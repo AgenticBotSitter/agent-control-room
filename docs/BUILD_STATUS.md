@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Vite notice-text comparison completed:** Read the five normalized term variants and
+all attribution prefixes across the remaining 71 quoted MIT/ISC sections. The Lodash
+CC0-sample/vendor exception is preserved; original notice bytes are unchanged.
+`research/vite-normalized-terms-review.json` records exact mappings. Prior non-MIT
+blocks and missing-body resolutions remain separately documented. Final distribution
+scope/notice delivery is still open; no original-code license or publication decision.
+
 **Vite patch provenance checked:** Read all three patches declared by the exact release
 (sirv, chokidar, dotenv-expand); their hashes match the source-lock patch identifiers.
 They modify code/types, not licensing files. Inert source and download log retained in

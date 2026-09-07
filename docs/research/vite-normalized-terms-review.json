@@ -1,0 +1,536 @@
+{
+  "schema": "control-room.vite-normalized-terms-review/v1",
+  "sourceEvidence": "docs/research/direct-notice-retention.json",
+  "sourceTextSha256": "40501d82eb20f60d031aaaa3291a103d72551ebd49e11e73ba94ea34589e7bdd",
+  "publicationApproved": false,
+  "reviewer": "primary-assistant",
+  "independent": false,
+  "method": "Quoted notice lines only: remove Markdown quote prefixes, collapse whitespace, split attribution prefix from first Permission sentence. Read each unique terms variant and every attribution prefix. Original source bytes remain authoritative; normalization is comparison evidence, not replacement license text.",
+  "terms": [
+    {
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "text": "Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions: The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software. THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE."
+    },
+    {
+      "termsSha256": "4829cc8e654be69dd1edcebedbda21758a239c230e38f532d6bf4b0adc1a0427",
+      "text": "Permission to use, copy, modify, and/or distribute this software for any purpose with or without fee is hereby granted, provided that the above copyright notice and this permission notice appear in all copies. THE SOFTWARE IS PROVIDED \"AS IS\" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE."
+    },
+    {
+      "termsSha256": "9e06052eb3811de1061464918ac71cc4a6d392febf8bd5e15366f131be8dd1cf",
+      "text": "Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the “Software”), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions: The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software. THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE."
+    },
+    {
+      "termsSha256": "ed1e240a96a36e5baa93b7fad4cc89dae42effbc8820657ff397f2cc7a079d15",
+      "text": "Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the 'Software'), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions: The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software. THE SOFTWARE IS PROVIDED 'AS IS', WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE."
+    },
+    {
+      "termsSha256": "de83fdfe81ce2673273840a2d77c21a10e99bb2e3bafba1f7a0a0c8bf5eca895",
+      "text": "Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions: The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software. THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. ==== Copyright and related rights for sample code are waived via CC0. Sample code is defined as all source code displayed within the prose of the documentation. CC0: http://creativecommons.org/publicdomain/zero/1.0/ ==== Files located in the node_modules and vendor directories are externally maintained libraries used by this software which have their own licenses; we recommend you read them, as their terms may differ from the terms above."
+    }
+  ],
+  "entries": [
+    {
+      "heading": "@jridgewell/gen-mapping, @jridgewell/remapping, @jridgewell/sourcemap-codec, @jridgewell/trace-mapping",
+      "blockSha256": "0361ec5795dcac9a246a8405345baa78d6aa651d96425d673b2210cdf39f6f12",
+      "attributionPrefix": "Copyright 2024 Justin Ridgewell <justin@ridgewell.name> ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "acb519d7955a79441854e1d77f351513a624f5f24e387493bad74cbc9352ef3e"
+    },
+    {
+      "heading": "@jridgewell/resolve-uri",
+      "blockSha256": "2a869cb85f56332e37e54f45b12aaeffbac5e246ca077d46bfc59f3a63911724",
+      "attributionPrefix": "Copyright 2019 Justin Ridgewell <jridgewell@google.com> ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "a1d3b9164c3f08c3675eaa60684cb6f1c18fd6faa08abcc818ec5228cbd248f6"
+    },
+    {
+      "heading": "@rollup/plugin-alias, @rollup/plugin-dynamic-import-vars, @rollup/pluginutils",
+      "blockSha256": "63fd8e071e2b37e92a64720ca8472c239a080f062d1d6234937723677ffd0ca3",
+      "attributionPrefix": "The MIT License (MIT) Copyright (c) 2019 RollupJS Plugin Contributors (https://github.com/rollup/plugins/graphs/contributors) ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "729533ec2b9c276ea1c5b88ef5eae0d036b466f107837335de5a615109db0e42"
+    },
+    {
+      "heading": "@vitest/utils",
+      "blockSha256": "317328c03e4bceb54738981608050349360541933b5e049a992b2e22e97a946e",
+      "attributionPrefix": "MIT License Copyright (c) 2021-Present VoidZero Inc. and Vitest contributors ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "f541f9bce5c6523064f2606612ae00b772d76ab64d66b5f49c39a2e5b1a4a554"
+    },
+    {
+      "heading": "anymatch",
+      "blockSha256": "d7f9ca4a0fa6974febc30dc16ed4491cf7cbc0c273049d1e3025ac3486457af7",
+      "attributionPrefix": "The ISC License Copyright (c) 2019 Elan Shanker, Paul Miller (https://paulmillr.com) ",
+      "termsSha256": "4829cc8e654be69dd1edcebedbda21758a239c230e38f532d6bf4b0adc1a0427",
+      "normalizedQuoteSha256": "0ab7a4bf9e1870a613f47ec85e1ec513f9e5bbdd382725fd058c2ea83ce99c8d"
+    },
+    {
+      "heading": "artichokie",
+      "blockSha256": "712b8d81b6ad28f91eefc78cf15ff1dd00665207fe8c984f553f03961fe41a39",
+      "attributionPrefix": "MIT License Copyright (c) 2020-present, Yuxi (Evan) You Copyright (c) 2023-present, sapphi-red ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "5208b3024a7885eabb7a70a2b4e5b6e6d5bba69c7e5f1b6e046851bb17c41eb5"
+    },
+    {
+      "heading": "binary-extensions",
+      "blockSha256": "4c2623249cfd7c579f1208a2853e9b9de8d9818912d9cc5270e276ae00ae2f59",
+      "attributionPrefix": "MIT License Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com) Copyright (c) Paul Miller (https://paulmillr.com) ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "72368b4c32f79ac87c960b2014b14a5d84891b4063ff32bb332a304dcec245e8"
+    },
+    {
+      "heading": "braces, fill-range, is-number",
+      "blockSha256": "ba28f3e9237c656e24fb1a0604931a49b7467ff5329e58b2d5785c6a2f87a72d",
+      "attributionPrefix": "The MIT License (MIT) Copyright (c) 2014-present, Jon Schlinkert. ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "c3d5b9c4c26ec9f94ca725b98aeca29591b42a788bdf0a3f807dcbb3c8584677"
+    },
+    {
+      "heading": "bundle-name, default-browser, default-browser-id, define-lazy-prop, is-docker, is-inside-container, is-wsl, open, run-applescript, wsl-utils",
+      "blockSha256": "fcd3c82d874b4b1b38b5bff0af6795d9801a356ee8b905ebd68791a4f3820816",
+      "attributionPrefix": "MIT License Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com) ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "6d0ffe243280b1c7634e32484daca6327008d11be972ce9d463af0a18049b20e"
+    },
+    {
+      "heading": "cac",
+      "blockSha256": "4da7e52b776546fc1aaef7cebdcc73f82f82a6e38f2a625e98a4383b6a7df00b",
+      "attributionPrefix": "The MIT License (MIT) Copyright (c) EGOIST <0x142857@gmail.com> (https://github.com/egoist) ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "13574fc6da92b26a31298cad11759f0f41db0e514e7c0e5117e039cc0231ad7f"
+    },
+    {
+      "heading": "chokidar",
+      "blockSha256": "ee39ba3e090998fa351f1c9d1040c431f6965700caab3beccce39f3d427b7810",
+      "attributionPrefix": "The MIT License (MIT) Copyright (c) 2012-2019 Paul Miller (https://paulmillr.com), Elan Shanker ",
+      "termsSha256": "9e06052eb3811de1061464918ac71cc4a6d392febf8bd5e15366f131be8dd1cf",
+      "normalizedQuoteSha256": "23c5e55032c2d3d7afc56f5ea79bef00eefe8818614a0300876f278ae8a43fda"
+    },
+    {
+      "heading": "connect",
+      "blockSha256": "61fde5a0b52362ca981a528c4f0c37374d58afa48e15f3bb31cb12901a70582a",
+      "attributionPrefix": "(The MIT License) Copyright (c) 2010 Sencha Inc. Copyright (c) 2011 LearnBoost Copyright (c) 2011-2014 TJ Holowaychuk Copyright (c) 2015 Douglas Christopher Wilson ",
+      "termsSha256": "ed1e240a96a36e5baa93b7fad4cc89dae42effbc8820657ff397f2cc7a079d15",
+      "normalizedQuoteSha256": "7f44f74744683f73bb6b07531c6e7796c764c73c7ef2ed49dcab55b272a7638a"
+    },
+    {
+      "heading": "convert-source-map",
+      "blockSha256": "33ce67f462b5c2aba5a582d78b308ff3ccc08881462760ec9169d66993107350",
+      "attributionPrefix": "Copyright 2013 Thorsten Lorenz. All rights reserved. ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "2beab0289eacf8d33f9c68bb33de29a99823857db7c3423a1032ed9c2f447283"
+    },
+    {
+      "heading": "cors",
+      "blockSha256": "a91face0db4fd777f48a42c3a5bc167bf68c050dd22064f473b1a36330a29b8f",
+      "attributionPrefix": "(The MIT License) Copyright (c) 2013 Troy Goode <troygoode@gmail.com> ",
+      "termsSha256": "ed1e240a96a36e5baa93b7fad4cc89dae42effbc8820657ff397f2cc7a079d15",
+      "normalizedQuoteSha256": "2821e3501ddda7cec44a636f25d410223cf91feaeb7a536e1e26f9c1af343905"
+    },
+    {
+      "heading": "cross-spawn",
+      "blockSha256": "69a0c0b11653632dcc26ea382899d08ac5776ae47944e7f8bc28b534205a4e6c",
+      "attributionPrefix": "The MIT License (MIT) Copyright (c) 2018 Made With MOXY Lda <hello@moxy.studio> ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "32075dbe8f1ae55fc12bd702d94cb617067e7545f6f01122e2c662e5eeb9cb55"
+    },
+    {
+      "heading": "cssesc",
+      "blockSha256": "0488d495ddba1cf0c8e85293496ff4670e718bbf76b7c40e262a9569b6d3d005",
+      "attributionPrefix": "Copyright Mathias Bynens <https://mathiasbynens.be/> ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "5469f0d9b3544f6a3d336b1c229212b4d3f28af300c4e1210d18be6d76fe0d3e"
+    },
+    {
+      "heading": "ee-first",
+      "blockSha256": "7112c1db6a46893b5c28dbcb058e0f571ffe503af6e5ca25ab3370bc2cbc3331",
+      "attributionPrefix": "The MIT License (MIT) Copyright (c) 2014 Jonathan Ong me@jongleberry.com ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "1edfdafc888f47708eed1fab04cc988acc8dfa5e4c03445aaa62b1a7a8f03e96"
+    },
+    {
+      "heading": "encodeurl",
+      "blockSha256": "b85497245325362ec103cba22ad00d5c08c3c42e6e3928a912859d61fbcdfed1",
+      "attributionPrefix": "(The MIT License) Copyright (c) 2016 Douglas Christopher Wilson ",
+      "termsSha256": "ed1e240a96a36e5baa93b7fad4cc89dae42effbc8820657ff397f2cc7a079d15",
+      "normalizedQuoteSha256": "fc978afb28746d1bce17d9f8f917c9422aecb86d4f4701243711fe40918f9f2d"
+    },
+    {
+      "heading": "es-module-lexer",
+      "blockSha256": "ea6510a7101dc146f145edd7a9b63ac0c7d13e933a0ad9fde0f088bae8012a34",
+      "attributionPrefix": "MIT License ----------- Copyright (C) 2018-2022 Guy Bedford ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "fe68ac788f437a0e113cc3b0e9b035457dda625c3c8d64764d2a078634d06045"
+    },
+    {
+      "heading": "escape-html",
+      "blockSha256": "73b40ff06046c45836d31c8557b7b6ad08750f82860c8c2b165c9ed76c2a99ef",
+      "attributionPrefix": "(The MIT License) Copyright (c) 2012-2013 TJ Holowaychuk Copyright (c) 2015 Andreas Lubbe Copyright (c) 2015 Tiancheng \"Timothy\" Gu ",
+      "termsSha256": "ed1e240a96a36e5baa93b7fad4cc89dae42effbc8820657ff397f2cc7a079d15",
+      "normalizedQuoteSha256": "9073a3f8bcb690cb5800977118adf6f24dce4645d343d076f4fd31ec10b33cc6"
+    },
+    {
+      "heading": "estree-walker",
+      "blockSha256": "9ff1729a0cf22801c57717c5349d33d6b36ca10f4b7e8cb6312c10552b53bfad",
+      "attributionPrefix": "Copyright (c) 2015-20 [these people](https://github.com/Rich-Harris/estree-walker/graphs/contributors) ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "bc69df8eb8053d9e2b13a28bbff6e89bd4262a9bf65b492f0fe08e70850748ca"
+    },
+    {
+      "heading": "etag",
+      "blockSha256": "f8707fc6e1724efb59e6a3b594817604eb84abf1ae7e28f2f330be3dbc3bdcdb",
+      "attributionPrefix": "(The MIT License) Copyright (c) 2014-2016 Douglas Christopher Wilson ",
+      "termsSha256": "ed1e240a96a36e5baa93b7fad4cc89dae42effbc8820657ff397f2cc7a079d15",
+      "normalizedQuoteSha256": "26d913ddc4ebc3c1e790c3cd7ba60158aa8106788e027312c0edad18f17e56f5"
+    },
+    {
+      "heading": "finalhandler",
+      "blockSha256": "920195a0368d05aa7a5e875de503c91b671cdd27f954e331ecb0510813c9dc8a",
+      "attributionPrefix": "(The MIT License) Copyright (c) 2014-2017 Douglas Christopher Wilson <doug@somethingdoug.com> ",
+      "termsSha256": "ed1e240a96a36e5baa93b7fad4cc89dae42effbc8820657ff397f2cc7a079d15",
+      "normalizedQuoteSha256": "967bb623c7966274f8064dc8695421eb464f320023088cfdf8bc0ef5be49c96d"
+    },
+    {
+      "heading": "follow-redirects",
+      "blockSha256": "96df7969d652f60312015ff53c70707618a2198ce88d89ea8084116b3dd94382",
+      "attributionPrefix": "Copyright 2014–present Olivier Lalonde <olalonde@gmail.com>, James Talmage <james@talmage.io>, Ruben Verborgh ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "53c5b32d7307e756f04a871d9c8dd147726019a10338883ea9ab75907bd6dc30"
+    },
+    {
+      "heading": "generic-names",
+      "blockSha256": "f243df5c2eb9b78aa70b731f99dda433c1ec6b7ef04b1420d18a1c8e389ec099",
+      "attributionPrefix": "The MIT License (MIT) Copyright (c) 2015 Alexey Litvinov ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "0ac5269557b189711e7b446cc0b6c0b3f8e47e822c8869eb2da971ce3e85d780"
+    },
+    {
+      "heading": "glob-parent",
+      "blockSha256": "1602163d2b6d8ca8101362ea18044b157a509f634485309021825078f9607c18",
+      "attributionPrefix": "The ISC License Copyright (c) 2015, 2019 Elan Shanker ",
+      "termsSha256": "4829cc8e654be69dd1edcebedbda21758a239c230e38f532d6bf4b0adc1a0427",
+      "normalizedQuoteSha256": "6783900f6dfd3951b72b62842c64bd47ad51f3859686f587e87d1e6e0d3a49d2"
+    },
+    {
+      "heading": "host-validation-middleware",
+      "blockSha256": "ce173eef68e765350b42d8003aa6848fbc813e298da189dbc85be3841d3ecaeb",
+      "attributionPrefix": "MIT License Copyright (c) 2025 sapphi-red ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "49faaa4a73c8fac2a6d1279e9aef172a09de4ce0ab0413cf24cfb556a32515b5"
+    },
+    {
+      "heading": "http-proxy-3",
+      "blockSha256": "5416663f0393f69af992f6569423f74b588fce59b1219364c1442077ff726c4b",
+      "attributionPrefix": "node-http-3 Copyright (c) 2010-2025 William Stein, Charlie Robbins, Jarrett Cruger & the Contributors. ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "85372ab763dfb279fe59c38597121bfd7f309e03a2f36374aa3cbae0d0d6cc15"
+    },
+    {
+      "heading": "icss-utils",
+      "blockSha256": "5787f9cbda9cdd48767e48d2ac6bb997bfbfb32717543ec45ae7c958edabe9c9",
+      "attributionPrefix": "ISC License (ISC) Copyright 2018 Glen Maddern ",
+      "termsSha256": "4829cc8e654be69dd1edcebedbda21758a239c230e38f532d6bf4b0adc1a0427",
+      "normalizedQuoteSha256": "c14ad4c175496ec53a51b576aceb681e5fec28c6e682ce9c67ad3a03042f32f9"
+    },
+    {
+      "heading": "is-binary-path",
+      "blockSha256": "4d4c7b16dad214070074247e5950d36662587893890ab151104a17f240ff5c50",
+      "attributionPrefix": "MIT License Copyright (c) 2019 Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com), Paul Miller (https://paulmillr.com) ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "543342e6aedf7f68e36348c5690b009ef1ebb66cb5b6dda9e26eee571436fac3"
+    },
+    {
+      "heading": "is-extglob",
+      "blockSha256": "4c43e35a909457f79cb280f4a28d8760bf8a57b13be3db9c05548e17ddc88a7e",
+      "attributionPrefix": "The MIT License (MIT) Copyright (c) 2014-2016, Jon Schlinkert ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "f1ec106b6885e7252c231ac9e04c829cd6805ba97526ae1983c185c9d9c54357"
+    },
+    {
+      "heading": "is-glob",
+      "blockSha256": "0275fe67b9e0cf30701f2162d78364519bf1fa763356c1c5151ac2b892e699d9",
+      "attributionPrefix": "The MIT License (MIT) Copyright (c) 2014-2017, Jon Schlinkert. ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "c0ddf2badc2834624de10947086ad7ff41edd908af1dd1c4b4a8cce2394dfb78"
+    },
+    {
+      "heading": "isexe, which",
+      "blockSha256": "3e39e01340b56f650ebe46b824f134788d043b1e347ef8c627c398fe45762612",
+      "attributionPrefix": "The ISC License Copyright (c) Isaac Z. Schlueter and Contributors ",
+      "termsSha256": "4829cc8e654be69dd1edcebedbda21758a239c230e38f532d6bf4b0adc1a0427",
+      "normalizedQuoteSha256": "338948ed75348ac8b9aab3e2e2e4b5da7490d654ddbb3abbc6fe73111ee7d4e7"
+    },
+    {
+      "heading": "js-tokens",
+      "blockSha256": "14cf95dffd80a2e2b01d81cfb300e16a151a54dfea7bce90d8d13c6379684ee5",
+      "attributionPrefix": "The MIT License (MIT) Copyright (c) 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024 Simon Lydell ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "9d492f62c1d773d0888c4f8fc51ac35dbe8e3636e12c5b98acb8bbea7089fff5"
+    },
+    {
+      "heading": "launch-editor, launch-editor-middleware",
+      "blockSha256": "7a4c865d93cdc75ced2ca5cac0c61b352162e511987dc21492114e1ca096a7de",
+      "attributionPrefix": "The MIT License (MIT) Copyright (c) 2017-present, Yuxi (Evan) You ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "1e0657a09e693385045f8cb581b3b3e08a98019fcfcc51cce752a43193d1b82a"
+    },
+    {
+      "heading": "lilconfig",
+      "blockSha256": "181a461af0dd9451fe7955e60809ad43746adfe6ad4286c920443dfe23f44298",
+      "attributionPrefix": "MIT License Copyright (c) 2022 Anton Kastritskiy ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "965c6fea4dd48d4ca32fae530ef3ab1e51159f7f50974751064ff3692aa860a2"
+    },
+    {
+      "heading": "loader-utils",
+      "blockSha256": "3c1ffdfb9f3352ffb58d9b2bbcbf270873aba335f40080adf55ebb3073309c42",
+      "attributionPrefix": "Copyright JS Foundation and other contributors ",
+      "termsSha256": "ed1e240a96a36e5baa93b7fad4cc89dae42effbc8820657ff397f2cc7a079d15",
+      "normalizedQuoteSha256": "f68028e8eefa94cf049aa58169166e00755bb70d21960b709b78b111f73a6d26"
+    },
+    {
+      "heading": "lodash.camelcase",
+      "blockSha256": "caac926bbbe6a5be670f5bd4271d195f29e1454deec482d47587f8f0060af8cf",
+      "attributionPrefix": "Copyright jQuery Foundation and other contributors <https://jquery.org/> Based on Underscore.js, copyright Jeremy Ashkenas, DocumentCloud and Investigative Reporters & Editors <http://underscorejs.org/> This software consists of voluntary contributions made by many individuals. For exact contribution history, see the revision history available at https://github.com/lodash/lodash The following license applies to all parts of this software except as documented below: ==== ",
+      "termsSha256": "de83fdfe81ce2673273840a2d77c21a10e99bb2e3bafba1f7a0a0c8bf5eca895",
+      "normalizedQuoteSha256": "db39c9e966b778ec4be93391fe652874ca14229275399d6a9b6a61d338762ee2"
+    },
+    {
+      "heading": "magic-string",
+      "blockSha256": "7414ca63cb8ff5cda5f8a921fddd559e93c02f16d535f63a0055d12277f79551",
+      "attributionPrefix": "Copyright 2018 Rich Harris ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "25361b6d66c3092a21cb4a34e5cb54ca02e120264599841e1f7202c0b831c7b1"
+    },
+    {
+      "heading": "mlly, ufo",
+      "blockSha256": "51381dbeff8bf2911300c1301bd7ce26658fc70f254e47bc55a7154378650865",
+      "attributionPrefix": "MIT License Copyright (c) Pooya Parsa <pooya@pi0.io> ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "e3d924ce54744eea3e5c04426c233dc312d1664bc92ca30b03424d5d3bc36305"
+    },
+    {
+      "heading": "mrmime",
+      "blockSha256": "6a2756fffd63a0bb07cf90c035df23ee71aa85f00824eca3ff8d6f701869185b",
+      "attributionPrefix": "The MIT License (MIT) Copyright (c) Luke Edwards <luke.edwards05@gmail.com> (https://lukeed.com) ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "e2dde3415c252b8bdde0cdaaa0418fa1628d1b57954b1b5f5e2347cdf90e0607"
+    },
+    {
+      "heading": "normalize-path",
+      "blockSha256": "6db357c0604e4a9664e63ef69ba45ea09008dc1e84cf33e9cca5495f28bd86b5",
+      "attributionPrefix": "The MIT License (MIT) Copyright (c) 2014-2018, Jon Schlinkert. ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "53840f9417109ccc74e1a76d5c62110ffc90b0a30dae980876218487738cd01d"
+    },
+    {
+      "heading": "object-assign",
+      "blockSha256": "f4900ad154cfbcbf326e4f8c91213f9d0f8fbdd608cbc7e444edfdeb19c22983",
+      "attributionPrefix": "The MIT License (MIT) Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com) ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "cd75fd0577d8ee5b1d2c6ba4e1430e68625072fcc2a10fbd92c6c7623af8f40d"
+    },
+    {
+      "heading": "obug",
+      "blockSha256": "c5f7f8836e103422ca945e5e05c40f8681c52f864b6b0c8d78f812370a727265",
+      "attributionPrefix": "The MIT License (MIT) Copyright © 2025-PRESENT Kevin Deng (https://github.com/sxzz) Copyright (c) 2014-2017 TJ Holowaychuk <tj@vision-media.ca> Copyright (c) 2018-2021 Josh Junon ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "2730221a54bf104cd38bcbdb665f15900f9b2bdc421a29403d82969f20fd2b96"
+    },
+    {
+      "heading": "on-finished",
+      "blockSha256": "ea295faa544b6f8d907ff00632cd331342c9a6ac89b300faecdb6b96cda0f886",
+      "attributionPrefix": "(The MIT License) Copyright (c) 2013 Jonathan Ong <me@jongleberry.com> Copyright (c) 2014 Douglas Christopher Wilson <doug@somethingdoug.com> ",
+      "termsSha256": "ed1e240a96a36e5baa93b7fad4cc89dae42effbc8820657ff397f2cc7a079d15",
+      "normalizedQuoteSha256": "1c43f371bde86b419349125a8b44e25dc46876b50d023d368365dc4ed812a6ff"
+    },
+    {
+      "heading": "parse5",
+      "blockSha256": "858e84a887b09cdff04bbf7eb9d21b38032ebddf3fb99b30ed49f5042f36e636",
+      "attributionPrefix": "Copyright (c) 2013-2019 Ivan Nikulin (ifaaan@gmail.com, https://github.com/inikulin) ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "c7be322c40cb771967f0fa276a9365674a47869a0daec6bb64f280adc7ce032e"
+    },
+    {
+      "heading": "parseurl",
+      "blockSha256": "8a3d79308e8e4cfd7871417d8e2be9ede86b72ef39c0d1561281ee0e51028df1",
+      "attributionPrefix": "(The MIT License) Copyright (c) 2014 Jonathan Ong <me@jongleberry.com> Copyright (c) 2014-2017 Douglas Christopher Wilson <doug@somethingdoug.com> ",
+      "termsSha256": "ed1e240a96a36e5baa93b7fad4cc89dae42effbc8820657ff397f2cc7a079d15",
+      "normalizedQuoteSha256": "3eecb5a51da28b4368996d81ec9165628d496dd6885e0bee07421623fb5b265c"
+    },
+    {
+      "heading": "path-key, shebang-regex",
+      "blockSha256": "feb71af2e2aefe99044d203b5fc2838e00bd70f3b652068566b83bc4a6d51940",
+      "attributionPrefix": "MIT License Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com) ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "27c00024b68111992e0c3e79bd459f46b398c61048feb44cd3a4288059c9715a"
+    },
+    {
+      "heading": "periscopic",
+      "blockSha256": "618216c72381bd17d1e6c2ada7222a1a3cdca3abbf8f25f53160a4d0db4c6c78",
+      "attributionPrefix": "Copyright (c) 2019 Rich Harris ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "04a4f52ccfb5bcdec7dff602f7687a2300d13f82cd86d5d6bd2abf985feefa66"
+    },
+    {
+      "heading": "picocolors",
+      "blockSha256": "bd76f87176b3c6b497046570b604a38054ceaa0508314a7052e86c6698b6f2f2",
+      "attributionPrefix": "ISC License Copyright (c) 2021-2024 Oleksii Raspopov, Kostiantyn Denysov, Anton Verinov ",
+      "termsSha256": "4829cc8e654be69dd1edcebedbda21758a239c230e38f532d6bf4b0adc1a0427",
+      "normalizedQuoteSha256": "732f702af0cef5544c4cb122ac032b05bd34c93c0716623978f954d5ca587692"
+    },
+    {
+      "heading": "postcss-import",
+      "blockSha256": "cd5330534e8e537179dfae72a83da9722137eddc620bf5e88f4ca51f4b2f0680",
+      "attributionPrefix": "The MIT License (MIT) Copyright (c) 2014 Maxime Thirouin, Jason Campbell & Kevin Mårtensson ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "d191d033d3077d7b4a9533d12e04b16eeac875b6e804c1e26aa909b942e5b8ef"
+    },
+    {
+      "heading": "postcss-load-config",
+      "blockSha256": "e5961f164d509f48c2d17fab476d0371974b2267b962eb8181888311ee837e45",
+      "attributionPrefix": "The MIT License (MIT) Copyright Michael Ciniawsky <michael.ciniawsky@gmail.com> ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "78a366b3704f1e6edee26430259e90190713e87f013b9792750fca985970ddbd"
+    },
+    {
+      "heading": "postcss-modules",
+      "blockSha256": "f1d05e97610d875155f21d490d9a335b8ee2ba22a6d86de26ed947dac36753f5",
+      "attributionPrefix": "The MIT License (MIT) Copyright 2015-present Alexander Madyankin <alexander@madyankin.name> ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "50d9d9ee59893b844061543f57895356dacc28a5c33fb75db5e47d774f4cbebe"
+    },
+    {
+      "heading": "postcss-modules-extract-imports",
+      "blockSha256": "ebf251ee2562872616a0280b41393d0fa5e2d26ab6655f720963bb7689b8f6c8",
+      "attributionPrefix": "Copyright 2015 Glen Maddern ",
+      "termsSha256": "4829cc8e654be69dd1edcebedbda21758a239c230e38f532d6bf4b0adc1a0427",
+      "normalizedQuoteSha256": "a3fa31cec8192bead85b0285d550eae95872369b43ea24b652c5c22bcae692f3"
+    },
+    {
+      "heading": "postcss-modules-local-by-default",
+      "blockSha256": "ceafe7b89e6fc2a17f386e8c52d28c88a48d4b3ca99cc6465b02798ecc9b40cd",
+      "attributionPrefix": "The MIT License (MIT) Copyright 2015 Mark Dalgleish <mark.john.dalgleish@gmail.com> ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "0e1b08f0b0392565d36040eee8cf2e25ef4f471f5a9a04f4921c88aa1eeb26d9"
+    },
+    {
+      "heading": "postcss-modules-scope",
+      "blockSha256": "471f992e4cbce9a33d9bd03bfd71d4b44e05bc3d55bf171627d0fb1f676d4f98",
+      "attributionPrefix": "ISC License (ISC) Copyright (c) 2015, Glen Maddern ",
+      "termsSha256": "4829cc8e654be69dd1edcebedbda21758a239c230e38f532d6bf4b0adc1a0427",
+      "normalizedQuoteSha256": "4a57715d1d8e6f39c03a40f3614e6cc58e43e4cabd2b20e9239dcec3a8aa42d1"
+    },
+    {
+      "heading": "postcss-modules-values",
+      "blockSha256": "15263d3060c4091341c30c9fcb215e617f15c9d869f370b138b51da874217f0a",
+      "attributionPrefix": "ISC License (ISC) Copyright (c) 2015, Glen Maddern ",
+      "termsSha256": "4829cc8e654be69dd1edcebedbda21758a239c230e38f532d6bf4b0adc1a0427",
+      "normalizedQuoteSha256": "4a57715d1d8e6f39c03a40f3614e6cc58e43e4cabd2b20e9239dcec3a8aa42d1"
+    },
+    {
+      "heading": "postcss-selector-parser",
+      "blockSha256": "ee91b5bf68d38e81d6e53caec417831aec8c9a043b4cb692fb54aec68542ecd7",
+      "attributionPrefix": "Copyright (c) Ben Briggs <beneb.info@gmail.com> (http://beneb.info) ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "7a87dd625f3c231818485da59b236a3b688f7c81ca9bfca22e70b8207803a8cb"
+    },
+    {
+      "heading": "postcss-value-parser",
+      "blockSha256": "baf53fba83d6a9fa849903b61a56f66dc3ae3c371b3451795232d292aecd5d4a",
+      "attributionPrefix": "Copyright (c) Bogdan Chadkin <trysound@yandex.ru> ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "964b342fd9383521e71686400f945d9e19492c9723d99205868ea123b2d07edc"
+    },
+    {
+      "heading": "readdirp",
+      "blockSha256": "8e71429d9afa7d679d7ec12badc17c0f8ad39cbc40c3f3217b7aeb4178236668",
+      "attributionPrefix": "MIT License Copyright (c) 2012-2019 Thorsten Lorenz, Paul Miller (https://paulmillr.com) ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "c64fecee97246010bddaf7556b79f3a1e7158e1fe6d5d86493e81649f5acf5e4"
+    },
+    {
+      "heading": "resolve.exports, totalist",
+      "blockSha256": "f142823702553efcc17956f052fd7e1de0097b336f4ad9d9ab9e7ca6ea83e331",
+      "attributionPrefix": "The MIT License (MIT) Copyright (c) Luke Edwards <luke.edwards05@gmail.com> (lukeed.com) ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "3f3f9d61b543529388cfac17cbcbd901612185f4a996eef70abad197783f9fca"
+    },
+    {
+      "heading": "shebang-command",
+      "blockSha256": "0f74531ffdb2684996e7bd7c034dc397ee9d0ac349ab4de028a86d9593b28846",
+      "attributionPrefix": "MIT License Copyright (c) Kevin Mårtensson <kevinmartensson@gmail.com> (github.com/kevva) ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "a3c61dadd480b99587b9710382de01ce9bd282e7a5fb74a25c61b06e00f670ec"
+    },
+    {
+      "heading": "shell-quote",
+      "blockSha256": "84f2f2b5a55261994e06bf417075bb7b6fd85a6fdd44f70fdf66b3fe7fd626e4",
+      "attributionPrefix": "The MIT License Copyright (c) 2013 James Halliday (mail@substack.net) ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "c34ccee31f3f4770975d1d74cc0ee044a76327e46cfd289424898b8571847069"
+    },
+    {
+      "heading": "statuses",
+      "blockSha256": "d99a2094a266ef6f4254ae33137d2c76d53928de9c8a355ce310b21baa2dd33c",
+      "attributionPrefix": "The MIT License (MIT) Copyright (c) 2014 Jonathan Ong <me@jongleberry.com> Copyright (c) 2016 Douglas Christopher Wilson <doug@somethingdoug.com> ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "a1adef022b607a7b9b54f2cc21efe778aaf641d20b5a44ffbb8b646d43199ab7"
+    },
+    {
+      "heading": "strip-literal",
+      "blockSha256": "c11d68f8e3099b92a2aa52c0ad0235b81f9d3e9cb0aca70d888190cb86c1873e",
+      "attributionPrefix": "MIT License Copyright (c) 2022 Anthony Fu <https://github.com/antfu> ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "ab5d97dc07706e3dd79963193199ffaf5b7f2a3ed6c00b965a1db183cad84d97"
+    },
+    {
+      "heading": "to-regex-range",
+      "blockSha256": "9f183fd773fcba1e9e3ef50cc735072d100d2b38ad62081fa9089dfad10e7d67",
+      "attributionPrefix": "The MIT License (MIT) Copyright (c) 2015-present, Jon Schlinkert. ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "d1add059343969e99fa896fbeaba01f8392e596281132d01646a2e41357a0959"
+    },
+    {
+      "heading": "unpipe",
+      "blockSha256": "55eaf9bce59da43d35210054a3d9b8d6384195937cd174aa93d833fc9e68fa8c",
+      "attributionPrefix": "(The MIT License) Copyright (c) 2015 Douglas Christopher Wilson <doug@somethingdoug.com> ",
+      "termsSha256": "ed1e240a96a36e5baa93b7fad4cc89dae42effbc8820657ff397f2cc7a079d15",
+      "normalizedQuoteSha256": "33d6d6418091247b69b68018408caf10cc3f9b377ca3a31a938436d58a7bc1b2"
+    },
+    {
+      "heading": "util-deprecate",
+      "blockSha256": "394bf30b8b672e4ada4fe626e44a602c57ace254abc7fe91217abe0a29b28c00",
+      "attributionPrefix": "(The MIT License) Copyright (c) 2014 Nathan Rajlich <nathan@tootallnate.net> ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "451ee1b74ec150446c9317f2947d84927c06c23ae2dbcfb2d453bb066067deac"
+    },
+    {
+      "heading": "utils-merge",
+      "blockSha256": "58f321f4a91deb30f48558a19a4bc55725777d1dbebec969048e6a7410f72b38",
+      "attributionPrefix": "The MIT License (MIT) Copyright (c) 2013-2017 Jared Hanson ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "9e98bfbdfd4680d7a650ba8dcbb8ca3bce02b9fbd724c028a5723fcb1d5b327c"
+    },
+    {
+      "heading": "vary",
+      "blockSha256": "d235837652d23ebc740402e9234f5aa2f9fbc040f9c819ce3e99d38742d36c3b",
+      "attributionPrefix": "(The MIT License) Copyright (c) 2014-2017 Douglas Christopher Wilson ",
+      "termsSha256": "ed1e240a96a36e5baa93b7fad4cc89dae42effbc8820657ff397f2cc7a079d15",
+      "normalizedQuoteSha256": "27ae2f0c0e3d928d4d071bbcd8981de49ee110f48fc3522ab0633ac46e2a77c7"
+    },
+    {
+      "heading": "ws",
+      "blockSha256": "8a4374fa48f2182320a8aa46e3c2c95192bf93ea81c832944d766c794b974715",
+      "attributionPrefix": "Copyright (c) 2011 Einar Otto Stangvik <einaros@gmail.com> Copyright (c) 2013 Arnout Kazemier and contributors Copyright (c) 2016 Luigi Pinca and contributors ",
+      "termsSha256": "fe2a9817987f862eaced948f0468c7f51d2fedfc48c5c505b246a49a3870e9a5",
+      "normalizedQuoteSha256": "4e809dede1ac546b95281f6d86da85aba2760682ae4a573a4925e83454226962"
+    }
+  ],
+  "findings": [
+    "71 quoted MIT/ISC sections, five exact normalized term variants.",
+    "Three MIT variants differ in quote punctuation; ISC and Lodash variant retained separately.",
+    "Lodash adds CC0 documentation sample language and separate node_modules/vendor license caveat; preserve original full notice.",
+    "Other license blocks and metadata-only gaps are covered by separate prior reviews; no new source/binary equivalence or legal clearance is asserted."
+  ]
+}

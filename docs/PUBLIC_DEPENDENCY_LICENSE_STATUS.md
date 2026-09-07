@@ -149,6 +149,27 @@ Keep the existing dependencies while that scoped review proceeds.
 
 ## Next licensing batch
 
+### Remaining Vite quoted MIT/ISC terms reviewed
+
+At `04fa0a0`, compared all 71 remaining quoted MIT/ISC sections by removing Markdown
+quote prefixes and collapsing whitespace, keeping every component attribution prefix.
+Read all five resulting terms variants and all attribution prefixes. Exact block hashes,
+normalized quote hashes, prefixes and terms are recorded in
+`research/vite-normalized-terms-review.json`. The original 108,466-byte Vite notice
+remains unchanged and authoritative; normalized comparison text is not a replacement.
+
+Three MIT variants differ in quotation punctuation; the ISC wording is separate.
+Lodash's variant also has a CC0 documentation-sample statement and an explicit caveat
+for separately maintained node_modules/vendor libraries. Keep that exception and its
+jQuery/Underscore attribution instead of flattening it into a generic MIT notice.
+
+Together with the previously read Apache/BSD blocks and resolved metadata-only upstream
+notices, this closes the planned Vite notice-text comparison pass. It does not prove
+source-to-installed-bundle equivalence or identify every component shipped by our
+eventual output. The next Vite-specific task is preserving applicable complete notices
+with the chosen deliverable and checking actual output scope, not rereading the same
+71 quoted sections. No downloads, package changes or original-license selection.
+
 ### Vite's three declared patches inspected
 
 At `648d96f`, retrieved the exact release's pnpm-workspace.yaml and all three declared
