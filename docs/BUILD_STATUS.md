@@ -8,6 +8,16 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Contributor-release review coverage refreshed:** A private exact-file inventory
+now covers all 518 staged files (3,710,033 bytes), plus observed metadata for 28
+direct dependencies. Seven earlier content-review receipts match 53 current files;
+other bounded reviews must be reconciled before treating the remaining files as
+cleared. Limited recognizable-key/identity scans found no key material; the sole
+locator match was inspected as a fabricated address used by an injected fake server.
+This is not full secret detection or manual clearance. `PUBLIC_LAUNCH_SETUP.md` now
+replaces stale account/license instructions with the real remaining release work.
+No additional source upload or security-setting change occurred in this pass.
+
 **Approved public identity batch pushed:** The public repository now has a useful
 pre-alpha introduction and the approved maintainer/contact/website links (commit
 `f699fa0`). The private welcome website received its matching HTML and deployment

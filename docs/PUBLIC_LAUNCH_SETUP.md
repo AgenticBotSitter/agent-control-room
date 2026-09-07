@@ -1,110 +1,93 @@
-# Public launch setup — owner checklist
+# Public contributor launch — remaining work
 
-2026-09-06. Local planning document, not publication approval. Existing private
-repository, history, deployment and credentials stay private. Account names, domain,
-license and contact remain owner decisions. No account, repository or DNS changes made.
+This is the current launch checklist. Historical account-creation and undecided-license
+instructions are superseded by the confirmed decisions below. It is not blanket
+publication, deployment or security-setting approval.
 
-## Recommended structure
+## Confirmed and completed
 
-**Current state:** `AgenticBotSitter` and its public `agent-control-room` repository
-already exist. Do not create another organization. The product repository currently
-has only its initial README; Actions are now disabled. The separate private
-`agent-control-room-website` repository is the static website handoff, not application
-source. The creation instructions below are historical setup guidance, not remaining
-owner actions. Current remaining decisions/work are license selection, reviewed source
-export, clean-checkout verification and ready contributor assignments.
+- Organization: AgenticBotSitter. Do not create another account or organization.
+- Public product repository: https://github.com/AgenticBotSitter/agent-control-room
+- Private website repository: https://github.com/AgenticBotSitter/agent-control-room-website
+- Public welcome-page domain: https://agentcontrolroom.xyz
+- Maintainer: Alastair Fraser; GitHub account with verified administrator access: MarvinAi5.
+- Main website: https://agenticbotsitter.com
+- Contact: Alastair@agenticbotsitter.com
+- Original-code license: Apache-2.0 with the approved project NOTICE.
+- Public introduction uploaded at `f699fa0`; private website handoff at `f03ca15`.
+- Actions disabled in both repositories. No new CI workflow is part of this release.
+- Owner reports Johnny5 is hosting the website. Live DNS/HTTPS and site content have
+  not been independently verified here.
 
-Keep the existing personal GitHub login. Create a separate **GitHub Free organization**
-for the project, with that login as its owner. Proposed display name: Agent Control Room.
-Try `AgentControlRoom` as the handle; availability has not been checked. If unavailable,
-choose a recognizable variation, for example `agent-control-room-community`.
-Proposed product repository: `agent-control-room` under the new organization.
+Do not ask the owner to repeat these decisions. Never publish Cloudflare dashboard
+links, private Git history, host-specific account metadata or private project data.
 
-The organization is a shared project home, not another login or a legal incorporation.
-Membership does not automatically transfer or publish personally owned repositories.
-There is no need to buy another paid plan for this public-project starting point.
-The owner's existing paid subscription and exact billing tier have not been inspected.
-See [GitHub account types](https://docs.github.com/en/get-started/learning-about-github/types-of-github-accounts).
+## What contributors can access today
 
-## Owner actions
+The public repository currently has only its introduction README, with no application
+source or ready work issues. It is shareable as an announcement, not yet as a runnable
+contributor release. The separate website repository does not supply application source.
 
-1. Sign into the existing GitHub account. Keep account recovery codes in the password
-   manager and enable two-factor authentication if not already enabled.
-2. Profile picture → Settings → Organizations → New organization. Choose GitHub Free,
-   enter the chosen organization handle and an email address you control. Complete any
-   verification steps yourself. Do not invite all contributors as owners.
-3. Either send the organization URL back, or also create an empty repository:
-   select New repository, set Owner to the new organization, name it
-   `agent-control-room`, and choose Public. Public here means an empty new destination,
-   not permission to upload the private project.
-4. Do not select a template, import the old repository, upload the current folder, or
-   change the private repository's visibility. Leave README, .gitignore and license
-   initialization off so the reviewed launch package can provide them together.
-5. Leave Actions disabled initially. Public CI needs a reviewed configuration before
-   activation; do not attach personal machines or the VPS as public-PR runners.
+## Finish the source release
 
-Official instructions: [organization creation](https://docs.github.com/en/organizations/collaborating-with-groups-in-organizations/creating-a-new-organization-from-scratch),
-[repository creation](https://docs.github.com/en/repositories/creating-and-managing-repositories/creating-a-new-repository).
+1. **Freeze and inspect the exact candidate.** The private evidence file
+   [release inventory](research/public-candidate-release-inventory.json) identifies
+   all 518 current source/document files and their hashes, excluding installed
+   dependencies and build output. Seven earlier content-review receipts match 53
+   files byte-for-byte. This is evidence coverage, not a claim that the other 465
+   files were never inspected or that all matched files have security clearance.
+   Reuse other bounded reviews where their scope and exact bytes can be established;
+   inspect the remaining gaps. Do not mistake automated scans for manual review.
 
-## Send back only non-secret details
+2. **Close source-distribution rights and privacy findings.** Preserve the full
+   Apache license, project NOTICE and upstream notices. The 28 installed direct
+   dependency metadata entries were observed without downloads; missing root notice
+   files must be reconciled with the existing dependency research, not guessed.
+   Review only the actual source distribution now; a future binary/container release
+   requires its own review. The original geometric favicon has recorded provenance.
+   Do not republish the unverified historical icon or private reconstruction receipts.
 
-- Organization URL and repository URL, if created.
-- Confirmed product name and preferred public maintainer name/credit.
-- Confirmed welcome-page domain: `agentcontrolroom.xyz`. The owner clarified that
-  `.com` was taken and is not owned. DNS/HTTPS configuration still needs verification.
-- Domain registrar and DNS provider names. Do not send passwords, DNS tokens or keys.
-- Confirmed general project email: `Alastair@agenticbotsitter.com`.
-- Original-code license decision; the Apache-2.0 recommendation is not yet approval.
+3. **Finish and verify public collaboration documents.** Ship README, SETUP,
+   CONTRIBUTING, ROADMAP, WORK_PACKAGES, architecture and third-party notices with
+   working relative links. Include a private security-reporting route once configured.
+   Document the maintainer's actual review process without inventing additional
+   independent human maintainers or response-time promises.
 
-Use existing local GitHub authentication if it grants the needed organization access.
-If another permission is required, complete GitHub's browser authorization yourself.
-Never paste access tokens, passwords, recovery codes, authentication codes or private
-SSH keys into chat. Domain access is needed only when deployment/DNS is separately approved.
+4. **Complete exact-tree acceptance.** Retain the successful strict type checks,
+   28 demo tests, two built-demo tests, 47 standalone compiled tests and owner-approved
+   macOS browser trial. Rerun affected checks after changes. Independent review must
+   identify the exact candidate and unresolved findings. Windows/Linux and live-agent
+   acceptance remain contributor work, not prerequisites we falsely claim passed.
 
-## Launch package to finish locally
+5. **Publish only the reviewed source snapshot.** Obtain approval identifying the
+   final candidate and destination. Use an isolated checkout based on the public
+   repository, with explicitly approved public author/committer name and email.
+   Do not attach a public remote to the private checkout, mirror private branches,
+   upload installed dependencies or force-push over public work. Verify remote files
+   against the approved manifest after one coherent source upload.
 
-The [local staging index](public-launch-draft/README.md) now maps the proposed public
-files to their draft sources, with explicit remaining decisions. Architecture,
-governance, security-reporting, PR and ready-work templates are drafted there. They
-are not installed as active repository policies or copied to `.github`.
+6. **Open substantial contributor assignments.** Create ready issues for DEMO-UX
+   and separate OS setup assignments from WORK_PACKAGES, with exact public base,
+   allowed paths, prerequisites, checks and reviewing maintainer. Use ordinary
+   confirmed assignments; do not revive the private automated jobber queue.
+   Contributors can take another independent assignment while review is pending.
 
-Reuse `PUBLIC_PROJECT_BRIEF_DRAFT.md`, `PUBLIC_CONTRIBUTOR_GUIDE_DRAFT.md` and
-`AGENT_CONTROL_ROOM_MODULE_ROADMAP.md`; do not publish internal build logs wholesale.
+## Repository protection decision still pending
 
-| Public deliverable | Contents / remaining work |
-|---|---|
-| README.md | Purpose, honest pre-alpha status, real capabilities versus roadmap, website and contribution links |
-| CONTRIBUTING.md and contributor instructions | Clean setup, own fork/branch, platform prerequisites, tests, reuse/license rules, handoff and review process |
-| ROADMAP.md and architecture overview | Core versus optional modules, dependencies, concrete completion criteria; generic examples only |
-| SECURITY.md | Confirmed private reporting channel and supported-version status; no public exploit/secret reports |
-| GOVERNANCE.md, CODEOWNERS and conduct policy | Owner accountability, qualified reviewer responsibilities, conflicts and moderation contact; actual GitHub handles required |
-| Issue forms and PR template | Bugs, feature proposals and ready work with platform, prerequisites, scope, tests and upstream attribution |
-| LICENSE and dependency notices | Owner-selected license for eligible original code, preserved upstream notices, resolved asset rights |
-| Setup and connector guides | Verified installation commands and explicit platform support, no copied credentials or private host coordinates |
-| Public website | Project explanation, honest status, how to help, GitHub link, optional founder/site credit; no private-app links |
+The earlier request to enable private vulnerability reporting, secret scanning and
+push protection has not received a specific answer. The latest explicit approvals
+covered identity content and website uploads, not these settings. Request that
+decision separately; do not silently enable them or describe them as active.
 
-Before source publication: assemble a fresh-history reviewed candidate in a separate
-checkout, complete privacy/rights and clean-install/demo checks, obtain independent
-review and owner approval naming the exact candidate and destination. Do not connect
-a public push remote to the private checkout or mirror private branches.
+For main-branch protection, propose blocking force pushes and deletion and requiring
+PR review without checks that do not exist. Do not lock out the sole actual maintainer
+by inventing a second human approver. Organization-wide 2FA changes can affect other
+members and require separate scope. Keep Actions disabled, no privileged public-PR
+runners, no scheduled polling and no paid-overage changes.
 
-An earlier **announcement-only** release can publish approved project information and
-roadmap without pretending the runnable code is available. It requires its own approval.
+## After contributor launch
 
-## Repository settings after the first reviewed content
-
-Recommend required 2FA for organization members, minimal member permissions, Issues
-and Discussions for collaboration, private vulnerability reporting, and a main-branch
-ruleset requiring PRs and blocking force pushes/deletion. Configure reviewer requirements
-to match actual maintainers: one human using several agents is not several GitHub reviewers.
-Add required checks only after those exact checks exist and have been exercised.
-
-GitHub Free supports public-repository rulesets and organization 2FA requirements.
-See [rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets),
-[organization 2FA](https://docs.github.com/en/organizations/keeping-your-organization-secure/managing-two-factor-authentication-for-your-organization/requiring-two-factor-authentication-in-your-organization),
-and [private reporting](https://docs.github.com/en/code-security/how-tos/report-and-fix-vulnerabilities/configure-vulnerability-reporting/configure-for-a-repository).
-
-Standard GitHub-hosted runners in public repositories have free Actions usage; this does
-not make every runner, storage or adjacent service free. It does not lift the current
-no-Actions instruction. Review limits, retention and fork permissions before enabling CI.
-See [Actions billing](https://docs.github.com/en/actions/concepts/billing-and-usage).
+Return to the borrow-before-build assessment: choose maintained upstream components
+against the remaining product gaps, verify licenses and integration tests, then update
+the completion plan. Prioritize the usable project/task/agent/result/review path.
+Announcing the repository is not completion of the Control Room product.
