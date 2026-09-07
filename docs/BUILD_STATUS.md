@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**PGlite alternate notice and binary-source trail resolved:** Retained the exact
+release's PostgreSQL license, submodule declaration and build-command manifest (2,620
+bytes, logged with hashes after a disk check). Release source points to postgres-pglite
+commit `1195d5388bd5529e0013c45fa816cfcd953d84e0` for database/extension outputs.
+The source trail is established; installed binary equivalence and extension rights
+remain unproved. No build scripts executed, install, production change or publication.
+
 **PGlite binary scope recorded:** Installed 0.3.14 includes an 8.86 MB WASM module,
 4.94 MB data file and 51 extension archives. Read-only archive listing did not find
 notice-named members; that is not an absent-license finding. The installed README

@@ -1,0 +1,42 @@
+{
+  "schema": "control-room.pglite-source-notice-evidence/v1",
+  "date": "2026-09-06",
+  "package": "@electric-sql/pglite",
+  "version": "0.3.14",
+  "commit": "6b7d56e56429259fb0241ffa17d484af2bddf00a",
+  "submodule": {
+    "path": "postgres-pglite",
+    "type": "commit",
+    "mode": "160000",
+    "commit": "1195d5388bd5529e0013c45fa816cfcd953d84e0",
+    "repository": "https://github.com/electric-sql/postgres-pglite"
+  },
+  "freeSpaceBefore": "102 GiB",
+  "retainedIn": "docs/research/pglite-source-notice-evidence.json",
+  "retention": "Retain as package review evidence; review removal if PGlite is no longer used. No downloaded code is executed.",
+  "publicationApproved": false,
+  "packageBinaryEquivalenceProven": false,
+  "entries": [
+    {
+      "file": "POSTGRES-LICENSE",
+      "url": "https://raw.githubusercontent.com/electric-sql/pglite/6b7d56e56429259fb0241ffa17d484af2bddf00a/POSTGRES-LICENSE",
+      "bytes": 1192,
+      "sha256": "31ccadc0a70e8e0e8a35c5833567b64388dfe34987d962e1911554e271294105",
+      "text": "PostgreSQL Database Management System\n(formerly known as Postgres, then as Postgres95)\n\nPortions Copyright (c) 1996-2021, PostgreSQL Global Development Group\n\nPortions Copyright (c) 1994, The Regents of the University of California\n\nPermission to use, copy, modify, and distribute this software and its\ndocumentation for any purpose, without fee, and without a written agreement\nis hereby granted, provided that the above copyright notice and this\nparagraph and the following two paragraphs appear in all copies.\n\nIN NO EVENT SHALL THE UNIVERSITY OF CALIFORNIA BE LIABLE TO ANY PARTY FOR\nDIRECT, INDIRECT, SPECIAL, INCIDENTAL, OR CONSEQUENTIAL DAMAGES, INCLUDING\nLOST PROFITS, ARISING OUT OF THE USE OF THIS SOFTWARE AND ITS\nDOCUMENTATION, EVEN IF THE UNIVERSITY OF CALIFORNIA HAS BEEN ADVISED OF THE\nPOSSIBILITY OF SUCH DAMAGE.\n\nTHE UNIVERSITY OF CALIFORNIA SPECIFICALLY DISCLAIMS ANY WARRANTIES,\nINCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY\nAND FITNESS FOR A PARTICULAR PURPOSE.  THE SOFTWARE PROVIDED HEREUNDER IS\nON AN \"AS IS\" BASIS, AND THE UNIVERSITY OF CALIFORNIA HAS NO OBLIGATIONS TO\nPROVIDE MAINTENANCE, SUPPORT, UPDATES, ENHANCEMENTS, OR MODIFICATIONS.\n"
+    },
+    {
+      "file": ".gitmodules",
+      "url": "https://raw.githubusercontent.com/electric-sql/pglite/6b7d56e56429259fb0241ffa17d484af2bddf00a/.gitmodules",
+      "bytes": 84,
+      "sha256": "361d7733b5e9e2bc47e5bb50821b4a72e312ce596c07d79bc7f6219763ddb90c",
+      "text": "[submodule \"postgres-pglite\"]\n\tpath = postgres-pglite\n\turl = ../postgres-pglite.git\n"
+    },
+    {
+      "file": "package.json",
+      "url": "https://raw.githubusercontent.com/electric-sql/pglite/6b7d56e56429259fb0241ffa17d484af2bddf00a/package.json",
+      "bytes": 1344,
+      "sha256": "e5e8acc067aa65ccbd3f64b304568b2b909d05202b4a470ba6196b522a9e30c9",
+      "text": "{\n  \"pnpm\": {},\n  \"engines\": {\n    \"node\": \">=20\",\n    \"pnpm\": \">=9\"\n  },\n  \"packageManager\": \"pnpm@9.7.0\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"ci:version\": \"pnpm exec changeset version\",\n    \"ci:publish\": \"pnpm changeset publish\",\n    \"ts:build\": \"pnpm -r --filter \\\"./packages/**\\\" build\",\n    \"ts:build:debug\": \"DEBUG=true pnpm ts:build\",\n    \"wasm:copy-pgdump\": \"mkdir -p ./packages/pglite-tools/release && cp ./postgres-pglite/dist/bin/pg_dump.* ./packages/pglite-tools/release\",\n    \"wasm:copy-pglite\": \"mkdir -p ./packages/pglite/release/ && cp ./postgres-pglite/dist/bin/pglite.* ./packages/pglite/release/ && cp ./postgres-pglite/dist/extensions/*.tar.gz ./packages/pglite/release/\",\n    \"wasm:build\": \"cd postgres-pglite && ./build-with-docker.sh && cd .. && pnpm wasm:copy-pglite && pnpm wasm:copy-pgdump\",\n    \"wasm:build:debug\": \"DEBUG=true pnpm wasm:build\",\n    \"build:all\": \"pnpm wasm:build && pnpm ts:build\",\n    \"build:all:debug\": \"DEBUG=true pnpm build:all\"\n  },\n  \"devDependencies\": {\n    \"@changesets/cli\": \"^2.27.9\",\n    \"@eslint/eslintrc\": \"^3.1.0\",\n    \"@typescript-eslint/eslint-plugin\": \"^7.18.0\",\n    \"@typescript-eslint/parser\": \"^7.18.0\",\n    \"eslint\": \"^8.57.1\",\n    \"globals\": \"^15.11.0\",\n    \"prettier\": \"3.3.3\",\n    \"tsup\": \"^8.3.0\",\n    \"tsx\": \"^4.19.1\",\n    \"typescript\": \"^5.6.3\"\n  }\n}\n"
+    }
+  ]
+}

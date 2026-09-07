@@ -108,6 +108,29 @@ Keep the existing dependencies while that scoped review proceeds.
 
 ## Next licensing batch
 
+### PGlite alternate notice and binary-source trail pinned
+
+At `85e8c4c`, direct read-only retrieval succeeded where the web cache had missed:
+the exact release's `POSTGRES-LICENSE` contains PostgreSQL/University of California
+permission and disclaimer text. It is retained with `.gitmodules` and root
+`package.json` in [`research/pglite-source-notice-evidence.json`](research/pglite-source-notice-evidence.json).
+The retained files total 2,620 bytes, with exact source URLs, sizes and SHA-256 hashes;
+disk check showed 102 GiB free. No scripts were executed or dependencies installed.
+
+The release tree pins `postgres-pglite` as a Git submodule at
+`1195d5388bd5529e0013c45fa816cfcd953d84e0`, resolved to the sibling repository
+`electric-sql/postgres-pglite` by `.gitmodules`. The root package scripts build inside
+that submodule, copy `dist/bin/pglite.*` into the package release directory, and copy
+`dist/extensions/*.tar.gz` alongside them. This identifies the intended binary source
+trail, not an independently reproducible match to the installed npm payloads.
+
+Read-only lookup also queried the release tree and a guessed root `Makefile` (404).
+Those lookup responses were inspected but not retained as additional files; the three
+source files above are the retained download set. Nothing was extracted, installed,
+started, pushed or published. Exact extension versions/build inputs belong to the
+pinned submodule review next. Do not substitute current-main extensions or infer that
+all archived components share the root package license.
+
 ### PGlite development payloads and license-description difference
 
 At `ca332b5`, inspected installed `@electric-sql/pglite` **0.3.14** without importing
