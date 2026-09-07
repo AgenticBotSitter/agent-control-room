@@ -8,6 +8,18 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Complete borrowed feeds now cross storage batches:** Logical collection and
+receipt bounds match the borrowed sitemap ceiling, while persistence reuses existing
+100-story batches inside a single transaction. A 250-item upstream-reader feed passes
+save, exact replay, receipt verification and paginated readback. An injected failure
+at item 101 rolls back articles, source observation and baseline. Existing smaller
+collections retain the same receipt shape. Older readers reject receipts over 100;
+upgrade readers/writers together before enabling this unwired path. The ceiling is
+not a performance claim: large sitemap runtime qualification remains open.
+The 284-entry delivery lane, types, focused lint and VPS compilation pass.
+Independent source review found no concrete introduced defect. Next product work:
+adopt the reading view and connect article actions, then bounded collection wiring.
+
 **Borrowed discovery memory now survives restart:** Migration 0062 stores the
 upstream snapshot format in PostgreSQL, bound to project/source URL and authenticated.
 The ingestion adapter exposes `loadBaseline()` and accepts that prior snapshot when
@@ -30,9 +42,8 @@ with exact configuration/result binding and a no-write regression, then re-revie
 without further concrete findings. The expanded 282-entry delivery lane, types,
 focused lint, diff checks and VPS build pass. Tests use supplied text and disposable
 PGlite; no live source, provider, service or deployment. No new schema or role grant.
-**Next:** connect larger batches, the saved reading view and article-to-task actions.
-Current adapter has a 100-item batch ceiling; larger borrowed discovery batches
-still need explicit orchestration. Keep current model/effort; full integration is
+**Next:** connect the saved reading view and article-to-task actions.
+Keep current model/effort; full integration is
 unfinished and live effects retain their separate scoped-authority requirements.
 
 **Control Center discovery cohort is now adopted and fixture-tested:** Complete

@@ -6,9 +6,40 @@ import { PostgresAbsNewsStoreV1 } from "../src/project-adapters/abs-news/v1/post
 import { WebNewsService } from "../src/web/v1/news-service";
 import { taskFixture } from "./helpers/web-task";
 import { now } from "./helpers/web-foundation";
+import type { DatabaseClient } from "../src/persistence/database";
 
 const source = { id: "source:borrowed", name: "Example", url: "https://example.org/feed" };
 const observed = new Date(now).toISOString();
+
+test("a complete borrowed 250-story feed saves across batches with one verifiable receipt", async t => {
+  const f = await taskFixture(); t.after(() => f.db.close());
+  const scope = { tenantId: "tenant:web", workspaceId: "workspace:web", projectId: f.project.projectId };
+  const key = new Uint8Array(32).fill(25), config = { ...scope, source };
+  const reader = createIndustrySourceReader({ now: () => now, async readText(url) {
+    return { finalUrl: url, text: `<rss><channel>${Array.from({ length: 250 }, (_, i) =>
+      `<item><title>AI model release ${i}</title><link>https://example.org/story-${i}</link><pubDate>${new Date(now - 1000).toUTCString()}</pubDate></item>`).join("")}</channel></rss>` };
+  } });
+  const result = await reader.readSource(source); assert.equal(result.items.length, 250);
+  let inserts = 0;
+  const failing: DatabaseClient = { ...f.client, query: f.client.query.bind(f.client),
+    transaction: work => f.client.transaction(tx => work({ async query<T>(sql: string, params?: unknown[]) {
+      if (sql.includes("INSERT INTO control_abs_story_versions") && ++inserts === 101) throw new Error("test_second_batch_failure");
+      return tx.query<T>(sql, params);
+    } })), transactionWithPreCommitCheck: f.client.transactionWithPreCommitCheck.bind(f.client) };
+  await assert.rejects(new AbsControlCenterIngestion(failing, config, key).ingest(result, observed), /test_second_batch_failure/);
+  for (const table of ["control_abs_story_versions", "control_abs_source_observations", "control_abs_discovery_baselines"])
+    assert.equal((await f.client.query(`SELECT * FROM ${table}`)).rows.length, 0);
+  const ingestion = new AbsControlCenterIngestion(f.client, config, key);
+  const saved = await ingestion.ingest(result, observed);
+  assert.equal(saved.inserted, 250); assert.equal(saved.status.itemCount, 250);
+  const store = new PostgresAbsNewsStoreV1(f.client, scope, key);
+  assert.equal((await store.verifyCollectionReceipt(saved.receipt)).storyCount, 250);
+  assert.equal((await ingestion.ingest(result, observed)).replayed, 250);
+  let cursor: string | undefined, count = 0;
+  do { const page = await store.listStories(cursor); count += page.stories.length; cursor = page.nextCursor ?? undefined; } while (cursor);
+  assert.equal(count, 250);
+  assert.deepEqual(await ingestion.loadBaseline(), result.snapshot);
+});
 
 test("borrowed undated baseline survives restart, conflicts roll back articles, and rejected items do not advance it", async t => {
   const f = await taskFixture(); t.after(() => f.db.close());

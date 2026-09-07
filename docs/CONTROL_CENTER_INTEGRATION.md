@@ -27,9 +27,14 @@ Storage bridge: `AbsControlCenterIngestion` translates a captured reader result 
 existing scoped story/source records through shared ingestion persistence. Borrowed
 ranking remains in use; no second ranking engine was added. The adapter requires
 source ID/name/input URL to match, carries RSS/Atom/sitemap evidence and treats
-partial coverage explicitly. It accepts the current 100-item storage batch ceiling;
-upstream larger batches are not silently truncated. Larger
-batch orchestration still needs integration before production collection is enabled.
+partial coverage explicitly. Logical collections now span 100-item storage batches
+inside one transaction, with one aggregate source observation and authenticated
+receipt. The input/receipt ceiling matches the upstream 100,000 sitemap-entry limit;
+this is not a production performance qualification. A complete 250-story borrowed
+feed is tested for receipt verification, replay and pagination; a forced failure
+in batch two rolls back all articles, source state and baseline. Larger receipts
+require updated writers and readers together: older readers capped at 100 reject
+them. Live collection remains unwired.
 This bridge is not the whole configured application or visible news page.
 
 Baseline integration now uses migration 0062 rather than upstream filesystem writes.
@@ -77,5 +82,6 @@ review-only. Canonical-page verification and article-to-agent task acceptance re
 5. Restart/cancellation/partial source failure preserve saved state and do not cause
    unintended duplicate effects. Qualify the actual supported runtime and database.
 
-The current curation import is only the first connected cohort member, not completion
-of these gates. No repository-wide adoption percentage is claimed.
+Discovery, curation, atomic persistence and restart memory are connected locally,
+but the visible configured workflow and live acceptance gates remain unfinished.
+No repository-wide adoption percentage is claimed.

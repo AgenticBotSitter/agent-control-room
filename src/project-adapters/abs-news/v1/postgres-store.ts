@@ -9,9 +9,12 @@ import type { AbsNewsStoryV1, AbsNewsWorkOrderProposalV1 } from "./types";
 
 const scopeSchema = z.object({ tenantId: id, workspaceId: id, projectId: id }).strict();
 const digestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+// Logical collection ceiling matches the borrowed sitemap walker. Individual
+// persistence batches remain 100; all batches share the collection transaction.
+export const absDiscoveryCollectionLimit = 100_000;
 const collectionReceiptSchema = scopeSchema.extend({ schema: z.literal("control-room.abs-collection-receipt/v1"),
   sourceId: id, statusDigest: digestSchema,
-  stories: z.array(z.object({ storyId: id, storyDigest: digestSchema }).strict()).max(100),
+  stories: z.array(z.object({ storyId: id, storyDigest: digestSchema }).strict()).max(absDiscoveryCollectionLimit),
   authTag: z.string().regex(/^hmac-sha256:[a-f0-9]{64}$/),
 }).strict();
 type Scope = z.infer<typeof scopeSchema>;
@@ -135,7 +138,7 @@ export class PostgresAbsNewsStoreV1 {
   /** Source outcome and its articles must be visible together, including empty feeds. */
   async saveCollection(values: unknown, statusValue: unknown) {
     const status = this.sourceStatus(statusValue);
-    if (!Array.isArray(values) || values.length > 100) throw new ProjectWorkspaceContractErrorV1("invalid_input");
+    if (!Array.isArray(values) || values.length > absDiscoveryCollectionLimit) throw new ProjectWorkspaceContractErrorV1("invalid_input");
     const stories = values.map(value => { const story = parseAbsNewsStoryV1(value); this.check(story); return story; });
     if (stories.length && !["available", "partial"].includes(status.state)
       || ["available", "partial"].includes(status.state) && status.itemCount !== stories.length
@@ -146,7 +149,11 @@ export class PostgresAbsNewsStoreV1 {
       const joined: DatabaseClient = { query: tx.query.bind(tx), transaction: async work => work(tx),
         transactionWithPreCommitCheck: async (work, check) => { const value = await work(tx); await check(); return value; } };
       const store = new PostgresAbsNewsStoreV1(joined, this.scope, this.key, this.clock);
-      const saved = await store.saveStories(stories);
+      const saved = { inserted: 0, replayed: 0 };
+      for (let offset = 0; offset < stories.length; offset += 100) {
+        const batch = await store.saveStories(stories.slice(offset, offset + 100));
+        saved.inserted += batch.inserted; saved.replayed += batch.replayed;
+      }
       const source = await store.saveSourceStatus(status);
       const payload = { schema: "control-room.abs-collection-receipt/v1" as const, ...this.scope,
         sourceId: status.sourceId, statusDigest: sha256Digest(source.status),

@@ -10,6 +10,7 @@ import { buildAbsNewsStoryV1 } from "./story";
 import type { AbsNewsStoryV1 } from "./types";
 import { saveAbsNewsDiscovery } from "./discovery-ingestion";
 import { discoverySnapshotSchema, readDiscoveryBaseline, saveDiscoveryBaseline } from "./discovery-baseline";
+import { absDiscoveryCollectionLimit } from "./postgres-store";
 
 const configuration = z.object({ tenantId: id, workspaceId: id, projectId: id,
   source: z.object({ id, name: label, url: absNewsCanonicalUrlSchemaV1 }).strict() }).strict();
@@ -17,7 +18,7 @@ const resultSchema = z.object({ sourceUrl: absNewsCanonicalUrlSchemaV1, coverage
   snapshot: discoverySnapshotSchema.optional(),
   status: z.object({ sourceId: id, source: label, mode: z.enum(["feed", "sitemap"]), endpoint: absNewsCanonicalUrlSchemaV1 }),
   items: z.array(z.object({ title: z.string().max(20_000), summary: z.string().max(20_000), url: z.string().max(2_000),
-    publishedAt: z.string().max(100), discoveredAt: time.optional() })).max(100),
+    publishedAt: z.string().max(100), discoveredAt: time.optional() })).max(absDiscoveryCollectionLimit),
 });
 const digestId = (prefix: string, value: unknown) => `${prefix}:${sha256Digest(value).slice(7, 39)}`;
 const text = (value: string, max: number) => value.replace(/<[^>]*>/g, " ")
