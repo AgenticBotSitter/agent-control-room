@@ -15,6 +15,7 @@ import { ManagedNativeSessions, captureManagedNativeSessionSettings, type Manage
 import { createNativeHttpHost, captureNativeHttpSettings, type NativeHttpSettings } from "./native-http-host";
 import { IdeaSessionCreationService, ideaCreationInputSchema, type IdeaCreateOperation } from "./idea-create-operation";
 import { WebIdeaDecisionOperation, ideaDecisionInputSchema } from "./idea-decision-operation";
+import { WebIdeaStartOperation, ideaStartInputSchema, type IdeaStartRuntime } from "./idea-start-operation";
 import { WebAccessError } from "./access-verifier";
 
 export type TaskApprovalOperation = Readonly<{ tenantId: string; workspaceId: string;
@@ -39,6 +40,8 @@ export type TaskCoordinatorConfiguration = {
   database: TaskCoordinatorDatabase;
   /** Non-executing Idea writer, independently verified with the fixed creation role. */
   ideaCreation?: { database: TaskCoordinatorDatabase; integrityKey: Uint8Array; participants: unknown[] };
+  /** Separately verified runtime writer and accepted provider ports. Never enabled by Idea saving. */
+  ideaRuntime?: { database: TaskCoordinatorDatabase; runtime: IdeaStartRuntime; close: () => Promise<void> };
   /** Optional fixed native-result writer, independently verified against the same primary. */
   resultDatabase?: TaskCoordinatorDatabase;
   evidence?: NativeEvidenceSettings & { database: TaskCoordinatorDatabase };
@@ -83,6 +86,11 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     .some(resource => resource && resource.client === input.ideaCreation!.database.client))
     throw new Error("task_coordinator_config_invalid");
   const ideaPool = input.ideaCreation ? capture(input.ideaCreation.database) : undefined;
+  if (input.ideaRuntime && (!ideaPool || typeof input.ideaRuntime.close !== "function"
+    || [input.database, input.resultDatabase, input.evidence?.database, input.sessions?.database, input.ideaCreation?.database]
+      .some(resource => resource?.client === input.ideaRuntime!.database.client))) throw new Error("task_coordinator_config_invalid");
+  const ideaRuntimePool = input.ideaRuntime ? capture(input.ideaRuntime.database) : undefined;
+  const closeIdeaRuntime = input.ideaRuntime?.close.bind(input.ideaRuntime);
   const evidenceSettings = input.evidence ? captureNativeEvidenceSettings(input.evidence) : undefined;
   if (evidenceSettings && (evidenceSettings.storage.storageClass !== input.quality!.results.storageClass
     || !timingSafeEqual(evidenceSettings.storage.integrityKey, input.quality!.results.integrityKey)))
@@ -107,7 +115,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   const stops = new Set<() => void>();
   const forced = new Promise<void>(resolve => { force = resolve; });
   const check = () => {
-    try { if (!invalid && (!ideaPool || ideaPool.isAvailable()) && (!sessionState.manager || sessionState.manager.isAvailable()) && pool.isAvailable() && (!resultPool || resultPool.isAvailable()) && (!evidencePool || evidencePool.isAvailable()) && (!sessionPool || sessionPool.isAvailable())) return; } catch { /* An unavailable health probe is still a lifecycle interruption. */ }
+    try { if (!invalid && (!ideaRuntimePool || ideaRuntimePool.isAvailable()) && (!ideaPool || ideaPool.isAvailable()) && (!sessionState.manager || sessionState.manager.isAvailable()) && pool.isAvailable() && (!resultPool || resultPool.isAvailable()) && (!evidencePool || evidencePool.isAvailable()) && (!sessionPool || sessionPool.isAvailable())) return; } catch { /* An unavailable health probe is still a lifecycle interruption. */ }
     throw new TaskCoordinatorInterruption("task_coordinator_unavailable");
   };
   const guardedDatabase = (owned: TaskCoordinatorDatabase) => {
@@ -137,6 +145,21 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     input.ideaCreation!.integrityKey, input.ideaCreation!.participants, input.clock) : undefined;
   const ideaDecision = ideaPool ? new WebIdeaDecisionOperation(guardedDatabase(ideaPool), scope,
     input.ideaCreation!.integrityKey, input.clock) : undefined;
+  const ideaStart = (() => {
+    if (!ideaRuntimePool) return undefined;
+    const source = input.ideaRuntime!.runtime;
+    if (source.driver.mode !== "hermes_bot_mode_filtered") throw new Error("task_coordinator_config_invalid");
+    const resolve = source.resolve.bind(source), invoke = source.driver.invoke.bind(source.driver),
+      verify = source.evidenceAuthority.verify.bind(source.evidenceAuthority), consume = source.admissionAuthority.consume.bind(source.admissionAuthority);
+    const turnAvailable = () => { check(); if (closing) throw new TaskCoordinatorInterruption("task_coordinator_unavailable"); };
+    return new WebIdeaStartOperation(guardedDatabase(ideaPool!), guardedDatabase(ideaRuntimePool), scope,
+      input.ideaCreation!.integrityKey, {
+        resolve: async (...args) => { turnAvailable(); const material = await resolve(...args); turnAvailable(); return material; },
+        driver: { mode: "hermes_bot_mode_filtered", invoke: async (...args) => { turnAvailable(); return invoke(...args); } },
+        evidenceAuthority: { verify: async (...args) => { turnAvailable(); const accepted = await verify(...args); turnAvailable(); return accepted; } },
+        admissionAuthority: { consume: async (...args) => { turnAvailable(); const accepted = await consume(...args); turnAvailable(); return accepted; } },
+      }, input.clock);
+  })();
   // Constructors validate and snapshot immutable templates, keys, route records and scope without SQL.
   const planner = new TaskExecutionPlanner(db, scope, input.planning, input.clock, input.revisionPlanning ? input.quality : undefined);
   const assignment = new TaskAssignmentCoordinator(db, scope, planner, input.routes, input.clock,
@@ -170,6 +193,11 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   }
   const receipt = input.sessions ? input.approvals!.store.receiveDeliveryReceipt.bind(input.approvals!.store) : undefined;
   const ideaCreation: IdeaCreateOperation | undefined = ideaService ? Object.freeze({ ...scope,
+    ...(ideaStart ? { start: (identity: Parameters<WebIdeaStartOperation["start"]>[0], sessionId: string, value: unknown) => {
+      const actor = { ...identity }, request = ideaStartInputSchema.safeParse(value);
+      if (!request.success) return Promise.reject(new WebAccessError("invalid_request"));
+      return run(() => ideaStart.start(actor, sessionId, request.data));
+    } } : {}),
     decide: (identity, sessionId, value) => {
       const actor = { ...identity }, request = ideaDecisionInputSchema.safeParse(value);
       if (!request.success) return Promise.reject(new WebAccessError("invalid_request"));
@@ -285,7 +313,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
       ...(nativeSubmission?.recoverUnsentInSession ? { queueRecoveryStatus: sessions.queueRecoveryStatus.bind(sessions) } : {}),
       attachInput: sessions.attachInput.bind(sessions), attachWire: sessions.attachWire.bind(sessions) }) } : {}),
     ...(nativeHttp ? { nativeHttp } : {}),
-    isReady: () => !closing && !invalid && (!ideaPool || ideaPool.isAvailable()) && (!nativeHttp || nativeHttp.isReady()) && (!sessions || sessions.isAvailable()) && pool.isAvailable() && (!resultPool || resultPool.isAvailable()) && (!evidencePool || evidencePool.isAvailable()) && (!sessionPool || sessionPool.isAvailable()),
+    isReady: () => !closing && !invalid && (!ideaRuntimePool || ideaRuntimePool.isAvailable()) && (!ideaPool || ideaPool.isAvailable()) && (!nativeHttp || nativeHttp.isReady()) && (!sessions || sessions.isAvailable()) && pool.isAvailable() && (!resultPool || resultPool.isAvailable()) && (!evidencePool || evidencePool.isAvailable()) && (!sessionPool || sessionPool.isAvailable()),
     close(): Promise<void> {
       if (closePromise) return closePromise;
       closing = true;
@@ -299,6 +327,12 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
             new Promise<void>(resolve => { drainTimer = setTimeout(() => { timedOut = true; interrupted = true; resolve(); }, drainMs); })]);
           clearTimeout(drainTimer);
           invalid = true;
+          if (closeIdeaRuntime) {
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            try { await Promise.race([Promise.resolve().then(closeIdeaRuntime), new Promise<never>((_, reject) => {
+              timer = setTimeout(() => reject(new Error("task_coordinator_close_uncertain")), closeMs);
+            })]); } catch { timedOut = true; } finally { clearTimeout(timer); }
+          }
           if (closeSubmission) {
             let timer: ReturnType<typeof setTimeout> | undefined;
             try { await Promise.race([Promise.resolve().then(closeSubmission), new Promise<never>((_, reject) => {
@@ -309,6 +343,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
           await Promise.race([Promise.all([Promise.resolve().then(pool.close), ...(resultPool ? [Promise.resolve().then(resultPool.close)] : []),
             ...(evidencePool ? [Promise.resolve().then(evidencePool.close)] : []),
             ...(ideaPool ? [Promise.resolve().then(ideaPool.close)] : []),
+            ...(ideaRuntimePool ? [Promise.resolve().then(ideaRuntimePool.close)] : []),
             ...(sessionPool ? [Promise.resolve().then(sessionPool.close)] : [])]), new Promise<never>((_, reject) => {
             closeTimer = setTimeout(() => reject(new Error("task_coordinator_close_uncertain")), closeMs);
           })]);

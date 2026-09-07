@@ -13,7 +13,7 @@ import { IdeaLabErrorV1 } from "../../idea-lab/v1/errors";
 import { WebSessionAuthority } from "./session-authority";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 
-const inputSchema = z.object({ sessionDigest: ideaDigestSchemaV1 }).strict();
+export const ideaStartInputSchema = z.object({ sessionDigest: ideaDigestSchemaV1 }).strict();
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: async work => work(tx),
   transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); await check(); return result; } });
 export interface IdeaStartRuntime {
@@ -43,7 +43,7 @@ export class WebIdeaStartOperation {
       runtime.driver, () => new Date(this.clock()).toISOString(), runtime.evidenceAuthority, runtime.admissionAuthority);
   }
   async start(identity: VerifiedWebIdentity, sessionId: string, value: unknown) {
-    const input = inputSchema.safeParse(value);
+    const input = ideaStartInputSchema.safeParse(value);
     if (!input.success || !ideaIdSchemaV1.safeParse(sessionId).success) throw new WebAccessError("invalid_request");
     identity = { ...identity };
     const select = async (tx: DatabaseSession) => {

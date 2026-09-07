@@ -360,3 +360,19 @@ no concrete defect; it did not execute tests. Actual independent PostgreSQL pool
 managed runtime role and lifecycle ownership, browser start controls and live acceptance
 remain required. In particular, the optional HTTP route is not proof of configured
 production execution or bounded physical cancellation at shutdown.
+
+Managed runtime update: the existing task lifecycle optionally captures an Idea runtime
+resource, read-only admission lookup and provider/authority methods. The Idea command
+pool remains distinct. Start requests share existing admission/drain handling and snapshot
+their input before admission; the application rejects aliasing the private web client.
+Shutdown rejects new starts and new provider turns, drains an existing turn within the
+existing deadline, then invalidates database access. The runtime's explicit close port is
+bounded and runs before database close; failed/stalled cleanup reports uncertainty while
+still attempting pool cleanup. No new detached worker or queue is introduced.
+
+Injected tests cover one retained in-flight contribution followed by a definite pre-next-
+call stop, shutdown during lookup without a run claim, timeout with no late contribution,
+captured method ownership, alias rejection, and failed/stalled cleanup. These tests use
+serialized PGlite and do not establish physical cancellation or independent PostgreSQL
+connections. A real runtime role/preflight and trusted bootstrap must still be added;
+the configuration type is not permission to supply unverified resources or live credentials.

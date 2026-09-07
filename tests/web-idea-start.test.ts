@@ -12,6 +12,8 @@ import type { DatabaseClient } from "../src/persistence/database";
 import { createPrivateWebProcess } from "../src/web/v1/private-process";
 import { startupConfig } from "./helpers/web-startup";
 import { request } from "./helpers/web-foundation";
+import { taskAssignmentFixture } from "./helpers/task-assignment";
+import { createTaskCoordinatorLifecycle } from "../src/web/v1/task-coordinator-lifecycle";
 
 const scope = { tenantId: "tenant:web", workspaceId: "workspace:web" }, key = new Uint8Array(32).fill(71);
 const at = (offset = 0) => new Date(now + offset).toISOString();
@@ -169,4 +171,77 @@ test("HTTP start remains unconfigured by default and requires same-origin authen
   assert.equal(f.counts().calls, 4);
   await handle(request("/api/v1/session/logout", "POST"));
   assert.equal((await handle(request(path, "POST", body))).status, 401);
+});
+
+async function managedFixture() {
+  const f = await fixture(), planner = await taskAssignmentFixture();
+  const closed: string[] = [];
+  const wrap = (): DatabaseClient => ({ query: f.client.query.bind(f.client), transaction: f.client.transaction.bind(f.client),
+    transactionWithPreCommitCheck: f.client.transactionWithPreCommitCheck.bind(f.client) });
+  const resource = (name: string, client: DatabaseClient) => ({ client, isAvailable: () => true, close: async () => { closed.push(name); } });
+  const config = { scope, planning: planner.plannerConfig, routes: [planner.route], clock: () => now,
+    database: resource("task", wrap()), ideaCreation: { database: resource("idea", f.client), integrityKey: key,
+      participants: buildIdeaLabFixtureV1().session.participants },
+    ideaRuntime: { database: resource("runtime-db", f.runtimeDb), runtime: f.runtime, close: async () => { closed.push("runtime"); } } };
+  return { ...f, config, closed, cleanup: async () => { await planner.close(); await f.db.close(); } };
+}
+
+test("managed discussion drains an in-flight turn, blocks another turn and closes captured resources once", async t => {
+  const f = await managedFixture(); t.after(f.cleanup); const entered = deferred(), release = deferred();
+  const invoke = f.runtime.driver.invoke.bind(f.runtime.driver);
+  f.runtime.driver.invoke = async input => { entered.resolve(); await release.promise; return invoke(input); };
+  const owner = createTaskCoordinatorLifecycle(f.config);
+  // Changing caller-owned methods after construction cannot replace the captured ports.
+  f.runtime.driver.invoke = async () => { throw new Error("mutated driver"); };
+  f.config.ideaRuntime.close = async () => { throw new Error("mutated close"); };
+  const pending = owner.ideaCreation!.start!(f.identity, f.saved.sessionId, { sessionDigest: f.saved.sessionDigest });
+  await entered.promise; const closing = owner.close(); assert.equal(owner.isReady(), false);
+  await assert.rejects(owner.ideaCreation!.start!(f.identity, f.saved.sessionId, { sessionDigest: f.saved.sessionDigest }), /unavailable/);
+  assert.deepEqual(f.closed, []); release.resolve();
+  const result = await pending; await closing; await owner.close();
+  assert.equal(f.counts().calls, 1); assert.equal(result.state, "failed_definite");
+  assert.equal((await f.client.query("SELECT * FROM control_idea_contributions")).rows.length, 1);
+  assert.equal(f.closed[0], "runtime"); assert.deepEqual([...f.closed].sort(), ["idea", "runtime", "runtime-db", "task"]);
+});
+
+test("managed shutdown during runtime lookup cannot claim or contact a provider", async t => {
+  const f = await managedFixture(); t.after(f.cleanup); const entered = deferred(), release = deferred();
+  const resolve = f.runtime.resolve.bind(f.runtime);
+  f.runtime.resolve = async (...args) => { entered.resolve(); await release.promise; return resolve(...args); };
+  const owner = createTaskCoordinatorLifecycle(f.config);
+  const pending = owner.ideaCreation!.start!(f.identity, f.saved.sessionId, { sessionDigest: f.saved.sessionDigest });
+  // Existing lifecycle deliberately reports an interrupted admitted command as
+  // uncertain once teardown wins, even though the assertions below prove no claim.
+  const rejected = assert.rejects(pending, /unavailable|save_uncertain/);
+  await entered.promise; const closing = owner.close(); release.resolve(); await rejected; await closing;
+  assert.equal(f.counts().calls, 0); assert.equal((await f.client.query("SELECT * FROM control_idea_bot_run_events")).rows.length, 0);
+});
+
+test("managed drain timeout retains unknown in-flight history and rejects a late reply", async t => {
+  const f = await managedFixture(); t.after(f.cleanup); const entered = deferred(), release = deferred();
+  const invoke = f.runtime.driver.invoke.bind(f.runtime.driver);
+  f.runtime.driver.invoke = async input => { entered.resolve(); await release.promise; return invoke(input); };
+  const owner = createTaskCoordinatorLifecycle({ ...f.config, drainMs: 10, closeMs: 20 });
+  const pending = owner.ideaCreation!.start!(f.identity, f.saved.sessionId, { sessionDigest: f.saved.sessionDigest });
+  const rejected = assert.rejects(pending, /uncertain/); await entered.promise;
+  await assert.rejects(owner.close(), /close_uncertain/); await rejected;
+  const before = await f.client.query("SELECT * FROM control_idea_bot_run_events");
+  release.resolve(); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual((await f.client.query("SELECT * FROM control_idea_bot_run_events")).rows, before.rows);
+  assert.equal((await f.client.query("SELECT * FROM control_idea_contributions")).rows.length, 0);
+  assert.equal(f.counts().calls, 1);
+});
+
+test("managed runtime rejects aliased pools and closes databases after failed or stalled runtime cleanup", async t => {
+  for (const stalled of [false, true]) await t.test(String(stalled), async t => {
+    const f = await managedFixture(); t.after(f.cleanup);
+    assert.throws(() => createTaskCoordinatorLifecycle({ ...f.config, ideaCreation: undefined }), /config_invalid/);
+    assert.throws(() => createTaskCoordinatorLifecycle({ ...f.config,
+      ideaRuntime: { ...f.config.ideaRuntime, database: f.config.ideaCreation.database } }), /config_invalid/);
+    f.config.ideaRuntime.close = async () => {
+      f.closed.push("runtime"); if (stalled) await new Promise<void>(() => {}); throw new Error("synthetic cleanup failure");
+    };
+    const owner = createTaskCoordinatorLifecycle({ ...f.config, closeMs: 20 }); await assert.rejects(owner.close(), /close_uncertain/);
+    assert.deepEqual([...f.closed].sort(), ["idea", "runtime", "runtime-db", "task"]);
+  });
 });

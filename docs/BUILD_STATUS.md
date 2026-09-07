@@ -8,6 +8,22 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Discussion execution now has optional managed lifecycle ownership:** The existing task
+lifecycle can own a separately verified Idea runtime pool and captured provider/authority
+ports, exposing the start operation through the existing application. Shutdown refuses
+new starts and turns, allows an in-flight reply to settle during its bounded drain, and
+fences late SQL after timeout. Runtime cleanup is bounded and precedes database closure;
+cleanup failure still attempts every pool close and reports uncertainty. This does not
+claim physical cancellation. Independent source review found no concrete defect.
+Sixteen focused start/lifecycle checks, 25 existing lifecycle regressions, 12 compiled
+handler/startup checks, TypeScript, focused lint and local VPS compilation pass. The
+lookup-shutdown test initially expected only unavailable; it now also accepts the
+existing lifecycle's conservative save-uncertain result after teardown, while explicitly
+asserting zero claims and zero provider calls. All provider ports in these tests are injected.
+The runtime SQL role/preflight and bootstrap configuration are not yet implemented, so
+normal startup still cannot enable this capability. Browser Start, useful synthesis,
+news ingestion and real-agent acceptance remain open. No provider call or deployment.
+
 **Owner start operation and optional protected endpoint implemented:** A start request
 binds the saved Idea digest, checks the current owner session before and after server-held
 runtime lookup, and atomically claims one run with its audit. Provider execution happens

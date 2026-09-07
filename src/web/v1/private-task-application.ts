@@ -14,6 +14,7 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
     || coordinator.evidence?.database.client === web.database.client
     || coordinator.sessions?.database.client === web.database.client
     || coordinator.ideaCreation?.database.client === web.database.client
+    || coordinator.ideaRuntime?.database.client === web.database.client
     || typeof web.database.isAvailable !== "function" || typeof web.database.close !== "function")
     throw new Error("private_task_application_config_invalid");
   if (coordinator.ideaCreation && (!web.ideaProjects
