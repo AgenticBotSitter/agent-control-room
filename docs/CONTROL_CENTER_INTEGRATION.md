@@ -138,6 +138,12 @@ pass. Independent source-only re-review of fdb8a89 accepted the earlier filterin
 correction and found no new concrete defects. Browser interaction acceptance and
 production database performance remain outstanding.
 
+The borrowed-collector/library regression now covers configured collection, archive,
+recollection with changed source content, retained old evidence, authenticated receipts,
+and restore through the borrowed reading projection. Each collection and web service
+is reconstructed over the same disposable database. All eleven ingestion tests pass;
+this does not claim a physical process restart, live network or browser run.
+
 ### Library browsing
 
 History, Archive and Recent are now database-level selection over each story's

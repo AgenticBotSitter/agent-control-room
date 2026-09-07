@@ -10,12 +10,59 @@ import { createControlCenterCollection } from "../src/project-adapters/abs-news/
 import { AbsControlCenterIngestion } from "../src/project-adapters/abs-news/v1/control-center-ingestion";
 import { PostgresAbsNewsStoreV1 } from "../src/project-adapters/abs-news/v1/postgres-store";
 import { WebNewsService } from "../src/web/v1/news-service";
+import { newsReadingView } from "../src/web/v1/news-reading-view";
 import { taskFixture } from "./helpers/web-task";
 import { now } from "./helpers/web-foundation";
 import type { DatabaseClient } from "../src/persistence/database";
 
 const source = { id: "source:borrowed", name: "Example", url: "https://example.org/feed" };
 const observed = new Date(now).toISOString();
+
+test("borrowed collection to archive to recollection to restore preserves evidence and review-only status", async t => {
+  const f = await taskFixture(); t.after(() => f.db.close());
+  const scope = { tenantId: "tenant:web", workspaceId: "workspace:web", projectId: f.project.projectId };
+  const key = new Uint8Array(32).fill(38); let tick = now, title = "AI model announcement", calls = 0;
+  await new PostgresNewsSourceSettings(f.client, scope, key).save({ ...source, enabled: true }, 0, observed);
+  const create = () => createControlCenterCollection(f.client, { ...scope, sourceId: source.id, expectedRevision: 1,
+    limits: { timeoutMs: 10_000, maxAttempts: 4, maxDocumentBytes: 4096, maxReservedBodyBytes: 16384 } }, key,
+  { assertCurrent(url) { assert.equal(url, source.url); } }, {
+    lookup: async () => [{ address: "8.8.8.8", family: 4 }],
+    fetch: async () => {
+      calls++;
+      return new Response(`<rss><channel><item><title>${title}</title><link>https://example.org/model</link><pubDate>${new Date(now - 1000).toUTCString()}</pubDate></item></channel></rss>`);
+    },
+  }, () => tick);
+  const collect = async () => {
+    const collection = create();
+    try { return await collection.collect(new AbortController().signal); }
+    finally { await collection.close(); }
+  };
+  const first = await collect(); assert.equal(first.inserted, 1);
+  const news = () => new WebNewsService(f.client, { tenantId: scope.tenantId, workspaceId: scope.workspaceId }, { integrityKey: key }, () => tick);
+  const history = await news().list(f.identity, scope.projectId, undefined, undefined, "history");
+  const story = history.stories[0]; assert.equal(story.verificationState, "review_only");
+  const original = await new PostgresAbsNewsStoreV1(f.client, scope, key).getStory(story.storyId, story.storyDigest);
+  await news().archive(f.identity, scope.projectId, { storyId: story.storyId, archived: true, expectedRevision: 0 });
+  tick += 1000; title = "AI model announcement updated";
+  const second = await collect();
+  const store = new PostgresAbsNewsStoreV1(f.client, scope, key);
+  await store.verifyCollectionReceipt(first.receipt); await store.verifyCollectionReceipt(second.receipt);
+  assert.deepEqual(await store.getStory(story.storyId, story.storyDigest), original);
+  const archived = await news().list(f.identity, scope.projectId, undefined, undefined, "archive");
+  assert.equal(archived.stories.length, 1); assert.equal(archived.stories[0].title, title);
+  assert.equal(archived.stories[0].storyId, story.storyId);
+  assert.notEqual(archived.stories[0].storyDigest, story.storyDigest);
+  assert.equal(newsReadingView(archived.stories, "archive", "important", archived.observedAt).stories.length, 1);
+  assert.equal((await news().list(f.identity, scope.projectId, undefined, undefined, "history")).stories.length, 0);
+  await news().archive(f.identity, scope.projectId, { storyId: story.storyId, archived: false, expectedRevision: 1 });
+  const restored = await news().list(f.identity, scope.projectId, undefined, undefined, "history");
+  assert.equal(newsReadingView(restored.stories, "history", "important", restored.observedAt).stories.length, 1);
+  assert.equal(restored.stories[0].verificationState, "review_only");
+  assert.equal(restored.stories[0].storyDigest, archived.stories[0].storyDigest);
+  assert.equal((await news().list(f.identity, scope.projectId, undefined, undefined, "archive")).stories.length, 0);
+  assert.equal(calls, 2);
+  assert.equal((await f.client.query("SELECT * FROM control_jobs")).rows.length, 0);
+});
 
 test("borrowed collection lifecycle is inert, single-use and close cancels without publishing", async t => {
   const f = await taskFixture(); t.after(() => f.db.close());

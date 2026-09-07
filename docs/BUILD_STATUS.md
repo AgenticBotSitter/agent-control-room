@@ -8,6 +8,15 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Borrowed collector/library journey:** A new integration regression runs the actual
+borrowed feed reader and collection adapter twice through injected DNS/HTTP responses,
+with an owner archive choice between runs. Updated article content remains archived;
+both collection receipts and the original evidence version remain valid. Restore
+returns the latest article to the borrowed History view without changing its digest
+or `review_only` status. No jobs are created by this journey. All eleven ingestion
+integration tests, TypeScript and focused lint pass. This is disposable PGlite and
+injected networking, not a live fetch, physical restart or browser acceptance.
+
 **Archive/Restore integration (local, browser acceptance pending):** Migration 0064
 adds project-scoped immutable archive choices separately from source evidence.
 Collection retains the owner's choice; restore and stale/exact retries are tested.
