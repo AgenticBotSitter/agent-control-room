@@ -12,6 +12,7 @@ import { IdeaLabBotRunStoreV1 } from "../../idea-lab/v1/coordinator-store";
 import { ideaStopInputSchema } from "./idea-wire";
 import type { WebIdeaDecisionOperation } from "./idea-decision-operation";
 import type { WebIdeaStartOperation } from "./idea-start-operation";
+import type { WebIdeaSynthesisOperation } from "./idea-synthesis-operation";
 
 export const ideaCreationInputSchema = z.object({ title: ideaLabelSchemaV1, ideaSummary: ideaTextSchemaV1,
   targetCustomer: z.string().min(1).max(300), maxRounds: z.number().int().min(1).max(3),
@@ -21,7 +22,8 @@ const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(
   transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); await check(); return result; } });
 export type IdeaCreateOperation = { tenantId: string; workspaceId: string;
   create: IdeaSessionCreationService["create"]; stop?: IdeaSessionCreationService["stop"];
-  decide?: WebIdeaDecisionOperation["decide"]; start?: WebIdeaStartOperation["start"] };
+  decide?: WebIdeaDecisionOperation["decide"]; start?: WebIdeaStartOperation["start"];
+  synthesize?: WebIdeaSynthesisOperation["synthesize"] };
 
 /** Non-executing coordinator operation. A separately provisioned pool is required;
  * the restricted web role is intentionally not granted session writes. */

@@ -160,8 +160,10 @@ test("HTTP start remains unconfigured by default and requires same-origin authen
   const service = new WebIdeaStartOperation(f.client, f.runtimeDb, scope, key, f.runtime, () => now);
   const options = { ...startupConfig, database: { client: f.client, close: async () => {} }, clock: () => now,
     ideaProjects: { integrityKey: key }, ideaCreation: { ...scope, create: creation.create.bind(creation) } };
+  const synthesis = new WebIdeaSynthesisOperation(f.client, scope, key, () => now);
   const closed = createPrivateWebProcess(options), app = createPrivateWebProcess({ ...options,
-    ideaCreation: { ...options.ideaCreation, start: service.start.bind(service) } });
+    ideaCreation: { ...options.ideaCreation, start: service.start.bind(service),
+      synthesize: synthesis.synthesize.bind(synthesis) } });
   t.after(async () => { await closed.close(); await app.close(); });
   const path = `/api/v1/ideas/${encodeURIComponent(f.saved.sessionId)}/start`, body = { sessionDigest: f.saved.sessionDigest };
   const handle = (req: Request) => app.handle(req, () => new Response("shell"));
@@ -177,8 +179,18 @@ test("HTTP start remains unconfigured by default and requires same-origin authen
   assert.equal((await handle(request(path, "POST", body))).status, 201);
   assert.equal((await handle(request(path, "POST", body))).status, 200);
   assert.equal(f.counts().calls, 4);
+  const recapPath = `/api/v1/ideas/${encodeURIComponent(f.saved.sessionId)}/synthesis`;
+  const recapInput = { ...body, runId: `idea-run:${f.saved.sessionDigest.slice(7, 31)}` };
+  assert.equal((await closed.handle(request(recapPath, "POST", recapInput), () => new Response("shell"))).status, 503);
+  const foreignRecap = request(recapPath, "POST", recapInput); foreignRecap.headers.set("origin", "https://other.example");
+  assert.equal((await handle(foreignRecap)).status, 403);
+  assert.equal((await handle(request(recapPath, "POST", { ...recapInput, executiveSummary: "injected" }))).status, 400);
+  assert.equal((await handle(request(recapPath, "POST", recapInput))).status, 201);
+  assert.equal((await handle(request(recapPath, "POST", recapInput))).status, 200);
+  assert.equal(f.counts().calls, 4);
   await handle(request("/api/v1/session/logout", "POST"));
   assert.equal((await handle(request(path, "POST", body))).status, 401);
+  assert.equal((await handle(request(recapPath, "POST", recapInput))).status, 401);
 });
 
 async function managedFixture() {

@@ -15,6 +15,7 @@ import { ManagedNativeSessions, captureManagedNativeSessionSettings, type Manage
 import { createNativeHttpHost, captureNativeHttpSettings, type NativeHttpSettings } from "./native-http-host";
 import { IdeaSessionCreationService, ideaCreationInputSchema, type IdeaCreateOperation } from "./idea-create-operation";
 import { WebIdeaDecisionOperation, ideaDecisionInputSchema } from "./idea-decision-operation";
+import { WebIdeaSynthesisOperation, ideaSynthesisInputSchema } from "./idea-synthesis-operation";
 import { WebIdeaStartOperation, ideaStartInputSchema, type IdeaStartRuntime } from "./idea-start-operation";
 import { WebAccessError } from "./access-verifier";
 
@@ -145,6 +146,8 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     input.ideaCreation!.integrityKey, input.ideaCreation!.participants, input.clock) : undefined;
   const ideaDecision = ideaPool ? new WebIdeaDecisionOperation(guardedDatabase(ideaPool), scope,
     input.ideaCreation!.integrityKey, input.clock) : undefined;
+  const ideaSynthesis = ideaPool ? new WebIdeaSynthesisOperation(guardedDatabase(ideaPool), scope,
+    input.ideaCreation!.integrityKey, input.clock) : undefined;
   const ideaStart = (() => {
     if (!ideaRuntimePool) return undefined;
     const source = input.ideaRuntime!.runtime;
@@ -193,6 +196,11 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   }
   const receipt = input.sessions ? input.approvals!.store.receiveDeliveryReceipt.bind(input.approvals!.store) : undefined;
   const ideaCreation: IdeaCreateOperation | undefined = ideaService ? Object.freeze({ ...scope,
+    synthesize: (identity, sessionId, value) => {
+      const actor = { ...identity }, request = ideaSynthesisInputSchema.safeParse(value);
+      if (!request.success) return Promise.reject(new WebAccessError("invalid_request"));
+      return run(() => ideaSynthesis!.synthesize(actor, sessionId, request.data));
+    },
     ...(ideaStart ? { start: (identity: Parameters<WebIdeaStartOperation["start"]>[0], sessionId: string, value: unknown) => {
       const actor = { ...identity }, request = ideaStartInputSchema.safeParse(value);
       if (!request.success) return Promise.reject(new WebAccessError("invalid_request"));

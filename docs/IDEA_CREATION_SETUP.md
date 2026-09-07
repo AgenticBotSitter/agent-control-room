@@ -5,7 +5,8 @@ Source configuration guide, 2026-09-07. Not an instruction to provision or launc
 The existing private task bootstrap accepts optional `coordinator.ideaCreation`.
 It saves an owner's Idea session and audit record and can record an owner stop request
 for an existing run. It also accepts an explicit owner decision on a retained synthesis,
-including project promotion. It does not run a panel, synthesize opinions, start a worker
+including project promotion. It can prepare a source-excerpt recap of a completed panel.
+It does not run a panel, make a new model judgment, start a worker
 or authorize a provider call. Promotion produces an active project, not execution authority.
 
 ## Required configuration
@@ -47,7 +48,9 @@ allow run-event inserts generally; the server operation constrains them to stop 
 The same role includes policy/permit/decision/project/lifecycle inserts for owner decisions
 and the reads needed to validate their inputs. SQL permits these inserts generally;
 the protected operation imposes the owner policy, immutable permit and atomic audit.
-No UPDATE rights on those records, contribution/synthesis writes, job or queue writes
+Synthesis INSERT is also required for owner-requested extractive recaps of completed
+runs, atomically audited by the application. No UPDATE rights on those records,
+contribution writes, job or queue writes
 are granted. Missing or additional rights reject installation;
 startup does not repair grants. Cancellation/failure closes acquired resources once.
 

@@ -30,6 +30,9 @@ test("bootstrap verifies all three exact roles and mounts non-executing Idea cre
   assert.equal((await (await handle("/api/v1/ideas")).json()).canCreate, true);
   const saved = await handle("/api/v1/ideas", "POST", draft); assert.equal(saved.status, 201, await saved.clone().text());
   const receipt = await saved.json(); assert.equal(receipt.startsWork, false);
+  assert.equal((await handle(`/api/v1/ideas/${encodeURIComponent(receipt.sessionId)}/synthesis`, "POST", {
+    sessionDigest: receipt.sessionDigest, runId: "idea-run:not-started",
+  })).status, 409);
   // Managed composition supplies the operation, but a saved draft without a
   // synthesis is not eligible. This is a conflict, not an unconfigured route.
   assert.equal((await handle(`/api/v1/ideas/${encodeURIComponent(receipt.sessionId)}/decision`, "POST", {

@@ -18,7 +18,7 @@ GRANT SELECT ON workspaces, control_identities, control_role_grants, control_web
 GRANT INSERT ON control_web_sessions, control_idea_sessions, control_idea_bot_run_events, audit_events, control_audit_chain_heads
   TO control_room_idea_creation;
 GRANT INSERT ON control_policy_decisions, control_idea_owner_authorizations, control_idea_decisions,
-  projects, control_project_lifecycle_events TO control_room_idea_creation;
+  projects, control_project_lifecycle_events, control_idea_syntheses TO control_room_idea_creation;
 GRANT UPDATE (web_lock) ON workspaces, control_identities, control_role_grants TO control_room_idea_creation;
 GRANT UPDATE (revoked_at) ON control_web_sessions TO control_room_idea_creation;
 GRANT UPDATE (head_hash, event_count, updated_at) ON control_audit_chain_heads TO control_room_idea_creation;

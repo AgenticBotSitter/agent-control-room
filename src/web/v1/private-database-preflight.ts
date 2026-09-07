@@ -32,7 +32,7 @@ const ideaCreationReads = ["workspaces", "control_identities", "control_role_gra
   "control_idea_decisions", "control_idea_owner_authorizations", "control_policy_decisions", "projects",
   "control_project_lifecycle_events", "audit_events", "control_audit_chain_heads"];
 const ideaCreationInserts = new Set(["control_web_sessions", "control_idea_sessions", "control_idea_bot_run_events", "audit_events", "control_audit_chain_heads",
-  "control_policy_decisions", "control_idea_owner_authorizations", "control_idea_decisions", "projects", "control_project_lifecycle_events"]);
+  "control_policy_decisions", "control_idea_owner_authorizations", "control_idea_decisions", "projects", "control_project_lifecycle_events", "control_idea_syntheses"]);
 const ideaCreationUpdates: Record<string, readonly string[]> = { workspaces: ["web_lock"], control_identities: ["web_lock"],
   control_role_grants: ["web_lock"], control_web_sessions: ["revoked_at"], control_audit_chain_heads: ["head_hash", "event_count", "updated_at"] };
 const ideaRuntimeReads = ["workspaces", "control_identities", "control_role_grants", "control_idea_sessions",

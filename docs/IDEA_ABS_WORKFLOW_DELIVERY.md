@@ -431,3 +431,13 @@ explicit owner-created project with zero automatic jobs and no additional provid
 Failed-audit rollback and revoked replay tests pass. Independent source review found no
 concrete defect. Managed permission/HTTP/browser wiring remains unimplemented; no new
 queue, model connector or production resource was introduced.
+
+Recap composition update: the existing managed Idea command resource supplies
+`synthesize` through captured request input, shared lifecycle admission and guarded SQL.
+The fixed owner-command role/preflight adds only synthesis INSERT; the runtime role
+still cannot write syntheses and neither gains contribution mutation or dispatch rights.
+`POST /api/v1/ideas/:id/synthesis` accepts only the exact session/run request, never
+caller-provided recap content. Explicit replay returns the retained synthesis. A restricted
+login test now covers recap and promotion rather than seeding a synthesis as administrator.
+Browser preparation controls and mounted interaction tests remain outstanding; the HTTP
+and role tests are disposable PGlite/injected provider evidence, not live acceptance.

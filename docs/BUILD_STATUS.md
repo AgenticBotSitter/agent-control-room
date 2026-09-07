@@ -8,6 +8,18 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Recap operation connected to managed owner commands:** The existing Idea command
+resource now owns synthesis requests with captured input, shared admission and guarded
+transactions. Its exact SQL profile adds synthesis INSERT only, not contribution writes
+or synthesis UPDATE. The protected bounded endpoint uses the same owner/session and
+origin controls. A restricted-login test prepares a recap from an injected completed run
+and promotes it through the existing owner decision service. HTTP replay preserves one
+recap without additional bot calls, rejects injected summary text and honors logout.
+Eighteen role/startup checks and 26 start/lifecycle/HTTP checks pass, with TypeScript and
+focused lint. Twelve compiled-handler/startup checks and VPS compilation also pass;
+independent source review found no concrete defect. Browser Prepare recap controls and real-agent acceptance are still open,
+as is ABS ingestion. No production grants, provider calls or deployment were performed.
+
 **Discussion recap now contains evidence, not just turn counts:** The existing deterministic
 engine was extracted for reuse and now requires complete participant/round coverage. It
 quotes bounded final-turn excerpts, retains the complete contribution digest set and picks

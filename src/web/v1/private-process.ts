@@ -65,10 +65,12 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     throw new Error("invalid_private_app_config");
   if (options.ideaCreation?.stop !== undefined && typeof options.ideaCreation.stop !== "function") throw new Error("idea_creation_config_invalid");
   if (options.ideaCreation?.decide !== undefined && typeof options.ideaCreation.decide !== "function") throw new Error("idea_creation_config_invalid");
+  if (options.ideaCreation?.synthesize !== undefined && typeof options.ideaCreation.synthesize !== "function") throw new Error("idea_creation_config_invalid");
   if (options.ideaCreation?.start !== undefined && typeof options.ideaCreation.start !== "function") throw new Error("idea_creation_config_invalid");
   const ideaCreation = options.ideaCreation ? Object.freeze({ create: options.ideaCreation.create.bind(options.ideaCreation),
     ...(options.ideaCreation.stop ? { stop: options.ideaCreation.stop.bind(options.ideaCreation) } : {}),
     ...(options.ideaCreation.decide ? { decide: options.ideaCreation.decide.bind(options.ideaCreation) } : {}),
+    ...(options.ideaCreation.synthesize ? { synthesize: options.ideaCreation.synthesize.bind(options.ideaCreation) } : {}),
     ...(options.ideaCreation.start ? { start: options.ideaCreation.start.bind(options.ideaCreation) } : {}) }) : undefined;
   if (options.queueAttention && (options.queueAttention.tenantId !== options.tenantId
     || options.queueAttention.workspaceId !== options.workspaceId || typeof options.queueAttention.read !== "function"))
@@ -137,6 +139,15 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
         const trust = await keys.get();
         const identity = createAccessVerifier(trust)(request, clock());
         if (url.pathname.startsWith("/api/")) {
+          const ideaSynthesis = /^\/api\/v1\/ideas\/([^/]+)\/synthesis$/.exec(url.pathname);
+          if (ideaSynthesis) {
+            if (request.method !== "POST" || url.search || !request.body
+              || request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") throw new WebAccessError("invalid_request");
+            if (!ideaCreation?.synthesize) throw new Error("idea_synthesis_not_configured");
+            let sessionId: string; try { sessionId = decodeURIComponent(ideaSynthesis[1]); } catch { throw new WebAccessError("invalid_request"); }
+            const result = await ideaCreation.synthesize(identity, sessionId, await readBoundedJson(request.body, 2048));
+            return Response.json(result, { status: result.replayed ? 200 : 201, headers: privateResponseHeaders });
+          }
           const ideaStart = /^\/api\/v1\/ideas\/([^/]+)\/start$/.exec(url.pathname);
           if (ideaStart) {
             if (request.method !== "POST" || url.search || !request.body
