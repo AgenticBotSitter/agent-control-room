@@ -8,6 +8,15 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Contribution handoff tightened:** The draft PR template now requests submitted
+revision, a results/limitations table, reviewer and blocking prerequisite, and makes
+independent follow-on assignments explicit. It requires a reason for custom
+infrastructure and does not authorize CI, live execution or deployment. The staging
+index no longer incorrectly says demo startup is unfinished. Three focused template
+checks plus four welcome-page source checks pass; these are document assertions,
+not proof of GitHub rendering or human review. Templates remain local drafts pending
+release-policy approval and source publication; no workflows or public issues added.
+
 **Migration publication review continued:** Full source text of migrations 0003–0009
 was inspected and recorded in `research/public-source-content-review-09.json`.
 No embedded private records, credentials, concrete keys or live endpoints were found.

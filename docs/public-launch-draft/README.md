@@ -1,8 +1,8 @@
 # Public launch package — local staging index
 
 These are unpublished drafts, not a runnable public distribution. Do not copy this
-directory wholesale into a public repository. The owner must confirm the destination,
-license, contacts and exact release scope; the candidate must pass privacy, attribution
+directory wholesale into a public repository. Destination, Apache-2.0 license and public
+identity details are confirmed; exact release scope still needs approval after privacy, attribution
 and reproducibility review. Nothing here enables GitHub Actions or changes repository access.
 
 ## Proposed public files
@@ -13,9 +13,9 @@ licenses; this decision does not approve unfinished release checks.
 
 | Destination | Local source | Before publication |
 |---|---|---|
-| README.md | [Project brief](../PUBLIC_PROJECT_BRIEF_DRAFT.md) | Confirm name, website/repository links and current release status |
+| README.md | [Project brief](../PUBLIC_PROJECT_BRIEF_DRAFT.md) | Approved identity links are present; align status with the exact released source |
 | CONTRIBUTING.md | [Contributor guide](../PUBLIC_CONTRIBUTOR_GUIDE_DRAFT.md) | Confirm license/contribution policy and link verified setup |
-| SETUP.md | [Candidate setup](SETUP.md) | Isolated macOS check/build/47 compiled tests pass; interactive demo startup remains unfinished |
+| SETUP.md | [Candidate setup](SETUP.md) | macOS automated checks and one synthetic browser journey passed; other OS/accessibility/live-agent acceptance remains open |
 | docs/ARCHITECTURE.md | [Architecture](ARCHITECTURE.md) | Technical review against the exact exported source |
 | ROADMAP.md | [Roadmap](ROADMAP.md) | Confirm milestone evidence and turn scoped work into ready issues after source release |
 | WORK_PACKAGES.md | [Substantial contributor packages](WORK_PACKAGES.md) | Fill exact public base, prerequisites, allowed files and acceptance commands before issuing ready assignments |
