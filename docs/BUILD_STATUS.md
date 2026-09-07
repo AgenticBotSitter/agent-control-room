@@ -1,12 +1,22 @@
 # Control Room build status
 
-**Updated:** 2026-09-06
+**Updated:** 2026-09-07
 **Purpose:** Single human-readable handoff showing what finished and which Codex model/effort to select next.  
 **Authority:** Current delivery order is `CONTROL_ROOM_COMPLETION_PROGRAM.md`; integration direction is
 `CR14A_INTEGRATION_DIRECTION.md` / ADR-202. `CR3_BUILD_PLAN.md` and detailed reviews preserve historical
 component acceptance. This file reports current product readiness and the next block.
 
 ## Current position
+
+**Publication-content review expanded:** Ten numbered receipts now match 102 exact
+candidate files, including migrations 0010–0039. Two independent reviewers completed
+another 93 files across domain, scheduler, project, operator and node modules. No
+concrete private-content hazard was found within those scopes. These 12 receipts
+cover 195 unique files of 520; 325 are not covered by these receipts. This is content
+evidence, not functional/security/license clearance. Ready-frontier remains outside
+the completed domain review. Exact hashes and limits are saved in the independent
+domain/node content receipts under `research/`. Public GitHub was checked again:
+only README, no issues or PRs, Actions disabled. No public source or settings changed.
 
 **Audit fix propagated to public candidate:** The reviewed migration and test are
 byte-identical to private commit `70655d8`. Candidate-specific schema fingerprint
@@ -20,9 +30,9 @@ Broader publication review and repository-security approval remain outstanding.
 confirmed incomplete v1 audit rows could pass the original nullable-hash trigger.
 Forward migration 0058 requires all three hashes without rewriting existing history.
 Twenty audit/permission tests and standalone TypeScript pass; independent read-only
-review found no concrete defect in the fix. **The public candidate has not received
-the fix yet.** Next: propagate migration/test and regenerate its separate generalized
-schema fingerprint and release receipts before source publication. Evidence and exact
+review found no concrete defect in the fix. The fix has since been propagated to the
+public candidate with its separate generalized schema fingerprint and reconstruction
+receipt, as recorded above. Evidence and exact
 review hashes: `AUDIT_HASH_MIGRATION_REVIEW.md`. No production database was touched.
 
 **Independent contributor-readiness review completed:** A separate reviewer fully

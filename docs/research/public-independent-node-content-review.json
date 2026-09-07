@@ -1,0 +1,223 @@
+{
+  "schema": "control-room.independent-publication-content-review/v1",
+  "reviewer": "release_node_content_review",
+  "independent": true,
+  "publicationApproved": false,
+  "scope": "Full text read for embedded private values, credentials, live infrastructure endpoints and unexpected attributed or vendored text. Exact hashes matched frozen inventory.",
+  "finding": "No concrete publication-content hazard found in reviewed scope.",
+  "limitations": "Native key-store paths and generic DPAPI script are source only and were not executed. Opaque artifact locators and schema identifiers are not private live infrastructure. Not security or functional correctness, license certification, native acceptance or final publication authorization. No network, writes, providers, credentials or runtime execution by reviewer.",
+  "entries": [
+    {
+      "path": "src/node-executor/artifact-evidence.ts",
+      "sha256": "c4dc725ee16d79b40c1f9c6c87851fcf098e8b6d5067af13fdc127f3c870cd78"
+    },
+    {
+      "path": "src/node-executor/artifact-storage.ts",
+      "sha256": "cb6c7c48e075f7a24004d5c580bcbf412d6c1c2923de199289970e5998c816d7"
+    },
+    {
+      "path": "src/node-executor/synthetic-coordinator.ts",
+      "sha256": "58da9b9b44ae4fee092a026571e5e84329565b6fbaad5ff8d0fa7dabd463ebdd"
+    },
+    {
+      "path": "src/node-executor/synthetic-executor.ts",
+      "sha256": "587823ef94e955f8b823b8edb61438b4379c7fde6075e18b28c5d3acc69193cb"
+    },
+    {
+      "path": "src/node-fleet/v1/authenticated-telemetry-receipt-store.ts",
+      "sha256": "6d83b24585b61685934d6efdfbc3042794977ee4250b8d6a9d0395afa362c53a"
+    },
+    {
+      "path": "src/node-fleet/v1/benchmark-runner.ts",
+      "sha256": "7be1e4702e27b61d7fbd6c39fa635af344dadbbfe63d3f64267732b2d7a080bf"
+    },
+    {
+      "path": "src/node-fleet/v1/capability-probe-runner.ts",
+      "sha256": "cc6b31fdc0bd30b972d4e3e106d8feee1fa6e4cd52a1f143cc05f3cdee13e6ad"
+    },
+    {
+      "path": "src/node-fleet/v1/eligibility.ts",
+      "sha256": "663e4378f418624481ff076e41012ac8445b1883e0be6bad6f912e977900c16c"
+    },
+    {
+      "path": "src/node-fleet/v1/fingerprint.ts",
+      "sha256": "04976bf8b7fda27e7518284dea6919714c895152c15233c8055fcc75db19e151"
+    },
+    {
+      "path": "src/node-fleet/v1/fleet-eligibility-service.ts",
+      "sha256": "119cae34330ecb34ee0ca8cedc9374a91b80b996fc89b642a4176937b4d9ddfc"
+    },
+    {
+      "path": "src/node-fleet/v1/fleet-signal-store.ts",
+      "sha256": "0d7253d5f5c3db46d716426cbe0f206a50a3ca2313344125cc2b9e0271cb3865"
+    },
+    {
+      "path": "src/node-fleet/v1/freshness.ts",
+      "sha256": "f6d5209dc90bfe02c0a24646c4d4d9d168cd23e9dc9b3dda51a44087a0ccd9f8"
+    },
+    {
+      "path": "src/node-fleet/v1/index.ts",
+      "sha256": "6817c01f1fdb114bc59402672c340f4eadc7f251aac22a687ca9e2397e0bb367"
+    },
+    {
+      "path": "src/node-fleet/v1/inventory-manifest.ts",
+      "sha256": "88e0f7f7d4c27d8d78cbaece49c8dbc3c0e4d481cf18d918b3936d842b33f15d"
+    },
+    {
+      "path": "src/node-fleet/v1/rediscovery.ts",
+      "sha256": "9445bd5e7c393e979608aab9e68edc062b2302b52a5eeef99bb3e1516b90f8ae"
+    },
+    {
+      "path": "src/node-fleet/v1/schemas.ts",
+      "sha256": "7612813843f1cfb443666d66ffc6007588054830337bdd83d4d5ebbbf5430a8d"
+    },
+    {
+      "path": "src/node-fleet/v1/static-discovery.ts",
+      "sha256": "c730da3ab4027bc43090eda435879640a3c52b2b676890f35f905273c284eb36"
+    },
+    {
+      "path": "src/node-fleet/v1/telemetry-port.ts",
+      "sha256": "e914945af7d60876e00c7975e8fd7047f5334bc42aef319457a427356c0eb049"
+    },
+    {
+      "path": "src/node-fleet/v1/types.ts",
+      "sha256": "e416ec9176c784434c0b955ea7836a9591dfdddf34d391e3e33707006f809e70"
+    },
+    {
+      "path": "src/node-policy/v1/admission-store.ts",
+      "sha256": "2199802b6c9eed0bc329b5012435f0726dcf4a02dd4ec7d89cbc2f7a9babf82d"
+    },
+    {
+      "path": "src/node-policy/v1/clock.ts",
+      "sha256": "5fb4d0a1f9abebf75b8d880f85f037176b4187f99301d837b900b14aeaf80e8e"
+    },
+    {
+      "path": "src/node-policy/v1/crypto.ts",
+      "sha256": "c3dd2e8f53ceea46f338d38c7719e21929097ddcd8857723c6ff28d060892bc4"
+    },
+    {
+      "path": "src/node-policy/v1/denial-receipt.ts",
+      "sha256": "733a7a95b1b84a708cc73f12a089684e122cb8f1f093c4eb78eba352f2c2834f"
+    },
+    {
+      "path": "src/node-policy/v1/effect-claim-store.ts",
+      "sha256": "4ca59ff552412b5be918a1d81da9b9622b887b90c8261d3b03839cedf800993e"
+    },
+    {
+      "path": "src/node-policy/v1/effect-claim.ts",
+      "sha256": "8f1dfa638d0102210bc6a847534444e0a1a4d7d68b290ede75f31e680c4dbb9e"
+    },
+    {
+      "path": "src/node-policy/v1/encrypted-file-key-store.ts",
+      "sha256": "100256d30758accccef06db6a20d315c855400ebe8f5a56cd5f26265c957c12a"
+    },
+    {
+      "path": "src/node-policy/v1/execution-authority.ts",
+      "sha256": "ca86dac66564e35b0c877fc8657f29a2f4592443ff895e7f7f0c677a7572340a"
+    },
+    {
+      "path": "src/node-policy/v1/execution-state-store.ts",
+      "sha256": "93d73c8207b9a04827c64d1747a8acc59b3b46c590eb02940c83516c68fbd99c"
+    },
+    {
+      "path": "src/node-policy/v1/filesystem-target-guard.ts",
+      "sha256": "9648615bb22ed97951783b47f1d7200a37f4531ecd6fe90bedbcea72319d7e49"
+    },
+    {
+      "path": "src/node-policy/v1/index.ts",
+      "sha256": "da0c6dd059be34b381975b9d9705bf567d3766efee0876e9831bec996e8841dd"
+    },
+    {
+      "path": "src/node-policy/v1/json-schema.ts",
+      "sha256": "26d3b1bad687d943d93d8d47839a28c484c28198304a6ab96b8ce739d66be6f0"
+    },
+    {
+      "path": "src/node-policy/v1/native-key-stores.ts",
+      "sha256": "39e82d948b2179920b65c63751935283367b43d91a6a19a33bd8f712b1ac6f88"
+    },
+    {
+      "path": "src/node-policy/v1/network-target-guard.ts",
+      "sha256": "73f3f86223fb6d4f67223fd1a54ff5b8dd657c00969eaa2cce533fa85a883872"
+    },
+    {
+      "path": "src/node-policy/v1/owner-pins.ts",
+      "sha256": "a07bc29775a204cb2ce5b818f30ac746e23fe9f03bb816bd6d5b14769ec0095d"
+    },
+    {
+      "path": "src/node-policy/v1/persistent-security-state.ts",
+      "sha256": "7143128a8cdc507de866d0655ea693fb6fdba6d44243597db7b5434aec81c154"
+    },
+    {
+      "path": "src/node-policy/v1/pinned-approval-trust.ts",
+      "sha256": "50becdf1776287f4cf55890778589396755cff82272d16ddf7283d111e3ffda9"
+    },
+    {
+      "path": "src/node-policy/v1/policy-evaluator.ts",
+      "sha256": "2f8df7b6c9703506c875b6c31d51473c6798cb964999f44d744b5a2eadf0b4ae"
+    },
+    {
+      "path": "src/node-policy/v1/private-key-runtime.ts",
+      "sha256": "eabb326bc53ae612bf0cd4c8e4daf56b82d12ab38622736617e46c4f3fca8054"
+    },
+    {
+      "path": "src/node-policy/v1/private-key-store-factory.ts",
+      "sha256": "29a6d7044c841bfbb6fe017abeef8f94d3a7db802994e5d19b131cabed369111"
+    },
+    {
+      "path": "src/node-policy/v1/provider-selection.ts",
+      "sha256": "5410b29a1aed811fc1445bbcedf8cb98e7fb2cd923cdea45c910919cbfe371d5"
+    },
+    {
+      "path": "src/node-policy/v1/schemas.ts",
+      "sha256": "e4b5d626e95c06a74f4d444bf7f517d7470edb4a9f34d5a39e2f35291b72f90b"
+    },
+    {
+      "path": "src/node-policy/v1/stores.ts",
+      "sha256": "a11400e2f1f29af2011b0c27fc581362d0b0a1b80259823e07f70c5e8f39255a"
+    },
+    {
+      "path": "src/node-policy/v1/target-guard-errors.ts",
+      "sha256": "73ab262d5de91fc34469f115248f835ded7f5606c5a8c596f5a50cd1f4d1ac09"
+    },
+    {
+      "path": "src/node-policy/v1/types.ts",
+      "sha256": "23df388148f07ce830080f6bf2663ad5686a8499fffeb00335fc9234488a0050"
+    },
+    {
+      "path": "src/node-protocol/v1/authentication.ts",
+      "sha256": "90195c2d9fff39a3441910c995dd075d1887f46439b82da438a91c159cec1a8b"
+    },
+    {
+      "path": "src/node-protocol/v1/crypto.ts",
+      "sha256": "756485fa2144dacf8cc5234bbf476177a17a3a9fe3c0f4a89dc87050aee4b08a"
+    },
+    {
+      "path": "src/node-protocol/v1/index.ts",
+      "sha256": "820e7c22b82c7b5b4c344ed2acdfb8b0eb22b14e4670f7f80002b7e105a798f0"
+    },
+    {
+      "path": "src/node-protocol/v1/json-schema.ts",
+      "sha256": "4a43b1b905bc15fa4c53c468e01af5162c3b1d60b9665e9d88e4d13bfd87c5a1"
+    },
+    {
+      "path": "src/node-protocol/v1/persistence.ts",
+      "sha256": "11acb94de138acc58a58c96d52e9454a50cf1f845a689ba1905d53a4dfa5efaa"
+    },
+    {
+      "path": "src/node-protocol/v1/rate-limit.ts",
+      "sha256": "84b4183663e948fc238fc9e4fd9d48ca7ae6c7c8efc96f83d92209f5cb548bed"
+    },
+    {
+      "path": "src/node-protocol/v1/schemas.ts",
+      "sha256": "19e7554f32355e3215a7197dcca563069bdcd4f53e7d7d9f72958eb7cc51dd3e"
+    },
+    {
+      "path": "src/node-protocol/v1/types.ts",
+      "sha256": "9ccf5f45589bdd2854a811e01206532640a97e9e9dbb61b3cc33685dfe65c6b4"
+    },
+    {
+      "path": "src/node-protocol/v1/versioning.ts",
+      "sha256": "72f51e800c4bccaffea90c98e07d28e24cab1f0c1934d8e5079082d41116175a"
+    }
+  ]
+}

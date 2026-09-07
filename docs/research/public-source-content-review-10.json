@@ -1,0 +1,339 @@
+{
+  "schema": "control-room.public-source-content-review/v1",
+  "reviewer": "primary-assistant",
+  "independent": false,
+  "publicationApproved": false,
+  "scope": "Full text of migrations 0010-0039 inspected for embedded private data, endpoints, credentials and imported source attribution. Truncated batch was reread before counting completion. No SQL executed. Not correctness/security/legal approval.",
+  "entries": [
+    {
+      "path": "db/migrations/0010_cr5d_node_operation_requests.sql",
+      "sha256": "a65eb47b9f02ee14ead7e0ad86cef273503b6b40440bbea7f6f783e8f7d9e1dc",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Node operation requests and acknowledgements. Schema literals, not deployed records; no credentials or live infrastructure coordinates observed.",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/migrations/0011_cr5d_node_job_evidence.sql",
+      "sha256": "010bec227c33808a188d96c3142dcbc56c61e8c26527d583de9a29e93cfbcc60",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Node job evidence and artifact lineage. Schema literals, not deployed records; no credentials or live infrastructure coordinates observed.",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/migrations/0012_cr6b_fleet_history.sql",
+      "sha256": "eca4b14497d94eff4cc3a46afa29a93557e6db002588e0fef4cd8d5db0fcf300",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Fleet signals and current-state tables. Schema literals, not deployed records; no credentials or live infrastructure coordinates observed.",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/migrations/0013_cr6b_fleet_current_subject.sql",
+      "sha256": "a9915f339f88eeb4de0ff5e64de553e4531008a090a4ebaef755a692a7800f2e",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Fleet signal-subject backfill from existing payload fields. Schema literals, not deployed records; no credentials or live infrastructure coordinates observed.",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/migrations/0014_cr6c_resource_reservations.sql",
+      "sha256": "c2e4fd7df7599f011e03b48ee2c600a80fd12f0bcb100dd542e00d1271ae8088",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Resource reservation heads and reservations. Schema literals, not deployed records; no credentials or live infrastructure coordinates observed.",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/migrations/0015_cr6c_project_budget_reservations.sql",
+      "sha256": "b5208bb3e33c499a170de4dc0ba9cbbc628b4fa81decd41cc64ec9d8f9ce9852",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Project budget reservations. Schema literals, not deployed records; no credentials or live infrastructure coordinates observed.",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/migrations/0016_cr6d_schedule_occurrences.sql",
+      "sha256": "c1389b551d17ec0091903dcfdbeb3e7b56092dd4dfd11dff33b855cbabef7c83",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Schedule occurrences. Schema literals, not deployed records; no credentials or live infrastructure coordinates observed.",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/migrations/0017_cr6d_service_incidents.sql",
+      "sha256": "102cb0f273986252b6ace20b8b28e9879c75be6b027c9854ff2c44a0110cca7f",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Service incident generations. Schema literals, not deployed records; no credentials or live infrastructure coordinates observed.",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/migrations/0018_cr6d_service_incident_remedies.sql",
+      "sha256": "9d3dc47f260060a1ab6fdf8b4322ad5c2402de122d53adde02eede03d7e930d2",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Generic service remedy default. Schema literals, not deployed records; no credentials or live infrastructure coordinates observed.",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/migrations/0019_cr6e_operator_surfaces.sql",
+      "sha256": "5a1befb752f028db82374527c97134699991df9471b14e79de672abb326395c0",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Action inbox and owner focus. Schema literals, not deployed records; no credentials or live infrastructure coordinates observed.",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/migrations/0020_cr7_harness_runs.sql",
+      "sha256": "0524b6bdbd44ab1dc4b87403e745402d5d37c7e4e00773f5ff39abe0625f98ea",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Harness runs and append-only events. Schema literals, not deployed records; no credentials or live infrastructure coordinates observed.",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/migrations/0021_cr7e_package_registry.sql",
+      "sha256": "1db7f3be842b8c49f40cdbe830df80d22b40ca2558a026eb4caf0e4150acf74f",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Immutable package versions, reviews, mappings and promotions. Schema literals, not deployed records; no credentials or live infrastructure coordinates observed.",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/migrations/0022_cr8b_completion_gate.sql",
+      "sha256": "64bb9be28b7a84f4f38ddf1e03fb7d4a60ee4ead74a8fcd2db8ca1691d3c7ae4",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Completion records and integrity heads. Schema literals, not deployed records; no credentials or live infrastructure coordinates observed.",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/migrations/0023_cr8d_telegram_delivery.sql",
+      "sha256": "72c09f09510c51208e741974df7d1f96fcab606f35403fbdbd001083457fe081",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Telegram digest-only delivery and callback schema. Schema literals, not deployed records; no credentials or live infrastructure coordinates observed.",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/migrations/0024_cr8q_rollback_checkpoints.sql",
+      "sha256": "7fcef3a321fbe90ae08919d4f12680e54e48bf7ea0aea325094bd5e9528fd3e4",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Monotonic revisions on integrity heads. Schema literals, not deployed records; no credentials or live infrastructure coordinates observed.",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/migrations/0025_cr9a_external_content_sync.sql",
+      "sha256": "a461e52cba46035e5a7e9a060fbba5039b73ee708c2695a99680fbcea1307c91",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Generalized external content read synchronization. Schema literals, not deployed records; no credentials or live infrastructure coordinates observed.",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/migrations/0026_cr9a_external_content_placement.sql",
+      "sha256": "843fe2549b300d7a1d4bdb60ac2a60739805a91c67c7d55efa768981e9b55d36",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Generalized external content placement ledger; existing cb-placement protocol prefix retained. Schema literals, not deployed records; no credentials or live infrastructure coordinates observed.",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/migrations/0027_cr11b_ready_frontier_handoffs.sql",
+      "sha256": "b7b03db48bd6ca59e6095197e200cea6f3424506dfd1c48d56a2c0f27f34c6fe",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Internal ready handoffs. Schema literals, not deployed records; no credentials or live infrastructure coordinates observed.",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/migrations/0028_cr12b_idea_lab_project_lifecycle.sql",
+      "sha256": "a81b3c59d969005963aae7d9ccaa8310e013524be17360131e1a583082341e6e",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Idea sessions, contributions, synthesis and lifecycle. Schema literals, not deployed records; no credentials or live infrastructure coordinates observed.",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/migrations/0029_cr12b_idea_lab_protected_coordinator.sql",
+      "sha256": "b223e276801074fb560610522aaa7b1212e9d0d2773822825ac7042c8b10a26d",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Idea run events and owner authorization records. Schema literals, not deployed records; no credentials or live infrastructure coordinates observed.",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/migrations/0030_cr12b_local_fake_pilot.sql",
+      "sha256": "c82ac7ec91830b0488415aa259be7775e44746adf7a41e67f3d06fd55319f6d2",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Disposable pilot session and catalog tables. Schema literals, not deployed records; no credentials or live infrastructure coordinates observed.",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/migrations/0031_cr12b_live_panel_authority.sql",
+      "sha256": "0cce314b741e951946a56df920c337a941fc3fe415de1f15510a81bd5faa4b48",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Idea live-authority events and admission consumption. Schema definitions only; no supplied secrets, private records or live endpoints observed.",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/migrations/0032_cr12b_idea_qualification_spends.sql",
+      "sha256": "67461e5d538827b74b8245a714a8fd9401c3e40ff602bc37ab2c97183bcbdc87",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Qualification permit-spend event schema. Schema definitions only; no supplied secrets, private records or live endpoints observed.",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/migrations/0033_cr13a_project_live_events.sql",
+      "sha256": "7aca6c767a8b5e67ef0d41859b11e8172983b96fd2b09d87d7e85f3221d0c008",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Project event stream heads and append-only events. Schema definitions only; no supplied secrets, private records or live endpoints observed.",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/migrations/0034_cr13a_connection_registry.sql",
+      "sha256": "0c201b83b66a80de38e89c7f53e66ab52a8332c23d84b711c3d32267b3d7a6a3",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Connection registry and authenticated telemetry receipts. Schema definitions only; no supplied secrets, private records or live endpoints observed.",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/migrations/0035_cr13a_connection_enrollment_intake.sql",
+      "sha256": "e869fd177a14e175d1d122fef4756745f5edbc71e2f6812fae3a8715bec7ee04",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Enrollment intake heads and receipts. Schema definitions only; no supplied secrets, private records or live endpoints observed.",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/migrations/0036_cr13a_connection_enrollment_node_delivery.sql",
+      "sha256": "e6e6372ee347710706a212a85f72a129c74687adf4cde5991433d6cc89452f0c",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Node-protocol enrollment delivery ledger. Schema definitions only; no supplied secrets, private records or live endpoints observed.",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/migrations/0037_cr13a_native_observation_authorizations.sql",
+      "sha256": "8d4efd8e49f9b1891079c99ee0bf82afc2c731349386ec44ceca8c2eb2f1b154",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Native observation authorization and nonce reservations. Schema definitions only; no supplied secrets, private records or live endpoints observed.",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/migrations/0038_cr13a_native_observation_authorization_consumptions.sql",
+      "sha256": "c98128708a164ec7bb888b8f8de3465478451605c46ea41e37d6c45b68647ab5",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Append-only authorization consumption. Schema definitions only; no supplied secrets, private records or live endpoints observed.",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/migrations/0039_cr14b_web_projects.sql",
+      "sha256": "05e43d3ca1780762fae214ca38347a01a2320d41ab0241846488d1717b6c98f3",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Browser session and manual-project state. Schema definitions only; no supplied secrets, private records or live endpoints observed.",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    }
+  ]
+}

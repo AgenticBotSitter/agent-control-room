@@ -1,0 +1,171 @@
+{
+  "schema": "control-room.independent-publication-content-review/v1",
+  "reviewer": "release_domain_content_review",
+  "independent": true,
+  "publicationApproved": false,
+  "scope": "Full text read for embedded private values, credentials, live infrastructure endpoints and unexpected attributed or vendored text. Exact hashes matched frozen inventory.",
+  "finding": "No concrete publication-content hazard found in reviewed scope.",
+  "limitations": "All 24 ready-frontier files were not read. Public schema identifiers and relative application routes are not live private endpoints. Not security or functional correctness, license certification, native acceptance or final publication authorization. No network, writes, providers, credentials or runtime execution by reviewer.",
+  "entries": [
+    {
+      "path": "src/domain/v1/authority.ts",
+      "sha256": "aae6eedcff09e809da1476fb2997460272dc5adaecc7860d24da19db7b855b03"
+    },
+    {
+      "path": "src/domain/v1/index.ts",
+      "sha256": "e8ef5d42ef09b05b14540d20cf50767df4f3383adb78b2fc79f2eded49301b9e"
+    },
+    {
+      "path": "src/domain/v1/json-schema.ts",
+      "sha256": "884bccce36299c21e134a9ede39391fa6ad73eff76fec0ec1213677f1f183b68"
+    },
+    {
+      "path": "src/domain/v1/state-machines.ts",
+      "sha256": "849698a15bd66189c446e3e4227cbcdb4d63a9562de20e4307236888b719f969"
+    },
+    {
+      "path": "src/domain/v1/types.ts",
+      "sha256": "c18bddeff605e284a438d1e27f76166e9f76107d27acee10165403d4b42d798b"
+    },
+    {
+      "path": "src/domain/v1/validators.ts",
+      "sha256": "f04bfeb7a16d33e501fad35b90118d363cd636a329937a05f7bbe3d8399f3028"
+    },
+    {
+      "path": "src/operator-surfaces/v1/http-client.ts",
+      "sha256": "63dee35370142185fe827deb9c578fe106e752b804bcda03432fab7db240bc7a"
+    },
+    {
+      "path": "src/operator-surfaces/v1/index.ts",
+      "sha256": "0d16776266ac1a86bfcccd0703666167de10c7aaf26cf3c5924107c717d4fe35"
+    },
+    {
+      "path": "src/operator-surfaces/v1/owner-focus-command-service.ts",
+      "sha256": "6d67f78b3a3192050c581d873059773b5d62bb49e4e2d82c43e336a483ad8b00"
+    },
+    {
+      "path": "src/operator-surfaces/v1/projections.ts",
+      "sha256": "dabbd45cc7ef590f795b7179eec3f769bc7c2ef74777998eb82c78704ca41500"
+    },
+    {
+      "path": "src/operator-surfaces/v1/read-service.ts",
+      "sha256": "3018b24406b6035dc497b3f0ce7e82e7510a9a7d18466575f43b6e7aad6d3c10"
+    },
+    {
+      "path": "src/operator-surfaces/v1/store.ts",
+      "sha256": "cedffa7e32366e311b1d60351319593b8176a2849f60e710eb7490f0b70f849f"
+    },
+    {
+      "path": "src/operator-surfaces/v1/types.ts",
+      "sha256": "053d24fe59c9194b21878f181702d6cbfbc83615c3c789dc526e293fb114df9e"
+    },
+    {
+      "path": "src/operator-surfaces/v1/validators.ts",
+      "sha256": "272c9b5c9e437db6916dad6fb568546e8517c3f192018e1dcf723f8eba82c9d4"
+    },
+    {
+      "path": "src/project-events/v1/contracts.ts",
+      "sha256": "ad782a5b1ffda518102f4ab57229a162f18cb66503b18452dde96ded20572247"
+    },
+    {
+      "path": "src/project-events/v1/errors.ts",
+      "sha256": "1d2f285a2e3b235c90874978a89714eb18247f75ac4448ff5b30d1b743c26b37"
+    },
+    {
+      "path": "src/project-events/v1/idea-lab-reconciler.ts",
+      "sha256": "ee1c16518c6745bf2865267bdd163f712e836b46422351f7dd73161a7539d924"
+    },
+    {
+      "path": "src/project-events/v1/index.ts",
+      "sha256": "ebabf2d3f268c4351b39704935b0077752ed324ee23a45cd414b9b285fa58689"
+    },
+    {
+      "path": "src/project-events/v1/schemas.ts",
+      "sha256": "56b431d06fe98fdc044110490fef8f8c90439c24c13fe1c932e9f2a924dfefd7"
+    },
+    {
+      "path": "src/project-events/v1/sse.ts",
+      "sha256": "e2c97e58b84bef3ddecee27e125661f3154b29adaae5a6d8d5048d9b3809b51c"
+    },
+    {
+      "path": "src/project-events/v1/store.ts",
+      "sha256": "27f64ccfba644e1d23f148f3ae09ba57afea2bc6e0248d0dab1e6af7a8a8690e"
+    },
+    {
+      "path": "src/project-events/v1/types.ts",
+      "sha256": "6e9037a20463528021e5fa4ae5df146de57cb090b88eb3f8015329f9bd73b90a"
+    },
+    {
+      "path": "src/project-workspace/v1/catalog-session.ts",
+      "sha256": "bb9eef82efa444141bf46e016fc73a5057726e474483d25a0072eac742590ac6"
+    },
+    {
+      "path": "src/project-workspace/v1/errors.ts",
+      "sha256": "78ff50cc25cb3cacb01a3576393c94e4fbd5456fb583a73173c208b0084d1317"
+    },
+    {
+      "path": "src/project-workspace/v1/exact.ts",
+      "sha256": "ea3f14ed1bc5c9403886383de6b147f27d3e6006a139cea6574a192ac16d82be"
+    },
+    {
+      "path": "src/project-workspace/v1/http-client.ts",
+      "sha256": "2c4c76c211db66d48abf742a7d7b5f788c6689af41182b9b8a75d3936822438e"
+    },
+    {
+      "path": "src/project-workspace/v1/index.ts",
+      "sha256": "5bf2602d3c65f98acf9b4b7fa65341db16b0e3771e577028b0dcdbcf0ca421b6"
+    },
+    {
+      "path": "src/project-workspace/v1/read-service.ts",
+      "sha256": "c0513684db0f0dd25d5f5df72eee4cea869646e6951b02a796df143598ac7e9d"
+    },
+    {
+      "path": "src/project-workspace/v1/schemas.ts",
+      "sha256": "6ebc5ac4c009fba64fa4dd85b9fb6cebbfc42dab6eb45557bb664b3e7888b100"
+    },
+    {
+      "path": "src/project-workspace/v1/types.ts",
+      "sha256": "2c4b4e900d3bddc07620ee8eeb98a062260b74585a1bd9ef5483d6a8600a0bf1"
+    },
+    {
+      "path": "src/project-workspace/v1/workspace.ts",
+      "sha256": "6b0b5bf59080b4748d3b1da5f07113a66ddc487f0c4b52cab6c91a7b9bd92c32"
+    },
+    {
+      "path": "src/scheduler/v1/allocation.ts",
+      "sha256": "b8801e5e05c69e74b274538fd73f3e2a2b3d4e12974985f7f0b1c530ea6f2067"
+    },
+    {
+      "path": "src/scheduler/v1/availability.ts",
+      "sha256": "19c72a84697a9857f132347249b66fe09f9fb5e38e46634b33d2dc94ebbe3467"
+    },
+    {
+      "path": "src/scheduler/v1/bottleneck.ts",
+      "sha256": "a542ce696da038f18fa78a8cf696a5ef0404cc1c998a892a1a2fb59377c9c684"
+    },
+    {
+      "path": "src/scheduler/v1/budget-store.ts",
+      "sha256": "2b60e3da3ccba64efef3cb4fb125e227c9950d42ce5609f74941bed4cdc9ec0f"
+    },
+    {
+      "path": "src/scheduler/v1/constraints.ts",
+      "sha256": "06610f2fba421589bfa7510c3d99270a2a3252e7a4274c46ab4df8c5fda425ac"
+    },
+    {
+      "path": "src/scheduler/v1/index.ts",
+      "sha256": "8648facf0dd8086a6835ee923cd5e9fdb21400c4e745c0101b4589ece89cb1ff"
+    },
+    {
+      "path": "src/scheduler/v1/placement.ts",
+      "sha256": "48be3987789c72699b5779bd1f58d17adb0b4d5fc6f3d19b62eb5a95b2b289ea"
+    },
+    {
+      "path": "src/scheduler/v1/reservation-store.ts",
+      "sha256": "e6c60448af0733cae9b4c21e5362feb733c118391120ec9eca8723b2c0855936"
+    },
+    {
+      "path": "src/services/v1/incident-store.ts",
+      "sha256": "a3e0a48b9681a90289f27fea61afea84fb9036864c0ca0a14cf1893a00abaf33"
+    }
+  ]
+}
