@@ -8,6 +8,17 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Restricted news-ingestion database profile verified:** The offline role template permits
+article/source inserts and required lock-column updates, not project content, proposals,
+jobs, grants or audit writes. The preflight checks effective permissions, including queue
+coexistence without queue access. Eleven focused checks and 62 workflow regressions pass,
+plus TypeScript, focused lint and VPS compilation. Independent source review found no
+concrete implementation defect; its misleading-comment correction is applied. Tests use
+an actual restricted PGlite login with its known TEMP metadata exception isolated in the
+test wrapper; this is not production PostgreSQL qualification. No login was provisioned
+outside disposable tests. Managed ingestion/job ownership, canonical verification and
+real multi-agent journeys remain unfinished.
+
 **Reader-to-ingestion ownership connected in one unmounted collection component:**
 One captured source configuration controls both the read URL and stored attribution.
 It permits one call per instance, closes the reader before persistence, and rechecks

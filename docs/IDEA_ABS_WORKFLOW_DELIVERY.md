@@ -25,6 +25,20 @@ Branch: `codex/idea-abs-workflows`. Public release remains a separate reviewed s
 
 ## Evidence and scope
 
+### Restricted ingestion SQL role and preflight
+
+`db/roles/news_ingestion_roles.sql` defines an offline NOLOGIN role for story/source
+SELECT and INSERT, prerequisite metadata reads, and only the workspace/project lock
+column updates needed by existing SQL locking. `verifyNewsIngestionDatabase` requires
+this exact effective profile. It does not grant privileges or mount a collector.
+Tests exercise ingestion and replay under the restricted login, deny unrelated writes,
+reject excess/missing privileges and permit configured native-queue coexistence only
+without queue access. The PGlite TEMP metadata exception remains test-only; the raw
+client fails the production preflight. Eleven focused tests, 62 workflow regressions,
+TypeScript, focused lint and VPS build pass. Independent source review found no concrete
+implementation defect; its comment correction is applied. Production grants, real
+PostgreSQL qualification and managed ingestion startup/job ownership are not complete.
+
 ### One owned reader-to-ingestion collection
 
 `createAbsFeedCollection` binds the same captured source and limits to the public reader
