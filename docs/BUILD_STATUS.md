@@ -8,6 +8,21 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**RSS/Atom decoding now reuses an upstream parser and saves atomic news batches:**
+Pinned rss-parser 3.13.0 parses supplied text only, under byte/item ceilings and with
+DTD/entity declarations refused. The adapter minimizes text, binds source attribution,
+keeps canonical story identity stable across headline changes, and reports rejected and
+duplicate counts. Feed discoveries remain review_only; they cannot prepare research
+work without canonical-page verification. PostgreSQL batch saving reuses the existing
+version/replay logic in one transaction. Seven focused decoder/store checks and 61
+Idea/ABS regressions pass, plus TypeScript, focused lint and VPS compilation. Tests caught
+an incorrect fixture clock/scope setup; corrected assertions now prove authenticated
+listing and an explicit conflict at proposal preparation. Independent source review found
+no concrete introduced defect. Five dependencies were downloaded with scripts disabled,
+approximately 2.3 MiB; licenses and cleanup disposition are recorded. Live feed retrieval,
+source status persistence, canonical-page checking and real-agent acceptance remain open.
+No network feed, provider call, production migration or deployment occurred.
+
 **Prepare recap now available on eligible completed discussions:** The private page
 offers an explicit saved-replies-only recap action, then refreshes into the existing owner
 decision form. The client checks the exact session/run receipt and makes no automatic

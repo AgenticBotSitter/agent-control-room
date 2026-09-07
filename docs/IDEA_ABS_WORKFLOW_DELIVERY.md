@@ -25,6 +25,32 @@ Branch: `codex/idea-abs-workflows`. Public release remains a separate reviewed s
 
 ## Evidence and scope
 
+### RSS/Atom decoding and atomic PostgreSQL ingestion batches
+
+`decodeAbsFeed` uses unmodified rss-parser 3.13.0 `parseString`, not custom XML parsing
+or the package's URL fetcher. This is an explicit reuse-first dependency decision: existing
+Control Center event-selection helpers continue downstream; they do not parse feeds.
+Source/license/integrity and download cleanup records are retained under third_party and
+the download ledger. The adapter accepts supplied text with a 1 MiB maximum and at most
+100 entries, rejects DTD/entity declarations, minimizes title/summary, counts malformed
+entries and canonical duplicates, and binds source/feed/item digests. Story IDs depend on
+canonical URL and project scope, not a changing headline. First valid duplicate wins.
+
+Records stay review_only; the legacy lastVerifiedAt field holds observation time for these
+unverified records and must not be presented as factual verification. A parsed feed is not
+proof of live retrieval or article accuracy. Large feeds fail explicitly rather than silently
+truncating entries. No raw XML is retained by the returned projection.
+
+`PostgresAbsNewsStoreV1.saveStories` reuses exact single-record validation within one
+outer transaction. A second-insert failure rolls back the first; exact replay inserts no
+new versions. Seven focused tests and 61 existing regressions pass, plus TypeScript,
+focused lint and VPS build. Tests use supplied synthetic RSS/Atom and PGlite. Corrected
+fixture clock/scope tests explicitly prove owner listing and proposal conflict for unverified
+articles. Independent source review found no concrete introduced defect. No mounted
+browser, live fetch, production roles or provider acceptance is claimed. Remaining work:
+allowlisted retrieval, retained source failures/freshness, canonical-page verification,
+managed ingestion wiring, and the real article-to-agent-to-review journey.
+
 ### Completed-discussion recap control
 
 The private detail page now offers Prepare recap only when the server operation is

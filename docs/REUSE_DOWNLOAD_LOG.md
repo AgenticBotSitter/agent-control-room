@@ -4,6 +4,27 @@ Started 2026-09-06. Owner authorized needed downloads for the reuse plan, with a
 
 ## Storage before acquisition
 
+### 2026-09-07 — ABS RSS/Atom parser dependency
+
+Pre-acquisition check: 106 GiB available. Evaluation/adoption target: `rss-parser@3.13.0`
+(MIT), using `parseString` only, not its URL-fetching implementation. Public npm metadata
+confirms `entities ^2.0.3` and `xml2js ^0.5.0` dependencies. Package acquisition and
+generated lockfile resolution are recorded below once complete. No feed requests,
+provider calls, repository clone or service startup is part of this acquisition.
+
+Acquisition complete: pinned rss-parser 3.13.0 plus entities 2.2.0, xml2js 0.5.0,
+sax 1.6.1 and xmlbuilder 11.0.1; five packages downloaded. `pnpm-lock.yaml` records
+all exact integrity hashes. Used lockfile-only resolution followed by frozen-lockfile
+installation, both with lifecycle scripts disabled. No existing package versions changed.
+Repository virtual-store directories total approximately 2.3 MiB (rss-parser 1.8 MiB,
+xml2js 68 KiB, entities 112 KiB, sax 72 KiB, xmlbuilder 276 KiB). Shared pnpm cache
+also retains package content; do not delete a shared cache as project cleanup.
+Disposition: retained runtime dependency, imported by the feed decoder. If discarded,
+remove the dependency and regenerate the lockfile/install normally; do not manually
+delete shared dependency links. No temporary clone or downloaded article files exist.
+License/source details: `third_party/rss-parser/NOTICE.md` and packaged licenses.
+
+
 ### E37 local application dependency preparation (2026-09-06)
 
 Precheck: shared APFS volume reports 104 GiB available, 312 GiB used, 76% capacity.

@@ -60,6 +60,22 @@ export class PostgresAbsNewsStoreV1 {
       return { story: saved, replayed: inserted.rows.length === 0 };
     });
   }
+  /** Commit one bounded ingestion batch atomically; reuse the exact single-story
+   * validation/replay path. A failed item cannot leave a partially published batch. */
+  async saveStories(values: unknown) {
+    if (!Array.isArray(values) || values.length > 100) throw new ProjectWorkspaceContractErrorV1("invalid_input");
+    const stories = values.map(value => { const story = parseAbsNewsStoryV1(value); this.check(story); return story; });
+    return this.db.transaction(async tx => {
+      const joined: DatabaseClient = { query: tx.query.bind(tx), transaction: async work => work(tx),
+        transactionWithPreCommitCheck: async (work, check) => { const value = await work(tx); await check(); return value; } };
+      const store = new PostgresAbsNewsStoreV1(joined, this.scope, this.key, this.clock);
+      let inserted = 0, replayed = 0;
+      for (const story of stories) {
+        if ((await store.saveStory(story)).replayed) replayed++; else inserted++;
+      }
+      return { inserted, replayed };
+    });
+  }
   async listStories(after?: string) {
     if (after !== undefined) id.parse(after);
     const rows = await this.db.query<Row & { story_id: string; story_digest: string }>(`SELECT DISTINCT ON (story_id COLLATE "C") story_id,story_digest,payload,auth_tag
