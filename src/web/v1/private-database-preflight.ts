@@ -5,7 +5,7 @@ import type { DatabaseClient, DatabaseSession } from "../../persistence/database
 import type { PrivatePostgresConfiguration } from "./private-postgres";
 
 // Generated from migrations 0001-0058 using the catalog query below, not a mutable database marker.
-export const privateWebSchemaDigest = "5108e1c9aa7f5b09d1f81b75d6f0595f09a0695ab04706d23d33382f2a167c16";
+export const privateWebSchemaDigest = "aac6f3f58ff464bf5d3a7227aa16efaf2beab0aba799db3b59b6248eff2f3a9f";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "adapter_registry", "projects", "control_manual_project_heads", "control_web_project_commands", "audit_events",
   "control_audit_chain_heads", "control_project_lifecycle_events", "control_connection_registry_heads",
