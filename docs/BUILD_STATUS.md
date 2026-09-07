@@ -8,6 +8,21 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Visible per-source refresh controls:** Saved source cards now expose refresh options,
+allowed sites and limits, prepare, and explicit approve/queue controls. Unconfigured or
+unauthorized sources show unavailable states. The fixed-source browser client preserves
+exact uncertain proposals/approvals across lost responses and later access denial;
+parent source editing/reload/pagination and navigation cannot discard pending requests.
+Review found stale checked options could retain an approval button; descriptor checks
+now invalidate approval until the same current permitted configuration is confirmed.
+The regression refuses stale approval with no request sent, without blocking exact
+uncertain retries. The browser client also replays against mounted API routes without
+another queued job. All 313 delivery tests, ten focused web-news tests, types, lint and
+VPS compilation pass. Independent re-review accepted the correction. Sites guidance
+preserved existing layout/auth/dependencies; no preview service or deployment started.
+Visual/browser acceptance, startup/native transport qualification and the complete
+article-to-agent workflow remain unfinished. Everything remains local.
+
 **Per-source refresh API is connected to the private web process:** Explicitly supplied
 collector operations expose authenticated description/propose/approve routes. The
 description includes source, origins, limits and current refresh permission; absent

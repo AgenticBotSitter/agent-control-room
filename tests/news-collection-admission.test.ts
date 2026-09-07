@@ -19,6 +19,7 @@ import { AbsFeedIngestionService } from "../src/project-adapters/abs-news/v1/fee
 import { PostgresNewsSourceSettings } from "../src/project-adapters/abs-news/v1/source-settings";
 import { PostgresAbsNewsStoreV1 } from "../src/project-adapters/abs-news/v1/postgres-store";
 import { createPrivateWebProcess } from "../src/web/v1/private-process";
+import { createNewsRefreshClient } from "../src/web/v1/news-refresh-client";
 
 // Routing evidence only: real restricted-login qualification has separate tests.
 function ingestionClient(db: DatabaseClient): DatabaseClient {
@@ -126,6 +127,13 @@ test("discovery approval and borrowed execution reuse queue claims and settlemen
         const approved = await approvalResponse.json() as Awaited<ReturnType<typeof admission.approve>>;
         const replayResponse = await handle(request(`${path}/approve`, "POST", args));
         assert.equal(replayResponse.status, 200); assert.equal((await replayResponse.json()).replayed, true);
+        if (mode === "success") {
+          const browser = createNewsRefreshClient(projectScope.projectId, source.id, async (url, init) =>
+            handle(request(String(url), init?.method ?? "GET", init?.body ? JSON.parse(String(init.body)) : undefined)));
+          await browser.propose(await browser.describe(), "discovery-execution-001");
+          await browser.approve();
+          assert.equal(browser.state().submitted, true); assert.equal(browser.state().jobId, plan.jobId);
+        }
         const queued = (await f.client.query<{ reference: AbsFeedJobReference }>("SELECT reference FROM synthetic_feed_queue")).rows;
         assert.equal(queued.length, 1);
         if (mode === "disabled_before_execution") await settings.save({ ...source, enabled: false }, 1, at);

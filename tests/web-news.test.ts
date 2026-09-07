@@ -15,8 +15,55 @@ import { NewsResearchForm } from "../private-app/app/news-research-form";
 import { PrivateNewsWorkspace, NewsSourceHealth } from "../private-app/app/news-workspace";
 import { installNewsNavigationGuard } from "../src/web/v1/news-navigation-guard";
 import { createNewsSourceClient } from "../src/web/v1/news-source-client";
+import { createNewsRefreshClient, newsRefreshDescriptionSchema } from "../src/web/v1/news-refresh-client";
+import { NewsSourceRefresh } from "../private-app/app/news-source-refresh";
 
 const scope = { tenantId: "tenant:web", workspaceId: "workspace:web" }, key = new Uint8Array(32).fill(37);
+
+test("refresh controls preserve exact uncertain proposal and approval requests without automatic resubmission", async () => {
+  const projectId = "project:refresh", sourceId = "source:refresh", sourceDigest = sha256Digest("source"), inputDigest = sha256Digest("plan");
+  const description = { projectId, sourceId, configured: true, canRefresh: true, startsWork: false, sourceCurrent: true,
+    sourceDigest, sourceLabel: "Example", endpointUrl: "https://example.org/", mode: "discovery", allowedOrigins: ["https://example.org/"],
+    limits: { timeoutMs: 10000, maxAttempts: 8, maxDocumentBytes: 4096, maxReservedBodyBytes: 32768 } };
+  const bodies: string[] = []; let loseProposal = true, loseApproval = true, denied = false, submitted = false, prepared = false;
+  const client = createNewsRefreshClient(projectId, sourceId, async (url, init) => {
+    if (!init?.body) return Response.json(description);
+    bodies.push(String(init.body));
+    if (denied) return Response.json({}, { status: 401 });
+    if (String(url).endsWith("/propose")) {
+      const replayed = prepared; prepared = true;
+      if (loseProposal) { loseProposal = false; throw new Error("lost after proposal"); }
+      return Response.json({ jobId: "job:refresh", inputDigest, sourceDigest, replayed, startsWork: false });
+    }
+    const replayed = submitted; submitted = true;
+    if (loseApproval) { loseApproval = false; throw new Error("lost after admission"); }
+    return Response.json({ schema: "control-room.abs-feed-job/v1", tenantId: "tenant:web", projectId, jobId: "job:refresh",
+      attemptId: "attempt:refresh", effectId: "effect:refresh", operationDigest: sha256Digest("effect"), replayed,
+      effectState: "authorized", networkContacted: false });
+  });
+  const descriptor = await client.describe();
+  await assert.rejects(client.propose(descriptor, "refresh:request-001"));
+  await assert.rejects(client.propose(descriptor, "refresh:request-002")); assert.equal(bodies.length, 1);
+  denied = true; await assert.rejects(client.retry()); assert.equal(client.hasPending(), true);
+  denied = false; await client.retry(); assert.equal(client.state().proposed, true);
+  assert.equal(new Set(bodies).size, 1); assert.equal(submitted, false);
+  description.sourceDigest = sha256Digest("changed before approval");
+  await assert.rejects(client.describe(), /configuration changed/);
+  assert.equal(client.state().canApprove, false);
+  await assert.rejects(client.approve()); assert.equal(bodies.length, 3); assert.equal(submitted, false);
+  description.sourceDigest = sourceDigest; await client.describe(); assert.equal(client.state().canApprove, true);
+  await assert.rejects(client.approve()); assert.equal(client.hasPending(), true);
+  await assert.rejects(client.propose(descriptor, "refresh:request-003"));
+  denied = true; await assert.rejects(client.retry()); assert.equal(client.hasPending(), true);
+  denied = false; await client.retry();
+  assert.equal(client.state().submitted, true); assert.equal(client.state().effectState, "authorized");
+  assert.equal(new Set(bodies.slice(3)).size, 1); assert.equal(client.hasPending(), false);
+  await assert.rejects(client.approve()); assert.equal(bodies.length, 6);
+  description.sourceDigest = sha256Digest("changed"); await assert.rejects(client.describe(), /configuration changed/);
+  assert.equal(newsRefreshDescriptionSchema.safeParse({ projectId, sourceId, configured: false, canRefresh: false, startsWork: false }).success, true);
+  const markup = renderToStaticMarkup(createElement(NewsSourceRefresh, { projectId, sourceId, disabled: false, onHold: () => {} }));
+  assert.match(markup, /Check refresh options/); assert.doesNotMatch(markup, /Approve and queue refresh/);
+});
 
 test("source browser client recovers a lost save without changing source or creating a second revision", async t => {
   const f = await taskFixture();

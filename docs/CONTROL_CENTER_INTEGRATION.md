@@ -132,8 +132,14 @@ with the retained plan before any approval changes. Review found this was initia
 missing: a same-project second-source job could use the first source's URL. The
 regression now requires rejection and zero approval/effect/attempt/queue writes.
 The injected discovery journey uses these mounted HTTP routes for description,
-proposal and approval before consuming the saved queue reference. Browser controls
-and production startup supplying these operations are not yet connected.
+proposal and approval before consuming the saved queue reference. Source cards now
+mount `NewsSourceRefresh`, with explicit options/prepare/approve steps and the existing
+navigation guard. Parent source edits, saves and pagination are held while a refresh
+request is uncertain. The client retains exact proposal/approval requests after lost
+responses and access denial; no automatic retry or approval occurs. Checked descriptor
+changes disable new approval until the prepared digest is confirmed current again.
+Admission receipt state is labeled as recorded history, not a live completion signal.
+Production startup supplying these operations and visual/browser acceptance remain open.
 
 ### Discovery job integration contract
 
