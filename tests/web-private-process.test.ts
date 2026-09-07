@@ -30,6 +30,13 @@ test("two configured private addresses share projects and tasks without sharing 
   assert.equal((await app.handle(new Request("https://unknown.example.org/projects", { headers: { "x-forwarded-host": new URL(origin).host } }), render)).status, 403);
   assert.equal((await f.client.query("SELECT * FROM control_jobs")).rows.length, 1);
   assert.equal((await f.client.query("SELECT * FROM control_attempts")).rows.length, 0);
+  assert.equal((await app.handle(other("/api/v1/session/logout", "POST"), render)).status, 204);
+  assert.equal((await app.handle(other(path), render)).status, 401);
+  // Application revocation is token-specific. Access-wide browser logout remains
+  // a separate edge operation, not simulated by these direct requests.
+  assert.equal((await app.handle(request(path), render)).status, 200);
+  await f.client.query("UPDATE control_role_grants SET revoked_at=$1", [new Date(now).toISOString()]);
+  assert.equal((await app.handle(request(path), render)).status, 403);
   await app.close(); await app.close(); assert.equal(closes, 1);
 });
 test("shared private page, API and finite snapshot stream respect stored identity and session state", async t => {

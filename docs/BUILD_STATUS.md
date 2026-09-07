@@ -23,7 +23,15 @@ was corrected to match the already-mounted protected page. Native host reconstru
 now preserves the exact configured primary/secondary Host through the existing bridge;
 the task host supplies the secondary origin without another worker or service. All 31
 targeted tests, TypeScript, lint and VPS compilation pass. Independent integration
-review, deployment and live browser/IdP validation remain unfinished. Isolated verifier tests cover
+review identified a mutable-input startup mismatch: the task host now captures the
+secondary origin before asynchronous bootstrap, matching the application's snapshot.
+Ten compiled startup checks and five mounted process checks pass, including origin
+mutation, secondary-token logout isolation and shared owner-grant revocation. The
+regression uses the existing injected installation seam, leaving the production
+single-install safeguard intact. TypeScript, focused lint and VPS compilation pass.
+Independent source-only re-review confirms the correction resolves the finding and
+reports no new concrete defect. Deployment and live browser/IdP validation remain
+unfinished. Isolated verifier tests cover
 separate audiences, same owner with distinct tokens, cross-origin writes and spoofed
 forwarded-host rejection. No actual alternate hostname is enabled by these tests.
 Private hostname, provider and employer-approved alternate use await owner answers;

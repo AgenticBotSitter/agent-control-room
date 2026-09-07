@@ -10,7 +10,7 @@ identity provider, queue or news engine is proposed.
 | Surface | Required behavior | Current position |
 | --- | --- | --- |
 | Public agentcontrolroom.xyz | Informational page, project/contribution links, no private login link or app data | Static source and website repository handoff exist; current hosted content not verified in this lane |
-| Primary private address | Full authenticated Control Room, same projects/tasks/results | Private hostname and actual identity provider requested from owner; current app accepts one configured origin |
+| Primary private address | Full authenticated Control Room, same projects/tasks/results | Private hostname and actual identity provider requested from owner; app defaults to one origin with optional exact secondary origin |
 | Optional second private address | Same application data and permissions, independent site login | Exact hostname and employer-approved use remain unconfirmed; deployment disabled |
 
 Candidate primary labels offered to owner: room, app or cr. None is selected or
@@ -65,6 +65,21 @@ verifier tests. Additional mounted disposable application tests share projects/t
 across both addresses, while injected Node streams verify host reconstruction. All
 31 targeted tests, TypeScript, focused lint and VPS compilation pass. None constitutes
 live cookie, IdP, TLS, physical listener or deployment acceptance.
+
+Independent review found that the task host read the secondary address again after
+asynchronous startup, allowing caller mutation to disagree with the application's
+captured configuration. The host now captures it before awaiting startup. The compiled
+regression mutates the original input during installation and confirms the original
+address still reaches authentication while the changed address is rejected. Ten compiled
+startup checks and five mounted process checks pass, along with TypeScript, focused
+lint and VPS compilation. The first regression version occupied the process's single-use
+global installation slot and made an existing test fail; it now uses the existing
+injected installation/handler seam, preserving the production safeguard.
+Mounted checks also show that revoking the secondary token leaves the primary token
+usable, while revoking the shared owner grant denies the primary token. This is
+application-level behavior, not proof of Cloudflare-wide logout or browser cookies.
+Independent source-only re-review confirms the capture finding is resolved and
+reports no new concrete defect; the reviewer performed no live operations.
 
 ### Reuse decision
 
