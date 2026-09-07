@@ -8,6 +8,17 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Project source settings now have durable storage:** Migration 0063 and
+`PostgresNewsSourceSettings` retain the upstream source fields plus enabled state,
+with project scope, authenticated revisions, expected-version writes and pagination.
+Tests cover restart, disable, exact replay, conflicting/stale writes, scope separation,
+wrong keys, immutability and more than 50 sources. A setting creates no job or fetch.
+The schema fingerprint was regenerated from the migrated test database. No web/runtime
+permissions or production migration were applied; owner UI/service wiring is next.
+The 299-entry delivery lane, final focused pagination test, database-role checks,
+types, lint and VPS compilation pass. Independent source review found no concrete
+defect. Work remains local; no GitHub writes, deployment or live source calls.
+
 **Query-based feeds now pass the complete local collection path:** Reader,
 configuration, result and baseline storage share a dedicated public HTTPS endpoint
 schema that preserves query selectors. Article canonical identity rules are unchanged.

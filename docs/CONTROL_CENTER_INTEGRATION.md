@@ -116,6 +116,14 @@ review-only. Canonical-page verification and article-to-agent task acceptance re
 
 ## Completion gates
 
+Source setting persistence now uses PostgreSQL migration 0063 and
+`PostgresNewsSourceSettings`: upstream id/name/url plus enabled, scoped by project,
+with authenticated revisions and expected-version writes. Restart, disable, conflicts,
+scope isolation and paginated listing are tested. This replaces neither source
+authority nor scheduling. No web/runtime grants or UI route have been enabled yet.
+Reason for this adapter rather than upstream settings persistence: one shared private
+PostgreSQL authority and project/session permissions, not machine-local global settings.
+
 Article action connection: the existing authenticated prepare/save flow now exposes
 research, setup guide, product comparison and article draft, using the existing
 ABS action/proposal catalog and ordinary project tasks. Four-action tests save and

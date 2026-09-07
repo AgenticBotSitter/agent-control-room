@@ -4,6 +4,7 @@ import { createIndustrySourceReader } from "../src/vendor/control-center/source-
 import { safeFetchText } from "../src/vendor/control-center/safe-fetch";
 import { createControlCenterCollectionReader } from "../src/project-adapters/abs-news/v1/control-center-reader";
 import { absNewsCanonicalUrlSchemaV1, absNewsDiscoveryEndpointSchemaV1 } from "../src/project-adapters/abs-news/v1/schemas";
+import { PostgresNewsSourceSettings } from "../src/project-adapters/abs-news/v1/source-settings";
 import { AbsControlCenterIngestion } from "../src/project-adapters/abs-news/v1/control-center-ingestion";
 import { PostgresAbsNewsStoreV1 } from "../src/project-adapters/abs-news/v1/postgres-store";
 import { WebNewsService } from "../src/web/v1/news-service";
@@ -13,6 +14,33 @@ import type { DatabaseClient } from "../src/persistence/database";
 
 const source = { id: "source:borrowed", name: "Example", url: "https://example.org/feed" };
 const observed = new Date(now).toISOString();
+
+test("source settings persist upstream fields, disable without fetching, and reject lost updates", async t => {
+  const f = await taskFixture(); t.after(() => f.db.close());
+  const scope = { tenantId: "tenant:web", workspaceId: "workspace:web", projectId: f.project.projectId }, key = new Uint8Array(32).fill(28);
+  const settings = new PostgresNewsSourceSettings(f.client, scope, key), value = { ...source, enabled: true };
+  const first = await settings.save(value, 0, observed);
+  assert.equal(first.startsWork, false); assert.equal(first.record.revision, 1);
+  assert.equal((await settings.save(value, 0, observed)).replayed, true);
+  await assert.rejects(settings.save({ ...value, name: "Other" }, 0, observed), /conflict/);
+  const later = new Date(now + 1000).toISOString();
+  const disabled = await settings.save({ ...value, enabled: false }, 1, later);
+  assert.equal(disabled.record.revision, 2);
+  const restarted = new PostgresNewsSourceSettings(f.client, scope, key);
+  assert.deepEqual(await restarted.get(source.id), disabled.record);
+  assert.deepEqual((await restarted.list()).sources, [disabled.record]);
+  await assert.rejects(settings.save(value, 2, observed), /stale/);
+  assert.equal(await new PostgresNewsSourceSettings(f.client, { ...scope, projectId: "project:other" }, key).get(source.id), undefined);
+  await assert.rejects(new PostgresNewsSourceSettings(f.client, scope, new Uint8Array(32)).get(source.id), /integrity_failed/);
+  for (const sql of ["UPDATE control_abs_source_settings SET payload=payload", "DELETE FROM control_abs_source_settings", "TRUNCATE control_abs_source_settings"])
+    await assert.rejects(f.client.query(sql));
+  assert.equal((await f.client.query("SELECT * FROM control_jobs")).rows.length, 0);
+  assert.equal((await f.client.query("SELECT * FROM control_abs_source_observations")).rows.length, 0);
+  for (let i = 0; i < 50; i++) await settings.save({ ...value, id: `source:extra:${String(i).padStart(2, "0")}` }, 0, later);
+  const firstPage = await restarted.list(); assert.equal(firstPage.sources.length, 50); assert.ok(firstPage.nextCursor);
+  const lastPage = await restarted.list(firstPage.nextCursor!); assert.equal(lastPage.sources.length, 1); assert.equal(lastPage.nextCursor, null);
+  assert.equal(new Set([...firstPage.sources, ...lastPage.sources].map(row => row.source.id)).size, 51);
+});
 
 test("query-bearing source and discovered feed pass the complete borrowed collection path without changing story identity", async t => {
   const f = await taskFixture(); t.after(() => f.db.close());
