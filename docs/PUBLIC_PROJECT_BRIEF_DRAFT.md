@@ -36,9 +36,10 @@ tree has implemented project/task interfaces, queue integration, connector compo
 result/review flows and extensive automated tests using disposable or simulated resources.
 Those results do not establish live compatibility on your machine.
 
-An isolated source candidate passes its standalone type check, build and 47 selected
-compiled integration tests on macOS. The browser demo still lacks a supported start
-command. Real multi-machine operation and recovery acceptance remain unfinished.
+The isolated source candidate includes an explicit `pnpm demo` command for a local,
+disposable project/task/sample/revision experience. It passes strict type checking,
+28 demo tests and two compiled-demo tests on macOS. Real listener/browser acceptance
+and multi-machine operation remain unfinished.
 No working public download, supported agent-runtime version or release date is announced here.
 
 ## Contributor starting points

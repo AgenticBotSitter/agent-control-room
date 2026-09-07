@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Expanded candidate retains all 47 compiled regressions:** Its full selected standalone
+build/test command passes after demo integration. Contributor setup and README now
+describe the explicit launch command, terminal code, revision/history behavior,
+15-minute disposable login, shutdown and platform limitations. Candidate-specific
+docs are retained in the reconstruction delta. No actual listener/browser acceptance
+or independent privacy/rights clearance is claimed by these automated tests.
+
 **Expanded isolated contributor candidate passes demo checks:** Fifty required source
 files and three serving updates are staged without replacing candidate schema/privacy
 adaptations or licensing. Exact source additions match byte-for-byte. Strict types,

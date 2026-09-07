@@ -2,6 +2,13 @@
 
 ## Expanded isolated demo rehearsal (2026-09-06)
 
+Follow-up: the full selected standalone command also builds successfully and passes
+all 47 compiled integration tests in the expanded candidate. README/SETUP now explain
+the actual demo command and limitations; both candidate-specific document bodies are
+preserved in the reconstruction delta (four adapted bodies total). No browser or
+physical listener was used. Existing middleware deprecation warnings remain; the
+passing build does not warrant an unrelated framework migration during release prep.
+
 The existing candidate now contains the 50 missing tracked source files from
 `40d3b98`, plus updated asset loader, Node handler and serving lifecycle. All 50
 additions were byte-compared against source with zero differences. Candidate

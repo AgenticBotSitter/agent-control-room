@@ -2,7 +2,7 @@
 
 This candidate is not yet a published release. Original code is licensed under Apache-2.0;
 third-party licenses remain applicable. These instructions cover
-source compilation and compiled synthetic integration tests, not a live installation.
+the disposable local demo and synthetic integration tests, not a production installation.
 
 ## Requirements
 
@@ -15,12 +15,19 @@ From this source directory:
 ```sh
 CI=true pnpm install --frozen-lockfile
 pnpm check
+pnpm check:demo
+pnpm test:demo
+pnpm test:build:demo
 pnpm test
 ```
 
 If pnpm is not installed, `npx --yes pnpm@11.19.0` can replace `pnpm` in the commands
 above. It may download the pinned package manager; do not substitute the newest release.
 Keep the lockfile and disabled dependency-build policy unchanged.
+
+In Windows PowerShell, set `$env:CI = "true"` and then run
+`pnpm install --frozen-lockfile` instead of the Unix-style first line. The current
+isolated rehearsal is on macOS; Windows and Linux installation acceptance is pending.
 
 `pnpm check` checks the standalone TypeScript source. `pnpm test` builds the standalone
 application and runs its selected compiled integration tests with synthetic/disposable
@@ -37,11 +44,41 @@ The output is `dist-vps`. A successful build does not configure a running applic
 The operational launcher requires trusted operator configuration and real resources;
 do not use it as a demo quick start or supply fake production credentials.
 
-## Not ready yet
+## Try the disposable demo
 
-The browser demonstration and its startup/shutdown instructions are not complete in
-this candidate. There is no supported `pnpm dev` or `pnpm start` command here. Hermes
-and Codex live compatibility, PostgreSQL deployment, owner login, approval key custody
+After preparing dependencies, run:
+
+```sh
+pnpm demo
+```
+
+The command builds the browser files and starts the demo at
+`http://127.0.0.1:3000/local-preview`. It listens only on this computer. If port
+3000 is occupied, stop your own conflicting server or use a separate session later;
+the launcher will not stop another application or select a different port.
+
+The terminal prints a one-time code after startup. Paste it into the page's
+**One-time owner code** field. Keep it out of shared screenshots, logs and issues.
+No Keychain access, agent credentials, paid provider or production database is needed.
+
+Create a project, save a proposed task, open it and choose **Simulate this task**.
+Inspect the labelled sample, enter feedback and request a revised sample. Earlier
+samples remain available; reopening the task reads history without rerunning work.
+Feedback is reproduced as sample text, not executed by an agent.
+
+Press Ctrl+C in the launch terminal to stop the server and remove this session's
+temporary database. SIGTERM uses the same cleanup. A forced kill or crash can leave
+temporary data; a cleanup warning means deletion was not confirmed. Do not store
+important work in this demo. The current demo login lasts 15 minutes; after expiry,
+restart for a fresh disposable session and code. This is not the planned production
+login experience.
+
+## Still awaiting acceptance
+
+The demo command and its simulated flow pass automated tests, but real listener and
+browser acceptance are not yet complete. There is no supported `pnpm dev` or
+`pnpm start` command here. Hermes and Codex live compatibility, PostgreSQL deployment,
+production owner login, approval key custody
 and independent integrity storage require separate configuration and acceptance.
 
 Tests of simulated behavior do not prove live-agent compatibility or production safety.
@@ -57,6 +94,7 @@ automatic deployment, secrets or self-hosted public-PR runners without maintaine
 ## Local cleanup
 
 Stop any process you explicitly started before cleaning its data. Preserve your source
-edits. Dependencies (`node_modules`) and generated output (`dist-vps`) can be recreated;
+edits. Dependencies (`node_modules`) and generated output (`dist-vps` and
+`dist-contributor`) can be recreated;
 inspect exact paths before removing them. Do not delete a shared package cache, home
 directory or another checkout. Temporary rehearsal logs are not release content.
