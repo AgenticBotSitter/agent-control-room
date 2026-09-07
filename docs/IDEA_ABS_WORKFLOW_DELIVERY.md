@@ -376,3 +376,18 @@ captured method ownership, alias rejection, and failed/stalled cleanup. These te
 serialized PGlite and do not establish physical cancellation or independent PostgreSQL
 connections. A real runtime role/preflight and trusted bootstrap must still be added;
 the configuration type is not permission to supply unverified resources or live credentials.
+
+Runtime database update: `idea_runtime_roles.sql` is an offline-only, separate NOLOGIN
+permission template. `verifyIdeaRuntimeDatabase` reuses the existing exact schema,
+login, effective-permission and owner-binding preflight. The writer can insert only
+contributions and append-only run history, with workspace lock-column permission. It
+can read existing owner decisions to refuse contributions after a decision, but cannot
+write them, owner permits, projects, sessions, synthesis or jobs. Explicit queue coexistence
+still requires zero queue privileges. SQL rights are table-scoped; tenant/run authority
+and HMAC checks remain application responsibilities, not claims of row-level isolation.
+
+Restricted-login tests execute the existing fake coordinator and retain its contributions;
+negative checks cover unrelated writes, changed permissions and queue access. PGlite's
+documented TEMP-metadata exception is test-only. Live authority-store ports require their
+own verified composition; this runtime role deliberately does not grant admission or
+qualification mutation rights. No production grant, pool opening or activation occurred.

@@ -8,6 +8,18 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Discussion runtime SQL role and exact preflight added:** The offline template permits
+contribution/run-event inserts and stable workspace locking, but not session creation,
+synthesis/decision/permit/project/job writes or queue access. Read-only decisions access
+is required by the existing contribution store's already-decided check; a restricted-login
+test caught that missing read and it was corrected without granting decision writes.
+Twenty role/preflight regression checks, TypeScript and focused lint pass. Independent
+source review found no concrete defect. Tests use disposable PGlite and a deterministic
+driver, not native providers or real PostgreSQL. The final three-test runtime rerun
+also retains eight contributions across two rounds. No production role was provisioned.
+Trusted bootstrap ownership of accepted live authority/provider ports remains next;
+browser Start, synthesis, news ingestion and real-agent acceptance are still open.
+
 **Discussion execution now has optional managed lifecycle ownership:** The existing task
 lifecycle can own a separately verified Idea runtime pool and captured provider/authority
 ports, exposing the start operation through the existing application. Shutdown refuses

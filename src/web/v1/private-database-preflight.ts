@@ -35,6 +35,10 @@ const ideaCreationInserts = new Set(["control_web_sessions", "control_idea_sessi
   "control_policy_decisions", "control_idea_owner_authorizations", "control_idea_decisions", "projects", "control_project_lifecycle_events"]);
 const ideaCreationUpdates: Record<string, readonly string[]> = { workspaces: ["web_lock"], control_identities: ["web_lock"],
   control_role_grants: ["web_lock"], control_web_sessions: ["revoked_at"], control_audit_chain_heads: ["head_hash", "event_count", "updated_at"] };
+const ideaRuntimeReads = ["workspaces", "control_identities", "control_role_grants", "control_idea_sessions",
+  "control_idea_contributions", "control_idea_bot_run_events", "control_idea_decisions"];
+const ideaRuntimeInserts = new Set(["control_idea_contributions", "control_idea_bot_run_events"]);
+const ideaRuntimeUpdates: Record<string, readonly string[]> = { workspaces: ["web_lock"] };
 const coordinatorReads = ["tenants", "workspaces", "control_identities", "control_role_grants", "control_web_sessions",
   "projects", "control_manual_project_heads", "control_requests", "control_workflows", "control_jobs",
   "control_attempts", "control_leases", "control_task_execution_plans", "control_nodes", "control_node_keys",
@@ -118,10 +122,16 @@ export async function verifyPrivateDatabase(db: DatabaseClient, config: PrivateP
   return verifyDatabase(db, config, scope, now, "web", queue);
 }
 
-/** Fixed session-creation profile: no participant result, decision, job, queue or execution writes. */
+/** Owner Idea commands: no participant result, job, queue or provider execution writes. */
 export async function verifyIdeaCreationDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,
   scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, queue?: NativeQueueDatabaseOption) {
   return verifyDatabase(db, config, scope, now, "ideas", queue);
+}
+
+/** Discussion writer only. Cannot create sessions, authorize decisions or dispatch jobs. */
+export async function verifyIdeaRuntimeDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,
+  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, queue?: NativeQueueDatabaseOption) {
+  return verifyDatabase(db, config, scope, now, "ideaRuntime", queue);
 }
 
 /** Exact task-coordinator profile. No request-selected role or caller-supplied permission policy. */
@@ -186,12 +196,12 @@ async function verifySession(tx: DatabaseSession, config: PrivatePostgresConfigu
 }
 
 async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,
-  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, kind: "web" | "coordinator" | "results" | "evidence" | "sessions" | "ideas", queue?: NativeQueueDatabaseOption) {
+  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, kind: "web" | "coordinator" | "results" | "evidence" | "sessions" | "ideas" | "ideaRuntime", queue?: NativeQueueDatabaseOption) {
   const withQueue = queue?.nativeQueue === true;
-  const role = { web: "control_room_private_web", coordinator: "control_room_task_coordinator", results: "control_room_native_results", evidence: "control_room_native_evidence", sessions: "control_room_native_sessions", ideas: "control_room_idea_creation" }[kind];
-  const allowedReads = kind === "ideas" ? ideaCreationReads : kind === "sessions" ? sessionReads : kind === "evidence" ? evidenceReads : kind === "results" ? resultReads : kind === "coordinator" ? coordinatorReads : privateWebReadTables;
-  const allowedInserts = kind === "ideas" ? ideaCreationInserts : kind === "sessions" ? sessionInserts : kind === "evidence" ? evidenceInserts : kind === "results" ? resultInserts : kind === "coordinator" ? coordinatorInserts : inserts;
-  const allowedUpdates = kind === "ideas" ? ideaCreationUpdates : kind === "sessions" ? sessionUpdates : kind === "evidence" ? evidenceUpdates : kind === "results" ? resultUpdates : kind === "coordinator" ? coordinatorUpdates : updates;
+  const role = { web: "control_room_private_web", coordinator: "control_room_task_coordinator", results: "control_room_native_results", evidence: "control_room_native_evidence", sessions: "control_room_native_sessions", ideas: "control_room_idea_creation", ideaRuntime: "control_room_idea_runtime" }[kind];
+  const allowedReads = kind === "ideaRuntime" ? ideaRuntimeReads : kind === "ideas" ? ideaCreationReads : kind === "sessions" ? sessionReads : kind === "evidence" ? evidenceReads : kind === "results" ? resultReads : kind === "coordinator" ? coordinatorReads : privateWebReadTables;
+  const allowedInserts = kind === "ideaRuntime" ? ideaRuntimeInserts : kind === "ideas" ? ideaCreationInserts : kind === "sessions" ? sessionInserts : kind === "evidence" ? evidenceInserts : kind === "results" ? resultInserts : kind === "coordinator" ? coordinatorInserts : inserts;
+  const allowedUpdates = kind === "ideaRuntime" ? ideaRuntimeUpdates : kind === "ideas" ? ideaCreationUpdates : kind === "sessions" ? sessionUpdates : kind === "evidence" ? evidenceUpdates : kind === "results" ? resultUpdates : kind === "coordinator" ? coordinatorUpdates : updates;
   try {
     await db.transaction(async tx => {
       await verifySession(tx, config, role);
