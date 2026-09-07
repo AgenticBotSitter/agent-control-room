@@ -13,6 +13,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { CompletionGatePanel } from "../app/components/completion-gate-panel";
 import { readCompletionSubjectViewV1 } from "../src/completion-gate/v1/subject-view";
 import { seedWebIdea, webIdeaKey } from "./helpers/web-idea-project";
+import { scriptedEtcdCheckpoint } from "./helpers/scripted-etcd-checkpoint";
 
 test("fresh project proposal can anchor an explicitly synthetic result and revision without fabricating native execution", async t => {
   const f = await taskFixture(); t.after(() => f.db.close());
@@ -25,9 +26,12 @@ test("fresh project proposal can anchor an explicitly synthetic result and revis
   assert.deepEqual(source.attempts, []);
   const tenantId = "tenant:web", projectId = f.project.projectId;
   const at = (seconds: number) => new Date(Date.parse(source.observedAt) + seconds * 1000).toISOString();
-  const store = new CompletionGateStoreV1(f.client, new Uint8Array(32).fill(49),
-    new InMemoryRollbackCheckpointStoreV1({ testOnly: true }), () => at(0));
-  await store.provisionTenant(tenantId);
+  // Bootstrap only in the disposable fixture, then exercise the real etcd port
+  // against a scripted RPC peer for every profile, result, revision and review.
+  const bootstrap = new InMemoryRollbackCheckpointStoreV1({ testOnly: true });
+  await new CompletionGateStoreV1(f.client, new Uint8Array(32).fill(49), bootstrap, () => at(0)).provisionTenant(tenantId);
+  const peer = scriptedEtcdCheckpoint(bootstrap.read(`completion-gate:${tenantId}`)!);
+  let store = new CompletionGateStoreV1(f.client, new Uint8Array(32).fill(49), peer.open(), () => at(0));
   const profile: CompletionAcceptanceProfileV1 = {
     schemaVersion: "control-room-completion-gate/v1", id: "profile:synthetic-preview", tenantId, projectId,
     name: "Synthetic preview document", targetKind: "document", requiredVerificationScenarioIds: ["scenario:content"],
@@ -171,6 +175,25 @@ test("fresh project proposal can anchor an explicitly synthetic result and revis
   await assert.rejects(readCompletionSubjectViewV1({ inspectSubject: async () => { invalidRead = true; return inspection; } },
     { ...scope, subjectLabel: "api_key=synthetic-example-only" }));
   assert.equal(invalidRead, false);
+  // Reconstruct both service and adapter over retained SQL and peer state. This
+  // proves readback composition, not process restart or real etcd durability.
+  const beforeReopen = peer.stats();
+  store = new CompletionGateStoreV1(f.client, new Uint8Array(32).fill(49), peer.open(), () => at(0));
+  assert.equal((await store.snapshot(tenantId, revised.id)).status, "ready");
+  assert.equal((await store.recordReview(acceptance)).replayed, true);
+  assert.equal(peer.stats().writes, beforeReopen.writes);
+  assert.ok(peer.stats().reads > beforeReopen.reads);
+
+  // A successful external CAS with a lost acknowledgement rolls SQL back and
+  // makes the resulting disagreement visible. It must not become a green review
+  // or trigger a second write. Recovery requires a separately reviewed procedure.
+  const beforeUncertainty = peer.stats().writes;
+  peer.loseNextWriteReply();
+  await assert.rejects(store.registerProfile({ ...profile, id: "profile:uncertain-write" }));
+  assert.equal(peer.stats().writes, beforeUncertainty + 1);
+  assert.equal((await f.db.query<{ n: number }>("SELECT count(*)::int AS n FROM control_completion_gate_records WHERE id=$1", ["profile:uncertain-write"])).rows[0].n, 0);
+  await assert.rejects(store.snapshot(tenantId, revised.id));
+  assert.equal(peer.stats().writes, beforeUncertainty + 1);
   // Reusing completion storage must not turn the demonstration into an operational run.
   assert.deepEqual(await f.tasks.detail(f.identity, projectId, receipt.jobId), source);
   for (const table of ["control_attempts", "control_leases", "control_harness_runs", "control_native_artifact_receipts", "control_effect_intents"])

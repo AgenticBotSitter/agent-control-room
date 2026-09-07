@@ -8,6 +8,21 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Full local regression and actual review-store/etcd-port rehearsal passed:** The
+fresh-project synthetic result/revision/independent-acceptance test now uses the actual
+Completion Gate store with the scoped etcd adapter and a scripted exact-CAS RPC peer.
+Reconstructed service/adapter readback and replay preserve accepted state without a
+new write. A committed external CAS whose acknowledgement is lost rolls SQL back and
+causes subsequent integrity reads to fail; there is no automatic repair or second CAS.
+The first new SQL assertion used the wrong table name; correcting the test to the
+existing generic record table made the rollback assertion pass. This is disposable
+PGlite/scripted-peer evidence, not etcd durability or process-restart qualification.
+Full default lifecycle: **3,146 passed, two existing skips, zero failures/cancellations**
+(775 + 1,890 + 481 passes). Seven new preview tests passed separately; they were added
+to posttest after this full run started, so are not included in that total. Both strict
+type checks, focused lint and all 38 selected review/checkpoint/task tests pass.
+Log: `/private/tmp/cr-local-preview-regression.obMY4B`. No external service or GitHub write.
+
 **Completion checkpoint port composed with existing etcd access:**
 `createEtcdCompletionCheckpointStoreV1` now supplies the awaited completion-store port
 using the existing bounded exact-key range/CAS implementation. It captures one trusted
