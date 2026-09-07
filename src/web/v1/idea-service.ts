@@ -15,7 +15,7 @@ export class WebIdeaService {
   private readonly key?: Uint8Array;
   constructor(db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     integrityKey?: Uint8Array, clock: () => number = Date.now, private readonly creationConfigured = false, private readonly stopConfigured = false,
-    private readonly decisionConfigured = false, private readonly startConfigured = false) {
+    private readonly decisionConfigured = false, private readonly startConfigured = false, private readonly synthesisConfigured = false) {
     this.authority = new WebSessionAuthority(db, scope, clock, "idea_lab_session");
     if (integrityKey !== undefined) {
       if (!(integrityKey instanceof Uint8Array) || integrityKey.length !== 32) throw new Error("idea_key_invalid");
@@ -65,6 +65,8 @@ export class WebIdeaService {
       const canDecide = this.decisionConfigured && !!synthesis && !decision && (!run || run.state === "completed")
         && actor.can("idea_lab.owner_decide", undefined, true);
       return { session, contributions, synthesis: synthesis ?? null, decision: decision ?? null, canDecide,
+        canSynthesize: this.synthesisConfigured && !!run && run.state === "completed" && !synthesis && !decision
+          && contributions.length === session.maxMessages && actor.can("idea_lab.synthesize", undefined, true),
         canStart: this.startConfigured && !run && !synthesis && !decision && !contributions.length
           && actor.can("idea_lab.panel_start", undefined, true),
         canPromote: canDecide && actor.can("projects.create", undefined, true),

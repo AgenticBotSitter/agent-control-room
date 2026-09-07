@@ -115,7 +115,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const news = new WebNewsService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
     { integrityKey: options.news?.integrityKey, ideaIntegrityKey: options.ideaProjects?.integrityKey }, clock);
   const ideas = new WebIdeaService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
-    options.ideaProjects?.integrityKey, clock, !!ideaCreation, !!ideaCreation?.stop, !!ideaCreation?.decide, !!ideaCreation?.start);
+    options.ideaProjects?.integrityKey, clock, !!ideaCreation, !!ideaCreation?.stop, !!ideaCreation?.decide, !!ideaCreation?.start, !!ideaCreation?.synthesize);
   const ownerReviews = options.tasks?.ownerReviews ? new WebTaskReviewService(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, { ...options.tasks.ownerReviews,
       harnessIntegrityKey: options.tasks.harnessIntegrityKey, results: options.tasks.results!, ideaIntegrityKey: options.ideaProjects?.integrityKey }, clock) : undefined;

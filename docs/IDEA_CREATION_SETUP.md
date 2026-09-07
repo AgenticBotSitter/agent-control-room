@@ -97,6 +97,11 @@ After authorized real setup, verify `/ideas` offers New idea for the scoped owne
 and reopen a harmless draft, confirm a retry returns the original session, and confirm
 logout revokes access. None of those production checks has run in this block.
 The owner decision command is mounted by the managed Idea resource after preflight.
+For a completed full panel without a recap, the detail page offers **Prepare recap**
+when the owner has current synthesis permission. It reads saved replies without another
+provider call. An uncertain response can be recovered by refreshing or explicitly trying
+the same recap again; the server returns the retained recap rather than creating a second
+discussion. The recap is extractive, not an AI consensus or measured business validation.
 The private detail page offers a choice form when a synthesis exists, no decision is
 already saved, any retained run is complete, and current owner permissions allow it.
 Project creation is a separately permission-checked option. Multi-bot execution remains

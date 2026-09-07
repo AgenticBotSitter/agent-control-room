@@ -8,6 +8,7 @@ import { IdeaCreateForm } from "./idea-create-form";
 import { IdeaStopControl } from "./idea-stop-control";
 import { IdeaDecisionForm } from "./idea-decision-form";
 import { IdeaStartControl } from "./idea-start-control";
+import { IdeaSynthesisControl } from "./idea-synthesis-control";
 
 export function IdeaDiscussion({ detail, refresh, pendingChanged }: { detail: IdeaDetail; refresh?: () => void; pendingChanged?: (held: boolean) => void }) {
   const { session, contributions, synthesis, decision, run } = detail;
@@ -38,9 +39,11 @@ export function IdeaDiscussion({ detail, refresh, pendingChanged }: { detail: Id
             <p>Suggested experiment: {contribution.suggestedExperiment}</p><p>{contribution.sourceMode === "injected_only" ? "Test confidence" : "Bot-reported confidence"}: {contribution.confidencePercent}%</p></>
             : <p>No contribution saved for this round.</p>}</article>;
       })}</section>)}
-    <section className="private-panel"><h2>Synthesis</h2>{synthesis ? <><p>{synthesis.executiveSummary}</p>
+    <section className="private-panel"><h2>Discussion recap</h2>{synthesis ? <><p style={{ whiteSpace: "pre-wrap" }}>{synthesis.executiveSummary}</p>
       <p>Advisory score: {synthesis.overallScore}/100 — not a prediction of business success.</p>
-      <p>Next experiment: {synthesis.nextExperiment}</p></> : <p>No synthesis saved yet.</p>}</section>
+      <p>Proposed experiment: {synthesis.nextExperiment}</p></> : detail.canSynthesize && run
+        ? <IdeaSynthesisControl key={run.runId} sessionId={session.sessionId} sessionDigest={session.sessionDigest} runId={run.runId} refresh={refresh} />
+        : <p>No recap saved yet. Preparing one requires a completed discussion and current owner access.</p>}</section>
     <section className="private-panel"><h2>Your decision</h2>{decision ? <>
       <p>{decision.decision === "create_project" ? "Promoted to a project" : decision.decision === "save" ? "Saved for later" : "Rejected"}</p>
       {decision.project ? <a href={`/projects/${encodeURIComponent(decision.project.projectId)}`}>Open project workspace</a> : null}

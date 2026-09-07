@@ -24,6 +24,10 @@ export const ideaStartReceiptSchema = z.object({ sessionId: id, sessionDigest: d
   replayed: z.boolean(), providerContacted: z.boolean(), retryPermitted: z.literal(false),
 }).strict();
 export type IdeaStartReceipt = z.infer<typeof ideaStartReceiptSchema>;
+export const ideaSynthesisDraftSchema = z.object({ sessionDigest: digest, runId: id }).strict();
+export const ideaSynthesisReceiptSchema = z.object({ sessionId: id, sessionDigest: digest, runId: id, synthesisDigest: digest,
+  replayed: z.boolean(), startsWork: z.literal(false) }).strict();
+export type IdeaSynthesisReceipt = z.infer<typeof ideaSynthesisReceiptSchema>;
 export const ideaDecisionDraftSchema = z.object({ sessionDigest: digest, synthesisDigest: digest,
   intent: ideaOwnerIntentSchemaV1 }).strict().refine(v => (v.intent.decision === "create_project") === !!v.intent.project);
 export const ideaDecisionReceiptSchema = z.object({ sessionId: id, sessionDigest: digest, synthesisDigest: digest,
@@ -60,11 +64,13 @@ run: z.object({ runId: id, sessionId: id, sessionDigest: digest,
 }).strict().nullable(),
 decision: z.object({ sessionId: id, sessionDigest: digest, synthesisDigest: digest,
   decision: z.enum(["create_project", "save", "reject"]), project: z.object({ projectId: id }).optional(),
-}).nullable(), canStart: z.boolean(), canStop: z.boolean(), canDecide: z.boolean(), canPromote: z.boolean(), execution: z.enum(["not_configured", "authorization_required"]), observedAt: z.string().datetime(),
+}).nullable(), canSynthesize: z.boolean(), canStart: z.boolean(), canStop: z.boolean(), canDecide: z.boolean(), canPromote: z.boolean(), execution: z.enum(["not_configured", "authorization_required"]), observedAt: z.string().datetime(),
 }).strict().refine(value => {
   const { session, contributions, synthesis, decision, run } = value;
   return new Set(contributions.map(c => `${c.round}:${c.participantId}`)).size === contributions.length
     && (!value.canStart || value.execution === "authorization_required" && !run && !synthesis && !decision && !contributions.length)
+    && (!value.canSynthesize || !!run && run.state === "completed" && !synthesis && !decision
+      && contributions.length === session.maxRounds * session.participants.length)
     && (!value.canPromote || value.canDecide)
     && (!value.canDecide || !!synthesis && !decision && (!run || run.state === "completed"))
     && (!run || run.sessionId === session.sessionId && run.sessionDigest === session.sessionDigest

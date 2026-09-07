@@ -25,6 +25,22 @@ Branch: `codex/idea-abs-workflows`. Public release remains a separate reviewed s
 
 ## Evidence and scope
 
+### Completed-discussion recap control
+
+The private detail page now offers Prepare recap only when the server operation is
+configured, the run is completed with full contributions, no recap or decision exists,
+and the owner currently has synthesis permission. The client submits only saved run and
+session digests, validates the exact receipt and never retries automatically. The recap
+uses saved final-turn excerpts, not another provider call or an AI consensus. The page
+refresh exposes the existing explicit project/save/reject decision.
+
+Twenty-nine focused tests cover lost HTTP response followed by explicit replay, invalid
+input and receipt scope, overlapping client requests and eligibility/static rendering.
+The 61-test regression suite, 12 compiled checks, TypeScript, focused lint and VPS build
+pass. A stale Synthesis heading assertion was corrected to Discussion recap. Independent
+source review found no concrete introduced defect; mounted-browser interaction and
+real-provider acceptance remain unproven. No deployment, preview or live calls occurred.
+
 ### Between-turn live authority and time checks
 
 Inspection before live start composition found that the coordinator validated admission

@@ -8,6 +8,17 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Prepare recap now available on eligible completed discussions:** The private page
+offers an explicit saved-replies-only recap action, then refreshes into the existing owner
+decision form. The client checks the exact session/run receipt and makes no automatic
+retry. Injected HTTP response-loss testing recovers the original recap on explicit retry
+without another bot call. Twenty-nine focused checks, 61 Idea/ABS regressions, 12 compiled
+checks, TypeScript, focused lint and VPS compilation pass. One older heading assertion
+was updated from Synthesis to Discussion recap. Independent source review found no
+concrete introduced defect. Static rendering and injected HTTP are not mounted-browser
+or native-agent acceptance. The Sites skill preserved existing controls and local-only
+hosting; no preview or deployment. ABS feed ingestion and real-agent journeys remain open.
+
 **Recap operation connected to managed owner commands:** The existing Idea command
 resource now owns synthesis requests with captured input, shared admission and guarded
 transactions. Its exact SQL profile adds synthesis INSERT only, not contribution writes

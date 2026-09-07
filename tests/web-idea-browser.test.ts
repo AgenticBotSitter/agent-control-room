@@ -22,7 +22,7 @@ test("Idea browser client renders retained round contributions, synthesis and pr
   const client = createIdeaBrowserClient(transport), page = await client.list(), id = page.sessions[0].sessionId;
   const detail = await client.detail(id), html = renderToStaticMarkup(createElement(IdeaDiscussion, { detail }));
   for (const p of detail.session.participants) assert.ok(html.includes(p.displayName));
-  assert.ok(html.includes("Round 1")); assert.ok(html.includes("Synthesis"));
+  assert.ok(html.includes("Round 1")); assert.ok(html.includes("Discussion recap"));
   assert.ok(html.includes("Open project workspace")); assert.ok(html.includes("Test confidence"));
   assert.ok(html.includes("Synthetic test contribution")); assert.ok(!html.includes("Bot-reported confidence"));
   // Rendering-only provider-history variant; this is not provider qualification evidence.

@@ -18,6 +18,11 @@ import { WebIdeaService } from "../src/web/v1/idea-service";
 import { WebIdeaSynthesisOperation } from "../src/web/v1/idea-synthesis-operation";
 import { WebIdeaDecisionOperation } from "../src/web/v1/idea-decision-operation";
 import { CONTROL_ROOM_IDEA_ADAPTER_V1 } from "../src/idea-lab/v1/schemas";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { IdeaDiscussion } from "../private-app/app/idea-workspace";
+import { ideaDetailSchema } from "../src/web/v1/idea-wire";
+import { createIdeaSynthesisClient } from "../src/web/v1/idea-synthesis-client";
 
 const scope = { tenantId: "tenant:web", workspaceId: "workspace:web" }, key = new Uint8Array(32).fill(71);
 const at = (offset = 0) => new Date(now + offset).toISOString();
@@ -167,6 +172,8 @@ test("HTTP start remains unconfigured by default and requires same-origin authen
   t.after(async () => { await closed.close(); await app.close(); });
   const path = `/api/v1/ideas/${encodeURIComponent(f.saved.sessionId)}/start`, body = { sessionDigest: f.saved.sessionDigest };
   const handle = (req: Request) => app.handle(req, () => new Response("shell"));
+  const detail = async () => ideaDetailSchema.parse(await (await handle(request(`/api/v1/ideas/${encodeURIComponent(f.saved.sessionId)}`))).json());
+  assert.equal((await detail()).canSynthesize, false);
   assert.equal((await closed.handle(request(path, "POST", body), () => new Response("shell"))).status, 503);
   const foreign = request(path, "POST", body); foreign.headers.set("origin", "https://other.example");
   assert.equal((await handle(foreign)).status, 403);
@@ -181,12 +188,23 @@ test("HTTP start remains unconfigured by default and requires same-origin authen
   assert.equal(f.counts().calls, 4);
   const recapPath = `/api/v1/ideas/${encodeURIComponent(f.saved.sessionId)}/synthesis`;
   const recapInput = { ...body, runId: `idea-run:${f.saved.sessionDigest.slice(7, 31)}` };
+  const ready = await detail(); assert.equal(ready.canSynthesize, true);
+  assert.ok(renderToStaticMarkup(createElement(IdeaDiscussion, { detail: ready })).includes("Prepare recap"));
   assert.equal((await closed.handle(request(recapPath, "POST", recapInput), () => new Response("shell"))).status, 503);
   const foreignRecap = request(recapPath, "POST", recapInput); foreignRecap.headers.set("origin", "https://other.example");
   assert.equal((await handle(foreignRecap)).status, 403);
   assert.equal((await handle(request(recapPath, "POST", { ...recapInput, executiveSummary: "injected" }))).status, 400);
-  assert.equal((await handle(request(recapPath, "POST", recapInput))).status, 201);
+  let lose = true, recapRequests = 0;
+  const recapClient = createIdeaSynthesisClient(async (url, options) => {
+    recapRequests++; assert.equal(String(url), recapPath);
+    const response = await handle(request(String(url), "POST", JSON.parse(String(options?.body))));
+    if (lose) { lose = false; throw new Error("synthetic lost recap acknowledgement"); } return response;
+  });
+  await assert.rejects(recapClient.synthesize(f.saved.sessionId, recapInput), /uncertain/); assert.equal(recapRequests, 1);
+  assert.equal((await recapClient.synthesize(f.saved.sessionId, recapInput)).replayed, true);
   assert.equal((await handle(request(recapPath, "POST", recapInput))).status, 200);
+  const prepared = await detail(); assert.equal(prepared.canSynthesize, false);
+  assert.ok(!renderToStaticMarkup(createElement(IdeaDiscussion, { detail: prepared })).includes("Prepare recap</button>"));
   assert.equal(f.counts().calls, 4);
   await handle(request("/api/v1/session/logout", "POST"));
   assert.equal((await handle(request(path, "POST", body))).status, 401);
