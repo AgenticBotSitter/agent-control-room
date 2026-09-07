@@ -8,6 +8,10 @@ import { AuditStore } from "../src/audit/audit-store";
 import { runSyntheticExecution, buildTextArtifactBundle } from "../src/node-executor";
 import { CompletionGateStoreV1, type CompletionAcceptanceProfileV1, type CompletionReviewTargetV1 } from "../src/completion-gate/v1";
 import { InMemoryRollbackCheckpointStoreV1, sha256Digest } from "../src/security";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { CompletionGatePanel } from "../app/components/completion-gate-panel";
+import { buildCompletionGateViewModelV1 } from "../src/completion-gate/v1/view-model";
 import { seedWebIdea, webIdeaKey } from "./helpers/web-idea-project";
 
 test("fresh project proposal can anchor an explicitly synthetic result and revision without fabricating native execution", async t => {
@@ -32,6 +36,33 @@ test("fresh project proposal can anchor an explicitly synthetic result and revis
     automaticLowRiskDisposition: false, createdBy: { actorId: "identity:web", actorType: "human" }, createdAt: at(0),
   };
   await store.registerProfile(profile);
+  async function renderStoredReviews() {
+    const inspection = await store.inspectSubject(tenantId, projectId, receipt.jobId);
+    assert.equal(inspection.additionalTargetsOmitted, false);
+    const items = inspection.targets.map(({ snapshot, reviews, verifications, findings, additionalEvidenceOmitted }) => {
+      assert.equal(additionalEvidenceOmitted, false);
+      const target = snapshot.target;
+      return buildCompletionGateViewModelV1({ schemaVersion: profile.schemaVersion,
+        target: { id: target.id, projectId: target.projectId, kind: target.kind, subjectLabel: "Simulated task review",
+          targetDigest: snapshot.targetDigest, revisionNumber: target.revisionNumber, supersedesTargetId: target.supersedesTargetId },
+        snapshot: { status: snapshot.status, acceptedReviewIds: snapshot.acceptedReviewIds,
+          missingVerificationScenarioIds: snapshot.missingVerificationScenarioIds, openFindingIds: snapshot.openFindingIds,
+          requiresSeparateApproval: snapshot.requiresSeparateApproval, grantsApproval: snapshot.grantsApproval,
+          grantsExecutionAuthority: snapshot.grantsExecutionAuthority },
+        reviews: reviews.map(value => ({ id: value.id, authority: value.authority, decision: value.decision,
+          reviewerLabel: "Synthetic owner", effectiveRisk: value.effectiveRisk, evidenceDigests: value.evidenceDigests, reviewedAt: value.reviewedAt })),
+        verifications: verifications.map(value => ({ id: value.id, scenarioId: value.scenarioId, outcome: value.outcome,
+          verifierLabel: "Synthetic verifier", evidenceDigests: value.evidenceDigests, verifiedAt: value.verifiedAt })),
+        findings: findings.map(value => ({ id: value.id, code: value.code, severity: value.severity,
+          statement: "Finding text is not included in this metadata view.", evidenceDigests: value.evidenceDigests, raisedAt: value.raisedAt })),
+        // This disposable rehearsal creates no preferences, previews or operation approval.
+        preferences: [], previews: [], approval: { state: "not_requested" },
+      });
+    });
+    return renderToStaticMarkup(createElement("section", { "aria-label": "Synthetic review rehearsal" },
+      createElement("p", null, "Simulation only — no agent ran."), createElement(CompletionGatePanel, { items })));
+  }
+  assert.match(await renderStoredReviews(), /No Completion Gate targets are visible/);
   const producer = { actorId: "service:synthetic-preview", actorType: "service" as const };
   async function simulate(round: number, text: string) {
     const attemptId = `attempt:simulation:${round}`;
@@ -65,6 +96,7 @@ test("fresh project proposal can anchor an explicitly synthetic result and revis
     acceptanceProfileId: profile.id, acceptanceProfileDigest: sha256Digest(profile), producer,
     rootTargetId: "target:simulation:0", revisionNumber: 0, submittedAt: at(2) };
   await store.registerTarget(target);
+  assert.match(await renderStoredReviews(), /Review in progress/);
   const findingId = "finding:simulation:missing-detail", reviewId = "review:simulation:changes";
   await store.recordReview({ schemaVersion: profile.schemaVersion, id: reviewId, tenantId, projectId,
     targetId: target.id, targetDigest: sha256Digest(target), acceptanceProfileId: profile.id,
@@ -75,6 +107,11 @@ test("fresh project proposal can anchor an explicitly synthetic result and revis
     targetDigest: sha256Digest(target), reviewId, code: "missing_detail", severity: "low",
     statementDigest: sha256Digest("Add a concrete next step"), evidenceDigests: [first.manifest.contentHash], raisedAt: at(3) }]);
   assert.equal((await store.snapshot(tenantId, target.id)).status, "changes_requested");
+  const changesHtml = await renderStoredReviews();
+  assert.match(changesHtml, /Changes requested/);
+  assert.match(changesHtml, /1 open finding/);
+  assert.match(changesHtml, /Simulation only/);
+  assert.doesNotMatch(changesHtml, /Quality review complete/);
   const second = await simulate(1, `SIMULATED REVISION\n${source.task.title}\nNext step: interview one potential user.`);
   assert.notEqual(first.manifest.contentHash, second.manifest.contentHash);
   assert.notEqual(first.manifest.attemptId, second.manifest.attemptId);
@@ -88,6 +125,13 @@ test("fresh project proposal can anchor an explicitly synthetic result and revis
   const pending = await store.snapshot(tenantId, revised.id);
   assert.equal(pending.status, "pending");
   assert.deepEqual(pending.missingVerificationScenarioIds, ["scenario:content"]);
+  const revisedHtml = await renderStoredReviews();
+  assert.match(revisedHtml, /Superseded/);
+  assert.match(revisedHtml, /Revision 1/);
+  assert.match(revisedHtml, /Review in progress/);
+  assert.match(revisedHtml, /Still needed: Scenario Content/);
+  assert.match(revisedHtml, /no execution authority/);
+  assert.doesNotMatch(revisedHtml, /Quality review complete|<button|memory:\/\//);
   // Reusing completion storage must not turn the demonstration into an operational run.
   assert.deepEqual(await f.tasks.detail(f.identity, projectId, receipt.jobId), source);
   for (const table of ["control_attempts", "control_leases", "control_harness_runs", "control_native_artifact_receipts", "control_effect_intents"])

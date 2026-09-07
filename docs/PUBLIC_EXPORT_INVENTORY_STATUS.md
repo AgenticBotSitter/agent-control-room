@@ -2,6 +2,27 @@
 
 ## General completion presentation reuse
 
+Store-to-panel rehearsal: the fresh-project test now reads each stage with the existing
+checkpoint-verified `inspectSubject`, projects those actual records through the general
+view model and server-renders the existing panel. It checks empty state, pending target,
+changes-requested finding, and superseded original plus pending revision/required scenario.
+Simulation labeling and no execution authority remain present; no buttons, raw locators
+or unwarranted quality-complete message appear. No historical `cr8c` UI fixture is used.
+
+This mapping is intentionally test-local: anonymous synthetic principal labels and
+no preferences/previews/operation approval are known properties of this disposable
+rehearsal, not general defaults for operational records. Findings expose a metadata-only
+placeholder, not invented original text. The test asserts no omitted evidence before
+rendering; a runtime view would need to display omissions and authorization explicitly.
+There is still no production store-to-view reader, simulation controller or browser
+interaction. Do not turn this test-local mapping into a trusted public endpoint without
+the actual source authorization, provenance and omitted-evidence behavior.
+Stage-zero, root type checking and targeted lint pass; the task-service and general
+completion panel/view-model selection passes 19 tests with no failures or skips.
+No new full-suite, production build or browser visual acceptance is claimed for this
+test-only rendering addition. Sites guidance was used to preserve the existing local
+site/dependencies; no server, registration or hosting was needed for static test rendering.
+
 Verification at `3322f75`: both source hashes match; all seven focused panel/view-model
 tests pass. The complete default suite also finished with 3,139 passes, two skips and
 zero failures/cancellations across three stages. Local log:

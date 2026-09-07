@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Stored synthetic review lifecycle renders with the existing panel:** The fresh-project
+rehearsal now uses checkpoint-verified records rather than the fixed UI fixture to
+render empty, pending, changes-requested and superseded/revision states. Simulation
+labels and missing-verification state remain honest. This is test-local server rendering,
+not an interactive page or activated endpoint; runtime authorization and commands remain
+unimplemented. Details: `PUBLIC_EXPORT_INVENTORY_STATUS.md`. No dependency/publication change.
+
 **Full regression refreshed at `3322f75`:** The default `pnpm test` command completed
 all three stages: 773 + 1,885 + 481 = **3,139 passed**, two skips, zero failures or
 cancellations. Log: `/private/tmp/cr-fresh-proposal-regression.log`. Includes the
