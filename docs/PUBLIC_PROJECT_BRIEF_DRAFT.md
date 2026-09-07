@@ -38,8 +38,10 @@ Those results do not establish live compatibility on your machine.
 
 The isolated source candidate includes an explicit `pnpm demo` command for a local,
 disposable project/task/sample/revision experience. It passes strict type checking,
-28 demo tests and two compiled-demo tests on macOS. Real listener/browser acceptance
-and multi-machine operation remain unfinished.
+28 demo tests and two compiled-demo tests on macOS. One owner-approved local browser
+trial also completed login, project/task creation, sample revision, refresh recovery,
+separate project tabs and archiving, followed by verified shutdown/data cleanup.
+That is synthetic demo evidence, not live-agent or multi-machine acceptance.
 No working public download, supported agent-runtime version or release date is announced here.
 
 ## Contributor starting points

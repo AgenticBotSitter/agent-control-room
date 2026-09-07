@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Public repository settings refreshed read-only:** The destination remains public
+with only its placeholder README. Actions is disabled; private vulnerability reporting,
+secret scanning and push protection are disabled. No setting or public file changed.
+Release docs now accurately state the completed macOS synthetic browser trial while
+leaving wider platform/accessibility/live-agent claims unfinished. Enabling the
+reporting/protection settings needs the next owner decision; source stays staged.
+
 **Owner-approved real local browser trial completed:** The staged demo accepted its
 disposable login, created a project/task, generated and revised a labelled sample,
 restored both versions after reload, kept a second project separate and archived it.

@@ -75,8 +75,9 @@ login experience.
 
 ## Still awaiting acceptance
 
-The demo command and its simulated flow pass automated tests, but real listener and
-browser acceptance are not yet complete. There is no supported `pnpm dev` or
+The demo command and its simulated flow pass automated tests and one local desktop
+browser trial on macOS, including revision/history and shutdown cleanup. Keyboard,
+mobile and other operating-system acceptance remain incomplete. There is no supported `pnpm dev` or
 `pnpm start` command here. Hermes and Codex live compatibility, PostgreSQL deployment,
 production owner login, approval key custody
 and independent integrity storage require separate configuration and acceptance.

@@ -25,7 +25,8 @@ tracked separately. Do not claim a real agent worked just because a fixture comp
 
 Read [setup](SETUP.md), [work packages](WORK_PACKAGES.md) and the [roadmap](ROADMAP.md).
 The candidate includes check/build/tests and the explicit `pnpm demo` command.
-Actual listener/browser acceptance is still pending; this is not a production release.
+One local macOS desktop browser trial passed; wider platform/accessibility acceptance
+and live operation remain unfinished. This is not a production release.
 
 Start with an issue marked ready and read its acceptance criteria before claiming it.
 Every ready issue should identify:
