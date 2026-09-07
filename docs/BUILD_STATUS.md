@@ -8,6 +8,15 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**First isolated public source candidate staged locally:** 458 tracked files from
+`4667c11` were exported without Git history to the recorded temporary candidate in
+`PUBLIC_CANDIDATE_STAGING.md` (about 7.7 MiB including archive; 101 GiB available first).
+Known private brand matches in the 381-file import closure occur only in a negative
+display assertion, flagged for candidate-only adaptation. This is not full privacy
+clearance. Root scripts still reference unselected tests, and the standalone demo needs
+verification. No dependency download, license grant or public upload. Next: adapt and
+review this actual candidate, not more feature building or another abstract inventory.
+
 **Owner priority reset: public contributor launch before more feature work.** The
 owner explicitly requested a usable public source repository with MVP-first substantial
 work packages. Live inspection confirms `AgenticBotSitter/agent-control-room` is public
