@@ -1,5 +1,12 @@
 # Public contributor launch — remaining work
 
+Publication update: the approved 520-file source snapshot is now public at
+`cc565d2acf33883316a5784fd0c8ba56fe2eb389`, with contributor issues #1–#3.
+Private vulnerability reporting, secret scanning and push protection are enabled;
+Actions remains disabled. See `PUBLIC_SOURCE_PUBLICATION_RECEIPT.md`.
+The pending-publication statements below preserve the pre-publication checklist,
+not current blockers. Optional policies outside the candidate remain unpublished.
+
 This is the current launch checklist. Historical account-creation and undecided-license
 instructions are superseded by the confirmed decisions below. It is not blanket
 publication, deployment or security-setting approval.

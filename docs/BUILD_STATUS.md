@@ -8,6 +8,15 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Public contributor source published:** Owner approved the exact release and repository
+protections. Public main is `cc565d2acf33883316a5784fd0c8ba56fe2eb389`; all 520 remote
+files match the reviewed snapshot. Issues #1–#3 provide browser/accessibility, Windows
+and Linux assignments. Secret scanning, push protection and private vulnerability
+reporting are enabled; Actions remains disabled. No private history or deployment.
+See `PUBLIC_SOURCE_PUBLICATION_RECEIPT.md` for verification and download retention.
+Next: finish the borrow-before-build integration assessment, then resume product work.
+Earlier pending-publication entries below are historical, superseded by this result.
+
 **Release-facing documents finalized locally:** README, contributor guide, setup,
 roadmap, work packages, architecture and third-party scope now describe the actual
 pre-alpha source preview. Independent review covered their exact current bytes and
