@@ -8,6 +8,16 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Demo transport reuses the existing bounded Node bridge:** A separate fixed-origin
+factory supports local cookie login at `http://127.0.0.1:3000`, rejects forwarded
+headers/non-loopback peers, and keeps the common framing, body, response and drain
+limits. The production factory still requires HTTPS and strips request/response cookies;
+it cannot select demo behavior through a request or environment setting. No listener
+is created by either handler factory. Nineteen focused transport/demo tests, both strict
+type configurations, lint and all 47 compiled standalone regression tests pass. A
+physical launcher, static UI build composition and revision workflow remain unfinished;
+no public export, deployment or live listener was performed.
+
 **Simulation panel composed into the existing workspace behind an explicit demo flag:**
 The task page can show simulate/reconcile controls and escaped, untrusted sample text
 using the validated browser clients. The existing Mac preview leaves the flag off;

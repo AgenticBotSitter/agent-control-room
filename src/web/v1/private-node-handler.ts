@@ -16,7 +16,7 @@ const forwarded = new Set(["accept", "accept-language", "cf-access-jwt-assertion
   "next-router-segment-prefetch", "next-url"]);
 class RequestFailure extends Error { constructor(readonly status: number) { super("private_request_rejected"); } }
 
-function requestHead(input: IncomingMessage, origin: string) {
+function requestHead(input: IncomingMessage, origin: string, localDemo: boolean) {
   if (input.socket.remoteAddress !== "127.0.0.1" || input.httpVersion !== "1.1") throw new RequestFailure(403);
   const method = input.method;
   const target = input.url;
@@ -39,9 +39,10 @@ function requestHead(input: IncomingMessage, origin: string) {
       || [...value].some(char => char.charCodeAt(0) < 32 && char !== "\t" || char.charCodeAt(0) === 127)
       || all.has(name)) throw new RequestFailure(400);
     all.set(name, value);
-    if (forwarded.has(name)) headers.set(name, value);
+    if (forwarded.has(name) || localDemo && name === "cookie") headers.set(name, value);
   }
   if (all.get("host") !== new URL(origin).host) throw new RequestFailure(403);
+  if (localDemo && [...all.keys()].some(name => name === "forwarded" || name.startsWith("x-forwarded-"))) throw new RequestFailure(403);
   if (["upgrade", "expect", "trailer", "content-encoding"].some(name => all.has(name))) throw new RequestFailure(400);
   const length = all.get("content-length"), transfer = all.get("transfer-encoding");
   if (length !== undefined && (!/^(0|[1-9][0-9]{0,8})$/.test(length) || transfer !== undefined)
@@ -49,7 +50,8 @@ function requestHead(input: IncomingMessage, origin: string) {
   const expectedLength = length === undefined ? undefined : Number(length);
   // Task endpoints have existing 16/24/32 KiB parsers. The outer transport must not
   // truncate valid task input; endpoint-specific limits and authentication still apply.
-  const bodyLimit = method === "POST" && /^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/.test(url.pathname)
+  const bodyLimit = method === "POST" && (/^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/.test(url.pathname)
+    || localDemo && url.pathname === "/api/v1/local-pilot/workspace")
     ? privateHttpLimits.taskBodyBytes : privateHttpLimits.bodyBytes;
   if (expectedLength !== undefined && expectedLength > bodyLimit) throw new RequestFailure(413);
   if (method !== "POST" && (transfer || expectedLength && expectedLength > 0)) throw new RequestFailure(400);
@@ -82,12 +84,13 @@ function consumeBody(input: IncomingMessage, signal: AbortSignal, expectedLength
   });
 }
 
-async function deliver(output: ServerResponse, response: Response, method: string, signal: AbortSignal) {
+async function deliver(output: ServerResponse, response: Response, method: string, signal: AbortSignal, localDemo: boolean) {
   if (signal.aborted || output.destroyed) { void response.body?.cancel().catch(() => {}); return; }
   output.statusCode = response.status;
   // Runtime owns framing/connection lifetime. Do not relay a handler's hop-by-hop headers or cookies.
   for (const [name, value] of response.headers) {
-    if (!["connection", "transfer-encoding", "keep-alive", "upgrade", "trailer", "set-cookie", "content-length"].includes(name))
+    if (!["connection", "transfer-encoding", "keep-alive", "upgrade", "trailer", "content-length"].includes(name)
+      && (name !== "set-cookie" || localDemo))
       output.setHeader(name, value);
   }
   for (const [name, value] of Object.entries(privateResponseHeaders)) output.setHeader(name, value);
@@ -114,13 +117,30 @@ async function deliver(output: ServerResponse, response: Response, method: strin
 /** No listener, credentials, environment or filesystem access. Supplies a Node-compatible callback.
  * Trusted composition provides the built application and startup-owned immutable client snapshot.
  */
-export function createPrivateNodeHandler(options: {
+interface NodeHandlerOptions {
   origin: string; application: PrivateServingApplication; handler: PrivateBuiltHandler; assets: PrivateClientAssets;
   /** Test-only shortening, never a production extension. */
   timing?: { bodyMs?: number; requestMs?: number; drainMs?: number };
-}) {
+}
+
+export function createPrivateNodeHandler(options: NodeHandlerOptions) {
   const origin = new URL(options.origin);
   if (origin.protocol !== "https:" || origin.origin !== options.origin) throw new Error("private_serving_config_invalid");
+  return createNodeHandler(options, false);
+}
+
+/** Separate local-only composition. Never selected through environment or a request.
+ * The production factory above still strips cookies and requires an HTTPS origin.
+ * This factory is request-only: it does not create a server or bind a listener.
+ */
+export function createContributorDemoNodeHandler(options: NodeHandlerOptions) {
+  if (options.origin !== "http://127.0.0.1:3000") throw new Error("demo_serving_config_invalid");
+  return createNodeHandler(options, true);
+}
+
+function createNodeHandler(options: NodeHandlerOptions, localDemo: boolean) {
+  const origin = new URL(options.origin);
+  if (origin.origin !== options.origin) throw new Error("private_serving_config_invalid");
   const limits = { ...privateHttpLimits, ...options.timing };
   for (const name of ["bodyMs", "requestMs", "drainMs"] as const)
     if (!Number.isSafeInteger(limits[name]) || limits[name] < 1 || limits[name] > privateHttpLimits[name]) throw new Error("private_serving_config_invalid");
@@ -138,7 +158,7 @@ export function createPrivateNodeHandler(options: {
       const timer = setTimeout(() => { controller.abort(); input.destroy(); output.destroy(); }, limits.requestMs);
       try {
         if (!admitted) throw new RequestFailure(503);
-        const head = requestHead(input, options.origin);
+        const head = requestHead(input, options.origin, localDemo);
         const body = await consumeBody(input, signal, head.expectedLength, limits.bodyMs, head.bodyLimit);
         if (signal.aborted) return;
         if (head.method !== "POST" && body.length) throw new RequestFailure(400);
@@ -161,12 +181,12 @@ export function createPrivateNodeHandler(options: {
             if (signal.aborted) abort();
           });
         }
-        await deliver(output, response, head.method, signal);
+        await deliver(output, response, head.method, signal, localDemo);
       } catch (error) {
         if (!signal.aborted && !output.headersSent && !output.destroyed) {
           const status = error instanceof RequestFailure ? error.status : 503;
           const response = Response.json({ error: status === 503 ? "service_unavailable" : "invalid_request" }, { status });
-          try { await deliver(output, response, input.method ?? "GET", signal); } catch { output.destroy(); }
+          try { await deliver(output, response, input.method ?? "GET", signal, localDemo); } catch { output.destroy(); }
         } else output.destroy();
       } finally {
         clearTimeout(timer); controller.abort();

@@ -5,6 +5,8 @@ import test from "node:test";
 import { createContributorDemoRuntime } from "../src/contributor-demo/runtime";
 import { createContributorDemoHttp } from "../src/contributor-demo/http";
 import { createContributorDemoBrowserClient } from "../src/contributor-demo/browser-client";
+import { createContributorDemoNodeHandler, createPrivateNodeHandler } from "../src/web/v1/private-node-handler";
+import { nodeExchange } from "./helpers/web-node";
 
 test("disposable demo uses real local authentication and project/task services, then removes its data", async t => {
   const demo = await createContributorDemoRuntime(process.cwd());
@@ -62,6 +64,40 @@ test("disposable demo uses real local authentication and project/task services, 
 
 test("demo rejects relative repository roots before allocating data", async () => {
   await assert.rejects(createContributorDemoRuntime("."), /demo_repository_root_must_be_absolute/);
+});
+
+test("demo Node bridge preserves local login cookies without changing the production bridge", async t => {
+  const demo = await createContributorDemoRuntime(process.cwd());
+  const options = { origin: demo.origin, application: { isReady: () => true, close: () => demo.close() },
+    handler: createContributorDemoHttp(demo.runtime, demo.simulate),
+    assets: { count: 0, digest: "synthetic-empty", respond: () => undefined } };
+  assert.throws(() => createPrivateNodeHandler(options), /private_serving_config_invalid/);
+  assert.throws(() => createContributorDemoNodeHandler({ ...options, origin: "http://localhost:3000" }), /demo_serving_config_invalid/);
+  const bridge = createContributorDemoNodeHandler(options);
+  t.after(() => bridge.close());
+  async function send(input: Parameters<typeof nodeExchange>[0]) {
+    const x = nodeExchange(input);
+    x.input.rawHeaders[1] = "127.0.0.1:3000";
+    await bridge.handle(x.input, x.output);
+    return x;
+  }
+  const login = await send({ path: "/api/v1/local-pilot/session", method: "POST",
+    headers: ["origin", demo.origin, "content-type", "application/json"],
+    body: JSON.stringify({ ownerCode: demo.ownerCode }) });
+  assert.equal(login.output.statusCode, 201);
+  const cookie = login.headers.get("set-cookie")!.split(";")[0]!;
+  const read = { path: "/api/v1/local-pilot/workspace?resource=projects", headers: ["cookie", cookie] };
+  assert.equal((await send(read)).output.statusCode, 200);
+  for (const name of ["forwarded", "x-forwarded-host", "x-forwarded-proto", "x-forwarded-for"]) {
+    assert.equal((await send({ ...read, headers: [...read.headers, name, "untrusted"] })).output.statusCode, 403);
+  }
+  assert.equal((await send({ ...read, peer: "192.0.2.1" })).output.statusCode, 403);
+  const production = createPrivateNodeHandler({ ...options, origin: "https://private.example.invalid",
+    handler: () => Response.json({}, { headers: { "set-cookie": "must-not-escape=1" } }) });
+  const x = nodeExchange();
+  await production.handle(x.input, x.output);
+  assert.equal(x.headers.has("set-cookie"), false);
+  await production.close();
 });
 
 test("simulation browser client rejects mismatched or authority-bearing receipts without retry", async () => {
