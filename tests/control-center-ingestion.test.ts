@@ -11,6 +11,36 @@ import type { DatabaseClient } from "../src/persistence/database";
 const source = { id: "source:borrowed", name: "Example", url: "https://example.org/feed" };
 const observed = new Date(now).toISOString();
 
+test("collection composition loads restart memory automatically and abort cannot commit article or baseline changes", async t => {
+  const f = await taskFixture(); t.after(() => f.db.close());
+  const scope = { tenantId: "tenant:web", workspaceId: "workspace:web", projectId: f.project.projectId };
+  const config = { ...scope, source }, key = new Uint8Array(32).fill(26);
+  let tick = now, calls = 0;
+  const pages = ["old"];
+  const reader = createIndustrySourceReader({ now: () => tick, async readText(url) {
+    calls++;
+    return { finalUrl: url, text: `<rss><channel>${pages.map(page => `<item><title>${page}</title><link>https://example.org/${page}</link></item>`).join("")}</channel></rss>` };
+  } });
+  const first = new AbsControlCenterIngestion(f.client, config, key);
+  assert.equal((await first.collect(reader, new AbortController().signal, () => tick)).inserted, 0);
+  const restarted = new AbsControlCenterIngestion(f.client, config, key);
+  const baseline = await restarted.loadBaseline();
+  tick += 1000; pages.push("new");
+  const abort = new AbortController();
+  const interrupted: DatabaseClient = { ...f.client, query: f.client.query.bind(f.client), transaction: f.client.transaction.bind(f.client),
+    transactionWithPreCommitCheck: (work, check) => f.client.transactionWithPreCommitCheck(work, async () => { abort.abort(); await check(); }) };
+  await assert.rejects(new AbsControlCenterIngestion(interrupted, config, key).collect(reader, abort.signal, () => tick));
+  assert.deepEqual(await restarted.loadBaseline(), baseline);
+  assert.equal((await new PostgresAbsNewsStoreV1(f.client, scope, key).listStories()).stories.length, 0);
+  assert.equal((await restarted.collect(reader, new AbortController().signal, () => tick)).inserted, 1);
+  const before = calls;
+  await assert.rejects(restarted.collect(reader, AbortSignal.abort(), () => tick));
+  assert.equal(calls, before);
+  const saved = await restarted.loadBaseline();
+  await assert.rejects(restarted.collect({ async readSource() { throw new Error("test_source_failure"); } }, new AbortController().signal), /test_source_failure/);
+  assert.deepEqual(await restarted.loadBaseline(), saved);
+});
+
 test("a complete borrowed 250-story feed saves across batches with one verifiable receipt", async t => {
   const f = await taskFixture(); t.after(() => f.db.close());
   const scope = { tenantId: "tenant:web", workspaceId: "workspace:web", projectId: f.project.projectId };

@@ -11,6 +11,7 @@ import type { AbsNewsStoryV1 } from "./types";
 import { saveAbsNewsDiscovery } from "./discovery-ingestion";
 import { discoverySnapshotSchema, readDiscoveryBaseline, saveDiscoveryBaseline } from "./discovery-baseline";
 import { absDiscoveryCollectionLimit } from "./postgres-store";
+import type { createIndustrySourceReader } from "../../../vendor/control-center/source-reader";
 
 const configuration = z.object({ tenantId: id, workspaceId: id, projectId: id,
   source: z.object({ id, name: label, url: absNewsCanonicalUrlSchemaV1 }).strict() }).strict();
@@ -37,6 +38,23 @@ export class AbsControlCenterIngestion {
     this.key = Uint8Array.from(key);
   }
   async loadBaseline() { return readDiscoveryBaseline(this.db, this.config, this.key); }
+  /** Connect the borrowed reader to durable restart memory. The caller supplies an
+   * already-bounded/authorized reader; this adds no network implementation or grants.
+   * Abort prevents persistence, but transport cancellation remains the reader's job. */
+  async collect(reader: Pick<ReturnType<typeof createIndustrySourceReader>, "readSource">,
+    signal: AbortSignal, clock: () => number = Date.now) {
+    const read = reader.readSource.bind(reader);
+    const current = () => { signal.throwIfAborted(); };
+    current();
+    const previous = await this.loadBaseline(); current();
+    const result = await read({ ...this.config.source }, previous); current();
+    const checkedAt = new Date(clock()).toISOString();
+    const db: DatabaseClient = { query: this.db.query.bind(this.db),
+      transaction: work => { current(); return this.db.transactionWithPreCommitCheck(work, current); },
+      transactionWithPreCommitCheck: (work, check) => this.db.transactionWithPreCommitCheck(work, async () => { await check(); current(); }),
+    };
+    return new AbsControlCenterIngestion(db, this.config, this.key).ingest(result, checkedAt, previous);
+  }
   async ingest(value: unknown, observedAt: unknown, previousBaseline?: unknown) {
     const checkedAt = time.parse(observedAt), result = resultSchema.parse(value);
     const expected = previousBaseline === undefined ? undefined : discoverySnapshotSchema.parse(previousBaseline);

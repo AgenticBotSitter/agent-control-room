@@ -8,6 +8,18 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Borrowed reader and durable ingestion compose directly:** `collect(reader,
+signal, clock)` loads the stored baseline, runs the supplied upstream reader and
+commits the result with that baseline. It reuses the existing pre-commit abort
+check rather than introducing transport, scheduler or authorization machinery.
+Tests prove restart pickup, source-failure preservation, pre-aborted no-read and
+cancellation immediately before commit with no article/baseline advance. Caller
+still owns live-reader authority, whole-collection budgets and transport cancellation.
+This path is not runtime-mounted; source settings and live wiring remain unfinished.
+The 288-entry delivery lane, types, focused lint and VPS compilation pass.
+Independent source review found no concrete introduced defect. No live reads,
+services, credentials, GitHub writes or deployment occurred.
+
 **Four article actions use ordinary project tasks:** The private news form now
 offers research, setup guide, product comparison and article draft. The latter two
 reuse existing proposal catalog entries; no new task system or execution permission

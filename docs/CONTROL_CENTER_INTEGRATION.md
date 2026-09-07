@@ -40,6 +40,13 @@ This bridge is not the whole configured application or visible news page.
 Baseline integration now uses migration 0062 rather than upstream filesystem writes.
 Call `loadBaseline()`, pass its result to the borrowed `readSource(source, baseline)`,
 then pass the same baseline as the third argument to `ingest(result, observedAt, baseline)`.
+The adapter's `collect(reader, signal, clock)` now performs that composition directly
+for an application-supplied borrowed reader. It checks abort before reading and
+before committing, using the existing database pre-commit mechanism. It does not
+create a transport or authorize a destination; the application must supply the
+bounded authorized reader and handle cancellation of its physical reads. Source
+failure propagates without advancing memory; failure-status persistence remains
+part of the later application wiring. No live runtime is mounted by this helper.
 The adapter atomically saves accepted stories, source outcome and the new snapshot.
 Competing baseline changes reject and roll back; rejected items leave memory unchanged.
 Snapshots retain the upstream format, with a 100,000 URL / 8 MiB storage ceiling;
