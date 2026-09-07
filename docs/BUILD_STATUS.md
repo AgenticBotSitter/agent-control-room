@@ -8,6 +8,15 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Explicit contributor launch command implemented:** `pnpm demo` builds the isolated
+frontend and explicitly starts the existing fixed-loopback demo service. The launcher
+prints the one-time login code only after successful binding, handles SIGINT/SIGTERM,
+and reports sanitized startup/cleanup failures without retry. Fake tests cover stops
+during preparation and binding, repeated signals and cleanup uncertainty. Setup and
+stop instructions are in `CONTRIBUTOR_DEMO.md`; `test:demo` collects the relevant
+effect-free checks. No physical listener or browser acceptance has been performed.
+Revision flow, candidate expansion and final publication review remain unfinished.
+
 **Contributor listener lifecycle reused, fake-tested:** The existing loopback server
 lifecycle now also accepts the assembled disposable demo bridge through a separate
 fixed-origin factory. It stays inert until explicit start, fixes the demo port at
