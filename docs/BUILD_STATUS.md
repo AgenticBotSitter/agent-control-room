@@ -8,6 +8,26 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Feed worker startup is verified locally with the installed package:** Reused the
+native bootstrap behind fixed native/feed wrappers. Feed configuration requires
+separate coordinator, ingestion and worker login names on one configured primary;
+the worker pool itself passes session/role and operational-permission preflight before
+pickup. One-attempt startup, ownership, cleanup and native recovery behavior remain
+intact; the feed wrapper exposes no recovery. All 31 installed-package checks pass,
+including direct and managed feed pickup under restricted PGlite session transactions,
+held/failed outcomes with zero retries and one owned pool close. Twenty-six focused
+startup/runtime checks, the expanded 255-entry Idea/ABS lane, eight lane-inventory
+checks, TypeScript, focused lint, diff checks and VPS compilation pass. Independent
+source review found no introduced defect in either code or installed-package evidence.
+The named coordinator/ingestion logins are topology assertions, not proof of their
+pool preflights. PGlite TEMP handling stays test-only; production pool isolation and
+live network collection are not qualified. No service, deployment or GitHub write.
+**Active/next:** application-level news startup that verifies both news-role pools,
+binds qualified source authority and owns submission/worker/HTTP lifetimes, followed
+by visible collection controls, page verification and article-to-agent completion.
+Preserve the current model/effort; local implementation needs no owner action. Actual
+network/provider and production preparation still require separate scoped authority.
+
 **Feed managed runtime now reuses the native lifecycle locally:** Extracted the
 existing pg-boss lifecycle behind fixed native-task and feed wrappers. Native error,
 recovery, cancellation, late-registration and pool-ownership behavior is preserved;
