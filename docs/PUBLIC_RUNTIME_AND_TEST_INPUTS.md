@@ -1,5 +1,15 @@
 # Non-import inputs for the public contributor candidate
 
+## Latest local verification
+
+After the explicit test-only migration profile was added, the unchanged full default
+test lifecycle passed at code baseline `46dc478`: 3,130 passes, two existing skips and
+zero failures/cancellations. All 47 compiled tests had passed separately. The inventory's
+two opt-in diagnostics also pass with the newly registered compiled schema test.
+No isolated public checkout or interactive demo has been verified; these are prepared
+private-checkout results. The smaller schema's startup refusal remains negative evidence,
+not a successful contributor installation.
+
 ## Follow-up: preview assertions separated and test closure traced
 
 The hosting-metadata and preview-delegation assertions now live in

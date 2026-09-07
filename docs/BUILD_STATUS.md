@@ -12,8 +12,11 @@ component acceptance. This file reports current product readiness and the next b
 adds 14 observations. Across all three batches, 34 current hashes match, covering all
 28 protected-app files, four shared UI components and two build files. No embedded
 private values observed; deeper services/shared CSS/SQL/dependencies and independent
-candidate review remain. The full `pnpm test` refresh is still running in the local
-log `/private/tmp/cr-public-schema-full-test.log`; do not treat it as a completed pass.
+candidate review remain. The full `pnpm test` refresh at code baseline `46dc478` has
+now exited successfully: 3,130 passed (773 + 1,876 + 481), two existing skips, zero
+failures/cancellations. Log: `/private/tmp/cr-public-schema-full-test.log`. Both opt-in
+inventory diagnostics also pass, and all 34 content-review hashes remain current.
+This does not prove a clean exported checkout, interactive demo or live deployment.
 
 **Core-only application rehearsal found a schema gate:** Omitting the two content
 adapter migrations changes the fixed structural fingerprint, so compiled startup
