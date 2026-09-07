@@ -8,6 +8,20 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Local pilot now exposes canonical projects and task proposals:** The configured
+repository-fake runtime reuses `WebProjectService`/`WebTaskService` after verifying its
+existing owner cookie. `/api/v1/local-pilot/workspace` supports bounded project reads,
+create/archive/reopen and task proposal/read operations; no execution operation exists.
+Tests cover origin/session rejection, unknown/oversized commands, exact replay, two
+isolated ordinary projects, coexistence with an Idea project and restart persistence.
+All 30 selected pilot/project/task tests, both strict type checks and focused lint pass.
+The Node-only preview build (Vite development mode, NODE_ENV=production, no Cloudflare
+plugin or CLI prerender listener) compiled; its actual request handler returned 503
+`local_pilot_disabled` for this endpoint. The first probe used the Worker-shaped fetch
+interface incorrectly; the corrected Node handler probe passed without source changes.
+This is backend mounting, not completed browser controls, production auth acceptance or
+an interactive demo. No pilot was activated outside disposable tests; no GitHub write.
+
 **Existing simulator made portable for the demo:** Removed its Node `Buffer` dependency
 in favor of standard UTF-8 encoding, with the same 65,536-byte bound. A regression first
 reproduced `Buffer is not defined` in a separate test realm, then passed without Node

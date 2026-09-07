@@ -10,6 +10,7 @@ interface LocalPilotPortsV1{
   projectEvents:{scopeAuthority:ProjectWorkspaceProtectedRuntimeV1["scopeAuthority"];eventSource:ProjectEventReadSourceV1};
   connectionCenter:ConnectionCenterProtectedRuntimeV1;
   sessionIssuer:Pick<LocalPilotOwnerSessionServiceV1,"issue"|"verify">;
+  projectTasks:ControlRoomLocalPilotRuntimeV1["projectTasks"];
 }
 let ports:LocalPilotPortsV1|undefined;
 
@@ -41,4 +42,13 @@ export function getControlRoomLocalPilotPortsV1():LocalPilotPortsV1|undefined{if
     freshnessSource:{read:value=>ready.then(runtime=>runtime.connectionFreshnessSource.read(value))}};
   const sessionIssuer:Pick<LocalPilotOwnerSessionServiceV1,"issue"|"verify">={issue:(request,code)=>ready.then(runtime=>runtime.ownerSession.issue(request,code)),
     verify:(credential,now)=>ready.then(runtime=>runtime.ownerSession.verify(credential,now))};
-  ports=Object.freeze({ideaLab,projectWorkspace,projectEvents,connectionCenter,sessionIssuer});return ports;}
+  const projectTasks:ControlRoomLocalPilotRuntimeV1["projectTasks"]={
+    listProjects:(request,after)=>ready.then(runtime=>runtime.projectTasks.listProjects(request,after)),
+    getProject:(request,id)=>ready.then(runtime=>runtime.projectTasks.getProject(request,id)),
+    createProject:(request,draft,key)=>ready.then(runtime=>runtime.projectTasks.createProject(request,draft,key)),
+    transitionProject:(request,id,draft,key)=>ready.then(runtime=>runtime.projectTasks.transitionProject(request,id,draft,key)),
+    listTasks:(request,id,after)=>ready.then(runtime=>runtime.projectTasks.listTasks(request,id,after)),
+    getTask:(request,id,job)=>ready.then(runtime=>runtime.projectTasks.getTask(request,id,job)),
+    proposeTask:(request,id,draft,key)=>ready.then(runtime=>runtime.projectTasks.proposeTask(request,id,draft,key)),
+  };
+  ports=Object.freeze({ideaLab,projectWorkspace,projectEvents,connectionCenter,sessionIssuer,projectTasks});return ports;}

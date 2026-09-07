@@ -37,6 +37,9 @@ import {
 } from "../../project-workspace/v1";
 import { IdeaLabProjectEventReconcilerV1,ProjectEventStoreV1,type ProjectEventReadSourceV1 } from "../../project-events/v1";
 import { canonicalJson, hmacSha256Tag, SecurityStore, sha256Digest, type VerifiedAuthentication } from "../../security";
+import { WebProjectService } from "../../web/v1/project-service";
+import { WebTaskService } from "../../web/v1/task-service";
+import { createLocalPilotProjectTasksV1, type LocalPilotProjectTasksV1 } from "./project-tasks";
 
 export const LOCAL_PILOT_MODE_V1 = "repository_fake" as const;
 export const LOCAL_PILOT_COOKIE_V1 = "control_room_local_pilot" as const;
@@ -234,6 +237,7 @@ async function seed(db:DatabaseClient,subject:string,now:string):Promise<void>{a
 
 export interface ControlRoomLocalPilotRuntimeV1{
   mode:typeof LOCAL_PILOT_MODE_V1;ownerSession:LocalPilotOwnerSessionServiceV1;
+  projectTasks:LocalPilotProjectTasksV1;
   operatorService:IdeaLabProtectedOperatorServiceV1;ownerDecisionService:Pick<IdeaLabOwnerDecisionServiceV1,"apply">;
   lifecycleService:Pick<IdeaLabProjectLifecycleServiceV1,"get"|"transition">;scopeAuthority:ProjectWorkspaceOwnerReadScopeAuthorityV1;
   readSource:ProjectWorkspaceOperatorReadSourceV1;projectEventSource:ProjectEventReadSourceV1;
@@ -254,6 +258,17 @@ export async function createControlRoomLocalPilotRuntimeV1(config:LocalPilotConf
   const subject=`owner:${sha256Digest({master:Array.from(config.masterKey),purpose:"local-pilot-subject"}).slice(7,31)}`;await seed(db,subject,clock());
   const integrityKey=derive(config.masterKey,"idea-integrity"),sessionKey=derive(config.masterKey,"owner-session"),catalogKey=derive(config.masterKey,"project-catalog"),highWaterKey=derive(config.masterKey,"catalog-high-water"),projectEventKey=derive(config.masterKey,"project-events"),connectionRegistryKey=derive(config.masterKey,"connection-registry"),connectionFreshnessKey=derive(config.masterKey,"connection-freshness"),connectionEnrollmentAuditKey=derive(config.masterKey,"connection-enrollment-audit");
   const registry=new IdeaLabProjectRegistryStoreV1(db,integrityKey),catalog=new LocalPilotCatalogStoreV1(db,catalogKey,highWaterKey,registry),ownerSession=new LocalPilotOwnerSessionServiceV1(db,sessionKey,config.ownerCodeDigest,config.origin,subject,clock),fixture=buildIdeaLabFixtureV1();
+  const webScope={tenantId:LOCAL_PILOT_TENANT_ID_V1,workspaceId:LOCAL_PILOT_WORKSPACE_ID_V1},webClock=()=>Date.parse(clock());
+  const projectTasks=createLocalPilotProjectTasksV1(new WebProjectService(db,webScope,webClock,integrityKey),
+    new WebTaskService(db,webScope,webClock,{ideaIntegrityKey:integrityKey}),async(request,method)=>{
+      if(request.method!==method)throw new LocalPilotErrorV1("local_request_required");
+      loopbackRequest(request,config.origin,method==="POST");
+      const auth=await ownerSession.verify(request,clock());
+      // Convert only the verified local cookie, never a request-supplied identity.
+      // Canonical services still enforce current identity, grants and revocation.
+      return{provider:auth.provider,subject:auth.subject,tokenDigest:sha256Digest({token:oneCookie(request)}),
+        issuedAt:auth.verifiedAt,expiresAt:auth.expiresAt,verificationExpiresAt:auth.expiresAt};
+    });
   const projectEventSource=new ProjectEventStoreV1(db,projectEventKey,clock),projectEventReconciler=new IdeaLabProjectEventReconcilerV1(registry,projectEventSource);
   const operatorService=new IdeaLabProtectedOperatorServiceV1(db,integrityKey,{workspaceId:LOCAL_PILOT_WORKSPACE_ID_V1,
     participants:fixture.session.participants,driver:new DeterministicIdeaLabFakeDriverV1(),clock});
@@ -273,7 +288,7 @@ export async function createControlRoomLocalPilotRuntimeV1(config:LocalPilotConf
   const connectionEnrollmentNodeIngress=new DisabledConnectionEnrollmentNodeIngressV1();
   const connectionEnrollmentTransportAdmission=new DisabledConnectionEnrollmentTransportAdmissionV1();
   const connectionEnrollmentPrivateLoopbackListener=new DisabledConnectionEnrollmentPrivateLoopbackListenerV1();
-  await catalog.sync(clock());await projectEventReconciler.reconcileAll(LOCAL_PILOT_TENANT_ID_V1);return Object.freeze({mode:LOCAL_PILOT_MODE_V1,ownerSession,operatorService,ownerDecisionService,lifecycleService,
+  await catalog.sync(clock());await projectEventReconciler.reconcileAll(LOCAL_PILOT_TENANT_ID_V1);return Object.freeze({mode:LOCAL_PILOT_MODE_V1,ownerSession,projectTasks,operatorService,ownerDecisionService,lifecycleService,
     scopeAuthority:new ProjectWorkspaceOwnerReadScopeAuthorityV1({verify:(credential,now)=>ownerSession.verifyProjectWorkspace(credential,now)},catalogAuthority,new SecurityStore(db)),
     readSource:new LocalPilotProjectReadSourceV1(registry),projectEventSource,connectionRosterSource,connectionFreshnessSource,
     connectionEnrollmentIntakeService,connectionEnrollmentNodeIngress,connectionEnrollmentTransportAdmission,
