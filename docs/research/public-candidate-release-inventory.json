@@ -11,8 +11,8 @@
     "dist-vps",
     "dist-contributor"
   ],
-  "manualReviewCoverageMeaning": "Eleven numbered content receipts match 121 exact files. Separate independent domain/node receipts cover 93 additional files: 214 unique files across 13 receipts. Other bounded reviews are separate evidence. Content review is not correctness, license or publication approval.",
-  "exactPriorReviewMatches": 121,
+  "manualReviewCoverageMeaning": "Twelve numbered content receipts match 132 exact files. Separate independent domain/node receipts cover 93 additional files: 225 unique files across 14 receipts. Other bounded reviews are separate evidence. Content review is not correctness, license or publication approval.",
+  "exactPriorReviewMatches": 132,
   "automatedScan": {
     "knownIdentityOrLocatorMatches": [
       {
@@ -1097,49 +1097,49 @@
       "path": "src/config/build-target.ts",
       "bytes": 293,
       "sha256": "0b23607ca40a2ab336962d2ac2e71e2c55972413894fc8716169bb5bbc3be5d9",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-12.json"
     },
     {
       "path": "src/connection-center/v1/authenticated-freshness.ts",
       "bytes": 2590,
       "sha256": "0d27841847bbcdcc2e8cdaf795ca8879ef3228cfad669bd2b0218e73ee5a500e",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-12.json"
     },
     {
       "path": "src/connection-center/v1/exact.ts",
       "bytes": 2254,
       "sha256": "641f8352080897be0d50dd2a840025638043835115cdd4d875eea008ec036aea",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-12.json"
     },
     {
       "path": "src/connection-center/v1/http-client.ts",
       "bytes": 2773,
       "sha256": "029ccd96fd832a20e836dc162acddc8241a1a963364b30f73f8c83cf43dc3f1a",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-12.json"
     },
     {
       "path": "src/connection-center/v1/index.ts",
       "bytes": 153,
       "sha256": "222cd3baa550602c4fc58190e0488043fd15db3ee6ef742176b4b6162bdffb62",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-12.json"
     },
     {
       "path": "src/connection-center/v1/schemas.ts",
       "bytes": 3253,
       "sha256": "4bf1ae3f1d8e78f681d576e5d67cdddd11490fed4847b25b8f5ad87e7e32863c",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-12.json"
     },
     {
       "path": "src/connection-center/v1/service.ts",
       "bytes": 10194,
       "sha256": "c74db9def9ae0fdadec77a4ec18362bce8d13ab41a6663bf60ea13620d231f0b",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-12.json"
     },
     {
       "path": "src/connection-center/v1/types.ts",
       "bytes": 2877,
       "sha256": "d830e95f9be2543a8caa1d035248002b7a5ed99b1ef71acdb976f278c0528c85",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-12.json"
     },
     {
       "path": "src/connection-registry/v1/intake.ts",
@@ -1181,19 +1181,19 @@
       "path": "src/contracts/v1/index.ts",
       "bytes": 55,
       "sha256": "e866672fc3fa5e53982c0381bd1398450760a52f6e1bf64c1cff799a616020d9",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-12.json"
     },
     {
       "path": "src/contracts/v1/types.ts",
       "bytes": 6972,
       "sha256": "9736705ede2036ef090021d38c97f93b07551214dc0f14084a07363423021d71",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-12.json"
     },
     {
       "path": "src/contracts/v1/validators.ts",
       "bytes": 6034,
       "sha256": "b4248d6117b181920b04900c6f8b3dfd909fdc9f3db34381e04e0eee224da9dc",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "docs/research/public-source-content-review-12.json"
     },
     {
       "path": "src/contributor-demo/application.ts",

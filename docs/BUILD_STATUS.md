@@ -8,6 +8,14 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Connection and adapter content review completed:** Eleven files covering Connection
+Center, project-adapter contracts and build-target selection were fully read and
+recorded in `research/public-source-content-review-12.json`. No embedded private
+values were found. Connection Center explicitly retains blocked live panels and
+qualification-required status; enrollment must not be advertised as live execution.
+Twelve numbered receipts plus two independent module receipts cover 225 unique
+exact candidate files, with 295 outside that set. No application code was changed.
+
 **Migration content pass finished:** Full text of migrations 0040–0058 was inspected
 and recorded in `research/public-source-content-review-11.json`, completing the
 numbered migration content pass. No private values or live endpoints were found.
