@@ -28,8 +28,8 @@ const updates: Record<string, readonly string[]> = {
 };
 const fail = () => { throw new Error("private_database_preflight_failed"); };
 const ideaCreationReads = ["workspaces", "control_identities", "control_role_grants", "control_web_sessions",
-  "control_idea_sessions", "audit_events", "control_audit_chain_heads"];
-const ideaCreationInserts = new Set(["control_web_sessions", "control_idea_sessions", "audit_events", "control_audit_chain_heads"]);
+  "control_idea_sessions", "control_idea_bot_run_events", "audit_events", "control_audit_chain_heads"];
+const ideaCreationInserts = new Set(["control_web_sessions", "control_idea_sessions", "control_idea_bot_run_events", "audit_events", "control_audit_chain_heads"]);
 const ideaCreationUpdates: Record<string, readonly string[]> = { workspaces: ["web_lock"], control_identities: ["web_lock"],
   control_role_grants: ["web_lock"], control_web_sessions: ["revoked_at"], control_audit_chain_heads: ["head_hash", "event_count", "updated_at"] };
 const coordinatorReads = ["tenants", "workspaces", "control_identities", "control_role_grants", "control_web_sessions",

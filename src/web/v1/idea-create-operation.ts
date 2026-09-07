@@ -8,6 +8,8 @@ import { IdeaLabProjectRegistryStoreV1 } from "../../idea-lab/v1/store";
 import { ideaLabelSchemaV1, ideaTextSchemaV1, ideaParticipantSchemaV1 } from "../../idea-lab/v1/schemas";
 import { WebSessionAuthority } from "./session-authority";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
+import { IdeaLabBotRunStoreV1 } from "../../idea-lab/v1/coordinator-store";
+import { ideaStopInputSchema } from "./idea-wire";
 
 export const ideaCreationInputSchema = z.object({ title: ideaLabelSchemaV1, ideaSummary: ideaTextSchemaV1,
   targetCustomer: z.string().min(1).max(300), maxRounds: z.number().int().min(1).max(3),
@@ -16,7 +18,7 @@ export const ideaCreationInputSchema = z.object({ title: ideaLabelSchemaV1, idea
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: async work => work(tx),
   transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); await check(); return result; } });
 export type IdeaCreateOperation = { tenantId: string; workspaceId: string;
-  create: IdeaSessionCreationService["create"] };
+  create: IdeaSessionCreationService["create"]; stop?: IdeaSessionCreationService["stop"] };
 
 /** Non-executing coordinator operation. A separately provisioned pool is required;
  * the restricted web role is intentionally not granted session writes. */
@@ -61,6 +63,34 @@ export class IdeaSessionCreationService {
       }
       return { sessionId, sessionDigest: session.sessionDigest, createdAt: session.createdAt,
         replayed: !!existing, startsWork: false as const, execution: "not_requested" as const, idempotencyKey: key };
+    });
+  }
+  /** Intrinsically idempotent stop for the exact retained run; never starts a provider. */
+  async stop(identity: VerifiedWebIdentity, sessionId: string, value: unknown) {
+    const input = ideaStopInputSchema.safeParse(value);
+    if (!input.success) throw new WebAccessError("invalid_request");
+    return this.authority.authenticated(identity, async (tx, actor) => {
+      actor.require("idea_lab.panel_cancel", undefined, true); actor.require("idea_lab.session_read", undefined, true);
+      const locked = await tx.query("SELECT id FROM workspaces WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [this.scope.tenantId, this.scope.workspaceId]);
+      if (!locked.rows.length) throw new WebAccessError("not_found");
+      const db = joined(tx), store = new IdeaLabProjectRegistryStoreV1(db, this.key), ledger = new IdeaLabBotRunStoreV1(db, this.key);
+      const session = await store.getSession(this.scope.tenantId, sessionId);
+      if (!session || session.workspaceId !== this.scope.workspaceId) throw new WebAccessError("not_found");
+      if (session.sessionDigest !== input.data.sessionDigest) throw new WebAccessError("conflict");
+      const before = await ledger.getForSession(session);
+      if (!before) throw new WebAccessError("not_found");
+      if (before.runId !== input.data.runId) throw new WebAccessError("conflict");
+      let run = await ledger.requestCancel(before.runId, actor.now);
+      if (["prepared", "running"].includes(run.state) && run.attempts.at(-1)?.state !== "provider_marked") run = await ledger.cancel(run.runId, actor.now);
+      if (!before.cancellationRequestedAt && run.cancellationRequestedAt) {
+        const suffix = sha256Digest({ ...this.scope, runId: run.runId, action: "idea_lab.panel_cancel" }).slice(7);
+        await appendAuditWith(tx, { id: `audit:idea-stop:${suffix}`, ...this.scope, actorId: actor.id, actorType: "human",
+          action: "idea_lab.panel_cancel", targetType: "idea_lab_session", targetId: sessionId,
+          idempotencyKey: `idea-stop:${suffix}`, occurredAt: actor.now,
+          safeMetadata: { sessionDigest: session.sessionDigest, runDigest: run.runDigest, state: "stop_requested" } });
+      }
+      return { sessionId, sessionDigest: session.sessionDigest, runId: run.runId, state: run.state,
+        cancellationRequestedAt: run.cancellationRequestedAt ?? null, startsWork: false as const };
     });
   }
 }

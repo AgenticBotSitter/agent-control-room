@@ -63,7 +63,9 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   if (options.ideaCreation && (options.ideaCreation.tenantId !== options.tenantId
     || options.ideaCreation.workspaceId !== options.workspaceId || typeof options.ideaCreation.create !== "function" || !options.ideaProjects))
     throw new Error("invalid_private_app_config");
-  const ideaCreation = options.ideaCreation ? Object.freeze({ create: options.ideaCreation.create.bind(options.ideaCreation) }) : undefined;
+  if (options.ideaCreation?.stop !== undefined && typeof options.ideaCreation.stop !== "function") throw new Error("idea_creation_config_invalid");
+  const ideaCreation = options.ideaCreation ? Object.freeze({ create: options.ideaCreation.create.bind(options.ideaCreation),
+    ...(options.ideaCreation.stop ? { stop: options.ideaCreation.stop.bind(options.ideaCreation) } : {}) }) : undefined;
   if (options.queueAttention && (options.queueAttention.tenantId !== options.tenantId
     || options.queueAttention.workspaceId !== options.workspaceId || typeof options.queueAttention.read !== "function"))
     throw new Error("invalid_private_app_config");
@@ -107,7 +109,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const news = new WebNewsService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
     { integrityKey: options.news?.integrityKey, ideaIntegrityKey: options.ideaProjects?.integrityKey }, clock);
   const ideas = new WebIdeaService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
-    options.ideaProjects?.integrityKey, clock, !!ideaCreation);
+    options.ideaProjects?.integrityKey, clock, !!ideaCreation, !!ideaCreation?.stop);
   const ownerReviews = options.tasks?.ownerReviews ? new WebTaskReviewService(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, { ...options.tasks.ownerReviews,
       harnessIntegrityKey: options.tasks.harnessIntegrityKey, results: options.tasks.results!, ideaIntegrityKey: options.ideaProjects?.integrityKey }, clock) : undefined;
@@ -131,6 +133,14 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
         const trust = await keys.get();
         const identity = createAccessVerifier(trust)(request, clock());
         if (url.pathname.startsWith("/api/")) {
+          const ideaStop = /^\/api\/v1\/ideas\/([^/]+)\/stop$/.exec(url.pathname);
+          if (ideaStop) {
+            if (request.method !== "POST" || url.search || !request.body
+              || request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") throw new WebAccessError("invalid_request");
+            if (!ideaCreation?.stop) throw new Error("idea_stop_not_configured");
+            let sessionId: string; try { sessionId = decodeURIComponent(ideaStop[1]); } catch { throw new WebAccessError("invalid_request"); }
+            return Response.json(await ideaCreation.stop(identity, sessionId, await readBoundedJson(request.body, 2048)), { headers: privateResponseHeaders });
+          }
           const ideaRoute = /^\/api\/v1\/ideas(?:\/([^/]+))?$/.exec(url.pathname);
           if (ideaRoute) {
             if (request.method === "POST" && ideaRoute[1] === undefined) {

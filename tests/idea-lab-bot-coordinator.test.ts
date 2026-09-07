@@ -69,16 +69,16 @@ test("append rereads the latest event after the stable workspace lock instead of
     await target.ledger.requestCancel(runId,stopAt);
     const order:string[]=[];
     // Inject an old first-statement view; PGlite is serialized, not real PostgreSQL concurrency.
-    const reader=new IdeaLabBotRunStoreV1({...target.db,transaction:work=>target.db.transaction(tx=>work({
+    const reader=new IdeaLabBotRunStoreV1({...target.db,transaction:work=>target.db.transaction(tx=>{let locked=false;return work({
       async query<T>(sql:string,params?:unknown[]){
-        if(sql.includes("FROM workspaces"))order.push("lock");
+        if(sql.includes("FROM workspaces")){order.push("lock");locked=true;}
         if(sql.includes("FROM control_idea_bot_run_events")&&sql.includes("LIMIT 1")){
-          if(!sql.includes("FOR UPDATE")){order.push("old_binding");return stale as {rows:T[]};}
+          if(!locked){order.push("old_binding");return stale as {rows:T[]};}
           order.push("fresh_version");
         }
         return tx.query<T>(sql,params);
       },
-    }))},key);
+    });})},key);
     const settled=await reader.settleCompleted(runId,"attempt:stale",sha256Digest("receipt"),sha256Digest("contribution"),0,false,now);
     assert.deepEqual(order,["old_binding","lock","fresh_version"]);assert.equal(settled.cancellationRequestedAt,stopAt);
     assert.equal(settled.updatedAt,stopAt);assert.equal(settled.attempts[0]!.settledAt,now);

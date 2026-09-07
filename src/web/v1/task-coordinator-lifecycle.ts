@@ -167,6 +167,10 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   }
   const receipt = input.sessions ? input.approvals!.store.receiveDeliveryReceipt.bind(input.approvals!.store) : undefined;
   const ideaCreation: IdeaCreateOperation | undefined = ideaService ? Object.freeze({ ...scope,
+    stop: (identity, sessionId, value) => {
+      const actor = { ...identity }, request = structuredClone(value);
+      return run(() => ideaService.stop(actor, sessionId, request));
+    },
     create: (identity, value, key) => {
       const actor = { ...identity }, request = ideaCreationInputSchema.safeParse(value);
       if (!request.success) return Promise.reject(new WebAccessError("invalid_request"));

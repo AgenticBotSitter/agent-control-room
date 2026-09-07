@@ -11,6 +11,12 @@ export const ideaCreateReceiptSchema = z.object({ sessionId: id, sessionDigest: 
 }).strict();
 export type IdeaCreateDraft = z.infer<typeof ideaCreateDraftSchema>;
 export type IdeaCreateReceipt = z.infer<typeof ideaCreateReceiptSchema>;
+export const ideaStopInputSchema = z.object({ runId: id, sessionDigest: digest }).strict();
+export const ideaStopReceiptSchema = z.object({ sessionId: id, sessionDigest: digest, runId: id,
+  state: z.enum(["prepared", "running", "completed", "cancelled", "failed_definite", "ambiguous"]),
+  cancellationRequestedAt: z.string().datetime({ offset: true }).nullable(), startsWork: z.literal(false),
+}).strict();
+export type IdeaStopReceipt = z.infer<typeof ideaStopReceiptSchema>;
 const summary = z.object({ sessionId: id, sessionDigest: digest, title: z.string().min(1).max(120),
   ideaSummary: text, targetCustomer: z.string().min(1).max(300), createdAt: z.string().datetime({ offset: true }) });
 export const ideaPageSchema = z.object({ availability: z.enum(["configured", "not_configured"]),
@@ -40,7 +46,7 @@ run: z.object({ runId: id, sessionId: id, sessionDigest: digest,
 }).strict().nullable(),
 decision: z.object({ sessionId: id, sessionDigest: digest, synthesisDigest: digest,
   decision: z.enum(["create_project", "save", "reject"]), project: z.object({ projectId: id }).optional(),
-}).nullable(), execution: z.literal("not_configured"), observedAt: z.string().datetime(),
+}).nullable(), canStop: z.boolean(), execution: z.literal("not_configured"), observedAt: z.string().datetime(),
 }).strict().refine(value => {
   const { session, contributions, synthesis, decision, run } = value;
   return new Set(contributions.map(c => `${c.round}:${c.participantId}`)).size === contributions.length

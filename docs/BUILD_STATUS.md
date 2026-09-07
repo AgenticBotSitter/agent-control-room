@@ -8,6 +8,22 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Owner stop command connected locally:** The protected Idea page now offers Stop
+discussion for an active retained run when the separately configured Idea operation
+and current owner permissions allow it. HTTP requests bind the exact session digest
+and run ID, recheck shared-session revocation, and atomically retain stop intent/audit.
+Explicit retry after a lost response does not duplicate the audit or start work. An
+in-flight turn is not falsely reported stopped. The existing Idea role adds run-event
+SELECT/INSERT, not UPDATE or dispatch/result rights; server code limits the operation
+to stop transitions. The restricted-role test caught redundant event-row locking that
+required UPDATE; removing it preserved the stable workspace lock/fresh-read ordering.
+Independent source re-review found no concrete defect. Sixty focused workflow checks
+and 14 overlapping stop/role/ledger checks pass, as do TypeScript and focused lint.
+Tests are disposable PGlite, injected HTTP and static rendering, not real PostgreSQL
+concurrency, browser interaction or provider cancellation. Live start, owner decision
+commands, news ingestion and complete real-agent journeys remain unfinished. No push,
+deployment, listener or provider call occurred.
+
 **Durable panel stop request implemented:** The existing authenticated run history now
 retains optional `cancellationRequestedAt`; old records still parse without it. The
 coordinator checks it before another turn, preserves it through settlement and recovery,

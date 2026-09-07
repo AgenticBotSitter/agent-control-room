@@ -14,7 +14,7 @@ export class WebIdeaService {
   private readonly authority: WebSessionAuthority;
   private readonly key?: Uint8Array;
   constructor(db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
-    integrityKey?: Uint8Array, clock: () => number = Date.now, private readonly creationConfigured = false) {
+    integrityKey?: Uint8Array, clock: () => number = Date.now, private readonly creationConfigured = false, private readonly stopConfigured = false) {
     this.authority = new WebSessionAuthority(db, scope, clock, "idea_lab_session");
     if (integrityKey !== undefined) {
       if (!(integrityKey instanceof Uint8Array) || integrityKey.length !== 32) throw new Error("idea_key_invalid");
@@ -62,6 +62,8 @@ export class WebIdeaService {
           && c.participantId === a.participantId && c.round === a.round))
         || run.state === "completed" && run.messagesUsed !== session.maxMessages)) throw new Error("idea_snapshot_changed");
       return { session, contributions, synthesis: synthesis ?? null, decision: decision ?? null,
+        canStop: this.stopConfigured && !!run && ["prepared", "running"].includes(run.state) && !run.cancellationRequestedAt
+          && actor.can("idea_lab.panel_cancel", undefined, true),
         run: run ? { runId: run.runId, sessionId: run.sessionId, sessionDigest: run.sessionDigest, state: run.state,
           messagesUsed: run.messagesUsed, maxMessages: session.maxMessages, costUsd: run.costUsd,
           providerContacted: run.providerContacted, updatedAt: run.updatedAt, retryPermitted: run.retryPermitted,

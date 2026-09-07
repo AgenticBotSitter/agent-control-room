@@ -42,7 +42,7 @@ export class IdeaLabBotRunStoreV1 {
     return run;
   }
   async prepare(run:IdeaLabBotRunV1):Promise<IdeaLabBotRunV1>{
-    const parsed=parseIdeaLabBotRunV1(run);return this.#db.transaction(async tx=>{await this.#lockWorkspace(tx,parsed);const existing=await tx.query<Row>(`SELECT version,payload,run_digest,run_auth_tag FROM control_idea_bot_run_events WHERE run_id=$1 ORDER BY version DESC LIMIT 1 FOR UPDATE`,[parsed.runId]);
+    const parsed=parseIdeaLabBotRunV1(run);return this.#db.transaction(async tx=>{await this.#lockWorkspace(tx,parsed);const existing=await tx.query<Row>(`SELECT version,payload,run_digest,run_auth_tag FROM control_idea_bot_run_events WHERE run_id=$1 ORDER BY version DESC LIMIT 1`,[parsed.runId]);
       if(existing.rows[0]){const stored=this.#verify(existing.rows[0]);if(stored.sessionDigest!==parsed.sessionDigest||stored.evidenceDigests.join()!==parsed.evidenceDigests.join())throw new IdeaLabErrorV1("duplicate_record");return stored;}
       await tx.query(`INSERT INTO control_idea_bot_run_events(run_id,version,tenant_id,workspace_id,session_id,state,run_digest,run_auth_tag,payload,occurred_at) VALUES($1,1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9)`,[parsed.runId,parsed.tenantId,parsed.workspaceId,parsed.sessionId,parsed.state,parsed.runDigest,this.#tag(parsed,1),JSON.stringify(parsed),parsed.updatedAt]);return parsed;});
   }
@@ -50,7 +50,9 @@ export class IdeaLabBotRunStoreV1 {
     const initial=await tx.query<Row>(`SELECT version,payload,run_digest,run_auth_tag FROM control_idea_bot_run_events WHERE run_id=$1 ORDER BY version DESC LIMIT 1`,[runId]);
     if(!initial.rows[0])throw new IdeaLabErrorV1("not_found");const binding=this.#verify(initial.rows[0]);
     if(binding.runId!==runId)throw new IdeaLabErrorV1("integrity_failed");await this.#lockWorkspace(tx,binding);
-    const rows=await tx.query<Row>(`SELECT version,payload,run_digest,run_auth_tag FROM control_idea_bot_run_events WHERE run_id=$1 ORDER BY version DESC LIMIT 1 FOR UPDATE`,[runId]);if(!rows.rows[0])throw new IdeaLabErrorV1("not_found");const current=this.#verify(rows.rows[0]);
+    // The stable workspace lock serializes appends. Immutable events need SELECT,
+    // not a row lock that would unnecessarily require UPDATE permission.
+    const rows=await tx.query<Row>(`SELECT version,payload,run_digest,run_auth_tag FROM control_idea_bot_run_events WHERE run_id=$1 ORDER BY version DESC LIMIT 1`,[runId]);if(!rows.rows[0])throw new IdeaLabErrorV1("not_found");const current=this.#verify(rows.rows[0]);
     if(current.runId!==runId||current.tenantId!==binding.tenantId||current.workspaceId!==binding.workspaceId||current.sessionDigest!==binding.sessionDigest)throw new IdeaLabErrorV1("integrity_failed");
     let next=change(current);const version=Number(rows.rows[0].version)+1;
     if(next===current)return current;

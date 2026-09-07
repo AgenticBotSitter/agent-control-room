@@ -12,8 +12,8 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO control_room_idea_creation;
 GRANT SELECT ON workspaces, control_identities, control_role_grants, control_web_sessions,
-  control_idea_sessions, audit_events, control_audit_chain_heads TO control_room_idea_creation;
-GRANT INSERT ON control_web_sessions, control_idea_sessions, audit_events, control_audit_chain_heads
+  control_idea_sessions, control_idea_bot_run_events, audit_events, control_audit_chain_heads TO control_room_idea_creation;
+GRANT INSERT ON control_web_sessions, control_idea_sessions, control_idea_bot_run_events, audit_events, control_audit_chain_heads
   TO control_room_idea_creation;
 GRANT UPDATE (web_lock) ON workspaces, control_identities, control_role_grants TO control_room_idea_creation;
 GRANT UPDATE (revoked_at) ON control_web_sessions TO control_room_idea_creation;

@@ -25,6 +25,29 @@ Branch: `codex/idea-abs-workflows`. Public release remains a separate reviewed s
 
 ## Evidence and scope
 
+### Protected owner stop command
+
+The separately configured Idea operation now exposes POST `/api/v1/ideas/:id/stop`
+and an owner-only detail-page control. It checks exact session/run identity, current
+read/cancel permissions and shared-session revocation in the same transaction as the
+stop request and audit. Explicit repeat requests are intrinsically idempotent. A turn
+already marked for provider work remains pending rather than falsely confirmed stopped.
+The existing managed lifecycle owns the operation; no new pool, driver or auto-retry.
+
+The fixed Idea role/preflight adds run-event SELECT/INSERT. These are general event
+insert privileges; application code restricts this route to stop transitions. An actual
+restricted-login test found event-row FOR UPDATE incorrectly required update rights.
+The redundant lock was removed, retaining the stable workspace lock and fresh event
+read. The initial failed test/full-suite run is not accepted evidence. The corrected
+60-test workflow suite and 14 overlapping stop/role/ledger checks pass; full TypeScript
+and focused lint pass. Independent source review/re-review found no residual concrete
+defect. Tests include lost HTTP responses, conflicting targets, logout and restricted-role
+in-flight stop/replay. PGlite is serialized; no real PostgreSQL concurrency or physical
+provider cancellation is claimed. Static markup is not mounted browser interaction.
+VPS compilation and 12 compiled handler/startup checks also pass. The initial direct
+Node test invocation omitted the required `--import tsx` loader and failed before tests;
+the corrected invocation is the accepted result. No installation or deployment occurred.
+
 ### Owner creation form and exact-save recovery
 
 `758f00e` connects the New idea form to the supplied creation operation. The catalog's

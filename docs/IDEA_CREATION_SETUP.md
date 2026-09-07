@@ -1,9 +1,10 @@
-# Saved Idea creation setup
+# Saved Idea creation and stop setup
 
 Source configuration guide, 2026-09-07. Not an instruction to provision or launch now.
 
 The existing private task bootstrap accepts optional `coordinator.ideaCreation`.
-It saves an owner's Idea session and audit record; it does not run a panel, synthesize
+It saves an owner's Idea session and audit record and can record an owner stop request
+for an existing run; it does not run a panel, synthesize
 opinions, promote a project, start a worker or authorize a provider call.
 
 ## Required configuration
@@ -39,7 +40,9 @@ configured application logins from its own login; no connection is shared.
 
 At explicit startup, the bootstrap checks configuration before opening any resource,
 then verifies each actual database login. The Idea preflight permits session creation,
-session authority and audit needs only. Missing or additional rights reject installation;
+run-event appends for the stop operation, session authority and audit needs. SQL grants
+allow run-event inserts generally; the server operation constrains them to stop transitions.
+There are no contribution, synthesis, decision, job or queue writes. Missing or additional rights reject installation;
 startup does not repair grants. Cancellation/failure closes acquired resources once.
 
 ## Acceptance and remaining work
@@ -56,3 +59,10 @@ After authorized real setup, verify `/ideas` offers New idea for the scoped owne
 and reopen a harmless draft, confirm a retry returns the original session, and confirm
 logout revokes access. None of those production checks has run in this block.
 Multi-bot execution and owner decision commands remain separate unfinished integration.
+
+The owner detail page offers **Stop discussion** only for a retained active run while
+the operation is configured and the owner has current read/cancel grants. A retry targets
+the same session digest and run ID and does not duplicate the audit. A saved request
+prevents later turns; an already marked provider turn remains unconfirmed until settlement
+or recovery. This is not physical cancellation of a provider. Disposable tests cover
+lost responses, revoked access and the restricted SQL login; real agent acceptance remains open.
