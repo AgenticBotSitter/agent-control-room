@@ -9,7 +9,7 @@ import { capturedIdeaTimeMillisecondsV1, ideaCodeSchemaV1, ideaIdSchemaV1,
 import { IdeaLabProjectRegistryStoreV1 } from "./store";
 import type { IdeaLabDecisionV1, ProjectRegistryProjectionV1 } from "./types";
 
-const ownerIntentSchema = z.object({
+export const ownerIntentSchema = z.object({
   decision: z.enum(["create_project", "save", "reject"]), safeReasonCode: ideaCodeSchemaV1,
   project: projectCreationSpecSchemaV1.optional(),
 }).strict();

@@ -8,6 +8,20 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Private owner decision bridge implemented locally:** The shared-session command
+reuses the existing owner policy, immutable permit and Idea project/lifecycle service.
+Policy, permit, project, decision and audit writes share one transaction; explicit
+replay compares the retained decision at its original time and rechecks current access.
+The optional bounded HTTP route is closed unless supplied by trusted composition.
+Tests exercise promotion into the shared project/task system, save/reject, failed-audit
+rollback, stale synthesis, an unfinished run, project collisions and logout. Fourteen
+decision/API checks, TypeScript, focused lint and VPS compilation pass. Independent
+source review found no concrete defect. These are synthetic PGlite/injected HTTP tests,
+not live panel acceptance. Managed startup does not yet provide the decision operation;
+its verified SQL permission profile and browser controls are next. Reuse the existing
+Idea resource where feasible rather than adding another service. Live start, news feeds
+and complete real-agent journeys remain open. No provider, deployment or GitHub writes.
+
 **Owner stop command connected locally:** The protected Idea page now offers Stop
 discussion for an active retained run when the separately configured Idea operation
 and current owner permissions allow it. HTTP requests bind the exact session digest

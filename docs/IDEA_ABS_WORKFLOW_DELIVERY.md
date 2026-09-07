@@ -25,6 +25,33 @@ Branch: `codex/idea-abs-workflows`. Public release remains a separate reviewed s
 
 ## Evidence and scope
 
+### Shared-session owner decisions and project handoff
+
+`WebIdeaDecisionOperation` bridges verified private sessions to the existing
+`IdeaLabOwnerDecisionServiceV1`; it does not duplicate project creation or omit the
+stored owner permit. One outer transaction contains policy, permit, project, lifecycle,
+decision and audit writes, including the shared session's precommit expiry/revocation
+checks. The stable workspace lock serializes competing decisions. Exact replay retains
+the original decision time and owner identity, without creating another project or job.
+An existing unfinished run blocks decisions; legacy retained synthesis without a run
+is not relabeled as live evidence. Promotion additionally requires `projects.create`.
+
+The optional POST `/api/v1/ideas/:id/decision` route accepts bounded JSON with exact
+session/synthesis digests and the existing owner intent schema. It is unavailable unless
+trusted composition supplies the operation. Managed startup currently does not; the
+SQL role/profile and browser controls remain unfinished. The intended next composition
+reuses the existing Idea resource, with its additional permissions explicitly verified.
+No production grants were changed and no new credential/pool was opened.
+
+Fourteen decision/API tests pass, covering save/reject, promotion followed by ordinary
+task proposal, lost-response-style replay after time advances, current owner access,
+logout, mismatched synthesis, unfinished run, project collision, and atomic rollback on
+audit failure. TypeScript, focused lint and VPS compilation pass. A new task assertion
+initially used the wrong receipt property; the corrected regression is the accepted
+result. Independent source review found no concrete introduced defect. Tests use one
+serialized PGlite instance and injected HTTP, not independent PostgreSQL transactions,
+browser interactions, a restricted decision login or real agents.
+
 ### Protected owner stop command
 
 The separately configured Idea operation now exposes POST `/api/v1/ideas/:id/stop`
