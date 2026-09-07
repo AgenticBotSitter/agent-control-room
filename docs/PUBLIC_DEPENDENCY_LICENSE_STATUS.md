@@ -149,6 +149,33 @@ Keep the existing dependencies while that scoped review proceeds.
 
 ## Next licensing batch
 
+### Four Vite notice locations resolved through release sources
+
+At `abb55eb`, Vite v8.0.13 peels to
+`a46f11a6c218f74b08ffb3e33a25c2ce02ba6643`. Its source lock records
+@polka/compression 1.0.0-next.25, @polka/url 1.0.0-next.29, sirv 3.0.2 and
+string-hash 1.1.3. Exact-version registry integrity fields match all four source-lock
+entries. Registry gitHead values identify immutable upstream source locations; this
+is not reproducible proof of every byte in Vite's generated bundle.
+
+`research/vite-missing-notice-source-trail.json` retains the full Luke Edwards MIT
+notice from both Polka commits and the sirv commit, plus string-hash's release README
+with its Dark Sky CC0 dedication. Full texts were read. string-hash's root tree has no
+license file; its README is the actual declaration location, so the initial lowercase
+license 404 is resolved rather than treated as an unlicensed package. Its matching
+manifest is retained; its tiny source was read without execution and only its hash kept.
+
+Disk check: 102 GiB free before retrieval. Total response bodies: 526,834 bytes,
+including Vite's lockfile, registry metadata, tree listing and one 404 response. Only
+selected source metadata/hashes and relevant notice/README/manifest texts are retained;
+no package tarballs, installs, clones, downloaded-code execution or GitHub writes.
+
+These four notice-location gaps no longer require searching. The source lock identifies
+a patch on sirv, which still needs inspection when accounting for bundled modifications.
+Other MIT/ISC Vite blocks have not all been read; complete source/bundle correspondence
+and final distribution notice delivery remain unproved. This does not select a license
+for original Agent Control Room code or approve publication.
+
 ### Vite bundled notice structure and four missing bodies
 
 At `fb3a922`, indexed all 78 bundled-component sections of the retained Vite 8.0.13

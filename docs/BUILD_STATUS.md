@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Four Vite notice locations resolved:** Exact release lock/registry records identify
+all four versions and matching integrity values. Immutable-source MIT notices are
+retained for Polka/sirv; string-hash's CC0 dedication is in its release README.
+`research/vite-missing-notice-source-trail.json` logs 526,834 fetched response bytes
+after the 102 GiB free-space check. No install or code execution. Sirv patch review,
+remaining bundled terms and final notice delivery remain; original license undecided.
+
 **Vite bundled review found four concrete text gaps:** Indexed 78 bundled sections;
 four contain only metadata, not license bodies (@polka/compression, @polka/url, sirv,
 string-hash). Apache/BSD blocks were fully read; remaining terms are not yet all reviewed.

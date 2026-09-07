@@ -1,0 +1,284 @@
+{
+  "schema": "control-room.vite-notice-source-trail/v1",
+  "publicationApproved": false,
+  "sourceEquivalenceProved": false,
+  "freeSpaceBefore": "102 GiB",
+  "downloadedResponseBytes": 526834,
+  "retention": "License and README texts retained verbatim; upstream manifest/lock/registry/tree data retained as selected entries plus full-response hashes. string-hash index source was read only and not retained; hash records that inspection. No downloads installed or executed. Remove this evidence only after applicable notices/provenance are preserved with the chosen distribution.",
+  "vite": {
+    "tag": "v8.0.13",
+    "tagObject": "2a1d5abfd4b622a89430008d5d7c286859eb27dd",
+    "commit": "a46f11a6c218f74b08ffb3e33a25c2ce02ba6643",
+    "source": [
+      {
+        "url": "https://raw.githubusercontent.com/vitejs/vite/a46f11a6c218f74b08ffb3e33a25c2ce02ba6643/packages/vite/package.json",
+        "bytes": 5045,
+        "sha256": "15041ba2a287370be16c7c17cfc150d29c8642541f76662d6466a246287590a8",
+        "selected": {
+          "name": "vite",
+          "version": "8.0.13",
+          "dependencies": {
+            "lightningcss": "^1.32.0",
+            "picomatch": "^4.0.4",
+            "postcss": "^8.5.14",
+            "rolldown": "1.0.1",
+            "tinyglobby": "^0.2.16"
+          },
+          "devDependencies": {
+            "@polka/compression": "^1.0.0-next.25",
+            "sirv": "^3.0.2"
+          }
+        }
+      },
+      {
+        "url": "https://raw.githubusercontent.com/vitejs/vite/a46f11a6c218f74b08ffb3e33a25c2ce02ba6643/pnpm-lock.yaml",
+        "bytes": 508939,
+        "sha256": "92610eb0963060c72f858cabe5fbc9888d3eac31e98825b660bee4e214d7c240",
+        "selected": {
+          "importer": {
+            "devDependencies": {
+              "@polka/compression": {
+                "specifier": "^1.0.0-next.25",
+                "version": "1.0.0-next.25"
+              },
+              "sirv": {
+                "specifier": "^3.0.2",
+                "version": "3.0.2(patch_hash=c07c56eb72faea34341d465cde2314e89db472106ed378181e3447893af6bf95)"
+              }
+            }
+          },
+          "packages": {
+            "@polka/compression@1.0.0-next.25": {
+              "resolution": {
+                "integrity": "sha512-UlVkoSGRig87riHSn8QOxd2DzGhadRpNSj5Ukqj+Bt7WTE4Es+sE3ju3OYbe8SiV2OwA+8tDcSuHWUh5S3jCBQ=="
+              },
+              "engines": {
+                "node": ">=6"
+              }
+            },
+            "@polka/url@1.0.0-next.29": {
+              "resolution": {
+                "integrity": "sha512-wwQAWhWSuHaag8c4q/KN/vCoeOJYshAIvMQwD4GpSb3OiZklFfvAgmj0VCBBImRpuF/aFgIRzllXlVX93Jevww=="
+              }
+            },
+            "sirv@3.0.2": {
+              "resolution": {
+                "integrity": "sha512-2wcC/oGxHis/BoHkkPwldgiPSYcpZK3JU28WoMVv55yHJgcZ8rlXvuG9iZggz+sU1d4bRgIGASwyWqjxu3FM0g=="
+              },
+              "engines": {
+                "node": ">=18"
+              }
+            },
+            "string-hash@1.1.3": {
+              "resolution": {
+                "integrity": "sha512-kJUvRUFK49aub+a7T1nNE66EJbZBMnBgoC1UbCZ5n6bsZKBRga4KgBRTMn/pFkeCZSYtNeSyMxPDM0AXWELk2A=="
+              }
+            }
+          }
+        }
+      }
+    ]
+  },
+  "npm": [
+    {
+      "url": "https://registry.npmjs.org/%40polka%2Fcompression/1.0.0-next.25",
+      "bytes": 1638,
+      "sha256": "765916cac406be79a96f2bee0b0510196d14221a6b5e6a5f2b32ee134f852109",
+      "selected": {
+        "name": "@polka/compression",
+        "version": "1.0.0-next.25",
+        "license": "MIT",
+        "repository": {
+          "url": "git+https://github.com/lukeed/polka.git",
+          "type": "git"
+        },
+        "gitHead": "eba0aaff89c8b0765dcc89b23f738399c5edff5e",
+        "dist": {
+          "shasum": "0d4e61f7f52975baaaf92b52e0ad171906a906cf",
+          "tarball": "https://registry.npmjs.org/@polka/compression/-/compression-1.0.0-next.25.tgz",
+          "fileCount": 6,
+          "integrity": "sha512-UlVkoSGRig87riHSn8QOxd2DzGhadRpNSj5Ukqj+Bt7WTE4Es+sE3ju3OYbe8SiV2OwA+8tDcSuHWUh5S3jCBQ==",
+          "unpackedSize": 12141
+        }
+      }
+    },
+    {
+      "url": "https://registry.npmjs.org/%40polka%2Furl/1.0.0-next.29",
+      "bytes": 1527,
+      "sha256": "0a563aea8fb1fb474b44a24082579ebcec98fe850311f719a0c37bc845543307",
+      "selected": {
+        "name": "@polka/url",
+        "version": "1.0.0-next.29",
+        "license": "MIT",
+        "repository": {
+          "url": "git+https://github.com/lukeed/polka.git",
+          "type": "git"
+        },
+        "gitHead": "02cbdb529ddca0a9f3d225e2abb2931924219cc3",
+        "dist": {
+          "shasum": "5a40109a1ab5f84d6fd8fc928b19f367cbe7e7b1",
+          "tarball": "https://registry.npmjs.org/@polka/url/-/url-1.0.0-next.29.tgz",
+          "fileCount": 5,
+          "integrity": "sha512-wwQAWhWSuHaag8c4q/KN/vCoeOJYshAIvMQwD4GpSb3OiZklFfvAgmj0VCBBImRpuF/aFgIRzllXlVX93Jevww==",
+          "unpackedSize": 4815
+        }
+      }
+    },
+    {
+      "url": "https://registry.npmjs.org/sirv/3.0.2",
+      "bytes": 1609,
+      "sha256": "dd9f587c125cb99398bdee35e1f8ba9533698f20091f885736a4b0e082be217e",
+      "selected": {
+        "name": "sirv",
+        "version": "3.0.2",
+        "license": "MIT",
+        "repository": {
+          "url": "git+https://github.com/lukeed/sirv.git",
+          "type": "git"
+        },
+        "gitHead": "1135207e92c40354543cbd15c763c7a61d79d432",
+        "dist": {
+          "shasum": "f775fccf10e22a40832684848d636346f41cd970",
+          "tarball": "https://registry.npmjs.org/sirv/-/sirv-3.0.2.tgz",
+          "fileCount": 6,
+          "integrity": "sha512-2wcC/oGxHis/BoHkkPwldgiPSYcpZK3JU28WoMVv55yHJgcZ8rlXvuG9iZggz+sU1d4bRgIGASwyWqjxu3FM0g==",
+          "unpackedSize": 21883
+        }
+      }
+    },
+    {
+      "url": "https://registry.npmjs.org/string-hash/1.1.3",
+      "bytes": 1428,
+      "sha256": "01155355c9b7d6a8db650a8d63e2608cc31372bef218505774dc9a3bfc64c0e0",
+      "selected": {
+        "name": "string-hash",
+        "version": "1.1.3",
+        "license": "CC0-1.0",
+        "repository": {
+          "url": "git://github.com/darkskyapp/string-hash.git",
+          "type": "git"
+        },
+        "gitHead": "5bf7547a91372c399f4052cc1094a93f73e10284",
+        "dist": {
+          "shasum": "e8aafc0ac1855b4666929ed7dd1275df5d6c811b",
+          "tarball": "https://registry.npmjs.org/string-hash/-/string-hash-1.1.3.tgz",
+          "integrity": "sha512-kJUvRUFK49aub+a7T1nNE66EJbZBMnBgoC1UbCZ5n6bsZKBRga4KgBRTMn/pFkeCZSYtNeSyMxPDM0AXWELk2A=="
+        }
+      }
+    }
+  ],
+  "noticeRequests": [
+    {
+      "url": "https://raw.githubusercontent.com/lukeed/polka/eba0aaff89c8b0765dcc89b23f738399c5edff5e/license",
+      "status": 200,
+      "bytes": 1122,
+      "sha256": "ba573393f24555ac0528612ad39665fab5bdcc80330a61096024bbf5f736526d",
+      "text": "The MIT License (MIT)\n\nCopyright (c) Luke Edwards <luke.edwards05@gmail.com> (https://lukeed.com)\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in\nall copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN\nTHE SOFTWARE.\n"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/lukeed/polka/02cbdb529ddca0a9f3d225e2abb2931924219cc3/license",
+      "status": 200,
+      "bytes": 1122,
+      "sha256": "ba573393f24555ac0528612ad39665fab5bdcc80330a61096024bbf5f736526d",
+      "text": "The MIT License (MIT)\n\nCopyright (c) Luke Edwards <luke.edwards05@gmail.com> (https://lukeed.com)\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in\nall copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN\nTHE SOFTWARE.\n"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/lukeed/sirv/1135207e92c40354543cbd15c763c7a61d79d432/license",
+      "status": 200,
+      "bytes": 1122,
+      "sha256": "ba573393f24555ac0528612ad39665fab5bdcc80330a61096024bbf5f736526d",
+      "text": "The MIT License (MIT)\n\nCopyright (c) Luke Edwards <luke.edwards05@gmail.com> (https://lukeed.com)\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in\nall copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN\nTHE SOFTWARE.\n"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/darkskyapp/string-hash/5bf7547a91372c399f4052cc1094a93f73e10284/license",
+      "status": 404,
+      "bytes": 14,
+      "sha256": "d5558cd419c8d46bdc958064cb97f963d1ea793866414c025906ec15033512ed",
+      "text": null
+    }
+  ],
+  "stringHash": {
+    "tree": {
+      "url": "https://api.github.com/repos/darkskyapp/string-hash/git/trees/5bf7547a91372c399f4052cc1094a93f73e10284",
+      "bytes": 1525,
+      "sha256": "7d1517d8f212c5e563f67b2a7007288f10e97cea4e1c55d516a9ac94d3a4efd9",
+      "truncated": false,
+      "tree": [
+        {
+          "path": ".gitignore",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "07e6e472cc75fafa944e2a6d4b0f101bc476c060",
+          "size": 14,
+          "url": "https://api.github.com/repos/darkskyapp/string-hash/git/blobs/07e6e472cc75fafa944e2a6d4b0f101bc476c060"
+        },
+        {
+          "path": "README.md",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "fd0d12f4395580fb9272e13060227d6c6534512e",
+          "size": 841,
+          "url": "https://api.github.com/repos/darkskyapp/string-hash/git/blobs/fd0d12f4395580fb9272e13060227d6c6534512e"
+        },
+        {
+          "path": "component.json",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "487554adef99967996f4815e6eb9a94cf062c3e5",
+          "size": 344,
+          "url": "https://api.github.com/repos/darkskyapp/string-hash/git/blobs/487554adef99967996f4815e6eb9a94cf062c3e5"
+        },
+        {
+          "path": "index.js",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "3bc4a826ba837d24ea5b36a683d13b9ed6873d53",
+          "size": 408,
+          "url": "https://api.github.com/repos/darkskyapp/string-hash/git/blobs/3bc4a826ba837d24ea5b36a683d13b9ed6873d53"
+        },
+        {
+          "path": "package.json",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "4eff969b744f04cbd8ce8cea3139c01bb9a35c47",
+          "size": 494,
+          "url": "https://api.github.com/repos/darkskyapp/string-hash/git/blobs/4eff969b744f04cbd8ce8cea3139c01bb9a35c47"
+        },
+        {
+          "path": "test.js",
+          "mode": "100644",
+          "type": "blob",
+          "sha": "ad193c6bafe2a9a50ff2258f2cc4e60550219467",
+          "size": 376,
+          "url": "https://api.github.com/repos/darkskyapp/string-hash/git/blobs/ad193c6bafe2a9a50ff2258f2cc4e60550219467"
+        }
+      ]
+    },
+    "files": [
+      {
+        "url": "https://raw.githubusercontent.com/darkskyapp/string-hash/5bf7547a91372c399f4052cc1094a93f73e10284/README.md",
+        "bytes": 841,
+        "sha256": "62a7a3b8dba4cc818974ab2c00cb7fb7cb20afd7d3c73ed049d7f2eb5621a46e",
+        "text": "string-hash\n===========\n\nA fast string hashing function for Node.JS. The particular algorithm is quite\nsimilar to `djb2`, by Dan Bernstein and available\n[here](http://www.cse.yorku.ca/~oz/hash.html). Differences include iterating\nover the string *backwards* (as that is faster in JavaScript) and using the XOR\noperator instead of the addition operator (as described at that page and\nbecause it obviates the need for modular arithmetic in JavaScript).\n\nThe hashing function returns a number between 0 and 4294967295 (inclusive).\n\nThanks to [cscott](https://github.com/cscott) for reminding us how integers\nwork in JavaScript.\n\nLicense\n-------\n\nTo the extend possible by law, The Dark Sky Company, LLC has [waived all\ncopyright and related or neighboring rights][cc0] to this library.\n\n[cc0]: http://creativecommons.org/publicdomain/zero/1.0/\n"
+      },
+      {
+        "url": "https://raw.githubusercontent.com/darkskyapp/string-hash/5bf7547a91372c399f4052cc1094a93f73e10284/package.json",
+        "bytes": 494,
+        "sha256": "39e0ad7355fbdda44a12870d21b48021df4e000d3870b4905b058f8a71728703",
+        "text": "{\n  \"name\": \"string-hash\",\n  \"version\": \"1.1.3\",\n  \"description\": \"fast string hashing function\",\n  \"license\": \"CC0-1.0\",\n  \"keywords\": [\n    \"string\",\n    \"hashing\"\n  ],\n  \"author\": {\n    \"name\": \"The Dark Sky Company\",\n    \"email\": \"developer@darksky.net\"\n  },\n  \"repository\": {\n    \"type\": \"git\",\n    \"url\": \"git://github.com/darkskyapp/string-hash.git\"\n  },\n  \"main\": \"./index\",\n  \"dependencies\": {\n  },\n  \"devDependencies\": {\n    \"mocha\": \"*\"\n  },\n  \"scripts\": {\n    \"test\": \"mocha\"\n  }\n}\n"
+      },
+      {
+        "url": "https://raw.githubusercontent.com/darkskyapp/string-hash/5bf7547a91372c399f4052cc1094a93f73e10284/index.js",
+        "bytes": 408,
+        "sha256": "c3e668295d58ec41962e617c6eb3f7a9944109bb87b6838c1588db8cbdf5a7b8",
+        "retainedText": false
+      }
+    ]
+  },
+  "limitations": [
+    "Registry gitHead is source-location evidence, not reproducible bundle equivalence.",
+    "Vite applies a sirv patch; patch review remains.",
+    "string-hash README contains the actual CC0 dedication; root license filename was absent. Do not substitute unrelated attribution.",
+    "Remaining Vite MIT/ISC blocks and actual candidate notice delivery still need review."
+  ]
+}
