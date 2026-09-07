@@ -8,6 +8,20 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Discussion recap now contains evidence, not just turn counts:** The existing deterministic
+engine was extracted for reuse and now requires complete participant/round coverage. It
+quotes bounded final-turn excerpts, retains the complete contribution digest set and picks
+an exact repeated final-turn experiment with a stable tie-break instead of selecting the
+most confident bot. It explicitly labels the recap as extractive, not AI consensus; v1
+confidence-based scores remain legacy proxies, not measurements of demand or risk.
+A new owner operation binds a completed run and its contribution digests, saves recap and
+audit atomically, and returns the original synthesis on replay without provider calls.
+Nineteen focused checks and TypeScript pass, including injected panel -> recap -> explicit
+owner project creation, exact replay, revoked access and failed-audit rollback. Independent
+source review found no concrete defect. This operation is not yet mounted in the managed
+SQL role/HTTP/UI; those are next. This is not semantic AI synthesis or real-agent acceptance.
+ABS ingestion remains open. No provider call, credential access, deployment or GitHub write.
+
 **Saved Idea page now offers Start discussion when eligible:** The server advertises
 configured-but-authorization-required separately from unconfigured execution. The control
 requires an untouched Idea and current owner start access, displays its saved participant,

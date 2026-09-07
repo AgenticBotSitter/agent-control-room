@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { DatabaseClient } from "../../persistence/database";
 import { SecurityStore, sha256Digest, type VerifiedAuthentication } from "../../security";
 import { isHostProxyV1 } from "../../security/host-value";
-import { buildIdeaLabSessionV1, buildIdeaLabSynthesisV1, parseIdeaLabSessionV1 } from "./contracts";
+import { buildIdeaLabSessionV1, parseIdeaLabSessionV1 } from "./contracts";
 import { buildIdeaLabBotRunV1, buildRepositoryFakeProviderEvidenceV1, IdeaLabBotCoordinatorV1, type IdeaLabBotPanelDriverV1,
   type IdeaLabBotRunV1 } from "./coordinator";
 import { IdeaLabBotRunStoreV1 } from "./coordinator-store";
@@ -14,7 +14,9 @@ import { capturedIdeaTimeFromMillisecondsV1, capturedIdeaTimeMillisecondsV1, cap
   ideaIdSchemaV1, ideaLabSessionProjectionSchemaV1,
   ideaLabelSchemaV1, ideaParticipantSchemaV1, ideaTextSchemaV1, ideaTimeSchemaV1 } from "./schemas";
 import { IdeaLabProjectRegistryStoreV1 } from "./store";
-import type { IdeaLabContributionV1, IdeaLabParticipantV1, IdeaLabSessionProjectionV1, IdeaLabSynthesisV1 } from "./types";
+import type { IdeaLabParticipantV1, IdeaLabSessionProjectionV1, IdeaLabSynthesisV1 } from "./types";
+import { DeterministicIdeaLabSynthesisEngineV1 } from "./synthesis-engine";
+export { DeterministicIdeaLabSynthesisEngineV1 } from "./synthesis-engine";
 
 const createInputSchema=z.object({commandId:ideaIdSchemaV1,title:ideaLabelSchemaV1,ideaSummary:ideaTextSchemaV1,
   targetCustomer:z.string().min(1).max(300),maxRounds:z.number().int().min(1).max(3),
@@ -24,24 +26,6 @@ const commandInputSchema=z.object({commandId:ideaIdSchemaV1,sessionId:ideaIdSche
 export class IdeaLabOperatorServiceErrorV1 extends Error {
   constructor(readonly safeCode:"invalid_operator_request"|"owner_forbidden"|"idea_not_found"|"state_conflict"|
     "operator_boundary_unavailable"){super(safeCode);this.name="IdeaLabOperatorServiceErrorV1";}
-}
-
-function mean(values:number[]):number{return values.length?Math.round(values.reduce((sum,value)=>sum+value,0)/values.length):50;}
-function perspective(contributions:IdeaLabContributionV1[],names:string[]):number[]{return contributions.filter(item=>names.includes(item.perspective)).map(item=>item.confidencePercent);}
-
-export class DeterministicIdeaLabSynthesisEngineV1 {
-  build(session:unknown,contributions:IdeaLabContributionV1[],synthesizedAt:string):IdeaLabSynthesisV1{
-    const parsed=parseIdeaLabSessionV1(session),all=contributions.map(item=>item.confidencePercent),fallback=mean(all);
-    const score=(names:string[])=>{const values=perspective(contributions,names);return values.length?mean(values):fallback;};
-    const risks=contributions.filter(item=>item.perspective==="skeptic"||item.perspective==="risk");
-    const next=[...contributions].sort((a,b)=>b.confidencePercent-a.confidencePercent||a.contributionId.localeCompare(b.contributionId))[0];
-    return buildIdeaLabSynthesisV1(parsed,contributions,{marketDemand:score(["customer","market"]),
-      feasibility:score(["operations","technology"]),differentiation:score(["market","growth"]),
-      durability:Math.max(0,100-score(["skeptic","risk"])),ownerFit:score(["customer","operations"]),
-      riskPercent:score(["skeptic","risk"]),executiveSummary:`The bounded panel completed ${contributions.length} safe contributions across ${parsed.participants.length} distinct perspectives. The score is mechanical and remains advisory until the owner decides.`,
-      nextExperiment:next?.suggestedExperiment??"Collect one bounded customer observation before making a project decision.",
-      dissentingPerspectiveCodes:[...new Set(risks.map(item=>item.primaryRiskCode))].sort().slice(0,6),synthesizedAt});
-  }
 }
 
 export class IdeaLabProtectedOperatorServiceV1 {

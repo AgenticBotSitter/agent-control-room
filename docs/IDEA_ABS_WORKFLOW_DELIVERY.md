@@ -413,3 +413,21 @@ retained. Existing Stop and owner decision controls remain separate. Independent
 found no concrete source defect; timeout/navigation rendering is not browser-tested.
 The Sites skill guided extension of existing controls without new hosting, imagery or
 dependencies. This is not a live Idea Lab qualification.
+
+Recap update: the existing deterministic synthesis engine is now independently reusable,
+with full expected tuple validation before extracting final-turn excerpts. All original
+contributions remain saved and digest-bound; excerpts are explicitly abbreviated and are
+not substituted for the full discussion. Exact repeated experiment text outranks isolated
+confidence, with deterministic participant-ID ties. The legacy v1 numeric dimensions and
+recommendation remain confidence-derived compatibility fields, explicitly not measured
+business evidence. This does not claim semantic agreement/disagreement detection or an
+additional model's judgment; useful richer AI synthesis remains a separate product question.
+
+`WebIdeaSynthesisOperation` requires current owner read/synthesize rights, the exact saved
+session and completed run, and all settled contribution digest/participant/round matches.
+It joins synthesis and audit in the same shared-session transaction and reuses a retained
+synthesis on replay. A synthetic integration test goes from injected panel to recap to
+explicit owner-created project with zero automatic jobs and no additional provider calls.
+Failed-audit rollback and revoked replay tests pass. Independent source review found no
+concrete defect. Managed permission/HTTP/browser wiring remains unimplemented; no new
+queue, model connector or production resource was introduced.
