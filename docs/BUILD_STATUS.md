@@ -8,6 +8,20 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Local saved-project preview controls mounted:** `/local-preview` now reuses the
+existing project creation/catalog and task proposal/catalog/detail components through
+the local-pilot transport. Each project has its own URL/new-tab link; status changes,
+pagination, refresh and exact-save recovery use canonical services. A pending-save
+navigation warning preserves the recovery path; no sample records replace failed reads.
+The enabled local Idea Lab links to this view. The page is gated on explicit pilot
+configuration, and no assignment/agent-start action is added. Both strict type checks,
+focused lint and the Node-only preview build pass. A direct compiled-handler probe
+confirmed the production page says disabled and the workspace API returns 503.
+Static component/client/disposable handler tests pass; interactive browser acceptance
+is still outstanding. The Sites skill guided reuse of existing components/styles;
+local-only authority prevented preview service startup or hosting. Next remains the
+explicitly synthetic progress/result/revision experience, not real-agent execution.
+
 **Local pilot browser transport now reuses existing clients:** A strict path adapter
 maps canonical project/task client requests to the configured local workspace endpoint,
 preserving timeout signals, cookie policy, response validation and exact-save retries.

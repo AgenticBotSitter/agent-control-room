@@ -34,7 +34,7 @@ export function IdeaLabWorkspace({ fixture, operatorControlsEnabled = false }: {
         ? "Local pilot: protected writes use durable local PGlite and the repository-fake panel. No Hermes, Codex, local-model provider, production database, or public network is connected. The examples below remain labelled fixtures."
         : "Development fixture only: these are injected, safe summaries. No Hermes, Codex, or local-model provider was contacted, and this screen cannot dispatch work or create a live project."}</p>
 
-      {operatorControlsEnabled?<LocalPilotOwnerSession/>:null}
+      {operatorControlsEnabled?<><LocalPilotOwnerSession/><p><a href="/local-preview">Open saved local projects and tasks →</a></p></>:null}
       <IdeaLabOperatorControls enabled={operatorControlsEnabled} />
       <IdeaLabConnectionReadiness />
 

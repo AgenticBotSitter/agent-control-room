@@ -27,17 +27,19 @@ export function TaskProposalForm({ draft, setDraft, pending, uncertain, onSave }
   </form>;
 }
 
-export function TaskCatalogPanel({ page, after }: { page: TaskPage; after?: string }) {
+export function TaskCatalogPanel({ page, after, href = (projectId, jobId, cursor) =>
+  `${taskUrl(projectId, jobId)}${cursor ? `?after=${encodeURIComponent(cursor)}` : ""}` }: {
+  page: TaskPage; after?: string; href?: (projectId: string, jobId?: string, after?: string) => string }) {
   return <section aria-label="Saved tasks">
     <h2>Saved tasks</h2>
     {!page.tasks.length ? <p>{after ? "No more tasks on this page." : "No tasks have been saved for this project."}</p>
-      : <ul className="private-task-list">{page.tasks.map(task => <li key={task.jobId}><a href={taskUrl(task.projectId, task.jobId)}>
+      : <ul className="private-task-list">{page.tasks.map(task => <li key={task.jobId}><a href={href(task.projectId, task.jobId)}>
         <span className="private-state">{taskStateLabel[task.state]}</span><h3>{task.title}</h3>
         <span className="private-note">Saved {date(task.createdAt)}</span><span className="private-open">View task →</span>
       </a></li>)}</ul>}
     <nav className="private-actions" aria-label="Task pages">
-      {after && <a href={taskUrl(page.project.projectId)}>First page</a>}
-      {page.nextCursor && <a href={`${taskUrl(page.project.projectId)}?after=${encodeURIComponent(page.nextCursor)}`}>Next 50 tasks</a>}
+      {after && <a href={href(page.project.projectId)}>First page</a>}
+      {page.nextCursor && <a href={href(page.project.projectId, undefined, page.nextCursor)}>Next 50 tasks</a>}
     </nav>
   </section>;
 }
