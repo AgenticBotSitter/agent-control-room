@@ -1,6 +1,55 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createProjectBrowserClient } from "../src/web/v1/browser-client.ts";
+import { readBrowserJson } from "../src/web/v1/browser-json.ts";
+import { readPrivateConnections } from "../src/web/v1/connection-browser-client.ts";
+
+test("shared browser JSON reader counts bytes, handles split Unicode and rejects malformed responses", async () => {
+  const bytes = new TextEncoder().encode('"é"');
+  const response = () => new Response(new ReadableStream({ start(controller) {
+    for (const byte of bytes) controller.enqueue(Uint8Array.of(byte));
+    controller.close();
+  } }), { headers: { "content-type": "application/json; charset=utf-8" } });
+  assert.equal(await readBrowserJson(response(), bytes.length), "é");
+  await assert.rejects(readBrowserJson(response(), bytes.length - 1), /too_large/);
+  for (const invalid of [new Response(null), new Response('{}'),
+    new Response('{', { headers: { "content-type": "application/json" } }),
+    new Response(Uint8Array.of(34, 255, 34), { headers: { "content-type": "application/json" } })])
+    await assert.rejects(readBrowserJson(invalid));
+});
+
+test("browser JSON deadline rejects even a valid prefix without EOF and does not await stuck cleanup", async () => {
+  let cancelled = false;
+  const response = new Response(new ReadableStream({
+    start(controller) { controller.enqueue(new TextEncoder().encode('{}')); },
+    cancel() { cancelled = true; return new Promise(() => {}); },
+  }), { headers: { "content-type": "application/json" } });
+  await assert.rejects(readBrowserJson(response, 100, 15), /timeout/);
+  assert.equal(cancelled, true);
+  assert.equal(response.body!.locked, false);
+});
+
+test("oversized project and connection reads fail without retry; uncertain writes retain their exact key", async () => {
+  const oversized = () => new Response(' '.repeat(1_048_577), { headers: { "content-type": "application/json" } });
+  let reads = 0;
+  const transport: typeof fetch = async () => { reads++; return oversized(); };
+  await assert.rejects(createProjectBrowserClient(transport).list(), /unavailable/);
+  await assert.rejects(readPrivateConnections(transport), /unavailable/);
+  assert.equal(reads, 2);
+  const keys: string[] = []; let calls = 0;
+  const client = createProjectBrowserClient(async (_, options) => {
+    keys.push(new Headers(options?.headers).get("idempotency-key")!);
+    if (++calls === 1) return oversized();
+    return Response.json({ project, replayed: true });
+  }, () => "bounded-save-key");
+  await assert.rejects(client.create({ title: "Work", summary: "" }), /uncertain/);
+  assert.equal(client.hasPending(), true);
+  await assert.rejects(client.create({ title: "Replacement", summary: "" }), /uncertain/);
+  assert.equal(calls, 1);
+  assert.deepEqual(await client.retryPending(), project);
+  assert.deepEqual(keys, ["bounded-save-key", "bounded-save-key"]);
+  assert.equal(client.hasPending(), false);
+});
 
 const project = { projectId: "project:web", title: "Work", summary: "", lifecycle: "active", version: 1,
   createdAt: "2026-09-04T12:00:00.000Z", updatedAt: "2026-09-04T12:00:00.000Z" };

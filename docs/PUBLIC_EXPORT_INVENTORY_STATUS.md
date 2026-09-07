@@ -9,10 +9,13 @@ local uncertain-save correction, so its working-tree hash rather than the prior 
 bytes defines the reviewed content. Its authorization/receipt behavior has focused
 regression coverage; that is not a comprehensive security acceptance.
 
-Follow-up found during review: project and connection clients call `response.json()`
-directly, unlike the byte-bounded attention/task readers. Review and reuse a browser-safe
-bounded reader; do not import server-side authentication/crypto into browser bundles.
-Preserve fixed errors, uncertain write identities and current same-origin request policy.
+Follow-up addressed locally: project, connection and task clients now share the task
+reader's browser-safe byte-limited approach, with an explicit deadline that rejects a
+stalled response even after a valid JSON prefix. Fixed errors, uncertain write identities
+and same-origin request policy remain. No server authentication/crypto import or new
+dependency was added. The project and connection hashes in batch 04 are historical now;
+their changed bytes and the new shared reader need refreshed exact-content observations
+before candidate acceptance. The original reports have not been silently rewritten.
 
 ## Protected application content pass completed
 

@@ -8,6 +8,20 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Browser response bounds implemented locally:** Project, connection and task clients
+now reuse one browser-only JSON reader, extracted from the task client: 1 MiB byte cap,
+10-second body deadline, strict UTF-8 and JSON media type. A valid prefix without EOF
+is rejected on timeout rather than accidentally accepted after cancellation. Cleanup
+does not wait for a stuck producer. Project write uncertainty and exact explicit retry
+keys survive response failures; no automatic retry or new dependency. Twenty-nine
+selected project/connection/task/result browser tests, standalone TypeScript, targeted
+lint and fresh standalone build pass. All 47 compiled-app tests also pass. Logs:
+`/private/tmp/cr-browser-bounded-tests.log`, `/private/tmp/cr-browser-bounded-build.log`
+and `/private/tmp/cr-browser-bounded-compiled-tests.log`. This is selected regression,
+not a new full-suite run or interactive browser acceptance.
+Batch 04 project/connection hashes describe older bytes and need refresh; no public
+clearance, license choice, publication, listener or provider operation is implied.
+
 **Project uncertainty preservation fixed:** An unconfirmed project create/lifecycle
 save now keeps its original request key after a later 400/401/403/404/409 response.
 Only a first definitive rejection or matching success clears the relevant hold. This

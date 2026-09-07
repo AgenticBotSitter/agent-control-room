@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { readBrowserJson } from "./browser-json";
 import { parseConnectionCenterBrowserProjectionV1 } from "../../connection-center/v1/http-client";
 
 export class ConnectionBrowserError extends Error {
@@ -14,7 +15,7 @@ export async function readPrivateConnections(transport: typeof fetch = fetch) {
     if (response.status === 401) throw new ConnectionBrowserError("authentication_required");
     if (response.status === 403) throw new ConnectionBrowserError("access_denied");
     if (!response.ok) throw new ConnectionBrowserError("unavailable");
-    const result = envelope.parse(await response.json());
+    const result = envelope.parse(await readBrowserJson(response));
     const projection = await parseConnectionCenterBrowserProjectionV1(result.projection);
     if (result.telemetry === "not_configured" && projection.connections.some(item => item.signalFreshness !== "missing"))
       throw new Error("invalid_telemetry_state");

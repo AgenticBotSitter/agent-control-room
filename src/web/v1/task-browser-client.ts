@@ -1,4 +1,5 @@
 import { BrowserRequestError, type BrowserFailureCode } from "./browser-client";
+import { readBrowserJson as json } from "./browser-json";
 import { catalogProjectIdSchema } from "./project-wire";
 import { taskCommandSchema, taskDetailSchema, taskDraftSchema, taskPageSchema, type TaskReceipt } from "./task-wire";
 import { taskResultsPageSchema, taskResultContentSchema } from "./task-result-wire";
@@ -26,18 +27,6 @@ export function createTaskBrowserClient(transport: typeof fetch = fetch, makeKey
           ...(command ? { "content-type": "application/json", "idempotency-key": command.key } : {}) },
         ...(command ? { body: command.body } : {}) });
     } catch { throw new BrowserRequestError(command ? "uncertain" : "unavailable"); }
-  }
-  async function json(response: Response) {
-    if (!response.body || response.headers.get("content-type")?.split(";")[0].trim() !== "application/json") throw new Error();
-    const reader = response.body.getReader(), chunks: Uint8Array[] = []; let size = 0;
-    const timer = setTimeout(() => { void reader.cancel().catch(() => {}); }, 10_000);
-    try {
-      for (;;) { const { value, done } = await reader.read(); if (done) break;
-        size += value.byteLength; if (size > 1_048_576) throw new Error(); chunks.push(value); }
-      const bytes = new Uint8Array(size); let offset = 0;
-      for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
-      return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
-    } finally { clearTimeout(timer); void reader.cancel().catch(() => {}); reader.releaseLock(); }
   }
   async function read(url: string) {
     const response = await call(url); if (!response.ok) throw new BrowserRequestError(failure(response.status));

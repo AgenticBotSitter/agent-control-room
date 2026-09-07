@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { readBrowserJson } from "./browser-json";
 import { catalogProjectIdSchema, projectCatalogPageSchema, projectCreateSchema, projectTransitionSchema,
   projectViewSchema, webProjectSchema, type ProjectCatalogPage, type ProjectView, type WebProject } from "./project-wire";
 
@@ -31,7 +32,7 @@ export function createProjectBrowserClient(transport: typeof fetch = fetch, make
     403: "access_denied", 404: "not_found", 409: "conflict" } as Record<number, BrowserFailureCode>)[status] ?? "unavailable";
   async function read(response: Response): Promise<unknown> {
     if (!response.ok) throw new BrowserRequestError(errorFor(response.status));
-    try { return await response.json(); } catch { throw new BrowserRequestError("unavailable"); }
+    try { return await readBrowserJson(response); } catch { throw new BrowserRequestError("unavailable"); }
   }
   async function command(path: string, value: unknown, matches: (project: WebProject) => boolean): Promise<WebProject> {
     if (busy) throw new BrowserRequestError("uncertain");
@@ -50,7 +51,7 @@ export function createProjectBrowserClient(transport: typeof fetch = fetch, make
         }
         throw new BrowserRequestError("uncertain");
       }
-      const result = z.object({ project: webProjectSchema, replayed: z.boolean() }).strict().parse(await response.json());
+      const result = z.object({ project: webProjectSchema, replayed: z.boolean() }).strict().parse(await readBrowserJson(response));
       if (!pending.matches(result.project)) throw new BrowserRequestError("uncertain");
       pending = undefined;
       return result.project;
