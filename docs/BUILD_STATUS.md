@@ -8,6 +8,17 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Isolated public candidate now installs, checks and compiles:** In the separate
+candidate, private-checkout scripts were replaced by three matching check/build/test
+commands, unselected SDK aliases removed, and the private-brand assertion generalized.
+The frozen lockfile is unchanged. Pinned preparation reused 476 cached packages; the
+recorded candidate is about 455 MiB with dependencies/build, and logs remain private.
+Standalone types, build and all 47 selected compiled tests pass from that directory.
+`docs/public-launch-draft/SETUP.md` now documents the verified commands and explicitly
+states the interactive demo has no ready start command. This is not publication or a
+license decision; privacy/rights review, demo startup and independent review remain.
+See `PUBLIC_CANDIDATE_STAGING.md` for hashes, preparation events and cleanup targets.
+
 **First isolated public source candidate staged locally:** 458 tracked files from
 `4667c11` were exported without Git history to the recorded temporary candidate in
 `PUBLIC_CANDIDATE_STAGING.md` (about 7.7 MiB including archive; 101 GiB available first).

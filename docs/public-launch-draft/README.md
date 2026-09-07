@@ -11,6 +11,7 @@ and reproducibility review. Nothing here enables GitHub Actions or changes repos
 |---|---|---|
 | README.md | [Project brief](../PUBLIC_PROJECT_BRIEF_DRAFT.md) | Confirm name, website/repository links and current release status |
 | CONTRIBUTING.md | [Contributor guide](../PUBLIC_CONTRIBUTOR_GUIDE_DRAFT.md) | Confirm license/contribution policy and link verified setup |
+| SETUP.md | [Candidate setup](SETUP.md) | Isolated macOS check/build/47 compiled tests pass; interactive demo startup remains unfinished |
 | docs/ARCHITECTURE.md | [Architecture](ARCHITECTURE.md) | Technical review against the exact exported source |
 | ROADMAP.md | [Roadmap](ROADMAP.md) | Confirm milestone evidence and turn scoped work into ready issues after source release |
 | WORK_PACKAGES.md | [Substantial contributor packages](WORK_PACKAGES.md) | Fill exact public base, prerequisites, allowed files and acceptance commands before issuing ready assignments |
