@@ -8,6 +8,17 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Simulation panel composed into the existing workspace behind an explicit demo flag:**
+The task page can show simulate/reconcile controls and escaped, untrusted sample text
+using the validated browser clients. The existing Mac preview leaves the flag off;
+the contributor launcher must enable it with the matching routes. Pending/error states
+are accessible, automatic retries absent, and leaving the component prevents late
+responses from setting its state. Nine selected rendering/runtime tests, strict types,
+focused lint and the full application build pass. Existing middleware deprecation and
+route-classification warnings remain. No browser interaction or listener was used.
+This is compiled UI composition, not runnable-demo acceptance; standalone startup and
+revision flow are still incomplete. The public candidate has not yet been expanded.
+
 **Browser simulation client added and verified:** A thin browser-only client uses the
 existing bounded JSON reader, same-origin/no-store requests, redirect rejection and
 a timeout. It sends only explicit simulation intent and project/job IDs, validates

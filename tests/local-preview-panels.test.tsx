@@ -7,6 +7,21 @@ import { TaskCatalogPanel } from "../private-app/app/task-panels";
 import { LocalProjectWorkspace, localPreviewHref, localPreviewFailure } from "../app/local-preview/workspace";
 import { BrowserRequestError } from "../src/web/v1/browser-client";
 import type { TaskPage } from "../src/web/v1/task-wire";
+import { ContributorSimulationPanel } from "../app/components/contributor-simulation";
+
+test("simulation panel distinguishes pending, uncertain and untrusted output", () => {
+  const render = (props: Partial<Parameters<typeof ContributorSimulationPanel>[0]>) => renderToStaticMarkup(
+    createElement(ContributorSimulationPanel, { pending: false, uncertain: false, onRun: () => {}, ...props }));
+  assert.match(render({}), /Simulate this task/);
+  const pending = render({ pending: true });
+  assert.match(pending, /disabled/); assert.match(pending, /role="status"/);
+  assert.match(render({ uncertain: true }), /Check this simulation/);
+  const result = render({ text: "<script>untrusted sample</script>" });
+  assert.match(result, /untrusted content/);
+  assert.match(result, /&lt;script&gt;/);
+  assert.doesNotMatch(result, /<script>/);
+  assert.match(render({ error: "Sign in again" }), /role="alert"/);
+});
 
 const project = { projectId: "project:example", title: "Example <project>", summary: "Purpose", lifecycle: "active" as const,
   origin: "ordinary" as const, lifecycleEditable: true, version: 1, createdAt: "2026-09-06T00:00:00.000Z", updatedAt: "2026-09-06T00:00:00.000Z" };

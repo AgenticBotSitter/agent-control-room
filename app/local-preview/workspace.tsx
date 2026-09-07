@@ -10,6 +10,7 @@ import { ProjectCreateForm } from "../components/project-create-form";
 import { TaskCatalogPanel, TaskDetailPanel, TaskProposalForm } from "../../private-app/app/task-panels";
 import { TaskResultsPanel } from "../../private-app/app/task-results";
 import type { TaskResultsPage, TaskResultContent } from "../../src/web/v1/task-result-wire";
+import { ContributorSimulation } from "../components/contributor-simulation";
 
 export function localPreviewHref(projectId?: string, jobId?: string, after?: string) {
   const query = new URLSearchParams();
@@ -27,7 +28,9 @@ export function localPreviewFailure(reason: unknown, operation: "read" | "save",
     clearRecords: operation === "read" || code !== "invalid_request" };
 }
 
-export function LocalProjectWorkspace({ projectId, jobId, after }: { projectId?: string; jobId?: string; after?: string }) {
+export function LocalProjectWorkspace({ projectId, jobId, after, contributorDemo = false }: {
+  projectId?: string; jobId?: string; after?: string; contributorDemo?: boolean;
+}) {
   const [clients] = useState(() => { const transport = createLocalPilotBrowserTransportV1();
     return { projects: createProjectBrowserClient(transport), tasks: createTaskBrowserClient(transport) }; });
   const [catalog, setCatalog] = useState<ProjectCatalogPage>();
@@ -131,6 +134,8 @@ export function LocalProjectWorkspace({ projectId, jobId, after }: { projectId?:
           localPreviewHref(projectId, (result as { jobId: string }).jobId));
       }} />}</>}
     {detail && <TaskDetailPanel detail={detail} />}
+    {contributorDemo && detail && detail.task.state === "proposed" && projectId && jobId && !held &&
+      <ContributorSimulation key={`${projectId}/${jobId}`} projectId={projectId} jobId={jobId} />}
     {detail && results && <TaskResultsPanel page={results} content={content} pending={reading}
       onOpen={artifactId => { void openResult(artifactId); }}
       onClose={() => { generation.current++; setContent(undefined); }} />}
