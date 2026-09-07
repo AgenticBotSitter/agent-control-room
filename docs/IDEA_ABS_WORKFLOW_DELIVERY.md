@@ -44,8 +44,13 @@ HTTP/startup mounted and its production SQL role is not granted.
 Initial tests found a nonexistent `control_jobs.input_digest` column assumption; the
 reader now checks the validated job payload instead. Thirteen focused tests then passed,
 covering concurrent replay, source drift, wrong scope/key, immutable storage and full
-rollback on audit failure or expiry. A final additional test rejects non-owner grants and
-paused projects. Eight startup/runtime-role checks, TypeScript, focused lint and VPS build
+rollback on audit failure or expiry. A final additional owner/paused-project test failed
+before its paused assertion: the fixture passed an extra project scope field to the
+project service, changing its adapter ID. Its premature pass statement is corrected here;
+the fixture now supplies the exact tenant/workspace scope. The final complete delivery
+rerun passes all 62 base and 135 extended checks, including that owner/paused-project test;
+TypeScript and focused lint also pass on the corrected checkout.
+Eight startup/runtime-role checks, TypeScript, focused lint and VPS build
 pass. The new `pnpm test:idea-abs:delivery` command passed the existing 62 workflow tests
 plus 134 newer Idea/ABS checks before that last owner test was added. No actual provider,
 network source or production PostgreSQL was used. Independent source review found no

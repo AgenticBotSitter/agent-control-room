@@ -77,7 +77,7 @@ test("non-owner grants and paused projects cannot propose a collection", async t
   await f.client.query("UPDATE control_role_grants SET role_key='operator' WHERE id='grant:web'");
   await assert.rejects(f.service.propose(f.identity, f.input));
   await f.client.query("UPDATE control_role_grants SET role_key='owner' WHERE id='grant:web'");
-  await new WebProjectService(f.client, f.scope, f.clock).transition(f.identity, f.scope.projectId,
+  await new WebProjectService(f.client, { tenantId: f.scope.tenantId, workspaceId: f.scope.workspaceId }, f.clock).transition(f.identity, f.scope.projectId,
     { lifecycle: "paused", expectedVersion: f.project.version }, "pause-news-project-001");
   await assert.rejects(f.service.propose(f.identity, f.input), /conflict/);
   assert.equal((await f.client.query("SELECT * FROM control_abs_feed_plans")).rows.length, 0);

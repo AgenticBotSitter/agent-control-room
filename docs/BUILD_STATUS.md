@@ -15,8 +15,10 @@ A fixed-source owner planning service saves audit in the same authenticated tran
 requests cannot select URLs, executors or limits. Revocation, expiry and audit failure
 prevent commit. An initial read query used a nonexistent normalized job column; it now
 uses the existing validated payload. Thirteen focused checks then passed. The new
-`pnpm test:idea-abs:delivery` command passed 62 base plus 134 extended checks; a final
-owner/paused-project check also passes. Eight startup/runtime-role checks, TypeScript,
+`pnpm test:idea-abs:delivery` command passed 62 base plus 134 extended checks. The final
+owner/paused-project test initially failed in fixture setup (an extra scope field changed
+its adapter identity); that fixture is corrected. The final delivery run passes all 62 base
+and 135 extended checks, including owner/paused-project refusal. Eight startup/runtime-role checks, TypeScript,
 focused lint and VPS build pass. Independent source review found no introduced defect.
 The schema fingerprint was regenerated from disposable migrations through 0061.
 Production role grants, HTTP/startup mounting, actual execution admission/markers and
