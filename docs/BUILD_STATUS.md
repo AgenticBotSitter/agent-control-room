@@ -8,6 +8,15 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Invalid local-preview saves no longer discard the form:** The controller now keeps
+loaded form components mounted only for a definitive invalid-input save, so project
+inputs remain editable. Failed reads and authorization, stale-state or uncertain-save
+failures still clear displayed records; existing clients retain uncertain request keys.
+Task errors use task-specific instructions rather than project-summary advice. All 26
+selected preview/client tests, both strict type checks, focused lint and the Node-only
+preview build pass. These include failure-policy tests, not a claimed interactive
+browser reproduction. No listener, authentication, provider or external write was used.
+
 **Separate public welcome page implemented locally:** `public-site/index.html` and
 `styles.css` contain the project introduction, feature goals, honest pre-alpha status
 and contribution invitation. No guessed GitHub/domain links, private-app navigation,

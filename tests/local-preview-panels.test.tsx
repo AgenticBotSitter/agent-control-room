@@ -4,11 +4,23 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ProjectCatalog } from "../app/components/project-catalog";
 import { TaskCatalogPanel } from "../private-app/app/task-panels";
-import { LocalProjectWorkspace, localPreviewHref } from "../app/local-preview/workspace";
+import { LocalProjectWorkspace, localPreviewHref, localPreviewFailure } from "../app/local-preview/workspace";
+import { BrowserRequestError } from "../src/web/v1/browser-client";
 import type { TaskPage } from "../src/web/v1/task-wire";
 
 const project = { projectId: "project:example", title: "Example <project>", summary: "Purpose", lifecycle: "active" as const,
   origin: "ordinary" as const, lifecycleEditable: true, version: 1, createdAt: "2026-09-06T00:00:00.000Z", updatedAt: "2026-09-06T00:00:00.000Z" };
+test("invalid saves keep forms editable but failed reads and uncertain or denied writes clear records", () => {
+  const invalid = new BrowserRequestError("invalid_request");
+  assert.equal(localPreviewFailure(invalid, "save", false).clearRecords, false);
+  assert.match(localPreviewFailure(invalid, "save", true).message, /title and instructions/);
+  assert.equal(localPreviewFailure(invalid, "read", false).clearRecords, true);
+  for (const code of ["authentication_required", "access_denied", "not_found", "conflict", "uncertain", "unavailable"] as const)
+    assert.equal(localPreviewFailure(new BrowserRequestError(code), "save", true).clearRecords, true);
+  const unexpected = localPreviewFailure(new Error("private implementation detail"), "save", false);
+  assert.equal(unexpected.clearRecords, true);
+  assert.doesNotMatch(unexpected.message, /private implementation detail/);
+});
 test("reused project catalog keeps pilot links separate and preserves default navigation", () => {
   const pilot = renderToStaticMarkup(createElement(ProjectCatalog, { state: "ready", projects: [project], projectHref: localPreviewHref }));
   assert.match(pilot, /href="\/local-preview\?project=project%3Aexample"/);

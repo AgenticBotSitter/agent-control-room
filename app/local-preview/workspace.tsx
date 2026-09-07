@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createLocalPilotBrowserTransportV1 } from "../../src/local-pilot/v1/browser-transport";
 import { BrowserRequestError, browserErrorMessage, createProjectBrowserClient } from "../../src/web/v1/browser-client";
-import { createTaskBrowserClient } from "../../src/web/v1/task-browser-client";
+import { createTaskBrowserClient, taskErrorMessage } from "../../src/web/v1/task-browser-client";
 import type { ProjectCatalogPage, WebProject } from "../../src/web/v1/project-wire";
 import type { TaskDetail, TaskPage } from "../../src/web/v1/task-wire";
 import { ProjectCatalog } from "../components/project-catalog";
@@ -15,6 +15,14 @@ export function localPreviewHref(projectId?: string, jobId?: string, after?: str
   if (jobId) query.set("job", jobId);
   if (after) query.set("after", after);
   return `/local-preview${query.size ? `?${query}` : ""}`;
+}
+
+export function localPreviewFailure(reason: unknown, operation: "read" | "save", taskContext: boolean) {
+  const code = reason instanceof BrowserRequestError ? reason.code : "unavailable";
+  return { message: (taskContext ? taskErrorMessage : browserErrorMessage)[code],
+    // Only a definitive invalid save keeps the already loaded form mounted.
+    // Failed reads and authorization/staleness/uncertainty failures clear records.
+    clearRecords: operation === "read" || code !== "invalid_request" };
 }
 
 export function LocalProjectWorkspace({ projectId, jobId, after }: { projectId?: string; jobId?: string; after?: string }) {
@@ -30,7 +38,11 @@ export function LocalProjectWorkspace({ projectId, jobId, after }: { projectId?:
   const busy = useRef(false), generation = useRef(0);
   const uncertain = clients.projects.hasPending() || clients.tasks.hasPending();
   const clear = useCallback(() => { setCatalog(undefined); setPage(undefined); setDetail(undefined); }, []);
-  const failure = useCallback((reason: unknown) => { clear(); setError(browserErrorMessage[reason instanceof BrowserRequestError ? reason.code : "unavailable"]); }, [clear]);
+  const failure = useCallback((reason: unknown, operation: "read" | "save") => {
+    const result = localPreviewFailure(reason, operation, !!projectId);
+    if (result.clearRecords) clear();
+    setError(result.message);
+  }, [clear, projectId]);
   useEffect(() => {
     let current = true;
     const version = ++generation.current;
@@ -41,7 +53,7 @@ export function LocalProjectWorkspace({ projectId, jobId, after }: { projectId?:
         if (!current || version !== generation.current) return;
         setError(undefined);
         if ("sources" in value) setCatalog(value); else if ("tasks" in value) setPage(value); else setDetail(value);
-      } catch (reason) { if (current && version === generation.current) failure(reason); }
+      } catch (reason) { if (current && version === generation.current) failure(reason, "read"); }
       finally { if (current && version === generation.current) setLoading(false); }
     };
     void read();
@@ -62,7 +74,7 @@ export function LocalProjectWorkspace({ projectId, jobId, after }: { projectId?:
       const result = await work();
       if (navigate) { busy.current = false; window.location.assign(navigate(result)); }
       else { clear(); setLoading(true); setRefresh(value => value + 1); }
-    } catch (reason) { failure(reason); setLoading(false); }
+    } catch (reason) { failure(reason, "save"); setLoading(false); }
     finally { busy.current = false; setPending(false); }
   }
   const project = page?.project ?? detail?.project;
