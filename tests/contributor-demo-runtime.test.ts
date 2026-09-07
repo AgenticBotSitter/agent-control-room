@@ -5,6 +5,9 @@ import test from "node:test";
 import { createContributorDemoRuntime } from "../src/contributor-demo/runtime";
 import { createContributorDemoHttp } from "../src/contributor-demo/http";
 import { createContributorDemoBrowserClient } from "../src/contributor-demo/browser-client";
+import { loadContributorHistory } from "../src/contributor-demo/history-view";
+import { createTaskBrowserClient } from "../src/web/v1/task-browser-client";
+import { createLocalPilotBrowserTransportV1 } from "../src/local-pilot/v1/browser-transport";
 import { createContributorDemoNodeHandler, createPrivateNodeHandler } from "../src/web/v1/private-node-handler";
 import { nodeExchange } from "./helpers/web-node";
 
@@ -246,6 +249,16 @@ test("demo HTTP composes protected login and project routes without operational 
   assert.equal(historyBody.entries.length, 2);
   assert.equal(historyBody.entries[1].artifactId, revised.artifactId);
   assert.deepEqual(await browser.history(projectId, jobId), historyBody);
+  const readTransport: typeof fetch = async (input, init) => {
+    assert.equal(init?.method ?? "GET", "GET");
+    const headers = new Headers(init?.headers); headers.set("cookie", cookie);
+    return handle(new Request(`${demo.origin}${String(input)}`, { ...init, headers }));
+  };
+  const restored = await loadContributorHistory({ simulations: createContributorDemoBrowserClient(readTransport),
+    tasks: createTaskBrowserClient(createLocalPilotBrowserTransportV1(readTransport)) }, projectId, jobId);
+  assert.equal(restored.unavailable, false); assert.equal(restored.samples.length, 2);
+  assert.equal(restored.samples[1].artifactId, revised.artifactId);
+  assert.match(restored.samples[1].text, /Use a shorter summary/);
   assert.equal((await handle(simulate({ revision: { ...feedback, feedback: "x".repeat(501) } }))).status, 400);
   assert.equal((await handle(simulate({ revision: { ...feedback, command: "no" } }))).status, 400);
   const query = new URLSearchParams({ resource: "synthetic_result", projectId, jobId, artifactId: receipt.artifactId });

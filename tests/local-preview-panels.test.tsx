@@ -31,6 +31,9 @@ test("simulation panel distinguishes pending, uncertain and untrusted output", (
   const pending = render({ pending: true });
   assert.match(pending, /disabled/); assert.match(pending, /role="status"/);
   assert.match(render({ uncertain: true }), /Check this simulation/);
+  const restoring = render({ pending: true, restoring: true });
+  assert.match(restoring, /Loading sample history/);
+  assert.match(restoring, /No simulation is being started/);
   const result = render({ text: "<script>untrusted sample</script>" });
   assert.match(result, /untrusted content/);
   assert.match(result, /&lt;script&gt;/);

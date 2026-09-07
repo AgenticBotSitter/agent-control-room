@@ -8,6 +8,15 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Page history recovery connected:** Opening the simulation panel first reads the
+current session's revision chain and verifies each sample through the existing
+protected artifact reader. The latest sample and earlier versions are restored;
+reads do not start simulations. Failed/unverified history cannot silently become a
+fresh run. Lost replies recover through a history read, and failed simulation
+outcomes remain labelled unavailable. Twelve runtime/render tests pass, including
+GET-only history restoration through both real browser clients. Browser interaction,
+progress display and final public source packaging/review remain outstanding.
+
 **Session history read available for refresh recovery:** The demo runtime and protected
 GET endpoint return an ordered, bounded sample/revision chain without starting work.
 Current task access is checked before reading history; failures remain unavailable,

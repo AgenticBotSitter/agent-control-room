@@ -28,9 +28,10 @@ Create a project and proposed task, then explicitly choose the simulation action
 to obtain a clearly labelled sample result. Real execution is not enabled.
 The sample result includes a feedback form for requesting another sample, and
 earlier displayed samples remain expandable. If a reply is uncertain, check that
-same request before changing its feedback. Revision history currently belongs to
-the open page; refresh/re-entry recovery and browser acceptance are still being
-completed. This document
+same request before changing its feedback. Reopening the task reads its history
+from the running demo session, including its latest sample and earlier versions.
+This does not restart simulations. History does not survive stopping the demo.
+Browser acceptance is still being completed. This document
 describes the implemented command, not a claim that the release is ready.
 
 ## Stop
