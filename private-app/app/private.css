@@ -1,0 +1,77 @@
+.private-shell { max-width: 1440px; margin: auto; font-size: 1rem; }
+.private-header { display: flex; align-items: center; gap: 1.25rem; padding: 1.3rem 2rem; border-bottom: 1px solid var(--border); }
+.private-brand { font-weight: 750; font-size: 1.25rem; }
+.private-header > span { color: var(--muted); flex: 1; }
+.private-header nav { display: flex; align-items: center; flex-wrap: wrap; gap: 1rem; }
+.private-header nav a { display: inline-flex; align-items: center; min-height: 44px; }
+.private-shell main { padding: 2rem; }
+.private-heading { margin-bottom: 1.8rem; }
+.private-heading h1 { margin: .5rem 0; font-size: clamp(1.8rem, 3vw, 2.6rem); letter-spacing: -.04em; }
+.private-heading p, .private-note { color: var(--muted); }
+.private-note { font-size: .875rem; margin-top: 1.5rem; }
+.private-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 360px); gap: 2rem; align-items: start; }
+.private-project-grid { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); gap: 1rem; }
+.private-project-grid li, .private-create, .private-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.private-project-grid a { display: block; padding: 1.35rem; height: 100%; overflow-wrap: anywhere; }
+.private-project-grid a:hover { background: var(--surface-2); border-radius: var(--radius); }
+.private-project-grid h3 { margin: .75rem 0 .3rem; font-size: 1.1rem; }
+.private-project-grid p { color: var(--muted); white-space: pre-wrap; }
+.private-state { text-transform: capitalize; font-size: .875rem; background: var(--surface-3); border-radius: 2rem; padding: .2rem .65rem; display: inline-block; }
+.private-open { font-weight: 650; color: var(--green); }
+.private-create, .private-panel { padding: 1.5rem; }
+.private-create { display: grid; gap: .7rem; }
+.private-create h2 { margin: 0 0 .5rem; }
+.private-create label { font-size: .875rem; font-weight: 650; }
+.private-create input, .private-create textarea { width: 100%; font: inherit; color: var(--text); border: 1px solid var(--border-strong); border-radius: .5rem; padding: .6rem; background: var(--surface); }
+.private-shell button, .private-notice a { min-height: 44px; padding: .6rem .9rem; border: 1px solid var(--border-strong); border-radius: .55rem; background: var(--surface-2); color: var(--text); font: inherit; cursor: pointer; }
+.private-create button { background: var(--green); color: var(--surface); margin-top: .3rem; }
+.private-shell button:disabled { opacity: .55; cursor: wait; }
+.private-shell textarea:focus-visible, .private-shell input:focus-visible { outline: 3px solid var(--green); outline-offset: 2px; }
+.private-notice { background: var(--amber-soft); border: 1px solid var(--amber); border-radius: .75rem; padding: 1rem; margin-bottom: 1.5rem; }
+.private-back { display: inline-block; margin-bottom: 1.2rem; color: var(--muted); }
+.private-tabs { display: flex; gap: 1.5rem; border-bottom: 1px solid var(--border); margin-bottom: 1.5rem; }
+.private-tabs a { padding: .65rem 0; }
+.private-tabs [aria-current="page"] { border-bottom: 3px solid var(--green); font-weight: 700; }
+.private-actions { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: 1.5rem; }
+.private-actions > a { padding: .6rem .9rem; min-height: 44px; border: 1px solid var(--border-strong); border-radius: .55rem; }
+.private-actions > .private-note { flex-basis: 100%; margin-top: 0; }
+.private-project-grid .private-note { display: block; margin: .75rem 0; }
+.private-project-grid li { display: flex; flex-direction: column; }
+.private-project-grid li > a { height: auto; }
+.private-project-grid li > a:first-child { flex: 1; }
+.private-project-grid a.private-project-new-tab { display: block; min-height: 44px; padding: .75rem 1.25rem; border-top: 1px solid var(--border); font-weight: 650; }
+.private-summary { white-space: pre-wrap; overflow-wrap: anywhere; }
+.private-task-list { list-style: none; padding: 0; display: grid; gap: .8rem; }
+.private-task-list li { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.private-task-list a { display: grid; gap: .6rem; padding: 1.25rem; overflow-wrap: anywhere; }
+.private-task-list a:hover { background: var(--surface-2); border-radius: var(--radius); }
+.private-task-list h3 { margin: 0; }
+.private-task-list .private-state { justify-self: start; }
+.private-task-list .private-note, .private-create .private-note { margin: 0; }
+.private-task-detail { display: grid; gap: 1.25rem; }
+.private-task-detail h2 { margin-top: .5rem; }
+.private-attempt { border-top: 1px solid var(--border); margin-top: 1.5rem; }
+.private-run { padding: 1rem; background: var(--surface-2); border-radius: .6rem; margin: 1rem 0; overflow-wrap: anywhere; }
+.private-run h4 { font-size: 1rem; margin-top: 0; }
+.private-task-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(230px, 100%), 1fr)); gap: 1rem; }
+.private-task-facts dt { color: var(--muted); font-size: .875rem; }
+.private-task-facts dd { margin: .25rem 0 0; }
+.private-result-claim { padding: 1rem; border-left: 3px solid var(--amber); }
+.private-run summary { cursor: pointer; min-height: 44px; padding-top: .75rem; }
+.private-timeline { padding-left: 1.5rem; }
+.private-timeline li { padding: .5rem 0; }
+.private-timeline time, .private-timeline li > span:last-child { display: block; font-size: .875rem; color: var(--muted); }
+.private-tabs { flex-wrap: wrap; }
+.private-task-results { display: grid; gap: 1.25rem; margin-top: 1.25rem; }
+.private-result-list, .private-review-list { list-style: none; padding: 0; display: grid; gap: 1rem; }
+.private-result-list > li, .private-review-list > li { border-top: 1px solid var(--border); padding: 1rem 0; overflow-wrap: anywhere; }
+.private-result-list button { margin-top: .75rem; }
+.private-task-results summary { cursor: pointer; min-height: 44px; padding-top: .7rem; }
+.private-task-results code { overflow-wrap: anywhere; }
+.private-owner-review { border: 1px solid var(--border); border-radius: .6rem; padding: 1rem; margin-block: 1rem; }
+.private-owner-review label { display: grid; gap: .5rem; }
+.private-owner-review textarea { min-height: 8rem; width: 100%; padding: .75rem; font: inherit; color: inherit; background: var(--surface-2); border: 1px solid var(--border); border-radius: .35rem; }
+.private-result-content { margin-top: 1.5rem; border-top: 1px solid var(--border); }
+.private-result-content .private-actions { align-items: center; justify-content: space-between; }
+.private-result-content textarea { display: block; width: 100%; min-height: 20rem; resize: vertical; font: inherit; color: var(--text); padding: 1rem; background: var(--surface-2); border: 1px solid var(--border); border-radius: .5rem; }
+@media (max-width: 800px) { .private-columns { grid-template-columns: 1fr; } .private-create { grid-row: 1; } .private-shell main { padding: 1.25rem; } .private-header { padding: 1rem; flex-wrap: wrap; } }

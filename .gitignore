@@ -1,0 +1,24 @@
+# Local dependencies and generated output are not release source.
+node_modules/
+/.next/
+/dist/
+/dist-vps/
+/dist-contributor/
+/coverage/
+*.tsbuildinfo
+
+# Local credentials and environment overrides. Examples must contain placeholders.
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.key
+
+# Local execution logs and operating-system metadata.
+*.log
+*.ndjson
+.DS_Store
+
+# Do not add automation without an explicit budget/security review.
+/.github/workflows/

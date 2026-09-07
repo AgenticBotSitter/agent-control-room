@@ -1,0 +1,7 @@
+packages:
+  - "."
+enableGlobalVirtualStore: false
+allowBuilds:
+  esbuild: false
+  sharp: false
+  workerd: false

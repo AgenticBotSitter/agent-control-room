@@ -1,0 +1,53 @@
+{
+  "name": "control-room",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "packageManager": "pnpm@11.19.0",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "check:demo": "tsc --noEmit --incremental false",
+    "build:demo": "vite build --config vite.contributor.config.ts",
+    "demo": "pnpm run build:demo && node --import tsx scripts/contributor-demo.mjs",
+    "test:demo": "node --import tsx --test tests/audit-required-hashes.test.mjs tests/contributor-demo-launcher.test.ts tests/contributor-demo-runtime.test.ts tests/local-preview-panels.test.tsx tests/web-private-serving.test.ts",
+    "test:build:demo": "pnpm run build:demo && node --import tsx --test tests/contributor-demo-build.test.mjs",
+    "check": "tsc --project tsconfig.vps.json",
+    "build": "node scripts/build-vps.mjs",
+    "test": "node scripts/build-vps.mjs && node --import tsx --test tests/audit-required-hashes.test.mjs tests/vps-built-handler.test.mjs tests/vps-built-startup.test.mjs tests/vps-built-serving.test.mjs tests/vps-built-rehearsal.test.mjs tests/vps-built-preparation.test.mjs tests/vps-built-results.test.mjs tests/vps-built-owner-review.test.mjs tests/vps-built-planning.test.mjs tests/vps-built-assignment.test.mjs tests/vps-built-task-application.test.mjs tests/vps-built-task-startup.test.mjs tests/vps-built-approval.test.mjs tests/vps-built-quality.test.mjs tests/vps-built-revision-planning.test.mjs tests/vps-built-revised-result.test.mjs tests/vps-built-capacity-release.test.mjs tests/vps-built-owner-revision-interface.test.mjs tests/vps-built-result-ownership.test.mjs tests/vps-built-native-evidence.test.mjs tests/vps-built-managed-native-sessions.test.mjs tests/vps-built-launcher.test.mjs tests/vps-built-core-schema.test.mjs"
+  },
+  "dependencies": {
+    "pg-boss": "12.30.0",
+    "postgres": "3.4.7",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "zod": "4.1.12"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "1.37.1",
+    "@electric-sql/pglite": "0.3.14",
+    "@eslint/js": "9.39.4",
+    "@next/eslint-plugin-next": "16.2.6",
+    "@tailwindcss/postcss": "4.2.1",
+    "@types/node": "22.19.19",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.2",
+    "@vitejs/plugin-rsc": "0.5.26",
+    "eslint": "9.39.4",
+    "eslint-plugin-jsx-a11y": "6.10.2",
+    "eslint-plugin-react": "7.37.5",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "globals": "16.4.0",
+    "react-server-dom-webpack": "19.2.6",
+    "tailwindcss": "4.2.1",
+    "tsx": "4.23.1",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.59.3",
+    "vinext": "1.0.0-beta.2",
+    "vite": "8.0.13",
+    "wrangler": "4.92.0"
+  },
+  "type": "module"
+}
