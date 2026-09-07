@@ -8,7 +8,10 @@ test("welcome page is independent, informational and contains no guessed destina
   assert.deepEqual(readdirSync(new URL("../public-site", import.meta.url)).sort(), ["DEPLOYMENT.md", "README.md", "index.html", "styles.css"]);
   assert.match(html, /<html lang="en">/);
   assert.match(html, /name="viewport"/);
-  assert.match(html, /there is no public download yet/i);
+  assert.match(html, /Pre-alpha source is available/);
+  assert.match(html, /not a production-ready system/);
+  assert.doesNotMatch(html, /no public download yet|source release in preparation/i);
+  assert.match(html, /agree on an issue with the maintainer before beginning work/);
   assert.match(html, /not a claim that every feature is ready/);
   assert.match(html, /not yet accepted/);
   assert.doesNotMatch(html, /<(?:script|form|iframe|img|video|audio|object|embed)\b/i);

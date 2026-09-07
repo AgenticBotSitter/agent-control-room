@@ -8,6 +8,21 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Active website/login lane:** Owner goal now targets website, login and dual website
+access. `WEBSITE_LOGIN_DELIVERY.md` records public/private separation, provider/hostname
+choices, exact-origin dual-address integration, deployment sequence and live acceptance.
+The current private process remains single-origin. New isolated verifier tests cover
+separate audiences, same owner with distinct tokens, cross-origin writes and spoofed
+forwarded-host rejection. They do not prove a mounted dual-address application.
+Private hostname, provider and employer-approved alternate use await owner answers;
+no DNS, account, service or deployment changes have been made.
+The static welcome source now reflects the recorded public pre-alpha publication,
+removing stale “no public download” wording and inviting coordinated contributor
+work. Existing styling and private/public separation are unchanged. Four static-source
+tests and five access-verifier tests pass. The web reader refused the live domain;
+deployed content and HTTPS/header behavior remain unverified. No fallback probe or
+deployment was attempted. This copy change remains a local update for later transfer.
+
 **Owner-approved verification-first research:** The private News page now permits
 “Research and verify” on discovered/unverified articles. The CR9D amendment permits
 only research briefs, preserving story state/digest and existing review and execution

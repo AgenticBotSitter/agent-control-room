@@ -35,3 +35,27 @@ test("mutations need the exact configured origin and return paths remain within 
   for (const path of ["https://elsewhere.invalid", "//elsewhere.invalid", "/\\elsewhere.invalid", "/cdn-cgi/access/logout", "/%2felsewhere.invalid"])
     assert.equal(safeWebReturnPath(path), "/projects");
 });
+
+test("separate private addresses reject each other's audience and cross-origin writes", () => {
+  const primary = { origin: "https://room.example.org", audience: "primary-private-app" };
+  const secondary = { origin: "https://room.example.net", audience: "secondary-private-app" };
+  const verifyPrimary = createAccessVerifier({ ...trust, audience: primary.audience });
+  const verifySecondary = createAccessVerifier({ ...trust, audience: secondary.audience });
+  const signed = (site: typeof primary) => new Request(`${site.origin}/api/v1/projects`, {
+    method: "POST", headers: { origin: site.origin, "cf-access-jwt-assertion": token({ aud: [site.audience] }) },
+  });
+  const a = signed(primary), b = signed(secondary);
+  requireSameOrigin(a, primary.origin); requireSameOrigin(b, secondary.origin);
+  assert.equal(verifyPrimary(a, now).subject, verifySecondary(b, now).subject);
+  assert.notEqual(verifyPrimary(a, now).tokenDigest, verifySecondary(b, now).tokenDigest);
+  assert.throws(() => verifyPrimary(b, now), /authentication_required/);
+  assert.throws(() => verifySecondary(a, now), /authentication_required/);
+  const crossed = new Request(`${secondary.origin}/api/v1/projects`, {
+    method: "POST", headers: { origin: primary.origin, "cf-access-jwt-assertion": token({ aud: [secondary.audience] }) },
+  });
+  assert.throws(() => requireSameOrigin(crossed, secondary.origin), /access_denied/);
+  const spoofed = new Request("https://unconfigured.example/api/v1/projects", {
+    headers: { "x-forwarded-host": new URL(primary.origin).host, "cf-access-jwt-assertion": token({ aud: [primary.audience] }) },
+  });
+  assert.throws(() => requireSameOrigin(spoofed, primary.origin), /access_denied/);
+});

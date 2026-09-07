@@ -1,9 +1,11 @@
-# Public welcome page — unpublished source
+# Public welcome page — maintained source
 
-This separate static page is an information-only draft. It is not the Control Room
-application or a public source release. The owner confirmed `agentcontrolroom.xyz`
+This separate static page is informational. It is not the private Control Room
+application. The owner confirmed `agentcontrolroom.xyz`
 as the welcome-page domain. The confirmed public project repository is
-https://github.com/AgenticBotSitter/agent-control-room; source release remains pending.
+https://github.com/AgenticBotSitter/agent-control-room; the pre-alpha source publication
+is recorded in docs/PUBLIC_SOURCE_PUBLICATION_RECEIPT.md. The current copy update
+reflects that release; it is local and has not been transferred or deployed.
 Maintainer: Alastair Fraser. Main website: https://agenticbotsitter.com.
 The owner confirmed the project contact as
 Alastair@agenticbotsitter.com. No DNS or hosting configuration has been changed.
@@ -17,12 +19,12 @@ The page uses no scripts, cookies, browser storage, forms, external fonts, image
 analytics or remote embeds. There are no private application links. Its stylesheet
 is a sibling file so the page is not dependent on the application build or credentials.
 
-Before publication:
+Before deploying an update:
 
 1. Verify DNS control for `agentcontrolroom.xyz` and current site content. Do not overwrite
    an existing website or infer that the domain is unused.
-2. Confirm the public repository and contribution destinations. Replace the forthcoming
-   notices with real links only when those resources are available.
+2. Confirm the public repository and contribution destinations still match the approved
+   release. Do not imply production readiness from source availability.
 3. Review copy, rights, maintainer credit and any contact/license additions.
 4. Perform explicit browser, keyboard, narrow-screen and text-enlargement checks.
 5. Approve the exact two-file candidate and deployment destination separately. Configure
