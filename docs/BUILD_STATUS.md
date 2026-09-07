@@ -8,6 +8,18 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Local pilot browser transport now reuses existing clients:** A strict path adapter
+maps canonical project/task client requests to the configured local workspace endpoint,
+preserving timeout signals, cookie policy, response validation and exact-save retries.
+Unsupported operational routes never fall through to another API. The real-handler
+test exposed a project-detail response-envelope mismatch; the endpoint now matches
+the canonical `{ project }` format. Authenticated disposable-data tests cover client
+reads and lost-response recovery without duplicate projects/tasks, plus cross-project
+denial. All 24 selected transport/client/pilot tests pass; both strict type checks and
+focused lint pass. This is client-to-handler integration, not mounted browser controls
+or interactive browser acceptance. No listener, real agent, download or GitHub write.
+Next: mount the existing forms and saved project/task views using this transport.
+
 **Local pilot now exposes canonical projects and task proposals:** The configured
 repository-fake runtime reuses `WebProjectService`/`WebTaskService` after verifying its
 existing owner cookie. `/api/v1/local-pilot/workspace` supports bounded project reads,

@@ -38,7 +38,7 @@ export function createLocalPilotProjectTaskHandlerV1(runtime: LocalPilotProjectT
         const query = parsed.data;
         switch (query.resource) {
           case "projects": return json(await runtime.listProjects(request, query.after));
-          case "project": return json(await runtime.getProject(request, query.projectId));
+          case "project": return json({ project: await runtime.getProject(request, query.projectId) });
           case "tasks": return json(await runtime.listTasks(request, query.projectId, query.after));
           case "task": return json(await runtime.getTask(request, query.projectId, query.jobId));
         }

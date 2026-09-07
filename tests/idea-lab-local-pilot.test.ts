@@ -11,6 +11,9 @@ import { ProjectWorkspaceReadServiceV1 } from "../src/project-workspace/v1/index
 import { sha256Digest } from "../src/security/index.ts";
 import { createLocalPilotSessionStatusHandlerV1 } from "../app/api/v1/local-pilot/session/route.ts";
 import { createLocalPilotProjectTaskHandlerV1 } from "../src/local-pilot/v1/project-task-http.ts";
+import { createLocalPilotBrowserTransportV1 } from "../src/local-pilot/v1/browser-transport.ts";
+import { createProjectBrowserClient } from "../src/web/v1/browser-client.ts";
+import { createTaskBrowserClient } from "../src/web/v1/task-browser-client.ts";
 
 const origin="http://127.0.0.1:3000"as const,code="owner-code-local-pilot-0123456789abcdef";
 function ownerRequest(path="/api/v1/local-pilot/session",cookie?:string,post=false){return new Request(`${origin}${path}`,{method:post?"POST":"GET",headers:{...(cookie?{cookie}:{}),...(post?{origin}:{}),"sec-fetch-site":"same-origin"}});}
@@ -63,6 +66,28 @@ test("CR12B-IDEA-060 performs one restart-safe loopback repository-fake owner fl
   assert.equal((await handler(commandRequest("x".repeat(24_577)))).status,400);
   assert.equal((await handler(commandRequest(JSON.stringify({operation:"start_agent",projectId:ordinary.project.projectId})))).status,400);
   assert.equal((await createLocalPilotProjectTaskHandlerV1(undefined)(new Request(`${endpoint}?resource=projects`))).status,503);
+  // Exercise the existing browser clients through the actual authenticated handler,
+  // without a listener. Cookies/origin below model browser-supplied metadata only.
+  let loseResponse=true;
+  const browserTransport=createLocalPilotBrowserTransportV1(async(input,init)=>{
+    const headers=new Headers(init?.headers);headers.set("cookie",cookie);
+    if(init?.method==="POST")headers.set("origin",origin);
+    const response=await handler(new Request(`${origin}${String(input)}`,{...init,headers}));
+    if(init?.method==="POST"&&loseResponse){loseResponse=false;throw new Error("lost committed response");}
+    return response;
+  });
+  const browserProjects=createProjectBrowserClient(browserTransport,()=>"pilot-create-project-0001");
+  assert.equal((await browserProjects.list()).projects.length,2);
+  assert.equal((await browserProjects.get(ordinary.project.projectId)).projectId,ordinary.project.projectId);
+  await assert.rejects(browserProjects.create(ordinaryDraft),{code:"uncertain"});
+  assert.deepEqual(await browserProjects.retryPending(),ordinary.project);
+  const browserTasks=createTaskBrowserClient(browserTransport,()=>"pilot-propose-task-0001");
+  loseResponse=true;
+  await assert.rejects(browserTasks.propose(ordinary.project.projectId,taskDraft),{code:"uncertain"});
+  assert.deepEqual(await browserTasks.retrySave(),proposed.receipt);
+  assert.equal((await browserTasks.list(ordinary.project.projectId)).tasks.length,1);
+  assert.equal((await browserTasks.detail(ordinary.project.projectId,proposed.receipt.jobId)).task.state,"proposed");
+  await assert.rejects(browserTasks.detail(another.project.projectId,proposed.receipt.jobId),{code:"not_found"});
   const taskBeforeRestart=await runtime.projectTasks.getTask(read(),ordinary.project.projectId,proposed.receipt.jobId);
   assert.equal(taskBeforeRestart.task.state,"proposed");assert.deepEqual(taskBeforeRestart.attempts,[]);
   assert.equal((await runtime.projectTasks.listTasks(read(),ordinary.project.projectId)).dispatch,"not_connected");
