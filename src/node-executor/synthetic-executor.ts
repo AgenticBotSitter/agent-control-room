@@ -161,6 +161,10 @@ export async function runSyntheticExecution(
       progressPercent: Math.floor((completedSteps * 100) / spec.steps),
     });
 
+    // Reporting may yield to cancellation, including on the final step where
+    // there is no next loop iteration to observe the signal.
+    if (ports.signal.aborted) return cancel();
+
     if (spec.crashAfterStep === completedSteps) {
       throw new SyntheticExecutorCrash(completedSteps);
     }
@@ -172,6 +176,7 @@ export async function runSyntheticExecution(
     }
   }
 
+  if (ports.signal.aborted) return cancel();
   await emit({ event: "completed", completedSteps });
   return {
     state: "succeeded",

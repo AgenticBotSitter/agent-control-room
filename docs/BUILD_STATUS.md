@@ -8,6 +8,14 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Existing synthetic runner reuse prepared:** Found and fixed final-progress/checkpoint
+cancellation returning success in the reusable synthetic executor. Both new regressions
+failed before the change; all 25 executor/coordinator tests now pass. The preview should
+reuse this runner, but its job events are not native harness snapshots: connecting
+progress/results/revision must preserve synthetic provenance. Existing native-result
+fixtures seed completed evidence and do not prove a fresh-task interactive demo.
+Details: `PUBLIC_EXPORT_INVENTORY_STATUS.md`. No live wiring or publication.
+
 **Project/task service content reviewed:** Batch 06 records five exact service/HTTP
 files with no embedded private values observed. It identifies the actual preview gap:
 project/task proposal works through supplied authority, but proposal is not dispatch;

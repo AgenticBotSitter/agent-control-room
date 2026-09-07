@@ -2,6 +2,32 @@
 
 ## Project/task service content and preview wiring
 
+### Existing synthetic execution reuse
+
+The existing `src/node-executor/synthetic-executor.ts` already emits ordered progress,
+checkpoint and cancellation events and returns bounded text bytes. Its admitted
+coordinator uses existing authority, event-recording and artifact-storage ports. Prefer
+these components for the preview execution step over a second simulator or scheduler.
+This is a reuse candidate, not yet an accepted web-demo composition: its node job events
+are not automatically the native snapshot/result protocol read by the current task UI.
+Do not manufacture Hermes-native provenance to bridge that difference.
+
+`tests/helpers/web-task.ts` creates a project through the service but stops at task
+proposal. `web-native-result.ts` instead seeds project/run context, and
+`web-owner-review.ts` ingests completed synthetic native evidence before returning.
+Those helpers support their targeted tests, not a fresh-task interactive demonstration.
+Next integration decision must preserve synthetic provenance while connecting progress,
+artifact and review projections through their actual supported schemas. The pg-boss
+worker remains an operational delivery mechanism, not a fake queue for the demo; do
+not claim real PostgreSQL queue behavior from these in-memory tests.
+
+Reuse preparation uncovered a concrete executor bug: cancellation during the final
+progress or checkpoint callback returned success. Two new tests reproduced it before
+the fix. Signal checks now prevent subsequent completion/artifact return at those
+boundaries. All 25 executor/coordinator tests pass. Completion already emitted is not
+retroactively revoked; this fix concerns cancellation before terminal emission. No
+native call, listener, package download or new execution framework was introduced.
+
 [Batch 06](research/public-source-content-review-06.json) records five full-text
 service/HTTP observations at `334a626`. No embedded private values were observed;
 this does not clear their imported stores, SQL, authentication or runtime inputs.

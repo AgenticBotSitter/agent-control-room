@@ -199,6 +199,30 @@ describe("synthetic executor execution", () => {
     assert.deepEqual(harness.events.map((event) => event.event), ["started", "progress", "cancelled"]);
   });
 
+  for (const boundary of ["progress", "checkpointed"] as const) {
+    it(`honors cancellation during final ${boundary} without completing or returning an artifact`, async () => {
+      const controller = new AbortController();
+      const { ports, events } = makePorts(controller.signal);
+      ports.emit = async event => {
+        events.push(event);
+        if (event.event === boundary && event.completedSteps === baseSpec.steps) {
+          await Promise.resolve();
+          controller.abort();
+        }
+      };
+      const result = await runSyntheticExecution(baseSpec, ports);
+      assert.equal(result.state, "cancelled");
+      assert.equal(result.completedSteps, baseSpec.steps);
+      assert.equal("artifactBytes" in result, false);
+      assert.equal(events.filter(event => event.event === "cancelled").length, 1);
+      assert.equal(events.some(event => event.event === "completed"), false);
+      assert.equal(events.at(-1)?.event, "cancelled");
+      assert.deepEqual(events.map(event => event.sequence), events.map((_, index) => index + 1));
+      assert.deepEqual(result.checkpointIds, boundary === "progress"
+        ? ["checkpoint:attempt-1:2"] : ["checkpoint:attempt-1:2", "checkpoint:attempt-1:4"]);
+    });
+  }
+
   it("throws at the exact crash boundary after progress and before checkpoint", async () => {
     const { ports, events } = makePorts();
     await assert.rejects(runSyntheticExecution(spec({ crashAfterStep: 3 }), ports), (error: unknown) => {
