@@ -8,6 +8,18 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Borrowed reading flow reaches the private news page:** Retained the complete
+upstream industry library module and adapted its daily-snapshot presentation to
+our project news records/theme. The page now offers recent/history/archive views,
+important/newest/oldest sorting and a recent-news brief, all explicitly page-scoped.
+Existing source health, pagination and article research form remain. Source/score/
+discovery metadata are projected from retained stories; original evidence is not
+rewritten. The 286-entry delivery lane, types, focused lint and VPS compilation
+pass. Pure tests cover sorting, archives, discovery dates and legacy missing
+metadata. Independent source review found no concrete defect; its test-wording
+caveat about upstream future tolerance was corrected. Browser/visual acceptance,
+whole-library views, archive writes, source settings and live collection remain open.
+
 **Complete borrowed feeds now cross storage batches:** Logical collection and
 receipt bounds match the borrowed sitemap ceiling, while persistence reuses existing
 100-story batches inside a single transaction. A 250-item upstream-reader feed passes

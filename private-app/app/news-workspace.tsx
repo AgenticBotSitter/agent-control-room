@@ -5,6 +5,9 @@ import { newsPageSchema, type NewsPage } from "../../src/web/v1/news-wire";
 import { PrivateHeader } from "./private-header";
 import { BrowserRequestError, browserErrorMessage } from "../../src/web/v1/browser-client";
 import { NewsResearchForm } from "./news-research-form";
+import { newsReadingView, type NewsReadingView } from "../../src/web/v1/news-reading-view";
+import type { IndustrySortOrder } from "../../src/vendor/control-center/industry";
+import { NewsDailySnapshot } from "./news-daily-snapshot";
 
 export function NewsSourceHealth({ sources }: { sources: NewsPage["sources"] }) {
   const labels = { available: "Last check succeeded", partial: "Last check was incomplete", stale: "Needs a fresh check", unavailable: "Last check failed", disabled: "Disabled" };
@@ -24,6 +27,10 @@ export function PrivateNewsWorkspace({ projectId, after, sourceAfter }: { projec
   const [error, setError] = useState<string>();
   const [refresh, setRefresh] = useState(0);
   const [selected, setSelected] = useState<NewsPage["stories"][number]>();
+  const [view, setView] = useState<NewsReadingView>("history");
+  const [order, setOrder] = useState<IndustrySortOrder>("important");
+  const reading = page ? newsReadingView(page.stories, view, order, page.observedAt) : undefined;
+  const brief = page ? newsReadingView(page.stories, "fresh", "important", page.observedAt) : undefined;
   const base = `/projects/${encodeURIComponent(projectId)}`;
   useEffect(() => {
     let active = true;
@@ -60,10 +67,20 @@ export function PrivateNewsWorkspace({ projectId, after, sourceAfter }: { projec
       ? <p role="status">News storage is not configured for this installation. No sample stories are shown.</p>
       : <><p>Saved sources, not an assertion that every claim is correct.</p>
         <NewsSourceHealth sources={page.sources} />
+        <NewsDailySnapshot items={brief!.stories.slice(0, 5)} availableCount={brief!.counts.fresh} onOpen={() => setView("fresh")} />
+        <nav aria-label="Saved news views">{(["fresh", "history", "archive"] as const).map(value =>
+          <button key={value} type="button" aria-pressed={view === value} onClick={() => setView(value)}>
+            {value === "fresh" ? "Recent (24 hours)" : value === "history" ? "History" : "Archive"} ({reading!.counts[value]})
+          </button>)}</nav>
+        <label>Sort this page<select value={order} onChange={event => setOrder(event.target.value as IndustrySortOrder)}>
+          <option value="important">Most important</option><option value="newest">Newest</option><option value="oldest">Oldest</option>
+        </select></label>
+        <p>Views, counts and sorting apply to these saved results, not the whole library. Use “Next saved stories” for more.</p>
         {page.sourcesNextCursor ? <a href={`${base}/news?${new URLSearchParams({ ...(after ? { after } : {}), sourceAfter: page.sourcesNextCursor })}`}>Next source checks</a> : null}
-        {!page.stories.length ? <p>No saved stories on this page.</p> : page.stories.map(story => <article className="private-panel" key={story.storyId}>
+        {!reading!.stories.length ? <p>No saved stories in this view on this page.</p> : reading!.stories.map(story => <article className="private-panel" key={story.storyId}>
           <h2><a href={story.canonicalUrl} target="_blank" rel="noopener noreferrer">{story.title}</a></h2>
           <p>{story.summary}</p><p>{story.verificationState === "verified" ? "Source evidence retained" : "Source needs review"} · {story.queue.replaceAll("_", " ")}</p>
+          <p>{story.sourceLabel ?? new URL(story.canonicalUrl).hostname}{story.publishedAt ? ` · Published ${story.publishedAt}` : story.discoveredAt ? ` · Discovered ${story.discoveredAt}` : " · Date unknown"}</p>
           <button type="button" disabled={!!selected || !page.canPrepare || story.verificationState !== "verified"}
             onClick={() => setSelected(story)}>Research or write a setup guide</button>
         </article>)}

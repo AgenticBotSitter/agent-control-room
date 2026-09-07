@@ -550,3 +550,15 @@ Three generated-gRPC-client/codec diagnostics pass with a fake channel (five com
 E69/E70 tests). gRPC/proto-loader installed license files are Apache-2.0; upstream
 protocol provenance and full transitive clearance remain required before adoption.
 No service, resolver or physical connection created. Retention status unchanged.
+# 2026-09-07 — Control Center reading cohort
+
+Before acquisition, `df -h .` showed 140 GiB free. Read three pinned public source
+files at d13e79e866cc33a1fddfe84f563ce2fb9a2113e0: `lib/industry.ts`,
+`components/daily-snapshot.tsx`, `components/daily-snapshot.module.css`.
+Retained industry module under `src/vendor/control-center/industry.ts` (imports
+adapted), snapshot presentation under `private-app/app/news-daily-snapshot.tsx`
+(adaptations recorded in third_party/control-center/NOTICE.md). Both are in use.
+CSS was inspected in tool output only, not saved. No temporary download directory,
+package installation, credentials, Actions or remote write. Remove retained modules
+only if their news page imports are removed; there are no unused downloaded files
+from this acquisition to clean up.

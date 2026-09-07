@@ -27,6 +27,8 @@ export const newsPageSchema = z.object({ project: projectViewSchema,
       const url = new URL(value); return url.protocol === "https:" && !url.username && !url.password;
     }), queue: z.enum(["important_now", "earlier", "archive"]), verificationState: z.enum(["verified", "review_only"]),
     publishedAt: z.string().datetime({ offset: true }).optional(),
+    discoveredAt: z.string().datetime({ offset: true }).optional(),
+    sourceLabel: z.string().min(1).max(180).optional(), priorityScore: z.number().min(0).max(100).optional(),
   }).strict()).max(50), nextCursor: id.nullable(),
 }).strict().refine(page => page.availability !== "not_configured" || (!page.stories.length && !page.sources.length && page.sourcesNextCursor === null && page.nextCursor === null && !page.canPrepare));
 export type NewsPage = z.infer<typeof newsPageSchema>;

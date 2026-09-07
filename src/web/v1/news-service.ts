@@ -43,8 +43,8 @@ export class WebNewsService {
       const sourcePage = await store.listSourceStatuses(sourceAfter);
       const sources = sourcePage.statuses.map(({ sourceId, label, mode, state, checkedAt, lastSuccessfulAt, itemCount }) =>
         ({ sourceId, label, mode, state, checkedAt, ...(lastSuccessfulAt ? { lastSuccessfulAt } : {}), ...(itemCount !== undefined ? { itemCount } : {}) }));
-      const stories = page.stories.map(({ storyId, storyDigest, title, summary, canonicalUrl, queue, verificationState, publishedAt }) =>
-        ({ storyId, storyDigest, title, summary, canonicalUrl, queue, verificationState, ...(publishedAt ? { publishedAt } : {}) }));
+      const stories = page.stories.map(({ storyId, storyDigest, title, summary, canonicalUrl, queue, verificationState, publishedAt, discoveredAt, sourceLabel, priorityScore }) =>
+        ({ storyId, storyDigest, title, summary, canonicalUrl, queue, verificationState, discoveredAt, sourceLabel, priorityScore, ...(publishedAt ? { publishedAt } : {}) }));
       return newsPageSchema.parse({ project, availability: "configured", stories, nextCursor: page.nextCursor, observedAt: actor.now,
         sources, sourcesNextCursor: sourcePage.nextCursor,
         canPrepare: project.lifecycle === "active" && actor.can("tasks.propose", projectId) });

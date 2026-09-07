@@ -65,3 +65,17 @@ across different existing cluster IDs. Existing canonical IDs, story/evidence di
 strict source cap, score order and verified/freshness filters remain intact. This does
 not overwrite or merge source records. Retain this notice and LICENSE when distributing
 the adapted helper.
+# Reading view adoption (2026-09-07)
+
+From mreflow/control-center revision d13e79e866cc33a1fddfe84f563ce2fb9a2113e0,
+MIT, copyright Matt Wolfe. Existing LICENSE applies.
+`src/vendor/control-center/industry.ts` retains complete `lib/industry.ts` with
+only imports changed to local relative paths. Sorting, library partitioning and
+freshness composition are upstream code.
+`private-app/app/news-daily-snapshot.tsx` adapts `components/daily-snapshot.tsx`:
+one news category instead of three, existing theme/classes instead of CSS module
+and lucide icons, project story fields and page-scoped wording. Upstream stylesheet
+was inspected but is not retained. No new icon/style dependency installed.
+`news-reading-view.ts` is Control Room field translation, using publication date
+or discovery date for ordering/freshness while retaining the original story fields
+for display and evidence. No collection, archive writes or task authority is added.

@@ -58,6 +58,15 @@ for live collection. No second database, scheduler or discovery algorithm was ad
 
 ## Avoid incompatible silent changes
 
+Reading integration now retains the complete upstream `lib/industry.ts` and an
+adapted daily-snapshot component in the actual private project news page. It offers
+recent/history/archive views and important/newest/oldest sorting over each saved
+page, preserving existing pagination and research preparation. Projection metadata
+adds source, score and discovery date; missing legacy metadata remains supported.
+The upstream ten-minute future tolerance remains unchanged. Archive mutation,
+whole-library filtering/ranking, source configuration and live refresh still need
+integration. No visual/browser acceptance is claimed by compilation or pure tests.
+
 Upstream discovery makes multiple feed/sitemap requests, supports redirects and uses
 larger defaults (10 MB feed, 50 MiB sitemap, 500 sitemap documents). Current custom
 single-endpoint admission cannot represent that operation. Define one bounded logical
