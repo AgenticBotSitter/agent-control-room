@@ -8,6 +8,20 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Verified optional Idea runtime now reaches startup:** Trusted configuration captures
+prepared runtime methods and requires a separate exact runtime login before mounting
+Start. Startup performs no provider call or admission lookup. Ownership after validated
+configuration uses one bounded memoized cleanup shared with the lifecycle; preflight,
+cancellation and installation failures still close acquired resources. Independent review
+caught the queue worker's older six-login ceiling; it is raised to seven and a combined
+queue/Idea/runtime regression exercises the actual worker topology validator. Real runtime
+ports remain separate from this synthetic setup. Forty-three startup regressions and
+28 package/compiled checks pass, along with TypeScript, focused lint and VPS compilation.
+The older queue boundary test was also updated to accept seven and reject eight logins.
+Source re-review confirmed the seven-login defect is fixed; tests were main-agent run.
+Accepted owner windows remain unconfigured. Browser Start, synthesis, ABS
+ingestion and real-agent acceptance remain open; no deployment or provider contact.
+
 **Discussion runtime SQL role and exact preflight added:** The offline template permits
 contribution/run-event inserts and stable workspace locking, but not session creation,
 synthesis/decision/permit/project/job writes or queue access. Read-only decisions access

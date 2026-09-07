@@ -77,3 +77,68 @@ test("a reused Idea pool cannot mount the app or double-close a resource", async
   await assert.rejects(bootstrap.start(f.config), /prerequisites_failed/);
   assert.equal(installs, 0); assert.deepEqual([f.web.closes(), f.coordinator.closes(), f.ideas.closes()], [1, 1, 0]);
 });
+
+async function runtimeFixture() {
+  const f = await fixture();
+  await f.raw.exec(await readFile("db/roles/idea_runtime_roles.sql", "utf8"));
+  await f.raw.exec("CREATE ROLE idea_runtime_test LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS; GRANT control_room_idea_runtime TO idea_runtime_test");
+  const runtimeDb = f.pool("idea_runtime_test"); let closes = 0, lookups = 0, calls = 0;
+  const runtime = { driver: { mode: "hermes_bot_mode_filtered" as const, async invoke(): Promise<never> { calls++; throw new Error("must not invoke"); } },
+    async resolve(): Promise<never> { lookups++; throw new Error("synthetic missing accepted window"); },
+    evidenceAuthority: { async verify() { return false; } }, admissionAuthority: { async consume() { return false; } } };
+  const config = { ...f.config, coordinator: { ...f.config.coordinator,
+    ideaRuntime: { database: { ...f.config.coordinator.database, username: "idea_runtime_test" }, runtime, close: async () => { closes++; } } } };
+  return { ...f, config, runtimeDb, counts: () => ({ closes, lookups, calls }),
+    openDatabase: (db: { username: string }) => db.username === "idea_runtime_test" ? runtimeDb : f.openDatabase(db) };
+}
+
+test("bootstrap verifies a fourth runtime role, mounts start and owns prepared ports without activating them", async t => {
+  const f = await runtimeFixture(); t.after(f.close); let app!: PrivateApplication;
+  const owner = await createPrivateTaskBootstrap({ clock: () => instant + 8000,
+    openDatabase: db => {
+      // Configuration captures ports before the first asynchronous database gate.
+      f.config.coordinator.ideaRuntime.runtime.resolve = async () => { throw new Error("mutated lookup"); };
+      f.config.coordinator.ideaRuntime.close = async () => { throw new Error("mutated cleanup"); };
+      return f.openDatabase(db);
+    }, install: value => { app = value; } }).start(f.config);
+  t.after(() => owner.close()); assert.deepEqual(f.counts(), { closes: 0, lookups: 0, calls: 0 });
+  const handle = (path: string, body: unknown) => app.handle(request(path, "POST", body, "idea-runtime-startup01", f.jwt), () => new Response("shell"));
+  const saved = await handle("/api/v1/ideas", { title: "Startup idea", ideaSummary: "Help local shops", targetCustomer: "Owners",
+    maxRounds: 1, maxDurationSeconds: 300, maxCostUsd: 2 });
+  assert.equal(saved.status, 201); const receipt = await saved.json();
+  const response = await handle(`/api/v1/ideas/${encodeURIComponent(receipt.sessionId)}/start`, { sessionDigest: receipt.sessionDigest });
+  assert.equal(response.status, 503); assert.equal(f.counts().lookups, 1); assert.equal(f.counts().calls, 0);
+  assert.equal((await f.runtimeDb.client.query("SELECT * FROM control_idea_bot_run_events")).rows.length, 0);
+  await owner.close(); await owner.close(); assert.equal(f.counts().closes, 1);
+  assert.deepEqual([f.web.closes(), f.coordinator.closes(), f.ideas.closes(), f.runtimeDb.closes()], [1, 1, 1, 1]);
+});
+
+test("invalid runtime topology or fake mode leaves ownership with caller and opens no pools", async t => {
+  const f = await runtimeFixture(); t.after(f.close); let opens = 0;
+  for (const patch of [{ database: f.config.coordinator.ideaCreation.database },
+    { database: { ...f.config.coordinator.ideaRuntime.database, database: "other" } },
+    { runtime: { ...f.config.coordinator.ideaRuntime.runtime, driver: { ...f.config.coordinator.ideaRuntime.runtime.driver, mode: "repository_fake" as const } } }]) {
+    const bootstrap = createPrivateTaskBootstrap({ openDatabase: () => { opens++; throw new Error(); }, install: () => {} });
+    await assert.rejects(bootstrap.start({ ...f.config, coordinator: { ...f.config.coordinator,
+      ideaRuntime: { ...f.config.coordinator.ideaRuntime, ...patch } } }), /config_invalid/);
+  }
+  assert.equal(opens, 0); assert.deepEqual(f.counts(), { closes: 0, lookups: 0, calls: 0 });
+});
+
+test("failed runtime verification, cancellation and installation clean prepared ports and all pools once", async t => {
+  for (const phase of ["preflight", "cancel", "install", "cleanup", "stalled"] as const) await t.test(phase, async t => {
+    const f = await runtimeFixture(); t.after(f.close); const abort = new AbortController();
+    if (phase === "preflight" || phase === "cleanup" || phase === "stalled") await f.raw.exec("GRANT INSERT ON control_idea_decisions TO control_room_idea_runtime");
+    if (phase === "cleanup" || phase === "stalled") { const close = f.config.coordinator.ideaRuntime.close;
+      f.config.coordinator.ideaRuntime.close = async () => {
+        await close(); if (phase === "stalled") await new Promise<void>(() => {}); throw new Error("synthetic failed cleanup");
+      }; }
+    const bootstrap = createPrivateTaskBootstrap({ clock: () => instant + 8000,
+      openDatabase: db => { const pool = f.openDatabase(db); if (phase === "cancel" && db.username === "idea_runtime_test") abort.abort(); return pool; },
+      install: () => { throw new Error("synthetic failed install"); } });
+    await assert.rejects(bootstrap.start(f.config, abort.signal), phase === "cleanup" || phase === "stalled" ? /cleanup_uncertain/ : /prerequisites_failed/);
+    assert.deepEqual(f.counts(), { closes: 1, lookups: 0, calls: 0 });
+    assert.deepEqual([f.web.closes(), f.coordinator.closes(), f.ideas.closes(), f.runtimeDb.closes()], [1, 1, 1, 1]);
+    await assert.rejects(bootstrap.start(f.config), /already_attempted/);
+  });
+});

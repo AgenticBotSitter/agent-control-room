@@ -391,3 +391,13 @@ negative checks cover unrelated writes, changed permissions and queue access. PG
 documented TEMP-metadata exception is test-only. Live authority-store ports require their
 own verified composition; this runtime role deliberately does not grant admission or
 qualification mutation rights. No production grant, pool opening or activation occurred.
+
+Bootstrap update: explicit `coordinator.ideaRuntime` configuration captures already prepared
+ports, validates one-primary/distinct-login topology, and verifies the runtime SQL login
+before passing it to the existing managed application. It does not invoke a runtime
+factory or admission lookup during startup. Configuration/dependency rejection retains
+caller ownership; later failure uses memoized bounded runtime cleanup plus pool cleanup.
+Tests include captured-port mutation, missing accepted material, cancellation, failed
+preflight/install and failed/stalled cleanup. The full queue/Idea/runtime test exposed
+and now covers the worker topology's seven application logins. These are disposable
+PGlite/injected ports and do not activate a real provider or establish production readiness.

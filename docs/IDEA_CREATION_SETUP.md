@@ -36,8 +36,9 @@ idempotent migration. Do not run it from startup or against an unreviewed existi
 Use the existing private PostgreSQL configuration and exact preflight requirements,
 including the current schema fingerprint, session limits and active scoped owner.
 When the native queue is explicitly configured, the Idea preflight recognizes its
-schema but requires zero queue privileges. The worker startup excludes all six
-configured application logins from its own login; no connection is shared.
+schema but requires zero queue privileges. The worker startup excludes all configured
+application logins (up to seven with the optional Idea runtime) from its own login;
+no connection is shared.
 
 At explicit startup, the bootstrap checks configuration before opening any resource,
 then verifies each actual database login. The Idea preflight permits session creation,
@@ -58,7 +59,34 @@ cancellation and reused-resource cleanup. It uses one serialized PGlite backend 
 actual test login identities and the documented TEMP metadata exception. This does not
 prove independent production connections, real PostgreSQL concurrency or deployment.
 Combined host tests additionally cover the sixth Idea login with an injected worker
-and producer. They do not substitute for real pg-boss acceptance.
+and producer, and the seventh runtime login. They do not substitute for real pg-boss acceptance.
+
+## Optional discussion runtime
+
+`coordinator.ideaRuntime` is separate from saving Ideas. It supplies a distinct private
+database configuration, an already prepared `runtime` (read-only accepted-material lookup,
+filtered driver and current evidence/admission verifiers), and an explicit async `close`.
+Startup does not construct a provider, load credentials, call lookup, mint admission or
+contact a bot. Runtime methods are captured before asynchronous preflight. Fake mode is
+rejected. Its login must differ from every configured application and queue-worker login.
+
+The later approved operator setup must provision the exact offline
+`db/roles/idea_runtime_roles.sql` profile. Startup calls `verifyIdeaRuntimeDatabase`
+before mounting Start; it never runs the role script. Admission-store/provider ports
+must independently come from the existing accepted composition, not a fabricated verifier.
+The runtime SQL role is not authorization to change accepted admissions or qualifications.
+
+After configuration and required dependency validation succeeds, bootstrap takes ownership
+of the prepared runtime's close port. Configuration rejection leaves it with the caller.
+Subsequent preflight/cancellation/installation failure closes it once, with a five-second
+bound, and attempts closure of acquired pools. Failed or stalled cleanup is reported as
+uncertain, never retried. Normal operation transfers the same memoized close to the managed
+lifecycle. The caller must not concurrently reuse or close a transferred runtime.
+
+With this optional configuration, the protected Start endpoint invokes the existing
+owner start operation. It does not bypass current owner permissions or accepted live
+window checks. The browser Start control and real runtime configuration remain unfinished;
+the synthetic startup test deliberately has no accepted window and confirms zero calls.
 
 After authorized real setup, verify `/ideas` offers New idea for the scoped owner, save
 and reopen a harmless draft, confirm a retry returns the original session, and confirm

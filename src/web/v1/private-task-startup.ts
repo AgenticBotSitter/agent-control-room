@@ -1,7 +1,7 @@
 import { assertNoSecretMaterial } from "../../security";
 import { localId } from "../../harness/v1/native-run-identifiers";
 import { createPrivatePostgresDatabase, validatePrivatePostgresConfiguration, type PrivatePostgresConfiguration } from "./private-postgres";
-import { verifyPrivateDatabase, verifyTaskCoordinatorDatabase, verifyNativeResultDatabase, verifyNativeEvidenceDatabase, verifyNativeSessionDatabase, verifyIdeaCreationDatabase } from "./private-database-preflight";
+import { verifyPrivateDatabase, verifyTaskCoordinatorDatabase, verifyNativeResultDatabase, verifyNativeEvidenceDatabase, verifyNativeSessionDatabase, verifyIdeaCreationDatabase, verifyIdeaRuntimeDatabase } from "./private-database-preflight";
 import { z } from "zod";
 import { ideaParticipantSchemaV1 } from "../../idea-lab/v1/schemas";
 import { validatePrivateStartupConfiguration, type PrivateStartupConfiguration } from "./private-startup";
@@ -31,6 +31,8 @@ export type PrivateTaskStartupConfiguration = {
     queueWorker?: { database: PrivatePostgresConfiguration; concurrency?: number };
     database: PrivatePostgresConfiguration; resultDatabase?: PrivatePostgresConfiguration;
     ideaCreation?: { database: PrivatePostgresConfiguration; integrityKey: Uint8Array; participants: unknown[] };
+    /** Already prepared inert ports; ownership transfers after configuration validation. No runtime factory is invoked here. */
+    ideaRuntime?: Omit<NonNullable<TaskCoordinatorConfiguration["ideaRuntime"]>, "database"> & { database: PrivatePostgresConfiguration };
     evidence?: NativeEvidenceSettings & { database: PrivatePostgresConfiguration };
     sessions?: ManagedNativeSessionSettings & { database: PrivatePostgresConfiguration } };
 };
@@ -93,7 +95,18 @@ function configuration(input: PrivateTaskStartupConfiguration) {
       || [web.database, database, resultDatabase, evidence?.database, sessions?.database, queueWorker?.database]
         .some(value => value?.username === ideaCreation.database.username)
       || new Set(ideaCreation.participants.map(value => value.participantId)).size !== ideaCreation.participants.length)) throw new Error();
-    return { web, database, planning, routes, approvals, quality, revisionPlanning, resultDatabase, evidence, sessions, nativeHttp, nativeQueue, nativeQueueRecovery, queueWorker, ideaCreation };
+    const ir = input.coordinator.ideaRuntime;
+    const ideaRuntime = ir ? { database: validatePrivatePostgresConfiguration(ir.database), close: ir.close.bind(ir),
+      runtime: Object.freeze({ resolve: ir.runtime.resolve.bind(ir.runtime),
+        driver: Object.freeze({ mode: ir.runtime.driver.mode, invoke: ir.runtime.driver.invoke.bind(ir.runtime.driver) }),
+        evidenceAuthority: Object.freeze({ verify: ir.runtime.evidenceAuthority.verify.bind(ir.runtime.evidenceAuthority) }),
+        admissionAuthority: Object.freeze({ consume: ir.runtime.admissionAuthority.consume.bind(ir.runtime.admissionAuthority) }) }) } : undefined;
+    if (ideaRuntime && (!ideaCreation || ideaRuntime.runtime.driver.mode !== "hermes_bot_mode_filtered"
+      || ideaRuntime.database.host !== database.host || ideaRuntime.database.port !== database.port
+      || ideaRuntime.database.database !== database.database
+      || [web.database, database, resultDatabase, evidence?.database, sessions?.database, queueWorker?.database, ideaCreation.database]
+        .some(value => value?.username === ideaRuntime.database.username))) throw new Error();
+    return { web, database, planning, routes, approvals, quality, revisionPlanning, resultDatabase, evidence, sessions, nativeHttp, nativeQueue, nativeQueueRecovery, queueWorker, ideaCreation, ideaRuntime };
   } catch { throw new Error("private_task_startup_config_invalid"); }
 }
 
@@ -120,6 +133,17 @@ export function createPrivateTaskBootstrap(dependencies: {
     const config = configuration(input);
     if (config.nativeQueue && !prepareSubmission) throw new Error("private_task_startup_config_invalid");
     if (config.queueWorker && !startWorker) throw new Error("private_task_startup_config_invalid");
+    // Validated prepared ports are now owned, even if a later database preflight fails.
+    // Memoization prevents duplicate cleanup when application construction also closes them.
+    let runtimeClose: Promise<void> | undefined;
+    const closeIdeaRuntime = config.ideaRuntime ? () => {
+      runtimeClose ??= (async () => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try { await Promise.race([Promise.resolve().then(config.ideaRuntime!.close), new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error("idea_runtime_cleanup_uncertain")), 5000);
+        })]); } finally { clearTimeout(timer); }
+      })(); return runtimeClose;
+    } : undefined;
     const queue = config.nativeQueue ? { nativeQueue: true as const,
       ...(config.nativeQueueRecovery ? { nativeQueueRecovery: true as const } : {}) } : undefined;
     let submission: (NativeTaskSubmission & { close(): Promise<void> }) | undefined;
@@ -190,6 +214,13 @@ export function createPrivateTaskBootstrap(dependencies: {
         requireActive();
       }
       if ([web, coordinator, resultDatabase, evidenceDatabase, sessionDatabase, ideaDatabase].some(pool => pool && !pool.isAvailable())) throw new Error();
+      const ideaRuntimeDatabase = config.ideaRuntime ? open(config.ideaRuntime.database) : undefined;
+      if (ideaRuntimeDatabase) {
+        if ([web, coordinator, resultDatabase, evidenceDatabase, sessionDatabase, ideaDatabase].some(pool => pool?.client === ideaRuntimeDatabase.client)) throw new Error();
+        await verifyIdeaRuntimeDatabase(ideaRuntimeDatabase.client, config.ideaRuntime!.database, config.web, now, queue);
+        requireActive();
+        if (!ideaRuntimeDatabase.isAvailable()) throw new Error();
+      }
       if (queue) {
         let timer: ReturnType<typeof setTimeout> | undefined;
         const pending = Promise.resolve().then(() => { requireActive(); return prepareSubmission!({ query: async (sql, values) => {
@@ -230,6 +261,7 @@ export function createPrivateTaskBootstrap(dependencies: {
         planning: config.planning, routes: config.routes, approvals: config.approvals, quality: config.quality,
         revisionPlanning: config.revisionPlanning, resultDatabase, clock,
         ideaCreation: ideaDatabase ? { ...config.ideaCreation!, database: ideaDatabase } : undefined,
+        ideaRuntime: ideaRuntimeDatabase ? { ...config.ideaRuntime!, database: ideaRuntimeDatabase, close: closeIdeaRuntime! } : undefined,
         evidence: evidenceDatabase ? { ...config.evidence!, database: evidenceDatabase } : undefined,
         sessions: sessionDatabase ? { ...config.sessions!, database: sessionDatabase } : undefined,
         nativeHttp: config.nativeHttp,
@@ -245,7 +277,8 @@ export function createPrivateTaskBootstrap(dependencies: {
           application: { host: config.database.host, port: config.database.port, database: config.database.database,
             loginNames: [config.web.database.username, config.database.username, config.resultDatabase!.username,
               config.evidence!.database.username, config.sessions!.database.username,
-              ...(config.ideaCreation ? [config.ideaCreation.database.username] : [])] },
+              ...(config.ideaCreation ? [config.ideaCreation.database.username] : []),
+              ...(config.ideaRuntime ? [config.ideaRuntime.database.username] : [])] },
           deliver: async (reference, signal) => {
             if (abandoned) throw new Error("native_task_delivery_unresolved");
             return deliver(reference, AbortSignal.any([signal, startupAbort.signal]));
@@ -297,8 +330,9 @@ export function createPrivateTaskBootstrap(dependencies: {
       const workerCleanup = worker ? await Promise.allSettled([worker.close()]) : [];
       const appCleanup = application ? await Promise.allSettled([application.close()]) : [];
       const producerCleanup = submission ? await Promise.allSettled([submission.close()]) : [];
+      const runtimeCleanup = closeIdeaRuntime ? await Promise.allSettled([closeIdeaRuntime()]) : [];
       const results = application ? [] : await Promise.allSettled(acquired.map(pool => pool.close()));
-      if (preparationUncertain || workerUncertain || [...workerCleanup, ...appCleanup, ...producerCleanup, ...results].some(result => result.status === "rejected")) throw new Error("private_task_startup_cleanup_uncertain");
+      if (preparationUncertain || workerUncertain || [...workerCleanup, ...appCleanup, ...producerCleanup, ...runtimeCleanup, ...results].some(result => result.status === "rejected")) throw new Error("private_task_startup_cleanup_uncertain");
       throw new Error("private_task_startup_prerequisites_failed");
     } finally { signal?.removeEventListener("abort", cancelStartup); }
   } });
