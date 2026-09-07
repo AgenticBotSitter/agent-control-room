@@ -8,6 +8,19 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Collector database resources are separated before startup integration:** Execution
+now requires distinct coordinator and ingestion clients. Saved plans and canonical
+transitions use the coordinator; collection storage and receipt verification receive
+only ingestion. Direct object reuse is rejected. Forty-eight execution/admission and
+ingestion-role checks pass, plus TypeScript, focused lint and VPS build. Independent
+source review found no concrete defect. Routing tests use instrumented separate ports;
+the existing restricted-ingestion tests remain their separate evidence. Distinct objects
+do not prove distinct logins or least privilege. Startup must verify those profiles and
+same authoritative database before mounting; no production grants or services changed.
+This fixes the earlier composition's use of one database resource for both purposes.
+**Next:** restricted coordinator profile and configured startup wiring, followed by
+visible collection controls, page verification and real article-to-agent acceptance.
+
 **Protected collection HTTP handler is implemented, not mounted:** Fixed-project
 proposal and approval POST routes reuse existing origin/identity checks, bounded JSON,
 sanitized failures and private no-store headers. Services retain exact input, owner and

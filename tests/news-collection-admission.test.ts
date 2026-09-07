@@ -14,6 +14,16 @@ import type { AbsFeedJobReference } from "../src/persistence/pg-boss-abs-feed-wo
 import { createAbsFeedJobExecution } from "../src/project-adapters/abs-news/v1/feed-job-execution";
 import { AbsFeedIngestionService } from "../src/project-adapters/abs-news/v1/feed-ingestion";
 
+// Routing evidence only: real restricted-login qualification has separate tests.
+function ingestionClient(db: DatabaseClient): DatabaseClient {
+  const session = (tx: DatabaseSession): DatabaseSession => ({ query<T>(sql: string, values?: unknown[]) {
+    assert.doesNotMatch(sql, /control_(?:jobs|attempts|leases|approvals|effect_intents|policy_decisions|abs_feed_plans)/);
+    return tx.query<T>(sql, values);
+  } });
+  return { ...session(db), transaction: work => db.transaction(tx => work(session(tx))),
+    transactionWithPreCommitCheck: (work, check) => db.transactionWithPreCommitCheck(tx => work(session(tx)), check) };
+}
+
 async function fixture() {
   let current = now, failQueue = false, expireQueue = false;
   const f = await taskFixture(() => current), key = new Uint8Array(32).fill(67);
@@ -226,9 +236,13 @@ test("owned feed execution binds approved plan, retained receipt and terminal jo
       const { replayed, effectState, networkContacted, ...reference } = approved;
       assert.equal(replayed, false); assert.equal(effectState, "authorized"); assert.equal(networkContacted, false);
       let calls = 0, closes = 0, permitted = true;
-      const runner = createAbsFeedJobExecution(f.client, f.scope, f.key, { assertCurrent(url) {
+      const ingestionDb = ingestionClient(f.client);
+      assert.throws(() => createAbsFeedJobExecution({ coordinator: f.client, ingestion: f.client }, f.scope, f.key,
+        { assertCurrent() {} }), /database_separation_required/);
+      const runner = createAbsFeedJobExecution({ coordinator: f.client, ingestion: ingestionDb }, f.scope, f.key, { assertCurrent(url) {
         assert.equal(url, "https://example.org/feed"); if (!permitted) throw new Error("synthetic revoked guard");
       } }, f.clock, (db, value, key, guard) => {
+        assert.equal(db, ingestionDb); assert.notEqual(db, f.client);
         const { timeoutMs, ...configuration } = value as Record<string, unknown>;
         assert.equal(timeoutMs, 10000);
         const ingestion = new AbsFeedIngestionService(db, configuration, key);
@@ -265,7 +279,7 @@ test("cancellation during durable start cannot invoke the collector", async t =>
   } });
   const db: DatabaseClient = { query: f.client.query.bind(f.client), transaction: work => f.client.transaction(tx => work(session(tx))),
     transactionWithPreCommitCheck: (work, check) => f.client.transactionWithPreCommitCheck(tx => work(session(tx)), check) };
-  const runner = createAbsFeedJobExecution(db, f.scope, f.key, { assertCurrent() {} }, f.clock, () => {
+  const runner = createAbsFeedJobExecution({ coordinator: db, ingestion: ingestionClient(f.client) }, f.scope, f.key, { assertCurrent() {} }, f.clock, () => {
     assert.fail("cancelled attempt must not construct a collector");
   });
   assert.equal((await runner.collect(reference, controller.signal)).disposition, "held"); assert.equal(marked, true);

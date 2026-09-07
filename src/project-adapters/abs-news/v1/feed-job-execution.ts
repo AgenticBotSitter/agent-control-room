@@ -11,16 +11,20 @@ import { captureAbsCurrentSourceAuthority, type AbsCurrentSourceAuthority } from
 /** Unmounted, trusted collector composition. Its required source guard must represent
  * separately established current local/source authority; this module cannot manufacture
  * that authority or replace a remote node's protected claim. Construction is inert.
+ * Startup must verify separate least-privilege logins on the same authoritative DB;
+ * object inequality below only catches accidental direct resource reuse.
  * The optional factory is an internal dependency seam, never a request field. */
-export function createAbsFeedJobExecution(db: DatabaseClient, value: unknown, key: Uint8Array,
+export function createAbsFeedJobExecution(databases: { coordinator: DatabaseClient; ingestion: DatabaseClient }, value: unknown, key: Uint8Array,
   source: AbsCurrentSourceAuthority, clock: () => number = Date.now,
   factory: typeof createAbsFeedCollection = createAbsFeedCollection) {
+  const { coordinator: db, ingestion } = databases;
+  if (!db || !ingestion || db === ingestion) throw new Error("abs_feed_execution_database_separation_required");
   const scope = z.object({ tenantId: localId, workspaceId: localId, projectId: localId, nodeId: localId, executorId: localId }).strict().parse(value);
   if (!(key instanceof Uint8Array) || key.length !== 32) throw new Error("abs_feed_execution_config_invalid");
   const capturedKey = Uint8Array.from(key), assertSource = captureAbsCurrentSourceAuthority(source);
   const projectScope = { tenantId: scope.tenantId, workspaceId: scope.workspaceId, projectId: scope.projectId };
   const plans = new AbsFeedPlanStore(db, projectScope, capturedKey), store = new CanonicalStore(db);
-  const news = new PostgresAbsNewsStoreV1(db, projectScope, capturedKey);
+  const news = new PostgresAbsNewsStoreV1(ingestion, projectScope, capturedKey);
   return Object.freeze({ async collect(value: unknown, signal: AbortSignal) {
     const reference = absFeedJobReferenceSchema.parse(value);
     if (!(signal instanceof AbortSignal) || signal.aborted || reference.tenantId !== scope.tenantId || reference.projectId !== scope.projectId)
@@ -47,7 +51,7 @@ export function createAbsFeedJobExecution(db: DatabaseClient, value: unknown, ke
     try {
       let outcome: "confirmed" | "failed" | "ambiguous" = "ambiguous", receiptDigest: string | undefined;
       try {
-        current(); collection = factory(db, work.plan.configuration, capturedKey, { assertCurrent: current });
+        current(); collection = factory(ingestion, work.plan.configuration, capturedKey, { assertCurrent: current });
         const result = await collection.collect(controller.signal);
         await collection.close(); current();
         const checked = await news.verifyCollectionReceipt(result.receipt);
