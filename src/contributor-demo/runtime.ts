@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { createControlRoomLocalPilotRuntimeV1 } from "../local-pilot/v1/runtime";
 import { sha256Digest } from "../security";
+import { createContributorSimulations } from "./simulations";
 
 /** Disposable contributor composition, not an operational startup entry.
  * Does not read environment credentials, access Keychain, start a listener or accept
@@ -15,10 +16,12 @@ export async function createContributorDemoRuntime(repositoryRoot: string) {
   const dataDir = await mkdtemp(join(tmpdir(), "control-room-contributor-demo-"));
   const ownerCode = randomBytes(24).toString("base64url");
   const masterKey = randomBytes(32);
+  const simulations = createContributorSimulations();
   try {
     const runtime = await createControlRoomLocalPilotRuntimeV1({
       repositoryRoot, dataDir, mode: "repository_fake", origin: "http://127.0.0.1:3000",
       masterKey, ownerCodeDigest: sha256Digest({ code: ownerCode }),
+      syntheticResults: simulations.source,
     });
     let closing: Promise<void> | undefined;
     return Object.freeze({
@@ -27,16 +30,19 @@ export async function createContributorDemoRuntime(repositoryRoot: string) {
       dataDir,
       ownerCode,
       runtime,
+      simulate: (request: Request, projectId: string, jobId: string) => simulations.start(runtime, request, projectId, jobId),
       close(): Promise<void> {
         // Do not remove a database that failed to close. Retain the exact path so
         // the caller can report cleanup failure without erasing recovery evidence.
         return closing ??= (async () => {
+          await simulations.close();
           await runtime.close();
           await rm(dataDir, { recursive: true, force: true });
         })();
       },
     });
   } catch (error) {
+    await simulations.close();
     await rm(dataDir, { recursive: true, force: true });
     throw error;
   } finally {

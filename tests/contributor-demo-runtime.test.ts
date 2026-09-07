@@ -29,9 +29,33 @@ test("disposable demo uses real local authentication and project/task services, 
   const detail = await demo.runtime.projectTasks.getTask(request("GET", cookie), project.project.projectId, proposed.receipt.jobId);
   assert.equal(detail.task.state, "proposed");
   assert.deepEqual(detail.attempts, []);
+  await assert.rejects(demo.simulate(request("GET", cookie), project.project.projectId, proposed.receipt.jobId));
+  await assert.rejects(demo.simulate(request("POST"), project.project.projectId, proposed.receipt.jobId));
+  const [simulation, replay] = await Promise.all([
+    demo.simulate(request("POST", cookie), project.project.projectId, proposed.receipt.jobId),
+    demo.simulate(request("POST", cookie), project.project.projectId, proposed.receipt.jobId),
+  ]);
+  assert.deepEqual(replay, simulation);
+  assert.equal(simulation.simulationOnly, true);
+  assert.equal(simulation.grantsExecutionAuthority, false);
+  const result = await demo.runtime.projectTasks.getSyntheticResult(request("GET", cookie),
+    project.project.projectId, proposed.receipt.jobId, simulation.artifactId);
+  assert.match(result.text, /SIMULATED RESULT/);
+  assert.match(result.text, /Compare options/);
+  assert.equal(result.untrustedContent, true);
+  const other = await demo.runtime.projectTasks.createProject(request("POST", cookie), {
+    title: "Other demo project", summary: "Separate scope",
+  }, "contributor-demo-project-002");
+  await assert.rejects(demo.simulate(request("POST", cookie), other.project.projectId, proposed.receipt.jobId));
+  await assert.rejects(demo.runtime.projectTasks.getSyntheticResult(request("GET", cookie),
+    other.project.projectId, proposed.receipt.jobId, simulation.artifactId));
+  const after = await demo.runtime.projectTasks.getTask(request("GET", cookie), project.project.projectId, proposed.receipt.jobId);
+  assert.equal(after.task.state, "proposed");
+  assert.deepEqual(after.attempts, []);
   const first = demo.close();
   assert.equal(demo.close(), first);
   await first;
+  await assert.rejects(demo.simulate(request("POST", cookie), project.project.projectId, proposed.receipt.jobId));
   await assert.rejects(stat(demo.dataDir), { code: "ENOENT" });
 });
 

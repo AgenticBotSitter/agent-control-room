@@ -8,6 +8,19 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Contributor simulation now returns protected sample artifacts:** The disposable
+composition reuses the existing synthetic executor, artifact storage/evidence builders
+and scoped result reader. An authenticated owner can simulate a proposed task, receive
+one sample artifact and read its exact bytes. Concurrent/repeated submissions share the
+same session-local outcome, with failed outcomes retained rather than silently retried.
+Wrong-project requests are rejected before cache access. No native attempts, leases,
+execution grants or canonical completion records are fabricated; text is explicitly
+simulated/untrusted. Session shutdown cancels pending simulations and discards records.
+23 focused tests, strict types, lint and whitespace checks pass. This remains an
+internal demo method, not a browser button or public export; progress display, revision
+workflow and standalone startup remain unfinished. Simulation records are session-only,
+bounded to 100 tasks, and do not claim crash/restart durability.
+
 **Disposable demo request routing connected without a listener:** Extracted the existing
 local login/status handlers into an explicitly supplied runtime module; the existing
 application route keeps its configuration behavior. Contributor routing mounts only
