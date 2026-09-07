@@ -43,7 +43,7 @@ test('planning inventory covers current tracked inputs without approving their p
       ? createHash('sha256').update(readFileSync(entry.path)).digest('hex') : null);
   }
   assert.equal(report.entries.find(entry => entry.path === 'public/favicon.svg').reason,
-    'startup_required_asset_rights_pending');
+    'startup_required_original_asset_license_pending');
   assert.equal(report.entries.find(entry => entry.path === '.openai/hosting.json').disposition, 'exclude');
   assert.ok(report.compilerSeeds.includes('middleware.ts'));
   assert.ok(report.compilerSeeds.includes('src/web/v1/private-task-host.ts'));

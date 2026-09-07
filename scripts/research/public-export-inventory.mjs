@@ -62,7 +62,7 @@ while (pending.length) {
 
 function proposal(file) {
   if (closure.has(file)) return ['review', 'application_or_build_import'];
-  if (file === 'public/favicon.svg') return ['review', 'startup_required_asset_rights_pending'];
+  if (file === 'public/favicon.svg') return ['review', 'startup_required_original_asset_license_pending'];
   if (/^(docs|coordination|reviews|\.agents|\.github|\.openai|release)\//.test(file))
     return ['exclude', 'private_history_or_configuration_default'];
   if (/^(tests|db|contracts|schemas|third_party)\//.test(file)) return ['review', 'supporting_tests_schema_or_attribution'];

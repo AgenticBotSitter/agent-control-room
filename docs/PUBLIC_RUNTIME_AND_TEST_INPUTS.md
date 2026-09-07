@@ -40,7 +40,7 @@ checks pass, as does targeted lint. The baseline JSON snapshot remains unchanged
 
 | Consumer | Input | Public candidate decision |
 |---|---|---|
-| `src/web/v1/private-assets.ts` | Built `dist-vps/client/_next/static` and `dist-vps/client/favicon.svg` | Both required at startup. Review favicon rights/source; import-only traversal missed it. Do not weaken loader to hide missing assets. |
+| `src/web/v1/private-assets.ts` | Built `dist-vps/client/_next/static` and `dist-vps/client/favicon.svg` | Both required at startup. Favicon replaced with an original geometric mark; see `PUBLIC_ASSET_PROVENANCE.md`. Owner license/branding decision remains. Do not weaken loader to hide missing assets. |
 | `tests/helpers/web-foundation.ts` | Every sorted `.sql` under `db/migrations/` | Preserve migration sequence with test candidate, rather than copying only SQL referenced by imports. |
 | `tests/node-synthetic-executor.test.ts` | Source text of `src/node-executor/synthetic-executor.ts` and `src/security/redaction.ts`, plus the installed TypeScript compiler | Portability regression transpiles these exact repository files into an isolated test realm without Buffer/process or package resolution. Retain both sources; this is not browser interaction or a security-sandbox qualification. |
 | `tests/helpers/task-startup.ts` | `db/roles/private_web_roles.sql`, `db/roles/task_coordinator_roles.sql` | Required for two-role compiled task tests. |

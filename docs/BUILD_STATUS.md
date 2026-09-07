@@ -8,6 +8,14 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Unattributed favicon replaced in the local source candidate:** The initial-import
+icon's upstream source was not established. A new code-authored SVG uses only original
+geometric primitives, with provenance and SHA-256 in `PUBLIC_ASSET_PROVENANCE.md`.
+XML validation, three inventory diagnostics, three asset-loader tests, focused lint
+and the standalone VPS build pass; compiled favicon bytes match source exactly.
+Owner licensing/branding acceptance and other asset review remain open. No claim of
+general rights clearance; the transferred welcome website is unchanged. No GitHub push.
+
 **Contributor source inventory refreshed:** The existing TypeScript-based scanner now
 handles inline type imports and external import-equals declarations without evaluating
 source. Three inventory/compiler-comparison diagnostics and focused lint pass. The
