@@ -8,6 +8,19 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Full local regression refreshed at `e3a1b06`:** The complete default `pnpm test`
+lifecycle passes: 3,161 passed, two skipped, zero failures/cancellations. Its three
+groups report 775/775, 1,893 passed plus two skipped, and 493/493 (about 281 seconds
+combined). Both strict TypeScript configurations and repository-wide ESLint pass.
+Local raw log: `/private/tmp/control-room-regression.7Q0UlZ` (temporary, not release
+content). Source stayed unchanged during the run; stage zero passed with the existing
+lockfile. The read-only source inventory still finds 380 standalone build/test closure
+files from 24 test seeds. This does not certify publication rights, complete interactive
+demo, native providers, production PostgreSQL, live checkpoint service or deployment.
+No GitHub/Actions or network integration was used. Next product work remains the
+persisted simulated-result browser journey and clean contributor release, not another
+round of isolated storage tests.
+
 **Welcome-page domain confirmed:** Owner clarified `agentcontrolroom.xyz` is the
 purchased domain; `.com` is not owned. Local deployment/setup/copy documents now use
 that decision and retain `Alastair@agenticbotsitter.com` as the separate contact email.
