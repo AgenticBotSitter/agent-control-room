@@ -33,6 +33,10 @@ test("exact news ingestion role retains source and article data without project 
   await assert.rejects(verifyNewsIngestionDatabase(f.client, f.config, startupConfig, now));
   await verifyNewsIngestionDatabase(f.checked, f.config, startupConfig, now);
   await f.client.query("SELECT * FROM control_abs_source_settings");
+  await f.client.query("SELECT * FROM control_abs_story_archives");
+  for (const sql of ["INSERT INTO control_abs_story_archives SELECT * FROM control_abs_story_archives",
+    "UPDATE control_abs_story_archives SET archived=false", "DELETE FROM control_abs_story_archives"])
+    await assert.rejects(f.client.query(sql), /permission denied/);
   await assert.rejects(f.client.query("INSERT INTO control_abs_source_settings SELECT * FROM control_abs_source_settings"), /permission denied/);
   await assert.rejects(verifyIdeaRuntimeDatabase(f.checked, f.config, startupConfig, now));
   const scope = { tenantId: "tenant:web", workspaceId: "workspace:web", projectId: f.project.projectId }, key = new Uint8Array(32).fill(59);

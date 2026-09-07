@@ -80,6 +80,10 @@ test("archive and restore preserve exact source evidence across recollection and
   await assert.rejects(news.archive(f.identity, projectId, input));
   await assert.rejects(f.client.query("DELETE FROM control_abs_story_archives"));
   assert.equal((await f.client.query("SELECT * FROM control_abs_story_archives")).rows.length, 2);
+  await f.client.query("UPDATE control_role_grants SET role_key='operator'");
+  assert.equal((await news.list(f.identity, projectId)).canArchive, false);
+  await assert.rejects(news.archive(f.identity, projectId, { ...input, expectedRevision: 2 }));
+  await f.client.query("UPDATE control_role_grants SET role_key='owner'");
   await f.client.query("UPDATE control_role_grants SET allowed_actions='[\"tasks.read\"]'::jsonb WHERE tenant_id=$1", [scope.tenantId]);
   await assert.rejects(news.archive(f.identity, projectId, { ...input, expectedRevision: 2 }));
 });
@@ -325,6 +329,7 @@ test("news source-health projection is scoped, paginated and distinguishes failu
   await assert.rejects(service.list(f.identity, "project:other"));
   const disabled = newsPageSchema.parse(await new WebNewsService(f.client, scope, {}, () => now).list(f.identity, f.project.projectId));
   assert.deepEqual(disabled.sources, []); assert.equal(disabled.sourcesNextCursor, null);
+  assert.equal(newsPageSchema.safeParse({ ...disabled, canArchive: true }).success, false);
   assert.equal(newsPageSchema.safeParse({ ...page, sources: [{ ...page.sources[0], itemCount: 0 }] }).success, false);
 });
 

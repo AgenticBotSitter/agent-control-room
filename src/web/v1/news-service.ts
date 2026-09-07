@@ -77,7 +77,7 @@ export class WebNewsService {
       actor.require("tasks.read", projectId);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
       if (!this.key) return { project, availability: "not_configured" as const, stories: [], nextCursor: null,
-        observedAt: actor.now, canPrepare: false, sources: [], sourcesNextCursor: null };
+        observedAt: actor.now, canPrepare: false, canArchive: false, sources: [], sourcesNextCursor: null };
       const store = new PostgresAbsNewsStoreV1(joined(tx), { ...this.scope, projectId }, this.key);
       const page = await store.listStories(after, { view: view as "all" | "history" | "archive" | "fresh",
         order: order as "id" | "important" | "newest" | "oldest", observedAt: actor.now });

@@ -99,8 +99,9 @@ recent/history/archive views and important/newest/oldest sorting over each saved
 page, preserving existing pagination and research preparation. Projection metadata
 adds source, score and discovery date; missing legacy metadata remains supported.
 The upstream ten-minute future tolerance remains unchanged. Archive mutation,
-whole-library filtering/ranking, source configuration and live refresh still need
-integration. No visual/browser acceptance is claimed by compilation or pure tests.
+whole-library filtering/ranking and source configuration are now integrated locally.
+Explicit startup composition supplies refresh operations, but live transport and
+browser acceptance remain unproven. Compilation and pure tests do not prove them.
 
 Upstream discovery makes multiple feed/sitemap requests, supports redirects and uses
 larger defaults (10 MB feed, 50 MiB sitemap, 500 sitemap documents). Current custom
@@ -133,7 +134,9 @@ bound is 100,000 classified article identities per project, with read batches of
 This is bounded local correctness evidence, not production performance evidence.
 The browser preserves unresolved exact requests and reloads authoritative ranked
 pages after confirmation. Restricted-role HTTP tests and client lost-response tests
-pass. Browser interaction acceptance and independent re-review remain outstanding.
+pass. Independent source-only re-review of fdb8a89 accepted the earlier filtering
+correction and found no new concrete defects. Browser interaction acceptance and
+production database performance remain outstanding.
 
 ### Library browsing
 

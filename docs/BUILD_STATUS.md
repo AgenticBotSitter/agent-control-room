@@ -27,7 +27,12 @@ web-news tests pass with these checks. Local migration verification applies all 
 migrations and finds 145 tables; VPS compilation passes. The package migration
 wrapper hit a sandbox IPC restriction, so its unchanged script was run with Node's
 tsx import loader instead. No new listener permission was requested. Browser
-interaction acceptance and independent re-review of the correction remain open.
+interaction acceptance remains open. Independent source-only re-review of fdb8a89
+accepted the filtering correction and found no new concrete defects in storage,
+permissions, replay handling or UI. It does not establish browser or production evidence.
+Additional permission regressions confirm ingestion workers cannot write archive
+choices, operators cannot use the owner control, and unconfigured news cannot advertise
+archive access. All 16 targeted web/ingestion tests, TypeScript and focused lint pass.
 All 321 delivery tests pass (83 base plus 238 integration cases).
 No live collection, provider call, production migration or GitHub write occurred.
 The separate verification-first Research product decision remains unanswered.
