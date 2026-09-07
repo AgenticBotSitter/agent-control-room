@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { captureAbsCurrentSourceAuthority, type AbsCurrentSourceAuthority } from "./current-source-authority";
 import type { DatabaseClient } from "../../../persistence/database";
 import { absFeedInputSchema } from "./feed-decoder";
 import { AbsFeedIngestionService } from "./feed-ingestion";
@@ -11,12 +12,12 @@ type Receipt = Awaited<ReturnType<AbsFeedIngestionService["ingest"]>>;
  * Construction is inert. Startup/queue wiring and live admission are deliberately external.
  * One source configuration controls both reader destination and stored attribution. */
 export function createAbsFeedCollection(db: DatabaseClient, value: unknown, key: Uint8Array,
-  source: { assertCurrent(url: string): void }, ports?: AbsPublicReaderPorts) {
+  source: AbsCurrentSourceAuthority, ports?: AbsPublicReaderPorts) {
   const { timeoutMs, ...config } = schema.parse(value), endpoint = config.source.endpointUrl;
-  const assertCurrent = source.assertCurrent.bind(source);
+  const assertCurrent = captureAbsCurrentSourceAuthority(source);
   let closed = false, used = false, active: Promise<Receipt> | undefined, closing: Promise<void> | undefined;
   let operationSignal: AbortSignal | undefined;
-  const current = () => { if (closed || operationSignal?.aborted) throw new Error("abs_collection_unavailable");
+  const current = (): undefined => { if (closed || operationSignal?.aborted) throw new Error("abs_collection_unavailable");
     try { assertCurrent(endpoint); } catch { throw new Error("abs_collection_unavailable"); }
     if (closed || operationSignal?.aborted) throw new Error("abs_collection_unavailable"); };
   const guarded: DatabaseClient = { query: db.query.bind(db),

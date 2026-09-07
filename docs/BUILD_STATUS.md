@@ -8,6 +8,14 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Source authority wiring now rejects asynchronous assertions:** The reader and collection
+share a captured, explicitly synchronous guard. A mistakenly returned Promise cannot
+authorize DNS, requests or saved failure outcomes; rejected native Promises are observed
+without awaiting permission. Twenty-five reader/collection tests, 62 workflow regressions,
+TypeScript and focused lint pass. This prevents a future integration mistake; no configured live reader was
+affected or executed. Managed job dispatch and real journeys are still pending.
+Independent source review found no concrete defect in the scoped change.
+
 **Restricted news-ingestion database profile verified:** The offline role template permits
 article/source inserts and required lock-column updates, not project content, proposals,
 jobs, grants or audit writes. The preflight checks effective permissions, including queue

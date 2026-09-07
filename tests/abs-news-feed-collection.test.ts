@@ -37,7 +37,9 @@ async function setup(mode = "normal") {
     });
   } };
   const collection = createAbsFeedCollection(db, { ...scope, source: { sourceId: "source:news", sourceLabel: "News", sourceKind: "rss", endpointUrl: "https://news.example.test/feed" }, maxBytes: 10000, maxItems: 50, timeoutMs: mode === "close_stall" ? 20 : 1000 }, key,
-    { assertCurrent() { if (!permitted) throw new Error("authority_revoked"); } }, ports);
+    { assertCurrent() { if (!permitted) throw new Error("authority_revoked");
+      if (mode === "async_authority") return Promise.resolve() as unknown as undefined;
+    } }, ports);
   return { ...f, collection, order, databaseEntered, release, requests: () => requests, store: new PostgresAbsNewsStoreV1(f.client, scope, key) };
 }
 test("one collection closes its reader before atomic ingestion and cannot fetch twice", async t => {
@@ -48,6 +50,12 @@ test("one collection closes its reader before atomic ingestion and cannot fetch 
   assert.equal((await f.store.listStories()).stories[0].verificationState, "review_only");
   await assert.rejects(f.collection.collect(new AbortController().signal)); assert.equal(f.requests(), 1);
   await f.collection.close(); assert.equal((await f.client.query("SELECT * FROM control_jobs")).rows.length, 0);
+});
+test("asynchronous authority cannot collect or record a misleading failure outcome", async t => {
+  const f = await setup("async_authority"); t.after(() => f.db.close());
+  await assert.rejects(f.collection.collect(new AbortController().signal), /abs_collection_unavailable/);
+  assert.equal(f.requests(), 0); assert.equal(f.order.includes("database_started"), false);
+  assert.equal((await f.store.listSourceStatuses()).statuses.length, 0); await f.collection.close();
 });
 test("a cleaned-up read failure retains a source failure, not empty successful news", async t => {
   const f = await setup("failed"); t.after(() => f.db.close());

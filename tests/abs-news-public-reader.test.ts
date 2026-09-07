@@ -35,7 +35,9 @@ function fixture(mode = "normal", timeoutMs = 1000) {
     return mode === "private" ? ["10.0.0.1"] : ["8.8.8.8"];
   } }, request(value, handler) { requests++; options = value; receive = handler; return request as unknown as ClientRequest; } };
   const reader = createAbsPublicReader({ urls: [url], maxBytes: 1000, timeoutMs, contentTypes: ["application/rss+xml"] },
-    { assertCurrent() { if (!permitted) throw new Error("not authorized"); } }, ports);
+    { assertCurrent() { if (!permitted) throw new Error("not authorized");
+      if (mode === "async_authority") return Promise.reject(new Error("denied")) as unknown as undefined;
+    } }, ports);
   return { reader, reply, request, counts: () => ({ resolves, requests }), options: () => options,
     revoke: () => { permitted = false; }, release: () => release(["8.8.8.8"]) };
 }
@@ -49,6 +51,12 @@ test("reader is inert and makes one public pinned GET without credentials, cooki
   assert.equal(options.rejectUnauthorized, true); assert.equal(options.ca, undefined); assert.equal(options.cert, undefined); assert.equal(options.key, undefined);
   assert.deepEqual(options.headers, { Host: "news.example.test", Accept: "application/rss+xml", "Accept-Encoding": "identity", Connection: "close" });
   assert.equal(f.reply.destroyed, true); assert.equal(f.request.destroyed, true); await f.reader.close();
+});
+test("miswired asynchronous authority refuses before DNS or request", async () => {
+  const f = fixture("async_authority");
+  await assert.rejects(f.reader.read(url, new AbortController().signal), /abs_public_read_failed/);
+  await new Promise(done => setImmediate(done));
+  assert.deepEqual(f.counts(), { resolves: 0, requests: 0 }); await f.reader.close();
 });
 test("private addresses, TLS mismatch, redirects, cookies, encoding, sizes and incomplete responses are refused without retry", async t => {
   for (const mode of ["private", "tls", "peer", "hostname", "redirect", "cookie", "compressed", "type", "oversize", "utf8", "incomplete"]) await t.test(mode, async () => {

@@ -25,6 +25,25 @@ Branch: `codex/idea-abs-workflows`. Public release remains a separate reviewed s
 
 ## Evidence and scope
 
+### Immediate authority assertion contract
+
+Reader and collection now require `assertCurrent` to return `undefined`, not TypeScript
+`void` (which also accepts asynchronous functions). A runtime guard refuses non-undefined
+returns; a miswired native Promise rejection is observed without authorizing work. Tests
+prove rejection before DNS/request and before ingestion or a misleading source-failure
+record. Twenty-five reader/collection checks, 62 workflow regressions, TypeScript and focused lint pass. No live
+effect was used. Future asynchronous owner/SQL admission must complete before constructing
+the synchronous current-authority snapshot; this guard does not replace admission.
+Independent source review found no concrete defect. Rejection observation applies to
+same-realm native Promises, not arbitrary thenables or cross-realm Promises; every
+non-undefined return is still refused.
+
+Next integration constraint: the installed pg-boss worker currently carries exact native
+Hermes task references, signed approval packets and enrollment/lease identities. A feed
+must not be disguised as one of those tasks or dispatched by the legacy SQLite simulation
+coordinator. Reuse PostgreSQL/pg-boss delivery machinery while giving collection an explicit
+job operation and durable effect ownership; preserve the existing native-task contract.
+
 ### Restricted ingestion SQL role and preflight
 
 `db/roles/news_ingestion_roles.sql` defines an offline NOLOGIN role for story/source

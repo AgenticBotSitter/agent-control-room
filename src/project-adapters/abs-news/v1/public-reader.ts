@@ -4,6 +4,7 @@ import type { ClientRequest, IncomingMessage } from "node:http";
 import type { EventEmitter } from "node:events";
 import { checkServerIdentity, type TLSSocket, type ConnectionOptions } from "node:tls";
 import { z } from "zod";
+import { captureAbsCurrentSourceAuthority, type AbsCurrentSourceAuthority } from "./current-source-authority";
 import { absNewsCanonicalUrlSchemaV1 } from "./schemas";
 import { preparePinnedHttpsConnection, verifyPinnedTlsPeer, type NetworkResolverV1 } from "../../../node-policy/v1/network-target-guard";
 
@@ -22,9 +23,9 @@ const refused = () => new Error("abs_public_read_failed");
 /** Inert until read. Trusted composition must supply current per-read authority.
  * Reuses the repository public DNS/pinned peer guard and Node's TLS/HTTP implementation.
  * No private-address exception, cookies, credentials, redirects, decompression or retries. */
-export function createAbsPublicReader(value: unknown, source: { assertCurrent(url: string): void }, ports: AbsPublicReaderPorts = nativePorts) {
+export function createAbsPublicReader(value: unknown, source: AbsCurrentSourceAuthority, ports: AbsPublicReaderPorts = nativePorts) {
   const config = configSchema.parse(value), allowed = new Set(config.urls);
-  const assertCurrent = source.assertCurrent.bind(source), resolve = ports.resolver.resolve.bind(ports.resolver), requestHttp = ports.request.bind(ports);
+  const assertCurrent = captureAbsCurrentSourceAuthority(source), resolve = ports.resolver.resolve.bind(ports.resolver), requestHttp = ports.request.bind(ports);
   const lifetime = new AbortController(), pending = new Set<Promise<unknown>>();
   let busy = false, closed = false, closing: Promise<void> | undefined;
   const track = <T>(promise: Promise<T>): Promise<T> => { pending.add(promise); void promise.then(() => pending.delete(promise), () => pending.delete(promise)); return promise; };
