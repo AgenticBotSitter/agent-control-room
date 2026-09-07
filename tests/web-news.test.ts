@@ -14,8 +14,35 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { NewsResearchForm } from "../private-app/app/news-research-form";
 import { PrivateNewsWorkspace, NewsSourceHealth } from "../private-app/app/news-workspace";
 import { installNewsNavigationGuard } from "../src/web/v1/news-navigation-guard";
+import { createNewsSourceClient } from "../src/web/v1/news-source-client";
 
 const scope = { tenantId: "tenant:web", workspaceId: "workspace:web" }, key = new Uint8Array(32).fill(37);
+
+test("source browser client recovers a lost save without changing source or creating a second revision", async t => {
+  const f = await taskFixture();
+  const app = createPrivateWebProcess({ ...startupConfig, news: { integrityKey: key }, database: { client: f.client, close: () => f.db.close() }, clock: () => now });
+  t.after(() => app.close());
+  let lose = true, deny = false, calls = 0;
+  const client = createNewsSourceClient(async (url, init) => {
+    calls++;
+    if (deny) return Response.json({}, { status: 401 });
+    const response = await app.handle(request(String(url), init?.method ?? "GET", init?.body ? JSON.parse(String(init.body)) : undefined), () => new Response("shell"));
+    if (init?.method === "POST" && lose) { lose = false; throw new Error("lost_after_commit"); }
+    return response;
+  });
+  const input = { source: { id: "source:browser", name: "Example", url: "https://example.org/feed", enabled: true }, expectedRevision: 0 };
+  await assert.rejects(client.save(f.project.projectId, input)); assert.equal(client.hasPending(), true);
+  input.source.name = "Changed after send";
+  await assert.rejects(client.save(f.project.projectId, input)); assert.equal(calls, 1);
+  deny = true;
+  await assert.rejects(client.retry()); assert.equal(client.hasPending(), true);
+  await assert.rejects(client.save(f.project.projectId, input)); assert.equal(calls, 2);
+  deny = false;
+  const receipt = await client.retry(); assert.equal(receipt.record.source.name, "Example"); assert.equal(receipt.replayed, true);
+  assert.equal(client.hasPending(), false);
+  assert.equal((await client.list(f.project.projectId)).sources.length, 1);
+  assert.equal((await f.client.query("SELECT * FROM control_abs_source_settings")).rows.length, 1);
+});
 
 test("source settings HTTP edits require owner authority, replay safely, and do not collect", async t => {
   const f = await taskFixture();

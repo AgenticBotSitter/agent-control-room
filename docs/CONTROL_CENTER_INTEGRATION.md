@@ -124,7 +124,12 @@ authority nor scheduling. Authenticated GET/POST `/api/v1/projects/:id/news/sour
 now exposes settings: project read permission for listing, owner-only
 `news.sources.manage` and active project for edits. Audit and setting commit together.
 The offline private-web role/preflight adds only source-settings SELECT/INSERT;
-no live role change occurred. Owner-facing browser controls remain to be connected.
+no live role change occurred. The private news page now includes source controls
+for name/URL, enabled state, edit/add and pagination. The browser client validates
+project/record/revision responses and keeps an exact pending save across uncertain
+responses, including a later denied retry. Navigation is held while a save is pending.
+These controls save settings only; they do not collect or schedule. Visual browser
+acceptance remains outstanding; build/render and injected HTTP tests are not visual QA.
 Reason for this adapter rather than upstream settings persistence: one shared private
 PostgreSQL authority and project/session permissions, not machine-local global settings.
 

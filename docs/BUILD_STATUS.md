@@ -8,6 +8,18 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Source controls connected to the news page:** Add/edit name and public URL,
+enable/disable, reload and pagination use the authenticated settings API. The browser
+client retains exact pending input after uncertain outcomes, validates project and
+revision receipts, and prevents replacing unresolved saves. Review caught a denied
+retry clearing earlier uncertainty; fixed and regression-tested through lost response,
+401 retry, restored access and one retained revision. No collection is started.
+Existing layout and navigation protection are reused. Browser visual/interaction
+acceptance and runtime source-to-collection wiring remain unfinished.
+The 301-entry delivery lane, types, focused lint and VPS compilation pass.
+Independent re-review accepted the uncertainty correction. No GitHub writes,
+native reads, service or deployment occurred; the change is saved locally.
+
 **Owner source-setting API connected:** Authenticated news source list/save routes
 reuse project/session authority and the settings store. Edits require owner-only
 `news.sources.manage` on an active project; operators can read within their grant

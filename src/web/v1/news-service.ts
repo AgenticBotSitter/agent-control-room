@@ -63,7 +63,7 @@ export class WebNewsService {
       if (!saved.replayed) await appendAuditWith(tx, { id: `audit:${randomUUID()}`, ...this.scope, projectId,
         actorId: actor.id, actorType: "human", action: "news.source.updated", targetType: "news_source", targetId: source.id,
         occurredAt: actor.now, safeMetadata: { sourceDigest: sha256Digest(source), revision: saved.record.revision } });
-      return saved;
+      return { ...saved, projectId };
     });
   }
   async list(identity: VerifiedWebIdentity, projectId: string, after?: string, sourceAfter?: string) {

@@ -8,6 +8,7 @@ import { NewsResearchForm } from "./news-research-form";
 import { newsReadingView, type NewsReadingView } from "../../src/web/v1/news-reading-view";
 import type { IndustrySortOrder } from "../../src/vendor/control-center/industry";
 import { NewsDailySnapshot } from "./news-daily-snapshot";
+import { NewsSourceSettings } from "./news-source-settings";
 
 export function NewsSourceHealth({ sources }: { sources: NewsPage["sources"] }) {
   const labels = { available: "Last check succeeded", partial: "Last check was incomplete", stale: "Needs a fresh check", unavailable: "Last check failed", disabled: "Disabled" };
@@ -61,6 +62,7 @@ export function PrivateNewsWorkspace({ projectId, after, sourceAfter }: { projec
   return <><PrivateHeader /><main className="private-main">
     <h1>{page ? `${page.project.title} · News` : "Project news"}</h1>
     <nav aria-label="Project pages"><a href={base}>Overview</a>{" · "}<a href={`${base}/tasks`}>Tasks</a>{" · "}<a href={`${base}/news`} aria-current="page">News</a></nav>
+    <NewsSourceSettings key={projectId} projectId={projectId} />
     <button type="button" disabled={!!selected} onClick={() => { setPage(undefined); setError(undefined); setRefresh(v => v + 1); }}>Refresh saved news</button>
     {selected ? <NewsResearchForm projectId={projectId} story={selected} close={() => setSelected(undefined)} /> : null}
     {error ? <p role="alert">{error}</p> : !page ? <p role="status">Loading saved news…</p> : page.availability === "not_configured"
