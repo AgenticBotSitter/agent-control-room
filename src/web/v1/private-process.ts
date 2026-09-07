@@ -211,8 +211,16 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
         if (request.method !== "GET" && request.method !== "HEAD") throw new WebAccessError("invalid_request");
         const taskPage = /^\/projects\/([^/]+)\/tasks(?:\/([^/]+))?$/.exec(url.pathname);
         const newsPage = /^\/projects\/([^/]+)\/news$/.exec(url.pathname);
+        const ideaPage = /^\/ideas(?:\/([^/]+))?$/.exec(url.pathname);
         const detail = /^\/projects\/([^/]+)(?:\/(overview|settings))?$/.exec(url.pathname);
-        if (taskPage) {
+        if (ideaPage) {
+          if ([...url.searchParams.keys()].some(key => key !== "after") || url.searchParams.getAll("after").length > 1
+            || ideaPage[1] && url.search) throw new WebAccessError("invalid_request");
+          let sessionId: string | undefined;
+          try { sessionId = ideaPage[1] === undefined ? undefined : decodeURIComponent(ideaPage[1]); }
+          catch { throw new WebAccessError("invalid_request"); }
+          if (sessionId) await ideas.detail(identity, sessionId); else await ideas.list(identity, url.searchParams.get("after") ?? undefined);
+        } else if (taskPage) {
           let id: string, jobId: string | undefined;
           try { id = decodeURIComponent(taskPage[1]); jobId = taskPage[2] ? decodeURIComponent(taskPage[2]) : undefined; }
           catch { throw new WebAccessError("invalid_request"); }
