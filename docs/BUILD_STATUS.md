@@ -8,6 +8,17 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Existing simulator made portable for the demo:** Removed its Node `Buffer` dependency
+in favor of standard UTF-8 encoding, with the same 65,536-byte bound. A regression first
+reproduced `Buffer is not defined` in a separate test realm, then passed without Node
+globals or dependency polyfills. Inputs are copied before callbacks yield, preventing
+mid-run draft edits from changing validated identity, step limits or result text.
+Full default lifecycle: **3,143 passed, two existing skips, zero failures/cancellations**;
+39 focused checks, both strict type checks and focused lint also pass. Required source
+reads are recorded in `PUBLIC_RUNTIME_AND_TEST_INPUTS.md`. This proves simulator reuse,
+not browser interaction or a mounted demo; interactive controls remain unfinished.
+No new simulator, listener, provider call, download, license selection or GitHub write.
+
 **Stored-review display adapter implemented:** `src/completion-gate/v1/subject-view.ts`
 now maps one checkpoint-verified subject read into the existing Completion Gate panel,
 replacing the test's hand-built projection. It preserves scope and stored quality state,

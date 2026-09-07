@@ -64,7 +64,7 @@ function isBoundedIdentifier(value: unknown): value is string {
   );
 }
 
-function validateSpec(spec: SyntheticExecutionSpecV1): void {
+function validateSpec(spec: SyntheticExecutionSpecV1): Uint8Array {
   if (!spec || typeof spec !== "object") {
     throw new Error("spec must be an object");
   }
@@ -97,9 +97,13 @@ function validateSpec(spec: SyntheticExecutionSpecV1): void {
   if (typeof spec.artifactText !== "string") {
     throw new Error("artifactText must be a string");
   }
-  if (Buffer.byteLength(spec.artifactText, "utf8") > 65_536) {
+  // Reject excessive code-unit length before allocating the UTF-8 result. Every
+  // supported runtime supplies TextEncoder; browser demos need no Node polyfill.
+  if (spec.artifactText.length > 65_536) {
     throw new Error("artifactText encodes to more than 65536 UTF-8 bytes");
   }
+  const artifactBytes = new TextEncoder().encode(spec.artifactText);
+  if (artifactBytes.byteLength > 65_536) throw new Error("artifactText encodes to more than 65536 UTF-8 bytes");
   assertNoSecretMaterial(spec.artifactText, "artifactText");
   if (
     spec.crashAfterStep !== undefined &&
@@ -107,13 +111,17 @@ function validateSpec(spec: SyntheticExecutionSpecV1): void {
   ) {
     throw new Error("crashAfterStep must be an integer from 1 through steps");
   }
+  return artifactBytes;
 }
 
 export async function runSyntheticExecution(
   spec: SyntheticExecutionSpecV1,
   ports: SyntheticExecutionPortsV1,
 ): Promise<SyntheticExecutionResultV1> {
-  validateSpec(spec);
+  // A caller editing its form while a callback yields must not alter validated
+  // step limits, identity or result text of an already-started simulation.
+  spec = { ...spec };
+  const artifactBytes = validateSpec(spec);
 
   let sequence = 0;
   let completedSteps = 0;
@@ -181,7 +189,7 @@ export async function runSyntheticExecution(
   return {
     state: "succeeded",
     completedSteps,
-    artifactBytes: Buffer.from(spec.artifactText, "utf8"),
+    artifactBytes,
     checkpointIds,
   };
 }

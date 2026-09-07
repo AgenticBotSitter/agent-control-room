@@ -33,6 +33,7 @@ checks pass, as does targeted lint. The baseline JSON snapshot remains unchanged
 |---|---|---|
 | `src/web/v1/private-assets.ts` | Built `dist-vps/client/_next/static` and `dist-vps/client/favicon.svg` | Both required at startup. Review favicon rights/source; import-only traversal missed it. Do not weaken loader to hide missing assets. |
 | `tests/helpers/web-foundation.ts` | Every sorted `.sql` under `db/migrations/` | Preserve migration sequence with test candidate, rather than copying only SQL referenced by imports. |
+| `tests/node-synthetic-executor.test.ts` | Source text of `src/node-executor/synthetic-executor.ts` and `src/security/redaction.ts`, plus the installed TypeScript compiler | Portability regression transpiles these exact repository files into an isolated test realm without Buffer/process or package resolution. Retain both sources; this is not browser interaction or a security-sandbox qualification. |
 | `tests/helpers/task-startup.ts` | `db/roles/private_web_roles.sql`, `db/roles/task_coordinator_roles.sql` | Required for two-role compiled task tests. |
 | `tests/helpers/managed-native-session.ts` and `managed-startup.ts` | Native session, evidence and result role SQL | Required for synthetic managed-result journeys; no actual operator passwords. |
 | `scripts/research/pg-boss-worker-integration.test.mjs` | Native queue producer, recovery and worker role SQL | Required for installed-package queue evidence; uses PGlite, not a server. |

@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { readFileSync } from "node:fs";
+import { runInNewContext } from "node:vm";
+import ts from "typescript";
 import {
   runSyntheticExecution,
   SyntheticExecutorCrash,
@@ -45,6 +48,47 @@ function makePorts(signal = new AbortController().signal): {
     },
   };
 }
+
+it("reuses the executor without Node globals and preserves UTF-8 bounds and cancellation", async () => {
+  // Execute repository source in a separate realm with browser-standard encoding
+  // only. No Buffer/process polyfill and no package or Node module resolution.
+  // This tests portability, not a security sandbox or browser interaction.
+  function load(path: string, dependencies: Record<string, unknown> = {}) {
+    const source = readFileSync(new URL(path, import.meta.url), "utf8");
+    const { outputText } = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022,
+      module: ts.ModuleKind.CommonJS } });
+    const context = { exports: {}, TextEncoder, require: (name: string) => {
+      if (!Object.hasOwn(dependencies, name)) throw new Error(`unexpected_dependency:${name}`);
+      return dependencies[name];
+    } };
+    runInNewContext(outputText, context, { timeout: 1000 });
+    return context.exports;
+  }
+  const redaction = load("../src/security/redaction.ts");
+  const portable = load("../src/node-executor/synthetic-executor.ts", { "../security/redaction": redaction }) as {
+    runSyntheticExecution: typeof runSyntheticExecution;
+  };
+  const text = "A🚀é\ud800";
+  const harness = makePorts();
+  const result = await portable.runSyntheticExecution(spec({ artifactText: text }), harness.ports);
+  assert.equal(result.state, "succeeded");
+  if (result.state !== "succeeded") throw new Error("expected successful result");
+  assert.deepEqual(Array.from(result.artifactBytes), Array.from(Buffer.from(text, "utf8")));
+  assert.deepEqual(harness.events.map(event => event.event), ["started", "progress", "progress", "checkpointed",
+    "progress", "progress", "checkpointed", "completed"]);
+  const accepted = await portable.runSyntheticExecution(spec({ artifactText: "🚀".repeat(16_384) }), makePorts().ports);
+  assert.equal(accepted.state, "succeeded");
+  const rejected = makePorts();
+  await assert.rejects(portable.runSyntheticExecution(spec({ artifactText: "🚀".repeat(16_384) + "a" }), rejected.ports), /65536/);
+  await assert.rejects(portable.runSyntheticExecution(spec({ artifactText: "api_key=synthetic-example-only" }), rejected.ports), /secret material/);
+  assert.deepEqual(rejected.events, []);
+  const controller = new AbortController(), cancelled = makePorts(controller.signal);
+  cancelled.ports.sleep = async () => { controller.abort(); };
+  const stopped = await portable.runSyntheticExecution(baseSpec, cancelled.ports);
+  assert.equal(stopped.state, "cancelled");
+  assert.equal("artifactBytes" in stopped, false);
+  assert.deepEqual(cancelled.events.map(event => event.event), ["started", "cancelled"]);
+});
 
 describe("synthetic executor validation", () => {
   it("rejects an unknown or missing schema before calling a port", async () => {
@@ -117,6 +161,22 @@ describe("synthetic executor validation", () => {
 });
 
 describe("synthetic executor execution", () => {
+  it("keeps validated inputs when a caller edits the draft during progress", async () => {
+    const draft = spec(), harness = makePorts();
+    const emit = harness.ports.emit;
+    harness.ports.emit = async event => {
+      await emit(event);
+      draft.steps = 101; draft.jobId = "changed-job"; draft.attemptId = "changed-attempt";
+      draft.artifactText = "api_key=synthetic-example-only";
+    };
+    const result = await runSyntheticExecution(draft, harness.ports);
+    assert.equal(result.state, "succeeded");
+    if (result.state !== "succeeded") throw new Error("expected successful result");
+    assert.equal(result.completedSteps, 4);
+    assert.equal(new TextDecoder().decode(result.artifactBytes), "artifact body");
+    assert.ok(harness.events.every(event => event.jobId === baseSpec.jobId && event.attemptId === baseSpec.attemptId));
+  });
+
   it("emits ordered events, deterministic time, progress, and checkpoints", async () => {
     const { ports, events, sleepCalls } = makePorts();
     const result = await runSyntheticExecution(baseSpec, ports);
