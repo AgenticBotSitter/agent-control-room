@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Draft dependency attribution assembled:** 36 distinct notice texts now have a single
+189 KB draft delivery file, with exact source mapping and verified wording/labels.
+LF normalization is explicit; original notice records are unchanged. See
+`research/DEPENDENCY_NOTICES_DRAFT.txt` and `research/notice-draft-assembly.json`.
+This is not complete distribution clearance or a public source export. Final scope,
+assets, demo and original-license/publication decisions remain; no GitHub write.
+
 **Vite notice-text comparison completed:** Read the five normalized term variants and
 all attribution prefixes across the remaining 71 quoted MIT/ISC sections. The Lodash
 CC0-sample/vendor exception is preserved; original notice bytes are unchanged.

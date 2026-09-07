@@ -1,0 +1,292 @@
+{
+  "schema": "control-room.notice-draft-assembly/v1",
+  "draft": "docs/research/DEPENDENCY_NOTICES_DRAFT.txt",
+  "draftSha256": "df2638d2ce77ead48eac4530dc38fd36f4f431e1c2628251130f200cad2363cf",
+  "draftBytes": 189118,
+  "publicationApproved": false,
+  "completeDistributionClearance": false,
+  "lineEndings": "LF; original source notice SHA-256 values preserved in labels and index",
+  "entries": [
+    {
+      "sha256": "31ccadc0a70e8e0e8a35c5833567b64388dfe34987d962e1911554e271294105",
+      "bytes": 1192,
+      "labels": [
+        "@electric-sql/pglite 0.3.14 — alternate PostgreSQL notice"
+      ]
+    },
+    {
+      "sha256": "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9",
+      "bytes": 10173,
+      "labels": [
+        "@electric-sql/pglite 0.3.14 — LICENSE"
+      ]
+    },
+    {
+      "sha256": "3b6be04f862a077a4b97929dbf247299360824d9365f8603c263769303ace18c",
+      "bytes": 1094,
+      "labels": [
+        "@eslint/js 9.39.4 — LICENSE",
+        "eslint 9.39.4 — LICENSE"
+      ]
+    },
+    {
+      "sha256": "ee765244e2d59f5234d474f62e0766fa0c8b99af967fdd4c0cb8dcb0c76ea224",
+      "bytes": 1079,
+      "labels": [
+        "@next/eslint-plugin-next 16.2.6 — upstream notice"
+      ]
+    },
+    {
+      "sha256": "60e0b68c0f35c078eef3a5d29419d0b03ff84ec1df9c3f9d6e39a519a5ae7985",
+      "bytes": 1071,
+      "labels": [
+        "@tailwindcss/node 4.2.1 — LICENSE",
+        "@tailwindcss/oxide 4.2.1 — LICENSE",
+        "@tailwindcss/postcss 4.2.1 — LICENSE",
+        "tailwindcss 4.2.1 — LICENSE"
+      ]
+    },
+    {
+      "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+      "bytes": 1141,
+      "labels": [
+        "@types/node 22.19.19 — LICENSE",
+        "@types/react 19.2.14 — LICENSE",
+        "@types/react-dom 19.2.3 — LICENSE"
+      ]
+    },
+    {
+      "sha256": "29b68325fe026047d13e187b44c33b2acacf7dc647dec4583702e59f235e13b5",
+      "bytes": 1103,
+      "labels": [
+        "@vitejs/plugin-react 6.0.2 — LICENSE",
+        "@vitejs/plugin-rsc 0.5.26 — upstream notice"
+      ]
+    },
+    {
+      "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a",
+      "bytes": 9723,
+      "labels": [
+        "Cloudflare workers-sdk: vite-plugin 1.37.1 / wrangler 4.92.0 — LICENSE-APACHE"
+      ]
+    },
+    {
+      "sha256": "9bb3b077cc8628334bab25961223dd8207252c8a56aa054195be38f1c042aaf4",
+      "bytes": 1086,
+      "labels": [
+        "Cloudflare workers-sdk: vite-plugin 1.37.1 / wrangler 4.92.0 — LICENSE-MIT"
+      ]
+    },
+    {
+      "sha256": "7eba1c8774e8bcb77356bafc70ac9de8383e7592bb79ab979130ab757d40f53d",
+      "bytes": 1084,
+      "labels": [
+        "cron-parser 5.10.0 — runtime dependency notice"
+      ]
+    },
+    {
+      "sha256": "82b19019e25e266a310ef46800b3af726136a3cee79af8812dc83ca0b045afae",
+      "bytes": 1077,
+      "labels": [
+        "eslint-plugin-jsx-a11y 6.10.2 — LICENSE.md"
+      ]
+    },
+    {
+      "sha256": "d500a9547fec26f52544f5f2fe52dec4b0c9bdf78177c79f202c98bd13d7c37c",
+      "bytes": 1085,
+      "labels": [
+        "eslint-plugin-react 7.37.5 — LICENSE"
+      ]
+    },
+    {
+      "sha256": "5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3",
+      "bytes": 1117,
+      "labels": [
+        "globals 16.4.0 — license",
+        "non-error 0.1.0 — runtime dependency notice",
+        "serialize-error 13.0.1 — runtime dependency notice",
+        "tagged-tag 1.0.0 — runtime dependency notice",
+        "type-fest 5.9.0 — runtime dependency notice"
+      ]
+    },
+    {
+      "sha256": "6cb2f2bf697ee9c6fa9eb8f227c63ee6e7a3cba42d4717f14c745ef9b6cbc006",
+      "bytes": 1076,
+      "labels": [
+        "luxon 3.7.2 — runtime dependency notice"
+      ]
+    },
+    {
+      "sha256": "51ad77d655782ec9ea2a624529a37f25cb82bd41ae38d85d15cdb0d4dd9c5689",
+      "bytes": 1076,
+      "labels": [
+        "pg-boss 12.30.0 — LICENSE",
+        "pg-boss 12.30.0 — runtime dependency notice"
+      ]
+    },
+    {
+      "sha256": "192b8f5c96900f04a1271dec39688655d7416c1c6ea84a508e18b50d2b6751f3",
+      "bytes": 1077,
+      "labels": [
+        "pg 8.23.0 — runtime dependency notice",
+        "pg-cloudflare 1.4.0 — runtime dependency notice",
+        "pg-protocol 1.16.0 — runtime dependency notice"
+      ]
+    },
+    {
+      "sha256": "2244b5486c4427001b6756a87b9a297d427c111dcc3ba64a097492a8979c23d0",
+      "bytes": 1082,
+      "labels": [
+        "pg-connection-string 2.14.0 — runtime dependency notice"
+      ]
+    },
+    {
+      "sha256": "4e8e87ccdfc7e4b47fd89015f78468aa53b6bf43ab6e6e12d43e8f55294911de",
+      "bytes": 750,
+      "labels": [
+        "pg-int8 1.0.1 — runtime dependency notice"
+      ]
+    },
+    {
+      "sha256": "4f15ee7fc2a72082859d7e0d12dfa4bcdd70b1c744ad3850d07780730ac08557",
+      "bytes": 1073,
+      "labels": [
+        "pg-pool 3.14.0 — runtime dependency notice"
+      ]
+    },
+    {
+      "sha256": "c565667e0560bba6502cda29fd9d461fd3acaf9dac24dda4d2758ce0f8b720cd",
+      "bytes": 1095,
+      "labels": [
+        "pg-types 2.2.0 — runtime dependency notice"
+      ]
+    },
+    {
+      "sha256": "f660a02f22de943c8c28a93791e8571c67f9088be93226fd526842b586cb4db4",
+      "bytes": 1073,
+      "labels": [
+        "pgpass 1.0.5 — runtime dependency notice"
+      ]
+    },
+    {
+      "sha256": "5be1f3465bba68a626777f984878814aaf35e7ef8e9fd314d469bcf887050fb8",
+      "bytes": 1095,
+      "labels": [
+        "postcss 8.5.26 — LICENSE"
+      ]
+    },
+    {
+      "sha256": "b5065838cbac452dfc855ba6e6e031481ad2c68406f70d21ead9321374653e6c",
+      "bytes": 1212,
+      "labels": [
+        "postgres 3.4.7 — runtime dependency notice",
+        "postgres 3.4.7 — upstream notice"
+      ]
+    },
+    {
+      "sha256": "f057f36739d53d228a746de4440c1e0c644ecde06d6beab45337d39c9d12a393",
+      "bytes": 1111,
+      "labels": [
+        "postgres-array 2.0.0 — runtime dependency notice",
+        "postgres-bytea 1.0.1 — runtime dependency notice",
+        "postgres-date 1.0.7 — runtime dependency notice",
+        "postgres-interval 1.2.0 — runtime dependency notice"
+      ]
+    },
+    {
+      "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93",
+      "bytes": 1088,
+      "labels": [
+        "@vitejs/plugin-rsc 0.5.26 — dist/vendor/react-server-dom/LICENSE",
+        "eslint-plugin-react-hooks 7.1.1 — LICENSE",
+        "react 19.2.6 — LICENSE",
+        "react 19.2.6 — runtime dependency notice",
+        "react-dom 19.2.6 — LICENSE",
+        "react-dom 19.2.6 — runtime dependency notice",
+        "react-server-dom-webpack 19.2.6 — LICENSE",
+        "scheduler 0.27.0 — LICENSE",
+        "scheduler 0.27.0 — runtime dependency notice"
+      ]
+    },
+    {
+      "sha256": "c372ef2fa1dfcb124ed807609751e75e3a009f108c5724916b489288fcb88a0c",
+      "bytes": 764,
+      "labels": [
+        "split2 4.2.0 — runtime dependency notice"
+      ]
+    },
+    {
+      "sha256": "8dded67841a9261a622c739fb61c81785e93765de852828ceeb9403d20a74581",
+      "bytes": 1088,
+      "labels": [
+        "tsx 4.23.1 — LICENSE"
+      ]
+    },
+    {
+      "sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499",
+      "bytes": 7048,
+      "labels": [
+        "type-fest 5.9.0 — runtime dependency notice"
+      ]
+    },
+    {
+      "sha256": "a7d00bfd54525bc694b6e32f64c7ebcf5e6b7ae3657be5cc12767bce74654a47",
+      "bytes": 9197,
+      "labels": [
+        "typescript 5.9.3 — LICENSE.txt"
+      ]
+    },
+    {
+      "sha256": "2eb5c7a0bba9deb77a98c81bf6b9d3fb1c67118eebf968b6b1a787b3f8928ee0",
+      "bytes": 1097,
+      "labels": [
+        "typescript-eslint 8.59.3 — LICENSE"
+      ]
+    },
+    {
+      "sha256": "19a7b85046eb77c8ab308c68569abbbb59235814297b9c95dc90480f71ec7198",
+      "bytes": 1073,
+      "labels": [
+        "vinext 1.0.0-beta.2 — LICENSE"
+      ]
+    },
+    {
+      "sha256": "40501d82eb20f60d031aaaa3291a103d72551ebd49e11e73ba94ea34589e7bdd",
+      "bytes": 108466,
+      "labels": [
+        "vite 8.0.13 — LICENSE.md"
+      ]
+    },
+    {
+      "sha256": "ba573393f24555ac0528612ad39665fab5bdcc80330a61096024bbf5f736526d",
+      "bytes": 1122,
+      "labels": [
+        "Vite bundled Polka/sirv — https://raw.githubusercontent.com/lukeed/polka/02cbdb529ddca0a9f3d225e2abb2931924219cc3/license",
+        "Vite bundled Polka/sirv — https://raw.githubusercontent.com/lukeed/polka/eba0aaff89c8b0765dcc89b23f738399c5edff5e/license",
+        "Vite bundled Polka/sirv — https://raw.githubusercontent.com/lukeed/sirv/1135207e92c40354543cbd15c763c7a61d79d432/license"
+      ]
+    },
+    {
+      "sha256": "62a7a3b8dba4cc818974ab2c00cb7fb7cb20afd7d3c73ed049d7f2eb5621a46e",
+      "bytes": 841,
+      "labels": [
+        "Vite bundled string-hash 1.1.3 — upstream README and CC0 dedication"
+      ]
+    },
+    {
+      "sha256": "82e67379203d5794e7c44549847d8d64ae6904591381682360470898bd306821",
+      "bytes": 1078,
+      "labels": [
+        "xtend 4.0.2 — runtime dependency notice"
+      ]
+    },
+    {
+      "sha256": "3f1189b28e3866e0d979968d466b78f813f76827cfdca1fbb124cc0a5c8841f8",
+      "bytes": 1072,
+      "labels": [
+        "zod 4.1.12 — LICENSE",
+        "zod 4.1.12 — runtime dependency notice"
+      ]
+    }
+  ]
+}

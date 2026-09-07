@@ -2,6 +2,19 @@
 
 ## Current actionable summary
 
+**Draft delivery file assembled:** `research/DEPENDENCY_NOTICES_DRAFT.txt` combines
+36 distinct retained notice texts with component/version labels. It includes direct
+roots, the selected runtime graph, known bundle owners, resolved Vite gaps and PGlite's
+alternate PostgreSQL notice. `research/notice-draft-assembly.json` records its 189,118
+bytes, hash and each original notice's source hash. All 36 texts and labels match the
+retained sources after explicitly declared LF newline normalization (TypeScript source
+used CRLF). Original evidence is unchanged. No original-code license is selected.
+
+This is an attribution draft, not an assembled source candidate or complete legal
+clearance. Final transitive/generated/platform scope, asset rights and delivery checks
+remain. Do not ship a private research directory wholesale: select this reviewed draft
+only after matching it to actual distributed components and resolving remaining duties.
+
 At `bb5c209`, **all 28 current direct dependencies have a resolved root notice-text
 location**. `research/direct-notice-retention.json` now preserves 16 distinct complete
 installed root texts (142,018 bytes) across 23 packages and references the five existing
