@@ -12,7 +12,7 @@ export async function createContributorDemoApplication(repositoryRoot: string) {
   const assets = await loadContributorClientAssets(await realpath(join(repositoryRoot, "dist-contributor/client")));
   const demo = await createContributorDemoRuntime(repositoryRoot);
   try {
-    const api = createContributorDemoHttp(demo.runtime, demo.simulate);
+    const api = createContributorDemoHttp(demo.runtime, demo.simulate, demo.simulationHistory);
     const bridge = createContributorDemoNodeHandler({ origin: demo.origin, assets,
       application: { isReady: () => true, close: () => demo.close() },
       handler: request => {

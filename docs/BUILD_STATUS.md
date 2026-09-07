@@ -8,6 +8,14 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Session history read available for refresh recovery:** The demo runtime and protected
+GET endpoint return an ordered, bounded sample/revision chain without starting work.
+Current task access is checked before reading history; failures remain unavailable,
+not converted into successful samples. The browser client checks scope, simulation
+flags, unique artifacts and parent ordering. Tests cover original/revision retrieval,
+mutation isolation, lost-response reconciliation, unauthenticated/wrong-origin reads,
+duplicate query keys and invalid chains. UI refresh hydration is still pending.
+
 **Revision controls connected in the contributor page:** Sample output now exposes a
 bounded feedback form, explicit revision action and expandable earlier samples.
 Unresolved revision feedback stays fixed for explicit reconciliation; successful

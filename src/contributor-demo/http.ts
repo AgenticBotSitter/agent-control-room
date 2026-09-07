@@ -15,7 +15,8 @@ const simulationRequest = z.object({ operation: z.literal("simulate_task"), simu
  * discover runtime configuration. Existing handlers enforce authentication/scope.
  */
 export function createContributorDemoHttp(runtime: ControlRoomLocalPilotRuntimeV1,
-  simulate?: Awaited<ReturnType<typeof createContributorDemoRuntime>>["simulate"]) {
+  simulate?: Awaited<ReturnType<typeof createContributorDemoRuntime>>["simulate"],
+  history?: Awaited<ReturnType<typeof createContributorDemoRuntime>>["simulationHistory"]) {
   const issue = createLocalPilotSessionHandlerV1(runtime.ownerSession);
   const status = createLocalPilotSessionStatusHandlerV1(runtime.ownerSession);
   const workspace = createLocalPilotProjectTaskHandlerV1(runtime.projectTasks);
@@ -32,6 +33,21 @@ export function createContributorDemoHttp(runtime: ControlRoomLocalPilotRuntimeV
     }
     if (url.pathname === "/api/v1/local-pilot/workspace") return workspace(request);
     if (url.pathname === "/api/v1/contributor-demo/simulations") {
+      if (request.method === "GET") {
+        if (!history) return failure("demo_simulation_unavailable", 503);
+        const params = [...url.searchParams.keys()];
+        const projectId = url.searchParams.get("projectId"), jobId = url.searchParams.get("jobId");
+        if (params.length !== 2 || new Set(params).size !== 2 || !params.includes("projectId") || !params.includes("jobId")
+          || !catalogProjectIdSchema.safeParse(projectId).success || !catalogProjectIdSchema.safeParse(jobId).success) {
+          return failure("invalid_request", 400);
+        }
+        try { return Response.json(await history(request, projectId!, jobId!), { headers: privateResponseHeaders }); }
+        catch (error) {
+          if (error instanceof LocalPilotErrorV1 && error.safeCode === "authentication_required") return failure(error.safeCode, 401);
+          if (error instanceof LocalPilotErrorV1 && error.safeCode === "local_request_required") return failure(error.safeCode, 403);
+          return webFailure(error);
+        }
+      }
       if (!simulate) return failure("demo_simulation_unavailable", 503);
       if (request.method !== "POST") return failure("method_not_allowed", 405);
       if (request.headers.get("origin") !== url.origin) return failure("local_request_required", 403);

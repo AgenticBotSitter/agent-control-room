@@ -31,6 +31,7 @@ export async function createContributorDemoRuntime(repositoryRoot: string) {
       dataDir,
       ownerCode,
       runtime,
+      simulationHistory: (request: Request, projectId: string, jobId: string) => simulations.history(runtime, request, projectId, jobId),
       simulate: (request: Request, projectId: string, jobId: string, revision?: ContributorRevision) => simulations.start(runtime, request, projectId, jobId, revision),
       close(): Promise<void> {
         // Do not remove a database that failed to close. Retain the exact path so

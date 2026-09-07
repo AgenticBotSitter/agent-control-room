@@ -47,6 +47,7 @@ test("disposable demo uses real local authentication and project/task services, 
   assert.match(result.text, /Compare options/);
   assert.equal(result.untrustedContent, true);
   const revisionInput = { parentArtifactId: simulation.artifactId, feedback: "Add a short summary." };
+  assert.equal((await demo.simulationHistory(request("GET", cookie), project.project.projectId, proposed.receipt.jobId)).entries.length, 1);
   const [revision, repeatedRevision] = await Promise.all([
     demo.simulate(request("POST", cookie), project.project.projectId, proposed.receipt.jobId, revisionInput),
     demo.simulate(request("POST", cookie), project.project.projectId, proposed.receipt.jobId, revisionInput),
@@ -56,6 +57,14 @@ test("disposable demo uses real local authentication and project/task services, 
     project.project.projectId, proposed.receipt.jobId, revision.artifactId);
   assert.match(revisedResult.text, /REVISED SAMPLE/); assert.match(revisedResult.text, /Add a short summary/);
   assert.match(revisedResult.text, /no agent performed/);
+  const history = await demo.simulationHistory(request("GET", cookie), project.project.projectId, proposed.receipt.jobId);
+  assert.deepEqual(history.entries, [
+    { parentArtifactId: null, feedback: null, state: "succeeded", artifactId: simulation.artifactId },
+    { parentArtifactId: simulation.artifactId, feedback: revisionInput.feedback, state: "succeeded", artifactId: revision.artifactId },
+  ]);
+  history.entries.length = 0;
+  assert.equal((await demo.simulationHistory(request("GET", cookie), project.project.projectId, proposed.receipt.jobId)).entries.length, 2);
+  await assert.rejects(demo.simulationHistory(request("GET"), project.project.projectId, proposed.receipt.jobId));
   assert.equal((await demo.runtime.projectTasks.getSyntheticResult(request("GET", cookie),
     project.project.projectId, proposed.receipt.jobId, simulation.artifactId)).text, result.text);
   await assert.rejects(demo.simulate(request("POST", cookie), project.project.projectId, proposed.receipt.jobId,
@@ -72,6 +81,7 @@ test("disposable demo uses real local authentication and project/task services, 
     title: "Other demo project", summary: "Separate scope",
   }, "contributor-demo-project-002");
   await assert.rejects(demo.simulate(request("POST", cookie), other.project.projectId, proposed.receipt.jobId));
+  await assert.rejects(demo.simulationHistory(request("GET", cookie), other.project.projectId, proposed.receipt.jobId));
   await assert.rejects(demo.runtime.projectTasks.getSyntheticResult(request("GET", cookie),
     other.project.projectId, proposed.receipt.jobId, simulation.artifactId));
   const after = await demo.runtime.projectTasks.getTask(request("GET", cookie), project.project.projectId, proposed.receipt.jobId);
@@ -86,6 +96,19 @@ test("disposable demo uses real local authentication and project/task services, 
 
 test("demo rejects relative repository roots before allocating data", async () => {
   await assert.rejects(createContributorDemoRuntime("."), /demo_repository_root_must_be_absolute/);
+});
+test("history client rejects broken chains, wrong scope and operational claims", async () => {
+  const root = { parentArtifactId: null, feedback: null, state: "succeeded", artifactId: "artifact:root" };
+  const base = { simulationOnly: true, grantsExecutionAuthority: false, projectId: "project:demo", jobId: "job:demo", entries: [root] };
+  for (const change of [{ projectId: "project:other" }, { grantsExecutionAuthority: true },
+    { entries: [{ ...root, parentArtifactId: "artifact:missing" }] },
+    { entries: [root, { ...root, parentArtifactId: root.artifactId, feedback: "Revise" }] },
+    { entries: [root, { ...root, artifactId: "artifact:new", parentArtifactId: "artifact:wrong", feedback: "Revise" }] }]) {
+    let calls = 0;
+    const client = createContributorDemoBrowserClient(async () => { calls++; return Response.json({ ...base, ...change }); });
+    await assert.rejects(client.history(base.projectId, base.jobId), { code: "uncertain" });
+    assert.equal(calls, 1);
+  }
 });
 
 test("demo Node bridge preserves local login cookies without changing the production bridge", async t => {
@@ -139,7 +162,7 @@ test("simulation browser client rejects mismatched or authority-bearing receipts
 test("demo HTTP composes protected login and project routes without operational endpoints", async t => {
   const demo = await createContributorDemoRuntime(process.cwd());
   t.after(() => demo.close());
-  const handle = createContributorDemoHttp(demo.runtime, demo.simulate);
+  const handle = createContributorDemoHttp(demo.runtime, demo.simulate, demo.simulationHistory);
   const session = `${demo.origin}/api/v1/local-pilot/session`;
   const workspace = `${demo.origin}/api/v1/local-pilot/workspace`;
   assert.equal((await handle(new Request(session))).status, 401);
@@ -212,6 +235,17 @@ test("demo HTTP composes protected login and project routes without operational 
   const revisionReply = await handle(new Request(`${workspace}?${revisionQuery}`, { headers: { cookie } }));
   assert.equal(revisionReply.status, 200);
   assert.match((await revisionReply.json()).text, /Use a shorter summary/);
+  const historyUrl = `${simulationUrl}?${new URLSearchParams({ projectId, jobId })}`;
+  assert.equal((await handle(new Request(historyUrl))).status, 401);
+  assert.equal((await handle(new Request(`${historyUrl}&jobId=another`, { headers: { cookie } }))).status, 400);
+  assert.equal((await handle(new Request(historyUrl, { headers: { cookie, origin: "https://other.example" } }))).status, 403);
+  const historyResponse = await handle(new Request(historyUrl, { headers: { cookie } }));
+  assert.equal(historyResponse.status, 200);
+  assert.match(historyResponse.headers.get("cache-control")!, /no-store/);
+  const historyBody = await historyResponse.json();
+  assert.equal(historyBody.entries.length, 2);
+  assert.equal(historyBody.entries[1].artifactId, revised.artifactId);
+  assert.deepEqual(await browser.history(projectId, jobId), historyBody);
   assert.equal((await handle(simulate({ revision: { ...feedback, feedback: "x".repeat(501) } }))).status, 400);
   assert.equal((await handle(simulate({ revision: { ...feedback, command: "no" } }))).status, 400);
   const query = new URLSearchParams({ resource: "synthetic_result", projectId, jobId, artifactId: receipt.artifactId });

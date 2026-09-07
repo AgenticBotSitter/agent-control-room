@@ -20,6 +20,25 @@ export function createContributorSimulations() {
   let closed = false;
   return {
     source: { storage, lineage: (id: string) => lineages.get(id) },
+    async history(runtime: ControlRoomLocalPilotRuntimeV1, request: Request, projectId: string, jobId: string) {
+      if (closed || request.method !== "GET") throw new Error("demo_simulation_unavailable");
+      await runtime.projectTasks.getTask(request, projectId, jobId);
+      request.signal.throwIfAborted();
+      const entries = [...runs.entries()].filter(([key]) => {
+        const [project, job] = JSON.parse(key) as [string, string, string | null];
+        return project === projectId && job === jobId;
+      });
+      const results = await Promise.allSettled(entries.map(([, work]) => work));
+      if (closed) throw new Error("demo_simulation_unavailable");
+      request.signal.throwIfAborted();
+      return { simulationOnly: true as const, grantsExecutionAuthority: false as const, projectId, jobId,
+        entries: results.map((result, index) => ({
+          parentArtifactId: (JSON.parse(entries[index][0]) as [string, string, string | null])[2],
+          feedback: feedbackByParent.get(entries[index][0]) ?? null,
+          ...(result.status === "fulfilled" ? { state: "succeeded" as const, artifactId: result.value.artifactId }
+            : { state: "unavailable" as const }),
+        })) };
+    },
     async start(runtime: ControlRoomLocalPilotRuntimeV1, request: Request, projectId: string, jobId: string,
       revisionInput?: ContributorRevision): Promise<Receipt> {
       if (closed || request.method !== "POST" || request.headers.get("origin") !== "http://127.0.0.1:3000") {
