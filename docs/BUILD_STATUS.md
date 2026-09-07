@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Migration publication review continued:** Full source text of migrations 0003–0009
+was inspected and recorded in `research/public-source-content-review-09.json`.
+No embedded private records, credentials, concrete keys or live endpoints were found.
+The backfill in 0007 derives tenant IDs from existing rows rather than shipping data.
+No SQL was executed or modified. Nine exact-hash content-review receipts now cover
+72 candidate files; this is not database-correctness or complete release acceptance.
+
 **Database source review advanced:** Full text of ten role SQL files and the first
 two migrations was inspected; exact hashes and findings are retained in
 `research/public-source-content-review-08.json`. No private records, credentials or

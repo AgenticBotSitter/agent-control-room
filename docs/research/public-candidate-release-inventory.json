@@ -11,8 +11,8 @@
     "dist-vps",
     "dist-contributor"
   ],
-  "manualReviewCoverageMeaning": "Only eight public-source-content-review receipts compared by exact path and SHA256. Other bounded reviews are separate evidence; missing match does not mean never reviewed.",
-  "exactPriorReviewMatches": 65,
+  "manualReviewCoverageMeaning": "Only nine public-source-content-review receipts compared by exact path and SHA256. Other bounded reviews are separate evidence; missing match does not mean never reviewed.",
+  "exactPriorReviewMatches": 72,
   "automatedScan": {
     "knownIdentityOrLocatorMatches": [
       {
@@ -371,43 +371,43 @@
       "path": "db/migrations/0003_canonical_domain_delivery.sql",
       "bytes": 16450,
       "sha256": "95ddcff940c17a2ea655789b479d9a75c86c7650fe75ae76083337c2f6d2df9c",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "public-source-content-review-09.json"
     },
     {
       "path": "db/migrations/0004_cr4b_review_hardening.sql",
       "bytes": 12265,
       "sha256": "098d3cfcdc6e2259f23e88f6007b47ee80310dcfee77170e212600d64154a6d0",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "public-source-content-review-09.json"
     },
     {
       "path": "db/migrations/0005_cr4c_identity_policy.sql",
       "bytes": 4580,
       "sha256": "1278ff95469510b4c1557aa21a915a91c4478db6b8ff4c13c429453f71da4299",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "public-source-content-review-09.json"
     },
     {
       "path": "db/migrations/0006_cr4d_audit_chain.sql",
       "bytes": 2708,
       "sha256": "0d2e6af9f1ad723f54c9b9ef47a6f4e054d57e63f20196eafa8d3efffef4b2a7",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "public-source-content-review-09.json"
     },
     {
       "path": "db/migrations/0007_cr4q_integrity_hardening.sql",
       "bytes": 12576,
       "sha256": "b52060e391f141c319bf6eca8ef85faa36c7ac6ecd5ff7e04d939cd7766ccdc5",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "public-source-content-review-09.json"
     },
     {
       "path": "db/migrations/0008_cr5a_node_protocol_identity.sql",
       "bytes": 8829,
       "sha256": "b94d9847b9765bb59c874c5c2221498849bc4767e38f5577e80d24083c963b51",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "public-source-content-review-09.json"
     },
     {
       "path": "db/migrations/0009_cr5b_protocol_delivery_semantics.sql",
       "bytes": 378,
       "sha256": "f444d9b0859f9e25b28b02ad7c4c45388502f6788e55bd4922d9cc7598e9eae1",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "public-source-content-review-09.json"
     },
     {
       "path": "db/migrations/0010_cr5d_node_operation_requests.sql",

@@ -1,0 +1,86 @@
+{
+  "schema": "control-room.public-source-content-review/v1",
+  "reviewer": "primary-assistant",
+  "independent": false,
+  "publicationApproved": false,
+  "scope": "Full text of seven staged migration files read for publication privacy and embedded third-party material. No private values or imported attribution blocks observed. Not database correctness, production permission or legal certification; no SQL executed.",
+  "entries": [
+    {
+      "path": "db/migrations/0003_canonical_domain_delivery.sql",
+      "sha256": "95ddcff940c17a2ea655789b479d9a75c86c7650fe75ae76083337c2f6d2df9c",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Canonical requests, jobs, attempts, leases, approvals, effects, services and artifacts; inbox/outbox/idempotency schema and payload mirror trigger. All values are schema literals, not records or infrastructure.",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/migrations/0004_cr4b_review_hardening.sql",
+      "sha256": "098d3cfcdc6e2259f23e88f6007b47ee80310dcfee77170e212600d64154a6d0",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Forward tenant-lineage, digest, timestamp and mirror constraints with truncate guard. No private identities, seeded rows, endpoints or credentials.",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/migrations/0005_cr4c_identity_policy.sql",
+      "sha256": "1278ff95469510b4c1557aa21a915a91c4478db6b8ff4c13c429453f71da4299",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Identity, grants, decisions and approval consumption schemas. Digest fields and strong-factor evidence columns are definitions, not supplied authentication material.",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/migrations/0006_cr4d_audit_chain.sql",
+      "sha256": "0d2e6af9f1ad723f54c9b9ef47a6f4e054d57e63f20196eafa8d3efffef4b2a7",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Audit-chain fields, heads, anchors and trigger functions; no concrete anchors, keys, external destinations or customer data. This content review does not certify nullable-field enforcement.",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/migrations/0007_cr4q_integrity_hardening.sql",
+      "sha256": "b52060e391f141c319bf6eca8ef85faa36c7ac6ecd5ff7e04d939cd7766ccdc5",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Tenant-scoped foreign keys and lineage constraints; deterministic backfill derives tenant from existing adapter rows, not embedded private seed data.",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/migrations/0008_cr5a_node_protocol_identity.sql",
+      "sha256": "b94d9847b9765bb59c874c5c2221498849bc4767e38f5577e80d24083c963b51",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Enrollment digest/challenge, public-key and replay schemas with identity-protection triggers. No key bytes, enrollment secrets, identities or live endpoint configuration.",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/migrations/0009_cr5b_protocol_delivery_semantics.sql",
+      "sha256": "f444d9b0859f9e25b28b02ad7c4c45388502f6788e55bd4922d9cc7598e9eae1",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "observation": "Adds nullable frame digest and digest-format constraint for delivery deduplication. No private content.",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    }
+  ]
+}
