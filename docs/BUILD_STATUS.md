@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Installed bundle notice texts preserved:** Seven version-checked package/vendor
+locations now map to three exact full MIT texts in
+`research/installed-bundle-notice-texts.json`. React-family, Vinext and Zod notices were
+read; the RSC vendor notice is explicitly not treated as the plugin's own notice.
+No download or original-project license choice. Missing notices/provenance, complete
+third-party scope and delivery with the eventual candidate remain unresolved.
+
 **Actual bundle package owners observed:** Rebuilt the standalone app with an
 observation-only hook and recorded final browser/RSC/SSR module owners plus exact chunk
 hashes in `research/bundled-package-observations.json`. Browser output includes seven

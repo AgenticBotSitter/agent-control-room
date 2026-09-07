@@ -108,6 +108,27 @@ Keep the existing dependencies while that scoped review proceeds.
 
 ## Next licensing batch
 
+### Exact installed notice texts retained
+
+At `0ec9a0e`, read the full installed notices for React, React DOM, React Server DOM
+Webpack, Scheduler, Vinext and Zod, plus the RSC plugin's nested React vendor notice.
+[`research/installed-bundle-notice-texts.json`](research/installed-bundle-notice-texts.json)
+preserves seven version-checked source locations and three distinct exact texts keyed
+by SHA-256. The React-family/vendor copies contain the same Meta MIT text; Vinext's
+root text names Cloudflare and Zod's names Colin McDonnell. No new download occurred.
+
+This is a private evidence archive, not a complete distribution NOTICE or selection of
+the original project's license. The plugin's vendor text does not cover the plugin's
+own original code. The earlier exact-tag root license location remains a separate
+provenance/retention task. A bounded notice-name walk to depth five in Vinext and the
+RSC plugin found the root/nested notices described here; inline/generated code and other
+names may carry further attributions. No exhaustive absence claim is made.
+
+For the eventual candidate, assemble applicable notices alongside the actual delivered
+code/assets and verify that build packaging retains them. Merely keeping this private
+research JSON does not satisfy the planned public artifact's notice delivery. The
+Postgres.js provenance gap and pg-types/pgpass notice locations remain unresolved.
+
 ### Build module attribution follow-up
 
 At `a422fb2`, rebuilt the unchanged standalone application with a local observation-only
