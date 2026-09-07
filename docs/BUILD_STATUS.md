@@ -8,13 +8,22 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Private Idea Lab pages mounted locally:** `beeaf72` connects `/ideas` and
+`/ideas/:sessionId` to the protected retained-discussion API, with workspace navigation,
+round-by-round opinions, synthesis, owner decisions and promoted-project links. These
+are database-backed reads, not fallback fixture pages. `320575f` preserves contribution
+provenance and clearly distinguishes synthetic test records from filtered provider history.
+Forty focused workflow tests passed; final page remediations have focused regression
+coverage. Creating/running panels, owner decision commands, live feeds and real-agent
+end-to-end acceptance remain incomplete. No deployment, native call or listener.
+
 **Private Idea Lab retained-discussion API implemented:** `0599aea` adds owner-only
 catalog/detail reads for saved sessions, contributions, synthesis and decisions, using
 the existing PostgreSQL registry and shared revocable web session. Catalog pagination
 is explicit (50 plus cursor), and stored session identity is checked against the selected
 row/scope. The role template adds SELECT only on the four Idea record tables. No operator,
-provider, session-create, run or promotion endpoint is enabled. The discussion page and
-command integration still need building; API availability does not mean live panels.
+provider, session-create, run or promotion endpoint is enabled. The discussion page is
+now mounted above; command integration still needs building. Reads are not live panels.
 Thirty-seven focused workflow tests plus four compiled-app checks pass; TypeScript,
 focused lint, VPS compilation and 16 Idea/database-role checks passed locally.
 Independent review's mixed-snapshot finding was fixed in `e04fb08` and re-reviewed

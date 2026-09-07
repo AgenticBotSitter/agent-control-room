@@ -25,6 +25,26 @@ Branch: `codex/idea-abs-workflows`. Public release remains a separate reviewed s
 
 ## Evidence and scope
 
+### Private Idea Lab pages
+
+`beeaf72` mounts protected `/ideas` and `/ideas/:sessionId`, adds the private navigation
+entry, bounded browser response validation and saved discussion rendering by round and
+participant. Owner decisions link to the existing separate project workspace. Loading,
+unavailable, empty and missing-contribution states contain no generated fallback records.
+The Sites skill informed reuse of the existing private layout and explicit states; the
+owner's local/VPS architecture overrides default Sites hosting. No preview/listener/deploy.
+Independent review found that synthetic confidence had been labeled bot-reported.
+`320575f` retains source provenance, checks its consistency, labels test contributions
+and warns that their synthesis is not live panel evidence. Provider-history rendering
+has a separate fixture assertion, not a claim that real providers were qualified.
+The compiled route test's historical `/ideas`-is-404 expectation was replaced with a
+protected page assertion plus logout denial; fixture/local-pilot APIs remain inaccessible.
+Forty focused workflow tests passed before the label correction; focused tests cover
+the final correction. No real browser interaction or live provider result is inferred.
+Final TypeScript and focused lint pass. The VPS artifact rebuilt and six final
+compiled-app/browser-client checks passed. Independent source re-review found no new
+concrete runtime defect; the test-only literal-type correction was separately inspected.
+
 ### Retained Idea Lab discussion access
 
 `0599aea` adds protected GET `/api/v1/ideas` and `/api/v1/ideas/:sessionId`.
@@ -34,7 +54,8 @@ owner decision; it does not infer a live run state from their presence. Missing 
 explicitly unavailable, with no fixture fallback. Exact selected session identity and
 workspace are checked; cursor pagination retains every session instead of truncating at 25.
 The private SQL role template adds SELECT only on sessions/contributions/syntheses/decisions.
-No SQL grants were applied outside disposable tests. Page mounting and commands remain open.
+No SQL grants were applied outside disposable tests. Page mounting is now implemented
+above; commands remain open.
 Four added tests cover retained records/reopening, owner/operator rejection and wrong scope/key,
 52-session pagination, protected HTTP routes, and denied Idea table writes. TypeScript,
 focused lint, VPS compilation and 41 combined workflow/compiled-app tests pass locally.
@@ -100,8 +121,8 @@ this is not real PostgreSQL concurrent-worker or production migration acceptance
 Authenticated read/draft wiring and its SELECT-only role template are now implemented
 above; actual deployment/migration and source ingestion remain open.
 
-1. Mount a non-fixture private Idea Lab workspace through the authenticated application.
-   Private saved news is mounted; existing demo `/ideas` and ABS fixture UI are not live.
+1. Add protected Idea Lab create/run/cancel/synthesize/owner-decision commands. Private
+   saved Idea and news pages are mounted; the separate demo build is not a live operator.
 2. Complete ingestion and operational use of the implemented PostgreSQL store. Existing
    SQLite ABS stores and live-read simulation coordinators must not become production authorities.
 3. Configure allowlisted news sources and reuse the selected normalization/deduplication

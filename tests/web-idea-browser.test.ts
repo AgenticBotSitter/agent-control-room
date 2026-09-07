@@ -27,7 +27,7 @@ test("Idea browser client renders retained round contributions, synthesis and pr
   assert.ok(html.includes("Synthetic test contribution")); assert.ok(!html.includes("Bot-reported confidence"));
   // Rendering-only provider-history variant; this is not provider qualification evidence.
   const providerHtml = renderToStaticMarkup(createElement(IdeaDiscussion, { detail: { ...detail,
-    contributions: detail.contributions.map(c => ({ ...c, sourceMode: "provider_filtered", providerContacted: true, liveBotContactAuthorized: true })) } }));
+    contributions: detail.contributions.map(c => ({ ...c, sourceMode: "provider_filtered" as const, providerContacted: true, liveBotContactAuthorized: true })) } }));
   assert.ok(providerHtml.includes("Retained, filtered provider contribution")); assert.ok(providerHtml.includes("Bot-reported confidence"));
   assert.ok(!providerHtml.includes("Synthetic test contribution"));
   assert.ok(html.includes("Live panel controls are not connected"));
