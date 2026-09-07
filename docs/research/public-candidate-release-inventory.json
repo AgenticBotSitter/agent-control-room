@@ -1,8 +1,8 @@
 {
   "scope": "Private evidence for staged source, not a public distribution or publication approval",
-  "candidateDigest": "299a8ada6e5c0ae77a28dc75b03d788594ec391ed2590c4aaa37160e51bb9838",
+  "candidateDigest": "8c50e63b3e368bf2f88716fafc1b55ebcde8a41e9a9f3f4f88ce64c882c263f7",
   "fileCount": 518,
-  "totalBytes": 3710033,
+  "totalBytes": 3710428,
   "excludedDirectoryNames": [
     "node_modules",
     ".git",
@@ -11,8 +11,8 @@
     "dist-vps",
     "dist-contributor"
   ],
-  "manualReviewCoverageMeaning": "Only seven public-source-content-review receipts compared by exact path and SHA256. Other bounded reviews are separate evidence; missing match does not mean never reviewed.",
-  "exactPriorReviewMatches": 53,
+  "manualReviewCoverageMeaning": "Only eight public-source-content-review receipts compared by exact path and SHA256. Other bounded reviews are separate evidence; missing match does not mean never reviewed.",
+  "exactPriorReviewMatches": 65,
   "automatedScan": {
     "knownIdentityOrLocatorMatches": [
       {
@@ -279,8 +279,8 @@
     },
     {
       "path": "SETUP.md",
-      "bytes": 4570,
-      "sha256": "5f1019bd4393085f28de0d38339bd15aebc4ee86d39d342383cd85a8d1259bf8",
+      "bytes": 4965,
+      "sha256": "9b045db64b2d2073bd8153e45eebc305aef49f99e190d5c4a5af550561763c36",
       "priorContentReviewReceipt": null
     },
     {
@@ -359,13 +359,13 @@
       "path": "db/migrations/0001_control_room_core.sql",
       "bytes": 12766,
       "sha256": "7d7b3994f8867a385d516ee480771ad425e2950b2fc7554b5d1315f9231cc8ed",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "public-source-content-review-08.json"
     },
     {
       "path": "db/migrations/0002_allocation_simulation_audit.sql",
       "bytes": 4185,
       "sha256": "7a5ca4ae4f3ed58c526148b44fef4d15e5d91c65319ab622aa5090f47885fe21",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "public-source-content-review-08.json"
     },
     {
       "path": "db/migrations/0003_canonical_domain_delivery.sql",
@@ -701,61 +701,61 @@
       "path": "db/roles/native_evidence_roles.sql",
       "bytes": 1864,
       "sha256": "4dc5a79706a46042482e36573859ccd586c25b4a9ed5b8ffd3653c7c52220c15",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "public-source-content-review-08.json"
     },
     {
       "path": "db/roles/native_queue_producer_roles.sql",
       "bytes": 1179,
       "sha256": "2d34ae9161f1803cd20d673d815682a4330211ff5524444c57c6ba1b2d135c50",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "public-source-content-review-08.json"
     },
     {
       "path": "db/roles/native_queue_recovery_roles.sql",
       "bytes": 1016,
       "sha256": "457c173d8ebecc686cc2bfd31bf9327f9825e6ce803d56c53216f4167d3f2df3",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "public-source-content-review-08.json"
     },
     {
       "path": "db/roles/native_queue_worker_roles.sql",
       "bytes": 1572,
       "sha256": "64ce05ce944690b31b0d2de80f6ff1ea5b85285489811eeb96db3828a347cf3a",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "public-source-content-review-08.json"
     },
     {
       "path": "db/roles/native_results_roles.sql",
       "bytes": 1927,
       "sha256": "5dc03fe28f00d688e93efa096b4cfc27a6b380a132ef87002cb9174b7421310f",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "public-source-content-review-08.json"
     },
     {
       "path": "db/roles/native_session_roles.sql",
       "bytes": 1202,
       "sha256": "cdf59f657b1592f6870047592f9585bf5476ae3f4c8eaefe2683f99c8d041474",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "public-source-content-review-08.json"
     },
     {
       "path": "db/roles/private_web_database.sql",
       "bytes": 263,
       "sha256": "af6e78cd02986baf028a2954f0ffa6b78fd6230aea0deb0436f41102a2d3367f",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "public-source-content-review-08.json"
     },
     {
       "path": "db/roles/private_web_roles.sql",
       "bytes": 3023,
       "sha256": "2e274d751d29179d1acfd011372e0dd5b7896f2aa1af1cac6ad8bf96a87a9929",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "public-source-content-review-08.json"
     },
     {
       "path": "db/roles/production_roles.sql",
       "bytes": 2425,
       "sha256": "9da5b27148ad7826f3b4c16f6b785c171b122ad1f88b1c6d896e22fe02391d1a",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "public-source-content-review-08.json"
     },
     {
       "path": "db/roles/task_coordinator_roles.sql",
       "bytes": 3318,
       "sha256": "132e5758b72abb9e26fcc0e72526aefca07ca9f1dffa1fb08b84dbce4cc41aea",
-      "priorContentReviewReceipt": null
+      "priorContentReviewReceipt": "public-source-content-review-08.json"
     },
     {
       "path": "docs/ARCHITECTURE.md",

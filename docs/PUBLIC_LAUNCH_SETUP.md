@@ -33,8 +33,8 @@ contributor release. The separate website repository does not supply application
 1. **Freeze and inspect the exact candidate.** The private evidence file
    [release inventory](research/public-candidate-release-inventory.json) identifies
    all 518 current source/document files and their hashes, excluding installed
-   dependencies and build output. Seven earlier content-review receipts match 53
-   files byte-for-byte. This is evidence coverage, not a claim that the other 465
+   dependencies and build output. Eight content-review receipts match 65
+   files byte-for-byte. This is evidence coverage, not a claim that the other 453
    files were never inspected or that all matched files have security clearance.
    Reuse other bounded reviews where their scope and exact bytes can be established;
    inspect the remaining gaps. Do not mistake automated scans for manual review.

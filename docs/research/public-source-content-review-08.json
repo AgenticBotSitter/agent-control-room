@@ -1,0 +1,142 @@
+{
+  "schema": "control-room.public-source-content-review/v1",
+  "reviewer": "primary-assistant",
+  "independent": false,
+  "publicationApproved": false,
+  "scope": "Full source text of these 12 exact staged files inspected for private content and source-distribution concerns. Not a PostgreSQL correctness, authorization-isolation or upstream-rights certification. No SQL executed.",
+  "entries": [
+    {
+      "path": "db/roles/native_evidence_roles.sql",
+      "observation": "Generic offline NOLOGIN group or scoped queue grants. No LOGIN creation, embedded credentials, hostnames or private project rows. Queue profiles require named pre-provisioned queue and version-specific rehearsal.",
+      "sha256": "4dc5a79706a46042482e36573859ccd586c25b4a9ed5b8ffd3653c7c52220c15",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/roles/native_queue_producer_roles.sql",
+      "observation": "Generic offline NOLOGIN group or scoped queue grants. No LOGIN creation, embedded credentials, hostnames or private project rows. Queue profiles require named pre-provisioned queue and version-specific rehearsal.",
+      "sha256": "2d34ae9161f1803cd20d673d815682a4330211ff5524444c57c6ba1b2d135c50",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/roles/native_queue_recovery_roles.sql",
+      "observation": "Generic offline NOLOGIN group or scoped queue grants. No LOGIN creation, embedded credentials, hostnames or private project rows. Queue profiles require named pre-provisioned queue and version-specific rehearsal.",
+      "sha256": "457c173d8ebecc686cc2bfd31bf9327f9825e6ce803d56c53216f4167d3f2df3",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/roles/native_queue_worker_roles.sql",
+      "observation": "Generic offline NOLOGIN group or scoped queue grants. No LOGIN creation, embedded credentials, hostnames or private project rows. Queue profiles require named pre-provisioned queue and version-specific rehearsal.",
+      "sha256": "64ce05ce944690b31b0d2de80f6ff1ea5b85285489811eeb96db3828a347cf3a",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/roles/native_results_roles.sql",
+      "observation": "Generic offline NOLOGIN group or scoped queue grants. No LOGIN creation, embedded credentials, hostnames or private project rows. Queue profiles require named pre-provisioned queue and version-specific rehearsal.",
+      "sha256": "5dc03fe28f00d688e93efa096b4cfc27a6b380a132ef87002cb9174b7421310f",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/roles/native_session_roles.sql",
+      "observation": "Generic offline NOLOGIN group or scoped queue grants. No LOGIN creation, embedded credentials, hostnames or private project rows. Queue profiles require named pre-provisioned queue and version-specific rehearsal.",
+      "sha256": "cdf59f657b1592f6870047592f9585bf5476ae3f4c8eaefe2683f99c8d041474",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/roles/private_web_database.sql",
+      "observation": "Revokes database creation and temporary-object privileges on current_database using quoted identifier formatting. No fixed deployment database; operator must select dedicated approved database.",
+      "sha256": "af6e78cd02986baf028a2954f0ffa6b78fd6230aea0deb0436f41102a2d3367f",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/roles/private_web_roles.sql",
+      "observation": "Generic offline NOLOGIN group or scoped queue grants. No LOGIN creation, embedded credentials, hostnames or private project rows. Queue profiles require named pre-provisioned queue and version-specific rehearsal.",
+      "sha256": "2e274d751d29179d1acfd011372e0dd5b7896f2aa1af1cac6ad8bf96a87a9929",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/roles/production_roles.sql",
+      "observation": "Generic NOLOGIN groups and broad application/default privilege grants; not the narrow web/coordinator profile. No embedded accounts, passwords or infrastructure. Must not be combined automatically with all later profiles.",
+      "sha256": "9da5b27148ad7826f3b4c16f6b785c171b122ad1f88b1c6d896e22fe02391d1a",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/roles/task_coordinator_roles.sql",
+      "observation": "Generic offline NOLOGIN group or scoped queue grants. No LOGIN creation, embedded credentials, hostnames or private project rows. Queue profiles require named pre-provisioned queue and version-specific rehearsal.",
+      "sha256": "132e5758b72abb9e26fcc0e72526aefca07ca9f1dffa1fb08b84dbce4cc41aea",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/migrations/0001_control_room_core.sql",
+      "observation": "Generic schema, constraints and indexes for tenants, projects, workers and audit. No inserted tenant/project records, secrets, external URLs or copied attribution blocks.",
+      "sha256": "7d7b3994f8867a385d516ee480771ad425e2950b2fc7554b5d1315f9231cc8ed",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    },
+    {
+      "path": "db/migrations/0002_allocation_simulation_audit.sql",
+      "observation": "Generic allocation, benchmark, simulation and recommendation schema; append-only trigger definition. No seed records, private project data, credentials or external endpoints.",
+      "sha256": "7a5ca4ae4f3ed58c526148b44fef4d15e5d91c65319ab622aa5090f47885fe21",
+      "contentReview": "no_private_values_observed",
+      "proposedDisposition": "candidate_after_remaining_reviews",
+      "remaining": [
+        "independent_candidate_review",
+        "owner_publication_decision"
+      ]
+    }
+  ],
+  "documentationChange": "SETUP explicitly excludes db/roles from contributor demo setup; role profiles are not an apply-all installation sequence."
+}

@@ -61,6 +61,12 @@ The terminal prints a one-time code after startup. Paste it into the page's
 **One-time owner code** field. Keep it out of shared screenshots, logs and issues.
 No Keychain access, agent credentials, paid provider or production database is needed.
 
+Do not run the SQL files in `db/roles` to prepare this demo. Its temporary PGlite
+database applies `db/migrations` itself. Role files are separate operator profiles,
+not a single installation script: applying every profile can grant overlapping
+permissions, and some require an already provisioned pg-boss queue. Never apply
+them to an existing or shared database as part of contributor setup.
+
 Create a project, save a proposed task, open it and choose **Simulate this task**.
 Inspect the labelled sample, enter feedback and request a revised sample. Earlier
 samples remain available; reopening the task reads history without rerunning work.

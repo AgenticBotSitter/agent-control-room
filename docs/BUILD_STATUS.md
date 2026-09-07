@@ -8,6 +8,16 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Database source review advanced:** Full text of ten role SQL files and the first
+two migrations was inspected; exact hashes and findings are retained in
+`research/public-source-content-review-08.json`. No private records, credentials or
+host configuration were found in those files. This is source-content review, not
+real PostgreSQL permission acceptance. SETUP now explicitly says not to run role
+scripts for the demo or combine every operator profile. Candidate and durable setup
+copies match; the reconstruction delta and inventory were refreshed. Eight review
+receipts now match 65 of 518 files. No SQL, provider, deployment or GitHub setting
+was executed or changed.
+
 **Contributor-release review coverage refreshed:** A private exact-file inventory
 now covers all 518 staged files (3,710,033 bytes), plus observed metadata for 28
 direct dependencies. Seven earlier content-review receipts match 53 current files;
