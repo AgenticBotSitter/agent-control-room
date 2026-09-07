@@ -65,3 +65,13 @@ test("CR8C accepts metadata for media, diff, and report previews without artifac
   ];
   assert.deepEqual(buildCompletionGateViewModelV1(allPreviews).previews.map((preview) => preview.kind), ["diff", "media", "report"]);
 });
+
+test("unavailable approval is distinct from no request and cannot grant authority", () => {
+  const view = buildCompletionGateViewModelV1({ ...input(), approval: { state: "unavailable" },
+    coverage: { additionalEvidenceOmitted: true, preferencesLoaded: false, previewsLoaded: false, findingStatementsLoaded: false } });
+  assert.equal(view.approval.state, "unavailable");
+  assert.match(view.approval.label, /not loaded/);
+  assert.equal(view.approval.grantsExecutionAuthority, false);
+  assert.equal(view.coverage?.additionalEvidenceOmitted, true);
+  assert.equal(view.coverage?.previewsLoaded, false);
+});

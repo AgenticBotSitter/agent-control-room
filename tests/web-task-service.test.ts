@@ -11,7 +11,7 @@ import { InMemoryRollbackCheckpointStoreV1, sha256Digest } from "../src/security
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { CompletionGatePanel } from "../app/components/completion-gate-panel";
-import { buildCompletionGateViewModelV1 } from "../src/completion-gate/v1/view-model";
+import { readCompletionSubjectViewV1 } from "../src/completion-gate/v1/subject-view";
 import { seedWebIdea, webIdeaKey } from "./helpers/web-idea-project";
 
 test("fresh project proposal can anchor an explicitly synthetic result and revision without fabricating native execution", async t => {
@@ -37,30 +37,12 @@ test("fresh project proposal can anchor an explicitly synthetic result and revis
   };
   await store.registerProfile(profile);
   async function renderStoredReviews() {
-    const inspection = await store.inspectSubject(tenantId, projectId, receipt.jobId);
-    assert.equal(inspection.additionalTargetsOmitted, false);
-    const items = inspection.targets.map(({ snapshot, reviews, verifications, findings, additionalEvidenceOmitted }) => {
-      assert.equal(additionalEvidenceOmitted, false);
-      const target = snapshot.target;
-      return buildCompletionGateViewModelV1({ schemaVersion: profile.schemaVersion,
-        target: { id: target.id, projectId: target.projectId, kind: target.kind, subjectLabel: "Simulated task review",
-          targetDigest: snapshot.targetDigest, revisionNumber: target.revisionNumber, supersedesTargetId: target.supersedesTargetId },
-        snapshot: { status: snapshot.status, acceptedReviewIds: snapshot.acceptedReviewIds,
-          missingVerificationScenarioIds: snapshot.missingVerificationScenarioIds, openFindingIds: snapshot.openFindingIds,
-          requiresSeparateApproval: snapshot.requiresSeparateApproval, grantsApproval: snapshot.grantsApproval,
-          grantsExecutionAuthority: snapshot.grantsExecutionAuthority },
-        reviews: reviews.map(value => ({ id: value.id, authority: value.authority, decision: value.decision,
-          reviewerLabel: "Synthetic owner", effectiveRisk: value.effectiveRisk, evidenceDigests: value.evidenceDigests, reviewedAt: value.reviewedAt })),
-        verifications: verifications.map(value => ({ id: value.id, scenarioId: value.scenarioId, outcome: value.outcome,
-          verifierLabel: "Synthetic verifier", evidenceDigests: value.evidenceDigests, verifiedAt: value.verifiedAt })),
-        findings: findings.map(value => ({ id: value.id, code: value.code, severity: value.severity,
-          statement: "Finding text is not included in this metadata view.", evidenceDigests: value.evidenceDigests, raisedAt: value.raisedAt })),
-        // This disposable rehearsal creates no preferences, previews or operation approval.
-        preferences: [], previews: [], approval: { state: "not_requested" },
-      });
-    });
+    const view = await readCompletionSubjectViewV1(store, { tenantId, projectId, subjectId: receipt.jobId,
+      subjectLabel: "Simulated task review" });
+    assert.equal(view.additionalTargetsOmitted, false);
+    assert.ok(view.items.every(item => item.coverage?.additionalEvidenceOmitted === false));
     return renderToStaticMarkup(createElement("section", { "aria-label": "Synthetic review rehearsal" },
-      createElement("p", null, "Simulation only — no agent ran."), createElement(CompletionGatePanel, { items })));
+      createElement("p", null, "Simulation only — no agent ran."), createElement(CompletionGatePanel, view)));
   }
   assert.match(await renderStoredReviews(), /No Completion Gate targets are visible/);
   const producer = { actorId: "service:synthetic-preview", actorType: "service" as const };
@@ -166,7 +148,29 @@ test("fresh project proposal can anchor an explicitly synthetic result and revis
   assert.match(completedHtml, /Quality review complete/);
   assert.match(completedHtml, /Simulation only/);
   assert.match(completedHtml, /no execution authority/);
+  assert.match(completedHtml, /Approval information not loaded/);
+  assert.match(completedHtml, /Preview metadata is not loaded/);
+  assert.doesNotMatch(completedHtml, /No consequential approval requested|identity:web|service:synthetic-verifier/);
   assert.doesNotMatch(completedHtml, /<button|memory:\/\//);
+  const scope = { tenantId, projectId, subjectId: receipt.jobId, subjectLabel: "Simulated task review" };
+  const inspection = await store.inspectSubject(tenantId, projectId, receipt.jobId);
+  const partial = await readCompletionSubjectViewV1({ inspectSubject: async () => ({
+    additionalTargetsOmitted: true, targets: inspection.targets.map(item => ({ ...item, additionalEvidenceOmitted: true })),
+  }) }, scope);
+  assert.equal(partial.additionalTargetsOmitted, true);
+  assert.ok(partial.items.every(item => item.coverage?.additionalEvidenceOmitted));
+  assert.deepEqual(partial.items.map(item => item.status), inspection.targets.map(item => item.snapshot.status));
+  const partialHtml = renderToStaticMarkup(createElement(CompletionGatePanel, partial));
+  assert.match(partialHtml, /not the complete history/);
+  assert.match(partialHtml, /Some review evidence is omitted/);
+  await assert.rejects(readCompletionSubjectViewV1({ inspectSubject: async () => { throw new Error("read_unavailable"); } }, scope), /read_unavailable/);
+  for (const key of ["tenantId", "projectId", "subjectId"] as const) {
+    await assert.rejects(readCompletionSubjectViewV1({ inspectSubject: async () => inspection }, { ...scope, [key]: "other:scope" }), /completion_subject_scope_mismatch/);
+  }
+  let invalidRead = false;
+  await assert.rejects(readCompletionSubjectViewV1({ inspectSubject: async () => { invalidRead = true; return inspection; } },
+    { ...scope, subjectLabel: "api_key=synthetic-example-only" }));
+  assert.equal(invalidRead, false);
   // Reusing completion storage must not turn the demonstration into an operational run.
   assert.deepEqual(await f.tasks.detail(f.identity, projectId, receipt.jobId), source);
   for (const table of ["control_attempts", "control_leases", "control_harness_runs", "control_native_artifact_receipts", "control_effect_intents"])

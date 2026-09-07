@@ -8,6 +8,17 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Stored-review display adapter implemented:** `src/completion-gate/v1/subject-view.ts`
+now maps one checkpoint-verified subject read into the existing Completion Gate panel,
+replacing the test's hand-built projection. It preserves scope and stored quality state,
+marks approval/preferences/previews as not loaded, omits raw actor identities and finding
+text, and carries partial-history/evidence warnings. Read failures propagate rather than
+becoming an empty success. This is a thin adapter, not a new review engine or authority.
+All 29 selected task/review/timeline checks, both strict type checks, focused lint and the
+standalone VPS build pass. No browser interaction or mounted demo controller is accepted;
+the next step is explicit simulated task/progress/result/revision controls using these
+existing services. No listener, provider, download, license selection or GitHub write.
+
 **Fresh-proposal rehearsal now reaches reviewed completion:** Extended the existing
 task-service test through independent verification and acceptance of the revised
 artifact. Old-target evidence and producer self-verification are rejected; verification

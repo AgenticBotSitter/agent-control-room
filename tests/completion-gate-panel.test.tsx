@@ -29,3 +29,16 @@ test("CR8C Completion Gate UI escapes hostile projected text", () => {
   assert.match(html, /&lt;script&gt;unsafe\(\)&lt;\/script&gt;/);
   assert.doesNotMatch(html, /<script>unsafe/);
 });
+
+test("partial review metadata does not claim absent evidence or loaded previews", () => {
+  const item = { ...cr8cCompletionGateFixture[0], reviews: [], verifications: [], preferences: [], previews: [],
+    coverage: { additionalEvidenceOmitted: true, preferencesLoaded: false, previewsLoaded: false, findingStatementsLoaded: false } };
+  const html = renderToStaticMarkup(<CompletionGatePanel items={[item]} additionalTargetsOmitted />);
+  assert.match(html, /not the complete history/);
+  assert.match(html, /Some review evidence is omitted/);
+  assert.match(html, /No reviews are included in this partial view/);
+  assert.match(html, /No verifications are included in this partial view/);
+  assert.match(html, /Review preferences are not loaded/);
+  assert.match(html, /Preview metadata is not loaded/);
+  assert.doesNotMatch(html, /No review evidence recorded|No verification evidence recorded|<button/);
+});

@@ -29,7 +29,9 @@ export const completionGateReadInputSchemaV1 = z.object({
   findings: z.array(z.object({ id, code: id, severity: z.enum(["low", "medium", "high", "critical"]), statement: safeText, evidenceDigests: z.array(digest).max(100), raisedAt: instant }).strict()).max(100),
   preferences: z.array(z.object({ id, subjectLabel: safeText, state: z.enum(["recorded", "expired"]), selectedAt: instant }).strict()).max(20),
   previews: z.array(previewSchema).max(50),
-  approval: z.object({ state: z.enum(["not_requested", "requested", "central_decision_recorded", "expired", "denied"]), expiresAt: instant.optional() }).strict(),
+  approval: z.object({ state: z.enum(["unavailable", "not_requested", "requested", "central_decision_recorded", "expired", "denied"]), expiresAt: instant.optional() }).strict(),
+  coverage: z.object({ additionalEvidenceOmitted: z.boolean(), preferencesLoaded: z.boolean(),
+    previewsLoaded: z.boolean(), findingStatementsLoaded: z.boolean() }).strict().optional(),
 }).strict();
 
 export type CompletionGateReadInputV1 = z.infer<typeof completionGateReadInputSchemaV1>;
@@ -48,6 +50,7 @@ export interface CompletionGateViewModelV1 {
   previews: CompletionGatePreviewV1[];
   missingVerificationScenarioIds: string[];
   openFindingIds: string[];
+  coverage?: CompletionGateReadInputV1["coverage"];
   approval: CompletionGateReadInputV1["approval"] & { label: string; detail: string; grantsExecutionAuthority: false; requiresSeparateNodeAttestation: true };
   authority: { requiresSeparateApproval: true; grantsApproval: false; grantsExecutionAuthority: false };
 }
@@ -63,6 +66,7 @@ const statusCopy: Record<CompletionGateViewModelV1["status"], { label: string; d
 
 function approvalCopy(state: CompletionGateReadInputV1["approval"]["state"]): { label: string; detail: string } {
   switch (state) {
+    case "unavailable": return { label: "Approval information not loaded", detail: "This review source does not report operation approvals. Do not infer approval or the absence of a request." };
     case "not_requested": return { label: "No consequential approval requested", detail: "Quality review does not request or create an operation approval." };
     case "requested": return { label: "Consequential approval requested", detail: "A separate human approval decision is pending. Nothing can execute from this panel." };
     case "central_decision_recorded": return { label: "Central approval decision recorded", detail: "A separate signed node attestation is still required before any approval-required effect." };
@@ -94,6 +98,7 @@ export function buildCompletionGateViewModelV1(input: unknown): CompletionGateVi
     previews: [...parsed.previews].sort((left, right) => left.previewId.localeCompare(right.previewId)),
     missingVerificationScenarioIds: [...parsed.snapshot.missingVerificationScenarioIds].sort(),
     openFindingIds: [...parsed.snapshot.openFindingIds].sort(),
+    ...(parsed.coverage ? { coverage: parsed.coverage } : {}),
     approval: { ...parsed.approval, ...approval, grantsExecutionAuthority: false, requiresSeparateNodeAttestation: true },
     authority: { requiresSeparateApproval: true, grantsApproval: false, grantsExecutionAuthority: false },
   };
