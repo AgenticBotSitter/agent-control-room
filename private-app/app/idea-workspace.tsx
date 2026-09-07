@@ -19,6 +19,7 @@ export function IdeaDiscussion({ detail }: { detail: IdeaDetail }) {
       <p>Last recorded update: <time dateTime={run.updatedAt}>{run.updatedAt}</time>. Refresh to check for newer records.</p>
       {run.attempts.some(a => a.state === "provider_marked") ? <p>A turn was started but has no settled result yet.</p> : null}
       <p>Automatic retry is disabled.</p>
+      {run.cancellationRequestedAt && run.state !== "cancelled" ? <p>Stop requested. This is not confirmation that the current turn stopped.</p> : null}
     </> : <p>No panel run is recorded for this idea.</p>}</section>
     {contributions.some(c => c.sourceMode === "injected_only") ? <p role="note">This discussion contains synthetic test contributions. Its synthesis is not evidence of a completed live bot panel.</p> : null}
     {Array.from({ length: session.maxRounds }, (_, i) => i + 1).map(round => <section key={round} aria-label={`Round ${round}`}>

@@ -65,6 +65,7 @@ export class WebIdeaService {
         run: run ? { runId: run.runId, sessionId: run.sessionId, sessionDigest: run.sessionDigest, state: run.state,
           messagesUsed: run.messagesUsed, maxMessages: session.maxMessages, costUsd: run.costUsd,
           providerContacted: run.providerContacted, updatedAt: run.updatedAt, retryPermitted: run.retryPermitted,
+          cancellationRequestedAt: run.cancellationRequestedAt ?? null,
           attempts: run.attempts.map(a => ({ participantId: a.participantId, round: a.round, state: a.state })) } : null,
         execution: "not_configured" as const, observedAt: actor.now };
     });

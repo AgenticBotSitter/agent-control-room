@@ -58,6 +58,7 @@ export const ideaLabBotRunSchemaV1 = z.object({
   attempts: z.array(attemptSchema).max(18), messagesUsed: z.number().int().min(0).max(18),
   costUsd: z.number().min(0).max(25), safeCode: ideaCodeSchemaV1, retryPermitted: z.literal(false),
   providerContacted: z.boolean(), startedAt: ideaTimeSchemaV1, updatedAt: ideaTimeSchemaV1,
+  cancellationRequestedAt: ideaTimeSchemaV1.optional(),
   grantsApproval: z.literal(false), grantsCommandAuthority: z.literal(false), grantsLeaseAuthority: z.literal(false),
   grantsExecutionAuthority: z.literal(false), automaticProjectCreationAllowed: z.literal(false), runDigest: ideaDigestSchemaV1,
 }).strict();
@@ -129,7 +130,9 @@ export function parseIdeaLabBotRunV1(value: unknown): IdeaLabBotRunV1 {
   if (sha256Digest(withoutDigest(parsed, "runDigest")) !== parsed.runDigest
     || parsed.messagesUsed !== parsed.attempts.filter((item) => item.state === "completed").length
     || parsed.costUsd !== parsed.attempts.reduce((sum, item) => sum + (item.state === "completed" ? item.costUsd : 0), 0)
-    || new Set(parsed.evidenceDigests).size !== parsed.evidenceDigests.length || invalidAttemptChronology) {
+    || new Set(parsed.evidenceDigests).size !== parsed.evidenceDigests.length || invalidAttemptChronology
+    || parsed.cancellationRequestedAt && (timeMillisecondsV1(parsed.cancellationRequestedAt) < timeMillisecondsV1(parsed.startedAt)
+      || timeMillisecondsV1(parsed.cancellationRequestedAt) > timeMillisecondsV1(parsed.updatedAt))) {
     throw new IdeaLabErrorV1("integrity_failed");
   }
   return parsed;
@@ -229,7 +232,9 @@ export class IdeaLabBotCoordinatorV1 {
       costUsd: 0, safeCode: "prepared", providerContacted: false, startedAt: now, updatedAt: now }));
     if (run.state !== "prepared") return run.state === "running" ? this.ledger.recover(run.runId, this.clock()) : run;
     for (let round = 1; round <= session.maxRounds; round += 1) for (const participant of session.participants) {
-      if (input.cancelRequested?.()) return this.ledger.cancel(run.runId, this.clock());
+      const current = await this.ledger.get(run.runId);
+      if (current?.state === "cancelled") return current;
+      if (current?.cancellationRequestedAt || input.cancelRequested?.()) return this.ledger.cancel(run.runId, this.clock());
       if (timeMillisecondsV1(this.clock()) - timeMillisecondsV1(run.startedAt) >= session.maxDurationSeconds * 1000
         || run.messagesUsed >= session.maxMessages || run.costUsd >= session.maxCostUsd) {
         return this.ledger.failDefinite(run.runId, "budget_exhausted_before_provider", this.clock());
@@ -246,9 +251,16 @@ export class IdeaLabBotCoordinatorV1 {
       const attemptId = `attempt.idea:${sha256Digest({ runId: run.runId, participantId: participant.participantId, round }).slice(7, 31)}`;
       const startedAt = this.clock(), markerDigest = sha256Digest({ runDigest: run.runDigest, attemptId,
         evidenceDigest: participantEvidence.evidenceDigest, startedAt });
-      run = await this.ledger.markProvider(run.runId, { attemptId, participantId: participant.participantId,
+      try { run = await this.ledger.markProvider(run.runId, { attemptId, participantId: participant.participantId,
         participantIdentityDigest: participant.identityDigest, round, state: "provider_marked", markerDigest,
-        costUsd: 0, messagesUsed: 0, startedAt });
+        costUsd: 0, messagesUsed: 0, startedAt }); }
+      catch (error) {
+        const latest = await this.ledger.get(run.runId);
+        if (latest?.state === "cancelled") return latest;
+        if (latest?.cancellationRequestedAt && ["prepared", "running"].includes(latest.state)
+          && latest.attempts.at(-1)?.state !== "provider_marked") return this.ledger.cancel(run.runId, this.clock());
+        throw error;
+      }
       let raw: unknown;
       try { raw = await this.driver.invoke({ session, participant, round, safePrompt,
         evidence: participantEvidence, markerDigest, ...(liveAdmission ? { liveAdmission } : {}) }); }
@@ -277,7 +289,7 @@ export class IdeaLabBotCoordinatorV1 {
       await this.registry.recordContribution(contribution);
       run = await this.ledger.settleCompleted(run.runId, attemptId, result.providerReceiptDigest,
         contribution.contributionDigest, result.costUsd, result.providerContacted, this.clock());
-      if (input.cancelRequested?.()) return this.ledger.cancel(run.runId, this.clock());
+      if (run.cancellationRequestedAt || input.cancelRequested?.()) return this.ledger.cancel(run.runId, this.clock());
     }
     return this.ledger.complete(run.runId, this.clock());
   }

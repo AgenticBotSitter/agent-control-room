@@ -92,7 +92,10 @@ export class IdeaLabProtectedOperatorServiceV1 {
     if(!run)run=await this.#ledger.prepare(buildIdeaLabBotRunV1({runId:this.runId(session),tenantId:session.tenantId,workspaceId:session.workspaceId,
       sessionId:session.sessionId,sessionDigest:session.sessionDigest,evidenceDigests:session.participants.map(participant=>sha256Digest({sessionDigest:session.sessionDigest,participantId:participant.participantId,purpose:"cancelled_before_evidence"})).sort(),
       state:"prepared",attempts:[],messagesUsed:0,costUsd:0,safeCode:"prepared",providerContacted:false,startedAt:now,updatedAt:now}));let cancelled:IdeaLabBotRunV1;
-    try{cancelled=await this.#ledger.cancel(run.runId,now);}catch{throw new IdeaLabOperatorServiceErrorV1("state_conflict");}
+    try{const requested=await this.#ledger.requestCancel(run.runId,now);
+      cancelled=requested.attempts.at(-1)?.state==="provider_marked"||!["prepared","running"].includes(requested.state)
+        ?requested:await this.#ledger.cancel(run.runId,now);
+    }catch{throw new IdeaLabOperatorServiceErrorV1("state_conflict");}
     return this.current(session,cancelled,now);
   }
   async synthesize(value:unknown,authentication:VerifiedAuthentication):Promise<IdeaLabSessionProjectionV1>{

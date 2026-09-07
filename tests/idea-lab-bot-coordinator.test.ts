@@ -28,6 +28,64 @@ async function setup(){const raw=new PGlite();for(const file of (await readdir(r
   const evidence=fixture.session.participants.map((p,index)=>buildRepositoryFakeProviderEvidenceV1(fixture.session,p,{evidenceId:`evidence.idea:${index}`,capturedAt:now,expiresAt:expires}));
   return {raw,db,registry,ledger,fixture,evidence};}
 
+test("durable cancellation survives store reopening and stops after the in-flight turn settles",async()=>{
+  const target=await setup();try{
+    let enter!:()=>void,release!:()=>void,calls=0;
+    const entered=new Promise<void>(resolve=>{enter=resolve;}),released=new Promise<void>(resolve=>{release=resolve;});
+    const fake=new DeterministicIdeaLabFakeDriverV1();
+    const coordinator=new IdeaLabBotCoordinatorV1(target.ledger,target.registry,{mode:"repository_fake",async invoke(input){
+      calls++;enter();await released;return fake.invoke(input);}},()=>now);
+    const pending=coordinator.execute({runId:"idea-run:durable-stop",session:target.fixture.session,evidence:target.evidence,safePrompt:"Discuss."});
+    await entered;
+    const reopened=new IdeaLabBotRunStoreV1(target.db,key);
+    const requested=await reopened.requestCancel("idea-run:durable-stop",now);
+    assert.equal(requested.state,"running");assert.equal(requested.cancellationRequestedAt,now);
+    assert.equal((await reopened.requestCancel(requested.runId,now)).runDigest,requested.runDigest);
+    release();const result=await pending;
+    assert.equal(result.state,"cancelled");assert.equal(result.cancellationRequestedAt,now);assert.equal(calls,1);
+    assert.equal(result.messagesUsed,1);assert.equal((await reopened.get(result.runId))!.cancellationRequestedAt,now);
+  }finally{await target.raw.close();}
+});
+test("durable cancellation never turns an unknown in-flight result into a confirmed stop",async()=>{
+  const target=await setup();try{
+    const coordinator=new IdeaLabBotCoordinatorV1(target.ledger,target.registry,{mode:"repository_fake",async invoke(){
+      await target.ledger.requestCancel("idea-run:uncertain-stop",now);throw new Error("synthetic lost result");}},()=>now);
+    const result=await coordinator.execute({runId:"idea-run:uncertain-stop",session:target.fixture.session,evidence:target.evidence,safePrompt:"Discuss."});
+    assert.equal(result.state,"ambiguous");assert.equal(result.cancellationRequestedAt,now);
+    assert.equal((await target.ledger.requestCancel(result.runId,now)).state,"ambiguous");
+  }finally{await target.raw.close();}
+});
+test("append rereads the latest event after the stable workspace lock instead of using a stale version",async()=>{
+  const target=await setup();try{
+    const runId="idea-run:stale-selection",session=target.fixture.session;
+    await target.ledger.prepare(buildIdeaLabBotRunV1({runId,tenantId:session.tenantId,workspaceId:session.workspaceId,
+      sessionId:session.sessionId,sessionDigest:session.sessionDigest,evidenceDigests:target.evidence.map(e=>e.evidenceDigest).sort(),
+      state:"prepared",attempts:[],messagesUsed:0,costUsd:0,safeCode:"prepared",providerContacted:false,startedAt:now,updatedAt:now}));
+    await target.ledger.markProvider(runId,{attemptId:"attempt:stale",participantId:session.participants[0]!.participantId,
+      participantIdentityDigest:session.participants[0]!.identityDigest,round:1,state:"provider_marked",
+      markerDigest:sha256Digest("marker"),costUsd:0,messagesUsed:0,startedAt:now});
+    const stale=await target.db.query("SELECT version,payload,run_digest,run_auth_tag FROM control_idea_bot_run_events WHERE run_id=$1 ORDER BY version DESC LIMIT 1",[runId]);
+    const stopAt="2026-08-31T16:00:31.000Z";
+    await target.ledger.requestCancel(runId,stopAt);
+    const order:string[]=[];
+    // Inject an old first-statement view; PGlite is serialized, not real PostgreSQL concurrency.
+    const reader=new IdeaLabBotRunStoreV1({...target.db,transaction:work=>target.db.transaction(tx=>work({
+      async query<T>(sql:string,params?:unknown[]){
+        if(sql.includes("FROM workspaces"))order.push("lock");
+        if(sql.includes("FROM control_idea_bot_run_events")&&sql.includes("LIMIT 1")){
+          if(!sql.includes("FOR UPDATE")){order.push("old_binding");return stale as {rows:T[]};}
+          order.push("fresh_version");
+        }
+        return tx.query<T>(sql,params);
+      },
+    }))},key);
+    const settled=await reader.settleCompleted(runId,"attempt:stale",sha256Digest("receipt"),sha256Digest("contribution"),0,false,now);
+    assert.deepEqual(order,["old_binding","lock","fresh_version"]);assert.equal(settled.cancellationRequestedAt,stopAt);
+    assert.equal(settled.updatedAt,stopAt);assert.equal(settled.attempts[0]!.settledAt,now);
+    assert.equal((await reader.recover(runId,now)).state,"cancelled");
+  }finally{await target.raw.close();}
+});
+
 test("CR12B-IDEA-030 runs every bounded fake panel turn and retains only filtered contributions",async()=>{const target=await setup();try{
   let calls=0;const prompts: { round:number; text:string }[]=[];const driver=new DeterministicIdeaLabFakeDriverV1();const coordinator=new IdeaLabBotCoordinatorV1(target.ledger,target.registry,{mode:"repository_fake",async invoke(input){calls+=1;prompts.push({round:input.round,text:input.safePrompt});return driver.invoke(input);}},()=>now);
   const run=await coordinator.execute({runId:"idea-run:complete",session:target.fixture.session,evidence:target.evidence,safePrompt:"Evaluate this bounded business idea."});

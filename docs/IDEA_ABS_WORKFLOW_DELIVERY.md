@@ -150,6 +150,24 @@ concrete finding. No independent test execution or live acceptance is inferred.
 
 ## Still required for the requested outcome
 
+Cancellation update: stop intent is retained in the existing HMAC-authenticated run
+events instead of relying only on a caller-held callback. No new queue, service or SQL
+table is introduced. An in-flight turn remains running until settlement; lost/invalid
+results remain ambiguous. Recovery can finish a pending stop after a settled turn,
+and repeated requests preserve the original intent. The current operator remains
+repository-fake-only; live web commands are not enabled by this change.
+
+Event append now locks the stable workspace row and separately rereads the latest
+event, so version allocation does not rely on locking an immutable previous event.
+Serialization is workspace-wide and limited to short SQL transactions, never provider
+work. Future panel-writer provisioning must include the existing workspace row-lock
+privilege. Head update time is monotonic even if an earlier-observed settlement obtains
+the lock after a later stop request; actual attempt/request timestamps are not rewritten.
+Independent review found both races and accepted the source remediations. Tests inject
+stale first-statement visibility with different timestamps; real PostgreSQL overlap
+acceptance is still required. Upgrade panel writers together: new readers accept old
+records, but old binaries are not promised to understand the new optional field.
+
 Run visibility update: the protected detail API and existing Idea page now display
 retained panel history from the existing coordinator event store. Reads bind tenant,
 workspace, session and digest; settled attempts must have corresponding returned

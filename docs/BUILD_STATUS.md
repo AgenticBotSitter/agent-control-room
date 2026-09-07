@@ -8,6 +8,20 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Durable panel stop request implemented:** The existing authenticated run history now
+retains optional `cancellationRequestedAt`; old records still parse without it. The
+coordinator checks it before another turn, preserves it through settlement and recovery,
+and does not turn an unknown in-flight result into a confirmed cancellation. The saved
+page labels pending stops explicitly. The repository-only operator uses this request;
+no live HTTP start/cancel operation or provider activation is added.
+Independent review found immutable-event version allocation and timestamp-order races.
+They were fixed using a stable workspace-row lock followed by a fresh event read and
+monotonic head timestamps, preserving actual request/attempt times. Re-review found no
+new concrete defect. Sixty focused workflow checks and 24 admission/history checks pass;
+TypeScript and focused lint pass. Tests use PGlite and injected stale statement visibility,
+not concurrent real PostgreSQL or physical provider cancellation. Next: protected live
+command composition and decision-to-project controls; news ingestion remains open.
+
 **Private Idea pages now display retained panel status:** The owner detail read loads
 authenticated run history bound to the selected session, checks settled turns against
 returned contributions, and refuses conflicting logical runs instead of selecting one.

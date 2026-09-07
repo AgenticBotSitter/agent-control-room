@@ -25,7 +25,7 @@ async function fixture() {
   const service = new WebIdeaService(f.client, scope, key, () => now);
   return { ...f, registry, ledger, session, evidence, service };
 }
-test("private Idea status shows retained pending and completed turns without claiming live connection", async t => {
+test("private Idea status shows a pending stop and settled cancellation without claiming live connection", async t => {
   const f = await fixture(); t.after(() => f.db.close());
   assert.equal((await f.service.detail(f.identity, f.session.sessionId)).run, null);
   let entered!: () => void, release!: () => void;
@@ -40,12 +40,23 @@ test("private Idea status shows retained pending and completed turns without cla
   assert.equal(running.run?.state, "running"); assert.equal(running.run.messagesUsed, 0);
   const html = renderToStaticMarkup(createElement(IdeaDiscussion, { detail: running }));
   assert.ok(html.includes("no settled result")); assert.ok(html.includes("does not prove that a bot is still connected"));
+  await f.ledger.requestCancel("idea-run:status",new Date(now).toISOString());
+  const stopping=ideaDetailSchema.parse(await f.service.detail(f.identity,f.session.sessionId));
+  assert.ok(renderToStaticMarkup(createElement(IdeaDiscussion,{detail:stopping})).includes("Stop requested. This is not confirmation"));
   release(); await pending;
   const completed = ideaDetailSchema.parse(await f.service.detail(f.identity, f.session.sessionId));
-  assert.equal(completed.run?.state, "completed"); assert.equal(completed.run.messagesUsed, 4);
-  assert.equal(completed.run.providerContacted, false); assert.equal(completed.contributions.length, 4);
+  assert.equal(completed.run?.state, "cancelled"); assert.equal(completed.run.messagesUsed, 1);
+  assert.equal(completed.run.providerContacted, false); assert.equal(completed.contributions.length, 1);
   assert.equal(ideaDetailSchema.safeParse({ ...completed, run: { ...completed.run, sessionId: "idea:other" } }).success, false);
   assert.equal(ideaDetailSchema.safeParse({ ...completed, run: { ...completed.run, messagesUsed: 3 } }).success, false);
+});
+test("completed panel status requires all retained turns",async t=>{
+  const f=await fixture();t.after(()=>f.db.close());
+  await new IdeaLabBotCoordinatorV1(f.ledger,f.registry,new DeterministicIdeaLabFakeDriverV1(),()=>new Date(now).toISOString())
+    .execute({runId:"idea-run:completed",session:f.session,evidence:f.evidence,safePrompt:"Discuss."});
+  const detail=ideaDetailSchema.parse(await f.service.detail(f.identity,f.session.sessionId));
+  assert.equal(detail.run?.state,"completed");assert.equal(detail.run.messagesUsed,4);assert.equal(detail.contributions.length,4);
+  assert.equal(ideaDetailSchema.safeParse({...detail,run:{...detail.run,messagesUsed:3}}).success,false);
 });
 test("uncertain provider outcome is visible and conflicting panel histories are not silently selected", async t => {
   const f = await fixture(); t.after(() => f.db.close());
