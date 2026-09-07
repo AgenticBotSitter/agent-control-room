@@ -1,11 +1,20 @@
 import type { ControlRoomLocalPilotRuntimeV1 } from "../local-pilot/v1/runtime";
 import { createLocalPilotSessionHandlerV1, createLocalPilotSessionStatusHandlerV1 } from "../local-pilot/v1/session-http";
 import { createLocalPilotProjectTaskHandlerV1 } from "../local-pilot/v1/project-task-http";
+import { LocalPilotErrorV1 } from "../local-pilot/v1/runtime";
+import { privateResponseHeaders, readBoundedJson, webFailure } from "../web/v1/http-common";
+import { catalogProjectIdSchema } from "../web/v1/project-wire";
+import { z } from "zod";
+import type { createContributorDemoRuntime } from "./runtime";
+
+const simulationRequest = z.object({ operation: z.literal("simulate_task"), simulationOnly: z.literal(true),
+  projectId: catalogProjectIdSchema, jobId: catalogProjectIdSchema }).strict();
 
 /** Request-only composition. Does not bind a socket, mount production routes or
  * discover runtime configuration. Existing handlers enforce authentication/scope.
  */
-export function createContributorDemoHttp(runtime: ControlRoomLocalPilotRuntimeV1) {
+export function createContributorDemoHttp(runtime: ControlRoomLocalPilotRuntimeV1,
+  simulate?: Awaited<ReturnType<typeof createContributorDemoRuntime>>["simulate"]) {
   const issue = createLocalPilotSessionHandlerV1(runtime.ownerSession);
   const status = createLocalPilotSessionStatusHandlerV1(runtime.ownerSession);
   const workspace = createLocalPilotProjectTaskHandlerV1(runtime.projectTasks);
@@ -21,6 +30,28 @@ export function createContributorDemoHttp(runtime: ControlRoomLocalPilotRuntimeV
       return failure("method_not_allowed", 405);
     }
     if (url.pathname === "/api/v1/local-pilot/workspace") return workspace(request);
+    if (url.pathname === "/api/v1/contributor-demo/simulations") {
+      if (!simulate) return failure("demo_simulation_unavailable", 503);
+      if (request.method !== "POST") return failure("method_not_allowed", 405);
+      if (request.headers.get("origin") !== url.origin) return failure("local_request_required", 403);
+      if (url.search || !request.body || request.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json") {
+        return failure("invalid_request", 400);
+      }
+      try {
+        const parsed = simulationRequest.safeParse(await readBoundedJson(request.body, 1024));
+        if (!parsed.success || request.signal.aborted) return failure("invalid_request", 400);
+        const result = await simulate(request, parsed.data.projectId, parsed.data.jobId);
+        return Response.json(result, { headers: { ...privateResponseHeaders, "x-control-room-pilot": "repository-fake" } });
+      } catch (error) {
+        if (error instanceof LocalPilotErrorV1) {
+          if (error.safeCode === "authentication_required") return failure(error.safeCode, 401);
+          if (error.safeCode === "local_request_required") return failure(error.safeCode, 403);
+        }
+        const response = webFailure(error);
+        response.headers.set("x-control-room-pilot", "repository-fake");
+        return response;
+      }
+    }
     return failure("not_found", 404);
   };
 }

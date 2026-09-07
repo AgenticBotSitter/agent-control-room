@@ -66,7 +66,7 @@ test("demo rejects relative repository roots before allocating data", async () =
 test("demo HTTP composes protected login and project routes without operational endpoints", async t => {
   const demo = await createContributorDemoRuntime(process.cwd());
   t.after(() => demo.close());
-  const handle = createContributorDemoHttp(demo.runtime);
+  const handle = createContributorDemoHttp(demo.runtime, demo.simulate);
   const session = `${demo.origin}/api/v1/local-pilot/session`;
   const workspace = `${demo.origin}/api/v1/local-pilot/workspace`;
   assert.equal((await handle(new Request(session))).status, 401);
@@ -93,6 +93,34 @@ test("demo HTTP composes protected login and project routes without operational 
   assert.equal((await handle(create())).status, 200);
   const projects = await handle(new Request(`${workspace}?resource=projects`, { headers: { cookie } }));
   assert.equal((await projects.json()).projects.length, 1);
+  const projectReply = await handle(create());
+  const projectId = (await projectReply.json()).project.projectId;
+  const taskReply = await handle(new Request(workspace, { method: "POST", headers: {
+    cookie, origin: demo.origin, "content-type": "application/json", "idempotency-key": "demo-http-task-0001",
+  }, body: JSON.stringify({ operation: "propose_task", projectId,
+    draft: { title: "HTTP sample", instructions: "Simulation only" } }) }));
+  assert.equal(taskReply.status, 201);
+  const jobId = (await taskReply.json()).receipt.jobId;
+  const simulationUrl = `${demo.origin}/api/v1/contributor-demo/simulations`;
+  const simulate = (extra: Record<string, unknown> = {}, authenticated = true) => new Request(simulationUrl, {
+    method: "POST", headers: { ...(authenticated ? { cookie } : {}), origin: demo.origin, "content-type": "application/json" },
+    body: JSON.stringify({ operation: "simulate_task", simulationOnly: true, projectId, jobId, ...extra }),
+  });
+  assert.equal((await handle(simulate({}, false))).status, 401);
+  assert.equal((await handle(simulate({ simulationOnly: false }))).status, 400);
+  assert.equal((await handle(simulate({ command: "not allowed" }))).status, 400);
+  assert.equal((await createContributorDemoHttp(demo.runtime)(simulate())).status, 503);
+  const simulated = await handle(simulate());
+  assert.equal(simulated.status, 200);
+  const receipt = await simulated.json();
+  assert.deepEqual(await (await handle(simulate())).json(), receipt);
+  const query = new URLSearchParams({ resource: "synthetic_result", projectId, jobId, artifactId: receipt.artifactId });
+  const resultResponse = await handle(new Request(`${workspace}?${query}`, { headers: { cookie } }));
+  assert.equal(resultResponse.status, 200);
+  const result = await resultResponse.json();
+  assert.equal(result.simulationOnly, true);
+  assert.equal(result.grantsExecutionAuthority, false);
+  assert.match(result.text, /HTTP sample/);
   assert.equal((await handle(new Request(`${workspace}?resource=projects`, {
     headers: { cookie, origin: "https://untrusted.example" },
   }))).status, 403);

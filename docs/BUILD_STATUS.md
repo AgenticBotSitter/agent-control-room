@@ -8,6 +8,16 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Contributor simulation request endpoint connected and tested:** The demo-only router
+accepts a bounded strict `simulate_task` request with explicit simulation-only intent,
+project/job IDs and existing owner authentication. No arbitrary commands, prompts or
+native driver selection are accepted. It stays unavailable unless the caller explicitly
+supplies the disposable simulation function. Tests traverse login, project creation,
+task proposal, repeated simulation and protected exact-artifact read through Request/
+Response handlers; unauthenticated, extra-field and non-simulation requests are denied.
+All three demo tests, strict types, focused lint and whitespace checks pass. No listener,
+browser UI or public export yet. This is not completion of the runnable demo milestone.
+
 **Contributor simulation now returns protected sample artifacts:** The disposable
 composition reuses the existing synthetic executor, artifact storage/evidence builders
 and scoped result reader. An authenticated owner can simulate a proposed task, receive
