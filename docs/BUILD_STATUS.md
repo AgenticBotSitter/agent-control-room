@@ -8,6 +8,13 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Owner-authorized private website transfer completed:**
+`AgenticBotSitter/agent-control-room-website` contains only the standalone HTML, CSS and
+manual deployment README at `2fc2327cf766e4bc8e42978f8f12bf94e6876936`. Private visibility,
+disabled Actions and zero workflow runs verified after one initial push. No deployment,
+DNS, collaborator grant or unrelated repository push. See `WEBSITE_REPOSITORY_HANDOFF.md`
+for scope, staging/cleanup record and the local-check/batched-update policy.
+
 **Invalid local-preview saves no longer discard the form:** The controller now keeps
 loaded form components mounted only for a definitive invalid-input save, so project
 inputs remain editable. Failed reads and authorization, stale-state or uncertain-save

@@ -5,7 +5,7 @@ import test from "node:test";
 const html = readFileSync(new URL("../public-site/index.html", import.meta.url), "utf8");
 const css = readFileSync(new URL("../public-site/styles.css", import.meta.url), "utf8");
 test("welcome page is independent, informational and contains no guessed destinations", () => {
-  assert.deepEqual(readdirSync(new URL("../public-site", import.meta.url)).sort(), ["README.md", "index.html", "styles.css"]);
+  assert.deepEqual(readdirSync(new URL("../public-site", import.meta.url)).sort(), ["DEPLOYMENT.md", "README.md", "index.html", "styles.css"]);
   assert.match(html, /<html lang="en">/);
   assert.match(html, /name="viewport"/);
   assert.match(html, /There is no public download yet/);
