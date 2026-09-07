@@ -8,6 +8,18 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Source health is now durable alongside news articles:** Migration 0060 adds scoped,
+append-only PostgreSQL source observations. The existing store saves a collection and
+its status atomically, validates matching source provenance, and exposes paginated latest
+checks ordered by observation time. A failed check cannot report itemCount zero. Supplied
+last-success timestamps are retained, not invented by the store. Ten focused tests, 61
+Idea/ABS regressions, 19 startup checks and 12 compiled checks pass, as do TypeScript,
+focused lint and VPS compilation. The schema fingerprint was recomputed from disposable
+migrations. Independent source review found no concrete introduced defect. No source
+table privileges were added to production or web roles; source-health UI/read wiring,
+ingestion ownership, live retrieval and canonical-page verification remain unfinished.
+No live source request, provider contact or deployment occurred.
+
 **RSS/Atom decoding now reuses an upstream parser and saves atomic news batches:**
 Pinned rss-parser 3.13.0 parses supplied text only, under byte/item ceilings and with
 DTD/entity declarations refused. The adapter minimizes text, binds source attribution,

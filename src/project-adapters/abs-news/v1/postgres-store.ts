@@ -1,8 +1,8 @@
 import { z } from "zod";
 import type { DatabaseClient, DatabaseSession } from "../../../persistence/database";
-import { hmacSha256Tag } from "../../../security";
+import { hmacSha256Tag, sha256Digest } from "../../../security";
 import { ProjectWorkspaceContractErrorV1, projectWorkspaceSafeIdSchemaV1 as id,
-  parseExactProjectWorkspaceV1 } from "../../../project-workspace/v1";
+  parseExactProjectWorkspaceV1, projectWorkspaceSourceStatusSchemaV1 } from "../../../project-workspace/v1";
 import { parseAbsNewsStoryV1 } from "./story";
 import { buildAbsNewsWorkOrderProposalV1, parseAbsNewsWorkOrderProposalV1 } from "./proposal";
 import type { AbsNewsStoryV1, AbsNewsWorkOrderProposalV1 } from "./types";
@@ -74,6 +74,65 @@ export class PostgresAbsNewsStoreV1 {
         if ((await store.saveStory(story)).replayed) replayed++; else inserted++;
       }
       return { inserted, replayed };
+    });
+  }
+  private sourceStatus(value: unknown) {
+    const status = parseExactProjectWorkspaceV1(projectWorkspaceSourceStatusSchemaV1, value);
+    if (!status.checkedAt || status.lastSuccessfulAt && Date.parse(status.lastSuccessfulAt) > Date.parse(status.checkedAt)
+      || status.state === "unavailable" && status.itemCount !== undefined)
+      throw new ProjectWorkspaceContractErrorV1("invalid_input");
+    return status;
+  }
+  private source(row: Row & { source_id: string; status_digest: string; checked_at: Date | string }) {
+    const status = this.sourceStatus(row.payload);
+    if (status.sourceId !== row.source_id || sha256Digest(status) !== row.status_digest
+      || new Date(status.checkedAt!).getTime() !== new Date(row.checked_at).getTime()
+      || this.tag("source", status) !== row.auth_tag) throw new ProjectWorkspaceContractErrorV1("integrity_failed");
+    return status;
+  }
+  async saveSourceStatus(value: unknown) {
+    const status = this.sourceStatus(value), digest = sha256Digest(status);
+    return this.db.transaction(async tx => {
+      await this.project(tx);
+      const inserted = await tx.query(`INSERT INTO control_abs_source_observations
+        (tenant_id,workspace_id,project_id,source_id,status_digest,checked_at,payload,auth_tag,recorded_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9) ON CONFLICT DO NOTHING RETURNING source_id`,
+      [...this.values(), status.sourceId, digest, status.checkedAt, JSON.stringify(status), this.tag("source", status), this.clock().toISOString()]);
+      const row = (await tx.query<Row & { source_id: string; status_digest: string; checked_at: Date | string }>(
+        `SELECT payload,auth_tag,source_id,status_digest,checked_at FROM control_abs_source_observations
+         WHERE tenant_id=$1 AND workspace_id=$2 AND project_id=$3 AND source_id=$4 AND status_digest=$5`,
+      [...this.values(), status.sourceId, digest])).rows[0];
+      if (!row) throw new ProjectWorkspaceContractErrorV1("integrity_failed");
+      return { status: this.source(row), replayed: inserted.rows.length === 0 };
+    });
+  }
+  async listSourceStatuses(after?: string) {
+    if (after !== undefined) id.parse(after);
+    const rows = await this.db.query<Row & { source_id: string; status_digest: string; checked_at: Date | string }>(
+      `SELECT DISTINCT ON (source_id COLLATE "C") source_id,status_digest,checked_at,payload,auth_tag
+       FROM control_abs_source_observations WHERE tenant_id=$1 AND workspace_id=$2 AND project_id=$3
+       AND ($4::text IS NULL OR source_id COLLATE "C">$4 COLLATE "C")
+       ORDER BY source_id COLLATE "C",checked_at DESC,sequence DESC LIMIT 51`, [...this.values(), after ?? null]);
+    const statuses = rows.rows.slice(0, 50).map(row => this.source(row));
+    return { statuses, nextCursor: rows.rows.length > 50 ? statuses.at(-1)!.sourceId : null };
+  }
+  /** Source outcome and its articles must be visible together, including empty feeds. */
+  async saveCollection(values: unknown, statusValue: unknown) {
+    const status = this.sourceStatus(statusValue);
+    if (!Array.isArray(values) || values.length > 100) throw new ProjectWorkspaceContractErrorV1("invalid_input");
+    const stories = values.map(value => { const story = parseAbsNewsStoryV1(value); this.check(story); return story; });
+    if (stories.length && !["available", "partial"].includes(status.state)
+      || ["available", "partial"].includes(status.state) && status.itemCount !== stories.length
+      || stories.some(story => story.sourceEvidence.some(evidence => evidence.sourceId !== status.sourceId
+        || evidence.observedAt !== status.checkedAt || evidence.sourceLabel !== status.label || evidence.sourceKind !== status.sourceKind)))
+      throw new ProjectWorkspaceContractErrorV1("invalid_input");
+    return this.db.transaction(async tx => {
+      const joined: DatabaseClient = { query: tx.query.bind(tx), transaction: async work => work(tx),
+        transactionWithPreCommitCheck: async (work, check) => { const value = await work(tx); await check(); return value; } };
+      const store = new PostgresAbsNewsStoreV1(joined, this.scope, this.key, this.clock);
+      const saved = await store.saveStories(stories);
+      const source = await store.saveSourceStatus(status);
+      return { ...saved, status: source.status, statusReplayed: source.replayed };
     });
   }
   async listStories(after?: string) {

@@ -25,6 +25,27 @@ Branch: `codex/idea-abs-workflows`. Public release remains a separate reviewed s
 
 ## Evidence and scope
 
+### Retained source observations and collection atomicity
+
+Migration 0060 adds source-history metadata to the existing PostgreSQL authority, with
+scope-bound authenticated payloads and update/delete/truncate refusal. No URLs, bodies,
+credentials or grants are added. Latest source checks follow checkedAt rather than arrival
+order; replaying or newly inserting an older observation cannot hide a newer failure.
+Listings paginate explicitly. Supplied lastSuccessfulAt is retained and cannot follow the
+check time; the store does not infer missing last-success values. An unavailable check
+must omit itemCount rather than reporting zero news.
+
+`saveCollection` validates matching source identity, label, kind, observation time and
+item count, then saves story versions plus source outcome in one transaction. A status
+write failure rolls back article inserts. Exact replay preserves both. Ten focused checks
+cover rollback, replay, delayed observations, last-success retention, scope isolation,
+pagination, wrong key, invalid times and immutability. The 61-test workflow suite, 19
+startup checks, 12 compiled checks, TypeScript, focused lint and VPS build pass. Independent
+source review found no concrete introduced defect. The schema fingerprint was regenerated
+from disposable PGlite migrations, not an existing database marker. This is not real
+PostgreSQL concurrency or deployment evidence. Source-health UI/read privileges and the
+trusted live ingestion service are still to be connected; no production grant changed.
+
 ### RSS/Atom decoding and atomic PostgreSQL ingestion batches
 
 `decodeAbsFeed` uses unmodified rss-parser 3.13.0 `parseString`, not custom XML parsing
