@@ -8,6 +8,19 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Saved source to borrowed collector composition:** `collectConfiguredControlCenterSource`
+loads an enabled source at the requested revision, runs the supplied bounded borrowed
+reader, and rechecks that revision around the atomic save. Disabling a source during
+an injected read prevents article, baseline and source-observation publication;
+re-enabling allows collection. Settings are not network authorization and this helper
+does not start jobs or mount a native transport. Offline ingestion grants add settings
+read access only; attempted settings insertion is denied. All 302 delivery tests,
+the three restricted-role tests, types, focused lint and VPS compilation pass.
+Independent source review found no concrete introduced defect; real PostgreSQL
+concurrency behavior was not qualified by that review or these PGlite tests.
+Runtime/manual-refresh wiring and live/browser acceptance remain unfinished.
+Changes are local; no GitHub writes or native source calls occurred.
+
 **Source controls connected to the news page:** Add/edit name and public URL,
 enable/disable, reload and pagination use the authenticated settings API. The browser
 client retains exact pending input after uncertain outcomes, validates project and

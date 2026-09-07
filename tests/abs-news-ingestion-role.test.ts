@@ -32,6 +32,8 @@ test("exact news ingestion role retains source and article data without project 
   const f = await setup(); t.after(() => f.db.close());
   await assert.rejects(verifyNewsIngestionDatabase(f.client, f.config, startupConfig, now));
   await verifyNewsIngestionDatabase(f.checked, f.config, startupConfig, now);
+  await f.client.query("SELECT * FROM control_abs_source_settings");
+  await assert.rejects(f.client.query("INSERT INTO control_abs_source_settings SELECT * FROM control_abs_source_settings"), /permission denied/);
   await assert.rejects(verifyIdeaRuntimeDatabase(f.checked, f.config, startupConfig, now));
   const scope = { tenantId: "tenant:web", workspaceId: "workspace:web", projectId: f.project.projectId }, key = new Uint8Array(32).fill(59);
   const service = new AbsFeedIngestionService(f.client, { ...scope, source: { sourceId: "source:example", sourceLabel: "Example", sourceKind: "rss", endpointUrl: "https://example.org/feed" }, maxItems: 10, maxBytes: 10000 }, key);

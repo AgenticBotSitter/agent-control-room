@@ -116,6 +116,15 @@ review-only. Canonical-page verification and article-to-agent task acceptance re
 
 ## Completion gates
 
+Configured collection now composes saved source settings with the borrowed reader
+through `collectConfiguredControlCenterSource`. The caller supplies an already
+authorized bounded reader and expected source revision. Missing, disabled or changed
+settings reject before reading or before publication; the final settings check shares
+the ingestion transaction and workspace lock. Settings edits during a read are tested
+to leave no new stories, observation or baseline. Offline ingestion permission is
+SELECT-only for settings. This is application composition, not a mounted refresh route,
+job admission or live-network qualification.
+
 Source setting persistence now uses PostgreSQL migration 0063 and
 `PostgresNewsSourceSettings`: upstream id/name/url plus enabled, scoped by project,
 with authenticated revisions and expected-version writes. Restart, disable, conflicts,

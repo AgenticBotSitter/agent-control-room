@@ -39,7 +39,7 @@ const ideaRuntimeReads = ["workspaces", "control_identities", "control_role_gran
   "control_idea_contributions", "control_idea_bot_run_events", "control_idea_decisions"];
 const ideaRuntimeInserts = new Set(["control_idea_contributions", "control_idea_bot_run_events"]);
 const ideaRuntimeUpdates: Record<string, readonly string[]> = { workspaces: ["web_lock"] };
-const newsIngestionReads = ["workspaces", "projects", "control_identities", "control_role_grants", "control_abs_story_versions", "control_abs_source_observations", "control_abs_discovery_baselines"];
+const newsIngestionReads = ["workspaces", "projects", "control_identities", "control_role_grants", "control_abs_story_versions", "control_abs_source_observations", "control_abs_discovery_baselines", "control_abs_source_settings"];
 const newsIngestionInserts = new Set(["control_abs_story_versions", "control_abs_source_observations", "control_abs_discovery_baselines"]);
 const newsIngestionUpdates: Record<string, readonly string[]> = { workspaces: ["web_lock"], projects: ["coordinator_lock"] };
 const newsCoordinatorReads = ["tenants", "workspaces", "projects", "control_manual_project_heads", "control_identities", "control_role_grants",

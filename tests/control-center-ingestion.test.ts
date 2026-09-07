@@ -5,6 +5,7 @@ import { safeFetchText } from "../src/vendor/control-center/safe-fetch";
 import { createControlCenterCollectionReader } from "../src/project-adapters/abs-news/v1/control-center-reader";
 import { absNewsCanonicalUrlSchemaV1, absNewsDiscoveryEndpointSchemaV1 } from "../src/project-adapters/abs-news/v1/schemas";
 import { PostgresNewsSourceSettings } from "../src/project-adapters/abs-news/v1/source-settings";
+import { collectConfiguredControlCenterSource } from "../src/project-adapters/abs-news/v1/configured-collection";
 import { AbsControlCenterIngestion } from "../src/project-adapters/abs-news/v1/control-center-ingestion";
 import { PostgresAbsNewsStoreV1 } from "../src/project-adapters/abs-news/v1/postgres-store";
 import { WebNewsService } from "../src/web/v1/news-service";
@@ -14,6 +15,40 @@ import type { DatabaseClient } from "../src/persistence/database";
 
 const source = { id: "source:borrowed", name: "Example", url: "https://example.org/feed" };
 const observed = new Date(now).toISOString();
+
+test("configured collection uses the saved source and refuses disabled or changed revisions", async t => {
+  const f = await taskFixture(); t.after(() => f.db.close());
+  const scope = { tenantId: "tenant:web", workspaceId: "workspace:web", projectId: f.project.projectId };
+  const key = new Uint8Array(32).fill(29), settings = new PostgresNewsSourceSettings(f.client, scope, key);
+  const value = { ...source, enabled: true };
+  await settings.save(value, 0, observed);
+  let calls = 0, disableDuringRead = true;
+  const reader = createControlCenterCollectionReader({ timeoutMs: 10_000, maxAttempts: 4, maxDocumentBytes: 4096, maxReservedBodyBytes: 16384 }, {
+    assertCurrent(url) { assert.equal(url, source.url); },
+  }, new AbortController().signal, {
+    lookup: async () => [{ address: "8.8.8.8", family: 4 }],
+    fetch: async () => {
+      calls++;
+      if (disableDuringRead) await settings.save({ ...value, enabled: false }, 1, observed);
+      return new Response(`<rss><channel><item><title>AI model</title><link>https://example.org/model</link><pubDate>${new Date(now - 1000).toUTCString()}</pubDate></item></channel></rss>`);
+    },
+  }, () => now);
+  const collect = (revision: number) => collectConfiguredControlCenterSource(f.client, scope, source.id, revision, key, reader, () => now);
+  await assert.rejects(collect(2), /news_configured_source_changed/);
+  assert.equal(calls, 0);
+  await assert.rejects(collect(1), /news_configured_source_changed/);
+  assert.equal(calls, 1);
+  assert.equal((await settings.get(source.id))?.source.enabled, false);
+  assert.equal((await new PostgresAbsNewsStoreV1(f.client, scope, key).listStories()).stories.length, 0);
+  assert.equal(await new AbsControlCenterIngestion(f.client, { ...scope, source }, key).loadBaseline(), undefined);
+  assert.equal((await f.client.query("SELECT * FROM control_abs_source_observations")).rows.length, 0);
+  await assert.rejects(collect(2), /news_configured_source_changed/);
+  assert.equal(calls, 1);
+  disableDuringRead = false;
+  await settings.save(value, 2, observed);
+  assert.equal((await collect(3)).inserted, 1);
+  assert.equal(calls, 2);
+});
 
 test("source settings persist upstream fields, disable without fetching, and reject lost updates", async t => {
   const f = await taskFixture(); t.after(() => f.db.close());
