@@ -127,6 +127,13 @@ are refused; execution requires a retained plan matching a registered configurat
 The caller must stop/drain the worker before closing supplied resources. This helper
 does not replace production role preflight or own application startup. Basic startup
 rejects unsupported collection operations rather than silently ignoring them.
+The existing `composePrivateTaskWorkerApplication` now accepts a captured worker
+list, so native-task and news workers can share one application lifecycle. All must
+be accepting before the combined app reports ready. Shutdown gates new web requests
+and attempts bounded drain of every worker before application cleanup; any drain
+failure or timeout remains cleanup uncertainty, not proof of physical termination.
+Single-worker callers retain compatibility. This supplies the joint lifecycle, not
+the still-pending production factory that opens/verifies news pools and mounts it.
 An injected integration test now submits a fresh proposal and approval through these
 assembled HTTP bindings, consumes the queued reference with the borrowed collector,
 and confirms the same story is not duplicated after another completed refresh.

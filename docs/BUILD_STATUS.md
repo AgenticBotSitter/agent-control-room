@@ -8,6 +8,15 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Shared agent/news worker lifecycle:** Extended the existing joint application
+lifecycle to accept both workers, without another supervisor. Readiness requires
+every worker; shutdown attempts all drains before app cleanup and preserves failure
+or timeout as uncertainty. Worker lists and methods are captured to prevent later
+mutation. Eight focused lifecycle tests plus the task/news startup regression,
+types and lint pass. Actual production
+startup still needs to supply verified news resources and install this composition;
+no worker or listener was started by this change.
+
 **Overlapping source refreshes are refused:** Admission now uses the existing
 workspace transaction lock and retained plan/effect records to prevent two different
 request keys from queuing an unresolved scan of the same source. Exact retries keep
