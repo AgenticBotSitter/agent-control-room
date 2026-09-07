@@ -66,18 +66,20 @@ export class WebNewsService {
       return { ...saved, projectId };
     });
   }
-  async list(identity: VerifiedWebIdentity, projectId: string, after?: string, sourceAfter?: string, view = "all") {
+  async list(identity: VerifiedWebIdentity, projectId: string, after?: string, sourceAfter?: string, view = "all", order = "id") {
     if (!catalogProjectIdSchema.safeParse(projectId).success
       || after !== undefined && !catalogProjectIdSchema.safeParse(after).success
       || sourceAfter !== undefined && !catalogProjectIdSchema.safeParse(sourceAfter).success
-      || !["all", "history", "archive", "fresh"].includes(view)) throw new WebAccessError("invalid_request");
+      || !["all", "history", "archive", "fresh"].includes(view)
+      || !["id", "important", "newest", "oldest"].includes(order)) throw new WebAccessError("invalid_request");
     return this.authority.authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
       if (!this.key) return { project, availability: "not_configured" as const, stories: [], nextCursor: null,
         observedAt: actor.now, canPrepare: false, sources: [], sourcesNextCursor: null };
       const store = new PostgresAbsNewsStoreV1(joined(tx), { ...this.scope, projectId }, this.key);
-      const page = await store.listStories(after, { view: view as "all" | "history" | "archive" | "fresh", observedAt: actor.now });
+      const page = await store.listStories(after, { view: view as "all" | "history" | "archive" | "fresh",
+        order: order as "id" | "important" | "newest" | "oldest", observedAt: actor.now });
       const sourcePage = await store.listSourceStatuses(sourceAfter);
       const sources = sourcePage.statuses.map(({ sourceId, label, mode, state, checkedAt, lastSuccessfulAt, itemCount }) =>
         ({ sourceId, label, mode, state, checkedAt, ...(lastSuccessfulAt ? { lastSuccessfulAt } : {}), ...(itemCount !== undefined ? { itemCount } : {}) }));

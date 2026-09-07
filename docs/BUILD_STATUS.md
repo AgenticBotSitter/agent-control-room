@@ -8,6 +8,19 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Whole-library sorting:** Most important, Newest and Oldest now select pages by
+saved priority/date rank across the chosen library view. Switching order resets
+the cursor, and links retain view/order. Existing clients default to ID ordering.
+The PostgreSQL adapter applies upstream priority/date rules with a deterministic
+C-collated ID tie-break for pagination; the borrowed display modules are unchanged.
+A 63-story, two-page regression matches upstream priority/date ordering without
+duplicates or omissions. Missing ranked cursors return no results instead of silently
+restarting at page one; changing collections is not a frozen snapshot. Daily-summary
+counts remain page-local. Research permission and live activation remain unchanged.
+All 317 delivery tests, 15 focused storage/web tests, types, lint and VPS compilation
+pass. The existing layout and authentication are preserved under Sites guidance;
+no preview, browser QA, hosting or GitHub write occurred.
+
 **Library-wide reading views:** History, Archive and Recent now select latest
 saved story versions before pagination, rather than filtering only the first 50
 articles in the browser. View selection resets the story cursor; pagination retains

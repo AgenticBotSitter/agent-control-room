@@ -23,30 +23,30 @@ export function NewsSourceHealth({ sources }: { sources: NewsPage["sources"] }) 
   </details>;
 }
 
-export function PrivateNewsWorkspace({ projectId, after, sourceAfter, view = "history" }: { projectId: string; after?: string; sourceAfter?: string; view?: NewsReadingView }) {
+export function PrivateNewsWorkspace({ projectId, after, sourceAfter, view = "history", order = "important" }: { projectId: string; after?: string; sourceAfter?: string; view?: NewsReadingView; order?: Exclude<IndustrySortOrder, "watched"> }) {
   const [page, setPage] = useState<NewsPage>();
   const [error, setError] = useState<string>();
   const [refresh, setRefresh] = useState(0);
   const [selected, setSelected] = useState<NewsPage["stories"][number]>();
-  const [order, setOrder] = useState<IndustrySortOrder>("important");
   const reading = page ? newsReadingView(page.stories, view, order, page.observedAt) : undefined;
   const brief = page ? newsReadingView(page.stories, "fresh", "important", page.observedAt) : undefined;
   const base = `/projects/${encodeURIComponent(projectId)}`;
-  const setView = (value: NewsReadingView) => window.location.assign(`${base}/news?${new URLSearchParams({ view: value })}`);
+  const setView = (value: NewsReadingView) => window.location.assign(`${base}/news?${new URLSearchParams({ view: value, order })}`);
+  const setOrder = (value: string) => window.location.assign(`${base}/news?${new URLSearchParams({ view, order: value })}`);
   useEffect(() => {
     let active = true;
     const abort = new AbortController();
     const load = async () => {
       try {
-        const query = new URLSearchParams({ view, ...(after ? { after } : {}), ...(sourceAfter ? { sourceAfter } : {}) });
+        const query = new URLSearchParams({ view, order, ...(after ? { after } : {}), ...(sourceAfter ? { sourceAfter } : {}) });
         const response = await fetch(`/api/v1/projects/${encodeURIComponent(projectId)}/news${query.size ? `?${query}` : ""}`,
           { credentials: "same-origin", cache: "no-store", redirect: "error",
             signal: AbortSignal.any([abort.signal, AbortSignal.timeout(10_000)]), headers: { accept: "application/json" } });
         if (!response.ok) throw new BrowserRequestError(response.status === 401 ? "authentication_required"
           : response.status === 403 ? "access_denied" : "unavailable");
         const result = newsPageSchema.parse(await readBrowserJson(response));
-        if (result.project.projectId !== projectId || result.stories.some((s, i) => after !== undefined && s.storyId <= after
-          || i > 0 && s.storyId <= result.stories[i - 1].storyId)
+        if (result.project.projectId !== projectId || new Set(result.stories.map(story => story.storyId)).size !== result.stories.length
+          || result.stories.some(story => story.storyId === after)
           || result.nextCursor !== null && (result.stories.length !== 50 || result.nextCursor !== result.stories.at(-1)?.storyId)
           || result.sources.some((s, i) => sourceAfter !== undefined && s.sourceId <= sourceAfter || i > 0 && s.sourceId <= result.sources[i - 1].sourceId)
           || result.sourcesNextCursor !== null && (result.sources.length !== 50 || result.sourcesNextCursor !== result.sources.at(-1)?.sourceId)) throw new Error();
@@ -58,7 +58,7 @@ export function PrivateNewsWorkspace({ projectId, after, sourceAfter, view = "hi
     };
     void load();
     return () => { active = false; abort.abort(); };
-  }, [projectId, after, sourceAfter, view, refresh]);
+  }, [projectId, after, sourceAfter, view, order, refresh]);
   return <><PrivateHeader /><main className="private-main">
     <h1>{page ? `${page.project.title} · News` : "Project news"}</h1>
     <nav aria-label="Project pages"><a href={base}>Overview</a>{" · "}<a href={`${base}/tasks`}>Tasks</a>{" · "}<a href={`${base}/news`} aria-current="page">News</a></nav>
@@ -74,11 +74,12 @@ export function PrivateNewsWorkspace({ projectId, after, sourceAfter, view = "hi
           <button key={value} type="button" aria-pressed={view === value} onClick={() => setView(value)}>
             {value === "fresh" ? "Recent (24 hours)" : value === "history" ? "History" : "Archive"}
           </button>)}</nav>
-        <label>Sort this page<select value={order} onChange={event => setOrder(event.target.value as IndustrySortOrder)}>
+        <label>Sort saved library<select value={order} onChange={event => setOrder(event.target.value)}>
           <option value="important">Most important</option><option value="newest">Newest</option><option value="oldest">Oldest</option>
         </select></label>
-        <p>This view searches the saved library. Sorting and the daily snapshot apply to this page. Use “Next saved stories” for more.</p>
-        {page.sourcesNextCursor ? <a href={`${base}/news?${new URLSearchParams({ view, ...(after ? { after } : {}), sourceAfter: page.sourcesNextCursor })}`}>Next source checks</a> : null}
+        <p>View and sorting apply across the saved library. The daily snapshot summarizes this page. Use “Next saved stories” for more.</p>
+        {after ? <a href={`${base}/news?${new URLSearchParams({ view, order, ...(sourceAfter ? { sourceAfter } : {}) })}`}>First saved stories</a> : null}
+        {page.sourcesNextCursor ? <a href={`${base}/news?${new URLSearchParams({ view, order, ...(after ? { after } : {}), sourceAfter: page.sourcesNextCursor })}`}>Next source checks</a> : null}
         {!reading!.stories.length ? <p>No saved stories in this view on this page.</p> : reading!.stories.map(story => <article className="private-panel" key={story.storyId}>
           <h2><a href={story.canonicalUrl} target="_blank" rel="noopener noreferrer">{story.title}</a></h2>
           <p>{story.summary}</p><p>{story.verificationState === "verified" ? "Source evidence retained" : "Source needs review"} · {story.queue.replaceAll("_", " ")}</p>
@@ -86,7 +87,7 @@ export function PrivateNewsWorkspace({ projectId, after, sourceAfter, view = "hi
           <button type="button" disabled={!!selected || !page.canPrepare || story.verificationState !== "verified"}
             onClick={() => setSelected(story)}>Research, compare or draft</button>
         </article>)}
-        {page.nextCursor ? <a href={`${base}/news?${new URLSearchParams({ view, after: page.nextCursor, ...(sourceAfter ? { sourceAfter } : {}) })}`}>Next saved stories</a> : null}
+        {page.nextCursor ? <a href={`${base}/news?${new URLSearchParams({ view, order, after: page.nextCursor, ...(sourceAfter ? { sourceAfter } : {}) })}`}>Next saved stories</a> : null}
       </>}
   </main></>;
 }

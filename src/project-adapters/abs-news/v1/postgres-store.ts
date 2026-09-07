@@ -190,21 +190,30 @@ export class PostgresAbsNewsStoreV1 {
       return { receiptDigest: sha256Digest(receipt), status, storyCount: receipt.stories.length, grantsNetworkAuthority: false as const };
     });
   }
-  async listStories(after?: string, filter: { view: "all" | "history" | "archive" | "fresh"; observedAt: string } = { view: "all", observedAt: new Date().toISOString() }) {
+  async listStories(after?: string, filter: { view: "all" | "history" | "archive" | "fresh"; observedAt: string;
+    order?: "id" | "important" | "newest" | "oldest" } = { view: "all", observedAt: new Date().toISOString() }) {
     if (after !== undefined) id.parse(after);
-    const selected = z.object({ view: z.enum(["all", "history", "archive", "fresh"]), observedAt: z.string().datetime({ offset: true }) }).strict().parse(filter);
+    const selected = z.object({ view: z.enum(["all", "history", "archive", "fresh"]), observedAt: z.string().datetime({ offset: true }),
+      order: z.enum(["id", "important", "newest", "oldest"]).default("id") }).strict().parse(filter);
     const now = Date.parse(selected.observedAt);
     const rows = await this.db.query<Row & { story_id: string; story_digest: string }>(`WITH latest AS (SELECT DISTINCT ON (story_id COLLATE "C") story_id,story_digest,payload,auth_tag
       FROM control_abs_story_versions WHERE tenant_id=$1 AND workspace_id=$2 AND project_id=$3
-      AND ($4::text IS NULL OR story_id COLLATE "C">$4 COLLATE "C")
-      ORDER BY story_id COLLATE "C",sequence DESC)
+      ORDER BY story_id COLLATE "C",sequence DESC), filtered AS (
       SELECT * FROM latest WHERE $5='all'
         OR ($5='archive' AND payload->>'queue'='archive')
         OR ($5='history' AND payload->>'queue'<>'archive')
         OR ($5='fresh' AND payload->>'queue'<>'archive'
-          AND COALESCE(payload->>'publishedAt',payload->>'discoveredAt')::timestamptz BETWEEN $6::timestamptz AND $7::timestamptz)
-      ORDER BY story_id COLLATE "C" LIMIT 51`, [...this.values(), after ?? null, selected.view,
-      new Date(now - INDUSTRY_FRESHNESS_HOURS * 3600000).toISOString(), new Date(now + INDUSTRY_FUTURE_TOLERANCE_MINUTES * 60000).toISOString()]);
+          AND COALESCE(payload->>'publishedAt',payload->>'discoveredAt')::timestamptz BETWEEN $6::timestamptz AND $7::timestamptz)),
+      ranked AS (SELECT *, row_number() OVER (ORDER BY
+        CASE WHEN $8='important' THEN (payload->>'priorityScore')::numeric END DESC,
+        CASE WHEN $8 IN ('important','newest') THEN COALESCE(payload->>'publishedAt',payload->>'discoveredAt')::timestamptz END DESC,
+        CASE WHEN $8='oldest' THEN COALESCE(payload->>'publishedAt',payload->>'discoveredAt')::timestamptz END ASC,
+        story_id COLLATE "C") AS ordinal FROM filtered)
+      SELECT story_id,story_digest,payload,auth_tag FROM ranked
+      WHERE $4::text IS NULL OR ($8='id' AND story_id COLLATE "C">$4 COLLATE "C")
+        OR ($8<>'id' AND ordinal>(SELECT ordinal FROM ranked WHERE story_id=$4))
+      ORDER BY ordinal LIMIT 51`, [...this.values(), after ?? null, selected.view,
+      new Date(now - INDUSTRY_FRESHNESS_HOURS * 3600000).toISOString(), new Date(now + INDUSTRY_FUTURE_TOLERANCE_MINUTES * 60000).toISOString(), selected.order]);
     const stories = rows.rows.slice(0, 50).map(row => {
       const story = this.story(row);
       if (story.storyId !== row.story_id || story.storyDigest !== row.story_digest) throw new ProjectWorkspaceContractErrorV1("integrity_failed");

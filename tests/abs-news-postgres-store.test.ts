@@ -4,6 +4,7 @@ import { taskFixture } from "./helpers/web-task";
 import { PostgresAbsNewsStoreV1 } from "../src/project-adapters/abs-news/v1/postgres-store";
 import { buildAbsNewsSyntheticWorkspaceV1, buildAbsNewsWorkOrderProposalV1 } from "../src/project-adapters/abs-news/v1/index";
 import { sha256Digest } from "../src/security";
+import { sortIndustryItems } from "../src/vendor/control-center/industry";
 
 async function setup() {
   const f = await taskFixture(), scope = { tenantId: "tenant:web", workspaceId: "workspace:web", projectId: f.project.projectId };
@@ -85,4 +86,24 @@ test("library views filter latest versions before pagination and preserve borrow
   assert.equal((await f.open().listStories(history.nextCursor!, { view: "history", observedAt })).stories.length, 3);
   assert.deepEqual((await f.open().listStories(undefined, { view: "fresh", observedAt })).stories.map(story => story.storyId), ["story:z-recent"]);
   await assert.rejects(f.open().listStories(undefined, { view: "unsupported" as never, observedAt }));
+});
+
+test("whole-library sorting paginates by rank rather than ID and matches borrowed priority/date rules", async t => {
+  const f = await setup(); t.after(() => f.db.close());
+  const observedAt = f.story.discoveredAt, items = [];
+  for (let index = 0; index < 63; index++) {
+    const { storyDigest: _digest, ...body } = { ...f.story, storyId: `story:rank:${String(index).padStart(3, "0")}`,
+      queue: "earlier" as const, priorityScore: index % 7,
+      publishedAt: new Date(Date.parse(observedAt) - (index % 9) * 60000).toISOString() }; void _digest;
+    await f.open().saveStory({ ...body, storyDigest: sha256Digest(body) });
+    items.push({ id: body.storyId, title: body.title, summary: body.summary, url: body.canonicalUrl,
+      source: body.sourceLabel, publishedAt: body.publishedAt, importanceScore: body.priorityScore });
+  }
+  for (const order of ["important", "newest", "oldest"] as const) {
+    const first = await f.open().listStories(undefined, { view: "history", observedAt, order });
+    const second = await f.open().listStories(first.nextCursor!, { view: "history", observedAt, order });
+    assert.equal(first.stories.length, 50); assert.equal(second.stories.length, 13); assert.equal(second.nextCursor, null);
+    assert.deepEqual([...first.stories, ...second.stories].map(story => story.storyId), sortIndustryItems(items, order).map(story => story.id));
+    assert.deepEqual((await f.open().listStories("story:missing", { view: "history", observedAt, order })).stories, []);
+  }
 });

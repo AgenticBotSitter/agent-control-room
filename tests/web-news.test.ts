@@ -197,9 +197,11 @@ test("private news routes require current access and grant only retained-source 
   assert.equal((await handle(request(path))).status, 200);
   for (const view of ["all", "history", "archive", "fresh"])
     assert.equal((await handle(request(`${path}?view=${view}`))).status, 200);
+  for (const order of ["id", "important", "newest", "oldest"])
+    assert.equal((await handle(request(`${path}?order=${order}`))).status, 200);
   assert.equal((await handle(request(`/projects/${project.projectId}/news`))).status, 200);
   assert.equal(renders, 1);
-  for (const suffix of ["?after=one&after=two", "?other=value", "?after=", "?sourceAfter=", "?sourceAfter=one&sourceAfter=two", "?view=unknown", "?view=archive&view=history"])
+  for (const suffix of ["?after=one&after=two", "?other=value", "?after=", "?sourceAfter=", "?sourceAfter=one&sourceAfter=two", "?view=unknown", "?view=archive&view=history", "?order=unknown", "?order=newest&order=oldest"])
     assert.equal((await handle(request(path + suffix))).status, 400);
   assert.equal((await handle(request(path, "POST", {}))).status, 400);
   assert.equal((await handle(request(path + "/prepare"))).status, 400);

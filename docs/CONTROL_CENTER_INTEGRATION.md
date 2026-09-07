@@ -124,9 +124,20 @@ accepts one `view=all|history|archive|fresh`; old clients retain `all` by defaul
 The page preserves its selected view during pagination and starts from the first
 matching story when switching views. The PostgreSQL adapter imports the borrowed
 freshness constants; the borrowed presentation/sort modules remain unchanged.
-This avoids loading the whole library into application memory. Sorting, summary
-counts and the daily snapshot remain page-local; global ranking and archive/restore
-mutation remain unfinished. View switching performs no collection or agent action.
+This avoids loading the whole library into application memory. Summary counts and
+the daily snapshot remain page-local; archive/restore mutation remains unfinished.
+View switching performs no collection or agent action.
+
+The API also accepts one `order=id|important|newest|oldest`. Existing clients default
+to ID order; the reading page defaults to importance. PostgreSQL applies the borrowed
+priority-then-date/newest/oldest rules before pagination, with C-collated ID ties for
+stable storage ordering rather than locale-dependent JavaScript ID ties. This is a
+database pagination adapter, not a replacement scoring algorithm. The existing
+borrowed browser presentation is retained. View/order switches reset the cursor;
+next-page links preserve both. Ranked pagination anchors on the retained story ID;
+a missing or newly excluded anchor returns no records and requires starting over.
+Concurrent collection updates are not a frozen snapshot. Tests compare a 63-story
+two-page cohort against upstream ordering and require no omissions/duplicates.
 
 ### Open product decision: research on discovered articles
 
