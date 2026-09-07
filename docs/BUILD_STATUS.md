@@ -8,6 +8,17 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Borrowed discovery memory now survives restart:** Migration 0062 stores the
+upstream snapshot format in PostgreSQL, bound to project/source URL and authenticated.
+The ingestion adapter exposes `loadBaseline()` and accepts that prior snapshot when
+saving a reader result. Baseline and article/source writes share one transaction;
+stale competing scans roll back, exact replay is inert, and rejected items do not
+advance memory. Offline ingestion grants and the schema fingerprint are updated;
+no production migration or permission change was performed. Restart/conflict tests,
+the 283-entry delivery lane, types, focused lint and VPS compilation pass. Independent
+source review found no concrete introduced defect. Whole integration remains open:
+larger batches, the borrowed reading view, article actions and bounded live wiring.
+
 **Borrowed discovery now connects to project news storage:** Added the thin
 `AbsControlCenterIngestion` adapter and extracted the existing feed atomic-save path
 for reuse. Reader results become existing project stories/source observations with
@@ -19,9 +30,8 @@ with exact configuration/result binding and a no-write regression, then re-revie
 without further concrete findings. The expanded 282-entry delivery lane, types,
 focused lint, diff checks and VPS build pass. Tests use supplied text and disposable
 PGlite; no live source, provider, service or deployment. No new schema or role grant.
-**Next:** persist upstream baseline and discovery outcome atomically, then connect
-the saved reading view and article-to-task actions. Current adapter has a 100-item
-batch ceiling and does not persist baselines; larger borrowed discovery batches
+**Next:** connect larger batches, the saved reading view and article-to-task actions.
+Current adapter has a 100-item batch ceiling; larger borrowed discovery batches
 still need explicit orchestration. Keep current model/effort; full integration is
 unfinished and live effects retain their separate scoped-authority requirements.
 

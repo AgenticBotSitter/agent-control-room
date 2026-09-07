@@ -28,9 +28,18 @@ existing scoped story/source records through shared ingestion persistence. Borro
 ranking remains in use; no second ranking engine was added. The adapter requires
 source ID/name/input URL to match, carries RSS/Atom/sitemap evidence and treats
 partial coverage explicitly. It accepts the current 100-item storage batch ceiling;
-upstream larger batches are not silently truncated. Baseline persistence and larger
-batch orchestration still need integration before production collection is enabled.
+upstream larger batches are not silently truncated. Larger
+batch orchestration still needs integration before production collection is enabled.
 This bridge is not the whole configured application or visible news page.
+
+Baseline integration now uses migration 0062 rather than upstream filesystem writes.
+Call `loadBaseline()`, pass its result to the borrowed `readSource(source, baseline)`,
+then pass the same baseline as the third argument to `ingest(result, observedAt, baseline)`.
+The adapter atomically saves accepted stories, source outcome and the new snapshot.
+Competing baseline changes reject and roll back; rejected items leave memory unchanged.
+Snapshots retain the upstream format, with a 100,000 URL / 8 MiB storage ceiling;
+oversized results fail without silent truncation. These are storage bounds, not grants
+for live collection. No second database, scheduler or discovery algorithm was added.
 
 | Block | Upstream source | Integration decision and necessary differences |
 | --- | --- | --- |

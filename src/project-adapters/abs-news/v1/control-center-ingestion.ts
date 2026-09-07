@@ -9,10 +9,12 @@ import { canonicalizeAbsNewsDiscoveredUrlV1 } from "./collection";
 import { buildAbsNewsStoryV1 } from "./story";
 import type { AbsNewsStoryV1 } from "./types";
 import { saveAbsNewsDiscovery } from "./discovery-ingestion";
+import { discoverySnapshotSchema, readDiscoveryBaseline, saveDiscoveryBaseline } from "./discovery-baseline";
 
 const configuration = z.object({ tenantId: id, workspaceId: id, projectId: id,
   source: z.object({ id, name: label, url: absNewsCanonicalUrlSchemaV1 }).strict() }).strict();
 const resultSchema = z.object({ sourceUrl: absNewsCanonicalUrlSchemaV1, coverageComplete: z.boolean(), feedKind: z.enum(["rss", "atom"]).optional(),
+  snapshot: discoverySnapshotSchema.optional(),
   status: z.object({ sourceId: id, source: label, mode: z.enum(["feed", "sitemap"]), endpoint: absNewsCanonicalUrlSchemaV1 }),
   items: z.array(z.object({ title: z.string().max(20_000), summary: z.string().max(20_000), url: z.string().max(2_000),
     publishedAt: z.string().max(100), discoveredAt: time.optional() })).max(100),
@@ -23,9 +25,8 @@ const text = (value: string, max: number) => value.replace(/<[^>]*>/g, " ")
   // eslint-disable-next-line no-control-regex
   .replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
 
-/** Thin translation/storage adapter for the borrowed source reader. No fetching,
- * verification or dispatch. Snapshot/baseline persistence is deliberately not claimed
- * here: the containing collection must commit its baseline with the accepted outcome. */
+/** Translation/storage adapter for the borrowed reader. No fetching or dispatch.
+ * Articles and baseline commit together; failed or rejected items never advance memory. */
 export class AbsControlCenterIngestion {
   private readonly config: z.infer<typeof configuration>;
   private readonly key: Uint8Array;
@@ -34,12 +35,17 @@ export class AbsControlCenterIngestion {
     if (!(key instanceof Uint8Array) || key.length !== 32) throw new Error("news_key_invalid");
     this.key = Uint8Array.from(key);
   }
-  async ingest(value: unknown, observedAt: unknown) {
+  async loadBaseline() { return readDiscoveryBaseline(this.db, this.config, this.key); }
+  async ingest(value: unknown, observedAt: unknown, previousBaseline?: unknown) {
     const checkedAt = time.parse(observedAt), result = resultSchema.parse(value);
+    const expected = previousBaseline === undefined ? undefined : discoverySnapshotSchema.parse(previousBaseline);
     const { source, ...scope } = this.config;
     if (result.status.sourceId !== source.id || result.status.source !== source.name || result.sourceUrl !== source.url)
       throw new Error("news_source_mismatch");
     if (result.status.mode === "feed" && !result.feedKind) throw new Error("news_source_format_missing");
+    if (result.snapshot && (result.snapshot.sourceUrl !== source.url || result.snapshot.endpoint !== result.status.endpoint
+      || (result.snapshot.mode ?? "sitemap") !== result.status.mode || Date.parse(result.snapshot.checkedAt) > Date.parse(checkedAt)))
+      throw new Error("news_baseline_mismatch");
     const sourceKind = result.status.mode === "sitemap" ? "sitemap" as const : result.feedKind!;
     const stories: AbsNewsStoryV1[] = [], seen = new Set<string>();
     let rejectedCount = 0, duplicateCount = 0;
@@ -83,6 +89,7 @@ export class AbsControlCenterIngestion {
         discoveryCuration: { engine: "control-center/industry-curation", selectedStoryIds: curated.selected.map(x => x.item.id),
           deferredStoryIds: curated.deferred.map(x => x.item.id), excludedStoryIds: curated.excluded.map(x => x.item.id),
           deduplicatedCount: curated.deduplicatedCount, grantsVerification: false },
-      });
+      }, undefined, result.snapshot && rejectedCount === 0
+        ? tx => saveDiscoveryBaseline(tx, this.config, this.key, result.snapshot, expected) : undefined);
   }
 }

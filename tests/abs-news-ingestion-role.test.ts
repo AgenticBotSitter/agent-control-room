@@ -8,6 +8,7 @@ import type { DatabaseClient } from "../src/persistence/database";
 import { verifyNewsIngestionDatabase, verifyIdeaRuntimeDatabase } from "../src/web/v1/private-database-preflight";
 import { AbsFeedIngestionService } from "../src/project-adapters/abs-news/v1/feed-ingestion";
 import { PostgresAbsNewsStoreV1 } from "../src/project-adapters/abs-news/v1/postgres-store";
+import { AbsControlCenterIngestion } from "../src/project-adapters/abs-news/v1/control-center-ingestion";
 
 async function setup() {
   const f = await taskFixture();
@@ -40,6 +41,13 @@ test("exact news ingestion role retains source and article data without project 
   assert.equal((await service.ingest(xml, at)).replayed, 1);
   const store = new PostgresAbsNewsStoreV1(f.client, scope, key);
   assert.equal((await store.listStories()).stories.length, 1); assert.equal((await store.listSourceStatuses()).statuses.length, 1);
+  const source = { id: "source:borrowed", name: "Example", url: "https://example.org/feed" };
+  const borrowed = new AbsControlCenterIngestion(f.client, { ...scope, source }, key);
+  const snapshot = { sourceUrl: source.url, endpoint: source.url, urls: {}, checkedAt: at, mode: "feed" as const };
+  await borrowed.ingest({ sourceUrl: source.url, coverageComplete: true, feedKind: "rss", snapshot, items: [],
+    status: { sourceId: source.id, source: source.name, mode: "feed", endpoint: source.url } }, at);
+  assert.deepEqual(await borrowed.loadBaseline(), snapshot);
+  await assert.rejects(f.client.query("DELETE FROM control_abs_discovery_baselines"), /permission denied/);
   for (const table of ["projects", "control_jobs", "control_outbox", "control_abs_research_proposals", "control_idea_sessions", "control_role_grants", "audit_events"])
     await assert.rejects(f.client.query(`INSERT INTO ${table} DEFAULT VALUES`), /permission denied/);
   for (const sql of ["UPDATE projects SET domain_state='{}'::jsonb", "UPDATE control_role_grants SET revoked_at=NULL",

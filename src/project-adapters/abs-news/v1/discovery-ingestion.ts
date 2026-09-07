@@ -10,7 +10,8 @@ export type DiscoveryBatch = { stories: AbsNewsStoryV1[]; state: "available" | "
 export async function saveAbsNewsDiscovery(db: DatabaseClient,
   config: { tenantId: string; workspaceId: string; projectId: string;
     source: { sourceId: string; sourceLabel: string; sourceKind: "rss" | "atom" | "sitemap" } },
-  key: Uint8Array, checkedAt: string, decoded?: DiscoveryBatch, reason?: string) {
+  key: Uint8Array, checkedAt: string, decoded?: DiscoveryBatch, reason?: string,
+  saveBaseline?: (tx: DatabaseSession) => Promise<void>) {
     const { tenantId, workspaceId, projectId, source } = config;
     return db.transaction(async tx => {
       // Same workspace lock used by managed owner operations. Future ingestion SQL
@@ -39,6 +40,7 @@ export async function saveAbsNewsDiscovery(db: DatabaseClient,
         checkedAt, ...(lastSuccessfulAt ? { lastSuccessfulAt } : {}),
         ...(decoded ? { itemCount: decoded.stories.length } : {}), grantsNetworkAuthority: false,
       });
+      await saveBaseline?.(tx);
       return { ...result, discoveryCuration: decoded?.discoveryCuration ?? null,
         rejectedCount: decoded?.rejectedCount ?? null, duplicateCount: decoded?.duplicateCount ?? null,
         startsWork: false as const };

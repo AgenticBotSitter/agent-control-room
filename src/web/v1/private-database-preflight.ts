@@ -4,8 +4,8 @@ import { verifyPgBossNativeWorkerPermissions } from "../../persistence/pg-boss-n
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import type { PrivatePostgresConfiguration } from "./private-postgres";
 
-// Generated from migrations 0001-0061 using the catalog query below, not a mutable database marker.
-export const privateWebSchemaDigest = "ba27d5f6b4db5c9678078bdb30e1bbbf63462a1aa5efc8b68be880aa6ffd4a6c";
+// Generated from migrations 0001-0062 using the catalog query below, not a mutable database marker.
+export const privateWebSchemaDigest = "53b3eda6fdd48bb5e0651b03db1da7290621474f2e7b3a605748db325371de39";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "control_abs_story_versions", "control_abs_source_observations",
   "control_idea_sessions", "control_idea_contributions", "control_idea_syntheses", "control_idea_decisions", "control_idea_bot_run_events",
@@ -39,8 +39,8 @@ const ideaRuntimeReads = ["workspaces", "control_identities", "control_role_gran
   "control_idea_contributions", "control_idea_bot_run_events", "control_idea_decisions"];
 const ideaRuntimeInserts = new Set(["control_idea_contributions", "control_idea_bot_run_events"]);
 const ideaRuntimeUpdates: Record<string, readonly string[]> = { workspaces: ["web_lock"] };
-const newsIngestionReads = ["workspaces", "projects", "control_identities", "control_role_grants", "control_abs_story_versions", "control_abs_source_observations"];
-const newsIngestionInserts = new Set(["control_abs_story_versions", "control_abs_source_observations"]);
+const newsIngestionReads = ["workspaces", "projects", "control_identities", "control_role_grants", "control_abs_story_versions", "control_abs_source_observations", "control_abs_discovery_baselines"];
+const newsIngestionInserts = new Set(["control_abs_story_versions", "control_abs_source_observations", "control_abs_discovery_baselines"]);
 const newsIngestionUpdates: Record<string, readonly string[]> = { workspaces: ["web_lock"], projects: ["coordinator_lock"] };
 const newsCoordinatorReads = ["tenants", "workspaces", "projects", "control_manual_project_heads", "control_identities", "control_role_grants",
   "control_web_sessions", "control_requests", "control_workflows", "control_jobs", "control_attempts", "control_leases", "control_nodes",
