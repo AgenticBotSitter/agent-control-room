@@ -8,6 +8,21 @@ import { LocalProjectWorkspace, localPreviewHref, localPreviewFailure } from "..
 import { BrowserRequestError } from "../src/web/v1/browser-client";
 import type { TaskPage } from "../src/web/v1/task-wire";
 import { ContributorSimulationPanel } from "../app/components/contributor-simulation";
+import { ContributorDemoView, contributorDemoSelection } from "../contributor-demo/view";
+
+test("standalone contributor entry keeps project selection strict and starts without private records", () => {
+  assert.deepEqual(contributorDemoSelection("?project=project%3Ademo&job=job%3Ademo"), {
+    projectId: "project:demo", jobId: "job:demo", after: undefined,
+  });
+  for (const query of ["?job=job:demo", "?project=a&project=b", "?project=p&job=j&after=a", "?secret=value"]) {
+    assert.throws(() => contributorDemoSelection(query), /invalid_demo_link/);
+  }
+  const html = renderToStaticMarkup(createElement(ContributorDemoView, { search: "" }));
+  assert.match(html, /Disposable contributor demo/);
+  assert.match(html, /One-time owner code/);
+  assert.match(html, /Loading saved data/);
+  assert.doesNotMatch(html, /Simulate this task|Save proposal/);
+});
 
 test("simulation panel distinguishes pending, uncertain and untrusted output", () => {
   const render = (props: Partial<Parameters<typeof ContributorSimulationPanel>[0]>) => renderToStaticMarkup(

@@ -8,6 +8,16 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Standalone contributor frontend now compiles:** `build:demo` uses installed Vite/React
+to compose the existing owner login, project/task workspace and explicit simulation
+panel, preserving existing styles. Output is isolated in ignored `dist-contributor/client`;
+no public directory wholesale copy, Sites bindings or server runtime is bundled. Strict
+query selection rejects duplicate/unknown parameters. Six rendering tests plus a built
+asset test pass; types/lint/whitespace checks pass. The asset test verifies local links,
+no source maps and selected server-only exclusions, not exhaustive bundle/privacy review.
+`test:build:demo` records the rebuild/check command. No browser or physical listener was
+started; the matching backend launcher, revision flow and candidate export remain.
+
 **Demo transport reuses the existing bounded Node bridge:** A separate fixed-origin
 factory supports local cookie login at `http://127.0.0.1:3000`, rejects forwarded
 headers/non-loopback peers, and keeps the common framing, body, response and drain
