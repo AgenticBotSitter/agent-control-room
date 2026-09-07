@@ -19,6 +19,12 @@ access policies and machine service-token rule were left unchanged. The third ap
 already used an explicit provider selection and was not modified. Control Room's
 owner-only Access application, MFA enforcement, DNS/ingress and live acceptance are
 not yet configured or proven by this provider setup.
+Further read-only inspection confirms the selected domain is active, its private DNS
+label is unused and the existing tunnel is healthy but has no private Control Room
+route. An unsaved Access draft selects the private hostname and Cloudflare-only login.
+Independent MFA methods are all disabled account-wide; approved method enablement,
+owner enrollment and owner-only application policy remain prerequisites. No route,
+DNS, application or MFA change was saved during this inspection.
 Do not deploy a second private address or populate `secondaryAccess`. The optional
 dual-address code remains unused. Hostnames stay out of public export configuration.
 Workplace use remains subject to employer policy, not assumed from domain reachability.

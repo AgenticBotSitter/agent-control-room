@@ -163,6 +163,27 @@ owner-only Control Room membership, application policy, DNS/tunnel configuration
 origin availability or successful real login. No website deployment or GitHub write
 was performed. No account identifiers or private hostname values are retained here.
 
+### Domain, tunnel and application preparation
+
+The selected existing domain is Active in the authenticated Cloudflare dashboard.
+Its DNS inventory has no record for the chosen private label; existing store and
+email records were not modified. The existing tunnel reports Healthy and has
+published routes for other applications and the public project website, but no
+selected private Control Room route. That is not evidence of a running Control Room
+origin or a suitable unused service port. Reuse the tunnel only after actual origin
+readiness is established; do not copy another application's port.
+
+An unsaved Control Room Access application draft now contains the selected private
+hostname and Cloudflare-only identity selection, without One-time PIN fallback.
+No policy is attached and Create was not submitted. The MFA tab reports that
+independent MFA is not enabled for the account. Read-only inspection confirms all
+five independent MFA method toggles are Off. Account session duration is shown as
+Same as application session timeout. Enabling approved MFA methods, attaching an
+owner-only policy and saving the Access application remain required; account-wide
+domain blocking, unrelated apps, DNS and tunnel routes must remain unchanged.
+Actual authenticator enrollment is an owner action. A browser draft is not a durable
+configuration or proof of protection and must be revalidated before submission.
+
 ## Public copy checkpoint
 
 The retained public release receipt confirms source publication, but the static page
