@@ -12,6 +12,9 @@ import { IdeaLabProjectRegistryStoreV1 } from "../src/idea-lab/v1/store";
 import { IdeaLabBotRunStoreV1 } from "../src/idea-lab/v1/coordinator-store";
 import { buildIdeaLabBotRunV1 } from "../src/idea-lab/v1/coordinator";
 import { sha256Digest } from "../src/security";
+import { WebIdeaDecisionOperation } from "../src/web/v1/idea-decision-operation";
+import { buildIdeaLabContributionV1, buildIdeaLabSynthesisV1 } from "../src/idea-lab/v1/contracts";
+import { CONTROL_ROOM_IDEA_ADAPTER_V1 } from "../src/idea-lab/v1/schemas";
 
 async function setup() {
   const f = await fixture();
@@ -63,7 +66,7 @@ test("exact Idea SQL role saves and requests stop without contribution or dispat
   assert.equal(stop.startsWork, false);
   assert.deepEqual(await service.stop(identity, saved.sessionId, { runId: run.runId, sessionDigest: saved.sessionDigest }), stop);
   assert.equal((await f.client.query("SELECT id FROM audit_events WHERE action='idea_lab.panel_cancel'")).rows.length, 1);
-  for (const table of ["control_idea_contributions", "control_idea_syntheses", "control_idea_decisions", "control_jobs", "control_outbox", "control_leases"])
+  for (const table of ["control_idea_contributions", "control_idea_syntheses", "control_jobs", "control_outbox", "control_leases"])
     await assert.rejects(f.client.query(`INSERT INTO ${table} DEFAULT VALUES`));
   await assert.rejects(f.client.query("UPDATE control_idea_sessions SET payload='{}'::jsonb"));
   await assert.rejects(f.client.query("DELETE FROM control_idea_sessions"));
@@ -78,6 +81,44 @@ test("Idea creation preflight rejects privilege expansion and removed required p
   await assert.rejects(verifyIdeaCreationDatabase(f.checked, f.config, startupConfig, now), /preflight_failed/);
   await f.db.exec("SET SESSION AUTHORIZATION postgres; REVOKE INSERT ON control_outbox FROM control_room_idea_creation; REVOKE INSERT ON control_idea_sessions FROM control_room_idea_creation; SET SESSION AUTHORIZATION idea_test");
   await assert.rejects(verifyIdeaCreationDatabase(f.checked, f.config, startupConfig, now), /preflight_failed/);
+});
+
+test("restricted Idea login promotes through policy and permit without update or worker rights", async t => {
+  const f = await setup(); t.after(() => f.db.close()); const key = new Uint8Array(32).fill(67);
+  const source = buildIdeaLabFixtureV1(), scope = { tenantId: "tenant:web", workspaceId: "workspace:web" };
+  const identity = createAccessVerifier(trust)(request(), now);
+  const saved = await new IdeaSessionCreationService(f.client, scope, key, source.session.participants, () => now)
+    .create(identity, { title: "Promote", ideaSummary: "Help local shops", targetCustomer: "Shop owners",
+      maxRounds: 1, maxDurationSeconds: 300, maxCostUsd: 2 }, "idea-role-promote01");
+  const store = new IdeaLabProjectRegistryStoreV1(f.client, key);
+  const session = (await store.getSession(scope.tenantId, saved.sessionId))!;
+  // Administrator seeds synthetic opinions/synthesis and the pre-existing adapter;
+  // the production Idea login must not write any of those inputs.
+  await f.db.exec("SET SESSION AUTHORIZATION postgres");
+  await f.client.query(`INSERT INTO adapter_registry(id,tenant_id,source_system,contract_version,authority_mode,status,redaction_policy_version,cursor_retention_days)
+    VALUES($1,$2,'control_room_native_ideas','1.0.0','control_room_native','fixture','v1',30)`, [CONTROL_ROOM_IDEA_ADAPTER_V1, scope.tenantId]);
+  const contributions = source.contributions.map(c => buildIdeaLabContributionV1(session, {
+    participantId: c.participantId, round: 1, safeOpinion: c.safeOpinion, opportunityCode: c.opportunityCode,
+    primaryRiskCode: c.primaryRiskCode, suggestedExperiment: c.suggestedExperiment,
+    confidencePercent: c.confidencePercent, contributedAt: new Date(now).toISOString() }));
+  for (const c of contributions) await store.recordContribution(c);
+  const s = source.synthesis;
+  const synthesis = buildIdeaLabSynthesisV1(session, contributions, { marketDemand: s.marketDemand, feasibility: s.feasibility,
+    differentiation: s.differentiation, durability: s.durability, ownerFit: s.ownerFit, riskPercent: s.riskPercent,
+    executiveSummary: s.executiveSummary, nextExperiment: s.nextExperiment,
+    dissentingPerspectiveCodes: s.dissentingPerspectiveCodes, synthesizedAt: new Date(now).toISOString() });
+  await store.recordSynthesis(synthesis); await f.db.exec("SET SESSION AUTHORIZATION idea_test");
+  await verifyIdeaCreationDatabase(f.checked, f.config, startupConfig, now);
+  const value = { sessionDigest: saved.sessionDigest, synthesisDigest: synthesis.synthesisDigest,
+    intent: { decision: "create_project", safeReasonCode: "owner_selected", project: { ...source.decision.project!, projectId: "project:role-promoted" } } };
+  const service = new WebIdeaDecisionOperation(f.client, scope, key, () => now);
+  const result = await service.decide(identity, saved.sessionId, value);
+  assert.equal(result.projectId, "project:role-promoted"); assert.equal(result.startsWork, false);
+  assert.equal((await service.decide(identity, saved.sessionId, value)).replayed, true);
+  for (const table of ["control_policy_decisions", "control_idea_owner_authorizations", "control_idea_decisions", "projects"])
+    await assert.rejects(f.client.query(`UPDATE ${table} SET tenant_id=tenant_id`));
+  for (const table of ["control_idea_contributions", "control_idea_syntheses", "control_jobs", "control_outbox"])
+    await assert.rejects(f.client.query(`INSERT INTO ${table} DEFAULT VALUES`));
 });
 
 test("Idea role recognizes configured queue schema only while retaining zero queue privileges", async t => {

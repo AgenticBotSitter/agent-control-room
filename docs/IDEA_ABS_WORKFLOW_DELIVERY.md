@@ -25,6 +25,25 @@ Branch: `codex/idea-abs-workflows`. Public release remains a separate reviewed s
 
 ## Evidence and scope
 
+### Managed owner decision resource and SQL permissions
+
+The existing optional Idea pool now owns the decision operation through the same
+managed admission, input capture, guarded transactions and cleanup as saves/stops.
+No extra pool or service was introduced. The fixed role/preflight adds reads and inserts
+for existing policy/permit/decision/project/lifecycle tables. It cannot update those
+records, create opinions/syntheses or dispatch jobs. This is application-constrained
+authority: SQL INSERT permissions themselves do not encode the owner decision rules.
+
+Policy rows have append-only UPDATE/DELETE/TRUNCATE triggers (migration 0005). Removing
+redundant row locking on those immutable reads avoids needing UPDATE privileges;
+SecurityStore retains its identity lock, and the private bridge retains its workspace
+lock and atomic shared-session transaction. Thirty focused role/startup/lifecycle/security
+checks pass, including promotion and exact replay under the actual restricted login.
+The startup route test additionally rejects a draft without synthesis as ineligible,
+not unconfigured. Independent source review found no introduced concrete defect.
+Evidence is serialized PGlite with the existing TEMP metadata exception, not independent
+PostgreSQL concurrency or production-role setup. Owner browser controls remain open.
+
 ### Shared-session owner decisions and project handoff
 
 `WebIdeaDecisionOperation` bridges verified private sessions to the existing

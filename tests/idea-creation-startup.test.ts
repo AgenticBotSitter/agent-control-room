@@ -30,6 +30,12 @@ test("bootstrap verifies all three exact roles and mounts non-executing Idea cre
   assert.equal((await (await handle("/api/v1/ideas")).json()).canCreate, true);
   const saved = await handle("/api/v1/ideas", "POST", draft); assert.equal(saved.status, 201, await saved.clone().text());
   const receipt = await saved.json(); assert.equal(receipt.startsWork, false);
+  // Managed composition supplies the operation, but a saved draft without a
+  // synthesis is not eligible. This is a conflict, not an unconfigured route.
+  assert.equal((await handle(`/api/v1/ideas/${encodeURIComponent(receipt.sessionId)}/decision`, "POST", {
+    sessionDigest: receipt.sessionDigest, synthesisDigest: `sha256:${"a".repeat(64)}`,
+    intent: { decision: "save", safeReasonCode: "owner_selected" },
+  })).status, 409);
   assert.equal((await handle("/api/v1/ideas", "POST", draft)).status, 200);
   assert.equal((await handle(`/api/v1/ideas/${receipt.sessionId}`)).status, 200);
   await assert.rejects(f.web.client.query("INSERT INTO control_idea_sessions DEFAULT VALUES"), /permission denied/);

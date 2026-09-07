@@ -1,11 +1,12 @@
-# Saved Idea creation and stop setup
+# Saved Idea creation, stop and owner decision setup
 
 Source configuration guide, 2026-09-07. Not an instruction to provision or launch now.
 
 The existing private task bootstrap accepts optional `coordinator.ideaCreation`.
 It saves an owner's Idea session and audit record and can record an owner stop request
-for an existing run; it does not run a panel, synthesize
-opinions, promote a project, start a worker or authorize a provider call.
+for an existing run. It also accepts an explicit owner decision on a retained synthesis,
+including project promotion. It does not run a panel, synthesize opinions, start a worker
+or authorize a provider call. Promotion produces an active project, not execution authority.
 
 ## Required configuration
 
@@ -42,7 +43,11 @@ At explicit startup, the bootstrap checks configuration before opening any resou
 then verifies each actual database login. The Idea preflight permits session creation,
 run-event appends for the stop operation, session authority and audit needs. SQL grants
 allow run-event inserts generally; the server operation constrains them to stop transitions.
-There are no contribution, synthesis, decision, job or queue writes. Missing or additional rights reject installation;
+The same role includes policy/permit/decision/project/lifecycle inserts for owner decisions
+and the reads needed to validate their inputs. SQL permits these inserts generally;
+the protected operation imposes the owner policy, immutable permit and atomic audit.
+No UPDATE rights on those records, contribution/synthesis writes, job or queue writes
+are granted. Missing or additional rights reject installation;
 startup does not repair grants. Cancellation/failure closes acquired resources once.
 
 ## Acceptance and remaining work
@@ -58,7 +63,12 @@ and producer. They do not substitute for real pg-boss acceptance.
 After authorized real setup, verify `/ideas` offers New idea for the scoped owner, save
 and reopen a harmless draft, confirm a retry returns the original session, and confirm
 logout revokes access. None of those production checks has run in this block.
-Multi-bot execution and owner decision commands remain separate unfinished integration.
+The owner decision command is mounted by the managed Idea resource after preflight;
+its browser controls and multi-bot execution remain unfinished integration. Promotion
+requires the existing `CONTROL_ROOM_IDEA_ADAPTER_V1` registry entry established by later
+approved operator setup; this operation does not create an adapter or repair missing setup.
+An older creation-only role must be explicitly reviewed/upgraded before this version
+will accept it. Startup does not silently expand an existing database login's privileges.
 
 The owner detail page offers **Stop discussion** only for a retained active run while
 the operation is configured and the owner has current read/cancel grants. A retry targets

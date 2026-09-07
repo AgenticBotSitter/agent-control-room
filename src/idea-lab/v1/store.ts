@@ -245,8 +245,9 @@ export class IdeaLabProjectRegistryStoreV1 {
   async authorizeOwnerDecision(input:{authorizationId:string;policyDecisionId:string;decision:unknown}):Promise<{authorizationDigest:string;replayed:boolean}>{
     const raw=parseExactIdeaLabV1(ideaDecisionSchemaV1,input.decision),session=await this.getSession(raw.tenantId,raw.sessionId),synthesis=await this.getSynthesis(raw.tenantId,raw.sessionId);
     if(!session||!synthesis)throw new IdeaLabErrorV1("not_found");const decision=parseIdeaLabDecisionV1(input.decision,session,synthesis);
+    // The referenced policy is immutable; a read must not require UPDATE authority.
     return this.#transaction(async tx=>{const policy=await tx.query<{identity_id:string;action:string;resource_type:string;resource_id:string;allowed:boolean;request_digest:string;grant_ids:string[];decided_at:string|Date;expires_at:string|Date}>(
-      `SELECT identity_id,action,resource_type,resource_id,allowed,request_digest,grant_ids,decided_at,expires_at FROM control_policy_decisions WHERE tenant_id=$1 AND id=$2 FOR UPDATE`,[decision.tenantId,input.policyDecisionId]);
+      `SELECT identity_id,action,resource_type,resource_id,allowed,request_digest,grant_ids,decided_at,expires_at FROM control_policy_decisions WHERE tenant_id=$1 AND id=$2`,[decision.tenantId,input.policyDecisionId]);
       const row=policy.rows[0];if(!row||!row.allowed||row.action!=="idea_lab.owner_decide"||row.resource_type!=="idea_lab_session"||row.resource_id!==decision.sessionId
         ||iso(row.decided_at)!==decision.decidedAt||time(iso(row.expires_at))<=time(decision.decidedAt))throw new IdeaLabErrorV1("authorization_denied");
       const grants=await tx.query<{id:string;role_key:string;revoked_at?:string;expires_at?:string}>(`SELECT id,role_key,revoked_at,expires_at FROM control_role_grants WHERE tenant_id=$1 AND identity_id=$2`,[decision.tenantId,row.identity_id]);

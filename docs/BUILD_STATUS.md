@@ -8,6 +8,19 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Owner decisions now use the managed Idea resource:** The existing optional pool
+owns decision requests with shared admission, input capture, guarded transactions and
+cleanup. Its fixed role/preflight includes the policy/permit/project/lifecycle records
+needed for promotion, but no contribution/synthesis, job or queue writes or updates to
+decision records. Restricted-login promotion/replay passes; the managed HTTP route
+refuses a draft without synthesis. Immutable policy reads no longer require redundant
+UPDATE permissions; append-only database triggers and identity/workspace locks remain.
+Thirty role/startup/lifecycle/security checks and TypeScript pass. Independent source
+review found no concrete defect. These are serialized PGlite tests, not provisioning or
+real PostgreSQL concurrency. The 61-test workflow regression, 12 compiled startup/handler
+checks, VPS compilation and focused lint also pass. Browser decision controls are next; live panels and news
+ingestion remain open. No production grants, provider calls, deployment or GitHub writes.
+
 **Private owner decision bridge implemented locally:** The shared-session command
 reuses the existing owner policy, immutable permit and Idea project/lifecycle service.
 Policy, permit, project, decision and audit writes share one transaction; explicit

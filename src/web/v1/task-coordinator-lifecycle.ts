@@ -14,6 +14,7 @@ import { NativeEvidenceReceiver, captureNativeEvidenceInput, captureNativeEviden
 import { ManagedNativeSessions, captureManagedNativeSessionSettings, type ManagedNativeSessionSettings } from "./managed-native-sessions";
 import { createNativeHttpHost, captureNativeHttpSettings, type NativeHttpSettings } from "./native-http-host";
 import { IdeaSessionCreationService, ideaCreationInputSchema, type IdeaCreateOperation } from "./idea-create-operation";
+import { WebIdeaDecisionOperation, ideaDecisionInputSchema } from "./idea-decision-operation";
 import { WebAccessError } from "./access-verifier";
 
 export type TaskApprovalOperation = Readonly<{ tenantId: string; workspaceId: string;
@@ -134,6 +135,8 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   const db = guardedDatabase(pool);
   const ideaService = ideaPool ? new IdeaSessionCreationService(guardedDatabase(ideaPool), scope,
     input.ideaCreation!.integrityKey, input.ideaCreation!.participants, input.clock) : undefined;
+  const ideaDecision = ideaPool ? new WebIdeaDecisionOperation(guardedDatabase(ideaPool), scope,
+    input.ideaCreation!.integrityKey, input.clock) : undefined;
   // Constructors validate and snapshot immutable templates, keys, route records and scope without SQL.
   const planner = new TaskExecutionPlanner(db, scope, input.planning, input.clock, input.revisionPlanning ? input.quality : undefined);
   const assignment = new TaskAssignmentCoordinator(db, scope, planner, input.routes, input.clock,
@@ -167,6 +170,11 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   }
   const receipt = input.sessions ? input.approvals!.store.receiveDeliveryReceipt.bind(input.approvals!.store) : undefined;
   const ideaCreation: IdeaCreateOperation | undefined = ideaService ? Object.freeze({ ...scope,
+    decide: (identity, sessionId, value) => {
+      const actor = { ...identity }, request = ideaDecisionInputSchema.safeParse(value);
+      if (!request.success) return Promise.reject(new WebAccessError("invalid_request"));
+      return run(() => ideaDecision!.decide(actor, sessionId, request.data));
+    },
     stop: (identity, sessionId, value) => {
       const actor = { ...identity }, request = structuredClone(value);
       return run(() => ideaService.stop(actor, sessionId, request));
