@@ -18,6 +18,7 @@ import { createAbsFeedJobExecution } from "../src/project-adapters/abs-news/v1/f
 import { AbsFeedIngestionService } from "../src/project-adapters/abs-news/v1/feed-ingestion";
 import { PostgresNewsSourceSettings } from "../src/project-adapters/abs-news/v1/source-settings";
 import { PostgresAbsNewsStoreV1 } from "../src/project-adapters/abs-news/v1/postgres-store";
+import { createPrivateWebProcess } from "../src/web/v1/private-process";
 
 // Routing evidence only: real restricted-login qualification has separate tests.
 function ingestionClient(db: DatabaseClient): DatabaseClient {
@@ -84,16 +85,47 @@ test("discovery approval and borrowed execution reuse queue claims and settlemen
           expectedRevision: 1, allowedOrigins: ["https://example.org/", "https://feeds.example.org/"],
           limits: { timeoutMs: 10000, maxAttempts: 8, maxDocumentBytes: 4096, maxReservedBodyBytes: 32768 } };
         const planner = new WebNewsCollectionPlanning(f.client, { configuration, executorId: f.scope.executorId, windowSeconds: 300 }, f.key, f.clock);
-        const plan = await planner.propose(f.identity, { sourceDigest: planner.sourceDigest, idempotencyKey: "discovery-execution-001" });
         const admission = new WebNewsCollectionAdmission(f.client, f.scope, f.key, f.submission, f.clock, "discovery");
+        const app = createPrivateWebProcess({ ...startupConfig, news: { integrityKey: f.key }, clock: f.clock,
+          database: { client: f.client, close: async () => {} }, newsCollections: [{ ...projectScope, sourceId: source.id, planning: planner, admission }] });
+        t.after(() => app.close());
+        const path = `/api/v1/projects/${encodeURIComponent(projectScope.projectId)}/news/sources/${encodeURIComponent(source.id)}/collection`;
+        const handle = (req: Request) => app.handle(req, () => new Response("shell"));
+        const descriptor = await handle(request(path));
+        assert.equal(descriptor.status, 200); assert.equal(descriptor.headers.get("cache-control"), "no-store");
+        const description = await descriptor.json();
+        assert.equal(description.sourceDigest, planner.sourceDigest); assert.equal(description.canRefresh, true);
+        assert.deepEqual(description.allowedOrigins, configuration.allowedOrigins);
+        const anonymous = request(path); anonymous.headers.delete("cf-access-jwt-assertion");
+        assert.equal((await handle(anonymous)).status, 401);
+        assert.equal((await (await handle(request(path.replace(encodeURIComponent(source.id), "source%3Aunconfigured")))).json()).configured, false);
+        const proposalInput = { sourceDigest: description.sourceDigest, idempotencyKey: "discovery-execution-001" };
+        const proposed = await handle(request(`${path}/propose`, "POST", proposalInput)); assert.equal(proposed.status, 201);
+        const plan = await proposed.json() as Awaited<ReturnType<typeof planner.propose>>;
+        assert.equal((await handle(request(`${path}/propose`, "POST", proposalInput))).status, 200);
+        if (mode === "success") {
+          const other = { ...source, id: "source:other", name: "Other source" };
+          await settings.save(other, 0, at);
+          const otherPlanner = new WebNewsCollectionPlanning(f.client, { configuration: { ...configuration,
+            source: { ...configuration.source, sourceId: other.id, sourceLabel: other.name } },
+          executorId: f.scope.executorId, windowSeconds: 300 }, f.key, f.clock);
+          const otherPlan = await otherPlanner.propose(f.identity, { sourceDigest: otherPlanner.sourceDigest, idempotencyKey: "other-discovery-001" });
+          assert.equal((await handle(request(`${path}/approve`, "POST", { jobId: otherPlan.jobId, inputDigest: otherPlan.inputDigest }))).status, 409);
+          for (const table of ["synthetic_feed_queue", "control_effect_intents", "control_approvals", "control_attempts"])
+            assert.equal((await f.client.query(`SELECT * FROM ${table}`)).rows.length, 0);
+        }
         const args = { jobId: plan.jobId, inputDigest: plan.inputDigest };
         if (mode === "disabled_before_approval") {
           await settings.save({ ...source, enabled: false }, 1, at);
-          await assert.rejects(admission.approve(f.identity, args), /conflict/);
+          assert.equal((await (await handle(request(path))).json()).canRefresh, false);
+          assert.equal((await handle(request(`${path}/approve`, "POST", args))).status, 409);
           assert.equal((await f.client.query("SELECT * FROM synthetic_feed_queue")).rows.length, 0); return;
         }
-        const approved = await admission.approve(f.identity, args);
-        assert.equal((await admission.approve(f.identity, args)).replayed, true);
+        const approvalResponse = await handle(request(`${path}/approve`, "POST", args));
+        assert.equal(approvalResponse.status, 201);
+        const approved = await approvalResponse.json() as Awaited<ReturnType<typeof admission.approve>>;
+        const replayResponse = await handle(request(`${path}/approve`, "POST", args));
+        assert.equal(replayResponse.status, 200); assert.equal((await replayResponse.json()).replayed, true);
         const queued = (await f.client.query<{ reference: AbsFeedJobReference }>("SELECT reference FROM synthetic_feed_queue")).rows;
         assert.equal(queued.length, 1);
         if (mode === "disabled_before_execution") await settings.save({ ...source, enabled: false }, 1, at);

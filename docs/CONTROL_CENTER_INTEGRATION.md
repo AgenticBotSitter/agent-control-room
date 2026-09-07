@@ -116,6 +116,25 @@ review-only. Canonical-page verification and article-to-agent task acceptance re
 
 ## Completion gates
 
+### Private web connection
+
+The private process accepts explicitly supplied, project/source-bound collection
+operations and exposes GET `/api/v1/projects/:project/news/sources/:source/collection`
+plus POST `/propose` and `/approve` beneath it. GET describes the configured source,
+origins, limits, digest and current owner ability to refresh, without starting work.
+Unconfigured sources report `configured:false` after project authorization. Existing
+same-origin and identity checks, bounded JSON and no-store responses apply. Callbacks
+are captured at construction; duplicate bindings and cross-tenant/workspace entries
+are refused. This creates no reader, pool, schedule or runtime by itself.
+
+Route source IDs are passed separately from request JSON into admission and compared
+with the retained plan before any approval changes. Review found this was initially
+missing: a same-project second-source job could use the first source's URL. The
+regression now requires rejection and zero approval/effect/attempt/queue writes.
+The injected discovery journey uses these mounted HTTP routes for description,
+proposal and approval before consuming the saved queue reference. Browser controls
+and production startup supplying these operations are not yet connected.
+
 ### Discovery job integration contract
 
 The existing plan builder/store now accepts `control-room.abs-discovery-plan/v1`

@@ -34,7 +34,8 @@ export class WebNewsCollectionAdmission {
     if (!(key instanceof Uint8Array) || key.length !== 32 || this.scope.executorId === "executor:unassigned") throw new Error("news_admission_config_invalid");
     this.key = Uint8Array.from(key); this.enqueue = submission.enqueueInSession.bind(submission);
   }
-  async approve(identity: VerifiedWebIdentity, value: unknown) {
+  async approve(identity: VerifiedWebIdentity, value: unknown, expectedSourceId?: string) {
+    if (expectedSourceId !== undefined) expectedSourceId = localId.parse(expectedSourceId);
     const parsed = inputSchema.safeParse(value); if (!parsed.success) throw new WebAccessError("invalid_request");
     const input = parsed.data, { tenantId, workspaceId, projectId, nodeId, executorId } = this.scope;
     identity = { ...identity }; let deadline: number | undefined;
@@ -49,6 +50,8 @@ export class WebNewsCollectionAdmission {
       if (project.lifecycle !== "active") throw new WebAccessError("conflict");
       const work = await new AbsFeedPlanStore(joined(tx), { tenantId, workspaceId, projectId }, this.key).get(input.jobId);
       if (!work || work.job.inputDigest !== input.inputDigest || work.job.authority.allowedExecutor !== executorId) throw new WebAccessError("conflict");
+      if (expectedSourceId !== undefined && work.plan.configuration.source.sourceId !== expectedSourceId)
+        throw new WebAccessError("conflict");
       if ((work.plan.schema === "control-room.abs-discovery-plan/v1") !== (this.collectionMode === "discovery"))
         throw new WebAccessError("conflict");
       if (work.plan.schema === "control-room.abs-discovery-plan/v1") {

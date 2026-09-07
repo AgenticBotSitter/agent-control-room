@@ -8,6 +8,20 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Per-source refresh API is connected to the private web process:** Explicitly supplied
+collector operations expose authenticated description/propose/approve routes. The
+description includes source, origins, limits and current refresh permission; absent
+operations report unavailable rather than implying a collector exists. Existing
+origin/identity checks, bounded request bodies and no-store headers are reused.
+The injected discovery journey now goes through these routes before executing its
+saved queue reference. Review found wrong-source approval within one project; fixed
+by comparing the route's separately supplied source ID against the retained plan
+before admission. A two-source test requires rejection with zero queue/effect/approval
+writes. Independent re-review accepted the fix. All 312 delivery tests, seven focused
+route/execution cases, types, lint and VPS compilation pass. Browser refresh controls
+and production startup composition remain unfinished. No live collection, GitHub
+write, service startup or deployment occurred; changes are local.
+
 **Discovery jobs execute through the existing lifecycle:** Explicit discovery admission
 rechecks the saved source then uses existing approval/claim/queue-reference storage.
 Execution with supplied discovery ports invokes the borrowed collector under origin,

@@ -8,6 +8,9 @@ import { catalogProjectIdSchema } from "./project-wire";
 import { WebConnectionService, type WebConnectionKeys } from "./connection-service";
 import { WebTaskService, type WebTaskKeys } from "./task-service";
 import { WebNewsService } from "./news-service";
+import type { WebNewsCollectionPlanning } from "./news-collection-planning";
+import type { WebNewsCollectionAdmission } from "./news-collection-admission";
+import { projectWorkspaceSafeIdSchemaV1 } from "../../project-workspace/v1";
 import { WebIdeaService } from "./idea-service";
 import type { IdeaCreateOperation } from "./idea-create-operation";
 import { createTaskHttpHandler } from "./task-http";
@@ -31,6 +34,11 @@ export interface PrivateWebProcessOptions {
   ideaProjects?: { integrityKey: Uint8Array };
   /** Read-only retained ABS source verification. Does not configure collection. */
   news?: { integrityKey: Uint8Array };
+  /** Explicit operations from the trusted collector composition. This process does
+   * not create readers, worker pools, schedules or collection authority. */
+  newsCollections?: readonly { tenantId: string; workspaceId: string; projectId: string; sourceId: string;
+    planning: Pick<WebNewsCollectionPlanning, "describe" | "propose">;
+    admission: Pick<WebNewsCollectionAdmission, "approve"> }[];
   /** Existing enrollment/signal keys, supplied privately. Absence is unavailable, not an empty roster. */
   connections?: WebConnectionKeys;
   /** Existing harness evidence verification key. No key means progress is unavailable, not no runs. */
@@ -60,6 +68,17 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   if (origin.protocol !== "https:" || origin.origin !== options.origin || !options.tenantId || !options.workspaceId)
     throw new Error("invalid_private_app_config");
   const clock = options.clock ?? Date.now;
+  const newsCollections = new Map<string, { describe: WebNewsCollectionPlanning["describe"];
+    propose: WebNewsCollectionPlanning["propose"]; approve: WebNewsCollectionAdmission["approve"] }>();
+  for (const entry of options.newsCollections ?? []) {
+    if (entry.tenantId !== options.tenantId || entry.workspaceId !== options.workspaceId
+      || !catalogProjectIdSchema.safeParse(entry.projectId).success || !projectWorkspaceSafeIdSchemaV1.safeParse(entry.sourceId).success)
+      throw new Error("invalid_private_app_config");
+    const key = JSON.stringify([entry.projectId, entry.sourceId]);
+    if (newsCollections.has(key)) throw new Error("invalid_private_app_config");
+    newsCollections.set(key, { describe: entry.planning.describe.bind(entry.planning), propose: entry.planning.propose.bind(entry.planning),
+      approve: entry.admission.approve.bind(entry.admission) });
+  }
   if (options.ideaCreation && (options.ideaCreation.tenantId !== options.tenantId
     || options.ideaCreation.workspaceId !== options.workspaceId || typeof options.ideaCreation.create !== "function" || !options.ideaProjects))
     throw new Error("invalid_private_app_config");
@@ -191,6 +210,32 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             catch { throw new WebAccessError("invalid_request"); }
             return Response.json(sessionId === undefined ? await ideas.list(identity, url.searchParams.get("after") ?? undefined)
               : await ideas.detail(identity, sessionId), { headers: privateResponseHeaders });
+          }
+          const collectionRoute = /^\/api\/v1\/projects\/([^/]+)\/news\/sources\/([^/]+)\/collection(?:\/(propose|approve))?$/.exec(url.pathname);
+          if (collectionRoute) {
+            let projectId: string, sourceId: string;
+            try { projectId = decodeURIComponent(collectionRoute[1]); sourceId = decodeURIComponent(collectionRoute[2]); }
+            catch { throw new WebAccessError("invalid_request"); }
+            if (url.search || !projectWorkspaceSafeIdSchemaV1.safeParse(sourceId).success) throw new WebAccessError("invalid_request");
+            const operation = newsCollections.get(JSON.stringify([projectId, sourceId]));
+            if (!collectionRoute[3]) {
+              if (request.method !== "GET") throw new WebAccessError("invalid_request");
+              if (!operation) {
+                await news.sourceSettings(identity, projectId);
+                return Response.json({ projectId, sourceId, configured: false, canRefresh: false, startsWork: false }, { headers: privateResponseHeaders });
+              }
+              const description = await operation.describe(identity);
+              if (description.projectId !== projectId || description.sourceId !== sourceId) throw new Error("news_collection_scope_mismatch");
+              return Response.json(description, { headers: privateResponseHeaders });
+            }
+            if (request.method !== "POST" || !request.body || request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json")
+              throw new WebAccessError("invalid_request");
+            if (!operation) { await news.sourceSettings(identity, projectId); throw new Error("news_collection_not_configured"); }
+            const description = await operation.describe(identity);
+            if (description.projectId !== projectId || description.sourceId !== sourceId) throw new Error("news_collection_scope_mismatch");
+            const input = await readBoundedJson(request.body, 4096);
+            const result = collectionRoute[3] === "propose" ? await operation.propose(identity, input) : await operation.approve(identity, input, sourceId);
+            return Response.json(result, { status: result.replayed ? 200 : 201, headers: privateResponseHeaders });
           }
           const newsSources = /^\/api\/v1\/projects\/([^/]+)\/news\/sources$/.exec(url.pathname);
           if (newsSources) {

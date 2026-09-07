@@ -34,6 +34,27 @@ export class WebNewsCollectionPlanning {
     this.authority = new WebSessionAuthority(db, { tenantId, workspaceId }, clock, "task");
     this.projects = new WebProjectService(db, { tenantId, workspaceId }, clock);
   }
+  async describe(identity: VerifiedWebIdentity) {
+    return this.authority.authenticated(identity, async (tx, actor) => {
+      const { configuration } = this.template, { tenantId, workspaceId, projectId, source } = configuration;
+      actor.require("tasks.read", projectId);
+      const project = await this.projects.getViewInSession(tx, actor, projectId);
+      let sourceCurrent = true;
+      if ("limits" in configuration) {
+        const setting = await new PostgresNewsSourceSettings(joined(tx), { tenantId, workspaceId, projectId }, this.key).get(source.sourceId);
+        sourceCurrent = !!setting?.source.enabled && setting.revision === configuration.expectedRevision
+          && setting.source.name === source.sourceLabel && setting.source.url === source.endpointUrl;
+      }
+      return { projectId, sourceId: source.sourceId, configured: true as const, sourceDigest: this.sourceDigest,
+        sourceLabel: source.sourceLabel, endpointUrl: source.endpointUrl,
+        mode: "limits" in configuration ? "discovery" as const : "feed" as const,
+        allowedOrigins: "limits" in configuration ? [...configuration.allowedOrigins] : [new URL(source.endpointUrl).origin + "/"],
+        limits: "limits" in configuration ? { ...configuration.limits }
+          : { timeoutMs: configuration.timeoutMs, maxAttempts: 1, maxDocumentBytes: configuration.maxBytes, maxReservedBodyBytes: configuration.maxBytes },
+        canRefresh: sourceCurrent && project.lifecycle === "active" && actor.can("tasks.propose", projectId, true) && actor.can("tasks.approve", projectId, true),
+        sourceCurrent, startsWork: false as const };
+    });
+  }
   async propose(identity: VerifiedWebIdentity, value: unknown) {
     const parsed = inputSchema.safeParse(value);
     if (!parsed.success) throw new WebAccessError("invalid_request");
