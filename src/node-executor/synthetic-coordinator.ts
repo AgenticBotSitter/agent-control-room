@@ -102,9 +102,16 @@ function mapEvent(input: SyntheticCoordinatorInputV1, event: SyntheticExecutionE
 }
 
 export async function runAdmittedSyntheticExecution(
-  input: SyntheticCoordinatorInputV1,
+  submitted: SyntheticCoordinatorInputV1,
   ports: SyntheticCoordinatorPortsV1,
 ): Promise<SyntheticCoordinatorResultV1> {
+  // These records contain primitive fields. Own them before invoking any port so
+  // callers cannot change the admitted operation or its result attribution.
+  const input: SyntheticCoordinatorInputV1 = {
+    ...submitted,
+    spec: { ...submitted.spec },
+    artifact: { ...submitted.artifact },
+  };
   const admitted = ports.authority.load(input.executionId);
   if (!admitted) throw new SyntheticCoordinatorError("admission_mismatch");
   assertAdmission(input, admitted);

@@ -8,6 +8,18 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Existing simulator/file-store composition verified:** Reused
+`runAdmittedSyntheticExecution` rather than creating another coordinator. A new
+regression first failed with `admission_mismatch` when a caller changed its submitted
+request during progress; the coordinator now owns the primitive input records before
+calling any ports. A second integration test verifies exact file-store bytes are
+readable through a reopened adapter before the completion event and afterward. Output
+remains `synthetic-result`, with independent verification `not_run`. All 34 selected
+coordinator/storage/executor tests, both strict type checks, focused lint and whitespace
+checks pass. This is adapter reopen evidence, not process restart or interactive
+result/review acceptance. No new engine, provider call, listener, deployment or GitHub
+write. Local result/review UI wiring and public source release remain unfinished.
+
 **Queued artifact input-mutation bug fixed:** A regression reproduced a submitted
 artifact being written under a caller-mutated ID. The existing disposable filesystem
 adapter now validates and snapshots ID, bounded bytes and cancellation signal before

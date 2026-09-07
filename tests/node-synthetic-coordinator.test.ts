@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { chmod, mkdtemp, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { sha256Digest } from "../src/security";
 import {
@@ -11,6 +14,7 @@ import { DurableBridgeJobEventRecorder, SqliteBridgeJournal } from "../src/node-
 import {
   ArtifactStorageError,
   InMemoryArtifactStorage,
+  DisposableFilesystemArtifactStorage,
   SyntheticCoordinatorError,
   runAdmittedSyntheticExecution,
   type ArtifactStoragePortV1,
@@ -148,6 +152,82 @@ test("an exact admitted operation completes with stored bytes, manifest, claim, 
   } finally {
     journal.close();
     store.close();
+  }
+});
+
+test("coordinator retains the admitted identity and artifact across caller mutations", async () => {
+  const { store, input } = fixture();
+  const original = structuredClone(input);
+  const artifacts = new InMemoryArtifactStorage();
+  const events: JobEventBody[] = [];
+  try {
+    const result = await runAdmittedSyntheticExecution(input, {
+      authority: store,
+      artifacts,
+      events: { append: (event) => {
+        events.push(event);
+        if (event.event === "started") {
+          input.executionId = "execution:changed";
+          input.leaseId = "lease:changed";
+          input.leaseEpoch = 99;
+          input.spec.jobId = "job:changed";
+          input.spec.artifactText = "changed result";
+          input.artifact.artifactId = "artifact:changed";
+          input.artifact.projectId = "project:changed";
+        }
+      } },
+      now: clock().now,
+      sleep: async () => {},
+    });
+    assert.equal(result.state, "completed");
+    assert.equal(result.executionId, original.executionId);
+    assert.equal(store.load(original.executionId)?.state, "completed");
+    assert.ok(events.every((event) => event.jobId === original.spec.jobId
+      && event.leaseId === original.leaseId && event.leaseEpoch === original.leaseEpoch));
+    assert.equal(Buffer.from(artifacts.get(original.artifact.artifactId) ?? []).toString(), original.spec.artifactText);
+    assert.equal(artifacts.get("artifact:changed"), undefined);
+    if (result.state !== "completed") throw new Error("expected completion");
+    assert.equal(result.bundle.manifest.id, original.artifact.artifactId);
+    assert.equal(result.bundle.manifest.projectId, original.artifact.projectId);
+  } finally {
+    store.close();
+  }
+});
+
+test("simulated completion records only a result whose exact bytes survive file-store reopen", async () => {
+  const { store, input } = fixture();
+  const parent = await mkdtemp(join(tmpdir(), "control-room-synthetic-result-"));
+  try {
+    await chmod(parent, 0o700);
+    const root = await realpath(parent);
+    const artifacts = await DisposableFilesystemArtifactStorage.create(root);
+    const events: JobEventBody[] = [];
+    const lineages: ArtifactLineageRecordV1[] = [];
+    const result = await runAdmittedSyntheticExecution(input, {
+      authority: store,
+      artifacts,
+      events: { append: async (event, lineage) => {
+        if (event.event === "completed") {
+          const reopened = await DisposableFilesystemArtifactStorage.create(root);
+          assert.equal(Buffer.from(await reopened.read(input.artifact.artifactId) ?? []).toString(), input.spec.artifactText);
+        }
+        events.push(event);
+        if (lineage) lineages.push(lineage);
+      } },
+      now: clock().now,
+      sleep: async () => {},
+    });
+    assert.equal(result.state, "completed");
+    if (result.state !== "completed") throw new Error("expected completion");
+    const reopened = await DisposableFilesystemArtifactStorage.create(root);
+    assert.deepEqual(await reopened.read(result.bundle.manifest.id), result.bundle.bytes);
+    assert.match(result.bundle.manifest.opaqueLocator ?? "", /^local-artifact:\/\//u);
+    assert.equal(result.bundle.manifest.logicalRole, "synthetic-result");
+    assert.deepEqual(lineages[0].independentVerification, { status: "not_run" });
+    assert.deepEqual(events.filter((event) => event.event === "completed").map((event) => event.artifactManifestIds), [[input.artifact.artifactId]]);
+  } finally {
+    store.close();
+    await rm(parent, { recursive: true, force: true });
   }
 });
 
