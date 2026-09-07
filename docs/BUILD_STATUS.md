@@ -8,6 +8,21 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Owner-approved verification-first research:** The private News page now permits
+“Research and verify” on discovered/unverified articles. The CR9D amendment permits
+only research briefs, preserving story state/digest and existing review and execution
+approvals. The digest-bound proposal marks verification-first intent; generated task
+instructions demand primary-source checking, uncertainty reporting and owner review,
+and explicitly forbid publication/setup execution under this proposal. Setup,
+comparison and editorial actions remain blocked on unverified stories. Independent
+source-only review found no concrete introduced defect. Live agent execution and
+browser acceptance remain unproven; this approval does not authorize either.
+All 323 delivery tests pass (84 base and 239 integration), as do seven PostgreSQL
+store tests, TypeScript, focused lint and VPS compilation. A regression strips the
+verification-first marker and recomputes the proposal digest; canonical storage
+rebuilding rejects it. Borrowed collection now reaches a saved ordinary proposed
+research task in injected tests, with no agent attempt or automatic verification.
+
 **Borrowed collector/library journey:** A new integration regression runs the actual
 borrowed feed reader and collection adapter twice through injected DNS/HTTP responses,
 with an owner archive choice between runs. Updated article content remains archived;
@@ -44,7 +59,7 @@ choices, operators cannot use the owner control, and unconfigured news cannot ad
 archive access. All 16 targeted web/ingestion tests, TypeScript and focused lint pass.
 All 321 delivery tests pass (83 base plus 238 integration cases).
 No live collection, provider call, production migration or GitHub write occurred.
-The separate verification-first Research product decision remains unanswered.
+The verification-first Research decision was approved by the owner on 2026-09-07.
 
 **Borrowed date compatibility:** Database freshness/ranking now truncates fractional
 seconds to JavaScript milliseconds before PostgreSQL parses timestamps. This avoids

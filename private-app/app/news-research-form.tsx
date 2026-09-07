@@ -50,10 +50,12 @@ export function NewsResearchForm({ projectId, story, close }: {
         <button type="button" disabled={busy || client.hasPending()} onClick={() => setDraft(undefined)}>Change request</button></>
         : <form onSubmit={event => { event.preventDefault(); void prepare(); }}>
           <label>What should the agent prepare?<select value={action} disabled={busy} onChange={event => setAction(event.target.value as typeof action)}>
-            {newsArticleActions.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
+            {newsArticleActions.filter(item => story.verificationState === "verified" || item.id === "research_brief")
+              .map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
           </select></label>
           <label>Your instructions<textarea value={goal} onChange={event => setGoal(event.target.value)} required maxLength={1200} disabled={busy} /></label>
           <p>Source links and evidence references will be included. This does not authorize execution or publication.</p>
+          {story.verificationState === "review_only" ? <p>This article is unverified. The agent will be asked to verify its claims and return a research report for your review.</p> : null}
           <button type="submit" disabled={busy || !goal.trim()}>Prepare draft</button>
         </form>}
     {busy ? <p role="status">Working…</p> : null}{error ? <p role="alert">{error}</p> : null}

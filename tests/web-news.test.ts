@@ -207,12 +207,20 @@ test("all four article actions prepare and save ordinary proposed tasks with exa
   const { storyDigest: _digest, ...body } = story; void _digest;
   const unverified = { ...body, verificationState: "review_only" as const };
   await store.saveStory({ ...unverified, storyDigest: sha256Digest(unverified) });
-  for (const action of newsArticleActions) await assert.rejects(service.prepare(f.identity, projectId, {
+  for (const action of newsArticleActions.filter(item => item.id !== "research_brief")) await assert.rejects(service.prepare(f.identity, projectId, {
     storyId: story.storyId, storyDigest: sha256Digest(unverified), action: action.id, goal: "Check this." }), /conflict/);
   assert.equal((await f.client.query("SELECT * FROM control_attempts")).rows.length, 0);
   const html = renderToStaticMarkup(createElement(NewsResearchForm, { projectId,
     story: (await service.list(f.identity, projectId)).stories[0], close() {} }));
-  for (const action of newsArticleActions) assert.ok(html.includes(action.label));
+  assert.ok(html.includes("This article is unverified"));
+  for (const action of newsArticleActions) assert.equal(html.includes(action.label), action.id === "research_brief");
+  const preview = await service.prepare(f.identity, projectId, { storyId: story.storyId,
+    storyDigest: sha256Digest(unverified), action: "research_brief", goal: "Check this." });
+  assert.ok(preview.draft.instructions.includes("VERIFICATION-FIRST RESEARCH"));
+  const saved = await f.tasks.propose(f.identity, projectId, preview.draft, "verification-first-0001");
+  const detail = await f.tasks.detail(f.identity, projectId, saved.receipt.jobId);
+  assert.equal(detail.task.state, "proposed"); assert.deepEqual(detail.attempts, []);
+  assert.equal((await store.getStory(story.storyId))?.verificationState, "review_only");
 });
 function storyFor(projectId: string) {
   const { storyDigest: _digest, ...source } = buildAbsNewsSyntheticWorkspaceV1().stories[0]; void _digest;

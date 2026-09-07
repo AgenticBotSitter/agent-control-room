@@ -130,7 +130,7 @@ export class WebNewsService {
       const store = new PostgresAbsNewsStoreV1(joined(tx), { ...this.scope, projectId }, this.key);
       const story = await store.getStory(input.storyId, input.storyDigest);
       if (!story) throw new WebAccessError("not_found");
-      if (story.verificationState !== "verified") throw new WebAccessError("conflict");
+      if (story.verificationState !== "verified" && input.action !== "research_brief") throw new WebAccessError("conflict");
       const proposal = buildAbsNewsWorkOrderProposalV1({ ...this.scope, projectId, story,
         proposalId: `proposal:${randomUUID()}`, actionId: input.action, requestedTitle: story.title,
         goal: input.goal, requestedPlatform: "any", requestedByActorDigest: sha256Digest({ actorId: actor.id }), requestedAt: actor.now });

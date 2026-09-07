@@ -95,9 +95,14 @@ test("CR9D ABS proposal idempotency is stable for exact intent and changes with 
   assert.notEqual(first.proposalIdempotencyKey, changed.proposalIdempotencyKey);
 });
 
-test("CR9D ABS review-only discoveries cannot enter the work-order proposal boundary", () => {
+test("CR9D ABS review-only discoveries allow only verification-first research", () => {
   const reviewOnly = buildAbsNewsSyntheticWorkspaceV1().stories.find((story) => story.verificationState === "review_only")!;
-  expectCode(() => proposal({ story: reviewOnly }), "unsupported_action");
+  const research = proposal({ story: reviewOnly, actionId: "research_brief" });
+  assert.equal(research.verificationFirst, true);
+  assert.equal(parseAbsNewsWorkOrderProposalV1(research).verificationFirst, true);
+  assert.equal(research.requiresOwnerReview, true); assert.equal(research.grantsExecutionAuthority, false);
+  for (const actionId of ["setup_guide", "product_comparison", "abs_article_draft"])
+    expectCode(() => proposal({ story: reviewOnly, actionId }), "unsupported_action");
 });
 
 test("CR9D ABS proposals fail closed on scope and platform mismatch", () => {

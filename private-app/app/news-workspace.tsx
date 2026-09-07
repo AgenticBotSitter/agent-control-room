@@ -116,8 +116,8 @@ export function PrivateNewsWorkspace({ projectId, after, sourceAfter, view = "hi
           <h2><a href={story.canonicalUrl} target="_blank" rel="noopener noreferrer">{story.title}</a></h2>
           <p>{story.summary}</p><p>{story.verificationState === "verified" ? "Source evidence retained" : "Source needs review"} · {story.queue.replaceAll("_", " ")}</p>
           <p>{story.sourceLabel ?? new URL(story.canonicalUrl).hostname}{story.publishedAt ? ` · Published ${story.publishedAt}` : story.discoveredAt ? ` · Discovered ${story.discoveredAt}` : " · Date unknown"}</p>
-          <button type="button" disabled={!!selected || archiveHeld || !page.canPrepare || story.verificationState !== "verified"}
-            onClick={() => setSelected(story)}>Research, compare or draft</button>
+          <button type="button" disabled={!!selected || archiveHeld || !page.canPrepare}
+            onClick={() => setSelected(story)}>{story.verificationState === "review_only" ? "Research and verify" : "Research, compare or draft"}</button>
           <button type="button" disabled={!!selected || archiveHeld || !page.canArchive}
             onClick={() => void changeArchive(story)}>{story.queue === "archive" ? "Restore to History" : "Archive article"}</button>
         </article>)}

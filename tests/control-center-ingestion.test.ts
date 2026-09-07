@@ -322,10 +322,18 @@ test("borrowed reader results reach project news storage and remain review-only"
   assert.equal((await store.getSourceStatus(source.id))?.safeStatusCode, "discovery_parsed");
   const service = new WebNewsService(f.client, { tenantId: scope.tenantId, workspaceId: scope.workspaceId }, { integrityKey: key }, () => now);
   assert.equal((await service.list(f.identity, scope.projectId)).stories.length, 1);
-  await assert.rejects(service.prepare(f.identity, scope.projectId, { storyId: stories[0].storyId,
-    storyDigest: stories[0].storyDigest, action: "research_brief", goal: "Research this" }), /conflict/);
+  const preview = await service.prepare(f.identity, scope.projectId, { storyId: stories[0].storyId,
+    storyDigest: stories[0].storyDigest, action: "research_brief", goal: "Research this" });
+  assert.ok(preview.draft.instructions.includes("VERIFICATION-FIRST RESEARCH"));
+  assert.ok(preview.draft.instructions.includes(stories[0].storyDigest));
+  for (const action of ["setup_guide", "product_comparison", "abs_article_draft"])
+    await assert.rejects(service.prepare(f.identity, scope.projectId, { storyId: stories[0].storyId,
+      storyDigest: stories[0].storyDigest, action, goal: "Research this" }));
   await assert.rejects(ingest.ingest({ ...result, snapshot: undefined }, new Date(now - 100).toISOString()), /news_observation_stale/);
   assert.equal((await f.client.query("SELECT * FROM control_jobs")).rows.length, 0);
+  const saved = await f.tasks.propose(f.identity, scope.projectId, preview.draft, "borrowed-verification-0001");
+  assert.equal((await f.tasks.detail(f.identity, scope.projectId, saved.receipt.jobId)).task.state, "proposed");
+  assert.equal((await f.client.query("SELECT * FROM control_attempts")).rows.length, 0);
 });
 
 test("partial sitemap discovery stores valid items without inventing publication dates", async t => {

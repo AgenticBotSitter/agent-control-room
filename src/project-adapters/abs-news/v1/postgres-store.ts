@@ -269,7 +269,7 @@ export class PostgresAbsNewsStoreV1 {
       [...this.values(), proposal.storyId, proposal.storyDigest])).rows[0];
       if (!source) throw new ProjectWorkspaceContractErrorV1("not_found");
       const story = this.story(source);
-      if (story.storyId !== proposal.storyId || story.storyDigest !== proposal.storyDigest || story.verificationState !== "verified")
+      if (story.storyId !== proposal.storyId || story.storyDigest !== proposal.storyDigest)
         throw new ProjectWorkspaceContractErrorV1("replay_drift");
       const rebuilt = buildAbsNewsWorkOrderProposalV1({ ...this.scope, story, proposalId: proposal.proposalId,
         actionId: proposal.actionId, requestedTitle: proposal.requestedTitle, goal: proposal.goal,

@@ -10,6 +10,9 @@ export function absResearchTaskDraft(proposal: AbsNewsWorkOrderProposalV1): Task
   if (longTitle) title += "…";
   const instructions = [proposal.goal, "", ...(longTitle ? [`Full requested title: ${proposal.requestedTitle}`] : []),
     "ABS source-backed work proposal (source claims require independent verification).",
+    ...(proposal.verificationFirst ? ["VERIFICATION-FIRST RESEARCH: this article is unverified discovery evidence, not established fact.",
+      "First verify the article's claims against reliable primary sources; identify unsupported or conflicting claims and cite your evidence.",
+      "Return a research report for owner review only. Do not publish, execute setup steps, or change the article's verification status."] : []),
     `Deliverable: ${proposal.deliverableKind}`, `Requested platform: ${proposal.requestedPlatform}`,
     `Requested capability: ${proposal.requiredCapability}`, `Proposal: ${proposal.proposalId}`,
     `Proposal digest: ${proposal.proposalDigest}`, `Story: ${proposal.storyId}`,

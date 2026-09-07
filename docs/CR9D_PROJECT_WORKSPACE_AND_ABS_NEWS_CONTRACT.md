@@ -71,7 +71,19 @@ An ABS story binds:
 
 Canonical display URLs reject credentials, non-HTTPS schemes, explicit ports, queries, fragments, loopback, local/internal hosts, and IP literals. Upstream canonicalization must remove tracking parameters before a story reaches this boundary. A retained URL is evidence and a display link; it does not authorize a fetch. Fetch eligibility later requires a separate typed collector ceiling and SSRF/DNS/redirect policy.
 
-Search snippets, newsletter extraction, AI summaries, and source counts are discovery evidence. They cannot make a story `verified`. Direct canonical-page evidence or another separately frozen verifier is required. A `review_only` story cannot create a work-order proposal.
+Search snippets, newsletter extraction, AI summaries, and source counts are discovery evidence. They cannot make a story `verified`. Direct canonical-page evidence or another separately frozen verifier is required.
+
+**Owner-approved amendment, 2026-09-07:** A `review_only` story may create only a
+`research_brief` proposal for verification-first research. The builder adds
+`verificationFirst: true` to its digest-bound material. The original story state and
+digest remain unchanged. The ordinary task draft must explicitly identify the input
+as unverified, require primary-source claim checking and uncertainty reporting, and
+return a report for owner review. This is not automatic promotion to verified status.
+Other article actions remain unavailable on `review_only` stories. Existing task
+review, dispatch, tools/network and publication approvals remain unchanged. Preparing
+or saving a draft itself performs none of those effects. Existing verified proposals
+retain their previous representation; old strict readers cannot consume the new
+optional field and must be upgraded before exchanging verification-first proposals.
 
 Raw newsletter bodies, subscriber-specific links, credentials, tokens, prompts, and secret material do not enter the story projection. Newsletter processing later retains only minimized issue metadata, body digest, masked/canonical source evidence, and extracted story records.
 

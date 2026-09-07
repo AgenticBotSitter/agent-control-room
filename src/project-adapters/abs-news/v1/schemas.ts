@@ -114,6 +114,7 @@ export const absNewsActionTemplateSchemaV1 = z.object({
 });
 
 export const absNewsWorkOrderProposalSchemaV1 = z.object({
+  verificationFirst: z.literal(true).optional(),
   contractVersion: z.literal(ABS_NEWS_CONTRACT_V1),
   proposalId: projectWorkspaceSafeIdSchemaV1,
   tenantId: projectWorkspaceSafeIdSchemaV1,

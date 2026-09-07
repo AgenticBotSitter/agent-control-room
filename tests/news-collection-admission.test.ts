@@ -203,14 +203,17 @@ test("discovery approval and borrowed execution reuse queue claims and settlemen
         assert.equal(effect.state, mode === "success" ? "confirmed" : "ambiguous");
         if (mode === "success") {
           assert.deepEqual(fetched.slice(0, 2), [source.url, "https://feeds.example.org/?feed=rss"]);
-          // Collection is not canonical-source verification. Record the actual
-          // workflow gap rather than treating a saved article as task-ready.
+          // Collection is not verification. Only an explicit verification-first
+          // research draft is now permitted; preparation still starts no agent.
           assert.equal(stories.stories[0].verificationState, "review_only");
           const research = await assembled.handle(request(`/api/v1/projects/${encodeURIComponent(projectScope.projectId)}/news/prepare`, "POST", {
             storyId: stories.stories[0].storyId, storyDigest: stories.stories[0].storyDigest,
             action: "research_brief", goal: "Verify this report and summarize the evidence.",
           }), () => new Response("shell"));
-          assert.equal(research.status, 409);
+          assert.equal(research.status, 200);
+          const researchPreview = await research.json();
+          assert.ok(researchPreview.draft.instructions.includes("VERIFICATION-FIRST RESEARCH"));
+          assert.equal(researchPreview.saved, false); assert.equal(researchPreview.dispatch, "not_requested");
           assert.ok(fetched.length <= configuration.limits.maxAttempts);
           assert.ok(fetched.every(url => configuration.allowedOrigins.includes(new URL(url).origin + "/")));
           // A fresh refresh, not merely replay of direct-service admission, must

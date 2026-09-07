@@ -171,21 +171,19 @@ its higher-precision rounding cannot disagree with the borrowed JavaScript
 millisecond rules. A boundary regression uses nanosecond-precision input and compares
 the selected records directly against upstream freshness and sorting functions.
 
-### Open product decision: research on discovered articles
+### Approved product decision: research on discovered articles
 
-The actual borrowed-collection-to-web path saves `review_only` articles. Under the
-current CR9D contract, `WebNewsService.prepare` refuses even `research_brief` with
-HTTP 409 until separate canonical-source verification has occurred. A regression
-now makes this end-to-end limitation explicit; successful collection/startup does
-not prove the requested news-to-research workflow.
+The borrowed-collection-to-web path saves `review_only` articles. On 2026-09-07,
+the owner approved verification-first research from those articles. CR9D now permits
+only `research_brief` for that state. Other actions still return conflict. The proposal
+builder binds `verificationFirst: true` into the digest; task instructions explicitly
+require claim verification, primary-source evidence, uncertainty and owner review.
 
-Owner direction has been requested on allowing verification-first research of an
-unverified article. Recommended: keep the article unverified, pass its exact retained
-discovery evidence as untrusted research input, and hold the result for review.
-Do not enable publication, setup execution or other consequential actions by this
-choice. Until approved and implemented in the normative contract and task boundaries,
-the existing refusal remains in force. Alternatively, retain the separate verifier
-gate and build its direct-page evidence path before any proposal.
+The article stays unverified, and its exact evidence references travel with the
+ordinary proposed task. This change grants no network, tools, setup execution,
+publication or dispatch authority. Preparing/saving is not an agent run. Existing
+execution and result-review paths remain required. The private news page exposes
+“Research and verify” and limits unverified articles to the research action.
 
 ### Startup composition
 
@@ -347,7 +345,7 @@ Article action connection: the existing authenticated prepare/save flow now expo
 research, setup guide, product comparison and article draft, using the existing
 ABS action/proposal catalog and ordinary project tasks. Four-action tests save and
 replay distinct proposed tasks with retained source evidence; unverified stories
-are refused for every action. No separate upstream reminder/task system was adopted.
+allow only the owner-approved verification-first research action. No separate upstream reminder/task system was adopted.
 This proves preparation and local persistence, not an agent run/result/review or
 publication. Canonical verification of newly collected stories remains required.
 

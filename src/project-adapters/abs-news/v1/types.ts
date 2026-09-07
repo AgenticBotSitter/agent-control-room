@@ -84,6 +84,7 @@ export interface AbsNewsActionTemplateV1 {
 }
 
 export interface AbsNewsWorkOrderProposalV1 {
+  verificationFirst?: true;
   contractVersion: typeof ABS_NEWS_CONTRACT_V1;
   proposalId: string;
   tenantId: string;

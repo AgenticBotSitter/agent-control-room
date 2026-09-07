@@ -53,6 +53,22 @@ test("store rejects other scope, wrong integrity key and proposal without retain
   await assert.rejects(f.open().saveProposal({ ...forged, proposalDigest: sha256Digest(forged) }));
 });
 
+test("verification-first proposals retain their marker and reject a stripped marker against original evidence", async t => {
+  const f = await setup(); t.after(() => f.db.close());
+  const { storyDigest: _digest, ...body } = { ...f.story, verificationState: "review_only" as const }; void _digest;
+  const story = { ...body, storyDigest: sha256Digest(body) }; await f.open().saveStory(story);
+  const proposal = buildAbsNewsWorkOrderProposalV1({ ...f.scope, story, proposalId: "proposal:verify-first",
+    actionId: "research_brief", requestedTitle: "Verify this discovery", goal: "Check the claims.", requestedPlatform: "any",
+    requestedByActorDigest: sha256Digest({ actor: "fixture" }), requestedAt: story.discoveredAt });
+  assert.equal(proposal.verificationFirst, true);
+  const { verificationFirst: _flag, proposalDigest: _proposalDigest, ...stripped } = proposal; void _flag; void _proposalDigest;
+  await assert.rejects(f.open().saveProposal({ ...stripped, proposalDigest: sha256Digest(stripped) }));
+  await f.open().saveProposal(proposal);
+  assert.equal((await f.open().getProposal(proposal.proposalId))?.verificationFirst, true);
+  assert.equal((await f.open().saveProposal(proposal)).replayed, true);
+  assert.deepEqual(await f.open().getStory(story.storyId), story);
+});
+
 test("story listing exposes explicit stable pagination without dropping saved items", async t => {
   const f = await setup(); t.after(() => f.db.close());
   for (let i = 0; i < 52; i++) {

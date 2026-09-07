@@ -74,8 +74,11 @@ test("decoded feed batch survives store reopening but cannot bypass canonical-pa
   assert.equal((await open().listStories()).stories.length, 2);
   const news = new WebNewsService(f.client, { tenantId: scope.tenantId, workspaceId: scope.workspaceId }, { integrityKey: key }, () => now);
   assert.equal((await news.list(f.identity, scope.projectId)).stories.length, 2);
-  // The domain store is reusable; feed receipt is discovery, never proposal authority.
+  // Discovery can now prepare verification-first research, but not other actions.
+  const preview = await news.prepare(f.identity, scope.projectId, { storyId: result.stories[0].storyId,
+    storyDigest: result.stories[0].storyDigest, action: "research_brief", goal: "Research this story" });
+  assert.ok(preview.draft.instructions.includes("VERIFICATION-FIRST RESEARCH"));
   await assert.rejects(news.prepare(f.identity, scope.projectId, { storyId: result.stories[0].storyId,
-    storyDigest: result.stories[0].storyDigest, action: "research_brief", goal: "Research this story" }), /conflict/);
+    storyDigest: result.stories[0].storyDigest, action: "setup_guide", goal: "Research this story" }), /conflict/);
   assert.equal((await f.client.query("SELECT * FROM control_jobs")).rows.length, 0);
 });
