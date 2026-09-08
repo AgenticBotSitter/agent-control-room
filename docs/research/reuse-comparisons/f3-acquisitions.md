@@ -43,3 +43,39 @@ Cleanup completed: lsof returned no open files for the exact root; all test hand
 were terminal. Removed only `/private/tmp/control-room-f3.oeXTN1` and verified absent.
 Approximately 1.5 MiB of disposable public source/metadata was removed, recoverable
 from the pinned URLs above. No user/production data or other cohort was removed.
+
+## Mounted follow-up acquisition
+
+Precheck again: 140 GiB available. New owned root
+`/private/tmp/control-room-f3.W6AbY9`, cap 100 MiB. Reacquired only:
+ActiveSessionsBar.tsx (3,757 bytes), chatRuns.ts (5,433 bytes), sessions.js (447,250
+bytes), using the same exact public URLs and SHA256 values above. No metadata,
+license or test file redownload. Original reviewed license findings remain tied to
+the same immutable pins. Peak directory allocation 452 KiB.
+
+Attempted explicit script-disabled isolated jsdom install was rejected by auto-review
+before process creation. It created no package directories, cache or lockfile; root
+listing showed exactly the three source files. No alternate installer was attempted.
+Existing esbuild 0.28.2 (resolved through existing Vite), React and browser performed
+the test instead. No dependency tree or product package/lockfile changed.
+
+Two sequential in-memory disposable fixture database/server runs used this source.
+Both exited 0 after SIGINT with server/database-close confirmations. Sanitized final
+receipt is `f3-mounted-evidence.json`. lsof found no open files in the source root
+and no listeners on either exact fixture port. Removed only this exact acquisition
+root and verified absent; approximately 452 KiB removed, recoverable from pinned URLs.
+The sole disposable Chrome tab was explicitly closed. No user tab was inspected.
+
+## F3-MR-01 acknowledged-race recheck
+
+Precheck 140 GiB free. Owned root `/private/tmp/control-room-f3.mfCpNB`; same 100 MiB
+cap. Only the same three exact source files were reacquired from prior pinned URLs:
+ActiveSessionsBar.tsx 3,757 bytes / chatRuns.ts 5,433 bytes / sessions.js 447,250 bytes.
+SHA256 checks match the manifest above; no new version or package acquisition.
+Peak allocation 452 KiB. No installs attempted. Existing browser and dependencies only.
+
+One corrected fixture server/database run exited 0 with explicit close confirmation;
+17 checks pass, recorded in `f3-mounted-race-evidence.json`. The disposable tab was
+closed. lsof found no source-root handles or listener on the exact fixture port.
+Removed only that exact source root and verified absent; approximately 452 KiB
+deleted, recoverable from pinned public URLs. No user or production data removed.

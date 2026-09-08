@@ -4,6 +4,11 @@
 Scope A6/A7/B5/C1/C2: presentation and identity, not execution engines.
 **Partial evidence, not a completed F3 decision.** No application code changed.
 
+**Mounted follow-up now available:** [F3 mounted comparison](f3-mounted-fit.md)
+supersedes the missing-browser/protected-API statements below only for its exact
+small candidate scope. Broader conversation, mobile/CSS and native-session gates
+remain. This first-experiment record is preserved rather than rewriting history.
+
 ## Pinned candidates and exact exercised scope
 
 - Hermes Desktop `3f744975f818bbb40ed029e6b3022cd0c5ad7a24`:

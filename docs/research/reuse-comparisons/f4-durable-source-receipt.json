@@ -1,0 +1,122 @@
+[
+  {
+    "path": "amp-inbox-writer.ts",
+    "bytes": 15363,
+    "sha256": "69f705753886dccc0b3466245ad5aacf1bfa9fc2e0765082c0cd86d1286c15cc"
+  },
+  {
+    "path": "bot-tree.json",
+    "bytes": 15489,
+    "sha256": "945d69f2d4c28e71fd68e582af1c9f373604620a1eb904d2544bf06d931e83a9"
+  },
+  {
+    "path": "durable-acquisitions.json",
+    "bytes": 5306,
+    "sha256": "996788ff72ab06f40fec0bf05d27c45150703864ce75859c8421b78057a9d2c5"
+  },
+  {
+    "path": "hermes/LICENSE",
+    "bytes": 1070,
+    "sha256": "821556e6336796450ab852d375117b48a4887e71d255794fd6318d99982a5ab6"
+  },
+  {
+    "path": "hermes/apps/desktop/src/plugins/hermes-bots/LICENSE",
+    "bytes": 1070,
+    "sha256": "5f79d321c17de8ef6e5f34967dc5b484afebeeefd87180890d9741941f6b815f"
+  },
+  {
+    "path": "hermes/apps/desktop/src/plugins/hermes-bots/group-rounds.ts",
+    "bytes": 38276,
+    "sha256": "8616f7568876dd1edc49b767454b852a18f25a46828e47d6496dddec7b98237f"
+  },
+  {
+    "path": "hermes/apps/desktop/src/plugins/hermes-bots/group-turns.ts",
+    "bytes": 30774,
+    "sha256": "996cd51aba6df695928be0b3386613d9c5d0f241976c9737131de9466ee0ad7e"
+  },
+  {
+    "path": "hermes/gateway/hosted_room_discussion.py",
+    "bytes": 42197,
+    "sha256": "79f22a077c52e99bae774b16a7962c98fa9ae36123b49cc500bc7ecd651ed2ac"
+  },
+  {
+    "path": "hermes/gateway/hosted_room_driver.py",
+    "bytes": 48201,
+    "sha256": "d7eed87f266719d774171b15d9d61c38d05123aa941fac6be763f47d223dbdbf"
+  },
+  {
+    "path": "hermes/gateway/hosted_room_execution_policy.py",
+    "bytes": 5747,
+    "sha256": "cd9b83906365433cbe358b54015da01f9c4cc3695788cb3d78a59ec9b68df1f3"
+  },
+  {
+    "path": "hermes/gateway/hosted_room_links.py",
+    "bytes": 6685,
+    "sha256": "5a72f15826f1749aaad4915ec150193dd5ea25273b741bde6646d341fc4e1899"
+  },
+  {
+    "path": "hermes/gateway/hosted_room_peer.py",
+    "bytes": 25807,
+    "sha256": "a319d3d41fb5621fc7dd0ea2ef317d91b207844e857a800a3686bfbe9a864802"
+  },
+  {
+    "path": "hermes/gateway/hosted_rooms.py",
+    "bytes": 63787,
+    "sha256": "54180f6c43c01c88f1c0ae3b6e027a6e5b36ff118846873d06f13095385a2222"
+  },
+  {
+    "path": "hermes/gateway/hosted_rooms_common.py",
+    "bytes": 7063,
+    "sha256": "b50b75a091700368f844eaa3a27a1a0890c2e3f97df2a206a0437bcbdd1420c4"
+  },
+  {
+    "path": "hermes/hermes_cli/sqlite_runtime.py",
+    "bytes": 3362,
+    "sha256": "8ca58b7997fa8afd097d92198c0e6040277f4b03ef87432a76c2358fd881a5cc"
+  },
+  {
+    "path": "hermes/hermes_state_wal.py",
+    "bytes": 27916,
+    "sha256": "ff39521324997b89db2213262a6d3f9d51d482074595b277a5518eba4e136da3"
+  },
+  {
+    "path": "hermes/tests/gateway/test_hosted_room_discussion.py",
+    "bytes": 22099,
+    "sha256": "4a2e1e809e618f7b8bf7016148484db82b67f4c7231d270055077ab34a0c4844"
+  },
+  {
+    "path": "hermes/tests/gateway/test_hosted_room_driver.py",
+    "bytes": 36814,
+    "sha256": "4c7bcf06dd4f6c2a994e14bfb22fb364b01949c6e7e7a721b3c312146093ac40"
+  },
+  {
+    "path": "hermes/tests/gateway/test_hosted_room_execution_policy.py",
+    "bytes": 8061,
+    "sha256": "3fc8e3abbfbbb8f4c8f9e3a88e545931ecf7189959ef73f6b26b20e9e1c1de7d"
+  },
+  {
+    "path": "hermes-tree.json",
+    "bytes": 4239425,
+    "sha256": "6f48f5063784fd1b04dbc64bbf748d64fa2da6d10c27954509213e99cb1236a5"
+  },
+  {
+    "path": "maestro/LICENSE",
+    "bytes": 1080,
+    "sha256": "bac517c0e2e7286936e2b774e3bbf11b5bed539a709b6e0660c6141f124bc77d"
+  },
+  {
+    "path": "maestro/lib/amp-inbox-writer.ts",
+    "bytes": 15363,
+    "sha256": "69f705753886dccc0b3466245ad5aacf1bfa9fc2e0765082c0cd86d1286c15cc"
+  },
+  {
+    "path": "maestro/lib/message-delivery.ts",
+    "bytes": 10094,
+    "sha256": "8cca43c8dee7d7427d318173b98c906cb6762d6b50375d6170fb6b3435b023a7"
+  },
+  {
+    "path": "maestro/lib/types/amp.ts",
+    "bytes": 16619,
+    "sha256": "4dea6bedebebd86e5b946746d0b4c89dead91c4a5ca857d7e9ebfd4cd5e25faf"
+  }
+]

@@ -5,6 +5,11 @@ across remaining outcomes, followed by an actionable implementation plan.
 This document prepares that work; it does not claim the comparisons are complete.
 The old expired overnight goal is not resumed by drafting these prompts.
 
+Execution checkpoint: the owner subsequently activated Goal prompt 1. See
+[current progress](REUSE_COMPARISON_PROGRESS.md) and the
+[candidate index](research/reuse-comparison-index.json). Several real-code and
+mounted-fit experiments now exist; the overall comparison remains incomplete.
+
 ## Direct answer: has every option been properly evaluated?
 
 No. The [26-area map](REMAINING_WORK_REUSE_MAP.md) is a coverage index and shortlist,
@@ -114,7 +119,8 @@ Each candidate-responsibility pair must record:
 
 Store machine-readable inventory at `docs/research/reuse-comparison-index.json`
 and human-readable dossiers under `docs/research/reuse-comparisons/` when the goal runs.
-These are required future outputs, not files claimed to exist today.
+These were required outputs at program creation; their current existence and
+evidence status are tracked by the progress report, not implied complete here.
 
 ## Decision rules
 

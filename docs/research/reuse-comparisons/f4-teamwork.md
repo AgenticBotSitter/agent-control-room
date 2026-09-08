@@ -4,6 +4,10 @@
 selection**: actual pure modules were exercised, but decisive workspace and AMP
 end-to-end fit comparisons remain. No application code changed.
 
+Follow-up: `f4-durable-comparison.md` now exercises actual Maestro durable inbox and
+Hermes hosted-room driver/planner/grants. Its13+6 scoped checks supersede the room
+discovery-only row below; E3 mapping and AO backend remain open.
+
 ## Immutable candidates and actual seams
 
 | Candidate | Pin and inspected implementation | Evidence / intended use |

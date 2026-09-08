@@ -1,0 +1,86 @@
+{
+  "state": "passed",
+  "checks": [
+    "desktop: real protected catalog project labels rendered",
+    "webui: real protected catalog project labels rendered",
+    "baseline: real protected catalog project labels rendered",
+    "composite adapter preserves two machines sharing native session ID",
+    "Desktop mounted close hides view without stopping synthetic work",
+    "WebUI actual DOM action close hides view without stopping synthetic work",
+    "offline clears candidate project presentation instead of reporting completion",
+    "reconnect restores views without duplicate session records",
+    "positively acknowledged exact held pre-expiry protected response: 200 and two projects",
+    "exact subsequent protected request rejected with 401 before successful held response release",
+    "expired synthetic Access assertion clears all mounted private labels",
+    "expired authentication clears adapter session identity and selection caches",
+    "server released exact successful held request only after exact 401 denial",
+    "late pre-expiry protected response cannot resurrect project labels",
+    "new valid synthetic assertion restores authorized labels",
+    "negative: unmodified Desktop role-tab is not keyboard-focusable",
+    "WebUI actual action button accepts browser focus"
+  ],
+  "count": 17,
+  "scope": "actual browser-mounted selected candidates through real Control Room browser client, HTTP auth handler, SQL project service; synthetic identity/run data; no live agents",
+  "remaining": [
+    "real terminal/session registration",
+    "upstream CSS/mobile/keyboard-complete adaptations",
+    "full conversation caches",
+    "complete UI reload persistence"
+  ],
+  "server": {
+    "reads": 7,
+    "controlJobs": 0,
+    "syntheticProjects": 2,
+    "realProviderCalls": 0,
+    "bundleBytes": 1637398,
+    "readHistory": [
+      {
+        "requestId": 1,
+        "status": 200,
+        "projectCount": 2
+      },
+      {
+        "requestId": 2,
+        "status": 503,
+        "projectCount": 0
+      },
+      {
+        "requestId": 3,
+        "status": 200,
+        "projectCount": 2
+      },
+      {
+        "requestId": 4,
+        "status": 200,
+        "projectCount": 2
+      },
+      {
+        "requestId": 5,
+        "status": 401,
+        "projectCount": 0
+      },
+      {
+        "requestId": 6,
+        "status": 200,
+        "projectCount": 2
+      },
+      {
+        "requestId": 7,
+        "status": 401,
+        "projectCount": 0
+      }
+    ],
+    "held": {
+      "requestId": 4,
+      "status": 200,
+      "projectCount": 2
+    },
+    "released": {
+      "requestId": 4,
+      "status": 200,
+      "projectCount": 2,
+      "afterRequestId": 5,
+      "afterStatus": 401
+    }
+  }
+}

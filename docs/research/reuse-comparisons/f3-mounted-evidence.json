@@ -1,0 +1,34 @@
+{
+  "state": "passed",
+  "checks": [
+    "desktop: real protected catalog project labels rendered",
+    "webui: real protected catalog project labels rendered",
+    "baseline: real protected catalog project labels rendered",
+    "composite adapter preserves two machines sharing native session ID",
+    "Desktop mounted close hides view without stopping synthetic work",
+    "WebUI actual DOM action close hides view without stopping synthetic work",
+    "offline clears candidate project presentation instead of reporting completion",
+    "reconnect restores views without duplicate session records",
+    "expired synthetic Access assertion clears all mounted private labels",
+    "expired authentication clears adapter session identity and selection caches",
+    "late pre-expiry protected response cannot resurrect project labels",
+    "new valid synthetic assertion restores authorized labels",
+    "negative: unmodified Desktop role-tab is not keyboard-focusable",
+    "WebUI actual action button accepts browser focus"
+  ],
+  "count": 14,
+  "scope": "actual browser-mounted selected candidates through real Control Room browser client, HTTP auth handler, SQL project service; synthetic identity/run data; no live agents",
+  "remaining": [
+    "real terminal/session registration",
+    "upstream CSS/mobile/keyboard-complete adaptations",
+    "full conversation caches",
+    "complete UI reload persistence"
+  ],
+  "server": {
+    "reads": 7,
+    "controlJobs": 0,
+    "syntheticProjects": 2,
+    "realProviderCalls": 0,
+    "bundleBytes": 1635685
+  }
+}

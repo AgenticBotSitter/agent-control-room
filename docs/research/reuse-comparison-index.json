@@ -226,26 +226,51 @@
       "evidence": "actual DBOS fixture failures; native PG setup permission pending; Hatchet source partial"
     },
     {
+      "id": "F2",
+      "dossier": "reuse-comparisons/f2-codex-interfaces.md",
+      "evidence": "actual published TS parser crosses current decoder/projector; Python method subset exercised; full transport, Hermes lifecycle/file and native gates remain"
+    },
+    {
       "id": "F3",
-      "dossier": "reuse-comparisons/f3-ui-fit.md",
-      "evidence": "selected actual code exercised; mounted E3 remains"
+      "dossier": "reuse-comparisons/f3-mounted-fit.md",
+      "evidence": "17 browser checks after correcting independent review's delayed-response ordering finding; selected components cross protected project API; full conversation, CSS/mobile and native-session coverage remains"
     },
     {
       "id": "F4",
-      "dossier": "reuse-comparisons/f4-teamwork.md",
-      "evidence": "selected modules exercised; delivery/backend E3 remains"
+      "dossier": "reuse-comparisons/f4-durable-comparison.md",
+      "evidence": "actual Hermes durable/planner 13 checks and Maestro writer 6 checks; policy/round semantics differ; mapped planner and worktree E3 remain"
+    },
+    {
+      "id": "F5",
+      "dossier": "reuse-comparisons/f5-checkpoint-comparison.md",
+      "evidence": "pinned etcd/OpenBao code and tests inspected; materially different delete permissions; shared real-service comparison remains"
+    },
+    {
+      "id": "F6",
+      "dossier": "reuse-comparisons/f6-supervisor-fit.md",
+      "evidence": "WinSW source and OS supervisor contracts inspected; four current static checks passed; native process/update fit remains unqualified"
+    },
+    {
+      "id": "F7",
+      "dossier": null,
+      "evidence": "prior integrated Control Center evidence exists; comparative family closure not yet reconciled"
     },
     {
       "id": "F8",
       "dossier": "reuse-comparisons/f8-operations.md",
       "evidence": "actual Kuma conditions exercised; probe/metrics/restore E3 remains"
+    },
+    {
+      "id": "F9",
+      "dossier": null,
+      "evidence": "candidate notices and partial inventories exist; exact selected shipping closure remains"
     }
   ],
   "next": [
     "Authorize or replace package-local PostgreSQL hydration step; continue unaffected comparisons meanwhile",
-    "F3 mounted protected-API comparison",
-    "F4 actual delivery/worktree backend comparison",
-    "F2/F5/F6/F7/F9 code-and-fit evaluation",
+    "F3 full conversation/accessibility fit beyond the accepted narrow mounted experiment",
+    "F4 mapped pure planner and actual delivery/worktree backend comparison",
+    "F2 bounded transport and Hermes interfaces; F5 real service; F6 lifecycle; F7 workflow; F9 license closure",
     "Independent review and implementation plan only after decisive comparisons"
   ]
 }
