@@ -4,6 +4,31 @@
 all-outcomes implementation plan or permission to implement or deploy candidates.
 All26 outcome-level gates remain tracked separately in the comparison index.
 
+## DR-05 — synchronous maintained JWT verification
+
+Select jsonwebtoken9.0.3 behind the current Node22 synchronous Access verifier,
+with narrow adaptation for existing canonical bytes, trusted keys, claims, session
+limits and frozen identity. Actual policy/project/dispatch/bootstrap/cache/rehearsal
+comparisons support both candidates; jsonwebtoken avoids changing six consuming
+files to async. jose6.2.12 remains viable and has fewer runtime dependencies, but its
+extra awaited/precommit/freshness migration is not justified for this current server.
+Retaining current Node crypto is compatible but retains standard JWT maintenance
+here. Do not keep two token libraries or change login provider.
+
+Scope: verifier module plus manifest/lock/notices, zero caller-signature edits,
+no DB migration/service/upstream fork. Remove standard decode/signature work, not
+application authority, key-cache policy or identity/digest semantics. TypeScript
+interop, any separately required maintained typings, actual shipped import and
+complete dependency notices remain implementation/release gates. Moderate overall
+confidence; no runtime benchmark winner or complete security clearance claimed.
+
+Independent challenge accepted with explicit confidence and overlapping-score
+qualifications. Reopen for changed runtime/algorithm, material upstream maintenance,
+measured dependency problems or broader approved async migration. Do not repeat
+unchanged narrow experiments merely because owner/live qualification is still open.
+Evidence, exact removal boundary, rubric, alternatives and review:
+[selection](f8-jwt-selection.md), [independent review](f8-jwt-selection-review.md).
+
 ## DR-01 — keep fixed-panel participant selection
 
 Scope: C1's existing1–3round, up-to6participant fixed-panel ordering only.

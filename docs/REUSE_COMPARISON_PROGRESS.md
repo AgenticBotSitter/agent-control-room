@@ -4,6 +4,13 @@
 
 ## Direct answer
 
+**DR-05 closes the narrow JWT-library selection:** adapt jsonwebtoken9.0.3 behind
+the existing synchronous verifier, retaining CR policy and Cloudflare Access. Both
+candidates passed mapped local cases; the choice avoids six-file async migration,
+not a claim that jose is unsafe. [Selection/rubric](research/reuse-comparisons/f8-jwt-selection.md)
+and independent challenge record moderate confidence, typing/notice/build gates
+and reopen conditions. Actual owner login remains separate; no application change.
+
 Both real JWT candidates now also pass the selected cache/rehearsal matrices:
 23 scenarios each,46 total, including actual token verification from cached trust.
 [Actual preflight report](research/reuse-comparisons/f8-actual-preflight-fit.md) and

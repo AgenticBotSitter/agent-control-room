@@ -265,7 +265,7 @@
       "id": "F8",
       "dossier": "reuse-comparisons/f8-http-fit.md",
       "additionalDossiers": ["reuse-comparisons/f8-operations.md", "reuse-comparisons/f8-jwt-fit.md", "reuse-comparisons/f8-jwt-http-fit.md"],
-      "evidence": "11 actualKuma HTTP cases;69 JWT policy checks,10minimaloptions observations,50actual HTTP scenarios; consolidatedJWT removal/allcaller fit plus daemon/alerts/metrics/restore remain"
+      "evidence": "DR-05 selects jsonwebtoken9.0.3 for synchronous verifier after consolidated policy/project/bootstrap/dispatch/cache/rehearsal comparison and independent challenge; typed import, full shipping notices/build and owner acceptance remain implementation gates. Operations remains incomplete:11 actualKuma HTTP cases; daemon/alerts/metrics/current-schema restore still open."
     },
     {
       "id": "F9",

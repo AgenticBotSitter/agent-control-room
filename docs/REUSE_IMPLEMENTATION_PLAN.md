@@ -29,6 +29,7 @@ Preserve canonical project/job/attempt/review IDs and private configuration.
 | DR-02 | Attributed Control Center collection modules; rss-parser 3.13.0 and fast-xml-parser 5.11.0 at their existing boundaries | A second full collector or custom compatibility parser without a named uncovered need | Repeat collection, archive and provenance through current task APIs; real approved feeds later |
 | DR-03 | pnpm 11.19.0 prepared runtime identity graph | New generic dependency resolver; npm CLI graph assumptions on this pnpm layout | Frozen clean preparation, exact platform graph and build binding |
 | DR-04 | CycloneDX library 10.2.0 public LicenseEvidenceGatherer, build-time only, plus four explicit retained-text exceptions | Whole CycloneDX CLI graph reader; single-text checker as sole original-text collector | Snapshot-safe bounded reads; complete built/copied/vendor/asset attribution, including collector notices |
+| DR-05 | jsonwebtoken9.0.3 behind existing synchronous verifier and retained CR policy | Async migration solely to adopt jose; a new login provider; dual token libraries | Actual typed package import, identity/caller regressions, full notices/build and owner login separately |
 
 These decisions currently delete zero production lines. They avoid unnecessary new
 infrastructure; they are not evidence that every existing custom component is needed.
@@ -44,7 +45,7 @@ added after selection; unknown cost is not zero.
 | Outcome | Existing base and proposed integration boundary | Decision still needed | Finish evidence and migration / rollback constraint |
 | --- | --- | --- | --- |
 | A1 Website/database | Compiled launcher, operator config and migration/role checks; PostgreSQL plus host supervisor | RC6/RC9 persistence and recovery fit | Dedicated DB/roles, restart and restored restricted-login checks. Preserve other apps; back up before migrations; no unproved down-migration |
-| A2 Owner login | Access verification and bootstrap | RC8 current verifier vs jose vs jsonwebtoken | Verified owner subject, wrong-owner denial, expiry/logout/origin; migration must preserve awaited freshness and fail closed, never enable bypass as rollback |
+| A2 Owner login | Access verification and bootstrap; DR-05 selects jsonwebtoken for standard token processing | Implement selected typed import and retained-policy parity; actual owner acceptance still open | Verified owner subject, wrong-owner denial, expiry/logout/origin; preserve synchronous verifier and existing downstream freshness, never enable bypass as rollback |
 | A3 Execution approval | Canonical packets, paired issuer and review controller; tested ssh2 signing seam | RC5 custody/interface selection | Exact consent/key/packet binding and uncertainty hold; real key and attended consent are separate gates; preserve pending packet identities |
 | A4 Rollback integrity | Async completion checkpoint interface | RC5 etcd vs OpenBao | CAS contention/lost response/restart/restore then independent target custody. Preserve checkpoint history and never silently reset a high-water mark |
 | A5 Task/result/revision | Current task/native/result/review services and synthetic joined journey | RC1/RC2 complete engine/client mapping | One real authorized result and reviewed revision, retained after reconnect. Preserve attempt IDs and journals; uncertainty forbids automatic repeat |
@@ -137,7 +138,7 @@ explicit minimum single-host B4/B6/B8/B9 prerequisites in the first-task batch.
 This is draft correction, not final acceptance of unresolved comparisons.
 
 - All 26 original outcome IDs are mapped above; none is declared fully accepted.
-- Four settled narrow decisions are separated from open responsibility decisions.
+- Five settled narrow decisions are separated from open responsibility decisions.
 - Exact source/change/deletion lists, comparative costs/rubric, final independent
   review and the final implementation prompt remain unfinished.
 - Production E4 gates are not substitutes for local RC experiments. Conversely,
