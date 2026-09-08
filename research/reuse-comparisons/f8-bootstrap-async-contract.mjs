@@ -9,6 +9,10 @@ import {createAccessVerifier} from '../../src/web/v1/access-verifier.ts';
 import {sha256Digest, assertNoSecretMaterial} from '../../src/security/index.ts';
 import {localId, digestSchema} from '../../src/harness/v1/native-run-identifiers.ts';
 import {validatePrivatePostgresConfiguration} from '../../src/web/v1/private-postgres.ts';
+import {candidateVerifier} from './f8-candidate-verifiers.mjs';
+
+const candidateKind=process.argv[3];
+const verifyFactory=process.argv[2]?await candidateVerifier(process.argv[2],candidateKind):createAccessVerifier;
 
 const local=createRequire(import.meta.url),hash=s=>createHash('sha256').update(s).digest('hex');
 const pins={'private-owner-bootstrap':'a562fe42b7010de891ac411ac782eb93543259184befb2b150d4743a1a024e39','access-verifier':'b51bc1fcde7c6c1790bd46a6ed9f3544aa808456c7b966b51d232038c2472426'};
@@ -30,9 +34,9 @@ function fixture(kind,{onVerify=async()=>{},onAfterWork=()=>{}}={}){
  const clock=()=>current;
  const state={advance:()=>{current=now+10000;},cancel:()=>abort.abort(),counts:()=>({verifications,transactions,writes,commits,opens,closes})};
  const factory=t=>{
-  const verify=createAccessVerifier(t);
+  const verify=verifyFactory(t);
   if(kind==='sync')return(req,time)=>{verifications++;return verify(req,time);};
-  return async(req,time)=>{const identity=verify(req,time);verifications++;await onVerify(verifications,state);return identity;};
+  return async(req,time)=>{const identity=await verify(req,time);verifications++;await onVerify(verifications,state);return identity;};
  };
  let source=original;
  if(kind!=='sync'&&kind!=='unadapted'){
@@ -78,7 +82,7 @@ function fixture(kind,{onVerify=async()=>{},onAfterWork=()=>{}}={}){
  return{...state,bridge,signal:abort.signal,command:subject=>command({configuration:config,trust,database:{host:'127.0.0.1',port:5432,database:'synthetic',username:'synthetic',password:'synthetic-not-used',majorVersion:17},assertion:token(subject)},abort.signal)};
 }
 const results=[];
-for(const kind of ['sync','await-only','fresh']){
+for(const kind of (candidateKind==='jose'?['await-only','fresh']:['sync','await-only','fresh'])){
  for(const mode of ['valid','wrong-owner','expired','cancelled','precommit-expiry','precommit-cancel']){
   const f=fixture(kind,{onAfterWork:s=>{if(mode==='precommit-expiry')s.advance();if(mode==='precommit-cancel')s.cancel();}});
   if(mode==='expired')f.advance();if(mode==='cancelled')f.cancel();
@@ -107,7 +111,7 @@ for(const kind of ['await-only','fresh']){
 }
 const unadapted=fixture('unadapted');await assert.rejects(unadapted.bridge().bootstrap(token()),/private_owner_bootstrap_failed/);
 assert.equal(unadapted.counts().transactions,0);results.push({kind:'unadapted',mode:'valid-identity-promise-refused',...unadapted.counts()});
-for(const kind of ['sync','fresh']){
+for(const kind of (candidateKind==='jose'?['fresh']:['sync','fresh'])){
  const f=fixture(kind);assert.equal((await f.command()).databaseClosed,true);
  assert.equal(f.counts().opens,1);assert.equal(f.counts().closes,1);assert.equal(f.counts().commits,1);
  results.push({kind,mode:'valid-command-control',...f.counts()});
@@ -124,4 +128,4 @@ const discarded=fixture('discard-precommit',{onVerify:async n=>{if(n===4)await h
 await discarded.bridge().bootstrap(token());assert.equal(discarded.counts().commits,1);
 results.push({kind:'discard-precommit',mode:'commits-with-final-verification-held',negativeControl:true,...discarded.counts()});
 release();await new Promise(r=>setImmediate(r));
-console.log(JSON.stringify({scope:'Actual hash-pinned owner-bootstrap control flow; actual Node verifier with synthetic signed JWT and optional async delay. SecurityStore and transactions are counters, not real persistence. Neither jose nor jsonwebtoken executed in this experiment.',pins,results,count:results.length,resources:{maxRssKiB:process.resourceUsage().maxRSS,downloads:0,connections:0,appWrites:0}},null,2));
+console.log(JSON.stringify({scope:`Actual hash-pinned owner-bootstrap control flow; ${candidateKind??'Node crypto'} verifier with synthetic signed JWT and optional async delay. SecurityStore and transactions are counters, not real persistence. ${candidateKind?'Actual pinned library executes within CR policy adapter.':'Neither jose nor jsonwebtoken executed in this experiment.'}`,candidate:candidateKind??'current',pins,results,count:results.length,resources:{maxRssKiB:process.resourceUsage().maxRSS,downloads:0,connections:0,appWrites:0}},null,2));

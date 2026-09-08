@@ -1,0 +1,289 @@
+{
+  "initialFailure": {
+    "exitCode": 1,
+    "reason": "IdeaLab registry constructor required transaction method on fake database.",
+    "correction": "Added required fail-on-call fake transaction method; not a real database."
+  },
+  "captureNote": "Successful output was prefixed by Node SQLite experimental warning from imported modules; first JSON.parse failed on warning, then parsed the same retained terminal output from its JSON boundary. No test rerun.",
+  "warning": "ExperimentalWarning: SQLite is an experimental feature and might change at any time",
+  "exitCode": 0,
+  "wallTimeSeconds": 0.93073575,
+  "output": {
+    "scope": "Actual task/news/private-process plus key-cache and HTTP error modules; candidate verifier adaptations; synthetic services and fake pool; no DB, browser, listener or live identity. Other imported current modules execute but are not individually hash pinned.",
+    "pins": {
+      "task-http": "9874644900e425edd03aeebe9bda0bc7d09a233571b1ca9a823ce9e73e96c6e0",
+      "news-collection-http": "63ff1965f478b28f7b52e48ac93ba859184d33d420c69b2db5d3e38c5399e4ad",
+      "http-common": "3d8372bf7b297d23e56a3578f7a979248acaf50f21c349ebd02de5292f4801a6",
+      "private-process": "79b5261c991634e61f6c89a15fe94e759606448b619b28c838adf6929a9b4aea",
+      "access-key-cache": "957522108a0c0f8b0bb6d9e363dbd071e16a5a7159133e84a54b8ae7d9fbf0e9"
+    },
+    "results": [
+      {
+        "kind": "jsonwebtoken",
+        "target": "task",
+        "mode": "valid",
+        "status": 200,
+        "serviceCalls": 1
+      },
+      {
+        "kind": "jsonwebtoken",
+        "target": "task",
+        "mode": "missing",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jsonwebtoken",
+        "target": "task",
+        "mode": "signature",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jsonwebtoken",
+        "target": "task",
+        "mode": "audience",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jsonwebtoken",
+        "target": "task",
+        "mode": "expired",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jsonwebtoken",
+        "target": "news",
+        "mode": "valid",
+        "status": 201,
+        "serviceCalls": 1
+      },
+      {
+        "kind": "jsonwebtoken",
+        "target": "news",
+        "mode": "missing",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jsonwebtoken",
+        "target": "news",
+        "mode": "signature",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jsonwebtoken",
+        "target": "news",
+        "mode": "audience",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jsonwebtoken",
+        "target": "news",
+        "mode": "expired",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jsonwebtoken",
+        "target": "private",
+        "mode": "valid",
+        "status": 200,
+        "serviceCalls": 1
+      },
+      {
+        "kind": "jsonwebtoken",
+        "target": "private",
+        "mode": "missing",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jsonwebtoken",
+        "target": "private",
+        "mode": "signature",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jsonwebtoken",
+        "target": "private",
+        "mode": "audience",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jsonwebtoken",
+        "target": "private",
+        "mode": "expired",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jose",
+        "target": "task",
+        "mode": "valid",
+        "status": 200,
+        "serviceCalls": 1
+      },
+      {
+        "kind": "jose",
+        "target": "task",
+        "mode": "missing",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jose",
+        "target": "task",
+        "mode": "signature",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jose",
+        "target": "task",
+        "mode": "audience",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jose",
+        "target": "task",
+        "mode": "expired",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jose",
+        "target": "news",
+        "mode": "valid",
+        "status": 201,
+        "serviceCalls": 1
+      },
+      {
+        "kind": "jose",
+        "target": "news",
+        "mode": "missing",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jose",
+        "target": "news",
+        "mode": "signature",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jose",
+        "target": "news",
+        "mode": "audience",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jose",
+        "target": "news",
+        "mode": "expired",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jose",
+        "target": "private",
+        "mode": "valid",
+        "status": 200,
+        "serviceCalls": 1
+      },
+      {
+        "kind": "jose",
+        "target": "private",
+        "mode": "missing",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jose",
+        "target": "private",
+        "mode": "signature",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jose",
+        "target": "private",
+        "mode": "audience",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jose",
+        "target": "private",
+        "mode": "expired",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jose",
+        "target": "task",
+        "mode": "held-valid",
+        "status": 200,
+        "calls": 1,
+        "dbCalls": 0,
+        "closes": 0
+      },
+      {
+        "kind": "jose",
+        "target": "task",
+        "mode": "held-signature",
+        "status": 401,
+        "calls": 0,
+        "dbCalls": 0,
+        "closes": 0
+      },
+      {
+        "kind": "jose",
+        "target": "news",
+        "mode": "held-valid",
+        "status": 201,
+        "calls": 1,
+        "dbCalls": 0,
+        "closes": 0
+      },
+      {
+        "kind": "jose",
+        "target": "news",
+        "mode": "held-signature",
+        "status": 401,
+        "calls": 0,
+        "dbCalls": 0,
+        "closes": 0
+      },
+      {
+        "kind": "jose",
+        "target": "private",
+        "mode": "held-valid",
+        "status": 200,
+        "calls": 1,
+        "dbCalls": 0,
+        "closes": 1
+      },
+      {
+        "kind": "jose",
+        "target": "private",
+        "mode": "held-signature",
+        "status": 401,
+        "calls": 0,
+        "dbCalls": 0,
+        "closes": 1
+      }
+    ],
+    "count": 36,
+    "maxRssKiB": 350624
+  }
+}

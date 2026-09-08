@@ -1,0 +1,258 @@
+{
+  "exitCode": 0,
+  "wallTimeSeconds": 0.487875166,
+  "output": {
+    "scope": "Actual hash-pinned owner-bootstrap control flow; jose verifier with synthetic signed JWT and optional async delay. SecurityStore and transactions are counters, not real persistence. Actual pinned library executes within CR policy adapter.",
+    "candidate": "jose",
+    "pins": {
+      "private-owner-bootstrap": "a562fe42b7010de891ac411ac782eb93543259184befb2b150d4743a1a024e39",
+      "access-verifier": "b51bc1fcde7c6c1790bd46a6ed9f3544aa808456c7b966b51d232038c2472426"
+    },
+    "results": [
+      {
+        "kind": "await-only",
+        "mode": "valid",
+        "verifications": 4,
+        "transactions": 1,
+        "writes": 1,
+        "commits": 1,
+        "opens": 0,
+        "closes": 0
+      },
+      {
+        "kind": "await-only",
+        "mode": "wrong-owner",
+        "verifications": 1,
+        "transactions": 0,
+        "writes": 0,
+        "commits": 0,
+        "opens": 0,
+        "closes": 0
+      },
+      {
+        "kind": "await-only",
+        "mode": "expired",
+        "verifications": 0,
+        "transactions": 0,
+        "writes": 0,
+        "commits": 0,
+        "opens": 0,
+        "closes": 0
+      },
+      {
+        "kind": "await-only",
+        "mode": "cancelled",
+        "verifications": 0,
+        "transactions": 0,
+        "writes": 0,
+        "commits": 0,
+        "opens": 0,
+        "closes": 0
+      },
+      {
+        "kind": "await-only",
+        "mode": "precommit-expiry",
+        "verifications": 3,
+        "transactions": 1,
+        "writes": 1,
+        "commits": 0,
+        "opens": 0,
+        "closes": 0
+      },
+      {
+        "kind": "await-only",
+        "mode": "precommit-cancel",
+        "verifications": 3,
+        "transactions": 1,
+        "writes": 1,
+        "commits": 0,
+        "opens": 0,
+        "closes": 0
+      },
+      {
+        "kind": "fresh",
+        "mode": "valid",
+        "verifications": 4,
+        "transactions": 1,
+        "writes": 1,
+        "commits": 1,
+        "opens": 0,
+        "closes": 0
+      },
+      {
+        "kind": "fresh",
+        "mode": "wrong-owner",
+        "verifications": 1,
+        "transactions": 0,
+        "writes": 0,
+        "commits": 0,
+        "opens": 0,
+        "closes": 0
+      },
+      {
+        "kind": "fresh",
+        "mode": "expired",
+        "verifications": 0,
+        "transactions": 0,
+        "writes": 0,
+        "commits": 0,
+        "opens": 0,
+        "closes": 0
+      },
+      {
+        "kind": "fresh",
+        "mode": "cancelled",
+        "verifications": 0,
+        "transactions": 0,
+        "writes": 0,
+        "commits": 0,
+        "opens": 0,
+        "closes": 0
+      },
+      {
+        "kind": "fresh",
+        "mode": "precommit-expiry",
+        "verifications": 3,
+        "transactions": 1,
+        "writes": 1,
+        "commits": 0,
+        "opens": 0,
+        "closes": 0
+      },
+      {
+        "kind": "fresh",
+        "mode": "precommit-cancel",
+        "verifications": 3,
+        "transactions": 1,
+        "writes": 1,
+        "commits": 0,
+        "opens": 0,
+        "closes": 0
+      },
+      {
+        "kind": "await-only",
+        "mode": "expiry-during-verification-1",
+        "negativeControl": false,
+        "verifications": 1,
+        "transactions": 1,
+        "writes": 0,
+        "commits": 0,
+        "opens": 0,
+        "closes": 0
+      },
+      {
+        "kind": "await-only",
+        "mode": "expiry-during-verification-4",
+        "negativeControl": true,
+        "verifications": 4,
+        "transactions": 1,
+        "writes": 1,
+        "commits": 1,
+        "opens": 0,
+        "closes": 0
+      },
+      {
+        "kind": "fresh",
+        "mode": "expiry-during-verification-1",
+        "negativeControl": false,
+        "verifications": 1,
+        "transactions": 0,
+        "writes": 0,
+        "commits": 0,
+        "opens": 0,
+        "closes": 0
+      },
+      {
+        "kind": "fresh",
+        "mode": "expiry-during-verification-4",
+        "negativeControl": false,
+        "verifications": 4,
+        "transactions": 1,
+        "writes": 1,
+        "commits": 0,
+        "opens": 0,
+        "closes": 0
+      },
+      {
+        "kind": "await-only",
+        "mode": "expiry-during-command-preflight",
+        "verifications": 1,
+        "transactions": 0,
+        "writes": 0,
+        "commits": 0,
+        "opens": 1,
+        "closes": 1
+      },
+      {
+        "kind": "fresh",
+        "mode": "expiry-during-command-preflight",
+        "verifications": 1,
+        "transactions": 0,
+        "writes": 0,
+        "commits": 0,
+        "opens": 0,
+        "closes": 0
+      },
+      {
+        "kind": "unadapted",
+        "mode": "valid-identity-promise-refused",
+        "verifications": 0,
+        "transactions": 0,
+        "writes": 0,
+        "commits": 0,
+        "opens": 0,
+        "closes": 0
+      },
+      {
+        "kind": "fresh",
+        "mode": "valid-command-control",
+        "verifications": 5,
+        "transactions": 1,
+        "writes": 1,
+        "commits": 1,
+        "opens": 1,
+        "closes": 1
+      },
+      {
+        "kind": "await-only",
+        "mode": "cancel-during-final-verification",
+        "negativeControl": true,
+        "verifications": 4,
+        "transactions": 1,
+        "writes": 1,
+        "commits": 1,
+        "opens": 0,
+        "closes": 0
+      },
+      {
+        "kind": "fresh",
+        "mode": "cancel-during-final-verification",
+        "negativeControl": false,
+        "verifications": 4,
+        "transactions": 1,
+        "writes": 1,
+        "commits": 0,
+        "opens": 0,
+        "closes": 0
+      },
+      {
+        "kind": "discard-precommit",
+        "mode": "commits-with-final-verification-held",
+        "negativeControl": true,
+        "verifications": 3,
+        "transactions": 1,
+        "writes": 1,
+        "commits": 1,
+        "opens": 0,
+        "closes": 0
+      }
+    ],
+    "count": 23,
+    "resources": {
+      "maxRssKiB": 247712,
+      "downloads": 0,
+      "connections": 0,
+      "appWrites": 0
+    }
+  }
+}

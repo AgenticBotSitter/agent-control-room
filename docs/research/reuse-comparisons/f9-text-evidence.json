@@ -1,0 +1,40 @@
+{
+  "exitCode": 0,
+  "wallTimeSeconds": 0.00000275,
+  "actualStdout": {
+    "library": "@cyclonedx/cyclonedx-library@10.2.0",
+    "plugin": "rollup-plugin-license@3.7.1",
+    "cases": {
+      "multipleOriginalTexts": [
+        {
+          "file": "LICENSE-APACHE",
+          "sha256": "8f91d833abe84004bc648ab19af17adf1e1b6fd544045d19380aae9ea0221602",
+          "bytes": 26
+        },
+        {
+          "file": "LICENSE-MIT",
+          "sha256": "804abdcdef426133279e6a26874a8a03ad4d0e2e6813e2ea44b4177b55014e68",
+          "bytes": 26
+        },
+        {
+          "file": "NOTICE",
+          "sha256": "da7432785a1eda180cb3b982aa58e775a14c7dd6b7033e4b2b7a0b52aec796fd",
+          "bytes": 17
+        }
+      ],
+      "pluginSingleText": [
+        {
+          "name": "synthetic-package",
+          "licenseText": "Synthetic Apache original\n",
+          "noticeText": "Synthetic NOTICE\n"
+        }
+      ],
+      "duplicateRawCount": 6,
+      "missingReturnsEmpty": true,
+      "defaultFollowsOwnedSymlink": true,
+      "supportedLstatPortSkipsSymlink": true,
+      "retainedExceptionStagedAndChangedDigestRefused": true
+    },
+    "scope": "actual public library gatherer and actual plugin hooks; synthetic package path/module list, not real Vite build or app graph; custom exception SHA guard belongs to research adapter, not upstream"
+  }
+}

@@ -49,6 +49,16 @@ These are feature-specific observations, not whole-product reliability rankings.
 
 Latest bounded comparisons:
 
+- [Actual JWT caller fit](research/reuse-comparisons/f8-actual-callers-fit.md):
+  actual libraries now execute within bootstrap (30 synchronous-library scenarios,
+  23 applicable async-library scenarios) and36 task/news/private dispatch cases.
+  Independent review accepts the bounded identity-ordering evidence, not downstream
+  authorization, real DB safety or a completed async high-water contract.
+- [Maintained full-text gatherer](research/reuse-comparisons/f9-text-fit.md):
+  actual public CycloneDX library preserves multiple original LICENSE/NOTICE texts
+  that the bundle plugin's first-match behavior cannot. Filename, empty-result,
+  duplicate and symlink limits remain explicit. Root review accepts fixture evidence;
+  actual39-package full-text/retained-exception coverage remains before selection.
 - [Owner-bootstrap async contract](research/reuse-comparisons/f8-bootstrap-async-contract-fit.md):
   30 scenarios execute the actual bootstrap control flow with a delayed real Node
   verifier and fake persistence. Await-only negative controls reach simulated commit
