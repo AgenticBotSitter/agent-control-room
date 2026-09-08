@@ -13,7 +13,7 @@ import { nativeHttpFixture } from './helpers/native-http.ts';
 import { createNativeConnector } from '../src/node-bridge/native-connector.ts';
 import { qualityText } from './helpers/native-quality-completion.ts';
 import { sha256Digest } from '../src/security/index.ts';
-import { nativeRunId } from './hermes-native-fixture.ts';
+import { nativeRunId, response } from './hermes-native-fixture.ts';
 
 const release = process.env.CR_REUSE_COMPILED_OWNER_REVIEW === '1'
   ? await import('../dist-vps/server/ownerReview.js') : await import('../src/web/v1/private-owner-review.ts');
@@ -86,9 +86,15 @@ test('confirmed command packet drives the same canonical task through signed dis
   // packet object, which downstream setup reads; do not create a second signature.
   Object.assign(x.f.packet, issuedPacket);
   const local = await nativeStartAuthorityFixture(undefined, x.f.prepared.enrollment, x.f.assignmentFixture);
+  const providerRunId = `run_${'2'.repeat(32)}`, json = local.transport.json;
+  local.transport.json = async request => {
+    const result = await json(request);
+    return request.operation === 'start'
+      ? response({ ...JSON.parse(Buffer.from(result.body).toString()), run_id: providerRunId }, result.status) : result;
+  };
   // Nested helpers take ownership at entry and close partial acquisitions on failure.
   x.transferBaseOwnership();
-  const pipeline = await nativeHttpFixture({ f: x.f, local, providerRunId: nativeRunId, resultText: qualityText });
+  const pipeline = await nativeHttpFixture({ f: x.f, local, providerRunId, resultText: qualityText });
   let connector;
   t.after(async () => { try { await connector?.close(); } finally { await pipeline.close(); } });
   const wire = pipeline.createClient(); let waits = 0;
@@ -115,6 +121,7 @@ test('confirmed command packet drives the same canonical task through signed dis
   assert.deepEqual(local.calls, []);
   const outcome = await pipeline.f.x.admin(() => connector.run('initial', new AbortController().signal));
   assert.equal(outcome.disposition, 'terminal'); assert.equal(outcome.state, 'completed');
+  assert.equal(local.journal.load(pipeline.f.x.registration.id).nativeRunId, providerRunId);
   const counts = await pipeline.f.x.counts();
   assert.equal(counts.runs.length, 1); assert.equal(counts.artifacts.length, 1); assert.equal(counts.receipts.length, 1);
   assert.equal(counts.runs[0].job_id, x.prepared.target.jobId);

@@ -5,6 +5,12 @@ Hermes, a node connector, a service account, a supervisor, credentials, or netwo
 
 Read the [common fleet handoff](README.md) first.
 
+For the already assigned website/VPS preparation, use the separate
+[deployment next steps](../JOHNNY5_DEPLOYMENT_NEXT_STEPS.md). This page remains
+worker-checkout preparation; do not repeat accepted installation gates or change
+the shared PostgreSQL service simply because this older guide describes future
+setup. The current one-task Hermes launcher is not an approved continuous service.
+
 ## Keep the VPS roles separate
 
 The supported initial database design places PostgreSQL 17 and the private web application on the VPS, with the

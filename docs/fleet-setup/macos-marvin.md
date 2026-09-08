@@ -5,6 +5,12 @@ Codex profile, enroll a node, install a LaunchAgent, start a connector, or make 
 
 Read the [common fleet handoff](README.md) first.
 
+The September 8 [one-task package](../../packages/control-room-node-service/README.md)
+and [owner-review command](../PRIVATE_OWNER_REVIEW_COMMAND.md) now exist in source.
+Neither supplies Marvin's private operator configuration or changes the owner-
+attended Keychain/signing boundary below. No LaunchAgent should wrap these commands
+in an automatic retry loop.
+
 ## Separate Mac checkouts and harness identities
 
 Marvin may eventually host Hermes and Codex, but they remain distinct harness routes with separate profiles, credentials,

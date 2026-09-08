@@ -39,7 +39,8 @@ export async function nativeNodeRuntimeFixture(context?: ManagedNativePreparedCo
       }
       if (wire.operation === "status" && resultText !== undefined) {
         await wire.authorize(); x.local.calls.push(wire.operation);
-        return response(statusBody("completed", { session_id: x.f.prepared.binding.sessionId,
+        return response(statusBody("completed", { ...(context ? { run_id: context.providerRunId } : {}),
+          session_id: x.f.prepared.binding.sessionId,
           output: resultText, usage: { input_tokens: 12, output_tokens: 5 } }));
       }
       return x.local.transport.json(wire);

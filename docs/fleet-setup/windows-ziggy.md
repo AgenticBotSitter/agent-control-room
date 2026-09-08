@@ -6,6 +6,11 @@ provider call.
 
 Read the [common fleet handoff](README.md) first.
 
+Current platform implementation gap: the new private node and owner-review launchers
+enforce a Unix protected-file gate and do not yet implement Windows ACL validation.
+Successful checkout/readiness checks cannot override this. Do not weaken permissions,
+use an administrative account, or relabel a WSL run as accepted native Windows setup.
+
 ## Keep Windows user context explicit
 
 Ziggy's future protected-store design uses Windows DPAPI `CurrentUser`, not machine-wide credential scope. That makes the

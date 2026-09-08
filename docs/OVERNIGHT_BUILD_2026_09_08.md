@@ -966,3 +966,26 @@ Final post-remediation run passed all 16 compiled-owner session/command scenario
 and all seven downstream source HTTP/connector regressions, with diff validation
 (64807 exit zero). Independent re-review confirmed cleanup ownership and no additional
 concrete finding. No process remains running from these verification commands.
+
+## Non-default native run identity and platform handoff refresh
+
+Extended the exact owner-command journey to receive a different synthetic provider
+run ID from start and assert that ID in the retained native journal. This exposed
+the newly composed fixture's status wrapper returning the old default run ID. The
+application correctly returned uncertain; the expectation failed (32114 exit one).
+Fixed the fixture wrapper to preserve context.providerRunId, matching the already
+existing managed-session fixture. No production run-ID checks were weakened.
+
+Focused corrected journey/types/lint passed (21160). Final compiled-owner command
+suite (10 scenarios), seven source native-runtime/connector integration checks,
+TypeScript, lint and diff validation passed (89593 exit zero). All native responses
+remain synthetic and no network/provider operation occurred.
+
+Updated existing fleet-setup pages instead of creating another parallel installer
+guide: link current VPS/one-task/owner-command artifacts, identify the actual Windows
+ACL gap, prohibit automatic restart of one-task commands, separate historical PR
+snapshots from current remote evidence, and explicitly preserve local-only transfer.
+Johnny5's assigned VPS preparation is not restarted by this guide. No clone/fetch,
+download, credential or host operation was performed. All 27 local documentation
+links resolved. Independent source-only review found no concrete defect in the
+run-ID test or refreshed handoffs.

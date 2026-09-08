@@ -25,6 +25,32 @@ checking, a Hermes run adapter, durable local run state, progress, results, and 
 fleet. Current tests use disposable stores, synthetic keys, and fake or injected transports. Production composition,
 credential custody, persistent supervision, and a first real task are still incomplete.
 
+### September 8 implementation update
+
+- The website/VPS package now has protected operator settings, database-only checks,
+  owner bootstrap and reviewed deployment procedures. Johnny Five should use
+  [the consolidated deployment handoff](../JOHNNY5_DEPLOYMENT_NEXT_STEPS.md) rather
+  than treating this checkout-only guide as deployment instructions.
+- The [node package](../../packages/control-room-node-service/README.md) now supplies
+  an explicit one-task Hermes launcher and persistent-resource assembly. Operator
+  credentials, trusted live sources and host qualification remain unconfigured.
+  The historical continuous-service templates are non-installable references.
+- The [owner-review command](../PRIVATE_OWNER_REVIEW_COMMAND.md) supplies attached-
+  terminal review and explicit confirmation, not credential provisioning. Its exact
+  packet has been followed through synthetic dispatch to saved results and pending
+  review. This does not establish actual owner attendance or a live Hermes run.
+- Windows cannot use these private launchers until their protected-file/ACL gate is
+  implemented for that platform. Do not bypass the Unix gate or switch to WSL and
+  call that Windows/DPAPI qualification. Codex remains a separate adapter path, not
+  an alternative value for the current Hermes-only launcher.
+- [Consecutive-task integration](../CONSECUTIVE_TASK_DESIGN.md) is still unfinished.
+  Reuse canonical node lease allocation and verified completion release; do not run
+  the one-task command under automatic restart to simulate a continuous worker.
+
+Current overnight work is local-only. A local commit is not available to remote
+agents until a separately authorized transfer; this guide does not authorize a
+push, fetch or download during that window.
+
 The required future topology remains:
 
 1. One private PostgreSQL primary is the sole global write authority. Its initial supported placement is on the VPS,
@@ -81,8 +107,11 @@ unknown checkout.
 
 The `main` checkout above is a **bootstrap checkout only**: it proves repository access and gives the operator a clean
 place from which to inspect current instructions. It is not the current CR14 product candidate. At this handoff, the
-CR14 dependency stack represented by PRs #280 through #324 has not been fully merged into `main`, so checks run on
-`main` alone do not qualify that stack or contain the complete build described by current CR14 acceptance records.
+historical CR14 dependency stack was represented by PRs #280 through #324. That old
+snapshot is not a current GitHub status report. During the local-only overnight
+continuation, newer work is on the dedicated working branch and no remote-state
+refresh is authorized. Checks on `main` alone do not qualify an architect-issued
+candidate; use its exact commit and recorded integration evidence.
 
 Before build work or candidate verification, obtain from the architect both:
 
