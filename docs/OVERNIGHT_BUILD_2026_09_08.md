@@ -1590,3 +1590,10 @@ the failure-catching callback prove the narrower ceiling actually persisted.
 Independent source review found no concrete issue. No production policy changed.
 Handoff review also narrowed its wording to the lease-aware factory specifically;
 the older unassigned factory does not contain the new restart gate.
+
+Final full Idea/ABS delivery run 58483 exited zero. Its three sequential stages
+passed 112 base cases, 22 lifecycle cases and 242 integration cases, each with zero
+failures/skips. These are stage totals, not a deduplicated global test count.
+The source-only handoff review found no other concrete inaccuracy after its wording
+correction. All observed check handles are terminal; no production service was
+started by this work. Test-fidelity correction was saved as 9b1b5c8.
