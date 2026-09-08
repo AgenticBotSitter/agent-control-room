@@ -63,9 +63,9 @@ export async function nativeNodeRuntimeFixture(context?: ManagedNativePreparedCo
   const createLeaseAware = (taskDependencies = dependencies) => {
     const node = createLeaseAwareNativeNodeRuntime(unassignedConfig, {
     executor: x.local.policy.executor, nodeClass: "personal-compute", nodeSigningKeyReferenceId: "key:test", parentAuthorities: [],
-  }, { ...taskDependencies, security: { ...taskDependencies.security,
+  }, { ...taskDependencies, runs: x.local.journal, security: { ...taskDependencies.security,
     loadCeiling: x.f.native.trust.loadCeiling.bind(x.f.native.trust), currentPolicyRevision: x.f.native.trust.currentPolicyRevision.bind(x.f.native.trust) },
-    local: { ...taskDependencies.local, effects: x.local.effects,
+    local: { ...taskDependencies.local, effects: x.local.effects, executions: x.local.executions,
       // Deliberately poisonous legacy callback: the new runtime must never call it.
       ...{ readCurrent: async () => { throw new Error("synthetic legacy policy must not be used"); } } },
     keys: { async availability() { return x.local.policy.keyAvailability; } }, localPaused: () => paused,

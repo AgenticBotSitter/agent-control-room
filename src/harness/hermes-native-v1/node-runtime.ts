@@ -16,6 +16,7 @@ import { createNativeCurrentPolicy } from "./current-policy";
 import { createNativeLeaseCommandHandler } from "./lease-intake";
 import { assertNativeLeaseDispatchPair } from "../v1/native-lease-dispatch-pair";
 import type { BridgeCommandHandler } from "../../node-bridge/admission-handler";
+import { readNativeRestartInventory } from "./restart-inventory";
 
 const configuration = z.object({ queueId: localId, enrollment: enrollmentSchema, nodeKeyId: localId,
   serverId: localId, serverKeyId: localId, serverPublicKeySpki: z.string().min(16).max(4096) }).strict();
@@ -33,10 +34,13 @@ export type NativeNodeRuntimeDependencies = Omit<HandoffDependencies, "deliverie
 };
 type PolicyConfiguration = Omit<Parameters<typeof createNativeCurrentPolicy>[0], "request" | "leaseMessageId" | "serverActorId">;
 type PolicyResources = Parameters<typeof createNativeCurrentPolicy>[1];
-export type LeaseAwareNativeNodeRuntimeDependencies = Omit<NativeNodeRuntimeDependencies, "local" | "security"> & {
+type RestartResources = Parameters<typeof readNativeRestartInventory>[1];
+export type LeaseAwareNativeNodeRuntimeDependencies = Omit<NativeNodeRuntimeDependencies, "local" | "security" | "runs"> & {
   security: NativeNodeRuntimeDependencies["security"] & PolicyResources["security"];
-  local: Omit<NativeNodeRuntimeDependencies["local"], "readCurrent" | "effects"> & {
-    effects: NativeNodeRuntimeDependencies["local"]["effects"] & PolicyResources["effects"];
+  runs: NativeNodeRuntimeDependencies["runs"] & RestartResources["runs"];
+  local: Omit<NativeNodeRuntimeDependencies["local"], "readCurrent" | "effects" | "executions"> & {
+    effects: NativeNodeRuntimeDependencies["local"]["effects"] & PolicyResources["effects"] & RestartResources["effects"];
+    executions: NativeNodeRuntimeDependencies["local"]["executions"] & RestartResources["executions"];
   };
   keys: PolicyResources["keys"];
   localPaused: PolicyResources["localPaused"];
@@ -62,13 +66,22 @@ export function createUnassignedNativeNodeRuntime(input: UnassignedNativeNodeRun
 export function createLeaseAwareNativeNodeRuntime(input: UnassignedNativeNodeRuntimeConfiguration,
   policy: PolicyConfiguration, dependencies: LeaseAwareNativeNodeRuntimeDependencies) {
   const config = { ...unassignedConfiguration.parse(input), queueId: undefined };
+  const policySnapshot = structuredClone(policy);
+  // Capture the resource set before any supplied inventory reader can run. The
+  // caller may replace its container fields, but not which stores we checked/use.
+  dependencies = { ...dependencies, local: { ...dependencies.local }, recovery: { ...dependencies.recovery } };
+  // A necessary local refusal gate, not a cross-process reservation. The host
+  // must still own its lifecycle exclusively and reconcile canonical server state.
+  const retained = readNativeRestartInventory(config.enrollment, { bridge: dependencies.journal, runs: dependencies.runs,
+    effects: dependencies.local.effects, executions: dependencies.local.executions }, new AbortController().signal);
+  if (retained.status !== "no_unresolved_local_work") throw new Error("native_node_restart_reconciliation_required");
   const security = dependencies.security;
   const capturedSecurity = { resolveServerKey: security.resolveServerKey.bind(security),
     currentServerTrustRevision: security.currentServerTrustRevision.bind(security),
     loadCeiling: security.loadCeiling.bind(security), currentPolicyRevision: security.currentPolicyRevision.bind(security) };
   return createRuntime(config, { ...dependencies, security: capturedSecurity,
     local: { ...dependencies.local, readCurrent: async () => fail() } }, {
-    config: structuredClone(policy), security: capturedSecurity,
+    config: policySnapshot, security: capturedSecurity,
     keys: { availability: dependencies.keys.availability.bind(dependencies.keys) },
     effects: { countActive: dependencies.local.effects.countActive.bind(dependencies.local.effects) },
     localPaused: dependencies.localPaused.bind(dependencies),

@@ -1537,3 +1537,23 @@ malformed/oversized bridge attempt inventory. 54863 passed all 19 combined journ
 restart, consecutive-task and runtime checks plus types/lint/diff.
 Independent source-only review found no concrete blocker and emphasized the
 non-atomic and non-authorizing scope. No native/production/GitHub effect occurred.
+
+### Restart refusal gate before fresh unassigned setup
+
+Saved inventory as 1c8fd4c. Lease-aware factory now requires the existing inventory/
+settlement readers on the same concrete supplied stores and refuses fresh creation
+when retained local work needs reconciliation. Tests cover delivery without run,
+completed-but-unsettled run, orphan state and inert creation after historical
+settlement. Fixed recovery unchanged; this is necessary refusal, not a lifecycle lock.
+33649 passed all 22 combined connector/two-task/runtime/inventory cases plus types/
+lint/diff. 21164 compiled VPS and passed four compiled startup checks; temporary build
+log is /private/tmp/cr-overnight-vps-build-20260908-1216.log, not repository evidence.
+
+Independent review then found inventory callbacks could replace original dependency
+container fields before runtime construction captured them. Factory now snapshots
+config/policy and private resource containers before those callbacks. Regression
+replaces original run/journal/effect/execution references with throwing proxies
+during inventory; actual delivery/start still use the checked original resources.
+12621 passed five inventory/gate cases plus types/lint/diff. Independent source
+re-review confirmed the finding resolved, with no further concrete defect. This does
+not freeze trusted class internals or supply exclusive cross-process ownership.

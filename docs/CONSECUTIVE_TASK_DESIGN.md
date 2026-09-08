@@ -285,6 +285,15 @@ or exclusive lifecycle ownership. Its result always denies fresh-pickup authorit
 and current cleanup proof. Server allocation/recovery and serialized ownership
 remain separate mandatory gates before an operational worker loop can use it.
 
+The lease-aware unassigned factory now applies this as a necessary local refusal
+gate before construction. Incomplete delivery, unsettled completion and orphan state
+refuse fresh setup. Historical settled records allow creation of an inert runtime,
+not a start or canonical allocation. Configuration and resource-container references
+are captured before inventory callbacks, so those callbacks cannot swap the checked
+stores for different runtime stores. Existing fixed-task recovery is unchanged.
+This check does not establish exclusivity against another process; an operational
+supervisor still needs sole lifecycle ownership and server reconciliation.
+
 Local progress on C/D: the per-task runtime now provides exact-binding drainage
 evidence, and `createNativeTaskSettlement` joins separately accepted cleanup proof to
 execution-first/effect-last durable settlement. The integrated retained-result test

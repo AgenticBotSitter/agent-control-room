@@ -7,6 +7,7 @@ import { syntheticCleanupEvidence } from "./helpers/native-cleanup-evidence";
 import { createNativeTaskSettlement } from "../src/harness/hermes-native-v1/task-settlement";
 import { qualityText } from "./helpers/native-quality-completion";
 import { SqliteBridgeJournal } from "../src/node-bridge/journal";
+import { createLeaseAwareNativeNodeRuntime, type LeaseAwareNativeNodeRuntimeDependencies } from "../src/harness/hermes-native-v1/node-runtime";
 
 type Fixture = Awaited<ReturnType<typeof nativeNodeRuntimeFixture>>;
 function sources(f: Fixture) {
@@ -20,11 +21,13 @@ test("restart inventory follows actual delivery, run, retained result and checke
   assert.equal(inspect().status, "no_unresolved_local_work");
   const c = await f.connect(); await f.dispatch(c);
   assert.deepEqual(inspect().pending, [{ queueId: f.queued.queueId, runId: f.x.f.prepared.binding.runId, reason: "delivery_without_run" }]);
+  assert.throws(() => f.createLeaseAware(), /restart_reconciliation_required/);
   await f.x.admin(() => f.runtime.start(currentSignal())); await f.pump(c);
   assert.equal(inspect().pending[0].reason, "unsettled_run"); assert.equal(inspect().activeEffects, 1);
   f.advance(); f.setResult(qualityText);
   await f.x.admin(() => f.runtime.poll(currentSignal())); await f.pump(c);
   assert.equal(inspect().status, "reconciliation_required");
+  assert.throws(() => f.createLeaseAware(), /restart_reconciliation_required/);
   const cleanup = syntheticCleanupEvidence({ enrollment: f.config.enrollment, binding: f.x.f.prepared.binding,
     runs: f.x.local.journal, effects: f.x.local.effects, security: f.x.f.native.trust, clock: f.x.f.clock }); t.after(cleanup.close);
   await createNativeTaskSettlement(cleanup.config, { ...cleanup.deps, effects: f.x.local.effects,
@@ -34,9 +37,38 @@ test("restart inventory follows actual delivery, run, retained result and checke
   assert.deepEqual(final.settledRunIds, [f.x.f.prepared.binding.runId]);
   assert.equal(final.permitsFreshPickup, false); assert.equal(final.currentCleanupVerified, false);
   assert.equal(final.grantsExecutionAuthority, false);
+  const next = f.createLeaseAware(); assert.equal(next.hasAcceptedDispatch(), false); await next.close();
   const serialized = JSON.stringify(final) + JSON.stringify(f.x.local.journal.inventory()) + JSON.stringify(f.journal.nativeRestartInventory());
   assert.equal(serialized.includes(qualityText), false); assert.equal(serialized.includes("resultText"), false);
   assert.equal(serialized.includes("prompt"), false); assert.equal(serialized.includes("approval"), false);
+});
+
+test("restart inspection and runtime use the same captured resources despite caller-container mutation", async t => {
+  const f = await nativeNodeRuntimeFixture(undefined, { leaseAware: true }); t.after(f.close);
+  const actual = f.x.local.journal.inventory.bind(f.x.local.journal);
+  const deps: LeaseAwareNativeNodeRuntimeDependencies = { ...f.dependencies, runs: f.x.local.journal,
+    security: { ...f.dependencies.security, loadCeiling: f.x.f.native.trust.loadCeiling.bind(f.x.f.native.trust),
+      currentPolicyRevision: f.x.f.native.trust.currentPolicyRevision.bind(f.x.f.native.trust) },
+    local: { ...f.x.local.dependencies, effects: f.x.local.effects, executions: f.x.local.executions },
+    keys: { async availability() { return f.x.local.policy.keyAvailability; } }, localPaused: () => false };
+  const policy = { executor: structuredClone(f.x.local.policy.executor), nodeClass: "personal-compute", nodeSigningKeyReferenceId: "key:test", parentAuthorities: [] };
+  const poison = new Proxy({}, { get() { throw new Error("synthetic swapped store"); } });
+  let reads = 0;
+  f.x.local.journal.inventory = () => {
+    reads++;
+    deps.runs = poison as typeof deps.runs; deps.journal = poison as typeof deps.journal;
+    deps.local.effects = poison as typeof deps.local.effects; deps.local.executions = poison as typeof deps.local.executions;
+    policy.nodeSigningKeyReferenceId = "key:changed";
+    return actual();
+  };
+  let runtime: ReturnType<typeof createLeaseAwareNativeNodeRuntime>;
+  try { runtime = createLeaseAwareNativeNodeRuntime(f.unassignedConfig, policy, deps); }
+  finally { f.x.local.journal.inventory = actual; }
+  t.after(() => runtime.close()); assert.equal(reads, 2);
+  const c = await f.connect("initial", runtime); await f.dispatch(c);
+  assert.equal((await f.x.admin(() => runtime.start(currentSignal()))).state, "queued");
+  await f.pump(c);
+  assert.equal(f.x.local.calls.filter(call => call === "start").length, 1);
 });
 
 test("bridge inventory checks every retained attempt and refuses oversized inventory", () => {
@@ -63,6 +95,7 @@ test("orphan run and unknown bridge attempt are reconciliation requirements, nev
   assert.equal(result.status, "reconciliation_required"); assert.equal(result.unknownAttempts, 1);
   assert.deepEqual(result.pending, [{ runId: binding.runId, queueId: null, reason: "run_without_delivery" }]);
   assert.equal(result.permitsFreshPickup, false);
+  assert.throws(() => f.createLeaseAware(), /restart_reconciliation_required/);
 });
 
 test("cross-store mutation, mixed scope and cancellation refuse a restart classification", async t => {
