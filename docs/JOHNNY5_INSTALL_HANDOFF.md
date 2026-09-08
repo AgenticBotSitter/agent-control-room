@@ -158,6 +158,36 @@ restart unrelated services, or declare a simulated test a live pass.
 
 ## GitHub and Actions budget
 
+### Memory-safe validation update
+
+The former `web-idea-start.test.ts` integration scenarios now occupy 14 separate
+test files using one shared helper. All 14 original top-level test bodies are
+unchanged, including the four nested subtests (18 reported tests total). Both
+Idea/ABS package commands now use `--test-concurrency=1`: Node isolates files into
+sequential child processes, allowing the OS to reclaim each process's memory.
+Do not validate just the original filename, which now contains only one scenario.
+
+After fetching and verifying the exact updated revision supplied by Codex, first
+run the full split group, with optional per-process peak RSS reporting:
+
+```sh
+node --import ./scripts/test-memory-report.mjs --import tsx --test --test-concurrency=1 tests/web-idea-start.test.ts tests/web-idea-start-case-*.test.ts
+```
+
+Then use the unchanged user-facing `pnpm test:idea-abs:delivery` command for the
+complete sequential suite. A killed process or nonzero exit remains a failure,
+even if its assertions printed success. No test retry, swap change, website stop,
+or production startup is part of this correction. The preload prints peak RSS
+for each normally exiting process; SIGKILL may prevent its final report, so retain
+the runner failure and existing cgroup OOM evidence as well. Peak per-process RSS
+does not include the parent, other processes, or the entire cgroup.
+
+Local macOS ARM64 / Node 22.22.3 measurement of the split group: all 18 tests and
+all 14 child exits passed; maximum child peak RSS was 1,206.4 MiB, with other
+children between 568.0 and 783.6 MiB. This is not Linux acceptance or production
+memory sizing, nor a same-host comparison with the earlier VPS failure. Verify
+Linux memory and clean exits before marking the VPS blocker resolved.
+
 This transfer uses one feature-branch push, no PR, merge, release upload or workflow
 dispatch. Repository workflows currently run push CI only on `main`; the handoff
 commit also uses `[skip ci]`. Skipping CI is not a passing check or merge approval.
