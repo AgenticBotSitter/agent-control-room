@@ -1,0 +1,62 @@
+# Johnny5: consolidated next deployment steps
+
+Operator configuration and deployment procedures are now supplied. This does not
+authorize production startup or resolve the shared-primary persistence problem.
+Use the exact private-branch SHA supplied with this handoff as the deployment pin.
+
+## Supplied
+
+- `deploy/operator-config.mjs`: protected single-site website-only settings.
+- `scripts/private-deployment-inventory.mjs`: 64 migration and web-role source hashes.
+- `scripts/check-private-vps-database.mjs`: existing production preflight plus close,
+  without application installation or a listener.
+- `deploy/README.md`: dedicated database/roles and initial website procedure.
+- `deploy/BACKUP_RESTORE.md`: backup, disposable restore and evidence requirements.
+- `deploy/SUPERVISION.md` and `control-room-website.service.in`: conditional systemd
+  review template and maintenance update/rollback procedure, not an installed unit.
+- `docs/IDEA_PROJECT_LIFECYCLE_DELIVERY.md`: changed web-role grants and lifecycle
+  integration. Older prepared grants fail the new exact startup preflight.
+
+The minimal settings module does not configure Idea/News integrity keys, providers,
+task coordinators or native transports. Source support is not configured operation.
+Do not invent keys for saved signed records or use fixture identities.
+
+## Inspection before production changes
+
+Verify the pinned checkout and source inventory; compare supplied procedures with
+the actual namespace/persistent layout. Confirm whether systemd manages that exact
+namespace; otherwise identify the existing supervisor. Do not install a replacement
+manager or rerun unchanged accepted memory tests without a reason.
+
+The database-check command is not an effect-free source check: it reads protected
+settings and contacts a database. Run it only with authority for that exact target.
+It performs preflight SELECT queries, but is not an arbitrary-SQL read-only sandbox.
+
+## Execution order after separate approval
+
+1. Resolve PostgreSQL storage persistence without risking other applications.
+   Review an exact backup/relocation plan before replacing a shared container.
+2. Provision the dedicated empty database and separate reviewed roles; apply pinned
+   migrations and current grants. Keep schema ownership separate from the web login.
+3. Capture the owner's real verified Access subject through the approved login
+   procedure and bootstrap only that identity. Verify issuer/audience and application
+   MFA inheritance; no policy-level override does not necessarily mean MFA is off.
+4. Run database-only preflight on the prepared target. Back it up, restore into a
+   different disposable database and verify preflight plus required data/integrity.
+5. Review the actual supervisor, service account, persistent settings and unused
+   loopback port. Obtain explicit production-start authorization.
+6. Start website-only once. Verify loopback binding, denied anonymous access, exact
+   Host checks and other-site health before separately approved ingress changes.
+7. Owner verifies real login/MFA, projects, logout, deep links and controlled restart.
+   Measure application/database memory under this small workload.
+8. Schedule separate real-agent, Idea panel and news-task execution acceptance.
+   Website-only success is not orchestration success.
+
+## Return one consolidated sanitized report
+
+Include release SHA, inventory digest, checks performed, exit codes, actual changes,
+remaining prerequisites, connection/process cleanup and exact next approval needed.
+Distinguish supplied procedures, local tests, host inspection and real acceptance.
+Never return passwords, owner subjects, tokens, MFA secrets, private routing values
+or raw database contents. No swap changes, unrelated website stops, production
+provisioning/startup, ingress edits or cleanup are authorized by this handoff.

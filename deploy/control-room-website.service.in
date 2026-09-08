@@ -1,0 +1,36 @@
+# REVIEW TEMPLATE ONLY. Do not install until the actual systemd execution
+# namespace, persistent paths, service identity and production start are approved.
+# Replace every /APPROVED path and REVIEWED_SERVICE_* value privately.
+[Unit]
+Description=Control Room private website (agent execution disabled)
+After=network.target
+
+[Service]
+Type=exec
+User=REVIEWED_SERVICE_USER
+Group=REVIEWED_SERVICE_GROUP
+WorkingDirectory=/APPROVED/RELEASE
+Environment=NODE_ENV=production
+Environment=CONTROL_ROOM_SETTINGS_FILE=/APPROVED/PRIVATE/settings.json
+ExecStart=/APPROVED/NODE /APPROVED/RELEASE/scripts/run-private-vps.mjs --configuration /APPROVED/RELEASE/deploy/operator-config.mjs
+Restart=no
+KillSignal=SIGTERM
+KillMode=control-group
+TimeoutStopSec=45s
+SendSIGKILL=yes
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+MemoryAccounting=yes
+StandardOutput=journal
+StandardError=journal
+
+# Enable at boot only after separate restart/persistence acceptance and approval.
+[Install]
+WantedBy=multi-user.target

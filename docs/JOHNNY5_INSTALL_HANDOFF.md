@@ -4,6 +4,10 @@ Updated 2026-09-07. Private source transfer, not a production-ready release.
 
 ## Start here
 
+For the latest ordered deployment work and supplied operator assets, first read
+`docs/JOHNNY5_DEPLOYMENT_NEXT_STEPS.md`. This older installation checklist retains
+the memory-fix evidence; it is not authority to start production.
+
 The next source update adds the restricted initial website configuration in
 `deploy/operator-config.mjs` and `deploy/README.md`. It removes the need to invent
 task-planning settings for an initial website. Follow that runbook's remaining

@@ -88,10 +88,16 @@ role name is a review condition, not permission to alter or drop it.
    substitute the owner's email for the subject or copy a fixture identity/grant.
    This owner bootstrap still needs its exact verified input and execution review;
    this document does not turn invented timestamps into verified authentication.
-7. Run the unchanged production preflight through the first authorized startup.
-   It must pass without a PGlite override or relaxed ACL/schema check.
+7. Run the unchanged production database preflight without starting the website:
+   `node scripts/check-private-vps-database.mjs --configuration /APPROVED/RELEASE/deploy/operator-config.mjs`.
+   This still requires explicit authorization for the selected private database
+   connection and protected settings. It must pass without a PGlite override or
+   relaxed ACL/schema check. First authorized startup repeats the checks.
 
 ## Backup, restore and rollback acceptance
+
+Follow `deploy/BACKUP_RESTORE.md` for the ordered dedicated-database procedure and
+the database-only check on the disposable restore. No new backup engine is introduced.
 
 Use PostgreSQL 17 `pg_dump` custom format for the dedicated database with an
 authorized backup role. Preserve protected role/configuration material separately;
@@ -114,6 +120,10 @@ release is incompatible with the migrated schema, leave Control Room stopped and
 review a restore into a separate target. Never roll back unrelated websites.
 
 ## Supervisor and first startup
+
+`deploy/SUPERVISION.md` supplies the execution-namespace decision and a conditional
+systemd template, plus a website-only maintenance update procedure. The template
+is not installed or approved for the currently unidentified target supervisor.
 
 Use the existing persistent supervisor **inside the correct execution namespace**.
 Do not assume host systemd can see container loopback or filesystem paths. The

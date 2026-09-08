@@ -74,3 +74,35 @@ export function createPrivateWebBootstrap(dependencies: {
 // Constructs only a lifecycle closure. Explicit start is the first possible database effect.
 const production = createPrivateWebBootstrap({ openDatabase: createPrivatePostgresDatabase, install: installPrivateWebProcess });
 export const startPrivateWebApplication = production.start;
+
+/** Read-only database acceptance without installing the application or binding a
+ * listener. Still an explicit database connection: run only for an approved target.
+ * Reuses the production ACL/schema/owner checks, with no fixture relaxation. */
+export function createPrivateWebDatabaseCheck(dependencies: {
+  openDatabase: (config: PrivatePostgresConfiguration) => OwnedDatabase;
+  clock?: () => number;
+}) {
+  return async (input: PrivateStartupConfiguration) => {
+    const config = validatePrivateStartupConfiguration(input);
+    const now = (dependencies.clock ?? Date.now)();
+    if (!Number.isSafeInteger(now) || now < 0) throw new Error("private_database_check_failed");
+    let database: OwnedDatabase | undefined;
+    let failed = false;
+    try {
+      database = dependencies.openDatabase(config.database);
+      await verifyPrivateDatabase(database.client, config.database, config, now);
+    } catch {
+      failed = true;
+    }
+    if (database) {
+      try { await database.close(); }
+      catch { throw new Error("private_database_check_cleanup_uncertain"); }
+    }
+    if (failed) throw new Error("private_database_check_failed");
+    return Object.freeze({ schema: "control-room.private-database-check/v1" as const,
+      databasePreflight: "passed" as const, databaseClosed: true as const,
+      applicationInstalled: false as const, listenerStarted: false as const,
+      backupVerified: false as const, productionReady: false as const });
+  };
+}
+export const checkPrivateWebDatabase = createPrivateWebDatabaseCheck({ openDatabase: createPrivatePostgresDatabase });

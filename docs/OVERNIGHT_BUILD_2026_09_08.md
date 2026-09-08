@@ -75,3 +75,30 @@ not an owner-attended browser session or live VPS acceptance.
 
 Deployment delta and caveats: `IDEA_PROJECT_LIFECYCLE_DELIVERY.md`. Preserve the
 unchanged 12:40:58 UTC deadline and all external production gates above.
+
+## Database-only preflight and deployment handoff
+
+Added a thin operator command around existing production database validation and
+bounded cleanup. It does not install the app, fetch JWKS, bind a listener or write
+application data. Read-only means performed SELECT queries, not an arbitrary-SQL
+read-only session; existing preflight requires a writable primary. Its receipt
+explicitly leaves backup verification and production readiness false.
+
+Added ordered PostgreSQL-tool backup/restore instructions, a conditional systemd
+review template and maintenance-update procedure, and one consolidated Johnny5
+handoff. Actual namespace/supervisor, persistence, target provisioning, real owner
+login, backup/restore and production start are still external gated work. The
+minimal operator profile does not magically configure Idea/News keys or agents.
+
+Independent source review found no concrete defect and requested separate cleanup
+branch coverage. Added passed-check/failed-close and failed-check/passed-close tests;
+follow-up review reports no concrete mismatch, including in the supervisor template.
+Its template test is a source-contract check, not Linux/systemd acceptance. Official
+PostgreSQL and upstream systemd documentation informed the procedures; no production
+commands or downloads were executed. Full lint, TypeScript, focused checks and a
+fresh VPS build pass. Compiled database-check/startup regression verification follows.
+Final verification: seven focused database/CLI/cleanup/template tests and 21
+compiled/startup/launcher/lifecycle regressions pass. The compiled check leaves
+the actual compiled handler uninstalled (503) before and after checking its
+disposable database. A key-loader trap confirms no login-key fetch. No native
+PostgreSQL connection, actual restore, supervisor install or listener was attempted.

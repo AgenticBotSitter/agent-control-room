@@ -42,6 +42,11 @@ existing role or grant broad UPDATE/ownership to bypass preflight. The deploymen
 inventory hashes change because the role source changed. No SQL was applied to
 production by this implementation.
 
+The bridge is composed only when `ideaProjects` supplies the existing integrity
+key. The minimal `deploy/operator-config.mjs` profile does not supply that key;
+this integration does not pretend the first website-only deployment enables every
+Idea Lab capability. Configuring the saved-record key is separate private setup.
+
 `pnpm test:idea-lifecycle` runs isolated database files sequentially and covers the
 bridge, mounted restricted-role route, permission removal rejection, browser retry
 binding and rendered controls. It is included in `test:idea-abs:delivery`.
