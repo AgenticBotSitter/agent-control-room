@@ -1288,3 +1288,20 @@ Final fresh combined runtime/connector/consecutive/unassigned run 20894 passed a
 41 cases. VPS compilation 95826 passed; compiled managed-session and fixed node
 launcher checks 22954 passed all four cases. Existing bundler/deprecation warnings
 remain; no production startup was attempted. Original deadline stays 12:40:58 UTC.
+
+### Lease-path audit after 52e03b7
+
+Previous goal turn made concrete progress (runtime implementation, 41 source and
+four compiled checks, local commit). This turn traced the missing production policy
+path through actual source. ServerNodeSession cannot sign/send a lease grant in its
+current native session state machine. Native runtime rejects that message type;
+PortableNodeBridge's generic grant branch only records a command. No source caller
+of journal.upsertAttempt supplies the missing native grant transition. The lease
+fixture does so manually. Existing current-policy tests verify its reader/controller
+in isolation, not native session delivery. This rules out treating a dynamic policy
+callback or receive-allowlist expansion as a completed integration.
+
+CONSECUTIVE_TASK_DESIGN now records the joined grant staging, same-generation delivery,
+atomic acceptance, existing verified policy composition and failure/reconnect tests
+required next. No new broker, lease format or relaxed authority is proposed. Production
+effects remain unauthorized, and no additional provider or GitHub action occurred.

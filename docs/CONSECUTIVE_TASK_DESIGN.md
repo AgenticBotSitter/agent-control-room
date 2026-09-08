@@ -102,6 +102,45 @@ approval, result buffers, recovery scope or capacity from its predecessor; unres
 native work or cleanup refuses a switch. Capture real retained journal state, not
 only a mocked `completed` callback.
 
+#### Verified lease delivery is a prerequisite, not a policy callback
+
+Source audit after the unassigned-runtime implementation found a concrete integration
+gap. `createNativeCurrentPolicy` already composes the right protected sources, but
+its `createNativeLeaseEvidence` reader requires BOTH a saved signed `job.lease.grant`
+and a current matching bridge attempt. These are absent from the native delivery
+journey: `ServerNodeSession` signs connection/reconciliation/ack/native-dispatch
+frames, not lease grants; the native runtime rejects lease grants; the generic
+`PortableNodeBridge` command branch records a grant but does not update an attempt.
+Thus simply permitting another frame type would still not establish usable policy.
+The lease-evidence fixture explicitly consumes a grant, records its command and
+upserts an attempt. That privileged fixture setup is not an implemented host path.
+
+Keep the existing `job.lease.grant` protocol and `createNativeCurrentPolicy` reader.
+Do not create a second lease format, treat the approval packet as a lease, or replace
+the verified reader with the manually supplied policy used by journey fixtures.
+The remaining implementation needs all of the following, as one joined block:
+
+1. Derive the exact grant from the coordinator's checked canonical lease/authority,
+   not from node-provided task metadata. Retain signed grant and dispatch identity
+   under the existing durable staging/transaction owner before transmission.
+2. Send the grant and dispatch on the same captured authenticated generation with
+   defined ordering. Partial delivery must remain recoverable as the same task;
+   it must not trigger another start, silently switch tasks or consume another claim.
+3. Accept the exact grant into existing inbox/command/attempt storage atomically,
+   with replay identity and terminal/superseded-attempt protection. Command receipt
+   alone is not admission. Do not use unrestricted `upsertAttempt` on wire input.
+4. Construct the existing policy reader from that retained grant, approved request,
+   trusted executor/node configuration and checked parent authority chain. Revalidate
+   the same evidence and pause/capacity state at the existing pre-effect boundary.
+5. Prove the full journey with the real policy reader, without fixture-inserted lease
+   receipts or a synthetic `readCurrent` bypass. Missing grant, dispatch-only,
+   grant-only, wrong generation, conflicting epoch, cancelled attempt, interrupted
+   delivery and reconnect must not release native execution without complete proof.
+
+No production launcher or receive allowlist was broadened by this audit. The existing
+two-task tests remain valuable result/capacity evidence, but not evidence that this
+lease-to-policy path is implemented. This prerequisite precedes fleet installation.
+
 ### D. Combined release acceptance before service packaging
 
 Local progress on C/D: the per-task runtime now provides exact-binding drainage
