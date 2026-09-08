@@ -107,8 +107,9 @@ only a mocked `completed` callback.
 Local progress on C/D: the per-task runtime now provides exact-binding drainage
 evidence, and `createNativeTaskSettlement` joins separately accepted cleanup proof to
 execution-first/effect-last durable settlement. The integrated retained-result test
-uses the real runtime and stores with synthetic producer qualification. It does not
-yet provide two independent task turnovers or historical settlement-receipt recovery.
+uses the real runtime and stores with synthetic producer qualification. Historical
+committed settlement recognition now reuses those protected journals, but this does
+not yet provide two independent task turnovers or physical restart acceptance.
 See `NATIVE_CLEANUP_EVIDENCE_DESIGN.md`; do not enable continuous service packaging
 from this partial acceptance.
 

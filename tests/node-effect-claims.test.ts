@@ -174,6 +174,30 @@ test("checked settlement refuses non-synchronous acceptance and captures the eve
   });
 });
 
+test("confirmed effect history survives reopen and refuses altered event lookup mirrors", async () => {
+  await withStore((store, path) => {
+    const before = committedMarker(store).result.snapshot;
+    assert.equal(store.confirmation(before.claimKey), undefined);
+    const event = { eventId: "event:history:confirmed", kind: "confirmed" as const,
+      occurredAt: "2026-08-23T12:00:04.000Z", destinationReceiptDigest: digest("d") };
+    const result = store.apply(before.claimKey, event);
+    store.close(); const reopened = new SqliteEffectClaimStore(path);
+    try {
+      assert.deepEqual(reopened.confirmation(before.claimKey), { event, snapshot: result.snapshot });
+      const raw = new DatabaseSync(path);
+      try {
+        for (const column of ["event_id", "occurred_at"]) {
+          const original = column === "event_id" ? event.eventId : event.occurredAt;
+          raw.prepare(`UPDATE effect_claim_events SET ${column}=? WHERE claim_key=? AND sequence=(SELECT MAX(sequence) FROM effect_claim_events WHERE claim_key=?)`).run("altered", before.claimKey, before.claimKey);
+          assert.throws(() => reopened.confirmation(before.claimKey), /history digest or chain mismatch/);
+          raw.prepare(`UPDATE effect_claim_events SET ${column}=? WHERE claim_key=? AND sequence=(SELECT MAX(sequence) FROM effect_claim_events WHERE claim_key=?)`).run(original, before.claimKey, before.claimKey);
+        }
+      } finally { raw.close(); }
+      assert.deepEqual(reopened.confirmation(before.claimKey), { event, snapshot: result.snapshot });
+    } finally { reopened.close(); }
+  });
+});
+
 test("effect identity is stable per effect and excludes delivery message identity", () => {
   const operation = request();
   const identity: EffectIdentityV1 = {

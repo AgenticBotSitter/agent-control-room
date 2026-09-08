@@ -301,6 +301,20 @@ export class SqliteEffectClaimStore {
     return snapshot ? { kind: "full", snapshot } : undefined;
   }
 
+  /** Historical protected-store evidence, not current cleanup or execution authority. */
+  confirmation(claimKey: string): { snapshot: EffectClaimSnapshotV1; event: Extract<EffectClaimEventV1, { kind: "confirmed" }> } | undefined {
+    return this.transaction(() => {
+      const lookup = this.load(claimKey);
+      if (lookup?.kind !== "full" || lookup.snapshot.state !== "confirmed") return undefined;
+      const row = this.db.prepare(`SELECT event_json FROM effect_claim_events WHERE claim_key=? ORDER BY sequence DESC LIMIT 1`).get(claimKey) as { event_json: string } | undefined;
+      if (!row) throw new EffectClaimConflictError("Effect confirmation event is missing");
+      const event = JSON.parse(row.event_json) as EffectClaimEventV1;
+      if (event.kind !== "confirmed" || event.destinationReceiptDigest !== lookup.snapshot.destinationReceiptDigest
+        || event.occurredAt !== lookup.snapshot.updatedAt) throw new EffectClaimConflictError("Effect confirmation event mismatch");
+      return { snapshot: lookup.snapshot, event };
+    });
+  }
+
   compactTerminal(claimKey: string, horizons: EffectRetentionHorizonsV1, compactedAt: string): { disposition: "compacted" | "retained_unknown_horizon" | "retained_until"; retainUntil?: string; tombstone?: EffectClaimTombstoneV1 } {
     const values = [horizons.jobRetentionUntil,horizons.destinationIdempotencyUntil,horizons.authorityLateDeliveryUntil,horizons.protocolRetryUntil];
     if (values.some((value) => value === undefined)) return { disposition: "retained_unknown_horizon" };
@@ -414,8 +428,8 @@ export class SqliteEffectClaimStore {
   }
 
   private verifyHistoryWithin(snapshot: EffectClaimSnapshotV1): void {
-    const rows = this.db.prepare(`SELECT event_digest,transition_digest,event_json,from_state,to_state FROM effect_claim_events WHERE claim_key=? ORDER BY sequence`).all(snapshot.claimKey) as Array<{
-      event_digest: string; transition_digest: string; event_json: string; from_state: string | null; to_state: string;
+    const rows = this.db.prepare(`SELECT event_id,occurred_at,event_digest,transition_digest,event_json,from_state,to_state FROM effect_claim_events WHERE claim_key=? ORDER BY sequence`).all(snapshot.claimKey) as Array<{
+      event_id: string; occurred_at: string; event_digest: string; transition_digest: string; event_json: string; from_state: string | null; to_state: string;
     }>;
     if (rows.length !== snapshot.version) throw new EffectClaimConflictError("Effect history length mismatch");
     let priorState: string | null = null;
@@ -428,8 +442,9 @@ export class SqliteEffectClaimStore {
       createdAt: snapshot.createdAt,
     });
     for (const [index,row] of rows.entries()) {
-      const event = JSON.parse(row.event_json) as object;
+      const event = JSON.parse(row.event_json) as { eventId: string; occurredAt: string };
       if (sha256Digest(event) !== row.event_digest
+        || event.eventId !== row.event_id || event.occurredAt !== row.occurred_at
         || row.transition_digest !== sha256Digest({ event,fromState: row.from_state,toState: row.to_state })
         || row.from_state !== priorState) throw new EffectClaimConflictError("Effect history digest or chain mismatch");
       priorState = row.to_state;

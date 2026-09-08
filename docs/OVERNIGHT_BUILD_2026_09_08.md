@@ -1166,3 +1166,43 @@ Fresh VPS compilation and four compiled managed-session/node-launcher checks pas
 (39896 exit zero). Existing build warnings were not repaired or downloaded around.
 The new settlement coordinator is source-tested, not enabled in the launcher.
 No test handle remains active. Original fixed deadline is still 12:40:58 UTC.
+
+## Historical local settlement recovery
+
+Implemented read-only recognition of already committed local settlement using the
+existing protected effect, execution and native journals. No new table, cleanup
+producer, signer or current authority is introduced. The effect-store confirmation
+lookup validates its full history under the existing transaction and now checks
+event-ID/timestamp index mirrors against event JSON. The history reader matches the
+exact retained native snapshot and completion events, identity, admission, authority
+and deadline, with cancellation/deadline checks on both sides of repeated reads.
+The result explicitly says historical completion, not current cleanup or new capacity
+release. Matching cross-store reads are not a shared SQLite transaction.
+
+Real-file effect tests close/reopen SQLite and reject altered lookup mirrors. The
+joined local settlement/runtime paths recognize their receipt after owner pins close
+and cleanup proof expires, without new native calls. Cancelled/late/corrupt/foreign
+or execution-only evidence is refused. Initial 13 store tests/types passed (75930),
+then 14 combined cleanup/runtime tests/types/lint (24381). Final 27 source cases,
+types, focused lint and diff check passed (16244 exit zero). Independent source
+review found no blocker and confirmed the protected-journal/non-atomic-read limits.
+No verification process remains active. Clock 10:45:35 UTC; original deadline unchanged.
+
+### Concrete next two-task fixture path
+
+Independent read-only source audit found direct reuse rather than a second queue or
+allocator. Use TaskQualityCoordinator.reconcile with the existing ownerConfig and
+scenarios:[] on NativeResultSubmissionService.inspectSubmitted's actual A result;
+it returns waiting_review plus canonical capacity release without owner quality
+approval. Then propose/plan/assign/prepare/sign/save/enqueue independent B in the same
+canonical database. Reuse the existing managed manager/roles and one outer owner for
+the bridge/native/admission/execution/effect journals; do not call the whole managed
+fixture again (it recreates roles). Supply B-specific policy/readers/runtime binding
+over shared stores and its own exact fake native run/session response.
+
+Keep canonical route limit two (one unrelated seeded active lease plus A) and native
+effect limit one. Before canonical A release, B assignment must fail. Before local
+A settlement, B native admission must remain blocked without inventing an effect or
+destroying its safe pre-effect retry path. After both releases, B must run once with
+A's result/review/history intact. The helper currently captures one task/config and
+needs bounded per-task composition, not relaxed guards or new journals.

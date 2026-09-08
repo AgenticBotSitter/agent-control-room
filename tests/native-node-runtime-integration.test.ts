@@ -7,6 +7,7 @@ import { signedNodeFrameSchema } from "../src/node-protocol/v1";
 import { sha256Digest } from "../src/security";
 import { syntheticCleanupEvidence } from "./helpers/native-cleanup-evidence";
 import { createNativeTaskSettlement } from "../src/harness/hermes-native-v1/task-settlement";
+import { readNativeSettlementHistory } from "../src/harness/hermes-native-v1/settlement-history";
 
 type Fixture = Awaited<ReturnType<typeof nativeNodeRuntimeFixture>>;
 const frames = (raw: string[]) => raw.map(value => signedNodeFrameSchema.parse(JSON.parse(value)));
@@ -89,6 +90,12 @@ test("node runtime intake waits for explicit start, starts once and routes compl
   const closed = await f.runtime.closeForSettlement(sha256Digest(binding)); closed.assertClosed();
   assert.equal(closed.descendantsStoppedVerified, false);
   await assert.rejects(f.runtime.start(currentSignal()));
+  cleanup.close(); f.advance(15_000);
+  const history = readNativeSettlementHistory(binding, { effects: local.effects, executions: local.executions,
+    runs: local.journal }, currentSignal());
+  assert.equal(history.evidenceDigest, receipt.evidenceDigest); assert.equal(history.historicalLocalCompletion, true);
+  assert.equal(history.currentCleanupVerified, false); assert.equal(history.releasesCapacity, false);
+  assert.deepEqual(local.calls, priorCalls);
 });
 
 test("disconnected runtime reports saved completion and reconnects the same journals without another native request or dispatch", async t => {

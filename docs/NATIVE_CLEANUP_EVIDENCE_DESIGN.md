@@ -90,6 +90,31 @@ effect records using synthetic producer evidence. It preserves canonical records
 and adds no native calls. This does not qualify a physical cleanup producer or turn
 on a continuous worker. Canonical result acknowledgement and lease release remain
 separate existing operations. Historical receipt recovery after effect confirmation
-already committed, dynamic next-runtime selection, and the complete two-independent-
-task journey remain unfinished. A fresh consumer refuses an already confirmed effect
+already committed is described below; dynamic next-runtime selection and the complete
+two-independent-task journey remain unfinished. A fresh consumer refuses an already confirmed effect
 instead of asserting fresh cleanup from historical evidence.
+
+## Historical committed settlement recognition
+
+`readNativeSettlementHistory` recognizes an already committed local success from
+existing protected effect, execution and native journals. It needs no cleanup
+producer, owner pins, runtime, provider call or new table. The effect store returns
+its exact last confirmed event after validating the full event chain, including
+event-ID and timestamp lookup mirrors. The reader matches exact task/native snapshot,
+execution completion event, identity, admission, authority and deadline, and returns
+only sanitized evidence digests and an explicit historical classification.
+
+This trusts protected-store integrity. Event-name prefixes and hashes are not
+authentication of a physical producer, and historical recognition is not new cleanup
+qualification. The result explicitly grants no execution, verifies no current cleanup,
+releases no capacity, and claims neither canonical lease release nor quality acceptance.
+Compacted, missing, changed or contradictory records are refused. Two matching reads
+detect observed cross-store changes; they are not an atomic snapshot across separate
+SQLite files. A deadline and cancellation are checked after reads as well as before.
+The effect history lookup takes the existing SQLite writer lock but changes no rows.
+
+The integrated source test recognizes committed settlement after closing the synthetic
+owner pins and advancing beyond cleanup-proof expiry, with no additional native calls.
+A separate real-file effect-store test closes/reopens SQLite and rejects corrupt event
+lookup mirrors. These are local historical/reconstruction tests, not a physical fleet
+restart or continuous two-task acceptance.

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createNativeCleanupEvidence } from "../src/harness/hermes-native-v1/cleanup-evidence";
 import { createNativeTaskSettlement } from "../src/harness/hermes-native-v1/task-settlement";
+import { readNativeSettlementHistory } from "../src/harness/hermes-native-v1/settlement-history";
 import { sha256Digest } from "../src/security";
 import { nativeLeaseEvidenceFixture } from "./helpers/native-lease-evidence";
 import { syntheticCleanupEvidence } from "./helpers/native-cleanup-evidence";
@@ -113,6 +114,30 @@ test("local settlement joins exact cleanup with execution completion before free
   assert.equal(x.f.executions.load(x.claim.executionId)?.state, "completed");
   assert.deepEqual(x.f.calls, beforeCalls);
   await assert.rejects(settlement.settle(signal()));
+  const deps = { effects: x.f.effects, executions: x.f.executions, runs: x.f.nativeRunJournal };
+  // Restart recognition needs only the protected journals, not a refreshed producer
+  // observation, owner pin store, runtime close, or another native request.
+  x.deps.approvals.close(); x.f.setNow(x.proof.validUntil + 1);
+  const history = readNativeSettlementHistory(x.config.binding, deps, signal());
+  assert.equal(history.evidenceDigest, receipt.evidenceDigest);
+  assert.equal(history.effectSnapshotDigest, receipt.effectSnapshotDigest);
+  assert.equal(history.historicalLocalCompletion, true); assert.equal(history.currentCleanupVerified, false);
+  assert.equal(history.releasesCapacity, false); assert.equal(history.grantsExecutionAuthority, false);
+  assert.deepEqual(x.f.calls, beforeCalls);
+  const cancelled = new AbortController(); cancelled.abort();
+  assert.throws(() => readNativeSettlementHistory(x.config.binding, deps, cancelled.signal));
+  assert.throws(() => readNativeSettlementHistory({ ...x.config.binding, jobId: "job:wrong" }, deps, signal()));
+  const lateAbort = new AbortController();
+  assert.throws(() => readNativeSettlementHistory(x.config.binding, { ...deps, runs: { load(id) {
+    lateAbort.abort(); return deps.runs.load(id);
+  } } }, lateAbort.signal));
+  let elapsed = 0; const timer = t.mock.method(performance, "now", () => elapsed);
+  assert.throws(() => readNativeSettlementHistory(x.config.binding, { ...deps, runs: { load(id) {
+    elapsed = 5000; return deps.runs.load(id);
+  } } }, signal()));
+  timer.mock.restore();
+  x.f.nativeRunJournal.update(x.config.binding.runId, x.snapshot.version, { observedAt: x.snapshot.observedAt + 1 });
+  assert.throws(() => readNativeSettlementHistory(x.config.binding, deps, signal()));
 });
 
 test("late cleanup failure retains capacity and reconstruction replays only execution completion", async t => {
@@ -132,6 +157,8 @@ test("late cleanup failure retains capacity and reconstruction replays only exec
   assert.equal(x.f.executions.load(x.claim.executionId)?.state, "completed");
   assert.deepEqual(x.f.effects.load(x.claim.claimKey), { kind: "full", snapshot: x.claim });
   assert.equal(x.f.effects.countActive(x.config.enrollment.tenantId, x.config.enrollment.nodeId), 1);
+  assert.throws(() => readNativeSettlementHistory(x.config.binding,
+    { effects: x.f.effects, executions: x.f.executions, runs: x.f.nativeRunJournal }, signal()));
   const events = x.f.executions.events(x.claim.executionId), calls = [...x.f.calls];
   failAfterExecution = false;
   const second = createNativeTaskSettlement(x.config, deps);
