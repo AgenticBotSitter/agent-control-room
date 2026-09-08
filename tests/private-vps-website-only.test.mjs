@@ -43,3 +43,31 @@ test('listener construction failure closes the acquired database', async () => {
   const f = fixture(); f.dependencies.serving.createPrivateNodeService = () => { throw new Error('synthetic'); };
   await assert.rejects(startWebsiteOnly(f.prepared, f.dependencies)); assert.equal(f.counts.closed, 1);
 });
+
+test('validated port is captured before asynchronous database startup', async () => {
+  const f = fixture(), start = f.dependencies.bootstrap.startPrivateWebApplication;
+  const serve = f.dependencies.serving.createPrivateNodeService;
+  f.dependencies.bootstrap.startPrivateWebApplication = async () => {
+    f.prepared.port = 3211; return start();
+  };
+  f.dependencies.serving.createPrivateNodeService = input => {
+    assert.equal(input.port, 3210); return serve(input);
+  };
+  const service = await startWebsiteOnly(f.prepared, f.dependencies);
+  await service.close(); assert.equal(f.counts.closed, 1);
+});
+
+test('bind rejection and cancellation during bind both close the acquired service', async () => {
+  for (const canceled of [false, true]) {
+    const f = fixture(), serve = f.dependencies.serving.createPrivateNodeService;
+    f.dependencies.serving.createPrivateNodeService = input => {
+      const service = serve(input);
+      return { ...service, async start() {
+        await service.start();
+        if (canceled) f.abort.abort(); else throw new Error('synthetic bind failure');
+      } };
+    };
+    await assert.rejects(startWebsiteOnly(f.prepared, f.dependencies));
+    assert.equal(f.counts.closed, 1);
+  }
+});

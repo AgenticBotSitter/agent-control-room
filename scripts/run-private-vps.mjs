@@ -112,9 +112,10 @@ export async function runPrivateVps(args, runtime = installedRuntime) {
  */
 export async function startWebsiteOnly(prepared, { bootstrap, serving, handler, assets, signal }) {
   requirePrivateVpsMode(prepared);
+  const port = prepared.port;
   if (prepared.mode !== 'website-only' || prepared.configuration.coordinator
     || Object.keys(prepared.configuration).some(key => key !== 'web')
-    || !Number.isSafeInteger(prepared.port) || prepared.port < 1 || prepared.port > 65535)
+    || !Number.isSafeInteger(port) || port < 1 || port > 65535)
     throw new Error('private_vps_mode_invalid');
   const config = bootstrap.validatePrivateStartupConfiguration(prepared.configuration.web);
   if (signal.aborted) throw new Error('private_vps_start_canceled');
@@ -126,7 +127,7 @@ export async function startWebsiteOnly(prepared, { bootstrap, serving, handler, 
   try {
     if (signal.aborted) throw new Error('private_vps_start_canceled');
     service = serving.createPrivateNodeService({ origin: config.origin,
-      secondaryOrigin: config.secondaryAccess?.origin, port: prepared.port,
+      secondaryOrigin: config.secondaryAccess?.origin, port,
       application, handler, assets });
     await service.start();
     if (signal.aborted) throw new Error('private_vps_start_canceled');

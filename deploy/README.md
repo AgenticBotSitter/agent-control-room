@@ -56,8 +56,15 @@ Room database and a separate non-login owner/migrator role. Do not apply this to
 another application's database. PostgreSQL roles are cluster-wide: an existing
 role name is a review condition, not permission to alter or drop it.
 
-1. Obtain a verified backup of existing affected resources before any change.
-2. Record the pinned release and hashes of all 64 `db/migrations/*.sql` files.
+1. Protect existing affected application data before changing shared infrastructure.
+   Establish durable storage and verify restoration of those existing backups before
+   relocation. A Control Room backup is produced after its database exists; it is
+   not a prerequisite for creating its first empty database.
+2. Record the pinned release and hashes of all 64 `db/migrations/*.sql` files using
+   `node scripts/private-deployment-inventory.mjs`. This command also inventories
+   the two restricted web role files and contacts no database. Compare its digest
+   with the accepted release inventory before executing any SQL. It is source
+   identification, not a migration executor or proof of live database state.
 3. In the dedicated empty database only, apply those files in lexicographic order
    with psql `-X -v ON_ERROR_STOP=1`, using the separately approved migration identity.
    Record each file's completion. Startup never reruns migrations. Stop on any
