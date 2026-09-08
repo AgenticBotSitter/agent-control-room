@@ -1,11 +1,12 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { BrowserRequestError } from "../../src/web/v1/browser-client";
-import { createTaskApprovalBrowserClient, approvalErrorMessage } from "../../src/web/v1/task-approval-browser-client";
+import { approvalErrorMessage } from "../../src/web/v1/task-approval-browser-client";
 import type { TaskApprovalRead, TaskApprovalReview } from "../../src/web/v1/task-approval-wire";
 import type { TaskDetail } from "../../src/web/v1/task-wire";
 import { PrivateTaskSubmission } from "./task-submission";
 import { createApprovalEditor, retainApprovalEditor, attachApprovalFile, type TaskApprovalEditor } from "../../src/web/v1/task-approval-editor";
+import { createTaskExecutionWorkspace, type TaskExecutionWorkspace } from "../../src/web/v1/task-execution-workspace";
 
 export function TaskApprovalPanel({ state, review, error, pending, uncertain, fileName, onReview, onCheck, onFile, onSave }: {
   state?: TaskApprovalRead; review?: TaskApprovalReview; error?: BrowserRequestError; pending: boolean; uncertain: boolean;
@@ -34,8 +35,23 @@ export function TaskApprovalPanel({ state, review, error, pending, uncertain, fi
   </section>;
 }
 
-export function PrivateTaskApproval({ detail }: { detail?: TaskDetail }) {
-  const [client] = useState(() => createTaskApprovalBrowserClient());
+/** Read gating may remove the panel, but never owns its exact submission client. */
+export function TaskApprovalSubmission({ detail, checked, state, workspace }: {
+  detail?: TaskDetail; checked?: TaskDetail; state?: TaskApprovalRead; workspace: TaskExecutionWorkspace;
+}) {
+  if (!detail || checked !== detail || !state?.receipt || state.projectId !== detail.task.projectId
+    || state.jobId !== detail.task.jobId || state.inputDigest !== detail.inputDigest) return null;
+  const binding = { projectId: detail.task.projectId, jobId: detail.task.jobId,
+    inputDigest: detail.inputDigest, packetDigest: state.receipt.packetDigest };
+  let client: ReturnType<TaskExecutionWorkspace["submission"]> | undefined;
+  try { client = workspace.submission(binding); } catch { /* Retain earlier clients; never evict on capacity or invalid input. */ }
+  if (!client) return <p className="private-notice">Submission is unavailable in this task tab. Earlier unconfirmed submissions are retained; do not resend them.</p>;
+  return <PrivateTaskSubmission key={JSON.stringify(binding)} {...binding} client={client} />;
+}
+
+export function PrivateTaskApproval({ detail, workspace: suppliedWorkspace }: { detail?: TaskDetail; workspace?: TaskExecutionWorkspace }) {
+  const [workspace] = useState(() => suppliedWorkspace ?? createTaskExecutionWorkspace());
+  const client = workspace.approval;
   const [checked, setChecked] = useState<TaskDetail>(), [state, setState] = useState<TaskApprovalRead>();
   const [editor, setEditor] = useState<TaskApprovalEditor>(), [error, setError] = useState<BrowserRequestError>();
   const [pending, setPending] = useState(false);
@@ -94,6 +110,5 @@ export function PrivateTaskApproval({ detail }: { detail?: TaskDetail }) {
     fileName={current ? file?.name ?? "" : ""} pending={pending} uncertain={client.hasPending()}
     onReview={() => { void action("review"); }} onCheck={() => { void action("check"); }} onSave={() => { void action("save"); }}
     onFile={selected => { void choose(selected); }} />
-    {current && state?.receipt && <PrivateTaskSubmission key={`${detail.task.projectId}/${detail.task.jobId}/${detail.inputDigest}/${state.receipt.packetDigest}`}
-      projectId={detail.task.projectId} jobId={detail.task.jobId} inputDigest={detail.inputDigest} packetDigest={state.receipt.packetDigest} />}</>;
+    <TaskApprovalSubmission detail={detail} checked={checked} state={state} workspace={workspace} /></>;
 }

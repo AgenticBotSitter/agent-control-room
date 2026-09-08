@@ -550,3 +550,30 @@ Browser close warnings cannot guarantee preservation after a forced close/crash.
 Nested planning/assignment/submission command protection remains outside this
 particular navigation test scope. Sites guidance kept the existing interface and
 local-only delivery; no browser handoff or hosting was performed during background work.
+
+## Retain queue submission across ordinary status refresh
+
+The follow-up source audit confirmed a second real recovery defect: each new task
+detail object briefly makes the approval read non-current, unmounting the submission
+panel. That panel previously owned its submission client, so an ordinary refresh
+could discard an unconfirmed queue command. Its initial read also labeled a null
+receipt as not recorded even when a retained client still held uncertainty.
+
+Moved execution clients to the stable task page, reusing the existing bounded
+page-workspace pattern. Planning, assignment and approval share that page lifetime;
+submission clients are retained by exact project/job/input/packet binding, bounded
+to 128 without eviction. Protected reads still gate rendering and actions. Null or
+denied submission reads retain uncertainty, while only matching canonical readback
+resolves it. No automatic POST retry, browser storage or new permission was added.
+The page navigation guard now also sees all these retained execution commands.
+Approval digest preparation is included in the pending hold because that asynchronous
+step can continue into a write even before its pending identity has been allocated.
+
+Thirty focused execution-client/panel checks initially passed; TypeScript passed,
+then lint caught JSX construction inside a try/catch. The guard now catches only
+client acquisition, with JSX outside the catch. The expanded task-recovery suite,
+18 compiled protected handler/approval/startup/review checks, TypeScript and full
+lint subsequently passed with a fresh VPS artifact. Independent source review
+confirmed retention fixes with no concrete new defect. Fixtures exercise the actual
+read-gated panel projection and retained clients, not a mounted browser refresh.
+All live fleet, owner-signing and production acceptance gates remain outstanding.

@@ -39,6 +39,11 @@ this document. The source changes below do not establish production readiness.
 - Needs Me admits the task or recovery owner permission independently, while each
   data endpoint still checks its own permissions. Idea/news skip-link targets exist;
   static rendering is not a live keyboard/browser acceptance result.
+- Task-page command memory now survives protected child-panel removal, including
+  exact queue submission readback. Expired-login guidance preserves the task tab;
+  pending-command navigation guards reuse the existing client protection. Source,
+  projection and compiled regressions pass; mounted-browser interruption acceptance
+  and live-agent delivery remain unproven.
 - Full sequential Idea/ABS delivery plus the authoring build command passed at
   this baseline. The latter compiled the release and passed 24 checks. No live
   owner login, database change, backup, deployment or provider call occurred.

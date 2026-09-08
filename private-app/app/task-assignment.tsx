@@ -28,8 +28,9 @@ export function TaskAssignmentPanel({ options, receipt = options?.receipt, error
 }
 
 /** Stable keyed page owns pending command memory; failed detail/option reads hide data and actions. */
-export function PrivateTaskAssignment({ detail, onRecorded }: { detail?: TaskDetail; onRecorded?: () => void }) {
-  const [client] = useState(() => createTaskAssignmentBrowserClient());
+export function PrivateTaskAssignment({ detail, onRecorded, client: suppliedClient }: { detail?: TaskDetail; onRecorded?: () => void;
+  client?: ReturnType<typeof createTaskAssignmentBrowserClient> }) {
+  const [client] = useState(() => suppliedClient ?? createTaskAssignmentBrowserClient());
   const [options, setOptions] = useState<TaskAssignmentOptions>(), [checkedDetail, setCheckedDetail] = useState<TaskDetail>();
   const [receipt, setReceipt] = useState<TaskAssignmentReceipt>();
   const [nodeId, setNodeId] = useState(""), [error, setError] = useState<BrowserRequestError>(), [pending, setPending] = useState(false);

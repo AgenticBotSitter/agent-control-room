@@ -13,6 +13,7 @@ import { PrivateTaskAssignment } from "./task-assignment";
 import { PrivateTaskApproval } from "./task-approval";
 import { TaskWorkflowGuide } from "./task-workflow-guide";
 import { installNewsNavigationGuard } from "../../src/web/v1/news-navigation-guard";
+import { createTaskExecutionWorkspace } from "../../src/web/v1/task-execution-workspace";
 
 export function TaskAuthenticationRecovery({ held }: { held: boolean }) {
   return <p>{browserAuthenticationRecovery(held)}</p>;
@@ -32,6 +33,7 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
   // Neither failed task-detail reads nor failed result reads may discard an unfinished review.
   const [reviewWorkspace] = useState(() => createTaskReviewWorkspace());
   const [verificationWorkspace] = useState(() => createTaskVerificationWorkspace());
+  const [executionWorkspace] = useState(() => createTaskExecutionWorkspace());
   const [page, setPage] = useState<TaskPage>();
   const [detail, setDetail] = useState<TaskDetail>();
   const [draft, setDraft] = useState<TaskDraft>({ title: "", instructions: "" });
@@ -40,8 +42,8 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
   const [loading, setLoading] = useState(true), [pending, setPending] = useState(false), [refresh, setRefresh] = useState(0);
   const generation = useRef(0), busy = useRef(false), alive = useRef(true);
   useEffect(() => installNewsNavigationGuard(window, document,
-    () => busy.current || client.hasPending() || reviewWorkspace.hasPending() || verificationWorkspace.hasPending(),
-    () => setNavigationNotice(true)), [client, reviewWorkspace, verificationWorkspace]);
+    () => busy.current || client.hasPending() || reviewWorkspace.hasPending() || verificationWorkspace.hasPending() || executionWorkspace.hasPending(),
+    () => setNavigationNotice(true)), [client, reviewWorkspace, verificationWorkspace, executionWorkspace]);
   const failure = (reason: unknown) => reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable");
   useEffect(() => {
     // Busy belongs to this effect generation: a retired request must not suppress
@@ -90,7 +92,7 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
     {navigationNotice && <p className="private-notice" role="alert">A save was still unconfirmed when you tried to leave.
       Keep this tab open and check that exact save again. If sign-in has expired, sign in from another tab, then return here.</p>}
     {error && <div className="private-notice" role="alert">{error.code === "authentication_required"
-      ? <TaskAuthenticationRecovery held={client.hasPending() || reviewWorkspace.hasPending() || verificationWorkspace.hasPending()} />
+      ? <TaskAuthenticationRecovery held={client.hasPending() || reviewWorkspace.hasPending() || verificationWorkspace.hasPending() || executionWorkspace.hasPending()} />
       : <p>{taskErrorMessage[error.code]}</p>}
       {jobId && <p>Result content has been cleared. Unfinished review text and exact pending save keys remain in this task page’s memory.
         Restore access and reopen the same result to continue. Leaving or reloading the task page discards them.</p>}
@@ -106,9 +108,9 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
         : <p className="private-note">{page.project.lifecycle !== "active" ? "Reopen this project before proposing more work." : "Your current access allows reading tasks, not proposing new work."}</p>}</div>}
     {detail && <TaskDetailPanel detail={detail} />}
     {detail && <TaskWorkflowGuide />}
-    {jobId && <PrivateTaskPlanning detail={detail} />}
-    {jobId && <PrivateTaskAssignment detail={detail} onRecorded={refreshSaved} />}
-    {jobId && <PrivateTaskApproval detail={detail} />}
+    {jobId && <PrivateTaskPlanning detail={detail} client={executionWorkspace.planning} />}
+    {jobId && <PrivateTaskAssignment detail={detail} client={executionWorkspace.assignment} onRecorded={refreshSaved} />}
+    {jobId && <PrivateTaskApproval detail={detail} workspace={executionWorkspace} />}
     <div id="task-results"><TaskDetailResults detail={detail} projectId={projectId} reviewWorkspace={reviewWorkspace} verificationWorkspace={verificationWorkspace} /></div>
     {project && <p className="private-note">Saved-state view · Refreshes every 30 seconds while visible. Use the task’s submission controls to queue signed work when configured. Refreshing this page does not submit a task.</p>}
   </main></div>;

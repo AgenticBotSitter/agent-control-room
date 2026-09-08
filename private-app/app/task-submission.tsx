@@ -5,19 +5,19 @@ import { BrowserRequestError } from "../../src/web/v1/browser-client";
 import type { z } from "zod";
 import type { taskDeliveryStatusSchema } from "../../src/web/v1/task-delivery-wire";
 
-export function PrivateTaskSubmission({ projectId, jobId, inputDigest, packetDigest }: {
-  projectId: string; jobId: string; inputDigest: string; packetDigest: string;
+export function PrivateTaskSubmission({ projectId, jobId, inputDigest, packetDigest, client: suppliedClient }: {
+  projectId: string; jobId: string; inputDigest: string; packetDigest: string; client?: ReturnType<typeof createTaskSubmissionBrowserClient>;
 }) {
-  const [client] = useState(() => createTaskSubmissionBrowserClient());
-  const [status, setStatus] = useState<"checking" | "not_recorded" | "recorded" | "unavailable" | "uncertain">("checking");
+  const [client] = useState(() => suppliedClient ?? createTaskSubmissionBrowserClient());
+  const [status, setStatus] = useState<"checking" | "not_recorded" | "recorded" | "unavailable" | "uncertain">(() => client.hasPending() ? "uncertain" : "checking");
   const [pending, setPending] = useState(false);
   const [delivery, setDelivery] = useState<z.infer<typeof taskDeliveryStatusSchema>>();
   const alive = useRef(true), busy = useRef(false), recorded = useRef(false);
   useEffect(() => {
     alive.current = true; let current = true;
     void client.read(projectId, jobId, inputDigest, packetDigest).then(value => {
-      if (current) { recorded.current ||= !!value.receipt; setStatus(recorded.current ? "recorded" : "not_recorded"); setDelivery(value.delivery); }
-    }).catch(() => { if (current) setStatus("unavailable"); });
+      if (current) { recorded.current ||= !!value.receipt; setStatus(recorded.current ? "recorded" : client.hasPending() ? "uncertain" : "not_recorded"); setDelivery(value.delivery); }
+    }).catch(() => { if (current) setStatus(client.hasPending() ? "uncertain" : "unavailable"); });
     return () => { current = false; alive.current = false; };
   }, [client, projectId, jobId, inputDigest, packetDigest]);
   async function action(submit: boolean) {
