@@ -1305,3 +1305,26 @@ CONSECUTIVE_TASK_DESIGN now records the joined grant staging, same-generation de
 atomic acceptance, existing verified policy composition and failure/reconnect tests
 required next. No new broker, lease format or relaxed authority is proposed. Production
 effects remain unauthorized, and no additional provider or GitHub action occurred.
+
+### Atomic initial lease storage
+
+Implemented recordInitialLease on the existing bridge journal, with no migration or
+new wire format. Already-consumed authenticated inbox evidence is required. Initial
+command/attempt writes share one transaction, exact active replay preserves progress,
+partial/conflicting/terminal state refuses, and synchronous exact-true fences run
+before/after writes with post-fence receipt/attempt checks. Failed commit leaves the
+consumed inbox but no partial command/attempt. It neither authenticates a sender nor
+grants native execution; the source method documents its trusted-intake prerequisite.
+Lease fixture now exercises this primitive; it still supplies synthetic consumption
+and freshness, not a complete server/native grant delivery path.
+
+Initial targeted run 32124 passed 38 cases with types/lint. Additional independent
+SQLite connection/reopen evidence passed 30173 (11 cases/types/lint). Source review
+found malformed retained checkpoint/sequence fields could survive duplicate checks.
+Reused the existing reconciliation attempt schema (export only; wire shape unchanged)
+and added object/nonstring/oversize checkpoint plus fractional-sequence regressions.
+Final combined initial-grant/lease/current-policy/bridge run 28344 passed all 61 cases,
+TypeScript, focused lint and diff check. Independent source re-review found the issue
+resolved and no further concrete persistence defect. No production/GitHub/provider
+operation occurred. Source-only storage acceptance does not complete automatic pickup.
+The unchanged protocol wire/schema regression suite also passed all 13 cases (2631).

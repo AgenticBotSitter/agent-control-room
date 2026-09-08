@@ -35,7 +35,11 @@ export async function nativeLeaseEvidenceFixture(enrollment?: NativeEnrollment) 
     leaseId: r.leaseId, leaseEpoch: r.leaseEpoch, acquiredAt: at, expiresAt: lease.expiresAt, authorityDigest: lease.authorityDigest, authority: lease.authority });
   const summary = { attemptId: r.attemptId, jobId: r.jobId, leaseId: r.leaseId, leaseEpoch: r.leaseEpoch,
     state: "leased" as const, lastEventSequence: 0, checkpointIds: [] };
-  const accept = async () => { await journal.consume(grant, at); journal.recordCommand(grant, at); journal.upsertAttempt(summary, at); };
+  const accept = async () => {
+    await journal.consume(grant, at);
+    if (grant.type !== "job.lease.grant") throw new Error("synthetic expected grant");
+    journal.recordInitialLease(grant, at, () => true);
+  };
   const config = { request: r, messageId: grant.messageId, serverActorId: actor, parentAuthorities: lease.parentAuthorities };
   const read = createNativeLeaseEvidence(config, { journal, trust, clock: now });
   return { ...f, startConfig: f.config, nativeRunJournal: f.journal, trust, journal, path, at, hello, grant, summary, config, read, accept,

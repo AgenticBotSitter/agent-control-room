@@ -141,6 +141,23 @@ No production launcher or receive allowlist was broadened by this audit. The exi
 two-task tests remain valuable result/capacity evidence, but not evidence that this
 lease-to-policy path is implemented. This prerequisite precedes fleet installation.
 
+The first persistence part is now implemented as `SqliteBridgeJournal.recordInitialLease`.
+After an authenticated frame has entered the existing replay inbox, this trusted
+intake primitive commits its exact command and initial attempt together. It checks
+the retained inbox mirrors/digests, preserves running progress on exact replay and
+refuses partial/conflicting/terminal prior state. Synchronous freshness fences run
+before and after writes; a late failure rolls both writes back while retaining the
+inbox. Stored replay summaries use the existing reconciliation schema, including
+bounded checkpoint IDs and safe numeric fields. No table or wire format was added.
+
+The lease-evidence fixture now uses this atomic primitive instead of separate command
+and unrestricted attempt writes. Its replay consumption and freshness fence remain
+privileged synthetic setup. Tests cover visibility from a second SQLite connection,
+reopened storage, failed fences and corrupted prior records. This does NOT implement
+the server grant producer, channel/task-bound intake handler, lease renewal or the
+runtime allowlist/policy wiring. Signature verification and live authority freshness
+remain mandatory at that handler and the existing verified policy reader.
+
 ### D. Combined release acceptance before service packaging
 
 Local progress on C/D: the per-task runtime now provides exact-binding drainage
