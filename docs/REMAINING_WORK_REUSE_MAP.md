@@ -5,6 +5,10 @@ This is the consolidated planning index, not a new implementation authorization 
 claim of production acceptance. Existing contracts and scoped live gates remain.
 No total percentage is inferred from the number of rows.
 
+For evidence levels, missing candidate comparisons, required fit experiments and
+copy-ready evaluation/implementation goals, see [Reuse comparison program](REUSE_COMPARISON_PROGRAM.md).
+This map alone does not establish that every candidate has been tested against Control Room.
+
 ## How to read this
 
 The remaining work is a mixture of missing implementation, connecting existing
