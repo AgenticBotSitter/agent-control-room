@@ -1557,3 +1557,36 @@ during inventory; actual delivery/start still use the checked original resources
 12621 passed five inventory/gate cases plus types/lint/diff. Independent source
 re-review confirmed the finding resolved, with no further concrete defect. This does
 not freeze trusted class internals or supply exclusive cross-process ownership.
+
+### Consolidated closing verification
+
+205e505 is the implementation checkpoint. Broad sequential run 69049 completed
+successfully: 169 tests passed, zero failures/skips, across 19 native journal,
+lease, policy, runtime, connector, settlement and canonical-delivery test files.
+57194 passed full pnpm check, full pnpm lint, fresh VPS compilation and all four
+compiled managed-session/node-launcher checks. Build warnings remain, not errors.
+The raw temporary logs are not publishable handoff evidence.
+
+Regenerated source-only deployment inventory for both supported profiles using
+the exported inventory function. Website-only: 64 migrations, two role files,
+SHA-256 128c04d81b4a23b5269225aa3c6a2f434ab3b7c618ef25914ba094b21111762c.
+Idea-authoring: 64 migrations, three role files, one adapter setup file,
+SHA-256 8ff100249f86877b360b1f00c7b0e40a61765d4611d48f5d34c4645da007d8e2.
+No database was contacted or SQL applied. An earlier --help invocation was refused
+because this script accepts only its documented optional --profile argument; it
+did not inspect or modify a database.
+
+The consolidated owner/operator handoff is docs/OVERNIGHT_HANDOFF_2026_09_08.md.
+It separates source/local acceptance from missing production/host authority and
+keeps the original 12:40:58 UTC deadline. No broad completion percentage is claimed.
+
+Closing verification also corrected the pre-existing narrowCeiling test helper:
+its empty operation list was structurally invalid, so the former test could pass
+by catching setup failure instead of observing an adopted narrower policy. It now
+adopts a valid version-two ceiling with a one-second duration. Assertions outside
+the failure-catching callback prove the narrower ceiling actually persisted.
+27504 passed all 36 policy/lease/runtime cases plus types/lint/diff; final focused
+60873 passed all four selected permission-change cases with the outside assertions.
+Independent source review found no concrete issue. No production policy changed.
+Handoff review also narrowed its wording to the lease-aware factory specifically;
+the older unassigned factory does not contain the new restart gate.

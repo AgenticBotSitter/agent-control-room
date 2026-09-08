@@ -80,6 +80,10 @@ test("permission changes during availability resolution invalidate the entire sn
     const controller = f.create({ readCurrent: read }); t.after(() => controller.close());
     assert.equal((await f.adapter(controller).start(f.prepared.start)).state, "failed");
     assert.deepEqual(f.calls, []); assert.equal(f.admissions.count(), 0);
+    if (change === "ceiling") {
+      const adopted = await f.trust.loadCeiling();
+      assert.equal(adopted.body.version, 2); assert.equal(adopted.body.maxDurationSeconds, 1);
+    }
   });
 });
 

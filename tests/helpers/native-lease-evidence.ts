@@ -45,7 +45,10 @@ export async function nativeLeaseEvidenceFixture(enrollment?: NativeEnrollment) 
   return { ...f, startConfig: f.config, nativeRunJournal: f.journal, trust, journal, path, at, hello, grant, summary, config, read, accept, serverFrame: frame,
     provisionCeiling: async () => trust.provisionInitialCeiling(signArtifact(f.policy.ceiling, root.privateKey)),
     narrowCeiling: async () => {
-      const body = { ...f.policy.ceiling, version: 2, operationIds: [], bodyDigest: "" };
+      // Keep the signed ceiling structurally valid while genuinely narrowing it.
+      // An empty operation list is rejected before adoption and cannot prove a
+      // policy-revision change during a later await.
+      const body = { ...f.policy.ceiling, version: 2, maxDurationSeconds: 1, bodyDigest: "" };
       body.bodyDigest = computeArtifactBodyDigest(body);
       await trust.adoptCeiling(signArtifact(body, root.privateKey));
     },
