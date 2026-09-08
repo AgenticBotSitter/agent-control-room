@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { createIdeaCreationClient } from "../../src/web/v1/idea-create-client";
-import { BrowserRequestError } from "../../src/web/v1/browser-client";
+import { BrowserRequestError, browserAuthenticationRecovery } from "../../src/web/v1/browser-client";
 import type { IdeaCreateDraft, IdeaCreateReceipt } from "../../src/web/v1/idea-wire";
 import { installNewsNavigationGuard } from "../../src/web/v1/news-navigation-guard";
 
@@ -17,7 +17,8 @@ export function IdeaCreateForm({ close }: { close: () => void }) {
     try { setReceipt(await (client.hasPending() ? client.retry() : client.create(draft))); }
     catch (reason) {
       const code = reason instanceof BrowserRequestError ? reason.code : "uncertain";
-      setError(code === "invalid_request" ? "Keep the brief short enough to leave room for bot replies. Check the fields and try a shorter brief."
+      setError(code === "authentication_required" ? browserAuthenticationRecovery(client.hasPending())
+        : code === "invalid_request" ? "Keep the brief short enough to leave room for bot replies. Check the fields and try a shorter brief."
         : client.hasPending() ? "The save may have completed. Check this exact save again; do not create another copy."
           : "The idea could not be saved. Check your access and configuration.");
     } finally { setBusy(false); }

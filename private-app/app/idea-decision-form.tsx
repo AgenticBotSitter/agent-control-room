@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { createIdeaDecisionClient } from "../../src/web/v1/idea-decision-client";
+import { BrowserRequestError, browserAuthenticationRecovery } from "../../src/web/v1/browser-client";
 import type { IdeaDetail, IdeaDecisionReceipt } from "../../src/web/v1/idea-wire";
 import { installNewsNavigationGuard } from "../../src/web/v1/news-navigation-guard";
 
@@ -23,7 +24,9 @@ export function IdeaDecisionForm({ detail, pendingChanged }: { detail: IdeaDetai
           summary: summary.trim(), projectKind: "business_validation", priority: 50,
         } } : {}) },
       })));
-    } catch { setError(client.hasPending() ? "The decision may have been saved. Check this exact decision again; do not switch choices."
+    } catch (reason) { setError(reason instanceof BrowserRequestError && reason.code === "authentication_required"
+      ? browserAuthenticationRecovery(client.hasPending())
+      : client.hasPending() ? "The decision may have been saved. Check this exact decision again; do not switch choices."
       : "The decision was not saved. Check the fields, access and current discussion before trying again."); }
     finally { setBusy(false); }
   }

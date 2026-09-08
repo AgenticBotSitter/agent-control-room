@@ -102,3 +102,31 @@ compiled/startup/launcher/lifecycle regressions pass. The compiled check leaves
 the actual compiled handler uninstalled (503) before and after checking its
 disposable database. A key-loader trap confirms no login-key fetch. No native
 PostgreSQL connection, actual restore, supervisor install or listener was attempted.
+
+## Expired-session recovery across Idea Lab and news
+
+Found 13 Idea/news request sites missing the explicit AJAX expiry header already
+used by project/task clients. Added it without changing cookies, redirect rejection,
+timeouts, server JWT checks or MFA. Cloudflare documents this mechanism at
+https://developers.cloudflare.com/cloudflare-one/access-controls/access-settings/session-management/.
+
+Idea creation/decision and news draft/save/settings/archive/refresh messages now
+distinguish expired login and preserve an earlier uncertain save. Guidance keeps
+the original tab open while signing in elsewhere; no automatic write retry or
+browser persistence was added. Source audit covers 24 currently matching client
+and top-level private component fetch calls; it is not a guarantee about future
+wrappers/nested components or real Cloudflare edge behavior.
+
+Four dedicated tests pass, including uncertain Idea save and initial-versus-later
+401 responses across archive/source/refresh clients. Independent source review
+reported no concrete defect, noting the source-audit and live-edge coverage limits.
+TypeScript, full lint and fresh VPS compilation pass. Full delivery command passed
+including its 239-test stage; final Idea/ABS base rerun covers the last recovery-copy
+changes. Compiled/private-browser regression checks also follow. Real owner login
+acceptance remains gated, not established by simulated 401 responses.
+
+After handoff, the earlier final-check output was unavailable. A process inventory
+confirmed those tests were no longer running before fresh verification: Idea/ABS
+base 88/88 pass, compiled handler/startup and browser regressions 19/19 pass.
+TypeScript and full lint pass again. No open PR targets this working branch;
+publication remains a private batched skip-CI push, with no merge or workflow run.

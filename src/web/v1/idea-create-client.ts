@@ -10,7 +10,7 @@ export function createIdeaCreationClient(transport: typeof fetch = fetch, makeKe
     busy = true;
     try {
       const response = await transport("/api/v1/ideas", { method: "POST", credentials: "same-origin", cache: "no-store", redirect: "error",
-        signal: AbortSignal.timeout(10_000), headers: { "content-type": "application/json", "idempotency-key": pending.key }, body: pending.body });
+        signal: AbortSignal.timeout(10_000), headers: { "x-requested-with": "XMLHttpRequest", "content-type": "application/json", "idempotency-key": pending.key }, body: pending.body });
       if (!response.ok) {
         const code = ({ 400: "invalid_request", 401: "authentication_required", 403: "access_denied", 404: "not_found", 409: "conflict" } as Record<number, BrowserFailureCode>)[response.status];
         if (code) { if (!pending.uncertain) pending = undefined; throw new BrowserRequestError(code); }

@@ -13,7 +13,7 @@ export function createIdeaStartClient(transport: typeof fetch = fetch) {
     try {
       const response = await transport(`/api/v1/ideas/${encodeURIComponent(sessionId)}/start`, {
         method: "POST", credentials: "same-origin", cache: "no-store", redirect: "error", signal: AbortSignal.timeout(10000),
-        headers: { "content-type": "application/json" }, body: JSON.stringify(input.data),
+        headers: { "x-requested-with": "XMLHttpRequest", "content-type": "application/json" }, body: JSON.stringify(input.data),
       });
       if (!response.ok) {
         const code = ({ 400: "invalid_request", 401: "authentication_required", 403: "access_denied", 404: "not_found", 409: "conflict" } as Record<number, BrowserFailureCode>)[response.status];

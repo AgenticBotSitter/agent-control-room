@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { readBrowserJson } from "./browser-json";
+import { browserAuthenticationRecovery } from "./browser-client";
 import { catalogProjectIdSchema as id } from "./project-wire";
 import { effectIntentStates } from "../../domain/v1/types";
 
@@ -28,9 +29,10 @@ export function createNewsRefreshClient(projectValue: string, sourceValue: strin
     const exact = pending; busy = true;
     try {
       const response = await fetcher(`${path}/${exact.phase}`, { method: "POST", credentials: "same-origin", cache: "no-store", redirect: "error",
-        signal: AbortSignal.timeout(10000), headers: { "content-type": "application/json", accept: "application/json" }, body: JSON.stringify(exact.input) });
+        signal: AbortSignal.timeout(10000), headers: { "x-requested-with": "XMLHttpRequest", "content-type": "application/json", accept: "application/json" }, body: JSON.stringify(exact.input) });
       if ([400, 401, 403, 409].includes(response.status)) {
         if (!exact.uncertain) pending = undefined;
+        if (response.status === 401) throw new Error(browserAuthenticationRecovery(exact.uncertain));
         throw new Error("Refresh request refused or unresolved. Check access and source settings.");
       }
       if (!response.ok) throw new Error("Refresh outcome unknown. Retry the exact request.");
@@ -53,9 +55,9 @@ export function createNewsRefreshClient(projectValue: string, sourceValue: strin
       jobId: proposal?.jobId, effectState: approval?.effectState }),
     async describe(signal?: AbortSignal) {
       if (proposal) approvalCurrent = false;
-      const response = await fetcher(path, { credentials: "same-origin", cache: "no-store", redirect: "error", headers: { accept: "application/json" },
+      const response = await fetcher(path, { credentials: "same-origin", cache: "no-store", redirect: "error", headers: { "x-requested-with": "XMLHttpRequest", accept: "application/json" },
         signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10000)]) : AbortSignal.timeout(10000) });
-      if (!response.ok) throw new Error("Refresh settings unavailable.");
+      if (!response.ok) throw new Error(response.status === 401 ? browserAuthenticationRecovery(!!pending) : "Refresh settings unavailable.");
       const value = newsRefreshDescriptionSchema.parse(await readBrowserJson(response));
       if (value.projectId !== projectId || value.sourceId !== sourceId) throw new Error("Refresh source mismatch.");
       if (proposal && value.configured && value.sourceDigest !== proposal.sourceDigest) throw new Error("Prepared refresh configuration changed.");

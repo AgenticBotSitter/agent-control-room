@@ -70,7 +70,7 @@ export function PrivateNewsWorkspace({ projectId, after, sourceAfter, view = "hi
         const query = new URLSearchParams({ view, order, ...(after ? { after } : {}), ...(sourceAfter ? { sourceAfter } : {}) });
         const response = await fetch(`/api/v1/projects/${encodeURIComponent(projectId)}/news${query.size ? `?${query}` : ""}`,
           { credentials: "same-origin", cache: "no-store", redirect: "error",
-            signal: AbortSignal.any([abort.signal, AbortSignal.timeout(10_000)]), headers: { accept: "application/json" } });
+            signal: AbortSignal.any([abort.signal, AbortSignal.timeout(10_000)]), headers: { "x-requested-with": "XMLHttpRequest", accept: "application/json" } });
         if (!response.ok) throw new BrowserRequestError(response.status === 401 ? "authentication_required"
           : response.status === 403 ? "access_denied" : "unavailable");
         const result = newsPageSchema.parse(await readBrowserJson(response));

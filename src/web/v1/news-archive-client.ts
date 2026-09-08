@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { readBrowserJson } from "./browser-json";
+import { browserAuthenticationRecovery } from "./browser-client";
 import { catalogProjectIdSchema as id } from "./project-wire";
 
 const inputSchema = z.object({ storyId: id, archived: z.boolean(),
@@ -18,8 +19,10 @@ export function createNewsArchiveClient(projectId: string, fetcher: typeof fetch
     const exact = pending; busy = true;
     try {
       const response = await fetcher(path, { method: "POST", credentials: "same-origin", cache: "no-store", redirect: "error",
-        signal: AbortSignal.timeout(10_000), headers: { "content-type": "application/json", accept: "application/json" }, body: JSON.stringify(exact.input) });
+        signal: AbortSignal.timeout(10_000), headers: { "x-requested-with": "XMLHttpRequest", "content-type": "application/json", accept: "application/json" }, body: JSON.stringify(exact.input) });
       if ([400, 401, 403, 404, 409].includes(response.status)) {
+        if (response.status === 401) { if (!exact.uncertain) pending = undefined;
+          throw new Error(browserAuthenticationRecovery(exact.uncertain)); }
         if (exact.uncertain) throw new Error("Earlier change is still unresolved. Restore access and retry this exact change.");
         pending = undefined;
         throw new Error("Article was not changed. Check access and reload the library before trying again.");

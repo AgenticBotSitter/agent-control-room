@@ -8,6 +8,11 @@ export type BrowserFailureCode = "authentication_required" | "access_denied" | "
 export class BrowserRequestError extends Error {
   constructor(readonly code: BrowserFailureCode) { super(code); }
 }
+export function browserAuthenticationRecovery(held: boolean) {
+  return "Your sign-in has expired. Keep this tab open and open Control Room in another tab to sign in. Then return here. "
+    + (held ? "The earlier save is still unconfirmed; check that exact save again, without changing the request."
+      : "Try this action again after signing in.");
+}
 export const browserErrorMessage: Record<BrowserFailureCode, string> = {
   authentication_required: "Your session has ended. Sign in again to continue.",
   access_denied: "You do not have access to this project or action.",

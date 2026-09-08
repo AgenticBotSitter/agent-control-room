@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { createTaskBrowserClient, taskErrorMessage } from "../../src/web/v1/task-browser-client";
-import { BrowserRequestError } from "../../src/web/v1/browser-client";
+import { BrowserRequestError, browserAuthenticationRecovery } from "../../src/web/v1/browser-client";
 import { readBrowserJson } from "../../src/web/v1/browser-json";
 import { newsResearchPreviewSchema, newsArticleActions, type NewsArticleAction, type NewsPage } from "../../src/web/v1/news-wire";
 import type { TaskDraft, TaskReceipt } from "../../src/web/v1/task-wire";
@@ -25,21 +25,26 @@ export function NewsResearchForm({ projectId, story, close }: {
     try {
       const response = await fetch(`/api/v1/projects/${encodeURIComponent(projectId)}/news/prepare`, {
         method: "POST", credentials: "same-origin", redirect: "error", cache: "no-store", signal: AbortSignal.timeout(10_000),
-        headers: { "content-type": "application/json", accept: "application/json" },
+        headers: { "x-requested-with": "XMLHttpRequest", "content-type": "application/json", accept: "application/json" },
         body: JSON.stringify({ storyId: story.storyId, storyDigest: story.storyDigest, action, goal }),
       });
-      if (!response.ok) throw new Error();
+      if (!response.ok) throw new BrowserRequestError(response.status === 401 ? "authentication_required"
+        : response.status === 403 ? "access_denied" : response.status === 409 ? "conflict" : "unavailable");
       const preview = newsResearchPreviewSchema.parse(await readBrowserJson(response));
       if (preview.projectId !== projectId || preview.storyId !== story.storyId || preview.storyDigest !== story.storyDigest) throw new Error();
       setDraft(preview.draft);
-    } catch { setError("Could not prepare this draft. Check your access and goal; large source packages are not supported yet. No task was saved."); }
+    } catch (reason) { setError(reason instanceof BrowserRequestError && reason.code === "authentication_required"
+      ? browserAuthenticationRecovery(false)
+      : "Could not prepare this draft. Check your access and goal; large source packages are not supported yet. No task was saved."); }
     finally { setBusy(false); }
   }
   async function save() {
     if (busy || !draft) return;
     setBusy(true); setError(undefined);
     try { setReceipt(await (client.hasPending() ? client.retrySave() : client.propose(projectId, draft))); }
-    catch (reason) { setError(taskErrorMessage[reason instanceof BrowserRequestError ? reason.code : "uncertain"]); }
+    catch (reason) { setError(reason instanceof BrowserRequestError && reason.code === "authentication_required"
+      ? browserAuthenticationRecovery(client.hasPending())
+      : taskErrorMessage[reason instanceof BrowserRequestError ? reason.code : "uncertain"]); }
     finally { setBusy(false); }
   }
   return <section className="private-panel" aria-label="Prepare article research">

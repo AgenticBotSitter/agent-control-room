@@ -8,7 +8,7 @@ export function createIdeaBrowserClient(transport: typeof fetch = fetch) {
   async function read(path: string, signal?: AbortSignal) {
     try {
       const response = await transport(path, { credentials: "same-origin", cache: "no-store", redirect: "error",
-        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000), headers: { accept: "application/json" } });
+        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000), headers: { "x-requested-with": "XMLHttpRequest", accept: "application/json" } });
       if (!response.ok) throw new BrowserRequestError(response.status === 401 ? "authentication_required"
         : response.status === 403 ? "access_denied" : response.status === 404 ? "not_found" : "unavailable");
       return await readBrowserJson(response);
