@@ -43,7 +43,8 @@ export function requirePrivateVpsMode(prepared) {
     throw new Error('private_vps_mode_invalid');
   }
   if (prepared.mode === 'website-only') {
-    if (coordinator?.nativeQueue || coordinator?.queueWorker || coordinator?.nativeHttp || prepared.nativeHttps) {
+    if (coordinator?.nativeQueue || coordinator?.queueWorker || coordinator?.nativeHttp || prepared.nativeHttps
+      || coordinator && 'ideaRuntime' in coordinator || 'news' in prepared.configuration) {
       throw new Error('private_vps_mode_invalid');
     }
   } else if (!coordinator || coordinator.nativeQueue !== true || coordinator.nativeQueueRecovery !== true

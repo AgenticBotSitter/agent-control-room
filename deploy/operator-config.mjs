@@ -1,4 +1,4 @@
-// Initial restricted website only. Import is inert; the launcher calls this explicitly.
+// Restricted website, optionally with saved Idea/news data. No runtime or worker.
 // Keep this file in deploy/ within the pinned release and chmod 0600 on the server.
 import { readFile } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
@@ -12,14 +12,26 @@ export async function createConfiguration({ signal }) {
   if (!path || !isAbsolute(path)) throw new Error('operator_settings_required');
   await validatePrivateVpsConfigurationPath(path);
   const settings = JSON.parse(await readFile(path, { encoding: 'utf8', signal }));
-  if (!settings || Object.keys(settings).sort().join(',') !== 'port,web'
+  if (!settings || !['port,web', 'port,savedViews,web'].includes(Object.keys(settings).sort().join(','))
     || !Number.isSafeInteger(settings.port) || settings.port < 1024 || settings.port > 65535)
     throw new Error('operator_settings_invalid');
   const expected = ['audience', 'database', 'issuer', 'maxSessionSeconds', 'origin',
     'ownerIdentityId', 'tenantId', 'workspaceId'].sort().join(',');
   if (!settings.web || Object.keys(settings.web).sort().join(',') !== expected)
     throw new Error('operator_settings_invalid');
+  const optional = {};
+  if ('savedViews' in settings) {
+    const saved = settings.savedViews;
+    if (!saved || Array.isArray(saved) || typeof saved !== 'object' || !Object.keys(saved).length
+      || Object.keys(saved).some(name => !['ideaIntegrityKeyHex', 'newsIntegrityKeyHex'].includes(name)))
+      throw new Error('operator_settings_invalid');
+    for (const [name, value] of Object.entries(saved)) {
+      if (typeof value !== 'string' || !/^[a-fA-F0-9]{64}$/.test(value)) throw new Error('operator_settings_invalid');
+      optional[name === 'ideaIntegrityKeyHex' ? 'ideaProjects' : 'news'] = { integrityKey: Uint8Array.from(Buffer.from(value, 'hex')) };
+    }
+  }
   const web = validatePrivateStartupConfiguration({ ...settings.web,
+    ...optional,
     loadKeys: createAccessKeyLoader(settings.web.issuer, fetch) });
   return { mode: 'website-only', port: settings.port, configuration: { web } };
 }

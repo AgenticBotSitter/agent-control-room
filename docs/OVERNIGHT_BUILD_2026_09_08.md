@@ -281,3 +281,26 @@ Final combined catalog, Idea navigation, lifecycle, restricted-role and compiled
 handler/startup run passes all 30 tests. TypeScript, full lint and fresh VPS
 compilation pass. These are disposable API and static-render checks, not owner
 browser or production acceptance. No new schema/role/production change occurred.
+
+## Installable saved-data capabilities and mode correction
+
+The operator module now optionally maps protected savedViews hexadecimal keys to
+the existing Idea/news services. The minimal settings shape remains valid. It
+generates no keys, starts no collectors/providers and supplies no coordinator.
+These services permit existing authorized saved-record actions; they are not a
+read-only database mode. Private configuration and key custody remain operator work.
+
+Source inspection found website-only mode could accept Idea runtime or top-level
+news worker settings despite its disabled-execution message. Both are now rejected
+before asset/host acquisition; non-executing saved web services and Idea creation
+configuration remain permitted. Independent review of both changes found no
+concrete defect. Fourteen combined launcher/compiled-startup/handler tests pass,
+including protected synthetic settings through compiled Idea/news routes and
+pre-acquisition runtime rejection. TypeScript and full lint pass. Synthetic trust
+is injected; no actual JWKS/provider/database/server operation is inferred.
+
+Remaining meaningful source assembly: make non-executing Idea creation available
+without requiring unrelated handwritten native-task planning/checkpoint resources.
+Reuse existing creation/coordinator services and role gates rather than inventing
+another discussion runtime. Actual agent admission resources remain private/live
+gates, not permission to substitute fixtures in production.

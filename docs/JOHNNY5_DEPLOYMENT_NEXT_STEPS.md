@@ -20,8 +20,10 @@ Use the exact private-branch SHA supplied with this handoff as the deployment pi
   source-status and participant-selection integration for separately configured
   news/Idea operations, not automatic activation by the website-only settings.
 
-The minimal settings module does not configure Idea/News integrity keys, providers,
-task coordinators or native transports. Source support is not configured operation.
+The settings module now optionally accepts protected `savedViews` keys for existing
+Idea/News records; see `deploy/README.md`. Omitting them keeps the minimal profile.
+It does not configure providers, task coordinators or native transports. Source
+support is not configured operation, and saved views are not worker activation.
 Do not invent keys for saved signed records or use fixture identities.
 
 The website-only startup rejects misplaced coordinator operations, including task

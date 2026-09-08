@@ -52,6 +52,27 @@ issuer is operator-selected, never obtained from an incoming token. The database
 preflight still requires the exact schema, restricted role, owner and workspace.
 The module does not seed owners, apply migrations, or infer identity from email.
 
+### Optional saved Idea and news capabilities
+
+The same protected JSON may optionally include a top-level `savedViews` object
+with `ideaIntegrityKeyHex`, `newsIntegrityKeyHex`, or both. Each value must be the
+exact existing 32-byte integrity key encoded as 64 hexadecimal characters. Keep
+these values private in the protected settings file, never Git or reports. Omit
+the object entirely when neither capability is configured; empty/unknown fields
+are rejected. No extra fields are accepted under `web`.
+
+Use the retained data's actual key: do not generate a replacement to make a failed
+integrity check pass. New-install key creation and custody need separate operator
+approval. No key is generated, discovered or rotated by this module.
+
+This enables the existing saved Idea/project and news services, including their
+already-authorized local record actions. It is **not a read-only database mode**.
+It does not enable new Idea creation, bot discussions, news collection or research
+execution: those need separately configured coordinators/workers and acceptance.
+The launcher rejects Idea runtime or news-worker configuration in website-only
+mode before opening runtime resources. Actual saved-data setup remains optional;
+the minimal configuration above works unchanged.
+
 ## Database procedure — exact target review required
 
 Use the existing PostgreSQL 17 primary; do not install another primary. First
