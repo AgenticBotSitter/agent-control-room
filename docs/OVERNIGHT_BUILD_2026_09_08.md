@@ -1597,3 +1597,14 @@ failures/skips. These are stage totals, not a deduplicated global test count.
 The source-only handoff review found no other concrete inaccuracy after its wording
 correction. All observed check handles are terminal; no production service was
 started by this work. Test-fidelity correction was saved as 9b1b5c8.
+
+### Closing reuse research handoff
+
+At 12:32:57 UTC the original deadline remained 12:40:58 UTC. Owner-requested
+read-only public Herdr research from the preceding interaction is now saved in
+HERDR_REUSE_ASSESSMENT.md with sources, limitations and a bounded acceptance card.
+It supplements R07/R08/R12 rather than selecting another scheduler or overriding
+native effect ownership. No upstream code was imported or runtime installed.
+Documentation's inconsistent Hermes minimum integration versions are recorded
+for resolution against a future immutable pin. The next step is a separately
+scoped disposable read-only adapter evaluation, not live automated resume.

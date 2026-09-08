@@ -44,6 +44,11 @@ delivery documents it references. Do not sum test counts from overlapping reruns
 
 ## What remains before daily unattended use
 
+Subsequent owner-requested Herdr research is saved in
+[the reuse assessment](HERDR_REUSE_ASSESSMENT.md). Evaluate its existing terminal,
+session and monitoring interfaces before adding equivalent custom infrastructure.
+It is not adopted, installed or qualified and does not replace the gates below.
+
 1. **Node lifecycle ownership:** ensure one lifecycle owner, reconstruct outstanding
    local and canonical work before fresh pickup, and connect the existing queue,
    connector, per-task runtimes, drain and exact recovery paths. Inventory alone
