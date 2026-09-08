@@ -27,6 +27,15 @@ export type IdeaCreateOperation = { tenantId: string; workspaceId: string;
   decide?: WebIdeaDecisionOperation["decide"]; start?: WebIdeaStartOperation["start"];
   synthesize?: WebIdeaSynthesisOperation["synthesize"] };
 
+export function captureIdeaParticipants(value: unknown) {
+  const participants = z.array(ideaParticipantSchemaV1).min(3).max(6).parse(value);
+  if (new Set(participants.map(p => p.participantId)).size !== participants.length
+    || new Set(participants.map(p => p.identityDigest)).size !== participants.length
+    || new Set(participants.map(p => p.perspective)).size !== participants.length
+    || !participants.some(p => p.perspective === "skeptic")) throw new Error("idea_roster_invalid");
+  return participants;
+}
+
 /** Non-executing coordinator operation. A separately provisioned pool is required;
  * the restricted web role is intentionally not granted session writes. */
 export class IdeaSessionCreationService {
@@ -37,11 +46,7 @@ export class IdeaSessionCreationService {
     key: Uint8Array, participants: unknown[], clock: () => number = Date.now) {
     if (!(key instanceof Uint8Array) || key.length !== 32) throw new Error("idea_key_invalid");
     this.key = Uint8Array.from(key);
-    this.participants = z.array(ideaParticipantSchemaV1).min(3).max(6).parse(participants);
-    if (new Set(this.participants.map(p => p.participantId)).size !== this.participants.length
-      || new Set(this.participants.map(p => p.identityDigest)).size !== this.participants.length
-      || new Set(this.participants.map(p => p.perspective)).size !== this.participants.length
-      || !this.participants.some(p => p.perspective === "skeptic")) throw new Error("idea_roster_invalid");
+    this.participants = captureIdeaParticipants(participants);
     this.authority = new WebSessionAuthority(db, scope, clock, "idea_lab_session");
   }
   async options(identity: VerifiedWebIdentity) {

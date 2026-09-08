@@ -320,3 +320,31 @@ expectation now reflects the nine added authorized renders. Final combined news,
 compiled-handler and startup verification passes 20 tests. TypeScript, full lint
 and fresh VPS compilation pass. Independent source review reports no defect;
 this is route/static evidence, not a live browser interaction test.
+
+## Non-executing Idea authoring installation
+
+Added a narrow two-role startup joining the existing web request admission/drain,
+bounded pools, Idea creation, deterministic recap and owner-decision services.
+It avoids requiring unrelated task-planning/checkpoint configuration. The compiled
+entry and existing launcher accept explicit protected ideaAuthoring settings with
+the same saved-record key, distinct restricted writer login and validated roster.
+No runtime, queue, task planner, provider, stop or native listener is configured.
+
+Independent review caught cleanup dropping a distinct pool wrapper when its client
+aliased another handle. Cleanup now deduplicates actual handles instead; the
+regression confirms both cleanup obligations run. Re-review confirms the fix and
+reports no concrete wiring defect. Invalid topology/roster, failed role preflight,
+cancellation and install failure checks pass. The compiled settings test initially
+included extra fields from a broad fixture object; it now selects only the existing
+documented web fields rather than weakening the settings parser. It passes through
+the actual operator, authoring bootstrap and launcher with synthetic trust and
+injected listener; exactly two pools serve saved Idea options/save/read.
+
+Source-only role tests use the existing PGlite fixture accommodation; they do not
+prove independent physical connections or production deployment. The web-only
+database checker does not verify the new writer role; documentation now says so.
+Full Idea/ABS delivery verification exits zero with 241 tests in its final stage;
+the new seven authoring startup tests are included in the lifecycle stage. Twelve
+compiled/operator/launcher checks pass, along with TypeScript, full lint and a
+fresh VPS build. No private input was read,
+no production schema/role was changed, and no native/provider call occurred.

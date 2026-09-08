@@ -32,6 +32,7 @@ const installedRuntime = Object.freeze({
     import('../dist-vps/server/taskHost.js'), import('../dist-vps/server/serving.js'),
     import('../dist-vps/server/index.js'),
     import('../dist-vps/server/bootstrap.js'),
+    import('../dist-vps/server/ideaAuthoring.js'),
   ]),
 });
 
@@ -42,6 +43,8 @@ export function requirePrivateVpsMode(prepared) {
   if (!prepared?.configuration || !['website-only', 'agent-tasks'].includes(prepared.mode)) {
     throw new Error('private_vps_mode_invalid');
   }
+  if ('ideaAuthoring' in prepared.configuration && (prepared.mode !== 'website-only' || coordinator))
+    throw new Error('private_vps_mode_invalid');
   if (prepared.mode === 'website-only') {
     if (coordinator?.nativeQueue || coordinator?.queueWorker || coordinator?.nativeHttp || prepared.nativeHttps
       || coordinator && 'ideaRuntime' in coordinator || 'news' in prepared.configuration) {
@@ -67,7 +70,7 @@ export async function runPrivateVps(args, runtime = installedRuntime) {
   }
   await validatePrivateVpsConfigurationPath(parsed.configurationPath);
   // Fixed paths in this release, not cwd or a request-supplied module search path.
-  const [{ createInstalledPrivateTaskHost, startPrivateHostLifecycle }, serving, renderer, bootstrap] = await runtime.loadRelease();
+  const [{ createInstalledPrivateTaskHost, startPrivateHostLifecycle }, serving, renderer, bootstrap, ideaAuthoring] = await runtime.loadRelease();
   let mode;
   const lifecycle = startPrivateHostLifecycle({ signals: runtime.signals, async start(signal) {
     const active = () => { if (signal.aborted) throw new Error('private_vps_start_canceled'); };
@@ -82,7 +85,7 @@ export async function runPrivateVps(args, runtime = installedRuntime) {
     const assets = await serving.loadPrivateClientAssets(fileURLToPath(new URL('../dist-vps/client', import.meta.url)));
     active();
     if (mode === 'website-only' && !prepared.configuration.coordinator) {
-      return startWebsiteOnly(prepared, { bootstrap, serving, handler: renderer.default, assets, signal });
+      return startWebsiteOnly(prepared, { bootstrap, ideaAuthoring, serving, handler: renderer.default, assets, signal });
     }
     return createInstalledPrivateTaskHost().start({
       configuration: prepared.configuration, port: prepared.port, nativeHttps: prepared.nativeHttps,
@@ -111,16 +114,19 @@ export async function runPrivateVps(args, runtime = installedRuntime) {
 /** Reuses the restricted production web bootstrap, with no task planner or worker.
  * Cleanup ownership transfers to the existing loopback service after construction.
  */
-export async function startWebsiteOnly(prepared, { bootstrap, serving, handler, assets, signal }) {
+export async function startWebsiteOnly(prepared, { bootstrap, ideaAuthoring, serving, handler, assets, signal }) {
   requirePrivateVpsMode(prepared);
   const port = prepared.port;
   if (prepared.mode !== 'website-only' || prepared.configuration.coordinator
-    || Object.keys(prepared.configuration).some(key => key !== 'web')
+    || Object.keys(prepared.configuration).some(key => !['web', 'ideaAuthoring'].includes(key))
     || !Number.isSafeInteger(port) || port < 1 || port > 65535)
     throw new Error('private_vps_mode_invalid');
   const config = bootstrap.validatePrivateStartupConfiguration(prepared.configuration.web);
+  const authoring = 'ideaAuthoring' in prepared.configuration
+    ? ideaAuthoring.validatePrivateIdeaAuthoringConfiguration(prepared.configuration) : undefined;
   if (signal.aborted) throw new Error('private_vps_start_canceled');
-  const application = await bootstrap.startPrivateWebApplication(config);
+  const application = authoring ? await ideaAuthoring.startPrivateIdeaAuthoringApplication(authoring, signal)
+    : await bootstrap.startPrivateWebApplication(config);
   let service;
   const close = () => service ? service.close() : application.close();
   const cancel = () => { void close().catch(() => {}); };

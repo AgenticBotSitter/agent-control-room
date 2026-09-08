@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { validatePrivateVpsConfigurationPath } from '../scripts/run-private-vps.mjs';
 import { createAccessKeyLoader, validatePrivateStartupConfiguration } from '../dist-vps/server/bootstrap.js';
+import { validatePrivateIdeaAuthoringConfiguration } from '../dist-vps/server/ideaAuthoring.js';
 
 export const schema = 'control-room.private-vps-configuration/v1';
 export async function createConfiguration({ signal }) {
@@ -12,7 +13,7 @@ export async function createConfiguration({ signal }) {
   if (!path || !isAbsolute(path)) throw new Error('operator_settings_required');
   await validatePrivateVpsConfigurationPath(path);
   const settings = JSON.parse(await readFile(path, { encoding: 'utf8', signal }));
-  if (!settings || !['port,web', 'port,savedViews,web'].includes(Object.keys(settings).sort().join(','))
+  if (!settings || !['port,web', 'port,savedViews,web', 'ideaAuthoring,port,savedViews,web'].includes(Object.keys(settings).sort().join(','))
     || !Number.isSafeInteger(settings.port) || settings.port < 1024 || settings.port > 65535)
     throw new Error('operator_settings_invalid');
   const expected = ['audience', 'database', 'issuer', 'maxSessionSeconds', 'origin',
@@ -33,5 +34,7 @@ export async function createConfiguration({ signal }) {
   const web = validatePrivateStartupConfiguration({ ...settings.web,
     ...optional,
     loadKeys: createAccessKeyLoader(settings.web.issuer, fetch) });
-  return { mode: 'website-only', port: settings.port, configuration: { web } };
+  const configuration = 'ideaAuthoring' in settings
+    ? validatePrivateIdeaAuthoringConfiguration({ web, ideaAuthoring: settings.ideaAuthoring }) : { web };
+  return { mode: 'website-only', port: settings.port, configuration };
 }

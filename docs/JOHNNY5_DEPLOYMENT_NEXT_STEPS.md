@@ -22,6 +22,9 @@ Use the exact private-branch SHA supplied with this handoff as the deployment pi
 
 The settings module now optionally accepts protected `savedViews` keys for existing
 Idea/News records; see `deploy/README.md`. Omitting them keeps the minimal profile.
+An optional `ideaAuthoring` writer login/roster now enables non-executing Idea
+save, recap and decision operations without native-task planner setup. Both actual
+database roles still require provisioning and preflight; see `deploy/README.md`.
 It does not configure providers, task coordinators or native transports. Source
 support is not configured operation, and saved views are not worker activation.
 Do not invent keys for saved signed records or use fixture identities.

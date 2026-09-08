@@ -73,6 +73,43 @@ The launcher rejects Idea runtime or news-worker configuration in website-only
 mode before opening runtime resources. Actual saved-data setup remains optional;
 the minimal configuration above works unchanged.
 
+### Optional Idea authoring, without bot execution
+
+With the saved Idea key configured, a top-level `ideaAuthoring` object may contain
+only `database` and `participants`. The database uses the same shape as `web.database`
+and must target the same primary/database with a different restricted LOGIN that
+inherits the existing `control_room_idea_creation` role. Its exact role preflight
+runs separately from the web preflight. Provisioning that login and applying
+`db/roles/idea_creation_roles.sql` still require exact-target operator approval.
+
+`participants` is the existing three-to-six configured Idea participant descriptors
+(`src/idea-lab/v1/schemas.ts`), with distinct IDs, identities and perspectives,
+including a skeptic. Supply reviewed descriptors; never copy fixture identities
+or claim they are connected. The same saved Idea integrity key is used by both
+read and writer services; a second independently generated key is not accepted.
+
+This adds roster options, saving Ideas, recaps of already-completed retained
+discussions, and owner decisions/project promotion. It starts no discussion and
+does not manufacture contributions. New Ideas remain saved/not-started until a
+separately authorized runtime is configured. No native-task planning/checkpoint
+configuration, task coordinator login, queue, provider, or native listener is
+required by this authoring profile. It cannot be combined with a task coordinator;
+use the existing full task composition for that separate deployment stage.
+
+The existing web request drain owns both bounded database connections. Failed
+preflight or installation closes acquired resources; an uncertain close is not
+reported as a clean shutdown. This package supplies configuration, not authority
+to provision roles, access credentials, or start production.
+
+The existing database-only check accepts the minimal web configuration, not this
+expanded authoring configuration; it does not verify the writer role. Authoring
+startup checks both roles before installation. Do not report a web-only preflight
+as acceptance of both roles or bypass the authoring startup's check.
+
+Local verification: `pnpm test:idea-authoring:build` compiles the release and runs
+the source/compiled configuration, role, launcher and cleanup tests sequentially
+with disposable data. It does not provision or start the production service.
+
 ## Database procedure — exact target review required
 
 Use the existing PostgreSQL 17 primary; do not install another primary. First
