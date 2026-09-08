@@ -1,0 +1,12 @@
+{
+  "command": "node --import tsx --test --test-concurrency=1 research/reuse-comparisons/cross-journey-revision.test.ts",
+  "exitCode": 0,
+  "actualStdout": "TAP version 13\n# (node:57030) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n# (Use `node --trace-warnings ...` to show where the warning was created)\n# Subtest: research: borrowed discovery result carries exact source lineage into owner-requested revision\nok 1 - research: borrowed discovery result carries exact source lineage into owner-requested revision\n  ---\n  duration_ms: 1588.515292\n  type: 'test'\n  ...\n1..1\n# tests 1\n# suites 0\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 1979.743542\n",
+  "initialRun": {
+    "exitCode": 0,
+    "tests": 1,
+    "durationMs": 2050.681208,
+    "retention": "summary from initial tool result; corrected rerun stdout follows"
+  },
+  "scope": "Synthetic local journey; no actual provider or revised task execution"
+}

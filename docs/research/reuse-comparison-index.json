@@ -6,6 +6,7 @@
   "completionClaim": false,
   "narrowDecisionRegister": "reuse-comparisons/decision-register.md",
   "remainingClosureChecklist": "../REUSE_COMPARISON_CLOSURE.md",
+  "crossJourneyEvidence": "reuse-comparisons/cross-journey-revision-fit.md",
   "outcomes": [
     {
       "id": "A1",
