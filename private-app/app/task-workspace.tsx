@@ -14,6 +14,8 @@ import { PrivateTaskApproval } from "./task-approval";
 import { TaskWorkflowGuide } from "./task-workflow-guide";
 import { installNewsNavigationGuard } from "../../src/web/v1/news-navigation-guard";
 import { createTaskExecutionWorkspace } from "../../src/web/v1/task-execution-workspace";
+import { createIdeaBrowserClient } from "../../src/web/v1/idea-browser-client";
+import { canPrepareIdeaExperiment, prepareIdeaExperimentDraft } from "../../src/web/v1/idea-experiment-draft";
 
 export function TaskAuthenticationRecovery({ held }: { held: boolean }) {
   return <p>{browserAuthenticationRecovery(held)}</p>;
@@ -30,6 +32,7 @@ export function TaskDetailResults({ detail, projectId, reviewWorkspace, verifica
 
 export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: string; jobId?: string; after?: string }) {
   const [client] = useState(() => createTaskBrowserClient());
+  const [ideas] = useState(() => createIdeaBrowserClient());
   // Neither failed task-detail reads nor failed result reads may discard an unfinished review.
   const [reviewWorkspace] = useState(() => createTaskReviewWorkspace());
   const [verificationWorkspace] = useState(() => createTaskVerificationWorkspace());
@@ -39,6 +42,8 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
   const [draft, setDraft] = useState<TaskDraft>({ title: "", instructions: "" });
   const [error, setError] = useState<BrowserRequestError>();
   const [navigationNotice, setNavigationNotice] = useState(false);
+  const [preparing, setPreparing] = useState(false), preparingRef = useRef(false);
+  const [experimentNotice, setExperimentNotice] = useState<string>();
   const [loading, setLoading] = useState(true), [pending, setPending] = useState(false), [refresh, setRefresh] = useState(0);
   const generation = useRef(0), busy = useRef(false), alive = useRef(true);
   useEffect(() => installNewsNavigationGuard(window, document,
@@ -50,7 +55,7 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
     // the new refresh. Old results remain fenced by live/current below.
     let live = true, readBusy = false; alive.current = true;
     const load = async () => {
-      if (busy.current || readBusy) return;
+      if (busy.current || preparingRef.current || readBusy) return;
       readBusy = true; const current = ++generation.current;
       try {
         const value = jobId ? await client.detail(projectId, jobId) : await client.list(projectId, after);
@@ -70,7 +75,7 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
   }, [client, projectId, jobId, after, refresh]);
 
   async function save(retry = false) {
-    if (busy.current || !page || (!retry && !page.canPropose)) return;
+    if (busy.current || preparingRef.current || !page || (!retry && !page.canPropose)) return;
     busy.current = true; generation.current++; setPending(true); setError(undefined);
     try {
       const receipt: TaskReceipt = retry ? await client.retrySave() : await client.propose(projectId, draft);
@@ -84,8 +89,23 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
       }
     } finally { busy.current = false; if (alive.current) setPending(false); }
   }
+  async function prepareExperiment() {
+    if (!page || busy.current || preparingRef.current || client.hasPending() || draft.title || draft.instructions) return;
+    preparingRef.current = true; setPreparing(true); setExperimentNotice(undefined);
+    const current = ++generation.current;
+    try {
+      const prepared = await prepareIdeaExperimentDraft(page, id => ideas.detail(id));
+      if (alive.current && generation.current === current) {
+        setDraft(prepared); setExperimentNotice("Experiment draft prepared. Review or edit it below, then save when ready. Nothing has been saved or started.");
+      }
+    } catch (reason) {
+      if (alive.current && generation.current === current) setExperimentNotice(reason instanceof BrowserRequestError
+        && reason.code === "authentication_required" ? browserAuthenticationRecovery(false)
+        : "The experiment could not be prepared. Refresh your access and source discussion, or write the task below. No task was saved.");
+    } finally { preparingRef.current = false; if (alive.current) setPreparing(false); }
+  }
   const project = detail?.project ?? page?.project;
-  const refreshSaved = () => { setLoading(true); setRefresh(value => value + 1); };
+  const refreshSaved = () => { if (preparingRef.current) return; setLoading(true); setRefresh(value => value + 1); };
   const uncertain = client.hasPending();
   return <div className="private-shell"><PrivateHeader /><main id="private-main">
     <a className="private-back" href={jobId ? taskUrl(projectId) : "/projects"}>{jobId ? "← Project tasks" : "← All projects"}</a>
@@ -96,15 +116,21 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
       : <p>{taskErrorMessage[error.code]}</p>}
       {jobId && <p>Result content has been cleared. Unfinished review text and exact pending save keys remain in this task page’s memory.
         Restore access and reopen the same result to continue. Leaving or reloading the task page discards them.</p>}
-      <div className="private-actions"><button type="button" disabled={pending} onClick={() => setRefresh(value => value + 1)}>Refresh saved tasks</button>
+      <div className="private-actions"><button type="button" disabled={pending || preparing} onClick={() => setRefresh(value => value + 1)}>Refresh saved tasks</button>
         {uncertain && page && <button type="button" disabled={pending} onClick={() => { void save(true); }}>Check this exact save again</button>}</div></div>}
     {loading && <p role="status">Loading protected tasks…</p>}
-    {project && <button type="button" disabled={loading || pending} onClick={refreshSaved}>Check latest saved status</button>}
+    {project && <button type="button" disabled={loading || pending || preparing} onClick={refreshSaved}>Check latest saved status</button>}
     {project && <><div className="private-heading"><span className="private-state">{project.lifecycle}</span><h1>{project.title}</h1></div>
       <nav className="private-tabs" aria-label="Project pages"><a href={`/projects/${encodeURIComponent(projectId)}`}>Overview</a>
         <a href={taskUrl(projectId)} aria-current="page">Tasks</a><a href={`/projects/${encodeURIComponent(projectId)}/settings`}>Settings</a></nav></>}
     {page && <div className="private-columns"><TaskCatalogPanel page={page} after={after} />
-      {page.canPropose ? <TaskProposalForm draft={draft} setDraft={setDraft} pending={pending} uncertain={uncertain} onSave={() => { void save(); }} />
+      {page.canPropose ? <div>{canPrepareIdeaExperiment(page) && <section className="private-panel" aria-label="First experiment">
+        <h2>Start from your Idea Lab experiment</h2><p>Bring the approved discussion into an editable planning task. It will not run the experiment.</p>
+        <button type="button" disabled={pending || preparing || uncertain || !!draft.title || !!draft.instructions}
+          onClick={() => { void prepareExperiment(); }}>{preparing ? "Reading experiment…" : "Prepare first experiment task"}</button>
+        {(!!draft.title || !!draft.instructions) && <p>Clear both draft fields first if you want to prepare it again. Existing text is never replaced.</p>}
+      </section>}{experimentNotice && <p role="status">{experimentNotice}</p>}
+        <TaskProposalForm draft={draft} setDraft={setDraft} pending={pending} preparing={preparing} uncertain={uncertain} onSave={() => { void save(); }} /></div>
         : <p className="private-note">{page.project.lifecycle !== "active" ? "Reopen this project before proposing more work." : "Your current access allows reading tasks, not proposing new work."}</p>}</div>}
     {detail && <TaskDetailPanel detail={detail} />}
     {detail && <TaskWorkflowGuide />}

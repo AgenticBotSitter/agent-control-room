@@ -53,6 +53,12 @@ this document. The source changes below do not establish production readiness.
   Run `pnpm test:abs-research-journey` for this path and its lifecycle regressions.
   This joins existing components; it does not qualify live collection, installed
   queue delivery, real research correctness or an actual agent/provider.
+- Promoted Idea projects now offer an explicit first-experiment draft on their task
+  page, using the existing authorized discussion read and ordinary task form/save.
+  It prepares an editable planning task with discussion provenance, never auto-saves
+  or starts work, and will not replace existing draft text. Execution still requires
+  a project-matched planner/template and acceptance profile; creating a project does
+  not automatically provision those resources.
 
 The shared primary's storage persistence, dedicated provisioning, actual restore,
 supervisor/account, real verified owner subject and authorized startup remain

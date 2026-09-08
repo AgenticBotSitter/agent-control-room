@@ -83,6 +83,17 @@ full-profile inspection section in `deploy/README.md`.
 
 ## Return one consolidated sanitized report
 
+For later owner acceptance of Idea promotion, open the created project's Tasks page
+and choose **Prepare first experiment task** with an empty draft. Review/edit the
+planning instructions and explicitly save. The result must be one proposed task,
+with the source discussion/digests retained as editable context and zero attempts.
+No initial task is silently saved by promotion. The preparation control requires
+both task-proposal eligibility and authorized source-discussion visibility.
+Do not report task execution ready merely because this works: the current execution
+planner uses a project-pinned template and matching acceptance profile. New promoted
+projects need separately configured execution resources, not another project's
+authority copied or broadened to make the next button succeed.
+
 Include release SHA, inventory digest, checks performed, exit codes, actual changes,
 remaining prerequisites, connection/process cleanup and exact next approval needed.
 Distinguish supplied procedures, local tests, host inspection and real acceptance.

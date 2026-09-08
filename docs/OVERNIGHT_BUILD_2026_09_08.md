@@ -605,3 +605,37 @@ synthetic owner/node credentials and structural document acceptance. This does n
 exercise real browsers, pg-boss workers, PostgreSQL or providers; it does not verify
 the truth of research conclusions. No runtime source behavior or production state
 changed. Source preparation failure now closes its disposable base fixture.
+
+## Prepare initial work from a promoted Idea
+
+Source audit found that promotion created the project but the task page offered only
+blank fields, leaving the owner to copy the recap/experiment manually. Reused the
+existing protected Idea read, schema-checked project view, editable task form and
+ordinary exact-save client. The explicit preparation control is available only for
+an active, proposal-eligible Idea project with authorized source-discussion metadata.
+The returned decision must promote this exact project and all session/synthesis
+bindings must agree. Draft text contains the experiment, recap and source digests,
+labels synthetic contributions, and asks for a bounded experiment plan rather than
+executing an experiment. The text is editable context, not authenticated authority.
+
+Preparation performs only a read. Existing text/pending writes prevent replacement;
+form edits/saves are disabled while it reads and stale responses are generation-fenced.
+The actual save still requires an explicit owner click and the existing server checks.
+No endpoint, permission, key, storage, dependency or provider path was added.
+
+Two initial restricted-role mounted integration checks passed: prepare without writes,
+reject invalid/mismatched source and missing login, then edit/save with a deliberately
+lost response and replay the exact bytes/key into one proposed task with no attempts.
+Static rendering verifies the editable form and preparation-disabled controls.
+TypeScript, full lint and the two package inventory checks passed. Independent source
+review found no concrete defect. Both new journey files are included in the standard
+sequential Idea/ABS delivery path. Sites guidance preserved the established interface
+and authentication; local background work did not deploy or open a browser preview.
+The final combined sequential Idea/ABS and task-recovery suites passed, followed by
+a fresh VPS build, 14 compiled handler/composition/startup checks, TypeScript and
+full lint. This remains injected/static evidence, not live browser or host acceptance.
+
+The audit also confirmed a larger remaining product setup limitation: the current
+execution planner is pinned to one project's template and acceptance profile. A newly
+promoted project does not inherit another project's execution authority. This initial
+draft connection does not solve or conceal that separate configuration requirement.
