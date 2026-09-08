@@ -268,8 +268,8 @@
     {
       "id": "F9",
       "dossier": "reuse-comparisons/f9-shipping-license-scope.md",
-      "additionalDossiers": ["reuse-comparisons/f9-entities-notice-followup.md", "reuse-comparisons/f9-distribution-fit.md"],
-      "evidence": "30-vs28 notice drift; entities provenance; actual115file distribution lacks standalone notices and externalimports mapped; buildprovenance/full graph/notice-generator fit remain"
+      "additionalDossiers": ["reuse-comparisons/f9-entities-notice-followup.md", "reuse-comparisons/f9-distribution-fit.md", "reuse-comparisons/f9-tooling-fit.md"],
+      "evidence": "Actual115file distribution and externalimports audited; npmSBOM3fixturechecks;3notice/SBOMtools source+tests screened; plugin/fulltextcollector runtime fit, buildprovenance/full graph/notice assembly remain"
     }
   ],
   "next": [

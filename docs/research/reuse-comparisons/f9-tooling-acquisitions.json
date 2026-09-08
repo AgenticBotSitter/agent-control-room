@@ -1,0 +1,63 @@
+{
+  "root": "/private/tmp/cr-f9-tools.XhLdwn",
+  "selected": [
+    {
+      "path": "license-checker-rseidelsohn-5.0.1.tgz",
+      "bytes": 45904,
+      "sha256": "fa3812f4b135fd2ffc6dbb81df7f85fe90a10bb3e45ef6a76f1363f6b0562db9"
+    },
+    {
+      "path": "cyclonedx-cyclonedx-npm-6.0.1.tgz",
+      "bytes": 22674,
+      "sha256": "569c41869fbd969d6bd435fec2a0e035c7e442d4a8dad323e32b9baa80e1d9e7"
+    },
+    {
+      "path": "rollup-plugin-license-3.7.1.tgz",
+      "bytes": 56206,
+      "sha256": "8e00be9d88307b4f96f05a66e28262d4f3031311acf020e63f6844ecaa37a105"
+    },
+    {
+      "path": "checker-test.js",
+      "bytes": 10149,
+      "sha256": "4fc87205987fc5e27d85fa40a5d68cee40f39738f8db38b9595f0d429841fa52"
+    },
+    {
+      "path": "cdx-test.js",
+      "bytes": 7575,
+      "sha256": "836ecce352f16f0848077f9582479d7e579bb33dcd69c800d2f2806ff5f57130"
+    },
+    {
+      "path": "rollup-test.js",
+      "bytes": 48757,
+      "sha256": "2bbc258fecf3ca6747fd9c384b62edfce6769e74c1d5af2ad5e6ca426faac5cb"
+    },
+    {
+      "path": "license-checker-rseidelsohn-5.0.1/package/lib/index.js",
+      "bytes": 32144,
+      "sha256": "78a28c3b9dfd380ec9f86f45a147534b361a247f79e2ff7c106394cce094c261"
+    },
+    {
+      "path": "license-checker-rseidelsohn-5.0.1/package/lib/readInstalledPackagesWithArborist.js",
+      "bytes": 5077,
+      "sha256": "9bd3949db95279950d6f422e5aef8f42b3901cd136ba1309860ec0110be7626b"
+    },
+    {
+      "path": "cyclonedx-cyclonedx-npm-6.0.1/package/dist/builders.js",
+      "bytes": 19707,
+      "sha256": "2033a203db34da359d39673405371b83603e39bb354dde2ad59fe2de7d8a6ee5"
+    },
+    {
+      "path": "cyclonedx-cyclonedx-npm-6.0.1/package/dist/npmRunner.js",
+      "bytes": 4799,
+      "sha256": "6591f9938cdfa42ade71a27c36222942db7c72bc09fab0275d64b10fe6a72496"
+    },
+    {
+      "path": "rollup-plugin-license-3.7.1/package/dist/index.js",
+      "bytes": 39448,
+      "sha256": "4b9b0a5b186701f7eb0e56edf993dcb337cd1aa2a3b671ebcd7859e9ea517e25"
+    }
+  ],
+  "cleanup": "complete: exact owned root removed and absence checked; selected hashes and direct evidence retained",
+  "initialFreeGiB": 140,
+  "allocatedMiB": 5.8
+}

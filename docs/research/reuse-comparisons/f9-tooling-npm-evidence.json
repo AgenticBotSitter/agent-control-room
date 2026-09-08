@@ -1,0 +1,31 @@
+{
+  "exitCode": 0,
+  "result": {
+    "npmVersion": "10.9.8",
+    "npmCliSha256": "8e5f6f3429f8cdbe693cdc29904e9d5a7b127a494bd15c804bd54c7403bfcbe7",
+    "sbomSourceSha256": "5399da11d6b51a261f2292d1a0bd4f7a279d7c4f265278791f28ff5c0231b810",
+    "cases": [
+      "actual npm lists both installed dependencies including unused",
+      "actual CycloneDX metadata output omits full license text",
+      "missing required dependency refuses"
+    ],
+    "sbom": {
+      "status": 0,
+      "signal": null,
+      "stdout": "{\n  \"$schema\": \"http://cyclonedx.org/schema/bom-1.5.schema.json\",\n  \"bomFormat\": \"CycloneDX\",\n  \"specVersion\": \"1.5\",\n  \"serialNumber\": \"urn:uuid:2eb26275-ed46-45bb-a568-d4170981dbe5\",\n  \"version\": 1,\n  \"metadata\": {\n    \"timestamp\": \"2026-09-08T14:44:41.846Z\",\n    \"lifecycles\": [\n      {\n        \"phase\": \"build\"\n      }\n    ],\n    \"tools\": [\n      {\n        \"vendor\": \"npm\",\n        \"name\": \"cli\",\n        \"version\": \"10.9.8\"\n      }\n    ],\n    \"component\": {\n      \"bom-ref\": \"fixture@1.0.0\",\n      \"type\": \"library\",\n      \"name\": \"fixture\",\n      \"version\": \"1.0.0\",\n      \"scope\": \"required\",\n      \"purl\": \"pkg:npm/fixture@1.0.0\",\n      \"properties\": [\n        {\n          \"name\": \"cdx:npm:package:path\",\n          \"value\": \"\"\n        }\n      ],\n      \"externalReferences\": [],\n      \"licenses\": [\n        {\n          \"license\": {\n            \"id\": \"MIT\"\n          }\n        }\n      ]\n    }\n  },\n  \"components\": [\n    {\n      \"bom-ref\": \"unused@1.0.0\",\n      \"type\": \"library\",\n      \"name\": \"unused\",\n      \"version\": \"1.0.0\",\n      \"scope\": \"required\",\n      \"purl\": \"pkg:npm/unused@1.0.0\",\n      \"properties\": [\n        {\n          \"name\": \"cdx:npm:package:path\",\n          \"value\": \"node_modules/unused\"\n        }\n      ],\n      \"externalReferences\": [],\n      \"licenses\": [\n        {\n          \"license\": {\n            \"id\": \"MIT\"\n          }\n        }\n      ]\n    },\n    {\n      \"bom-ref\": \"used@1.0.0\",\n      \"type\": \"library\",\n      \"name\": \"used\",\n      \"version\": \"1.0.0\",\n      \"scope\": \"required\",\n      \"purl\": \"pkg:npm/used@1.0.0\",\n      \"properties\": [\n        {\n          \"name\": \"cdx:npm:package:path\",\n          \"value\": \"node_modules/used\"\n        }\n      ],\n      \"externalReferences\": [],\n      \"licenses\": [\n        {\n          \"license\": {\n            \"id\": \"MIT\"\n          }\n        }\n      ]\n    }\n  ],\n  \"dependencies\": [\n    {\n      \"ref\": \"fixture@1.0.0\",\n      \"dependsOn\": [\n        \"used@1.0.0\",\n        \"unused@1.0.0\"\n      ]\n    },\n    {\n      \"ref\": \"unused@1.0.0\",\n      \"dependsOn\": []\n    },\n    {\n      \"ref\": \"used@1.0.0\",\n      \"dependsOn\": []\n    }\n  ]\n}\n",
+      "stderr": ""
+    },
+    "list": {
+      "status": 0,
+      "signal": null,
+      "stdout": "{\n  \"version\": \"1.0.0\",\n  \"name\": \"fixture\",\n  \"dependencies\": {\n    \"unused\": {\n      \"version\": \"1.0.0\",\n      \"overridden\": false\n    },\n    \"used\": {\n      \"version\": \"1.0.0\",\n      \"overridden\": false\n    }\n  }\n}\n",
+      "stderr": ""
+    },
+    "missing": {
+      "status": 1,
+      "signal": null,
+      "stdout": "",
+      "stderr": "npm error code ESBOMPROBLEMS\nnpm error missing: used@1.0.0, required by fixture@1.0.0\nnpm error A complete log of this run can be found in: /private/tmp/cr-f9-tools.XhLdwn/cache/_logs/2026-09-08T14_44_42_049Z-debug-0.log\n"
+    }
+  }
+}

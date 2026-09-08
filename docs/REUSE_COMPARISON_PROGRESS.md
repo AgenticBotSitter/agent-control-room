@@ -53,6 +53,10 @@ no new auth provider is selected. [Distribution audit](research/reuse-comparison
 finds115 actual built files without standalone notice/license files and maps external
 imports. Source-to-build freshness is unverified; generator comparison and complete
 artifact notice assembly remain, rather than assuming another custom tool is needed.
+The [tool comparison](research/reuse-comparisons/f9-tooling-fit.md) now screens three
+actual pinned implementations and tests, plus three executed installed-npm fixture
+checks. Prioritize actual Vite/notice-plugin fit next; no generic custom notice
+engine is selected, and a metadata-only SBOM is not complete license-text assembly.
 
 1. Give every remaining responsibility a row containing all known relevant candidates,
    the existing implementation and the smallest new-adapter alternative. Record
