@@ -16,6 +16,51 @@ async function queued(onQueueReady?: import("../src/web/v1/task-assignment-coord
   return { x, ref };
 }
 
+test("queue lookup returns an immutable canonical task binding, not authority or private preparation", async t => {
+  const { x, ref } = await queued(); t.after(x.close);
+  const coordinator = x.f.create(x.f.db, { async enqueueInSession() { throw new Error("lookup must not enqueue"); } });
+  const locate = (value = ref) => x.admin(() => coordinator.locateApprovedQueueDelivery(value, currentSignal()));
+  const before = await x.states(), counts = await x.counts();
+  const target = await locate();
+  assert.deepEqual(target, { nodeId: x.f.prepared.request.nodeId,
+    task: { projectId: ref.projectId, jobId: ref.jobId, attemptId: ref.attemptId, inputDigest: ref.inputDigest } });
+  assert.equal(Object.isFrozen(target), true); assert.equal(Object.isFrozen(target.task), true);
+  assert.deepEqual(Object.keys(target).sort(), ["nodeId", "task"]);
+  assert.equal(Reflect.set(target.task, "jobId", "job:mutated"), false);
+  for (const field of ["tenantId", "projectId", "jobId", "attemptId"] as const)
+    await assert.rejects(locate({ ...ref, [field]: "other:unapproved" }));
+  await assert.rejects(locate({ ...ref, inputDigest: `sha256:${"f".repeat(64)}` }));
+  await assert.rejects(locate({ ...ref, packetDigest: `sha256:${"f".repeat(64)}` }));
+  assert.deepEqual(await x.states(), before); assert.deepEqual(await x.counts(), counts);
+  assert.deepEqual(x.local.calls, []);
+  assert.equal((await x.admin(() => x.f.db.query("SELECT 1 FROM control_native_delivery_envelopes"))).rows.length, 0);
+});
+
+test("a mismatched lookup projection cannot stage or transmit work on the managed session", async t => {
+  const { x, ref } = await queued(); t.after(x.close);
+  const c = await x.attach(); await x.handshake(c);
+  const states = await x.states(), counts = await x.counts(), sends = c.peer.state.sends;
+  let stages = 0, transmissions = 0;
+  x.hooks.beforeQueueStage = () => { stages++; };
+  x.hooks.beforeQueueTransmit = () => { transmissions++; };
+  for (const field of ["projectId", "jobId", "attemptId", "inputDigest"] as const) {
+    // In-process routing fault only: canonical lookup still runs first. The host
+    // must refuse a mismatched projection before any stage/transmit callback.
+    x.hooks.afterQueueLocate = target => ({ ...target, task: { ...target.task,
+      [field]: field === "inputDigest" ? `sha256:${"e".repeat(64)}` : "other:mismatched" } });
+    await assert.rejects(x.manager.deliverApproved(ref, currentSignal()), /native_session_unavailable/);
+    assert.equal(c.peer.state.sends, sends); assert.deepEqual(x.local.calls, []);
+    assert.equal(stages, 0); assert.equal(transmissions, 0);
+  }
+  assert.deepEqual(await x.states(), states); assert.deepEqual(await x.counts(), counts);
+  assert.equal((await x.admin(() => x.f.db.query("SELECT 1 FROM control_native_delivery_envelopes"))).rows.length, 0);
+  x.hooks.afterQueueLocate = undefined;
+  const delivered = await x.manager.deliverApproved(ref, currentSignal());
+  assert.equal(delivered.deliveryConfirmed, false);
+  assert.equal(stages, 1); assert.equal(transmissions, 1);
+  assert.equal(c.peer.outgoing.filter(frame => JSON.parse(frame).type === "harness.native.dispatch").length, 1);
+});
+
 test("readiness recovery waits for signed reconciliation and ignores later fresh acknowledgements", async t => {
   let calls = 0;
   const { x } = await queued(async (node, signal, current) => {

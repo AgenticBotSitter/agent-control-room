@@ -7,9 +7,9 @@ import { response, statusBody } from "../hermes-native-fixture";
 
 /** Synthetic node runtime plus actual restricted managed server. All stores are disposable;
  * canonical approval/dispatch setup remains labelled privileged fixture composition. */
-export async function nativeNodeRuntimeFixture(context?: ManagedNativePreparedContext) {
+export async function nativeNodeRuntimeFixture(context?: ManagedNativePreparedContext, options: { queue?: boolean } = {}) {
   // The managed fixture owns supplied context immediately, including setup failure.
-  const x = await managedNativeSessionFixture(context);
+  const x = await managedNativeSessionFixture(context, options);
   let closeJournal: (() => void) | undefined;
   try {
   const journal = new SqliteBridgeJournal(":memory:"); closeJournal = () => journal.close();
@@ -80,7 +80,7 @@ export async function nativeNodeRuntimeFixture(context?: ManagedNativePreparedCo
     await connection.server.stage(x.f.identity, x.task, currentSignal());
     await connection.server.transmit(x.f.identity, x.task, currentSignal()); await pump(connection);
   }
-  return { x, config, dependencies, runtime, journal, create, connect, pump, dispatch,
+  return { x, config, queued, dependencies, runtime, journal, create, connect, pump, dispatch,
     setResult: (value: string) => { resultText = value; }, setRecoveryAllowed: (value: boolean) => { recoveryAllowed = value; },
     advance: (ms = 1000) => { const now = x.f.clock() + ms; x.f.setNow(now); x.local.setNow(now); },
     close: async () => { let failed = false;

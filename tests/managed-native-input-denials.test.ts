@@ -349,6 +349,73 @@ test("fixed-task and mode checks reject implicit or foreign dispatch", async t =
   });
 });
 
+test("canonical queued dispatch shares the input FIFO with its receipt and captures its exact binding", async () => {
+  const x = inputFixture("initial"), gate = deferred(), entered = deferred();
+  await x.input.receive(hello(), undefined, signal()); await x.input.receive(reconciliation(), undefined, signal());
+  const binding = { ...configuredTask }; let deliveries = 0;
+  const delivery = x.input.deliverQueued(binding, signal(), async current => {
+    assert.equal(current.aborted, false); deliveries++; entered.resolve(); await gate.promise; return "sent";
+  });
+  binding.jobId = "job:mutated";
+  await entered.promise;
+  const received = x.input.receive(receipt(), undefined, signal());
+  assert.equal(x.registerCalls.length, 0);
+  gate.resolve(); assert.equal(await delivery, "sent");
+  assert.equal((await received).kind, "receipt"); assert.equal(x.registerCalls.length, 1);
+  await assert.rejects(x.input.deliverQueued(configuredTask, signal(), async () => { deliveries++; }));
+  assert.equal(deliveries, 1); await x.input.close();
+});
+
+test("queued dispatch refuses wrong bindings, recovery, unready state and prior manual staging", async t => {
+  for (const field of ["projectId", "jobId", "attemptId", "inputDigest"] as const) await t.test(field, async () => {
+    const x = inputFixture("initial"); let deliveries = 0;
+    await x.input.receive(hello(), undefined, signal()); await x.input.receive(reconciliation(), undefined, signal());
+    await assert.rejects(x.input.deliverQueued({ ...configuredTask,
+      [field]: field === "inputDigest" ? digest("a") : "other:task" }, signal(), async () => { deliveries++; }));
+    assert.equal(deliveries, 0); assert.equal(x.registerCalls.length, 0); await x.input.close();
+  });
+  for (const state of ["recover", "new", "prepared"] as const) await t.test(state, async () => {
+    const x = inputFixture(state === "recover" ? "recover" : "initial"); let deliveries = 0;
+    if (state !== "new") {
+      await x.input.receive(hello(), undefined, signal()); await x.input.receive(reconciliation(), undefined, signal());
+    }
+    if (state === "prepared") await x.input.stage(actor, task, signal());
+    await assert.rejects(x.input.deliverQueued(configuredTask, signal(), async () => { deliveries++; }));
+    assert.equal(deliveries, 0); await x.input.close();
+  });
+});
+
+test("uncertain queued delivery aborts the receipt suffix without registration or retry", async () => {
+  const x = inputFixture("initial"), gate = deferred(), entered = deferred();
+  await x.input.receive(hello(), undefined, signal()); await x.input.receive(reconciliation(), undefined, signal());
+  let deliveries = 0;
+  const delivery = x.input.deliverQueued(configuredTask, signal(), async () => {
+    deliveries++; entered.resolve(); await gate.promise; throw new Error("synthetic transmit uncertainty");
+  }).catch(error => error);
+  await entered.promise;
+  const received = x.input.receive(receipt(), undefined, signal()).catch(error => error);
+  gate.resolve(); assert.equal((await delivery).message, "native_input_uncertain");
+  assert.equal((await received).message, "native_input_uncertain");
+  await assert.rejects(x.input.deliverQueued(configuredTask, signal(), async () => { deliveries++; }));
+  assert.equal(deliveries, 1); assert.equal(x.registerCalls.length, 0); assert.equal(x.raw.closes(), 1);
+});
+
+test("active queued-dispatch cancellation cannot register a queued receipt after late completion", async () => {
+  const x = inputFixture("initial"), gate = deferred(), entered = deferred(), abort = new AbortController();
+  await x.input.receive(hello(), undefined, signal()); await x.input.receive(reconciliation(), undefined, signal());
+  let observed: AbortSignal | undefined;
+  const delivery = x.input.deliverQueued(configuredTask, abort.signal, async current => {
+    observed = current; entered.resolve(); await gate.promise;
+  }).catch(error => error);
+  await entered.promise;
+  const received = x.input.receive(receipt(), undefined, signal()).catch(error => error);
+  abort.abort(); assert.equal(observed!.aborted, true);
+  assert.equal((await delivery).message, "native_input_uncertain");
+  assert.equal((await received).message, "native_input_uncertain");
+  gate.resolve(); await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(x.registerCalls.length, 0); assert.equal(x.raw.closes(), 1);
+});
+
 test("availability failure closes without invoking a raw handle operation", async () => {
   const x = inputFixture("initial"); x.setAvailable(false);
   await assert.rejects(x.input.receive(hello(), undefined, signal()), { message: "native_input_uncertain" });

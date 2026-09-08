@@ -43,12 +43,19 @@ async function dispatch(x: Fixture, signal: AbortSignal) {
   await x.f.x.admin(async () => {});
 }
 
-function completeOnSecondWait(x: Fixture) {
+function completeOnSecondWait(x: Fixture, queued = false) {
   let waits = 0;
   return async (milliseconds: number, signal: AbortSignal) => {
     assert.equal(milliseconds, settings.intervalMs); assert.equal(signal.aborted, false);
     waits++;
-    if (waits === 1) await dispatch(x, signal);
+    if (waits === 1 && queued) {
+      const receipt = x.f.queued;
+      await x.f.x.manager.deliverApproved({ schema: "control-room.native-task-submission/v1",
+        tenantId: x.f.x.f.scope.tenantId, projectId: receipt.projectId, jobId: receipt.jobId,
+        attemptId: receipt.attemptId, queueId: receipt.queueId, packetDigest: receipt.packetDigest,
+        inputDigest: x.f.x.task.inputDigest }, signal);
+      assert.deepEqual(x.f.x.local.calls, []); await x.f.x.admin(async () => {});
+    } else if (waits === 1) await dispatch(x, signal);
     else { assert.equal(waits, 2); assert.deepEqual(x.f.x.local.calls, ["capabilities", "start"]);
       x.f.advance(); x.f.setResult(qualityText); await x.f.x.admin(async () => {}); }
   };
@@ -72,10 +79,10 @@ async function preserved(x: Fixture) {
   return { canonical, rows, calls: [...x.f.x.local.calls], registrations: x.f.x.inputRegistrations() };
 }
 
-test("connector alone drives signed HTTP dispatch, native execution and exact bytes into pending review", async t => {
-  const x = await nativeHttpFixture(), wire = x.createClient();
+for (const queued of [false, true]) test(`connector alone drives ${queued ? "canonical queue" : "owner"} HTTP dispatch, native execution and exact bytes into pending review`, async t => {
+  const x = await nativeHttpFixture(undefined, { queue: queued }), wire = x.createClient();
   const connector = createNativeConnector(x.f.runtime, fixtureClient(x, wire), settings,
-    { assertCurrent() {}, wait: completeOnSecondWait(x) });
+    { assertCurrent() {}, wait: completeOnSecondWait(x, queued) });
   t.after(async () => { try { await connector.close(); } finally { await x.close(); } });
   await x.f.x.verify();
   const canonical = await x.f.x.states();

@@ -80,6 +80,48 @@ test("actual HTTP host exchange performs signed intake and delivers exact comple
   assert.ok(x.f.x.observed.some(row => row.login === "managed_result_test" && row.sql.includes("INSERT INTO control_native_review_plans")));
 });
 
+test("canonical queue delivery through the HTTP session registers its receipt and reaches pending review", async t => {
+  const x = await nativeHttpFixture(undefined, { queue: true }); t.after(x.close);
+  const { f } = x, client = x.create(); await f.x.verify();
+  await f.x.admin(() => client.host.open("initial", currentSignal()));
+  const queued = f.queued;
+  const ref = { schema: "control-room.native-task-submission/v1" as const, tenantId: f.x.f.scope.tenantId,
+    projectId: queued.projectId, jobId: queued.jobId, attemptId: queued.attemptId, queueId: queued.queueId,
+    packetDigest: queued.packetDigest, inputDigest: f.x.task.inputDigest };
+  const delivered = await f.x.manager.deliverApproved(ref, currentSignal());
+  assert.equal(delivered.deliveryConfirmed, false);
+  await f.x.admin(() => client.host.step(currentSignal()));
+  assert.equal(f.x.inputRegistrations(), 1); assert.deepEqual(f.x.local.calls, []);
+  await f.x.admin(() => client.node.start(currentSignal()));
+  await f.x.admin(() => client.host.step(currentSignal()));
+  await completeLocally(x); await f.x.admin(() => client.host.step(currentSignal()));
+  await pendingReview(x);
+  assert.deepEqual(f.x.local.calls, ["capabilities", "start", "status"]);
+  assert.equal(inspectedPackets(client.commands).filter(frame => frame.type === "harness.native.dispatch.receipt").length, 1);
+});
+
+test("HTTP generation replacement after queue staging prevents transmission and cannot target the new session", async t => {
+  const x = await nativeHttpFixture(undefined, { queue: true }); t.after(x.close);
+  const { f } = x, client = x.create(); await f.x.verify();
+  await f.x.admin(() => client.host.open("initial", currentSignal()));
+  const queued = f.queued;
+  const ref = { schema: "control-room.native-task-submission/v1" as const, tenantId: f.x.f.scope.tenantId,
+    projectId: queued.projectId, jobId: queued.jobId, attemptId: queued.attemptId, queueId: queued.queueId,
+    packetDigest: queued.packetDigest, inputDigest: f.x.task.inputDigest };
+  let stages = 0, transmissions = 0;
+  f.x.hooks.beforeQueueStage = () => { stages++; };
+  f.x.hooks.beforeQueueTransmit = () => { transmissions++; };
+  f.x.hooks.afterQueueStage = async () => {
+    const replacement = await x.request({ schema: "control-room.native-http/v1", operation: "open", mode: "initial" });
+    assert.equal(replacement.status, 200);
+    assert.notEqual((await replacement.json()).connection, client.connection());
+  };
+  await assert.rejects(f.x.manager.deliverApproved(ref, currentSignal()));
+  assert.equal(stages, 1); assert.equal(transmissions, 0);
+  assert.equal(f.x.inputRegistrations(), 0); assert.deepEqual(f.x.local.calls, []);
+  assert.equal((await f.x.admin(() => f.x.f.db.query("SELECT 1 FROM control_native_transmission_intents"))).rows.length, 0);
+});
+
 test("lost HTTP response after result commit does not retry and explicit replacement recovers exact saved journals once", async t => {
   const x = await nativeHttpFixture(); t.after(x.close); const original = await started(x);
   await completeLocally(x); const before = await stable(x), requests = original.commands.length;

@@ -166,3 +166,23 @@ runtime cleanup before a new local admission. A server release receipt alone doe
 not attest to native adapter cleanup. These remaining predicates, dynamic selection
 and server/node handoff are still unfinished; no new capacity table is justified by
 the source audit so far.
+
+## Canonical routing and fixed-session queue integration
+
+The canonical queue lookup now returns a frozen node and exact project/job/attempt/
+execution-input binding after existing approval/queue-intent revalidation. It does
+not disclose task prompts, credentials or signing material and is not new authority.
+Managed delivery checks that projection against the queue reference before staging.
+
+An actual HTTP-path regression exposed a prerequisite defect: queue delivery called
+the raw session stage/transmit methods without advancing the managed input's FIFO
+state, so its later signed receipt was rejected. Queue delivery now enters that
+same input FIFO, checks initial/ready state and the exact fixed task, retains the
+captured session generation, and enters sent state only after successful canonical
+stage/transmit. The signed receipt then uses existing registration and result paths.
+No callback is exposed on the wire facade. Readiness recovery remains enqueue-only;
+it must not await delivery from inside the same FIFO.
+
+This makes one already-approved queued task usable through the existing HTTP
+session, not consecutive pickup. Peer configuration and node runtime remain fixed
+to one task/queue. A+B+C and combined release acceptance D above are still open.

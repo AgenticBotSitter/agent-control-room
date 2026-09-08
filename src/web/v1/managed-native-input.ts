@@ -117,6 +117,21 @@ export class ManagedNativeInput {
       throw unavailable();
     });
   }
+  /** Internal canonical-queue composition. Uses the same FIFO and task binding as
+   * owner commands so a queued dispatch cannot bypass receipt lifecycle ownership.
+   * The supplied work still performs canonical stage/transmit revalidation. */
+  deliverQueued<T>(input: NativeInputConfiguration["task"], signal: AbortSignal, work: (signal: AbortSignal) => Promise<T>) {
+    let task: NativeInputConfiguration["task"];
+    try { task = nativeEvidenceRegistrationSchema.parse(input); } catch { return this.reject(); }
+    return this.enqueue(Buffer.byteLength(JSON.stringify(task)), signal, async current => {
+      if (this.config.mode !== "initial" || this.state !== "ready" || task.projectId !== this.config.task.projectId
+        || task.jobId !== this.config.task.jobId || task.attemptId !== this.config.task.attemptId
+        || task.inputDigest !== this.config.task.inputDigest) throw unavailable();
+      const result = await work(current); this.current();
+      if (current.aborted) throw unavailable();
+      this.state = "sent"; return result;
+    });
+  }
   stage(identity: Parameters<Handle["stage"]>[0], input: Parameters<Handle["stage"]>[1], signal: AbortSignal) {
     let captured: ReturnType<typeof captureCommand>;
     try { captured = captureCommand(identity, input); } catch { return this.reject(); }

@@ -204,7 +204,13 @@ export class TaskAssignmentCoordinator {
     return this.withNativeApproval(undefined, ref.projectId, ref.jobId, ref.inputDigest, async (tx, prepared) => {
       if (prepared.request.attemptId !== ref.attemptId) conflict();
       const verified = await this.approvalStore!.revalidateInSession(tx, prepared, ref.packetDigest, signal);
-      return { value: { nodeId: prepared.request.nodeId }, assertFresh: verified.assertFresh };
+      // The queue reference is a locator, not authority. Return only the routing
+      // binding derived inside canonical approval/intent revalidation; no prompt,
+      // enrollment, signing material or credentials leave this lookup.
+      return { value: Object.freeze({ nodeId: prepared.request.nodeId,
+        task: Object.freeze({ projectId: prepared.binding.projectId, jobId: prepared.request.jobId,
+          attemptId: prepared.request.attemptId, inputDigest: prepared.inputDigest }) }),
+      assertFresh: verified.assertFresh };
     }, ref);
   }
   /** Optional trusted recovery composition only, never a browser endpoint. Recovery

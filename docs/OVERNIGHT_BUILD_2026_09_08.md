@@ -989,3 +989,40 @@ Johnny5's assigned VPS preparation is not restarted by this guide. No clone/fetc
 download, credential or host operation was performed. All 27 local documentation
 links resolved. Independent source-only review found no concrete defect in the
 run-ID test or refreshed handoffs.
+
+## Canonical queue routing and actual HTTP receipt lifecycle
+
+Canonical lookup now emits an immutable routing projection only after existing
+approval/intent checks. Managed delivery refuses mismatches before stage/transmit.
+Independent review requested direct projection-fault coverage; all four task fields
+are now injected after actual lookup, asserting zero callbacks and unchanged state.
+The valid path dispatches once. Initial final routing tests passed 28 cases, types,
+lint and VPS build (52739 exit zero); no external operations occurred.
+
+Following the real queue-to-HTTP path exposed a functional integration defect rather
+than another component gap: queued delivery bypassed ManagedNativeInput state, so
+the signed receipt failed at HTTP step (6472 exit one, native_http_node_unavailable).
+Added internal FIFO composition with exact task/mode/state checks and canonical
+stage/transmit revalidation. The same regression now saves exact completed bytes
+into pending owner review with one fake start (64101 exit zero, including types).
+No owner command is substituted for the queue delivery in that journey.
+
+Expanded seven-file source test run passed 95 cases, types, lint and a fresh VPS
+build (38236 exit zero). Final added cancellation and generation-replacement checks
+passed in 38 input/HTTP cases (1413 exit zero): cancellation aborts receipt suffix;
+replacement after staging causes zero transmissions and no action on the new
+generation. Binding mutation, wrong task, recovery, unready, prior manual staging,
+duplicate dispatch and uncertainty are also covered. Independent source review
+found no concrete defect and requested these negative paths. All transports/native
+responses are injected; PGlite/SQLite are disposable. Production and continuous
+pickup remain unqualified and no credentials or GitHub access were used.
+
+Final compiled startup/session checks passed 13 cases plus types/lint/diff (2187
+exit zero). These compiled checks exercise startup and isolation, not a compiled
+end-to-end queue journey. The actual source connector journey now runs both owner
+dispatch and canonical queue dispatch: no test-side runtime.start call is needed,
+one simulated capabilities/start/status sequence delivers exact bytes for pending
+review, and the connector closes once. All four connector scenarios, types, lint
+and diff checks passed (64841 exit zero). The test invokes the canonical queue
+handler at an injected wait boundary; it does not claim a running pg-boss daemon,
+multiple successive tasks or real PostgreSQL concurrency.

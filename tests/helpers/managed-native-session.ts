@@ -23,6 +23,7 @@ import { response, statusBody } from "../hermes-native-fixture";
 export const currentSignal = () => new AbortController().signal;
 type Login = "managed_auth_test" | "managed_evidence_test" | "managed_result_test";
 type Base = Awaited<ReturnType<typeof canonicalApprovalStorageFixture>>;
+type QueueLookup = Awaited<ReturnType<Base["coordinator"]["locateApprovedQueueDelivery"]>>;
 type Local = Pick<Awaited<ReturnType<typeof nativeStartAuthorityFixture>>,
   "policy" | "dependencies" | "journal" | "transport" | "calls" | "setNow" | "close"> & {
     prepared: { binding: Base["prepared"]["binding"] };
@@ -58,7 +59,9 @@ export async function managedNativeSessionFixture(context?: ManagedNativePrepare
       SET search_path=pg_catalog, public; SET statement_timeout='5s'; SET lock_timeout='2s';
       SET transaction_timeout='10s'; SET idle_in_transaction_session_timeout='5s'`);
     const observed: { login: Login; sql: string }[] = [];
-    const hooks: { afterQuery?: (login: Login, sql: string) => void; afterQueueStage?: () => Promise<void> } = {};
+    const hooks: { afterQuery?: (login: Login, sql: string) => void; afterQueueStage?: () => Promise<void>;
+      afterQueueLocate?: (target: QueueLookup) => QueueLookup;
+      beforeQueueStage?: () => void; beforeQueueTransmit?: () => void } = {};
     let healthy = true, admitted = 0;
     const pool = (login: Login): DatabaseClient => {
       const db: DatabaseClient = { query: (sql, params) => db.transaction(tx => tx.query(sql, params)),
@@ -112,12 +115,16 @@ export async function managedNativeSessionFixture(context?: ManagedNativePrepare
     const routes: ConstructorParameters<typeof ManagedNativeSessions>[3] = {
       queue: options.queue ? {
         ready: options.onQueueReady,
-        locate: (...args) => admin(() => queueCoordinator.locateApprovedQueueDelivery(...args)),
+        locate: async (...args) => {
+          const target = await admin(() => queueCoordinator.locateApprovedQueueDelivery(...args));
+          return hooks.afterQueueLocate ? hooks.afterQueueLocate(target) : target;
+        },
         stage: async (...args) => {
+          hooks.beforeQueueStage?.();
           const value = await admin(() => queueCoordinator.stageApprovedQueueDelivery(...args));
           await hooks.afterQueueStage?.(); return value;
         },
-        transmit: (...args) => admin(() => queueCoordinator.transmitApprovedQueueDelivery(...args)),
+        transmit: (...args) => { hooks.beforeQueueTransmit?.(); return admin(() => queueCoordinator.transmitApprovedQueueDelivery(...args)); },
       } : undefined,
       // Canonical approval/envelope/intent/receipt work is privileged fixture composition, not
       // evidence of new coordinator grants. Server authentication is always the manager's pool.
