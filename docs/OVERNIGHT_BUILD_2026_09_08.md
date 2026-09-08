@@ -1328,3 +1328,26 @@ TypeScript, focused lint and diff check. Independent source re-review found the 
 resolved and no further concrete persistence defect. No production/GitHub/provider
 operation occurred. Source-only storage acceptance does not complete automatic pickup.
 The unchanged protocol wire/schema regression suite also passed all 13 cases (2631).
+
+### Exact task/channel lease intake
+
+Added createNativeLeaseIntake around the existing atomic journal method and retained
+lease reader. It captures task/channel/server pins and dependency methods, rechecks
+actual server signing trust, exact grant/task/authority identity, frame/lease expiry,
+five-second monotonic deadline and synchronous task freshness before persistence.
+It requires a real AbortSignal and authenticated replay inbox. Native execution,
+renewal, producer signing and runtime wiring remain outside this component.
+
+First type run 14549 and initial tests/types run 74569 failed on a declaration that
+incorrectly placed currentServerTrustRevision on ServerTrustStore (15 tests passed).
+Corrected the type to the actual persistent-security repository interface. Combined
+61181 then passed 58 cases, TypeScript and lint. Independent source review found
+missing runtime signal validation and clock sampling before a potentially slow
+final trust callback. Both were corrected; added invalid-signal and final post-write
+trust-read expiry/rollback tests. Existing timeout/overlap tests prove late resolution
+cannot create a command or attempt after closure. No actual provider, credential,
+GitHub or production operation occurred.
+Post-remediation run 36271 passed all 20 intake cases, TypeScript, focused lint and
+diff check. Independent source re-review confirmed both findings resolved and found
+no further concrete issue. Grant production/delivery and runtime policy wiring are
+still unfinished; original overnight deadline remains 12:40:58 UTC.

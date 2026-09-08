@@ -158,6 +158,21 @@ the server grant producer, channel/task-bound intake handler, lease renewal or t
 runtime allowlist/policy wiring. Signature verification and live authority freshness
 remain mandatory at that handler and the existing verified policy reader.
 
+`createNativeLeaseIntake` now supplies a bounded, exact-task/channel check around
+that storage primitive: strict grant parsing, pinned signature plus current trusted
+key/revision, request/lease/authority equality, real cancellation signal, monotonic
+five-second and lease/envelope deadlines, and a synchronous task-owner freshness
+fence. It clones caller input before awaiting trust; failures and overlap close the
+intake, and a late key resolution cannot revive it. The grant must already be in
+the authenticated replay inbox. This is not an alternate authenticator or a source
+of native execution permission. Exact stored grants remain subject to the existing
+verified policy reader and its parent-authority/ceiling/profile/capacity checks.
+
+This intake is not yet attached to the native bridge/session. The server's durable
+grant producer and delivery ordering, capture of the verified dispatch/channel
+fence, grant-aware readiness and actual policy-reader composition remain required.
+Do not enable a service or start on dispatch-only readiness using this component.
+
 ### D. Combined release acceptance before service packaging
 
 Local progress on C/D: the per-task runtime now provides exact-binding drainage
