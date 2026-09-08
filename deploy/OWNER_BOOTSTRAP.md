@@ -22,8 +22,8 @@ credential collector, account-recovery route or automatic startup step.
 - A genuine current Access assertion delivered through separately reviewed private
   intake. Do not paste it into chat, Git, command arguments or logs.
 
-Actual subject confirmation, protected assertion intake, provisioning connection
-acquisition and execution authority remain missing operational inputs. This file
+Actual subject confirmation, preparation of protected assertion/settings material,
+approved provisioning credentials and execution authority remain operational inputs. This file
 does not approve their acquisition. The bridge does not fetch keys, prove owner
 attendance, inspect Access policy or establish MFA enforcement. Verify the real
 owner-only application and MFA separately. Login setup is not owner effect-signing
@@ -54,6 +54,47 @@ The receipt includes no subject, assertion, identities or private connection
 details. It explicitly leaves application installation and production readiness
 false and states that connection cleanup belongs to the caller. A successful
 receipt is not proof of connection closure, backup restoration or usable login.
+
+## Explicit operator command
+
+The separately invoked `scripts/bootstrap-private-vps-owner.mjs` now supplies
+connection ownership around that bridge. It is a production **write** command,
+not a readiness probe. Nothing in this document authorizes running it on the VPS.
+
+After exact-target approval, use a pinned provisioning checkout owned and controlled
+by the provisioning operator, not a checkout writable by the website account.
+All imported code and parent directories must share that trust boundary. Do not
+run privileged provisioning code from a worker/service-writable tree. Keep the
+supplied `deploy/owner-bootstrap-config.mjs` canonical, operator-owned and 0600.
+
+Prepare a separate operator-owned 0600 JSON file outside Git and the web root,
+unreadable by the website account. Set `CONTROL_ROOM_OWNER_BOOTSTRAP_FILE` privately
+to its absolute canonical path. Its exact top-level fields are:
+
+- `configuration`: the seven reviewed fields described above.
+- `trust`: the existing AccessTrust public-key/issuer/audience/validity structure.
+- `database`: the explicit private PostgreSQL settings shape from README, using
+  the approved provisioning login, not the runtime web or Idea login.
+- `assertion`: the actual current, independently owner-confirmed Access assertion.
+
+No credential discovery, identity guessing or key fetch is performed. The command
+reuses the bounded loopback PostgreSQL adapter. It verifies the pinned assertion
+before pool acquisition, repeats verification inside the bridge, and retains one
+clock high-water check across acquisition and commit. Successful reporting requires
+the owned pool to close; failed cleanup is uncertainty even if the owner was created.
+
+Run only after authorization:
+
+```text
+node /APPROVED/PROVISIONING-RELEASE/scripts/bootstrap-private-vps-owner.mjs --configuration /APPROVED/PROVISIONING-RELEASE/deploy/owner-bootstrap-config.mjs
+```
+
+`--help` performs no database operation. Do not pass credentials or assertions as
+arguments, wire this into a supervisor, or retry on failure. The fixed command
+receipt reports database closure but still leaves application installation and
+production readiness false. Its error output contains no private inputs. Retention
+or removal of the exact provisioning input file needs the approved credential
+handling procedure; it is never automatically copied into runtime configuration.
 
 ## Local verification
 

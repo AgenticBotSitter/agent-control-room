@@ -14,8 +14,9 @@ Use the exact private-branch SHA supplied with this handoff as the deployment pi
   without application installation or a listener. It verifies both roles when the
   optional Idea-authoring profile is configured, otherwise only the web role.
 - `deploy/README.md`: dedicated database/roles and initial website procedure.
-- `deploy/OWNER_BOOTSTRAP.md`: compiled verifier-to-owner bridge and its still-gated
-  identity confirmation, protected assertion intake and provisioning connection.
+- `deploy/OWNER_BOOTSTRAP.md`: compiled verifier-to-owner bridge, explicit
+  `scripts/bootstrap-private-vps-owner.mjs` command and separate protected input
+  module. Identity confirmation, prepared private inputs and execution remain gated.
 - `deploy/BACKUP_RESTORE.md`: backup, disposable restore and evidence requirements.
 - `deploy/SUPERVISION.md` and `control-room-website.service.in`: conditional systemd
   review template and maintenance update/rollback procedure, not an installed unit.

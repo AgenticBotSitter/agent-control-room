@@ -3,6 +3,7 @@ import type { DatabaseClient } from "../../persistence/database";
 import { SecurityStore, assertNoSecretMaterial, sha256Digest } from "../../security";
 import { localId, digestSchema } from "../../harness/v1/native-run-identifiers";
 import { createAccessVerifier, type AccessTrust } from "./access-verifier";
+import { createPrivatePostgresDatabase, validatePrivatePostgresConfiguration, type PrivatePostgresConfiguration } from "./private-postgres";
 
 const configurationSchema = z.object({
   databaseName: z.string().min(1).max(63), tenantId: localId, workspaceId: localId,
@@ -10,6 +11,14 @@ const configurationSchema = z.object({
   expectedOwnerSubjectDigest: digestSchema,
 }).strict();
 export type PrivateOwnerBootstrapConfiguration = z.infer<typeof configurationSchema>;
+
+function verifyPinnedOwner(verify: ReturnType<typeof createAccessVerifier>, config: PrivateOwnerBootstrapConfiguration,
+  request: Request, now: number) {
+  const identity = verify(request, now);
+  if (sha256Digest({ provider: identity.provider, subject: identity.subject }) !== config.expectedOwnerSubjectDigest)
+    throw new Error("private_owner_bootstrap_failed");
+  return identity;
+}
 
 /** Deployment-only bridge, not an HTTP route or credential intake mechanism.
  * Caller supplies a separately approved provisioning connection and independently
@@ -36,8 +45,7 @@ export function createPrivateOwnerBootstrap(input: PrivateOwnerBootstrapConfigur
         const now = clock();
         if (signal?.aborted || !Number.isSafeInteger(now) || now < 0 || now < highWater) return fail();
         highWater = now;
-        const identity = verify(request, now);
-        if (sha256Digest({ provider: identity.provider, subject: identity.subject }) !== config.expectedOwnerSubjectDigest) return fail();
+        const identity = verifyPinnedOwner(verify, config, request, now);
         return { identity, now };
       };
       current(); // Invalid or unconfirmed identity cannot touch the database.
@@ -61,3 +69,44 @@ export function createPrivateOwnerBootstrap(input: PrivateOwnerBootstrapConfigur
     } catch { return fail(); }
   } });
 }
+
+export type PrivateOwnerBootstrapInput = { configuration: PrivateOwnerBootstrapConfiguration;
+  trust: AccessTrust; database: PrivatePostgresConfiguration; assertion: string };
+
+/** Explicit operator operation with owned, bounded connection cleanup. Never
+ * called by website startup. The real factory contains no fixture override. */
+export function createPrivateOwnerBootstrapCommand(dependencies: {
+  openDatabase: typeof createPrivatePostgresDatabase; clock?: () => number;
+}) {
+  return async (input: PrivateOwnerBootstrapInput, signal?: AbortSignal) => {
+    let pool: ReturnType<typeof createPrivatePostgresDatabase> | undefined;
+    let passed = false;
+    try {
+      if (Object.keys(input).sort().join(',') !== 'assertion,configuration,database,trust') throw new Error();
+      const config = configurationSchema.parse(input.configuration); assertNoSecretMaterial(config);
+      const database = validatePrivatePostgresConfiguration(input.database), trust = structuredClone(input.trust);
+      const assertion = input.assertion, sourceClock = dependencies.clock ?? Date.now;
+      let highWater = -1;
+      const clock = () => {
+        const now = sourceClock();
+        if (!Number.isSafeInteger(now) || now < 0 || now < highWater) throw new Error();
+        highWater = now; return now;
+      };
+      if (database.database !== config.databaseName || signal?.aborted || typeof assertion !== 'string'
+        || !assertion || assertion.length > 16_384) throw new Error();
+      verifyPinnedOwner(createAccessVerifier(trust), config,
+        new Request('https://bootstrap.invalid', { headers: { 'cf-access-jwt-assertion': assertion } }), clock());
+      pool = dependencies.openDatabase(database);
+      await createPrivateOwnerBootstrap(config, trust, { database: pool.client, clock }).bootstrap(assertion, signal);
+      passed = true;
+    } catch { passed = false; }
+    if (pool) {
+      try { await pool.close(); }
+      catch { throw new Error('private_owner_bootstrap_cleanup_uncertain'); }
+    }
+    if (!passed) throw new Error('private_owner_bootstrap_failed');
+    return Object.freeze({ schema: 'control-room.private-owner-bootstrap-command/v1', ownerCreated: true,
+      databaseClosed: true, applicationInstalled: false, listenerStarted: false, productionReady: false });
+  };
+}
+export const runPrivateOwnerBootstrap = createPrivateOwnerBootstrapCommand({ openDatabase: createPrivatePostgresDatabase });

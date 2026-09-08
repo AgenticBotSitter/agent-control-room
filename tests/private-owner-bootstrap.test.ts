@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createPrivateOwnerBootstrap } from "../src/web/v1/private-owner-bootstrap";
+import { createPrivateOwnerBootstrap, createPrivateOwnerBootstrapCommand } from "../src/web/v1/private-owner-bootstrap";
 import { sha256Digest } from "../src/security";
 import type { DatabaseClient } from "../src/persistence/database";
 import { fixture, now, token, trust } from "./helpers/web-foundation";
@@ -89,5 +89,24 @@ test("deployment owner bridge verifies a pinned actual subject and atomically re
     await assert.rejects(bridge.bootstrap(token()), /private_owner_bootstrap_failed/);
     await assert.rejects(bridge.bootstrap(token()), /private_owner_bootstrap_failed/);
     assert.equal(transactions, 1); assert.equal(await count(config.tenantId), 1);
+  });
+  await t.test("owned command verifies before opening and never accepts failed cleanup", async () => {
+    for (const mode of ["invalid", "success", "close_failure", "query_failure", "acquisition_rollback"] as const) {
+      const config = await configuration(); let opens = 0, closes = 0, current = now;
+      const command = createPrivateOwnerBootstrapCommand({ clock: () => current, openDatabase: () => {
+        opens++;
+        if (mode === "acquisition_rollback") current--;
+        return { client: mode === "query_failure" ? { ...f.client, transactionWithPreCommitCheck: async () => { throw new Error('private diagnostic'); } } : f.client,
+          isAvailable: () => true, close: async () => { closes++; if (mode === "close_failure") throw new Error('private diagnostic'); } };
+      } });
+      const input = { configuration: config, trust,
+        database: { host: "127.0.0.1" as const, port: 5432, database: "template1", username: "setup_test", password: "synthetic-only", majorVersion: 17 as const },
+        assertion: mode === "invalid" ? token({ sub: 'other' }) : token() };
+      if (mode === "success") {
+        const receipt = await command(input); assert.equal(receipt.databaseClosed, true); assert.equal(receipt.productionReady, false);
+      } else await assert.rejects(command(input), { message: mode === "close_failure" ? 'private_owner_bootstrap_cleanup_uncertain' : 'private_owner_bootstrap_failed' });
+      assert.equal(opens, mode === "invalid" ? 0 : 1); assert.equal(closes, opens);
+      assert.equal(await count(config.tenantId), mode === "success" || mode === "close_failure" ? 1 : 0);
+    }
   });
 });

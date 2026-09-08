@@ -471,3 +471,27 @@ tests also cover wrong subject/audience/token type, scope refusal, config captur
 concurrent use, pre-abort and unchanged existing tenants. All thirteen final combined
 source/compiled/startup checks pass, including browser-artifact isolation. TypeScript,
 full lint, final focused lint and VPS compilation pass.
+
+## Executable owner setup and restricted website handoff
+
+Added the explicit owner-bootstrap operator command using the existing argument
+and protected-path guards, fixed compiled entry and bounded PostgreSQL adapter.
+Provisioning input uses a separate operator-controlled file/module, not runtime
+website credentials. Pinned identity verification precedes connection acquisition;
+the bridge rechecks before writing/commit, and successful reporting requires owned
+connection closure. No website or supervisor calls this command automatically.
+
+Independent review found the command and bridge initially had separate clock
+high-water marks. They now share one across acquisition and commit; the acquisition
+rollback regression refuses creation and closes the acquired pool. Source re-review
+confirms that correction with no remaining concrete issue. Documentation requires
+a provisioning checkout and imports not writable by the web service, independently
+confirmed identity, approved target and explicit production-write authority.
+
+The compiled journey now continues from owner creation through actual restricted
+web-role preflight, authenticated project creation/read and logout/revocation. Every
+application query asserts the restricted login; provisioning never substitutes an
+admin connection for app requests. The first logout expectation used 200, corrected
+to the existing 204 contract. All 17 combined source/wrapper/compiled checks pass,
+as do TypeScript, full lint and a fresh VPS build. No real assertion, provisioning
+connection, native listener or production write was used.
