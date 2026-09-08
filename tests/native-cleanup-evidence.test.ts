@@ -1,11 +1,10 @@
 import assert from "node:assert/strict";
-import { createHash, generateKeyPairSync } from "node:crypto";
 import test from "node:test";
-import { createNativeCleanupEvidence, type NativeCleanupAcceptanceBody, type NativeCleanupSnapshot } from "../src/harness/hermes-native-v1/cleanup-evidence";
-import { PinnedApprovalTrustStore } from "../src/node-policy/v1/pinned-approval-trust";
-import { computeArtifactBodyDigest, signArtifact } from "../src/node-policy/v1/crypto";
+import { createNativeCleanupEvidence } from "../src/harness/hermes-native-v1/cleanup-evidence";
+import { createNativeTaskSettlement } from "../src/harness/hermes-native-v1/task-settlement";
 import { sha256Digest } from "../src/security";
 import { nativeLeaseEvidenceFixture } from "./helpers/native-lease-evidence";
+import { syntheticCleanupEvidence } from "./helpers/native-cleanup-evidence";
 import { response, statusBody } from "./hermes-native-fixture";
 
 const signal = () => new AbortController().signal;
@@ -18,33 +17,10 @@ async function fixture() {
   } });
   await adapter.start(f.prepared.start);
   f.setNow(f.dependencies.clock!() + 1000); await adapter.poll(f.prepared.binding.runId);
-  const keys = generateKeyPairSync("ed25519"), enrollment = f.startConfig.enrollment;
-  const now = f.dependencies.clock!, body: NativeCleanupAcceptanceBody = {
-    schema: "control-room.native-cleanup-acceptance/v1", enrollmentDigest: sha256Digest(enrollment),
-    producerDigest: sha256Digest("synthetic-cleanup-producer"), evidenceDigest: sha256Digest("synthetic-host-review-not-qualification"),
-    nodeClass: "personal-compute", approvalKeyId: "owner-key:cleanup", issuedAt: now() - 1000, expiresAt: enrollment.validUntil,
-    guarantees: { exactRunIsolation: true, descendantsStoppedVerified: true, nativeRequestsDrainedVerified: true,
-      durableRevisionTracking: true }, bodyDigest: "" };
-  body.bodyDigest = computeArtifactBodyDigest(body);
-  const acceptance = signArtifact(body, keys.privateKey), spki = keys.publicKey.export({ type: "spki", format: "der" }).toString("base64url");
-  const pins = new PinnedApprovalTrustStore({ schema: "control-room.owner-approval-pins/v1", tenantId: enrollment.tenantId,
-    nodeId: enrollment.nodeId, nodeClass: body.nodeClass, validFrom: body.issuedAt, validUntil: body.expiresAt,
-    keys: [{ keyId: body.approvalKeyId, algorithm: "ed25519", spki,
-      fingerprint: `sha256:${createHash("sha256").update(Buffer.from(spki, "base64url")).digest("hex")}` }] },
-  { security: f.trust, clock: now });
-  const snapshot = f.nativeRunJournal.load(f.prepared.binding.runId)!, claim = f.effects.load(f.prepared.binding.effectClaimKey);
-  assert.equal(snapshot.state, "completed"); assert.equal(claim?.kind, "full");
-  if (claim?.kind !== "full" || !claim.snapshot.markerDigest || !snapshot.nativeRunId) throw new Error("fixture missing exact retained evidence");
-  const proof: NativeCleanupSnapshot = { enrollmentDigest: body.enrollmentDigest, producerDigest: body.producerDigest,
-    bindingDigest: sha256Digest(f.prepared.binding), nativeRunId: snapshot.nativeRunId, snapshotDigest: sha256Digest(snapshot),
-    markerDigest: claim.snapshot.markerDigest, revision: 1, observedAt: now(), validUntil: now() + 10_000,
-    state: "quiescent", remainingDescendants: 0, pendingNativeRequests: 0 };
-  const config = { enrollment, binding: f.prepared.binding, acceptance };
-  const deps = { approvals: pins, security: f.trust, runs: f.nativeRunJournal, effects: f.effects,
-    readSupervisedCleanup: () => proof, clock: now };
-  return { f, config, deps, proof, snapshot, claim: claim.snapshot,
-    create: () => createNativeCleanupEvidence(config, deps),
-    close: async () => { pins.close(); control.close(); await f.close(); } };
+  const cleanup = syntheticCleanupEvidence({ enrollment: f.startConfig.enrollment, binding: f.prepared.binding,
+    runs: f.nativeRunJournal, effects: f.effects, security: f.trust, clock: f.dependencies.clock! });
+  return { ...cleanup, f, deps: { ...cleanup.deps, effects: f.effects },
+    close: async () => { cleanup.close(); control.close(); await f.close(); } };
 }
 
 test("accepted exact cleanup evidence is read-only and cannot clear retained active capacity", async t => {
@@ -120,4 +96,94 @@ test("final synchronous cleanup reads cannot borrow an earlier wall-clock or mon
     assert.equal(reads, 2); reader.close();
   }
   assert.deepEqual(x.f.effects.load(x.snapshot.binding.effectClaimKey), { kind: "full", snapshot: x.claim });
+});
+
+test("local settlement joins exact cleanup with execution completion before freeing the effect", async t => {
+  const x = await fixture(); t.after(x.close); let drained = false;
+  const beforeCalls = [...x.f.calls];
+  const settlement = createNativeTaskSettlement(x.config, { ...x.deps, executions: x.f.executions,
+    runtime: { async closeForSettlement(bindingDigest) {
+      assert.equal(bindingDigest, sha256Digest(x.config.binding)); drained = true;
+      return { bindingDigest, descendantsStoppedVerified: false, assertClosed() { assert.equal(drained, true); } };
+    } } });
+  const receipt = await settlement.settle(signal());
+  assert.equal(receipt.localEffectSettled, true); assert.equal(receipt.canonicalCapacityReleased, false);
+  assert.equal(receipt.grantsExecutionAuthority, false); assert.equal(receipt.qualityAccepted, false);
+  assert.equal(x.f.effects.countActive(x.config.enrollment.tenantId, x.config.enrollment.nodeId), 0);
+  assert.equal(x.f.executions.load(x.claim.executionId)?.state, "completed");
+  assert.deepEqual(x.f.calls, beforeCalls);
+  await assert.rejects(settlement.settle(signal()));
+});
+
+test("late cleanup failure retains capacity and reconstruction replays only execution completion", async t => {
+  const x = await fixture(); t.after(x.close);
+  let failAfterExecution = true, closes = 0;
+  const runtime = { async closeForSettlement(bindingDigest: string) {
+    closes++; return { bindingDigest, descendantsStoppedVerified: false as const, assertClosed() {} };
+  } };
+  const deps = { ...x.deps, runtime, executions: x.f.executions, readSupervisedCleanup() {
+    if (failAfterExecution && x.f.executions.load(x.claim.executionId)?.state === "completed") {
+      throw new Error("synthetic proof lost after execution commit");
+    }
+    return x.proof;
+  } };
+  const first = createNativeTaskSettlement(x.config, deps);
+  await assert.rejects(first.settle(signal()), /native_task_settlement_unavailable/);
+  assert.equal(x.f.executions.load(x.claim.executionId)?.state, "completed");
+  assert.deepEqual(x.f.effects.load(x.claim.claimKey), { kind: "full", snapshot: x.claim });
+  assert.equal(x.f.effects.countActive(x.config.enrollment.tenantId, x.config.enrollment.nodeId), 1);
+  const events = x.f.executions.events(x.claim.executionId), calls = [...x.f.calls];
+  failAfterExecution = false;
+  const second = createNativeTaskSettlement(x.config, deps);
+  assert.equal((await second.settle(signal())).localEffectSettled, true);
+  assert.deepEqual(x.f.executions.events(x.claim.executionId), events);
+  assert.deepEqual(x.f.calls, calls); assert.equal(closes, 2);
+});
+
+test("unproven runtime drainage and cancellation cannot mutate settlement state", async t => {
+  const x = await fixture(); t.after(x.close); const execution = x.f.executions.load(x.claim.executionId);
+  for (const fault of ["wrong_binding", "close_failed", "not_drained", "cancelled"] as const) {
+    const controller = new AbortController();
+    const settlement = createNativeTaskSettlement(x.config, { ...x.deps, executions: x.f.executions,
+      runtime: { async closeForSettlement(bindingDigest) {
+        if (fault === "close_failed") throw new Error("synthetic uncertain close");
+        if (fault === "cancelled") controller.abort();
+        return { bindingDigest: fault === "wrong_binding" ? sha256Digest("other") : bindingDigest,
+          descendantsStoppedVerified: false, assertClosed() { if (fault === "not_drained") throw new Error("still draining"); } };
+      } } });
+    await assert.rejects(settlement.settle(controller.signal), /native_task_settlement_unavailable/);
+    assert.deepEqual(x.f.executions.load(x.claim.executionId), execution);
+    assert.deepEqual(x.f.effects.load(x.claim.claimKey), { kind: "full", snapshot: x.claim });
+  }
+});
+
+test("asynchronous drainage assertions are refused before writes and after the tentative effect write", async t => {
+  const x = await fixture(); t.after(x.close); const execution = x.f.executions.load(x.claim.executionId);
+  for (const late of [false, true]) {
+    const settlement = createNativeTaskSettlement(x.config, { ...x.deps, executions: x.f.executions,
+      runtime: { async closeForSettlement(bindingDigest) {
+        return { bindingDigest, descendantsStoppedVerified: false, assertClosed() {
+          const claim = x.f.effects.load(x.claim.claimKey);
+          if (!late || claim?.kind === "full" && claim.snapshot.state === "confirmed")
+            return Promise.reject(new Error("async drainage failure")) as unknown as undefined;
+        } };
+      } } });
+    await assert.rejects(settlement.settle(signal()), /native_task_settlement_unavailable/);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert.deepEqual(x.f.effects.load(x.claim.claimKey), { kind: "full", snapshot: x.claim });
+    if (!late) assert.deepEqual(x.f.executions.load(x.claim.executionId), execution);
+    else assert.equal(x.f.executions.load(x.claim.executionId)?.state, "completed");
+    assert.equal(x.f.effects.countActive(x.config.enrollment.tenantId, x.config.enrollment.nodeId), 1);
+  }
+});
+
+test("confirmation proof cannot bless another event or a caller-selected post-transition digest", async t => {
+  const x = await fixture(); t.after(x.close);
+  const first = x.create(), proof = await first.verify(signal());
+  assert.throws(() => proof.confirmation.verifyCurrent(sha256Digest("arbitrary target")));
+  const second = x.create(), next = await second.verify(signal());
+  assert.throws(() => x.f.effects.applyChecked(x.claim.claimKey, { ...next.confirmation.event,
+    destinationReceiptDigest: sha256Digest("different evidence") }, next.confirmation));
+  assert.deepEqual(x.f.effects.load(x.claim.claimKey), { kind: "full", snapshot: x.claim });
+  assert.equal(x.f.effects.countActive(x.config.enrollment.tenantId, x.config.enrollment.nodeId), 1);
 });

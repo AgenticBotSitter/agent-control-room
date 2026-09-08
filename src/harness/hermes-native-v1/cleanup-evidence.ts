@@ -4,6 +4,7 @@ import { verifyArtifactSignature } from "../../node-policy/v1/crypto";
 import { resolvePinnedApprovalKey, type PinnedApprovalTrustStore } from "../../node-policy/v1/pinned-approval-trust";
 import type { SqliteNodeSecurityStateRepository } from "../../node-policy/v1/persistent-security-state";
 import type { SqliteEffectClaimStore } from "../../node-policy/v1/effect-claim-store";
+import { applyEffectClaimEvent, type EffectClaimSnapshotV1 } from "../../node-policy/v1/effect-claim";
 import { bindingSchema, enrollmentSchema, snapshotSchema, type NativeRunJournal } from "./contracts";
 import { digestSchema, localId } from "../v1/native-run-identifiers";
 
@@ -50,12 +51,18 @@ export function createNativeCleanupEvidence(config: { enrollment: unknown; bindi
     load = deps.runs.load.bind(deps.runs), claim = deps.effects.load.bind(deps.effects),
     read = deps.readSupervisedCleanup.bind(deps), clock = deps.clock?.bind(deps) ?? Date.now;
   let highTime = -1, highRevision = -1, previous: string | undefined, closed = false;
-  function current(signal: AbortSignal) {
+  function current(signal: AbortSignal, transition?: { before: EffectClaimSnapshotV1; afterDigest: string }) {
     if (closed || !(signal instanceof AbortSignal) || signal.aborted) fail();
     const now = clock();
     if (!Number.isSafeInteger(now) || now < 0 || now < highTime) fail(); highTime = now;
     if (now < body.issuedAt || now >= body.expiresAt) fail();
-    const snapshot = snapshotSchema.parse(load(binding.runId)), effect = claim(binding.effectClaimKey);
+    const snapshot = snapshotSchema.parse(load(binding.runId)), retained = claim(binding.effectClaimKey);
+    if (retained?.kind !== "full") fail();
+    const retainedDigest = sha256Digest(retained.snapshot);
+    // Only this verifier's exact computed transition may normalize to the prior
+    // claim during the transactional post-write check. All other evidence stays exact.
+    const effect = transition && retainedDigest === transition.afterDigest
+      ? { kind: "full" as const, snapshot: transition.before } : retained;
     if (snapshot.state !== "completed" || snapshot.availability !== "current" || snapshot.nativeRunId === null
       || snapshot.resultText === null || snapshot.observedAt > now || sha256Digest(snapshot.binding) !== bindingDigest
       || effect?.kind !== "full" || !effect.snapshot.markerDigest || !["executing", "ambiguous"].includes(effect.snapshot.state)) fail();
@@ -79,8 +86,8 @@ export function createNativeCleanupEvidence(config: { enrollment: unknown; bindi
     if (closed || signal.aborted || !Number.isSafeInteger(after) || after < now || after < highTime
       || after >= body.expiresAt || after >= proof.validUntil) fail();
     highTime = after;
-    return sha256Digest({ proof, acceptance: sha256Digest(acceptance), snapshot: sha256Digest(snapshot),
-      claim: sha256Digest(effect.snapshot), trust });
+    return { digest: sha256Digest({ proof, acceptance: sha256Digest(acceptance), snapshot: sha256Digest(snapshot),
+      claim: sha256Digest(effect.snapshot), trust }), retainedDigest, claim: effect.snapshot, snapshot, proof };
   }
   return Object.freeze({ close() { closed = true; }, async verify(signal: AbortSignal) {
     try {
@@ -88,11 +95,28 @@ export function createNativeCleanupEvidence(config: { enrollment: unknown; bindi
       const key = await resolvePinnedApprovalKey(approvals, scope, body.approvalKeyId);
       if (!key || !verifyArtifactSignature(acceptance, key.publicKeySpki)) fail();
       const assertFresh = () => { try {
-        if (performance.now() >= deadline || current(signal) !== before || performance.now() >= deadline) fail();
+        if (performance.now() >= deadline || current(signal).digest !== before.digest || performance.now() >= deadline) fail();
       } catch { closed = true; fail(); } };
       assertFresh();
-      return Object.freeze({ evidenceDigest: before, grantsExecutionAuthority: false as const,
-        releasesCapacity: false as const, assertFresh });
+      const event = Object.freeze({ eventId: `event:cleanup:${before.digest.slice(7)}`, kind: "confirmed" as const,
+        occurredAt: new Date(before.proof.observedAt).toISOString(), destinationReceiptDigest: before.digest });
+      const afterDigest = sha256Digest(applyEffectClaimEvent(before.claim, event));
+      const confirmation = Object.freeze({ event, expectedSnapshotDigest: before.retainedDigest,
+        executionId: before.claim.executionId, admissionId: before.claim.admissionId,
+        authorityDigest: before.claim.authorityDigest, identityDigest: sha256Digest(before.claim.identity),
+        effectiveDeadline: before.claim.effectiveDeadline,
+        executionEvent: Object.freeze({ eventId: `event:native-complete:${sha256Digest(before.snapshot).slice(7)}`,
+          kind: "completed" as const, occurredAt: new Date(before.snapshot.observedAt).toISOString() }),
+        verifyCurrent(expected: string): true {
+          try {
+            if (![before.retainedDigest, afterDigest].includes(expected) || performance.now() >= deadline) fail();
+            const value = current(signal, { before: before.claim, afterDigest });
+            if (value.retainedDigest !== expected || value.digest !== before.digest || performance.now() >= deadline) fail();
+            return true;
+          } catch { closed = true; fail(); }
+        } });
+      return Object.freeze({ evidenceDigest: before.digest, grantsExecutionAuthority: false as const,
+        releasesCapacity: false as const, assertFresh, confirmation });
     } catch { closed = true; fail(); }
   } });
 }

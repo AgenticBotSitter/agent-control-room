@@ -51,6 +51,7 @@ export function createNativeNodeRuntime(input: NativeNodeRuntimeConfiguration, d
   let recoveryAdapter: HermesNativeRunAdapter | undefined, recoveryRunId: string | undefined;
   let recoveryDeliveryDigest: string | undefined;
   let sourceDigest: string | undefined;
+  let sourceBindingDigest: string | undefined;
   let operation: { kind: string; cancel: AbortController; interrupted: boolean; settled: Promise<void> } | undefined;
   const current = () => {
     const now = clock();
@@ -147,6 +148,7 @@ export function createNativeNodeRuntime(input: NativeNodeRuntimeConfiguration, d
     matchNativeTaskDispatchReceipt(saved.receipt, frame);
     const material = prepareNativeTaskDispatchIntake(frame.body, config.enrollment), digest = sha256Digest(saved);
     if (sourceDigest !== undefined && sourceDigest !== digest) return fail(); sourceDigest = digest;
+    sourceBindingDigest = frame.body.bindingDigest;
     return { saved, material };
   }
   async function prepared() {
@@ -275,5 +277,15 @@ export function createNativeNodeRuntime(input: NativeNodeRuntimeConfiguration, d
     report(signal: AbortSignal) { return native("report", signal, () => reporter.report(signal)); },
     readResult: reporter.readResult.bind(reporter),
     close,
+    async closeForSettlement(bindingDigest: string) {
+      if (!sourceBindingDigest || sourceBindingDigest !== bindingDigest) return fail();
+      await close();
+      const assertClosed = (): void => {
+        if (!closed || !lifetime.signal.aborted || rawNative.size !== 0 || pending.size !== 0
+          || sourceBindingDigest !== bindingDigest) return fail();
+      };
+      assertClosed();
+      return Object.freeze({ bindingDigest, descendantsStoppedVerified: false as const, assertClosed });
+    },
   });
 }

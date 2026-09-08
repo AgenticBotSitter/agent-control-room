@@ -1125,3 +1125,44 @@ zero). Tests prove rollback and committed visibility, stale/replay guards, event
 capture and refusal of asynchronous acceptance. No real native task or production
 capacity was changed. Next: bind this seam to fixed cleanup-derived confirmation and
 execution-state settlement before attempting the two-task integrated journey.
+
+## Joined local native task settlement
+
+Added `createNativeTaskSettlement` and the runtime's exact-binding
+`closeForSettlement`. The latter drains the actual existing task runtime and
+explicitly does not attest to physical descendants. The cleanup consumer now
+computes one fixed confirmation event and supports freshness checks across only
+that exact claim transition; arbitrary target digests/altered events are refused.
+Settlement closes/drains the runtime, verifies separately accepted synthetic cleanup
+proof, matches execution identity/admission/authority/deadline, records the retained
+native completion event, then confirms the effect with transactional freshness.
+The execution-only crash window retains capacity and reconstructs through exact
+execution event replay without another native call.
+
+The combined runtime test now routes saved result bytes into pending review through
+actual managed/native code, closes that runtime, and settles its existing local
+stores. Canonical records remain unchanged and the closed runtime cannot start.
+Synthetic cleanup signing/proof generation was extracted into a shared test helper;
+the ordinary and revised managed fixtures expose their already-existing local
+execution/effect stores. No producer, owner signer, production wiring or server
+capacity release was introduced. Historical receipt recovery after the effect commit
+still refuses; dynamic next-task runtime selection and the two-task journey remain.
+
+Initial five consumer tests/types passed (75206). Eight settlement tests passed but
+types found void/undefined fixture assertion mismatch (17008 exit two), corrected by
+typing the real runtime assertion void. Next 12 combined cases passed but fixture
+Local types omitted existing effect/execution members (43669 exit two), corrected
+without inventing stores. Independent review found ignored async drainage assertion
+results; the bound assertion now requires synchronous undefined and observes rejected
+Promises. Immediate and post-effect-write failures are tested, with rollback retaining
+capacity. Independent re-review accepted this and later identity/digest-check changes.
+
+Broader test run first hit the intended exact-facade allowlist (41765: 28 passes,
+one failure), which was updated to include only the new drainage method and reject
+unknown task settlement. All 30 cases then passed (32085), but TypeScript found the
+empty-array assertion narrowed later call strings to never; replaced it with a
+length assertion. Final types, focused lint and diff check passed (60229 exit zero).
+Fresh VPS compilation and four compiled managed-session/node-launcher checks passed
+(39896 exit zero). Existing build warnings were not repaired or downloaded around.
+The new settlement coordinator is source-tested, not enabled in the launcher.
+No test handle remains active. Original fixed deadline is still 12:40:58 UTC.

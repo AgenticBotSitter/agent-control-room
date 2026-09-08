@@ -25,7 +25,7 @@ type Login = "managed_auth_test" | "managed_evidence_test" | "managed_result_tes
 type Base = Awaited<ReturnType<typeof canonicalApprovalStorageFixture>>;
 type QueueLookup = Awaited<ReturnType<Base["coordinator"]["locateApprovedQueueDelivery"]>>;
 type Local = Pick<Awaited<ReturnType<typeof nativeStartAuthorityFixture>>,
-  "policy" | "dependencies" | "journal" | "transport" | "calls" | "setNow" | "close"> & {
+  "policy" | "dependencies" | "journal" | "effects" | "executions" | "transport" | "calls" | "setNow" | "close"> & {
     prepared: { binding: Base["prepared"]["binding"] };
   };
 export type ManagedNativePreparedContext = { f: Base; local: Local; providerRunId: string; resultText: string };

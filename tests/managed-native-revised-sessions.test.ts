@@ -65,7 +65,7 @@ async function revisedPreparation() {
       f: { ...f, planner, route, coordinator, prepared, packet, args, close: original.close,
         save: (value: unknown = packet, c = coordinator) => c.storeNativeApproval(...args, value, currentSignal()) },
       providerRunId, resultText: revisedText,
-      local: { prepared, policy, dependencies, journal, calls, setNow: f.setNow, close: closeLocal,
+      local: { prepared, policy, dependencies, journal, effects, executions, calls, setNow: f.setNow, close: closeLocal,
         transport: { async json(wire) {
           await wire.authorize(); calls.push(wire.operation);
           if (wire.operation === "capabilities") return response(capabilityBody);

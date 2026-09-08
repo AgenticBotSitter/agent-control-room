@@ -104,6 +104,14 @@ only a mocked `completed` callback.
 
 ### D. Combined release acceptance before service packaging
 
+Local progress on C/D: the per-task runtime now provides exact-binding drainage
+evidence, and `createNativeTaskSettlement` joins separately accepted cleanup proof to
+execution-first/effect-last durable settlement. The integrated retained-result test
+uses the real runtime and stores with synthetic producer qualification. It does not
+yet provide two independent task turnovers or historical settlement-receipt recovery.
+See `NATIVE_CLEANUP_EVIDENCE_DESIGN.md`; do not enable continuous service packaging
+from this partial acceptance.
+
 Run the six scenarios in `CONTINUOUS_PICKUP_GAP.md` through A+B+C together with
 disposable canonical storage, actual signing verification and fake native transport.
 Add crash-window evidence around allocation, dispatch, receipt, result delivery and

@@ -4,6 +4,9 @@ import { nativeNodeRuntimeFixture } from "./helpers/native-node-runtime";
 import { currentSignal } from "./helpers/managed-native-session";
 import { qualityText } from "./helpers/native-quality-completion";
 import { signedNodeFrameSchema } from "../src/node-protocol/v1";
+import { sha256Digest } from "../src/security";
+import { syntheticCleanupEvidence } from "./helpers/native-cleanup-evidence";
+import { createNativeTaskSettlement } from "../src/harness/hermes-native-v1/task-settlement";
 
 type Fixture = Awaited<ReturnType<typeof nativeNodeRuntimeFixture>>;
 const frames = (raw: string[]) => raw.map(value => signedNodeFrameSchema.parse(JSON.parse(value)));
@@ -71,6 +74,21 @@ test("node runtime intake waits for explicit start, starts once and routes compl
   assert.ok(f.x.observed.some(row => row.login === "managed_auth_test" && row.sql.includes("INSERT INTO node_protocol_replay")));
   assert.ok(f.x.observed.some(row => row.login === "managed_evidence_test" && row.sql.includes("INSERT INTO control_harness_runs")));
   assert.ok(f.x.observed.some(row => row.login === "managed_result_test" && row.sql.includes("INSERT INTO control_native_review_plans")));
+  const binding = f.x.f.prepared.binding, local = f.x.local;
+  const cleanup = syntheticCleanupEvidence({ enrollment: f.config.enrollment, binding, runs: local.journal,
+    effects: local.effects, security: f.x.f.native.trust, clock: f.x.f.clock }); t.after(cleanup.close);
+  const beforeSettlement = await stableExecution(f), priorCalls = [...local.calls];
+  await assert.rejects(f.runtime.closeForSettlement(sha256Digest("wrong task")));
+  const receipt = await createNativeTaskSettlement(cleanup.config, { ...cleanup.deps,
+    effects: local.effects, executions: local.executions, runtime: f.runtime }).settle(currentSignal());
+  assert.equal(receipt.localEffectSettled, true); assert.equal(receipt.canonicalCapacityReleased, false);
+  assert.equal(local.effects.countActive(binding.tenantId, binding.nodeId), 0);
+  assert.equal(local.executions.load(cleanup.claim.executionId)?.state, "completed");
+  assert.deepEqual(await stableExecution(f), beforeSettlement);
+  assert.deepEqual(local.calls, priorCalls);
+  const closed = await f.runtime.closeForSettlement(sha256Digest(binding)); closed.assertClosed();
+  assert.equal(closed.descendantsStoppedVerified, false);
+  await assert.rejects(f.runtime.start(currentSignal()));
 });
 
 test("disconnected runtime reports saved completion and reconnects the same journals without another native request or dispatch", async t => {
