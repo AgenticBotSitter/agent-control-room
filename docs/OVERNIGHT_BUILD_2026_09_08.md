@@ -1505,3 +1505,16 @@ cleanup producer evidence and lifecycle driving remain synthetic/manual.
 3529 passed all ten combined two-task/runtime tests, types, focused lint and diff.
 Independent source-only review found no concrete issue and confirmed these limits.
 This is sequential local integration, not automatic pickup or live qualification.
+
+### Existing connector reuse with lease-aware runtime
+
+Saved two-task block as 4769877. Extended existing HTTP/connector fixtures and tests
+to opt into the lease-aware initial runtime. Production connector/HTTP code remains
+unchanged. 40091 passed six initial scenarios/types/lint/diff, including owner and
+canonical queue dispatch through connector-driven terminal result. 40899 passed all
+eight final scenarios/types/lint/diff after adding lease-aware idle-bound and lost
+result response cases. Recovery explicitly uses the existing fixed-task runtime on
+retained journals; it does not retry native start or claim unassigned recovery.
+Independent source-only review found no concrete defect and confirmed fixture
+cleanup ownership and synthetic/manual-dispatch limits. Reuse the current connector
+for lifecycle integration; no alternate polling/transport stack is needed.

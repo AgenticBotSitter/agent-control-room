@@ -79,8 +79,8 @@ async function preserved(x: Fixture) {
   return { canonical, rows, calls: [...x.f.x.local.calls], registrations: x.f.x.inputRegistrations() };
 }
 
-for (const queued of [false, true]) test(`connector alone drives ${queued ? "canonical queue" : "owner"} HTTP dispatch, native execution and exact bytes into pending review`, async t => {
-  const x = await nativeHttpFixture(undefined, { queue: queued, queueBinding: queued }), wire = x.createClient();
+for (const leaseAware of [false, true]) for (const queued of [false, true]) test(`connector alone drives ${queued ? "canonical queue" : "owner"} HTTP dispatch and exact result, lease-aware=${leaseAware}`, async t => {
+  const x = await nativeHttpFixture(undefined, { queue: queued, queueBinding: queued, leaseAware }), wire = x.createClient();
   const connector = createNativeConnector(x.f.runtime, fixtureClient(x, wire), settings,
     { assertCurrent() {}, wait: completeOnSecondWait(x, queued) });
   t.after(async () => { try { await connector.close(); } finally { await x.close(); } });
@@ -112,8 +112,8 @@ for (const queued of [false, true]) test(`connector alone drives ${queued ? "can
   assert.deepEqual(x.f.x.local.calls, calls); assert.equal(wire.commands.length, commands);
 });
 
-test("waiting connector reaches its cycle bound without dispatch, registration or native effects", async t => {
-  const x = await nativeHttpFixture(), wire = x.createClient(); let waits = 0;
+for (const leaseAware of [false, true]) test(`waiting connector reaches its cycle bound without effects, lease-aware=${leaseAware}`, async t => {
+  const x = await nativeHttpFixture(undefined, { leaseAware }), wire = x.createClient(); let waits = 0;
   const connector = createNativeConnector(x.f.runtime, fixtureClient(x, wire), settings,
     { assertCurrent() {}, async wait() { waits++; } });
   t.after(async () => { try { await connector.close(); } finally { await x.close(); } });
@@ -126,8 +126,8 @@ test("waiting connector reaches its cycle bound without dispatch, registration o
   assert.equal(wire.closes(), 1);
 });
 
-test("lost HTTP response after result commit stops the connector without retry; a new connector recovers retained journals without native restart", async t => {
-  const x = await nativeHttpFixture(), wire = x.createClient();
+for (const leaseAware of [false, true]) test(`lost result response stops without retry; exact fixed recovery does not restart native work, initial lease-aware=${leaseAware}`, async t => {
+  const x = await nativeHttpFixture(undefined, { leaseAware }), wire = x.createClient();
   let lostAt: number | undefined;
   const connector = createNativeConnector(x.f.runtime, fixtureClient(x, wire, async () => {
     // Effect-free fault injection observes the actual server commit, not packet types.

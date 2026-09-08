@@ -10,7 +10,7 @@ import { currentSignal, type ManagedNativePreparedContext } from "./managed-nati
 
 /** No network or credential operations: Request/Response and an explicitly synthetic TLS
  * peer replace the physical HTTP hop. Packet bodies are opaque to this exchange fixture. */
-export async function nativeHttpFixture(context?: ManagedNativePreparedContext, options: { queue?: boolean; queueBinding?: boolean } = {}) {
+export async function nativeHttpFixture(context?: ManagedNativePreparedContext, options: { queue?: boolean; queueBinding?: boolean; leaseAware?: boolean } = {}) {
   const f = await nativeNodeRuntimeFixture(context, options), origin = "https://control-room.example.test";
   try {
   const rawCertificate = Buffer.from("synthetic-machine-certificate-bytes-not-a-real-certificate");

@@ -256,6 +256,16 @@ probe still uses an explicit fixture policy. Cleanup producer evidence and lifec
 driving remain synthetic/manual. This closes the two-task lease-policy composition
 gap, not automatic pickup, real cleanup qualification or PostgreSQL concurrency.
 
+The unchanged one-task HTTP connector now also passes this lease-aware initial mode
+for owner-dispatched and canonical queue-dispatched tasks. The connector itself
+drives protocol/start/poll/result delivery to pending review. Empty work stops at its
+cycle bound with no native calls. A lost result response stops without retry; a new
+explicit fixed-task recovery runtime reads the same saved result without native
+restart. These tests use injected HTTP transport and explicit fixture server dispatch.
+They do not implement automatic unassigned recovery, consecutive service ownership,
+physical networking or a qualified cleanup producer. Reuse this connector for the
+remaining lifecycle work rather than invent another task-driving loop.
+
 ### D. Combined release acceptance before service packaging
 
 Local progress on C/D: the per-task runtime now provides exact-binding drainage

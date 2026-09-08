@@ -5,6 +5,24 @@ not authorization to install a service or a claim of continuous fleet operation.
 `CONSECUTIVE_TASK_DESIGN.md` gives the lead-authored implementation direction and
 the exact durable-allocation questions that must be resolved before changing code.
 
+## Superseding local checkpoint, 2026-09-08
+
+The original audit below is historical. Local commits 19e8c12, 2098f16, 2ae548a and
+4769877 now provide canonical signed dispatch/lease pairs, checked atomic node lease
+intake, a separate lease-aware unassigned runtime using the actual current-policy
+reader, and two-task shared-store acceptance with synthetic cleanup. The unchanged
+HTTP connector additionally drives this runtime through exact result/pending review,
+bounds idle work and supports explicit fixed-task result recovery without restarting
+native execution in disposable integration tests.
+
+Remaining integration is node-level lifecycle ownership: reconstruct outstanding
+work before fresh pickup; settle exact runs with genuinely qualified host cleanup;
+drive canonical selection and fresh task runtimes with drain/reconnect handling; then
+package and qualify that combination. Existing fixed launcher/defaults remain unchanged.
+Current tests use synthetic trust, profile, key availability, provider, transport and
+cleanup evidence. Two-task transitions and recovery selection are explicitly driven
+by the tests. No unattended fleet or production readiness is claimed.
+
 ## What works and why a restart loop is not the answer
 
 The existing one-task connector can exchange signed dispatch and progress, execute
