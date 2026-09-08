@@ -1,5 +1,10 @@
 # Current completion handoff — first usable task before more polish
 
+For the consolidated remaining-outcome inventory, reusable components, competing
+alternatives and finish tests, see [Remaining work and reuse map](REMAINING_WORK_REUSE_MAP.md)
+(2026-09-08). It includes the bounded Herdr evaluation and does not authorize adoption
+or replace the live acceptance gates below.
+
 2026-09-08 overnight update, source baseline `a834aca`. This updates implementation
 status, not the original owner outcomes. The renewed overnight prompt now limits
 work to local commits; earlier private-branch push permission is not used. No
