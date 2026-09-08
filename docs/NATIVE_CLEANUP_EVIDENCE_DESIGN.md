@@ -39,3 +39,25 @@ restart protection: the accepted producer
 must preserve monotonic revision and current state durably. A verifier cannot prove
 its producer's physical observations independently. Synthetic tests validate the
 consumer only; no real Hermes cleanup producer is presently installed or qualified.
+
+## Transactional settlement seam
+
+The existing local effect store now offers `applyChecked`: an exact-current-snapshot
+comparison and synchronous checks before and after the proposed event, under its
+existing SQLite write transaction. Failed checks roll back both event history and
+capacity changes. Another connection sees the previous committed snapshot until
+commit. Replays also require the expected current snapshot and fresh checks; an old
+pre-transition digest cannot authorize a replay against a changed record.
+
+This is a trusted internal persistence seam, not a cleanup verifier. The callback
+must return exactly `true` synchronously and must not write stores or perform
+external effects. Returned promises are refused and their rejections observed.
+The existing unguarded event API retains its existing trusted-writer contract.
+
+The lifecycle integration still must derive a fixed confirmation event from verified
+cleanup evidence, validate all unchanged non-claim evidence across this one exact
+transition, finish execution-state recording before freeing the effect claim, and
+reconcile canonical result/lease acceptance before fresh pickup. Separate SQLite
+files do not provide a shared transaction. Any crash between execution completion
+and effect confirmation must retain the active effect hold and reconcile exact
+recorded events, not invent a new native attempt or clear history.

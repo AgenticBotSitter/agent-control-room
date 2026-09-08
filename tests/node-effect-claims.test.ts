@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { sha256Digest } from "../src/security/index.ts";
 import {
   EffectClaimConflictError,
   SqliteEffectClaimStore,
@@ -112,6 +113,66 @@ function committedMarker(store: SqliteEffectClaimStore, operation = request()) {
   });
   return { marker,result: store.commitPreEffectMarker(marker) };
 }
+
+test("checked settlement rolls back capacity and history on late verification failure", async () => {
+  await withStore((store, path) => {
+    const { result } = committedMarker(store), before = result.snapshot, key = before.claimKey;
+    const observer = new SqliteEffectClaimStore(path);
+    const event = { eventId: "event:checked:complete", kind: "confirmed" as const,
+      occurredAt: "2026-08-23T12:00:04.000Z", destinationReceiptDigest: digest("d") };
+    try {
+      let reads = 0;
+      assert.throws(() => store.applyChecked(key, event, { expectedSnapshotDigest: sha256Digest(before),
+        verifyCurrent(current) {
+          reads++;
+          assert.deepEqual(observer.load(key), { kind: "full", snapshot: before });
+          assert.equal(current, sha256Digest((store.load(key) as { kind: "full"; snapshot: typeof before }).snapshot));
+          if (reads === 2) throw new Error("proof expired");
+          return true;
+        } }), /proof expired/);
+      assert.equal(reads, 2);
+      assert.deepEqual(store.load(key), { kind: "full", snapshot: before });
+      assert.equal(observer.countActive("tenant:owner", "node:marvin"), 1);
+      // The rolled-back event ID is reusable with exactly the same evidence.
+      const applied = store.applyChecked(key, event, { expectedSnapshotDigest: sha256Digest(before), verifyCurrent: () => true });
+      assert.equal(applied.disposition, "applied");
+      assert.equal(observer.countActive("tenant:owner", "node:marvin"), 0);
+      assert.throws(() => store.applyChecked(key, event, { expectedSnapshotDigest: sha256Digest(before), verifyCurrent: () => true }), /stale/);
+      const replay = store.applyChecked(key, event, { expectedSnapshotDigest: sha256Digest(applied.snapshot), verifyCurrent: () => true });
+      assert.equal(replay.disposition, "duplicate");
+      assert.deepEqual(replay.snapshot, applied.snapshot);
+      assert.throws(() => store.applyChecked(key, event, { expectedSnapshotDigest: sha256Digest(applied.snapshot),
+        verifyCurrent: () => { throw new Error("trust revoked"); } }), /trust revoked/);
+    } finally { observer.close(); }
+  });
+});
+
+test("checked settlement refuses non-synchronous acceptance and captures the event before callbacks", async () => {
+  await withStore(async (store) => {
+    const before = committedMarker(store).result.snapshot, key = before.claimKey;
+    const event = { eventId: "event:checked:captured", kind: "confirmed" as const,
+      occurredAt: "2026-08-23T12:00:04.000Z", destinationReceiptDigest: digest("d") };
+    let rejectLate!: (error: Error) => void;
+    const late = new Promise((_, reject) => { rejectLate = reject; });
+    for (const value of [false, undefined, Promise.resolve(true), Promise.reject(new Error("async proof failure")), late]) {
+      assert.throws(() => store.applyChecked(key, event, { expectedSnapshotDigest: sha256Digest(before),
+        verifyCurrent: (() => value) as unknown as () => true }), /check failed/);
+      assert.deepEqual(store.load(key), { kind: "full", snapshot: before });
+    }
+    assert.throws(() => store.applyChecked(key, event, { expectedSnapshotDigest: sha256Digest(before),
+      verifyCurrent: (async () => { throw new Error("async reader threw"); }) as unknown as () => true }), /check failed/);
+    rejectLate(new Error("late proof failure"));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.deepEqual(store.load(key), { kind: "full", snapshot: before });
+    const captured = structuredClone(event);
+    const applied = store.applyChecked(key, event, { expectedSnapshotDigest: sha256Digest(before), verifyCurrent() {
+      event.destinationReceiptDigest = digest("e"); return true;
+    } });
+    assert.equal(store.apply(key, captured).disposition, "duplicate");
+    assert.throws(() => store.apply(key, event), /different content/);
+    assert.equal(applied.snapshot.state, "confirmed");
+  });
+});
 
 test("effect identity is stable per effect and excludes delivery message identity", () => {
   const operation = request();

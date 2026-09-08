@@ -1096,3 +1096,32 @@ including altered identity/marker, forged acceptance, retained native observatio
 changes, committed trust changes, source revision, pin close, cancellation and late
 reads. Independent re-review confirms the timing repair and no further concrete
 finding. No production evidence has been manufactured and no claim was freed.
+
+## Guarded durable effect settlement groundwork
+
+Original deadline remains 2026-09-08 12:40:58 UTC; the subsequently requested new
+goal prompt did not reset this existing overnight run. Prior prompt-only turn made
+no implementation progress; resumed with the next safe local persistence action.
+
+Added `SqliteEffectClaimStore.applyChecked` using the existing write transaction,
+exact-current snapshot digest, captured event and synchronous pre/post-write checks.
+Any failure rolls back the event and capacity change, including after the tentative
+write. Duplicate replay is checked too. This is a trusted local persistence seam,
+not a replacement for cleanup verification or an enabled consecutive worker.
+
+Initial test command failed on an incorrect directory import (319d0b exit one),
+corrected to security/index.ts. Next two test runs (37833 and 89568 exit one) exposed
+a test-fixture locking mistake: countActive intentionally opens a write transaction,
+so it cannot be used on a second connection during the guarded writer callback.
+Changed that in-transaction observer to load the committed snapshot; capacity is
+still checked after rollback and commit. No store locking safeguard was changed.
+
+Independent review found unobserved rejected Promise results from accidentally async
+guards. Captured and observed native Promise rejection before synchronous refusal;
+added immediate/late rejection and async-throw tests that yield an event-loop tick.
+Independent source re-review found the issue resolved and no new concrete defect.
+All 12 effect-store tests, TypeScript, focused lint and diff check passed (22214 exit
+zero). Tests prove rollback and committed visibility, stale/replay guards, event
+capture and refusal of asynchronous acceptance. No real native task or production
+capacity was changed. Next: bind this seam to fixed cleanup-derived confirmation and
+execution-state settlement before attempting the two-task integrated journey.

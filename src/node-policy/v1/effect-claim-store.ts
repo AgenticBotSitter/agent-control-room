@@ -219,17 +219,53 @@ export class SqliteEffectClaimStore {
   }
 
   apply(claimKey: string, event: Exclude<EffectClaimEventV1, { kind: "marker_committed" }>): { disposition: "applied" | "duplicate"; snapshot: EffectClaimSnapshotV1 } {
+    return this.applyWithinGuard(claimKey, event);
+  }
+
+  /** Trusted local settlement seam, not evidence verification. Both checks run
+   * synchronously under the write lock; a failed post-write check rolls back the
+   * event and capacity change. The caller must verify all non-claim evidence.
+   * Exact replay also requires the expected CURRENT snapshot and fresh checks. */
+  applyChecked(claimKey: string, event: Exclude<EffectClaimEventV1, { kind: "marker_committed" }>, guard: {
+    expectedSnapshotDigest: string;
+    verifyCurrent(snapshotDigest: string): true;
+  }): { disposition: "applied" | "duplicate"; snapshot: EffectClaimSnapshotV1 } {
+    const expectedSnapshotDigest = guard.expectedSnapshotDigest, verifyCurrent = guard.verifyCurrent.bind(guard);
+    if (!/^sha256:[a-f0-9]{64}$/.test(expectedSnapshotDigest)) throw new EffectClaimConflictError("Invalid expected effect snapshot");
+    return this.applyWithinGuard(claimKey, event, { expectedSnapshotDigest, verifyCurrent });
+  }
+
+  private applyWithinGuard(claimKey: string, input: Exclude<EffectClaimEventV1, { kind: "marker_committed" }>, guard?: {
+    expectedSnapshotDigest: string;
+    verifyCurrent(snapshotDigest: string): true;
+  }): { disposition: "applied" | "duplicate"; snapshot: EffectClaimSnapshotV1 } {
+    // A trusted reader must not accidentally mutate the event being committed.
+    const event = structuredClone(input);
     assertNoSecretMaterial(event, "effect claim event");
     return this.transaction(() => {
+      const before = this.requireFullWithin(claimKey), beforeDigest = sha256Digest(before);
+      const check = (expected: string) => {
+        if (guard) {
+          const accepted: unknown = guard.verifyCurrent(expected);
+          // Reject async verification without leaving a late rejection unobserved.
+          // Do not invoke arbitrary thenables to decide synchronous acceptance.
+          if (accepted instanceof Promise) Promise.prototype.then.call(accepted, undefined, () => undefined);
+          if (accepted !== true) throw new EffectClaimConflictError("Effect settlement check failed");
+        }
+        if (sha256Digest(this.requireFullWithin(claimKey)) !== expected) throw new EffectClaimConflictError("Effect snapshot changed during verification");
+      };
+      if (guard && guard.expectedSnapshotDigest !== beforeDigest) throw new EffectClaimConflictError("Effect snapshot is stale");
+      if (guard) check(beforeDigest);
       const eventDigest = sha256Digest(event);
       const prior = this.db.prepare(`SELECT event_digest FROM effect_claim_events WHERE claim_key=? AND event_id=?`).get(claimKey,event.eventId) as { event_digest: string } | undefined;
       if (prior) {
         if (prior.event_digest !== eventDigest) throw new EffectClaimConflictError("Effect event ID was reused with different content");
+        if (guard) check(beforeDigest);
         return { disposition: "duplicate", snapshot: this.requireFullWithin(claimKey) };
       }
-      const before = this.requireFullWithin(claimKey);
       const after = applyEffectClaimEvent(before,event);
       this.persistTransition(before,after,event);
+      if (guard) check(sha256Digest(after));
       return { disposition: "applied", snapshot: after };
     });
   }
