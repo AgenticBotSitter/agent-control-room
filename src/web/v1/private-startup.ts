@@ -3,6 +3,7 @@ import { createPrivatePostgresDatabase, validatePrivatePostgresConfiguration,
 import { verifyPrivateDatabase } from "./private-database-preflight";
 import { installPrivateWebProcess, type PrivateWebProcessOptions } from "./private-process";
 import { captureWebOrigins } from "./access-verifier";
+export { createAccessKeyLoader } from "./access-key-cache";
 
 export type PrivateStartupConfiguration = Omit<PrivateWebProcessOptions, "database" | "clock" | "drainMs" | "planning" | "assignment" | "revisions" | "ideaCreation" | "newsCollections"> & {
   database: PrivatePostgresConfiguration; ownerIdentityId: string;

@@ -4,6 +4,12 @@ Updated 2026-09-07. Private source transfer, not a production-ready release.
 
 ## Start here
 
+The next source update adds the restricted initial website configuration in
+`deploy/operator-config.mjs` and `deploy/README.md`. It removes the need to invent
+task-planning settings for an initial website. Follow that runbook's remaining
+private-input and production-execution gates; source availability does not certify
+backup/restore or authorize changing a shared supervisor/database blindly.
+
 The owner requested a private GitHub transfer so Johnny5 can help install Control
 Room. This document provides the preparation sequence and identifies what still
 needs an architect-reviewed production configuration. It does not authorize
