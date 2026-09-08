@@ -73,6 +73,37 @@ test("owner approval, assignment, effect authorization and queue entry commit on
   assert.equal((await f.client.query("SELECT * FROM synthetic_feed_queue")).rows.length, 0);
 });
 
+test("latest source status cannot hide a plan with a corrupted source identity", async t => {
+  const f = await fixture(); t.after(() => f.db.close());
+  assert.equal((await f.planner.status(f.identity)).latest?.jobId, f.plan.jobId);
+  const row = (await f.client.query<{ payload: unknown }>("SELECT payload FROM control_abs_feed_plans WHERE job_id=$1", [f.plan.jobId])).rows[0];
+  // Corruption injection only in this disposable PGlite fixture; ordinary writes
+  // are prevented by the append-only trigger (which the first test attempt hit).
+  await f.db.exec("ALTER TABLE control_abs_feed_plans DISABLE TRIGGER USER");
+  await f.client.query("UPDATE control_abs_feed_plans SET payload=jsonb_set(payload,'{plan,configuration,source,sourceId}','\"source:changed\"'::jsonb) WHERE job_id=$1", [f.plan.jobId]);
+  await assert.rejects(f.planner.status(f.identity));
+  await assert.rejects(f.planner.status(f.identity, f.plan.jobId));
+  await f.client.query("UPDATE control_abs_feed_plans SET payload=$1 WHERE job_id=$2", [row.payload, f.plan.jobId]);
+  await f.db.exec("ALTER TABLE control_abs_feed_plans ENABLE TRIGGER USER");
+  assert.equal((await f.planner.status(f.identity)).latest?.jobId, f.plan.jobId);
+  const largeInventory: DatabaseClient = { ...f.client,
+    transactionWithPreCommitCheck: (work, check) => f.client.transactionWithPreCommitCheck(tx => work({
+      async query<T>(sql: string, values?: unknown[]) {
+        if (sql.includes("LIMIT 101")) return { rows: Array.from({ length: 101 }, () => ({ job_id: f.plan.jobId })) as T[] };
+        return tx.query<T>(sql, values);
+      },
+    }), check) };
+  const bounded = new WebNewsCollectionPlanning(largeInventory, {
+    configuration: (row.payload as { plan: { configuration: unknown } }).plan.configuration,
+    executorId: f.scope.executorId, windowSeconds: 300,
+  }, f.key, f.clock);
+  await assert.rejects(bounded.status(f.identity), /history_requires_exact_job/);
+  assert.equal((await bounded.status(f.identity, f.plan.jobId)).latest?.jobId, f.plan.jobId);
+  await f.client.query("UPDATE control_role_grants SET revoked_at=$1 WHERE identity_id=$2", [new Date(now).toISOString(), "identity:web"]);
+  await assert.rejects(f.planner.status(f.identity), /access_denied/);
+  assert.equal((await f.client.query("SELECT * FROM synthetic_feed_queue")).rows.length, 0);
+});
+
 test("different refresh keys cannot overlap an unresolved source collection", async t => {
   const f = await fixture(); t.after(() => f.db.close());
   const second = await f.planner.propose(f.identity, { sourceDigest: f.planner.sourceDigest, idempotencyKey: "distinct-refresh-key-002" });
@@ -117,6 +148,17 @@ test("discovery approval and borrowed execution reuse queue claims and settlemen
         const proposalInput = { sourceDigest: description.sourceDigest, idempotencyKey: "discovery-execution-001" };
         const proposed = await handle(request(`${path}/propose`, "POST", proposalInput)); assert.equal(proposed.status, 201);
         const plan = await proposed.json() as Awaited<ReturnType<typeof planner.propose>>;
+        const readStatus = async (jobId?: string) => handle(request(`${path}/status${jobId ? `?${new URLSearchParams({ jobId })}` : ""}`));
+        const preparedStatus = await readStatus(plan.jobId);
+        assert.equal(preparedStatus.status, 200);
+        assert.equal(preparedStatus.headers.get("cache-control"), "no-store");
+        assert.equal((await preparedStatus.json()).latest.state, "prepared");
+        assert.equal((await (await readStatus()).json()).latest.jobId, plan.jobId);
+        const anonymousStatus = request(`${path}/status`); anonymousStatus.headers.delete("cf-access-jwt-assertion");
+        assert.equal((await handle(anonymousStatus)).status, 401);
+        assert.equal((await handle(request(`${path}/status?jobId=a&jobId=b`))).status, 400);
+        assert.equal((await handle(request(`${path}/status`, "POST", {}))).status, 400);
+        assert.equal((await readStatus("job:missing")).status, 404);
         assert.equal((await handle(request(`${path}/propose`, "POST", proposalInput))).status, 200);
         if (mode === "success") {
           const other = { ...source, id: "source:other", name: "Other source" };
@@ -125,6 +167,7 @@ test("discovery approval and borrowed execution reuse queue claims and settlemen
             source: { ...configuration.source, sourceId: other.id, sourceLabel: other.name } },
           executorId: f.scope.executorId, windowSeconds: 300 }, f.key, f.clock);
           const otherPlan = await otherPlanner.propose(f.identity, { sourceDigest: otherPlanner.sourceDigest, idempotencyKey: "other-discovery-001" });
+          assert.equal((await readStatus(otherPlan.jobId)).status, 404);
           assert.equal((await handle(request(`${path}/approve`, "POST", { jobId: otherPlan.jobId, inputDigest: otherPlan.inputDigest }))).status, 409);
           for (const table of ["synthetic_feed_queue", "control_effect_intents", "control_approvals", "control_attempts"])
             assert.equal((await f.client.query(`SELECT * FROM ${table}`)).rows.length, 0);
@@ -139,6 +182,7 @@ test("discovery approval and borrowed execution reuse queue claims and settlemen
         const approvalResponse = await handle(request(`${path}/approve`, "POST", args));
         assert.equal(approvalResponse.status, 201);
         const approved = await approvalResponse.json() as Awaited<ReturnType<typeof admission.approve>>;
+        assert.equal((await (await readStatus(plan.jobId)).json()).latest.state, "queued");
         const replayResponse = await handle(request(`${path}/approve`, "POST", args));
         assert.equal(replayResponse.status, 200); assert.equal((await replayResponse.json()).replayed, true);
         if (mode === "success") {
@@ -201,6 +245,10 @@ test("discovery approval and borrowed execution reuse queue claims and settlemen
         assert.equal(stories.stories.length, mode === "success" ? 1 : 0);
         const effect = (await f.client.query<{ state: string }>("SELECT state FROM control_effect_intents WHERE id=$1", [approved.effectId])).rows[0];
         assert.equal(effect.state, mode === "success" ? "confirmed" : "ambiguous");
+        const savedStatus = await readStatus(plan.jobId);
+        assert.equal(savedStatus.status, 200);
+        assert.equal((await savedStatus.json()).latest.state, mode === "success" ? "completed" : "uncertain");
+        assert.equal(fetched.length, before, "status read must not collect again");
         if (mode === "success") {
           assert.deepEqual(fetched.slice(0, 2), [source.url, "https://feeds.example.org/?feed=rss"]);
           // Collection is not verification. Only an explicit verification-first
@@ -304,12 +352,15 @@ test("restricted coordinator role can plan approve start and settle but cannot w
   let submissions = 0;
   const service = new WebNewsCollectionAdmission(f.client, f.scope, f.key, { async enqueueInSession() { submissions++; } }, f.clock);
   const receipt = await service.approve(f.identity, { jobId: plan.jobId, inputDigest: plan.inputDigest });
+  assert.equal((await f.planner.status(f.identity, plan.jobId)).latest?.state, "queued");
+  assert.ok((await f.planner.status(f.identity)).latest);
   assert.equal(submissions, 1); // No queue privilege is asserted by this injected submission.
   const store = new CanonicalStore(f.client);
   const marker = await store.beginAbsFeedAttempt({ ...f.scope, jobId: plan.jobId, inputDigest: plan.inputDigest,
     attemptId: receipt.attemptId, effectId: receipt.effectId, operationDigest: receipt.operationDigest }, f.clock);
   assert.equal((await store.settleAbsFeedAttempt({ tenantId: f.scope.tenantId, projectId: f.scope.projectId, jobId: plan.jobId,
     attemptId: receipt.attemptId, effectId: receipt.effectId, nodeId: f.scope.nodeId, markerDigest: marker.markerDigest, outcome: "ambiguous" }, f.clock)).effectState, "ambiguous");
+  assert.equal((await f.planner.status(f.identity, plan.jobId)).latest?.state, "uncertain");
   for (const table of ["control_abs_story_versions", "control_abs_source_observations", "projects", "control_role_grants", "control_native_task_queue"])
     await assert.rejects(f.client.query(`INSERT INTO ${table} DEFAULT VALUES`), /permission denied/);
   await f.db.exec("SET SESSION AUTHORIZATION postgres; GRANT INSERT ON control_abs_story_versions TO control_room_news_coordinator; SET SESSION AUTHORIZATION news_coordinator_test");
@@ -384,6 +435,7 @@ test("feed outcomes settle atomically, replay exactly and never permit another s
       const receipt = await f.service.approve(f.identity, f.args), store = new CanonicalStore(f.client);
       const start = { ...f.scope, ...f.args, attemptId: receipt.attemptId, effectId: receipt.effectId, operationDigest: receipt.operationDigest };
       const marker = await store.beginAbsFeedAttempt(start, f.clock);
+      assert.equal((await f.planner.status(f.identity, receipt.jobId)).latest?.state, "running");
       if (outcome === "late") f.setTime(now + 61_000);
       const input = { tenantId: f.scope.tenantId, projectId: f.scope.projectId, jobId: receipt.jobId, attemptId: receipt.attemptId,
         effectId: receipt.effectId, nodeId: f.scope.nodeId, markerDigest: marker.markerDigest,
@@ -396,6 +448,8 @@ test("feed outcomes settle atomically, replay exactly and never permit another s
       await assert.rejects(store.settleAbsFeedAttempt({ ...input, outcome: outcome === "failed" ? "ambiguous" : "failed", receiptDigest: undefined }, f.clock));
       await assert.rejects(store.beginAbsFeedAttempt(start, f.clock));
       const expected = outcome === "confirmed" ? "succeeded" : outcome === "failed" ? "failed" : "orphaned";
+      assert.equal((await f.planner.status(f.identity, receipt.jobId)).latest?.state,
+        outcome === "confirmed" ? "completed" : outcome === "failed" ? "failed" : "uncertain");
       assert.equal((await store.get(f.scope.tenantId, "job", receipt.jobId))?.state, expected);
       assert.equal((await store.get(f.scope.tenantId, "attempt", receipt.attemptId))?.state, expected);
       assert.equal((await f.client.query("SELECT state FROM control_leases WHERE attempt_id=$1", [receipt.attemptId])).rows[0].state, "released");

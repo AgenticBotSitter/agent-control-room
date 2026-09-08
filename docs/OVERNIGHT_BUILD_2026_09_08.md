@@ -184,3 +184,34 @@ stop and hold-cycle races. Closing aborts the signal and suppresses late success
 or failed callbacks; releasing a hold cannot admit the pre-hold response. The
 separate 40-test startup suite and 18-test news/recovery suite also passed. No live
 browser, Cloudflare, PostgreSQL, provider or production test is claimed.
+
+## News collection status
+
+Connected saved collection status through the existing signed-plan/coordinator
+composition, protected source route, strict browser client and progress UI.
+Queued/running observations are finite and read-only with respect to domain work;
+normal authentication may register a web session. No automatic approval or retry.
+Completed links to saved news and does not imply new articles or verified research.
+
+Independent backend review found unsigned JSON filtering could hide a corrupt
+source plan. Removed that selection shortcut: bounded complete inventory integrity
+verification precedes source/ranking selection. More than 100 project plans needs
+an exact job ID; no silent partial result. Re-review reports the finding resolved.
+Browser review found a stale empty-state flash after receiving a new job ID; command
+completion now clears only the old status display, not its pending command memory.
+The first corruption-test attempt was blocked by the append-only trigger. The test
+now explicitly injects corruption only in disposable PGlite and restores it; focused
+corruption and restricted-role tests pass. Full final verification is in progress.
+Details and remaining scale/live-acceptance limits: `NEWS_COLLECTION_STATUS_DELIVERY.md`.
+
+Final full delivery command exited zero, including its 240-test final stage.
+TypeScript, full lint and VPS compilation passed. Ten focused browser/status tests
+and eight compiled startup/handler/database checks also passed. The history-bound
+fixture proves incomplete discovery refuses and exact lookup remains usable.
+Final UI review additionally caught a passive-cleanup race; command completion
+now stops the old observer synchronously before replacing its status projection.
+Subsequent timer reads pin the discovered job instead of rescanning project history.
+Final focused/rebuild checks cover this correction; no production effect occurred.
+The final correction passes six focused status tests, TypeScript, full lint, a fresh
+VPS build and seven compiled handler/startup tests. No test was weakened to convert
+an uncertain collection into success.

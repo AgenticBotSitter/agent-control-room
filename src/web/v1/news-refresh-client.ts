@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { readBrowserJson } from "./browser-json";
-import { BrowserAuthenticationRecoveryError } from "./browser-client";
+import { BrowserAuthenticationRecoveryError, BrowserRequestError } from "./browser-client";
+import { newsCollectionStatusSchema } from "./news-collection-status-wire";
 import { catalogProjectIdSchema as id } from "./project-wire";
 import { effectIntentStates } from "../../domain/v1/types";
 
@@ -53,6 +54,23 @@ export function createNewsRefreshClient(projectValue: string, sourceValue: strin
   return Object.freeze({ hasPending: () => !!pending,
     state: () => ({ proposed: !!proposal, submitted: !!approval, canApprove: approvalCurrent && !!proposal && !approval,
       jobId: proposal?.jobId, effectState: approval?.effectState }),
+    async status(jobId?: string, signal?: AbortSignal) {
+      if (jobId !== undefined && !id.safeParse(jobId).success) throw new BrowserRequestError("invalid_request");
+      try {
+        const response = await fetcher(`${path}/status${jobId === undefined ? "" : `?${new URLSearchParams({ jobId })}`}`, {
+          credentials: "same-origin", cache: "no-store", redirect: "error",
+          headers: { "x-requested-with": "XMLHttpRequest", accept: "application/json" },
+          signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10000)]) : AbortSignal.timeout(10000),
+        });
+        if (!response.ok) throw new BrowserRequestError(response.status === 401 ? "authentication_required"
+          : response.status === 403 ? "access_denied" : response.status === 404 ? "not_found" : "unavailable");
+        const value = newsCollectionStatusSchema.parse(await readBrowserJson(response));
+        if (value.projectId !== projectId || value.sourceId !== sourceId
+          || jobId !== undefined && (value.configured && value.latest === null
+            || value.latest !== null && value.latest.jobId !== jobId)) throw new Error();
+        return value;
+      } catch (reason) { throw reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable"); }
+    },
     async describe(signal?: AbortSignal) {
       if (proposal) approvalCurrent = false;
       const response = await fetcher(path, { credentials: "same-origin", cache: "no-store", redirect: "error", headers: { "x-requested-with": "XMLHttpRequest", accept: "application/json" },

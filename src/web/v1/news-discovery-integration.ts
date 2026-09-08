@@ -60,7 +60,7 @@ export function createNewsDiscoveryIntegration(value: unknown, databases: { coor
       { configuration, executorId, windowSeconds: assignment.windowSeconds }, key, clock);
     const admission = new WebNewsCollectionAdmission(databases.coordinator, scope, key, submission, clock, "discovery");
     return Object.freeze({ tenantId, workspaceId, projectId, sourceId,
-      planning: Object.freeze({ describe: planning.describe.bind(planning), propose: planning.propose.bind(planning) }),
+      planning: Object.freeze({ describe: planning.describe.bind(planning), status: planning.status.bind(planning), propose: planning.propose.bind(planning) }),
       admission: Object.freeze({ approve: (identity: Parameters<typeof admission.approve>[0], request: unknown, expectedSourceId?: string) => {
         if (expectedSourceId !== undefined && expectedSourceId !== sourceId) return Promise.reject(new Error("news_integration_source_mismatch"));
         return admission.approve(identity, request, sourceId);

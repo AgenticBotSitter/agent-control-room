@@ -1,7 +1,10 @@
 import { z } from "zod";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import { localId, digestSchema } from "../../harness/v1/native-run-identifiers";
-import { sha256Digest } from "../../security";
+import { computeEffectOperationDigest, sha256Digest } from "../../security";
+import { CanonicalStore } from "../../persistence/canonical-store";
+import { effectIntentRecordSchema, jobRecordSchema } from "../../domain/v1";
+import { newsCollectionState, newsCollectionStatusSchema } from "./news-collection-status-wire";
 import { appendAuditWith } from "../../audit/audit-store";
 import { absFeedCollectionConfigurationSchema } from "../../project-adapters/abs-news/v1/feed-collection";
 import { absDiscoveryJobConfigurationSchema } from "../../project-adapters/abs-news/v1/discovery-job-configuration";
@@ -53,6 +56,57 @@ export class WebNewsCollectionPlanning {
           : { timeoutMs: configuration.timeoutMs, maxAttempts: 1, maxDocumentBytes: configuration.maxBytes, maxReservedBodyBytes: configuration.maxBytes },
         canRefresh: sourceCurrent && project.lifecycle === "active" && actor.can("tasks.propose", projectId, true) && actor.can("tasks.approve", projectId, true),
         sourceCurrent, startsWork: false as const };
+    });
+  }
+  /** Saved evidence only: no enqueue, lease transition, source fetch or retry.
+   * Without a job ID, rediscover the latest retained plan for this fixed source. */
+  async status(identity: VerifiedWebIdentity, jobId?: string) {
+    if (jobId !== undefined && !localId.safeParse(jobId).success) throw new WebAccessError("invalid_request");
+    return this.authority.authenticated(identity, async (tx, actor) => {
+      const { tenantId, workspaceId, projectId, source } = this.template.configuration;
+      actor.require("tasks.read", projectId);
+      await this.projects.getViewInSession(tx, actor, projectId);
+      const result = { projectId, sourceId: source.sourceId, configured: true, observedAt: actor.now };
+      const db = joined(tx), plans = new AbsFeedPlanStore(db, { tenantId, workspaceId, projectId }, this.key);
+      let selected = jobId;
+      if (selected === undefined) {
+        // Source identity and ordering live in signed plans. Filtering unsigned
+        // JSON first could hide corrupted work. Refuse an incomplete inventory;
+        // exact-job reads remain available for larger histories.
+        const candidates = (await tx.query<{ job_id: string }>(
+          "SELECT job_id FROM control_abs_feed_plans WHERE tenant_id=$1 AND workspace_id=$2 AND project_id=$3 LIMIT 101",
+          [tenantId, workspaceId, projectId])).rows;
+        if (candidates.length > 100) throw new Error("news_collection_history_requires_exact_job");
+        let latest: { id: string; createdAt: string } | undefined;
+        for (const row of candidates) {
+          const candidate = await plans.get(row.job_id);
+          if (!candidate) throw new Error("news_collection_status_unavailable");
+          if (candidate.plan.configuration.source.sourceId !== source.sourceId) continue;
+          if (!latest || Date.parse(candidate.job.createdAt) > Date.parse(latest.createdAt)
+            || candidate.job.createdAt === latest.createdAt && candidate.job.id > latest.id)
+            latest = { id: candidate.job.id, createdAt: candidate.job.createdAt };
+        }
+        selected = latest?.id;
+      }
+      if (!selected) return newsCollectionStatusSchema.parse({ ...result, latest: null });
+      // The collector settles job and effect atomically under this job lock.
+      // Hold a shared lock so the projection cannot mix before/after settlement.
+      await tx.query("SELECT id FROM control_jobs WHERE tenant_id=$1 AND id=$2 FOR SHARE", [tenantId, selected]);
+      const work = await plans.get(selected);
+      if (!work || work.plan.configuration.source.sourceId !== source.sourceId) throw new WebAccessError("not_found");
+      const canonical = new CanonicalStore(db), job = jobRecordSchema.parse(await canonical.get(tenantId, "job", selected));
+      const suffix = sha256Digest({ tenantId, projectId, jobId: selected, inputDigest: work.job.inputDigest }).slice(7, 47);
+      const rawEffect = await canonical.get(tenantId, "effect_intent", `effect:abs-feed:${suffix}`);
+      const effect = rawEffect ? effectIntentRecordSchema.parse(rawEffect) : null;
+      if (effect && (effect.tenantId !== tenantId || effect.jobId !== selected || effect.attemptId !== `attempt:abs-feed:${suffix}`
+        || effect.approvalId !== `approval:abs-feed:${suffix}` || effect.idempotencyKey !== `abs-feed-effect:${suffix}`
+        || effect.operation !== work.job.authority.allowedOperations[0] || effect.destination !== work.job.authority.allowedNetworkDestinations[0]
+        || effect.operationDigest !== computeEffectOperationDigest(effect, projectId)
+        || effect.state === "confirmed" && !digestSchema.safeParse(effect.destinationReceipt).success))
+        throw new Error("news_collection_status_unavailable");
+      return newsCollectionStatusSchema.parse({ ...result, latest: { jobId: selected, jobState: job.state,
+        effectState: effect?.state ?? null, state: newsCollectionState(job.state, effect?.state ?? null),
+        updatedAt: effect && Date.parse(effect.updatedAt) > Date.parse(job.updatedAt) ? effect.updatedAt : job.updatedAt } });
     });
   }
   async propose(identity: VerifiedWebIdentity, value: unknown) {
