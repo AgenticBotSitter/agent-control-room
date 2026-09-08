@@ -13,6 +13,7 @@ import {
 import type { ArtifactLineageRecordV1 } from "../node-executor/artifact-evidence";
 import { assertNativeSnapshotProgress, nativeTaskSnapshotBodySchema, type NativeTaskSnapshotBody } from "../harness/v1/native-observation";
 import { matchNativeTaskDispatchReceipt, type NativeTaskDispatchReceiptBody } from "../harness/v1/native-delivery";
+import { localId } from "../harness/v1/native-run-identifiers";
 
 export class BridgeBackpressureError extends Error {
   constructor() {
@@ -168,6 +169,32 @@ export class SqliteBridgeJournal implements ReplayGuard {
     const r = matchNativeTaskDispatchReceipt(JSON.parse(row.receipt_json), frame);
     if (sha256Digest(r) !== row.receipt_digest) throw new Error("native_delivery_integrity_invalid");
     return { frame, receipt: r };
+  }
+
+  /** Bounded historical restart metadata only. Contains no prompts, approvals or
+   * result bytes. Unknown attempts are included, never filtered out as irrelevant. */
+  nativeRestartInventory() {
+    return this.transaction(() => {
+      const rows = this.db.prepare("SELECT queue_id,tenant_id,job_id,attempt_id FROM bridge_native_deliveries ORDER BY queue_id LIMIT 1025")
+        .all() as { queue_id: string; tenant_id: string; job_id: string; attempt_id: string }[];
+      const attempts = this.db.prepare("SELECT attempt_id FROM bridge_attempts ORDER BY attempt_id LIMIT 1025").all() as { attempt_id: string }[];
+      if (rows.length > 1024 || attempts.length > 1024) throw new BridgeBackpressureError();
+      return { deliveries: rows.map(row => {
+        const saved = this.acceptedNativeDelivery(row.queue_id); if (!saved) throw new Error("native_delivery_integrity_invalid");
+        const body = saved.frame.body, request = body.request;
+        if (request.tenantId !== row.tenant_id || request.jobId !== row.job_id || request.attemptId !== row.attempt_id)
+          throw new Error("native_delivery_integrity_invalid");
+        return { queueId: row.queue_id, tenantId: request.tenantId, nodeId: request.nodeId,
+          projectId: request.projectId, jobId: request.jobId, attemptId: request.attemptId,
+          leaseId: request.leaseId, leaseEpoch: request.leaseEpoch, runId: body.start.runId,
+          bindingDigest: body.bindingDigest, deliveryDigest: sha256Digest(saved) };
+      }), attempts: attempts.map(row => {
+        const saved = this.attemptSummary(row.attempt_id);
+        if (!saved) throw new Error("native_attempt_inventory_invalid");
+        const { jobId, ...summary } = saved;
+        return { ...reconciliationAttemptSchema.parse(summary), jobId: localId.parse(jobId) };
+      }) };
+    });
   }
 
   appendNativeSnapshot(input: NativeTaskSnapshotBody, recordedAt: string): "recorded" | "duplicate" {

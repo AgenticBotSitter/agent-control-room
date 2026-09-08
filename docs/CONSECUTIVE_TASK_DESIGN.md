@@ -268,6 +268,23 @@ remaining lifecycle work rather than invent another task-driving loop.
 
 ### D. Combined release acceptance before service packaging
 
+#### Local restart inventory prerequisite
+
+The existing native and bridge journals now expose bounded node-private metadata
+inventories. They enumerate all rows before scope interpretation, reusing existing
+record-integrity readers, checking indexed mirrors/attempt schemas and refusing
+overflow rather than returning a partial list. Prompts, approval packets and result
+text are not included. No migration, pruning or state mutation is introduced.
+
+`readNativeRestartInventory` joins these records with existing effect counts and
+historical settlement recognition. Delivery without a run, run without delivery,
+unsettled run, unknown bridge attempt or active effect requires reconciliation.
+Two opposite-direction reads compare metadata and settlement evidence. This is not
+an atomic cross-store snapshot, an inventory of unrelated execution-store activity,
+or exclusive lifecycle ownership. Its result always denies fresh-pickup authority
+and current cleanup proof. Server allocation/recovery and serialized ownership
+remain separate mandatory gates before an operational worker loop can use it.
+
 Local progress on C/D: the per-task runtime now provides exact-binding drainage
 evidence, and `createNativeTaskSettlement` joins separately accepted cleanup proof to
 execution-first/effect-last durable settlement. The integrated retained-result test

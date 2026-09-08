@@ -1518,3 +1518,22 @@ retained journals; it does not retry native start or claim unassigned recovery.
 Independent source-only review found no concrete defect and confirmed fixture
 cleanup ownership and synthetic/manual-dispatch limits. Reuse the current connector
 for lifecycle integration; no alternate polling/transport stack is needed.
+
+### Bounded local restart inventory
+
+Saved connector evidence as 6f63d20. Added checked metadata-only inventory methods
+to the existing native and bridge journals, plus readNativeRestartInventory joining
+deliveries/runs/attempts with active effect counts and historical settlement. It
+always returns permitsFreshPickup:false and currentCleanupVerified:false; it is
+not an atomic multi-store lock or complete server/execution-store inventory.
+
+74848 found the existing reconciliation wire schema omits jobId. Preserve jobId via
+its existing identifier schema while passing only wire fields to the strict schema.
+Initial 30769 exposed that extra-field parse error and a late cross-store mutation
+not detected by same-direction sweeps. Corrected schema composition and changed
+the verification sweep order. 55303 passed all three initial lifecycle/inventory
+cases plus types/lint. Added file reopen, over-capacity and corrupt-mirror tests,
+malformed/oversized bridge attempt inventory. 54863 passed all 19 combined journal,
+restart, consecutive-task and runtime checks plus types/lint/diff.
+Independent source-only review found no concrete blocker and emphasized the
+non-atomic and non-authorizing scope. No native/production/GitHub effect occurred.

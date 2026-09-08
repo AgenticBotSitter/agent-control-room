@@ -80,6 +80,19 @@ export class SqliteNativeRunJournal implements NativeRunJournal {
     }
     return parsed;
   }
+  /** Bounded node-private restart inventory. No result text or execution authority.
+   * Enumerate every row before interpreting scope; indexes must not hide work. */
+  inventory() {
+    return this.transaction(() => {
+      const rows = this.db.prepare("SELECT run_id FROM hermes_native_runs ORDER BY run_id LIMIT ?")
+        .all(this.maximumEntries + 1) as { run_id: string }[];
+      if (rows.length > this.maximumEntries) throw new Error("native_journal_capacity_exhausted");
+      return rows.map(row => {
+        const snapshot = this.load(row.run_id); if (!snapshot) throw new Error("native_journal_integrity_invalid");
+        return { binding: snapshot.binding, state: snapshot.state, snapshotDigest: sha256Digest(snapshot) };
+      });
+    });
+  }
   private transaction<T>(work: () => T): T {
     this.assertUsable(); this.db.exec("BEGIN IMMEDIATE");
     let committing = false;
