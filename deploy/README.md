@@ -129,7 +129,10 @@ role name is a review condition, not permission to alter or drop it.
    not a prerequisite for creating its first empty database.
 2. Record the pinned release and hashes of all 64 `db/migrations/*.sql` files using
    `node scripts/private-deployment-inventory.mjs`. This command also inventories
-   the two restricted web role files and contacts no database. Compare its digest
+   the two restricted web role files and contacts no database. For the optional
+   Idea-authoring profile, use `node scripts/private-deployment-inventory.mjs --profile idea-authoring`
+   instead; it additionally hashes `db/roles/idea_creation_roles.sql`. Compare the
+   digest for the selected profile, not a minimal-profile inventory,
    with the accepted release inventory before executing any SQL. It is source
    identification, not a migration executor or proof of live database state.
 3. In the dedicated empty database only, apply those files in lexicographic order
@@ -150,6 +153,16 @@ role name is a review condition, not permission to alter or drop it.
    substitute the owner's email for the subject or copy a fixture identity/grant.
    This owner bootstrap still needs its exact verified input and execution review;
    this document does not turn invented timestamps into verified authentication.
+   When authoring is selected, first also apply the inventoried
+   `db/roles/idea_creation_roles.sql` under separate exact-target approval and
+   provision a different restricted LOGIN inheriting only `control_room_idea_creation`,
+   without ADMIN, object ownership or privileged role attributes. Do not grant the
+   web login this writer role or make the writer inherit the web group. Both logins
+   must reach the same dedicated database; verify actual database connection access
+   without granting CREATE or TEMPORARY. Default privileges apply to the actual
+   object-creating owner, not an unrelated operator role. The role script creates a
+   cluster-wide group and is not a repeatable update script: an existing group
+   requires review, not an automatic drop/recreate or reapplication.
 7. Run the unchanged production database preflight without starting the website:
    `node scripts/check-private-vps-database.mjs --configuration /APPROVED/RELEASE/deploy/operator-config.mjs`.
    This still requires explicit authorization for the selected private database

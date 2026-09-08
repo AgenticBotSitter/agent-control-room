@@ -385,3 +385,20 @@ pass, as do TypeScript, full lint and fresh VPS compilation. The new repeatable
 test:private-navigation command covers the focused cases. Recovery denial copy
 still says owner access is required for owners missing that permission; this is
 a wording limitation, not additional authority or a bypass.
+
+## Authoring deployment inventory and restore completeness
+
+The explicit idea-authoring source inventory now includes the writer-role SQL in
+addition to all migrations and the existing web files. The default inventory is
+unchanged. CLI tests reject unknown profiles and extra arguments; writer source
+changes alter the digest. The first CLI regression failed because the test used
+a URL pathname containing encoded spaces as a filesystem path; fileURLToPath fixes
+the test invocation. All eight inventory checks, TypeScript and full lint pass.
+
+Deployment instructions now identify separate writer-role provisioning and
+cluster-wide role collision review. Restore acceptance must preserve the deployed
+authoring profile, keys and roster, retarget both distinct logins to the same
+disposable restore and require both role checks. Independent deployment review
+identified the restore ambiguity; independent final source review confirms the
+inventory and corrected instructions have no concrete mismatch. No SQL was run,
+no archive created, and no production inputs accessed.

@@ -8,7 +8,8 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const digest = value => createHash('sha256').update(value).digest('hex');
 const refuse = () => { throw new Error('private_deployment_inventory_invalid'); };
 
-export async function createPrivateDeploymentInventory(directory = root) {
+export async function createPrivateDeploymentInventory(directory = root, profile = 'website-only') {
+  if (!['website-only', 'idea-authoring'].includes(profile)) refuse();
   const base = await realpath(directory);
   async function entry(path) {
     const target = join(base, path), stat = await lstat(target);
@@ -24,18 +25,21 @@ export async function createPrivateDeploymentInventory(directory = root) {
   const migrations = [];
   for (const name of names) migrations.push(await entry(`db/migrations/${name}`));
   const roles = [];
-  for (const name of ['private_web_database.sql', 'private_web_roles.sql']) roles.push(await entry(`db/roles/${name}`));
+  const roleFiles = ['private_web_database.sql', 'private_web_roles.sql'];
+  if (profile === 'idea-authoring') roleFiles.push('idea_creation_roles.sql');
+  for (const name of roleFiles) roles.push(await entry(`db/roles/${name}`));
   const material = { migrations, roles };
   return { schema: 'control-room.private-deployment-inventory/v1',
-    mode: 'website-only', migrationCount: migrations.length, ...material,
+    mode: profile, migrationCount: migrations.length, ...material,
     inventorySha256: digest(JSON.stringify(material)),
     databaseContacted: false, sqlApplied: false, productionReady: false };
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   try {
-    if (process.argv.length !== 2) refuse();
-    console.log(JSON.stringify(await createPrivateDeploymentInventory(), null, 2));
+    const args = process.argv.slice(2);
+    if (args.length && (args.length !== 2 || args[0] !== '--profile')) refuse();
+    console.log(JSON.stringify(await createPrivateDeploymentInventory(root, args[1] ?? 'website-only'), null, 2));
   } catch {
     console.error('Private deployment source inventory failed; no database was contacted.');
     process.exitCode = 1;

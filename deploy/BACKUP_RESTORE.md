@@ -11,6 +11,8 @@ backup does not make container-overlay storage durable.
 Record the exact immutable release and deployment source inventory. Privately
 identify the dedicated source database, schema owner, restricted web login, backup
 identity, archive destination, and a different empty disposable restore database.
+For Idea-authoring, include the separately restricted writer login and the
+authoring-profile source inventory; the minimal inventory omits its role script.
 All must be in the approved private execution namespace. Never infer a target from
 an ambient PGDATABASE, default username, or connection URL in a pasted command.
 
@@ -66,7 +68,14 @@ node /APPROVED/RELEASE/scripts/check-private-vps-database.mjs --configuration /A
 
 Set `CONTROL_ROOM_SETTINGS_FILE` privately to that restore-specific file. This
 command reuses production schema, effective grants, ownership restrictions and
-owner/workspace checks, then closes the pool. It does not fetch login keys, install
+owner/workspace checks, then closes the pool. When authoring is configured, preserve
+that profile and point **both** `web.database` and `ideaAuthoring.database` at the
+same disposable restore, retaining their distinct reviewed logins. Do not omit the
+writer profile to obtain a web-only pass, or leave either target pointing at the
+source. Preserve the original integrity keys and reviewed roster in the protected
+restore settings. The command must report both roles verified and both connections
+closed; a minimal web-only receipt cannot prove authoring restore readiness.
+It does not fetch login keys, install
 the application, bind a listener, start agents, or migrate data. It deliberately
 reports `backupVerified:false` and `productionReady:false`: its scope is narrower.
 Here read-only describes the performed queries, not a read-only PostgreSQL session

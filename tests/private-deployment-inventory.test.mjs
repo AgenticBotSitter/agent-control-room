@@ -4,6 +4,8 @@ import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createPrivateDeploymentInventory } from '../scripts/private-deployment-inventory.mjs';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'cr-source-inventory-'));
@@ -43,4 +45,37 @@ test('symlinked migration material is refused', async t => {
   const root = await fixture(t);
   await symlink(join(root, 'db/migrations/0001_first.sql'), join(root, 'db/migrations/0002_link.sql'));
   await assert.rejects(createPrivateDeploymentInventory(root), /inventory_invalid/);
+});
+
+test('authoring inventory adds exactly its writer role and remains source-only', async t => {
+  const basic = await createPrivateDeploymentInventory();
+  const authoring = await createPrivateDeploymentInventory(undefined, 'idea-authoring');
+  assert.equal(authoring.mode, 'idea-authoring');
+  assert.deepEqual(authoring.migrations, basic.migrations);
+  assert.deepEqual(authoring.roles.slice(0, 2), basic.roles);
+  assert.equal(authoring.roles[2].path, 'db/roles/idea_creation_roles.sql');
+  assert.equal(authoring.roles.length, 3);
+  assert.notEqual(authoring.inventorySha256, basic.inventorySha256);
+  assert.equal(authoring.databaseContacted, false); assert.equal(authoring.sqlApplied, false);
+  assert.equal(authoring.productionReady, false);
+  const root = await fixture(t);
+  await assert.rejects(createPrivateDeploymentInventory(root, 'idea-authoring'));
+  const file = join(root, 'db/roles/idea_creation_roles.sql');
+  await writeFile(file, '-- writer first');
+  const before = await createPrivateDeploymentInventory(root, 'idea-authoring');
+  await writeFile(file, '-- writer changed');
+  assert.notEqual((await createPrivateDeploymentInventory(root, 'idea-authoring')).inventorySha256, before.inventorySha256);
+  await assert.rejects(createPrivateDeploymentInventory(root, 'unknown'), /inventory_invalid/);
+});
+
+test('inventory CLI accepts only an explicit known profile', () => {
+  const script = new URL('../scripts/private-deployment-inventory.mjs', import.meta.url);
+  const run = args => spawnSync(process.execPath, [fileURLToPath(script), ...args], { encoding: 'utf8' });
+  const selected = run(['--profile', 'idea-authoring']);
+  assert.equal(selected.status, 0);
+  assert.equal(JSON.parse(selected.stdout).roles.length, 3);
+  for (const args of [['--profile'], ['--profile', 'unknown'], ['--profile', 'idea-authoring', 'extra'], ['--database', 'production']]) {
+    const result = run(args); assert.equal(result.status, 1); assert.equal(result.stdout, '');
+    assert.match(result.stderr, /no database was contacted/);
+  }
 });

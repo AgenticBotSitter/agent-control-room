@@ -7,7 +7,8 @@ Use the exact private-branch SHA supplied with this handoff as the deployment pi
 ## Supplied
 
 - `deploy/operator-config.mjs`: protected single-site website-only settings.
-- `scripts/private-deployment-inventory.mjs`: 64 migration and web-role source hashes.
+- `scripts/private-deployment-inventory.mjs`: 64 migration and web-role source hashes;
+  select `--profile idea-authoring` to include the optional writer-role source.
 - `scripts/check-private-vps-database.mjs`: existing production preflight plus close,
   without application installation or a listener. It verifies both roles when the
   optional Idea-authoring profile is configured, otherwise only the web role.
@@ -57,6 +58,8 @@ It performs preflight SELECT queries, but is not an arbitrary-SQL read-only sand
    MFA inheritance; no policy-level override does not necessarily mean MFA is off.
 4. Run database-only preflight on the prepared target. Back it up, restore into a
    different disposable database and verify preflight plus required data/integrity.
+   Retain the selected authoring profile during restore acceptance and retarget both
+   database settings to the restore; require both role checks, not a web-only pass.
 5. Review the actual supervisor, service account, persistent settings and unused
    loopback port. Obtain explicit production-start authorization.
 6. Start website-only once. Verify loopback binding, denied anonymous access, exact
