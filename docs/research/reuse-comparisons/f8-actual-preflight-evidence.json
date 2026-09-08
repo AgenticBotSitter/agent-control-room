@@ -1,0 +1,270 @@
+{
+  "exitCode": 0,
+  "reportedWallTimeSeconds": 0.808380042,
+  "diagnostic": "(node:<owned>) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n",
+  "actualStdout": {
+    "base": "af6bcb4",
+    "node": "v22.22.3",
+    "pins": {
+      "research/reuse-comparisons/f8-rehearsal-await-fit.mjs": "a4b27b0186797e9d632541f25ac5ad8797a13559f9f36ac7eb0bb0d5294efe07",
+      "research/reuse-comparisons/f8-key-cache-boundary.test.ts": "3cbcaf8e915c0a330b0b95e8b907134a1e84c0e123b44e910d3545941f75b86e",
+      "src/web/v1/access-key-cache.ts": "957522108a0c0f8b0bb6d9e363dbd071e16a5a7159133e84a54b8ae7d9fbf0e9",
+      "research/reuse-comparisons/f8-candidate-verifiers.mjs": "4f339a23862d3dd0fa8539cd3b891f35c56f7ef22e79d46698e32384ae770add"
+    },
+    "scope": "Both actual pinned JWT libraries across current cache and researched awaited rehearsal; 13 cache cases +3 actual cached-key token cases +7 held rehearsal cases per candidate. Invalid key admission is current CR factory policy, not library verification.",
+    "results": [
+      {
+        "kind": "jsonwebtoken",
+        "cacheFixture": [
+          {
+            "name": "invalid trust is not cached: empty",
+            "status": "passed"
+          },
+          {
+            "name": "invalid trust is not cached: too many",
+            "status": "passed"
+          },
+          {
+            "name": "invalid trust is not cached: duplicate ID",
+            "status": "passed"
+          },
+          {
+            "name": "invalid trust is not cached: empty ID",
+            "status": "passed"
+          },
+          {
+            "name": "invalid trust is not cached: wrong key type",
+            "status": "passed"
+          },
+          {
+            "name": "invalid trust is not cached: private material",
+            "status": "passed"
+          },
+          {
+            "name": "invalid trust is not cached: wrong algorithm",
+            "status": "passed"
+          },
+          {
+            "name": "invalid trust is not cached: wrong use",
+            "status": "passed"
+          },
+          {
+            "name": "invalid trust is not cached: malformed modulus",
+            "status": "passed"
+          },
+          {
+            "name": "held key load: expired",
+            "status": "passed"
+          },
+          {
+            "name": "held key load: backwards",
+            "status": "passed"
+          },
+          {
+            "name": "held key load: closed",
+            "status": "passed"
+          },
+          {
+            "name": "held key load: valid",
+            "status": "passed"
+          }
+        ],
+        "cacheActualTokenVerification": [
+          {
+            "mode": "valid",
+            "accepted": true
+          },
+          {
+            "mode": "wrong-issuer",
+            "accepted": false
+          },
+          {
+            "mode": "expired",
+            "accepted": false
+          }
+        ],
+        "rehearsal": {
+          "sourceSha256": "d74c3f2bfdaea0840acf20a63e584fd8406ee0398b00e99f765b776fbf988bbe",
+          "scope": "Actual candidate verifier after held gate, actual await-adapted rehearsal control flow; fake clocks and fail-on-open DB/probe sentinels; no DB or provider",
+          "results": [
+            {
+              "mode": "valid",
+              "disposition": "stopped",
+              "openSentinelCalls": 1,
+              "probes": 0,
+              "replay": "already_attempted"
+            },
+            {
+              "mode": "wrong-owner",
+              "disposition": "setup_incomplete",
+              "openSentinelCalls": 0,
+              "probes": 0,
+              "replay": "already_attempted"
+            },
+            {
+              "mode": "expired-token",
+              "disposition": "setup_incomplete",
+              "openSentinelCalls": 0,
+              "probes": 0,
+              "replay": "already_attempted"
+            },
+            {
+              "mode": "abort",
+              "disposition": "stopped",
+              "openSentinelCalls": 0,
+              "probes": 0,
+              "replay": "already_attempted"
+            },
+            {
+              "mode": "elapsed",
+              "disposition": "stopped",
+              "openSentinelCalls": 0,
+              "probes": 0,
+              "replay": "already_attempted"
+            },
+            {
+              "mode": "wall-expired",
+              "disposition": "stopped",
+              "openSentinelCalls": 0,
+              "probes": 0,
+              "replay": "already_attempted"
+            },
+            {
+              "mode": "wall-backwards",
+              "disposition": "stopped",
+              "openSentinelCalls": 0,
+              "probes": 0,
+              "replay": "already_attempted"
+            }
+          ]
+        }
+      },
+      {
+        "kind": "jose",
+        "cacheFixture": [
+          {
+            "name": "invalid trust is not cached: empty",
+            "status": "passed"
+          },
+          {
+            "name": "invalid trust is not cached: too many",
+            "status": "passed"
+          },
+          {
+            "name": "invalid trust is not cached: duplicate ID",
+            "status": "passed"
+          },
+          {
+            "name": "invalid trust is not cached: empty ID",
+            "status": "passed"
+          },
+          {
+            "name": "invalid trust is not cached: wrong key type",
+            "status": "passed"
+          },
+          {
+            "name": "invalid trust is not cached: private material",
+            "status": "passed"
+          },
+          {
+            "name": "invalid trust is not cached: wrong algorithm",
+            "status": "passed"
+          },
+          {
+            "name": "invalid trust is not cached: wrong use",
+            "status": "passed"
+          },
+          {
+            "name": "invalid trust is not cached: malformed modulus",
+            "status": "passed"
+          },
+          {
+            "name": "held key load: expired",
+            "status": "passed"
+          },
+          {
+            "name": "held key load: backwards",
+            "status": "passed"
+          },
+          {
+            "name": "held key load: closed",
+            "status": "passed"
+          },
+          {
+            "name": "held key load: valid",
+            "status": "passed"
+          }
+        ],
+        "cacheActualTokenVerification": [
+          {
+            "mode": "valid",
+            "accepted": true
+          },
+          {
+            "mode": "wrong-issuer",
+            "accepted": false
+          },
+          {
+            "mode": "expired",
+            "accepted": false
+          }
+        ],
+        "rehearsal": {
+          "sourceSha256": "d74c3f2bfdaea0840acf20a63e584fd8406ee0398b00e99f765b776fbf988bbe",
+          "scope": "Actual candidate verifier after held gate, actual await-adapted rehearsal control flow; fake clocks and fail-on-open DB/probe sentinels; no DB or provider",
+          "results": [
+            {
+              "mode": "valid",
+              "disposition": "stopped",
+              "openSentinelCalls": 1,
+              "probes": 0,
+              "replay": "already_attempted"
+            },
+            {
+              "mode": "wrong-owner",
+              "disposition": "setup_incomplete",
+              "openSentinelCalls": 0,
+              "probes": 0,
+              "replay": "already_attempted"
+            },
+            {
+              "mode": "expired-token",
+              "disposition": "setup_incomplete",
+              "openSentinelCalls": 0,
+              "probes": 0,
+              "replay": "already_attempted"
+            },
+            {
+              "mode": "abort",
+              "disposition": "stopped",
+              "openSentinelCalls": 0,
+              "probes": 0,
+              "replay": "already_attempted"
+            },
+            {
+              "mode": "elapsed",
+              "disposition": "stopped",
+              "openSentinelCalls": 0,
+              "probes": 0,
+              "replay": "already_attempted"
+            },
+            {
+              "mode": "wall-expired",
+              "disposition": "stopped",
+              "openSentinelCalls": 0,
+              "probes": 0,
+              "replay": "already_attempted"
+            },
+            {
+              "mode": "wall-backwards",
+              "disposition": "stopped",
+              "openSentinelCalls": 0,
+              "probes": 0,
+              "replay": "already_attempted"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

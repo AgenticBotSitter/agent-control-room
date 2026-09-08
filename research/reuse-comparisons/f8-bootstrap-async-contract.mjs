@@ -11,8 +11,9 @@ import {localId, digestSchema} from '../../src/harness/v1/native-run-identifiers
 import {validatePrivatePostgresConfiguration} from '../../src/web/v1/private-postgres.ts';
 import {candidateVerifier} from './f8-candidate-verifiers.mjs';
 
-const candidateKind=process.argv[3];
-const verifyFactory=process.argv[2]?await candidateVerifier(process.argv[2],candidateKind):createAccessVerifier;
+const highWaterOnly=process.argv[2]==='--high-water-only';
+const candidateKind=highWaterOnly?undefined:process.argv[3];
+const verifyFactory=process.argv[2]&&!highWaterOnly?await candidateVerifier(process.argv[2],candidateKind):createAccessVerifier;
 
 const local=createRequire(import.meta.url),hash=s=>createHash('sha256').update(s).digest('hex');
 const pins={'private-owner-bootstrap':'a562fe42b7010de891ac411ac782eb93543259184befb2b150d4743a1a024e39','access-verifier':'b51bc1fcde7c6c1790bd46a6ed9f3544aa808456c7b966b51d232038c2472426'};
@@ -28,11 +29,11 @@ function token(subject='test-owner'){
  return `${body}.${sign('RSA-SHA256',Buffer.from(body),keys.privateKey).toString('base64url')}`;
 }
 
-function fixture(kind,{onVerify=async()=>{},onAfterWork=()=>{}}={}){
+function fixture(kind,{onVerify=async()=>{},onAfterWork=()=>{},onBeforeTransaction=()=>{}}={}){
  let current=now,verifications=0,transactions=0,writes=0,commits=0,opens=0,closes=0;
  const abort=new AbortController();
  const clock=()=>current;
- const state={advance:()=>{current=now+10000;},cancel:()=>abort.abort(),counts:()=>({verifications,transactions,writes,commits,opens,closes})};
+ const state={advance:()=>{current=now+10000;},setOffset:offset=>{current=now+offset;},cancel:()=>abort.abort(),counts:()=>({verifications,transactions,writes,commits,opens,closes})};
  const factory=t=>{
   const verify=verifyFactory(t);
   if(kind==='sync')return(req,time)=>{verifications++;return verify(req,time);};
@@ -42,13 +43,21 @@ function fixture(kind,{onVerify=async()=>{},onAfterWork=()=>{}}={}){
  if(kind!=='sync'&&kind!=='unadapted'){
   source=once(source,'function verifyPinnedOwner(','async function verifyPinnedOwner(');
   source=once(source,'request: Request, now: number) {','request: Request, now: number, freshness: () => number, signal?: AbortSignal) {');
-  source=once(source,'const identity = verify(request, now);','const identity = await verify(request, now);'+(kind==='fresh'||kind==='discard-precommit'?`
+  source=once(source,'const identity = verify(request, now);','const identity = await verify(request, now);'+(['fresh','discard-precommit','high-water'].includes(kind)?`
   const after = freshness();
   if (signal?.aborted || !Number.isSafeInteger(after) || after < now
     || Date.parse(identity.issuedAt) > after || Date.parse(identity.expiresAt) <= after
     || Date.parse(identity.verificationExpiresAt) <= after) throw new Error("private_owner_bootstrap_failed");`:''));
   source=once(source,'const current = () => {','const current = async () => {');
   source=once(source,'const identity = verifyPinnedOwner(verify, config, request, now);','const identity = await verifyPinnedOwner(verify, config, request, now, clock, signal);');
+  if(kind==='high-water'){
+   source=once(source,'request, now, clock, signal);',`request, now, () => {
+          const after = clock();
+          if (!Number.isSafeInteger(after) || after < highWater) return fail();
+          highWater = after; return after;
+        }, signal);`);
+   source=once(source,'return { identity, now };','return { identity, now: highWater };');
+  }
   source=once(source,'current(); // Invalid','await current(); // Invalid');
   source=once(source,'        current();','        await current();');
   source=once(source,'const { identity, now } = current();','const { identity, now } = await current();');
@@ -57,7 +66,7 @@ function fixture(kind,{onVerify=async()=>{},onAfterWork=()=>{}}={}){
   source=once(source,"}), clock());","}), clock(), clock, signal);");
  }
  const database={async transactionWithPreCommitCheck(work,check){
-  transactions++;
+  onBeforeTransaction(state);transactions++;
   const tx={async query(sql){
    if(sql.includes('current_database'))return{rows:[{database_name:config.databaseName}]};
    if(sql.includes('FROM tenants'))return{rows:[{id:config.tenantId}]};
@@ -82,6 +91,20 @@ function fixture(kind,{onVerify=async()=>{},onAfterWork=()=>{}}={}){
  return{...state,bridge,signal:abort.signal,command:subject=>command({configuration:config,trust,database:{host:'127.0.0.1',port:5432,database:'synthetic',username:'synthetic',password:'synthetic-not-used',majorVersion:17},assertion:token(subject)},abort.signal)};
 }
 const results=[];
+if(highWaterOnly){
+ for(const kind of ['fresh','high-water'])for(const regressed of [false,true]){
+  const f=fixture(kind,{onVerify:async(n,s)=>{if(n===1)s.setOffset(100);},
+   onBeforeTransaction:s=>{if(regressed)s.setOffset(50);}});
+  const pending=f.bridge().bootstrap(token());
+  const refused=kind==='high-water'&&regressed;
+  if(refused)await assert.rejects(pending,/private_owner_bootstrap_failed/);else await pending;
+  assert.equal(f.counts().commits,refused?0:1);
+  assert.equal(f.counts().writes,refused?0:1);
+  results.push({kind,mode:regressed?'regression-below-post-await-observation':'monotonic-control',
+   negativeControl:kind==='fresh'&&regressed,...f.counts()});
+ }
+ console.log(JSON.stringify({scope:'Actual owner-bootstrap flow, delayed current Node verifier, synthetic clocks and persistence counters; research high-water adaptation, not candidate library or production fix',pins,results},null,2));
+}else{
 for(const kind of (candidateKind==='jose'?['await-only','fresh']:['sync','await-only','fresh'])){
  for(const mode of ['valid','wrong-owner','expired','cancelled','precommit-expiry','precommit-cancel']){
   const f=fixture(kind,{onAfterWork:s=>{if(mode==='precommit-expiry')s.advance();if(mode==='precommit-cancel')s.cancel();}});
@@ -129,3 +152,4 @@ await discarded.bridge().bootstrap(token());assert.equal(discarded.counts().comm
 results.push({kind:'discard-precommit',mode:'commits-with-final-verification-held',negativeControl:true,...discarded.counts()});
 release();await new Promise(r=>setImmediate(r));
 console.log(JSON.stringify({scope:`Actual hash-pinned owner-bootstrap control flow; ${candidateKind??'Node crypto'} verifier with synthetic signed JWT and optional async delay. SecurityStore and transactions are counters, not real persistence. ${candidateKind?'Actual pinned library executes within CR policy adapter.':'Neither jose nor jsonwebtoken executed in this experiment.'}`,candidate:candidateKind??'current',pins,results,count:results.length,resources:{maxRssKiB:process.resourceUsage().maxRSS,downloads:0,connections:0,appWrites:0}},null,2));
+}

@@ -4,6 +4,27 @@
 
 ## Direct answer
 
+Both real JWT candidates now also pass the selected cache/rehearsal matrices:
+23 scenarios each,46 total, including actual token verification from cached trust.
+[Actual preflight report](research/reuse-comparisons/f8-actual-preflight-fit.md) and
+[root review](research/reuse-comparisons/f8-actual-preflight-review.md) close that
+narrow execution gap. The logged1.3MiB temporary cohort was removed. A separate
+four-case bootstrap experiment demonstrates preserving post-await clock high-water;
+the complete async migration and final weighted selection remain unfinished.
+
+Additional [cache/rehearsal boundary evidence](research/reuse-comparisons/f8-cache-rehearsal-boundaries.md)
+adds13 actual-cache baseline cases and seven awaited actual-rehearsal cases with a
+delayed current verifier. Existing rehearsal checkpoints already stop tested expired,
+cancelled and backward-clock paths before a pool opens; do not duplicate them merely
+because verification becomes async. Actual candidate-library mapping, broader clock
+contract and independent review remain open; these are not new live-login passes.
+
+A [working implementation plan](REUSE_IMPLEMENTATION_PLAN.md) now maps all26
+outcomes into substantial delivery batches, carries DR-01–DR-04 forward, and records
+migration/rollback and acceptance constraints. It is explicitly incomplete: open
+RC comparisons, exact change/removal scope, comparative costs and final independent
+review must be resolved before its implementation prompt is ready.
+
 We have the remaining-outcome map and the candidate comparison program. We do
 **not** yet have completed, equivalent integration evaluations of every viable
 candidate. Some actual upstream code now crosses real Control Room interfaces;
