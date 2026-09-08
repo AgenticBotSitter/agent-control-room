@@ -1,0 +1,147 @@
+[
+  {
+    "path": "ao/LICENSE",
+    "bytes": 11339,
+    "sha256": "1a2219722b7ef58364065e9073a2cb2831891eb147a785742a31431c9cddad1d"
+  },
+  {
+    "path": "ao/backend/go.mod",
+    "bytes": 2474,
+    "sha256": "632a22a435b3237364c1a0b786eec14216c257720677d452c88709c2bc6a796e"
+  },
+  {
+    "path": "ao/backend/internal/adapters/workspace/gitworktree/parse.go",
+    "bytes": 1270,
+    "sha256": "baaabe8bf36c80eb3aef1d267a4e0182ef70ff66f66cf8682549928197f54842"
+  },
+  {
+    "path": "ao/backend/internal/adapters/workspace/gitworktree/workspace.go",
+    "bytes": 76702,
+    "sha256": "9617901516a75f5388f24ac4c90e39add740046738e826b452f2e0132ea8692d"
+  },
+  {
+    "path": "ao/backend/internal/adapters/workspace/router/router.go",
+    "bytes": 7601,
+    "sha256": "4f94b0f0beae75efbf6ed69e80e08a7a885467d3c8b52b9afc46037dfd3443c6"
+  },
+  {
+    "path": "ao/backend/internal/adapters/workspace/router/router_test.go",
+    "bytes": 8306,
+    "sha256": "8bf2f0ef3eb8bf2101f9e78ef90a93a0f013d5cfc44e86cbadbd9239c1270c2d"
+  },
+  {
+    "path": "ao/backend/internal/session_manager/message_delivery.go",
+    "bytes": 3981,
+    "sha256": "955002b21963c39a66f747da87c4bb8d13e8fb6b7ce080a32130729dc2a7c48a"
+  },
+  {
+    "path": "ao/backend/internal/session_manager/message_delivery_test.go",
+    "bytes": 6344,
+    "sha256": "2cdf0255be329395d42219513151bbf4a7769a651aad83c2d92e904d986a9899"
+  },
+  {
+    "path": "ao/frontend/src/renderer/lib/workspace-file-path.test.ts",
+    "bytes": 1574,
+    "sha256": "231005d2751bf9e779180dcee7520f5e0b211f7dea767fb372b40b458151b683"
+  },
+  {
+    "path": "ao/frontend/src/renderer/lib/workspace-file-path.ts",
+    "bytes": 1266,
+    "sha256": "9b6487acb09593def16b18335728dddd1012e76da72341826113a89732aead29"
+  },
+  {
+    "path": "ao-tree.json",
+    "bytes": 1289723,
+    "sha256": "f8a3aba0005c02f20a53c6d771c6021e95ae68aae1e07954da0c469f359e425a"
+  },
+  {
+    "path": "maestro/LICENSE",
+    "bytes": 1080,
+    "sha256": "bac517c0e2e7286936e2b774e3bbf11b5bed539a709b6e0660c6141f124bc77d"
+  },
+  {
+    "path": "maestro/hooks/useMeetingMessages.ts",
+    "bytes": 7117,
+    "sha256": "e474c2cb375b37eeafb65f6b4fb62db8996bf7f16644c8a4102e90d6e4f10caa"
+  },
+  {
+    "path": "maestro/lib/agent-messaging.ts",
+    "bytes": 5288,
+    "sha256": "27f4bae18c794ae239bf2c2c8fe7a00dc4840071249fa46e9414e944ff8ef417"
+  },
+  {
+    "path": "maestro/lib/meeting-inject-queue.ts",
+    "bytes": 4064,
+    "sha256": "9a18eaeb6ee7163e982785c952770a049d717e68d3b616478149a1aa4e2eedad"
+  },
+  {
+    "path": "maestro/lib/meeting-inject-utils.ts",
+    "bytes": 794,
+    "sha256": "5a74bf86e62e64856fc625a7c30563a58800a4b1be80960edbcfc8bcf9cdd48f"
+  },
+  {
+    "path": "maestro/lib/message-delivery.ts",
+    "bytes": 10094,
+    "sha256": "8cca43c8dee7d7427d318173b98c906cb6762d6b50375d6170fb6b3435b023a7"
+  },
+  {
+    "path": "maestro/lib/message-send.ts",
+    "bytes": 20963,
+    "sha256": "21266f8d50605e0b95a2b93a64a52957e1fbfec43ccaa99cd4829f5d82406545"
+  },
+  {
+    "path": "maestro/lib/messageQueue.ts",
+    "bytes": 27106,
+    "sha256": "b01092f6a52788e277c61876ea0f34890bc842e0bfef7a530fc1815729917de2"
+  },
+  {
+    "path": "maestro/lib/types/amp-message.ts",
+    "bytes": 8632,
+    "sha256": "eec6687b77166ea8138dac918814870343d3820b850400fbdbae0dba0c3067bd"
+  },
+  {
+    "path": "maestro/meeting-route.ts",
+    "bytes": 566,
+    "sha256": "dc1a6da3592daeb6f5340f8cfa2ee5d14efc08bec3adcb4890d2213f73221e1d"
+  },
+  {
+    "path": "maestro/package.json",
+    "bytes": 3692,
+    "sha256": "0e988f00cdce47a77ca409085507d57e0b4f4b3d4d9bb3e95c11b0ec10519e2c"
+  },
+  {
+    "path": "maestro/services/agents-messaging-service.ts",
+    "bytes": 24596,
+    "sha256": "3558e03af5424e0da8b15046bbb960f7979dad8df2fc8a3abb2996175fcc4c3c"
+  },
+  {
+    "path": "maestro/services/messages-service.ts",
+    "bytes": 17282,
+    "sha256": "92264047b8fa8c5bb302fa917a7a22cb7d4a0fed7a7469cfab100be4b17bca9b"
+  },
+  {
+    "path": "maestro/tests/meeting-inject-queue.test.ts",
+    "bytes": 6177,
+    "sha256": "c1235116c5f79385328242d40673e46f8a4073b39dccef87d715335fa34f4104"
+  },
+  {
+    "path": "maestro/tests/meeting-inject-utils.test.ts",
+    "bytes": 1817,
+    "sha256": "6642aa3a269e86b1ce2a2da20911cbaef491621d0986cf38fc49a378db5cf8ef"
+  },
+  {
+    "path": "maestro/tests/message-id-determinism.test.ts",
+    "bytes": 3161,
+    "sha256": "b41120928baae9ade902fac7f687e39ea1b1386cb6f9ec1af811ea879f819ce5"
+  },
+  {
+    "path": "maestro-tree.json",
+    "bytes": 364780,
+    "sha256": "2c8e03a125dabe5734d90e07c2f28ee2cd1f93c1a5cb9971b5d5f26fa5d60dd2"
+  },
+  {
+    "path": "selected-acquisitions.json",
+    "bytes": 5470,
+    "sha256": "58f42d3328e82cba7c905fa3c196616bce06e94d045c857f891c29b35ab3d65d"
+  }
+]

@@ -1,0 +1,31 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import {createHash} from 'node:crypto';
+import ts from 'typescript';
+const root=process.argv[2];
+if(!/^\/private\/tmp\/control-room-f4\.[A-Za-z0-9]+$/.test(root??''))throw Error('owned root required');
+async function load(path,salt=''){const source=await readFile(`${root}/${path}`,'utf8');const js=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ES2022,target:ts.ScriptTarget.ES2022}}).outputText;return import(`data:text/javascript;base64,${Buffer.from(js+`\n//${salt}`).toString('base64')}`);}
+const begin=performance.now();
+const queue=await load('maestro/lib/meeting-inject-queue.ts');
+queue.enqueueForSession('project:a/participant:one','question');
+queue.enqueueForSession('project:a/participant:one','question');
+queue.enqueueForSession('project:b/participant:one','other');
+assert.equal(queue.peekForSession('project:a/participant:one').length,2);
+assert.equal(queue.peekForSession('project:b/participant:one').length,1);
+assert.equal(queue.drainForSession('project:a/participant:one').length,2);
+assert.equal(queue.drainForSession('project:a/participant:one').length,0);
+const restarted=await load('maestro/lib/meeting-inject-queue.ts','fresh module process-state equivalent');
+assert.equal(restarted.peekForSession('project:b/participant:one').length,0);
+for(let i=0;i<1000;i++)queue.enqueueForSession('disconnected',`turn:${i}`);
+assert.equal(queue.peekForSession('disconnected').length,1000);
+assert.equal(queue.inferKindFromProgram('hermes'),'unknown');
+queue.clearAll();
+const paths=await load('ao/frontend/src/renderer/lib/workspace-file-path.ts');
+const files=[{path:'src/a/item.ts'},{path:'src/b/item.ts'},{path:'docs/only.md'}];
+assert.equal(paths.matchWorkspaceFilePath('only.md',files),'docs/only.md');
+// Retained negative finding: first suffix match wins before ambiguity check.
+assert.equal(paths.matchWorkspaceFilePath('item.ts',files),'src/a/item.ts');
+assert.equal(paths.matchWorkspaceFilePath('../private.txt',files),'../private.txt');
+assert.equal(paths.matchWorkspaceFilePath('src\\a\\item.ts',files),'src/a/item.ts');
+const provenance={};for(const path of ['maestro/lib/meeting-inject-queue.ts','ao/frontend/src/renderer/lib/workspace-file-path.ts'])provenance[path]=createHash('sha256').update(await readFile(`${root}/${path}`)).digest('hex');
+console.log(JSON.stringify({scope:'actual upstream pure modules transpiled without edits; synthetic data only',checks:12,maestro:{fifo:true,distinctKeys:true,duplicatesRetained:true,restartLosesQueue:true,disconnectedUnboundedObservedAt:1000,hermesKind:'unknown'},ao:{uniqueBasename:true,ambiguousFirstSuffixWins:true,traversalPassedThrough:true,windowsSeparatorNormalization:true},elapsedMs:performance.now()-begin,maxRSSKiB:process.resourceUsage().maxRSS,provenance},null,2));

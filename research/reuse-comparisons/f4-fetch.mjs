@@ -1,0 +1,10 @@
+import {mkdir,writeFile} from 'node:fs/promises';
+import {createHash} from 'node:crypto';
+const root=process.argv[2];
+if(!/^\/private\/tmp\/control-room-f4\.[A-Za-z0-9]+$/.test(root??''))throw Error('owned root required');
+const sets=[['maestro','23blocks-OS/ai-maestro','2c3baa70ab8f8b2b97c943e4f97c20c5c3e5b81c',['LICENSE','package.json','lib/agent-messaging.ts','lib/message-delivery.ts','lib/message-send.ts','lib/messageQueue.ts','lib/types/amp-message.ts','tests/message-id-determinism.test.ts','services/messages-service.ts','services/agents-messaging-service.ts','hooks/useMeetingMessages.ts']],['ao','Untrivial-ai/agent-orchestrator','24e101914976a14145d7302f49626db3541ef8b5',['LICENSE','backend/go.mod','backend/internal/adapters/workspace/gitworktree/parse.go','backend/internal/adapters/workspace/gitworktree/workspace.go','backend/internal/adapters/workspace/router/router.go','backend/internal/adapters/workspace/router/router_test.go','backend/internal/session_manager/message_delivery.go','backend/internal/session_manager/message_delivery_test.go','frontend/src/renderer/lib/workspace-file-path.ts','frontend/src/renderer/lib/workspace-file-path.test.ts']]];
+sets[0][3].push('lib/meeting-inject-utils.ts','lib/meeting-inject-queue.ts','tests/meeting-inject-utils.test.ts','tests/meeting-inject-queue.test.ts');
+const ledger=[];
+for(const [name,repo,pin,paths] of sets)for(const path of paths){const url=`https://raw.githubusercontent.com/${repo}/${pin}/${path}`;const r=await fetch(url,{signal:AbortSignal.timeout(15000)});if(!r.ok)throw Error(`${r.status} ${path}`);const b=Buffer.from(await r.arrayBuffer());if(b.length>1000000)throw Error('size');await mkdir(`${root}/${name}/${path.slice(0,path.lastIndexOf('/'))}`,{recursive:true});await writeFile(`${root}/${name}/${path}`,b);ledger.push({url,bytes:b.length,sha256:createHash('sha256').update(b).digest('hex')});}
+await writeFile(`${root}/selected-acquisitions.json`,JSON.stringify(ledger,null,2));
+console.log(JSON.stringify({files:ledger.length,bytes:ledger.reduce((a,x)=>a+x.bytes,0)}));

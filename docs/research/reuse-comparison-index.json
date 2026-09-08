@@ -1,0 +1,251 @@
+{
+  "schema": "control-room.reuse-comparison-index/v1",
+  "date": "2026-09-08",
+  "baseline": "44f9064",
+  "status": "in_progress",
+  "completionClaim": false,
+  "outcomes": [
+    {
+      "id": "A1",
+      "families": [
+        "F6"
+      ],
+      "status": "comparison_incomplete",
+      "decision": null
+    },
+    {
+      "id": "A2",
+      "families": [
+        "F8"
+      ],
+      "status": "comparison_incomplete",
+      "decision": null
+    },
+    {
+      "id": "A3",
+      "families": [
+        "F5"
+      ],
+      "status": "comparison_incomplete",
+      "decision": null
+    },
+    {
+      "id": "A4",
+      "families": [
+        "F5"
+      ],
+      "status": "comparison_incomplete",
+      "decision": null
+    },
+    {
+      "id": "A5",
+      "families": [
+        "F1",
+        "F2"
+      ],
+      "status": "comparison_incomplete",
+      "decision": null
+    },
+    {
+      "id": "A6",
+      "families": [
+        "F3"
+      ],
+      "status": "comparison_incomplete",
+      "decision": null
+    },
+    {
+      "id": "A7",
+      "families": [
+        "F3"
+      ],
+      "status": "comparison_incomplete",
+      "decision": null
+    },
+    {
+      "id": "B1",
+      "families": [
+        "F1"
+      ],
+      "status": "comparison_incomplete",
+      "decision": null
+    },
+    {
+      "id": "B2",
+      "families": [
+        "F1"
+      ],
+      "status": "comparison_incomplete",
+      "decision": null
+    },
+    {
+      "id": "B3",
+      "families": [
+        "F2"
+      ],
+      "status": "comparison_incomplete",
+      "decision": null
+    },
+    {
+      "id": "B4",
+      "families": [
+        "F6"
+      ],
+      "status": "comparison_incomplete",
+      "decision": null
+    },
+    {
+      "id": "B5",
+      "families": [
+        "F3"
+      ],
+      "status": "comparison_incomplete",
+      "decision": null
+    },
+    {
+      "id": "B6",
+      "families": [
+        "F2",
+        "F6"
+      ],
+      "status": "comparison_incomplete",
+      "decision": null
+    },
+    {
+      "id": "B7",
+      "families": [
+        "F4"
+      ],
+      "status": "comparison_incomplete",
+      "decision": null
+    },
+    {
+      "id": "B8",
+      "families": [
+        "F2"
+      ],
+      "status": "comparison_incomplete",
+      "decision": null
+    },
+    {
+      "id": "B9",
+      "families": [
+        "F2"
+      ],
+      "status": "comparison_incomplete",
+      "decision": null
+    },
+    {
+      "id": "C1",
+      "families": [
+        "F3",
+        "F4"
+      ],
+      "status": "comparison_incomplete",
+      "decision": null
+    },
+    {
+      "id": "C2",
+      "families": [
+        "F3",
+        "F4"
+      ],
+      "status": "comparison_incomplete",
+      "decision": null
+    },
+    {
+      "id": "C3",
+      "families": [
+        "F7"
+      ],
+      "status": "comparison_incomplete",
+      "decision": null
+    },
+    {
+      "id": "C4",
+      "families": [
+        "F7"
+      ],
+      "status": "comparison_incomplete",
+      "decision": null
+    },
+    {
+      "id": "C5",
+      "families": [
+        "F7"
+      ],
+      "status": "comparison_incomplete",
+      "decision": null
+    },
+    {
+      "id": "D1",
+      "families": [
+        "F8"
+      ],
+      "status": "comparison_incomplete",
+      "decision": null
+    },
+    {
+      "id": "D2",
+      "families": [
+        "F8"
+      ],
+      "status": "comparison_incomplete",
+      "decision": null
+    },
+    {
+      "id": "D3",
+      "families": [
+        "F6"
+      ],
+      "status": "comparison_incomplete",
+      "decision": null
+    },
+    {
+      "id": "D4",
+      "families": [
+        "F8"
+      ],
+      "status": "comparison_incomplete",
+      "decision": null
+    },
+    {
+      "id": "D5",
+      "families": [
+        "F4",
+        "F9"
+      ],
+      "status": "comparison_incomplete",
+      "decision": null
+    }
+  ],
+  "families": [
+    {
+      "id": "F1",
+      "dossier": "reuse-comparisons/f1-queue-fit.md",
+      "evidence": "actual DBOS fixture failures; native PG setup permission pending; Hatchet source partial"
+    },
+    {
+      "id": "F3",
+      "dossier": "reuse-comparisons/f3-ui-fit.md",
+      "evidence": "selected actual code exercised; mounted E3 remains"
+    },
+    {
+      "id": "F4",
+      "dossier": "reuse-comparisons/f4-teamwork.md",
+      "evidence": "selected modules exercised; delivery/backend E3 remains"
+    },
+    {
+      "id": "F8",
+      "dossier": "reuse-comparisons/f8-operations.md",
+      "evidence": "actual Kuma conditions exercised; probe/metrics/restore E3 remains"
+    }
+  ],
+  "next": [
+    "Authorize or replace package-local PostgreSQL hydration step; continue unaffected comparisons meanwhile",
+    "F3 mounted protected-API comparison",
+    "F4 actual delivery/worktree backend comparison",
+    "F2/F5/F6/F7/F9 code-and-fit evaluation",
+    "Independent review and implementation plan only after decisive comparisons"
+  ]
+}
