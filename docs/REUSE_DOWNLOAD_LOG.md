@@ -12,13 +12,24 @@ No global install, package changes, persistent service or GitHub writes.
 
 Actual etcd comparison completed, including one recorded initial harness failure
 and one focused correction. Both terminal runs cleaned their owned test-data
-directories after process termination. OpenBao binary has not been executed.
+directories after process termination. OpenBao was subsequently executed in the
+[logged Raft/KV comparison](research/reuse-comparisons/f5-openbao-service-fit.md):
+three failed setup/harness attempts followed by17 completed observations. All owned
+OpenBao processes terminated with code0 and all owned test-state directories were
+removed. Root verified no etcd-state/openbao-state directory remains in the cohort.
 Distributions remain intentionally available for the remaining common comparison;
 do not count them cleaned or delete them while an owned test is running. Before
 eventual exact-root cleanup, retain all needed sanitized evidence and confirm no
 owned service handles remain. No real credential/profile or production data exists
 in this cohort. Full binary/dependency license audit remains distinct from source
 root license inspection and the acquisition hash inventory.
+
+RC2 Python observer follow-up reacquired nine previously pinned source files
+(404,162bytes), with139GiB free and prior scoped allocation579,516KiB. No packages
+or native runtime installed. [Acquisition/cleanup receipt](research/reuse-comparisons/f2-python-observer-acquisitions.json)
+records exact URLs/hashes and removed owned root; seven synthetic peers were reaped.
+Independent review confirmed that root absent. Existing F2 SDK and RC5 service
+distribution roots were left unchanged.
 
 ## RC7 article-extractor comparisons — 2026-09-08 (cleaned)
 

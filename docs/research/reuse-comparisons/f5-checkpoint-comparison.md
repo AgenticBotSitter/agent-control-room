@@ -1,5 +1,14 @@
 # F5 checkpoint custody: etcd versus OpenBao
 
+**Subsequent runtime evidence:** release-pinned
+[etcd3.7.1](f5-etcd-service-fit.md) and [OpenBao2.6.2](f5-openbao-service-fit.md)
+now have actual disposable service observations; the source-only text below is
+historical scope, not a statement that neither has run. Tested etcd WRITE permits
+exact-key deletion. Tested OpenBao read/update permits CAS but denies deletion,
+administration and missing-head recreation. OpenBao additionally required explicit
+unsealing after restart. Neither run reaches the actual CR checkpoint/SQL interface
+or supported snapshot restore, so the final comparison remains open.
+
 2026-09-08. Independent source comparison; **E1, not service acceptance**.
 Scope A3/A4. No code imported, agent/key/service invoked or application altered.
 

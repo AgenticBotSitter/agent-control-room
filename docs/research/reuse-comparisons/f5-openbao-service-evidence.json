@@ -1,0 +1,426 @@
+{
+  "scope": "Actual OpenBao2.6.2 single-node Raft/KV2, synthetic state/identities; not CR adapter",
+  "binarySha256": "d476d17e81a35e6d70dd7e86a8ab2a3664313525118f1f1cfe0130e7a2b95f3a",
+  "checks": [
+    {
+      "name": "initially_absent"
+    },
+    {
+      "name": "scoped_read_allowed"
+    },
+    {
+      "name": "scoped_concurrent_compare_one_winner"
+    },
+    {
+      "name": "stale_compare_refused"
+    },
+    {
+      "name": "missing_cas_refused"
+    },
+    {
+      "name": "restart_requires_unseal"
+    },
+    {
+      "name": "restart_preserves_data_version_and_runtime_token"
+    },
+    {
+      "name": "neighbor_read_denied",
+      "status": 403,
+      "permissionDenied": true
+    },
+    {
+      "name": "data_delete_denied",
+      "status": 403,
+      "permissionDenied": true
+    },
+    {
+      "name": "versions_delete_denied",
+      "status": 403,
+      "permissionDenied": true
+    },
+    {
+      "name": "versions_destroy_denied",
+      "status": 403,
+      "permissionDenied": true
+    },
+    {
+      "name": "metadata_delete_denied",
+      "status": 403,
+      "permissionDenied": true
+    },
+    {
+      "name": "config_change_denied",
+      "status": 403,
+      "permissionDenied": true
+    },
+    {
+      "name": "data_patch_denied",
+      "status": 403,
+      "permissionDenied": true
+    },
+    {
+      "name": "administration_denied",
+      "status": 403,
+      "permissionDenied": true
+    },
+    {
+      "name": "denied_operations_leave_full_record_unchanged"
+    },
+    {
+      "name": "missing_head_recreation_observation",
+      "status": 403,
+      "permissionDenied": true,
+      "recreated": false
+    }
+  ],
+  "processExits": [
+    {
+      "code": 0,
+      "signal": null
+    },
+    {
+      "code": 0,
+      "signal": null
+    }
+  ],
+  "maxSampledRssKiB": 85376,
+  "status": "completed_scoped_observations",
+  "listenerReadyMs": [
+    223.38716599999998,
+    210.75933299999997
+  ],
+  "requestTimings": [
+    {
+      "method": "POST",
+      "path": "sys/init",
+      "status": 200,
+      "elapsedMs": 9601.132416999999,
+      "timeoutMs": 30000
+    },
+    {
+      "method": "POST",
+      "path": "sys/unseal",
+      "status": 200,
+      "elapsedMs": 12.675334000001385,
+      "timeoutMs": 5000
+    },
+    {
+      "method": "POST",
+      "path": "sys/mounts/checkpoint",
+      "status": 204,
+      "elapsedMs": 29.780374999998457,
+      "timeoutMs": 5000
+    },
+    {
+      "method": "GET",
+      "path": "checkpoint/config",
+      "status": 400,
+      "elapsedMs": 18.722624999998516,
+      "timeoutMs": 5000
+    },
+    {
+      "method": "GET",
+      "path": "checkpoint/config",
+      "status": 200,
+      "elapsedMs": 2.0976670000000013,
+      "timeoutMs": 5000
+    },
+    {
+      "method": "POST",
+      "path": "checkpoint/config",
+      "status": 204,
+      "elapsedMs": 27.732334000000264,
+      "timeoutMs": 5000
+    },
+    {
+      "method": "GET",
+      "path": "checkpoint/data/head",
+      "status": 404,
+      "elapsedMs": 1.3866670000006707,
+      "timeoutMs": 5000
+    },
+    {
+      "method": "POST",
+      "path": "checkpoint/data/head",
+      "status": 200,
+      "elapsedMs": 28.67541700000038,
+      "timeoutMs": 5000
+    },
+    {
+      "method": "POST",
+      "path": "checkpoint/data/neighbor",
+      "status": 200,
+      "elapsedMs": 25.633041999999477,
+      "timeoutMs": 5000
+    },
+    {
+      "method": "PUT",
+      "path": "sys/policies/acl/fixture-runtime",
+      "status": 204,
+      "elapsedMs": 25.591332999998485,
+      "timeoutMs": 5000
+    },
+    {
+      "method": "POST",
+      "path": "auth/token/create",
+      "status": 200,
+      "elapsedMs": 113.40191600000071,
+      "timeoutMs": 5000
+    },
+    {
+      "method": "GET",
+      "path": "checkpoint/data/head",
+      "status": 200,
+      "elapsedMs": 8.91662499999984,
+      "timeoutMs": 5000
+    },
+    {
+      "method": "POST",
+      "path": "checkpoint/data/head",
+      "status": 200,
+      "elapsedMs": 34.057708000000275,
+      "timeoutMs": 5000
+    },
+    {
+      "method": "POST",
+      "path": "checkpoint/data/head",
+      "status": 400,
+      "elapsedMs": 33.84675000000061,
+      "timeoutMs": 5000
+    },
+    {
+      "method": "GET",
+      "path": "checkpoint/data/head",
+      "status": 200,
+      "elapsedMs": 1.1953749999993306,
+      "timeoutMs": 5000
+    },
+    {
+      "method": "POST",
+      "path": "checkpoint/data/head",
+      "status": 400,
+      "elapsedMs": 1.1062499999989086,
+      "timeoutMs": 5000
+    },
+    {
+      "method": "POST",
+      "path": "checkpoint/data/head",
+      "status": 400,
+      "elapsedMs": 1.0799580000002607,
+      "timeoutMs": 5000
+    },
+    {
+      "method": "GET",
+      "path": "sys/seal-status",
+      "status": 200,
+      "elapsedMs": 1.2537909999991825,
+      "timeoutMs": 5000
+    },
+    {
+      "method": "POST",
+      "path": "sys/unseal",
+      "status": 200,
+      "elapsedMs": 8.946625000000495,
+      "timeoutMs": 5000
+    },
+    {
+      "method": "GET",
+      "path": "checkpoint/data/head",
+      "status": 200,
+      "elapsedMs": 1.7475830000003043,
+      "timeoutMs": 5000
+    },
+    {
+      "method": "GET",
+      "path": "checkpoint/data/neighbor",
+      "status": 403,
+      "elapsedMs": 0.9038749999999709,
+      "timeoutMs": 5000
+    },
+    {
+      "method": "DELETE",
+      "path": "checkpoint/data/head",
+      "status": 403,
+      "elapsedMs": 0.6332500000007713,
+      "timeoutMs": 5000
+    },
+    {
+      "method": "POST",
+      "path": "checkpoint/delete/head",
+      "status": 403,
+      "elapsedMs": 0.6586250000000291,
+      "timeoutMs": 5000
+    },
+    {
+      "method": "POST",
+      "path": "checkpoint/destroy/head",
+      "status": 403,
+      "elapsedMs": 0.6421659999996336,
+      "timeoutMs": 5000
+    },
+    {
+      "method": "DELETE",
+      "path": "checkpoint/metadata/head",
+      "status": 403,
+      "elapsedMs": 0.6418340000000171,
+      "timeoutMs": 5000
+    },
+    {
+      "method": "POST",
+      "path": "checkpoint/config",
+      "status": 403,
+      "elapsedMs": 1.0920830000013666,
+      "timeoutMs": 5000
+    },
+    {
+      "method": "PATCH",
+      "path": "checkpoint/data/head",
+      "status": 403,
+      "elapsedMs": 0.5051669999993464,
+      "timeoutMs": 5000
+    },
+    {
+      "method": "PUT",
+      "path": "sys/policies/acl/forbidden",
+      "status": 403,
+      "elapsedMs": 1.0705830000006245,
+      "timeoutMs": 5000
+    },
+    {
+      "method": "GET",
+      "path": "checkpoint/data/head",
+      "status": 200,
+      "elapsedMs": 0.41683300000113377,
+      "timeoutMs": 5000
+    },
+    {
+      "method": "DELETE",
+      "path": "checkpoint/metadata/head",
+      "status": 204,
+      "elapsedMs": 24.471707999999126,
+      "timeoutMs": 5000
+    },
+    {
+      "method": "POST",
+      "path": "checkpoint/data/head",
+      "status": 403,
+      "elapsedMs": 0.689542000000074,
+      "timeoutMs": 5000
+    }
+  ],
+  "errors": [
+    {
+      "method": "GET",
+      "path": "checkpoint/config",
+      "status": 400,
+      "messages": [
+        "Upgrading from non-versioned to versioned data. This backend will be unavailable for a brief period and will resume service shortly."
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "checkpoint/data/head",
+      "status": 404,
+      "messages": []
+    },
+    {
+      "method": "POST",
+      "path": "checkpoint/data/head",
+      "status": 400,
+      "messages": [
+        "check-and-set parameter did not match the current version"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "checkpoint/data/head",
+      "status": 400,
+      "messages": [
+        "check-and-set parameter did not match the current version"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "checkpoint/data/head",
+      "status": 400,
+      "messages": [
+        "check-and-set parameter required for this call"
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "checkpoint/data/neighbor",
+      "status": 403,
+      "messages": [
+        "1 error occurred:\n\t* permission denied\n\n"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "checkpoint/data/head",
+      "status": 403,
+      "messages": [
+        "1 error occurred:\n\t* permission denied\n\n"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "checkpoint/delete/head",
+      "status": 403,
+      "messages": [
+        "1 error occurred:\n\t* permission denied\n\n"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "checkpoint/destroy/head",
+      "status": 403,
+      "messages": [
+        "1 error occurred:\n\t* permission denied\n\n"
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "checkpoint/metadata/head",
+      "status": 403,
+      "messages": [
+        "1 error occurred:\n\t* permission denied\n\n"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "checkpoint/config",
+      "status": 403,
+      "messages": [
+        "1 error occurred:\n\t* permission denied\n\n"
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "checkpoint/data/head",
+      "status": 403,
+      "messages": [
+        "1 error occurred:\n\t* permission denied\n\n"
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "sys/policies/acl/forbidden",
+      "status": 403,
+      "messages": [
+        "1 error occurred:\n\t* permission denied\n\n"
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "checkpoint/data/head",
+      "status": 403,
+      "messages": [
+        "1 error occurred:\n\t* permission denied\n\n"
+      ]
+    }
+  ],
+  "monitorFailure": null,
+  "stateRemoved": true,
+  "distributionRetainedForFurtherComparison": true
+}

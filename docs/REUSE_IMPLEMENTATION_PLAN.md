@@ -1,6 +1,6 @@
 # Reuse-led completion plan — working draft
 
-Source checkpoint: `af6bcb4`. This is an incomplete implementation plan, not a
+Source checkpoint: `0d3031d`, with linked subsequent local research. This is an incomplete implementation plan, not a
 claim that the comparison goal is finished or authorization to deploy. It records
 settled choices and makes pending decisions explicit. The authoritative remaining
 experiments are in [the closure checklist](REUSE_COMPARISON_CLOSURE.md); candidate
@@ -53,6 +53,24 @@ RC6 [journal/update primitive tests](research/reuse-comparisons/f6-update-fit.md
 support reuse of existing durable state and close/recover code, not a claim that
 continuous pickup, release switching or fleet drain already exists. Those remain
 explicit implementation work; do not replace them with supervisor restart loops.
+
+RC3 root decision: preserve the existing result/review authority UI. The unchanged
+Hermes Desktop MessageRow derives Approve/Deny controls from assistant prose and is
+not a replacement for those controls. Its presentation pieces remain candidates,
+but adapting them must remove that misleading action path rather than attach no-op
+callbacks. Actual renderer/media closure and complete navigation remain open. See
+[mounted comparison](research/reuse-comparisons/f3-journey-fit.md) and
+[independent root review](research/reuse-comparisons/f3-journey-review.md).
+
+RC5 now has a real permission tradeoff, not merely two service names. Tested
+OpenBao2.6.2 read/update blocks deletion and missing-head recreation while retaining
+CAS; tested etcd3.7.1 READWRITE also permits deletion. OpenBao's startup/unseal,
+policy/token and storage operations are additional integration costs; etcd already
+has a CR-specific checkpoint adapter. Do not pick by test count or small cold-run
+RSS alone. The next shared adapter cases must preserve actual CR scope/digest and
+revision binding, uncertainty without repeated writes, restore/custody boundaries
+and staged SQL commit failure. Retain one selected anchor only, never hot fallback
+to a stale second store. [Actual OpenBao evidence](research/reuse-comparisons/f5-openbao-service-fit.md).
 
 ## Outcome-to-implementation ledger
 

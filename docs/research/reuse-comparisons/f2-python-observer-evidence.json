@@ -1,0 +1,530 @@
+{
+  "exitCode": 0,
+  "actualStdout": {
+    "scope": "Actual Python client typed output crosses actual existing CR observer with native IDs from synthetic peer; fake settlement sink, not authorized/durable broker. No protocol reshaping except supported Pydantic alias serialization.",
+    "pythonStatus": 0,
+    "sdk": {
+      "scope": "Actual selected synchronous client plus generated models, public explicit resume/turn/notification methods; controlled emission after registration; source package facade excluded. No native/provider.",
+      "python": "3.12.14",
+      "pydantic": "2.13.5",
+      "allPeersReaped": true,
+      "results": [
+        {
+          "mode": "valid",
+          "requestedThreadId": "thread-fixture",
+          "returnedThreadId": "thread-fixture",
+          "turnId": "turn-fixture",
+          "notifications": [
+            {
+              "method": "turn/started",
+              "params": {
+                "threadId": "thread-fixture",
+                "turn": {
+                  "id": "turn-fixture",
+                  "items": [],
+                  "itemsView": "full",
+                  "status": "inProgress"
+                }
+              },
+              "model": "TurnStartedNotification"
+            },
+            {
+              "method": "thread/tokenUsage/updated",
+              "params": {
+                "threadId": "thread-fixture",
+                "tokenUsage": {
+                  "last": {
+                    "cacheWriteInputTokens": 0,
+                    "cachedInputTokens": 5,
+                    "inputTokens": 17,
+                    "outputTokens": 8,
+                    "reasoningOutputTokens": 3,
+                    "totalTokens": 25
+                  },
+                  "total": {
+                    "cacheWriteInputTokens": 0,
+                    "cachedInputTokens": 5,
+                    "inputTokens": 17,
+                    "outputTokens": 8,
+                    "reasoningOutputTokens": 3,
+                    "totalTokens": 25
+                  }
+                },
+                "turnId": "turn-fixture"
+              },
+              "model": "ThreadTokenUsageUpdatedNotification"
+            },
+            {
+              "method": "turn/completed",
+              "params": {
+                "threadId": "thread-fixture",
+                "turn": {
+                  "id": "turn-fixture",
+                  "items": [],
+                  "itemsView": "full",
+                  "status": "completed"
+                }
+              },
+              "model": "TurnCompletedNotification"
+            }
+          ],
+          "turnStartInvoked": true,
+          "streamEndError": "TransportClosedError",
+          "peerReaped": true
+        },
+        {
+          "mode": "wrong-resume",
+          "requestedThreadId": "thread-fixture",
+          "returnedThreadId": "wrong-resume",
+          "turnId": null,
+          "notifications": [],
+          "turnStartInvoked": false,
+          "peerReaped": true
+        },
+        {
+          "mode": "wrong-thread",
+          "requestedThreadId": "thread-fixture",
+          "returnedThreadId": "thread-fixture",
+          "turnId": "turn-fixture",
+          "notifications": [
+            {
+              "method": "turn/started",
+              "params": {
+                "threadId": "different-thread",
+                "turn": {
+                  "id": "turn-fixture",
+                  "items": [],
+                  "itemsView": "full",
+                  "status": "inProgress"
+                }
+              },
+              "model": "TurnStartedNotification"
+            },
+            {
+              "method": "thread/tokenUsage/updated",
+              "params": {
+                "threadId": "different-thread",
+                "tokenUsage": {
+                  "last": {
+                    "cacheWriteInputTokens": 0,
+                    "cachedInputTokens": 5,
+                    "inputTokens": 17,
+                    "outputTokens": 8,
+                    "reasoningOutputTokens": 3,
+                    "totalTokens": 25
+                  },
+                  "total": {
+                    "cacheWriteInputTokens": 0,
+                    "cachedInputTokens": 5,
+                    "inputTokens": 17,
+                    "outputTokens": 8,
+                    "reasoningOutputTokens": 3,
+                    "totalTokens": 25
+                  }
+                },
+                "turnId": "turn-fixture"
+              },
+              "model": "ThreadTokenUsageUpdatedNotification"
+            },
+            {
+              "method": "turn/completed",
+              "params": {
+                "threadId": "different-thread",
+                "turn": {
+                  "id": "turn-fixture",
+                  "items": [],
+                  "itemsView": "full",
+                  "status": "completed"
+                }
+              },
+              "model": "TurnCompletedNotification"
+            }
+          ],
+          "turnStartInvoked": true,
+          "streamEndError": "TransportClosedError",
+          "peerReaped": true
+        },
+        {
+          "mode": "wrong-turn",
+          "requestedThreadId": "thread-fixture",
+          "returnedThreadId": "thread-fixture",
+          "turnId": "turn-fixture",
+          "notifications": [],
+          "turnStartInvoked": true,
+          "streamEndError": "TransportClosedError",
+          "peerReaped": true
+        },
+        {
+          "mode": "late-usage",
+          "requestedThreadId": "thread-fixture",
+          "returnedThreadId": "thread-fixture",
+          "turnId": "turn-fixture",
+          "notifications": [
+            {
+              "method": "turn/started",
+              "params": {
+                "threadId": "thread-fixture",
+                "turn": {
+                  "id": "turn-fixture",
+                  "items": [],
+                  "itemsView": "full",
+                  "status": "inProgress"
+                }
+              },
+              "model": "TurnStartedNotification"
+            },
+            {
+              "method": "thread/tokenUsage/updated",
+              "params": {
+                "threadId": "thread-fixture",
+                "tokenUsage": {
+                  "last": {
+                    "cacheWriteInputTokens": 0,
+                    "cachedInputTokens": 5,
+                    "inputTokens": 17,
+                    "outputTokens": 8,
+                    "reasoningOutputTokens": 3,
+                    "totalTokens": 25
+                  },
+                  "total": {
+                    "cacheWriteInputTokens": 0,
+                    "cachedInputTokens": 5,
+                    "inputTokens": 17,
+                    "outputTokens": 8,
+                    "reasoningOutputTokens": 3,
+                    "totalTokens": 25
+                  }
+                },
+                "turnId": "turn-fixture"
+              },
+              "model": "ThreadTokenUsageUpdatedNotification"
+            },
+            {
+              "method": "turn/completed",
+              "params": {
+                "threadId": "thread-fixture",
+                "turn": {
+                  "id": "turn-fixture",
+                  "items": [],
+                  "itemsView": "full",
+                  "status": "completed"
+                }
+              },
+              "model": "TurnCompletedNotification"
+            },
+            {
+              "method": "thread/tokenUsage/updated",
+              "params": {
+                "threadId": "thread-fixture",
+                "tokenUsage": {
+                  "last": {
+                    "cacheWriteInputTokens": 0,
+                    "cachedInputTokens": 5,
+                    "inputTokens": 17,
+                    "outputTokens": 8,
+                    "reasoningOutputTokens": 3,
+                    "totalTokens": 25
+                  },
+                  "total": {
+                    "cacheWriteInputTokens": 0,
+                    "cachedInputTokens": 5,
+                    "inputTokens": 17,
+                    "outputTokens": 8,
+                    "reasoningOutputTokens": 3,
+                    "totalTokens": 25
+                  }
+                },
+                "turnId": "turn-fixture"
+              },
+              "model": "ThreadTokenUsageUpdatedNotification"
+            }
+          ],
+          "turnStartInvoked": true,
+          "streamEndError": "TransportClosedError",
+          "peerReaped": true
+        },
+        {
+          "mode": "disconnect",
+          "requestedThreadId": "thread-fixture",
+          "returnedThreadId": "thread-fixture",
+          "turnId": "turn-fixture",
+          "notifications": [
+            {
+              "method": "turn/started",
+              "params": {
+                "threadId": "thread-fixture",
+                "turn": {
+                  "id": "turn-fixture",
+                  "items": [],
+                  "itemsView": "full",
+                  "status": "inProgress"
+                }
+              },
+              "model": "TurnStartedNotification"
+            },
+            {
+              "method": "thread/tokenUsage/updated",
+              "params": {
+                "threadId": "thread-fixture",
+                "tokenUsage": {
+                  "last": {
+                    "cacheWriteInputTokens": 0,
+                    "cachedInputTokens": 5,
+                    "inputTokens": 17,
+                    "outputTokens": 8,
+                    "reasoningOutputTokens": 3,
+                    "totalTokens": 25
+                  },
+                  "total": {
+                    "cacheWriteInputTokens": 0,
+                    "cachedInputTokens": 5,
+                    "inputTokens": 17,
+                    "outputTokens": 8,
+                    "reasoningOutputTokens": 3,
+                    "totalTokens": 25
+                  }
+                },
+                "turnId": "turn-fixture"
+              },
+              "model": "ThreadTokenUsageUpdatedNotification"
+            }
+          ],
+          "turnStartInvoked": true,
+          "streamEndError": "TransportClosedError",
+          "peerReaped": true
+        },
+        {
+          "mode": "settlement-uncertain",
+          "requestedThreadId": "thread-fixture",
+          "returnedThreadId": "thread-fixture",
+          "turnId": "turn-fixture",
+          "notifications": [
+            {
+              "method": "turn/started",
+              "params": {
+                "threadId": "thread-fixture",
+                "turn": {
+                  "id": "turn-fixture",
+                  "items": [],
+                  "itemsView": "full",
+                  "status": "inProgress"
+                }
+              },
+              "model": "TurnStartedNotification"
+            },
+            {
+              "method": "thread/tokenUsage/updated",
+              "params": {
+                "threadId": "thread-fixture",
+                "tokenUsage": {
+                  "last": {
+                    "cacheWriteInputTokens": 0,
+                    "cachedInputTokens": 5,
+                    "inputTokens": 17,
+                    "outputTokens": 8,
+                    "reasoningOutputTokens": 3,
+                    "totalTokens": 25
+                  },
+                  "total": {
+                    "cacheWriteInputTokens": 0,
+                    "cachedInputTokens": 5,
+                    "inputTokens": 17,
+                    "outputTokens": 8,
+                    "reasoningOutputTokens": 3,
+                    "totalTokens": 25
+                  }
+                },
+                "turnId": "turn-fixture"
+              },
+              "model": "ThreadTokenUsageUpdatedNotification"
+            },
+            {
+              "method": "turn/completed",
+              "params": {
+                "threadId": "thread-fixture",
+                "turn": {
+                  "id": "turn-fixture",
+                  "items": [],
+                  "itemsView": "full",
+                  "status": "completed"
+                }
+              },
+              "model": "TurnCompletedNotification"
+            }
+          ],
+          "turnStartInvoked": true,
+          "streamEndError": "TransportClosedError",
+          "peerReaped": true
+        }
+      ]
+    },
+    "results": [
+      {
+        "mode": "valid",
+        "disposition": "completed",
+        "observed": [
+          {
+            "category": "lifecycle",
+            "state": "started"
+          },
+          {
+            "category": "usage",
+            "usage": {
+              "inputTokens": 17,
+              "outputTokens": 8,
+              "cachedInputTokens": 5,
+              "reasoningTokens": 3
+            }
+          },
+          {
+            "category": "lifecycle",
+            "state": "completed"
+          }
+        ],
+        "errors": [],
+        "settlements": [
+          {
+            "outcome": "completed",
+            "usage": {
+              "inputTokens": 17,
+              "outputTokens": 8,
+              "cachedInputTokens": 5,
+              "reasoningTokens": 3
+            }
+          }
+        ]
+      },
+      {
+        "mode": "wrong-resume",
+        "disposition": "resume_identity_refused",
+        "settlements": []
+      },
+      {
+        "mode": "wrong-thread",
+        "disposition": "ambiguous",
+        "observed": [],
+        "errors": [
+          "Codex isolated turn start invalid"
+        ],
+        "settlements": [
+          {
+            "outcome": "ambiguous",
+            "safeResultCode": "synthetic_observation_uncertain"
+          }
+        ]
+      },
+      {
+        "mode": "wrong-turn",
+        "disposition": "ambiguous",
+        "observed": [],
+        "errors": [],
+        "settlements": [
+          {
+            "outcome": "ambiguous",
+            "safeResultCode": "synthetic_peer_eof"
+          }
+        ]
+      },
+      {
+        "mode": "late-usage",
+        "disposition": "completed",
+        "observed": [
+          {
+            "category": "lifecycle",
+            "state": "started"
+          },
+          {
+            "category": "usage",
+            "usage": {
+              "inputTokens": 17,
+              "outputTokens": 8,
+              "cachedInputTokens": 5,
+              "reasoningTokens": 3
+            }
+          },
+          {
+            "category": "lifecycle",
+            "state": "completed"
+          }
+        ],
+        "errors": [
+          "Codex isolated observer already terminal"
+        ],
+        "settlements": [
+          {
+            "outcome": "completed",
+            "usage": {
+              "inputTokens": 17,
+              "outputTokens": 8,
+              "cachedInputTokens": 5,
+              "reasoningTokens": 3
+            }
+          }
+        ]
+      },
+      {
+        "mode": "disconnect",
+        "disposition": "ambiguous",
+        "observed": [
+          {
+            "category": "lifecycle",
+            "state": "started"
+          },
+          {
+            "category": "usage",
+            "usage": {
+              "inputTokens": 17,
+              "outputTokens": 8,
+              "cachedInputTokens": 5,
+              "reasoningTokens": 3
+            }
+          }
+        ],
+        "errors": [],
+        "settlements": [
+          {
+            "outcome": "ambiguous",
+            "safeResultCode": "synthetic_peer_eof"
+          }
+        ]
+      },
+      {
+        "mode": "settlement-uncertain",
+        "disposition": "ambiguous",
+        "observed": [
+          {
+            "category": "lifecycle",
+            "state": "started"
+          },
+          {
+            "category": "usage",
+            "usage": {
+              "inputTokens": 17,
+              "outputTokens": 8,
+              "cachedInputTokens": 5,
+              "reasoningTokens": 3
+            }
+          }
+        ],
+        "errors": [
+          "Codex isolated settlement uncertain"
+        ],
+        "settlements": [
+          {
+            "outcome": "completed",
+            "usage": {
+              "inputTokens": 17,
+              "outputTokens": 8,
+              "cachedInputTokens": 5,
+              "reasoningTokens": 3
+            }
+          },
+          {
+            "outcome": "ambiguous",
+            "safeResultCode": "synthetic_observation_uncertain"
+          }
+        ]
+      }
+    ]
+  }
+}

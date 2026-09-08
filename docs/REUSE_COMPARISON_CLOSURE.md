@@ -45,6 +45,23 @@ provider/owner-qualified execution remains the separate target gate.
 | RC9 Recovery, monitoring and daily acceptance | A1, A7, D1, D2, D4 | Actual current-schema disposable PG restore including rows/roles/ACLs/restricted login and artifacts. Complete Kuma daemon/alerts/persistence and Beszel metrics adapter fit, not only HTTP/classifier snippets. Map browser/load recovery acceptance to selected components. Distinguish logical dedicated-DB restore from physical cluster recovery. | Production backup/restore, persistent-volume replacement, outage alerts, multi-agent soak and real mobile/desktop acceptance. Cluster-wide pgBackRest operations require separate approved scope. |
 | RC10 Shipping attribution and contribution | D5 plus every imported component | Actual Vite notice-plugin seam is tested. DR-03 selects native pnpm for the clean prepared39-runtime identity graph. DR-04 selects the public CycloneDX text gatherer after actual checker-per-path comparison;40 byte-matched attachments across39 identities include four revalidated exceptions. Do not repeat those closed narrow contests. Map actual full build/copied/external/nested-vendor scope and produce substantial reviewed contributor packets. | Final selected release build/publication audit and explicit GitHub publishing authority; research packages are not automatically shipped. |
 
+## Latest execution delta
+
+RC5's current release service experiments now exist: actual etcd3.7.1 CAS/restart/
+RBAC and OpenBao2.6.2 Raft/KV scoped CAS/restart/unseal/deletion denials. Reuse those
+receipts; don't rerun raw happy paths unchanged. Actual CR adapter/canonical payload,
+lost successful-write reply, restore and split SQL/anchor commit remain the next
+decisive common cases. Etcd scoped-token CAS/authenticated restart also remains
+unexercised; the earlier CAS/restart ran before auth setup. OpenBao's observed missing
+head recreation denial does not itself establish independent rollback protection.
+
+RC2 now has actual TS decoder/result and Python generated-model-to-observer mapping.
+Python's notifications cross the observer offline with a fake settlement sink;
+the favorable post-registration trigger does not repair the known early ordering
+gap. Compare actual supported ordering/recovery with the existing direct transport
+before replacing it. RC6's new journal/layout and close/recover checks are reusable
+primitives, not an implemented version switch or continuous worker.
+
 ## Consolidation into the final plan
 
 The final `REUSE_IMPLEMENTATION_PLAN.md` must use these decisions to define substantial

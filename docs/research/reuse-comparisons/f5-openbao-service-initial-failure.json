@@ -1,0 +1,15 @@
+{
+  "scope": "Preserved first disposable OpenBao2.6.2 Raft fixture before one focused setup-timeout correction",
+  "binarySha256": "d476d17e81a35e6d70dd7e86a8ab2a3664313525118f1f1cfe0130e7a2b95f3a",
+  "checks": [],
+  "status": "failed",
+  "failedOperation": "POST sys/init",
+  "requestDeadlineMs": 5000,
+  "failure": "The operation was aborted due to timeout",
+  "listenerReadyMs": [1455.507875],
+  "maxSampledRssKiB": 79008,
+  "processExits": [{ "code": 0, "signal": null }],
+  "monitorFailure": null,
+  "stateRemoved": true,
+  "correction": "Fresh owned state only; bound one-time initialization at30seconds, retain5second runtime-request bound. Do not retry the uncertain initialization on the old state."
+}

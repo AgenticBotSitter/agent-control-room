@@ -1,0 +1,38 @@
+{
+  "scope": "Actual OpenBao2.6.2 single-node Raft/KV2, synthetic state/identities; not CR adapter; preserved second attempt",
+  "binarySha256": "d476d17e81a35e6d70dd7e86a8ab2a3664313525118f1f1cfe0130e7a2b95f3a",
+  "checks": [],
+  "processExits": [
+    {
+      "code": 0,
+      "signal": null
+    }
+  ],
+  "maxSampledRssKiB": 84656,
+  "status": "failed",
+  "listenerReadyMs": [
+    224.212292
+  ],
+  "requestTimings": [
+    {
+      "method": "POST",
+      "path": "sys/init",
+      "status": 200,
+      "elapsedMs": 6460.220125000001,
+      "timeoutMs": 30000
+    },
+    {
+      "method": "POST",
+      "path": "sys/unseal",
+      "status": 200,
+      "elapsedMs": 10.771458000000166,
+      "timeoutMs": 5000
+    }
+  ],
+  "failure": "Cannot read properties of null (reading 'Symbol(Symbol.asyncIterator)')",
+  "monitorFailure": null,
+  "stateRemoved": true,
+  "distributionRetainedForFurtherComparison": true,
+  "failedOperation": "POST sys/mounts/checkpoint returned an empty HTTP204 body",
+  "correction": "Handle absent HTTP response bodies before async iteration; no response or acceptance expectations changed"
+}

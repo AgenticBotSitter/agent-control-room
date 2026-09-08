@@ -1,0 +1,14 @@
+{
+  "baseline":"0d3031d",
+  "receiptType":"Condensed transcription of direct terminal stdout, tool chunk cd931d",
+  "command":"node --import tsx research/reuse-comparisons/f3-journey-fit.mjs",
+  "exitCode":0,
+  "checks":11,
+  "httpCalls":9,
+  "writes":0,
+  "candidateApprovalCallbacks":1,
+  "candidateDenialCallbacks":0,
+  "outcomes":["actual result bytes verified and mounted as text","candidate matching prose shows approval affordance","candidate invokes injected callback","native button programmatic focus","loading hides approval affordance","nonlast hides approval affordance","ordinary answer lacks approval affordance","actual close clears result without writes","401 focus refresh clears private result","remount after401 does not restore result","controlled candidate unmount clears labels without actions"],
+  "cleanup":"All React roots unmounted and JSDOM window closed in finally; acquisition root cleanup recorded separately",
+  "limits":"No authenticated service, browser layout, native keyboard activation, full markdown/media dependency rendering, or live authorization tested"
+}

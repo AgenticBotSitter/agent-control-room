@@ -4,6 +4,35 @@
 
 ## Direct answer
 
+RC3's [eleven new mounted checks](research/reuse-comparisons/f3-journey-fit.md)
+and [root review](research/reuse-comparisons/f3-journey-review.md) close one concrete
+replacement question: unchanged Desktop MessageRow must not replace authoritative
+result/review controls. Its text-derived buttons remain presentation candidates
+only after that action logic is removed/replaced. Actual CR result clearing on
+synthetic401 and close-without-write were exercised, not live authorization or full
+browser navigation. Full transcript renderer selection remains open.
+
+Latest RC5 comparison now includes [actual OpenBao2.6.2 Raft/KV2](research/reuse-comparisons/f5-openbao-service-fit.md):
+17 completed observations establish scoped CAS, runtime-token persistence through
+restart/unseal, and explicit403 denial of deletion/configuration/neighbor/admin
+operations. Runtime missing-head recreation was also observed denied. The three
+earlier setup/harness failures are preserved; no failed state was reused. This is
+a real operation-permission advantage over tested etcd WRITE, not a final custody
+choice. Actual CR adapter/split-commit/restore tests and total operational cost remain.
+
+RC2 [actual Python-to-observer mapping](research/reuse-comparisons/f2-python-observer-fit.md)
+adds seven scenarios with genuine generated-model thread/turn fields and unchanged
+CR observer checks. Independent review accepts only data/interface composition:
+notifications are collected then replayed into the observer, and settlement is fake.
+The prior early-completion ordering gap remains open. The completed
+[upstream source trace](research/reuse-comparisons/f2-python-ordering-source.md)
+finds that response-first wire order alone does not resolve Python reader/requester
+registration. The [current-runtime comparison](research/reuse-comparisons/f2-current-ordering-disposition.md)
+also finds blanket rejection of pre-response notifications in our qualification
+runtime: safe ambiguity is not complete supported ordering. Neither transport wins
+by default. No fabricated native ID or new generic router is justified to make the
+TS stream or Python ordering fit.
+
 New cross-family evidence, without application changes:
 
 - RC2: [actual TS SDK observer/result comparison](research/reuse-comparisons/f2-observer-fit.md)
