@@ -1608,3 +1608,15 @@ native effect ownership. No upstream code was imported or runtime installed.
 Documentation's inconsistent Hermes minimum integration versions are recorded
 for resolution against a future immutable pin. The next step is a separately
 scoped disposable read-only adapter evaluation, not live automated resume.
+
+### Closing deployment report audit
+
+Read the consolidated Johnny5 handoff against deploy/README.md, OWNER_BOOTSTRAP.md,
+BACKUP_RESTORE.md, SUPERVISION.md and the conditional service template. Made the
+tenant/workspace prerequisite explicit in the consolidated execution order: the
+existing owner bridge requires these records and does not create them. Added a
+single sanitized gate-report ledger separating namespace availability, supplied
+templates, actual provisioning and verified acceptance, with the next responsible
+party. It does not broaden operator authority or claim the VPS was rechecked.
+This is documentation-only; no production command was run and no existing tests
+were rerun unchanged. Private setup notes and poster remain excluded.

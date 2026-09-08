@@ -74,6 +74,9 @@ full-profile inspection section in `deploy/README.md`.
    Review an exact backup/relocation plan before replacing a shared container.
 2. Provision the dedicated empty database and separate reviewed roles; apply pinned
    migrations and current grants. Keep schema ownership separate from the web login.
+   Provision the reviewed tenant/workspace before owner bootstrap; the bootstrap
+   command checks those records but does not create them. Use the approved private
+   identifiers, not the illustrative IDs from the configuration example.
    For authoring, register the native Idea adapter for the exact tenant using the
    reviewed setup procedure after that tenant exists. Preflight refuses a missing
    or mismatched registration; ordinary schema migrations alone do not create it.
@@ -94,6 +97,32 @@ full-profile inspection section in `deploy/README.md`.
    Website-only success is not orchestration success.
 
 ## Return one consolidated sanitized report
+
+Use the following gate ledger with the exact release pin and selected profile.
+For each row report **not checked**, **blocked**, **verified**, or **failed**, plus
+the sanitized evidence reference and the next responsible party. Availability of a
+name, port or template is not completed provisioning or acceptance. Do not mark a
+row verified from an earlier release's report without checking that evidence still
+applies. This ledger is a report format, not permission to execute its procedures.
+
+| Gate | Evidence needed to close it | If missing |
+| --- | --- | --- |
+| Release/profile | Exact transferred SHA, selected profile and matching source inventory | Request the approved transfer/pin; do not assume the VPS has local-only commits. |
+| Shared-primary persistence | Actual data mount/replacement durability and reviewed protection/restore plan for affected applications | Keep Control Room stopped; return the proposed plan without relocating a shared container. |
+| Dedicated database/roles | Dedicated target, applied migration/grant evidence, isolated reviewed roles and tenant/workspace present | Return the exact provisioning scope privately for approval; do not use another application's database. |
+| Owner bootstrap | Reviewed trust and independently confirmed owner subject, explicit bootstrap outcome and connection closure | Owner participation/private intake remains required; no fixture identity or email substitution. |
+| Backup/restore | Successful disposable restore, required-row/integrity comparison, correct ACLs and all selected-role checks; retrievable protected off-host copy | Report the missing proof, not merely that a dump exists. |
+| Supervisor/layout | Actual namespace, dedicated account, protected persistent configuration, reviewed unit/launcher and shutdown behavior | A systemd template is not an installed supervisor; request the actual environment decision. |
+| Private access | Verified exact application/issuer/audience, owner-only rule and effective application MFA; later approved routing acceptance | Distinguish saved settings from live login; no policy-level MFA override alone does not mean MFA is disabled. |
+| First website start | Separate start authorization, loopback/Host/anonymous-denial checks, owner login and other-site health | Remain stopped or retain the reviewed restricted state; do not enable agent workers. |
+| Daily use | Controlled restart, memory measurements and separately scoped live task/Idea/news acceptance | Report website-only operation, not a completed orchestration fleet. |
+
+Keep private values and raw diagnostics outside this report. A failed or uncertain
+bootstrap/start is not permission to repeat it: reconcile the exact operation first.
+The owner handles real login and approvals; Johnny5 handles only explicitly approved
+host actions; Codex supplies/reviews implementation and any unresolved integration
+contract. A report asking for a new decision should name that decision once rather
+than requesting the entire installation again.
 
 For later owner acceptance of Idea promotion, open the created project's Tasks page
 and choose **Prepare first experiment task** with an empty draft. Review/edit the
