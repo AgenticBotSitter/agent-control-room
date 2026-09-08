@@ -316,11 +316,11 @@ export class TaskAssignmentCoordinator {
     digestSchema.parse(expectedPacketDigest);
     if (!this.approvalStore || signal.aborted) conflict();
     const store = this.approvalStore;
-    return session.stageNativeDispatch((sign, channel) => this.withNativeApproval(identity, projectId, jobId, expectedInputDigest,
+    return session.stageNativeDispatch((sign, channel, signLease) => this.withNativeApproval(identity, projectId, jobId, expectedInputDigest,
       async (tx, prepared, actorId, nodeKeyId, deadline) => {
         if (expectedAttemptId !== undefined && prepared.request.attemptId !== expectedAttemptId) conflict();
         if (channel.tenantId !== this.scope.tenantId || channel.nodeId !== prepared.request.nodeId || channel.nodeKeyId !== nodeKeyId) conflict();
-        const saved = await store.stageDeliveryEnvelopeInSession(tx, prepared, expectedPacketDigest, actorId, signal, sign, channel, deadline);
+        const saved = await store.stageDeliveryEnvelopeInSession(tx, prepared, expectedPacketDigest, actorId, signal, sign, channel, deadline, signLease);
         await appendAuditWith(tx, { id: `audit:envelope:${saved.receipt.queueId}`, tenantId: this.scope.tenantId, actorId, actorType: "human",
           action: "native.delivery.staged", targetType: "job", targetId: jobId, correlationId: saved.receipt.queueId,
           idempotencyKey: `envelope:${saved.receipt.queueId}`, safeMetadata: { frameDigest: saved.receipt.frameDigest }, occurredAt: saved.receipt.stagedAt });
@@ -341,12 +341,12 @@ export class TaskAssignmentCoordinator {
     digestSchema.parse(expectedPacketDigest);
     if (!this.approvalStore || signal.aborted) conflict();
     const store = this.approvalStore;
-    return session.sendPreparedNativeDispatch((frame, channel) => this.withNativeApproval(identity, projectId, jobId, expectedInputDigest,
+    return session.sendPreparedNativeDispatch((frame, channel, leaseFrame) => this.withNativeApproval(identity, projectId, jobId, expectedInputDigest,
       async (tx, prepared, actorId, nodeKeyId, deadline, assertAuthorizationTime) => {
         if (expectedAttemptId !== undefined && prepared.request.attemptId !== expectedAttemptId) conflict();
         if (channel.tenantId !== this.scope.tenantId || channel.nodeId !== prepared.request.nodeId || channel.nodeKeyId !== nodeKeyId
             || Date.parse(frame.expiresAt) > deadline) conflict();
-        const saved = await store.recordTransmissionInSession(tx, prepared, expectedPacketDigest, actorId, signal, frame, channel);
+        const saved = await store.recordTransmissionInSession(tx, prepared, expectedPacketDigest, actorId, signal, frame, channel, leaseFrame);
         const checkedAt = this.clock();
         const assertFresh = () => {
           assertAuthorizationTime(); saved.assertFresh(); const now = this.clock();
@@ -355,7 +355,7 @@ export class TaskAssignmentCoordinator {
         await appendAuditWith(tx, { id: `audit:transmit:${saved.receipt.queueId}`, tenantId: this.scope.tenantId, actorId, actorType: "human",
           action: "native.delivery.transmission_requested", targetType: "job", targetId: jobId, correlationId: saved.receipt.queueId,
           idempotencyKey: `transmit:${saved.receipt.queueId}`, safeMetadata: { frameDigest: saved.receipt.frameDigest }, occurredAt: saved.receipt.requestedAt });
-        return { value: { value: saved.receipt, assertFresh }, assertFresh };
+        return { value: { value: saved.receipt, assertFresh, ...(saved.receipt.leaseFrameDigest ? { leaseFrameDigest: saved.receipt.leaseFrameDigest } : {}) }, assertFresh };
       }, queue));
   }
   private async withNativeApproval<T>(identity: VerifiedWebIdentity | undefined, projectId: string, jobId: string, expectedInputDigest: string,

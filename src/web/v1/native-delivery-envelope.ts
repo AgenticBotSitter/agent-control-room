@@ -7,9 +7,10 @@ import { localId } from "../../harness/v1/native-run-identifiers";
 import type { NativeEnvelopeChannel } from "../../node-control/server-node-session";
 import type { NativeTaskQueueScope } from "./native-task-queue";
 import { readNativeDeliveryPreparationInSession } from "./native-delivery-preparation";
+import { assertNativeLeaseDispatchPair } from "../../harness/v1/native-lease-dispatch-pair";
 
 const schema = z.object({ schema: z.literal("control-room.native-delivery-envelope/v1"),
-  frame: signedNodeFrameSchema, nodeKeyId: localId, stagedAt: z.string().datetime(), stagedBy: localId }).strict()
+  frame: signedNodeFrameSchema, leaseFrame: signedNodeFrameSchema.optional(), nodeKeyId: localId, stagedAt: z.string().datetime(), stagedBy: localId }).strict()
   .refine(r => r.frame.type === "harness.native.dispatch");
 type Record = z.infer<typeof schema>;
 type Row = { tenant_id: string; project_id: string; job_id: string; attempt_id: string; message_id: string; record: unknown; auth_tag: string };
@@ -21,6 +22,7 @@ const receipt = (r: Record) => {
   return { projectId: body.request.projectId, jobId: body.request.jobId, attemptId: body.request.attemptId,
     queueId: body.queueId, messageId: f.messageId, connectionId: f.connectionId, frameDigest: sha256Digest(f),
     bodyDigest: f.bodyDigest, packetDigest: body.packetDigest, stagedAt: r.stagedAt, expiresAt: f.expiresAt,
+    ...(r.leaseFrame ? { leaseFrameDigest: sha256Digest(r.leaseFrame) } : {}),
     evidence: "stored_signed_delivery_envelope" as const, startsWork: false as const, grantsExecutionAuthority: false as const };
 };
 export async function readNativeDeliveryEnvelopeInSession(tx: DatabaseSession, key: Uint8Array, scope: NativeTaskQueueScope) {
@@ -28,6 +30,7 @@ export async function readNativeDeliveryEnvelopeInSession(tx: DatabaseSession, k
     [scope.tenantId, scope.jobId, scope.attemptId])).rows[0];
   if (!row) return null;
   const r = schema.parse(row.record), f = frameOf(r), q = f.body.request;
+  if (r.leaseFrame) assertNativeLeaseDispatchPair(f, r.leaseFrame);
   const expected = Buffer.from(tag(key, r)), actual = Buffer.from(row.auth_tag);
   if (actual.length !== expected.length || !timingSafeEqual(actual, expected) || row.message_id !== f.messageId
       || row.tenant_id !== q.tenantId || row.project_id !== q.projectId || row.job_id !== q.jobId || row.attempt_id !== q.attemptId
@@ -40,9 +43,15 @@ export async function assertNativeDeliveryEnvelopeAbsent(tx: DatabaseSession, ke
 }
 /** Internal collaborator: current canonical/signature checks and commit fence are mandatory. */
 export async function persistNativeDeliveryEnvelope(tx: DatabaseSession, key: Uint8Array, input: SignedNodeFrame<"harness.native.dispatch">,
-  channel: NativeEnvelopeChannel, actorId: string, now: number) {
+  channel: NativeEnvelopeChannel, actorId: string, now: number, leaseFrame?: SignedNodeFrame<"job.lease.grant">) {
   const r = schema.parse({ schema: "control-room.native-delivery-envelope/v1", frame: input, nodeKeyId: channel.nodeKeyId,
-    stagedAt: new Date(now).toISOString(), stagedBy: actorId }), f = frameOf(r), q = f.body.request;
+    ...(leaseFrame ? { leaseFrame } : {}), stagedAt: new Date(now).toISOString(), stagedBy: actorId }), f = frameOf(r), q = f.body.request;
+  if (r.leaseFrame) {
+    const lease = assertNativeLeaseDispatchPair(f, r.leaseFrame);
+    if (!channel.leaseDelivery || now < Date.parse(lease.sentAt) || now >= Date.parse(lease.expiresAt)
+      || Buffer.byteLength(JSON.stringify(lease)) > channel.maxFrameBytes
+      || !verifyNodeFrameSignature(lease, channel.serverPublicKeySpki)) return fail();
+  } else if (channel.leaseDelivery) return fail();
   channel.assertCurrent();
   if (f.tenantId !== channel.tenantId || q.nodeId !== channel.nodeId || f.connectionId !== channel.connectionId
       || f.actorId !== channel.serverId || f.keyId !== channel.serverKeyId || now < Date.parse(f.sentAt)

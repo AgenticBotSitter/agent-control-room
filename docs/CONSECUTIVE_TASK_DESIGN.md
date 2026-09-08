@@ -196,6 +196,31 @@ direct delivery, not evidence of a separate offer negotiation. No browser operat
 signature or transmission is added. Signed grant retention and same-generation
 delivery still need to be joined to the existing envelope/transmission intent.
 
+### Negotiated paired envelope and transmission
+
+Peers that both advertise `harness.native.lease.v1` now use the existing coordinator
+to reserve a signed dispatch followed by its signed `job.lease.grant`, bound to the
+same connection and consecutive sequence numbers. The grant names its dispatch as
+causation. The existing immutable envelope record stores both frames under one MAC;
+the existing transmission intent binds the grant digest as well as the dispatch.
+There is no second table, broker or independent retry path. Older dispatch-only
+connections and stored records retain their previous shape.
+
+Signing/staging sends neither message. Transmission commits its intent first, sends
+dispatch then grant at most once, and rechecks the captured authority/time fence
+between sends. A first/second-send failure or cancellation retains the uncertain
+intent and does not retry. The one-shot entry remains prepared-only; the same
+operation's freshness fence remains valid while it is transmitting. A legacy
+callback cannot authorize a pair while omitting the committed grant digest.
+
+This is canonical server staging/transmission with injected local transport, not
+native runtime readiness or live fleet acceptance. Current native runtimes do not
+advertise this feature yet. They must first install the checked lease handler and
+wait for exact usable lease evidence before attempting start. Do not enable the
+feature in operational configuration as a substitute for that integration.
+Older servers may refuse newer paired records on downgrade: preserve the newer
+reader and immutable evidence; never strip grant fields or rewrite MACs for rollback.
+
 ### D. Combined release acceptance before service packaging
 
 Local progress on C/D: the per-task runtime now provides exact-binding drainage

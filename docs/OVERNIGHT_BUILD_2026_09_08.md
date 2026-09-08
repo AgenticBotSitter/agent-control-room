@@ -1385,6 +1385,45 @@ review found no concrete defect in the builder/coordinator integration and confi
 the scope limits. Signed grant retention/delivery and runtime readiness remain open.
 Corrected run 9298 passed all 20 binding/protocol checks, TypeScript, focused lint
 and diff check. No live effects or GitHub operations occurred.
+
+### Canonical signed pair staging and transmission
+
+Implemented negotiated harness.native.lease.v1 using existing session/coordinator
+ownership and existing envelope/intent tables. Canonical prepared lease material is
+signed immediately after the dispatch on the same connection, bound by consecutive
+sequence and causation. Optional leaseFrame is included in envelope MAC; the intent
+binds its digest. Transmission revalidates the current canonical unsigned grant,
+requires exact stored pair and commit digest, and sends dispatch then grant once.
+Default dispatch-only behavior and JSON shapes stay unchanged; no runtime advertises
+the new feature yet. No migration, listener, native call or deployment was performed.
+
+Initial paired run 30687 passed five cases/types. Added a between-send freshness
+check; independent review found it reused a prepared-only state fence after state
+became transmitting. Broader 15815 confirmed 41/44 cases passed, with the paired
+failures. Fixed the captured in-flight freshness fence while retaining prepared-only
+entry/bounded ownership. 55071 then passed six paired cases/types. Added reentrant
+transmission refusal; 79041 passed all 45 combined cases/types but lint rejected two
+forward-declared let fixture variables. Replaced these with deferred const captures.
+Independent source re-review confirmed the state correction and no further concrete
+blocker in that remediation. Additional tests cover omitted pair commitment and
+grant stripping from authenticated historical JSON. Native grant-aware readiness and
+the real policy composition remain unfinished; no live qualification is claimed.
+Additional run 57044 passed nine paired cases but observed the same fixture lint
+failure before its correction. Types/lint/diff check 41083 then passed. Fresh final
+75539 passed all nine paired cases, VPS compilation and four compiled managed-session/
+fixed-node-launcher checks. Existing bundler warnings remain. All task-owned changes
+are local; unrelated private setup notes and artwork remain excluded.
+
+Next node integration must use a separate lease-aware factory, keep the existing
+fixed validator/launcher unchanged, install the checked bridge handler only for that
+mode and advertise the negotiated feature only there. Dispatch-only readiness must
+remain false until the exact paired grant is retained. Direct early start must fail
+before adapter reservation, not consume the approved run through failed preflight.
+Reuse createNativeCurrentPolicy with the actual retained lease message and captured
+node stores/configuration; do not carry the fixture's manually supplied readCurrent
+callback into the new mode. Verify protocol ACK routing for the grant through the
+managed input before claiming an end-to-end native session. Original deadline remains
+12:40:58 UTC, without a new overnight window.
 Post-remediation run 36271 passed all 20 intake cases, TypeScript, focused lint and
 diff check. Independent source re-review confirmed both findings resolved and found
 no further concrete issue. Grant production/delivery and runtime policy wiring are
