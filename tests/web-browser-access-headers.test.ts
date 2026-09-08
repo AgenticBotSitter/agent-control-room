@@ -7,7 +7,7 @@ import { createIdeaCreationClient } from "../src/web/v1/idea-create-client.ts";
 import { createNewsArchiveClient } from "../src/web/v1/news-archive-client.ts";
 import { createNewsSourceClient } from "../src/web/v1/news-source-client.ts";
 import { createNewsRefreshClient } from "../src/web/v1/news-refresh-client.ts";
-import { browserAuthenticationRecovery } from "../src/web/v1/browser-client.ts";
+import { browserAuthenticationRecovery, BrowserAuthenticationRecoveryError } from "../src/web/v1/browser-client.ts";
 
 test("all private browser fetch call sites request explicit Access expiry responses", () => {
   const files = readdirSync("src/web/v1").filter(name => /client\.ts$/.test(name)).map(name => `src/web/v1/${name}`)
@@ -70,7 +70,13 @@ test("news actions distinguish an initial login denial from an unresolved earlie
       : refresh.propose({ projectId: "project:news", sourceId: "source:news", configured: true, canRefresh: true, startsWork: false,
         sourceDigest: `sha256:${"a".repeat(64)}`, sourceLabel: "News", endpointUrl: "https://example.invalid/feed", mode: "feed",
         sourceCurrent: true, allowedOrigins: ["https://example.invalid"], limits: { timeoutMs: 1000, maxAttempts: 1, maxDocumentBytes: 1000, maxReservedBodyBytes: 1000 } }, "news-expiry-test-001");
-    await assert.rejects(send());
+    await assert.rejects(send(), error => {
+      if (!lost && kind !== "archive") {
+        assert.ok(error instanceof BrowserAuthenticationRecoveryError);
+        assert.equal(error.code, "authentication_required");
+      }
+      return true;
+    });
     if (lost) await assert.rejects(client.retry(), /sign-in has expired.*still unconfirmed/);
     assert.equal(client.hasPending(), lost, kind);
     if (lost) assert.deepEqual(bodies, [bodies[0], bodies[0]]);
@@ -91,4 +97,17 @@ test("expired Idea reads request private response semantics and expose authentic
   assert.equal(calls, 2);
   assert.match(browserAuthenticationRecovery(true), /Keep this tab open.*another tab.*still unconfirmed.*exact save/);
   assert.doesNotMatch(browserAuthenticationRecovery(true), /was not saved|reload this tab/);
+});
+
+test("source settings and refresh surfaces preserve typed login recovery instead of replacing it with generic copy", () => {
+  for (const name of ["news-source-settings", "news-source-refresh"]) {
+    const source = readFileSync(`private-app/app/${name}.tsx`, "utf8");
+    assert.match(source, /reason instanceof BrowserAuthenticationRecoveryError \? reason\.message/);
+    assert.doesNotMatch(source, /reason instanceof Error \? reason\.message/);
+  }
+  for (const held of [true, false]) {
+    const failure = new BrowserAuthenticationRecoveryError(held);
+    assert.equal(failure.code, "authentication_required");
+    assert.equal(failure.message, browserAuthenticationRecovery(held));
+  }
 });

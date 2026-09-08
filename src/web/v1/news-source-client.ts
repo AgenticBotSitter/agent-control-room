@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { readBrowserJson } from "./browser-json";
-import { browserAuthenticationRecovery } from "./browser-client";
+import { BrowserAuthenticationRecoveryError } from "./browser-client";
 import { catalogProjectIdSchema as id } from "./project-wire";
 
 // Browser wire validation only. Server performs the stronger destination/authority checks.
@@ -25,7 +25,7 @@ export function createNewsSourceClient(fetcher: typeof fetch = fetch) {
         signal: AbortSignal.timeout(10_000), headers: { "x-requested-with": "XMLHttpRequest", "content-type": "application/json", accept: "application/json" }, body: JSON.stringify(exact.input) });
       if ([400, 401, 403, 409].includes(response.status)) {
         if (response.status === 401) { if (!exact.uncertain) pending = undefined;
-          throw new Error(browserAuthenticationRecovery(exact.uncertain)); }
+          throw new BrowserAuthenticationRecoveryError(exact.uncertain); }
         if (exact.uncertain) throw new Error("Earlier save is still unresolved. Restore access and retry this exact save.");
         pending = undefined;
         throw new Error(response.status === 409 ? "This source changed. Reload settings before editing again." : "Source was not saved. Check your access and the public feed URL.");
@@ -45,8 +45,8 @@ export function createNewsSourceClient(fetcher: typeof fetch = fetch) {
       const url = path(projectId) + (after ? `?${new URLSearchParams({ after: id.parse(after) })}` : "");
       const response = await fetcher(url, { credentials: "same-origin", cache: "no-store", redirect: "error",
         signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000), headers: { "x-requested-with": "XMLHttpRequest", accept: "application/json" } });
-      if (!response.ok) throw new Error(response.status === 401 ? browserAuthenticationRecovery(!!pending)
-        : "Source settings are unavailable. Check your access and reload.");
+      if (response.status === 401) throw new BrowserAuthenticationRecoveryError(!!pending);
+      if (!response.ok) throw new Error("Source settings are unavailable. Check your access and reload.");
       const page = pageSchema.parse(await readBrowserJson(response));
       if (page.projectId !== projectId || page.sources.some((row, i) => after !== undefined && row.source.id <= after
         || i > 0 && row.source.id <= page.sources[i - 1].source.id)

@@ -13,6 +13,10 @@ export function browserAuthenticationRecovery(held: boolean) {
     + (held ? "The earlier save is still unconfirmed; check that exact save again, without changing the request."
       : "Try this action again after signing in.");
 }
+/** Locally generated recovery copy, never a remote response body. */
+export class BrowserAuthenticationRecoveryError extends BrowserRequestError {
+  constructor(held: boolean) { super("authentication_required"); this.message = browserAuthenticationRecovery(held); }
+}
 export const browserErrorMessage: Record<BrowserFailureCode, string> = {
   authentication_required: "Your session has ended. Sign in again to continue.",
   access_denied: "You do not have access to this project or action.",

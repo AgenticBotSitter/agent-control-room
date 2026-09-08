@@ -15,7 +15,7 @@ export function IdeaDecisionForm({ detail, pendingChanged }: { detail: IdeaDetai
   useEffect(() => installNewsNavigationGuard(window, document, () => busy || client.hasPending(),
     () => setError("This decision may already be saved. Check the same decision again before leaving.")), [busy, client]);
   async function save() {
-    if (busy || !detail.synthesis) return; setBusy(true); setError(undefined);
+    if (busy || !detail.synthesis) return; pendingChanged?.(true); setBusy(true); setError(undefined);
     try {
       setReceipt(await (client.hasPending() ? client.retry() : client.decide(detail.session.sessionId, {
         sessionDigest: detail.session.sessionDigest, synthesisDigest: detail.synthesis.synthesisDigest,
@@ -28,7 +28,7 @@ export function IdeaDecisionForm({ detail, pendingChanged }: { detail: IdeaDetai
       ? browserAuthenticationRecovery(client.hasPending())
       : client.hasPending() ? "The decision may have been saved. Check this exact decision again; do not switch choices."
       : "The decision was not saved. Check the fields, access and current discussion before trying again."); }
-    finally { setBusy(false); }
+    finally { pendingChanged?.(client.hasPending()); setBusy(false); }
   }
   if (receipt) return <p role="status">{receipt.decision === "create_project" ? "Project created. No work has started."
     : receipt.decision === "save" ? "Idea saved for later." : "Idea rejected."} {receipt.projectId

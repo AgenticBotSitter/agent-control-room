@@ -5,7 +5,7 @@ import { installPrivateWebProcess, type PrivateWebProcessOptions } from "./priva
 import { captureWebOrigins } from "./access-verifier";
 export { createAccessKeyLoader } from "./access-key-cache";
 
-export type PrivateStartupConfiguration = Omit<PrivateWebProcessOptions, "database" | "clock" | "drainMs" | "planning" | "assignment" | "revisions" | "ideaCreation" | "newsCollections"> & {
+export type PrivateStartupConfiguration = Omit<PrivateWebProcessOptions, "database" | "clock" | "drainMs" | "planning" | "assignment" | "approvals" | "submission" | "queueAttention" | "revisions" | "ideaCreation" | "newsCollections"> & {
   database: PrivatePostgresConfiguration; ownerIdentityId: string;
 };
 type OwnedDatabase = ReturnType<typeof createPrivatePostgresDatabase>;
@@ -18,7 +18,8 @@ export function validatePrivateStartupConfiguration(input: PrivateStartupConfigu
     const sites = captureWebOrigins({ origin: input.origin, audience: input.audience }, input.secondaryAccess);
     // The production bootstrap owns only the restricted web pool. Do not silently discard or
     // pretend to configure a privileged planning dependency through this startup profile.
-    if ("planning" in input || "assignment" in input || "revisions" in input || "ideaCreation" in input || "newsCollections" in input) throw new Error();
+    if (["planning", "assignment", "approvals", "submission", "queueAttention", "revisions", "ideaCreation", "newsCollections"]
+      .some(name => name in input)) throw new Error();
     if (!Number.isSafeInteger(input.maxSessionSeconds) || input.maxSessionSeconds < 1 || input.maxSessionSeconds > 604800
       || typeof input.loadKeys !== "function") throw new Error();
     return Object.freeze({ origin: exactOrigin(input.origin), issuer: exactOrigin(input.issuer), audience: reference(input.audience),

@@ -36,6 +36,18 @@ test("database startup, role checks and credential configuration stay out of bro
     assert.doesNotMatch(readFileSync(file, "utf8"), /private_startup_prerequisites_failed|control_room_private_web|database_outcome_uncertain|transaction_timeout/);
 });
 
+test("compiled website startup cannot silently discard task coordinator capabilities", async () => {
+  let effects = 0;
+  const effect = () => { effects++; throw new Error('unexpected effect'); };
+  for (const name of ['approvals', 'submission', 'queueAttention']) {
+    const bootstrap = createPrivateWebBootstrap({ openDatabase: effect, install: effect });
+    await assert.rejects(bootstrap.start({ ...startupConfig, [name]: {} }),
+      { message: 'private_startup_config_invalid' });
+  }
+  assert.equal(effects, 0);
+  assert.equal((await handler(request())).status, 503);
+});
+
 test("operator configuration accepts only the restricted single-site settings without starting resources", async t => {
   const directory = await realpath(await mkdtemp(join(tmpdir(), "cr-operator-settings-")));
   const previous = process.env.CONTROL_ROOM_SETTINGS_FILE;

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createPrivateWebBootstrap, type PrivateStartupConfiguration } from "../src/web/v1/private-startup";
+import { createPrivateWebBootstrap, createPrivateWebDatabaseCheck, type PrivateStartupConfiguration } from "../src/web/v1/private-startup";
 import { createPrivateWebProcess } from "../src/web/v1/private-process";
 import { boundPrivateDatabase } from "../src/web/v1/bounded-database";
 import { limitedWebFixture, startupConfig } from "./helpers/web-startup";
@@ -16,6 +16,21 @@ test("invalid startup configuration has zero pool, install or key-loader calls",
     await assert.rejects(bootstrap.start({ ...startupConfig, ...patch } as PrivateStartupConfiguration), /config_invalid/);
   }
   assert.equal(calls, 0);
+});
+
+test("website-only startup and database check reject misplaced coordinator operations before effects", async () => {
+  let effects = 0;
+  const effect = (): never => { effects++; throw new Error("unexpected effect"); };
+  for (const name of ["planning", "assignment", "approvals", "submission", "queueAttention", "revisions", "ideaCreation", "newsCollections"]) {
+    for (const value of [undefined, { run: effect }]) {
+      const config = { ...startupConfig, loadKeys: effect, [name]: value };
+      const bootstrap = createPrivateWebBootstrap({ openDatabase: effect, install: effect });
+      await assert.rejects(bootstrap.start(config), { message: "private_startup_config_invalid" }, name);
+      await assert.rejects(createPrivateWebDatabaseCheck({ openDatabase: effect })(config),
+        { message: "private_startup_config_invalid" }, name);
+    }
+  }
+  assert.equal(effects, 0);
 });
 
 test("startup verifies schema and role before one shared installation; close removes readiness immediately", async () => {

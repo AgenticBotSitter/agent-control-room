@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { createNewsRefreshClient, type NewsRefreshDescription } from "../../src/web/v1/news-refresh-client";
 import { installNewsNavigationGuard } from "../../src/web/v1/news-navigation-guard";
+import { BrowserAuthenticationRecoveryError } from "../../src/web/v1/browser-client";
 
 export function NewsSourceRefresh({ projectId, sourceId, disabled, onHold }: {
   projectId: string; sourceId: string; disabled: boolean; onHold: (held: boolean) => void;
@@ -19,8 +20,9 @@ export function NewsSourceRefresh({ projectId, sourceId, disabled, onHold }: {
       else if (action === "propose" && description) await client.propose(description, `refresh:${crypto.randomUUID()}`);
       else if (action === "approve") await client.approve();
       else if (action === "retry") await client.retry();
-    } catch {
-      setError(client.hasPending() ? "The request may have completed. Retry the exact request; do not start another refresh."
+    } catch (reason) {
+      setError(reason instanceof BrowserAuthenticationRecoveryError ? reason.message
+        : client.hasPending() ? "The request may have completed. Retry the exact request; do not start another refresh."
         : "Could not complete this step. Check your access and reload refresh options. No new request will be sent automatically.");
     } finally { setState(client.state()); setBusy(false); onHold(client.hasPending()); }
   }

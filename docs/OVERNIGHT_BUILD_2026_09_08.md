@@ -130,3 +130,57 @@ confirmed those tests were no longer running before fresh verification: Idea/ABS
 base 88/88 pass, compiled handler/startup and browser regressions 19/19 pass.
 TypeScript and full lint pass again. No open PR targets this working branch;
 publication remains a private batched skip-CI push, with no merge or workflow run.
+
+## Startup configuration and remaining workflow audit
+
+Independent read-only workflow tracing at 83b15c5 confirmed existing Idea
+create/start/stop/synthesize/decision/promotion and ABS source/task-save paths.
+It found three genuine gaps, distinct from missing production configuration:
+
+- Idea Start waits for full execution while the browser request times out after
+  ten seconds. The detail page needs bounded read-only progress refresh, without
+  replaying Start or losing pending decisions. Local implementation is recorded below.
+- ABS refresh approval displays an historical receipt, but no subsequent collection
+  completion/failure read. Reuse the retained feed plan and canonical job/effect
+  records for a scoped status view; do not treat collection jobs as ordinary tasks.
+- Idea participants are fixed by server configuration. Owner roster selection
+  would need authorized options drawn only from that configured roster, not
+  browser-supplied provider descriptors or identities. This remains unimplemented.
+
+The website-only validator previously silently discarded approvals, submission
+and queue-attention callbacks. It now rejects their presence, matching existing
+coordinator-operation exclusions. Both ordinary startup and database-only check
+reject before effects. Independent review confirmed legitimate task composition
+adds these operations later and is not broken by this restriction. Forty startup/
+Idea/news tests and five compiled startup/database tests pass; typecheck, lint and
+VPS build pass. These are disposable local tests, not production startup evidence.
+
+Follow-through inspection found two news settings UI catches swallowed the new
+authentication guidance. Added a typed, locally generated recovery error and
+surface only that type in those screens; generic failures remain generic. Source
+review found no defect and confirmed pending-save semantics remain unchanged.
+
+## Idea progress observation
+
+Connected a finite, non-overlapping saved-detail observer to the Idea workspace.
+Visible active panels and locally requested starts get five-second checks, capped
+at 180 automatic reads per mounted detail. Terminal state or authorization denial
+stops automatic reads; explicit Refresh can check again. No command or provider
+capability is passed to this observer, and the server's synchronous start operation
+is unchanged. Observation does not constitute live-provider qualification.
+
+Decision submission synchronously holds reads and invalidates an older outstanding
+read, preserving its exact pending client. Errors render beside the retained
+discussion instead of unmounting it, and manual refresh does not clear the detail.
+Source review reported no defect and requested additional deferred cleanup tests.
+Static-render/controller tests establish projection retention, not mounted React
+form lifecycle acceptance. Real browser and real owner/provider acceptance remain
+unperformed. An initial test callback type error was corrected; subsequent full
+TypeScript, lint and fresh VPS compilation pass.
+
+Final batch verification: Idea/ABS base 92/92 pass, eight fresh compiled startup/
+database/handler tests pass, and all five observer tests pass after adding deferred
+stop and hold-cycle races. Closing aborts the signal and suppresses late successful
+or failed callbacks; releasing a hold cannot admit the pre-hold response. The
+separate 40-test startup suite and 18-test news/recovery suite also passed. No live
+browser, Cloudflare, PostgreSQL, provider or production test is claimed.

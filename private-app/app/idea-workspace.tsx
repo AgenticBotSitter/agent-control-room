@@ -1,5 +1,6 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createIdeaDetailRefresh } from "../../src/web/v1/idea-detail-refresh";
 import { createIdeaBrowserClient } from "../../src/web/v1/idea-browser-client";
 import type { IdeaDetail, IdeaPage } from "../../src/web/v1/idea-wire";
 import { BrowserRequestError, browserErrorMessage } from "../../src/web/v1/browser-client";
@@ -10,7 +11,7 @@ import { IdeaDecisionForm } from "./idea-decision-form";
 import { IdeaStartControl } from "./idea-start-control";
 import { IdeaSynthesisControl } from "./idea-synthesis-control";
 
-export function IdeaDiscussion({ detail, refresh, pendingChanged }: { detail: IdeaDetail; refresh?: () => void; pendingChanged?: (held: boolean) => void }) {
+export function IdeaDiscussion({ detail, refresh, pendingChanged, observeStart }: { detail: IdeaDetail; refresh?: () => void; pendingChanged?: (held: boolean) => void; observeStart?: () => void }) {
   const { session, contributions, synthesis, decision, run } = detail;
   return <><h1>{session.title}</h1><p>{session.ideaSummary}</p><p>For: {session.targetCustomer}</p>
     <p>{detail.execution === "not_configured" ? "Starting live panels is not connected on this installation."
@@ -27,7 +28,7 @@ export function IdeaDiscussion({ detail, refresh, pendingChanged }: { detail: Id
       {run.cancellationRequestedAt && run.state !== "cancelled" ? <p>Stop requested. This is not confirmation that the current turn stopped.</p> : null}
       {detail.canStop ? <IdeaStopControl key={run.runId} sessionId={session.sessionId} sessionDigest={session.sessionDigest} runId={run.runId} refresh={refresh} /> : null}
     </> : <><p>No panel run is recorded for this idea.</p>
-      {detail.canStart ? <IdeaStartControl key={session.sessionId} session={session} refresh={refresh} />
+      {detail.canStart ? <IdeaStartControl key={session.sessionId} session={session} refresh={refresh} observeStart={observeStart} />
         : <p>Starting requires a configured runtime, an untouched idea and current owner access.</p>}</>}</section>
     {contributions.some(c => c.sourceMode === "injected_only") ? <p role="note">This discussion contains synthetic test contributions. Its synthesis is not evidence of a completed live bot panel.</p> : null}
     {Array.from({ length: session.maxRounds }, (_, i) => i + 1).map(round => <section key={round} aria-label={`Round ${round}`}>
@@ -57,12 +58,25 @@ export function PrivateIdeaWorkspace({ sessionId, after }: { sessionId?: string;
   const [error, setError] = useState<string>(), [refresh, setRefresh] = useState(0);
   const [creating, setCreating] = useState(false);
   const [decisionPending, setDecisionPending] = useState(false);
+  const observer = useRef<ReturnType<typeof createIdeaDetailRefresh> | undefined>(undefined);
+  const pendingChanged = useCallback((held: boolean) => { observer.current?.hold(held); setDecisionPending(held); }, []);
   useEffect(() => {
+    if (sessionId) {
+      const controller = createIdeaDetailRefresh({ read: signal => client.detail(sessionId, signal),
+        accept: value => { setDetail(value); setError(undefined); },
+        failed: reason => setError(reason instanceof BrowserRequestError ? browserErrorMessage[reason.code] : "Saved ideas are unavailable."),
+        hidden: () => document.hidden });
+      observer.current = controller;
+      void controller.read();
+      const interval = setInterval(() => { void controller.read(true); }, 5000);
+      const focus = () => { void controller.read(true); };
+      window.addEventListener("focus", focus);
+      return () => { controller.stop(); clearInterval(interval); window.removeEventListener("focus", focus); observer.current = undefined; };
+    }
     let active = true; const abort = new AbortController();
     void (async () => {
       try {
-        if (sessionId) { const value = await client.detail(sessionId, abort.signal); if (active) setDetail(value); }
-        else { const value = await client.list(after, abort.signal); if (active) setPage(value); }
+        const value = await client.list(after, abort.signal); if (active) setPage(value);
       } catch (reason) {
         if (active) setError(reason instanceof BrowserRequestError ? browserErrorMessage[reason.code] : "Saved ideas are unavailable.");
       }
@@ -71,9 +85,11 @@ export function PrivateIdeaWorkspace({ sessionId, after }: { sessionId?: string;
   }, [client, sessionId, after, refresh]);
   return <><PrivateHeader /><main className="private-main">
     <nav aria-label="Idea pages"><a href="/ideas">All saved ideas</a></nav>
-    <button type="button" disabled={creating || decisionPending} onClick={() => { setPage(undefined); setDetail(undefined); setError(undefined); setRefresh(v => v + 1); }}>Refresh saved discussion</button>
+    <button type="button" disabled={creating || decisionPending} onClick={() => { if (observer.current) void observer.current.read(); else { setPage(undefined); setError(undefined); setRefresh(v => v + 1); } }}>Refresh saved discussion</button>
     {creating ? <IdeaCreateForm close={() => { setCreating(false); setPage(undefined); setRefresh(v => v + 1); }} /> : null}
-    {error ? <p role="alert">{error}</p> : detail ? <IdeaDiscussion detail={detail} refresh={() => setRefresh(v => v + 1)} pendingChanged={setDecisionPending} /> : page ? <>
+    {error ? <p role="alert">{error} Previously loaded discussion content is not a fresh status check.</p> : null}
+    {detail ? <><p className="private-note">Active discussions are checked automatically while this page is visible, for up to 180 checks. These checks only read saved status; they never restart a bot. Use Refresh for a new check after a pause or login.</p>
+      <IdeaDiscussion detail={detail} refresh={() => { void observer.current?.read(); }} pendingChanged={pendingChanged} observeStart={() => observer.current?.watchStart()} /></> : page ? <>
       <h1>Idea Lab</h1><p>Explore saved discussions and the projects you chose to pursue.</p>
       {page.availability === "not_configured" ? <p>Idea storage is not configured. No sample discussions are shown.</p>
         : <>{page.canCreate ? <button type="button" disabled={creating} onClick={() => setCreating(true)}>New idea</button>
@@ -83,6 +99,6 @@ export function PrivateIdeaWorkspace({ sessionId, after }: { sessionId?: string;
             <h2><a href={`/ideas/${encodeURIComponent(session.sessionId)}`}>{session.title}</a></h2>
             <p>{session.ideaSummary}</p><p>{session.participantCount} participants · Up to {session.maxRounds} rounds</p>
           </article>)}{page.nextCursor ? <a href={`/ideas?after=${encodeURIComponent(page.nextCursor)}`}>Next saved ideas</a> : null}</>}
-    </> : <p role="status">Loading saved ideas…</p>}
+    </> : !error ? <p role="status">Loading saved ideas…</p> : null}
   </main></>;
 }

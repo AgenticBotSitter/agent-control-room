@@ -21,6 +21,11 @@ The minimal settings module does not configure Idea/News integrity keys, provide
 task coordinators or native transports. Source support is not configured operation.
 Do not invent keys for saved signed records or use fixture identities.
 
+The website-only startup rejects misplaced coordinator operations, including task
+approvals, submission and queue attention. These require the existing task-application
+composition and its separately verified resources; adding callback fields to `web`
+must not look like successful activation while the callbacks are discarded.
+
 ## Inspection before production changes
 
 Verify the pinned checkout and source inventory; compare supplied procedures with

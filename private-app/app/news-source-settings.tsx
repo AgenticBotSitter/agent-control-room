@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { createNewsSourceClient, type NewsSourceInput, type NewsSourcePage } from "../../src/web/v1/news-source-client";
 import { installNewsNavigationGuard } from "../../src/web/v1/news-navigation-guard";
 import { NewsSourceRefresh } from "./news-source-refresh";
+import { BrowserAuthenticationRecoveryError } from "../../src/web/v1/browser-client";
 
 export function NewsSourceSettings({ projectId }: { projectId: string }) {
   const [client] = useState(() => createNewsSourceClient());
@@ -13,7 +14,8 @@ export function NewsSourceSettings({ projectId }: { projectId: string }) {
   useEffect(() => {
     const abort = new AbortController();
     void client.list(projectId, after, abort.signal).then(value => { if (!abort.signal.aborted) setPage(value); },
-      () => { if (!abort.signal.aborted) setError("Could not load source settings. Reload or check your access."); });
+      reason => { if (!abort.signal.aborted) setError(reason instanceof BrowserAuthenticationRecoveryError ? reason.message
+        : "Could not load source settings. Reload or check your access."); });
     return () => abort.abort();
   }, [client, projectId, after, refresh]);
   useEffect(() => installNewsNavigationGuard(window, document, () => busy || client.hasPending(),
@@ -26,7 +28,8 @@ export function NewsSourceSettings({ projectId }: { projectId: string }) {
     try {
       await (client.hasPending() ? client.retry() : client.save(projectId, draft));
       reload(after); setNotice("Source saved. This does not start collection.");
-    } catch { setError(client.hasPending() ? "The save may have completed. Retry the exact save before doing anything else."
+    } catch (reason) { setError(reason instanceof BrowserAuthenticationRecoveryError ? reason.message
+      : client.hasPending() ? "The save may have completed. Retry the exact save before doing anything else."
       : "Could not save. Reload settings before editing again; check your access and public feed URL."); }
     finally { setBusy(false); }
   }
