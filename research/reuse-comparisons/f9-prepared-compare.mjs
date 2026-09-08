@@ -1,0 +1,9 @@
+// Read-only receipts and emitted package paths; diagnostic comparison, not notice generator.
+import fs from 'node:fs';import path from 'node:path';import assert from 'node:assert/strict';import {createHash} from 'node:crypto';
+const root=process.argv[2];assert.match(root,/^\/private\/tmp\/cr-f9-prepared\.[A-Za-z0-9]+$/);const hash=p=>createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+assert.equal(hash(root+'/pnpm-lock.yaml'),hash('pnpm-lock.yaml'));assert.equal(hash(root+'/package.json'),hash('package.json'));
+const prior=JSON.parse(fs.readFileSync('docs/research/reuse-comparisons/f9-next-evidence.json')).stdout.expected;
+const record=JSON.parse(fs.readFileSync('docs/research/reuse-comparisons/f9-prepared-licenses-evidence.json'));
+const packages=Object.values(record.actualStdout).flat();const ids=packages.flatMap(p=>p.versions.map(v=>p.name+'@'+v)).sort();assert.deepEqual(ids,[...prior].sort());
+const textFiles=[];for(const p of packages){for(const dir of p.paths){assert.ok(dir.startsWith(root+'/node_modules/'));const files=fs.readdirSync(dir).filter(n=>/^(?:licen[cs]e|copying|notice)(?:[.-].*)?$/i.test(n)).filter(n=>fs.statSync(path.join(dir,n)).isFile());textFiles.push({name:p.name,versions:p.versions,emittedLicenseContents:!!p.licenseContents,files:files.map(n=>({name:n,bytes:fs.statSync(path.join(dir,n)).size,sha256:hash(path.join(dir,n))}))});}}
+const pnpm='/Users/alastairfraser/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/pnpm/dist/pnpm.mjs';console.log(JSON.stringify({exactIdentityCount:ids.length,expectedMatched:true,manifestHash:hash('package.json'),lockHash:hash('pnpm-lock.yaml'),installedPnpmImplementationHash:hash(pnpm),textFiles,missingRootText:textFiles.filter(x=>x.files.length===0).map(x=>x.name),emittedFullTextCount:packages.filter(x=>x.licenseContents).length},null,2));

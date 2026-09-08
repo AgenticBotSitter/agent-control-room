@@ -49,13 +49,21 @@ These are feature-specific observations, not whole-product reliability rankings.
 
 Latest bounded comparisons:
 
+- [Owner-bootstrap async contract](research/reuse-comparisons/f8-bootstrap-async-contract-fit.md):
+  30 scenarios execute the actual bootstrap control flow with a delayed real Node
+  verifier and fake persistence. Await-only negative controls reach simulated commit
+  after expiry/cancellation; freshness-aware adaptation rejects. A discarded precommit
+  Promise is separately demonstrated. This is additional caller migration evidence,
+  not execution of candidate JWT libraries inside bootstrap or real DB qualification.
 - [Parser consolidation](research/reuse-comparisons/f7-parser-decision-fit.md): actual
   legacy decoder with a fast-xml-parser research adapter matches14/18 corpus outputs;
   four explicit compatibility adaptations reach18/18. A corrected single run verifies
   seven source/lock identities and212 files across13 packages before candidate imports;
   candidate entities resolution is now independent of rss-parser. Independent re-review
-  closes those two prototype findings. Explicit shipping entities dependency/notices,
-  broader parity and cost remain before a removal-ready decision. No parser removed.
+  closes those two prototype findings. The broader selection corpus then gives11/18
+  adapted parity and4/18 borrowed-output parity. DR-02 now retains both maintained
+  parsers: avoid a compatibility fork for about2.23MiB possible package allocation
+  savings. Independent selection review accepted that narrow planning choice.
 - [Full-text collector](research/reuse-comparisons/f9-collector-fit.md): actual
   pnpm-created fixture passes with4.4.2 and exploratory unsupported-on-Node22 5.0.1.
   Crucially,4.4.2 then omits resolvable transitives from the real application graph;
@@ -68,10 +76,16 @@ Latest bounded comparisons:
  before start reply, parent-environment merging and absent request deadlines need
  adapter handling. This is not yet client-to-CR observer mapping or native execution.
 - [Next license tools](research/reuse-comparisons/f9-next-fit.md): current manifest
- closure is39 runtime identities, broader than the earlier30-entry inventory.
- Actual CycloneDX fails its npm graph read; pnpm native license output needs missing
- store-index metadata. Clean isolated frozen-lock preparation is the next decisive
- test, not a current application reinstall or error suppression. Owned70MiB removed.
+ closure is39 runtime identities, a different scope from the earlier30 direct
+ dev+runtime entries. CycloneDX failed its npm graph read; pnpm initially lacked
+ store metadata. A clean isolated frozen preparation now yields39/39 native identities
+ and closes that graph question (DR-03), but no full license text fields. Full-text
+ extraction remains separate. Owned70MiB and later288MiB cohorts removed.
+- [Consolidated JWT adapters](research/reuse-comparisons/f8-jwt-consolidated-fit.md):
+ actual library parsing/verification preserves99 policy cases and50 projectHTTP
+ checks; four further actual-authority preflight cases reject expired identity before
+ any DB call, with a fresh positive sentinel. All-caller adaptation and final library
+ choice remain; these are synthetic local tests, not actual Access/login acceptance.
 
 The [joined ABS revision fixture](research/reuse-comparisons/cross-journey-revision-fit.md)
 now proves that the same borrowed-source task/result carries exact lineage through
@@ -88,14 +102,15 @@ Latest concrete additions: [JWT library fit](research/reuse-comparisons/f8-jwt-f
 executes jose and jsonwebtoken through the current verifier policy (69 mapped checks,
 10 library-only observations). [Actual HTTP follow-up](research/reuse-comparisons/f8-jwt-http-fit.md)
 adds50 named scenarios and demonstrates the required jose await, denial ordering and
-full identity fields. Consolidated parsing/removal and all-caller parity remain;
+full identity fields. The later consolidated experiment above supersedes the parsing
+gap; all-caller execution and final selection remain;
 no new auth provider is selected. [Distribution audit](research/reuse-comparisons/f9-distribution-fit.md)
 finds115 actual built files without standalone notice/license files and maps external
 imports. Source-to-build freshness is unverified; generator comparison and complete
 artifact notice assembly remain, rather than assuming another custom tool is needed.
 The [tool comparison](research/reuse-comparisons/f9-tooling-fit.md) now screens three
 actual pinned implementations and tests, plus three executed installed-npm fixture
-checks. Prioritize actual Vite/notice-plugin fit next; no generic custom notice
+checks. The actual Vite/notice-plugin fit below advances that seam; no generic custom notice
 engine is selected, and a metadata-only SBOM is not complete license-text assembly.
 The [actual Vite plugin fit](research/reuse-comparisons/f9-plugin-fit.md) now passes
 six assertion groups. It is the leading bundled-package extraction candidate;

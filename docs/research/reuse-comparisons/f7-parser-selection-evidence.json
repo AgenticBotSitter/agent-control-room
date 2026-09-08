@@ -1,0 +1,891 @@
+{
+  "command": "node --import tsx research/reuse-comparisons/f7-parser-selection-fit.ts",
+  "exitCode": 0,
+  "wallTimeSeconds": 0.469783209,
+  "actualStdout": {
+    "scope": "new18case full-decoder synthetic corpus; original18case workload not rerun; actual borrowed parseFeed plus explicit translation alternative",
+    "pins": {
+      "packages": [
+        {
+          "name": "@nodable/entities",
+          "version": "3.0.0"
+        },
+        {
+          "name": "anynum",
+          "version": "1.0.1"
+        },
+        {
+          "name": "entities",
+          "version": "2.2.0"
+        },
+        {
+          "name": "fast-xml-builder",
+          "version": "1.3.1"
+        },
+        {
+          "name": "fast-xml-parser",
+          "version": "5.11.0"
+        },
+        {
+          "name": "is-unsafe",
+          "version": "2.0.2"
+        },
+        {
+          "name": "path-expression-matcher",
+          "version": "1.6.2"
+        },
+        {
+          "name": "rss-parser",
+          "version": "3.13.0"
+        },
+        {
+          "name": "sax",
+          "version": "1.6.1"
+        },
+        {
+          "name": "strnum",
+          "version": "2.4.2"
+        },
+        {
+          "name": "xml-naming",
+          "version": "0.3.0"
+        },
+        {
+          "name": "xml2js",
+          "version": "0.5.0"
+        },
+        {
+          "name": "xmlbuilder",
+          "version": "11.0.1"
+        }
+      ],
+      "sourceCount": 7,
+      "hashedPackageFiles": 212
+    },
+    "adapterSha256": "3a11a58aea39ff9cb76ba0a293e8200c763767c5b48f217f84cda56f87bed661",
+    "adapterDeclarationLines": 30,
+    "results": [
+      {
+        "name": "prefixed Atom",
+        "adapterParity": false,
+        "borrowedParity": false,
+        "incumbent": {
+          "wholeOutputSha256": "aeaf2b9dbcc214d09c39143b401c71a15b93565b5f9e533bc5cf6a130550bfe8",
+          "ok": false,
+          "code": "invalid_feed"
+        },
+        "adapted": {
+          "wholeOutputSha256": "99e1cdcbe69b38aca1814d65a91e0809e351dd684a75005b33f13158a50f5078",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "News",
+              "summary": "News",
+              "url": "https://example.org/item",
+              "storyDigest": "sha256:916d05f4ecc0725dfa46392f20caad5cb270efa785edb096c0c2fec86d9cf574"
+            }
+          ]
+        },
+        "translated": {
+          "wholeOutputSha256": "99e1cdcbe69b38aca1814d65a91e0809e351dd684a75005b33f13158a50f5078",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "News",
+              "summary": "News",
+              "url": "https://example.org/item",
+              "storyDigest": "sha256:916d05f4ecc0725dfa46392f20caad5cb270efa785edb096c0c2fec86d9cf574"
+            }
+          ]
+        }
+      },
+      {
+        "name": "RSS mixed inline title",
+        "adapterParity": false,
+        "borrowedParity": false,
+        "incumbent": {
+          "wholeOutputSha256": "51820579ed2afc111ec6072e444234b24393d98d8ae08c7601d81118d96b6ddb",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "AI today",
+              "summary": "Report",
+              "url": "https://example.org/item",
+              "storyDigest": "sha256:5dead0d672fa2dfb87e22463b66241d3d1d608494be3b95782d67757ee20a9a1"
+            }
+          ]
+        },
+        "adapted": {
+          "wholeOutputSha256": "1413eb76a1bb1c283023487f864543ac5222d3d35ee98e3ade1ff94a9ee90f4e",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "AItoday",
+              "summary": "Report",
+              "url": "https://example.org/item",
+              "storyDigest": "sha256:ce418fe1bd50d9372b94e846e1a392559f73ebe3078c367d6514a7de9bee90c3"
+            }
+          ]
+        },
+        "translated": {
+          "wholeOutputSha256": "1413eb76a1bb1c283023487f864543ac5222d3d35ee98e3ade1ff94a9ee90f4e",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "AItoday",
+              "summary": "Report",
+              "url": "https://example.org/item",
+              "storyDigest": "sha256:ce418fe1bd50d9372b94e846e1a392559f73ebe3078c367d6514a7de9bee90c3"
+            }
+          ]
+        }
+      },
+      {
+        "name": "RSS duplicate title",
+        "adapterParity": false,
+        "borrowedParity": false,
+        "incumbent": {
+          "wholeOutputSha256": "5870d7414716c6ab750fb220aa663d93467ad9127bd6301b640bbd71870b7767",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "First",
+              "summary": "Report",
+              "url": "https://example.org/item",
+              "storyDigest": "sha256:297f6216db56289d4b535e17d8be5a26fd59f41fcafc6de465617ada2a40efdf"
+            }
+          ]
+        },
+        "adapted": {
+          "wholeOutputSha256": "77b24fed24ecc6c4f8a834c4c972a6dae8a77683fc9d8c35865f03528df769c6",
+          "ok": true,
+          "state": "partial",
+          "rejected": 1,
+          "duplicates": 0,
+          "stories": []
+        },
+        "translated": {
+          "wholeOutputSha256": "071dcca6382079f7283e7ce609b40ad80d3d3e1f2e81dee7a0f4bee9a35312a2",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "Untitled update",
+              "summary": "Report",
+              "url": "https://example.org/item",
+              "storyDigest": "sha256:f572498a193ba9c42789b5f64ebba792ce8b9efb0e37abe694c4b80ce75de304"
+            }
+          ]
+        }
+      },
+      {
+        "name": "RSS numeric leadingzero title",
+        "adapterParity": true,
+        "borrowedParity": false,
+        "incumbent": {
+          "wholeOutputSha256": "d5374186507e565bbe9a2a732abcf67b639a76ebb3b1f710f8c83ae81337aa8f",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "0012",
+              "summary": "Report",
+              "url": "https://example.org/item",
+              "storyDigest": "sha256:ec6eeeb69a7cf95bb2dd095b55252b9f1086fe271a71be11dfb9579f406b4948"
+            }
+          ]
+        },
+        "adapted": {
+          "wholeOutputSha256": "d5374186507e565bbe9a2a732abcf67b639a76ebb3b1f710f8c83ae81337aa8f",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "0012",
+              "summary": "Report",
+              "url": "https://example.org/item",
+              "storyDigest": "sha256:ec6eeeb69a7cf95bb2dd095b55252b9f1086fe271a71be11dfb9579f406b4948"
+            }
+          ]
+        },
+        "translated": {
+          "wholeOutputSha256": "602288fcf2c91591424fa64f5a4b7f28d6bacfa8b25edcd69af32955143e8ec4",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "12",
+              "summary": "Report",
+              "url": "https://example.org/item",
+              "storyDigest": "sha256:4ab738b0d89f6ca507df389327de3a0c75648896dcfc9879b7f9d738b7d72a0e"
+            }
+          ]
+        }
+      },
+      {
+        "name": "RSS duplicate description",
+        "adapterParity": false,
+        "borrowedParity": false,
+        "incumbent": {
+          "wholeOutputSha256": "0d54d28afbcac467c9f27c5afa344af535a5cb0c895489536907c30e131314a2",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "AI news",
+              "summary": "Report",
+              "url": "https://example.org/item",
+              "storyDigest": "sha256:034a2dedec76642f54cfed8e68022de6a518aa7a2ed904a3014441a37281b908"
+            }
+          ]
+        },
+        "adapted": {
+          "wholeOutputSha256": "3eb4a3f31dbf70fd578bcc2d789c20ed953c56dc4fe4ec0f3e1edd9f62ec2bd6",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "AI news",
+              "summary": "Report Second",
+              "url": "https://example.org/item",
+              "storyDigest": "sha256:78b19dfed4cee1c5695def11d2ea8702d4b22ee55dd7e0c0d26809ec5a0c3a5b"
+            }
+          ]
+        },
+        "translated": {
+          "wholeOutputSha256": "444720c815a5c894bac52971b73b8c1baf939a8717f3959c1a85151626340d1e",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "AI news",
+              "summary": "AI news",
+              "url": "https://example.org/item",
+              "storyDigest": "sha256:726f9cff27e23869d249dbffe860d6f0337011d49770b540478af6a6235c48c8"
+            }
+          ]
+        }
+      },
+      {
+        "name": "RSS content encoded only",
+        "adapterParity": true,
+        "borrowedParity": false,
+        "incumbent": {
+          "wholeOutputSha256": "225631d5290bd8684b2a2287f00611cf6a1277bddd52609ede8ab42e157e74da",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "AI news",
+              "summary": "AI news",
+              "url": "https://example.org/item",
+              "storyDigest": "sha256:9b39b59f5e88f5e875394bb9774092da84fa3cfd6c37bdd796f7f54d5f3caa7d"
+            }
+          ]
+        },
+        "adapted": {
+          "wholeOutputSha256": "225631d5290bd8684b2a2287f00611cf6a1277bddd52609ede8ab42e157e74da",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "AI news",
+              "summary": "AI news",
+              "url": "https://example.org/item",
+              "storyDigest": "sha256:9b39b59f5e88f5e875394bb9774092da84fa3cfd6c37bdd796f7f54d5f3caa7d"
+            }
+          ]
+        },
+        "translated": {
+          "wholeOutputSha256": "6e95b4bd0af1743ac9cd8fb6c3e1919863fb65eb9d1e909cad907d318eb16817",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "AI news",
+              "summary": "Full report",
+              "url": "https://example.org/item",
+              "storyDigest": "sha256:261125fe228eadcf8c66b8081fdd0050bfb57cc54c84f8f797a12c78465c8189"
+            }
+          ]
+        }
+      },
+      {
+        "name": "RSS invalidpubdate validDCdate",
+        "adapterParity": true,
+        "borrowedParity": false,
+        "incumbent": {
+          "wholeOutputSha256": "56c1821924e2fa33b7b30d4572bf9498a5f4f0eaf533e66d704148d8fd1b5463",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "AI news",
+              "summary": "Report",
+              "url": "https://example.org/item",
+              "storyDigest": "sha256:2898092d5c3e254b2732b9c966d547fa02167732c7635e677b27b3cd4145f4d5"
+            }
+          ]
+        },
+        "adapted": {
+          "wholeOutputSha256": "56c1821924e2fa33b7b30d4572bf9498a5f4f0eaf533e66d704148d8fd1b5463",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "AI news",
+              "summary": "Report",
+              "url": "https://example.org/item",
+              "storyDigest": "sha256:2898092d5c3e254b2732b9c966d547fa02167732c7635e677b27b3cd4145f4d5"
+            }
+          ]
+        },
+        "translated": {
+          "wholeOutputSha256": "3806a032edbb5728021fd7bce65a0df854a918eeddf106e6259c8e0bcfca855f",
+          "ok": true,
+          "state": "partial",
+          "rejected": 1,
+          "duplicates": 0,
+          "stories": []
+        }
+      },
+      {
+        "name": "Atom alternate link selected",
+        "adapterParity": true,
+        "borrowedParity": true,
+        "incumbent": {
+          "wholeOutputSha256": "e1da40ed9e7eb13b4000207164c839c8705374c72ae434167620376739bfcaa9",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "AI news",
+              "summary": "Report",
+              "url": "https://example.org/item",
+              "publishedAt": "2026-09-08T10:00:00.000Z",
+              "storyDigest": "sha256:a440a1c1b645d7ad7eb30e304d6283bfa7d370c9ea7733ee8a50f600a6fd03b3"
+            }
+          ]
+        },
+        "adapted": {
+          "wholeOutputSha256": "e1da40ed9e7eb13b4000207164c839c8705374c72ae434167620376739bfcaa9",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "AI news",
+              "summary": "Report",
+              "url": "https://example.org/item",
+              "publishedAt": "2026-09-08T10:00:00.000Z",
+              "storyDigest": "sha256:a440a1c1b645d7ad7eb30e304d6283bfa7d370c9ea7733ee8a50f600a6fd03b3"
+            }
+          ]
+        },
+        "translated": {
+          "wholeOutputSha256": "e1da40ed9e7eb13b4000207164c839c8705374c72ae434167620376739bfcaa9",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "AI news",
+              "summary": "Report",
+              "url": "https://example.org/item",
+              "publishedAt": "2026-09-08T10:00:00.000Z",
+              "storyDigest": "sha256:a440a1c1b645d7ad7eb30e304d6283bfa7d370c9ea7733ee8a50f600a6fd03b3"
+            }
+          ]
+        }
+      },
+      {
+        "name": "Atom empty published updated fallback",
+        "adapterParity": false,
+        "borrowedParity": false,
+        "incumbent": {
+          "wholeOutputSha256": "be04d77bde2d2a8626c74eba6eb4cc63dbf164dcdeb159a3d409bea52ddb92a0",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "AI news",
+              "summary": "Report",
+              "url": "https://example.org/item",
+              "publishedAt": "2026-09-08T10:00:00.000Z",
+              "storyDigest": "sha256:033a5d22466b167fc1e54071ae40639de35595e5cfbdc8b37e1687f5c609cd94"
+            }
+          ]
+        },
+        "adapted": {
+          "wholeOutputSha256": "aeaf2b9dbcc214d09c39143b401c71a15b93565b5f9e533bc5cf6a130550bfe8",
+          "ok": false,
+          "code": "invalid_feed"
+        },
+        "translated": {
+          "wholeOutputSha256": "41debaa408f61acc36c99423d19a5bb6a2e88908b7d715266b549d9ac67e7a0c",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "AI news",
+              "summary": "Report",
+              "url": "https://example.org/item",
+              "storyDigest": "sha256:4a11ec3bf273501c47ccd6b1d808a0c51efd385c4941e1aecf5e61d7df0b939e"
+            }
+          ]
+        }
+      },
+      {
+        "name": "Atom summary only",
+        "adapterParity": true,
+        "borrowedParity": false,
+        "incumbent": {
+          "wholeOutputSha256": "bb9d98306a300a07b5834b7fbf94495924cb9f7dac1b0d2e1fad05689bc736b9",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "AI news",
+              "summary": "AI news",
+              "url": "https://example.org/item",
+              "publishedAt": "2026-09-08T10:00:00.000Z",
+              "storyDigest": "sha256:9aeb0e6d3190e1fad192d1a69603b93a73c20285917f5b8e2b77fe80a44d53de"
+            }
+          ]
+        },
+        "adapted": {
+          "wholeOutputSha256": "bb9d98306a300a07b5834b7fbf94495924cb9f7dac1b0d2e1fad05689bc736b9",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "AI news",
+              "summary": "AI news",
+              "url": "https://example.org/item",
+              "publishedAt": "2026-09-08T10:00:00.000Z",
+              "storyDigest": "sha256:9aeb0e6d3190e1fad192d1a69603b93a73c20285917f5b8e2b77fe80a44d53de"
+            }
+          ]
+        },
+        "translated": {
+          "wholeOutputSha256": "e348bd081ea775e71ed213fe91f71c40e344365bcb0dd0d2626e76eda8feb181",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "AI news",
+              "summary": "Meaningful summary",
+              "url": "https://example.org/item",
+              "publishedAt": "2026-09-08T10:00:00.000Z",
+              "storyDigest": "sha256:8e9391d12c89772ac9f5c9fc47004ec4b4fa64d44a4e5edc8667863090b88a64"
+            }
+          ]
+        }
+      },
+      {
+        "name": "Atom XHTML mixedcontent",
+        "adapterParity": false,
+        "borrowedParity": false,
+        "incumbent": {
+          "wholeOutputSha256": "3ae1b3a52d0f61a9b4bf9ba37fc1727e59531f16eb6562f5215626d02c7c05cf",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "AI news",
+              "summary": "Before afterbold",
+              "url": "https://example.org/item",
+              "publishedAt": "2026-09-08T10:00:00.000Z",
+              "storyDigest": "sha256:3c860db33ec51c379c83f243ea7fe96c3c56b907296fb44edca4c9e1119d1c22"
+            }
+          ]
+        },
+        "adapted": {
+          "wholeOutputSha256": "5c5768a9a8424d945a0c07eafb26819a4acb5217cbd5925bb3499e9d6bc59e0f",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "AI news",
+              "summary": "boldBeforeafter",
+              "url": "https://example.org/item",
+              "publishedAt": "2026-09-08T10:00:00.000Z",
+              "storyDigest": "sha256:cc9f0cce498c26de8fea974630ccbac6bbe791250202a8de7f9e5e8649dcc1e6"
+            }
+          ]
+        },
+        "translated": {
+          "wholeOutputSha256": "bc442585984940f203608d32d7d963fdaf5c737abe3aefacd54c227667dee810",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "AI news",
+              "summary": "AI news",
+              "url": "https://example.org/item",
+              "publishedAt": "2026-09-08T10:00:00.000Z",
+              "storyDigest": "sha256:3236f2ef5ecb652d6e631bf1538093d4082106416218a316307f60ddddb76546"
+            }
+          ]
+        }
+      },
+      {
+        "name": "Atom duplicate content",
+        "adapterParity": false,
+        "borrowedParity": false,
+        "incumbent": {
+          "wholeOutputSha256": "1cdb53f16fe293822b26de0b35cf221845cdf23a0df7863b4d649f772148823d",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "AI news",
+              "summary": "First",
+              "url": "https://example.org/item",
+              "publishedAt": "2026-09-08T10:00:00.000Z",
+              "storyDigest": "sha256:44fe1b0f73dee2b15d09cb5065aed9fc803e1e4c61afc6a65f82c20596230840"
+            }
+          ]
+        },
+        "adapted": {
+          "wholeOutputSha256": "b6b6007dca922e84f85b3bded4056dfa5d0f08dea4eb9afa841ce531b90ed4a3",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "AI news",
+              "summary": "First Second",
+              "url": "https://example.org/item",
+              "publishedAt": "2026-09-08T10:00:00.000Z",
+              "storyDigest": "sha256:c8c35a9c0469c66eca37b11cb4b81d57ab5aa72d81ed6c0aa374ad7fd0061e00"
+            }
+          ]
+        },
+        "translated": {
+          "wholeOutputSha256": "b72f0ee73a243191399b76346a5487046838f59ccec67cb01e6561408bcf2e99",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "AI news",
+              "summary": "AI news",
+              "url": "https://example.org/item",
+              "publishedAt": "2026-09-08T10:00:00.000Z",
+              "storyDigest": "sha256:c291a2f013d1e69faab7304d4934bb3a8c91b65484a2ed36391fa34e9ac95d66"
+            }
+          ]
+        }
+      },
+      {
+        "name": "RSS missing title",
+        "adapterParity": true,
+        "borrowedParity": false,
+        "incumbent": {
+          "wholeOutputSha256": "05c6e0549d5f72acff1a538638de71e6fc31a30fbbf8c83df6a86286644103bf",
+          "ok": true,
+          "state": "partial",
+          "rejected": 1,
+          "duplicates": 0,
+          "stories": []
+        },
+        "adapted": {
+          "wholeOutputSha256": "05c6e0549d5f72acff1a538638de71e6fc31a30fbbf8c83df6a86286644103bf",
+          "ok": true,
+          "state": "partial",
+          "rejected": 1,
+          "duplicates": 0,
+          "stories": []
+        },
+        "translated": {
+          "wholeOutputSha256": "02241fc4227a3adb4fac2933f64009c9d002e75c89e3fd51ab9b4a89a69d082a",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "Untitled update",
+              "summary": "Report",
+              "url": "https://example.org/item",
+              "storyDigest": "sha256:4a7a023f02cb4df100ee97ba2d8d2c3ae3d3cdda29c8bf10ed2c0d5c81c85f16"
+            }
+          ]
+        }
+      },
+      {
+        "name": "RSS relative URL",
+        "adapterParity": true,
+        "borrowedParity": false,
+        "incumbent": {
+          "wholeOutputSha256": "504209b8ff8aa9c3029ca4cb7bdc1a72131e315f10e9be22dfd96d4997efe27b",
+          "ok": true,
+          "state": "partial",
+          "rejected": 1,
+          "duplicates": 0,
+          "stories": []
+        },
+        "adapted": {
+          "wholeOutputSha256": "504209b8ff8aa9c3029ca4cb7bdc1a72131e315f10e9be22dfd96d4997efe27b",
+          "ok": true,
+          "state": "partial",
+          "rejected": 1,
+          "duplicates": 0,
+          "stories": []
+        },
+        "translated": {
+          "wholeOutputSha256": "9407648a04ef4c81cbb800505048cccbe2a7bebcd54608e5da00ce6f7accdd8e",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "AI news",
+              "summary": "Report",
+              "url": "https://example.org/item",
+              "storyDigest": "sha256:570d69aa8495e7504d8dfb2445eab703378ec35bb2d7436d7a5776c31a6dcba1"
+            }
+          ]
+        }
+      },
+      {
+        "name": "RSS long summary",
+        "adapterParity": true,
+        "borrowedParity": false,
+        "incumbent": {
+          "wholeOutputSha256": "822f5448dade1caac6c2c357a185bc7e587312c29c2e6aa0779c578ba35c3fcc",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "AI news",
+              "summary": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+              "url": "https://example.org/item",
+              "storyDigest": "sha256:3095df6c2fc5358cf91327bb869e0eb833a6b187a2b9f5207a91d43cd1c3b72e"
+            }
+          ]
+        },
+        "adapted": {
+          "wholeOutputSha256": "822f5448dade1caac6c2c357a185bc7e587312c29c2e6aa0779c578ba35c3fcc",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "AI news",
+              "summary": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+              "url": "https://example.org/item",
+              "storyDigest": "sha256:3095df6c2fc5358cf91327bb869e0eb833a6b187a2b9f5207a91d43cd1c3b72e"
+            }
+          ]
+        },
+        "translated": {
+          "wholeOutputSha256": "57d7b4cda89f51c7a241d3063cb357f2ef38fb292722625d419f2a5bad07660d",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "AI news",
+              "summary": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+              "url": "https://example.org/item",
+              "storyDigest": "sha256:69978ccaa913cd31ca99f634325336ae725ef3db709b6293ccadbf35d2413676"
+            }
+          ]
+        }
+      },
+      {
+        "name": "RSS multiple links",
+        "adapterParity": true,
+        "borrowedParity": true,
+        "incumbent": {
+          "wholeOutputSha256": "47d9778188c75fc719c498bbadee1900ac2e892b4ccc47e7533408181c415206",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "AI news",
+              "summary": "Report",
+              "url": "https://example.org/item",
+              "storyDigest": "sha256:a6f3e21e134bdc97d47f5cba31e61e1f920289fad4031232601d82ccccfe88a9"
+            }
+          ]
+        },
+        "adapted": {
+          "wholeOutputSha256": "47d9778188c75fc719c498bbadee1900ac2e892b4ccc47e7533408181c415206",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "AI news",
+              "summary": "Report",
+              "url": "https://example.org/item",
+              "storyDigest": "sha256:a6f3e21e134bdc97d47f5cba31e61e1f920289fad4031232601d82ccccfe88a9"
+            }
+          ]
+        },
+        "translated": {
+          "wholeOutputSha256": "47d9778188c75fc719c498bbadee1900ac2e892b4ccc47e7533408181c415206",
+          "ok": true,
+          "state": "available",
+          "rejected": 0,
+          "duplicates": 0,
+          "stories": [
+            {
+              "title": "AI news",
+              "summary": "Report",
+              "url": "https://example.org/item",
+              "storyDigest": "sha256:a6f3e21e134bdc97d47f5cba31e61e1f920289fad4031232601d82ccccfe88a9"
+            }
+          ]
+        }
+      },
+      {
+        "name": "existing multibyte bytecap",
+        "adapterParity": true,
+        "borrowedParity": true,
+        "incumbent": {
+          "wholeOutputSha256": "7c2762def6160be1a4533de98f949900849cbf022235c34a1f0dd93bcc58e1e3",
+          "ok": false,
+          "code": "feed_limit_exceeded"
+        },
+        "adapted": {
+          "wholeOutputSha256": "7c2762def6160be1a4533de98f949900849cbf022235c34a1f0dd93bcc58e1e3",
+          "ok": false,
+          "code": "feed_limit_exceeded"
+        },
+        "translated": {
+          "wholeOutputSha256": "7c2762def6160be1a4533de98f949900849cbf022235c34a1f0dd93bcc58e1e3",
+          "ok": false,
+          "code": "feed_limit_exceeded"
+        }
+      },
+      {
+        "name": "existing exact itemcap",
+        "adapterParity": true,
+        "borrowedParity": true,
+        "incumbent": {
+          "wholeOutputSha256": "7c2762def6160be1a4533de98f949900849cbf022235c34a1f0dd93bcc58e1e3",
+          "ok": false,
+          "code": "feed_limit_exceeded"
+        },
+        "adapted": {
+          "wholeOutputSha256": "7c2762def6160be1a4533de98f949900849cbf022235c34a1f0dd93bcc58e1e3",
+          "ok": false,
+          "code": "feed_limit_exceeded"
+        },
+        "translated": {
+          "wholeOutputSha256": "7c2762def6160be1a4533de98f949900849cbf022235c34a1f0dd93bcc58e1e3",
+          "ok": false,
+          "code": "feed_limit_exceeded"
+        }
+      }
+    ],
+    "summary": {
+      "cases": 18,
+      "adapterParity": 11,
+      "borrowedParity": 4,
+      "adapterMismatches": [
+        "prefixed Atom",
+        "RSS mixed inline title",
+        "RSS duplicate title",
+        "RSS duplicate description",
+        "Atom empty published updated fallback",
+        "Atom XHTML mixedcontent",
+        "Atom duplicate content"
+      ],
+      "borrowedMismatches": [
+        "prefixed Atom",
+        "RSS mixed inline title",
+        "RSS duplicate title",
+        "RSS numeric leadingzero title",
+        "RSS duplicate description",
+        "RSS content encoded only",
+        "RSS invalidpubdate validDCdate",
+        "Atom empty published updated fallback",
+        "Atom summary only",
+        "Atom XHTML mixedcontent",
+        "Atom duplicate content",
+        "RSS missing title",
+        "RSS relative URL",
+        "RSS long summary"
+      ]
+    }
+  }
+}
