@@ -2,7 +2,7 @@ import { verifyServicePackages } from "./conformance";
 
 export type ServicePackagePlatform = "linux" | "macos" | "windows";
 export type ServicePackageDiagnosticCode =
-  | "ready_for_owner_start"
+  | "continuous_service_not_available"
   | "configuration_invalid"
   | "state_incompatible"
   | "runtime_missing"
@@ -57,5 +57,6 @@ export async function diagnoseServicePackage(input: ServicePackageDiagnosticInpu
   if (input.nativeEvidenceClaim === true) {
     return { platform: input.platform, code: "native_evidence_required", checks: ["native claim requires owner rehearsal"] };
   }
-  return { platform: input.platform, code: "ready_for_owner_start", checks: ["static package and configuration shape accepted"] };
+  return { platform: input.platform, code: "continuous_service_not_available",
+    checks: ["historical template only; static shape is not executable service readiness"] };
 }

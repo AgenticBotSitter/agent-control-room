@@ -64,6 +64,13 @@ this document. The source changes below do not establish production readiness.
   checks; unknown projects have no fallback. See `MULTI_PROJECT_PLANNING_DELIVERY.md`.
   This removes the single-template source limitation, not the need to approve and
   configure each project's execution resources or qualify the actual fleet.
+- The missing node entrypoint now has an explicit one-task Hermes launcher and a
+  fixed compiled export. It composes existing runtime/HTTPS components from protected
+  operator-supplied resources, requires `initial` or `recover`, and never retries.
+  See `packages/control-room-node-service/README.md`. Historical continuous-service
+  templates are non-installable; static diagnostics no longer claim startup readiness.
+  This does not supply real credential/journal adapters, a continuous multi-job
+  worker, Windows ACL handling, Codex runtime support or native host qualification.
 
 The shared primary's storage persistence, dedicated provisioning, actual restore,
 supervisor/account, real verified owner subject and authorized startup remain

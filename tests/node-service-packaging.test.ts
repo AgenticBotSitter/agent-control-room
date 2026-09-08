@@ -19,10 +19,20 @@ const validMacInput = {
 };
 
 test("static diagnostics expose only safe status codes and never operate a supervisor", async () => {
-  assert.equal((await diagnoseServicePackage(validMacInput)).code, "ready_for_owner_start");
+  assert.equal((await diagnoseServicePackage(validMacInput)).code, "continuous_service_not_available");
   assert.equal((await diagnoseServicePackage({ ...validMacInput, configPath: "relative-config" })).code, "configuration_invalid");
   assert.equal((await diagnoseServicePackage({ ...validMacInput, runtimePresent: false })).code, "runtime_missing");
   assert.equal((await diagnoseServicePackage({ ...validMacInput, nativeEvidenceClaim: true })).code, "native_evidence_required");
+});
+
+test("valid paths and supplied runtime presence never certify continuous service readiness", async () => {
+  for (const platform of ["macos", "linux", "windows"] as const) {
+    const input = platform === "windows" ? { runtimePath: "C:/cr/node.exe", releaseDirectory: "C:/cr/release",
+      configPath: "C:/cr/config", stateRoot: "C:/cr/state", logRoot: "C:/cr/log" } : validMacInput;
+    const result = await diagnoseServicePackage({ ...input, platform, runtimePresent: true, systemdAvailable: true });
+    assert.equal(result.code, "continuous_service_not_available");
+    assert.doesNotMatch(JSON.stringify(result), /C:\/cr|\/opt\/|\/Library\//);
+  }
 });
 
 test("linux diagnostics visibly reject a non-systemd context without attempting an alternate supervisor", async () => {

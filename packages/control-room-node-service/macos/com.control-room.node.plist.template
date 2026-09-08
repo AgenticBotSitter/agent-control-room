@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Platform: macos-launchd -->
+<!-- Historical continuous-service design reference. NON-INSTALLABLE.
+     Do not substitute the one-task launcher; automatic restart is not recovery authority. -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>

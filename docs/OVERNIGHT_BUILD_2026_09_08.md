@@ -693,3 +693,46 @@ two project requests inside one restricted application, verifies captured templa
 bytes and no attempts, then confirms both owned pools close once.
 No live effects or installation. See `MULTI_PROJECT_PLANNING_DELIVERY.md` for the
 configuration contract, operator responsibilities and evidence limits.
+
+### Resume checkpoint after multi-project integration
+
+`c626687` is committed and pushed to the authorized private branch. No open PR
+was present; no PR/merge/Actions dispatch or production effect occurred. Final
+follow-up session 62504 exited zero (39 checks, TypeScript, lint); push session 8275
+exited zero. Worktree has only the preserved unrelated private notes/image before
+this local checkpoint. The fixed deadline remains 12:40:58 UTC; clock at this batch
+was 08:22:01 UTC. The goal is not complete: live owner signing/custody, executable
+fleet setup, production storage/restore/supervisor/login and real task acceptance
+remain required. A read-only agent audit is checking actual connector entrypoint and
+packaging gaps next, so subsequent work can target the critical path rather than
+repeat completed source tests or polish unrelated screens.
+
+## Explicit private one-task node launcher
+
+The read-only packaging audit confirmed the old supervisor templates referenced
+nonexistent `node-service.js`, while no executable composed the existing native
+runtime and HTTPS connector. Added `scripts/run-private-node.mjs` and fixed compiled
+`nodeConnector.js` export. Protected operator code supplies existing typed resources;
+the command owns one explicit initial/recover attempt, drains runtime before releasing
+journals, prints fixed summaries and never retries. No protocol, credential source,
+listener, installer, runtime authority or automatic service was invented.
+
+Independent review found an unbounded resource-close await. Corrected with bounded
+cleanup observation, preserving resources if runtime drain remains uncertain. The
+regression uses fake timers; documentation explicitly says underlying timed-out
+cleanup may continue and acquisition cancellation is cooperative. Re-review found
+no further concrete issue. Unix-only file permission validation is explicit;
+Windows ACL handling remains required rather than weakening the gate.
+
+Historical platform templates are marked non-installable and no longer demonstrate
+automatic restart. Static diagnostics now return continuous_service_not_available
+for valid-shaped inputs instead of incorrectly declaring owner-start readiness.
+The package README distinguishes explicit task execution from continuous fleet use.
+
+Seven launcher tests and four package checks first passed, followed by TypeScript
+and full lint (session 72961 exit zero). Expanded sequential launcher, connector
+dispatch/recovery/denial and synthetic TLS regressions passed; fresh VPS build,
+the actual compiled composition denial test, TypeScript and full lint passed
+(session 76187 exit zero). The compiled test is denied before credentials/network/
+native execution and must not be reported as successful physical task delivery.
+No downloads, live effects, production changes or native qualifications occurred.

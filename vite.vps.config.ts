@@ -14,6 +14,7 @@ export default defineConfig({
       ideaAuthoring: "src/web/v1/private-idea-authoring-startup.ts",
       ownerBootstrap: "src/web/v1/private-owner-bootstrap.ts",
       taskDatabaseCheck: "src/web/v1/private-task-database-check.ts",
+      nodeConnector: "src/node-bridge/private-node-entry.ts",
       serving: "src/web/v1/private-serving.ts", rehearsal: "src/web/v1/private-database-rehearsal.ts",
       preparation: "src/web/v1/private-fixture-preparation.ts", taskApplication: "src/web/v1/private-task-application.ts",
       taskBootstrap: "src/web/v1/private-task-startup.ts", nativeQueueFactories: "src/web/v1/installed-native-queue.ts",

@@ -36,16 +36,19 @@ export async function verifyServicePackages(): Promise<ServicePackageConformance
   ] as const) {
     rejectForbidden(text);
     const checks: string[] = [];
+    requireText(text, "NON-INSTALLABLE", "historical reference only", checks);
+    if (text.includes("run-private-node.mjs") || /Restart=(?!no\b)\S+|action="restart"/.test(text))
+      throw new Error("one-task substitution or automatic restart is forbidden");
     for (const placeholder of placeholders) requireText(text, placeholder, `placeholder ${placeholder}`, checks);
     results.push({ platform, file, checks });
   }
   requireText(linux, "NoNewPrivileges=true", "linux no-new-privileges", results[0].checks);
   requireText(linux, "KillMode=control-group", "linux process-group cancellation", results[0].checks);
-  requireText(linux, "RestartSec=5", "linux bounded restart", results[0].checks);
+  requireText(linux, "Restart=no", "linux automatic restart disabled", results[0].checks);
   requireText(linux, "Platform: linux-systemd", "linux platform marker", results[0].checks);
   requireText(macos, "LimitLoadToSessionType", "macOS Aqua session guard", results[1].checks);
   requireText(macos, "<string>Aqua</string>", "macOS excludes LaunchDaemon context", results[1].checks);
-  requireText(macos, "ThrottleInterval", "macOS bounded restart", results[1].checks);
+  requireText(macos, "ThrottleInterval", "macOS historical launch throttle", results[1].checks);
   requireText(macos, "Platform: macos-launchd", "macOS platform marker", results[1].checks);
   requireText(windows, "<id>control-room-node</id>", "windows stable identity", results[2].checks);
   requireText(windows, "<stoptimeout>30sec</stoptimeout>", "windows bounded stop", results[2].checks);

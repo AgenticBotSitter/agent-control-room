@@ -6,6 +6,14 @@ Use the exact private-branch SHA supplied with this handoff as the deployment pi
 
 ## Supplied
 
+- `scripts/run-private-node.mjs` and the compiled `nodeConnector.js` provide an
+  explicit one-task Hermes command, not a continuous service or approved live setup.
+  See `packages/control-room-node-service/README.md` for the protected configuration,
+  ownership, explicit recovery and evidence limits. Do not install the historical
+  node service templates or substitute this command into an automatic restart loop.
+  Real enrollment, persistent journals, credential/trust ports and runtime setup
+  remain separately required; the Windows permission gate is not implemented.
+
 - `deploy/operator-config.mjs`: protected single-site website-only settings.
 - `scripts/private-deployment-inventory.mjs`: 64 migration and web-role source hashes;
   select `--profile idea-authoring` to include the optional writer-role and native

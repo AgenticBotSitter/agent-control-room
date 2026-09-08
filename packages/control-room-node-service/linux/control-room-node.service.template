@@ -1,4 +1,6 @@
 # Platform: linux-systemd
+# Historical continuous-service design reference. NON-INSTALLABLE.
+# Do not substitute the one-task launcher; automatic restart is not recovery authority.
 [Unit]
 Description=Control Room Node Bridge
 After=network-online.target
@@ -16,8 +18,7 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths={{CONTROL_ROOM_NODE_STATE_ROOT}} {{CONTROL_ROOM_NODE_LOG_ROOT}}
-Restart=on-failure
-RestartSec=5
+Restart=no
 TimeoutStopSec=30
 KillMode=control-group
 
