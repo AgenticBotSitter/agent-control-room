@@ -47,6 +47,12 @@ this document. The source changes below do not establish production readiness.
 - Full sequential Idea/ABS delivery plus the authoring build command passed at
   this baseline. The latter compiled the release and passed 24 checks. No live
   owner login, database change, backup, deployment or provider call occurred.
+- An additional synthetic ABS journey now follows the collected article through
+  mounted news preparation and ordinary task save/replay into the exact planned
+  native task, protected result retrieval, verification, owner review and completion.
+  Run `pnpm test:abs-research-journey` for this path and its lifecycle regressions.
+  This joins existing components; it does not qualify live collection, installed
+  queue delivery, real research correctness or an actual agent/provider.
 
 The shared primary's storage persistence, dedicated provisioning, actual restore,
 supervisor/account, real verified owner subject and authorized startup remain

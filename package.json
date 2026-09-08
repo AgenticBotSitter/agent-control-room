@@ -7,6 +7,7 @@
     "node": ">=22.13.0"
   },
   "scripts": {
+    "test:abs-research-journey": "node --import tsx --test --test-concurrency=1 tests/abs-research-native-journey.test.ts tests/web-abs-research.test.ts tests/native-task-lifecycle-integration.test.ts tests/native-quality-completion.test.ts tests/canonical-approval-storage.test.ts",
     "test:news:startup": "node --import tsx --test tests/news-application-startup.test.ts tests/news-queue-worker-startup.test.ts tests/private-task-worker-application.test.ts tests/installed-native-queue.test.ts tests/web-task-startup.test.ts",
     "dev": "vinext dev",
     "build": "vinext build",

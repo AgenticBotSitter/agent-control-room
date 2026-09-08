@@ -8,9 +8,16 @@ import { computeAuthorityDigest, sha256Digest } from "../../src/security";
 import { FleetSignalStore } from "../../src/node-fleet/v1/fleet-signal-store";
 import type { FleetSignalEnvelope } from "../../src/node-fleet/v1/schemas";
 import type { DatabaseClient } from "../../src/persistence/database";
+import type { TaskDraft } from "../../src/web/v1/task-wire";
 
-export async function taskAssignmentFixture() {
+export type TaskSourcePreparation = (fixture: Awaited<ReturnType<typeof ownerReviewFixture>>) => Promise<{
+  draft: TaskDraft;
+  source: Awaited<ReturnType<Awaited<ReturnType<typeof ownerReviewFixture>>["tasks"]["propose"]>>;
+}>;
+
+export async function taskAssignmentFixture(prepareSource?: TaskSourcePreparation) {
   const f = await ownerReviewFixture();
+  try {
   const authority: NativeTaskTemplate["authority"] = { projectId: binding.projectId, allowedExecutor: "executor:hermes-native",
     allowedOperations: ["harness.hermes.native.start"], credentialRefs: ["credential:test"], filesystemRoots: [],
     networkPolicy: "allowlist", allowedNetworkDestinations: [enrollment.canonicalDestination], effectPolicy: "approval_required",
@@ -20,8 +27,12 @@ export async function taskAssignmentFixture() {
     instructions: "Use only the supplied information.", acceptanceProfileId: f.profile.id, acceptanceProfileDigest: sha256Digest(f.profile) };
   const plannerConfig = { template, integrityKey: new Uint8Array(32).fill(55), reviewIntegrityKey: f.reviewKey, checkpoints: f.checkpoints };
   const planner = new TaskExecutionPlanner(f.db, f.scope, plannerConfig, () => instant + 7000);
-  const source = await f.tasks.propose(f.identity, binding.projectId, taskDraft, "assignment-source-001");
-  const prepared = await planner.plan(f.identity, binding.projectId, source.receipt.jobId, sha256Digest(taskDraft));
+  // A workflow test may supply its real saved source in this same disposable database.
+  // The planner still derives/binds the exact draft digest, never a fixture-selected substitute.
+  const sourceInput = prepareSource ? await prepareSource(f) : {
+    draft: taskDraft, source: await f.tasks.propose(f.identity, binding.projectId, taskDraft, "assignment-source-001") };
+  const source = sourceInput.source;
+  const prepared = await planner.plan(f.identity, binding.projectId, source.receipt.jobId, sha256Digest(sourceInput.draft));
   const route: TaskAssignmentRoute = { nodeId: binding.nodeId, executorId: authority.allowedExecutor,
     capabilityProbeId: "harness.hermes.native.runs.v1", maxConcurrentTasks: 2, requiredScratchBytes: 100, leaseSeconds: 60 };
   const signals = new FleetSignalStore(f.db);
@@ -40,5 +51,6 @@ export async function taskAssignmentFixture() {
     new TaskAssignmentCoordinator(db, f.scope, planner, routes, clock);
   const coordinator = create();
   const assign = () => coordinator.assign(f.identity, binding.projectId, prepared.receipt.jobId, binding.nodeId, prepared.receipt.inputDigest);
-  return { ...f, source, prepared, planner, plannerConfig, route, signals, telemetry, capability, create, coordinator, assign };
+  return { ...f, source, sourceDraft: sourceInput.draft, prepared, planner, plannerConfig, route, signals, telemetry, capability, create, coordinator, assign };
+  } catch (error) { await f.close(); throw error; }
 }

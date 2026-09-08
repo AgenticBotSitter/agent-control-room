@@ -11,10 +11,11 @@ import { NativeResultSubmissionService } from "../../src/completion-gate/v1/nati
 import { NativeTaskResultService } from "../../src/node-control/native-task-result-service";
 import { binding, instant } from "../hermes-native-fixture";
 import { at, registration } from "../native-task-fixture";
+import type { TaskSourcePreparation } from "./task-assignment";
 
 export const qualityText = "# Result\nA useful synthetic document with an explicit result.\n# Evidence\nThe fixture supplied this evidence.\n";
-export async function nativeQualityCompletionFixture(text = qualityText) {
-  const x = await nativeTaskLifecycleFixture();
+export async function nativeQualityCompletionFixture(text = qualityText, prepareSource?: TaskSourcePreparation) {
+  const x = await nativeTaskLifecycleFixture({ prepareSource });
   try {
     await x.handoff.start(); const reviewPlan = await x.register(); await x.publish();
     x.advance(); await x.handoff.poll(); await x.publish();

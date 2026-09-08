@@ -577,3 +577,31 @@ lint subsequently passed with a fresh VPS artifact. Independent source review
 confirmed retention fixes with no concrete new defect. Fixtures exercise the actual
 read-gated panel projection and retained clients, not a mounted browser refresh.
 All live fleet, owner-signing and production acceptance gates remain outstanding.
+
+## Join article discovery to the exact completed research task
+
+Closed a synthetic integration evidence gap rather than implementing another
+collector or executor. The existing borrowed Control Center collection receives
+injected HTML/feed responses, stores the article, and the mounted private API
+prepares its verification-first draft. The ordinary task-save endpoint saves and
+replays that draft without starting work. An optional source-preparation callback
+in the existing lifecycle fixtures carries this exact saved draft and its digest
+through planning, assignment, signed approval and synthetic native execution.
+The test checks the new source/execution lineage (not unrelated historical fixture
+rows), protected result retrieval, exact output bytes, owner review, completion,
+and replay with only one synthetic native start.
+
+The first new test run reached the result but exposed an incorrect test expectation
+equating source-draft and execution-input digests. Those are different contracts;
+the corrected assertions check sourceInputDigest, exact prompt and execution digest
+separately. The final focused journey including unauthorized/authorized HTTP result
+reads passed 1/1. Existing canonical approval/lifecycle/quality regressions passed
+56/56, TypeScript and full lint. Independent source review found no concrete defect.
+The focused sequential command is `pnpm test:abs-research-journey`.
+Its combined final run passed 61/61, followed by TypeScript and full lint.
+
+Scope: injected collection authorization/transport, PGlite and in-process controllers,
+synthetic owner/node credentials and structural document acceptance. This does not
+exercise real browsers, pg-boss workers, PostgreSQL or providers; it does not verify
+the truth of research conclusions. No runtime source behavior or production state
+changed. Source preparation failure now closes its disposable base fixture.
