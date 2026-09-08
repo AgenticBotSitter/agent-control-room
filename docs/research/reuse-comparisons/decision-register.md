@@ -90,3 +90,47 @@ outside this proven scope or a concrete resolution mismatch.
 
 Evidence: [prepared comparison](f9-prepared-fit.md),
 [root review](f9-prepared-review.md), [prior contenders](f9-next-fit.md).
+
+## DR-04 — maintained public collector for runtime original text attachments
+
+Select `@cyclonedx/cyclonedx-library@10.2.0` public
+`Contrib/License.Utils.LicenseEvidenceGatherer` for the narrow per-package original
+text responsibility, paired with DR-03's native pnpm identity/path graph and the
+existing four checksum-bound notice exceptions. Do not adopt the npm CLI's graph
+reader or add another generic filesystem/package scanner.
+
+Actual current-runtime fit supplies36 original attachments across35 identities;
+the same collector consumes four explicitly staged retained texts byte-for-byte,
+giving39 identities and40 attachments. Both type-fest originals survive. The final
+viable checker4.4.2 per-path alternative executes successfully but selects one text
+and normalizes it; preserving multiple originals would require more extraction and
+staging. The plugin likewise selects one license text, so keep its separately tested
+bundle-module discovery responsibility. Native pnpm lacks full texts; the CLI graph
+failure does not invalidate this supported public library interface.
+
+This is an engineering preservation choice, not a claim that an OR-license requires
+shipping both alternatives or that checker users violate licenses. Retain original
+source names/digests, exact exceptions and their unresolved source-correspondence
+qualifications. The public library's default symlink following and limited filename
+patterns require the reviewed filesystem port and explicit exception records, not
+trust in a source comment or silent omission of missing text.
+
+Implementation cost: one build-time package (8MiB observed installed/cache cohort,
+not server RAM), no optional validator peers for this tested entry, no service,
+database migration or upstream fork. Keep library Apache license/NOTICE. Preserve
+existing checksum/completeness/build-binding glue; production deletion now0. Avoided
+work is generic matching/attachment encoding and duplicate graph traversal, not all
+attribution logic. See scoped rubric with unknown comparative performance in the
+runtime fit report; no unmeasured speed advantage is claimed.
+
+Remaining acceptance: bounded snapshot-safe filesystem reads (lstat/read alone is
+not atomic), actual release/bundle/copied/asset/nested-vendor reconciliation, target
+platform package variants and final reviewed output. This decision closes text-tool
+selection, not RC10, legal clearance or publication. Reopen for a changed runtime
+graph, required unsupported text format, material upstream change or a maintained
+alternative offering the same original-text behavior with lower demonstrated cost.
+
+Evidence: [actual runtime fit](f9-runtime-text-fit.md),
+[runtime review](f9-runtime-text-review.md),
+[final per-path alternative](f9-checker-path-fit.md),
+[independent root review](f9-checker-path-review.md).

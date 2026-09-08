@@ -1,0 +1,16 @@
+{
+  "command": "node --import tsx --test research/reuse-comparisons/cross-journey-revision.test.ts",
+  "stageZero": "ready_for_runtime_check; Node>=22.13.0; pnpm11.19.0; lock3d98f907941fa407b82b4af1e9475acb2f93f92a427cea666edeb652ad92a8c8",
+  "initialRun": {
+    "exitCode": 0,
+    "testsPassed": 1,
+    "durationMs": 2289.806
+  },
+  "strengthenedRun": {
+    "exitCode": 0,
+    "initialStdout": "TAP version 13\nExperimentalWarning: SQLite is an experimental feature and might change at any time (existing runtime warning)",
+    "terminalStdout": "# Subtest: research: borrowed discovery result carries exact source lineage into owner-requested revision\nok 1 - research: borrowed discovery result carries exact source lineage into owner-requested revision\n  ---\n  duration_ms: 1895.283666\n  type: 'test'\n  ...\n# {\"scope\":\"same child signed-memory bridge and synthetic results, not live execution\",\"childRevisionPlan\":\"v2\",\"parentPacketRejected\":true,\"freshChildPacket\":true,\"parentUnchanged\":true,\"childState\":\"succeeded\",\"childLease\":\"released\",\"completionReplayed\":true,\"parentEffectCount\":1,\"childEffectCount\":1,\"sharedFleetDedup\":false}\n1..1\n# tests 1\n# suites 0\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 2309.877292\n"
+  },
+  "scope": "One existing PGlite fixture, existing signed in-memory bridge and synthetic provider status/results. No socket, native agent, provider, download or additional database.",
+  "cleanup": "Caller test hooks registered for local stores, memory bridge journal, intake handler, bridge/session/handoff; parent fixture closes existing database."
+}

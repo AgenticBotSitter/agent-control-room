@@ -97,8 +97,13 @@ current infrastructure. Existing generic tests already cover lost revision-plan
 acknowledgment, cancellation, restricted HTTP and changed feedback; reuse them at
 their exact scope rather than write duplicates.
 
-Still open: the revision's fresh approval/dispatch, actual second result
-and review; joined restart/restore and late/uncertain-result behavior; actual native
+The [joined-child extension](cross-journey-child-fit.md) now proves fresh child
+approval/dispatch, a distinct synthetic second result, its own verification/review,
+canonical completion and receipt/state replay in the same database. Independent
+[source review](cross-journey-child-review.md) accepts that bounded evidence. Root
+also ran focused ESLint on the two research TypeScript files successfully.
+
+Still open: joined restart/restore and late/uncertain-result behavior; actual native
 SDK/queue contenders through this journey; real PG17 roles/concurrency; browser and
 provider-qualified workflow. A proposed child is **not** a completed revised task.
 The initial accepted-completion test remains unchanged alongside this changes-requested

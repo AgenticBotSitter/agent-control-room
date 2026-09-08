@@ -11,6 +11,8 @@ import { newsPageSchema, newsResearchPreviewSchema } from "../../src/web/v1/news
 import { taskReceiptSchema } from "../../src/web/v1/task-wire";
 import { sha256Digest } from "../../src/security";
 import { createTaskHttpHandler } from "../../src/web/v1/task-http";
+import { childLifecycleFixture } from "./cross-journey-child-helper";
+import { WebTaskReviewService } from "../../src/web/v1/task-review-service";
 
 test("research: borrowed discovery result carries exact source lineage into owner-requested revision", async t => {
   // In-process application integration only: no sockets, providers or pg-boss
@@ -158,4 +160,72 @@ test("research: borrowed discovery result carries exact source lineage into owne
   assert.deepEqual((await x.f.db.query("SELECT * FROM control_harness_runs ORDER BY id")).rows, runsBeforeAssignment);
   assert.deepEqual(await x.states(), released);
   assert.equal(x.local.effects.countFull(), 1);
+  const childArgs = [x.f.identity, binding.projectId, child.receipt.jobId, plan.job.inputDigest] as const;
+  const parentPacket = await x.f.coordinator.readNativeApproval(...x.f.args);
+  await assert.rejects(x.f.coordinator.storeNativeApproval(...childArgs, x.f.packet, x.f.abort.signal));
+  assert.deepEqual(await x.f.coordinator.readNativeApproval(...x.f.args), parentPacket);
+  const childPrepared = await x.f.coordinator.prepareNativeApproval(...childArgs);
+  const packet = { schema: "control-room.native-task-approval-packet/v1" as const,
+    approval: x.f.sign({ ...x.f.packet.approval.body, jobId: childPrepared.request.jobId,
+      attemptId: childPrepared.request.attemptId, operationDigest: childPrepared.request.operationDigest,
+      issuedAt: new Date(x.f.clock()).toISOString(), expiresAt: new Date(childPrepared.start.deadline).toISOString(),
+      nonce: "c3ludGhldGljLWNoaWxkLW5vbmNl" }),
+    recovery: x.f.sign({ ...x.f.packet.recovery.body, bindingDigest: sha256Digest(childPrepared.binding),
+      issuedAt: x.f.clock(), expiresAt: childPrepared.start.deadline + 120_000, nonce: "synthetic-child-recovery-nonce" }) };
+  assert.notEqual(sha256Digest(packet), sha256Digest(x.f.packet));
+  assert.notEqual(packet.approval.body.attemptId, x.f.packet.approval.body.attemptId);
+  const childFixture = { ...x.f, args: childArgs, prepared: childPrepared, packet,
+    assignmentFixture: { ...x.f.assignmentFixture, assign: async () => assigned },
+    save: () => x.f.coordinator.storeNativeApproval(...childArgs, packet, x.f.abort.signal) };
+  const y = await childLifecycleFixture(childFixture, close => { t.after(close); });
+  assert.notEqual(y.registration.id, x.registration.id);
+  assert.notEqual(y.registration.attemptId, x.registration.attemptId);
+  assert.equal(y.registration.jobId, child.receipt.jobId);
+  assert.equal(y.registration.nativeTask!.leaseId, assigned.receipt.leaseId);
+  await y.handoff.start(); const childReviewPlan = await y.register();
+  assert.equal(childReviewPlan.plan.schema, "control-room.native-review-plan/v2");
+  assert.deepEqual(childReviewPlan.plan.revision, plan.revision);
+  assert.deepEqual([childReviewPlan.plan.revision.fromJobId, childReviewPlan.plan.revision.fromRunId,
+    childReviewPlan.plan.revision.fromTargetId, childReviewPlan.plan.revision.fromTargetDigest,
+    childReviewPlan.plan.revision.fromContentHash, childReviewPlan.plan.revision.reviewId,
+    childReviewPlan.plan.revision.feedbackDigest], [x.registration.jobId, x.registration.id, x.target.id,
+    x.request.targetDigest, x.artifact.contentHash, review.receipt.reviewId, sha256Digest(value.feedback)]);
+  await y.publish();
+  y.advance(); await y.handoff.poll(); await y.publish();
+  const revisedText = `${qualityText}Source: ${article}\nStory: ${storyDigest}\nFeedback addressed: ${value.feedback}\n`;
+  y.advance(); y.setResult(revisedText); await y.handoff.poll(); const childCompleted = await y.publish();
+  const childArtifact = (await y.results.ingest(childCompleted.raw, new TextEncoder().encode(revisedText), y.options())).receipt;
+  assert.notEqual(childArtifact.artifactId, x.artifact.artifactId); assert.notEqual(childArtifact.contentHash, x.artifact.contentHash);
+  const childTarget = (await x.f.reviewStore.snapshot(binding.tenantId, childReviewPlan.plan.targetId)).target;
+  assert.notEqual(childTarget.id, x.target.id);
+  const childRequest = { tenantId: binding.tenantId, runId: y.registration.id,
+    targetDigest: sha256Digest(childTarget), contentHash: childArtifact.contentHash };
+  await assert.rejects(x.createCompletion().complete(childRequest, () => {}));
+  await x.createVerification().verify(childRequest, () => {});
+  await assert.rejects(x.createCompletion().complete(childRequest, () => {}));
+  const childReview = await new WebTaskReviewService(x.f.db, x.f.scope, x.f.ownerConfig, x.f.clock).record(
+    x.f.identity, binding.projectId, child.receipt.jobId, { artifactId: childArtifact.artifactId, targetId: childTarget.id,
+      targetDigest: childRequest.targetDigest, contentHash: childRequest.contentHash, decision: "accepted", feedback: "" },
+    "cross-journey-child-review-001");
+  assert.notEqual(childReview.receipt.reviewId, review.receipt.reviewId);
+  const childCompletion = await x.createCompletion().complete(childRequest, () => {});
+  assert.equal(childCompletion.replayed, false);
+  const childStates = async () => ({
+    job: await x.f.canonical.get(binding.tenantId, "job", y.registration.jobId),
+    attempt: await x.f.canonical.get(binding.tenantId, "attempt", y.registration.attemptId),
+    lease: await x.f.canonical.get(binding.tenantId, "lease", y.registration.nativeTask!.leaseId) });
+  const settledChild = await childStates();
+  assert.deepEqual([settledChild.job.state, settledChild.attempt.state, settledChild.lease.state], ["succeeded", "succeeded", "released"]);
+  const completionReplay = await x.createCompletion().complete(childRequest, () => {});
+  assert.equal(completionReplay.replayed, true); assert.deepEqual(completionReplay.receipt, childCompletion.receipt);
+  assert.deepEqual(await childStates(), settledChild);
+  assert.deepEqual(await x.f.coordinator.readNativeApproval(...x.f.args), parentPacket);
+  assert.equal(x.local.effects.countFull(), 1); assert.equal(y.local.effects.countFull(), 1);
+  assert.deepEqual((await y.results.ingest(childCompleted.raw, new TextEncoder().encode(revisedText), y.options())).receipt, childArtifact);
+  const finalPlan = await x.f.planner.read(child.receipt.jobId); assert.deepEqual(finalPlan, plan);
+  assert.deepEqual(await x.states(), released);
+  t.diagnostic(JSON.stringify({scope:"same child signed-memory bridge and synthetic results, not live execution",
+    childRevisionPlan:"v2", parentPacketRejected:true, freshChildPacket:true, parentUnchanged:true,
+    childState:"succeeded", childLease:"released", completionReplayed:true,
+    parentEffectCount:x.local.effects.countFull(), childEffectCount:y.local.effects.countFull(), sharedFleetDedup:false}));
 });

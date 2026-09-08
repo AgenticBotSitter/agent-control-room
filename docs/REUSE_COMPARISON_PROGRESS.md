@@ -49,6 +49,16 @@ These are feature-specific observations, not whole-product reliability rankings.
 
 Latest bounded comparisons:
 
+- [Same revision child through completion](research/reuse-comparisons/cross-journey-child-fit.md):
+  actual services now reject the parent's approval for the child, accept a fresh
+  synthetic child-bound packet, dispatch through signed memory frames, retain a new
+  result, require the child's own verification/review and settle/replay canonical
+  succeeded/succeeded/released states. Same PGlite database and original story lineage;
+  separate local journals and synthetic responses do not prove fleet or live agents.
+- DR-04 now selects the public CycloneDX library for runtime original-text gathering.
+  The remaining checker-per-path contender executes but selects/normalizes one text,
+  so it needs extra machinery for our multiple-original requirement. Runtime graph
+  and text tool selection are closed narrowly; complete release attribution remains.
 - Actual runtime text coverage now reaches all39 recorded runtime identities:
   the maintained gatherer returns36 attachments for35 packages, then four existing
   retained exceptions pass through it byte-for-byte, giving40 attachments total.
@@ -65,7 +75,8 @@ Latest bounded comparisons:
   actual public CycloneDX library preserves multiple original LICENSE/NOTICE texts
   that the bundle plugin's first-match behavior cannot. Filename, empty-result,
   duplicate and symlink limits remain explicit. Root review accepts fixture evidence;
-  actual39-package full-text/retained-exception coverage remains before selection.
+  the later actual39-package pass above closes that narrow coverage experiment.
+  Checker-per-path comparison and complete distribution attribution remain.
 - [Owner-bootstrap async contract](research/reuse-comparisons/f8-bootstrap-async-contract-fit.md):
   30 scenarios execute the actual bootstrap control flow with a delayed real Node
   verifier and fake persistence. Await-only negative controls reach simulated commit
@@ -111,8 +122,8 @@ preserves a full-capacity refusal, then uses existing quality reconciliation to
 release the parent's execution slot without accepting its result. The child receives
 a distinct lease at the unchanged limit and assignment replays without another run.
 This reuses existing production release logic; no new capacity engine is needed.
-Revised-task execution,
-restore and candidate transport/queue substitutions remain open. This closes a
+The later joined-child extension above adds synthetic revised-task execution and
+completion. Restore and candidate transport/queue substitutions remain open. This closes a
 specific baseline gap, not the full end-to-end live workflow.
 
 Latest concrete additions: [JWT library fit](research/reuse-comparisons/f8-jwt-fit.md)
