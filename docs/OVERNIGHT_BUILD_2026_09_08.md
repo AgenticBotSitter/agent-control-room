@@ -1068,3 +1068,31 @@ Fresh compiled session/startup checks passed all 13 cases plus final types/lint/
 (22661 exit zero). Clock 10:05:48 UTC, original deadline still 12:40:58 UTC. No
 verification process from this batch remains active. Local-only implementation is
 accepted as a partial server-side integration, not an operational fleet release.
+
+## Task-bound cleanup evidence consumer
+
+Implemented the missing read-only native cleanup consumer using existing pinned
+owner trust, artifact signatures, native run journal and effect store. Separate
+domain-separated owner acceptance binds exact enrollment, qualified producer and
+explicit per-run cleanup guarantees; the old profile acceptance is not upgraded.
+The protected producer snapshot must match exact run/binding/snapshot/marker with
+zero descendants/pending native requests and a freshness window at most 30 seconds.
+No producer, signature workflow, settlement, runtime wiring or capacity release was
+created. Tests keep real local run/claim records and synthetic accepted supervisor
+evidence, and assert accepted proof leaves both records and active capacity unchanged.
+
+Initial tests passed but types found narrowing errors from an arrow never-returning
+helper (96583 and 81103 exit two). Changed it to a declared never-returning function;
+types/lint passed (56279). Independent review found a genuine post-read expiry gap:
+the final synchronous evidence read could cross the earlier wall/monotonic checks.
+Added post-read wall-clock/cancel checks and a post-current monotonic check, with
+clock-advancing/cancelling source regressions (12236 exit zero, four tests/types/lint).
+Any failed verification/freshness check permanently closes that consumer instance;
+it cannot revive older proof. Durable restart revision guarantees remain the separately
+accepted producer's responsibility, not an in-memory verifier claim.
+
+Final five cleanup tests plus existing native profile tests passed 20 cases (47357),
+including altered identity/marker, forged acceptance, retained native observation
+changes, committed trust changes, source revision, pin close, cancellation and late
+reads. Independent re-review confirms the timing repair and no further concrete
+finding. No production evidence has been manufactured and no claim was freed.

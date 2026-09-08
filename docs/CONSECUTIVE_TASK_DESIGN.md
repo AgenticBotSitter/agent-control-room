@@ -223,3 +223,9 @@ destination/cleanup receipt. The next local implementation must define and verif
 exact task-bound cleanup evidence, with a host producer still requiring separately
 authorized qualification. Codex's descendant-aware cancellation evidence is scoped
 to its own executor and cannot simply be relabeled Hermes evidence.
+
+The local read-only consumer is now specified in `NATIVE_CLEANUP_EVIDENCE_DESIGN.md`
+and implemented as `createNativeCleanupEvidence`. It requires a separate scoped
+owner acceptance for the cleanup producer and exact supervised run/marker evidence.
+It deliberately does not settle the effect, create a producer, or enable the next
+task. Physical host qualification and lifecycle settlement remain unfinished.
