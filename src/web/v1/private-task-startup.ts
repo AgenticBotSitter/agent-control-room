@@ -1,4 +1,3 @@
-import { assertNoSecretMaterial } from "../../security";
 import { localId } from "../../harness/v1/native-run-identifiers";
 import { createPrivatePostgresDatabase, validatePrivatePostgresConfiguration, type PrivatePostgresConfiguration } from "./private-postgres";
 import { verifyPrivateDatabase, verifyTaskCoordinatorDatabase, verifyNativeResultDatabase, verifyNativeEvidenceDatabase, verifyNativeSessionDatabase, verifyIdeaCreationDatabase, verifyIdeaRuntimeDatabase, verifyPrivateIdeaAdapter } from "./private-database-preflight";
@@ -7,7 +6,7 @@ import { ideaParticipantSchemaV1 } from "../../idea-lab/v1/schemas";
 import { validatePrivateStartupConfiguration, type PrivateStartupConfiguration } from "./private-startup";
 import { installPrivateApplication } from "./private-process";
 import { createPrivateTaskApplication } from "./private-task-application";
-import { nativeTaskTemplateSchema } from "./task-execution-planner";
+import { captureNativeTaskTemplates } from "./task-execution-planner";
 import { validateTaskAssignmentRoutes, validateNativeApprovalEnrollments } from "./task-assignment-coordinator";
 import type { TaskCoordinatorConfiguration, TaskCoordinatorDatabase } from "./task-coordinator-lifecycle";
 import { captureTaskQualityConfiguration, validateTaskQualityKeys } from "./task-quality-coordinator";
@@ -50,11 +49,10 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
     if (database.host !== web.database.host || database.port !== web.database.port || database.database !== web.database.database
       || database.username === web.database.username) throw new Error();
     const key = (value: Uint8Array) => { if (!(value instanceof Uint8Array) || value.length !== 32) throw new Error(); return Uint8Array.from(value); };
-    const p = input.coordinator.planning, template = nativeTaskTemplateSchema.parse(p.template);
-    assertNoSecretMaterial(template);
+    const p = input.coordinator.planning, templates = captureNativeTaskTemplates(p);
     const read = p.checkpoints.read.bind(p.checkpoints);
     const denied = (): never => { throw new Error("private_task_checkpoint_write_denied"); };
-    const planning = { template, integrityKey: key(p.integrityKey), reviewIntegrityKey: key(p.reviewIntegrityKey),
+    const planning = { ...templates, integrityKey: key(p.integrityKey), reviewIntegrityKey: key(p.reviewIntegrityKey),
       checkpoints: Object.freeze({ read, initialize: denied, advance: denied }),
       ...(p.ideaIntegrityKey ? { ideaIntegrityKey: key(p.ideaIntegrityKey) } : {}) };
     const routes = validateTaskAssignmentRoutes(input.coordinator.routes), a = input.coordinator.approvals;

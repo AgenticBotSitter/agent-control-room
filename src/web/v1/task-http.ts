@@ -19,7 +19,7 @@ import { taskRevisionCommandSchema, taskRevisionRequestSchema } from "./task-rev
 import { sha256Digest } from "../../security";
 
 export function createTaskHttpHandler(options: { origin: string; trust: AccessTrust; service: WebTaskService;
-  ownerReviews?: WebTaskReviewService; ownerVerifications?: WebTaskVerificationService; planning?: Pick<TaskPlanningOperation, "plan" | "readSaved">;
+  ownerReviews?: WebTaskReviewService; ownerVerifications?: WebTaskVerificationService; planning?: Pick<TaskPlanningOperation, "plan" | "readSaved" | "supportsProject">;
   assignment?: TaskAssignmentOperation; approvals?: TaskApprovalOperation; submission?: TaskSubmissionOperation; revisions?: TaskRevisionOperation; clock?: () => number }) {
   const verify = createAccessVerifier(options.trust);
   return async (request: Request): Promise<Response> => {
@@ -158,7 +158,10 @@ export function createTaskHttpHandler(options: { origin: string; trust: AccessTr
         if (!catalogProjectIdSchema.safeParse(projectId).success || !catalogProjectIdSchema.safeParse(jobId).success)
           throw new WebAccessError("invalid_request");
         if (request.method === "GET") {
-          const value = await options.service.planningOptions(identity, projectId, jobId, !!options.planning);
+          const authorized = await options.service.planningOptions(identity, projectId, jobId, !!options.planning);
+          // Resolve server configuration only after database-backed session/project access.
+          const value = authorized.availability === "available" && options.planning?.supportsProject
+            && options.planning.supportsProject(projectId) !== true ? { ...authorized, availability: "not_configured" as const } : authorized;
           const savedPlan = await options.planning?.readSaved?.(identity, projectId, jobId);
           return Response.json(taskPlanningOptionsSchema.parse({ ...value,
             ...(savedPlan !== undefined ? { savedPlan, ...(savedPlan ? { availability: "already_planned" } : {}) } : {}) }),

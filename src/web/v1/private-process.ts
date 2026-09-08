@@ -105,8 +105,10 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const queueAttention = options.queueAttention ? Object.freeze({ tenantId: options.tenantId,
     workspaceId: options.workspaceId, read: options.queueAttention.read.bind(options.queueAttention) }) : undefined;
   if (options.planning && (options.planning.tenantId !== options.tenantId || options.planning.workspaceId !== options.workspaceId
-    || typeof options.planning.plan !== "function" || options.planning.readSaved !== undefined && typeof options.planning.readSaved !== "function")) throw new Error("invalid_private_app_config");
+    || typeof options.planning.plan !== "function" || options.planning.readSaved !== undefined && typeof options.planning.readSaved !== "function"
+    || options.planning.supportsProject !== undefined && typeof options.planning.supportsProject !== "function")) throw new Error("invalid_private_app_config");
   const planning = options.planning ? Object.freeze({ plan: options.planning.plan.bind(options.planning),
+    supportsProject: options.planning.supportsProject?.bind(options.planning),
     readSaved: options.planning.readSaved?.bind(options.planning) }) : undefined;
   if (options.revisions && (options.revisions.tenantId !== options.tenantId || options.revisions.workspaceId !== options.workspaceId
     || typeof options.revisions.plan !== "function")) throw new Error("invalid_private_app_config");

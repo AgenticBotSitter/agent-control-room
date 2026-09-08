@@ -639,3 +639,57 @@ The audit also confirmed a larger remaining product setup limitation: the curren
 execution planner is pinned to one project's template and acceptance profile. A newly
 promoted project does not inherit another project's execution authority. This initial
 draft connection does not solve or conceal that separate configuration requirement.
+
+### Resume checkpoint after private batch push
+
+Private branch now contains `1d1ae90` (article-to-exact-research integration) and
+`7f46251` (Idea experiment draft). Push confirmed; no open PR existed for this branch,
+and the inspected workflows do not run on its push. No PR, merge or Actions dispatch.
+Final regression session 76602 exited zero; no test process from this batch remains.
+Original deadline stays 2026-09-08 12:40:58 UTC (clock at push: 08:06:42 UTC).
+
+Next meaningful local block: one existing coordinator should support several
+explicitly configured project templates, without granting automatic authority to new
+projects. Independent source feasibility review confirmed the smallest extension is
+a bounded extra-template list inside TaskExecutionPlanner, exact project selection
+inside authorized plan/revise operations, plus immutable capture in private task
+startup and result-coordinator reconstruction. Preserve profile/digest/expiry checks,
+same-source replay, historical result reads, one shared lifecycle/queue and current
+approval/submission checks. Reject duplicate project/template IDs and unknown-project
+planning. Do not construct authority by substituting another project's ID, add new
+keys from browser data, duplicate coordinators or auto-provision a promoted project.
+This block is not implemented yet. Exact operator approval/profile/runtime setup
+remains gated even after multi-project source support.
+
+## Multiple explicitly configured project templates
+
+Implemented the source extension identified in the preceding checkpoint. The planner
+captures a primary template plus at most 15 additional unique project/template bindings.
+It selects the exact configured project after authorization, with no implicit cloning
+or fallback. Startup captures the list before effects; result reconstruction owns its
+copy. Existing coordinator, queue, assignment, keys and approval contracts are reused.
+The protected planning view now reports missing project configuration accurately.
+Historical saved receipts/results remain readable after template removal; removal is
+not cancellation/revocation of existing work.
+
+Initial two focused checks passed. The expanded expiry test initially tried to seed
+a new task after restricted-role setup, producing SQL permission denial rather than
+testing expiry. Moved that synthetic seed before role installation and used the
+explicit coordinator pool for planner checks; no permissions were weakened. Four
+focused checks then passed including selected-template precommit rollback and
+additional-project revision/result reconstruction. TypeScript and full lint passed.
+Independent source review found no authority/capture defect and suggested delaying
+the configuration availability lookup until after authorization. Implemented that
+ordering and a regression for inaccessible projects. Review of the revised source
+found no new concrete issue.
+
+The expanded `test:multi-project` suite, TypeScript, lint, fresh VPS build and 15
+compiled planning/revision/startup/database checks all passed. Added a dedicated
+compiled multi-project check afterward to exercise the new configuration through the
+actual built bootstrap (not merely source planning behind a compiled HTTP handler).
+Its combined run with result/coordinator lifecycle and package inventory regressions
+passed 39/39, followed by TypeScript and full lint. The compiled case overlaps the
+two project requests inside one restricted application, verifies captured template
+bytes and no attempts, then confirms both owned pools close once.
+No live effects or installation. See `MULTI_PROJECT_PLANNING_DELIVERY.md` for the
+configuration contract, operator responsibilities and evidence limits.

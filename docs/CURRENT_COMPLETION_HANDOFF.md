@@ -59,6 +59,11 @@ this document. The source changes below do not establish production readiness.
   or starts work, and will not replace existing draft text. Execution still requires
   a project-matched planner/template and acceptance profile; creating a project does
   not automatically provision those resources.
+- One existing task coordinator now accepts up to 16 explicitly configured
+  project-bound templates. Exact project selection preserves profile/authority
+  checks; unknown projects have no fallback. See `MULTI_PROJECT_PLANNING_DELIVERY.md`.
+  This removes the single-template source limitation, not the need to approve and
+  configure each project's execution resources or qualify the actual fleet.
 
 The shared primary's storage persistence, dedicated provisioning, actual restore,
 supervisor/account, real verified owner subject and authorized startup remain

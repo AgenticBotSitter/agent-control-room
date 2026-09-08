@@ -89,8 +89,10 @@ planning instructions and explicitly save. The result must be one proposed task,
 with the source discussion/digests retained as editable context and zero attempts.
 No initial task is silently saved by promotion. The preparation control requires
 both task-proposal eligibility and authorized source-discussion visibility.
-Do not report task execution ready merely because this works: the current execution
-planner uses a project-pinned template and matching acceptance profile. New promoted
+Do not report task execution ready merely because this works: the execution
+planner uses explicitly project-pinned templates and matching acceptance profiles.
+One coordinator supports up to 16 configured projects; follow
+`docs/MULTI_PROJECT_PLANNING_DELIVERY.md`. New promoted
 projects need separately configured execution resources, not another project's
 authority copied or broadened to make the next button succeed.
 
