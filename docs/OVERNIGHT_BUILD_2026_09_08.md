@@ -402,3 +402,43 @@ disposable restore and require both role checks. Independent deployment review
 identified the restore ambiguity; independent final source review confirms the
 inventory and corrected instructions have no concrete mismatch. No SQL was run,
 no archive created, and no production inputs accessed.
+
+## Accumulated delivery verification
+
+At a834aca, `pnpm test:idea-abs:delivery && pnpm test:idea-authoring:build`
+completed with exit zero. The latter rebuilt the VPS artifact and passed all 24
+source/compiled/operator/launcher checks. The former completed the full sequential
+memory-safe Idea/ABS pipeline. This validates the accumulated local changes;
+it is not a new VPS installation, backup rehearsal or live provider acceptance.
+
+## Fresh authoring promotion prerequisite
+
+The independent worker extended the compiled operator/authoring test beyond save
+and read. Synthetic completed turns and compiled recap/replay passed, but compiled
+project promotion returned 503 because the fresh fixture lacked the native Idea
+adapter registry row required by the project foreign key. Older seeded fixtures
+supplied that row manually. This was a genuine untested installation prerequisite,
+not an assertion to remove or an excuse to give the writer broader privileges.
+
+Added separately executed, inventoried native-adapter setup SQL requiring an
+explicit session-only tenant setting and an existing tenant. It inserts a pending
+registration and refuses collisions without overwrite. Authoring and full task
+startup now read-check the fixed adapter's tenant, version, source, native authority
+mode and non-disabled state through the existing web role. They never provision
+or repair it. Existing role privileges and all 64 migrations remain unchanged.
+
+The shared disposable startup fixture executes that actual setup SQL. The compiled
+path now completes recap, decision/project promotion, exact replay, project-origin
+read and deep-link admission with unchanged job/outbox counts. Synthetic records
+remain explicitly injected-only; no fake driver is installed in production code.
+The initial test-only session-auth reset remains a documented PGlite accommodation.
+
+All 34 focused source/compiled/setup tests pass, including full-task missing-adapter
+cleanup and authoring missing/mismatched/disabled adapter refusal. Setup rejects
+missing tenant input and duplicate registration without changing the original row.
+Independent source review found no concrete defect and requested the full-task
+cleanup case, now passing. Setup guidance and restore requirements are updated;
+actual execution still needs exact-target authority. The earlier full-delivery
+pass predates this prerequisite correction and is not represented as its full run.
+The final eight inventory checks, TypeScript and full lint also pass; the compiled
+promotion regression uses a fresh VPS artifact built from the corrected source.

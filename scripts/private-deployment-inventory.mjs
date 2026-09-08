@@ -28,7 +28,8 @@ export async function createPrivateDeploymentInventory(directory = root, profile
   const roleFiles = ['private_web_database.sql', 'private_web_roles.sql'];
   if (profile === 'idea-authoring') roleFiles.push('idea_creation_roles.sql');
   for (const name of roleFiles) roles.push(await entry(`db/roles/${name}`));
-  const material = { migrations, roles };
+  const material = { migrations, roles, ...(profile === 'idea-authoring'
+    ? { setup: [await entry('db/setup/private_idea_adapter.sql')] } : {}) };
   return { schema: 'control-room.private-deployment-inventory/v1',
     mode: profile, migrationCount: migrations.length, ...material,
     inventorySha256: digest(JSON.stringify(material)),

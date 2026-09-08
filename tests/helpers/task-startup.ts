@@ -6,6 +6,8 @@ import type { PrivateTaskStartupConfiguration } from "../../src/web/v1/private-t
 
 export async function taskStartupFixture(base?: Awaited<ReturnType<typeof taskAssignmentFixture>>) {
   const f = base ?? await taskAssignmentFixture();
+  await f.raw.query("SELECT set_config('control_room.setup_tenant_id',$1,false)", [f.scope.tenantId]);
+  await f.raw.exec(await readFile("db/setup/private_idea_adapter.sql", "utf8"));
   await f.raw.exec(await readFile("db/roles/private_web_roles.sql", "utf8"));
   await f.raw.exec(await readFile("db/roles/task_coordinator_roles.sql", "utf8"));
   await f.raw.exec(`CREATE ROLE web_test LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;

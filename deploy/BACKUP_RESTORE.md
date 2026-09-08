@@ -86,6 +86,8 @@ Separately verify required restored rows and signed application records against
 the captured source evidence. Compare from a consistent source snapshot or an
 approved period with Control Room writers quiesced; unrelated websites need not
 stop. Verify protected integrity/configuration material can be recovered. Confirm
+the authoring adapter registration belongs to the expected tenant and remains
+usable; do not run its fresh-setup INSERT over a restored registration. Confirm
 the encrypted off-host copy is retrievable and hash-matches, under separately
 approved transfer authority. A same-disk archive alone is not disaster recovery.
 

@@ -1,27 +1,68 @@
 # Current completion handoff — first usable task before more polish
 
-2026-09-06, refreshed after local commit `a18a263`. This updates implementation status,
-not the original owner outcomes. GitHub publication remains paused. Local build work
-is authorized; live database, credentials, providers and deployment remain separately gated.
+2026-09-08 overnight update, source baseline `a834aca`. This updates implementation
+status, not the original owner outcomes. Sanitized batches may be pushed only to
+the existing private working branch with CI skipped. Public publication, PRs,
+merges and Actions dispatch are not part of this overnight authorization. Local
+build work is authorized; live database, credentials, providers and deployment
+remain separately gated. Preserve unrelated private setup notes outside commits.
+
+## September 8 deployment and product delta
+
+`JOHNNY5_DEPLOYMENT_NEXT_STEPS.md` is the consolidated installation handoff.
+`OVERNIGHT_BUILD_2026_09_08.md` records exact local tests, review findings and fixes.
+The original overnight deadline remains 12:40:58 UTC, not eight hours from reading
+this document. The source changes below do not establish production readiness.
+
+- Protected operator settings and compiled website launcher now support optional
+  saved Idea/news keys and a separate two-login Idea-authoring profile. This mounts
+  existing save/recap/decision services without task planners, workers or providers.
+- Database-only checks verify the selected profile's actual roles and close all
+  acquired connections without installing an application. The source inventory
+  includes the writer-role SQL when that profile is selected. Neither proves
+  backup restoration or actual target readiness until separately run there.
+- A subsequent compiled promotion test exposed a missing fresh-install native Idea
+  adapter registration, previously supplied by older fixtures. Authoring now also
+  requires that tenant-bound registration at preflight. The separately run setup
+  SQL is included in the authoring inventory; it is not an automatic startup write.
+- Idea project lifecycle controls use the existing lifecycle service. Project pages
+  can link back to their authorized source discussion. News view/sort deep links,
+  verified collection-history paging and configured roster selection are connected.
+- Needs Me admits the task or recovery owner permission independently, while each
+  data endpoint still checks its own permissions. Idea/news skip-link targets exist;
+  static rendering is not a live keyboard/browser acceptance result.
+- Full sequential Idea/ABS delivery plus the authoring build command passed at
+  this baseline. The latter compiled the release and passed 24 checks. No live
+  owner login, database change, backup, deployment or provider call occurred.
+
+The shared primary's storage persistence, dedicated provisioning, actual restore,
+supervisor/account, real verified owner subject and authorized startup remain
+external gates from the operator report. Do not substitute fixtures for them or
+change another application's storage without an exact separately approved plan.
 
 ## What exists versus what the owner can use
 
 | Outcome | Verified local position | What is still required |
 |---|---|---|
-| Separate projects | Protected catalog/pages, lifecycle, task pages and explicit browser-tab links | Actual browser/mobile interaction, real persistence and Idea-project lifecycle |
+| Separate projects | Protected catalog/pages, ordinary and Idea lifecycle, task pages, source-discussion backlinks and explicit browser-tab links | Actual browser/mobile interaction and real persistence |
 | Website task to result | Installed pg-boss, protected submission, compiled six-role synthetic journeys, saved artifacts and pending review | Configured owner signing, runtime/host setup and one real task plus revision |
 | Productive fleet | Supplied-resource Hermes connector, bounded recovery and node protocol components | Packaged installers, exact host identities/runtime setup, Mac/PC/VPS qualification, continuous multi-job operation |
 | Needs Me | Protected saved-task/review list and delivery uncertainty; separate process-local recovery summary | Real fleet trial and usable operational triage; counts alone do not prove recovery |
-| Idea Lab | Existing bounded coordinator and synthetic flow | Live participants/conversation, synthesis and promotion into ordinary project work |
-| ABS | Attributed Control Center duplicate-event helpers integrated and tested | Configured feeds, private news view and article-to-real-task/result journey |
+| Idea Lab | Existing bounded coordinator, synthetic recap/promotion flow, configurable roster and installable non-executing authoring | Live participants/conversation and real end-to-end project work |
+| ABS | Attributed Control Center collection/reading logic, private news view, saved source configuration/history and research-task preparation | Configured live feeds and article-to-real-task/result journey |
 | Files between machines | Pinned Hermes remote retrieval and filesystem-policy evaluation | Verified run/project association, retained bytes and authorized cross-harness downloads |
 | Daily operation | Compiled entries and preparation/rehearsal components | Private PostgreSQL setup/rehearsal, login/ingress, actual process supervision, restore, drain/update/rollback and sustained use |
 
 No total completion percentage is supported. Component test counts must not replace
-the real outcomes in this table. E50's complete default test lifecycle passed before
-E51; E51 has focused and compiled verification, not another full lifecycle run.
+the real outcomes in this table. The overnight delivery evidence above supersedes
+the older E50/E51 verification snapshot for its named suites, not the entire default
+test lifecycle or live acceptance.
 
 ## The immediate critical path
+
+The September 6 findings below remain historical context where superseded by the
+September 8 delta. In particular, the minimal website/authoring operator profile is
+now supplied; the full live-task runtime and owner-signing setup are still separate.
 
 **2026-09-06 local source update:** The historical E64 gap below now has asynchronous
 completion-store integration and a scoped etcd storage-port adapter in

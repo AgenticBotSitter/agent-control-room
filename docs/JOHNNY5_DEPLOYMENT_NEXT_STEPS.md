@@ -8,7 +8,8 @@ Use the exact private-branch SHA supplied with this handoff as the deployment pi
 
 - `deploy/operator-config.mjs`: protected single-site website-only settings.
 - `scripts/private-deployment-inventory.mjs`: 64 migration and web-role source hashes;
-  select `--profile idea-authoring` to include the optional writer-role source.
+  select `--profile idea-authoring` to include the optional writer-role and native
+  Idea adapter setup sources.
 - `scripts/check-private-vps-database.mjs`: existing production preflight plus close,
   without application installation or a listener. It verifies both roles when the
   optional Idea-authoring profile is configured, otherwise only the web role.
@@ -53,6 +54,9 @@ It performs preflight SELECT queries, but is not an arbitrary-SQL read-only sand
    Review an exact backup/relocation plan before replacing a shared container.
 2. Provision the dedicated empty database and separate reviewed roles; apply pinned
    migrations and current grants. Keep schema ownership separate from the web login.
+   For authoring, register the native Idea adapter for the exact tenant using the
+   reviewed setup procedure after that tenant exists. Preflight refuses a missing
+   or mismatched registration; ordinary schema migrations alone do not create it.
 3. Capture the owner's real verified Access subject through the approved login
    procedure and bootstrap only that identity. Verify issuer/audience and application
    MFA inheritance; no policy-level override does not necessarily mean MFA is off.

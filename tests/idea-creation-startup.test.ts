@@ -61,6 +61,15 @@ test("invalid Idea topology, key or roster opens no resources", async t => {
   }
   assert.equal(effects, 0);
 });
+test("full task startup refuses missing Idea registration and closes all acquired pools", async t => {
+  const f = await fixture(); t.after(f.close); let installs = 0;
+  await f.raw.exec("DELETE FROM adapter_registry WHERE id='adapter.control-room-native-ideas'");
+  const bootstrap = createPrivateTaskBootstrap({ clock: () => instant + 8000,
+    openDatabase: f.openDatabase, install: () => { installs++; } });
+  await assert.rejects(bootstrap.start(f.config), /prerequisites_failed/);
+  assert.equal(installs, 0);
+  assert.deepEqual([f.web.closes(), f.coordinator.closes(), f.ideas.closes()], [1, 1, 1]);
+});
 test("failed Idea preflight or cancellation cleans all acquired resources without installing", async t => {
   for (const cancel of [false, true]) await t.test(String(cancel), async t => {
     const f = await fixture(); t.after(f.close); const controller = new AbortController(); let installs = 0;

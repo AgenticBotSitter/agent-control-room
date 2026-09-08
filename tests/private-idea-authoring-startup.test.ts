@@ -7,6 +7,7 @@ import { createPrivateIdeaAuthoringBootstrap, createPrivateIdeaAuthoringDatabase
 import { createPrivateWebProcess } from "../src/web/v1/private-process";
 import { instant } from "./hermes-native-fixture";
 import { request } from "./helpers/web-foundation";
+import { verifyPrivateIdeaAdapter } from "../src/web/v1/private-database-preflight";
 
 async function fixture() {
   const f = await taskStartupFixture();
@@ -19,6 +20,42 @@ async function fixture() {
     assert.ok(["web_test", "idea_test"].includes(db.username)); return db.username === "web_test" ? f.web : writer;
   } };
 }
+
+test("authoring setup requires the native Idea registration without creating or repairing it", async t => {
+  const f = await fixture(); t.after(f.close);
+  const scope = f.config.web;
+  await verifyPrivateIdeaAdapter(f.web.client, scope);
+  for (const sql of [
+    "UPDATE adapter_registry SET source_system='wrong' WHERE id='adapter.control-room-native-ideas'",
+    "UPDATE adapter_registry SET authority_mode='advisory' WHERE id='adapter.control-room-native-ideas'",
+    "UPDATE adapter_registry SET status='disabled' WHERE id='adapter.control-room-native-ideas'",
+  ]) {
+    await f.raw.exec('SET SESSION AUTHORIZATION postgres');
+    await f.raw.exec(sql);
+    await assert.rejects(verifyPrivateIdeaAdapter(f.web.client, scope), /private_idea_adapter_unavailable/);
+    await f.raw.exec('SET SESSION AUTHORIZATION postgres');
+    await f.raw.exec("UPDATE adapter_registry SET source_system='control_room_native_ideas',authority_mode='control_room_native',status='pending' WHERE id='adapter.control-room-native-ideas'");
+  }
+  await assert.rejects(verifyPrivateIdeaAdapter(f.web.client, { tenantId: 'tenant:other' }), /private_idea_adapter_unavailable/);
+  await f.raw.exec('SET SESSION AUTHORIZATION postgres');
+  await f.raw.exec("DELETE FROM adapter_registry WHERE id='adapter.control-room-native-ideas'");
+  await assert.rejects(createPrivateIdeaAuthoringDatabaseCheck({ openDatabase: f.openDatabase,
+    clock: () => instant + 8000 })(f.config), /private_idea_authoring_prerequisites_failed/);
+  assert.deepEqual([f.web.closes(), f.writer.closes()], [1, 0]);
+  await f.raw.exec('SET SESSION AUTHORIZATION postgres');
+  assert.equal((await f.raw.query("SELECT id FROM adapter_registry WHERE id='adapter.control-room-native-ideas'")).rows.length, 0);
+  const setup = await readFile("db/setup/private_idea_adapter.sql", "utf8");
+  await f.raw.query("SELECT set_config('control_room.setup_tenant_id','',false)");
+  await assert.rejects(f.raw.exec(setup), /private_idea_adapter_setup_invalid/);
+  await f.raw.exec('ROLLBACK');
+  await f.raw.query("SELECT set_config('control_room.setup_tenant_id',$1,false)", [scope.tenantId]);
+  await f.raw.exec(setup);
+  const registered = await f.raw.query("SELECT tenant_id,status FROM adapter_registry WHERE id='adapter.control-room-native-ideas'");
+  assert.deepEqual(registered.rows, [{ tenant_id: scope.tenantId, status: 'pending' }]);
+  await assert.rejects(f.raw.exec(setup), /duplicate key/);
+  await f.raw.exec('ROLLBACK');
+  assert.deepEqual((await f.raw.query("SELECT tenant_id,status FROM adapter_registry WHERE id='adapter.control-room-native-ideas'")).rows, registered.rows);
+});
 
 test("two-role authoring mounts existing save/options/read without task planning or runtime", async t => {
   const f = await fixture(); t.after(f.close); let app!: ReturnType<typeof createPrivateWebProcess>, opens = 0;

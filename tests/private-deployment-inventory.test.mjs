@@ -12,6 +12,8 @@ async function fixture(t) {
   t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(join(root, 'db/migrations'), { recursive: true });
   await mkdir(join(root, 'db/roles'));
+  await mkdir(join(root, 'db/setup'));
+  await writeFile(join(root, 'db/setup/private_idea_adapter.sql'), '-- synthetic adapter setup');
   await writeFile(join(root, 'db/migrations/0001_first.sql'), 'SELECT 1;');
   for (const file of ['private_web_database.sql', 'private_web_roles.sql'])
     await writeFile(join(root, 'db/roles', file), '-- synthetic role material');
@@ -55,6 +57,7 @@ test('authoring inventory adds exactly its writer role and remains source-only',
   assert.deepEqual(authoring.roles.slice(0, 2), basic.roles);
   assert.equal(authoring.roles[2].path, 'db/roles/idea_creation_roles.sql');
   assert.equal(authoring.roles.length, 3);
+  assert.equal(authoring.setup[0].path, 'db/setup/private_idea_adapter.sql');
   assert.notEqual(authoring.inventorySha256, basic.inventorySha256);
   assert.equal(authoring.databaseContacted, false); assert.equal(authoring.sqlApplied, false);
   assert.equal(authoring.productionReady, false);
@@ -65,6 +68,9 @@ test('authoring inventory adds exactly its writer role and remains source-only',
   const before = await createPrivateDeploymentInventory(root, 'idea-authoring');
   await writeFile(file, '-- writer changed');
   assert.notEqual((await createPrivateDeploymentInventory(root, 'idea-authoring')).inventorySha256, before.inventorySha256);
+  const afterRole = await createPrivateDeploymentInventory(root, 'idea-authoring');
+  await writeFile(join(root, 'db/setup/private_idea_adapter.sql'), '-- changed setup');
+  assert.notEqual((await createPrivateDeploymentInventory(root, 'idea-authoring')).inventorySha256, afterRole.inventorySha256);
   await assert.rejects(createPrivateDeploymentInventory(root, 'unknown'), /inventory_invalid/);
 });
 

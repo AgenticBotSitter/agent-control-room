@@ -1,6 +1,6 @@
 import { createPrivatePostgresDatabase, validatePrivatePostgresConfiguration, type PrivatePostgresConfiguration } from "./private-postgres";
 import { validatePrivateStartupConfiguration, type PrivateStartupConfiguration } from "./private-startup";
-import { verifyPrivateDatabase, verifyIdeaCreationDatabase } from "./private-database-preflight";
+import { verifyPrivateDatabase, verifyIdeaCreationDatabase, verifyPrivateIdeaAdapter } from "./private-database-preflight";
 import { installPrivateWebProcess } from "./private-process";
 import { captureIdeaParticipants, IdeaSessionCreationService, type IdeaCreateOperation } from "./idea-create-operation";
 import { WebIdeaSynthesisOperation } from "./idea-synthesis-operation";
@@ -47,6 +47,7 @@ async function prepareResources(input: PrivateIdeaAuthoringConfiguration, depend
       const now = clock(); if (!Number.isSafeInteger(now) || now < 0) throw new Error();
       const web = dependencies.openDatabase(config.web.database); pools.push(web);
       active(); await verifyPrivateDatabase(web.client, config.web.database, config.web, now); active();
+      await verifyPrivateIdeaAdapter(web.client, config.web); active();
       const writer = dependencies.openDatabase(config.ideaAuthoring.database); pools.push(writer);
       if (web === writer || web.client === writer.client) throw new Error();
       active(); await verifyIdeaCreationDatabase(writer.client, config.ideaAuthoring.database, config.web, now); active();

@@ -3,6 +3,17 @@ import { verifyPgBossApplicationPermissions } from "../../persistence/pg-boss-ap
 import { verifyPgBossNativeWorkerPermissions } from "../../persistence/pg-boss-native-task-permissions";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import type { PrivatePostgresConfiguration } from "./private-postgres";
+import { CONTROL_ROOM_IDEA_ADAPTER_V1 } from "../../idea-lab/v1/schemas";
+
+/** Optional authoring prerequisite, read through the existing web role.
+ * Registration is operator setup, never a startup repair or connectivity claim. */
+export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tenantId: string }) {
+  const rows = (await db.query<{ valid: boolean }>(`SELECT tenant_id=$2 AND
+    source_system='control_room_native_ideas' AND contract_version='1.0.0' AND
+    authority_mode='control_room_native' AND status <> 'disabled' AS valid
+    FROM adapter_registry WHERE id=$1`, [CONTROL_ROOM_IDEA_ADAPTER_V1, scope.tenantId])).rows;
+  if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
+}
 
 // Generated from migrations 0001-0064 using the catalog query below, not a mutable database marker.
 export const privateWebSchemaDigest = "f3431786139ea22bd6f50f5fe06cf518540a469bd49f7222fc8362dffdb7edba";

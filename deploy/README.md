@@ -131,7 +131,8 @@ role name is a review condition, not permission to alter or drop it.
    `node scripts/private-deployment-inventory.mjs`. This command also inventories
    the two restricted web role files and contacts no database. For the optional
    Idea-authoring profile, use `node scripts/private-deployment-inventory.mjs --profile idea-authoring`
-   instead; it additionally hashes `db/roles/idea_creation_roles.sql`. Compare the
+   instead; it additionally hashes `db/roles/idea_creation_roles.sql` and
+   `db/setup/private_idea_adapter.sql`. Compare the
    digest for the selected profile, not a minimal-profile inventory,
    with the accepted release inventory before executing any SQL. It is source
    identification, not a migration executor or proof of live database state.
@@ -163,6 +164,19 @@ role name is a review condition, not permission to alter or drop it.
    object-creating owner, not an unrelated operator role. The role script creates a
    cluster-wide group and is not a repeatable update script: an existing group
    requires review, not an automatic drop/recreate or reapplication.
+   Before authoring preflight, register the built-in Idea project adapter using
+   the inventoried `db/setup/private_idea_adapter.sql` in this dedicated database.
+   In the same approved operator connection, set the session-only
+   `control_room.setup_tenant_id` setting to the reviewed existing tenant ID (for
+   example through parameterized `set_config` with its third argument false).
+   Do not use ALTER SYSTEM or a server-wide default. Then execute the setup file
+   with stop-on-error and close that operator connection. This writes one registry
+   row with pending status; it does not enroll a bot or claim connectivity.
+   An existing row causes failure and requires comparison/review, not overwrite.
+   The fixed adapter ID is single-tenant; a record owned by another tenant cannot
+   be reused. Both authoring and full task startup check this prerequisite through
+   the existing web read role and refuse missing, mismatched or disabled records.
+   Startup and the database-only checker never create or repair this row.
 7. Run the unchanged production database preflight without starting the website:
    `node scripts/check-private-vps-database.mjs --configuration /APPROVED/RELEASE/deploy/operator-config.mjs`.
    This still requires explicit authorization for the selected private database

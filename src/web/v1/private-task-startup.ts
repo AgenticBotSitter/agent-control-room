@@ -1,7 +1,7 @@
 import { assertNoSecretMaterial } from "../../security";
 import { localId } from "../../harness/v1/native-run-identifiers";
 import { createPrivatePostgresDatabase, validatePrivatePostgresConfiguration, type PrivatePostgresConfiguration } from "./private-postgres";
-import { verifyPrivateDatabase, verifyTaskCoordinatorDatabase, verifyNativeResultDatabase, verifyNativeEvidenceDatabase, verifyNativeSessionDatabase, verifyIdeaCreationDatabase, verifyIdeaRuntimeDatabase } from "./private-database-preflight";
+import { verifyPrivateDatabase, verifyTaskCoordinatorDatabase, verifyNativeResultDatabase, verifyNativeEvidenceDatabase, verifyNativeSessionDatabase, verifyIdeaCreationDatabase, verifyIdeaRuntimeDatabase, verifyPrivateIdeaAdapter } from "./private-database-preflight";
 import { z } from "zod";
 import { ideaParticipantSchemaV1 } from "../../idea-lab/v1/schemas";
 import { validatePrivateStartupConfiguration, type PrivateStartupConfiguration } from "./private-startup";
@@ -249,6 +249,7 @@ export function createPrivateTaskBootstrap(dependencies: {
       }
       const ideaDatabase = config.ideaCreation ? open(config.ideaCreation.database) : undefined;
       if (ideaDatabase) {
+        await verifyPrivateIdeaAdapter(web.client, config.web); requireActive();
         if ([web, coordinator, resultDatabase, evidenceDatabase, sessionDatabase].some(pool => pool?.client === ideaDatabase.client)) throw new Error();
         await verifyIdeaCreationDatabase(ideaDatabase.client, config.ideaCreation!.database, config.web, now, queue);
         requireActive();
