@@ -3,6 +3,11 @@
 Date: 2026-09-08. Control Room local checkpoint: `2ce2fc9`.
 Status: **research candidate, not adopted or qualified**.
 
+**Follow-up evaluation:** The owner subsequently authorized a bounded adapter
+experiment. [Pinned results](research/HERDR_ADAPTER_EVALUATION.md) supersede the
+not-run status below for its explicitly tested local cases. Herdr remains an
+optional observation candidate, not an accepted native execution backend.
+
 The owner requested read-only research of https://github.com/herdrdev/herdr.
 That request allowed the public reads used below, not installation, provider calls,
 agent configuration changes or a new overnight build window. No package was

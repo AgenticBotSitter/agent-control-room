@@ -1,0 +1,23 @@
+{
+  "release": "v0.9.0",
+  "source": "b99002ac99b09e00b4ca692436cb15a6b0d676f1",
+  "checks": [
+    "actual Unix API and client sockets are mode 0600",
+    "actual pane metadata retains duplicate synthetic Hermes session IDs; adapter flags both",
+    "two actual panes monitored with distinct project identities and no execution authority",
+    "adapter refuses group-accessible test socket and recovers after owner-only mode restored",
+    "temporary socket-path loss leaves original pane processes alive; reconnection retains generation",
+    "read-only disconnect/reconnect and second observer create no new panes",
+    "server restart advances observation generation, restores layout but does not resume agents",
+    "stopped server remains offline without implicit restart"
+  ],
+  "limitations": [],
+  "nativeAgentCalls": 0,
+  "providers": 0,
+  "sshHosts": 0,
+  "fixtureOnly": true,
+  "cleanup": true,
+  "serverRssKiBWithTwoCatPanes": 21248,
+  "fixtureQueries": 17,
+  "failure": null
+}

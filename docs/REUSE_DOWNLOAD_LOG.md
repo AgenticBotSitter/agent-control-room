@@ -1,5 +1,65 @@
 # Reuse evaluation download and cleanup ledger
 
+## Herdr bounded adapter evaluation — 2026-09-08
+
+Owner requested pinned source/license review, disposable read-only monitoring and
+disconnect/restart/duplicate-session evaluation. Pre-acquisition space: 140 GiB
+available on the shared APFS volume. Evaluation root created with mktemp:
+`/private/tmp/control-room-herdr-eval.ZSup2F`. Limit this cohort to 1 GiB and stop
+if available disk falls below 20 GiB. Do not use shared package caches.
+
+Planned acquisitions: public release metadata, one pinned source archive and the
+matching macOS arm64 release binary if source inspection permits isolated use.
+No installer, Rust toolchain, personal-agent configuration or provider credentials.
+Resolved master during discovery: `9e01168b140ce8e3821131345dc82bc2bf9994eb`;
+selected release candidate is v0.9.0, whose tag pin is resolved separately before
+source acquisition. Record actual paths, hashes, sizes and disposition below.
+Retain downloads only for evaluation; remove this exact root after owned processes
+are closed and sanitized evidence is saved. Do not delete unrelated caches/data.
+
+Additional acquisition: pinned Cargo.lock dependency license metadata from public
+`https://crates.io/api/v1/crates/NAME/VERSION`, bounded to 512 entries, four concurrent
+reads and three minutes. No crate archives/install scripts are acquired. Normalized
+metadata, exact URLs and response hashes go to `cargo-license-inventory.json` in
+the same evaluation root. Runtime test state stays in its owned `run-*` children;
+successful test children are removed after verified shutdown. Failed diagnostic
+children are retained until findings are recorded and scoped cleanup is performed.
+
+Acquisition/evaluation completed:
+
+| Item under the evaluation root | Source/pin | Bytes | SHA-256 |
+| --- | --- | ---: | --- |
+| `release.json` | GitHub releases/tags/v0.9.0 API | 21,891 | `98393f4f1e8d1e568c47e8cf9435f9b11b1f2eacfe0e32108a1e5c248fce0dd7` |
+| `source.tar.gz` | codeload.github.com/herdrdev/herdr/tar.gz/b99002ac99b09e00b4ca692436cb15a6b0d676f1 | 8,489,740 | `dbb75bfeb331261c3c84b3e751cb7a52852faf944f7d887af53faf9b571ae7a0` |
+| `herdr-macos-aarch64` | GitHub v0.9.0 release asset | 20,692,496 | `32b53df09872628059c789a69f02a6b8e29e14ddf26711421f3463f70c1aef17` |
+| `cargo-license-inventory.json` | 265 exact-version crates.io metadata responses, normalized | 124,696 | `79af5fd4cfd94fc997fe1dc6ffc7582f274ceea6a78c06db2cf5da3c6f3efd21` |
+
+The extracted source is `herdr-b99002ac99b09e00b4ca692436cb15a6b0d676f1/`.
+Its contents are identified by the archive hash; no upstream file was modified.
+Individual crates.io response bodies were held in memory and discarded after
+normalizing license metadata and hashing them; no crate archives were acquired.
+The full normalized license inventory is preserved at
+`docs/research/HERDR_CARGO_LICENSE_INVENTORY.json` with the same hash, and the final
+sanitized binary receipt at `docs/research/HERDR_BINARY_EVIDENCE.json`.
+Acquisition/test tree peak observed allocation: 67 MiB; free space remained 140 GiB.
+
+Two sandbox permission refusals occurred for the initial server/query; explicitly
+scoped local-socket execution then worked. Three actual-binary fixture iterations
+failed because `agent list` excluded session-bearing unknown panes. All owned
+processes were closed each time. Source/response inspection identified the existing
+`pane list` interface; the corrected run and expanded outage/permissions run passed.
+No native agent was started; the pane executable was `/bin/cat` with synthetic
+session reporting. Only this disposable server's socket was renamed/chmodded during
+the test, with restoration before shutdown. No real profile, SSH host or provider.
+
+Final observed test servers and captured cat PIDs exited; socket removal was checked
+by the runner. `lsof -nP +D` on this exact root returned no entries (exit 1, its
+no-match result). Cleanup completed: the exact acquisition/test root was removed
+and its absence verified. Approximately 67 MiB of disposable downloads and fixture
+state were removed; the pinned public downloads can be acquired again. Sanitized
+evidence and the research prototype remain in the repository. No shared cache,
+personal data or application dependency was removed.
+
 ## Control Center discovery cohort — 2026-09-07
 
 Pre-acquisition: 140 GiB free. Public pinned source root:
