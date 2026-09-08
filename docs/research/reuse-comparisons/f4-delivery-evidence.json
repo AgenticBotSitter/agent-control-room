@@ -1,0 +1,18 @@
+{
+ "receiptType":"Condensed direct terminal results; first failure preserved",
+ "command":"node research/reuse-comparisons/f4-delivery-fit.mjs",
+ "firstRun":{"exitCode":1,"chunk":"49838a","error":"SyntaxError Unexpected string in authored exportsObj declaration","candidateExecuted":false},
+ "focusedRepair":"Removed erroneous quotes around authored variable name; no upstream code or assertions changed",
+ "finalRun":{"exitCode":0,"chunk":"be6dd3","checks":9,"queueEmpty":true},
+ "outcomes":[
+  "Unavailable recipient: delivered=true from disk; WS push succeeds but notified=false verified=false; queue1",
+  "Changed body same message ID: delivered=true and pending wakes2; persisted single inbox file contains changed body",
+  "Channel sent but unverified: fallback pane attempted, notified=true verified=false; queued",
+  "Channel session verification true: verifiedBy=channel; no pane fallback, no queued wake",
+  "Busy pane: deferred=true verified=false; queued once",
+  "Synthetic pane readback: verifiedBy=pane",
+  "Synthetic in-process stream acceptance: verifiedBy=stream",
+  "Missing recipient UUID: delivered=false before write/wake"
+ ],
+ "scope":"Actual delivery, wake-chain and queue logic; external transport and registry substituted. Not whole authenticated AMP routing or real agent receipt. No webhook exercised."
+}

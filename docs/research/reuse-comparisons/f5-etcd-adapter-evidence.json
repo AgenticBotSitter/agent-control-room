@@ -1,0 +1,58 @@
+{
+  "scope": "Actual CR checkpoint adapter and etcd3.7.1; synthetic checkpoint and gateway bridge, not production custody",
+  "binarySha256": "8ffc90f61928a4b27a0ab890a0b57f17752a607abc8a8a9efc052a36bd384164",
+  "checks": [
+    {
+      "name": "actual_adapter_scoped_read"
+    },
+    {
+      "name": "runtime_initialization_refused"
+    },
+    {
+      "name": "scoped_adapter_advance_full_payload",
+      "writeRequests": 1
+    },
+    {
+      "name": "stale_digest_refused_before_write"
+    },
+    {
+      "name": "lost_successful_ack_reports_failure_but_exact_write_persisted",
+      "errorCode": "Checkpoint request uncertain",
+      "writeRequests": 2,
+      "extraWriteRequests": 1
+    },
+    {
+      "name": "stale_resubmission_refused_without_second_write"
+    },
+    {
+      "name": "old_runtime_token_after_restart",
+      "status": 401,
+      "hasError": false
+    },
+    {
+      "name": "reauthenticated_restart_preserves_actual_checkpoint"
+    },
+    {
+      "name": "deleted_head_is_refused_not_reinitialized"
+    }
+  ],
+  "processExits": [
+    {
+      "code": null,
+      "signal": "SIGTERM"
+    },
+    {
+      "code": null,
+      "signal": "SIGTERM"
+    }
+  ],
+  "maxSampledRssKiB": 32352,
+  "status": "passed_scoped_observations",
+  "startupMs": [
+    157.21825,
+    541.0332500000001
+  ],
+  "monitorFailure": null,
+  "stateRemoved": true,
+  "distributionRetainedForFurtherComparison": true
+}

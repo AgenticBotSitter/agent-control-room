@@ -1,0 +1,393 @@
+{
+  "command": "node --import tsx research/reuse-comparisons/f2-current-ordering-fit.ts",
+  "exitCode": 0,
+  "output": {
+    "schema": "control-room.research.current-ordering/v1",
+    "scope": "actual runtime/controller/observer and in-memory ledger; synthetic line transport and authority evidence; no native calls",
+    "pins": {
+      "isolated-runtime.ts": "398c56e2036ddd0f4aecf1fe8964e3ff1849fcc88fd7143f46826ec3eb022aca",
+      "isolated-jsonrpc.ts": "b224f9ab4bb3edb60b829cbaecad0df40a97cced5ebc9dc5d3e3865ff419b7ff",
+      "credential-broker.ts": "639bb488c4c7f317e62a680858e3b1733868217049beb21e4027f9df2c6dd198"
+    },
+    "cases": 4,
+    "rows": [
+      {
+        "mode": "response-first",
+        "result": {
+          "disposition": "completed",
+          "nativeThreadIdDigest": "sha256:1f178841c7456602f99c3dd475c85d44f1f7e53140e64316f7ba8531baedbd22",
+          "events": [
+            {
+              "category": "lifecycle",
+              "state": "started"
+            },
+            {
+              "category": "usage",
+              "usage": {
+                "inputTokens": 20,
+                "outputTokens": 4,
+                "cachedInputTokens": 8,
+                "reasoningTokens": 2
+              }
+            },
+            {
+              "category": "lifecycle",
+              "state": "completed"
+            }
+          ]
+        },
+        "claimed": {
+          "disposition": "replay_completed",
+          "usage": {
+            "inputTokens": 20,
+            "outputTokens": 4,
+            "cachedInputTokens": 8,
+            "reasoningTokens": 2
+          }
+        },
+        "replay": {
+          "disposition": "replay_completed",
+          "events": []
+        },
+        "consumed": [
+          "response",
+          "response",
+          "response",
+          "response",
+          "response",
+          "turn/started",
+          "thread/tokenUsage/updated",
+          "turn/completed"
+        ],
+        "unreadFrames": 0,
+        "queuedTurnFrames": [
+          {
+            "id": 5,
+            "result": {
+              "turn": {
+                "id": "turn:runtime:one",
+                "status": "inProgress"
+              }
+            }
+          },
+          {
+            "method": "turn/started",
+            "params": {
+              "threadId": "thread:runtime:one",
+              "turn": {
+                "id": "turn:runtime:one",
+                "status": "inProgress"
+              }
+            }
+          },
+          {
+            "method": "thread/tokenUsage/updated",
+            "params": {
+              "threadId": "thread:runtime:one",
+              "turnId": "turn:runtime:one",
+              "tokenUsage": {
+                "last": {
+                  "inputTokens": 20,
+                  "outputTokens": 4,
+                  "cachedInputTokens": 8,
+                  "reasoningOutputTokens": 2
+                }
+              }
+            }
+          },
+          {
+            "method": "turn/completed",
+            "params": {
+              "threadId": "thread:runtime:one",
+              "turn": {
+                "id": "turn:runtime:one",
+                "status": "completed",
+                "items": []
+              }
+            }
+          }
+        ],
+        "methods": [
+          "initialize",
+          "initialized",
+          "environment/add",
+          "environment/status",
+          "thread/start",
+          "turn/start"
+        ],
+        "replayMethods": [
+          "initialize",
+          "initialized",
+          "environment/add",
+          "environment/status"
+        ],
+        "closed": 1,
+        "replayClosed": 1,
+        "consumedSyntheticCalls": 1
+      },
+      {
+        "mode": "same-turn-start-first",
+        "safeCode": "app_server_protocol_invalid",
+        "claimed": {
+          "disposition": "ambiguous",
+          "safeResultCode": "app_server_protocol_invalid"
+        },
+        "replay": {
+          "disposition": "ambiguous",
+          "events": []
+        },
+        "consumed": [
+          "response",
+          "response",
+          "response",
+          "response",
+          "turn/started"
+        ],
+        "unreadFrames": 3,
+        "queuedTurnFrames": [
+          {
+            "method": "turn/started",
+            "params": {
+              "threadId": "thread:runtime:one",
+              "turn": {
+                "id": "turn:runtime:one",
+                "status": "inProgress"
+              }
+            }
+          },
+          {
+            "id": 5,
+            "result": {
+              "turn": {
+                "id": "turn:runtime:one",
+                "status": "inProgress"
+              }
+            }
+          },
+          {
+            "method": "thread/tokenUsage/updated",
+            "params": {
+              "threadId": "thread:runtime:one",
+              "turnId": "turn:runtime:one",
+              "tokenUsage": {
+                "last": {
+                  "inputTokens": 20,
+                  "outputTokens": 4,
+                  "cachedInputTokens": 8,
+                  "reasoningOutputTokens": 2
+                }
+              }
+            }
+          },
+          {
+            "method": "turn/completed",
+            "params": {
+              "threadId": "thread:runtime:one",
+              "turn": {
+                "id": "turn:runtime:one",
+                "status": "completed",
+                "items": []
+              }
+            }
+          }
+        ],
+        "methods": [
+          "initialize",
+          "initialized",
+          "environment/add",
+          "environment/status",
+          "thread/start",
+          "turn/start"
+        ],
+        "replayMethods": [
+          "initialize",
+          "initialized",
+          "environment/add",
+          "environment/status"
+        ],
+        "closed": 1,
+        "replayClosed": 1,
+        "consumedSyntheticCalls": 1
+      },
+      {
+        "mode": "same-turn-all-first",
+        "safeCode": "app_server_protocol_invalid",
+        "claimed": {
+          "disposition": "ambiguous",
+          "safeResultCode": "app_server_protocol_invalid"
+        },
+        "replay": {
+          "disposition": "ambiguous",
+          "events": []
+        },
+        "consumed": [
+          "response",
+          "response",
+          "response",
+          "response",
+          "turn/started"
+        ],
+        "unreadFrames": 3,
+        "queuedTurnFrames": [
+          {
+            "method": "turn/started",
+            "params": {
+              "threadId": "thread:runtime:one",
+              "turn": {
+                "id": "turn:runtime:one",
+                "status": "inProgress"
+              }
+            }
+          },
+          {
+            "method": "thread/tokenUsage/updated",
+            "params": {
+              "threadId": "thread:runtime:one",
+              "turnId": "turn:runtime:one",
+              "tokenUsage": {
+                "last": {
+                  "inputTokens": 20,
+                  "outputTokens": 4,
+                  "cachedInputTokens": 8,
+                  "reasoningOutputTokens": 2
+                }
+              }
+            }
+          },
+          {
+            "method": "turn/completed",
+            "params": {
+              "threadId": "thread:runtime:one",
+              "turn": {
+                "id": "turn:runtime:one",
+                "status": "completed",
+                "items": []
+              }
+            }
+          },
+          {
+            "id": 5,
+            "result": {
+              "turn": {
+                "id": "turn:runtime:one",
+                "status": "inProgress"
+              }
+            }
+          }
+        ],
+        "methods": [
+          "initialize",
+          "initialized",
+          "environment/add",
+          "environment/status",
+          "thread/start",
+          "turn/start"
+        ],
+        "replayMethods": [
+          "initialize",
+          "initialized",
+          "environment/add",
+          "environment/status"
+        ],
+        "closed": 1,
+        "replayClosed": 1,
+        "consumedSyntheticCalls": 1
+      },
+      {
+        "mode": "stale-control",
+        "safeCode": "app_server_protocol_invalid",
+        "claimed": {
+          "disposition": "ambiguous",
+          "safeResultCode": "app_server_protocol_invalid"
+        },
+        "replay": {
+          "disposition": "ambiguous",
+          "events": []
+        },
+        "consumed": [
+          "response",
+          "response",
+          "response",
+          "response",
+          "turn/started"
+        ],
+        "unreadFrames": 4,
+        "queuedTurnFrames": [
+          {
+            "method": "turn/started",
+            "params": {
+              "threadId": "thread:runtime:one",
+              "turn": {
+                "id": "turn:stale",
+                "status": "inProgress"
+              }
+            }
+          },
+          {
+            "id": 5,
+            "result": {
+              "turn": {
+                "id": "turn:runtime:one",
+                "status": "inProgress"
+              }
+            }
+          },
+          {
+            "method": "turn/started",
+            "params": {
+              "threadId": "thread:runtime:one",
+              "turn": {
+                "id": "turn:runtime:one",
+                "status": "inProgress"
+              }
+            }
+          },
+          {
+            "method": "thread/tokenUsage/updated",
+            "params": {
+              "threadId": "thread:runtime:one",
+              "turnId": "turn:runtime:one",
+              "tokenUsage": {
+                "last": {
+                  "inputTokens": 20,
+                  "outputTokens": 4,
+                  "cachedInputTokens": 8,
+                  "reasoningOutputTokens": 2
+                }
+              }
+            }
+          },
+          {
+            "method": "turn/completed",
+            "params": {
+              "threadId": "thread:runtime:one",
+              "turn": {
+                "id": "turn:runtime:one",
+                "status": "completed",
+                "items": []
+              }
+            }
+          }
+        ],
+        "methods": [
+          "initialize",
+          "initialized",
+          "environment/add",
+          "environment/status",
+          "thread/start",
+          "turn/start"
+        ],
+        "replayMethods": [
+          "initialize",
+          "initialized",
+          "environment/add",
+          "environment/status"
+        ],
+        "closed": 1,
+        "replayClosed": 1,
+        "consumedSyntheticCalls": 1
+      }
+    ]
+  },
+  "captureNote": "Second identical execution retained directly; first execution also exit0. No harness repair."
+}

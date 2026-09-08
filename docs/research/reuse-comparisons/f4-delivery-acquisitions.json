@@ -1,0 +1,69 @@
+{
+  "root": "/private/tmp/cr-f4-delivery.CmEyjB",
+  "freeBytes": 148965588992,
+  "pin": "2c3baa70ab8f8b2b97c943e4f97c20c5c3e5b81c",
+  "files": [
+    {
+      "file": "lib/message-delivery.ts",
+      "name": "lib--message-delivery.ts",
+      "url": "https://raw.githubusercontent.com/23blocks-OS/ai-maestro/2c3baa70ab8f8b2b97c943e4f97c20c5c3e5b81c/lib/message-delivery.ts",
+      "bytes": 10094,
+      "sha256": "8cca43c8dee7d7427d318173b98c906cb6762d6b50375d6170fb6b3435b023a7"
+    },
+    {
+      "file": "lib/wake-chain.ts",
+      "name": "lib--wake-chain.ts",
+      "url": "https://raw.githubusercontent.com/23blocks-OS/ai-maestro/2c3baa70ab8f8b2b97c943e4f97c20c5c3e5b81c/lib/wake-chain.ts",
+      "bytes": 10547,
+      "sha256": "0313a11b5a6ae59f1fea5a30b3bf24fe205b4c7484586af7b3ac1578f2de16a0"
+    },
+    {
+      "file": "lib/wake-queue.ts",
+      "name": "lib--wake-queue.ts",
+      "url": "https://raw.githubusercontent.com/23blocks-OS/ai-maestro/2c3baa70ab8f8b2b97c943e4f97c20c5c3e5b81c/lib/wake-queue.ts",
+      "bytes": 9882,
+      "sha256": "fdf841a7de03928c3deb732a51f5a889779165dd752e8cbc4ea7fa7378e97c43"
+    },
+    {
+      "file": "lib/content-security.ts",
+      "name": "lib--content-security.ts",
+      "url": "https://raw.githubusercontent.com/23blocks-OS/ai-maestro/2c3baa70ab8f8b2b97c943e4f97c20c5c3e5b81c/lib/content-security.ts",
+      "bytes": 6138,
+      "sha256": "f2ab203f9050086e0d32fd6f757bb9ce69a243a157efa50ed70eb2cb2b10e593"
+    },
+    {
+      "file": "lib/amp-inbox-writer.ts",
+      "name": "lib--amp-inbox-writer.ts",
+      "url": "https://raw.githubusercontent.com/23blocks-OS/ai-maestro/2c3baa70ab8f8b2b97c943e4f97c20c5c3e5b81c/lib/amp-inbox-writer.ts",
+      "bytes": 15363,
+      "sha256": "69f705753886dccc0b3466245ad5aacf1bfa9fc2e0765082c0cd86d1286c15cc"
+    },
+    {
+      "file": "lib/amp-canonical-json.ts",
+      "name": "lib--amp-canonical-json.ts",
+      "url": "https://raw.githubusercontent.com/23blocks-OS/ai-maestro/2c3baa70ab8f8b2b97c943e4f97c20c5c3e5b81c/lib/amp-canonical-json.ts",
+      "bytes": 1032,
+      "sha256": "9e2cdf2a9d0306f529ac6a427c4f4b87f5dbd83716705ed56e1e11c40b0dc65f"
+    },
+    {
+      "file": "lib/notification-service.ts",
+      "name": "lib--notification-service.ts",
+      "url": "https://raw.githubusercontent.com/23blocks-OS/ai-maestro/2c3baa70ab8f8b2b97c943e4f97c20c5c3e5b81c/lib/notification-service.ts",
+      "bytes": 19378,
+      "sha256": "38fdf6585b34406ce9ca9f8c4099c1a9a233f8e950a40dfc2c3d37c467b67463"
+    },
+    {
+      "file": "types/agent.ts",
+      "name": "types--agent.ts",
+      "url": "https://raw.githubusercontent.com/23blocks-OS/ai-maestro/2c3baa70ab8f8b2b97c943e4f97c20c5c3e5b81c/types/agent.ts",
+      "bytes": 28056,
+      "sha256": "e4fb4ec9d9be38497b36af495c50698351104435a521c947561a1799ed48ce97"
+    }
+  ],
+  "cleanup": {
+    "allocatedKiB": 116,
+    "removed": true,
+    "absenceVerified": true,
+    "exitCode": 0
+  }
+}

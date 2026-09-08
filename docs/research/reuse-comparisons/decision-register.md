@@ -4,6 +4,32 @@
 all-outcomes implementation plan or permission to implement or deploy candidates.
 All26 outcome-level gates remain tracked separately in the comparison index.
 
+## DR-06 — preserve task authority; reuse notification routing only for a named gap
+
+Do not replace canonical CR task/attempt/receipt state with unchanged Maestro local
+delivery. Actual deliver/wake-chain/queue execution accepts a changed body under
+the same ID, overwrites one inbox record and queues two wakes. Its verified wake
+status is not an exact message/digest/attempt acknowledgement. Retaining current
+immutable state is a responsibility-specific exception, not rejection of Maestro
+or justification for another custom messaging framework.
+
+Compared alternatives: current canonical dispatch/journals; actual Maestro local
+delivery; previously evaluated Hermes participant/room state (with its separate
+zero-tool policy mismatch). Native agent execution remains under RC2; none of these
+local message observations alone qualifies it. Existing direct participant paths
+remain the MVP route pending their own complete lifecycle qualification.
+
+No notification framework or new service is selected now. For a concrete future
+heterogeneous notification gap, prefer Maestro's tested ordered adapters and
+unavailable/sent/deferred/confirmed distinctions as the first reuse candidate.
+Reopen on a named required channel or upstream exact-message immutable receipt
+contract; then test ingress authentication, digest replay, restart and actual
+transport before adoption. No whole-service cost or licence clearance is inferred.
+
+Production deletion0; no DB migration, dependencies or service added by this choice.
+Evidence: [actual delivery fit](f4-delivery-fit.md),
+[root review](f4-delivery-review.md). The broader RC4 packet remains open.
+
 ## DR-05 — synchronous maintained JWT verification
 
 Select jsonwebtoken9.0.3 behind the current Node22 synchronous Access verifier,

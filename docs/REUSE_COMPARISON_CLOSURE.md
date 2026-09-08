@@ -51,8 +51,12 @@ RC5's current release service experiments now exist: actual etcd3.7.1 CAS/restar
 RBAC and OpenBao2.6.2 Raft/KV scoped CAS/restart/unseal/deletion denials. Reuse those
 receipts; don't rerun raw happy paths unchanged. Actual CR adapter/canonical payload,
 lost successful-write reply, restore and split SQL/anchor commit remain the next
-decisive common cases. Etcd scoped-token CAS/authenticated restart also remains
-unexercised; the earlier CAS/restart ran before auth setup. OpenBao's observed missing
+decisive common cases. A subsequent actual CR etcd adapter experiment now exercises
+scoped advance, lost successful callback reply without duplicate write, and restart
+with explicit runtime reauthentication (the old token returned401). OpenBao still
+needs the equivalent CR adapter cases; etcd still needs supported restore and split
+SQL/anchor recovery. Raw concurrent CAS remains distinct from new sequential adapter
+advancement. OpenBao's observed missing
 head recreation denial does not itself establish independent rollback protection.
 
 RC2 now has actual TS decoder/result and Python generated-model-to-observer mapping.
@@ -61,6 +65,20 @@ the favorable post-registration trigger does not repair the known early ordering
 gap. Compare actual supported ordering/recovery with the existing direct transport
 before replacing it. RC6's new journal/layout and close/recover checks are reusable
 primitives, not an implemented version switch or continuous worker.
+
+The actual current-runtime same-turn early-ordering fixture is now executed:
+same-turn early start is refused, actual in-memory ledger becomes ambiguous, and
+same-request replay issues no second turn. This closes the missing **observation**,
+not successful ordering support. Reuse that receipt rather than repeat it. Supported
+client correction/reconciliation with exact identity and usage remains the decision
+gap; safe refusal alone is not a reason to select custom transport as complete.
+
+RC10 actual multi-environment preflight found vinext root-relative output, separate
+dotenv loading and conditional dependency-adjacent writes. OutDir/envFile overrides
+alone do not isolate a repository-root build. Proceed through a fully owned staged
+application/dependency root; do not repeat the miniature plugin test or change app
+configuration merely to make the research run. No actual application build or new
+plugin acquisition occurred in that preflight.
 
 ## Consolidation into the final plan
 

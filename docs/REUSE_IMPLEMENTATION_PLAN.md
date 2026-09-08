@@ -30,6 +30,7 @@ Preserve canonical project/job/attempt/review IDs and private configuration.
 | DR-03 | pnpm 11.19.0 prepared runtime identity graph | New generic dependency resolver; npm CLI graph assumptions on this pnpm layout | Frozen clean preparation, exact platform graph and build binding |
 | DR-04 | CycloneDX library 10.2.0 public LicenseEvidenceGatherer, build-time only, plus four explicit retained-text exceptions | Whole CycloneDX CLI graph reader; single-text checker as sole original-text collector | Snapshot-safe bounded reads; complete built/copied/vendor/asset attribution, including collector notices |
 | DR-05 | jsonwebtoken9.0.3 behind existing synchronous verifier and retained CR policy | Async migration solely to adopt jose; a new login provider; dual token libraries | Actual typed package import, identity/caller regressions, full notices/build and owner login separately |
+| DR-06 | Current immutable task/attempt/receipt authority; Maestro routing is conditional reuse for a named notification gap | Unchanged Maestro local inbox/wake status as task acknowledgement; a new general notification framework without a required channel | Actual native lifecycle still required; future notification adoption needs ingress/digest/restart/transport fit, not wake-as-completion |
 
 These decisions currently delete zero production lines. They avoid unnecessary new
 infrastructure; they are not evidence that every existing custom component is needed.

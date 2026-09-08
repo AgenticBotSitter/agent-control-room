@@ -1,0 +1,28 @@
+# Independent RC5 etcd adapter source/receipt review
+
+2026-09-08. Reviewed root-authored `f5-etcd-adapter-fit.mjs`, `f5-etcd-adapter-fit.md` and `f5-etcd-adapter-evidence.json`; no rerun, download, service operation or product changes. Also read actual `etcd-checkpoint-store.ts`, `etcd-checkpoint-access.ts`, `etcd-checkpoint-record.ts`, `etcd-checkpoint-advance.ts` and `bounded-checkpoint-call.ts` under src/completion-gate/v1.
+
+## Disposition
+
+No blocking finding for the **nine explicitly bounded observations** in this saved run. Accept as actual existing-CR-adapter → research JSON gateway bridge → real etcd composition. Do not extend acceptance to production transport, independent rollback custody, adapter concurrency, backup/restore or endpoint authentication. Root retains selection and security authority.
+
+## Checked evidence
+
+- The receipt contains exactly nine observations matching the report. It records first advance writeRequests1; lost-successful-ack writeRequests2/extra1; old token status401; two terminal SIGTERM exits; sampled peak32,352KiB; monitorFailure null and stateRemoved true.
+- Owner fixture provisioning occurs before auth activation. Runtime dispatch closes over the runtime user's token, not an owner token. The role is exact-key READWRITE. Both adapter transactions call that dispatch. Reauthentication also uses runtime, not root. No claim that neighbor-key rejection or other permission cases were rerun in this packet.
+- Actual access validates scope and independently supplied binding, exact wire key/create revision/cluster, value length/lease, and checkpoint format. Advance prepares create-revision/mod-revision/value/lease comparisons with one put and an empty failure branch. Receipt validation requires succeeded=true, exactly one put response and a later revision in the bound cluster. Gateway conversion preserves value bytes and supplies protobuf defaults/discriminant; it is disclosed research transport glue, not borrowed production transport.
+- Initial read, next read, post-lost-reply final read and post-restart final read use deepEqual on the full checkpoint object. This is stronger than checking revision alone. It does not validate fabricated stateAuthTag against SQL or prove complete history custody.
+- Lost-reply injection follows successful `ok('/v3/kv/txn', ...)` and HTTP response parsing. Callback error then traverses actual boundedCheckpointCall, which classifies dispatched failures as uncertain. Full final readback proves that this particular write committed. It is not network loss, crash-at-commit or remote cancellation evidence.
+- Stale attempts invoke adapter advance with the old expected digest; a fresh read encounters the changed record and preparation refuses. writeRequests remains2. This proves no further transaction on these explicit stale calls, not retry suppression for every possible caller or exactly-once behavior under all failures.
+- Old token's HTTP401 is retained before explicit authentication. This observation is not an asserted status invariant: the harness records whatever status occurred. Reauthentication then succeeds and the same store/binding returns full final payload. No hidden retry loop refreshes a token or repeats a write.
+- Runtime READWRITE permits actual deleteRange. The receipt's deleted count is asserted1; subsequent adapter read refuses missing head; initialize is separately refused. That is deletion **detection/refusal**, not deletion prevention or restoration of the old checkpoint. No automatic reinitialization occurs.
+
+## Nonblocking limitations to preserve
+
+1. Lost-reply assertion only requires a truthy extracted error; the saved direct receipt supplies the exact `Checkpoint request uncertain` value and source explains why. Before using this as a regression gate, assert the specific CheckpointCallError/outcome, not any error. Likewise old-token401 is observed, not asserted. Neither weakness invalidates the narrower recorded observation.
+2. The bridge's cancel marks callback delivery suppressed; it does not abort its already-sent fetch. Request fetch timeout is2seconds, adapter budget5seconds; neither proves remote rollback. Response size is checked after response.text(), not bounded while receiving. Report correctly states these limits.
+3. Binary hash is checked before launch, but app modules are statically imported from the checkout without a preimport closure hash guard. Source baseline attribution is not an immutable full executable-closure attestation. This is adequate for this source/receipt review, not reproducibility certification.
+4. Cleanup protection begins after temp-state creation and port allocation. A setup failure before try/finally can leave the owned state directory; report explicitly discloses this. Within terminal run finally, state is recursively removed under the validated owned acquisition root and absence reported. Report does not claim independently inventoried leftover processes. SIGTERM exits are terminal, not successful graceful shutdown evidence.
+5. RSS sampling every250ms can miss peaks, and an unsuccessful ps invocation is not explicitly converted to monitorFailure. This run contains a positive measured maximum; keep it labeled sampled service RSS, not a hard memory ceiling or total application footprint. Timer/output/RSS guards do not replace sandbox containment.
+
+The strongest useful reuse finding stands: the current adapter's validation/CAS/uncertainty behavior crosses an actual service without replacing its logic. Etcd's delete-capable runtime permission is a real limitation to compare against OpenBao, not a reason to assert complete custody from these nine observations. No new protocol implementation or final winner is approved here.

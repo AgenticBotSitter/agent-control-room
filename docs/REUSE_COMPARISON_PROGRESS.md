@@ -4,6 +4,28 @@
 
 ## Direct answer
 
+[Actual etcd checkpoint-adapter composition](research/reuse-comparisons/f5-etcd-adapter-fit.md)
+now crosses the existing CR schema/digest/conditional-write/bounded-callback code:
+nine observations include exact payload advancement, successful-write/lost-reply
+uncertainty without a second write, explicit reauthentication after restart and
+missing-head refusal. No new acquisition; both disposable processes and state were
+cleaned. [Independent review](research/reuse-comparisons/f5-etcd-adapter-review.md)
+found no blocker for those bounded observations; root accepts that limited scope.
+OpenBao parity, restore and SQL split-commit remain open. This is not production
+custody qualification.
+
+DR-06 now closes the unchanged Maestro delivery-as-task-authority question after
+[actual delivery/queue checks](research/reuse-comparisons/f4-delivery-fit.md) and
+[root review](research/reuse-comparisons/f4-delivery-review.md). Retain CR immutable
+task state; keep upstream fallback notification routing as conditional reuse for a
+named channel gap. Do not build or install an extra general notification system
+merely because that optional code is available. Wider RC4 integration remains open.
+
+[Actual multi-environment build preflight](research/reuse-comparisons/f9-multienvironment-fit.md)
+found that vinext can write beyond configured output folders and separately load
+dotenv. A genuinely owned source/dependency staging root is required for the next
+license-plugin build experiment; no application build or download was attempted.
+
 RC3's [eleven new mounted checks](research/reuse-comparisons/f3-journey-fit.md)
 and [root review](research/reuse-comparisons/f3-journey-review.md) close one concrete
 replacement question: unchanged Desktop MessageRow must not replace authoritative
@@ -32,6 +54,13 @@ also finds blanket rejection of pre-response notifications in our qualification
 runtime: safe ambiguity is not complete supported ordering. Neither transport wins
 by default. No fabricated native ID or new generic router is justified to make the
 TS stream or Python ordering fit.
+
+The [new actual-runtime ordering experiment](research/reuse-comparisons/f2-current-ordering-fit.md)
+confirms that matching early events also lead to ambiguity, not just stale events.
+Same-request replay makes no second turn; eager response-first completes. This is
+actual runtime/controller/observer/in-memory-ledger behavior with fake transport,
+not persistent recovery or native compatibility. That comparison gap is now measured;
+the supported recovery/ordering solution is still unselected.
 
 New cross-family evidence, without application changes:
 

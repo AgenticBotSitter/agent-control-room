@@ -1,5 +1,19 @@
 # Reuse evaluation download and cleanup ledger
 
+## Additional completed seams — 2026-09-08
+
+- RC3 [mounted transcript/result](research/reuse-comparisons/f3-journey-acquisitions.json):
+  three pinned sources plus isolated jsdom26.1.0,30,816KiB; exact root removed and
+  absence independently checked. No application dependency changes.
+- RC4 [actual delivery](research/reuse-comparisons/f4-delivery-acquisitions.json):
+  eight pinned sources and synthetic inbox,116KiB; exact root removed and absence
+  independently checked. Upstream wake ticker reset; no native notification or service.
+- RC5 [actual etcd adapter](research/reuse-comparisons/f5-etcd-adapter-fit.md):
+  reused retained distribution, zero downloads; two owned processes terminated,
+  adapter-state removed and directory absence checked. Distribution still retained.
+- RC10 [multi-environment preflight](research/reuse-comparisons/f9-multienvironment-fit.md):
+  no build, installation or acquisition; source inspection identified staging needs.
+
 ## RC5 current service releases — 2026-09-08 (distributions retained)
 
 Pre-download free space139GiB. Official release API selected etcd3.7.1 and

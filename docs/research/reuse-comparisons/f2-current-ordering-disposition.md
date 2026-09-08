@@ -60,13 +60,27 @@ runtime has a concrete reason to retain its sequential binding and uncertainty
 boundaries while evaluation continues, **not** permission to expand bespoke
 infrastructure or a claim that no upstream solution exists.
 
-The remaining decisive fixture should add the previously missing same-turn
-early-event case through the actual current runtime, and exercise response-first
-reader/requester scheduling through the unchanged Python client. Compare bounded
+The [actual current-runtime fixture](f2-current-ordering-fit.md) now supplies the
+missing same-turn early-event case: two early schedules are refused at the first
+start frame, record ambiguity in the actual in-memory ledger and issue no second
+turn on same-request replay. Eager response-first and stale controls separate
+successful ordering from intentional refusal. Root read the complete standalone
+fixture and direct receipt: accepted for that narrow runtime/ledger composition.
+The author disclosed a second identical run to retain stdout; it adds no distinct
+coverage. No further unchanged replay is needed. Persistent restart and real
+transport termination are not established by this fake-port/in-memory experiment.
+
+Still exercise response-first reader/requester scheduling through the unchanged
+Python client, if that remains decision-changing. Compare bounded
 termination, exact identity, usage availability, durable settlement/reconciliation
 and no duplicate start. Keep stale-event cases separate. Investigate supported
 upstream correction/reconciliation before proposing a new correlation router.
 Do not synthesize lost usage or manufacture native IDs from thread snapshots.
+
+The [independent source review](f2-current-ordering-review.md) agrees with this
+distinction and preserves best-effort settlement and qualification-versus-production
+limits. Its source review preceded the new runtime fixture and is not represented
+as independent execution review of those new results.
 
 ## Other evidence accepted narrowly
 
