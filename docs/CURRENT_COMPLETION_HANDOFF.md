@@ -1,9 +1,9 @@
 # Current completion handoff — first usable task before more polish
 
 2026-09-08 overnight update, source baseline `a834aca`. This updates implementation
-status, not the original owner outcomes. Sanitized batches may be pushed only to
-the existing private working branch with CI skipped. Public publication, PRs,
-merges and Actions dispatch are not part of this overnight authorization. Local
+status, not the original owner outcomes. The renewed overnight prompt now limits
+work to local commits; earlier private-branch push permission is not used. No
+publication, pushes, PRs, merges or Actions dispatch during this continuation. Local
 build work is authorized; live database, credentials, providers and deployment
 remain separately gated. Preserve unrelated private setup notes outside commits.
 
@@ -164,6 +164,12 @@ between trusted canonical preparation, shared human review and the existing pair
 issuer. It has one preparation/issuance attempt and source/consent invalidation,
 but no owner-facing consent UI, native custody or authenticated delivery installation.
 This supersedes the lack of a reusable session controller, not the live gates below.
+
+`PRIVATE_OWNER_REVIEW_COMMAND.md` now supplies a first attached-terminal owner surface
+using that session. It displays both task and recovery scope, requires exact explicit
+confirmation and current owner-key state, and separately stores/verifies the packet
+through existing intake. This is not a website signer or configured private transport;
+native key/channel provisioning and actual owner-attended acceptance remain gated.
 
 `src/node-bridge/protected-store-signer.ts` implements node-frame signatures using the
 node key store. It is not an owner approval issuer. The accepted owner trust contract

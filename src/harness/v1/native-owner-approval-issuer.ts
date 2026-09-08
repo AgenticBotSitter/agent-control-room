@@ -18,12 +18,16 @@ export function createNativeOwnerApprovalIssuer(
 ) {
   const material = prepareNativeOwnerApprovalMaterial(input), review = describeNativeOwnerReview(input);
   const reviewDigest = sha256Digest({ review, material });
+  const authorization = Object.freeze({ approvalKeyId: material.approval.approvalKeyId,
+    approvalExpiresAt: material.approval.expiresAt,
+    recoveryExpiresAt: new Date(material.recovery.expiresAt).toISOString(),
+    recoveryOperations: Object.freeze([...material.recovery.operations]) });
   const key = dependencies.publicKeySpki, clock = dependencies.clock;
   const consent = dependencies.assertOwnerConsentCurrent, sign = dependencies.sign;
   const timeoutMs = dependencies.timeoutMs;
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30_000) throw new Error("owner_approval_issuer_invalid");
   let attempted = false, highWater = material.recovery.issuedAt;
-  return Object.freeze({ review, reviewDigest, async issue(signal: AbortSignal) {
+  return Object.freeze({ review, authorization, reviewDigest, async issue(signal: AbortSignal) {
     const unavailable = () => new Error("owner_approval_issuance_uncertain");
     if (attempted) throw unavailable(); attempted = true;
     const controller = new AbortController(), stop = () => controller.abort();

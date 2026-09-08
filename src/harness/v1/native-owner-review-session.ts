@@ -53,7 +53,7 @@ export function createNativeOwnerReviewSession(value: NativeOwnerReviewTarget,
   return Object.freeze({ close,
     snapshot() {
       return Object.freeze({ phase, target, startsWork: false as const,
-        ...(phase === "review" && issuer ? { review: issuer.review, reviewDigest: issuer.reviewDigest } : {}) });
+        ...(phase === "review" && issuer ? { review: issuer.review, authorization: issuer.authorization, reviewDigest: issuer.reviewDigest } : {}) });
     },
     async prepare(signal: AbortSignal) {
       if (phase !== "new" || !(signal instanceof AbortSignal)) throw unavailable();
@@ -81,7 +81,8 @@ export function createNativeOwnerReviewSession(value: NativeOwnerReviewTarget,
           };
           const candidate = createNativeOwnerApprovalIssuer(input, { ...signer, assertOwnerConsentCurrent: checkReview });
           synchronous(current); loadingCurrent(); issuer = candidate; reviewCurrent = checkReview; phase = "review";
-          return Object.freeze({ review: candidate.review, reviewDigest: candidate.reviewDigest, startsWork: false as const });
+          return Object.freeze({ review: candidate.review, authorization: candidate.authorization,
+            reviewDigest: candidate.reviewDigest, startsWork: false as const });
         });
         return await Promise.race([work, stopped]);
       } catch { if (status() !== "closed") phase = "unavailable"; lifetime.abort(); issuer = undefined; throw unavailable(); }

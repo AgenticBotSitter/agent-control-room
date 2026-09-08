@@ -823,3 +823,60 @@ lint (47538 exit zero). A subsequent sequential source-session and existing comp
 approval/owner-review run passed 9/9 and diff whitespace checks (89291 exit zero).
 This includes the existing browser-asset boundary check; no signing cryptography or
 approval storage was introduced into browser assets. All named test processes ended.
+
+### Resume checkpoint after owner review session
+
+`35b1267` committed and push confirmed (80300 exit zero); local HEAD matches the
+authorized private branch. No open PR, PR/merge/Actions dispatch or production effect.
+Clock: 08:59:37 UTC; original deadline still 12:40:58 UTC. Only unrelated private
+notes/image were dirty before this checkpoint. Previous turn is concrete progress.
+Next missing integration is the actual owner-controlled presentation/confirmation
+surface and trusted preparation/signing channel composition. The session/controller
+does not provide those. An explicit private owner-attended command with injected
+offline tests is a possible first surface; no live signing, credential lookup or
+owner phrase may be performed by the unattended agent. Evaluate against existing
+accepted components and avoid creating another transport/security protocol.
+
+## Owner-attended terminal review surface
+
+Added `scripts/review-private-owner-task.mjs`, an explicit protected-module/attached-
+terminal command around the existing session. It displays exact escaped task text,
+scope and dedicated canonical Ed25519 key fingerprint, plus approval and recovery
+permissions/expiry. Exact interactive digest confirmation intersects a current-key
+guard; no affirmative flag, environment consent, piped fallback, retry or dispatch.
+Only the complete packet is delivered once to existing canonical intake. A separate
+copy preserves the expected bytes while the intake callback runs, and receipt
+validation reuses the strict application schema and exact task/attempt/operation/
+packet bindings. Source/consent/custody and delivery authenticity remain required
+trusted operator ports, not configured by this command.
+
+Initial five command scenarios, TypeScript and lint passed (84993 exit zero).
+Expanded source/session/intake/HTTP plus fresh compiled 11 scenarios, types and lint
+passed (26115 exit zero). Independent source review found no blocking defect and
+requested additional command-level cancellation, mutation and cleanup tests; added
+those. Its cooperative acquisition/store timeout caveat is documented explicitly.
+
+The first expanded cleanup-timeout test enabled fake timers after the command's real
+five-minute timer was created. All eight assertions passed but a real timer kept the
+process alive. Verified the exact test process and terminated only that local test
+(78362); session 17927 exited one/SIGTERM and is not accepted as a passing run.
+Moved fake-clock installation before both timer creations. No application behavior
+or production process was changed to repair this test-fixture timer mismatch.
+
+Corrected eight command scenarios, TypeScript and lint passed and exited normally
+(93624 exit zero). The following observation was lost across compaction; its result
+is not counted. At 09:16 UTC an exact process check found no matching active owner
+review/build/check process, so a fresh sequential compiled verification was started.
+Final independent source-only re-review found no remaining concrete blocker after
+the added mutation, cancellation and cleanup tests. Cooperative cancellation and
+the distinction between receipt validation and authenticated persistence remain
+explicit limits, not qualified live behavior.
+
+The renewed overnight prompt limits subsequent work to local commits: no pushes,
+PRs, merges, Actions, installs, downloads or production effects. Preserve the
+original 12:40:58 UTC deadline rather than silently extending this run.
+
+Fresh compiled verification completed with exit zero (41671): all 14 owner-session/
+command tests, 13 existing compiled approval and private launcher checks, TypeScript,
+lint and whitespace validation passed. This establishes local release behavior with
+synthetic signing and disposable storage, not owner attendance or a live task.

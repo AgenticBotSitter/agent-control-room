@@ -13,6 +13,12 @@ reuses E53/E57/E58 material, signature verification, review projection and canon
 packet intake. The evaluated ssh2 adapter remains a separate channel implementation;
 this work does not install it or connect to an SSH agent.
 
+The subsequent `PRIVATE_OWNER_REVIEW_COMMAND.md` supplies an explicit attached-terminal
+presentation/confirmation surface. It still requires approved private canonical and
+signing ports and does not qualify live owner setup. The session now also exposes
+the issuer's immutable authorization summary (key ID, approval expiry and exact
+recovery scope/expiry) so that surface can display both permissions before consent.
+
 ## Session behavior
 
 1. Construct for an exact project/job/input digest with a trusted authenticated
