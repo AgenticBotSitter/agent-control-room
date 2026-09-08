@@ -11,7 +11,7 @@ import { ManagedNativeSessions, type ManagedNativeSessionSettings, type NativeSe
 import { NativeEvidenceReceiver } from "../../src/web/v1/native-evidence-receiver";
 import { TaskResultCoordinator } from "../../src/web/v1/task-result-coordinator";
 import { verifyNativeSessionDatabase, verifyNativeEvidenceDatabase, verifyNativeResultDatabase } from "../../src/web/v1/private-database-preflight";
-import { NATIVE_DELIVERY_FEATURE } from "../../src/harness/v1/native-delivery";
+import { NATIVE_DELIVERY_FEATURE, NATIVE_LEASE_DELIVERY_FEATURE } from "../../src/harness/v1/native-delivery";
 import { prepareNativeExecutionHandoff } from "../../src/harness/hermes-native-v1/execution-handoff";
 import { NativeObservationReporter } from "../../src/harness/hermes-native-v1/observation-reporter";
 import { nativeTaskObservation, nativeTaskRegistration } from "../../src/harness/hermes-native-v1/task-observation";
@@ -33,7 +33,7 @@ export type ManagedNativePreparedContext = { f: Base; local: Local; providerRunI
 /** Real signed node protocol and restricted server SQL, entirely in disposable fake-native fixtures.
  * Canonical assignment/approval/dispatch and producer policy reads remain labelled privileged setup.
  * Never constructs a server session or supplies f.auth to the managed server. */
-export async function managedNativeSessionFixture(context?: ManagedNativePreparedContext, options: { reporting?: boolean; queue?: boolean; stopHandshakeAtDispatch?: boolean;
+export async function managedNativeSessionFixture(context?: ManagedNativePreparedContext, options: { reporting?: boolean; queue?: boolean; stopHandshakeAtDispatch?: boolean; leaseDelivery?: boolean;
   onQueueReady?: import("../../src/web/v1/task-assignment-coordinator").TaskAssignmentCoordinator["recoverForReadyNode"] } = {}) {
   const f = context?.f ?? await canonicalApprovalStorageFixture();
   const cleanup: (() => void | Promise<void>)[] = [f.close];
@@ -101,7 +101,7 @@ export async function managedNativeSessionFixture(context?: ManagedNativePrepare
       storage: f.config, results: { ...f.scope, register: resultService.register.bind(resultService), submit: resultService.submit.bind(resultService) }, clock: f.clock };
     const receiver = new NativeEvidenceReceiver(evidenceDb, receiverConfig);
     const serverKeys = generateKeyPairSync("ed25519"), spki = serverKeys.publicKey.export({ format: "der", type: "spki" }).toString("base64url");
-    const features = [NATIVE_DELIVERY_FEATURE, "harness.native.snapshot.v1"];
+    const features = [NATIVE_DELIVERY_FEATURE, "harness.native.snapshot.v1", ...(options.leaseDelivery ? [NATIVE_LEASE_DELIVERY_FEATURE] : [])];
     const settings: ManagedNativeSessionSettings = { nodes: [{ tenantId: f.scope.tenantId, nodeId: f.prepared.request.nodeId,
       nodeKeyId: "key:test", serverId: "server:managed", serverKeyId: "key:managed-server", serverPublicKeySpki: spki,
       transportIdentity: "transport:managed", features, maxFrameBytes: 131_072, heartbeatIntervalSeconds: 30 }],

@@ -1458,3 +1458,35 @@ Scope remains synthetic trust/keys and manually pumped transport. This verifies 
 server-session ACK path, NOT ManagedNativeInput composition, native runtime readiness,
 real current-policy composition, provider execution or production operation. No new
 runtime feature is enabled. Original fixed deadline is unchanged at 12:40:58 UTC.
+
+### Lease-aware native runtime with actual current-policy composition
+
+Implemented separate createLeaseAwareNativeNodeRuntime, preserving fixed validator/
+launcher/defaults. Opt-in peers negotiate the existing lease feature. Checked intake
+binds exact dispatch and grant to one channel, retains the grant identity, and keeps
+readiness/start unavailable until both exist with an active exact attempt. Early
+start does not reserve or close the run. Lazy existing createNativeCurrentPolicy
+uses the accepted owner approval and actual captured node stores/resources. Legacy
+readCurrent is not used; the test supplies one that deliberately throws.
+
+Initial 24106 passed positive, pause and cancellation. The ceiling test failed in
+the old fixture's narrowCeiling helper before exercising runtime; replaced with
+genuine omission of ceiling provisioning. 34764 passed all 23 combined runtime
+cases, types/lint/diff. Added exact result/pending review and queue-selected capture
+coverage. 45580 exposed that queue delivery must invoke the real manager submission,
+not merely connect; 14933 then exposed a test replacing attemptSummary while the
+atomic store internally calls it. 47330 passed seven cases but retained that capture
+fixture issue. Preserve the store's internal method through intake, then replace it
+before runtime readiness/start. This tests captured dependencies, not immutable class
+internals. Runtime now captures all lease journal methods before delayed intake.
+69865 passed types. Corrected 20663 passed eight runtime cases, types, lint and diff.
+
+Independent source review and final extension review found no concrete blocking
+defect; both were source-only. Tests prove ManagedNativeInput receipt/grant ACK,
+actual verified policy to fake start, exact result and pending review. They also
+prove the local effect remains held after completion. Synthetic profile/key/trust/
+provider seams remain; continuous cleanup/pickup and live operation are not claimed.
+Run 37009 completed VPS compilation but the subsequent compiled tests were invoked
+without their required tsx loader and failed module resolution. Corrected 37761
+passed all four compiled startup/launcher checks with --import tsx. Existing build
+warnings remain; no deployment, GitHub operation or live provider call occurred.

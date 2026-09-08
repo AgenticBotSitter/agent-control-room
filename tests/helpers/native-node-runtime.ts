@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
 import { managedNativeSessionFixture, currentSignal, type ManagedNativePreparedContext } from "./managed-native-session";
-import { createNativeNodeRuntime, createUnassignedNativeNodeRuntime, type NativeNodeRuntimeDependencies } from "../../src/harness/hermes-native-v1/node-runtime";
+import { createNativeNodeRuntime, createUnassignedNativeNodeRuntime, createLeaseAwareNativeNodeRuntime, type NativeNodeRuntimeDependencies } from "../../src/harness/hermes-native-v1/node-runtime";
 import { SqliteBridgeJournal } from "../../src/node-bridge/journal";
 import { NodeProtocolAuthenticator, FixedWindowProtocolRateLimiter, signNodeFrame, signedNodeFrameSchema } from "../../src/node-protocol/v1";
 import { response, statusBody } from "../hermes-native-fixture";
 
 /** Synthetic node runtime plus actual restricted managed server. All stores are disposable;
  * canonical approval/dispatch setup remains labelled privileged fixture composition. */
-export async function nativeNodeRuntimeFixture(context?: ManagedNativePreparedContext, options: { queue?: boolean; unassigned?: boolean } = {}) {
+export async function nativeNodeRuntimeFixture(context?: ManagedNativePreparedContext, options: { queue?: boolean; unassigned?: boolean; leaseAware?: boolean; leaseCeiling?: boolean } = {}) {
   // The managed fixture owns supplied context immediately, including setup failure.
-  const x = await managedNativeSessionFixture(context, options);
+  const x = await managedNativeSessionFixture(context, { ...options, leaseDelivery: options.leaseAware });
   let closeJournal: (() => void) | undefined;
   try {
   const journal = new SqliteBridgeJournal(":memory:"); closeJournal = () => journal.close();
@@ -55,7 +55,21 @@ export async function nativeNodeRuntimeFixture(context?: ManagedNativePreparedCo
   const createUnassigned = (taskDependencies = dependencies) => {
     const runtime = createUnassignedNativeNodeRuntime(unassignedConfig, taskDependencies); runtimes.push(runtime); return runtime;
   };
-  const runtime = options.unassigned ? createUnassigned() : create();
+  let paused = false;
+  if (options.leaseAware) {
+    if (options.leaseCeiling !== false) await x.f.native.provisionCeiling();
+    journal.initializeNodeControlState({ nodeId: config.enrollment.nodeId, nodeVersion: 1, state: "active", updatedAt: new Date(x.f.clock()).toISOString() });
+  }
+  const runtime = options.leaseAware ? createLeaseAwareNativeNodeRuntime(unassignedConfig, {
+    executor: x.local.policy.executor, nodeClass: "personal-compute", nodeSigningKeyReferenceId: "key:test", parentAuthorities: [],
+  }, { ...dependencies, security: { ...dependencies.security,
+    loadCeiling: x.f.native.trust.loadCeiling.bind(x.f.native.trust), currentPolicyRevision: x.f.native.trust.currentPolicyRevision.bind(x.f.native.trust) },
+    local: { ...x.local.dependencies, effects: x.local.effects,
+      // Deliberately poisonous legacy callback: the new runtime must never call it.
+      ...{ readCurrent: async () => { throw new Error("synthetic legacy policy must not be used"); } } },
+    keys: { async availability() { return x.local.policy.keyAvailability; } }, localPaused: () => paused,
+  }) : options.unassigned ? createUnassigned() : create();
+  if (options.leaseAware) runtimes.push(runtime);
   type Runtime = typeof runtime;
   type Input = Awaited<ReturnType<typeof x.manager.attachInput>>;
   async function connect(mode: "initial" | "recover" = "initial", node = runtime, task: typeof x.request | "queue" = x.request) {
@@ -89,6 +103,7 @@ export async function nativeNodeRuntimeFixture(context?: ManagedNativePreparedCo
     await connection.server.transmit(x.f.identity, x.task, currentSignal()); await pump(connection);
   }
   return { x, config, unassignedConfig, queued, dependencies, runtime, journal, create, createUnassigned, connect, pump, dispatch,
+    setPaused: (value: boolean) => { paused = value; },
     setResult: (value: string) => { resultText = value; }, setRecoveryAllowed: (value: boolean) => { recoveryAllowed = value; },
     advance: (ms = 1000) => { const now = x.f.clock() + ms; x.f.setNow(now); x.local.setNow(now); },
     close: async () => { let failed = false;

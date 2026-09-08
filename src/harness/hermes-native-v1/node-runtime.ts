@@ -2,7 +2,7 @@ import { z } from "zod";
 import { PortableNodeBridge, type BridgeFrameSigner, type BridgeTransport } from "../../node-bridge/bridge";
 import { NativeDispatchIntakeHandler } from "../../node-bridge/native-dispatch-handler";
 import type { SqliteBridgeJournal } from "../../node-bridge/journal";
-import { NATIVE_DELIVERY_FEATURE, matchNativeTaskDispatchReceipt, prepareNativeTaskDispatchIntake } from "../v1/native-delivery";
+import { NATIVE_DELIVERY_FEATURE, NATIVE_LEASE_DELIVERY_FEATURE, matchNativeTaskDispatchReceipt, prepareNativeTaskDispatchIntake } from "../v1/native-delivery";
 import { signedNodeFrameSchema, verifyNodeFrameSignature, type NodeProtocolAuthenticator } from "../../node-protocol/v1";
 import { sha256Digest } from "../../security";
 import { enrollmentSchema, localId, type NativeRunTransport, type NativeWireRequest } from "./contracts";
@@ -12,6 +12,10 @@ import { createNativeRecoveryAuthority, type NativeRecoveryDependencies } from "
 import { HermesNativeRunAdapter } from "./adapter";
 import { verifyNativeTaskApprovalBinding } from "../v1/native-task-approval-binding";
 import { encodeNativeWire, decodeNativeWire } from "../v1/native-wire";
+import { createNativeCurrentPolicy } from "./current-policy";
+import { createNativeLeaseCommandHandler } from "./lease-intake";
+import { assertNativeLeaseDispatchPair } from "../v1/native-lease-dispatch-pair";
+import type { BridgeCommandHandler } from "../../node-bridge/admission-handler";
 
 const configuration = z.object({ queueId: localId, enrollment: enrollmentSchema, nodeKeyId: localId,
   serverId: localId, serverKeyId: localId, serverPublicKeySpki: z.string().min(16).max(4096) }).strict();
@@ -26,6 +30,16 @@ export type NativeNodeRuntimeDependencies = Omit<HandoffDependencies, "deliverie
   signer: BridgeFrameSigner;
   serverAuthenticator: NodeProtocolAuthenticator;
   recovery: Omit<NativeRecoveryDependencies, "journal" | "effects" | "executions" | "clock">;
+};
+type PolicyConfiguration = Omit<Parameters<typeof createNativeCurrentPolicy>[0], "request" | "leaseMessageId" | "serverActorId">;
+type PolicyResources = Parameters<typeof createNativeCurrentPolicy>[1];
+export type LeaseAwareNativeNodeRuntimeDependencies = Omit<NativeNodeRuntimeDependencies, "local" | "security"> & {
+  security: NativeNodeRuntimeDependencies["security"] & PolicyResources["security"];
+  local: Omit<NativeNodeRuntimeDependencies["local"], "readCurrent" | "effects"> & {
+    effects: NativeNodeRuntimeDependencies["local"]["effects"] & PolicyResources["effects"];
+  };
+  keys: PolicyResources["keys"];
+  localPaused: PolicyResources["localPaused"];
 };
 const fail = (): never => { throw new Error("native_node_runtime_unavailable"); };
 
@@ -42,11 +56,34 @@ export function createUnassignedNativeNodeRuntime(input: UnassignedNativeNodeRun
   return createRuntime({ ...unassignedConfiguration.parse(input), queueId: undefined }, dependencies);
 }
 
-function createRuntime(config: Omit<z.infer<typeof configuration>, "queueId"> & { queueId: string | undefined }, dependencies: NativeNodeRuntimeDependencies) {
+/** Opt-in one-task runtime using the retained canonical lease and existing verified
+ * current-policy composition. Does not change fixed launcher defaults or supply a
+ * multi-task lifecycle, profile qualification, key availability or native transport. */
+export function createLeaseAwareNativeNodeRuntime(input: UnassignedNativeNodeRuntimeConfiguration,
+  policy: PolicyConfiguration, dependencies: LeaseAwareNativeNodeRuntimeDependencies) {
+  const config = { ...unassignedConfiguration.parse(input), queueId: undefined };
+  const security = dependencies.security;
+  const capturedSecurity = { resolveServerKey: security.resolveServerKey.bind(security),
+    currentServerTrustRevision: security.currentServerTrustRevision.bind(security),
+    loadCeiling: security.loadCeiling.bind(security), currentPolicyRevision: security.currentPolicyRevision.bind(security) };
+  return createRuntime(config, { ...dependencies, security: capturedSecurity,
+    local: { ...dependencies.local, readCurrent: async () => fail() } }, {
+    config: structuredClone(policy), security: capturedSecurity,
+    keys: { availability: dependencies.keys.availability.bind(dependencies.keys) },
+    effects: { countActive: dependencies.local.effects.countActive.bind(dependencies.local.effects) },
+    localPaused: dependencies.localPaused.bind(dependencies),
+  });
+}
+
+function createRuntime(config: Omit<z.infer<typeof configuration>, "queueId"> & { queueId: string | undefined }, dependencies: NativeNodeRuntimeDependencies,
+  leasePolicy?: Pick<PolicyResources, "security" | "keys" | "effects" | "localPaused"> & { config: PolicyConfiguration }) {
   const clock = dependencies.clock.bind(dependencies);
   let boundQueue = config.queueId;
   const queue = () => boundQueue ?? fail();
   const journal = dependencies.journal;
+  const leaseJournal = leasePolicy ? Object.freeze({ acceptedCommand: journal.acceptedCommand.bind(journal),
+    attemptSummary: journal.attemptSummary.bind(journal), nodeControlState: journal.nodeControlState.bind(journal),
+    recordInitialLease: journal.recordInitialLease.bind(journal) }) : undefined;
   const deliveries = Object.freeze({ acceptedNativeDelivery: journal.acceptedNativeDelivery.bind(journal) });
   const runs = Object.freeze({ reserve: dependencies.runs.reserve.bind(dependencies.runs),
     load: dependencies.runs.load.bind(dependencies.runs), update: dependencies.runs.update.bind(dependencies.runs) });
@@ -86,10 +123,34 @@ function createRuntime(config: Omit<z.infer<typeof configuration>, "queueId"> & 
   const intake = new NativeDispatchIntakeHandler(config.enrollment, journal,
     { approvals: dependencies.approvals, security: { currentServerTrustRevision: revision } }, current);
   const sign = dependencies.signer.sign.bind(dependencies.signer);
+  let leaseHandler: ReturnType<typeof createNativeLeaseCommandHandler> | undefined;
+  let leaseIdentity: { messageId: string; digest: string } | undefined;
+  let readLeasePolicy: ReturnType<typeof createNativeCurrentPolicy> | undefined;
+  const leaseCurrent = () => {
+    current(); const channel = bridge.nativeDeliveryChannel();
+    if (!channel || !bridge.status().enabledFeatures?.includes(NATIVE_LEASE_DELIVERY_FEATURE)) return fail();
+    channel.assertCurrent(); const { saved } = savedSource();
+    if (channel.connectionId !== saved.frame.connectionId) return fail();
+    return true as const;
+  };
+  const commandHandler: BridgeCommandHandler | undefined = leasePolicy ? { async handle(frame, receivedAt) {
+    if (frame.type !== "job.lease.grant") return false;
+    leaseCurrent(); const { saved, material } = savedSource();
+    assertNativeLeaseDispatchPair(saved.frame, frame);
+    if (leaseIdentity && (leaseIdentity.messageId !== frame.messageId || leaseIdentity.digest !== sha256Digest(frame))) return fail();
+    leaseHandler ??= createNativeLeaseCommandHandler({ request: material.request, serverActorId: config.serverId,
+      serverKeyId: config.serverKeyId, serverPublicKeySpki: config.serverPublicKeySpki }, {
+      journal: leaseJournal!, trust: { resolveServerKey: resolve, currentServerTrustRevision: revision }, clock: current,
+      channel: () => bridge.nativeDeliveryChannel(), assertTaskCurrent: leaseCurrent,
+    });
+    await leaseHandler.handle(frame, receivedAt); leaseCurrent();
+    leaseIdentity = { messageId: frame.messageId, digest: sha256Digest(frame) };
+    return true;
+  } } : undefined;
   const bridge = new PortableNodeBridge({ tenantId: config.enrollment.tenantId, nodeId: config.enrollment.nodeId,
-    keyId: config.nodeKeyId, features: [NATIVE_DELIVERY_FEATURE, "harness.native.snapshot.v1"] }, journal,
+    keyId: config.nodeKeyId, features: [NATIVE_DELIVERY_FEATURE, "harness.native.snapshot.v1", ...(leasePolicy ? [NATIVE_LEASE_DELIVERY_FEATURE] : [])] }, journal,
   { sign: async frame => { current(); const result = await sign(frame); current(); return result; } },
-  dependencies.serverAuthenticator, undefined, undefined, intake);
+  dependencies.serverAuthenticator, undefined, commandHandler, intake);
   let reporter: NativeObservationReporter | undefined;
   const reporting = () => {
     if (closed) return fail();
@@ -150,7 +211,16 @@ function createRuntime(config: Omit<z.infer<typeof configuration>, "queueId"> & 
       current(); if (owned.signal?.aborted) return fail(); receive(chunk);
     })),
   };
-  const readLocal = dependencies.local.readCurrent.bind(dependencies.local), profileLocal = dependencies.local.assertProfileCurrent.bind(dependencies.local);
+  const readLocal = leasePolicy ? async (signal: AbortSignal) => {
+    requireLease(); const { material } = savedSource();
+    readLeasePolicy ??= createNativeCurrentPolicy({ ...leasePolicy.config,
+      request: { ...material.request, approval: material.packet.approval }, leaseMessageId: leaseIdentity!.messageId,
+      serverActorId: config.serverId }, { ...leasePolicy, approvals: dependencies.approvals, journal: leaseJournal!, clock: current });
+    const policy = await readLeasePolicy(signal); requireLease();
+    const fresh = policy.assertFresh;
+    return { ...policy, assertFresh: () => { requireLease(); fresh?.(); requireLease(); } };
+  } : dependencies.local.readCurrent.bind(dependencies.local);
+  const profileLocal = dependencies.local.assertProfileCurrent.bind(dependencies.local);
   const local = { ...dependencies.local, ...stores, clock,
     readCurrent: async (signal: AbortSignal) => { current(); const value = await readLocal(signal); current(); return value; },
     assertProfileCurrent: async (...args: Parameters<typeof profileLocal>) => {
@@ -170,6 +240,16 @@ function createRuntime(config: Omit<z.infer<typeof configuration>, "queueId"> & 
     if (sourceDigest !== undefined && sourceDigest !== digest) return fail(); sourceDigest = digest;
     sourceBindingDigest = frame.body.bindingDigest;
     return { saved, material };
+  }
+  function requireLease() {
+    if (!leasePolicy) return;
+    leaseCurrent(); if (!leaseIdentity) return fail();
+    const accepted = leaseJournal!.acceptedCommand(leaseIdentity.messageId);
+    if (!accepted || sha256Digest(accepted.frame) !== leaseIdentity.digest || accepted.frame.type !== "job.lease.grant") return fail();
+    const grant = accepted.frame.body, attempt = leaseJournal!.attemptSummary(grant.attemptId);
+    if (!attempt || attempt.jobId !== grant.jobId || attempt.leaseId !== grant.leaseId || attempt.leaseEpoch !== grant.leaseEpoch
+      || !["leased", "running", "waiting"].includes(attempt.state) || current() >= Date.parse(grant.expiresAt)
+      || current() >= Date.parse(grant.authority.expiresAt)) return fail();
   }
   async function prepared() {
     savedSource();
@@ -224,7 +304,7 @@ function createRuntime(config: Omit<z.infer<typeof configuration>, "queueId"> & 
   const transports = new WeakSet<object>(), ownedTransports = new Set<() => Promise<void>>();
   function close(): Promise<void> {
     if (closing) return closing;
-    closed = true; lifetime.abort(); intake.close(); handoff?.close(); recovery?.close(); reporter?.close();
+    closed = true; lifetime.abort(); intake.close(); leaseHandler?.close(); handoff?.close(); recovery?.close(); reporter?.close();
     const cleanup = Promise.all([bridge.close(), ...[...ownedTransports].map(dispose => dispose())]);
     closing = (async () => {
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -256,7 +336,7 @@ function createRuntime(config: Omit<z.infer<typeof configuration>, "queueId"> & 
         size = typeof raw === "string" ? Buffer.byteLength(raw) : raw.byteLength; if (size > 131_072) return fail();
         copy = typeof raw === "string" ? raw : Uint8Array.from(raw);
         frame = signedNodeFrameSchema.parse(JSON.parse(typeof copy === "string" ? copy : Buffer.from(copy).toString("utf8")));
-        if (!["connection.accepted", "node.reconciliation.request", "protocol.ack", "harness.native.dispatch"].includes(frame.type)
+        if (!["connection.accepted", "node.reconciliation.request", "protocol.ack", "harness.native.dispatch", ...(leasePolicy ? ["job.lease.grant"] : [])].includes(frame.type)
           || frame.direction !== "server_to_node" || frame.actorId !== config.serverId || frame.keyId !== config.serverKeyId
           || !verifyNodeFrameSignature(frame, config.serverPublicKeySpki)
           || frame.type === "harness.native.dispatch" && boundQueue !== undefined && frame.body.queueId !== boundQueue) return fail();
@@ -277,6 +357,8 @@ function createRuntime(config: Omit<z.infer<typeof configuration>, "queueId"> & 
   return Object.freeze({ nodeId: config.enrollment.nodeId, get queueId() { return queue(); }, grantsExecutionAuthority: false as const,
     hasAcceptedDispatch() {
       current(); if (boundQueue === undefined || !deliveries.acceptedNativeDelivery(boundQueue)) return false;
+      if (leasePolicy && !leaseIdentity) return false;
+      requireLease();
       savedSource(); return true;
     },
     open: (transport: BridgeTransport, identity: string, signal: AbortSignal) => open(transport, identity, signal),
@@ -287,7 +369,11 @@ function createRuntime(config: Omit<z.infer<typeof configuration>, "queueId"> & 
       catch { void close().catch(() => {}); return Promise.reject(new Error("native_node_runtime_uncertain")); }
     },
     disconnected(signal: AbortSignal) { return wire(0, signal, () => bridge.disconnected()); },
-    start(signal: AbortSignal) { return native("start", signal, async () => {
+    start(signal: AbortSignal) {
+      // Incomplete delivery is not an attempted native start. Refuse before the
+      // adapter reserves the approved run, keeping the node able to receive grant.
+      if (leasePolicy) { try { requireLease(); } catch { return Promise.reject(new Error("native_node_runtime_not_ready")); } }
+      return native("start", signal, async () => {
       bridge.nativeDeliveryChannel()?.assertCurrent(); if (!bridge.nativeDeliveryChannel()) return fail();
       return publish(await (await prepared()).start());
     }); },

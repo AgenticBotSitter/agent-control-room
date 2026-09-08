@@ -214,12 +214,38 @@ operation's freshness fence remains valid while it is transmitting. A legacy
 callback cannot authorize a pair while omitting the committed grant digest.
 
 This is canonical server staging/transmission with injected local transport, not
-native runtime readiness or live fleet acceptance. Current native runtimes do not
-advertise this feature yet. They must first install the checked lease handler and
+native runtime readiness or live fleet acceptance. Original fixed native runtimes do not
+advertise this feature. A participating runtime must install the checked lease handler and
 wait for exact usable lease evidence before attempting start. Do not enable the
 feature in operational configuration as a substitute for that integration.
 Older servers may refuse newer paired records on downgrade: preserve the newer
 reader and immutable evidence; never strip grant fields or rewrite MACs for rollback.
+
+### Opt-in lease-aware one-task runtime
+
+`createLeaseAwareNativeNodeRuntime` is a separate unassigned, one-task factory.
+Only this factory advertises the lease feature; existing fixed validation, launcher
+and defaults stay unchanged. It installs the checked grant handler with the actual
+accepted dispatch/channel fence, verifies the exact consecutive signed pair and
+retains its message ID/digest. Dispatch alone leaves readiness false. Early start
+refuses before native journal reservation, allowing the same runtime to receive
+the missing grant without consuming the approved run.
+
+The new factory captures security, journal, effect-count, key-availability and local
+pause methods. Its lazy `createNativeCurrentPolicy` uses the retained grant, the
+accepted packet's approval and the same node stores used for admission. It does not
+use the legacy caller-supplied `readCurrent`. Readiness/start requires an active exact
+attempt on the original negotiated channel. Current-policy and pre-effect checks
+still enforce owner ceiling, approval, profile, pause, key and capacity evidence.
+
+Local tests join canonical paired staging/transmission, actual ManagedNativeInput,
+native runtime and verified policy through one fake-provider start, exact result
+bytes and pending owner review. Duplicate start makes no second provider call.
+Missing grant, grant-only, wrong causation, disconnect, cancelled attempt, local
+pause and absent ceiling deny execution; queue-selected delivery is also covered.
+Completion leaves its active effect hold intact. Synthetic trust, availability,
+profile and provider seams are explicitly retained. No real host cleanup producer,
+continuous lifecycle, production feature enablement or live qualification is proven.
 
 ### D. Combined release acceptance before service packaging
 
