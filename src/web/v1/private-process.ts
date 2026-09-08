@@ -398,11 +398,15 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             throw new WebAccessError("invalid_request");
           if (jobId) await tasks.detail(identity, id, jobId); else await tasks.authorize(identity, id);
         } else if (newsPage) {
-          if ([...url.searchParams.keys()].some(key => key !== "after" && key !== "sourceAfter") || url.searchParams.getAll("after").length > 1 || url.searchParams.getAll("sourceAfter").length > 1)
+          if ([...url.searchParams.keys()].some(key => !["after", "sourceAfter", "view", "order"].includes(key))
+            || ["after", "sourceAfter", "view", "order"].some(key => url.searchParams.getAll(key).length > 1)
+            || url.searchParams.has("view") && !["history", "archive", "fresh"].includes(url.searchParams.get("view")!)
+            || url.searchParams.has("order") && !["important", "newest", "oldest"].includes(url.searchParams.get("order")!))
             throw new WebAccessError("invalid_request");
           let id: string;
           try { id = decodeURIComponent(newsPage[1]); } catch { throw new WebAccessError("invalid_request"); }
-          await news.list(identity, id, url.searchParams.get("after") ?? undefined, url.searchParams.get("sourceAfter") ?? undefined);
+          await news.list(identity, id, url.searchParams.get("after") ?? undefined, url.searchParams.get("sourceAfter") ?? undefined,
+            url.searchParams.get("view") ?? "history", url.searchParams.get("order") ?? "important");
         } else if (detail) {
           let id: string;
           try { id = decodeURIComponent(detail[1]); } catch { throw new WebAccessError("invalid_request"); }

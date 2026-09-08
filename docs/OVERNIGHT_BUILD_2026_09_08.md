@@ -304,3 +304,19 @@ without requiring unrelated handwritten native-task planning/checkpoint resource
 Reuse existing creation/coordinator services and role gates rather than inventing
 another discussion runtime. Actual agent admission resources remain private/live
 gates, not permission to substitute fixtures in production.
+
+## Saved news deep-link correction
+
+Before starting the larger authoring composition, source tracing found the HTML
+news guard rejected view/order query parameters already emitted by the UI and
+accepted by the API. It now accepts the exact three visible views and sorts,
+passes them to the existing authorized news read, and uses the page's same
+history/important defaults. Duplicate, empty, unknown and API-only options remain
+rejected. No news fetching or command behavior changes.
+
+All nine combinations reach the protected shell; anonymous and malformed requests
+do not. The first expanded test retained a stale final render count of one; that
+expectation now reflects the nine added authorized renders. Final combined news,
+compiled-handler and startup verification passes 20 tests. TypeScript, full lint
+and fresh VPS compilation pass. Independent source review reports no defect;
+this is route/static evidence, not a live browser interaction test.

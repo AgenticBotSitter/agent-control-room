@@ -296,6 +296,18 @@ test("private news routes require current access and grant only retained-source 
     assert.equal((await handle(request(`${path}?order=${order}`))).status, 200);
   assert.equal((await handle(request(`/projects/${project.projectId}/news`))).status, 200);
   assert.equal(renders, 1);
+  const pagePath = `/projects/${project.projectId}/news`;
+  for (const view of ["history", "archive", "fresh"]) for (const order of ["important", "newest", "oldest"]) {
+    const response = await handle(request(`${pagePath}?${new URLSearchParams({ view, order })}`));
+    assert.equal(response.status, 200); assert.equal(await response.text(), "news-shell");
+    assert.equal(response.headers.get("cache-control"), "no-store");
+  }
+  assert.equal(renders, 10);
+  for (const suffix of ["?view=all", "?order=id", "?view=", "?order=", "?view=archive&view=fresh", "?order=newest&order=oldest", "?unexpected=true"])
+    assert.equal((await handle(request(pagePath + suffix))).status, 400);
+  assert.equal(renders, 10);
+  const anonymousPage = request(`${pagePath}?view=archive&order=newest`); anonymousPage.headers.delete("cf-access-jwt-assertion");
+  assert.equal((await handle(anonymousPage)).status, 401); assert.equal(renders, 10);
   for (const suffix of ["?after=one&after=two", "?other=value", "?after=", "?sourceAfter=", "?sourceAfter=one&sourceAfter=two", "?view=unknown", "?view=archive&view=history", "?order=unknown", "?order=newest&order=oldest"])
     assert.equal((await handle(request(path + suffix))).status, 400);
   assert.equal((await handle(request(path, "POST", {}))).status, 400);
@@ -313,7 +325,7 @@ test("private news routes require current access and grant only retained-source 
   assert.equal((await handle(request("/api/v1/session/logout", "POST"))).status, 204);
   assert.equal((await handle(request(path))).status, 401);
   assert.equal((await handle(request(`/projects/${project.projectId}/news`))).status, 401);
-  assert.equal(renders, 1);
+  assert.equal(renders, 10);
 });
 
 test("news source-health projection is scoped, paginated and distinguishes failure from an empty check", async t => {
