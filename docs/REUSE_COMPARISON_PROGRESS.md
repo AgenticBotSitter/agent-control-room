@@ -47,6 +47,20 @@ These are feature-specific observations, not whole-product reliability rankings.
 
 ## How we close the comparisons
 
+Latest bounded comparisons:
+
+- [Parser consolidation](research/reuse-comparisons/f7-parser-decision-fit.md): actual
+  legacy decoder with a fast-xml-parser research adapter matches14/18 corpus outputs;
+  four explicit compatibility adaptations reach18/18. Independent review still
+  requires guarded pins, explicit entities dependency/attribution and broader parity
+  before a removal-ready decision. No production parser was removed.
+- [Full-text collector](research/reuse-comparisons/f9-collector-fit.md): actual
+  pnpm-created fixture passes with4.4.2 and exploratory unsupported-on-Node22 5.0.1.
+  Crucially,4.4.2 then omits resolvable transitives from the real application graph;
+  it is not acceptable as a complete inventory as configured. Preserve existing
+  tooling alternatives rather than write a custom walker. Owned52MiB evaluation
+  packages/cache/fixtures removed with absence verified; receipts retained.
+
 The [joined ABS revision fixture](research/reuse-comparisons/cross-journey-revision-fit.md)
 now proves that the same borrowed-source task/result carries exact lineage through
 changes-requested review to a replayable proposed revision. The extended fixture

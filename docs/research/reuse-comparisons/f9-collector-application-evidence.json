@@ -1,0 +1,14 @@
+{
+  "sourceBaseline": "2052982",
+  "collector": "license-checker-rseidelsohn@4.4.2",
+  "options": {"production":true,"customFormat":{"name":"","version":"","licenses":"","licenseText":"","licenseFile":""}},
+  "scope": "Read-only init against actual current checkout, no fixture graph or package modifications",
+  "exitCode": 0,
+  "returnedIds": ["control-room@0.1.0","fast-xml-parser@5.11.0","pg-boss@12.30.0","postgres@3.4.7","react-dom@19.2.6","react@19.2.6","rss-parser@3.13.0","zod@4.1.12"],
+  "missingTextCountReported": 0,
+  "verifiedResolvableButOmitted": {"rss-parser@3.13.0":["entities@2.2.0","xml2js@0.5.0"],"pg-boss@12.30.0":["cron-parser@5.10.0","pg@8.23.0","serialize-error@13.0.1"]},
+  "elapsedMs": 39.062708,
+  "peakRssKiB": 80192,
+  "decision": "Incomplete current application inventory despite successful tool exit. Not accepted as-is.",
+  "retention": "Structured summary of root-observed stdout and follow-up parent-relative require.resolve checks"
+}

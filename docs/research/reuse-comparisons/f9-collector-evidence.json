@@ -1,0 +1,57 @@
+{
+  "initialFailure": {
+    "chunk_id": "a187e8",
+    "wall_time_seconds": 0.263257833,
+    "exit_code": 1,
+    "original_token_count": 371,
+    "output": "node:fs:1722\n  const stats = binding.lstat(\n                        ^\n\nError: ENOENT: no such file or directory, lstat '/private/tmp/cr-f9-collector.LrFi53/fixture/node_modules/beta/private/tmp/cr-f9-collector.LrFi53/beta-license.txt'\n    at Object.lstatSync (node:fs:1722:25)\n    at findBetterLicenseData (file:///private/tmp/cr-f9-collector.LrFi53/compatible/node_modules/license-checker-rseidelsohn/lib/index.js:202:16)\n    at Array.forEach (<anonymous>)\n    at recursivelyCollectAllDependencies (file:///private/tmp/cr-f9-collector.LrFi53/compatible/node_modules/license-checker-rseidelsohn/lib/index.js:198:42)\n    at file:///private/tmp/cr-f9-collector.LrFi53/compatible/node_modules/license-checker-rseidelsohn/lib/index.js:333:20\n    at Array.forEach (<anonymous>)\n    at recursivelyCollectAllDependencies (file:///private/tmp/cr-f9-collector.LrFi53/compatible/node_modules/license-checker-rseidelsohn/lib/index.js:321:62)\n    at file:///private/tmp/cr-f9-collector.LrFi53/compatible/node_modules/license-checker-rseidelsohn/lib/index.js:442:54\n    at /private/tmp/cr-f9-collector.LrFi53/compatible/node_modules/read-installed-packages/read-installed.js:139:5\n    at /private/tmp/cr-f9-collector.LrFi53/compatible/node_modules/read-installed-packages/read-installed.js:267:14 {\n  errno: -2,\n  code: 'ENOENT',\n  syscall: 'lstat',\n  path: '/private/tmp/cr-f9-collector.LrFi53/fixture/node_modules/beta/private/tmp/cr-f9-collector.LrFi53/beta-license.txt'\n}\n\nNode.js v22.22.3\n"
+  },
+  "relativePathFailure": {
+    "chunk_id": "166929",
+    "wall_time_seconds": 0.161499,
+    "exit_code": 1,
+    "original_token_count": 323,
+    "output": "node:fs:1722\n  const stats = binding.lstat(\n                        ^\n\nError: ENOENT: no such file or directory, lstat '/beta-license.txt'\n    at Object.lstatSync (node:fs:1722:25)\n    at findBetterLicenseData (file:///private/tmp/cr-f9-collector.LrFi53/compatible/node_modules/license-checker-rseidelsohn/lib/index.js:202:16)\n    at Array.forEach (<anonymous>)\n    at recursivelyCollectAllDependencies (file:///private/tmp/cr-f9-collector.LrFi53/compatible/node_modules/license-checker-rseidelsohn/lib/index.js:198:42)\n    at file:///private/tmp/cr-f9-collector.LrFi53/compatible/node_modules/license-checker-rseidelsohn/lib/index.js:333:20\n    at Array.forEach (<anonymous>)\n    at recursivelyCollectAllDependencies (file:///private/tmp/cr-f9-collector.LrFi53/compatible/node_modules/license-checker-rseidelsohn/lib/index.js:321:62)\n    at file:///private/tmp/cr-f9-collector.LrFi53/compatible/node_modules/license-checker-rseidelsohn/lib/index.js:442:54\n    at /private/tmp/cr-f9-collector.LrFi53/compatible/node_modules/read-installed-packages/read-installed.js:139:5\n    at /private/tmp/cr-f9-collector.LrFi53/compatible/node_modules/read-installed-packages/read-installed.js:267:14 {\n  errno: -2,\n  code: 'ENOENT',\n  syscall: 'lstat',\n  path: '/beta-license.txt'\n}\n\nNode.js v22.22.3\n"
+  },
+  "corrected": {
+    "exitCode": 0,
+    "stdout": {
+      "pnpmPreparation": {
+        "status": 0,
+        "stdout": "Progress: resolved 1, reused 0, downloaded 0, added 0\nPackages: +2\n++\nPackages are hard linked from the content-addressable store to the virtual store.\n  Content-addressable store is at: /private/tmp/cr-f9-collector.LrFi53/store/v11\n  Virtual store is at:             node_modules/.pnpm\nProgress: resolved 2, reused 2, downloaded 0, added 2, done\n\ndependencies:\n+ alpha 1.0.0\n+ beta 1.0.0\n\nDone in 201ms using pnpm v11.19.0\n",
+        "stderr": ""
+      },
+      "node": "v22.22.3",
+      "actualPnpmSymlinkGraph": true,
+      "outputs": [
+        {
+          "version": "4.4.2",
+          "supportedOnNode22": true,
+          "packages": [
+            "alpha@1.0.0",
+            "beta@1.0.0",
+            "fixture@1.0.0"
+          ],
+          "alphaText": "Synthetic full license alpha",
+          "betaMissing": true,
+          "betaClarification": "Synthetic retained beta license",
+          "changedTextRejected": true
+        },
+        {
+          "version": "5.0.1",
+          "supportedOnNode22": false,
+          "packages": [
+            "alpha@1.0.0",
+            "beta@1.0.0",
+            "fixture@1.0.0"
+          ],
+          "alphaText": "Synthetic full license alpha",
+          "betaMissing": true,
+          "betaClarification": "Synthetic retained beta license",
+          "changedTextRejected": true
+        }
+      ],
+      "scope": "actual collectors on actual pnpm-created graph of authored local packages; no app graph or legal clearance;5.0.1 runtime unsupported Node22 exploratory only"
+    }
+  }
+}
