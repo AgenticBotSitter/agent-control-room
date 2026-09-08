@@ -1026,3 +1026,45 @@ review, and the connector closes once. All four connector scenarios, types, lint
 and diff checks passed (64841 exit zero). The test invokes the canonical queue
 handler at an injected wait boundary; it does not claim a running pg-boss daemon,
 multiple successive tasks or real PostgreSQL concurrency.
+
+## Explicit server queue-selected session binding
+
+Added opt-in `assignment: "queue"` peer configuration. After node authentication,
+only canonical queue delivery can bind the initially empty managed generation to
+one exact task; input is copied/frozen and cannot switch in place. Manual stage/
+transmit cannot choose a task in this mode. HTTP requests still carry no task or
+queue selector. Unsupported recovery open is refused before replacing an existing
+generation. Fixed-task and explicit fixed-task recovery remain supported.
+
+The connector's canonical queue journey now uses this server mode, not a fixed
+peer task. Its node runtime still has a fixed queue ID, so this is not consecutive
+execution. Independent review found no within-generation defect but correctly
+identified the missing durable prior-work predicate across initial connections.
+Recorded that deployment limitation and left service/operator examples unchanged.
+
+Initial types failed on a denial-test helper assuming every configuration has a
+task (29958 and 59664 exit two; 39 runtime cases passed in the latter). Updated the
+helper to narrow the union and added body-selector/implicit-recovery refusal checks.
+Corrected types plus 39 queue/HTTP cases passed (75446 exit zero). Final five-suite
+input/queue/HTTP/connector verification, types, lint and VPS build passed (98715 exit
+zero). Separate exact connector check confirms a completed result still retains
+the local executing effect claim (39849 exit zero): no capacity settlement is
+implied by result delivery. No production/network/provider/key operations occurred.
+
+Independent fixture audit found no existing combined two-independent-task fixture
+with shared canonical and local stores. It identified reusable ordinary proposal/
+assignment and capacity-release helpers, while warning not to use fresh per-task
+journals or increased capacity as turnover evidence. Local native claim settlement
+is the next substantive lifecycle gap; no claim has been deleted or discounted.
+
+Independent profile audit found no existing task-specific Hermes cleanup proof in
+the accepted profile interface. Runtime close drains local owners/transports, not
+the upstream process tree. Reusable terminal effect/execution methods validate
+event/history, not the truth of an asserted receipt. Recorded this exact gap and
+the need for a trusted per-task evidence producer/verifier; Codex-specific
+descendant-aware cancellation cannot be substituted as Hermes proof.
+
+Fresh compiled session/startup checks passed all 13 cases plus final types/lint/diff
+(22661 exit zero). Clock 10:05:48 UTC, original deadline still 12:40:58 UTC. No
+verification process from this batch remains active. Local-only implementation is
+accepted as a partial server-side integration, not an operational fleet release.

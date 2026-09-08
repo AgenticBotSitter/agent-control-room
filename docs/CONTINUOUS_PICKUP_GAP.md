@@ -15,7 +15,9 @@ Its caller owns retained journals. Native host acceptance remains separate.
 Three bindings deliberately restrict the current composition:
 
 - `src/web/v1/native-http-host.ts`: every authenticated mTLS peer captures one exact
-  `task`; opening a connection passes that configured task to `attachWire`.
+  `task`; opening a connection passes that configured task to `attachWire`. The
+  later local `assignment: "queue"` server option removes this configuration-time
+  binding only; it is not an operational consecutive-worker mode (see design).
 - `src/web/v1/managed-native-sessions.ts`: `attachInputOwned` pins that task's attempt
   and creates one `ManagedNativeInput`; delivery refuses a different attempt.
 - `src/harness/hermes-native-v1/node-runtime.ts`: one runtime captures one `queueId`
@@ -40,9 +42,11 @@ and close/drain the old runtime before admitting another task. Define restart an
 drain behavior before enabling automatic pickup. A server-side selector alone is
 not a complete deliverable; both ends and their combined acceptance must work.
 
-This requires an architectural lifecycle decision, not just operator values. No
-new selection protocol, migration, dynamic peer mode or daemon is approved by this
-gap report. The existing single-task path remains supported while this is built.
+This requires an architectural lifecycle decision, not just operator values. The
+subsequent `CONSECUTIVE_TASK_DESIGN.md` records the implemented local server queue
+binding and its unresolved native capacity/recovery gates. This gap report does
+not authorize deployment or a daemon. The existing single-task path remains
+supported while the combined lifecycle is built.
 
 ## Required acceptance for the combined slice
 

@@ -205,8 +205,9 @@ export class ManagedNativeSessions {
   }
   private attachInputOwned(nodeId: string, input: NativeSessionTransport, configuration: NativeInputConfiguration, packet: boolean) {
     const config = nativeInputConfigurationSchema.parse(configuration);
-    if (!this.routes.register || !this.routes.recover) return Promise.reject(new Error("native_input_unavailable"));
-    return this.attachOwned(nodeId, input, config.task.attemptId, packet).then(({ handle, record }) => {
+    if (!this.routes.register || !this.routes.recover || "assignment" in config && !this.routes.queue)
+      return Promise.reject(new Error("native_input_unavailable"));
+    return this.attachOwned(nodeId, input, "task" in config ? config.task.attemptId : undefined, packet).then(({ handle, record }) => {
       const owner = new ManagedNativeInput(handle, config,
         (value, signal) => this.operation(record, signal, async () => this.routes.register!(value, signal, () => this.current(record))),
         () => this.current(record));

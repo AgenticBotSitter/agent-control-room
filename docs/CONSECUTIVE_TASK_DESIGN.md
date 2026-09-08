@@ -184,5 +184,42 @@ No callback is exposed on the wire facade. Readiness recovery remains enqueue-on
 it must not await delivery from inside the same FIFO.
 
 This makes one already-approved queued task usable through the existing HTTP
-session, not consecutive pickup. Peer configuration and node runtime remain fixed
-to one task/queue. A+B+C and combined release acceptance D above are still open.
+session, not consecutive pickup. A+B+C and combined release acceptance D above are
+still open.
+
+### Explicit server-side queue binding (local integration only)
+
+An optional peer `assignment: "queue"` now omits configuration-time task identity.
+It accepts initial connections only and cannot be combined with a fixed task. The
+authenticated generation remains unbound until `deliverApproved` supplies its first
+canonically revalidated task; the existing FIFO freezes that exact binding and
+routes the signed receipt and result to it. It never switches task in place. Manual
+owner stage/transmit calls cannot select the task in this mode. No task/queue field
+is added to the HTTP client request. Fixed-task/recovery configuration is unchanged.
+
+The actual connector journey exercises this server mode with real local protocol
+and storage code and fake transport. The node runtime still pins its queue before
+opening; this is NOT safe consecutive execution or an installable fleet mode.
+A new initial connection currently creates another unbound server generation, so
+the durable outstanding-task predicate and native cleanup/recovery remain mandatory
+before operational enablement. A connection close does not establish native stop.
+No supervisor or operator example enables this mode.
+
+Further source audit found another actual turnover gap: native start records an
+active local effect claim, while the native adapter/recovery/reporting paths do not
+settle it. Existing `SqliteEffectClaimStore.countActive` correctly retains claimed,
+executing and ambiguous claims independent of elapsed deadlines. Do not delete or
+discount those claims to admit the next task. Define exact retained native/result/
+cleanup evidence for the existing effect-state transition before any automatic
+local turnover. Reported native completion alone does not prove OS descendants
+have exited; that existing adapter caveat remains unchanged.
+
+The independent profile audit confirms the current supervised profile snapshot has
+no task-specific stopped/descendant-absence evidence. `CR14C_NATIVE_PROFILE_EVIDENCE_CONTRACT.md`
+and `CR14C_CONNECTOR_LIFECYCLE_CONTRACT.md` leave physical cleanup integration open.
+The reusable effect/execution stores can record confirmation, but only validate
+event shape/history; hashing a completed snapshot cannot manufacture a verified
+destination/cleanup receipt. The next local implementation must define and verify
+exact task-bound cleanup evidence, with a host producer still requiring separately
+authorized qualification. Codex's descendant-aware cancellation evidence is scoped
+to its own executor and cannot simply be relabeled Hermes evidence.

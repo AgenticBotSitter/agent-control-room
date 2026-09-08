@@ -97,7 +97,7 @@ function rawHandle(options: { before?: (method: Method, args: unknown[], current
   return { handle, calls, closes: () => closes, closePromise };
 }
 
-function inputFixture(mode: NativeInputConfiguration["mode"], raw = rawHandle()) {
+function inputFixture(mode: NativeInputConfiguration["mode"], raw = rawHandle(), queueBinding = false) {
   const registerCalls: { value: unknown; signal: AbortSignal }[] = [];
   const register = (async (value: typeof configuredTask, current: AbortSignal) => {
     registerCalls.push({ value: structuredClone(value), signal: current });
@@ -105,7 +105,7 @@ function inputFixture(mode: NativeInputConfiguration["mode"], raw = rawHandle())
     return { receipt: { targetId: "target:test" }, replayed: false };
   }) as unknown as Register;
   let available = true;
-  const input = new ManagedNativeInput(raw.handle, { mode, task: configuredTask }, register,
+  const input = new ManagedNativeInput(raw.handle, queueBinding ? { mode: "initial", assignment: "queue" } : { mode, task: configuredTask }, register,
     () => { if (!available) throw new Error("synthetic_input_unavailable"); });
   return { input, raw, registerCalls, setAvailable(value: boolean) { available = value; } };
 }
@@ -414,6 +414,26 @@ test("active queued-dispatch cancellation cannot register a queued receipt after
   assert.equal((await received).message, "native_input_uncertain");
   gate.resolve(); await new Promise<void>(resolve => setImmediate(resolve));
   assert.equal(x.registerCalls.length, 0); assert.equal(x.raw.closes(), 1);
+});
+
+test("queue-bound generation selects only once and refuses owner staging before canonical selection", async t => {
+  await t.test("selection survives input mutation and registers the selected receipt", async () => {
+    const x = inputFixture("initial", undefined, true); let deliveries = 0;
+    await x.input.receive(hello(), undefined, signal()); await x.input.receive(reconciliation(), undefined, signal());
+    const selected = { ...configuredTask };
+    const delivery = x.input.deliverQueued(selected, signal(), async () => { deliveries++; });
+    selected.jobId = "job:changed-after-selection"; await delivery;
+    assert.equal((await x.input.receive(receipt(), undefined, signal())).kind, "receipt");
+    assert.deepEqual(x.registerCalls[0].value, configuredTask);
+    await assert.rejects(x.input.deliverQueued({ ...configuredTask, jobId: "job:second" }, signal(), async () => { deliveries++; }));
+    assert.equal(deliveries, 1); await x.input.close();
+  });
+  await t.test("owner command is not canonical queue selection", async () => {
+    const x = inputFixture("initial", undefined, true);
+    await x.input.receive(hello(), undefined, signal()); await x.input.receive(reconciliation(), undefined, signal());
+    await assert.rejects(x.input.stage(actor, task, signal()));
+    assert.equal(x.raw.calls.some(call => call.method === "stage"), false); await x.input.close();
+  });
 });
 
 test("availability failure closes without invoking a raw handle operation", async () => {

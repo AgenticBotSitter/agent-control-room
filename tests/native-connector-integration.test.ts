@@ -80,7 +80,7 @@ async function preserved(x: Fixture) {
 }
 
 for (const queued of [false, true]) test(`connector alone drives ${queued ? "canonical queue" : "owner"} HTTP dispatch, native execution and exact bytes into pending review`, async t => {
-  const x = await nativeHttpFixture(undefined, { queue: queued }), wire = x.createClient();
+  const x = await nativeHttpFixture(undefined, { queue: queued, queueBinding: queued }), wire = x.createClient();
   const connector = createNativeConnector(x.f.runtime, fixtureClient(x, wire), settings,
     { assertCurrent() {}, wait: completeOnSecondWait(x, queued) });
   t.after(async () => { try { await connector.close(); } finally { await x.close(); } });
@@ -91,6 +91,13 @@ for (const queued of [false, true]) test(`connector alone drives ${queued ? "can
   const result = await x.f.x.admin(() => connector.run("initial", currentSignal()));
   assert.deepEqual(result, { disposition: "terminal", state: "completed", cycles: 3 });
   assert.equal((await pendingReview(x)).events.length, 2);
+  if (queued) {
+    // Negative turnover evidence: result delivery/connector close do not yet
+    // settle the retained local effect. Never call this consecutive readiness.
+    const claim = x.f.x.local.dependencies.effects.load(x.f.x.f.prepared.binding.effectClaimKey);
+    assert.equal(claim?.kind, "full");
+    if (claim?.kind === "full") assert.equal(claim.snapshot.state, "executing");
+  }
   assert.deepEqual(x.f.x.local.calls, ["capabilities", "start", "status"]);
   assert.deepEqual(await x.f.x.states(), canonical); assert.equal(x.f.x.inputRegistrations(), 1);
   assert.equal(frames(wire).filter(frame => frame.type === "harness.native.dispatch.receipt").length, 1);

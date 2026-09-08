@@ -10,7 +10,7 @@ import { currentSignal, type ManagedNativePreparedContext } from "./managed-nati
 
 /** No network or credential operations: Request/Response and an explicitly synthetic TLS
  * peer replace the physical HTTP hop. Packet bodies are opaque to this exchange fixture. */
-export async function nativeHttpFixture(context?: ManagedNativePreparedContext, options: { queue?: boolean } = {}) {
+export async function nativeHttpFixture(context?: ManagedNativePreparedContext, options: { queue?: boolean; queueBinding?: boolean } = {}) {
   const f = await nativeNodeRuntimeFixture(context, options), origin = "https://control-room.example.test";
   try {
   const rawCertificate = Buffer.from("synthetic-machine-certificate-bytes-not-a-real-certificate");
@@ -19,7 +19,8 @@ export async function nativeHttpFixture(context?: ManagedNativePreparedContext, 
     getPeerCertificate: () => ({ raw }),
   }) as unknown as TLSSocket;
   const server = createNativeHttpHost({ origin, connections: f.x.manager,
-    peers: [{ nodeId: f.config.enrollment.nodeId, certificateDigest, task: f.x.request }],
+    peers: [{ nodeId: f.config.enrollment.nodeId, certificateDigest,
+      ...(options.queueBinding ? { assignment: "queue" as const } : { task: f.x.request }) }],
     isReady: () => true, isPeerCurrent: () => true, clock: f.x.f.clock });
   const nodeHosts: ReturnType<typeof createNativeHttpNodeHost>[] = [];
   async function request(command: NativeHttpRequest, signal = currentSignal(), peer = socket()) {

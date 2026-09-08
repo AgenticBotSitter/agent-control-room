@@ -20,15 +20,17 @@ function socket(options: { authorized?: boolean; destroyed?: boolean; certificat
     getPeerCertificate: () => ({ raw: options.certificate ?? certificate }) } as unknown as TLSSocket;
 }
 
-function hostFixture() {
-  const attached: { nodeId: string; transport: NativeSessionTransport; mode: string; task: unknown }[] = [];
+function hostFixture(queueBinding = false) {
+  const attached: { nodeId: string; transport: NativeSessionTransport; mode: string; task: unknown; assignment?: string }[] = [];
   const handles: { receives: unknown[]; closes: number; stages: number; transmits: number }[] = [];
   let ready = true, current = true;
-  const host = createNativeHttpHost({ origin, peers: [{ nodeId: "node:http", certificateDigest, task }],
+  const host = createNativeHttpHost({ origin, peers: [{ nodeId: "node:http", certificateDigest,
+    ...(queueBinding ? { assignment: "queue" as const } : { task }) }],
     isPeerCurrent(nodeId, digest) { return current && nodeId === "node:http" && digest === certificateDigest; },
     connections: { async attachWire(nodeId, transport, configuration) {
       const state = { receives: [] as unknown[], closes: 0, stages: 0, transmits: 0 }; handles.push(state);
-      attached.push({ nodeId, transport, mode: configuration.mode, task: configuration.task });
+      attached.push({ nodeId, transport, mode: configuration.mode, task: "task" in configuration ? configuration.task : undefined,
+        ...("assignment" in configuration ? { assignment: configuration.assignment } : {}) });
       return Object.freeze({ nodeId, grantsExecutionAuthority: false as const,
         async receive(packet: string | Uint8Array) { state.receives.push(packet); return { kind: "reconciliation" as const }; },
         async stage() { state.stages++; throw new Error("stage is outside HTTP denial evidence"); },
@@ -72,6 +74,23 @@ test("host selects only the configured current TLS certificate and captures the 
   f.setCurrent(true); await open(f);
   assert.equal(f.attached.length, 1); assert.equal(f.attached[0].nodeId, "node:http");
   assert.equal(f.attached[0].mode, "initial"); assert.deepEqual(f.attached[0].task, task);
+});
+
+test("queue-bound HTTP peer exposes no caller task selector and refuses implicit recovery without replacing its generation", async t => {
+  const f = hostFixture(true); t.after(f.host.close);
+  const generation = await open(f);
+  assert.equal(f.attached[0].assignment, "queue"); assert.equal(f.attached[0].task, undefined);
+  for (const body of [
+    { schema: "control-room.native-http/v1", operation: "open", mode: "recover" },
+    { schema: "control-room.native-http/v1", operation: "open", mode: "initial", task },
+    { schema: "control-room.native-http/v1", operation: "open", mode: "initial", queueId: "queue:chosen-by-client" },
+  ]) {
+    const response = await f.host.handle(request({ schema: "control-room.native-http/v1", operation: "open", mode: "initial" },
+      { body: JSON.stringify(body) }), socket());
+    assert.equal(response.status, 503); assert.equal(f.attached.length, 1); assert.equal(f.handles[0].closes, 0);
+  }
+  const continued = await f.host.handle(request({ schema: "control-room.native-http/v1", operation: "exchange", connection: generation, packet: null }), socket());
+  assert.equal(continued.status, 200);
 });
 
 test("host rejects request metadata, body mismatch and malformed commands before attaching a wire", async t => {
