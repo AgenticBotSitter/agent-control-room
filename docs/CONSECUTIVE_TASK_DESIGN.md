@@ -141,8 +141,10 @@ Distinct A/B result bytes, hashes and attempts remain intact in the artifact sto
 both quality reviews remain pending, and the unrelated seeded lease is preserved.
 
 This is injected local integration evidence, not automatic continuous operation. The
-test explicitly supplies B's exact configuration and policy, invokes delivery/pumps,
-reconciliation and synthetic qualified cleanup. Automatic node-side task discovery,
+test explicitly supplies B's exact policy, invokes delivery/pumps,
+reconciliation and synthetic qualified cleanup. Both runtimes now discover their
+queue from accepted signed dispatch, without configuration-time queue IDs. Automatic
+lifecycle sequencing,
 lifecycle ownership across tasks, real cleanup qualification, physical restart and
 PostgreSQL concurrency/sustained-operation acceptance remain open. Do not install a
 continuous service based on this test alone.
@@ -232,8 +234,9 @@ owner stage/transmit calls cannot select the task in this mode. No task/queue fi
 is added to the HTTP client request. Fixed-task/recovery configuration is unchanged.
 
 The actual connector journey exercises this server mode with real local protocol
-and storage code and fake transport. The node runtime still pins its queue before
-opening; this is NOT safe consecutive execution or an installable fleet mode.
+and storage code and fake transport. The fixed node runtime pins its queue before
+opening; the separate initial-only unassigned factory described below does not.
+Neither is an installable continuous fleet mode.
 A new initial connection currently creates another unbound server generation, so
 the durable outstanding-task predicate and native cleanup/recovery remain mandatory
 before operational enablement. A connection close does not establish native stop.
@@ -263,3 +266,20 @@ and implemented as `createNativeCleanupEvidence`. It requires a separate scoped
 owner acceptance for the cleanup producer and exact supervised run/marker evidence.
 It deliberately does not settle the effect, create a producer, or enable the next
 task. Physical host qualification and lifecycle settlement remain unfinished.
+
+### Initial node-side queue discovery
+
+`createUnassignedNativeNodeRuntime` accepts explicit `assignment: "queue"`, without
+a queue ID. It reuses the existing runtime and binds once, only after signed dispatch
+intake records the exact frame and accepted receipt in the existing bridge journal.
+Queue identity is checked again inside the receive FIFO, and reporting is created
+only after binding. Before assignment, `hasAcceptedDispatch()` returns false and the
+queue ID getter refuses access. Closure before assignment performs no native work.
+The existing fixed-task configuration validator and production launcher are unchanged.
+
+The same-store two-task test now uses this factory for both tasks. Separate negative
+checks cover forged owner approval despite a valid synthetic server signature and
+competing dispatch intake. This removes the preconfigured queue-ID dependency, not
+the need for exact task policy: the host still supplies task-specific policy and must
+reconcile outstanding work before choosing an initial session. Automatic lifecycle
+ownership, real cleanup production/qualification and fleet startup remain unfinished.

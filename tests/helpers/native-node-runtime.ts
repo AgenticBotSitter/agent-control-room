@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { managedNativeSessionFixture, currentSignal, type ManagedNativePreparedContext } from "./managed-native-session";
-import { createNativeNodeRuntime, type NativeNodeRuntimeDependencies } from "../../src/harness/hermes-native-v1/node-runtime";
+import { createNativeNodeRuntime, createUnassignedNativeNodeRuntime, type NativeNodeRuntimeDependencies } from "../../src/harness/hermes-native-v1/node-runtime";
 import { SqliteBridgeJournal } from "../../src/node-bridge/journal";
 import { NodeProtocolAuthenticator, FixedWindowProtocolRateLimiter, signNodeFrame, signedNodeFrameSchema } from "../../src/node-protocol/v1";
 import { response, statusBody } from "../hermes-native-fixture";
 
 /** Synthetic node runtime plus actual restricted managed server. All stores are disposable;
  * canonical approval/dispatch setup remains labelled privileged fixture composition. */
-export async function nativeNodeRuntimeFixture(context?: ManagedNativePreparedContext, options: { queue?: boolean } = {}) {
+export async function nativeNodeRuntimeFixture(context?: ManagedNativePreparedContext, options: { queue?: boolean; unassigned?: boolean } = {}) {
   // The managed fixture owns supplied context immediately, including setup failure.
   const x = await managedNativeSessionFixture(context, options);
   let closeJournal: (() => void) | undefined;
@@ -50,7 +50,12 @@ export async function nativeNodeRuntimeFixture(context?: ManagedNativePreparedCo
   const create = (taskConfig = config, taskDependencies = dependencies) => {
     const runtime = createNativeNodeRuntime(taskConfig, taskDependencies); runtimes.push(runtime); return runtime;
   };
-  const runtime = create();
+  const unassignedConfig = { assignment: "queue" as const, enrollment: config.enrollment, nodeKeyId: config.nodeKeyId,
+    serverId: config.serverId, serverKeyId: config.serverKeyId, serverPublicKeySpki: config.serverPublicKeySpki };
+  const createUnassigned = (taskDependencies = dependencies) => {
+    const runtime = createUnassignedNativeNodeRuntime(unassignedConfig, taskDependencies); runtimes.push(runtime); return runtime;
+  };
+  const runtime = options.unassigned ? createUnassigned() : create();
   type Runtime = typeof runtime;
   type Input = Awaited<ReturnType<typeof x.manager.attachInput>>;
   async function connect(mode: "initial" | "recover" = "initial", node = runtime, task: typeof x.request | "queue" = x.request) {
@@ -83,7 +88,7 @@ export async function nativeNodeRuntimeFixture(context?: ManagedNativePreparedCo
     await connection.server.stage(x.f.identity, x.task, currentSignal());
     await connection.server.transmit(x.f.identity, x.task, currentSignal()); await pump(connection);
   }
-  return { x, config, queued, dependencies, runtime, journal, create, connect, pump, dispatch,
+  return { x, config, unassignedConfig, queued, dependencies, runtime, journal, create, createUnassigned, connect, pump, dispatch,
     setResult: (value: string) => { resultText = value; }, setRecoveryAllowed: (value: boolean) => { recoveryAllowed = value; },
     advance: (ms = 1000) => { const now = x.f.clock() + ms; x.f.setNow(now); x.local.setNow(now); },
     close: async () => { let failed = false;

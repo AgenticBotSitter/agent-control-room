@@ -1251,3 +1251,40 @@ expanding that validator would accidentally enable an unaccepted launcher mode.
 The current queueId facade is not consumed elsewhere in src except configuration;
 any new preassignment metadata semantics must remain explicit and tested. This is
 an implementation trace, not accepted code or permission to enable a service.
+
+### Initial unassigned runtime implemented
+
+The separate `createUnassignedNativeNodeRuntime` now implements the preceding trace.
+Fixed-task validator/launcher remain unchanged. Queue binding follows exact signed
+dispatch admission and retained recorded receipt; queued receive rechecks prevent
+switching after binding. Reporter construction is lazy from captured dependencies.
+Before binding, metadata refuses a queue ID and accepted-dispatch readiness is false.
+The two-independent-task integration now supplies no queue ID to either runtime,
+while retaining exact task policies and manual lifecycle/transport orchestration.
+
+Recovered test handle 17630 was missing, so results were not assumed. Fresh test
+47993 found the competing-dispatch fixture used an invalid queue ID. The broader
+37799 run passed 40 cases but failed the corrected fixture's stale approval-body
+digest before signing. Recomputed the digest using the existing canonical helper;
+56908 then passed all three new tests, TypeScript, focused lint and diff check.
+Neither failure was an application assertion; neither was converted to a pass.
+Independent source review reported no concrete defect, explicitly leaving outstanding
+work reconciliation, per-task policy resolution and continuous lifecycle ownership
+unproven. All evidence is local/synthetic; no native provider, launcher, production
+service, GitHub or credential operation occurred.
+
+Next source trace: reuse `createNativeCurrentPolicy`, not a permissive callback.
+It already reads verified ceiling, node control/pause, key availability, node-wide
+active effects and exact accepted lease evidence with freshness fencing. However,
+its constructor needs the approved request, lease message ID and parent authorities.
+`createNativeLeaseEvidence` requires a retained signed `job.lease.grant` plus the
+matching current bridge attempt. The native runtime's receive allowlist currently
+excludes lease grants. Merely deriving a request from native dispatch cannot replace
+that missing lease provenance. Trace the existing lease delivery/acceptance path and
+compose it before claiming task-independent operational policy resolution. Do not
+broaden the wire allowlist or fabricate an accepted lease to make the test work.
+
+Final fresh combined runtime/connector/consecutive/unassigned run 20894 passed all
+41 cases. VPS compilation 95826 passed; compiled managed-session and fixed node
+launcher checks 22954 passed all four cases. Existing bundler/deprecation warnings
+remain; no production startup was attempted. Original deadline stays 12:40:58 UTC.

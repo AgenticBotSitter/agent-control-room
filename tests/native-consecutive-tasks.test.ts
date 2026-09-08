@@ -14,10 +14,11 @@ import { createNativeTaskSettlement } from "../src/harness/hermes-native-v1/task
 import { readNativeSettlementHistory } from "../src/harness/hermes-native-v1/settlement-history";
 
 test("two independent approved tasks turn over the same canonical and local stores without raising capacity", async t => {
-  const root = await nativeNodeRuntimeFixture(undefined, { queue: true }); t.after(root.close);
+  const root = await nativeNodeRuntimeFixture(undefined, { queue: true, unassigned: true }); t.after(root.close);
   const x = root.x, f = x.f, local = x.local, tenantId = f.scope.tenantId, nodeId = root.config.enrollment.nodeId;
   assert.equal(f.route.maxConcurrentTasks, 2); assert.equal(local.policy.ceiling.maxConcurrentEffects, 1);
   await x.verify();
+  assert.equal(root.runtime.hasAcceptedDispatch(), false); assert.throws(() => root.runtime.queueId);
   const a = await root.connect("initial", root.runtime, "queue");
   const deliver = async (queued: typeof root.queued, inputDigest: string, connection: typeof a) => {
     await x.manager.deliverApproved({ schema: "control-room.native-task-submission/v1", tenantId,
@@ -26,6 +27,7 @@ test("two independent approved tasks turn over the same canonical and local stor
     await root.pump(connection);
   };
   await deliver(root.queued, x.task.inputDigest, a);
+  assert.equal(root.runtime.queueId, root.queued.queueId);
   await x.admin(() => root.runtime.start(currentSignal())); await root.pump(a);
   root.advance(); root.setResult(qualityText);
   await x.admin(() => root.runtime.poll(currentSignal())); await root.pump(a);
@@ -91,7 +93,7 @@ test("two independent approved tasks turn over the same canonical and local stor
     { effects: local.effects, executions: local.executions, runs: local.journal }, currentSignal());
 
   const bCalls: string[] = [], nativeId = `run_${"3".repeat(32)}`, secondText = qualityText.replace("A useful synthetic", "A distinct second-task synthetic");
-  const second = root.create({ ...root.config, queueId: queued.queueId }, { ...root.dependencies, local: localB,
+  const second = root.createUnassigned({ ...root.dependencies, local: localB,
     recovery: { ...root.dependencies.recovery, async readCurrent() {
       return { approvalKey: policy.approvalKey!, credentialAvailable: true, recoveryAllowed: true };
     } }, transport: { async json(wire) {
@@ -101,11 +103,13 @@ test("two independent approved tasks turn over the same canonical and local stor
       return response(statusBody("completed", { run_id: nativeId, session_id: prepared.binding.sessionId, output: secondText }));
     }, async events() { throw new Error("synthetic second task has no event polling"); } } });
   const b = await root.connect("initial", second, "queue");
+  assert.equal(second.hasAcceptedDispatch(), false); assert.throws(() => second.queueId);
   const lateA = a.nodeSent.findLast(raw => JSON.parse(raw).type === "harness.native.snapshot"); assert.ok(lateA);
   await assert.rejects(a.server.receive(lateA, new TextEncoder().encode(qualityText), currentSignal()));
   await assert.rejects(root.runtime.start(currentSignal()));
   assert.equal(bCalls.length, 0);
   await deliver(queued, args[3], b);
+  assert.equal(second.queueId, queued.queueId);
   assert.equal(root.dependencies.runs, local.journal);
   const firstB = await x.admin(() => second.start(currentSignal())); await root.pump(b);
   assert.equal(firstB.nativeRunId, nativeId); assert.equal(local.effects.countActive(tenantId, nodeId), 1);

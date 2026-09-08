@@ -17,6 +17,8 @@ const configuration = z.object({ queueId: localId, enrollment: enrollmentSchema,
   serverId: localId, serverKeyId: localId, serverPublicKeySpki: z.string().min(16).max(4096) }).strict();
 export type NativeNodeRuntimeConfiguration = z.input<typeof configuration>;
 export const validateNativeNodeRuntimeConfiguration = (input: unknown) => configuration.parse(input);
+const unassignedConfiguration = configuration.omit({ queueId: true }).extend({ assignment: z.literal("queue") }).strict();
+export type UnassignedNativeNodeRuntimeConfiguration = z.input<typeof unassignedConfiguration>;
 type Handoff = Awaited<ReturnType<typeof prepareNativeExecutionHandoff>>;
 type HandoffDependencies = Parameters<typeof prepareNativeExecutionHandoff>[1];
 export type NativeNodeRuntimeDependencies = Omit<HandoffDependencies, "deliveries" | "reporting" | "recovery"> & {
@@ -30,7 +32,20 @@ const fail = (): never => { throw new Error("native_node_runtime_unavailable"); 
 /** Node-private supplied-resource owner. No listener, journal opening, credential lookup,
  * scheduling or implicit execution. Supplied journals remain owned by the host. */
 export function createNativeNodeRuntime(input: NativeNodeRuntimeConfiguration, dependencies: NativeNodeRuntimeDependencies) {
-  const config = configuration.parse(input), clock = dependencies.clock.bind(dependencies);
+  return createRuntime(configuration.parse(input), dependencies);
+}
+
+/** Initial, one-task discovery only. Kept separate from the production fixed-task
+ * validator/launcher. Outstanding work must be reconciled before a host chooses this
+ * mode; this factory does not supply that lifecycle or authorize native execution. */
+export function createUnassignedNativeNodeRuntime(input: UnassignedNativeNodeRuntimeConfiguration, dependencies: NativeNodeRuntimeDependencies) {
+  return createRuntime({ ...unassignedConfiguration.parse(input), queueId: undefined }, dependencies);
+}
+
+function createRuntime(config: Omit<z.infer<typeof configuration>, "queueId"> & { queueId: string | undefined }, dependencies: NativeNodeRuntimeDependencies) {
+  const clock = dependencies.clock.bind(dependencies);
+  let boundQueue = config.queueId;
+  const queue = () => boundQueue ?? fail();
   const journal = dependencies.journal;
   const deliveries = Object.freeze({ acceptedNativeDelivery: journal.acceptedNativeDelivery.bind(journal) });
   const runs = Object.freeze({ reserve: dependencies.runs.reserve.bind(dependencies.runs),
@@ -75,9 +90,14 @@ export function createNativeNodeRuntime(input: NativeNodeRuntimeConfiguration, d
     keyId: config.nodeKeyId, features: [NATIVE_DELIVERY_FEATURE, "harness.native.snapshot.v1"] }, journal,
   { sign: async frame => { current(); const result = await sign(frame); current(); return result; } },
   dependencies.serverAuthenticator, undefined, undefined, intake);
-  const reporter = new NativeObservationReporter({ queueId: config.queueId, enrollment: config.enrollment,
-    serverId: config.serverId, serverKeyId: config.serverKeyId, serverPublicKeySpki: config.serverPublicKeySpki },
-  { deliveries, runs, bridge, clock, assertAvailable: current });
+  let reporter: NativeObservationReporter | undefined;
+  const reporting = () => {
+    if (closed) return fail();
+    return reporter ??= new NativeObservationReporter({ queueId: queue(), enrollment: config.enrollment,
+      serverId: config.serverId, serverKeyId: config.serverKeyId, serverPublicKeySpki: config.serverPublicKeySpki },
+    { deliveries, runs, bridge, clock, assertAvailable: current });
+  };
+  if (boundQueue !== undefined) reporting();
 
   function track<T>(work: Promise<T>): Promise<T> {
     pending.add(work); void work.then(() => pending.delete(work), () => pending.delete(work)); return work;
@@ -139,11 +159,11 @@ export function createNativeNodeRuntime(input: NativeNodeRuntimeConfiguration, d
   };
   const approvals = dependencies.approvals;
   function savedSource() {
-    current(); const saved = deliveries.acceptedNativeDelivery(config.queueId); if (!saved) return fail();
+    current(); const saved = deliveries.acceptedNativeDelivery(queue()); if (!saved) return fail();
     const frame = signedNodeFrameSchema.parse(saved.frame);
     if (frame.type !== "harness.native.dispatch" || frame.direction !== "server_to_node"
       || frame.actorId !== config.serverId || frame.keyId !== config.serverKeyId
-      || frame.tenantId !== config.enrollment.tenantId || frame.body.queueId !== config.queueId
+      || frame.tenantId !== config.enrollment.tenantId || frame.body.queueId !== queue()
       || !verifyNodeFrameSignature(frame, config.serverPublicKeySpki)) return fail();
     matchNativeTaskDispatchReceipt(saved.receipt, frame);
     const material = prepareNativeTaskDispatchIntake(frame.body, config.enrollment), digest = sha256Digest(saved);
@@ -153,7 +173,7 @@ export function createNativeNodeRuntime(input: NativeNodeRuntimeConfiguration, d
   }
   async function prepared() {
     savedSource();
-    if (!handoff) handoff = await prepareNativeExecutionHandoff({ queueId: config.queueId, enrollment: config.enrollment,
+    if (!handoff) handoff = await prepareNativeExecutionHandoff({ queueId: queue(), enrollment: config.enrollment,
       serverActorId: config.serverId }, { deliveries, runs, approvals,
       security: { currentServerTrustRevision: revision, resolveServerKey: resolve }, local, transport: nativeTransport,
       clock, recovery: recoveryDependencies }, lifetime.signal);
@@ -187,7 +207,7 @@ export function createNativeNodeRuntime(input: NativeNodeRuntimeConfiguration, d
     } finally { active.cancel.abort(); operation = undefined; nativeBusy = false; finish(); }
   }
   async function publish<T>(result: T): Promise<T> {
-    current(); if (!operation?.interrupted) await reporter.report(lifetime.signal); return result;
+    current(); if (!operation?.interrupted) await reporting().report(lifetime.signal); return result;
   }
   let wireTail: Promise<unknown> = Promise.resolve(), wireCount = 0, wireBytes = 0;
   function wire<T>(bytes: number, signal: AbortSignal, work: () => Promise<T>) {
@@ -204,7 +224,7 @@ export function createNativeNodeRuntime(input: NativeNodeRuntimeConfiguration, d
   const transports = new WeakSet<object>(), ownedTransports = new Set<() => Promise<void>>();
   function close(): Promise<void> {
     if (closing) return closing;
-    closed = true; lifetime.abort(); intake.close(); handoff?.close(); recovery?.close(); reporter.close();
+    closed = true; lifetime.abort(); intake.close(); handoff?.close(); recovery?.close(); reporter?.close();
     const cleanup = Promise.all([bridge.close(), ...[...ownedTransports].map(dispose => dispose())]);
     closing = (async () => {
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -224,7 +244,7 @@ export function createNativeNodeRuntime(input: NativeNodeRuntimeConfiguration, d
       ownedTransports.add(closeTransport);
       return wire(0, signal, () => bridge.open({ send: async raw => {
         current();
-        const output = packet ? encodeNativeWire(raw, "node_to_server", body => reporter.readResult(body, lifetime.signal)) : raw;
+        const output = packet ? encodeNativeWire(raw, "node_to_server", body => reporting().readResult(body, lifetime.signal)) : raw;
         current(); await send(output); current();
       },
         close: closeTransport }, { now: new Date(current()).toISOString(), transportIdentity }));
@@ -239,13 +259,24 @@ export function createNativeNodeRuntime(input: NativeNodeRuntimeConfiguration, d
         if (!["connection.accepted", "node.reconciliation.request", "protocol.ack", "harness.native.dispatch"].includes(frame.type)
           || frame.direction !== "server_to_node" || frame.actorId !== config.serverId || frame.keyId !== config.serverKeyId
           || !verifyNodeFrameSignature(frame, config.serverPublicKeySpki)
-          || frame.type === "harness.native.dispatch" && frame.body.queueId !== config.queueId) return fail();
+          || frame.type === "harness.native.dispatch" && boundQueue !== undefined && frame.body.queueId !== boundQueue) return fail();
       } catch { void close().catch(() => {}); return Promise.reject(new Error("native_node_runtime_uncertain")); }
-      return wire(size, signal, () => bridge.receive(copy, new Date(current()).toISOString()));
+      return wire(size, signal, async () => {
+        // Queued receives may have parsed while still unbound. Recheck under the
+        // same FIFO immediately before admission, not only before enqueueing.
+        if (frame.type === "harness.native.dispatch" && boundQueue !== undefined && frame.body.queueId !== boundQueue) return fail();
+        await bridge.receive(copy, new Date(current()).toISOString()); current();
+        if (frame.type === "harness.native.dispatch" && boundQueue === undefined) {
+          const accepted = deliveries.acceptedNativeDelivery(frame.body.queueId);
+          if (!accepted || accepted.receipt.disposition !== "recorded" || sha256Digest(accepted.frame) !== sha256Digest(frame)) return fail();
+          boundQueue = frame.body.queueId;
+          savedSource(); reporting();
+        }
+      });
   }
-  return Object.freeze({ nodeId: config.enrollment.nodeId, queueId: config.queueId, grantsExecutionAuthority: false as const,
+  return Object.freeze({ nodeId: config.enrollment.nodeId, get queueId() { return queue(); }, grantsExecutionAuthority: false as const,
     hasAcceptedDispatch() {
-      current(); if (!deliveries.acceptedNativeDelivery(config.queueId)) return false;
+      current(); if (boundQueue === undefined || !deliveries.acceptedNativeDelivery(boundQueue)) return false;
       savedSource(); return true;
     },
     open: (transport: BridgeTransport, identity: string, signal: AbortSignal) => open(transport, identity, signal),
@@ -274,8 +305,8 @@ export function createNativeNodeRuntime(input: NativeNodeRuntimeConfiguration, d
       }
       return native("stop", signal, async () => { const value = recover(); return publish(await value.adapter.stop(value.runId)); });
     },
-    report(signal: AbortSignal) { return native("report", signal, () => reporter.report(signal)); },
-    readResult: reporter.readResult.bind(reporter),
+    report(signal: AbortSignal) { return native("report", signal, () => reporting().report(signal)); },
+    readResult: (...args: Parameters<NativeObservationReporter["readResult"]>) => reporting().readResult(...args),
     close,
     async closeForSettlement(bindingDigest: string) {
       if (!sourceBindingDigest || sourceBindingDigest !== bindingDigest) return fail();
