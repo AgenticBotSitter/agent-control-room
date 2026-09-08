@@ -148,8 +148,9 @@ role name is a review condition, not permission to alter or drop it.
    NOCREATEROLE, NOREPLICATION, NOBYPASSRLS and membership only in
    `control_room_private_web`, without ADMIN or object ownership. Supply its secret
    privately. Keep the migrator/admin credentials out of the application settings.
-6. Bootstrap the tenant/workspace and first owner through the existing
-   `SecurityStore.bootstrapOwner` procedure after verifying a current owner
+6. Create the reviewed tenant/workspace under separate provisioning authority.
+   Bootstrap only the first owner through the existing primitive and the bridge in
+   `deploy/OWNER_BOOTSTRAP.md` after verifying a current owner
    authentication. The issuer and authenticated subject must match Access. Do not
    substitute the owner's email for the subject or copy a fixture identity/grant.
    This owner bootstrap still needs its exact verified input and execution review;

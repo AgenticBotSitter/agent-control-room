@@ -442,3 +442,32 @@ actual execution still needs exact-target authority. The earlier full-delivery
 pass predates this prerequisite correction and is not represented as its full run.
 The final eight inventory checks, TypeScript and full lint also pass; the compiled
 promotion regression uses a fresh VPS artifact built from the corrected source.
+
+The full sequential Idea/ABS delivery and authoring build pipeline subsequently
+passed at eef319e, with all 25 authoring build checks passing. This supersedes the
+previous full-run caveat for that correction, not the remaining live gates.
+
+## Verified owner bootstrap bridge
+
+Critical-path inspection found meaningful local glue missing between the existing
+Access verifier and one-time SecurityStore owner bootstrap. The new deployment-only
+bridge composes those existing components with a separately confirmed subject digest,
+captured trusted configuration and a borrowed provisioning connection. It requires
+the reviewed database name and existing tenant/workspace, verifies before database
+access, and checks authentication/clock/cancellation again before commit. It never
+selects an owner from the first valid token or changes an existing owner.
+
+The compiled server entry is explicit and not mounted in the website or loaded by
+the launcher. Private assertion intake, real identity confirmation, trusted keys,
+MFA inspection, provisioning connection acquisition/cleanup and execution authority
+remain operator work. OWNER_BOOTSTRAP.md documents these limits. No production
+credential, database or owner login was accessed in this block.
+
+Independent source review found no concrete security defect and requested additional
+trust-expiry, grant-write failure and lost-commit-response cases. Those now pass:
+expired trust and grant failure roll back identity/grant writes, while a lost commit
+acknowledgement reports failure and consumes the attempt rather than retrying. Local
+tests also cover wrong subject/audience/token type, scope refusal, config capture,
+concurrent use, pre-abort and unchanged existing tenants. All thirteen final combined
+source/compiled/startup checks pass, including browser-artifact isolation. TypeScript,
+full lint, final focused lint and VPS compilation pass.
