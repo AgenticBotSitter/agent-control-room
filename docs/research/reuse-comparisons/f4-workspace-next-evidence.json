@@ -1,0 +1,20 @@
+{
+  "root": "/private/tmp/control-room-f4-workspace.MyR4g2",
+  "args": [
+    "test",
+    "-p",
+    "1",
+    "-timeout",
+    "40s",
+    "./internal/adapters/workspace/gitworktree",
+    "-run",
+    "^TestControlRoomNextWorkspaceBoundaries$",
+    "-v"
+  ],
+  "fixtureSHA256": "13e93467835a10604156bc957ef82b8f1e1a31d52005b9ff6594bd26d176407f",
+  "status": 0,
+  "signal": null,
+  "elapsedMs": 8265,
+  "stdout": "=== RUN   TestControlRoomNextWorkspaceBoundaries\n    controlroom_next_test.go:18: duplicate restore after object reconstruction reuses actual registered worktree\n    controlroom_next_test.go:23: actual stale registration restored, prior missing path refused for stash\n2026/09/08 17:09:52 INFO gitworktree: StashUncommitted skipping ignored paths session=session skipped_count=0\n    controlroom_next_test.go:27: real three-way conflict retains snapshot ref and markers without moving HEAD\n    controlroom_next_test.go:32: negative CR fit: Restore accepts advanced attached branch while returning original BaseRef metadata\n--- PASS: TestControlRoomNextWorkspaceBoundaries (0.47s)\nPASS\nok  \tgithub.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/gitworktree\t0.692s\n",
+  "stderr": ""
+}

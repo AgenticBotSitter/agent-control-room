@@ -2,6 +2,12 @@
 
 ## Additional completed seams — 2026-09-08
 
+- RC10 actual staged build subsequently completed with independent review. The
+  [staging ledger](research/reuse-comparisons/f9-staging-acquisitions.json) records
+  physical copied dependencies, pinned plugin acquisition, source additions and
+  preserved failures. Root removed the536,204KiB exact staging cohort after review
+  and verified absence. No built output was deployed or copied into the app.
+
 - RC3 [mounted transcript/result](research/reuse-comparisons/f3-journey-acquisitions.json):
   three pinned sources plus isolated jsdom26.1.0,30,816KiB; exact root removed and
   absence independently checked. No application dependency changes.

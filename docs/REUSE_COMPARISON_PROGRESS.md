@@ -4,6 +4,27 @@
 
 ## Direct answer
 
+RC10's actual staged client/RSC/SSR build is now independently reviewed:21 detected
+package identities,113 physical output hashes and779 source hashes. Three missing
+third-party texts map to existing verified retained originals. Self/copy/assets,
+external closure and final completeness tests remain explicit. Root cleaned the
+524MiB disposable build after review; reports and hashes remain. Reuse the working
+per-environment plugin API; do not repeat that unchanged build or invent a scanner.
+
+DR-07 selects Readability0.6.0 + jsdom26.1.0 as the default extraction primitive
+following [independent comparative synthesis](research/reuse-comparisons/f7-extractor-selection-review.md).
+Full article reading, source-bound storage/detail UI, safe retrieval, resource bounds
+and shipping notices remain separate implementation/fit gates. Retain source-link
+fallback but do not call summaries a substitute for full reading. No custom HTML
+repair, selector or extraction engine is justified for the selected path.
+
+AO's [new real-Git lifecycle evidence](research/reuse-comparisons/f4-workspace-next-fit.md)
+and [root review](research/reuse-comparisons/f4-workspace-next-review.md) exercise
+conflict preservation, stale registration and duplicate object restoration. Actual
+advanced HEAD can differ from returned BaseRef, so that field must not become CR's
+observed immutable revision. Lower-level donor mapping remains the next step, not
+another unchanged lifecycle test or removal of physical lease checks.
+
 [Actual etcd checkpoint-adapter composition](research/reuse-comparisons/f5-etcd-adapter-fit.md)
 now crosses the existing CR schema/digest/conditional-write/bounded-callback code:
 nine observations include exact payload advancement, successful-write/lost-reply

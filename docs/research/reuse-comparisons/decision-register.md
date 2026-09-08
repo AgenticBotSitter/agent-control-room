@@ -4,6 +4,45 @@
 all-outcomes implementation plan or permission to implement or deploy candidates.
 All26 outcome-level gates remain tracked separately in the comparison index.
 
+## DR-07 — default article extraction primitive
+
+Select Readability0.6.0 with jsdom26.1.0 for the bounded Node reader integration.
+This is the extraction primitive choice, not completion of the full reader,
+shipping approval or a claim of best extraction quality on every publisher.
+Root accepts the [independent selection synthesis](f7-extractor-selection-review.md)
+and its distinction between demonstrated HTML/interface fit and unmeasured quality.
+
+Actual common-corpus and normal-HTML tests favor this supported in-process embedding
+over writing an extractor, HTML normalizer or selector engine. The bundled DOM's
+well-formed-markup limitations and missing selectors rule it out for ordinary raw
+HTML. Miniflux's tested small pure extractor remains viable, with real upstream
+tests; its process/package integration and different output responsibilities are
+extra work for the current Node app, not proof of inferior extraction quality.
+Reusing the existing story title remains a legitimate alternative, not a reason
+to falsely call Miniflux broken. Full Miniflux/FreshRSS readers and RSSHub source
+generation have separate responsibilities, not an obligation to install a service
+to obtain main-text extraction.
+
+Keep the existing borrowed collector, parsers, summaries and canonical source links.
+Summaries alone do not satisfy full-article reading. Add the selected extraction
+only through a source-bound detail/evidence path that preserves project/story digest
+and approved research lineage. Existing native-result capture cannot be used as an
+article bucket by fabricating a completed run. Both extractors retain unsafe HTML
+attributes; plain text is the initial presentation direction, not an implicit
+sanitization guarantee or authorization to republish copyrighted articles.
+
+No upstream fork, added service or production deletion is selected. Add only the
+chosen package boundary and project-specific retrieval/detail glue during the
+implementation phase; do not build a general artifact or parsing framework.
+Full transitive/file notices (including differently licensed bundled subfiles),
+bounded DOM memory/time/output, representative publisher quality, actual reader
+storage/rendering/fallback and source-to-task acceptance remain explicit gates.
+Cold fixture RSS is not a production benchmark; no cross-runtime memory winner.
+
+Reopen if the actual integration fails a required quality/resource/dependency
+constraint or an existing external reader supplies a newly required capability.
+Do not repeat unchanged primitive tests before attempting that real integration.
+
 ## DR-06 — preserve task authority; reuse notification routing only for a named gap
 
 Do not replace canonical CR task/attempt/receipt state with unchanged Maestro local

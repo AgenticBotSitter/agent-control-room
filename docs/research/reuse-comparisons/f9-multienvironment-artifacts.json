@@ -1,0 +1,773 @@
+{
+  "scope": "actual observed callback identity/text equality, not adversarial collision test",
+  "files": [
+    {
+      "path": "app/dist-vps/client/.vite/manifest.json",
+      "bytes": 6771,
+      "sha256": "a31b040887fab9ba8a340536d9e54e520120fb1586ce4878abbef47582371ef4"
+    },
+    {
+      "path": "app/dist-vps/client/_next/static/1e98fbdf-f1ce-42f8-a405-a3e712445e9c/_buildManifest.js",
+      "bytes": 159,
+      "sha256": "47f02b34be6dc481257b6efce4c19e19111f37ef5c437f8ffed44f0da97fa9bb"
+    },
+    {
+      "path": "app/dist-vps/client/_next/static/1e98fbdf-f1ce-42f8-a405-a3e712445e9c/_ssgManifest.js",
+      "bytes": 76,
+      "sha256": "653f3e53e89b4f8548ff86c19e92bb3c6b84b6be7485a320b1e00893ed877479"
+    },
+    {
+      "path": "app/dist-vps/client/_next/static/chunks/browser-client-CBNen220.js",
+      "bytes": 6009,
+      "sha256": "6f7d1f12589e3d847c44648f5ccdab46fe6a34cf13ef863bf62bfc0ee3b4db2d"
+    },
+    {
+      "path": "app/dist-vps/client/_next/static/chunks/browser-json-BzjQioEj.js",
+      "bytes": 53698,
+      "sha256": "fe3200357ec792787b9d7be7e9fbda765336a7c2d18dde0806b8d87bd48ccda3"
+    },
+    {
+      "path": "app/dist-vps/client/_next/static/chunks/framework-BgSIrAUN.js",
+      "bytes": 190152,
+      "sha256": "a8e611453a742bf422100cc5f20f7f4139295740492196303a191d9f17033206"
+    },
+    {
+      "path": "app/dist-vps/client/_next/static/chunks/idea-browser-client-yeuSIqI9.js",
+      "bytes": 12802,
+      "sha256": "cc56dd0f6c0ea24367f225d248a4bd8db22dbd599a224779a846af48c267e497"
+    },
+    {
+      "path": "app/dist-vps/client/_next/static/chunks/idea-workspace-7uN-NYCM.js",
+      "bytes": 25393,
+      "sha256": "470edea0a61a04fae9613d5dca079a9c6a66265e4e7e626f9be1d56a2bb91783"
+    },
+    {
+      "path": "app/dist-vps/client/_next/static/chunks/index-DEwgjEfk.js",
+      "bytes": 184039,
+      "sha256": "f51811f10afd82bb7c783d1312a25bacefab4d91cd16bd50f70ba36c363a08bb"
+    },
+    {
+      "path": "app/dist-vps/client/_next/static/chunks/layout-segment-context-BM6DkvW2.js",
+      "bytes": 494,
+      "sha256": "f34c22b0dfb9723317c315d282d69494d15bb0e6b640fb1049bc021f5ac60062"
+    },
+    {
+      "path": "app/dist-vps/client/_next/static/chunks/news-navigation-guard-CFR8_sIK.js",
+      "bytes": 358,
+      "sha256": "1e99e68c9621abfe24376a5a2af036addf38c4327d6793079e87327a1f53d710"
+    },
+    {
+      "path": "app/dist-vps/client/_next/static/chunks/news-workspace-Nix9SagG.js",
+      "bytes": 37472,
+      "sha256": "6b5bce3e4d136cc7a8846f5497ef55ca533f3cd4866d1f732213e43c32ee6131"
+    },
+    {
+      "path": "app/dist-vps/client/_next/static/chunks/private-header-CfhB4Yzm.js",
+      "bytes": 628,
+      "sha256": "b1f2e691cb3608e47176a9b5c0a284816c1e085e19073f3cdb2a8c237d529408"
+    },
+    {
+      "path": "app/dist-vps/client/_next/static/chunks/rolldown-runtime-C60lm6uB.js",
+      "bytes": 694,
+      "sha256": "5db5ba82eef00d1dee7e86e663098c9427d01183a88d357437daff295aec3e75"
+    },
+    {
+      "path": "app/dist-vps/client/_next/static/chunks/session-controls-DBCNa14M.js",
+      "bytes": 581,
+      "sha256": "9573f8f83122e3b90fa72d679c5e9f5312a04744f1ae6cf747bc4885a9352339"
+    },
+    {
+      "path": "app/dist-vps/client/_next/static/chunks/task-approval-wire-CVEtL6ny.js",
+      "bytes": 859,
+      "sha256": "76193249135f3c7a38f21497770c47a904d9c58ede322fe806f8bbca867e1ceb"
+    },
+    {
+      "path": "app/dist-vps/client/_next/static/chunks/task-browser-client-BalzAJxZ.js",
+      "bytes": 8047,
+      "sha256": "f54d82cdb381852933b01ebb07b63712a8af305fbeb3110f33e28501c24c579d"
+    },
+    {
+      "path": "app/dist-vps/client/_next/static/chunks/task-wire-B4t7ow3D.js",
+      "bytes": 2708,
+      "sha256": "ef306b186c3c400ca75ebe227de9dd10b8054094d7a32cf602881cf9c05ed233"
+    },
+    {
+      "path": "app/dist-vps/client/_next/static/chunks/task-workspace-C3etg4B1.js",
+      "bytes": 88327,
+      "sha256": "11469e939db580f78a1295cb44ea606d00927819ec6af2aef4009b6d7f8f4f1c"
+    },
+    {
+      "path": "app/dist-vps/client/_next/static/chunks/workspace-B2lRRYCZ.js",
+      "bytes": 11915,
+      "sha256": "c0b0154dbb261d182142863554454ac2804b601747e72e5e8e07f36cba1262b5"
+    },
+    {
+      "path": "app/dist-vps/client/_next/static/chunks/workspace-DIegpp-T.js",
+      "bytes": 8569,
+      "sha256": "2c5977c7c7bf5c1161f0866b6e1b5629738473a870d55811a947b3f7ddfff27d"
+    },
+    {
+      "path": "app/dist-vps/client/_next/static/chunks/workspace-DSpF9wyr.js",
+      "bytes": 11769,
+      "sha256": "5642ad7947bbea48144e05ece0bdcc0885f54907816b8d7b7619d7db905b10af"
+    },
+    {
+      "path": "app/dist-vps/client/_next/static/css/index.CkbohfXa.css",
+      "bytes": 107170,
+      "sha256": "3282adfad28f212d73ccefb3b3aeac924057f8493953dba7951b825847624b89"
+    },
+    {
+      "path": "app/dist-vps/client/favicon.svg",
+      "bytes": 527,
+      "sha256": "b718117c09caff435de086a545f5c27c8b22497a1be2b3069f595ccad3da268a"
+    },
+    {
+      "path": "app/dist-vps/client/vinext-client-entry-manifest.json",
+      "bytes": 65,
+      "sha256": "18479556eef58a84d785b171397abe998fb31c289dbc23251918b06f4c1bb620"
+    },
+    {
+      "path": "app/dist-vps/server/__vite_rsc_assets_manifest.js",
+      "bytes": 5618,
+      "sha256": "177b1ff95d395c3b7a19ff78be373d9197c345cbf9b967042f9599c1e812a503"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/access-verifier-6rplrzWD.js",
+      "bytes": 2996,
+      "sha256": "6a14a1ee650af90b6782c7153472d683bce88f3d9c2185f32eaefe899a096658"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/app-elements-BkySLpnz.js",
+      "bytes": 43960,
+      "sha256": "799d7025ee8d26fb26df82fcf3e2b8245f083b0216e0a24b71285dc624a3be2d"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/app-page-cache-Dgp9kNBu.js",
+      "bytes": 5155,
+      "sha256": "2a1b79e9a8d197e42574308f62f9bcfad7c8f920b41813111cb374c4fe8ce635"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/app-page-cache-render-Dbq3Was_.js",
+      "bytes": 1812,
+      "sha256": "d1bd26a4a3f471ef32d8216a886e916716f2cc7c007549d2b7a5909c6395bdb6"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/app-prerender-endpoints-BtW0cC-a.js",
+      "bytes": 1946,
+      "sha256": "e612a593da91cab0c3f4b9393b5c6f25d3ccaa1798202c90cf88563f3aa80e0f"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/app-route-handler-dispatch--wJrWwvT.js",
+      "bytes": 25829,
+      "sha256": "2d4a0a279936cfebb5b5fc61f48e848d69a06c5ca38839c81a10b5a35f7347d2"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/app-static-generation-DhOT5QrC.js",
+      "bytes": 916,
+      "sha256": "71451721ae4a42108e9ed32567cd9d9861beb4952215b0fd57ffc373cd3edc01"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/css/index.CkbohfXa.css",
+      "bytes": 107170,
+      "sha256": "3282adfad28f212d73ccefb3b3aeac924057f8493953dba7951b825847624b89"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/framework~index-CzrrhqBY.js",
+      "bytes": 56660,
+      "sha256": "917c943854024cb009c181c60de963a684bef0da23c89aa4c50b7d6dd0cd6dd5"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/framework~index~app-page-cache-render~app-page-cache~seed-cache~page~page~page~layout~page~~jl86k673-BroBjkZD.js",
+      "bytes": 6125,
+      "sha256": "7926d4a6f1135a3953a4a8febdf40cb8ac81f3a3a064691b0e86f69d0e069687"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/headers-BpcmjV_T.js",
+      "bytes": 2915,
+      "sha256": "cfc66d3bf7fff954c8a3f59ee19ecbe9c61a7e56fabd480f8996e7bf35de3127"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/http-common-RJtg1HDc.js",
+      "bytes": 1016,
+      "sha256": "899ce0a80e1ff2a27c6bcea35ab8002c3e5d618afb395a5d408d5b40b26d51cb"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/idea-decision-operation-BwtOj7IE.js",
+      "bytes": 10156,
+      "sha256": "d9554dd258c511632ce8197ddfac2222ed02e96cf28e26b0072dd0b04bba7106"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/idea-workspace-BAzsyxbK.js",
+      "bytes": 193,
+      "sha256": "a2906ba2a7d436201ce6355fe580fc0ad70f62f3ca7a9b12ea28280ef9a6ab66"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/native-http-exchange-vEKB8wGo.js",
+      "bytes": 28061,
+      "sha256": "bf75c76b5f64e6ab7fdcb49580619360348a0c3d0c71603cd8331e56a56fdbdf"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/native-observation-CjOm_Jf1.js",
+      "bytes": 7181,
+      "sha256": "177e616b163950bcc69bbe4d4fb6f33de85c731a164bcb9f9b64dc2c6a46df91"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/native-owner-review-Dc2GAttU.js",
+      "bytes": 3066,
+      "sha256": "485f99fc0707ceaeb910c831b79ed7d32bc20244075a025b3943e28207e99826"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/native-run-identifiers-CreoRKvl.js",
+      "bytes": 16962,
+      "sha256": "c490c1c08e675334935ad48846569860b09cda7e80f00543dd741ad915174953"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/native-task-approval-binding-DQljiYxT.js",
+      "bytes": 48868,
+      "sha256": "1d95cc9470f74ecca6ca19630ac49997b85f739ac314b672f07396d81265b6a3"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/native-task-submission-BVsvIe4h.js",
+      "bytes": 327,
+      "sha256": "6132a0db5b3b5162bc2ccc949a476c07084cfa7f90aa3db201ef3f4184f6cf73"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/navigation-runtime-DFR5gXZ1.js",
+      "bytes": 802,
+      "sha256": "bd888fc42a858ac6ce1ff332b139261489cc0be901b1db72ce8d3037a68ee301"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/operation-signal-DE4uXDPZ.js",
+      "bytes": 37466,
+      "sha256": "132480b504c54770d5b7580c80ba23ae1ce66d8c1d078c94ae93642b0d0c76d8"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/page-BIoprSnj.js",
+      "bytes": 291,
+      "sha256": "5f784b52e6c5a63a4bb316ae13a40b21e633d875be9d9953e8920dc704b96dbf"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/page-BS4jR-fC.js",
+      "bytes": 450,
+      "sha256": "28f9a31d43f95a0c3015587b79aab7a1fb7a28f8f9f03950b3174ae2f5e4873c"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/page-C2TX11Yf.js",
+      "bytes": 736,
+      "sha256": "d4fefd1e7c4576799c7a56ee9da1e1bef29807f561f9d10e3c212173bba54100"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/page-CsaGygCD.js",
+      "bytes": 332,
+      "sha256": "6a1dfc62fc21533f6ee7ed4de32273a70ffb156d8638bb1141e172fed314b96d"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/page-D-KvJvIU.js",
+      "bytes": 388,
+      "sha256": "549891f2d6451a02d15f18bd6534e13833a9e3870a0034c6d1d7f521aae638f5"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/page-D2ZQ_aul.js",
+      "bytes": 441,
+      "sha256": "4cef5005ef5ca7e9f6263f8aeea8261e8bcb35ae3669198a4a26eb0e63602621"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/page-D4AyFU3O.js",
+      "bytes": 412,
+      "sha256": "d35f1bc57084640fc656772f1aa89e7f00c49c19a8f39c65c6f3a238e9bd3036"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/page-DOC_6iFw.js",
+      "bytes": 556,
+      "sha256": "6d38c3cf24c528b0b4973d9fcadc6fb5b457edaf6c9aeb3934f3e06ccca0146b"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/page-DiLXB7w_.js",
+      "bytes": 941,
+      "sha256": "7c49a7f7d52e9747fc5a696f20b8b1edfee055ca4586806d1d92e0f4f7cff856"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/page-DlZJ_hX0.js",
+      "bytes": 325,
+      "sha256": "f11cff0edb42564a6f5b4b031297605c117218c9ccbdd07970058b607c4acc33"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/page-Dm16yTRQ.js",
+      "bytes": 388,
+      "sha256": "78947eb68fb9b1e2d59748e63a9bf0f20f51136aad02c0577f847a4bb18f136b"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/page-DtXFSWeO.js",
+      "bytes": 347,
+      "sha256": "588b32c8941d9b1b44d625d2c358c4dd9b6bbbd051e15947007ce0e41967b3c3"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/pg-boss-abs-feed-worker-iYkzts6M.js",
+      "bytes": 2676,
+      "sha256": "ef90c124af9130075d861f442f867865383289061a4f595b6f3ac821ca8d376d"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/pg-boss-native-task-submission-DrySt4SM.js",
+      "bytes": 3331,
+      "sha256": "0794ee75aa289db0fe5857f940d07111ae17a13513b706038c7878016d343114"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/private-database-preflight-Bv8vx_rq.js",
+      "bytes": 25010,
+      "sha256": "fd7b2f12c767b0ff801d9468c6cf4e6137ea99c06df1edb04a0cdfb248a9e3e5"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/private-postgres-Bfinbtlh.js",
+      "bytes": 3890,
+      "sha256": "d138ac971274bcc220b0497085d78dcdc7e3deb50cd0a8a2a9b412a2e1e3e5d6"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/rolldown-runtime-Dx6myolh.js",
+      "bytes": 898,
+      "sha256": "d55f3d179d80b728938e9b5606650d90bc87aff405ae62588f9b7ad04f5fea1d"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/schemas-B3lWlu1S.js",
+      "bytes": 54636,
+      "sha256": "b721d3f7b5596c2bdb5e555051f4cce505986685f3756af5b88ab6474b4e6e29"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/schemas-CwuTYsya.js",
+      "bytes": 6224,
+      "sha256": "daa6ad1866ed34d36d8975a85a584a0da5493a93556cc98341ee07b220186fbd"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/seed-cache-D_wnhZK1.js",
+      "bytes": 1940,
+      "sha256": "1e51c963815abb0bc13265ab4cad7c65761bf9b2c28bf75b6851e97b03fdf0f3"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/task-workspace-B0Z7-M2i.js",
+      "bytes": 193,
+      "sha256": "d99af7fbba85b8cc9dfd04b30bfdcefbbbccf0bd6a1f2477b589be69eb150048"
+    },
+    {
+      "path": "app/dist-vps/server/_next/static/workspace-CX5lyJxC.js",
+      "bytes": 199,
+      "sha256": "da999b5de3570757e61c7304ea21abb387d78d94a9f733557496348113380c2b"
+    },
+    {
+      "path": "app/dist-vps/server/bootstrap.js",
+      "bytes": 3475,
+      "sha256": "c0b4ecacd32f86bc600fb6f1e54042e0cc767fd10368709f51102c0e23e79450"
+    },
+    {
+      "path": "app/dist-vps/server/ideaAuthoring.js",
+      "bytes": 3366,
+      "sha256": "2832a7c92a648071936e1490bbbdedafa0db6f287ae5574f36395652cf8ffc32"
+    },
+    {
+      "path": "app/dist-vps/server/index.js",
+      "bytes": 235412,
+      "sha256": "90eb62300380271312e809117bc6cf35b62d3084c0038101a28bf4e85252be52"
+    },
+    {
+      "path": "app/dist-vps/server/nativeQueueFactories.js",
+      "bytes": 6715,
+      "sha256": "9a49c7e9838c5b66c6d349d68321771e15d2dc7c0b7bf9a51782f5b629f473f1"
+    },
+    {
+      "path": "app/dist-vps/server/nativeQueueInspection.js",
+      "bytes": 741,
+      "sha256": "f513fba200c34e524d263b37209698c9cc958bed80a7c3bfcd281576714b7185"
+    },
+    {
+      "path": "app/dist-vps/server/nodeConnector.js",
+      "bytes": 157977,
+      "sha256": "6f5a61df9ee670ea37ca5c112fe4904ff33c9ae3be44cf6ee5a4eb881d05f81a"
+    },
+    {
+      "path": "app/dist-vps/server/ownerBootstrap.js",
+      "bytes": 3293,
+      "sha256": "88e9d2703773277f87b763e7693d3fdd1803ca6bda39a189748da1f1894eb00a"
+    },
+    {
+      "path": "app/dist-vps/server/ownerReview.js",
+      "bytes": 6309,
+      "sha256": "0f5ca137eec3ef7b8f1d5127b8d7228f1dc7359f46dc58e216fdebed308e7b28"
+    },
+    {
+      "path": "app/dist-vps/server/preparation.js",
+      "bytes": 11458,
+      "sha256": "4b6affd2f451c3e0668660772dd119a4f510043d9a078ad59f2ba0d85c3b9d70"
+    },
+    {
+      "path": "app/dist-vps/server/rehearsal.js",
+      "bytes": 14662,
+      "sha256": "079c4978633e37b6fd68a64201033c8e67eb6c76720dc35db64210775a7facba"
+    },
+    {
+      "path": "app/dist-vps/server/runtime.js",
+      "bytes": 532794,
+      "sha256": "94870b667310f5e66ff0f037d6e7c93c69d4f0a0dfaa915607948dd2d5ad594c"
+    },
+    {
+      "path": "app/dist-vps/server/serving.js",
+      "bytes": 11404,
+      "sha256": "9f9bc8e1fdbd0a8f86410dee0a51ad4430b491671cb889fe80ee6edc1cd1ff1f"
+    },
+    {
+      "path": "app/dist-vps/server/ssr/__vite_rsc_assets_manifest.js",
+      "bytes": 5618,
+      "sha256": "177b1ff95d395c3b7a19ff78be373d9197c345cbf9b967042f9599c1e812a503"
+    },
+    {
+      "path": "app/dist-vps/server/ssr/_next/static/app-prefetch-fetch-queue-VzlFQmkH.js",
+      "bytes": 9,
+      "sha256": "56e1b0c10087ee6ff7f949b15d1ef63cb11228ff93a159a52f9ad7ef851e4e02"
+    },
+    {
+      "path": "app/dist-vps/server/ssr/_next/static/app-router-scroll-C7vyPD0V.js",
+      "bytes": 2542,
+      "sha256": "f40154cbcca4b491d6feef8fed11a2d0b5ad827437133c696e3f3b65dfc179c5"
+    },
+    {
+      "path": "app/dist-vps/server/ssr/_next/static/browser-client-suhgMZfl.js",
+      "bytes": 6009,
+      "sha256": "781ff9ba3da31e6deb334d1f98dca939abadba9be1dc0bc5eaa76681428485bb"
+    },
+    {
+      "path": "app/dist-vps/server/ssr/_next/static/browser-json-B_lKjeSL.js",
+      "bytes": 53698,
+      "sha256": "fe3200357ec792787b9d7be7e9fbda765336a7c2d18dde0806b8d87bd48ccda3"
+    },
+    {
+      "path": "app/dist-vps/server/ssr/_next/static/error-boundary-Cb0xQdaY.js",
+      "bytes": 5324,
+      "sha256": "09e88bb9f1510ca9a5b1e4c5b9c4cfc7d6a662cd4257b0ef1ceb8cc5096f65b5"
+    },
+    {
+      "path": "app/dist-vps/server/ssr/_next/static/idea-browser-client-7qpSdWlK.js",
+      "bytes": 12802,
+      "sha256": "65a1ab07b24595697f95c993a766667426d6c50b1a6c6f8e949fa65bc9a000f0"
+    },
+    {
+      "path": "app/dist-vps/server/ssr/_next/static/idea-workspace-CDiR6Ih7.js",
+      "bytes": 23516,
+      "sha256": "6608353ab5fe0f7cf360311d3e916fa542aa943b76218731454a37019106dd78"
+    },
+    {
+      "path": "app/dist-vps/server/ssr/_next/static/layout-segment-context-DWf82M7_.js",
+      "bytes": 379,
+      "sha256": "a85fda13330113e90efe6c1de69fe06227bda852798cad24be04993695aae927"
+    },
+    {
+      "path": "app/dist-vps/server/ssr/_next/static/news-navigation-guard-BEjNc1Pe.js",
+      "bytes": 358,
+      "sha256": "1e99e68c9621abfe24376a5a2af036addf38c4327d6793079e87327a1f53d710"
+    },
+    {
+      "path": "app/dist-vps/server/ssr/_next/static/news-workspace-DVyF6MqO.js",
+      "bytes": 35396,
+      "sha256": "c0d710f6dd1c955bbc0ac1dd3cdbe9efb39ad43ed7c52c1cc92996a6d4b02fba"
+    },
+    {
+      "path": "app/dist-vps/server/ssr/_next/static/private-header-B7VliR9_.js",
+      "bytes": 551,
+      "sha256": "8e257ef429f9ec4e73bc62fa1c59a12a65ab34e2fe30cfe79c38dcd601d1a541"
+    },
+    {
+      "path": "app/dist-vps/server/ssr/_next/static/session-controls-D9KeVjnN.js",
+      "bytes": 496,
+      "sha256": "586c12b1f156a92f1f8a0920afabba2bde88b37f14518e927d118b1f9b055579"
+    },
+    {
+      "path": "app/dist-vps/server/ssr/_next/static/task-approval-wire-CHQHvtTs.js",
+      "bytes": 859,
+      "sha256": "ea4fec714b35effc44d566743a748b2d3e07f44d2d8ea68641f33e2e3d465c14"
+    },
+    {
+      "path": "app/dist-vps/server/ssr/_next/static/task-browser-client-Cs0v00lC.js",
+      "bytes": 8047,
+      "sha256": "9c294f91e36b672381839d9f270b2bfb555379a1842dc2183a8d02d5ce12b647"
+    },
+    {
+      "path": "app/dist-vps/server/ssr/_next/static/task-wire-DAR0kweY.js",
+      "bytes": 2708,
+      "sha256": "81a1f47aa0ce03ff6f11c02e9dd3106a42e90bb3d66ebaee9e9045ce8a9754eb"
+    },
+    {
+      "path": "app/dist-vps/server/ssr/_next/static/task-workspace-CBEjpupr.js",
+      "bytes": 84120,
+      "sha256": "2835663ff6635722b8fcfde2aaa2281d7dfc89fb81aa98a8e6497a1ba499067d"
+    },
+    {
+      "path": "app/dist-vps/server/ssr/_next/static/workspace-Bxw-lCy7.js",
+      "bytes": 10719,
+      "sha256": "dfe880ab4fc454f96af8bc8767b467921905c5353cecdff1e0e826e792ecc332"
+    },
+    {
+      "path": "app/dist-vps/server/ssr/_next/static/workspace-CPGdItYr.js",
+      "bytes": 8095,
+      "sha256": "182d6f3ee60e907d30c0dd97cded53f1b5eb15d0076db459a355a49a7deee7c1"
+    },
+    {
+      "path": "app/dist-vps/server/ssr/_next/static/workspace-CvF03GZm.js",
+      "bytes": 10994,
+      "sha256": "d674c810144fcd6e759e1dc5f7a214bd3635ef8434ffe19ec795183aa11f3ddd"
+    },
+    {
+      "path": "app/dist-vps/server/ssr/index.js",
+      "bytes": 74532,
+      "sha256": "6f886355ca980672c7793be3217864c305353f2a3cf2d3e0eb14801cc770bc35"
+    },
+    {
+      "path": "app/dist-vps/server/ssr/vinext-client-assets.js",
+      "bytes": 4362,
+      "sha256": "39e2bc99037a528b40785a288fb2b792c15e6bf68aa46bdd849112750ce8d9f3"
+    },
+    {
+      "path": "app/dist-vps/server/ssr/vinext-server.json",
+      "bytes": 86,
+      "sha256": "6ea410e83a7896261dffcecc61f7b20a7a3cc8809888dbd068efe6688a081cd3"
+    },
+    {
+      "path": "app/dist-vps/server/taskApplication.js",
+      "bytes": 146393,
+      "sha256": "00a3087f57fc4296251b2ffaf49833f7be51e25009bd08d9e6f18b17202f775e"
+    },
+    {
+      "path": "app/dist-vps/server/taskBootstrap.js",
+      "bytes": 332189,
+      "sha256": "3593849cbc71d2185eda02c8c42d0b20a06bb3ad39918b8fdfa6ea8954fe1145"
+    },
+    {
+      "path": "app/dist-vps/server/taskDatabaseCheck.js",
+      "bytes": 2665,
+      "sha256": "82a65b0c8c3924823d0217801bafdce59daa90ed1a1f2d39ae7ccf9328aa54e2"
+    },
+    {
+      "path": "app/dist-vps/server/taskHost.js",
+      "bytes": 6806,
+      "sha256": "713dc9cb1dbe5047c3cc4b8b46157f21d93b341eb5c395821f9498073c17336a"
+    },
+    {
+      "path": "app/dist-vps/server/vinext-client-assets.js",
+      "bytes": 4362,
+      "sha256": "39e2bc99037a528b40785a288fb2b792c15e6bf68aa46bdd849112750ce8d9f3"
+    },
+    {
+      "path": "app/dist-vps/server/vinext-externals.json",
+      "bytes": 42,
+      "sha256": "bfc89b759c009e3e8bdc9e54dba3ebebba6b9c92b8d923f15bf42fa50b075fb2"
+    },
+    {
+      "path": "app/dist-vps/server/vinext-server.json",
+      "bytes": 86,
+      "sha256": "6ea410e83a7896261dffcecc61f7b20a7a3cc8809888dbd068efe6688a081cd3"
+    },
+    {
+      "path": "app/dist/server/BUILD_ID",
+      "bytes": 36,
+      "sha256": "d777e49ef03b622401b525a55b8f19c114bfc714a4fec07d8c63a07f8b9c04c3"
+    }
+  ],
+  "uniquePackages": 21,
+  "missingFullText": [
+    {
+      "name": "control-room",
+      "version": "0.1.0",
+      "license": null,
+      "licenseTextBytes": 0,
+      "licenseTextSha256": null,
+      "noticeTextSha256": null
+    },
+    {
+      "name": "@vitejs/plugin-rsc",
+      "version": "0.5.26",
+      "license": "MIT",
+      "licenseTextBytes": 0,
+      "licenseTextSha256": null,
+      "noticeTextSha256": null
+    },
+    {
+      "name": "@nodable/entities",
+      "version": "3.0.0",
+      "license": "MIT",
+      "licenseTextBytes": 0,
+      "licenseTextSha256": null,
+      "noticeTextSha256": null
+    },
+    {
+      "name": "postgres",
+      "version": "3.4.7",
+      "license": "Unlicense",
+      "licenseTextBytes": 0,
+      "licenseTextSha256": null,
+      "noticeTextSha256": null
+    }
+  ],
+  "collisions": [],
+  "pluginLock": {
+    "name": "cr-f9-plugin.UtNOAa",
+    "lockfileVersion": 3,
+    "requires": true,
+    "packages": {
+      "": {
+        "dependencies": {
+          "rollup-plugin-license": "^3.7.1"
+        }
+      },
+      "node_modules/@jridgewell/sourcemap-codec": {
+        "version": "1.6.0",
+        "resolved": "https://registry.npmjs.org/@jridgewell/sourcemap-codec/-/sourcemap-codec-1.6.0.tgz",
+        "integrity": "sha512-T7jf+5zgsZHwNJ4lvQ7/aezbyk0nNX+zJVWpmHA7VYsEx7a7qr5Rg5IbtJFqkgze5Y2sruq1RUY8Q837Od7iFw==",
+        "license": "MIT"
+      },
+      "node_modules/array-find-index": {
+        "version": "1.0.2",
+        "resolved": "https://registry.npmjs.org/array-find-index/-/array-find-index-1.0.2.tgz",
+        "integrity": "sha512-M1HQyIXcBGtVywBt8WVdim+lrNaK7VHp99Qt5pSNziXznKHViIBbXWtfRTpEFpF/c4FdfxNAsCCwPp5phBYJtw==",
+        "license": "MIT",
+        "engines": {
+          "node": ">=0.10.0"
+        }
+      },
+      "node_modules/commenting": {
+        "version": "1.1.0",
+        "resolved": "https://registry.npmjs.org/commenting/-/commenting-1.1.0.tgz",
+        "integrity": "sha512-YeNK4tavZwtH7jEgK1ZINXzLKm6DZdEMfsaaieOsCAN0S8vsY7UeuO3Q7d/M018EFgE+IeUAuBOKkFccBZsUZA==",
+        "license": "MIT"
+      },
+      "node_modules/fdir": {
+        "version": "6.5.0",
+        "resolved": "https://registry.npmjs.org/fdir/-/fdir-6.5.0.tgz",
+        "integrity": "sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg==",
+        "license": "MIT",
+        "engines": {
+          "node": ">=12.0.0"
+        },
+        "peerDependencies": {
+          "picomatch": "^3 || ^4"
+        },
+        "peerDependenciesMeta": {
+          "picomatch": {
+            "optional": true
+          }
+        }
+      },
+      "node_modules/lodash": {
+        "version": "4.18.1",
+        "resolved": "https://registry.npmjs.org/lodash/-/lodash-4.18.1.tgz",
+        "integrity": "sha512-dMInicTPVE8d1e5otfwmmjlxkZoUpiVLwyeTdUsi/Caj/gfzzblBcCE5sRHV/AsjuCmxWrte2TNGSYuCeCq+0Q==",
+        "license": "MIT"
+      },
+      "node_modules/magic-string": {
+        "version": "0.30.21",
+        "resolved": "https://registry.npmjs.org/magic-string/-/magic-string-0.30.21.tgz",
+        "integrity": "sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==",
+        "license": "MIT",
+        "dependencies": {
+          "@jridgewell/sourcemap-codec": "^1.5.5"
+        }
+      },
+      "node_modules/moment": {
+        "version": "2.30.1",
+        "resolved": "https://registry.npmjs.org/moment/-/moment-2.30.1.tgz",
+        "integrity": "sha512-uEmtNhbDOrWPFS+hdjFCBfy9f2YoyzRpwcl+DqpC6taX21FzsTLQVbMV/W7PzNSX6x/bhC1zA3c2UQ5NzH6how==",
+        "license": "MIT",
+        "engines": {
+          "node": "*"
+        }
+      },
+      "node_modules/package-name-regex": {
+        "version": "2.0.6",
+        "resolved": "https://registry.npmjs.org/package-name-regex/-/package-name-regex-2.0.6.tgz",
+        "integrity": "sha512-gFL35q7kbE/zBaPA3UKhp2vSzcPYx2ecbYuwv1ucE9Il6IIgBDweBlH8D68UFGZic2MkllKa2KHCfC1IQBQUYA==",
+        "license": "MIT",
+        "engines": {
+          "node": ">=12"
+        },
+        "funding": {
+          "url": "https://github.com/sponsors/dword-design"
+        }
+      },
+      "node_modules/rollup-plugin-license": {
+        "version": "3.7.1",
+        "resolved": "https://registry.npmjs.org/rollup-plugin-license/-/rollup-plugin-license-3.7.1.tgz",
+        "integrity": "sha512-FcGXUbAmPvRSLxjVdjp/r/MUtKBlttVQd+ApUyvKfREnsoAfAZA6Ic2fE1Tz4RL0f9XqEQU9UIRNUMdtQtliDw==",
+        "license": "MIT",
+        "dependencies": {
+          "commenting": "^1.1.0",
+          "fdir": "^6.4.3",
+          "lodash": "^4.17.21",
+          "magic-string": "^0.30.0",
+          "moment": "^2.30.1",
+          "package-name-regex": "^2.0.6",
+          "spdx-expression-validate": "^2.0.0",
+          "spdx-satisfies": "^5.0.1"
+        },
+        "engines": {
+          "node": ">=14.0.0"
+        },
+        "peerDependencies": {
+          "rollup": "^1.0.0 || ^2.0.0 || ^3.0.0 || ^4.0.0"
+        }
+      },
+      "node_modules/spdx-compare": {
+        "version": "1.0.0",
+        "resolved": "https://registry.npmjs.org/spdx-compare/-/spdx-compare-1.0.0.tgz",
+        "integrity": "sha512-C1mDZOX0hnu0ep9dfmuoi03+eOdDoz2yvK79RxbcrVEG1NO1Ph35yW102DHWKN4pk80nwCgeMmSY5L25VE4D9A==",
+        "license": "MIT",
+        "dependencies": {
+          "array-find-index": "^1.0.2",
+          "spdx-expression-parse": "^3.0.0",
+          "spdx-ranges": "^2.0.0"
+        }
+      },
+      "node_modules/spdx-exceptions": {
+        "version": "2.5.0",
+        "resolved": "https://registry.npmjs.org/spdx-exceptions/-/spdx-exceptions-2.5.0.tgz",
+        "integrity": "sha512-PiU42r+xO4UbUS1buo3LPJkjlO7430Xn5SVAhdpzzsPHsjbYVflnnFdATgabnLude+Cqu25p6N+g2lw/PFsa4w==",
+        "license": "CC-BY-3.0"
+      },
+      "node_modules/spdx-expression-parse": {
+        "version": "3.0.1",
+        "resolved": "https://registry.npmjs.org/spdx-expression-parse/-/spdx-expression-parse-3.0.1.tgz",
+        "integrity": "sha512-cbqHunsQWnJNE6KhVSMsMeH5H/L9EpymbzqTQ3uLwNCLZ1Q481oWaofqH7nO6V07xlXwY6PhQdQ2IedWx/ZK4Q==",
+        "license": "MIT",
+        "dependencies": {
+          "spdx-exceptions": "^2.1.0",
+          "spdx-license-ids": "^3.0.0"
+        }
+      },
+      "node_modules/spdx-expression-validate": {
+        "version": "2.0.0",
+        "resolved": "https://registry.npmjs.org/spdx-expression-validate/-/spdx-expression-validate-2.0.0.tgz",
+        "integrity": "sha512-b3wydZLM+Tc6CFvaRDBOF9d76oGIHNCLYFeHbftFXUWjnfZWganmDmvtM5sm1cRwJc/VDBMLyGGrsLFd1vOxbg==",
+        "license": "(MIT AND CC-BY-3.0)",
+        "dependencies": {
+          "spdx-expression-parse": "^3.0.0"
+        }
+      },
+      "node_modules/spdx-license-ids": {
+        "version": "3.0.23",
+        "resolved": "https://registry.npmjs.org/spdx-license-ids/-/spdx-license-ids-3.0.23.tgz",
+        "integrity": "sha512-CWLcCCH7VLu13TgOH+r8p1O/Znwhqv/dbb6lqWy67G+pT1kHmeD/+V36AVb/vq8QMIQwVShJ6Ssl5FPh0fuSdw==",
+        "license": "CC0-1.0"
+      },
+      "node_modules/spdx-ranges": {
+        "version": "2.1.1",
+        "resolved": "https://registry.npmjs.org/spdx-ranges/-/spdx-ranges-2.1.1.tgz",
+        "integrity": "sha512-mcdpQFV7UDAgLpXEE/jOMqvK4LBoO0uTQg0uvXUewmEFhpiZx5yJSZITHB8w1ZahKdhfZqP5GPEOKLyEq5p8XA==",
+        "license": "(MIT AND CC-BY-3.0)"
+      },
+      "node_modules/spdx-satisfies": {
+        "version": "5.0.1",
+        "resolved": "https://registry.npmjs.org/spdx-satisfies/-/spdx-satisfies-5.0.1.tgz",
+        "integrity": "sha512-Nwor6W6gzFp8XX4neaKQ7ChV4wmpSh2sSDemMFSzHxpTw460jxFYeOn+jq4ybnSSw/5sc3pjka9MQPouksQNpw==",
+        "license": "MIT",
+        "dependencies": {
+          "spdx-compare": "^1.0.0",
+          "spdx-expression-parse": "^3.0.0",
+          "spdx-ranges": "^2.0.0"
+        }
+      }
+    }
+  }
+}

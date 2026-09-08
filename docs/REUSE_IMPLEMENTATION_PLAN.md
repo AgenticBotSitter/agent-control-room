@@ -31,10 +31,19 @@ Preserve canonical project/job/attempt/review IDs and private configuration.
 | DR-04 | CycloneDX library 10.2.0 public LicenseEvidenceGatherer, build-time only, plus four explicit retained-text exceptions | Whole CycloneDX CLI graph reader; single-text checker as sole original-text collector | Snapshot-safe bounded reads; complete built/copied/vendor/asset attribution, including collector notices |
 | DR-05 | jsonwebtoken9.0.3 behind existing synchronous verifier and retained CR policy | Async migration solely to adopt jose; a new login provider; dual token libraries | Actual typed package import, identity/caller regressions, full notices/build and owner login separately |
 | DR-06 | Current immutable task/attempt/receipt authority; Maestro routing is conditional reuse for a named notification gap | Unchanged Maestro local inbox/wake status as task acknowledgement; a new general notification framework without a required channel | Actual native lifecycle still required; future notification adoption needs ingress/digest/restart/transport fit, not wake-as-completion |
+| DR-07 | Readability0.6.0 + jsdom26.1.0 as the default bounded extraction primitive; retain existing collection | Custom article scoring, HTML repair/selector engine, or an extra reader service solely for extraction | Source-bound detail/storage/rendering, lineage/fallback, bounded resources and complete package/file notices; not full reader completion |
 
 These decisions currently delete zero production lines. They avoid unnecessary new
 infrastructure; they are not evidence that every existing custom component is needed.
 Other selections below remain pending their discriminating local tests.
+
+RC10 actual client/RSC/SSR build now works with the existing notice plugin in an
+owned staging root. Its three missing third-party text records resolve to already
+retained originals; no new collector or repeated download is justified. Implement
+explicit pinned exceptions, cross-environment aggregation, project/copied-code/asset
+and external-runtime inputs as described in
+[the actual-build resolution map](research/reuse-comparisons/f9-build-notice-resolution.md).
+This is not notice-complete release acceptance; final assembly/negative tests remain.
 
 RC7 integration constraint: [the inspected article boundary](research/reuse-comparisons/f7-article-integration-map.md)
 rules out storing fetched articles as completed native results. Rich reading needs
@@ -72,6 +81,12 @@ RSS alone. The next shared adapter cases must preserve actual CR scope/digest an
 revision binding, uncertainty without repeated writes, restore/custody boundaries
 and staged SQL commit failure. Retain one selected anchor only, never hot fallback
 to a stale second store. [Actual OpenBao evidence](research/reuse-comparisons/f5-openbao-service-fit.md).
+
+The [OpenBao identity source map](research/reuse-comparisons/f5-openbao-identity-map.md)
+rules out translating data-version created_time into stable key identity. Its
+ordinary data CAS differs from etcd's combined create/mod/value comparisons. Resolve
+the actual object-binding and restore model before creating a Bao-specific adapter;
+do not fabricate equivalent etcd responses or quietly broaden metadata permissions.
 
 ## Outcome-to-implementation ledger
 

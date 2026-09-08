@@ -80,6 +80,13 @@ application/dependency root; do not repeat the miniature plugin test or change a
 configuration merely to make the research run. No actual application build or new
 plugin acquisition occurred in that preflight.
 
+DR-07 now closes the default extractor primitive choice (Readability0.6/jsdom26.1),
+not RC7's source-bound full reader. Carry the actual detail/storage/lineage/resource
+and notice requirements into integration; do not reopen the primitive contest
+without a named failed requirement. AO's additional real-Git conflict/stale/branch
+tests likewise replace those previously missing observations, not the still-missing
+actual CR detached/path/lease mapping or true process recovery.
+
 ## Consolidation into the final plan
 
 The final `REUSE_IMPLEMENTATION_PLAN.md` must use these decisions to define substantial

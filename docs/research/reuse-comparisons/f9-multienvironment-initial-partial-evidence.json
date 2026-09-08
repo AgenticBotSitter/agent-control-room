@@ -1,0 +1,23 @@
+{
+  "scope": "actual staged Control Room Vite client/RSC/SSR build, no application runtime/prerender",
+  "status": "failed",
+  "environments": {
+    "client": {
+      "callbacks": [],
+      "modules": [],
+      "externals": []
+    },
+    "rsc": {
+      "callbacks": [],
+      "modules": [],
+      "externals": []
+    },
+    "ssr": {
+      "callbacks": [],
+      "modules": [],
+      "externals": []
+    }
+  },
+  "outputs": [],
+  "failure": "\u001b[31mBuild failed with 1 error:\n\n\u001b[31m[UNRESOLVED_IMPORT] \u001b[0mCould not resolve '../../styles/control-room.css' in ../../../../../private/tmp/cr-f9-staging.ITLsVE/app/private-app/app/layout.tsx\n   \u001b[38;5;246m╭\u001b[0m\u001b[38;5;246m─\u001b[0m\u001b[38;5;246m[\u001b[0m ../../../../../private/tmp/cr-f9-staging.ITLsVE/app/private-app/app/layout.tsx:3:8 \u001b[38;5;246m]\u001b[0m\n   \u001b[38;5;246m│\u001b[0m\n \u001b[38;5;246m3 │\u001b[0m \u001b[38;5;249mi\u001b[0m\u001b[38;5;249mm\u001b[0m\u001b[38;5;249mp\u001b[0m\u001b[38;5;249mo\u001b[0m\u001b[38;5;249mr\u001b[0m\u001b[38;5;249mt\u001b[0m\u001b[38;5;249m \u001b[0m\"../../styles/control-room.css\"\u001b[38;5;249m;\u001b[0m\n \u001b[38;5;240m  │\u001b[0m        ───────────────┬───────────────  \n \u001b[38;5;240m  │\u001b[0m                       ╰───────────────── Module not found.\n \u001b[38;5;240m  │\u001b[0m \n \u001b[38;5;240m  │\u001b[0m \u001b[38;5;115mHelp\u001b[0m: '../../../../../private/tmp/cr-f9-staging.ITLsVE/app/private-app/app/layout.tsx' is imported by the following path:\n \u001b[38;5;240m  │\u001b[0m         - ../../../../../private/tmp/cr-f9-staging.ITLsVE/app/private-app/app/layout.tsx\n \u001b[38;5;240m  │\u001b[0m         - \\0virtual:vinext-rsc-entry\n\u001b[38;5;246m───╯\u001b[0m\n\u001b[39m"
+}

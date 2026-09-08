@@ -1,0 +1,12 @@
+import {spawn} from 'node:child_process';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+const root=process.argv[2];assert.match(root,/^\/private\/tmp\/cr-f9-staging\.[A-Za-z0-9]+$/);
+const script=path.resolve('research/reuse-comparisons/f9-multienvironment-build.mjs');
+const start=performance.now();
+const p=spawn(process.execPath,['--max-old-space-size=1024',script,root],{cwd:root+'/app',env:{PATH:'/usr/bin:/bin',TMPDIR:root+'/tmp',CI:'true',CONTROL_ROOM_BUILD_TARGET:'vps-node',NODE_ENV:'production'},stdio:['ignore','pipe','pipe']});
+let output='',limited=false,timedOut=false;
+for(const s of[p.stdout,p.stderr])s.on('data',b=>{output+=b.toString();if(output.length>262144){limited=true;p.kill('SIGKILL');}});
+const timer=setTimeout(()=>{timedOut=true;p.kill('SIGKILL');},60000);
+p.on('exit',async(code,signal)=>{clearTimeout(timer);const receipt={code,signal,limited,timedOut,elapsedMs:performance.now()-start,output:output.slice(0,262144)};await fs.writeFile(root+'/terminal-evidence.json',JSON.stringify(receipt,null,2));console.log(JSON.stringify(receipt));process.exitCode=code??1;});
