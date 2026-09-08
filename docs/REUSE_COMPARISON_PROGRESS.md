@@ -44,6 +44,14 @@ These are feature-specific observations, not whole-product reliability rankings.
 
 ## How we close the comparisons
 
+Latest concrete additions: [JWT library fit](research/reuse-comparisons/f8-jwt-fit.md)
+executes jose and jsonwebtoken through the current verifier policy (69 mapped checks,
+10 library-only observations). Full-handler async/policy-removal comparison remains;
+no new auth provider is selected. [Distribution audit](research/reuse-comparisons/f9-distribution-fit.md)
+finds115 actual built files without standalone notice/license files and maps external
+imports. Source-to-build freshness is unverified; generator comparison and complete
+artifact notice assembly remain, rather than assuming another custom tool is needed.
+
 1. Give every remaining responsibility a row containing all known relevant candidates,
    the existing implementation and the smallest new-adapter alternative. Record
    targeted searches for uncovered gaps. No claim to have found every Internet repo.

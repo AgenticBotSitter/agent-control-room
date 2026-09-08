@@ -17,10 +17,12 @@ exact acquisition, negative outcomes and cleanup records:
 [F7](research/reuse-comparisons/f7-candidate-acquisitions.md),
 [F8](research/reuse-comparisons/f8-acquisitions.md),
 [F8 HTTP](research/reuse-comparisons/f8-http-fit.md),
+[F8 JWT libraries](research/reuse-comparisons/f8-jwt-acquisitions.md),
 [F9](research/reuse-comparisons/f9-entities-notice-followup.md).
 No production dependency/source change or GitHub write. F1 (222 MiB) and F2
 (184 KiB) remain retained for continued package tests; F3/F4/F5/F6/F7/F8/F9 report exact
-owned temporary-root cleanup. Latest root disk check remains 140 GiB free.
+owned temporary-root cleanup. The F8 JWT cohort (3.6 MiB) was also removed with
+absence verified after source/receipt review. Latest root disk check remains140GiB free.
 
 ## Herdr bounded adapter evaluation — 2026-09-08
 

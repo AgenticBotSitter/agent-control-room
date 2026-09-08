@@ -262,14 +262,14 @@
     {
       "id": "F8",
       "dossier": "reuse-comparisons/f8-http-fit.md",
-      "additionalDossiers": ["reuse-comparisons/f8-operations.md"],
-      "evidence": "11 actualKuma HTTPbranch+Axios cases through currenthealthbuilder; daemon/alerts/metrics/restore remain; standardJWTlibrary comparison newly traced"
+      "additionalDossiers": ["reuse-comparisons/f8-operations.md", "reuse-comparisons/f8-jwt-fit.md"],
+      "evidence": "11 actualKuma HTTP cases; 69 current/mapped JWT policy cases and10 library-only observations; wholehandler JWT fit, daemon/alerts/metrics/restore remain"
     },
     {
       "id": "F9",
       "dossier": "reuse-comparisons/f9-shipping-license-scope.md",
-      "additionalDossiers": ["reuse-comparisons/f9-entities-notice-followup.md"],
-      "evidence": "30-vs28 direct dependency notice drift found; entities source+MIT provenance traced with version discrepancy; full graph and built distribution notices remain"
+      "additionalDossiers": ["reuse-comparisons/f9-entities-notice-followup.md", "reuse-comparisons/f9-distribution-fit.md"],
+      "evidence": "30-vs28 notice drift; entities provenance; actual115file distribution lacks standalone notices and externalimports mapped; buildprovenance/full graph/notice-generator fit remain"
     }
   ],
   "next": [

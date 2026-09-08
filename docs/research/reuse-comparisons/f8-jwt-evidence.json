@@ -1,0 +1,426 @@
+{
+  "exitCode": 0,
+  "wallTimeSeconds": 0.414267625,
+  "actualStdout": {
+    "scope": "Actual package verification through hash-pinned current verifier adapted only at signature call; synthetic in-memory keys. No HTTP handler, DB, live Access or whole-application acceptance.",
+    "versions": {
+      "jose": "6.2.12",
+      "jsonwebtoken": "9.0.3"
+    },
+    "results": [
+      {
+        "variant": "current",
+        "case": "valid",
+        "accepted": true
+      },
+      {
+        "variant": "current",
+        "case": "wrong signature",
+        "accepted": false
+      },
+      {
+        "variant": "current",
+        "case": "wrong issuer",
+        "accepted": false
+      },
+      {
+        "variant": "current",
+        "case": "wrong audience",
+        "accepted": false
+      },
+      {
+        "variant": "current",
+        "case": "string audience",
+        "accepted": false
+      },
+      {
+        "variant": "current",
+        "case": "missing subject",
+        "accepted": false
+      },
+      {
+        "variant": "current",
+        "case": "wrong token type",
+        "accepted": false
+      },
+      {
+        "variant": "current",
+        "case": "missing expiry",
+        "accepted": false
+      },
+      {
+        "variant": "current",
+        "case": "expired",
+        "accepted": false
+      },
+      {
+        "variant": "current",
+        "case": "future issued",
+        "accepted": false
+      },
+      {
+        "variant": "current",
+        "case": "future not before",
+        "accepted": false
+      },
+      {
+        "variant": "current",
+        "case": "fractional issued",
+        "accepted": false
+      },
+      {
+        "variant": "current",
+        "case": "session age boundary",
+        "accepted": false
+      },
+      {
+        "variant": "current",
+        "case": "unknown key",
+        "accepted": false
+      },
+      {
+        "variant": "current",
+        "case": "extra header",
+        "accepted": false
+      },
+      {
+        "variant": "current",
+        "case": "no typ",
+        "accepted": true
+      },
+      {
+        "variant": "current",
+        "case": "wrong algorithm",
+        "accepted": false
+      },
+      {
+        "variant": "current",
+        "case": "overlong token",
+        "accepted": false
+      },
+      {
+        "variant": "current",
+        "case": "padded signature",
+        "accepted": false
+      },
+      {
+        "variant": "current",
+        "case": "malformed",
+        "accepted": false
+      },
+      {
+        "variant": "current",
+        "case": "absent",
+        "accepted": false
+      },
+      {
+        "variant": "current",
+        "case": "trust expired",
+        "accepted": false
+      },
+      {
+        "variant": "current",
+        "case": "invalid clock",
+        "accepted": false
+      },
+      {
+        "variant": "jsonwebtoken",
+        "case": "valid",
+        "accepted": true
+      },
+      {
+        "variant": "jsonwebtoken",
+        "case": "wrong signature",
+        "accepted": false
+      },
+      {
+        "variant": "jsonwebtoken",
+        "case": "wrong issuer",
+        "accepted": false
+      },
+      {
+        "variant": "jsonwebtoken",
+        "case": "wrong audience",
+        "accepted": false
+      },
+      {
+        "variant": "jsonwebtoken",
+        "case": "string audience",
+        "accepted": false
+      },
+      {
+        "variant": "jsonwebtoken",
+        "case": "missing subject",
+        "accepted": false
+      },
+      {
+        "variant": "jsonwebtoken",
+        "case": "wrong token type",
+        "accepted": false
+      },
+      {
+        "variant": "jsonwebtoken",
+        "case": "missing expiry",
+        "accepted": false
+      },
+      {
+        "variant": "jsonwebtoken",
+        "case": "expired",
+        "accepted": false
+      },
+      {
+        "variant": "jsonwebtoken",
+        "case": "future issued",
+        "accepted": false
+      },
+      {
+        "variant": "jsonwebtoken",
+        "case": "future not before",
+        "accepted": false
+      },
+      {
+        "variant": "jsonwebtoken",
+        "case": "fractional issued",
+        "accepted": false
+      },
+      {
+        "variant": "jsonwebtoken",
+        "case": "session age boundary",
+        "accepted": false
+      },
+      {
+        "variant": "jsonwebtoken",
+        "case": "unknown key",
+        "accepted": false
+      },
+      {
+        "variant": "jsonwebtoken",
+        "case": "extra header",
+        "accepted": false
+      },
+      {
+        "variant": "jsonwebtoken",
+        "case": "no typ",
+        "accepted": true
+      },
+      {
+        "variant": "jsonwebtoken",
+        "case": "wrong algorithm",
+        "accepted": false
+      },
+      {
+        "variant": "jsonwebtoken",
+        "case": "overlong token",
+        "accepted": false
+      },
+      {
+        "variant": "jsonwebtoken",
+        "case": "padded signature",
+        "accepted": false
+      },
+      {
+        "variant": "jsonwebtoken",
+        "case": "malformed",
+        "accepted": false
+      },
+      {
+        "variant": "jsonwebtoken",
+        "case": "absent",
+        "accepted": false
+      },
+      {
+        "variant": "jsonwebtoken",
+        "case": "trust expired",
+        "accepted": false
+      },
+      {
+        "variant": "jsonwebtoken",
+        "case": "invalid clock",
+        "accepted": false
+      },
+      {
+        "variant": "jose",
+        "case": "valid",
+        "accepted": true
+      },
+      {
+        "variant": "jose",
+        "case": "wrong signature",
+        "accepted": false
+      },
+      {
+        "variant": "jose",
+        "case": "wrong issuer",
+        "accepted": false
+      },
+      {
+        "variant": "jose",
+        "case": "wrong audience",
+        "accepted": false
+      },
+      {
+        "variant": "jose",
+        "case": "string audience",
+        "accepted": false
+      },
+      {
+        "variant": "jose",
+        "case": "missing subject",
+        "accepted": false
+      },
+      {
+        "variant": "jose",
+        "case": "wrong token type",
+        "accepted": false
+      },
+      {
+        "variant": "jose",
+        "case": "missing expiry",
+        "accepted": false
+      },
+      {
+        "variant": "jose",
+        "case": "expired",
+        "accepted": false
+      },
+      {
+        "variant": "jose",
+        "case": "future issued",
+        "accepted": false
+      },
+      {
+        "variant": "jose",
+        "case": "future not before",
+        "accepted": false
+      },
+      {
+        "variant": "jose",
+        "case": "fractional issued",
+        "accepted": false
+      },
+      {
+        "variant": "jose",
+        "case": "session age boundary",
+        "accepted": false
+      },
+      {
+        "variant": "jose",
+        "case": "unknown key",
+        "accepted": false
+      },
+      {
+        "variant": "jose",
+        "case": "extra header",
+        "accepted": false
+      },
+      {
+        "variant": "jose",
+        "case": "no typ",
+        "accepted": true
+      },
+      {
+        "variant": "jose",
+        "case": "wrong algorithm",
+        "accepted": false
+      },
+      {
+        "variant": "jose",
+        "case": "overlong token",
+        "accepted": false
+      },
+      {
+        "variant": "jose",
+        "case": "padded signature",
+        "accepted": false
+      },
+      {
+        "variant": "jose",
+        "case": "malformed",
+        "accepted": false
+      },
+      {
+        "variant": "jose",
+        "case": "absent",
+        "accepted": false
+      },
+      {
+        "variant": "jose",
+        "case": "trust expired",
+        "accepted": false
+      },
+      {
+        "variant": "jose",
+        "case": "invalid clock",
+        "accepted": false
+      }
+    ],
+    "rawWithoutPolicy": [
+      {
+        "variant": "jsonwebtoken",
+        "case": "string audience",
+        "accepted": true
+      },
+      {
+        "variant": "jose",
+        "case": "string audience",
+        "accepted": true
+      },
+      {
+        "variant": "jsonwebtoken",
+        "case": "missing subject",
+        "accepted": true
+      },
+      {
+        "variant": "jose",
+        "case": "missing subject",
+        "accepted": true
+      },
+      {
+        "variant": "jsonwebtoken",
+        "case": "wrong token type",
+        "accepted": true
+      },
+      {
+        "variant": "jose",
+        "case": "wrong token type",
+        "accepted": true
+      },
+      {
+        "variant": "jsonwebtoken",
+        "case": "missing expiry",
+        "accepted": true
+      },
+      {
+        "variant": "jose",
+        "case": "missing expiry",
+        "accepted": true
+      },
+      {
+        "variant": "jsonwebtoken",
+        "case": "future issued",
+        "accepted": true
+      },
+      {
+        "variant": "jose",
+        "case": "future issued",
+        "accepted": true
+      }
+    ],
+    "timings": {
+      "current": {
+        "cases": 23,
+        "elapsedMs": 10.880375000000015
+      },
+      "jsonwebtoken": {
+        "cases": 23,
+        "elapsedMs": 3.488583999999946
+      },
+      "jose": {
+        "cases": 23,
+        "elapsedMs": 6.437375000000088
+      }
+    },
+    "parentMaxRssKiB": 234432,
+    "applicationFilesChanged": 0
+  }
+}
