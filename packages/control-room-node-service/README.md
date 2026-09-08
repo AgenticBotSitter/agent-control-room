@@ -5,6 +5,9 @@ references**. Their referenced `node-service.js` does not exist. Static conforma
 checks do not prove executable service readiness. Never replace that filename with
 the one-task command or enable automatic restarts. Continuous multi-job service,
 its installation, and native platform acceptance remain unfinished.
+`docs/CONTINUOUS_PICKUP_GAP.md` identifies the exact server/node bindings and
+combined acceptance needed for consecutive tasks; automatic restarts are not that
+implementation.
 
 The current executable is `scripts/run-private-node.mjs`, backed by the explicitly
 compiled `dist-vps/server/nodeConnector.js`. Build using the existing `pnpm build:vps`
@@ -113,6 +116,11 @@ The connector closes the runtime before factory-owned journals are released. Cle
 observation is bounded; an uncertain runtime drain retains those resources for operator
 attention. A timed-out resource close may still be running; timeout is not proof of stop.
 Logs contain only fixed summaries, not raw configuration, paths, tokens or identities.
+
+The connector also checks a monotonic deadline between operations, including after
+dispatch readiness, so delayed timer callbacks cannot authorize a subsequent start
+or poll. This detects expiry at connector boundaries; it cannot preempt an already
+running native call or establish that a remote run stopped.
 
 Exit zero means the connector reported `terminal/completed` and cleanup was observed.
 It does not mean the research is correct or owner review passed. Bounded waiting,

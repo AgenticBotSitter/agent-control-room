@@ -880,3 +880,30 @@ Fresh compiled verification completed with exit zero (41671): all 14 owner-sessi
 command tests, 13 existing compiled approval and private launcher checks, TypeScript,
 lint and whitespace validation passed. This establishes local release behavior with
 synthetic signing and disposable storage, not owner attendance or a live task.
+
+## Connector elapsed deadlines and continuous-pickup audit
+
+Owner command saved locally as `68e8af3`; no push. Independent audit found that
+continuous pickup is missing server-side dynamic canonical selection and matching
+node task-runtime handoff, not just a restart policy. Lead inspected the exact
+peer-task, managed-attempt and runtime queue bindings and saved the combined
+acceptance plan in `CONTINUOUS_PICKUP_GAP.md`. No guard was removed to accept a
+different task, and no new daemon/selection protocol was introduced.
+
+Two new connector tests reproduced a genuine timer-only deadline gap: when the
+event loop has not delivered the timeout callback, expired work could start or
+continue polling. Both failed with missing expected rejection before the fix.
+Monotonic boundary checks now supplement timer cancellation. Initial 15 source
+connector checks, TypeScript and lint passed (64066 exit zero). Review found that
+a slow false readiness result also needed an unconditional post-readiness check;
+fixed and added no-wait/no-normal-disconnect regressions for one and three cycles.
+Final verification is recorded below when complete. No physical transport or
+provider execution was used; cancellation remains cooperative inside a running call.
+
+Final re-review confirmed the false-readiness finding resolved with no further
+concrete issue. All 17 final source connector checks, TypeScript, lint and diff
+validation passed (35018 exit zero). Fresh node-launcher build and its compiled
+launcher/persistent-resource checks passed (21620 exit zero). The preceding broader
+node-launcher, TLS and packaging run also exited zero (31367), but the final source
+and fresh compiled commands above establish the post-review state. Compiled launcher
+denial is not a real successful network connection or native host qualification.

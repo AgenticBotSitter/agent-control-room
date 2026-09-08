@@ -32,6 +32,7 @@ type FixtureOptions = {
   runtimeClose?: () => Promise<void>;
   clientClose?: () => Promise<void>;
   settings?: Partial<NativeConnectorSettings>;
+  onReady?: () => void;
 };
 
 function fixture(options: FixtureOptions = {}) {
@@ -46,7 +47,7 @@ function fixture(options: FixtureOptions = {}) {
   const choose = (values: NativeSnapshot[], index: number) => structuredClone(values[Math.min(index, values.length - 1)]);
   const runtime = {
     nodeId: "node:test", queueId: "queue:test", grantsExecutionAuthority: false as const,
-    hasAcceptedDispatch() { calls.runtime.push("ready"); return accepted; },
+    hasAcceptedDispatch() { calls.runtime.push("ready"); options.onReady?.(); return accepted; },
     async openWire(value: RuntimeTransport) { calls.runtime.push("openWire"); transport = value; },
     async receiveWire(packet: string | Uint8Array) {
       calls.runtime.push("receiveWire"); if (packet === "dispatch") accepted = true;
@@ -113,6 +114,49 @@ test("construction is inert and captures supplied configuration and methods", as
   assert.deepEqual(operations(f.calls.commands), ["open", "exchange", "exchange", "close"]);
   assert.equal(f.calls.runtimeCloses, 1); assert.equal(f.calls.clientCloses, 1);
   assert.deepEqual(f.calls.native, []); assert.deepEqual(f.calls.waits, []);
+});
+
+test("elapsed connector deadline refuses late startup before the timer callback runs", async t => {
+  let now = 0;
+  t.mock.method(performance, "now", () => now);
+  const f = fixture();
+  const running = f.connector.run("initial", new AbortController().signal);
+  now = 1001;
+  await assert.rejects(running, /native_connector_unavailable/);
+  assert.deepEqual(f.calls.native, []);
+  assert.deepEqual(f.calls.commands, []);
+  assert.equal(f.calls.runtimeCloses, 1); assert.equal(f.calls.clientCloses, 1);
+});
+
+test("elapsed connector deadline after waiting cannot begin another native poll", async t => {
+  let now = 0;
+  t.mock.method(performance, "now", () => now);
+  const f = fixture({ wait: async () => { now = 1001; } });
+  await assert.rejects(f.connector.run("initial", new AbortController().signal), /native_connector_unavailable/);
+  assert.deepEqual(f.calls.native, ["start"]);
+  assert.equal(f.calls.runtimeCloses, 1); assert.equal(f.calls.clientCloses, 1);
+});
+
+test("slow dispatch readiness cannot authorize a start after connector expiry", async t => {
+  let now = 0;
+  t.mock.method(performance, "now", () => now);
+  const f = fixture({ onReady: () => { now = 1001; } });
+  await assert.rejects(f.connector.run("initial", new AbortController().signal), /native_connector_unavailable/);
+  assert.deepEqual(f.calls.native, []);
+  assert.equal(f.calls.runtimeCloses, 1); assert.equal(f.calls.clientCloses, 1);
+});
+
+test("slow negative readiness cannot enter another wait or send a normal disconnect", async t => {
+  let now = 0;
+  t.mock.method(performance, "now", () => now);
+  for (const maxCycles of [1, 3]) {
+    now = 0;
+    const f = fixture({ dispatchAtExchange: false, settings: { maxCycles }, onReady: () => { now = 1001; } });
+    await assert.rejects(f.connector.run("initial", new AbortController().signal), /native_connector_unavailable/);
+    assert.deepEqual(f.calls.native, []); assert.deepEqual(f.calls.waits, []);
+    assert.equal(f.calls.commands.some(command => command.operation === "close"), false);
+    assert.equal(f.calls.runtimeCloses, 1); assert.equal(f.calls.clientCloses, 1);
+  }
 });
 
 test("initial mode starts once, polls thereafter, and flushes each observation in FIFO order", async () => {
