@@ -51,15 +51,27 @@ Latest bounded comparisons:
 
 - [Parser consolidation](research/reuse-comparisons/f7-parser-decision-fit.md): actual
   legacy decoder with a fast-xml-parser research adapter matches14/18 corpus outputs;
-  four explicit compatibility adaptations reach18/18. Independent review still
-  requires guarded pins, explicit entities dependency/attribution and broader parity
-  before a removal-ready decision. No production parser was removed.
+  four explicit compatibility adaptations reach18/18. A corrected single run verifies
+  seven source/lock identities and212 files across13 packages before candidate imports;
+  candidate entities resolution is now independent of rss-parser. Independent re-review
+  closes those two prototype findings. Explicit shipping entities dependency/notices,
+  broader parity and cost remain before a removal-ready decision. No parser removed.
 - [Full-text collector](research/reuse-comparisons/f9-collector-fit.md): actual
   pnpm-created fixture passes with4.4.2 and exploratory unsupported-on-Node22 5.0.1.
   Crucially,4.4.2 then omits resolvable transitives from the real application graph;
   it is not acceptable as a complete inventory as configured. Preserve existing
   tooling alternatives rather than write a custom walker. Owned52MiB evaluation
   packages/cache/fixtures removed with absence verified; receipts retained.
+- [Complete synchronous SDK client](research/reuse-comparisons/f2-client-fit.md):
+ 15 checks exercise actual Python client and five synthetic stdio peers, including
+ explicit refusal and cleanup. Same-turn/wrong-thread streaming, early completion
+ before start reply, parent-environment merging and absent request deadlines need
+ adapter handling. This is not yet client-to-CR observer mapping or native execution.
+- [Next license tools](research/reuse-comparisons/f9-next-fit.md): current manifest
+ closure is39 runtime identities, broader than the earlier30-entry inventory.
+ Actual CycloneDX fails its npm graph read; pnpm native license output needs missing
+ store-index metadata. Clean isolated frozen-lock preparation is the next decisive
+ test, not a current application reinstall or error suppression. Owned70MiB removed.
 
 The [joined ABS revision fixture](research/reuse-comparisons/cross-journey-revision-fit.md)
 now proves that the same borrowed-source task/result carries exact lineage through

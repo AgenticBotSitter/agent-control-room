@@ -1,0 +1,16 @@
+{
+  "command": "env -i PATH=/usr/bin:/bin PYTHONDONTWRITEBYTECODE=1 SYNTHETIC_PARENT=inherited-fixture <bundled-python> research/reuse-comparisons/f2-client-fit.py /private/tmp/control-room-f2router.MhEDIA",
+  "initialAttempt": {
+    "exitCode": 130,
+    "reason": "Unbounded stream wait stopped with SIGINT; finally closes/reaps synthetic peers",
+    "location": "client.py stream_text → next_turn_notification → queue.get",
+    "retention": "Summary of observed terminal trace; not a successful run"
+  },
+  "corrected": {
+    "exitCode": 0,
+    "wallTimeSeconds": 0.619521458,
+    "actualStdout": "{\n  \"checks\": [\n    \"actual initialize\",\n    \"four explicit server request refusals\",\n    \"stream registered before controlled peer emission\",\n    \"controlled stream finished\",\n    \"actual typed stream includes wrong thread under same turn\",\n    \"actual interrupt response\",\n    \"config env overlays parent rather than replaces\",\n    \"early terminal before start reply leaves stream waiting\",\n    \"early stream rescued by explicit close\",\n    \"eof wakes waiter\",\n    \"malformed wakes waiter\",\n    \"request has no built-in short timeout\",\n    \"hold wakes waiter\",\n    \"all authored peers reaped\"\n  ],\n  \"count\": 14,\n  \"peers\": 5,\n  \"scope\": \"Actual CodexClient/client dependency closure and generated types with synthetic stdio processes; no package facade, native Codex, provider, credentials, or CR application mapping\"\n}\n"
+  },
+  "independentReviewRecheck": {"exitCode":0,"wallTimeSeconds":0.641672041,"actualStdout":"{\n  \"checks\": [\n    \"actual initialize\",\n    \"four explicit server request refusals\",\n    \"stream registered before controlled peer emission\",\n    \"controlled stream finished\",\n    \"actual typed stream includes wrong thread under same turn\",\n    \"actual interrupt response\",\n    \"config env overlays parent rather than replaces\",\n    \"early start response consumed and empty turn queue registered\",\n    \"early terminal before start reply leaves stream waiting\",\n    \"early stream rescued by explicit close\",\n    \"eof wakes waiter\",\n    \"malformed wakes waiter\",\n    \"request has no built-in short timeout\",\n    \"hold wakes waiter\",\n    \"all authored peers reaped\"\n  ],\n  \"count\": 15,\n  \"peers\": 5,\n  \"scope\": \"Actual CodexClient/client dependency closure and generated types with synthetic stdio processes; no package facade, native Codex, provider, credentials, or CR application mapping\"\n}\n","change":"Require actual turn-start response consumed and empty turn queue registered before timed observation."},
+  "scope": "No actual Codex/native/provider execution; explicit synthetic Python peer launch override"
+}

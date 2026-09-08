@@ -1,0 +1,64 @@
+{
+  "pin": "553df1c691fe8bf7747e50da22f1342984495ae0",
+  "root": "/private/tmp/control-room-f2router.MhEDIA",
+  "files": [
+    {
+      "file": "_message_router.py",
+      "url": "https://raw.githubusercontent.com/openai/codex/553df1c691fe8bf7747e50da22f1342984495ae0/sdk/python/src/openai_codex/_message_router.py",
+      "bytes": 11855,
+      "sha256": "69a3cca523c833c92bc9c99337399f6f450e45f41822ef3f051c15e0fb9fe7be"
+    },
+    {
+      "file": "_goal.py",
+      "url": "https://raw.githubusercontent.com/openai/codex/553df1c691fe8bf7747e50da22f1342984495ae0/sdk/python/src/openai_codex/_goal.py",
+      "bytes": 16291,
+      "sha256": "b61a1a25322e8d385ded39a1a93f0c4131d5bf0c66461cee89989930d2352643"
+    },
+    {
+      "file": "models.py",
+      "url": "https://raw.githubusercontent.com/openai/codex/553df1c691fe8bf7747e50da22f1342984495ae0/sdk/python/src/openai_codex/models.py",
+      "bytes": 3097,
+      "sha256": "0b00b8077455d38b46b8c8ff0e5d59e896410f489ab240055a8df8f09bd1a949"
+    },
+    {
+      "file": "errors.py",
+      "url": "https://raw.githubusercontent.com/openai/codex/553df1c691fe8bf7747e50da22f1342984495ae0/sdk/python/src/openai_codex/errors.py",
+      "bytes": 3656,
+      "sha256": "104b435d7e9f293c3327ad59fc7985363503fb4d919cadbb73f943d12a75a615"
+    },
+    {
+      "file": "generated/notification_registry.py",
+      "url": "https://raw.githubusercontent.com/openai/codex/553df1c691fe8bf7747e50da22f1342984495ae0/sdk/python/src/openai_codex/generated/notification_registry.py",
+      "bytes": 9800,
+      "sha256": "6e54cb47cf508e3c3306b071eec2b2563af3f0177308b2b4e2e351e1331a839a"
+    },
+    {
+      "file": "generated/v2_all.py",
+      "url": "https://raw.githubusercontent.com/openai/codex/553df1c691fe8bf7747e50da22f1342984495ae0/sdk/python/src/openai_codex/generated/v2_all.py",
+      "bytes": 326654,
+      "sha256": "03eefef8398b4adc29995d88c04a22b9bb5ee210e3ecfed69fd41aeb2cc72941"
+    },
+    {
+      "file": "client.py",
+      "url": "https://raw.githubusercontent.com/openai/codex/553df1c691fe8bf7747e50da22f1342984495ae0/sdk/python/src/openai_codex/client.py",
+      "bytes": 30896,
+      "sha256": "76bdb1e63c62987c3530ea763e9655a06b308cbc4e18cb51958e85b6c23aec3b"
+    },
+    {
+      "file": "_version.py",
+      "url": "https://raw.githubusercontent.com/openai/codex/553df1c691fe8bf7747e50da22f1342984495ae0/sdk/python/src/openai_codex/_version.py",
+      "bytes": 906,
+      "sha256": "678f4945d9906b0150a3d84cfc217e06824b9a963e7d248bd4b0d0fb51210658"
+    },
+    {
+      "file": "retry.py",
+      "url": "https://raw.githubusercontent.com/openai/codex/553df1c691fe8bf7747e50da22f1342984495ae0/sdk/python/src/openai_codex/retry.py",
+      "bytes": 1007,
+      "sha256": "0d0d048748a675ea29a2df497ae416d79887d5a69d03453fb7ca7387c4c8af47"
+    }
+  ],
+  "bytes": 404162,
+  "freeGiBBefore": 139,
+  "initialFetchFailure": "ENOTFOUND before acquisition; scoped network fetch succeeded",
+  "cleanup": {"status":"removed","ownedTreeKiB":416,"absenceCheckExitCode":0,"peersReapedInFinalRun":5,"persistentServices":0}
+}
