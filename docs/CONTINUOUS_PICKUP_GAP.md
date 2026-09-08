@@ -2,6 +2,8 @@
 
 2026-09-08, inspected against `68e8af3`. This is a source-backed completion plan,
 not authorization to install a service or a claim of continuous fleet operation.
+`CONSECUTIVE_TASK_DESIGN.md` gives the lead-authored implementation direction and
+the exact durable-allocation questions that must be resolved before changing code.
 
 ## What works and why a restart loop is not the answer
 

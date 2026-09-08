@@ -907,3 +907,34 @@ launcher/persistent-resource checks passed (21620 exit zero). The preceding broa
 node-launcher, TLS and packaging run also exited zero (31367), but the final source
 and fresh compiled commands above establish the post-review state. Compiled launcher
 denial is not a real successful network connection or native host qualification.
+
+## Consecutive-task architecture trace
+
+`1018748` is saved locally, no push. Inspected CR14A, security/authority and the full
+CR5C contract, coordinator queue revalidation/never-staged recovery, managed input
+receipt handling, HTTP peer attachment and node runtime setup. The existing recovery
+hook is not a generic next-task selector. Added `CONSECUTIVE_TASK_DESIGN.md` to keep
+the combined server/node goal intact: reuse existing queue/protocol, establish durable
+allocation before dynamic attachment, retain per-task admission, reconcile before
+fresh pickup, and do not substitute an operator callback or restart loop for that
+work. The next concrete source question is existing durable capacity/reservation
+ownership; this is local architect work, not a new owner-input blocker. No runtime
+or production behavior is enabled by the design document.
+
+Further inspected migration0014, the complete reservation-store implementation and
+canonical ready-frontier reservation transactions. Resource head row locks exist,
+but expired holds automatically stop counting against capacity. Existing canonical
+usage is no-effect ready-frontier work; native planning has no reservation-store
+call. The active-lease unique index is per job. This changes the next implementation
+action: preserve a native occupancy/reconciliation binding across expiry rather
+than treating the existing TTL ledger as proof an adapter is idle. Reusing the
+existing locking machinery remains preferable to a second scheduler.
+
+Deeper independent and lead callsite inspection found the actual native capacity
+fence in coordinator.assign: tenant/project/node locks plus all active node leases,
+not generic ResourceReservationStore. Existing NativeTaskCompletionService also
+authenticates terminal/result bindings and releases capacity separately from quality
+approval. Updated design to reuse these paths and avoid a second allocator. Reviewer
+requested stable enrolled node/adapter capacity identity and explicit expiry-versus-
+stop distinction; both added. This is source-backed architecture progress, not an
+implemented dynamic fleet or new live evidence. No runtime code changed this batch.
