@@ -13,8 +13,8 @@ import { createNativeStartAuthority, type NativeCurrentPolicy } from "../src/har
 import { createNativeTaskSettlement } from "../src/harness/hermes-native-v1/task-settlement";
 import { readNativeSettlementHistory } from "../src/harness/hermes-native-v1/settlement-history";
 
-test("two independent approved tasks turn over the same canonical and local stores without raising capacity", async t => {
-  const root = await nativeNodeRuntimeFixture(undefined, { queue: true, unassigned: true }); t.after(root.close);
+for (const leaseAware of [false, true]) test(`two independent approved tasks turn over shared stores without raising capacity, lease-aware=${leaseAware}`, async t => {
+  const root = await nativeNodeRuntimeFixture(undefined, { queue: true, unassigned: true, leaseAware }); t.after(root.close);
   const x = root.x, f = x.f, local = x.local, tenantId = f.scope.tenantId, nodeId = root.config.enrollment.nodeId;
   assert.equal(f.route.maxConcurrentTasks, 2); assert.equal(local.policy.ceiling.maxConcurrentEffects, 1);
   await x.verify();
@@ -93,7 +93,7 @@ test("two independent approved tasks turn over the same canonical and local stor
     { effects: local.effects, executions: local.executions, runs: local.journal }, currentSignal());
 
   const bCalls: string[] = [], nativeId = `run_${"3".repeat(32)}`, secondText = qualityText.replace("A useful synthetic", "A distinct second-task synthetic");
-  const second = root.createUnassigned({ ...root.dependencies, local: localB,
+  const second = (leaseAware ? root.createLeaseAware : root.createUnassigned)({ ...root.dependencies, local: localB,
     recovery: { ...root.dependencies.recovery, async readCurrent() {
       return { approvalKey: policy.approvalKey!, credentialAvailable: true, recoveryAllowed: true };
     } }, transport: { async json(wire) {

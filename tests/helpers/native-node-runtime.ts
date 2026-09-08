@@ -60,16 +60,18 @@ export async function nativeNodeRuntimeFixture(context?: ManagedNativePreparedCo
     if (options.leaseCeiling !== false) await x.f.native.provisionCeiling();
     journal.initializeNodeControlState({ nodeId: config.enrollment.nodeId, nodeVersion: 1, state: "active", updatedAt: new Date(x.f.clock()).toISOString() });
   }
-  const runtime = options.leaseAware ? createLeaseAwareNativeNodeRuntime(unassignedConfig, {
+  const createLeaseAware = (taskDependencies = dependencies) => {
+    const node = createLeaseAwareNativeNodeRuntime(unassignedConfig, {
     executor: x.local.policy.executor, nodeClass: "personal-compute", nodeSigningKeyReferenceId: "key:test", parentAuthorities: [],
-  }, { ...dependencies, security: { ...dependencies.security,
+  }, { ...taskDependencies, security: { ...taskDependencies.security,
     loadCeiling: x.f.native.trust.loadCeiling.bind(x.f.native.trust), currentPolicyRevision: x.f.native.trust.currentPolicyRevision.bind(x.f.native.trust) },
-    local: { ...x.local.dependencies, effects: x.local.effects,
+    local: { ...taskDependencies.local, effects: x.local.effects,
       // Deliberately poisonous legacy callback: the new runtime must never call it.
       ...{ readCurrent: async () => { throw new Error("synthetic legacy policy must not be used"); } } },
     keys: { async availability() { return x.local.policy.keyAvailability; } }, localPaused: () => paused,
-  }) : options.unassigned ? createUnassigned() : create();
-  if (options.leaseAware) runtimes.push(runtime);
+  }); runtimes.push(node); return node;
+  };
+  const runtime = options.leaseAware ? createLeaseAware() : options.unassigned ? createUnassigned() : create();
   type Runtime = typeof runtime;
   type Input = Awaited<ReturnType<typeof x.manager.attachInput>>;
   async function connect(mode: "initial" | "recover" = "initial", node = runtime, task: typeof x.request | "queue" = x.request) {
@@ -102,7 +104,7 @@ export async function nativeNodeRuntimeFixture(context?: ManagedNativePreparedCo
     await connection.server.stage(x.f.identity, x.task, currentSignal());
     await connection.server.transmit(x.f.identity, x.task, currentSignal()); await pump(connection);
   }
-  return { x, config, unassignedConfig, queued, dependencies, runtime, journal, create, createUnassigned, connect, pump, dispatch,
+  return { x, config, unassignedConfig, queued, dependencies, runtime, journal, create, createUnassigned, createLeaseAware, connect, pump, dispatch,
     setPaused: (value: boolean) => { paused = value; },
     setResult: (value: string) => { resultText = value; }, setRecoveryAllowed: (value: boolean) => { recoveryAllowed = value; },
     advance: (ms = 1000) => { const now = x.f.clock() + ms; x.f.setNow(now); x.local.setNow(now); },

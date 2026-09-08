@@ -247,6 +247,15 @@ Completion leaves its active effect hold intact. Synthetic trust, availability,
 profile and provider seams are explicitly retained. No real host cleanup producer,
 continuous lifecycle, production feature enablement or live qualification is proven.
 
+The shared-store two-independent-task journey now also runs with both runtimes in
+this lease-aware mode. A and B each receive canonical signed pairs and build their
+start policy from retained grants; both distinct results remain under pending owner
+review, late A packets are refused, and exact synthetic settlement releases each
+local effect hold without increasing capacity. The separate pre-start occupied-slot
+probe still uses an explicit fixture policy. Cleanup producer evidence and lifecycle
+driving remain synthetic/manual. This closes the two-task lease-policy composition
+gap, not automatic pickup, real cleanup qualification or PostgreSQL concurrency.
+
 ### D. Combined release acceptance before service packaging
 
 Local progress on C/D: the per-task runtime now provides exact-binding drainage

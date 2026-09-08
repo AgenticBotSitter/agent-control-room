@@ -1490,3 +1490,18 @@ Run 37009 completed VPS compilation but the subsequent compiled tests were invok
 without their required tsx loader and failed module resolution. Corrected 37761
 passed all four compiled startup/launcher checks with --import tsx. Existing build
 warnings remain; no deployment, GitHub operation or live provider call occurred.
+
+### Two-task journey on retained lease policy
+
+Saved runtime block as 2ae548a. Factored the fixture's lease-aware creation so both
+task runtimes share actual journals/effects/security and retain cleanup ownership.
+Existing two-task acceptance now runs both legacy and lease-aware variants. Each
+lease-aware start uses its actual canonical grant and currentPolicy, never the
+poisoned legacy readCurrent callback. Distinct results/pending reviews, obsolete
+generation refusal, no duplicate starts and exact local settlement remain checked.
+The earlier standalone occupied-slot preflight still uses a synthetic policy; actual
+cleanup producer evidence and lifecycle driving remain synthetic/manual.
+
+3529 passed all ten combined two-task/runtime tests, types, focused lint and diff.
+Independent source-only review found no concrete issue and confirmed these limits.
+This is sequential local integration, not automatic pickup or live qualification.
