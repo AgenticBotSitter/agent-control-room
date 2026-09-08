@@ -4,7 +4,7 @@ import { localId, digestSchema } from "../../harness/v1/native-run-identifiers";
 import { computeEffectOperationDigest, sha256Digest } from "../../security";
 import { CanonicalStore } from "../../persistence/canonical-store";
 import { effectIntentRecordSchema, jobRecordSchema } from "../../domain/v1";
-import { newsCollectionState, newsCollectionStatusSchema } from "./news-collection-status-wire";
+import { newsCollectionState, newsCollectionStatusSchema, newsCollectionHistorySchema } from "./news-collection-status-wire";
 import { appendAuditWith } from "../../audit/audit-store";
 import { absFeedCollectionConfigurationSchema } from "../../project-adapters/abs-news/v1/feed-collection";
 import { absDiscoveryJobConfigurationSchema } from "../../project-adapters/abs-news/v1/discovery-job-configuration";
@@ -107,6 +107,29 @@ export class WebNewsCollectionPlanning {
       return newsCollectionStatusSchema.parse({ ...result, latest: { jobId: selected, jobState: job.state,
         effectState: effect?.state ?? null, state: newsCollectionState(job.state, effect?.state ?? null),
         updatedAt: effect && Date.parse(effect.updatedAt) > Date.parse(job.updatedAt) ? effect.updatedAt : job.updatedAt } });
+    });
+  }
+  async history(identity: VerifiedWebIdentity, after?: string) {
+    if (after !== undefined && !localId.safeParse(after).success) throw new WebAccessError("invalid_request");
+    return this.authority.authenticated(identity, async (tx, actor) => {
+      const { tenantId, workspaceId, projectId, source } = this.template.configuration;
+      actor.require("tasks.read", projectId);
+      await this.projects.getViewInSession(tx, actor, projectId);
+      const candidates = (await tx.query<{ job_id: string }>(
+        `SELECT job_id FROM control_abs_feed_plans WHERE tenant_id=$1 AND workspace_id=$2 AND project_id=$3
+         AND ($4::text IS NULL OR job_id COLLATE "C">$4::text COLLATE "C")
+         ORDER BY job_id COLLATE "C" ASC LIMIT 26`,
+        [tenantId, workspaceId, projectId, after ?? null])).rows;
+      const page = candidates.slice(0, 25), plans = new AbsFeedPlanStore(joined(tx), { tenantId, workspaceId, projectId }, this.key);
+      const entries: { jobId: string; createdAt: string }[] = [];
+      for (const row of page) {
+        const work = await plans.get(row.job_id);
+        if (!work) throw new Error("news_collection_history_unavailable");
+        if (work.plan.configuration.source.sourceId === source.sourceId)
+          entries.push({ jobId: work.job.id, createdAt: work.job.createdAt });
+      }
+      return newsCollectionHistorySchema.parse({ projectId, sourceId: source.sourceId, configured: true, observedAt: actor.now,
+        after: after ?? null, scanned: page.length, nextCursor: candidates.length > 25 ? page.at(-1)!.job_id : null, entries });
     });
   }
   async propose(identity: VerifiedWebIdentity, value: unknown) {

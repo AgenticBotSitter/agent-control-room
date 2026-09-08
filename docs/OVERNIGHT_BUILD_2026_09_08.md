@@ -238,3 +238,27 @@ final stage. After strict options-response serialization, TypeScript, full lint,
 fresh VPS compilation and 21 compiled-handler/startup/Idea-startup tests pass.
 No open PR exists for the private working branch. Batched publication uses skip-CI;
 no merge, workflow dispatch, credential access or production action was performed.
+
+## Bounded saved collection history
+
+Added authenticated history pages using the existing signed plan store, rather
+than a second history index. Pages verify 25 project records and then filter by
+source. Empty filtered pages retain a forward cursor. The browser replaces one
+page at a time and selects exact saved status without changing pending commands.
+Automatic latest discovery retains its 100-plan ceiling.
+
+Independent backend review found database-default sorting could disagree with
+JavaScript cursor ordering for mixed-case/punctuation IDs. Both SQL cursor
+comparison and ordering now explicitly use C collation. A real disposable signed
+store traversal covers 108 plans, an empty first source page, five pages without
+duplicates/skips, and exact status beyond the discovery limit. Its first run used
+an overly broad fixture scope and failed strict validation; the fixture now passes
+only the store's three scope fields, with no production contract change.
+
+Independent UI source review reports no concrete defect; mounted React races and
+live provider/browser operation remain unverified. The first focused combined run
+passed 67 tests. TypeScript, full lint, fresh VPS compilation and seven compiled
+handler/startup checks pass. Additional mounted route, corruption and restricted
+role assertions pass in the full delivery run, which exits zero with 241 tests in
+its final stage. Backend re-review confirms the collation finding resolved. No
+open PR exists for this branch; no CI, production or provider action was taken.

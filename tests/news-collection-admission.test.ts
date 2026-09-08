@@ -21,6 +21,8 @@ import { PostgresAbsNewsStoreV1 } from "../src/project-adapters/abs-news/v1/post
 import { createPrivateWebProcess } from "../src/web/v1/private-process";
 import { createNewsRefreshClient } from "../src/web/v1/news-refresh-client";
 import { createNewsDiscoveryIntegration } from "../src/web/v1/news-discovery-integration";
+import { AbsFeedPlanStore } from "../src/project-adapters/abs-news/v1/feed-plan-store";
+import { buildAbsFeedProposedWork } from "../src/project-adapters/abs-news/v1/feed-job-plan";
 
 // Routing evidence only: real restricted-login qualification has separate tests.
 function ingestionClient(db: DatabaseClient): DatabaseClient {
@@ -83,6 +85,7 @@ test("latest source status cannot hide a plan with a corrupted source identity",
   await f.client.query("UPDATE control_abs_feed_plans SET payload=jsonb_set(payload,'{plan,configuration,source,sourceId}','\"source:changed\"'::jsonb) WHERE job_id=$1", [f.plan.jobId]);
   await assert.rejects(f.planner.status(f.identity));
   await assert.rejects(f.planner.status(f.identity, f.plan.jobId));
+  await assert.rejects(f.planner.history(f.identity));
   await f.client.query("UPDATE control_abs_feed_plans SET payload=$1 WHERE job_id=$2", [row.payload, f.plan.jobId]);
   await f.db.exec("ALTER TABLE control_abs_feed_plans ENABLE TRIGGER USER");
   assert.equal((await f.planner.status(f.identity)).latest?.jobId, f.plan.jobId);
@@ -102,6 +105,41 @@ test("latest source status cannot hide a plan with a corrupted source identity",
   await f.client.query("UPDATE control_role_grants SET revoked_at=$1 WHERE identity_id=$2", [new Date(now).toISOString(), "identity:web"]);
   await assert.rejects(f.planner.status(f.identity), /access_denied/);
   assert.equal((await f.client.query("SELECT * FROM synthetic_feed_queue")).rows.length, 0);
+});
+
+test("verified history pages traverse large inventories in explicit ASCII order without collecting", async t => {
+  const f = await fixture(); t.after(() => f.db.close());
+  const store = new AbsFeedPlanStore(f.client, { tenantId: f.scope.tenantId, workspaceId: f.scope.workspaceId,
+    projectId: f.scope.projectId }, f.key);
+  const original = (await store.get(f.plan.jobId))!;
+  const matching = [f.plan.jobId];
+  // The first complete page belongs to another source. Mixed case/punctuation
+  // guards cursor ordering; all records use the actual signed plan store.
+  const ids = [...Array.from({ length: 25 }, (_, i) => `AAA:${String(i).padStart(3, "0")}`),
+    ...Array.from({ length: 80 }, (_, i) => `job:History-${String(i).padStart(3, "0")}`), "job:History.000", "job:history_000"];
+  for (const [i, jobId] of ids.entries()) {
+    const configuration = { ...original.plan.configuration, source: { ...original.plan.configuration.source,
+      sourceId: i < 25 ? "source:other" : "source:feed" } };
+    await store.saveProposed(buildAbsFeedProposedWork({ plan: { ...original.plan, jobId, configuration },
+      requestId: `request:history:${i}`, workflowId: `workflow:history:${i}`, ownerId: "identity:web",
+      executorId: f.scope.executorId, expiresAt: original.job.authority.expiresAt }));
+    if (i >= 25) matching.push(jobId);
+  }
+  await assert.rejects(f.planner.status(f.identity), /history_requires_exact_job/);
+  const first = await f.planner.history(f.identity);
+  assert.deepEqual(first.entries, []); assert.equal(first.scanned, 25); assert.ok(first.nextCursor);
+  const found: string[] = []; let after: string | undefined; let pages = 0;
+  do {
+    const page = await f.planner.history(f.identity, after);
+    assert.equal(page.after, after ?? null); assert.ok(page.scanned <= 25);
+    found.push(...page.entries.map(entry => entry.jobId)); after = page.nextCursor ?? undefined;
+    assert.ok(++pages <= 5);
+  } while (after);
+  assert.equal(pages, 5); assert.deepEqual(found, matching.sort());
+  assert.equal((await f.planner.status(f.identity, found[0])).latest?.jobId, found[0]);
+  assert.equal((await f.client.query("SELECT * FROM synthetic_feed_queue")).rows.length, 0);
+  await f.client.query("UPDATE control_role_grants SET revoked_at=$1 WHERE identity_id=$2", [new Date(now).toISOString(), "identity:web"]);
+  await assert.rejects(f.planner.history(f.identity), /access_denied/);
 });
 
 test("different refresh keys cannot overlap an unresolved source collection", async t => {
@@ -148,6 +186,15 @@ test("discovery approval and borrowed execution reuse queue claims and settlemen
         const proposalInput = { sourceDigest: description.sourceDigest, idempotencyKey: "discovery-execution-001" };
         const proposed = await handle(request(`${path}/propose`, "POST", proposalInput)); assert.equal(proposed.status, 201);
         const plan = await proposed.json() as Awaited<ReturnType<typeof planner.propose>>;
+        if (mode === "success") {
+          const history = await handle(request(`${path}/history`));
+          assert.equal(history.status, 200); assert.equal(history.headers.get("cache-control"), "no-store");
+          assert.deepEqual((await history.json()).entries.map((entry: { jobId: string }) => entry.jobId), [plan.jobId]);
+          const anonymousHistory = request(`${path}/history`); anonymousHistory.headers.delete("cf-access-jwt-assertion");
+          assert.equal((await handle(anonymousHistory)).status, 401);
+          assert.equal((await handle(request(`${path}/history?after=job:one&after=job:two`))).status, 400);
+          assert.equal((await handle(request(`${path}/history?unknown=true`))).status, 400);
+        }
         const readStatus = async (jobId?: string) => handle(request(`${path}/status${jobId ? `?${new URLSearchParams({ jobId })}` : ""}`));
         const preparedStatus = await readStatus(plan.jobId);
         assert.equal(preparedStatus.status, 200);
@@ -354,6 +401,7 @@ test("restricted coordinator role can plan approve start and settle but cannot w
   const receipt = await service.approve(f.identity, { jobId: plan.jobId, inputDigest: plan.inputDigest });
   assert.equal((await f.planner.status(f.identity, plan.jobId)).latest?.state, "queued");
   assert.ok((await f.planner.status(f.identity)).latest);
+  assert.ok((await f.planner.history(f.identity)).entries.some(entry => entry.jobId === plan.jobId));
   assert.equal(submissions, 1); // No queue privilege is asserted by this injected submission.
   const store = new CanonicalStore(f.client);
   const marker = await store.beginAbsFeedAttempt({ ...f.scope, jobId: plan.jobId, inputDigest: plan.inputDigest,

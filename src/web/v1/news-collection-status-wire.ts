@@ -11,6 +11,22 @@ export const newsCollectionStatusSchema = z.object({
   .refine(value => !value.latest || value.latest.state === newsCollectionState(value.latest.jobState, value.latest.effectState));
 export type NewsCollectionStatus = z.infer<typeof newsCollectionStatusSchema>;
 
+/** A page of verified matches, not a claim to contain the latest source run.
+ * Cursor follows project plan IDs because source identity is verified after read. */
+export const newsCollectionHistorySchema = z.object({
+  projectId: id, sourceId: id, configured: z.boolean(), observedAt: z.string().datetime(),
+  after: id.nullable(), nextCursor: id.nullable(), scanned: z.number().int().min(0).max(25),
+  entries: z.array(z.object({ jobId: id, createdAt: z.string().datetime() }).strict()).max(25),
+}).strict().refine(value => {
+  if (!value.configured && (value.scanned || value.entries.length || value.nextCursor !== null)) return false;
+  if (value.entries.length > value.scanned || value.nextCursor !== null && value.scanned !== 25) return false;
+  if (value.nextCursor !== null && value.after !== null && value.nextCursor <= value.after) return false;
+  return value.entries.every((entry, i) => (value.after === null || entry.jobId > value.after)
+    && (i === 0 || entry.jobId > value.entries[i - 1].jobId)
+    && (value.nextCursor === null || entry.jobId <= value.nextCursor));
+});
+export type NewsCollectionHistory = z.infer<typeof newsCollectionHistorySchema>;
+
 /** Both durable records must agree before displaying completion. Missing or
  * incompatible settlement is uncertainty, not permission to run again. */
 export function newsCollectionState(job: typeof jobStates[number], effect: typeof effectIntentStates[number] | null): "prepared" | "queued" | "running" | "completed" | "failed" | "cancelled" | "uncertain" {

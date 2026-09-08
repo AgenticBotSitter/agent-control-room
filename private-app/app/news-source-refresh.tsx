@@ -5,6 +5,7 @@ import { installNewsNavigationGuard } from "../../src/web/v1/news-navigation-gua
 import { BrowserAuthenticationRecoveryError, BrowserRequestError, browserAuthenticationRecovery } from "../../src/web/v1/browser-client";
 import type { NewsCollectionStatus } from "../../src/web/v1/news-collection-status-wire";
 import { createNewsStatusObserver } from "../../src/web/v1/news-status-observer";
+import { NewsCollectionHistoryBrowser } from "./news-collection-history";
 
 export function NewsCollectionProgress({ status }: { status: NewsCollectionStatus }) {
   if (!status.configured) return <p>Collection status is not configured. Saved articles remain available.</p>;
@@ -28,11 +29,13 @@ export function NewsSourceRefresh({ projectId, sourceId, disabled, onHold }: {
   const [state, setState] = useState(client.state), [busy, setBusy] = useState(false), [error, setError] = useState<string>();
   const [status, setStatus] = useState<NewsCollectionStatus>(), [statusError, setStatusError] = useState<string>();
   const [statusRefresh, setStatusRefresh] = useState(0);
+  const [selectedJob, setSelectedJob] = useState<string>();
+  const statusJob = selectedJob ?? state.jobId;
   const observer = useRef<ReturnType<typeof createNewsStatusObserver> | undefined>(undefined);
   useEffect(() => {
     // Discover once, then observe that exact run rather than rescanning the
     // whole signed project history every five seconds.
-    let observedJob = state.jobId;
+    let observedJob = statusJob;
     const current = createNewsStatusObserver({ read: signal => client.status(observedJob, signal),
       accept: value => { observedJob ??= value.latest?.jobId; setStatus(value); setStatusError(undefined); },
       failed: reason => setStatusError(reason instanceof BrowserRequestError && reason.code === "authentication_required"
@@ -44,7 +47,7 @@ export function NewsSourceRefresh({ projectId, sourceId, disabled, onHold }: {
     const focus = () => { void current.read(true); };
     window.addEventListener("focus", focus);
     return () => { current.stop(); clearInterval(timer); window.removeEventListener("focus", focus); observer.current = undefined; };
-  }, [client, state.jobId, statusRefresh]);
+  }, [client, statusJob, statusRefresh]);
   useEffect(() => installNewsNavigationGuard(window, document, () => busy || client.hasPending(),
     () => setError("Resolve this refresh request before leaving. Retry the exact request.")), [busy, client]);
   async function run(action: "describe" | "propose" | "approve" | "retry") {
@@ -60,7 +63,7 @@ export function NewsSourceRefresh({ projectId, sourceId, disabled, onHold }: {
         : client.hasPending() ? "The request may have completed. Retry the exact request; do not start another refresh."
         : "Could not complete this step. Check your access and reload refresh options. No new request will be sent automatically.");
     } finally { setState(client.state()); setBusy(false); onHold(client.hasPending());
-      if (action !== "describe") { observer.current?.stop(); setStatus(undefined); setStatusError(undefined); setStatusRefresh(value => value + 1); } }
+      if (action !== "describe") { observer.current?.stop(); setStatus(undefined); setSelectedJob(undefined); setStatusError(undefined); setStatusRefresh(value => value + 1); } }
   }
   const held = busy || disabled;
   return <section aria-label="Refresh this news source">
@@ -83,7 +86,11 @@ export function NewsSourceRefresh({ projectId, sourceId, disabled, onHold }: {
     {state.jobId ? <p style={{ overflowWrap: "anywhere" }}>Job: {state.jobId}</p> : null}
     <button type="button" onClick={() => { void observer.current?.read(); }}>Refresh saved collection status</button>
     {statusError ? <p role="alert">{statusError}</p> : null}
-    {status && (!state.jobId || status.latest?.jobId === state.jobId || status.latest === null) ? <NewsCollectionProgress status={status} /> : <p>Checking saved collection status…</p>}
+    {status && (!statusJob || status.latest?.jobId === statusJob || status.latest === null) ? <NewsCollectionProgress status={status} /> : <p>Checking saved collection status…</p>}
+    <NewsCollectionHistoryBrowser client={client} disabled={held || client.hasPending()} choose={jobId => {
+      if (busy || disabled || client.hasPending()) return;
+      observer.current?.stop(); setStatus(undefined); setStatusError(undefined); setSelectedJob(jobId); setStatusRefresh(value => value + 1);
+    }} />
     <p>Queued and running requests are checked while visible, for up to 180 automatic checks. Refresh status explicitly to check again.</p>
   </section>;
 }

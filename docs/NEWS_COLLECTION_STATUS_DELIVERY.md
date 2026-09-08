@@ -30,10 +30,15 @@ mutate domain state. No remote error bodies are returned to the interface.
 Without a job ID, discovery verifies the complete project plan inventory up to 100
 plans before selecting this source's latest signed creation time/ID. Above that
 bound it reports unavailable, never a partial oldest/newest or empty result. Exact
-job reads still work. This is a known history-scale limitation, not protection
-against database rollback or deleted records. A scalable authenticated history
-index or paginated history experience remains future work; do not silently raise
-the scan ceiling without measuring cost.
+job reads still work. Browse saved refreshes now provides bounded history pages:
+each read verifies up to 25 project plans before selecting source matches. An
+empty filtered page can still have a Next page. Cursor ordering is explicitly
+ASCII in both SQL and response validation, not a newest-first claim. Selecting
+a saved job reads its exact status without altering a pending command.
+Pages replace rather than accumulate in browser memory. Return to the first page
+to discover new records inserted before a prior cursor. This is not a snapshot or
+protection against database rollback/deletion; automatic latest discovery still
+retains its 100-plan ceiling.
 
 While visible, queued/running progress receives at most 180 non-overlapping
 automatic checks per observation target. Authorization denial and terminal states
