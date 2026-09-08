@@ -15,13 +15,13 @@ import { NativeQueueAuthority } from "./native-queue-authority";
 import { WebProjectService } from "./project-service";
 import type { TaskExecutionPlanner } from "./task-execution-planner";
 import { enrollmentSchema, type NativeEnrollment } from "../../harness/v1/native-run-contracts";
-import { prepareNativeTaskApproval } from "../../harness/v1/native-task-approval-binding";
+import { prepareNativeTaskApprovalWithLease } from "../../harness/v1/native-task-lease-grant";
 import type { NativeApprovalPacketStore } from "./native-approval-packet-store";
 import { nativeTaskApprovalPacketSchema } from "../../harness/v1/native-approval-packet";
 import type { NativeTaskQueueScope } from "./native-task-queue";
 import type { ServerNodeSession } from "../../node-control/server-node-session";
 
-type CanonicalNativeApproval = ReturnType<typeof prepareNativeTaskApproval> & {
+type CanonicalNativeApproval = ReturnType<typeof prepareNativeTaskApprovalWithLease> & {
   enrollment: NativeEnrollment; preparedAt: string; sourceInputDigest: string; inputDigest: string;
 };
 
@@ -390,7 +390,7 @@ export class TaskAssignmentCoordinator {
         [this.scope.tenantId, node.id, node.identityKeyId])).rows[0];
       const now = this.clock();
       if (!Number.isSafeInteger(now) || !key || new Date(key.valid_from).getTime() > now) conflict();
-      const prepared = prepareNativeTaskApproval({ job, attempt: stored.attempt, lease: stored.lease, input: plan.input,
+      const prepared = prepareNativeTaskApprovalWithLease({ job, attempt: stored.attempt, lease: stored.lease, input: plan.input,
         enrollment, nodeClass: configured.nodeClass, now });
       preparedAt = now; deadline = Math.min(prepared.start.deadline, key.valid_until ? new Date(key.valid_until).getTime() : Infinity);
       if (!Number.isFinite(deadline) || deadline <= now) conflict();

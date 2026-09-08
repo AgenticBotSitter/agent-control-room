@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { generateKeyPairSync } from "node:crypto";
 import { prepareNativeTaskApproval, verifyNativeTaskApprovalBinding } from "../src/harness/hermes-native-v1/task-approval-binding";
+import { prepareNativeTaskApprovalWithLease } from "../src/harness/v1/native-task-lease-grant";
+import { jobRecordSchema, leaseRecordSchema } from "../src/domain/v1";
 import { taskAssignmentFixture } from "./helpers/task-assignment";
 import { enrollment, instant } from "./hermes-native-fixture";
 import { CanonicalStore } from "../src/persistence/canonical-store";
@@ -33,6 +35,37 @@ test("canonical assignment produces exact native approval material with stable e
   assert.equal(later.start.effectClaimKey, p.start.effectClaimKey); assert.equal(later.binding.sessionId, p.binding.sessionId);
   assert.equal(later.request.operationDigest, p.request.operationDigest);
   assert.notEqual(later.request.occurredAt, p.request.occurredAt);
+});
+
+test("unsigned protocol grant is derived from the same canonical reservation without extending its authority", async t => {
+  const f = await fixture(); t.after(f.close);
+  const input = { ...f.input, job: jobRecordSchema.parse(f.input.job), lease: leaseRecordSchema.parse(f.input.lease) };
+  const { leaseGrant, ...approval } = prepareNativeTaskApprovalWithLease(input);
+  assert.deepEqual(approval, f.prepared);
+  assert.equal(leaseGrant.leaseId, f.assigned.leaseId);
+  assert.equal(leaseGrant.leaseEpoch, approval.request.leaseEpoch);
+  assert.equal(leaseGrant.jobId, approval.request.jobId);
+  assert.equal(leaseGrant.attemptId, approval.request.attemptId);
+  assert.equal(leaseGrant.nodeId, approval.request.nodeId);
+  assert.equal(leaseGrant.authorityDigest, approval.request.authorityDigest);
+  assert.deepEqual(leaseGrant.authority, f.authority);
+  assert.equal(leaseGrant.acquiredAt, input.lease.acquiredAt);
+  assert.equal(leaseGrant.expiresAt, input.lease.expiresAt);
+  assert.ok(approval.start.deadline <= Date.parse(leaseGrant.expiresAt));
+  assert.equal("signature" in leaseGrant, false);
+  const later = prepareNativeTaskApprovalWithLease({ ...input, now: input.now + 1 });
+  assert.deepEqual(later.leaseGrant, leaseGrant);
+  input.job.authority.allowedOperations.length = 0;
+  assert.equal(leaseGrant.authority.allowedOperations.length, 1);
+});
+
+test("grant preparation inherits the approval builder's canonical mismatch and expiry refusals", async t => {
+  const f = await fixture(); t.after(f.close);
+  for (const patch of [{ lease: { ...f.input.lease, state: "expired" } },
+    { lease: { ...f.input.lease, epoch: 2 } }, { now: f.prepared.start.deadline },
+    { job: { ...f.input.job, state: "cancelled" } }]) {
+    assert.throws(() => prepareNativeTaskApprovalWithLease({ ...f.input, ...patch }));
+  }
 });
 
 test("native payload, destination, model, qualification, lease and authority changes cannot retain an approval binding", async t => {

@@ -187,6 +187,15 @@ native session gap. Its grant signer is still a synthetic fixture, and the exact
 task/freshness fence is supplied explicitly. Canonical server grant staging,
 native runtime handler installation and grant-aware start readiness remain open.
 
+The canonical coordinator now calls `prepareNativeTaskApprovalWithLease` inside its
+existing checked transaction. This reuses the original approval builder over one
+captured input and derives an unsigned existing-format grant from the same job and
+lease. Node/job/attempt/lease/epoch, canonical acquired/expiry times and complete
+authority are unchanged. Its deterministic offer ID is correlation for native
+direct delivery, not evidence of a separate offer negotiation. No browser operation,
+signature or transmission is added. Signed grant retention and same-generation
+delivery still need to be joined to the existing envelope/transmission intent.
+
 ### D. Combined release acceptance before service packaging
 
 Local progress on C/D: the per-task runtime now provides exact-binding drainage

@@ -169,7 +169,7 @@ const offerDecision = z.object({
   if (value.decision === "rejected" && !value.safeReasonCode) context.addIssue({ code: "custom", path: ["safeReasonCode"], message: "rejections require a safe reason" });
   if (value.decision === "accepted" && value.safeReasonCode) context.addIssue({ code: "custom", path: ["safeReasonCode"], message: "accepted leases cannot carry a rejection reason" });
 });
-const leaseGrant = z.object({
+export const leaseGrantSchema = z.object({
   offerId: id,
   nodeId: id,
   ...leaseIdentity,
@@ -354,7 +354,7 @@ export const signedNodeFrameSchema = z.discriminatedUnion("type", [
   frame("node.fleet.signal", fleetSignalEnvelopeSchema),
   frame("job.offer", jobOffer),
   frame("job.offer.decision", offerDecision),
-  frame("job.lease.grant", leaseGrant),
+  frame("job.lease.grant", leaseGrantSchema),
   frame("job.lease.renewed", leaseRenewed),
   frame("job.event", jobEvent),
   frame("harness.native.snapshot", nativeTaskSnapshotBodySchema, { direction: "node_to_server", senderKind: "node" }),

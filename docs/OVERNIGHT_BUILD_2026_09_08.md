@@ -1367,6 +1367,24 @@ Independent source review found no concrete blocking defect and retained the sco
 limits: no canonical server lease producer, runtime wiring or native permission.
 Final corrected run 63408 passed both joined tests, TypeScript, focused lint and
 diff check. No live provider, credential, deployment or GitHub operation occurred.
+
+### Canonical unsigned grant preparation
+
+Added prepareNativeTaskApprovalWithLease using the existing approval builder over a
+single captured canonical input and existing leaseGrantSchema (export/name only,
+unchanged wire shape). Coordinator now derives this material under its existing
+locks and freshness checks. Canonical lease dates/identity/epoch and complete job
+authority are preserved; native execution keeps its original tighter deadline.
+The deterministic offer ID is direct-delivery correlation, not a new offer workflow.
+No signature, sidecar persistence, browser exposure or transport call was added.
+
+Run 67974 passed all 32 canonical packet/envelope/binding/consecutive-task cases, then
+TypeScript found new assertions accessing concrete fields on a generic DomainEntity.
+Tests now parse the fixture job/lease through existing schemas. Independent source
+review found no concrete defect in the builder/coordinator integration and confirmed
+the scope limits. Signed grant retention/delivery and runtime readiness remain open.
+Corrected run 9298 passed all 20 binding/protocol checks, TypeScript, focused lint
+and diff check. No live effects or GitHub operations occurred.
 Post-remediation run 36271 passed all 20 intake cases, TypeScript, focused lint and
 diff check. Independent source re-review confirmed both findings resolved and found
 no further concrete issue. Grant production/delivery and runtime policy wiring are
