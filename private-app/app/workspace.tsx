@@ -24,6 +24,11 @@ export function IdeaProjectStatusActions({ project, pending, onAction }: {
       {{ pause: "Pause project", resume: "Resume project", complete: "Mark complete", archive: "Archive project", reopen: "Reopen project" }[action]}</button>)}</div>;
 }
 
+export function ProjectIdeaOrigin({ project }: { project: ProjectView }) {
+  return project.origin === "idea_lab" && project.sourceIdeaSessionId
+    ? <p><a href={`/ideas/${encodeURIComponent(project.sourceIdeaSessionId)}`}>View original Idea Lab discussion and decision</a></p> : null;
+}
+
 export function PrivateProjectWorkspace({ projectId, section = "overview", after }: { projectId?: string; section?: string; after?: string }) {
   const [client] = useState(() => createProjectBrowserClient());
   const [projects, setProjects] = useState<ProjectView[]>([]);
@@ -130,6 +135,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
         {state === "loading" && <p role="status">Loading project…</p>}
         {state === "ready" && project && <>
           <div className="private-heading"><span className="private-state">{project.lifecycle} · {project.origin === "idea_lab" ? "From Idea Lab" : "Ordinary project"}</span><h1>{project.title}</h1></div>
+          <ProjectIdeaOrigin project={project} />
           <nav className="private-tabs" aria-label="Project pages">
             <a href={`/projects/${encodeURIComponent(projectId)}`} aria-current={section === "overview" ? "page" : undefined}>Overview</a>
             <a href={`/projects/${encodeURIComponent(projectId)}/tasks`}>Tasks</a>

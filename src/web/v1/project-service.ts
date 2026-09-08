@@ -106,6 +106,10 @@ export class WebProjectService {
       if (!this.ideas) throw new Error("idea_catalog_not_configured");
       const idea = await this.ideas.getProjectInSession(tx, this.scope.tenantId, this.scope.workspaceId, projectId);
       if (!idea) throw new WebAccessError("not_found");
+      // A project-scoped grant must not reveal workspace-wide discussion IDs.
+      // Register the optional read for the same transaction's precommit check.
+      const canReadDiscussion = actor.can("idea_lab.session_read", undefined, true);
+      if (canReadDiscussion) actor.require("idea_lab.session_read", undefined, true);
       const actions = this.ideaLifecycle ? ideaLabProjectLifecycleActionsV1.filter(action => {
         if (action === "resume" && idea.lifecycleState !== "paused" || action === "reopen" && idea.lifecycleState !== "archived") return false;
         try { assertProjectLifecycleTransitionV1(idea.lifecycleState, ideaProjectActionTarget[action]); }
@@ -115,6 +119,7 @@ export class WebProjectService {
       return projectViewSchema.parse({ projectId: idea.projectId, title: idea.title, summary: idea.summary,
         lifecycle: idea.lifecycleState, version: idea.version, createdAt: iso(idea.createdAt), updatedAt: iso(idea.updatedAt),
         origin: "idea_lab", lifecycleEditable: actions.length > 0,
+        ...(canReadDiscussion ? { sourceIdeaSessionId: idea.sourceIdeaSessionId } : {}),
         ...(this.ideaLifecycle ? { ideaLifecycleActions: actions } : {}) });
     }
     actor.require("projects.read", projectId);

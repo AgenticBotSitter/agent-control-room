@@ -27,6 +27,8 @@ test("one catalog and detail read use real ordinary rows and authenticated Idea 
   const idea = page.projects.find(p => p.origin === "idea_lab")!;
   assert.equal(idea.projectId, f.project.projectId); assert.equal(idea.lifecycleEditable, false);
   assert.equal(idea.title, f.project.title); assert.equal(idea.version, 1);
+  assert.equal(idea.sourceIdeaSessionId, f.project.sourceIdeaSessionId);
+  assert.equal(page.projects.find(p => p.origin === "ordinary")?.sourceIdeaSessionId, undefined);
   assert.equal((await f.handler(request(`/api/v1/projects/${encodeURIComponent(idea.projectId)}`))).status, 200);
   assert.equal((await f.db.query<{ n: number }>("SELECT count(*)::int n FROM control_manual_project_heads")).rows[0].n, 1);
   const before = await f.store.getProject("tenant:web", idea.projectId);
@@ -55,10 +57,13 @@ test("operator permissions cannot reveal Idea records and owner Idea-only access
   await f.db.query(`UPDATE control_role_grants SET role_key='owner',allowed_actions='["idea_lab.project_read"]'::jsonb WHERE id='grant:web'`);
   page = await f.service.listPage(proof());
   assert.equal(page.projects.length, 1); assert.equal(page.projects[0].origin, "idea_lab");
+  assert.equal(page.projects[0].sourceIdeaSessionId, undefined);
   assert.equal(page.sources.ordinary, "not_authorized"); assert.equal(page.canCreate, false);
   await assert.rejects(f.service.getView(proof(), ordinary.project.projectId), /not_found/);
   await f.db.query("UPDATE control_role_grants SET project_ids=$1::jsonb WHERE id='grant:web'", [JSON.stringify([f.project.projectId])]);
   assert.equal((await f.service.getView(proof(), f.project.projectId)).origin, "idea_lab");
+  await f.db.query(`UPDATE control_role_grants SET allowed_actions='["idea_lab.project_read","idea_lab.session_read"]'::jsonb WHERE id='grant:web'`);
+  assert.equal((await f.service.getView(proof(), f.project.projectId)).sourceIdeaSessionId, undefined);
   await assert.rejects(f.service.listPage(proof()), /access_denied/);
 });
 
@@ -115,6 +120,7 @@ test("existing Idea lifecycle changes appear in the shared read view without cha
       toState, actorIdentityDigest: f.decision.ownerIdentityDigest, safeReasonCode: "test_owner_transition", occurredAt: new Date(now + index).toISOString() });
     const view = await f.service.getView(proof(), f.project.projectId);
     assert.equal(view.lifecycle, toState); assert.equal(view.version, index + 2);
+    assert.equal(view.sourceIdeaSessionId, f.project.sourceIdeaSessionId);
     assert.equal((await f.service.listPage(proof())).projects[0].lifecycle, toState);
   }
   assert.equal((await f.store.listProjectLifecycleEvents("tenant:web", f.project.projectId)).length, 4);

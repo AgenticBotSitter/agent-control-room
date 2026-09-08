@@ -262,3 +262,22 @@ handler/startup checks pass. Additional mounted route, corruption and restricted
 role assertions pass in the full delivery run, which exits zero with 241 tests in
 its final stage. Backend re-review confirms the collation finding resolved. No
 open PR exists for this branch; no CI, production or provider action was taken.
+
+## Project-to-discussion return navigation
+
+The existing signed project registry already retained its originating session;
+the private projection now exposes it only with workspace-wide owner discussion
+read permission. The project page links to that existing protected discussion.
+Ordinary projects and narrower project grants omit the field, and archive/reopen
+preserves provenance. No database schema, new index or provider work is added.
+
+Independent source review found no defect and suggested isolating the wildcard
+permission case; the regression now gives session-read plus project-read actions
+but only one project scope and confirms no link disclosure. Initial navigation
+test incorrectly assumed a top-level project/decision digest in the wire response;
+it now follows the existing decision.project and compares the returned decision.
+A second test-only correction unwraps the project API's existing project envelope.
+Final combined catalog, Idea navigation, lifecycle, restricted-role and compiled
+handler/startup run passes all 30 tests. TypeScript, full lint and fresh VPS
+compilation pass. These are disposable API and static-render checks, not owner
+browser or production acceptance. No new schema/role/production change occurred.

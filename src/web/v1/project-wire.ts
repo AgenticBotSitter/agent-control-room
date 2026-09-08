@@ -21,8 +21,9 @@ export const ideaProjectTransitionSchema = z.object({ action: ideaProjectActionS
 export const ideaLifecycleProjectSchema = webProjectSchema.extend({ projectId: catalogProjectIdSchema }).strict();
 export const projectViewSchema = webProjectSchema.extend({ projectId: catalogProjectIdSchema,
   origin: z.enum(["ordinary", "idea_lab"]), lifecycleEditable: z.boolean(),
+  sourceIdeaSessionId: catalogProjectIdSchema.optional(),
   ideaLifecycleActions: z.array(ideaProjectActionSchema).max(5).optional() }).strict()
-  .refine(project => project.origin === "ordinary" ? project.ideaLifecycleActions === undefined
+  .refine(project => project.origin === "ordinary" ? project.ideaLifecycleActions === undefined && project.sourceIdeaSessionId === undefined
     : project.lifecycleEditable === !!project.ideaLifecycleActions?.length
       && new Set(project.ideaLifecycleActions).size === (project.ideaLifecycleActions?.length ?? 0));
 export const projectCatalogPageSchema = z.object({ projects: z.array(projectViewSchema).max(50),

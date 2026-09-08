@@ -10,6 +10,8 @@ import { WebIdeaService } from "../src/web/v1/idea-service";
 import { createPrivateWebProcess } from "../src/web/v1/private-process";
 import { createIdeaBrowserClient } from "../src/web/v1/idea-browser-client";
 import { IdeaDiscussion, PrivateIdeaWorkspace } from "../private-app/app/idea-workspace";
+import { ProjectIdeaOrigin } from "../private-app/app/workspace";
+import { projectViewSchema } from "../src/web/v1/project-wire";
 
 test("Idea browser client renders retained round contributions, synthesis and project navigation from the real private API", async t => {
   const f = await taskFixture(); await seedWebIdea(f.client);
@@ -31,6 +33,14 @@ test("Idea browser client renders retained round contributions, synthesis and pr
   assert.ok(providerHtml.includes("Retained, filtered provider contribution")); assert.ok(providerHtml.includes("Bot-reported confidence"));
   assert.ok(!providerHtml.includes("Synthetic test contribution"));
   assert.ok(html.includes("Starting live panels is not connected"));
+  const projectResponse = await app.handle(request(`/api/v1/projects/${encodeURIComponent(detail.decision!.project!.projectId)}`), () => new Response("shell"));
+  assert.equal(projectResponse.status, 200);
+  const project = projectViewSchema.parse((await projectResponse.json()).project);
+  assert.equal(project.sourceIdeaSessionId, id);
+  const originHtml = renderToStaticMarkup(createElement(ProjectIdeaOrigin, { project }));
+  assert.ok(originHtml.includes(`href="/ideas/${encodeURIComponent(id)}"`));
+  assert.deepEqual((await client.detail(project.sourceIdeaSessionId!)).decision, detail.decision);
+  assert.equal(renderToStaticMarkup(createElement(ProjectIdeaOrigin, { project: { ...project, sourceIdeaSessionId: undefined } })), "");
   let renders = 0;
   const handle = (path: string) => app.handle(request(path), () => { renders++; return new Response("shell"); });
   assert.equal((await handle("/ideas")).status, 200);

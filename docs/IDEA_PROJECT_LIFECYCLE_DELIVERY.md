@@ -47,6 +47,18 @@ key. The minimal `deploy/operator-config.mjs` profile does not supply that key;
 this integration does not pretend the first website-only deployment enables every
 Idea Lab capability. Configuring the saved-record key is separate private setup.
 
+## Return to the original discussion
+
+Idea-created project pages link back to their originating discussion and owner
+decision using the integrity-checked registry's source session ID. No source ID
+is inferred from a title or copied into a new provenance table. The field is
+omitted for ordinary projects and for owners without workspace-wide discussion
+read access, even if they can read the individual project. The optional disclosure
+is registered for the existing transaction's authorization expiry check.
+Archiving and reopening preserve the same originating discussion. Following the
+link uses the existing protected Idea route and its current authorization checks.
+This adds no execution, migration, provider call or configuration requirement.
+
 `pnpm test:idea-lifecycle` runs isolated database files sequentially and covers the
 bridge, mounted restricted-role route, permission removal rejection, browser retry
 binding and rendered controls. It is included in `test:idea-abs:delivery`.
