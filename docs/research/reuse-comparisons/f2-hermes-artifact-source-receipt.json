@@ -1,0 +1,139 @@
+{
+  "pin": "b1f003e18633298d549668b8e186af84cca45b76",
+  "resolvedCommitDate": "2026-09-08T21:57:15Z",
+  "acquisition": "Public source bodies read into transient analysis memory; no filesystem source/cache/root retained; no candidate code executed.",
+  "requestTimeoutMs": 15000,
+  "metadata": "GET commits/HEAD and git/trees/{pin}?recursive=1 (truncated:false), latter twice with narrow path filters; metadata not hashed.",
+  "files": [
+    {
+      "path": "hermes_cli/web_server.py",
+      "url": "https://raw.githubusercontent.com/NousResearch/hermes-agent/b1f003e18633298d549668b8e186af84cca45b76/hermes_cli/web_server.py",
+      "status": 200,
+      "bytes": 92358,
+      "sha256": "083f4b1918d82dff613323f77e0b406fdfbc28a281a6f1f1827d57c528c9afe1"
+    },
+    {
+      "path": "gateway/platforms/api_server_runs.py",
+      "url": "https://raw.githubusercontent.com/NousResearch/hermes-agent/b1f003e18633298d549668b8e186af84cca45b76/gateway/platforms/api_server_runs.py",
+      "status": 200,
+      "bytes": 44702,
+      "sha256": "270f7e221b5486a6ac499732d0f5471f3f48dc0c0a0633186bc762bcb1345a39"
+    },
+    {
+      "path": "tests/gateway/test_api_server_runs_extraction.py",
+      "url": "https://raw.githubusercontent.com/NousResearch/hermes-agent/b1f003e18633298d549668b8e186af84cca45b76/tests/gateway/test_api_server_runs_extraction.py",
+      "status": 200,
+      "bytes": 6520,
+      "sha256": "742b28be4b5737857ffe2ef0159c23d4c68ccf6956593037df6e9f9c4a71354a"
+    },
+    {
+      "path": "hermes_cli/web_routers/files.py",
+      "url": "https://raw.githubusercontent.com/NousResearch/hermes-agent/b1f003e18633298d549668b8e186af84cca45b76/hermes_cli/web_routers/files.py",
+      "status": 200,
+      "bytes": 31377,
+      "sha256": "7b9aa2fd6c148fb126126023f504543eb4ff01828e6ce2394449cc73f8dab954"
+    },
+    {
+      "path": "gateway/browser_control_artifacts.py",
+      "url": "https://raw.githubusercontent.com/NousResearch/hermes-agent/b1f003e18633298d549668b8e186af84cca45b76/gateway/browser_control_artifacts.py",
+      "status": 200,
+      "bytes": 14602,
+      "sha256": "0c3d60897eac61450c07d1016b3719a5692ee4d75c9f4c9dedb72ae71f7062f8"
+    },
+    {
+      "path": "apps/desktop/src/store/artifacts.ts",
+      "url": "https://raw.githubusercontent.com/NousResearch/hermes-agent/b1f003e18633298d549668b8e186af84cca45b76/apps/desktop/src/store/artifacts.ts",
+      "status": 200,
+      "bytes": 7022,
+      "sha256": "79ad97746c48f0a405ac597226efbb69b58aff6495ea49ee27f8f3fd2baf2399"
+    },
+    {
+      "path": "LICENSE",
+      "url": "https://raw.githubusercontent.com/NousResearch/hermes-agent/b1f003e18633298d549668b8e186af84cca45b76/LICENSE",
+      "status": 200,
+      "bytes": 1070,
+      "sha256": "821556e6336796450ab852d375117b48a4887e71d255794fd6318d99982a5ab6"
+    },
+    {
+      "path": "gateway/platforms/api_server.py",
+      "url": "https://raw.githubusercontent.com/NousResearch/hermes-agent/b1f003e18633298d549668b8e186af84cca45b76/gateway/platforms/api_server.py",
+      "status": 200,
+      "bytes": 215553,
+      "sha256": "221589ae8c45349736bb291b4679b86e9e12cb22f5a33220ae3d22929fea8297"
+    },
+    {
+      "path": "gateway/browser_control_broker.py",
+      "url": "https://raw.githubusercontent.com/NousResearch/hermes-agent/b1f003e18633298d549668b8e186af84cca45b76/gateway/browser_control_broker.py",
+      "status": 200,
+      "bytes": 26284,
+      "sha256": "92bee184b1f086d6828573d2143951f2fbb3d0eed6c495341692cf388535cda6"
+    },
+    {
+      "path": "tests/gateway/test_browser_control_artifacts.py",
+      "url": "https://raw.githubusercontent.com/NousResearch/hermes-agent/b1f003e18633298d549668b8e186af84cca45b76/tests/gateway/test_browser_control_artifacts.py",
+      "status": 200,
+      "bytes": 27465,
+      "sha256": "763b069d71dcfd7e1ed30af518c3b18e8cc7b5aad9f3d23b51cf31562cebaa42"
+    },
+    {
+      "path": "tests/gateway/test_browser_control_api.py",
+      "url": "https://raw.githubusercontent.com/NousResearch/hermes-agent/b1f003e18633298d549668b8e186af84cca45b76/tests/gateway/test_browser_control_api.py",
+      "status": 200,
+      "bytes": 26951,
+      "sha256": "a9e61148a118b7b40310b019f6bb52762a1d28c27940e90c390810d139f5b5d3"
+    },
+    {
+      "path": "tests/gateway/test_api_server_runs.py",
+      "url": "https://raw.githubusercontent.com/NousResearch/hermes-agent/b1f003e18633298d549668b8e186af84cca45b76/tests/gateway/test_api_server_runs.py",
+      "status": 200,
+      "bytes": 87874,
+      "sha256": "6811c0bfa79b9c3e12c4d1d5f9e2355b8b8abea9c3414a75406c2d4985c5a995"
+    },
+    {
+      "path": "tests/hermes_cli/test_web_server_files.py",
+      "url": "https://raw.githubusercontent.com/NousResearch/hermes-agent/b1f003e18633298d549668b8e186af84cca45b76/tests/hermes_cli/test_web_server_files.py",
+      "status": 200,
+      "bytes": 15427,
+      "sha256": "1aa747456c25a912a1af91a08692d60dd9bbf8f696304a28b191eb643b1ecf81"
+    },
+    {
+      "path": "hermes_cli/web_routers/sessions.py",
+      "url": "https://raw.githubusercontent.com/NousResearch/hermes-agent/b1f003e18633298d549668b8e186af84cca45b76/hermes_cli/web_routers/sessions.py",
+      "status": 200,
+      "bytes": 32264,
+      "sha256": "2dcfde29593a6646cfd64775aea7749a42ac91812f62bc562e2b9a126d892075"
+    },
+    {
+      "path": "hermes_cli/web_server_files.py",
+      "url": "https://raw.githubusercontent.com/NousResearch/hermes-agent/b1f003e18633298d549668b8e186af84cca45b76/hermes_cli/web_server_files.py",
+      "status": 200,
+      "bytes": 7810,
+      "sha256": "bd0bda866b80f227640c93fad997879f2b8066921d0cec090b4b1517a871659e"
+    }
+  ],
+  "retainedDownloadedBytes": 0,
+  "sourceBytes": 637279,
+  "priorPinComparisons": [
+    {
+      "path": "gateway/platforms/api_server_runs.py",
+      "prior": "b499ab11fe8b081470e269f2fb27abae03000da5",
+      "bytes": 44702,
+      "sha256": "270f7e221b5486a6ac499732d0f5471f3f48dc0c0a0633186bc762bcb1345a39",
+      "same": true
+    },
+    {
+      "path": "gateway/browser_control_artifacts.py",
+      "prior": "b499ab11fe8b081470e269f2fb27abae03000da5",
+      "bytes": 14602,
+      "sha256": "0c3d60897eac61450c07d1016b3719a5692ee4d75c9f4c9dedb72ae71f7062f8",
+      "same": true
+    },
+    {
+      "path": "hermes_cli/web_routers/files.py",
+      "prior": "b499ab11fe8b081470e269f2fb27abae03000da5",
+      "bytes": 30353,
+      "sha256": "727c8a05cb3c4491f47f9a21537a523064b823f4094c64bd68996117917e533c",
+      "same": false
+    }
+  ]
+}

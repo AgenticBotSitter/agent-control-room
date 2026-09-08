@@ -47,6 +47,20 @@ provider/owner-qualified execution remains the separate target gate.
 
 ## Latest execution delta
 
+RC9 full Kuma daemon preflight is now source-backed, not another helper test:
+its selected SQLite driver has a native download/build install step, normal startup
+expects the actual web distribution, and the update checker reads persisted
+checkUpdate=false rather than the inspected environment configuration. Resolve
+exact prebuilt provenance and offline initialization before starting a fresh daemon.
+Do not run all installation scripts, substitute MariaDB, or race the settings UI
+after listen as shortcuts. This is a local setup review, not candidate rejection or
+a production/owner credential gate. See f8-kuma-daemon-preflight.md.
+
+The actual application readiness projection also remains a small missing integration
+surface, as mapped in f8-readiness-integration-map.md. Prior synthetic monitor JSON
+does not prove an actual Control Room health endpoint. Keep daemon mechanics and
+actual protected projection acceptance separate so neither is counted twice.
+
 RC5's current release service experiments now exist: actual etcd3.7.1 CAS/restart/
 RBAC and OpenBao2.6.2 Raft/KV scoped CAS/restart/unseal/deletion denials. Reuse those
 receipts; don't rerun raw happy paths unchanged. Actual CR adapter/canonical payload,
@@ -73,12 +87,13 @@ not successful ordering support. Reuse that receipt rather than repeat it. Suppo
 client correction/reconciliation with exact identity and usage remains the decision
 gap; safe refusal alone is not a reason to select custom transport as complete.
 
-RC10 actual multi-environment preflight found vinext root-relative output, separate
-dotenv loading and conditional dependency-adjacent writes. OutDir/envFile overrides
-alone do not isolate a repository-root build. Proceed through a fully owned staged
-application/dependency root; do not repeat the miniature plugin test or change app
-configuration merely to make the research run. No actual application build or new
-plugin acquisition occurred in that preflight.
+RC10's preflight was followed by an actual, independently reviewed client/RSC/SSR
+build in an owned application/dependency staging root. The build and113 artifact
+hashes are verified; cleanup is recorded. Reuse f9-multienvironment-review.md and
+f9-build-notice-resolution.md. Do not repeat preflight or the successful build to
+resolve already-retained notice texts. Final aggregation, copied-code/assets and
+external-runtime coverage are release implementation acceptance, not evidence that
+the tested plugin seam is still missing.
 
 DR-07 now closes the default extractor primitive choice (Readability0.6/jsdom26.1),
 not RC7's source-bound full reader. Carry the actual detail/storage/lineage/resource
@@ -88,6 +103,15 @@ tests likewise replace those previously missing observations, not the still-miss
 actual CR detached/path/lease mapping or true process recovery.
 
 ## Consolidation into the final plan
+
+The independent completion-audit-next.md scope correction is accepted: E3 means
+an actual candidate crossing a representative application interface, not building
+an entire replacement subsystem during comparison. DR-05 login, DR-07 extraction,
+DR-03/04 attribution primitives, RC10 actual build and RC6 journal/supervisor
+dispositions must not be reopened just because implementation or live acceptance
+remains. Maestro's actual delivery/duplicate/ACK experiment is also complete;
+the RC4 delivery wording above is superseded by DR-06 and its actual delivery
+receipts. AO-to-CR path/detached-HEAD/lease mapping remains a distinct open decision.
 
 The final `REUSE_IMPLEMENTATION_PLAN.md` must use these decisions to define substantial
 end-to-end batches: first task/result/review/revision; productive fleet; Idea Lab and

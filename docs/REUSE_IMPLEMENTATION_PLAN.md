@@ -32,6 +32,7 @@ Preserve canonical project/job/attempt/review IDs and private configuration.
 | DR-05 | jsonwebtoken9.0.3 behind existing synchronous verifier and retained CR policy | Async migration solely to adopt jose; a new login provider; dual token libraries | Actual typed package import, identity/caller regressions, full notices/build and owner login separately |
 | DR-06 | Current immutable task/attempt/receipt authority; Maestro routing is conditional reuse for a named notification gap | Unchanged Maestro local inbox/wake status as task acknowledgement; a new general notification framework without a required channel | Actual native lifecycle still required; future notification adoption needs ingress/digest/restart/transport fit, not wake-as-completion |
 | DR-07 | Readability0.6.0 + jsdom26.1.0 as the default bounded extraction primitive; retain existing collection | Custom article scoring, HTML repair/selector engine, or an extra reader service solely for extraction | Source-bound detail/storage/rendering, lineage/fallback, bounded resources and complete package/file notices; not full reader completion |
+| DR-08 | Native Git detached worktree operation behind existing workspace identity/lease checks | Unchanged AO branch-oriented Restore as the exact checkout port; a new worktree engine | Actual concrete port, detached readback, concurrent ownership, failed-create/restart reconciliation and no-loss conflict/dirty handling; AO remains selective preservation donor |
 
 These decisions currently delete zero production lines. They avoid unnecessary new
 infrastructure; they are not evidence that every existing custom component is needed.
@@ -44,6 +45,13 @@ explicit pinned exceptions, cross-environment aggregation, project/copied-code/a
 and external-runtime inputs as described in
 [the actual-build resolution map](research/reuse-comparisons/f9-build-notice-resolution.md).
 This is not notice-complete release acceptance; final assembly/negative tests remain.
+
+RC9 [readiness source mapping](research/reuse-comparisons/f8-readiness-integration-map.md)
+finds internal readiness/admission but no dedicated JSON health route in the
+inspected private application. Add a narrowly reviewed read-only projection and
+monitor configuration; do not assume earlier synthetic Kuma JSON is that route.
+Preserve Access and distinguish listener200 from dependency/task readiness. Reuse
+the upstream monitoring engine instead of creating one for this small app seam.
 
 RC7 integration constraint: [the inspected article boundary](research/reuse-comparisons/f7-article-integration-map.md)
 rules out storing fetched articles as completed native results. Rich reading needs
@@ -191,8 +199,25 @@ explicit minimum single-host B4/B6/B8/B9 prerequisites in the first-task batch.
 This is draft correction, not final acceptance of unresolved comparisons.
 
 - All 26 original outcome IDs are mapped above; none is declared fully accepted.
-- Five settled narrow decisions are separated from open responsibility decisions.
+- Eight settled narrow decisions (DR-01 through DR-08) are separated from open
+  responsibility decisions; an unbuilt outcome can have a settled component choice.
 - Exact source/change/deletion lists, comparative costs/rubric, final independent
   review and the final implementation prompt remain unfinished.
 - Production E4 gates are not substitutes for local RC experiments. Conversely,
   local simulations do not establish live operation.
+
+### Independent completion-audit disposition
+
+Root accepts the scope correction in
+[the completion audit](research/reuse-comparisons/completion-audit-next.md).
+Representative integration-fit evidence is required where it can change selection;
+completing a new reader, updater or health subsystem is not a prerequisite to
+selecting its already-tested upstream primitive. Those features remain required
+implementation deliverables, not removed requirements.
+
+The remaining decision-changing priority is: queue transaction/recovery; supported
+native lifecycle and Hermes artifact intake; checkpoint object binding/recovery;
+monitoring daemon and current-schema restore; then narrow presentation/workspace
+seams. Optional C5 candidates still need individual recorded dispositions, not
+implementation before this comparison goal closes. Final packets, comparative
+costs and the copy-ready goal prompt remain due after those choices are resolved.

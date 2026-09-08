@@ -1,0 +1,102 @@
+{
+  "pin": "e4821321e559c887b14e37d9979e604b221a8945",
+  "scope": "memory-only source reads, no retained upstream files",
+  "records": [
+    {
+      "url": "https://api.github.com/repos/louislam/node-sqlite3/releases/tags/v15.1.6",
+      "status": 200,
+      "bytes": 14743,
+      "sha256": "6d53fa4a05c3656ae006bbf09fcaef030014b356f2b471e03cfaeaa77254373f"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/e4821321e559c887b14e37d9979e604b221a8945/extra/download-dist.js",
+      "status": 200,
+      "bytes": 1934,
+      "sha256": "aafb63d7a5349286f77a2c3211739971ec9c126a047afc41431ecae77f578872"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/e4821321e559c887b14e37d9979e604b221a8945/server/setup-database.js",
+      "status": 200,
+      "bytes": 12383,
+      "sha256": "2e82d7af6870c83e7ba7917f5ca58cb615d76208587cdd1a67cc134f46b84013"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/e4821321e559c887b14e37d9979e604b221a8945/server/socket-handlers/database-socket-handler.js",
+      "status": 200,
+      "bytes": 983,
+      "sha256": "5101c683061a607a4de62e082a806180a46d1c688224e50e8c5f82df955267c6"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/e4821321e559c887b14e37d9979e604b221a8945/db/knex_init_db.js",
+      "status": 200,
+      "bytes": 21945,
+      "sha256": "01632f9203eb2f2bdb451a3f0af30aca62b91aeb5ad5dbe9977aa5b8e76ad78a"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/e4821321e559c887b14e37d9979e604b221a8945/server/util-server.js",
+      "status": 200,
+      "bytes": 34580,
+      "sha256": "374c070054db0fcf6f089dc40d1b5d341729dc2533348f12e1c7162439bce90a"
+    },
+    {
+      "url": "https://api.github.com/repos/louislam/uptime-kuma/releases/tags/2.5.3",
+      "status": 200,
+      "bytes": 3596,
+      "sha256": "324daba88e9dd2747bd5d54035d072570653757f73e6a49ba120e5d77f321630"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/e4821321e559c887b14e37d9979e604b221a8945/server/database.js",
+      "status": 200,
+      "bytes": 37103,
+      "sha256": "a155d869e9540fd34955b56634acc6ca0ef17b2a7f01c6ae8e31d5b21481bba6"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/e4821321e559c887b14e37d9979e604b221a8945/server/settings.js",
+      "status": 200,
+      "bytes": 4234,
+      "sha256": "4ce41c79f400c0fa2d2ee812fefb4a64d3fcdfd83f7678799e1ed47db5146bfb"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/e4821321e559c887b14e37d9979e604b221a8945/server/util-server.js",
+      "status": 200,
+      "bytes": 34580,
+      "sha256": "374c070054db0fcf6f089dc40d1b5d341729dc2533348f12e1c7162439bce90a"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/e4821321e559c887b14e37d9979e604b221a8945/server/server.js",
+      "status": 200,
+      "bytes": 70153,
+      "sha256": "161b4379770ab0940181a2d6c8196f2e68de7b4399750f14a142a022dfd64da0"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/e4821321e559c887b14e37d9979e604b221a8945/test/prepare-test-server.js",
+      "status": 200,
+      "bytes": 161,
+      "sha256": "44e39d8d881efd6874b2f777b22faa2c19c0b3eb2673d536d3aa319c7d03b949"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/e4821321e559c887b14e37d9979e604b221a8945/server/database.js",
+      "status": 200,
+      "bytes": 37103,
+      "sha256": "a155d869e9540fd34955b56634acc6ca0ef17b2a7f01c6ae8e31d5b21481bba6"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/e4821321e559c887b14e37d9979e604b221a8945/server/settings.js",
+      "status": 200,
+      "bytes": 4234,
+      "sha256": "4ce41c79f400c0fa2d2ee812fefb4a64d3fcdfd83f7678799e1ed47db5146bfb"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/e4821321e559c887b14e37d9979e604b221a8945/test/prepare-test-server.js",
+      "status": 200,
+      "bytes": 161,
+      "sha256": "44e39d8d881efd6874b2f777b22faa2c19c0b3eb2673d536d3aa319c7d03b949"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/e4821321e559c887b14e37d9979e604b221a8945/server/database.js",
+      "status": 200,
+      "bytes": 37103,
+      "sha256": "a155d869e9540fd34955b56634acc6ca0ef17b2a7f01c6ae8e31d5b21481bba6"
+    }
+  ]
+}

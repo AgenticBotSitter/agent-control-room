@@ -2,7 +2,9 @@
 
 2026-09-08. Root read-only reconciliation against the completed staged build's
 actual per-environment callback records. No build rerun, download, package mutation
-or release assembly. Staging root retained temporarily for independent review.
+or release assembly. Independent review subsequently completed in
+`f9-multienvironment-review.md`; exact-root cleanup is recorded in
+`f9-staging-acquisitions.json`. The temporary staging root is no longer retained.
 
 The actual build reports21 unique name/version identities. Four have no full
 license text from the plugin. **All three third-party omissions already have
@@ -49,4 +51,6 @@ The release acceptance batch must still exercise final assembly with missing-tex
 changed-hash, conflicting-record, stale-lock/build, omitted copied-file and external
 closure negatives, and include the actual resulting notice files in the distribution.
 The current113-file artifact hash inventory is a research result, not a published or
-notice-complete release. Independent full-build review remains pending.
+notice-complete release. Independent full-build review accepted the narrow build
+result and verified all113 artifact hashes and lengths. Final distribution notice
+assembly remains implementation acceptance, not another comparison build.

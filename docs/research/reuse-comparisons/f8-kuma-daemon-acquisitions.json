@@ -1,0 +1,82 @@
+{
+  "root": "/private/tmp/cr-f8-kuma-daemon.xAuK66",
+  "pin": "e4821321e559c887b14e37d9979e604b221a8945",
+  "status": "source_preflight_complete_native_setup_pending",
+  "files": [
+    {
+      "file": "package.json",
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/e4821321e559c887b14e37d9979e604b221a8945/package.json",
+      "status": 200,
+      "bytes": 11490,
+      "sha256": "cb382abcefd6ddb1e51ff7b760431703ca843df1e94befae90b7b92174d2e9d9"
+    },
+    {
+      "file": "package-lock.json",
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/e4821321e559c887b14e37d9979e604b221a8945/package-lock.json",
+      "status": 200,
+      "bytes": 721525,
+      "sha256": "13cee09231188c146aac5fe3d799b6a3ced1b68f07a43d57c8002122172e8280"
+    },
+    {
+      "file": "LICENSE",
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/e4821321e559c887b14e37d9979e604b221a8945/LICENSE",
+      "status": 200,
+      "bytes": 1066,
+      "sha256": "a0e4fe6bed45a817794411c8ddf2deffbe010ac3a2b2f47e5b8d2fe2f9486883"
+    },
+    {
+      "file": "server/server.js",
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/e4821321e559c887b14e37d9979e604b221a8945/server/server.js",
+      "status": 200,
+      "bytes": 70153,
+      "sha256": "161b4379770ab0940181a2d6c8196f2e68de7b4399750f14a142a022dfd64da0"
+    },
+    {
+      "file": "server/database.js",
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/e4821321e559c887b14e37d9979e604b221a8945/server/database.js",
+      "status": 200,
+      "bytes": 37103,
+      "sha256": "a155d869e9540fd34955b56634acc6ca0ef17b2a7f01c6ae8e31d5b21481bba6"
+    },
+    {
+      "file": "server/uptime-kuma-server.js",
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/e4821321e559c887b14e37d9979e604b221a8945/server/uptime-kuma-server.js",
+      "status": 200,
+      "bytes": 20944,
+      "sha256": "1d4934f23c141df3c560624008e2d4c73c8e47c4080e94e2c19129d4b9a75980"
+    },
+    {
+      "file": "server/check-version.js",
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/e4821321e559c887b14e37d9979e604b221a8945/server/check-version.js",
+      "status": 200,
+      "bytes": 1870,
+      "sha256": "b8af6d22b2aed54c21de0f977442c33101367e966d5b508c415cad5a3f26011e"
+    },
+    {
+      "file": "server/config.js",
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/e4821321e559c887b14e37d9979e604b221a8945/server/config.js",
+      "status": 200,
+      "bytes": 1650,
+      "sha256": "cbe5f46555f9f83b565af0b783d02f79915b8b094f47414a0a898ce0c9b99b65"
+    },
+    {
+      "file": "server/notification.js",
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/e4821321e559c887b14e37d9979e604b221a8945/server/notification.js",
+      "status": 200,
+      "bytes": 14113,
+      "sha256": "231d909f7596e60b03fe92dfa340809da66572d9c3d91787c7d7ad81a3932f12"
+    },
+    {
+      "file": "sqlite-metadata.json",
+      "url": "https://registry.npmjs.org/@louislam/sqlite3/15.1.6",
+      "status": 200,
+      "bytes": 4833,
+      "sha256": "9fd724ca9b69138fbe1372936c769d1a9d44c68de618a0231637752efdf0ab6c"
+    }
+  ],
+  "cleanup": {
+    "removed": "/private/tmp/cr-f8-kuma-daemon.xAuK66",
+    "absent": true,
+    "observedKiB": 892
+  }
+}

@@ -4,6 +4,34 @@
 all-outcomes implementation plan or permission to implement or deploy candidates.
 All26 outcome-level gates remain tracked separately in the comparison index.
 
+## DR-08 — native Git for the initial detached checkout
+
+Select native Git's detached-worktree operation behind the existing
+`CodexWorkspaceManagerV1` identity/lease boundary, not unchanged AO Restore.
+Root accepts the independently challenged narrow choice in
+[workspace selection](f4-workspace-selection.md) and
+[review](f4-workspace-selection-review.md), including both corrected findings.
+
+AO's actual tested attached-branch and nested-path behavior does not satisfy this
+port unchanged: requested BaseRef can differ from observed HEAD. Do not rename
+that field or change application authority to make it appear compatible. Native
+Git supplies the checkout operation; CR-specific execution/ownership glue is the
+custom exception, not a new worktree engine. AO remains the evaluated donor for
+automatic preservation/stash/merge when needed; compiled-helper packaging costs
+must not be inflated into a mandatory installed Go runtime.
+
+No concrete production port is present in the inspected scope. Detached-state
+readback, concurrent preparation, failed-create/readback ownership, dirty/conflict
+preservation, stale/duplicate state and restart reconciliation remain mandatory
+implementation acceptance. Keeping an in-memory manager is not durable ownership.
+No-loss handling is required even when automatic repair is not implemented.
+
+Production deletion zero; no new dependency, service or schema change selected.
+Integration effort remains estimated, with no measured total-cost winner. Reopen
+if actual implementation requires a preservation framework, AO supplies the exact
+detached/path interface, or measured adapter cost overturns this narrow choice.
+This does not close all RC4 responsibilities or authorize checkout/deletion effects.
+
 ## DR-07 — default article extraction primitive
 
 Select Readability0.6.0 with jsdom26.1.0 for the bounded Node reader integration.

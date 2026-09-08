@@ -8,6 +8,17 @@
   "narrowDecisionRegister": "reuse-comparisons/decision-register.md",
   "remainingClosureChecklist": "../REUSE_COMPARISON_CLOSURE.md",
   "crossJourneyEvidence": "reuse-comparisons/cross-journey-revision-fit.md",
+  "decisionStatusNote": "Outcome status is not product acceptance. Settled responsibility choices below must not be reopened solely because implementation or target qualification remains.",
+  "settledResponsibilityDecisions": [
+    { "id": "DR-01", "outcomes": ["C1"], "scope": "Fixed-panel participant selection loop", "evidence": "reuse-comparisons/decision-register.md#dr-01--keep-fixed-panel-participant-selection" },
+    { "id": "DR-02", "outcomes": ["C3"], "scope": "Existing collection and distinct parsing boundaries", "evidence": "reuse-comparisons/decision-register.md" },
+    { "id": "DR-03", "outcomes": ["D5"], "scope": "Prepared runtime dependency identity graph", "evidence": "reuse-comparisons/decision-register.md" },
+    { "id": "DR-04", "outcomes": ["D5"], "scope": "Original license text gathering", "evidence": "reuse-comparisons/decision-register.md" },
+    { "id": "DR-05", "outcomes": ["A2"], "scope": "Synchronous JWT primitive; Access policy retained", "evidence": "reuse-comparisons/f8-jwt-selection-review.md" },
+    { "id": "DR-06", "outcomes": ["B7"], "scope": "Canonical task authority versus optional notification delivery", "evidence": "reuse-comparisons/f4-delivery-review.md" },
+    { "id": "DR-07", "outcomes": ["C3"], "scope": "Default extraction primitive, not complete reader", "evidence": "reuse-comparisons/f7-extractor-selection-review.md" },
+    { "id": "DR-08", "outcomes": ["B7"], "scope": "Native Git initial detached checkout with CR ownership checks; concrete adapter and recovery unbuilt", "evidence": "reuse-comparisons/f4-workspace-selection-review.md" }
+  ],
   "outcomes": [
     {
       "id": "A1",
@@ -22,8 +33,9 @@
       "families": [
         "F8"
       ],
-      "status": "comparison_incomplete",
-      "decision": null
+      "status": "selection_settled_implementation_pending",
+      "decision": "DR-05",
+      "remaining": "Typed import, caller regressions and release notices; actual owner identity/MFA/origin acceptance remains target qualification."
     },
     {
       "id": "A3",
