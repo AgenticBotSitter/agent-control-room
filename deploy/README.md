@@ -5,6 +5,11 @@ PostgreSQL web login. No task coordinator, queue worker, agent connection, news
 collector, or live Idea Lab runtime is started. This is a first usable website
 stage, not a completed orchestration deployment.
 
+The Idea-project lifecycle release changes the web role's exact grants. See
+`docs/IDEA_PROJECT_LIFECYCLE_DELIVERY.md` before preparing or updating a role.
+Older grants intentionally fail the new startup preflight. No role script is run
+automatically, and these source changes do not authorize a production privilege update.
+
 ## Supplied configuration module
 
 `deploy/operator-config.mjs` is executable operator configuration for the existing

@@ -4,6 +4,7 @@ import { captureWebOrigins, createAccessVerifier, requireSameOrigin, WebAccessEr
 import { privateResponseHeaders, webFailure, readBoundedJson } from "./http-common";
 import { createProjectHttpHandler } from "./project-http";
 import { WebProjectService } from "./project-service";
+import { WebIdeaProjectLifecycleOperation } from "./idea-project-lifecycle-operation";
 import { catalogProjectIdSchema } from "./project-wire";
 import { WebConnectionService, type WebConnectionKeys } from "./connection-service";
 import { WebTaskService, type WebTaskKeys } from "./task-service";
@@ -129,7 +130,9 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   if (!Number.isSafeInteger(drainMs) || drainMs < 1 || drainMs > 30_000) throw new Error("invalid_private_app_config");
   const keys = createAccessKeyCache({ ...options, clock });
   const service = new WebProjectService(options.database.client,
-    { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock, options.ideaProjects?.integrityKey);
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock, options.ideaProjects?.integrityKey,
+    options.ideaProjects ? new WebIdeaProjectLifecycleOperation(options.database.client,
+      { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.ideaProjects.integrityKey, clock) : undefined);
   const connections = new WebConnectionService(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock, options.connections);
   const tasks = new WebTaskService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock,

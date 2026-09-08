@@ -35,3 +35,43 @@ source-only review plus local injected tests, not VPS startup acceptance.
 
 Review findings, implement concrete corrections, test and record the disposition.
 Then inspect actionable project/Idea/ABS integration gaps against existing source.
+
+## Idea project lifecycle integration
+
+The suspected Idea discussion navigation-state issue was already prevented by
+route keys; no navigation change was retained. Independent investigation instead
+confirmed the private project view had not connected the existing Idea lifecycle.
+
+Connected that existing service through a scoped, revocable transaction and durable
+browser command receipts, added a private route, authorized action projections and
+Settings controls. Added narrow SQL grants and matching strict preflight. No new
+schema migration, provider call or production SQL execution.
+
+Independent review identified resume/reopen permission interchangeability in the
+existing domain service. Added source-state enforcement after historical replay and
+both restricted-grant regression cases. Re-review reports resolved with no additional
+concrete finding. Source-only review is not independent runtime acceptance.
+
+Initial bridge/browser/restricted-role tests passed (11 before the rendered-control
+test was added). The omitted-grant negative test first failed because its synthetic
+session reset did not select the setup owner; corrected to the fixture's explicit
+setup identity and verified the privilege really became false before testing rejection.
+The corrected negative test passes. TypeScript, focused lint, VPS compilation,
+42 related regressions and 23 existing lifecycle/registry/compiled checks passed.
+Full Idea/ABS delivery validation and final rendered-control verification completed
+as recorded below.
+
+Final lifecycle tests: 12/12 pass, including rendered controls and cross-operation
+command-key collisions. Full `test:idea-abs:delivery` exits zero, including its
+239-test delivery stage. Full lint initially reported 1,081 errors in generated
+`dist-contributor` output. That directory is the configured contributor Vite output
+and already gitignored; added its exact directory to ESLint's existing build-output
+exclusions. Verified both contributor and private source remain linted. Full lint
+and a fresh VPS compilation now pass; existing middleware/dependency bundling
+warnings remain warnings, not silently claimed fixed.
+All 49 compiled VPS tests pass sequentially against the fresh artifact. This batch
+has local source, rendered-control, restricted-fixture and compiled-route evidence,
+not an owner-attended browser session or live VPS acceptance.
+
+Deployment delta and caveats: `IDEA_PROJECT_LIFECYCLE_DELIVERY.md`. Preserve the
+unchanged 12:40:58 UTC deadline and all external production gates above.

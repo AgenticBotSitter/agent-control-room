@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { readBrowserJson } from "./browser-json";
 import { catalogProjectIdSchema, projectCatalogPageSchema, projectCreateSchema, projectTransitionSchema,
-  projectViewSchema, webProjectSchema, type ProjectCatalogPage, type ProjectView, type WebProject } from "./project-wire";
+  projectViewSchema, webProjectSchema, ideaLifecycleProjectSchema, ideaProjectTransitionSchema, ideaProjectActionTarget,
+  type IdeaProjectAction, type ProjectCatalogPage, type ProjectView, type WebProject } from "./project-wire";
 
 export type BrowserFailureCode = "authentication_required" | "access_denied" | "invalid_request" | "conflict" | "not_found" | "unavailable" | "uncertain";
 export class BrowserRequestError extends Error {
@@ -51,7 +52,8 @@ export function createProjectBrowserClient(transport: typeof fetch = fetch, make
         }
         throw new BrowserRequestError("uncertain");
       }
-      const result = z.object({ project: webProjectSchema, replayed: z.boolean() }).strict().parse(await readBrowserJson(response));
+      const result = z.object({ project: path.endsWith("/idea-lifecycle") ? ideaLifecycleProjectSchema : webProjectSchema,
+        replayed: z.boolean() }).strict().parse(await readBrowserJson(response));
       if (!pending.matches(result.project)) throw new BrowserRequestError("uncertain");
       pending = undefined;
       return result.project;
@@ -100,6 +102,15 @@ export function createProjectBrowserClient(transport: typeof fetch = fetch, make
       const { projectId, title, summary, createdAt } = project;
       return command(`/api/v1/projects/${encodeURIComponent(projectId)}/lifecycle`, input, result =>
         result.projectId === projectId && result.lifecycle === input.lifecycle && result.version === input.expectedVersion + 1
+        && result.title === title && result.summary === summary && result.createdAt === createdAt);
+    },
+    transitionIdea(project: ProjectView, action: IdeaProjectAction) {
+      if (project.origin !== "idea_lab" || !project.lifecycleEditable || !project.ideaLifecycleActions?.includes(action))
+        return Promise.reject(new BrowserRequestError("invalid_request"));
+      const input = ideaProjectTransitionSchema.parse({ action, expectedVersion: project.version });
+      const { projectId, title, summary, createdAt } = project;
+      return command(`/api/v1/projects/${encodeURIComponent(projectId)}/idea-lifecycle`, input, result =>
+        result.projectId === projectId && result.lifecycle === ideaProjectActionTarget[action] && result.version === input.expectedVersion + 1
         && result.title === title && result.summary === summary && result.createdAt === createdAt);
     },
     async logout() {

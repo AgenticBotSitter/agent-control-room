@@ -38,6 +38,13 @@ export function createProjectHttpHandler(options: {
         return Response.json(await options.service.transition(identity, projectId, await readBody(request), request.headers.get("idempotency-key") ?? ""),
           { headers: responseHeaders });
       }
+      const ideaLifecycle = /^\/api\/v1\/projects\/([^/]+)\/idea-lifecycle$/.exec(path);
+      if (ideaLifecycle && request.method === "POST") {
+        let projectId: string;
+        try { projectId = decodeURIComponent(ideaLifecycle[1]); } catch { throw new WebAccessError("invalid_request"); }
+        return Response.json(await options.service.transitionIdea(identity, projectId, await readBody(request), request.headers.get("idempotency-key") ?? ""),
+          { headers: responseHeaders });
+      }
       const detail = /^\/api\/v1\/projects\/([^/]+)$/.exec(path);
       if (detail && request.method === "GET") {
         let projectId: string;

@@ -56,7 +56,8 @@ test("compiled private routes use the installed process, real disposable SQL, an
   const combined = await (await handler(request())).json();
   assert.equal(combined.projects.length, 2); assert.equal(combined.sources.ideas, "included");
   const ideaRead = await (await handler(request(`/api/v1/projects/${encodeURIComponent(idea.projectId)}`))).json();
-  assert.equal(ideaRead.project.origin, "idea_lab"); assert.equal(ideaRead.project.lifecycleEditable, false);
+  assert.equal(ideaRead.project.origin, "idea_lab"); assert.equal(ideaRead.project.lifecycleEditable, true);
+  assert.deepEqual(ideaRead.project.ideaLifecycleActions, ["pause", "complete"]);
   const ideaPage = await handler(request(`/projects/${encodeURIComponent(idea.projectId)}/settings`));
   assert.equal(ideaPage.status, 200); assert.match(await ideaPage.text(), /Loading project/);
   const nextPage = await handler(request(`/projects?after=${encodeURIComponent(idea.projectId)}`));

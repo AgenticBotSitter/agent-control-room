@@ -10,19 +10,20 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_abs_story_versions", "control_abs_source_observations", "control_abs_source_settings", "control_abs_story_archives",
   "control_idea_sessions", "control_idea_contributions", "control_idea_syntheses", "control_idea_decisions", "control_idea_bot_run_events",
   "adapter_registry", "projects", "control_manual_project_heads", "control_web_project_commands", "audit_events",
-  "control_audit_chain_heads", "control_project_lifecycle_events", "control_connection_registry_heads",
+  "control_audit_chain_heads", "control_project_lifecycle_events", "control_policy_decisions", "control_connection_registry_heads",
   "control_connection_enrollments", "control_connection_authenticated_telemetry_receipts", "control_requests", "control_workflows",
   "control_jobs", "control_attempts", "control_harness_runs", "control_harness_run_events", "control_web_task_commands",
   "control_artifact_manifests", "control_native_artifact_receipts", "control_completion_gate_records", "control_completion_gate_integrity", "control_web_task_review_commands", "control_native_review_plans"] as const;
 const inserts = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
-  "control_jobs", "control_web_task_commands", "control_completion_gate_records", "control_web_task_review_commands", "control_abs_source_settings", "control_abs_story_archives"]);
+  "control_jobs", "control_web_task_commands", "control_completion_gate_records", "control_web_task_review_commands", "control_abs_source_settings", "control_abs_story_archives",
+  "control_policy_decisions", "control_project_lifecycle_events"]);
 const updates: Record<string, readonly string[]> = {
   control_identities: ["web_lock"], control_role_grants: ["web_lock"], workspaces: ["web_lock"],
   control_connection_registry_heads: ["web_lock"], control_web_sessions: ["revoked_at"],
   control_completion_gate_integrity: ["web_lock", "revision", "record_count", "state_digest", "state_auth_tag"],
   control_completion_gate_records: ["web_lock"],
-  projects: ["domain_state", "source_version", "normalized_state", "updated_at"],
+  projects: ["domain_state", "source_version", "normalized_state", "updated_at", "payload", "observed_at"],
   control_manual_project_heads: ["lifecycle", "version", "updated_at"],
   control_audit_chain_heads: ["head_hash", "event_count", "updated_at"],
 };
