@@ -523,3 +523,30 @@ handler remains unavailable before and after inspection. Later tests add invalid
 topology refusal before acquisition and coordinator failure before Idea acquisition.
 All nine final focused source checks pass with those additions.
 No live database contact, SQL provisioning, provider or production effect occurred.
+
+## Keep exact task saves through authentication recovery
+
+Independent journey inspection confirmed the normal news-to-task and Idea-to-project
+links already exist. It found a concrete recovery defect instead: the task page
+offered a same-tab Access logout link after an expired session, destroying its
+memory-only pending command keys and review/verification state when followed.
+
+Reused the existing keep-this-tab authentication guidance and navigation guard.
+The task page now holds link navigation and requests a browser leave warning while
+a proposal, review, revision or human-verification save is in flight/unconfirmed.
+Page-owned workspaces expose aggregate pending state even while protected result
+subtrees are removed. Protected read failures still clear displayed results, not
+the retained exact command. Confirmed proposals release the busy hold before their
+normal success navigation. No browser storage, new authentication stack, background
+write/retry or additional authority was introduced.
+
+Independent source re-review found no concrete regression in this scope. All 31
+focused recovery/review/revision/verification checks and six compiled protected
+handler/review/revision checks pass, plus TypeScript, full lint and a fresh VPS build.
+The new lost-save/401/recovery test retains identical request bytes and key and
+releases navigation only after a matching receipt. Tests use injected browser
+events/static rendering, not a mounted live browser or real identity provider.
+Browser close warnings cannot guarantee preservation after a forced close/crash.
+Nested planning/assignment/submission command protection remains outside this
+particular navigation test scope. Sites guidance kept the existing interface and
+local-only delivery; no browser handoff or hosting was performed during background work.

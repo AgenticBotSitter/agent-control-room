@@ -37,10 +37,13 @@ test("page-owned review survives result subtree removal, denied reads and recove
   const first = workspace.get(bound); first.setFeedback("Retained private revision draft");
   let notifications = 0;
   const detach = first.subscribe(() => { notifications++; });
+  assert.equal(workspace.hasPending(), false);
   await first.save("changes_requested"); assert.equal(first.client.hasPending(), true); assert.ok(notifications > 0);
+  assert.equal(workspace.hasPending(), true);
   detach(); // A denied result refresh removes the child subscriber, not the task page's workspace.
   // The actual task-detail read gate also removes the entire result subtree on failure.
   assert.equal(TaskDetailResults({ detail: undefined, projectId: binding.projectId, reviewWorkspace: workspace }), null);
+  assert.equal(workspace.hasPending(), true);
   phase = "denied";
   await assert.rejects(first.client.options(bound.projectId, bound.jobId, f.draft), { code: "access_denied" });
   const restored = workspace.get(bound); assert.equal(restored, first);
@@ -54,6 +57,7 @@ test("page-owned review survives result subtree removal, denied reads and recove
   assert.equal(remounted?.props.reviewWorkspace, workspace);
   assert.equal(remounted?.props.reviewWorkspace.get(bound), first);
   await restored.save(); assert.equal(restored.client.hasPending(), false);
+  assert.equal(workspace.hasPending(), false);
   assert.equal(restored.getSnapshot().receipt?.decision, "changes_requested"); assert.equal(restored.getSnapshot().feedback, "");
   assert.equal(new Set(keys).size, 1); assert.equal(new Set(bodies).size, 1);
   assert.deepEqual(f.checkpoints.read(`completion-gate:${binding.tenantId}`), checkpoint);
@@ -82,9 +86,11 @@ test("in-flight save completes in page memory while the result subtree is detach
   const bound = { projectId: binding.projectId, jobId: binding.jobId, ...f.draft };
   const session = workspace.get(bound), detach = session.subscribe(() => {});
   const saving = session.save("accepted"); detach();
+  assert.equal(workspace.hasPending(), true);
   assert.equal(workspace.get(bound).getSnapshot().pending, true);
   await workspace.get(bound).save("changes_requested"); assert.equal(calls, 1);
   release(Response.json({ receipt, replayed: true })); await saving;
+  assert.equal(workspace.hasPending(), false);
   assert.equal(workspace.get(bound).getSnapshot().pending, false);
   assert.deepEqual(workspace.get(bound).getSnapshot().receipt, receipt);
 });

@@ -46,6 +46,9 @@ export function createTaskVerificationWorkspace(makeClient = createTaskVerificat
     };
   }
   return {
+    hasPending() {
+      return [...sessions.values()].some(session => session.getSnapshot().pending || session.client.hasPending());
+    },
     get(binding: VerificationWorkspaceBinding) {
       const key = JSON.stringify([binding.projectId, binding.jobId, binding.artifactId, binding.targetId,
         binding.targetDigest, binding.contentHash]);

@@ -162,7 +162,9 @@ test("task workspace retains unsaved and uncertain input across result teardown 
   const session = workspace.get(bound); session.selectScenario(scenario.scenarioId); session.setOutcome("passed");
   session.setNote("  Exact workspace observation.  ");
   const detach = session.subscribe(() => {}); detach();
+  assert.equal(workspace.hasPending(), false);
   await session.save(scenario); assert.equal(session.client.hasPending(), true);
+  assert.equal(workspace.hasPending(), true);
   assert.equal(session.getSnapshot().scenarioId, scenario.scenarioId); assert.equal(session.getSnapshot().outcome, "passed");
   assert.equal(session.getSnapshot().note, "Exact workspace observation."); assert.equal(session.getSnapshot().pending, false);
   assert.equal(session.getSnapshot().error?.code, "uncertain"); assert.equal(session.getSnapshot().receipt, undefined);
@@ -171,6 +173,7 @@ test("task workspace retains unsaved and uncertain input across result teardown 
   const protectedShell = renderToStaticMarkup(createElement(OwnerTaskVerification, { ...bound, workspace, onSaved() {} }));
   assert.doesNotMatch(protectedShell, /Exact workspace observation/); assert.match(protectedShell, /earlier human verification save is unresolved/);
   phase = "recover"; await workspace.get(bound).save();
+  assert.equal(workspace.hasPending(), false);
   assert.equal(session.client.hasPending(), false); assert.equal(session.getSnapshot().note, ""); assert.equal(new Set(bodies).size, 1);
 });
 
@@ -181,10 +184,12 @@ test("an in-flight human verification remains bound while its result subtree is 
   }));
   const session = workspace.get(bound); session.selectScenario(scenario.scenarioId); session.setOutcome("blocked"); session.setNote("Viewport unavailable.");
   const detach = session.subscribe(() => {}); const saving = session.save(scenario); detach();
+  assert.equal(workspace.hasPending(), true);
   assert.equal(session.getSnapshot().pending, true); assert.equal(workspace.get(bound), session);
   await session.save(scenario); assert.equal(calls, 1);
   release(Response.json({ receipt: commandReceipt("Viewport unavailable.", { outcome: "blocked" }), replayed: false }));
   await saving; assert.equal(session.getSnapshot().pending, false); assert.equal(session.getSnapshot().receipt?.outcome, "blocked");
+  assert.equal(workspace.hasPending(), false);
 });
 
 test("human verification presentation shows actual instructions, requires outcome and note, and labels historical readback truthfully", () => {

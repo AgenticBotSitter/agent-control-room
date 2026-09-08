@@ -132,11 +132,14 @@ test("definitive first denials release revision holds while malformed and server
 test("bounded page workspace never evicts an unresolved revision command", async () => {
   const pendingClient = createTaskRevisionBrowserClient(async () => { throw new Error("lost"); });
   const workspace = createTaskReviewWorkspace(undefined, () => pendingClient);
+  assert.equal(workspace.hasPending(), false);
   const first = workspace.get(binding); await first.prepareRevision(revisionRequest);
+  assert.equal(workspace.hasPending(), true);
   assert.equal(first.revisionClient.hasPending(), true);
   for (let index = 1; index < 128; index++) workspace.get({ ...binding, artifactId: `artifact:${index}` });
   assert.throws(() => workspace.get({ ...binding, artifactId: "artifact:overflow" }), { code: "unavailable" });
   assert.equal(workspace.get(binding), first); assert.equal(first.revisionClient.hasPending(), true);
+  assert.equal(workspace.hasPending(), true);
   assert.deepEqual(first.getSnapshot().revisionError, new BrowserRequestError("uncertain"));
 });
 

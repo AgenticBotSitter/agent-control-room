@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { BrowserRequestError } from "../../src/web/v1/browser-client";
+import { BrowserRequestError, browserAuthenticationRecovery } from "../../src/web/v1/browser-client";
 import { createTaskBrowserClient, taskErrorMessage } from "../../src/web/v1/task-browser-client";
 import type { TaskDetail, TaskDraft, TaskPage, TaskReceipt } from "../../src/web/v1/task-wire";
 import { PrivateHeader } from "./private-header";
@@ -12,6 +12,11 @@ import { PrivateTaskPlanning } from "./task-planning";
 import { PrivateTaskAssignment } from "./task-assignment";
 import { PrivateTaskApproval } from "./task-approval";
 import { TaskWorkflowGuide } from "./task-workflow-guide";
+import { installNewsNavigationGuard } from "../../src/web/v1/news-navigation-guard";
+
+export function TaskAuthenticationRecovery({ held }: { held: boolean }) {
+  return <p>{browserAuthenticationRecovery(held)}</p>;
+}
 
 /** Read-gated child; command memory is owned by the stable keyed task page, not this subtree. */
 export function TaskDetailResults({ detail, projectId, reviewWorkspace, verificationWorkspace }: {
@@ -31,8 +36,12 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
   const [detail, setDetail] = useState<TaskDetail>();
   const [draft, setDraft] = useState<TaskDraft>({ title: "", instructions: "" });
   const [error, setError] = useState<BrowserRequestError>();
+  const [navigationNotice, setNavigationNotice] = useState(false);
   const [loading, setLoading] = useState(true), [pending, setPending] = useState(false), [refresh, setRefresh] = useState(0);
   const generation = useRef(0), busy = useRef(false), alive = useRef(true);
+  useEffect(() => installNewsNavigationGuard(window, document,
+    () => busy.current || client.hasPending() || reviewWorkspace.hasPending() || verificationWorkspace.hasPending(),
+    () => setNavigationNotice(true)), [client, reviewWorkspace, verificationWorkspace]);
   const failure = (reason: unknown) => reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable");
   useEffect(() => {
     // Busy belongs to this effect generation: a retired request must not suppress
@@ -63,6 +72,8 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
     busy.current = true; generation.current++; setPending(true); setError(undefined);
     try {
       const receipt: TaskReceipt = retry ? await client.retrySave() : await client.propose(projectId, draft);
+      // The confirmed command has released its hold; allow the success navigation.
+      busy.current = false;
       if (alive.current) window.location.assign(taskUrl(receipt.projectId, receipt.jobId));
     } catch (reason) {
       if (alive.current) {
@@ -76,12 +87,15 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
   const uncertain = client.hasPending();
   return <div className="private-shell"><PrivateHeader /><main id="private-main">
     <a className="private-back" href={jobId ? taskUrl(projectId) : "/projects"}>{jobId ? "← Project tasks" : "← All projects"}</a>
-    {error && <div className="private-notice" role="alert"><p>{taskErrorMessage[error.code]}</p>
+    {navigationNotice && <p className="private-notice" role="alert">A save was still unconfirmed when you tried to leave.
+      Keep this tab open and check that exact save again. If sign-in has expired, sign in from another tab, then return here.</p>}
+    {error && <div className="private-notice" role="alert">{error.code === "authentication_required"
+      ? <TaskAuthenticationRecovery held={client.hasPending() || reviewWorkspace.hasPending() || verificationWorkspace.hasPending()} />
+      : <p>{taskErrorMessage[error.code]}</p>}
       {jobId && <p>Result content has been cleared. Unfinished review text and exact pending save keys remain in this task page’s memory.
         Restore access and reopen the same result to continue. Leaving or reloading the task page discards them.</p>}
-      {error.code === "authentication_required" ? <><p>Signing in again also ends Access sessions for other protected applications.</p><a href="/cdn-cgi/access/logout">Sign in again</a></>
-        : <div className="private-actions"><button type="button" disabled={pending} onClick={() => setRefresh(value => value + 1)}>Refresh saved tasks</button>
-          {uncertain && page && <button type="button" disabled={pending} onClick={() => { void save(true); }}>Check this exact save again</button>}</div>}</div>}
+      <div className="private-actions"><button type="button" disabled={pending} onClick={() => setRefresh(value => value + 1)}>Refresh saved tasks</button>
+        {uncertain && page && <button type="button" disabled={pending} onClick={() => { void save(true); }}>Check this exact save again</button>}</div></div>}
     {loading && <p role="status">Loading protected tasks…</p>}
     {project && <button type="button" disabled={loading || pending} onClick={refreshSaved}>Check latest saved status</button>}
     {project && <><div className="private-heading"><span className="private-state">{project.lifecycle}</span><h1>{project.title}</h1></div>
