@@ -215,3 +215,26 @@ Final focused/rebuild checks cover this correction; no production effect occurre
 The final correction passes six focused status tests, TypeScript, full lint, a fresh
 VPS build and seven compiled handler/startup tests. No test was weakened to convert
 an uncertain collection into success.
+
+## Idea participant choice
+
+Connected safe configured-roster options through the existing coordinator and
+protected application, then added the New Idea chooser. The existing contract
+requires three to six distinct perspectives including a skeptic; it is not relaxed.
+Each choice binds the server descriptor digest, not a browser-supplied identity or
+connection. Exact retries recover the saved roster across deployment changes.
+Options/reloads cannot replace pending request bytes or trigger execution.
+
+Independent backend and UI reviews found no concrete defect. Eighteen focused
+creation/startup tests passed; a separate injected start proves only the selected
+three participants are invoked and replay is inert. That test initially assumed
+the helper returned its session; it was corrected to read the actual saved session
+through the application service. TypeScript and full lint pass. Full delivery and
+fresh compilation are running. See `IDEA_ROSTER_SELECTION_DELIVERY.md` for scope
+and live-browser/provider evidence limitations.
+
+Final roster batch: full `test:idea-abs:delivery` exits zero including its 240-test
+final stage. After strict options-response serialization, TypeScript, full lint,
+fresh VPS compilation and 21 compiled-handler/startup/Idea-startup tests pass.
+No open PR exists for the private working branch. Batched publication uses skip-CI;
+no merge, workflow dispatch, credential access or production action was performed.

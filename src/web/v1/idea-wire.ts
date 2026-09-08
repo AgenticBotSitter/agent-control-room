@@ -2,9 +2,21 @@ import { z } from "zod";
 import { catalogProjectIdSchema as id } from "./project-wire";
 import { ideaOwnerIntentSchemaV1 } from "../../idea-lab/v1/schemas";
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/), text = z.string().min(1).max(2000);
+export const ideaParticipantSelectionSchema = z.array(z.object({ participantId: id, participantDigest: digest }).strict())
+  .min(3).max(6).refine(values => new Set(values.map(value => value.participantId)).size === values.length);
+export const ideaCreationOptionsSchema = z.object({ startsWork: z.literal(false), minParticipants: z.literal(3), maxParticipants: z.literal(6),
+  requiredPerspectives: z.tuple([z.literal("skeptic")]),
+  participants: z.array(z.object({ participantId: id, participantDigest: digest, displayName: z.string().min(1).max(120),
+    perspective: z.string().min(1).max(80), harness: z.enum(["hermes", "codex", "local_model"]),
+  }).strict()).min(3).max(6),
+}).strict().refine(value => new Set(value.participants.map(p => p.participantId)).size === value.participants.length
+  && new Set(value.participants.map(p => p.perspective)).size === value.participants.length
+  && value.participants.some(p => p.perspective === "skeptic"));
+export type IdeaCreationOptions = z.infer<typeof ideaCreationOptionsSchema>;
 export const ideaCreateDraftSchema = z.object({ title: z.string().trim().min(1).max(120), ideaSummary: z.string().trim().min(1).max(800),
   targetCustomer: z.string().trim().min(1).max(300), maxRounds: z.number().int().min(1).max(3),
   maxDurationSeconds: z.number().int().min(60).max(900), maxCostUsd: z.number().min(0).max(25),
+  participantSelections: ideaParticipantSelectionSchema.optional(),
 }).strict();
 export const ideaCreateReceiptSchema = z.object({ sessionId: id, sessionDigest: digest, createdAt: z.string().datetime(),
   replayed: z.boolean(), startsWork: z.literal(false), execution: z.literal("not_requested"),

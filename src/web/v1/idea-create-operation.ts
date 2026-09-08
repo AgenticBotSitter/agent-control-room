@@ -9,7 +9,7 @@ import { ideaLabelSchemaV1, ideaTextSchemaV1, ideaParticipantSchemaV1 } from "..
 import { WebSessionAuthority } from "./session-authority";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 import { IdeaLabBotRunStoreV1 } from "../../idea-lab/v1/coordinator-store";
-import { ideaStopInputSchema } from "./idea-wire";
+import { ideaStopInputSchema, ideaCreationOptionsSchema, ideaParticipantSelectionSchema } from "./idea-wire";
 import type { WebIdeaDecisionOperation } from "./idea-decision-operation";
 import type { WebIdeaStartOperation } from "./idea-start-operation";
 import type { WebIdeaSynthesisOperation } from "./idea-synthesis-operation";
@@ -17,10 +17,12 @@ import type { WebIdeaSynthesisOperation } from "./idea-synthesis-operation";
 export const ideaCreationInputSchema = z.object({ title: ideaLabelSchemaV1, ideaSummary: ideaTextSchemaV1,
   targetCustomer: z.string().min(1).max(300), maxRounds: z.number().int().min(1).max(3),
   maxDurationSeconds: z.number().int().min(60).max(900), maxCostUsd: z.number().min(0).max(25),
+  participantSelections: ideaParticipantSelectionSchema.optional(),
 }).strict();
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: async work => work(tx),
   transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); await check(); return result; } });
 export type IdeaCreateOperation = { tenantId: string; workspaceId: string;
+  options?: IdeaSessionCreationService["options"];
   create: IdeaSessionCreationService["create"]; stop?: IdeaSessionCreationService["stop"];
   decide?: WebIdeaDecisionOperation["decide"]; start?: WebIdeaStartOperation["start"];
   synthesize?: WebIdeaSynthesisOperation["synthesize"] };
@@ -36,7 +38,22 @@ export class IdeaSessionCreationService {
     if (!(key instanceof Uint8Array) || key.length !== 32) throw new Error("idea_key_invalid");
     this.key = Uint8Array.from(key);
     this.participants = z.array(ideaParticipantSchemaV1).min(3).max(6).parse(participants);
+    if (new Set(this.participants.map(p => p.participantId)).size !== this.participants.length
+      || new Set(this.participants.map(p => p.identityDigest)).size !== this.participants.length
+      || new Set(this.participants.map(p => p.perspective)).size !== this.participants.length
+      || !this.participants.some(p => p.perspective === "skeptic")) throw new Error("idea_roster_invalid");
     this.authority = new WebSessionAuthority(db, scope, clock, "idea_lab_session");
+  }
+  async options(identity: VerifiedWebIdentity) {
+    return this.authority.authenticated(identity, async (tx, actor) => {
+      actor.require("idea_lab.session_create", undefined, true);
+      actor.require("idea_lab.session_read", undefined, true);
+      if (!(await tx.query("SELECT id FROM workspaces WHERE tenant_id=$1 AND id=$2 FOR SHARE",
+        [this.scope.tenantId, this.scope.workspaceId])).rows.length) throw new WebAccessError("not_found");
+      return ideaCreationOptionsSchema.parse({ startsWork: false, minParticipants: 3, maxParticipants: 6, requiredPerspectives: ["skeptic"],
+        participants: this.participants.map(p => ({ participantId: p.participantId, participantDigest: sha256Digest(p),
+          displayName: p.displayName, perspective: p.perspective, harness: p.harness })) });
+    });
   }
   async create(identity: VerifiedWebIdentity, value: unknown, key: string) {
     const input = ideaCreationInputSchema.safeParse(value);
@@ -54,7 +71,14 @@ export class IdeaSessionCreationService {
       let session;
       try {
         // A retry recovers its original saved roster, not today's deployment configuration.
-        session = buildIdeaLabSessionV1({ ...this.scope, sessionId, ...input.data, participants: existing?.participants ?? this.participants,
+        const { participantSelections, ...brief } = input.data;
+        const available = existing?.participants ?? this.participants;
+        const participants = participantSelections ? participantSelections.map(selection => {
+          const participant = available.find(p => p.participantId === selection.participantId);
+          if (!participant || sha256Digest(participant) !== selection.participantDigest) throw new Error("idea_roster_changed");
+          return participant;
+        }) : available;
+        session = buildIdeaLabSessionV1({ ...this.scope, sessionId, ...brief, participants,
           createdByIdentityDigest, createdAt: existing?.createdAt ?? actor.now });
         if (!existing) buildIdeaLabOwnerPromptV1(session);
       } catch { throw new WebAccessError("invalid_request"); }

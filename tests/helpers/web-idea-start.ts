@@ -15,11 +15,13 @@ const at = (offset = 0) => new Date(now + offset).toISOString();
 
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
 
-async function fixture() {
+async function fixture(selectedParticipantIds?: string[]) {
   const f = await taskFixture();
-  const saved = await new IdeaSessionCreationService(f.client, scope, key, buildIdeaLabFixtureV1().session.participants, () => now)
-    .create(f.identity, { title: "Test idea", ideaSummary: "Help local shops", targetCustomer: "Shop owners", maxRounds: 1,
-      maxDurationSeconds: 300, maxCostUsd: 2 }, "idea-start-test01");
+  const creation = new IdeaSessionCreationService(f.client, scope, key, buildIdeaLabFixtureV1().session.participants, () => now);
+  const options = selectedParticipantIds ? await creation.options(f.identity) : undefined;
+  const saved = await creation.create(f.identity, { title: "Test idea", ideaSummary: "Help local shops", targetCustomer: "Shop owners", maxRounds: 1,
+    maxDurationSeconds: 300, maxCostUsd: 2, ...(options ? { participantSelections: options.participants
+      .filter(p => selectedParticipantIds!.includes(p.participantId)).map(({ participantId, participantDigest }) => ({ participantId, participantDigest })) } : {}) }, "idea-start-test01");
   const session = (await new IdeaLabProjectRegistryStoreV1(f.client, key).getSession(scope.tenantId, saved.sessionId))!;
   // Synthetic evidence and injected driver only. No native qualification/contact.
   const evidence = session.participants.map((p, i) => {

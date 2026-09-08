@@ -28,6 +28,8 @@ test("bootstrap verifies all three exact roles and mounts non-executing Idea cre
   const handle = (path: string, method = "GET", body?: unknown) =>
     app.handle(request(path, method, body, "idea-startup-0001", f.jwt), () => new Response("shell"));
   assert.equal((await (await handle("/api/v1/ideas")).json()).canCreate, true);
+  const options = await handle("/api/v1/ideas/options");
+  assert.equal(options.status, 200); assert.equal((await options.json()).participants.length, 4);
   const saved = await handle("/api/v1/ideas", "POST", draft); assert.equal(saved.status, 201, await saved.clone().text());
   const receipt = await saved.json(); assert.equal(receipt.startsWork, false);
   assert.equal((await handle(`/api/v1/ideas/${encodeURIComponent(receipt.sessionId)}/synthesis`, "POST", {

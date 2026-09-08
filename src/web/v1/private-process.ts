@@ -26,6 +26,7 @@ import { taskPlanningReceiptSchema } from "./task-planning-wire";
 import { taskAttentionPageSchema } from "./task-attention-wire";
 import { taskDeliveryStatusSchema } from "./task-delivery-wire";
 import { newsCollectionStatusSchema } from "./news-collection-status-wire";
+import { ideaCreationOptionsSchema } from "./idea-wire";
 
 export interface PrivateWebProcessOptions {
   origin: string; issuer: string; audience: string; tenantId: string; workspaceId: string;
@@ -88,10 +89,12 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     || options.ideaCreation.workspaceId !== options.workspaceId || typeof options.ideaCreation.create !== "function" || !options.ideaProjects))
     throw new Error("invalid_private_app_config");
   if (options.ideaCreation?.stop !== undefined && typeof options.ideaCreation.stop !== "function") throw new Error("idea_creation_config_invalid");
+  if (options.ideaCreation?.options !== undefined && typeof options.ideaCreation.options !== "function") throw new Error("idea_creation_config_invalid");
   if (options.ideaCreation?.decide !== undefined && typeof options.ideaCreation.decide !== "function") throw new Error("idea_creation_config_invalid");
   if (options.ideaCreation?.synthesize !== undefined && typeof options.ideaCreation.synthesize !== "function") throw new Error("idea_creation_config_invalid");
   if (options.ideaCreation?.start !== undefined && typeof options.ideaCreation.start !== "function") throw new Error("idea_creation_config_invalid");
   const ideaCreation = options.ideaCreation ? Object.freeze({ create: options.ideaCreation.create.bind(options.ideaCreation),
+    ...(options.ideaCreation.options ? { options: options.ideaCreation.options.bind(options.ideaCreation) } : {}),
     ...(options.ideaCreation.stop ? { stop: options.ideaCreation.stop.bind(options.ideaCreation) } : {}),
     ...(options.ideaCreation.decide ? { decide: options.ideaCreation.decide.bind(options.ideaCreation) } : {}),
     ...(options.ideaCreation.synthesize ? { synthesize: options.ideaCreation.synthesize.bind(options.ideaCreation) } : {}),
@@ -167,6 +170,11 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
         const trust = { ...await keys.get(), audience: site.audience };
         const identity = createAccessVerifier(trust)(request, clock());
         if (url.pathname.startsWith("/api/")) {
+          if (url.pathname === "/api/v1/ideas/options") {
+            if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+            if (!ideaCreation?.options) throw new Error("idea_creation_not_configured");
+            return Response.json(ideaCreationOptionsSchema.parse(await ideaCreation.options(identity)), { headers: privateResponseHeaders });
+          }
           const ideaSynthesis = /^\/api\/v1\/ideas\/([^/]+)\/synthesis$/.exec(url.pathname);
           if (ideaSynthesis) {
             if (request.method !== "POST" || url.search || !request.body

@@ -1,6 +1,6 @@
 import { BrowserRequestError, type BrowserFailureCode } from "./browser-client";
 import { readBrowserJson } from "./browser-json";
-import { ideaCreateDraftSchema, ideaCreateReceiptSchema } from "./idea-wire";
+import { ideaCreateDraftSchema, ideaCreateReceiptSchema, ideaCreationOptionsSchema } from "./idea-wire";
 
 /** Explicit exact-request retry only. Never autosubmit a second session after uncertainty. */
 export function createIdeaCreationClient(transport: typeof fetch = fetch, makeKey = () => crypto.randomUUID()) {
@@ -25,6 +25,16 @@ export function createIdeaCreationClient(transport: typeof fetch = fetch, makeKe
     } finally { busy = false; }
   }
   return { hasPending: () => !!pending, retry: commit,
+    async options(signal?: AbortSignal) {
+      try {
+        const response = await transport("/api/v1/ideas/options", { credentials: "same-origin", cache: "no-store", redirect: "error",
+          signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10000)]) : AbortSignal.timeout(10000),
+          headers: { "x-requested-with": "XMLHttpRequest", accept: "application/json" } });
+        if (!response.ok) throw new BrowserRequestError(response.status === 401 ? "authentication_required"
+          : response.status === 403 ? "access_denied" : "unavailable");
+        return ideaCreationOptionsSchema.parse(await readBrowserJson(response));
+      } catch (reason) { throw reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable"); }
+    },
     async create(value: unknown) {
       const parsed = ideaCreateDraftSchema.safeParse(value); if (!parsed.success) throw new BrowserRequestError("invalid_request");
       const body = JSON.stringify(parsed.data);

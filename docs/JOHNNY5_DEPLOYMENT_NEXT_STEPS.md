@@ -16,6 +16,9 @@ Use the exact private-branch SHA supplied with this handoff as the deployment pi
   review template and maintenance update/rollback procedure, not an installed unit.
 - `docs/IDEA_PROJECT_LIFECYCLE_DELIVERY.md`: changed web-role grants and lifecycle
   integration. Older prepared grants fail the new exact startup preflight.
+- `docs/NEWS_COLLECTION_STATUS_DELIVERY.md` and `docs/IDEA_ROSTER_SELECTION_DELIVERY.md`:
+  source-status and participant-selection integration for separately configured
+  news/Idea operations, not automatic activation by the website-only settings.
 
 The minimal settings module does not configure Idea/News integrity keys, providers,
 task coordinators or native transports. Source support is not configured operation.
