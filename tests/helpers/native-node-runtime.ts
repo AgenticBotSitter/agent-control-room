@@ -47,17 +47,20 @@ export async function nativeNodeRuntimeFixture(context?: ManagedNativePreparedCo
     } },
   };
   const runtimes: ReturnType<typeof createNativeNodeRuntime>[] = [];
-  const create = () => { const runtime = createNativeNodeRuntime(config, dependencies); runtimes.push(runtime); return runtime; };
+  const create = (taskConfig = config, taskDependencies = dependencies) => {
+    const runtime = createNativeNodeRuntime(taskConfig, taskDependencies); runtimes.push(runtime); return runtime;
+  };
   const runtime = create();
   type Runtime = typeof runtime;
   type Input = Awaited<ReturnType<typeof x.manager.attachInput>>;
-  async function connect(mode: "initial" | "recover" = "initial", node = runtime) {
+  async function connect(mode: "initial" | "recover" = "initial", node = runtime, task: typeof x.request | "queue" = x.request) {
+    if (task === "queue" && mode !== "initial") throw new Error("synthetic_queue_binding_requires_initial");
     const incoming: string[] = [], outgoing: string[] = [], nodeSent: string[] = [], serverSent: string[] = [];
     const state = { nodeCloses: 0, serverCloses: 0, available: true };
     const server = await x.manager.attachInput(config.enrollment.nodeId, {
       async send(raw) { outgoing.push(raw); serverSent.push(raw); },
       async close() { state.serverCloses++; state.available = false; }, isAvailable: () => state.available,
-    }, { mode, task: x.request });
+    }, task === "queue" ? { mode: "initial", assignment: "queue" } : { mode, task });
     await x.admin(() => node.open({ async send(raw) { incoming.push(raw); nodeSent.push(raw); },
       async close() { state.nodeCloses++; } }, "transport:managed-server", currentSignal()));
     const connection = { incoming, outgoing, nodeSent, serverSent, state, server, node };

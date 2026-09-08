@@ -109,7 +109,8 @@ evidence, and `createNativeTaskSettlement` joins separately accepted cleanup pro
 execution-first/effect-last durable settlement. The integrated retained-result test
 uses the real runtime and stores with synthetic producer qualification. Historical
 committed settlement recognition now reuses those protected journals, but this does
-not yet provide two independent task turnovers or physical restart acceptance.
+not itself provide automatic task turnover or physical restart acceptance. The
+manually composed two-independent-task proof below now joins these components.
 See `NATIVE_CLEANUP_EVIDENCE_DESIGN.md`; do not enable continuous service packaging
 from this partial acceptance.
 
@@ -121,6 +122,30 @@ provide a continuous supervisor command and reviewed platform installation steps
 
 Independent component passes do not close D. Native host/credential/provider
 qualification and sustained operation remain separately authorized live gates.
+
+### Joined two-independent-task evidence
+
+`tests/native-consecutive-tasks.test.ts` now runs independently approved A and B
+through one canonical database, managed server, bridge journal and local native/
+admission/execution/effect stores. Canonical queue delivery uses unbound initial
+server generations and existing signed dispatch. The existing quality coordinator
+releases each completed task's canonical lease while review remains pending; the
+separate cleanup settlement closes its runtime and frees its local effect hold.
+
+The canonical route remains two (one unrelated seeded lease plus one task), and
+the native ceiling remains one. B assignment is refused before A's canonical release.
+B's pre-effect policy check is refused before A's local settlement, with no B native
+run or effect record consumed. After release, B starts once and its duplicate start
+adds no native call. A's obsolete generation and closed runtime cannot act on B.
+Distinct A/B result bytes, hashes and attempts remain intact in the artifact store;
+both quality reviews remain pending, and the unrelated seeded lease is preserved.
+
+This is injected local integration evidence, not automatic continuous operation. The
+test explicitly supplies B's exact configuration and policy, invokes delivery/pumps,
+reconciliation and synthetic qualified cleanup. Automatic node-side task discovery,
+lifecycle ownership across tasks, real cleanup qualification, physical restart and
+PostgreSQL concurrency/sustained-operation acceptance remain open. Do not install a
+continuous service based on this test alone.
 
 ## Explicitly unresolved before A implementation
 

@@ -1206,3 +1206,48 @@ A settlement, B native admission must remain blocked without inventing an effect
 destroying its safe pre-effect retry path. After both releases, B must run once with
 A's result/review/history intact. The helper currently captures one task/config and
 needs bounded per-task composition, not relaxed guards or new journals.
+
+## Two independent tasks on shared stores
+
+Added a joined A/B test using one canonical DB, managed manager, bridge journal and
+native/admission/execution/effect stores. The fixture can create a per-task runtime
+with supplied task config/dependencies while retaining one outer resource owner, and
+can connect an explicitly unbound initial server queue generation. Fixed-task helpers
+remain unchanged by default; queue mode cannot silently turn recovery into initial.
+
+The existing quality coordinator releases canonical capacity with waiting_review;
+cleanup settlement separately closes each runtime and frees its local effect. B
+assignment fails while seeded lease+A fill route limit two. B pre-effect policy
+check fails while A consumes native ceiling one, without reserving a B run or claim.
+After A settlement, B starts exactly once with the same stores. Both pending reviews,
+distinct result bytes/hashes/attempts, A's history, and the unrelated seeded lease are
+retained. Late A input and closed-A start are refused without affecting B. No raised
+capacity, fresh journals, deleted leases or owner quality approval was used.
+
+Initial run 40050 failed because B's synthetic lease used nonexistent assignedAt;
+type check 72897 confirmed the field error. Corrected it to the actual acquiredAt
+receipt field. The two-task test/types/lint then passed (88939). Stronger byte/generation
+isolation assertions plus existing runtime/connector suites passed all 22 cases,
+types, focused lint and diff check (3537 exit zero). Independent source review and
+incremental review reported no concrete finding, with the scope limits preserved.
+
+This remains a manually driven injected integration, not a deployed continuous
+worker: the test supplies B's config/policy, drives queue delivery/transport pumping,
+reconciles quality and supplies synthetic accepted cleanup evidence. Automatic
+node-side discovery and lifecycle sequencing remain real build work. No test handle
+remains active; original fixed deadline remains 12:40:58 UTC.
+
+### Next implementation trace
+
+The current node runtime still requires configuration-time queueId. Its receive()
+checks the exact queue before delegating to the bridge; reporter is created eagerly
+with that queue. A future explicit unassigned factory can reuse this implementation,
+but must bind once only after the signed dispatch is accepted into the existing
+journal, serialize/recheck queue identity inside the wire FIFO, and lazily create
+the per-task reporter from captured dependencies. Merely taking an unsigned hint or
+changing the guard to accept any queue is not equivalent. Keep the existing fixed
+configuration validator unchanged: private-native-configuration.ts calls it, so
+expanding that validator would accidentally enable an unaccepted launcher mode.
+The current queueId facade is not consumed elsewhere in src except configuration;
+any new preassignment metadata semantics must remain explicit and tested. This is
+an implementation trace, not accepted code or permission to enable a service.
