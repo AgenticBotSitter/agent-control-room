@@ -27,6 +27,14 @@ owner approval, Authenticator application was enabled in Access settings and ver
 On after a full reload. Other MFA methods and account-wide domain blocking remain
 Off. Owner authenticator enrollment and owner-only application MFA enforcement remain
 unfinished. No route, DNS or application was saved; the Access draft remains unsaved.
+The enrollment link initially failed because the App Launcher had no policy. With
+explicit owner approval, the existing exact-owner-email Allow policy was reused
+unchanged for the launcher, Cloudflare-only login selected and a six-hour launcher
+session saved. Reload confirmed all three settings. The enrollment entry now reaches
+"Secure your account with MFA" and the authenticator setup button after sign-in in
+Chrome. No setup button was pressed, QR/secret read, or authenticator enrolled.
+The owner must complete enrollment. This launcher change does not deploy Control Room
+or grant access to it; individual application permissions remain separate.
 Do not deploy a second private address or populate `secondaryAccess`. The optional
 dual-address code remains unused. Hostnames stay out of public export configuration.
 Workplace use remains subject to employer policy, not assumed from domain reachability.

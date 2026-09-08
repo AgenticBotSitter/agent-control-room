@@ -197,6 +197,26 @@ enforcement on Control Room. The dashboard directs the owner to the Account page
 the App Launcher for enrollment; the owner must handle the authenticator secret,
 confirmation and recovery material themselves.
 
+### Owner-approved App Launcher enrollment access
+
+The owner reported that the direct enrollment link reached NoAuth. Read-only
+inspection found no App Launcher policy, and the dashboard explicitly requires one.
+After approval, the existing exact-owner-email Allow policy was attached unchanged,
+Cloudflare selected as the only login provider, and a six-hour launcher session saved.
+Reload confirmed the exact policy identity, Cloudflare-only selection and duration.
+Launcher MFA was left respecting the existing non-enforcing global setting so first
+enrollment remains reachable; Control Room requires a separate enforced MFA policy.
+
+A proposed duplicate policy form did not yield save confirmation; the persisted
+policy inventory showed no new policy, and that draft was discarded in favor of
+the verified existing owner rule. No broad email-domain or account-member Allow rule
+was used. The entry point and routine sign-in were then tested in Chrome, reaching
+"Secure your account with MFA" and "Set up authenticator application MFA". Execution
+stopped before that setup button: no QR code, TOTP secret, verification code or
+recovery material was accessed, and owner enrollment remains pending. This verifies
+the enrollment entry flow in Chrome, not another browser session or Control Room
+deployment. No DNS, tunnel route or Control Room application was saved.
+
 ## Public copy checkpoint
 
 The retained public release receipt confirms source publication, but the static page
