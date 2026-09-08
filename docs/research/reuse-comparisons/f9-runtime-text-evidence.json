@@ -1,0 +1,584 @@
+{
+  "exitCode": 0,
+  "wallTimeSeconds": 0.000004291,
+  "actualStdout": {
+    "baseline": "4d204e6",
+    "library": "10.2.0",
+    "implementationSha256": "10a3bc2b7855dcfe85e8f3943d8bd2c512875d2cded34bc7df9ab51544891b36",
+    "manifestHash": "818b3bc8f80674785fdf9c80fe13ba323db19c70a2d0591686cfa6fd73d62c84",
+    "lockHash": "3d98f907941fa407b82b4af1e9475acb2f93f92a427cea666edeb652ad92a8c8",
+    "expectedCount": 39,
+    "processed": 39,
+    "mismatches": [],
+    "packagesWithText": 35,
+    "textFileCount": 36,
+    "results": [
+      {
+        "name": "@nodable/entities",
+        "version": "3.0.0",
+        "manifestSha256": "548526ce0e1cad9ffe904fba19067013c9fea336eafd3cd52a337ec44406c9ed",
+        "gathered": [],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": true
+      },
+      {
+        "name": "anynum",
+        "version": "1.0.1",
+        "manifestSha256": "41c5d60f0aa8b5f4133aeff56573a8c4130d4d1c19dc240398ff806b40a4470e",
+        "gathered": [
+          {
+            "file": "LICENSE",
+            "bytes": 1077,
+            "sha256": "8e75fc0e776c62ccadb8178ece8d3daa9ba7601fb0a49b2dfb0ea9a7a5c0aa07"
+          }
+        ],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": true
+      },
+      {
+        "name": "cron-parser",
+        "version": "5.10.0",
+        "manifestSha256": "b302295ef94320de3076de0c20ed58a3ba12f8a5bd1066c5e8f8b233a6a969ee",
+        "gathered": [
+          {
+            "file": "LICENSE",
+            "bytes": 1084,
+            "sha256": "7eba1c8774e8bcb77356bafc70ac9de8383e7592bb79ab979130ab757d40f53d"
+          }
+        ],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": true
+      },
+      {
+        "name": "fast-xml-builder",
+        "version": "1.3.1",
+        "manifestSha256": "304416f412412cd967ee1139f0eadfebaa263e92bfbfa264bedbb37055d5c27e",
+        "gathered": [
+          {
+            "file": "LICENSE",
+            "bytes": 1077,
+            "sha256": "8e75fc0e776c62ccadb8178ece8d3daa9ba7601fb0a49b2dfb0ea9a7a5c0aa07"
+          }
+        ],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": false
+      },
+      {
+        "name": "fast-xml-parser",
+        "version": "5.11.0",
+        "manifestSha256": "c61593381ea333fce34ff4e5bf2e3062f83cf31c7474920fe73a5771aac69b75",
+        "gathered": [
+          {
+            "file": "LICENSE",
+            "bytes": 1073,
+            "sha256": "7883225d5e84a6bbb9b170c3d891b4bf6d6259cee869c86bd86381a927071745"
+          }
+        ],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": true
+      },
+      {
+        "name": "is-unsafe",
+        "version": "2.0.2",
+        "manifestSha256": "0fb03fbe6e0df6090d778679929c7c34c9fca298bc72190468217171e8154943",
+        "gathered": [
+          {
+            "file": "LICENSE",
+            "bytes": 1077,
+            "sha256": "8e75fc0e776c62ccadb8178ece8d3daa9ba7601fb0a49b2dfb0ea9a7a5c0aa07"
+          }
+        ],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": true
+      },
+      {
+        "name": "luxon",
+        "version": "3.7.2",
+        "manifestSha256": "bf8c55f4072d01467c1c0c49807722f79577680ac1ff7fa7c030a83716d3db4f",
+        "gathered": [
+          {
+            "file": "LICENSE.md",
+            "bytes": 1076,
+            "sha256": "6cb2f2bf697ee9c6fa9eb8f227c63ee6e7a3cba42d4717f14c745ef9b6cbc006"
+          }
+        ],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": false
+      },
+      {
+        "name": "non-error",
+        "version": "0.1.0",
+        "manifestSha256": "37019b134aef000584708a17cdd87b192a123a5a9e0d32c1933747937da83b85",
+        "gathered": [
+          {
+            "file": "license",
+            "bytes": 1117,
+            "sha256": "5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3"
+          }
+        ],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": false
+      },
+      {
+        "name": "path-expression-matcher",
+        "version": "1.6.2",
+        "manifestSha256": "625ca3a27a289160508a79773ddfd7bf678a6401bd96321cac0bc43ebebe01f8",
+        "gathered": [
+          {
+            "file": "LICENSE",
+            "bytes": 1056,
+            "sha256": "75486ea0af9309140ca6e2c401d7e67bea8f4892344e5707f6394dc5e83dfc44"
+          }
+        ],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": false
+      },
+      {
+        "name": "pg",
+        "version": "8.23.0",
+        "manifestSha256": "e42dd36cba6e9dd8dbb6f773a2f7be8a8c3c273e18b155e42e75961a4cb8bc28",
+        "gathered": [
+          {
+            "file": "LICENSE",
+            "bytes": 1077,
+            "sha256": "192b8f5c96900f04a1271dec39688655d7416c1c6ea84a508e18b50d2b6751f3"
+          }
+        ],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": true
+      },
+      {
+        "name": "pg-boss",
+        "version": "12.30.0",
+        "manifestSha256": "72f89c78727d3bb15c535f8eef148aee6dbf78eaeaedcc1f9825840e7c31a2f0",
+        "gathered": [
+          {
+            "file": "LICENSE",
+            "bytes": 1076,
+            "sha256": "51ad77d655782ec9ea2a624529a37f25cb82bd41ae38d85d15cdb0d4dd9c5689"
+          }
+        ],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": false
+      },
+      {
+        "name": "pg-cloudflare",
+        "version": "1.4.0",
+        "manifestSha256": "26a5017fe5fa14bb2eaa90fb87a2c54becc2666516ef79ee591694bcb9533531",
+        "gathered": [
+          {
+            "file": "LICENSE",
+            "bytes": 1077,
+            "sha256": "192b8f5c96900f04a1271dec39688655d7416c1c6ea84a508e18b50d2b6751f3"
+          }
+        ],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": true
+      },
+      {
+        "name": "pg-connection-string",
+        "version": "2.14.0",
+        "manifestSha256": "5e07e70c64af1e8695a91f9371b713106eeed3b52a1d6b7f7238a33f01dd3f20",
+        "gathered": [
+          {
+            "file": "LICENSE",
+            "bytes": 1082,
+            "sha256": "2244b5486c4427001b6756a87b9a297d427c111dcc3ba64a097492a8979c23d0"
+          }
+        ],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": false
+      },
+      {
+        "name": "pg-pool",
+        "version": "3.14.0",
+        "manifestSha256": "0a9924def9e06f791b09a44eaefb227f323a39199887f6ce17b44cb5a9193134",
+        "gathered": [
+          {
+            "file": "LICENSE",
+            "bytes": 1073,
+            "sha256": "4f15ee7fc2a72082859d7e0d12dfa4bcdd70b1c744ad3850d07780730ac08557"
+          }
+        ],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": true
+      },
+      {
+        "name": "pg-protocol",
+        "version": "1.16.0",
+        "manifestSha256": "4ee6a91e60a002e828e64dfab04c232bba566db233a905a1a15e475a0336c73d",
+        "gathered": [
+          {
+            "file": "LICENSE",
+            "bytes": 1077,
+            "sha256": "192b8f5c96900f04a1271dec39688655d7416c1c6ea84a508e18b50d2b6751f3"
+          }
+        ],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": false
+      },
+      {
+        "name": "pg-types",
+        "version": "2.2.0",
+        "manifestSha256": "3ec0293cb38cc8d9475e3eb32ac5f19d195bf9fccc8b19a0714e6ecd6e7c2cf0",
+        "gathered": [],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": true
+      },
+      {
+        "name": "pgpass",
+        "version": "1.0.5",
+        "manifestSha256": "d75240eb4fe759c10db9f903838275348676a8bdc1f329e20a833713cd7c99bd",
+        "gathered": [],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": true
+      },
+      {
+        "name": "postgres-array",
+        "version": "2.0.0",
+        "manifestSha256": "dcd6a505fcbc032b409ee2838ab2c776dea3a9cfe02b736364b6cb82a946665f",
+        "gathered": [
+          {
+            "file": "license",
+            "bytes": 1111,
+            "sha256": "f057f36739d53d228a746de4440c1e0c644ecde06d6beab45337d39c9d12a393"
+          }
+        ],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": true
+      },
+      {
+        "name": "postgres-bytea",
+        "version": "1.0.1",
+        "manifestSha256": "9125568c5fb51a65b8f11adb0080c2775b99ee82822d73bff8b56b2a9d47d7aa",
+        "gathered": [
+          {
+            "file": "license",
+            "bytes": 1111,
+            "sha256": "f057f36739d53d228a746de4440c1e0c644ecde06d6beab45337d39c9d12a393"
+          }
+        ],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": true
+      },
+      {
+        "name": "postgres-date",
+        "version": "1.0.7",
+        "manifestSha256": "03f9edefa96697072075e02df045cc61ed4ca2f8dfffb1ff87f4070bc3404151",
+        "gathered": [
+          {
+            "file": "license",
+            "bytes": 1111,
+            "sha256": "f057f36739d53d228a746de4440c1e0c644ecde06d6beab45337d39c9d12a393"
+          }
+        ],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": true
+      },
+      {
+        "name": "postgres-interval",
+        "version": "1.2.0",
+        "manifestSha256": "cc3056db105e66c9128cb8a387cda782d5f1ae9281be90de0b8d26a90af89c57",
+        "gathered": [
+          {
+            "file": "license",
+            "bytes": 1111,
+            "sha256": "f057f36739d53d228a746de4440c1e0c644ecde06d6beab45337d39c9d12a393"
+          }
+        ],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": true
+      },
+      {
+        "name": "react",
+        "version": "19.2.6",
+        "manifestSha256": "e631b6ac066fa758d9b36f226d96e8fc05425d1e8993ffcc99c6de2d6aa7268c",
+        "gathered": [
+          {
+            "file": "LICENSE",
+            "bytes": 1088,
+            "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
+          }
+        ],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": false
+      },
+      {
+        "name": "react-dom",
+        "version": "19.2.6",
+        "manifestSha256": "2c195b9bfa1b4f7dee5dd6f955c0fbb716e83c3e9c2e7a80b5e19c5a18507718",
+        "gathered": [
+          {
+            "file": "LICENSE",
+            "bytes": 1088,
+            "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
+          }
+        ],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": false
+      },
+      {
+        "name": "rss-parser",
+        "version": "3.13.0",
+        "manifestSha256": "1bcad58a5212f0aab7767d9f662745d1c59c721578b2ce85e611d26722a10d2d",
+        "gathered": [
+          {
+            "file": "LICENSE",
+            "bytes": 1070,
+            "sha256": "66fa72d1e76ca487fde9f153ac1183b906733f314d556645cb614e90961da634"
+          }
+        ],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": false
+      },
+      {
+        "name": "scheduler",
+        "version": "0.27.0",
+        "manifestSha256": "393bb96b7e481bf50189a1a02c7e0e7f4d01acba5abc6fbe7d214638624462fc",
+        "gathered": [
+          {
+            "file": "LICENSE",
+            "bytes": 1088,
+            "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
+          }
+        ],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": false
+      },
+      {
+        "name": "serialize-error",
+        "version": "13.0.1",
+        "manifestSha256": "66f4c32c81cbbc79bf9ecabdae0e9209b0b93c958aea96db6eb287553cc88541",
+        "gathered": [
+          {
+            "file": "license",
+            "bytes": 1117,
+            "sha256": "5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3"
+          }
+        ],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": false
+      },
+      {
+        "name": "strnum",
+        "version": "2.4.2",
+        "manifestSha256": "38bf3bf508c5f454549308baf2b4c56ed01c14dfa29bb3efd51308cecb8efd70",
+        "gathered": [
+          {
+            "file": "LICENSE",
+            "bytes": 1077,
+            "sha256": "2aa16be0f4fad003a352a955a43314e9d1d8deef7034060a82ac9c49f32b81e2"
+          }
+        ],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": false
+      },
+      {
+        "name": "tagged-tag",
+        "version": "1.0.0",
+        "manifestSha256": "85d0af116e49402c9cfca1bb434c1de2d86ce724d0465d4c7daafca07810c12e",
+        "gathered": [
+          {
+            "file": "license",
+            "bytes": 1117,
+            "sha256": "5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3"
+          }
+        ],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": false
+      },
+      {
+        "name": "xml-naming",
+        "version": "0.3.0",
+        "manifestSha256": "e6ff1758837bca3ca6877308c0d51f9e3e47efd07497fa62c8291fd88ab8216f",
+        "gathered": [
+          {
+            "file": "LICENSE",
+            "bytes": 1077,
+            "sha256": "8e75fc0e776c62ccadb8178ece8d3daa9ba7601fb0a49b2dfb0ea9a7a5c0aa07"
+          }
+        ],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": true
+      },
+      {
+        "name": "xml2js",
+        "version": "0.5.0",
+        "manifestSha256": "6694abf5891ad4c2991561ce456eecc580099f84f148749bd544bc4216729b67",
+        "gathered": [
+          {
+            "file": "LICENSE",
+            "bytes": 1079,
+            "sha256": "c51452ef1dfd5606c9fe266930fa6bf7e8a534d52973b6475df5bf212cad5b0a"
+          }
+        ],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": false
+      },
+      {
+        "name": "xmlbuilder",
+        "version": "11.0.1",
+        "manifestSha256": "7e2f254e4004b5ea5f6ee351541afe893f8dfc66f8b527774c5a57860a8778d8",
+        "gathered": [
+          {
+            "file": "LICENSE",
+            "bytes": 1101,
+            "sha256": "e368bc4263b466cf98c225af15e300549e00da8859416a4536109e9654d434a8"
+          }
+        ],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": false
+      },
+      {
+        "name": "xtend",
+        "version": "4.0.2",
+        "manifestSha256": "b02ffef8cda96c5c3ee00a00390e63f608362c2ddfb3ed754e181d013a45d48a",
+        "gathered": [
+          {
+            "file": "LICENSE",
+            "bytes": 1078,
+            "sha256": "82e67379203d5794e7c44549847d8d64ae6904591381682360470898bd306821"
+          }
+        ],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": false
+      },
+      {
+        "name": "zod",
+        "version": "4.1.12",
+        "manifestSha256": "8fafce7fd929141a91d78d66fa4b275415ac68cd9c81f9e3160868a5fab4122f",
+        "gathered": [
+          {
+            "file": "LICENSE",
+            "bytes": 1072,
+            "sha256": "3f1189b28e3866e0d979968d466b78f813f76827cfdca1fbb124cc0a5c8841f8"
+          }
+        ],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": false
+      },
+      {
+        "name": "entities",
+        "version": "2.2.0",
+        "manifestSha256": "e551da4eee00694ea973b9d0a0aaa696256007fc4083a80c8fb2b005c788fca1",
+        "gathered": [
+          {
+            "file": "LICENSE",
+            "bytes": 1260,
+            "sha256": "cb992345949ccd6e8394b2cd6c465f7b897c864f845937dbf64e8997f389e164"
+          }
+        ],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": false
+      },
+      {
+        "name": "pg-int8",
+        "version": "1.0.1",
+        "manifestSha256": "147155887a41bb6f69ff98b3dde827b7e6a8214c3a71938da4babf8e12adff2e",
+        "gathered": [
+          {
+            "file": "LICENSE",
+            "bytes": 750,
+            "sha256": "4e8e87ccdfc7e4b47fd89015f78468aa53b6bf43ab6e6e12d43e8f55294911de"
+          }
+        ],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": false
+      },
+      {
+        "name": "split2",
+        "version": "4.2.0",
+        "manifestSha256": "87b734c3087c8d9ed5d76d1bff00db30f960831ba8705dd18d73b180d08d2140",
+        "gathered": [
+          {
+            "file": "LICENSE",
+            "bytes": 764,
+            "sha256": "c372ef2fa1dfcb124ed807609751e75e3a009f108c5724916b489288fcb88a0c"
+          }
+        ],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": true
+      },
+      {
+        "name": "postgres",
+        "version": "3.4.7",
+        "manifestSha256": "7324573388770786378751cf5e4267587261e694319be41924dcd2420262eb85",
+        "gathered": [],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": false
+      },
+      {
+        "name": "sax",
+        "version": "1.6.1",
+        "manifestSha256": "d7e5ff764b48b9532d1b9a8b481b8d54336e6309e362571e993645b790bea657",
+        "gathered": [
+          {
+            "file": "LICENSE.md",
+            "bytes": 1552,
+            "sha256": "8a1af140fdfbf5afd3df27f7e662f989c5b963a300020dfafce42033cae9e004"
+          }
+        ],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": false
+      },
+      {
+        "name": "type-fest",
+        "version": "5.9.0",
+        "manifestSha256": "a2e0db80f15c56f59cd3cf9ba21ffe0757bf9174c3568f2d2fccfd9f3effd821",
+        "gathered": [
+          {
+            "file": "license-cc0",
+            "bytes": 7048,
+            "sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499"
+          },
+          {
+            "file": "license-mit",
+            "bytes": 1117,
+            "sha256": "5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3"
+          }
+        ],
+        "errors": [],
+        "uncollectedNamedFiles": [],
+        "readmeLicenseHeading": true
+      }
+    ]
+  }
+}

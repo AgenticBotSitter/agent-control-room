@@ -1,0 +1,85 @@
+{
+  "initialFailure": {
+    "exitCode": 1,
+    "error": "TypeError: Cannot read properties of undefined (reading 'length')",
+    "cause": "Harness assumed actualStdout instead of root receipt output envelope; failed before any staging. One focused envelope repair."
+  },
+  "exitCode": 0,
+  "wallTimeSeconds": 0.000003416,
+  "actualStdout": {
+    "scope": "Actual public gatherer consumes four explicitly staged retained texts; no package source edits or generic license discovery.",
+    "defaultPackagesWithText": 35,
+    "defaultMissingPreserved": [
+      "@nodable/entities",
+      "pg-types",
+      "pgpass",
+      "postgres"
+    ],
+    "exceptionPackages": 4,
+    "totalIdentityCoverage": 39,
+    "totalTextFiles": 40,
+    "implementationSha256": "10a3bc2b7855dcfe85e8f3943d8bd2c512875d2cded34bc7df9ab51544891b36",
+    "results": [
+      {
+        "package": "pg-types",
+        "version": "2.2.0",
+        "kind": "installed_README_section",
+        "file": "README.md",
+        "sourceSha256": "ecda9bca71d3f0cee4e600d1dd2bef336213f39ef2e8fca6a1a1c1c8723f643a",
+        "textSha256": "c565667e0560bba6502cda29fd9d461fd3acaf9dac24dda4d2758ce0f8b720cd",
+        "bytes": 1095,
+        "currentSourceMatches": true,
+        "retainedIn": "docs/research/embedded-runtime-notice-texts.json",
+        "stagedFilename": "LICENSE",
+        "collectedBytes": 1095,
+        "collectedSha256": "c565667e0560bba6502cda29fd9d461fd3acaf9dac24dda4d2758ce0f8b720cd",
+        "byteIdentical": true
+      },
+      {
+        "package": "pgpass",
+        "version": "1.0.5",
+        "kind": "installed_README_section",
+        "file": "README.md",
+        "sourceSha256": "62549909404b5a0dcb2b4b74c9a930baf8095dbcfa1543c4ffc79378acd22b57",
+        "textSha256": "f660a02f22de943c8c28a93791e8571c67f9088be93226fd526842b586cb4db4",
+        "bytes": 1073,
+        "currentSourceMatches": true,
+        "retainedIn": "docs/research/embedded-runtime-notice-texts.json",
+        "stagedFilename": "LICENSE",
+        "collectedBytes": 1073,
+        "collectedSha256": "f660a02f22de943c8c28a93791e8571c67f9088be93226fd526842b586cb4db4",
+        "byteIdentical": true
+      },
+      {
+        "package": "postgres",
+        "version": "3.4.7",
+        "kind": "retained_upstream_release_text",
+        "textSha256": "b5065838cbac452dfc855ba6e6e031481ad2c68406f70d21ead9321374653e6c",
+        "bytes": 1212,
+        "commit": "9b92b65da6a5121545581a6dd5de859c2a70177f",
+        "currentInstalledVersionMatches": true,
+        "wholePackageSourceCorrespondence": "not_proven_by_this_check",
+        "retainedIn": "docs/research/pinned-upstream-notice-texts.json",
+        "stagedFilename": "LICENSE",
+        "collectedBytes": 1212,
+        "collectedSha256": "b5065838cbac452dfc855ba6e6e031481ad2c68406f70d21ead9321374653e6c",
+        "byteIdentical": true
+      },
+      {
+        "package": "@nodable/entities",
+        "version": "3.0.0",
+        "kind": "retained_upstream_text_with_matching_code",
+        "codeFilesMatched": 8,
+        "textSha256": "750cb3fb6362804957ef52caaf9b5c824015be44d494637330d7cd8834d31d40",
+        "bytes": 1064,
+        "commit": "d2070d76a8ba07e6c7fa142caeb51ffd756e47eb",
+        "sourceManifestDiscrepancy": "upstream manifest2.2.0 versus installed3.0.0 remains explicit; prior source acquisition evidence, not reacquired",
+        "retainedIn": "docs/research/reuse-comparisons/f9-entities-MIT.txt",
+        "stagedFilename": "LICENSE",
+        "collectedBytes": 1064,
+        "collectedSha256": "750cb3fb6362804957ef52caaf9b5c824015be44d494637330d7cd8834d31d40",
+        "byteIdentical": true
+      }
+    ]
+  }
+}

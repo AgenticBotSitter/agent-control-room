@@ -1,0 +1,16 @@
+import fs from 'node:fs';import path from 'node:path';import assert from 'node:assert/strict';import {createHash} from 'node:crypto';import {createRequire} from 'node:module';
+const owned=process.argv[2];assert.match(owned,/^\/private\/tmp\/cr-f9-runtime-text\.[A-Za-z0-9]+$/);const sha=b=>createHash('sha256').update(b).digest('hex'),fileHash=p=>sha(fs.readFileSync(p));
+const identity=JSON.parse(fs.readFileSync('docs/research/reuse-comparisons/f9-prepared-comparison-evidence.json')).actualStdout;assert.equal(fileHash('package.json'),identity.manifestHash);assert.equal(fileHash('pnpm-lock.yaml'),identity.lockHash);
+const implementation=owned+'/node_modules/@cyclonedx/cyclonedx-library/dist.node/contrib/license/utils.node.js';assert.equal(fileHash(implementation),'10a3bc2b7855dcfe85e8f3943d8bd2c512875d2cded34bc7df9ab51544891b36');const req=createRequire(owned+'/package.json');const {Utils:{LicenseEvidenceGatherer}}=req('@cyclonedx/cyclonedx-library/Contrib/License');
+const records=Object.values(JSON.parse(fs.readFileSync('docs/research/reuse-comparisons/f9-prepared-licenses-evidence.json')).actualStdout).flat();assert.equal(records.length,39);
+const results=[],mismatches=[];for(const record of records){for(const old of record.paths){assert.ok(old.startsWith('/private/tmp/cr-f9-prepared.ze3EBj/node_modules/'));const dir=path.resolve('node_modules',old.split('/node_modules/').slice(1).join('/node_modules/'));
+ let meta;try{meta=JSON.parse(fs.readFileSync(dir+'/package.json'));assert.equal(meta.name,record.name);assert.ok(record.versions.includes(meta.version));}catch(e){mismatches.push({name:record.name,error:e.message});continue;}
+ const real=fs.realpathSync(dir);assert.ok(real.startsWith(fs.realpathSync('node_modules')+path.sep));const gathered=[];const errors=[];
+ const check=p=>{assert.equal(path.dirname(p),real);assert.ok(!fs.lstatSync(p).isSymbolicLink());assert.ok(fs.lstatSync(p).size<=2e6);return p;};
+ const reader=new LicenseEvidenceGatherer({fs:{readdirSync:p=>{assert.equal(p,real);return fs.readdirSync(p);},statSync:p=>fs.lstatSync(p),readFileSync:p=>fs.readFileSync(check(p))}});
+ for(const a of reader.getFileAttachments(real,e=>errors.push(e.message))){const bytes=Buffer.from(a.text.content,'base64');assert.deepEqual(bytes,fs.readFileSync(check(a.filePath)));gathered.push({file:a.file,bytes:bytes.length,sha256:sha(bytes)});}
+ const conventional=fs.readdirSync(real).filter(n=>/^(?:licen[cs]e|copying|notice|copyright)(?:[.-].*)?$/i.test(n));
+ const readme=fs.existsSync(real+'/README.md')?fs.readFileSync(real+'/README.md','utf8'):'';
+ results.push({name:meta.name,version:meta.version,manifestSha256:fileHash(real+'/package.json'),gathered,errors,uncollectedNamedFiles:conventional.filter(n=>!gathered.some(a=>a.file===n)),readmeLicenseHeading:/^#+\s*(?:license|copyright)/im.test(readme)});
+}}
+const out={baseline:'4d204e6',library:'10.2.0',implementationSha256:fileHash(implementation),manifestHash:identity.manifestHash,lockHash:identity.lockHash,expectedCount:39,processed:results.length,mismatches,packagesWithText:results.filter(r=>r.gathered.length).length,textFileCount:results.reduce((s,r)=>s+r.gathered.length,0),results};console.log(JSON.stringify(out,null,2));assert.equal(mismatches.length,0);assert.equal(results.length,39);

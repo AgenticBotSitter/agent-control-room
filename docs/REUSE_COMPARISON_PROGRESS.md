@@ -49,6 +49,13 @@ These are feature-specific observations, not whole-product reliability rankings.
 
 Latest bounded comparisons:
 
+- Actual runtime text coverage now reaches all39 recorded runtime identities:
+  the maintained gatherer returns36 attachments for35 packages, then four existing
+  retained exceptions pass through it byte-for-byte, giving40 attachments total.
+  [Runtime review](research/reuse-comparisons/f9-runtime-text-review.md) and
+  [exception revalidation](research/reuse-comparisons/f9-runtime-exceptions-fit.md)
+  preserve the difference between text availability and complete distribution
+  attribution. No new graph walker, app reinstall or rediscovery of known notices.
 - [Actual JWT caller fit](research/reuse-comparisons/f8-actual-callers-fit.md):
   actual libraries now execute within bootstrap (30 synchronous-library scenarios,
   23 applicable async-library scenarios) and36 task/news/private dispatch cases.
