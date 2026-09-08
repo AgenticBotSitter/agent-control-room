@@ -1347,6 +1347,26 @@ final trust callback. Both were corrected; added invalid-signal and final post-w
 trust-read expiry/rollback tests. Existing timeout/overlap tests prove late resolution
 cannot create a command or attempt after closure. No actual provider, credential,
 GitHub or production operation occurred.
+
+### Lease bridge integration
+
+Added createNativeLeaseCommandHandler to connect the checked intake to the existing
+authenticated PortableNodeBridge command path. It captures the exact task/server
+configuration, binds a negotiated connection, composes channel/task freshness and
+owns intake closure. Non-grant commands retain the existing bridge fallback. New
+joined tests use real bridge authentication/replay, atomic lease storage and the
+existing verified lease reader, without fixture-written commands/attempts.
+
+Initial test 26644 failed because fixture server/bridge connection IDs differed;
+fixed the deterministic node ID factory and registered resource cleanup before
+handshake setup. 68017 passed two tests but found missing method parameter types;
+fixed those. 75818 passed all 43 combined bridge/intake cases and TypeScript but
+lint rejected a forward-declared let; changed to a const captured by a deferred
+callback. Input parsing now occurs before channel callbacks, inside failure closure.
+Independent source review found no concrete blocking defect and retained the scope
+limits: no canonical server lease producer, runtime wiring or native permission.
+Final corrected run 63408 passed both joined tests, TypeScript, focused lint and
+diff check. No live provider, credential, deployment or GitHub operation occurred.
 Post-remediation run 36271 passed all 20 intake cases, TypeScript, focused lint and
 diff check. Independent source re-review confirmed both findings resolved and found
 no further concrete issue. Grant production/delivery and runtime policy wiring are

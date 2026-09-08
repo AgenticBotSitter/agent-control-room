@@ -42,7 +42,7 @@ export async function nativeLeaseEvidenceFixture(enrollment?: NativeEnrollment) 
   };
   const config = { request: r, messageId: grant.messageId, serverActorId: actor, parentAuthorities: lease.parentAuthorities };
   const read = createNativeLeaseEvidence(config, { journal, trust, clock: now });
-  return { ...f, startConfig: f.config, nativeRunJournal: f.journal, trust, journal, path, at, hello, grant, summary, config, read, accept,
+  return { ...f, startConfig: f.config, nativeRunJournal: f.journal, trust, journal, path, at, hello, grant, summary, config, read, accept, serverFrame: frame,
     provisionCeiling: async () => trust.provisionInitialCeiling(signArtifact(f.policy.ceiling, root.privateKey)),
     narrowCeiling: async () => {
       const body = { ...f.policy.ceiling, version: 2, operationIds: [], bodyDigest: "" };

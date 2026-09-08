@@ -173,6 +173,20 @@ grant producer and delivery ordering, capture of the verified dispatch/channel
 fence, grant-aware readiness and actual policy-reader composition remain required.
 Do not enable a service or start on dispatch-only readiness using this component.
 
+`createNativeLeaseCommandHandler` now adapts that intake to the existing
+`PortableNodeBridge` command-handler interface. It captures the supplied exact task,
+binds one negotiated connection and composes the channel guard with the task owner's
+freshness fence. The joined bridge test authenticates a synthetic signed grant,
+consumes replay evidence, invokes this handler, persists the command/attempt and
+reads the result with `createNativeLeaseEvidence`. No test-side command/attempt
+insertion is used in this journey. Task invalidation during trust resolution leaves
+only an unprocessed authenticated inbox entry and no usable lease state.
+
+This closes the generic bridge-to-lease-reader integration gap, not the remaining
+native session gap. Its grant signer is still a synthetic fixture, and the exact
+task/freshness fence is supplied explicitly. Canonical server grant staging,
+native runtime handler installation and grant-aware start readiness remain open.
+
 ### D. Combined release acceptance before service packaging
 
 Local progress on C/D: the per-task runtime now provides exact-binding drainage

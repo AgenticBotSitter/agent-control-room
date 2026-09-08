@@ -5,6 +5,8 @@ import type { SqliteBridgeJournal } from "../../node-bridge/journal";
 import { signedNodeFrameSchema, verifyNodeFrameSignature } from "../../node-protocol/v1";
 import { assertAuthorityDigest } from "../../security";
 import { localId } from "./contracts";
+import type { BridgeCommandHandler } from "../../node-bridge/admission-handler";
+import type { NativeDeliveryChannel } from "../../node-bridge/bridge";
 
 const fail = (): never => { throw new Error("native_lease_intake_unavailable"); };
 
@@ -72,4 +74,39 @@ export function createNativeLeaseIntake(config: { request: unknown; serverActorI
       finally { busy = false; if (timer) clearTimeout(timer); }
     },
   });
+}
+
+/** Adapter for the existing authenticated PortableNodeBridge command path. The
+ * enclosing task owner supplies the exact request and current dispatch fence.
+ * Does not select tasks or enable the native runtime's receive allowlist. */
+export function createNativeLeaseCommandHandler(
+  config: Omit<Parameters<typeof createNativeLeaseIntake>[0], "connectionId">,
+  dependencies: Parameters<typeof createNativeLeaseIntake>[1] & { channel: () => NativeDeliveryChannel | undefined },
+): BridgeCommandHandler & { close(): void } {
+  const captured = { ...config, request: normalizedLocalPolicyRequestSchema.parse(config.request) };
+  const channel = dependencies.channel.bind(dependencies), task = dependencies.assertTaskCurrent.bind(dependencies);
+  const deps = { journal: { recordInitialLease: dependencies.journal.recordInitialLease.bind(dependencies.journal) },
+    trust: { resolveServerKey: dependencies.trust.resolveServerKey.bind(dependencies.trust),
+      currentServerTrustRevision: dependencies.trust.currentServerTrustRevision.bind(dependencies.trust) }, clock: dependencies.clock.bind(dependencies) };
+  const lifetime = new AbortController();
+  let intake: ReturnType<typeof createNativeLeaseIntake> | undefined, boundConnection: string | undefined;
+  const close = () => { lifetime.abort(); intake?.close(); };
+  return Object.freeze({ close, async handle(frame: Parameters<BridgeCommandHandler["handle"]>[0], receivedAt: string) {
+    if (lifetime.signal.aborted) return fail();
+    try {
+      frame = signedNodeFrameSchema.parse(frame);
+      if (frame.type !== "job.lease.grant") return false;
+      const active = channel();
+      if (!active || active.tenantId !== captured.request.tenantId || active.nodeId !== captured.request.nodeId
+        || frame.connectionId !== active.connectionId || boundConnection !== undefined && boundConnection !== active.connectionId) return fail();
+      active.assertCurrent();
+      if (!intake) {
+        boundConnection = active.connectionId;
+        intake = createNativeLeaseIntake({ ...captured, connectionId: active.connectionId }, { ...deps,
+          assertTaskCurrent: () => { active.assertCurrent(); const result = task(); active.assertCurrent(); return result; } });
+      }
+      await intake.accept(frame, receivedAt, lifetime.signal);
+      active.assertCurrent(); return true;
+    } catch { close(); return fail(); }
+  } });
 }
