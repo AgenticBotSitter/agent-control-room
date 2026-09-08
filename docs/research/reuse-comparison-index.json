@@ -5,11 +5,12 @@
   "status": "in_progress",
   "completionClaim": false,
   "narrowDecisionRegister": "reuse-comparisons/decision-register.md",
+  "remainingClosureChecklist": "../REUSE_COMPARISON_CLOSURE.md",
   "outcomes": [
     {
       "id": "A1",
       "families": [
-        "F6"
+        "F6", "F8"
       ],
       "status": "comparison_incomplete",
       "decision": null
@@ -58,7 +59,7 @@
     {
       "id": "A7",
       "families": [
-        "F3"
+        "F2", "F3", "F8"
       ],
       "status": "comparison_incomplete",
       "decision": null
@@ -268,8 +269,8 @@
     {
       "id": "F9",
       "dossier": "reuse-comparisons/f9-shipping-license-scope.md",
-      "additionalDossiers": ["reuse-comparisons/f9-entities-notice-followup.md", "reuse-comparisons/f9-distribution-fit.md", "reuse-comparisons/f9-tooling-fit.md"],
-      "evidence": "Actual115file distribution and externalimports audited; npmSBOM3fixturechecks;3notice/SBOMtools source+tests screened; plugin/fulltextcollector runtime fit, buildprovenance/full graph/notice assembly remain"
+      "additionalDossiers": ["reuse-comparisons/f9-entities-notice-followup.md", "reuse-comparisons/f9-distribution-fit.md", "reuse-comparisons/f9-tooling-fit.md", "reuse-comparisons/f9-plugin-fit.md"],
+      "evidence": "Actual115file distribution audited; npmSBOM3fixturechecks; actual Vite+noticeplugin6groups pass; fulltextcollector runtime, vinextmultienvironment, buildprovenance/full graph/notice assembly remain"
     }
   ],
   "next": [

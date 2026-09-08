@@ -1,0 +1,113 @@
+{
+  "initial": {
+    "exitCode": 1,
+    "output": "node:internal/modules/run_main:123\n    triggerUncaughtException(\n    ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n+ actual - expected\n\n  [\n-   'fixture-self',\n    'private-dep'\n  ]\n\n    at file:///Users/alastairfraser/Documents/Codex/Agent%20Control%20Room/research/reuse-comparisons/f9-plugin-fit.mjs:15:101 {\n  generatedMessage: true,\n  code: 'ERR_ASSERTION',\n  actual: [ 'private-dep' ],\n  expected: [ 'fixture-self', 'private-dep' ],\n  operator: 'deepStrictEqual',\n  diff: 'simple'\n}\n\nNode.js v22.22.3\n"
+  },
+  "corrected": {
+    "exitCode": 0,
+    "wallTimeSeconds": 0.01317,
+    "stdout": {
+      "plugin": "rollup-plugin-license@3.7.1",
+      "vite": "8.0.13",
+      "pluginSha256": "4b9b0a5b186701f7eb0e56edf993dcb337cd1aa2a3b671ebcd7859e9ea517e25",
+      "viteEntrySha256": "9b3e72282cfda2f0e60ad5b123e2c8a89e27b9b7cc7c892ae7b34036db5f92ef",
+      "cases": [
+        {
+          "name": "used/unused/external/virtual/copied plus full LICENSE and NOTICE",
+          "outputs": [
+            [
+              {
+                "name": "used",
+                "license": "MIT",
+                "licenseText": "Synthetic license used",
+                "noticeText": "Synthetic separate NOTICE used"
+              }
+            ]
+          ],
+          "bundle": [
+            "import { value } from \"external\";\n//#endregion\n//#region ../../../../../private/tmp/cr-f9-plugin.UtNOAa/fixture/entry.js\nvar result = [\n\t\"used\",\n\tvalue,\n\t\"copied-source\",\n\t\"virtual-value\"\n];\n//#endregion\nexport { result };\n"
+          ]
+        },
+        {
+          "name": "private excluded by default",
+          "outputs": [
+            []
+          ],
+          "bundle": [
+            "//#region ../../../../../private/tmp/cr-f9-plugin.UtNOAa/fixture/node_modules/private-dep/index.js\nvar value = \"private-dep\";\n//#endregion\nexport { value };\n"
+          ]
+        },
+        {
+          "name": "private and rendered self explicitly included",
+          "outputs": [
+            [
+              {
+                "name": "private-dep",
+                "license": "MIT",
+                "licenseText": "Synthetic license private-dep",
+                "noticeText": null
+              },
+              {
+                "name": "fixture-self",
+                "license": "MIT",
+                "licenseText": "Synthetic self license text",
+                "noticeText": null
+              }
+            ]
+          ],
+          "bundle": [
+            "//#endregion\n//#region ../../../../../private/tmp/cr-f9-plugin.UtNOAa/fixture/entry.js\nvar own = \"private-depowned-source\";\n//#endregion\nexport { own };\n"
+          ]
+        },
+        {
+          "name": "MIT manifest without full text passes SPDX policy; explicit text gate remains",
+          "outputs": [
+            [
+              {
+                "name": "missing-text",
+                "license": "MIT",
+                "licenseText": null,
+                "noticeText": null
+              }
+            ]
+          ],
+          "bundle": [
+            "//#region ../../../../../private/tmp/cr-f9-plugin.UtNOAa/fixture/node_modules/missing-text/index.js\nvar value = \"missing-text\";\n//#endregion\nexport { value };\n"
+          ]
+        },
+        {
+          "name": "unlicensed package fails configured policy",
+          "rejected": true
+        },
+        {
+          "name": "two output formats",
+          "outputs": [
+            [
+              {
+                "name": "used",
+                "license": "MIT",
+                "licenseText": "Synthetic license used",
+                "noticeText": "Synthetic separate NOTICE used"
+              }
+            ],
+            [
+              {
+                "name": "used",
+                "license": "MIT",
+                "licenseText": "Synthetic license used",
+                "noticeText": "Synthetic separate NOTICE used"
+              }
+            ]
+          ],
+          "bundle": [
+            "//#region ../../../../../private/tmp/cr-f9-plugin.UtNOAa/fixture/node_modules/used/index.js\nvar value = \"used\";\n//#endregion\nexport { value };\n",
+            "Object.defineProperty(exports, Symbol.toStringTag, { value: \"Module\" });\n//#region ../../../../../private/tmp/cr-f9-plugin.UtNOAa/fixture/node_modules/used/index.js\nvar value = \"used\";\n//#endregion\nexports.value = value;\n"
+          ]
+        }
+      ],
+      "count": 6,
+      "scope": "actual Vite miniature library builds; no Control Room app or multi-environment vinext build; synthetic licenses, no deployment/legal clearance"
+    }
+  },
+  "captureNote": "Corrected test passed once, but orchestration .then typo after output prevented saving return value. Repeated unchanged corrected harness solely for direct evidence capture."
+}

@@ -16,6 +16,9 @@ coverage, decision rules, resource authorization and two goal prompts. The
 [machine-readable index](research/reuse-comparison-index.json) tracks open families.
 All outcomes remain comparison-incomplete until their decisive work is closed;
 that does **not** mean all their application code is missing.
+The [closure checklist](REUSE_COMPARISON_CLOSURE.md) consolidates the remaining
+decisive work into ten substantial packets with explicit local versus target gates,
+covering all26 outcomes. It is not a substitute for completing those experiments.
 
 ## What the deeper comparison has established
 
@@ -57,6 +60,10 @@ The [tool comparison](research/reuse-comparisons/f9-tooling-fit.md) now screens 
 actual pinned implementations and tests, plus three executed installed-npm fixture
 checks. Prioritize actual Vite/notice-plugin fit next; no generic custom notice
 engine is selected, and a metadata-only SBOM is not complete license-text assembly.
+The [actual Vite plugin fit](research/reuse-comparisons/f9-plugin-fit.md) now passes
+six assertion groups. It is the leading bundled-package extraction candidate;
+actual vinext multi-environment output, full-text completeness, externals and copied
+source attribution remain explicit integration tests, not inferred passes.
 
 1. Give every remaining responsibility a row containing all known relevant candidates,
    the existing implementation and the smallest new-adapter alternative. Record
