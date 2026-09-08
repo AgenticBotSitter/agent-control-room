@@ -938,3 +938,31 @@ approval. Updated design to reuse these paths and avoid a second allocator. Revi
 requested stable enrolled node/adapter capacity identity and explicit expiry-versus-
 stop distinction; both added. This is source-backed architecture progress, not an
 implemented dynamic fleet or new live evidence. No runtime code changed this batch.
+
+## Exact owner-command packet through the task-result path
+
+Native capacity/revision tests already cover occupancy release before quality review;
+no duplicate implementation added there. Added a stronger joined owner-command test
+instead: its actual paired signatures are stored, that exact packet/job is carried
+through the existing managed HTTP fixture, signed dispatch, fake native execution,
+saved exact result bytes and pending review. Asserted matching packet digest/job,
+two signatures, one command intake, one canonical packet and one native start. Queueing
+and dispatch remain explicit subsequent operations, not effects of owner confirmation.
+
+The initial test selected a nonexistent queue `id` column and failed; corrected to
+`SELECT 1`. The joined scenario passed (84672 exit zero). Independent review confirmed
+same-packet continuity but found partial helper setup cleanup/ownership ambiguity.
+Added catches around acquired node/HTTP helper resources and moved ownership transfer
+to helper entry. A post-managed-setup injected failure now proves borrowed base/local
+resources close once. Both focused scenarios, TypeScript and lint passed (68978).
+
+The preceding full owner source suite, fresh compiled-owner tests and seven HTTP/
+connector integration checks also passed with types/lint (78629 exit zero). That run
+began before cleanup remediation; final post-remediation checks are recorded below.
+No production runtime changed, real owner confirmation typed, credential accessed,
+physical TLS connection opened or provider called.
+
+Final post-remediation run passed all 16 compiled-owner session/command scenarios
+and all seven downstream source HTTP/connector regressions, with diff validation
+(64807 exit zero). Independent re-review confirmed cleanup ownership and no additional
+concrete finding. No process remains running from these verification commands.

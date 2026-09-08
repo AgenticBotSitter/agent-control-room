@@ -101,3 +101,13 @@ unknown/mismatched stored receipts, terminal-control escaping, storage-callback
 mutation, cancellation after commit and cleanup rejection/timeout. The compiled variant
 requires the actual `ownerReview.js` exports with no source fallback. None of these
 tests proves real owner attendance, actual key custody, live transport or deployment.
+
+The same-task continuation test takes the exact command-issued packet and canonical
+job into the existing restricted managed HTTP session, signed dispatch, native
+controller and result registration. It verifies one fake native start, exact saved
+result bytes and a pending review, without replacing the approval with the fixture's
+original pair. Signing/storage alone still creates no queue entry: later queueing
+and dispatch are separate explicit test actions. The variant with compiled
+`ownerReview.js` exercises compiled owner issuance/intake validation; downstream
+node/server integration uses source modules and synthetic TLS/native transport.
+This is not full compiled fleet or owner-quality acceptance.

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { managedNativeSessionFixture, currentSignal } from "./managed-native-session";
+import { managedNativeSessionFixture, currentSignal, type ManagedNativePreparedContext } from "./managed-native-session";
 import { createNativeNodeRuntime, type NativeNodeRuntimeDependencies } from "../../src/harness/hermes-native-v1/node-runtime";
 import { SqliteBridgeJournal } from "../../src/node-bridge/journal";
 import { NodeProtocolAuthenticator, FixedWindowProtocolRateLimiter, signNodeFrame, signedNodeFrameSchema } from "../../src/node-protocol/v1";
@@ -7,8 +7,12 @@ import { response, statusBody } from "../hermes-native-fixture";
 
 /** Synthetic node runtime plus actual restricted managed server. All stores are disposable;
  * canonical approval/dispatch setup remains labelled privileged fixture composition. */
-export async function nativeNodeRuntimeFixture() {
-  const x = await managedNativeSessionFixture(), journal = new SqliteBridgeJournal(":memory:");
+export async function nativeNodeRuntimeFixture(context?: ManagedNativePreparedContext) {
+  // The managed fixture owns supplied context immediately, including setup failure.
+  const x = await managedNativeSessionFixture(context);
+  let closeJournal: (() => void) | undefined;
+  try {
+  const journal = new SqliteBridgeJournal(":memory:"); closeJournal = () => journal.close();
   const config = { queueId: "", enrollment: x.f.prepared.enrollment,
     nodeKeyId: "key:test", serverId: x.settings.nodes[0].serverId, serverKeyId: x.settings.nodes[0].serverKeyId,
     serverPublicKeySpki: x.settings.nodes[0].serverPublicKeySpki };
@@ -82,4 +86,8 @@ export async function nativeNodeRuntimeFixture() {
       for (const owned of runtimes) { try { await owned.close(); } catch { failed = true; } }
       journal.close(); await x.close(); if (failed) throw new Error("synthetic_node_runtime_cleanup_uncertain");
     } };
+  } catch (error) {
+    try { closeJournal?.(); } finally { await x.close(); }
+    throw error;
+  }
 }

@@ -6,12 +6,13 @@ import { createNativeHttpHost } from "../../src/web/v1/native-http-host";
 import { createNativeHttpNodeHost, type NativeHttpClient } from "../../src/node-bridge/native-http-host";
 import { nativeHttpJson, nativeHttpLimits, nativeHttpResponseSchema,
   type NativeHttpRequest } from "../../src/harness/v1/native-http-exchange";
-import { currentSignal } from "./managed-native-session";
+import { currentSignal, type ManagedNativePreparedContext } from "./managed-native-session";
 
 /** No network or credential operations: Request/Response and an explicitly synthetic TLS
  * peer replace the physical HTTP hop. Packet bodies are opaque to this exchange fixture. */
-export async function nativeHttpFixture() {
-  const f = await nativeNodeRuntimeFixture(), origin = "https://control-room.example.test";
+export async function nativeHttpFixture(context?: ManagedNativePreparedContext) {
+  const f = await nativeNodeRuntimeFixture(context), origin = "https://control-room.example.test";
+  try {
   const rawCertificate = Buffer.from("synthetic-machine-certificate-bytes-not-a-real-certificate");
   const certificateDigest = `sha256:${createHash("sha256").update(rawCertificate).digest("hex")}`;
   const socket = (raw = rawCertificate, authorized = true) => ({ encrypted: true, authorized, destroyed: false,
@@ -62,4 +63,5 @@ export async function nativeHttpFixture() {
       await f.close(); if (failed) throw new Error("synthetic_http_fixture_cleanup_uncertain");
     },
   };
+  } catch (error) { await f.close(); throw error; }
 }
