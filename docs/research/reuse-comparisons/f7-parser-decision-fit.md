@@ -58,3 +58,46 @@ adapter; measured standalone footprint/cost and rollback to original import. The
 current prototype logs a source hash but does not assert the expected pin. Installed
 source and lock identities must be checked before reproducing at a later revision.
 No downloads, services, provider calls or production effects were needed.
+
+## Focused independent-review correction at fbac95b
+
+The two reproduction findings are addressed in the research fixture, without
+changing any application package, lockfile, parser or route. This does not imply the
+original observed source was different, or establish a final consolidation winner.
+
+Before dynamically importing any selected parser, decoder or borrowed module,
+`f7-parser-decision-pins.mjs::verify` explicitly compares the exact retained
+inventory. It covers seven source/lock identities (decoder, sitemap, source reader,
+freshness, feed discovery, industry curation and pnpm lock), plus212files in13actual
+installed dependency packages. The required direct versions are additionally checked:
+rss-parser3.13.0, fast-xml-parser5.11.0 and entities2.2.0. Dependency content includes
+package manifests and license files, not just version labels; package-internal
+symlinks are refused. The supported installed pnpm layout is resolved read-only,
+without relying on blocked package.json exports. Initial inventory inspection met an
+exports-only dependency and was corrected to traverse Node's package search paths;
+no candidate corpus was run during that inventory correction.
+
+`entities` now loads from the explicit existing
+`node_modules/.pnpm/entities@2.2.0/node_modules/entities` directory, independently
+of rss-parser resolution. The baseline still legitimately imports rss-parser;
+the adapter's entity decoder no longer does. The evidence does **not** claim an
+uninstall test or independently installed shipping package: a production change
+would still promote entities2.2.0 to an explicit supported dependency/import and
+retain the MIT strip-algorithm attribution.
+
+The corrected corpus ran exactly once: exit0,14/18 minimal parity and18/18 adapted
+full-output parity, same four retained mismatch categories, actual borrowed250cap
+and undated baseline/replay checks intact. [Separate actual stdout/exit receipt]
+(f7-parser-decision-recheck-evidence.json) and [fixed pin inventory]
+(f7-parser-decision-pins.json) preserve this run independently of the first receipt.
+The run is a fraction-of-a-second bounded fit test, not a fair standalone resource
+benchmark. No download, temporary root, installation, service or cleanup was needed;
+pre-existing node_modules were read and left untouched.
+
+Removal boundary remains unchanged: a future accepted consolidation could remove
+the direct rss-parser dependency and otherwise-unused XML transitives only after
+consumer/lock closure verification. It would add/retain explicit entities and
+compatibility glue, not delete the provenance decoder or borrowed collector. The
+two accepted source-plan kinds and persisted receipt/digest contracts remain. A
+broader corpus, actual package closure and maintenance comparison still decide
+whether that trade is preferable to simply keeping the proven existing parsers.

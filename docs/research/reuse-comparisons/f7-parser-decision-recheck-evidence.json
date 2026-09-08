@@ -1,0 +1,838 @@
+{
+  "command": "node --import tsx research/reuse-comparisons/f7-parser-decision-fit.ts",
+  "exitCode": 0,
+  "wallTimeSeconds": 0.51487725,
+  "actualStdout": {
+    "scope": "actual full decoder import substitution plus actual borrowed parser/reader; supplied synthetic XML and readText only, no network/DB",
+    "verifiedPins": {
+      "packages": [
+        {
+          "name": "@nodable/entities",
+          "version": "3.0.0"
+        },
+        {
+          "name": "anynum",
+          "version": "1.0.1"
+        },
+        {
+          "name": "entities",
+          "version": "2.2.0"
+        },
+        {
+          "name": "fast-xml-builder",
+          "version": "1.3.1"
+        },
+        {
+          "name": "fast-xml-parser",
+          "version": "5.11.0"
+        },
+        {
+          "name": "is-unsafe",
+          "version": "2.0.2"
+        },
+        {
+          "name": "path-expression-matcher",
+          "version": "1.6.2"
+        },
+        {
+          "name": "rss-parser",
+          "version": "3.13.0"
+        },
+        {
+          "name": "sax",
+          "version": "1.6.1"
+        },
+        {
+          "name": "strnum",
+          "version": "2.4.2"
+        },
+        {
+          "name": "xml-naming",
+          "version": "0.3.0"
+        },
+        {
+          "name": "xml2js",
+          "version": "0.5.0"
+        },
+        {
+          "name": "xmlbuilder",
+          "version": "11.0.1"
+        }
+      ],
+      "sourceCount": 7,
+      "hashedPackageFiles": 212
+    },
+    "entitiesResolution": "explicit node_modules/.pnpm/entities@2.2.0/node_modules/entities; not via rss-parser",
+    "sourceSha256": "51fd92b54010953db81e64383f6bb60abfed977a5918a528a0b497ed244e9409",
+    "substitutedImports": 1,
+    "comparisons": [
+      {
+        "name": "rss",
+        "parity": true,
+        "adaptedParity": true,
+        "originalDigest": "da02952435d6a62283ab230b865aad0b84cb26136ab231aa7d3afbf335d64862",
+        "candidateDigest": "da02952435d6a62283ab230b865aad0b84cb26136ab231aa7d3afbf335d64862",
+        "adaptedDigest": "da02952435d6a62283ab230b865aad0b84cb26136ab231aa7d3afbf335d64862",
+        "originalState": "success",
+        "candidateState": "success"
+      },
+      {
+        "name": "atom content",
+        "parity": true,
+        "adaptedParity": true,
+        "originalDigest": "421fdd33fabdc4b85efea63b191c1ed63a244f2e4e7b7dd7c2f1f56f676dd4d8",
+        "candidateDigest": "421fdd33fabdc4b85efea63b191c1ed63a244f2e4e7b7dd7c2f1f56f676dd4d8",
+        "adaptedDigest": "421fdd33fabdc4b85efea63b191c1ed63a244f2e4e7b7dd7c2f1f56f676dd4d8",
+        "originalState": "success",
+        "candidateState": "success"
+      },
+      {
+        "name": "atom summary only",
+        "parity": true,
+        "adaptedParity": true,
+        "originalDigest": "70695c3dfa989dab2f162e5cc89971d345180ef3f9005ac8b3f2f484444aaeda",
+        "candidateDigest": "70695c3dfa989dab2f162e5cc89971d345180ef3f9005ac8b3f2f484444aaeda",
+        "adaptedDigest": "70695c3dfa989dab2f162e5cc89971d345180ef3f9005ac8b3f2f484444aaeda",
+        "originalState": "success",
+        "candidateState": "success"
+      },
+      {
+        "name": "rdf namespaced date",
+        "parity": true,
+        "adaptedParity": true,
+        "originalDigest": "638ff966b1518297cc293cb30758a029835748c78ea17cce828d3826103f50d5",
+        "candidateDigest": "638ff966b1518297cc293cb30758a029835748c78ea17cce828d3826103f50d5",
+        "adaptedDigest": "638ff966b1518297cc293cb30758a029835748c78ea17cce828d3826103f50d5",
+        "originalState": "success",
+        "candidateState": "success"
+      },
+      {
+        "name": "missing title",
+        "parity": true,
+        "adaptedParity": true,
+        "originalDigest": "e148ff0c1b12e39c0a4dd07d64067cffcc828e7e4c9bda247f73e52ff4229d2a",
+        "candidateDigest": "e148ff0c1b12e39c0a4dd07d64067cffcc828e7e4c9bda247f73e52ff4229d2a",
+        "adaptedDigest": "e148ff0c1b12e39c0a4dd07d64067cffcc828e7e4c9bda247f73e52ff4229d2a",
+        "originalState": "success",
+        "candidateState": "success"
+      },
+      {
+        "name": "relative URL",
+        "parity": true,
+        "adaptedParity": true,
+        "originalDigest": "efabf8c98535fece2e3bddda6e0475f1701c91d9a8d16fe091b05d958e52f6f4",
+        "candidateDigest": "efabf8c98535fece2e3bddda6e0475f1701c91d9a8d16fe091b05d958e52f6f4",
+        "adaptedDigest": "efabf8c98535fece2e3bddda6e0475f1701c91d9a8d16fe091b05d958e52f6f4",
+        "originalState": "success",
+        "candidateState": "success"
+      },
+      {
+        "name": "canonical query",
+        "parity": true,
+        "adaptedParity": true,
+        "originalDigest": "2b2230c2a7b8b228c11c2e7be6f963afd4f1707f8d87e5c80e324b7a18b54e6b",
+        "candidateDigest": "2b2230c2a7b8b228c11c2e7be6f963afd4f1707f8d87e5c80e324b7a18b54e6b",
+        "adaptedDigest": "2b2230c2a7b8b228c11c2e7be6f963afd4f1707f8d87e5c80e324b7a18b54e6b",
+        "originalState": "success",
+        "candidateState": "success"
+      },
+      {
+        "name": "duplicate URL",
+        "parity": true,
+        "adaptedParity": true,
+        "originalDigest": "fe15205c196ccc68a660190b5943e6a64d9edbbb5a2280575763eef6c5637c5c",
+        "candidateDigest": "fe15205c196ccc68a660190b5943e6a64d9edbbb5a2280575763eef6c5637c5c",
+        "adaptedDigest": "fe15205c196ccc68a660190b5943e6a64d9edbbb5a2280575763eef6c5637c5c",
+        "originalState": "success",
+        "candidateState": "success"
+      },
+      {
+        "name": "undated",
+        "parity": true,
+        "adaptedParity": true,
+        "originalDigest": "19904cd322dca03911fb371ee0724ee85e223541ca1c034f137900615ebbfe4b",
+        "candidateDigest": "19904cd322dca03911fb371ee0724ee85e223541ca1c034f137900615ebbfe4b",
+        "adaptedDigest": "19904cd322dca03911fb371ee0724ee85e223541ca1c034f137900615ebbfe4b",
+        "originalState": "success",
+        "candidateState": "success"
+      },
+      {
+        "name": "future date",
+        "parity": true,
+        "adaptedParity": true,
+        "originalDigest": "7bed74a67fa470face531e870581bb02d4fbdff59aa36fb0e68ff85f0f2b7a6d",
+        "candidateDigest": "7bed74a67fa470face531e870581bb02d4fbdff59aa36fb0e68ff85f0f2b7a6d",
+        "adaptedDigest": "7bed74a67fa470face531e870581bb02d4fbdff59aa36fb0e68ff85f0f2b7a6d",
+        "originalState": "success",
+        "candidateState": "success"
+      },
+      {
+        "name": "malformed",
+        "parity": true,
+        "adaptedParity": true,
+        "originalDigest": "aeaf2b9dbcc214d09c39143b401c71a15b93565b5f9e533bc5cf6a130550bfe8",
+        "candidateDigest": "aeaf2b9dbcc214d09c39143b401c71a15b93565b5f9e533bc5cf6a130550bfe8",
+        "adaptedDigest": "aeaf2b9dbcc214d09c39143b401c71a15b93565b5f9e533bc5cf6a130550bfe8",
+        "originalState": "invalid_feed",
+        "candidateState": "invalid_feed"
+      },
+      {
+        "name": "DTD",
+        "parity": true,
+        "adaptedParity": true,
+        "originalDigest": "aeaf2b9dbcc214d09c39143b401c71a15b93565b5f9e533bc5cf6a130550bfe8",
+        "candidateDigest": "aeaf2b9dbcc214d09c39143b401c71a15b93565b5f9e533bc5cf6a130550bfe8",
+        "adaptedDigest": "aeaf2b9dbcc214d09c39143b401c71a15b93565b5f9e533bc5cf6a130550bfe8",
+        "originalState": "invalid_feed",
+        "candidateState": "invalid_feed"
+      },
+      {
+        "name": "NUL",
+        "parity": true,
+        "adaptedParity": true,
+        "originalDigest": "aeaf2b9dbcc214d09c39143b401c71a15b93565b5f9e533bc5cf6a130550bfe8",
+        "candidateDigest": "aeaf2b9dbcc214d09c39143b401c71a15b93565b5f9e533bc5cf6a130550bfe8",
+        "adaptedDigest": "aeaf2b9dbcc214d09c39143b401c71a15b93565b5f9e533bc5cf6a130550bfe8",
+        "originalState": "invalid_feed",
+        "candidateState": "invalid_feed"
+      },
+      {
+        "name": "101 item limit",
+        "parity": true,
+        "adaptedParity": true,
+        "originalDigest": "7c2762def6160be1a4533de98f949900849cbf022235c34a1f0dd93bcc58e1e3",
+        "candidateDigest": "7c2762def6160be1a4533de98f949900849cbf022235c34a1f0dd93bcc58e1e3",
+        "adaptedDigest": "7c2762def6160be1a4533de98f949900849cbf022235c34a1f0dd93bcc58e1e3",
+        "originalState": "feed_limit_exceeded",
+        "candidateState": "feed_limit_exceeded"
+      },
+      {
+        "name": "HTML entities",
+        "parity": false,
+        "adaptedParity": true,
+        "originalDigest": "fa9cd00e6a1f0bdc857c1bed3a585b4a2bd0d9b5dbda034fecc7f9723042dea0",
+        "candidateDigest": "2d469c7cd17fa7bf1b5a95a6dc34075681a82fa0d16a09a207eebdde182094cd",
+        "adaptedDigest": "fa9cd00e6a1f0bdc857c1bed3a585b4a2bd0d9b5dbda034fecc7f9723042dea0",
+        "originalState": "success",
+        "candidateState": "success",
+        "original": {
+          "ok": true,
+          "value": {
+            "stories": [
+              {
+                "contractVersion": "control-room-abs-news/v1",
+                "storyId": "story.abs:71ad055830e5a0847f888406cac9f4a4",
+                "tenantId": "tenant:rc7",
+                "workspaceId": "workspace:rc7",
+                "projectId": "project:rc7",
+                "clusterId": "cluster.abs:74ef97b27e5363e15579f2dafac3a209",
+                "queue": "earlier",
+                "title": "AI launch",
+                "summary": "A B © ©",
+                "canonicalUrl": "https://example.org/launch",
+                "canonicalHost": "example.org",
+                "sourceLabel": "RC7",
+                "publishedAt": "2026-09-08T10:00:00.000Z",
+                "discoveredAt": "2026-09-08T12:00:00.000Z",
+                "lastVerifiedAt": "2026-09-08T12:00:00.000Z",
+                "verificationState": "review_only",
+                "priorityScore": 75,
+                "coverageCount": 1,
+                "sourceEvidence": [
+                  {
+                    "evidenceId": "evidence.abs:825241bbbf7e1ac6ae790c8674af78ff",
+                    "sourceId": "source:rc7",
+                    "sourceKind": "rss",
+                    "sourceLabel": "RC7",
+                    "canonicalUrl": "https://example.org/launch",
+                    "observedAt": "2026-09-08T12:00:00.000Z",
+                    "evidenceDigest": "sha256:825241bbbf7e1ac6ae790c8674af78ff04eeee674cc46c6b169ef95d6ba202d8",
+                    "containsRawNewsletterBody": false,
+                    "grantsNetworkAuthority": false
+                  }
+                ],
+                "contentDigest": "sha256:d08e6c095cfea0e5a15625b5ab6b1ab507e13580ccd0a38723e76636cc035f52",
+                "containsRawNewsletterBody": false,
+                "grantsNetworkAuthority": false,
+                "grantsCommandAuthority": false,
+                "grantsExecutionAuthority": false,
+                "storyDigest": "sha256:fab1cac7517580f65233f4636f6b7f7527861c9518695c257d95acbcd7c66f25"
+              }
+            ],
+            "discoveryCuration": {
+              "engine": "control-center/industry-curation",
+              "selectedStoryIds": [
+                "story.abs:71ad055830e5a0847f888406cac9f4a4"
+              ],
+              "deferredStoryIds": [],
+              "excludedStoryIds": [],
+              "deduplicatedCount": 0,
+              "grantsVerification": false
+            },
+            "sourceId": "source:rc7",
+            "feedDigest": "sha256:c606b61ddcc1c690a755e6eea6fd3d9cec47ea7cc1096d772ba3963feebbe9b3",
+            "byteCount": 255,
+            "inputItemCount": 1,
+            "rejectedCount": 0,
+            "duplicateCount": 0,
+            "state": "available",
+            "observedAt": "2026-09-08T12:00:00.000Z",
+            "startsWork": false
+          }
+        },
+        "candidate": {
+          "ok": true,
+          "value": {
+            "stories": [
+              {
+                "contractVersion": "control-room-abs-news/v1",
+                "storyId": "story.abs:71ad055830e5a0847f888406cac9f4a4",
+                "tenantId": "tenant:rc7",
+                "workspaceId": "workspace:rc7",
+                "projectId": "project:rc7",
+                "clusterId": "cluster.abs:74ef97b27e5363e15579f2dafac3a209",
+                "queue": "earlier",
+                "title": "AI launch",
+                "summary": "A B &copy; &#169;",
+                "canonicalUrl": "https://example.org/launch",
+                "canonicalHost": "example.org",
+                "sourceLabel": "RC7",
+                "publishedAt": "2026-09-08T10:00:00.000Z",
+                "discoveredAt": "2026-09-08T12:00:00.000Z",
+                "lastVerifiedAt": "2026-09-08T12:00:00.000Z",
+                "verificationState": "review_only",
+                "priorityScore": 75,
+                "coverageCount": 1,
+                "sourceEvidence": [
+                  {
+                    "evidenceId": "evidence.abs:af49cb3ed22f914ce478e0a761830ac6",
+                    "sourceId": "source:rc7",
+                    "sourceKind": "rss",
+                    "sourceLabel": "RC7",
+                    "canonicalUrl": "https://example.org/launch",
+                    "observedAt": "2026-09-08T12:00:00.000Z",
+                    "evidenceDigest": "sha256:af49cb3ed22f914ce478e0a761830ac6781720a27e6044c9ba6bc28ac7c2cdb7",
+                    "containsRawNewsletterBody": false,
+                    "grantsNetworkAuthority": false
+                  }
+                ],
+                "contentDigest": "sha256:634399e6d498afdd8425f8bece3c6377aa6fc926dd0ec251379f279d2b6e4211",
+                "containsRawNewsletterBody": false,
+                "grantsNetworkAuthority": false,
+                "grantsCommandAuthority": false,
+                "grantsExecutionAuthority": false,
+                "storyDigest": "sha256:8660e43b5f34716ad7cfd1d6a1cbce2e9160dc82af546adf6325c944a816b9d3"
+              }
+            ],
+            "discoveryCuration": {
+              "engine": "control-center/industry-curation",
+              "selectedStoryIds": [
+                "story.abs:71ad055830e5a0847f888406cac9f4a4"
+              ],
+              "deferredStoryIds": [],
+              "excludedStoryIds": [],
+              "deduplicatedCount": 0,
+              "grantsVerification": false
+            },
+            "sourceId": "source:rc7",
+            "feedDigest": "sha256:c606b61ddcc1c690a755e6eea6fd3d9cec47ea7cc1096d772ba3963feebbe9b3",
+            "byteCount": 255,
+            "inputItemCount": 1,
+            "rejectedCount": 0,
+            "duplicateCount": 0,
+            "state": "available",
+            "observedAt": "2026-09-08T12:00:00.000Z",
+            "startsWork": false
+          }
+        },
+        "corrected": {
+          "ok": true,
+          "value": {
+            "stories": [
+              {
+                "contractVersion": "control-room-abs-news/v1",
+                "storyId": "story.abs:71ad055830e5a0847f888406cac9f4a4",
+                "tenantId": "tenant:rc7",
+                "workspaceId": "workspace:rc7",
+                "projectId": "project:rc7",
+                "clusterId": "cluster.abs:74ef97b27e5363e15579f2dafac3a209",
+                "queue": "earlier",
+                "title": "AI launch",
+                "summary": "A B © ©",
+                "canonicalUrl": "https://example.org/launch",
+                "canonicalHost": "example.org",
+                "sourceLabel": "RC7",
+                "publishedAt": "2026-09-08T10:00:00.000Z",
+                "discoveredAt": "2026-09-08T12:00:00.000Z",
+                "lastVerifiedAt": "2026-09-08T12:00:00.000Z",
+                "verificationState": "review_only",
+                "priorityScore": 75,
+                "coverageCount": 1,
+                "sourceEvidence": [
+                  {
+                    "evidenceId": "evidence.abs:825241bbbf7e1ac6ae790c8674af78ff",
+                    "sourceId": "source:rc7",
+                    "sourceKind": "rss",
+                    "sourceLabel": "RC7",
+                    "canonicalUrl": "https://example.org/launch",
+                    "observedAt": "2026-09-08T12:00:00.000Z",
+                    "evidenceDigest": "sha256:825241bbbf7e1ac6ae790c8674af78ff04eeee674cc46c6b169ef95d6ba202d8",
+                    "containsRawNewsletterBody": false,
+                    "grantsNetworkAuthority": false
+                  }
+                ],
+                "contentDigest": "sha256:d08e6c095cfea0e5a15625b5ab6b1ab507e13580ccd0a38723e76636cc035f52",
+                "containsRawNewsletterBody": false,
+                "grantsNetworkAuthority": false,
+                "grantsCommandAuthority": false,
+                "grantsExecutionAuthority": false,
+                "storyDigest": "sha256:fab1cac7517580f65233f4636f6b7f7527861c9518695c257d95acbcd7c66f25"
+              }
+            ],
+            "discoveryCuration": {
+              "engine": "control-center/industry-curation",
+              "selectedStoryIds": [
+                "story.abs:71ad055830e5a0847f888406cac9f4a4"
+              ],
+              "deferredStoryIds": [],
+              "excludedStoryIds": [],
+              "deduplicatedCount": 0,
+              "grantsVerification": false
+            },
+            "sourceId": "source:rc7",
+            "feedDigest": "sha256:c606b61ddcc1c690a755e6eea6fd3d9cec47ea7cc1096d772ba3963feebbe9b3",
+            "byteCount": 255,
+            "inputItemCount": 1,
+            "rejectedCount": 0,
+            "duplicateCount": 0,
+            "state": "available",
+            "observedAt": "2026-09-08T12:00:00.000Z",
+            "startsWork": false
+          }
+        }
+      },
+      {
+        "name": "Atom XHTML",
+        "parity": false,
+        "adaptedParity": true,
+        "originalDigest": "b6220cfc985137ecb657a06beb6fe8ab95389a263fa969f123b98ba257aedd3a",
+        "candidateDigest": "634385ecf42d0ce5781ae5932c93db2db62fd13234e466cd7eafcac101a12c13",
+        "adaptedDigest": "b6220cfc985137ecb657a06beb6fe8ab95389a263fa969f123b98ba257aedd3a",
+        "originalState": "success",
+        "candidateState": "success",
+        "original": {
+          "ok": true,
+          "value": {
+            "stories": [
+              {
+                "contractVersion": "control-room-abs-news/v1",
+                "storyId": "story.abs:71ad055830e5a0847f888406cac9f4a4",
+                "tenantId": "tenant:rc7",
+                "workspaceId": "workspace:rc7",
+                "projectId": "project:rc7",
+                "clusterId": "cluster.abs:74ef97b27e5363e15579f2dafac3a209",
+                "queue": "earlier",
+                "title": "AI launch",
+                "summary": "Evidence",
+                "canonicalUrl": "https://example.org/launch",
+                "canonicalHost": "example.org",
+                "sourceLabel": "RC7",
+                "publishedAt": "2026-09-08T10:00:00.000Z",
+                "discoveredAt": "2026-09-08T12:00:00.000Z",
+                "lastVerifiedAt": "2026-09-08T12:00:00.000Z",
+                "verificationState": "review_only",
+                "priorityScore": 75,
+                "coverageCount": 1,
+                "sourceEvidence": [
+                  {
+                    "evidenceId": "evidence.abs:9c4f19780abb08e907fab5fc1dae5fcb",
+                    "sourceId": "source:rc7",
+                    "sourceKind": "rss",
+                    "sourceLabel": "RC7",
+                    "canonicalUrl": "https://example.org/launch",
+                    "observedAt": "2026-09-08T12:00:00.000Z",
+                    "evidenceDigest": "sha256:9c4f19780abb08e907fab5fc1dae5fcb54a90b3188e1a95735e7a7bd15808196",
+                    "containsRawNewsletterBody": false,
+                    "grantsNetworkAuthority": false
+                  }
+                ],
+                "contentDigest": "sha256:0638ee40e35b2c407feabd5163d357d0e3bb48e383553ba64d9a745d630c8f66",
+                "containsRawNewsletterBody": false,
+                "grantsNetworkAuthority": false,
+                "grantsCommandAuthority": false,
+                "grantsExecutionAuthority": false,
+                "storyDigest": "sha256:ecaf41f24d8de23cce6be4db3926a3ffe4712ac85ba9ccf32fad7ef5a9282aae"
+              }
+            ],
+            "discoveryCuration": {
+              "engine": "control-center/industry-curation",
+              "selectedStoryIds": [
+                "story.abs:71ad055830e5a0847f888406cac9f4a4"
+              ],
+              "deferredStoryIds": [],
+              "excludedStoryIds": [],
+              "deduplicatedCount": 0,
+              "grantsVerification": false
+            },
+            "sourceId": "source:rc7",
+            "feedDigest": "sha256:449ccfea6a44efc5769cc4a034b0cba81e75dd80b2a668a7f038648cec8bbeb6",
+            "byteCount": 281,
+            "inputItemCount": 1,
+            "rejectedCount": 0,
+            "duplicateCount": 0,
+            "state": "available",
+            "observedAt": "2026-09-08T12:00:00.000Z",
+            "startsWork": false
+          }
+        },
+        "candidate": {
+          "ok": true,
+          "value": {
+            "stories": [
+              {
+                "contractVersion": "control-room-abs-news/v1",
+                "storyId": "story.abs:71ad055830e5a0847f888406cac9f4a4",
+                "tenantId": "tenant:rc7",
+                "workspaceId": "workspace:rc7",
+                "projectId": "project:rc7",
+                "clusterId": "cluster.abs:74ef97b27e5363e15579f2dafac3a209",
+                "queue": "earlier",
+                "title": "AI launch",
+                "summary": "AI launch",
+                "canonicalUrl": "https://example.org/launch",
+                "canonicalHost": "example.org",
+                "sourceLabel": "RC7",
+                "publishedAt": "2026-09-08T10:00:00.000Z",
+                "discoveredAt": "2026-09-08T12:00:00.000Z",
+                "lastVerifiedAt": "2026-09-08T12:00:00.000Z",
+                "verificationState": "review_only",
+                "priorityScore": 75,
+                "coverageCount": 1,
+                "sourceEvidence": [
+                  {
+                    "evidenceId": "evidence.abs:3955fd7fda62f5be68a53025be8eab47",
+                    "sourceId": "source:rc7",
+                    "sourceKind": "rss",
+                    "sourceLabel": "RC7",
+                    "canonicalUrl": "https://example.org/launch",
+                    "observedAt": "2026-09-08T12:00:00.000Z",
+                    "evidenceDigest": "sha256:3955fd7fda62f5be68a53025be8eab478435c4c396f4a8addfb41e871522c015",
+                    "containsRawNewsletterBody": false,
+                    "grantsNetworkAuthority": false
+                  }
+                ],
+                "contentDigest": "sha256:9a0e14ae566656e0518936f24b569e9812fdb7d6a6f5f744d36e99b1680f1be5",
+                "containsRawNewsletterBody": false,
+                "grantsNetworkAuthority": false,
+                "grantsCommandAuthority": false,
+                "grantsExecutionAuthority": false,
+                "storyDigest": "sha256:092f27cdd375a826d23c7be6f3a9a14f1dcbd41d9342d57bea40c143a79edd47"
+              }
+            ],
+            "discoveryCuration": {
+              "engine": "control-center/industry-curation",
+              "selectedStoryIds": [
+                "story.abs:71ad055830e5a0847f888406cac9f4a4"
+              ],
+              "deferredStoryIds": [],
+              "excludedStoryIds": [],
+              "deduplicatedCount": 0,
+              "grantsVerification": false
+            },
+            "sourceId": "source:rc7",
+            "feedDigest": "sha256:449ccfea6a44efc5769cc4a034b0cba81e75dd80b2a668a7f038648cec8bbeb6",
+            "byteCount": 281,
+            "inputItemCount": 1,
+            "rejectedCount": 0,
+            "duplicateCount": 0,
+            "state": "available",
+            "observedAt": "2026-09-08T12:00:00.000Z",
+            "startsWork": false
+          }
+        },
+        "corrected": {
+          "ok": true,
+          "value": {
+            "stories": [
+              {
+                "contractVersion": "control-room-abs-news/v1",
+                "storyId": "story.abs:71ad055830e5a0847f888406cac9f4a4",
+                "tenantId": "tenant:rc7",
+                "workspaceId": "workspace:rc7",
+                "projectId": "project:rc7",
+                "clusterId": "cluster.abs:74ef97b27e5363e15579f2dafac3a209",
+                "queue": "earlier",
+                "title": "AI launch",
+                "summary": "Evidence",
+                "canonicalUrl": "https://example.org/launch",
+                "canonicalHost": "example.org",
+                "sourceLabel": "RC7",
+                "publishedAt": "2026-09-08T10:00:00.000Z",
+                "discoveredAt": "2026-09-08T12:00:00.000Z",
+                "lastVerifiedAt": "2026-09-08T12:00:00.000Z",
+                "verificationState": "review_only",
+                "priorityScore": 75,
+                "coverageCount": 1,
+                "sourceEvidence": [
+                  {
+                    "evidenceId": "evidence.abs:9c4f19780abb08e907fab5fc1dae5fcb",
+                    "sourceId": "source:rc7",
+                    "sourceKind": "rss",
+                    "sourceLabel": "RC7",
+                    "canonicalUrl": "https://example.org/launch",
+                    "observedAt": "2026-09-08T12:00:00.000Z",
+                    "evidenceDigest": "sha256:9c4f19780abb08e907fab5fc1dae5fcb54a90b3188e1a95735e7a7bd15808196",
+                    "containsRawNewsletterBody": false,
+                    "grantsNetworkAuthority": false
+                  }
+                ],
+                "contentDigest": "sha256:0638ee40e35b2c407feabd5163d357d0e3bb48e383553ba64d9a745d630c8f66",
+                "containsRawNewsletterBody": false,
+                "grantsNetworkAuthority": false,
+                "grantsCommandAuthority": false,
+                "grantsExecutionAuthority": false,
+                "storyDigest": "sha256:ecaf41f24d8de23cce6be4db3926a3ffe4712ac85ba9ccf32fad7ef5a9282aae"
+              }
+            ],
+            "discoveryCuration": {
+              "engine": "control-center/industry-curation",
+              "selectedStoryIds": [
+                "story.abs:71ad055830e5a0847f888406cac9f4a4"
+              ],
+              "deferredStoryIds": [],
+              "excludedStoryIds": [],
+              "deduplicatedCount": 0,
+              "grantsVerification": false
+            },
+            "sourceId": "source:rc7",
+            "feedDigest": "sha256:449ccfea6a44efc5769cc4a034b0cba81e75dd80b2a668a7f038648cec8bbeb6",
+            "byteCount": 281,
+            "inputItemCount": 1,
+            "rejectedCount": 0,
+            "duplicateCount": 0,
+            "state": "available",
+            "observedAt": "2026-09-08T12:00:00.000Z",
+            "startsWork": false
+          }
+        }
+      },
+      {
+        "name": "bad RSS date",
+        "parity": false,
+        "adaptedParity": true,
+        "originalDigest": "a12e7b1ae9059d05825a46afce0745f2ebf30c78c3128d697df42fd6364e3f5b",
+        "candidateDigest": "71566c32142ae5f56718447de9dab66de9987fadc060d0a1d30e0bf689dbe181",
+        "adaptedDigest": "a12e7b1ae9059d05825a46afce0745f2ebf30c78c3128d697df42fd6364e3f5b",
+        "originalState": "success",
+        "candidateState": "success",
+        "original": {
+          "ok": true,
+          "value": {
+            "stories": [
+              {
+                "contractVersion": "control-room-abs-news/v1",
+                "storyId": "story.abs:71ad055830e5a0847f888406cac9f4a4",
+                "tenantId": "tenant:rc7",
+                "workspaceId": "workspace:rc7",
+                "projectId": "project:rc7",
+                "clusterId": "cluster.abs:74ef97b27e5363e15579f2dafac3a209",
+                "queue": "earlier",
+                "title": "AI launch",
+                "summary": "Evidence",
+                "canonicalUrl": "https://example.org/launch",
+                "canonicalHost": "example.org",
+                "sourceLabel": "RC7",
+                "discoveredAt": "2026-09-08T12:00:00.000Z",
+                "lastVerifiedAt": "2026-09-08T12:00:00.000Z",
+                "verificationState": "review_only",
+                "priorityScore": 75,
+                "coverageCount": 1,
+                "sourceEvidence": [
+                  {
+                    "evidenceId": "evidence.abs:21c195d68803b60c630e60ad41180f54",
+                    "sourceId": "source:rc7",
+                    "sourceKind": "rss",
+                    "sourceLabel": "RC7",
+                    "canonicalUrl": "https://example.org/launch",
+                    "observedAt": "2026-09-08T12:00:00.000Z",
+                    "evidenceDigest": "sha256:21c195d68803b60c630e60ad41180f54c0a7957b92ca6e6a8af9b55e661c1cad",
+                    "containsRawNewsletterBody": false,
+                    "grantsNetworkAuthority": false
+                  }
+                ],
+                "contentDigest": "sha256:737bd867bccd1a239753c99e33b1ace3f4db433c0a4e5b08f75ab1c8c92bb517",
+                "containsRawNewsletterBody": false,
+                "grantsNetworkAuthority": false,
+                "grantsCommandAuthority": false,
+                "grantsExecutionAuthority": false,
+                "storyDigest": "sha256:3fb26efc1e70460d517a5fbd3b87ea4dd929242e99212ab18bb5ac7f78f2d26a"
+              }
+            ],
+            "discoveryCuration": {
+              "engine": "control-center/industry-curation",
+              "selectedStoryIds": [
+                "story.abs:71ad055830e5a0847f888406cac9f4a4"
+              ],
+              "deferredStoryIds": [],
+              "excludedStoryIds": [],
+              "deduplicatedCount": 0,
+              "grantsVerification": false
+            },
+            "sourceId": "source:rc7",
+            "feedDigest": "sha256:b32b9be79fdc5b831eadbdf58804006afe289daf343b7a879a29eaeab507325a",
+            "byteCount": 202,
+            "inputItemCount": 1,
+            "rejectedCount": 0,
+            "duplicateCount": 0,
+            "state": "available",
+            "observedAt": "2026-09-08T12:00:00.000Z",
+            "startsWork": false
+          }
+        },
+        "candidate": {
+          "ok": true,
+          "value": {
+            "stories": [],
+            "discoveryCuration": {
+              "engine": "control-center/industry-curation",
+              "selectedStoryIds": [],
+              "deferredStoryIds": [],
+              "excludedStoryIds": [],
+              "deduplicatedCount": 0,
+              "grantsVerification": false
+            },
+            "sourceId": "source:rc7",
+            "feedDigest": "sha256:b32b9be79fdc5b831eadbdf58804006afe289daf343b7a879a29eaeab507325a",
+            "byteCount": 202,
+            "inputItemCount": 1,
+            "rejectedCount": 1,
+            "duplicateCount": 0,
+            "state": "partial",
+            "observedAt": "2026-09-08T12:00:00.000Z",
+            "startsWork": false
+          }
+        },
+        "corrected": {
+          "ok": true,
+          "value": {
+            "stories": [
+              {
+                "contractVersion": "control-room-abs-news/v1",
+                "storyId": "story.abs:71ad055830e5a0847f888406cac9f4a4",
+                "tenantId": "tenant:rc7",
+                "workspaceId": "workspace:rc7",
+                "projectId": "project:rc7",
+                "clusterId": "cluster.abs:74ef97b27e5363e15579f2dafac3a209",
+                "queue": "earlier",
+                "title": "AI launch",
+                "summary": "Evidence",
+                "canonicalUrl": "https://example.org/launch",
+                "canonicalHost": "example.org",
+                "sourceLabel": "RC7",
+                "discoveredAt": "2026-09-08T12:00:00.000Z",
+                "lastVerifiedAt": "2026-09-08T12:00:00.000Z",
+                "verificationState": "review_only",
+                "priorityScore": 75,
+                "coverageCount": 1,
+                "sourceEvidence": [
+                  {
+                    "evidenceId": "evidence.abs:21c195d68803b60c630e60ad41180f54",
+                    "sourceId": "source:rc7",
+                    "sourceKind": "rss",
+                    "sourceLabel": "RC7",
+                    "canonicalUrl": "https://example.org/launch",
+                    "observedAt": "2026-09-08T12:00:00.000Z",
+                    "evidenceDigest": "sha256:21c195d68803b60c630e60ad41180f54c0a7957b92ca6e6a8af9b55e661c1cad",
+                    "containsRawNewsletterBody": false,
+                    "grantsNetworkAuthority": false
+                  }
+                ],
+                "contentDigest": "sha256:737bd867bccd1a239753c99e33b1ace3f4db433c0a4e5b08f75ab1c8c92bb517",
+                "containsRawNewsletterBody": false,
+                "grantsNetworkAuthority": false,
+                "grantsCommandAuthority": false,
+                "grantsExecutionAuthority": false,
+                "storyDigest": "sha256:3fb26efc1e70460d517a5fbd3b87ea4dd929242e99212ab18bb5ac7f78f2d26a"
+              }
+            ],
+            "discoveryCuration": {
+              "engine": "control-center/industry-curation",
+              "selectedStoryIds": [
+                "story.abs:71ad055830e5a0847f888406cac9f4a4"
+              ],
+              "deferredStoryIds": [],
+              "excludedStoryIds": [],
+              "deduplicatedCount": 0,
+              "grantsVerification": false
+            },
+            "sourceId": "source:rc7",
+            "feedDigest": "sha256:b32b9be79fdc5b831eadbdf58804006afe289daf343b7a879a29eaeab507325a",
+            "byteCount": 202,
+            "inputItemCount": 1,
+            "rejectedCount": 0,
+            "duplicateCount": 0,
+            "state": "available",
+            "observedAt": "2026-09-08T12:00:00.000Z",
+            "startsWork": false
+          }
+        }
+      },
+      {
+        "name": "bad Atom date",
+        "parity": false,
+        "adaptedParity": true,
+        "originalDigest": "aeaf2b9dbcc214d09c39143b401c71a15b93565b5f9e533bc5cf6a130550bfe8",
+        "candidateDigest": "0019ab02332ae14714ae5c854291fd71228ba8e40c9e571b2785933116fb8125",
+        "adaptedDigest": "aeaf2b9dbcc214d09c39143b401c71a15b93565b5f9e533bc5cf6a130550bfe8",
+        "originalState": "invalid_feed",
+        "candidateState": "success",
+        "original": {
+          "ok": false,
+          "code": "invalid_feed"
+        },
+        "candidate": {
+          "ok": true,
+          "value": {
+            "stories": [],
+            "discoveryCuration": {
+              "engine": "control-center/industry-curation",
+              "selectedStoryIds": [],
+              "deferredStoryIds": [],
+              "excludedStoryIds": [],
+              "deduplicatedCount": 0,
+              "grantsVerification": false
+            },
+            "sourceId": "source:rc7",
+            "feedDigest": "sha256:daf6e7c12f90885817e743c35a43f07c7b15c4f7c6e2cb64d6fd814f2c8d12d7",
+            "byteCount": 203,
+            "inputItemCount": 1,
+            "rejectedCount": 1,
+            "duplicateCount": 0,
+            "state": "partial",
+            "observedAt": "2026-09-08T12:00:00.000Z",
+            "startsWork": false
+          }
+        },
+        "corrected": {
+          "ok": false,
+          "code": "invalid_feed"
+        }
+      }
+    ],
+    "summary": {
+      "fixtures": 18,
+      "parity": 14,
+      "adaptedParity": 18,
+      "mismatches": [
+        "HTML entities",
+        "Atom XHTML",
+        "bad RSS date",
+        "bad Atom date"
+      ],
+      "remainingMismatches": [],
+      "borrowedCapSort": true,
+      "borrowedUndatedBaselineReplay": true,
+      "syntheticReadCalls": 3
+    }
+  }
+}

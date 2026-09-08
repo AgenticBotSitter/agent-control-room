@@ -6,17 +6,19 @@ import {createHash} from 'node:crypto';
 import path from 'node:path';
 import vm from 'node:vm';
 import ts from 'typescript';
-import {XMLParser,XMLValidator,XMLBuilder} from 'fast-xml-parser';
-import {decodeAbsFeed} from '../../src/project-adapters/abs-news/v1/feed-decoder';
-import {parseFeed} from '../../src/vendor/control-center/sitemap';
-import {createIndustrySourceReader} from '../../src/vendor/control-center/source-reader';
+import {verify,entitiesRoot} from './f7-parser-decision-pins.mjs';
+const verifiedPins=verify(); // Explicit identity refusal BEFORE candidate/borrowed imports.
+const {XMLParser,XMLValidator,XMLBuilder}=await import('fast-xml-parser');
+const {decodeAbsFeed}=await import('../../src/project-adapters/abs-news/v1/feed-decoder');
+const {parseFeed}=await import('../../src/vendor/control-center/sitemap');
+const {createIndustrySourceReader}=await import('../../src/vendor/control-center/source-reader');
 
 // Minimal competing adapter; deliberately not claimed a full rss-parser clone.
 const arr=(v:any):any[]=>v===undefined?[]:Array.isArray(v)?v:[v];
 const txt=(v:any):string|undefined=>typeof v==='string'?v:typeof v?.['#text']==='string'?v['#text']:undefined;
 let compatibilityMode=false;
-const rssRequire=createRequire(createRequire(import.meta.url).resolve('rss-parser'));
-const {decodeHTML}=rssRequire('entities');
+// Standalone exact installed package path: candidate does not resolve via incumbent.
+const {decodeHTML}=createRequire(import.meta.url)(entitiesRoot);
 class FastCompatibilityParser {
  async parseString(xml:string){
   if(XMLValidator.validate(xml)!==true)throw Error('invalid XML');
@@ -83,4 +85,4 @@ const next=await reader.readSource(configured as any,repeat.snapshot);assert.equ
 assert.equal(comparisons.filter(c=>c.parity).length,14);
 assert.deepEqual(comparisons.filter(c=>!c.parity).map(c=>c.name),['HTML entities','Atom XHTML','bad RSS date','bad Atom date']);
 assert.equal(comparisons.filter(c=>c.adaptedParity).length,18);
-console.log(JSON.stringify({scope:'actual full decoder import substitution plus actual borrowed parser/reader; supplied synthetic XML and readText only, no network/DB',sourceSha256:hash(source),substitutedImports:replaced,comparisons,summary:{fixtures:comparisons.length,parity:comparisons.filter(c=>c.parity).length,adaptedParity:comparisons.filter(c=>c.adaptedParity).length,mismatches:comparisons.filter(c=>!c.parity).map(c=>c.name),remainingMismatches:comparisons.filter(c=>!c.adaptedParity).map(c=>c.name),borrowedCapSort:true,borrowedUndatedBaselineReplay:true,syntheticReadCalls:calls}},null,2));
+console.log(JSON.stringify({scope:'actual full decoder import substitution plus actual borrowed parser/reader; supplied synthetic XML and readText only, no network/DB',verifiedPins,entitiesResolution:'explicit node_modules/.pnpm/entities@2.2.0/node_modules/entities; not via rss-parser',sourceSha256:hash(source),substitutedImports:replaced,comparisons,summary:{fixtures:comparisons.length,parity:comparisons.filter(c=>c.parity).length,adaptedParity:comparisons.filter(c=>c.adaptedParity).length,mismatches:comparisons.filter(c=>!c.parity).map(c=>c.name),remainingMismatches:comparisons.filter(c=>!c.adaptedParity).map(c=>c.name),borrowedCapSort:true,borrowedUndatedBaselineReplay:true,syntheticReadCalls:calls}},null,2));
