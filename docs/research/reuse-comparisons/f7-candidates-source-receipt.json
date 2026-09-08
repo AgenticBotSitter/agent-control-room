@@ -1,0 +1,160 @@
+{
+  "root": "/private/tmp/cr-f7-candidates.8g4o3m",
+  "scope": "read-only source, no installation or execution",
+  "files": [
+    {
+      "repo": "miniflux/v2",
+      "pin": "a84533db6ca0a2ff9a47800fbf0326be6d9b3170",
+      "path": "LICENSE",
+      "url": "https://raw.githubusercontent.com/miniflux/v2/a84533db6ca0a2ff9a47800fbf0326be6d9b3170/LICENSE",
+      "name": "miniflux--LICENSE",
+      "bytes": 10174,
+      "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594"
+    },
+    {
+      "repo": "miniflux/v2",
+      "pin": "a84533db6ca0a2ff9a47800fbf0326be6d9b3170",
+      "path": "go.mod",
+      "url": "https://raw.githubusercontent.com/miniflux/v2/a84533db6ca0a2ff9a47800fbf0326be6d9b3170/go.mod",
+      "name": "miniflux--go.mod",
+      "bytes": 1596,
+      "sha256": "64d13a594ff0039d523b06638691f8d63697945b7b8f8d61baa2c1a7b5976ad0"
+    },
+    {
+      "repo": "miniflux/v2",
+      "pin": "a84533db6ca0a2ff9a47800fbf0326be6d9b3170",
+      "path": "internal/api/entry_handlers.go",
+      "url": "https://raw.githubusercontent.com/miniflux/v2/a84533db6ca0a2ff9a47800fbf0326be6d9b3170/internal/api/entry_handlers.go",
+      "name": "miniflux--internal--api--entry_handlers.go",
+      "bytes": 17399,
+      "sha256": "fa1a12381ddd6dd98812756a46065c5fe1624aefeff9a6d200d57aa6fce6fbf5"
+    },
+    {
+      "repo": "miniflux/v2",
+      "pin": "a84533db6ca0a2ff9a47800fbf0326be6d9b3170",
+      "path": "internal/reader/scraper/scraper.go",
+      "url": "https://raw.githubusercontent.com/miniflux/v2/a84533db6ca0a2ff9a47800fbf0326be6d9b3170/internal/reader/scraper/scraper.go",
+      "name": "miniflux--internal--reader--scraper--scraper.go",
+      "bytes": 3270,
+      "sha256": "f84aa5068fb3a09a5d03ff18bf93fd5d8fd5a0b282569da0b886dca9458b2388"
+    },
+    {
+      "repo": "miniflux/v2",
+      "pin": "a84533db6ca0a2ff9a47800fbf0326be6d9b3170",
+      "path": "internal/reader/scraper/scraper_test.go",
+      "url": "https://raw.githubusercontent.com/miniflux/v2/a84533db6ca0a2ff9a47800fbf0326be6d9b3170/internal/reader/scraper/scraper_test.go",
+      "name": "miniflux--internal--reader--scraper--scraper_test.go",
+      "bytes": 4409,
+      "sha256": "d106a6f1786a84d2eef7782631b770e26486adc9808d6992ce6e5a6fa5af725f"
+    },
+    {
+      "repo": "miniflux/v2",
+      "pin": "a84533db6ca0a2ff9a47800fbf0326be6d9b3170",
+      "path": "internal/reader/sanitizer/sanitizer.go",
+      "url": "https://raw.githubusercontent.com/miniflux/v2/a84533db6ca0a2ff9a47800fbf0326be6d9b3170/internal/reader/sanitizer/sanitizer.go",
+      "name": "miniflux--internal--reader--sanitizer--sanitizer.go",
+      "bytes": 16079,
+      "sha256": "1c2c7c006597b8211f138c9af6d47a62a3e0ad072b4be7a4088b2f462f2a32be"
+    },
+    {
+      "repo": "FreshRSS/FreshRSS",
+      "pin": "65e402ca412dd2683ed3b36ac673cb7cdf5de43e",
+      "path": "LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/FreshRSS/FreshRSS/65e402ca412dd2683ed3b36ac673cb7cdf5de43e/LICENSE.txt",
+      "name": "FreshRSS--LICENSE.txt",
+      "bytes": 34524,
+      "sha256": "e9df4c4e4e64b8168a71c3c67668dcffabbe8fca11d4ac4a7d5482562cd1679c"
+    },
+    {
+      "repo": "FreshRSS/FreshRSS",
+      "pin": "65e402ca412dd2683ed3b36ac673cb7cdf5de43e",
+      "path": "composer.json",
+      "url": "https://raw.githubusercontent.com/FreshRSS/FreshRSS/65e402ca412dd2683ed3b36ac673cb7cdf5de43e/composer.json",
+      "name": "FreshRSS--composer.json",
+      "bytes": 2342,
+      "sha256": "3da7fef8d75c7de08dfeafa8d6bd81d08502b332134e305cf19bd130c3569378"
+    },
+    {
+      "repo": "FreshRSS/FreshRSS",
+      "pin": "65e402ca412dd2683ed3b36ac673cb7cdf5de43e",
+      "path": "p/api/greader.php",
+      "url": "https://raw.githubusercontent.com/FreshRSS/FreshRSS/65e402ca412dd2683ed3b36ac673cb7cdf5de43e/p/api/greader.php",
+      "name": "FreshRSS--p--api--greader.php",
+      "bytes": 48744,
+      "sha256": "4ca63d62f1dd6c98afb1bd4ccb89d13f94a2302abe7b186d9f60b8c75c74ce42"
+    },
+    {
+      "repo": "FreshRSS/FreshRSS",
+      "pin": "65e402ca412dd2683ed3b36ac673cb7cdf5de43e",
+      "path": "app/Models/Feed.php",
+      "url": "https://raw.githubusercontent.com/FreshRSS/FreshRSS/65e402ca412dd2683ed3b36ac673cb7cdf5de43e/app/Models/Feed.php",
+      "name": "FreshRSS--app--Models--Feed.php",
+      "bytes": 51248,
+      "sha256": "98804544e4f590d2260e6aa96bf5d3aee94d9dc819143cca47f68ee239a93fc0"
+    },
+    {
+      "repo": "DIYgod/RSSHub",
+      "pin": "865f1cf5af3973dffaa2cb8c2d73ee0538043c12",
+      "path": "LICENSE",
+      "url": "https://raw.githubusercontent.com/DIYgod/RSSHub/865f1cf5af3973dffaa2cb8c2d73ee0538043c12/LICENSE",
+      "name": "DIYgod--LICENSE",
+      "bytes": 34523,
+      "sha256": "8486a10c4393cee1c25392769ddd3b2d6c242d6ec7928e1414efff7dfb2f07ef"
+    },
+    {
+      "repo": "DIYgod/RSSHub",
+      "pin": "865f1cf5af3973dffaa2cb8c2d73ee0538043c12",
+      "path": "package.json",
+      "url": "https://raw.githubusercontent.com/DIYgod/RSSHub/865f1cf5af3973dffaa2cb8c2d73ee0538043c12/package.json",
+      "name": "DIYgod--package.json",
+      "bytes": 10917,
+      "sha256": "2bcd7b35d082f47344edd92b6f0347185e88db80a50e762cabe8f5254753d8a1"
+    },
+    {
+      "repo": "DIYgod/RSSHub",
+      "pin": "865f1cf5af3973dffaa2cb8c2d73ee0538043c12",
+      "path": "lib/routes/github/issue.ts",
+      "url": "https://raw.githubusercontent.com/DIYgod/RSSHub/865f1cf5af3973dffaa2cb8c2d73ee0538043c12/lib/routes/github/issue.ts",
+      "name": "DIYgod--lib--routes--github--issue.ts",
+      "bytes": 3089,
+      "sha256": "8c4c4b0bc394f559dd33e57955ba9f913411f22f58de38accace0fdb7a24b4d9"
+    },
+    {
+      "repo": "DIYgod/RSSHub",
+      "pin": "865f1cf5af3973dffaa2cb8c2d73ee0538043c12",
+      "path": "lib/utils/rss-parser.ts",
+      "url": "https://raw.githubusercontent.com/DIYgod/RSSHub/865f1cf5af3973dffaa2cb8c2d73ee0538043c12/lib/utils/rss-parser.ts",
+      "name": "DIYgod--lib--utils--rss-parser.ts",
+      "bytes": 723,
+      "sha256": "f6a15e5c5eaeae2c48f3642c3c061328c74bc0b91a588e66911b51779fd96d73"
+    },
+    {
+      "repo": "DIYgod/RSSHub",
+      "pin": "865f1cf5af3973dffaa2cb8c2d73ee0538043c12",
+      "path": "lib/utils/rss-parser.test.ts",
+      "url": "https://raw.githubusercontent.com/DIYgod/RSSHub/865f1cf5af3973dffaa2cb8c2d73ee0538043c12/lib/utils/rss-parser.test.ts",
+      "name": "DIYgod--lib--utils--rss-parser.test.ts",
+      "bytes": 3461,
+      "sha256": "792f28c407e5fa8049a0668cb8ccde40b9156ec787626a54fa6b91bc04ee3898"
+    },
+    {
+      "repo": "DIYgod/RSSHub",
+      "pin": "865f1cf5af3973dffaa2cb8c2d73ee0538043c12",
+      "path": "lib/middleware/cache.ts",
+      "url": "https://raw.githubusercontent.com/DIYgod/RSSHub/865f1cf5af3973dffaa2cb8c2d73ee0538043c12/lib/middleware/cache.ts",
+      "name": "DIYgod--lib--middleware--cache.ts",
+      "bytes": 3637,
+      "sha256": "46bd84428daed3e2b01c71b7f23580dd999eb374312c4278b79d93f2232c3842"
+    },
+    {
+      "repo": "DIYgod/RSSHub",
+      "pin": "865f1cf5af3973dffaa2cb8c2d73ee0538043c12",
+      "path": "lib/middleware/cache.test.ts",
+      "url": "https://raw.githubusercontent.com/DIYgod/RSSHub/865f1cf5af3973dffaa2cb8c2d73ee0538043c12/lib/middleware/cache.test.ts",
+      "name": "DIYgod--lib--middleware--cache.test.ts",
+      "bytes": 7770,
+      "sha256": "8aa2d3a08ea08c5d0a2caeebaf4d53ae655d666968f6db45dfe26b3592d5ddb4"
+    }
+  ],
+  "totalBytes": 253905
+}

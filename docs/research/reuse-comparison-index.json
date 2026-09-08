@@ -4,6 +4,7 @@
   "baseline": "44f9064",
   "status": "in_progress",
   "completionClaim": false,
+  "narrowDecisionRegister": "reuse-comparisons/decision-register.md",
   "outcomes": [
     {
       "id": "A1",
@@ -237,8 +238,8 @@
     },
     {
       "id": "F4",
-      "dossier": "reuse-comparisons/f4-durable-comparison.md",
-      "evidence": "actual Hermes durable/planner 13 checks and Maestro writer 6 checks; policy/round semantics differ; mapped planner and worktree E3 remain"
+      "dossier": "reuse-comparisons/f4-planner-fit.md",
+      "evidence": "12 mapped actual-planner/coordinator cases support narrow fixed-panel retention; all four source hashes and exact contributions checked on rerun; durable messaging/worktree alternatives remain"
     },
     {
       "id": "F5",
@@ -252,8 +253,8 @@
     },
     {
       "id": "F7",
-      "dossier": null,
-      "evidence": "prior integrated Control Center evidence exists; comparative family closure not yet reconciled"
+      "dossier": "reuse-comparisons/f7-existing-reconciliation.md",
+      "evidence": "11 actually integrated vendor files reconciled; 60 checks including synthetic research journey and differing actual parser semantics; Miniflux/FreshRSS/RSSHub source candidates screened, not executed"
     },
     {
       "id": "F8",
@@ -262,8 +263,8 @@
     },
     {
       "id": "F9",
-      "dossier": null,
-      "evidence": "candidate notices and partial inventories exist; exact selected shipping closure remains"
+      "dossier": "reuse-comparisons/f9-shipping-license-scope.md",
+      "evidence": "30-vs28 direct dependency notice drift found; entities source+MIT provenance traced with version discrepancy; full graph and built distribution notices remain"
     }
   ],
   "next": [

@@ -1,0 +1,834 @@
+{
+  "outcomes": [
+    {
+      "count": 3,
+      "rounds": 1,
+      "adapted": false,
+      "state": "completed",
+      "messagesUsed": 3,
+      "calls": 3,
+      "contributions": 3,
+      "replayNoCalls": true,
+      "mappings": [
+        {
+          "currentParticipant": "bot:customer",
+          "currentRound": 1,
+          "candidateParticipant": "bot:customer",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 566
+        },
+        {
+          "currentParticipant": "bot:market",
+          "currentRound": 1,
+          "candidateParticipant": "bot:market",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 638
+        },
+        {
+          "currentParticipant": "bot:skeptic",
+          "currentRound": 1,
+          "candidateParticipant": "bot:skeptic",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 706
+        }
+      ],
+      "elapsedMs": 151.54100000000005
+    },
+    {
+      "count": 3,
+      "rounds": 1,
+      "adapted": true,
+      "state": "completed",
+      "messagesUsed": 3,
+      "calls": 3,
+      "contributions": 3,
+      "replayNoCalls": true,
+      "mappings": [
+        {
+          "currentParticipant": "bot:customer",
+          "currentRound": 1,
+          "candidateParticipant": "bot:customer",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 566
+        },
+        {
+          "currentParticipant": "bot:market",
+          "currentRound": 1,
+          "candidateParticipant": "bot:market",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 638
+        },
+        {
+          "currentParticipant": "bot:skeptic",
+          "currentRound": 1,
+          "candidateParticipant": "bot:skeptic",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 706
+        }
+      ],
+      "elapsedMs": 160.7504590000001
+    },
+    {
+      "count": 3,
+      "rounds": 2,
+      "adapted": false,
+      "state": "ambiguous",
+      "messagesUsed": 3,
+      "calls": 4,
+      "contributions": 3,
+      "replayNoCalls": true,
+      "mappings": [
+        {
+          "currentParticipant": "bot:customer",
+          "currentRound": 1,
+          "candidateParticipant": "bot:customer",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 566
+        },
+        {
+          "currentParticipant": "bot:market",
+          "currentRound": 1,
+          "candidateParticipant": "bot:market",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 638
+        },
+        {
+          "currentParticipant": "bot:skeptic",
+          "currentRound": 1,
+          "candidateParticipant": "bot:skeptic",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 706
+        },
+        {
+          "currentParticipant": "bot:customer",
+          "currentRound": 2,
+          "status": "settled"
+        }
+      ],
+      "elapsedMs": 193.3465000000001
+    },
+    {
+      "count": 3,
+      "rounds": 2,
+      "adapted": true,
+      "state": "completed",
+      "messagesUsed": 6,
+      "calls": 6,
+      "contributions": 6,
+      "replayNoCalls": true,
+      "mappings": [
+        {
+          "currentParticipant": "bot:customer",
+          "currentRound": 1,
+          "candidateParticipant": "bot:customer",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 566
+        },
+        {
+          "currentParticipant": "bot:market",
+          "currentRound": 1,
+          "candidateParticipant": "bot:market",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 638
+        },
+        {
+          "currentParticipant": "bot:skeptic",
+          "currentRound": 1,
+          "candidateParticipant": "bot:skeptic",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 706
+        },
+        {
+          "currentParticipant": "bot:customer",
+          "currentRound": 2,
+          "candidateParticipant": "bot:customer",
+          "candidateRound": 2,
+          "status": "task",
+          "promptLength": 664
+        },
+        {
+          "currentParticipant": "bot:market",
+          "currentRound": 2,
+          "candidateParticipant": "bot:market",
+          "candidateRound": 2,
+          "status": "task",
+          "promptLength": 668
+        },
+        {
+          "currentParticipant": "bot:skeptic",
+          "currentRound": 2,
+          "candidateParticipant": "bot:skeptic",
+          "candidateRound": 2,
+          "status": "task",
+          "promptLength": 666
+        }
+      ],
+      "elapsedMs": 321.68504199999984
+    },
+    {
+      "count": 3,
+      "rounds": 3,
+      "adapted": false,
+      "state": "ambiguous",
+      "messagesUsed": 3,
+      "calls": 4,
+      "contributions": 3,
+      "replayNoCalls": true,
+      "mappings": [
+        {
+          "currentParticipant": "bot:customer",
+          "currentRound": 1,
+          "candidateParticipant": "bot:customer",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 566
+        },
+        {
+          "currentParticipant": "bot:market",
+          "currentRound": 1,
+          "candidateParticipant": "bot:market",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 638
+        },
+        {
+          "currentParticipant": "bot:skeptic",
+          "currentRound": 1,
+          "candidateParticipant": "bot:skeptic",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 706
+        },
+        {
+          "currentParticipant": "bot:customer",
+          "currentRound": 2,
+          "status": "settled"
+        }
+      ],
+      "elapsedMs": 186.6685
+    },
+    {
+      "count": 3,
+      "rounds": 3,
+      "adapted": true,
+      "state": "completed",
+      "messagesUsed": 9,
+      "calls": 9,
+      "contributions": 9,
+      "replayNoCalls": true,
+      "mappings": [
+        {
+          "currentParticipant": "bot:customer",
+          "currentRound": 1,
+          "candidateParticipant": "bot:customer",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 566
+        },
+        {
+          "currentParticipant": "bot:market",
+          "currentRound": 1,
+          "candidateParticipant": "bot:market",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 638
+        },
+        {
+          "currentParticipant": "bot:skeptic",
+          "currentRound": 1,
+          "candidateParticipant": "bot:skeptic",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 706
+        },
+        {
+          "currentParticipant": "bot:customer",
+          "currentRound": 2,
+          "candidateParticipant": "bot:customer",
+          "candidateRound": 2,
+          "status": "task",
+          "promptLength": 664
+        },
+        {
+          "currentParticipant": "bot:market",
+          "currentRound": 2,
+          "candidateParticipant": "bot:market",
+          "candidateRound": 2,
+          "status": "task",
+          "promptLength": 668
+        },
+        {
+          "currentParticipant": "bot:skeptic",
+          "currentRound": 2,
+          "candidateParticipant": "bot:skeptic",
+          "candidateRound": 2,
+          "status": "task",
+          "promptLength": 666
+        },
+        {
+          "currentParticipant": "bot:customer",
+          "currentRound": 3,
+          "candidateParticipant": "bot:customer",
+          "candidateRound": 3,
+          "status": "task",
+          "promptLength": 664
+        },
+        {
+          "currentParticipant": "bot:market",
+          "currentRound": 3,
+          "candidateParticipant": "bot:market",
+          "candidateRound": 3,
+          "status": "task",
+          "promptLength": 668
+        },
+        {
+          "currentParticipant": "bot:skeptic",
+          "currentRound": 3,
+          "candidateParticipant": "bot:skeptic",
+          "candidateRound": 3,
+          "status": "task",
+          "promptLength": 666
+        }
+      ],
+      "elapsedMs": 509.4567089999998
+    },
+    {
+      "count": 6,
+      "rounds": 1,
+      "adapted": false,
+      "state": "completed",
+      "messagesUsed": 6,
+      "calls": 6,
+      "contributions": 6,
+      "replayNoCalls": true,
+      "mappings": [
+        {
+          "currentParticipant": "bot:customer",
+          "currentRound": 1,
+          "candidateParticipant": "bot:customer",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 602
+        },
+        {
+          "currentParticipant": "bot:market",
+          "currentRound": 1,
+          "candidateParticipant": "bot:market",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 674
+        },
+        {
+          "currentParticipant": "bot:skeptic",
+          "currentRound": 1,
+          "candidateParticipant": "bot:skeptic",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 742
+        },
+        {
+          "currentParticipant": "bot:operations",
+          "currentRound": 1,
+          "candidateParticipant": "bot:operations",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 812
+        },
+        {
+          "currentParticipant": "bot:technology",
+          "currentRound": 1,
+          "candidateParticipant": "bot:technology",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 888
+        },
+        {
+          "currentParticipant": "bot:finance",
+          "currentRound": 1,
+          "candidateParticipant": "bot:finance",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 964
+        }
+      ],
+      "elapsedMs": 283.88316699999996
+    },
+    {
+      "count": 6,
+      "rounds": 1,
+      "adapted": true,
+      "state": "completed",
+      "messagesUsed": 6,
+      "calls": 6,
+      "contributions": 6,
+      "replayNoCalls": true,
+      "mappings": [
+        {
+          "currentParticipant": "bot:customer",
+          "currentRound": 1,
+          "candidateParticipant": "bot:customer",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 602
+        },
+        {
+          "currentParticipant": "bot:market",
+          "currentRound": 1,
+          "candidateParticipant": "bot:market",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 674
+        },
+        {
+          "currentParticipant": "bot:skeptic",
+          "currentRound": 1,
+          "candidateParticipant": "bot:skeptic",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 742
+        },
+        {
+          "currentParticipant": "bot:operations",
+          "currentRound": 1,
+          "candidateParticipant": "bot:operations",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 812
+        },
+        {
+          "currentParticipant": "bot:technology",
+          "currentRound": 1,
+          "candidateParticipant": "bot:technology",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 888
+        },
+        {
+          "currentParticipant": "bot:finance",
+          "currentRound": 1,
+          "candidateParticipant": "bot:finance",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 964
+        }
+      ],
+      "elapsedMs": 313.5752090000001
+    },
+    {
+      "count": 6,
+      "rounds": 2,
+      "adapted": false,
+      "state": "ambiguous",
+      "messagesUsed": 6,
+      "calls": 7,
+      "contributions": 6,
+      "replayNoCalls": true,
+      "mappings": [
+        {
+          "currentParticipant": "bot:customer",
+          "currentRound": 1,
+          "candidateParticipant": "bot:customer",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 602
+        },
+        {
+          "currentParticipant": "bot:market",
+          "currentRound": 1,
+          "candidateParticipant": "bot:market",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 674
+        },
+        {
+          "currentParticipant": "bot:skeptic",
+          "currentRound": 1,
+          "candidateParticipant": "bot:skeptic",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 742
+        },
+        {
+          "currentParticipant": "bot:operations",
+          "currentRound": 1,
+          "candidateParticipant": "bot:operations",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 812
+        },
+        {
+          "currentParticipant": "bot:technology",
+          "currentRound": 1,
+          "candidateParticipant": "bot:technology",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 888
+        },
+        {
+          "currentParticipant": "bot:finance",
+          "currentRound": 1,
+          "candidateParticipant": "bot:finance",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 964
+        },
+        {
+          "currentParticipant": "bot:customer",
+          "currentRound": 2,
+          "status": "settled"
+        }
+      ],
+      "elapsedMs": 322.82012499999973
+    },
+    {
+      "count": 6,
+      "rounds": 2,
+      "adapted": true,
+      "state": "completed",
+      "messagesUsed": 12,
+      "calls": 12,
+      "contributions": 12,
+      "replayNoCalls": true,
+      "mappings": [
+        {
+          "currentParticipant": "bot:customer",
+          "currentRound": 1,
+          "candidateParticipant": "bot:customer",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 602
+        },
+        {
+          "currentParticipant": "bot:market",
+          "currentRound": 1,
+          "candidateParticipant": "bot:market",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 674
+        },
+        {
+          "currentParticipant": "bot:skeptic",
+          "currentRound": 1,
+          "candidateParticipant": "bot:skeptic",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 742
+        },
+        {
+          "currentParticipant": "bot:operations",
+          "currentRound": 1,
+          "candidateParticipant": "bot:operations",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 812
+        },
+        {
+          "currentParticipant": "bot:technology",
+          "currentRound": 1,
+          "candidateParticipant": "bot:technology",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 888
+        },
+        {
+          "currentParticipant": "bot:finance",
+          "currentRound": 1,
+          "candidateParticipant": "bot:finance",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 964
+        },
+        {
+          "currentParticipant": "bot:customer",
+          "currentRound": 2,
+          "candidateParticipant": "bot:customer",
+          "candidateRound": 2,
+          "status": "task",
+          "promptLength": 922
+        },
+        {
+          "currentParticipant": "bot:market",
+          "currentRound": 2,
+          "candidateParticipant": "bot:market",
+          "candidateRound": 2,
+          "status": "task",
+          "promptLength": 926
+        },
+        {
+          "currentParticipant": "bot:skeptic",
+          "currentRound": 2,
+          "candidateParticipant": "bot:skeptic",
+          "candidateRound": 2,
+          "status": "task",
+          "promptLength": 924
+        },
+        {
+          "currentParticipant": "bot:operations",
+          "currentRound": 2,
+          "candidateParticipant": "bot:operations",
+          "candidateRound": 2,
+          "status": "task",
+          "promptLength": 918
+        },
+        {
+          "currentParticipant": "bot:technology",
+          "currentRound": 2,
+          "candidateParticipant": "bot:technology",
+          "candidateRound": 2,
+          "status": "task",
+          "promptLength": 918
+        },
+        {
+          "currentParticipant": "bot:finance",
+          "currentRound": 2,
+          "candidateParticipant": "bot:finance",
+          "candidateRound": 2,
+          "status": "task",
+          "promptLength": 924
+        }
+      ],
+      "elapsedMs": 634.3507089999998
+    },
+    {
+      "count": 6,
+      "rounds": 3,
+      "adapted": false,
+      "state": "ambiguous",
+      "messagesUsed": 6,
+      "calls": 7,
+      "contributions": 6,
+      "replayNoCalls": true,
+      "mappings": [
+        {
+          "currentParticipant": "bot:customer",
+          "currentRound": 1,
+          "candidateParticipant": "bot:customer",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 602
+        },
+        {
+          "currentParticipant": "bot:market",
+          "currentRound": 1,
+          "candidateParticipant": "bot:market",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 674
+        },
+        {
+          "currentParticipant": "bot:skeptic",
+          "currentRound": 1,
+          "candidateParticipant": "bot:skeptic",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 742
+        },
+        {
+          "currentParticipant": "bot:operations",
+          "currentRound": 1,
+          "candidateParticipant": "bot:operations",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 812
+        },
+        {
+          "currentParticipant": "bot:technology",
+          "currentRound": 1,
+          "candidateParticipant": "bot:technology",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 888
+        },
+        {
+          "currentParticipant": "bot:finance",
+          "currentRound": 1,
+          "candidateParticipant": "bot:finance",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 964
+        },
+        {
+          "currentParticipant": "bot:customer",
+          "currentRound": 2,
+          "status": "settled"
+        }
+      ],
+      "elapsedMs": 316.690916
+    },
+    {
+      "count": 6,
+      "rounds": 3,
+      "adapted": true,
+      "state": "completed",
+      "messagesUsed": 18,
+      "calls": 18,
+      "contributions": 18,
+      "replayNoCalls": true,
+      "mappings": [
+        {
+          "currentParticipant": "bot:customer",
+          "currentRound": 1,
+          "candidateParticipant": "bot:customer",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 602
+        },
+        {
+          "currentParticipant": "bot:market",
+          "currentRound": 1,
+          "candidateParticipant": "bot:market",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 674
+        },
+        {
+          "currentParticipant": "bot:skeptic",
+          "currentRound": 1,
+          "candidateParticipant": "bot:skeptic",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 742
+        },
+        {
+          "currentParticipant": "bot:operations",
+          "currentRound": 1,
+          "candidateParticipant": "bot:operations",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 812
+        },
+        {
+          "currentParticipant": "bot:technology",
+          "currentRound": 1,
+          "candidateParticipant": "bot:technology",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 888
+        },
+        {
+          "currentParticipant": "bot:finance",
+          "currentRound": 1,
+          "candidateParticipant": "bot:finance",
+          "candidateRound": 1,
+          "status": "task",
+          "promptLength": 964
+        },
+        {
+          "currentParticipant": "bot:customer",
+          "currentRound": 2,
+          "candidateParticipant": "bot:customer",
+          "candidateRound": 2,
+          "status": "task",
+          "promptLength": 922
+        },
+        {
+          "currentParticipant": "bot:market",
+          "currentRound": 2,
+          "candidateParticipant": "bot:market",
+          "candidateRound": 2,
+          "status": "task",
+          "promptLength": 926
+        },
+        {
+          "currentParticipant": "bot:skeptic",
+          "currentRound": 2,
+          "candidateParticipant": "bot:skeptic",
+          "candidateRound": 2,
+          "status": "task",
+          "promptLength": 924
+        },
+        {
+          "currentParticipant": "bot:operations",
+          "currentRound": 2,
+          "candidateParticipant": "bot:operations",
+          "candidateRound": 2,
+          "status": "task",
+          "promptLength": 918
+        },
+        {
+          "currentParticipant": "bot:technology",
+          "currentRound": 2,
+          "candidateParticipant": "bot:technology",
+          "candidateRound": 2,
+          "status": "task",
+          "promptLength": 918
+        },
+        {
+          "currentParticipant": "bot:finance",
+          "currentRound": 2,
+          "candidateParticipant": "bot:finance",
+          "candidateRound": 2,
+          "status": "task",
+          "promptLength": 924
+        },
+        {
+          "currentParticipant": "bot:customer",
+          "currentRound": 3,
+          "candidateParticipant": "bot:customer",
+          "candidateRound": 3,
+          "status": "task",
+          "promptLength": 922
+        },
+        {
+          "currentParticipant": "bot:market",
+          "currentRound": 3,
+          "candidateParticipant": "bot:market",
+          "candidateRound": 3,
+          "status": "task",
+          "promptLength": 926
+        },
+        {
+          "currentParticipant": "bot:skeptic",
+          "currentRound": 3,
+          "candidateParticipant": "bot:skeptic",
+          "candidateRound": 3,
+          "status": "task",
+          "promptLength": 924
+        },
+        {
+          "currentParticipant": "bot:operations",
+          "currentRound": 3,
+          "candidateParticipant": "bot:operations",
+          "candidateRound": 3,
+          "status": "task",
+          "promptLength": 918
+        },
+        {
+          "currentParticipant": "bot:technology",
+          "currentRound": 3,
+          "candidateParticipant": "bot:technology",
+          "candidateRound": 3,
+          "status": "task",
+          "promptLength": 918
+        },
+        {
+          "currentParticipant": "bot:finance",
+          "currentRound": 3,
+          "candidateParticipant": "bot:finance",
+          "candidateRound": 3,
+          "status": "task",
+          "promptLength": 924
+        }
+      ],
+      "elapsedMs": 991.2462500000001
+    }
+  ],
+  "providerCalls": 0,
+  "realCoordinatorAndStores": true,
+  "upstreamPurePlanner": true,
+  "sqliteUsed": false,
+  "db": "disposable PGlite current migrations",
+  "maxRSSKiB": 568736
+}

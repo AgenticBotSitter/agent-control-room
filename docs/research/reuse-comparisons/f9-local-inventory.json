@@ -1,0 +1,645 @@
+{
+  "schema": "control-room.f9.local-provenance/v1",
+  "scope": "Selected current direct manifests/root notices and vendor files; not transitive/bundle/distribution clearance",
+  "lockSha256": "3d98f907941fa407b82b4af1e9475acb2f93f92a427cea666edeb652ad92a8c8",
+  "priorLockSha256": "51e1e83929e1b806c7316b2ca9b1b2326ae89aec3935f15c9e99a157bc531ad0",
+  "priorLockMatches": false,
+  "directCount": 30,
+  "priorDirectCount": 28,
+  "direct": [
+    {
+      "name": "fast-xml-parser",
+      "declaredVersion": "5.11.0",
+      "installedVersion": "5.11.0",
+      "license": "MIT",
+      "group": "runtime",
+      "rootNotices": [
+        {
+          "file": "LICENSE",
+          "sha256": "7883225d5e84a6bbb9b170c3d891b4bf6d6259cee869c86bd86381a927071745"
+        }
+      ],
+      "priorRecord": null
+    },
+    {
+      "name": "pg-boss",
+      "declaredVersion": "12.30.0",
+      "installedVersion": "12.30.0",
+      "license": "MIT",
+      "group": "runtime",
+      "rootNotices": [
+        {
+          "file": "LICENSE",
+          "sha256": "51ad77d655782ec9ea2a624529a37f25cb82bd41ae38d85d15cdb0d4dd9c5689"
+        }
+      ],
+      "priorRecord": {
+        "version": "12.30.0",
+        "manifestMatches": true
+      }
+    },
+    {
+      "name": "postgres",
+      "declaredVersion": "3.4.7",
+      "installedVersion": "3.4.7",
+      "license": "Unlicense",
+      "group": "runtime",
+      "rootNotices": [],
+      "priorRecord": {
+        "version": "3.4.7",
+        "manifestMatches": true
+      }
+    },
+    {
+      "name": "react",
+      "declaredVersion": "19.2.6",
+      "installedVersion": "19.2.6",
+      "license": "MIT",
+      "group": "runtime",
+      "rootNotices": [
+        {
+          "file": "LICENSE",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
+        }
+      ],
+      "priorRecord": {
+        "version": "19.2.6",
+        "manifestMatches": true
+      }
+    },
+    {
+      "name": "react-dom",
+      "declaredVersion": "19.2.6",
+      "installedVersion": "19.2.6",
+      "license": "MIT",
+      "group": "runtime",
+      "rootNotices": [
+        {
+          "file": "LICENSE",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
+        }
+      ],
+      "priorRecord": {
+        "version": "19.2.6",
+        "manifestMatches": true
+      }
+    },
+    {
+      "name": "rss-parser",
+      "declaredVersion": "3.13.0",
+      "installedVersion": "3.13.0",
+      "license": "MIT",
+      "group": "runtime",
+      "rootNotices": [
+        {
+          "file": "LICENSE",
+          "sha256": "66fa72d1e76ca487fde9f153ac1183b906733f314d556645cb614e90961da634"
+        }
+      ],
+      "priorRecord": null
+    },
+    {
+      "name": "zod",
+      "declaredVersion": "4.1.12",
+      "installedVersion": "4.1.12",
+      "license": "MIT",
+      "group": "runtime",
+      "rootNotices": [
+        {
+          "file": "LICENSE",
+          "sha256": "3f1189b28e3866e0d979968d466b78f813f76827cfdca1fbb124cc0a5c8841f8"
+        }
+      ],
+      "priorRecord": {
+        "version": "4.1.12",
+        "manifestMatches": true
+      }
+    },
+    {
+      "name": "@cloudflare/vite-plugin",
+      "declaredVersion": "1.37.1",
+      "installedVersion": "1.37.1",
+      "license": "MIT",
+      "group": "development",
+      "rootNotices": [],
+      "priorRecord": {
+        "version": "1.37.1",
+        "manifestMatches": true
+      }
+    },
+    {
+      "name": "@electric-sql/pglite",
+      "declaredVersion": "0.3.14",
+      "installedVersion": "0.3.14",
+      "license": "Apache-2.0",
+      "group": "development",
+      "rootNotices": [
+        {
+          "file": "LICENSE",
+          "sha256": "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9"
+        }
+      ],
+      "priorRecord": {
+        "version": "0.3.14",
+        "manifestMatches": true
+      }
+    },
+    {
+      "name": "@eslint/js",
+      "declaredVersion": "9.39.4",
+      "installedVersion": "9.39.4",
+      "license": "MIT",
+      "group": "development",
+      "rootNotices": [
+        {
+          "file": "LICENSE",
+          "sha256": "3b6be04f862a077a4b97929dbf247299360824d9365f8603c263769303ace18c"
+        }
+      ],
+      "priorRecord": {
+        "version": "9.39.4",
+        "manifestMatches": true
+      }
+    },
+    {
+      "name": "@next/eslint-plugin-next",
+      "declaredVersion": "16.2.6",
+      "installedVersion": "16.2.6",
+      "license": "MIT",
+      "group": "development",
+      "rootNotices": [],
+      "priorRecord": {
+        "version": "16.2.6",
+        "manifestMatches": true
+      }
+    },
+    {
+      "name": "@tailwindcss/postcss",
+      "declaredVersion": "4.2.1",
+      "installedVersion": "4.2.1",
+      "license": "MIT",
+      "group": "development",
+      "rootNotices": [
+        {
+          "file": "LICENSE",
+          "sha256": "60e0b68c0f35c078eef3a5d29419d0b03ff84ec1df9c3f9d6e39a519a5ae7985"
+        }
+      ],
+      "priorRecord": {
+        "version": "4.2.1",
+        "manifestMatches": true
+      }
+    },
+    {
+      "name": "@types/node",
+      "declaredVersion": "22.19.19",
+      "installedVersion": "22.19.19",
+      "license": "MIT",
+      "group": "development",
+      "rootNotices": [
+        {
+          "file": "LICENSE",
+          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+        }
+      ],
+      "priorRecord": {
+        "version": "22.19.19",
+        "manifestMatches": true
+      }
+    },
+    {
+      "name": "@types/react",
+      "declaredVersion": "19.2.14",
+      "installedVersion": "19.2.14",
+      "license": "MIT",
+      "group": "development",
+      "rootNotices": [
+        {
+          "file": "LICENSE",
+          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+        }
+      ],
+      "priorRecord": {
+        "version": "19.2.14",
+        "manifestMatches": true
+      }
+    },
+    {
+      "name": "@types/react-dom",
+      "declaredVersion": "19.2.3",
+      "installedVersion": "19.2.3",
+      "license": "MIT",
+      "group": "development",
+      "rootNotices": [
+        {
+          "file": "LICENSE",
+          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+        }
+      ],
+      "priorRecord": {
+        "version": "19.2.3",
+        "manifestMatches": true
+      }
+    },
+    {
+      "name": "@vitejs/plugin-react",
+      "declaredVersion": "6.0.2",
+      "installedVersion": "6.0.2",
+      "license": "MIT",
+      "group": "development",
+      "rootNotices": [
+        {
+          "file": "LICENSE",
+          "sha256": "29b68325fe026047d13e187b44c33b2acacf7dc647dec4583702e59f235e13b5"
+        }
+      ],
+      "priorRecord": {
+        "version": "6.0.2",
+        "manifestMatches": true
+      }
+    },
+    {
+      "name": "@vitejs/plugin-rsc",
+      "declaredVersion": "0.5.26",
+      "installedVersion": "0.5.26",
+      "license": "MIT",
+      "group": "development",
+      "rootNotices": [],
+      "priorRecord": {
+        "version": "0.5.26",
+        "manifestMatches": true
+      }
+    },
+    {
+      "name": "eslint",
+      "declaredVersion": "9.39.4",
+      "installedVersion": "9.39.4",
+      "license": "MIT",
+      "group": "development",
+      "rootNotices": [
+        {
+          "file": "LICENSE",
+          "sha256": "3b6be04f862a077a4b97929dbf247299360824d9365f8603c263769303ace18c"
+        }
+      ],
+      "priorRecord": {
+        "version": "9.39.4",
+        "manifestMatches": true
+      }
+    },
+    {
+      "name": "eslint-plugin-jsx-a11y",
+      "declaredVersion": "6.10.2",
+      "installedVersion": "6.10.2",
+      "license": "MIT",
+      "group": "development",
+      "rootNotices": [
+        {
+          "file": "LICENSE.md",
+          "sha256": "82b19019e25e266a310ef46800b3af726136a3cee79af8812dc83ca0b045afae"
+        }
+      ],
+      "priorRecord": {
+        "version": "6.10.2",
+        "manifestMatches": true
+      }
+    },
+    {
+      "name": "eslint-plugin-react",
+      "declaredVersion": "7.37.5",
+      "installedVersion": "7.37.5",
+      "license": "MIT",
+      "group": "development",
+      "rootNotices": [
+        {
+          "file": "LICENSE",
+          "sha256": "d500a9547fec26f52544f5f2fe52dec4b0c9bdf78177c79f202c98bd13d7c37c"
+        }
+      ],
+      "priorRecord": {
+        "version": "7.37.5",
+        "manifestMatches": true
+      }
+    },
+    {
+      "name": "eslint-plugin-react-hooks",
+      "declaredVersion": "7.1.1",
+      "installedVersion": "7.1.1",
+      "license": "MIT",
+      "group": "development",
+      "rootNotices": [
+        {
+          "file": "LICENSE",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
+        }
+      ],
+      "priorRecord": {
+        "version": "7.1.1",
+        "manifestMatches": true
+      }
+    },
+    {
+      "name": "globals",
+      "declaredVersion": "16.4.0",
+      "installedVersion": "16.4.0",
+      "license": "MIT",
+      "group": "development",
+      "rootNotices": [
+        {
+          "file": "license",
+          "sha256": "5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3"
+        }
+      ],
+      "priorRecord": {
+        "version": "16.4.0",
+        "manifestMatches": true
+      }
+    },
+    {
+      "name": "react-server-dom-webpack",
+      "declaredVersion": "19.2.6",
+      "installedVersion": "19.2.6",
+      "license": "MIT",
+      "group": "development",
+      "rootNotices": [
+        {
+          "file": "LICENSE",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
+        }
+      ],
+      "priorRecord": {
+        "version": "19.2.6",
+        "manifestMatches": true
+      }
+    },
+    {
+      "name": "tailwindcss",
+      "declaredVersion": "4.2.1",
+      "installedVersion": "4.2.1",
+      "license": "MIT",
+      "group": "development",
+      "rootNotices": [
+        {
+          "file": "LICENSE",
+          "sha256": "60e0b68c0f35c078eef3a5d29419d0b03ff84ec1df9c3f9d6e39a519a5ae7985"
+        }
+      ],
+      "priorRecord": {
+        "version": "4.2.1",
+        "manifestMatches": true
+      }
+    },
+    {
+      "name": "tsx",
+      "declaredVersion": "4.23.1",
+      "installedVersion": "4.23.1",
+      "license": "MIT",
+      "group": "development",
+      "rootNotices": [
+        {
+          "file": "LICENSE",
+          "sha256": "8dded67841a9261a622c739fb61c81785e93765de852828ceeb9403d20a74581"
+        }
+      ],
+      "priorRecord": {
+        "version": "4.23.1",
+        "manifestMatches": true
+      }
+    },
+    {
+      "name": "typescript",
+      "declaredVersion": "5.9.3",
+      "installedVersion": "5.9.3",
+      "license": "Apache-2.0",
+      "group": "development",
+      "rootNotices": [
+        {
+          "file": "LICENSE.txt",
+          "sha256": "a7d00bfd54525bc694b6e32f64c7ebcf5e6b7ae3657be5cc12767bce74654a47"
+        }
+      ],
+      "priorRecord": {
+        "version": "5.9.3",
+        "manifestMatches": true
+      }
+    },
+    {
+      "name": "typescript-eslint",
+      "declaredVersion": "8.59.3",
+      "installedVersion": "8.59.3",
+      "license": "MIT",
+      "group": "development",
+      "rootNotices": [
+        {
+          "file": "LICENSE",
+          "sha256": "2eb5c7a0bba9deb77a98c81bf6b9d3fb1c67118eebf968b6b1a787b3f8928ee0"
+        }
+      ],
+      "priorRecord": {
+        "version": "8.59.3",
+        "manifestMatches": true
+      }
+    },
+    {
+      "name": "vinext",
+      "declaredVersion": "1.0.0-beta.2",
+      "installedVersion": "1.0.0-beta.2",
+      "license": "MIT",
+      "group": "development",
+      "rootNotices": [
+        {
+          "file": "LICENSE",
+          "sha256": "19a7b85046eb77c8ab308c68569abbbb59235814297b9c95dc90480f71ec7198"
+        }
+      ],
+      "priorRecord": {
+        "version": "1.0.0-beta.2",
+        "manifestMatches": true
+      }
+    },
+    {
+      "name": "vite",
+      "declaredVersion": "8.0.13",
+      "installedVersion": "8.0.13",
+      "license": "MIT",
+      "group": "development",
+      "rootNotices": [
+        {
+          "file": "LICENSE.md",
+          "sha256": "40501d82eb20f60d031aaaa3291a103d72551ebd49e11e73ba94ea34589e7bdd"
+        }
+      ],
+      "priorRecord": {
+        "version": "8.0.13",
+        "manifestMatches": true
+      }
+    },
+    {
+      "name": "wrangler",
+      "declaredVersion": "4.92.0",
+      "installedVersion": "4.92.0",
+      "license": "MIT OR Apache-2.0",
+      "group": "development",
+      "rootNotices": [],
+      "priorRecord": {
+        "version": "4.92.0",
+        "manifestMatches": true
+      }
+    }
+  ],
+  "selectedXmlChildren": [
+    {
+      "name": "@nodable/entities",
+      "version": "3.0.0",
+      "license": "MIT",
+      "rootNotices": []
+    },
+    {
+      "name": "fast-xml-builder",
+      "version": "1.3.1",
+      "license": "MIT",
+      "rootNotices": [
+        {
+          "file": "LICENSE",
+          "sha256": "8e75fc0e776c62ccadb8178ece8d3daa9ba7601fb0a49b2dfb0ea9a7a5c0aa07"
+        }
+      ]
+    },
+    {
+      "name": "is-unsafe",
+      "version": "2.0.2",
+      "license": "MIT",
+      "rootNotices": [
+        {
+          "file": "LICENSE",
+          "sha256": "8e75fc0e776c62ccadb8178ece8d3daa9ba7601fb0a49b2dfb0ea9a7a5c0aa07"
+        }
+      ]
+    },
+    {
+      "name": "path-expression-matcher",
+      "version": "1.6.2",
+      "license": "MIT",
+      "rootNotices": [
+        {
+          "file": "LICENSE",
+          "sha256": "75486ea0af9309140ca6e2c401d7e67bea8f4892344e5707f6394dc5e83dfc44"
+        }
+      ]
+    },
+    {
+      "name": "strnum",
+      "version": "2.4.2",
+      "license": "MIT",
+      "rootNotices": [
+        {
+          "file": "LICENSE",
+          "sha256": "2aa16be0f4fad003a352a955a43314e9d1d8deef7034060a82ac9c49f32b81e2"
+        }
+      ]
+    },
+    {
+      "name": "xml-naming",
+      "version": "0.3.0",
+      "license": "MIT",
+      "rootNotices": [
+        {
+          "file": "LICENSE",
+          "sha256": "8e75fc0e776c62ccadb8178ece8d3daa9ba7601fb0a49b2dfb0ea9a7a5c0aa07"
+        }
+      ]
+    }
+  ],
+  "vendor": [
+    {
+      "path": "src/vendor/control-center/feed-discovery.ts",
+      "bytes": 893,
+      "sha256": "d94449d6b86ff873096c36d4ce7943f9afd473ba19183217b865bf6f5dbc8974",
+      "noticeMentions": true
+    },
+    {
+      "path": "src/vendor/control-center/freshness.ts",
+      "bytes": 1140,
+      "sha256": "dc691c41b2b0707626d2589866aa2fa1d106e4c8a1190e376379ac4582e410ca",
+      "noticeMentions": true
+    },
+    {
+      "path": "src/vendor/control-center/industry-curation.ts",
+      "bytes": 19888,
+      "sha256": "ad668fe4bf08e7b48913b43ef7edb05edbe4d874db1a16c451ff006e0b70d962",
+      "noticeMentions": true
+    },
+    {
+      "path": "src/vendor/control-center/industry-events.ts",
+      "bytes": 3701,
+      "sha256": "7c4bfca9612a34255cee2fa0db53ec1e20b0fc9f89835e2dc443e64e81ddf9bb",
+      "noticeMentions": true
+    },
+    {
+      "path": "src/vendor/control-center/industry.ts",
+      "bytes": 2511,
+      "sha256": "9ca39a9ad88f16262a2551a99de016a5ed951c7a53ba6a7a36362e061779db8b",
+      "noticeMentions": true
+    },
+    {
+      "path": "src/vendor/control-center/pinned-fetch.ts",
+      "bytes": 8071,
+      "sha256": "1fafc239bb2a06038c2c7f54d0026f736e64f938ff37976e075b2021e20112ca",
+      "noticeMentions": true
+    },
+    {
+      "path": "src/vendor/control-center/public-address.ts",
+      "bytes": 3590,
+      "sha256": "291fc245b943c48feaeb5807ef5f60b1ec8b31f0f8f6cdd7782c998be0c6cb48",
+      "noticeMentions": true
+    },
+    {
+      "path": "src/vendor/control-center/safe-fetch.ts",
+      "bytes": 3777,
+      "sha256": "a1357f764be50e705d79da4d261fbba38a72e392e7818480560b9d445287f733",
+      "noticeMentions": true
+    },
+    {
+      "path": "src/vendor/control-center/sitemap.ts",
+      "bytes": 15984,
+      "sha256": "732d0a11901eb340925ac0aa8d636e43d31b7296aa79306a81147048eeda4f7e",
+      "noticeMentions": true
+    },
+    {
+      "path": "src/vendor/control-center/source-reader.ts",
+      "bytes": 12458,
+      "sha256": "81e03fc3f97b3d5729bc96044e27cbd19c27536c9bb82a906fba5f500ccff9ab",
+      "noticeMentions": true
+    },
+    {
+      "path": "src/vendor/control-center/types.ts",
+      "bytes": 7780,
+      "sha256": "25d5046f5e6c1ce2897144cba5e39797b77a2143628d82cceb3ebea014ad195f",
+      "noticeMentions": true
+    }
+  ],
+  "retainedNotices": [
+    {
+      "path": "third_party/control-center/LICENSE",
+      "exists": true,
+      "sha256": "a149b592d1e38b71a4ff4987ee9020b5f35a5fe7c2f09ebdc78ae9ec7a87349b"
+    },
+    {
+      "path": "third_party/control-center/NOTICE.md",
+      "exists": true,
+      "sha256": "06b381e0a31599c5c90dff1eb3eee093f22d6080e68d892b551c24253cebbc48"
+    },
+    {
+      "path": "third_party/rss-parser/LICENSE",
+      "exists": true,
+      "sha256": "66fa72d1e76ca487fde9f153ac1183b906733f314d556645cb614e90961da634"
+    },
+    {
+      "path": "third_party/rss-parser/NOTICE.md",
+      "exists": true,
+      "sha256": "26732d0ddccf781ec7464f329405ce28a15d9c32d388e79a253efd8ef4a7e08c"
+    }
+  ],
+  "downloads": 0,
+  "packageCodeExecuted": false
+}

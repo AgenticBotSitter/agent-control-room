@@ -1,0 +1,27 @@
+[
+  {
+    "url": "https://raw.githubusercontent.com/NousResearch/hermes-agent/fb3446a281e4bddc733a04bf92a5ec5f0d6decc9/LICENSE",
+    "bytes": 1070,
+    "sha256": "821556e6336796450ab852d375117b48a4887e71d255794fd6318d99982a5ab6"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/NousResearch/hermes-agent/fb3446a281e4bddc733a04bf92a5ec5f0d6decc9/gateway/hosted_room_discussion.py",
+    "bytes": 42197,
+    "sha256": "79f22a077c52e99bae774b16a7962c98fa9ae36123b49cc500bc7ecd651ed2ac"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/NousResearch/hermes-agent/fb3446a281e4bddc733a04bf92a5ec5f0d6decc9/gateway/hosted_room_driver.py",
+    "bytes": 48201,
+    "sha256": "d7eed87f266719d774171b15d9d61c38d05123aa941fac6be763f47d223dbdbf"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/NousResearch/hermes-agent/fb3446a281e4bddc733a04bf92a5ec5f0d6decc9/gateway/hosted_rooms.py",
+    "bytes": 63787,
+    "sha256": "54180f6c43c01c88f1c0ae3b6e027a6e5b36ff118846873d06f13095385a2222"
+  },
+  {
+    "url": "https://raw.githubusercontent.com/NousResearch/hermes-agent/fb3446a281e4bddc733a04bf92a5ec5f0d6decc9/gateway/hosted_rooms_common.py",
+    "bytes": 7063,
+    "sha256": "b50b75a091700368f844eaa3a27a1a0890c2e3f97df2a206a0437bcbdd1420c4"
+  }
+]

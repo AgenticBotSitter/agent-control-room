@@ -1,0 +1,73 @@
+{
+  "baseline": "29dbc4a",
+  "upstream": "mreflow/control-center",
+  "revision": "d13e79e866cc33a1fddfe84f563ce2fb9a2113e0",
+  "files": [
+    {
+      "path": "src/vendor/control-center/feed-discovery.ts",
+      "bytes": 893,
+      "lines": 27,
+      "sha256": "d94449d6b86ff873096c36d4ce7943f9afd473ba19183217b865bf6f5dbc8974"
+    },
+    {
+      "path": "src/vendor/control-center/freshness.ts",
+      "bytes": 1140,
+      "lines": 32,
+      "sha256": "dc691c41b2b0707626d2589866aa2fa1d106e4c8a1190e376379ac4582e410ca"
+    },
+    {
+      "path": "src/vendor/control-center/industry-curation.ts",
+      "bytes": 19888,
+      "lines": 511,
+      "sha256": "ad668fe4bf08e7b48913b43ef7edb05edbe4d874db1a16c451ff006e0b70d962"
+    },
+    {
+      "path": "src/vendor/control-center/industry-events.ts",
+      "bytes": 3701,
+      "lines": 78,
+      "sha256": "7c4bfca9612a34255cee2fa0db53ec1e20b0fc9f89835e2dc443e64e81ddf9bb"
+    },
+    {
+      "path": "src/vendor/control-center/industry.ts",
+      "bytes": 2511,
+      "lines": 75,
+      "sha256": "9ca39a9ad88f16262a2551a99de016a5ed951c7a53ba6a7a36362e061779db8b"
+    },
+    {
+      "path": "src/vendor/control-center/pinned-fetch.ts",
+      "bytes": 8071,
+      "lines": 228,
+      "sha256": "1fafc239bb2a06038c2c7f54d0026f736e64f938ff37976e075b2021e20112ca"
+    },
+    {
+      "path": "src/vendor/control-center/public-address.ts",
+      "bytes": 3590,
+      "lines": 98,
+      "sha256": "291fc245b943c48feaeb5807ef5f60b1ec8b31f0f8f6cdd7782c998be0c6cb48"
+    },
+    {
+      "path": "src/vendor/control-center/safe-fetch.ts",
+      "bytes": 3777,
+      "lines": 89,
+      "sha256": "a1357f764be50e705d79da4d261fbba38a72e392e7818480560b9d445287f733"
+    },
+    {
+      "path": "src/vendor/control-center/sitemap.ts",
+      "bytes": 15984,
+      "lines": 414,
+      "sha256": "732d0a11901eb340925ac0aa8d636e43d31b7296aa79306a81147048eeda4f7e"
+    },
+    {
+      "path": "src/vendor/control-center/source-reader.ts",
+      "bytes": 12458,
+      "lines": 261,
+      "sha256": "81e03fc3f97b3d5729bc96044e27cbd19c27536c9bb82a906fba5f500ccff9ab"
+    },
+    {
+      "path": "src/vendor/control-center/types.ts",
+      "bytes": 7780,
+      "lines": 324,
+      "sha256": "25d5046f5e6c1ce2897144cba5e39797b77a2143628d82cceb3ebea014ad195f"
+    }
+  ]
+}
