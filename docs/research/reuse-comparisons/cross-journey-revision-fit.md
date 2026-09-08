@@ -58,6 +58,37 @@ close hooks; both test processes exited. No downloads or persistent services.
 
 ## What remains and what can be reused
 
+### Follow-up: revision assignment at existing capacity
+
+An extension attempted fresh child assignment without changing the fixture's route.
+It failed with `conflict` at `task-assignment-coordinator.ts:532`: the existing active
+lease count reaches the route's maximum concurrent tasks. This is an observed capacity
+refusal, not evidence of a broken assignment implementation or candidate rejection.
+The research test now explicitly checks that full-capacity precondition and refusal,
+then verifies the child stays proposed with no attempts, existing runs and parent
+state remain unchanged, and the synthetic execution count stays one. That version
+passed one test with zero failures (1990.540875ms runner duration). The original
+positive assignment expectation did not pass; no capacity limit or production code
+was changed to force it through. Successful revision assignment after a legitimate
+capacity release or to another eligible node was unproven at that stage.
+Independent source review then identified the existing `TaskQualityCoordinator`
+capacity release used in `tests/task-capacity-release.test.ts`. The joined fixture
+had bypassed that reconciliation by calling verification/review directly. Its next
+extension invokes actual `owner.quality.reconcile` on the same ABS result. The parent
+lease releases while its job/attempt remain unchanged; the unrelated seeded lease
+is preserved. The child then receives its own current lease at the unchanged limit,
+has one attempt and no run, and assignment replays exactly. Parent state and prior
+run rows remain unchanged and the synthetic effect count stays one. This extended
+test passed (one test, zero failures, 1883.108042ms runner duration). No new release
+logic, raised capacity, deleted seed, manufactured expiry or production changes.
+The original failed expectation remains documented above; it exposed missing fixture
+orchestration, not missing production capacity-release code.
+[Independent source recheck](cross-journey-capacity-review.md) found the missing
+composition step addressed with no blocking defect in the bounded extension.
+[New execution receipt](cross-journey-capacity-evidence.json) preserves the failed
+expectation summary and successful reconciliation output separately from the older
+revision-planning receipt.
+
 Reuse this exact fixture as the baseline when comparing queue/native transport changes;
 do not repeat it unchanged simply for more test counts. Preserve source→execution→
 revision identities even if candidate queues and native session IDs differ.
@@ -66,7 +97,7 @@ current infrastructure. Existing generic tests already cover lost revision-plan
 acknowledgment, cancellation, restricted HTTP and changed feedback; reuse them at
 their exact scope rather than write duplicates.
 
-Still open: the revision's fresh assignment/approval/dispatch, actual second result
+Still open: the revision's fresh approval/dispatch, actual second result
 and review; joined restart/restore and late/uncertain-result behavior; actual native
 SDK/queue contenders through this journey; real PG17 roles/concurrency; browser and
 provider-qualified workflow. A proposed child is **not** a completed revised task.

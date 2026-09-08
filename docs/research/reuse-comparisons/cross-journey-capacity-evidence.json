@@ -1,0 +1,22 @@
+{
+  "command": "node --import tsx --test --test-concurrency=1 research/reuse-comparisons/cross-journey-revision.test.ts",
+  "sourceBaseline": "77dfd3f plus research-only extension",
+  "initialPositiveExpectation": {
+    "exitCode": 1,
+    "tests": 1,
+    "pass": 0,
+    "fail": 1,
+    "error": "conflict",
+    "location": "src/web/v1/task-assignment-coordinator.ts:532",
+    "reason": "Active leases reach unchanged route capacity; quality reconciliation was not called",
+    "durationMs": 2005.7715,
+    "retention": "Summary of observed failing tool output, not reconstructed stdout"
+  },
+  "refusalOnlyExtension": { "exitCode": 0, "tests": 1, "fail": 0, "durationMs": 1990.540875 },
+  "actualReconciliationAndAssignment": {
+    "exitCode": 0,
+    "actualStdout": "TAP version 13\n# (node:59017) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n# (Use `node --trace-warnings ...` to show where the warning was created)\n# Subtest: research: borrowed discovery result carries exact source lineage into owner-requested revision\nok 1 - research: borrowed discovery result carries exact source lineage into owner-requested revision\n  ---\n  duration_ms: 1519.8\n  type: 'test'\n  ...\n1..1\n# tests 1\n# suites 0\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 1883.108042\n"
+  },
+  "checks": { "focusedEslintExitCode": 0, "diffCheckExitCode": 0 },
+  "scope": "Actual local coordinator services, synthetic workers and PGlite. No child execution, production changes, downloads or persistent services."
+}

@@ -49,7 +49,12 @@ These are feature-specific observations, not whole-product reliability rankings.
 
 The [joined ABS revision fixture](research/reuse-comparisons/cross-journey-revision-fit.md)
 now proves that the same borrowed-source task/result carries exact lineage through
-changes-requested review to a replayable proposed revision. Revised-task execution,
+changes-requested review to a replayable proposed revision. The extended fixture
+preserves a full-capacity refusal, then uses existing quality reconciliation to
+release the parent's execution slot without accepting its result. The child receives
+a distinct lease at the unchanged limit and assignment replays without another run.
+This reuses existing production release logic; no new capacity engine is needed.
+Revised-task execution,
 restore and candidate transport/queue substitutions remain open. This closes a
 specific baseline gap, not the full end-to-end live workflow.
 

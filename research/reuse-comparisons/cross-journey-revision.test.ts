@@ -120,4 +120,42 @@ test("research: borrowed discovery result carries exact source lineage into owne
   assert.equal(x.local.effects.countFull(), 1);
   assert.deepEqual((await x.results.ingest(x.completed.raw, new TextEncoder().encode(text), x.options())).receipt, x.artifact);
   assert.equal(x.local.effects.countFull(), 1);
+  const runsBeforeAssignment = (await x.f.db.query("SELECT * FROM control_harness_runs ORDER BY id")).rows;
+  const parentBeforeAssignment = await x.states();
+  const coordinator = x.f.assignmentFixture.create(x.f.db, x.f.clock);
+  const activeLeases = (await x.f.db.query<{ count: string }>(
+    "SELECT count(*)::text AS count FROM control_leases WHERE tenant_id=$1 AND node_id=$2 AND state='active'",
+    [x.f.scope.tenantId, binding.nodeId])).rows[0];
+  assert.ok(Number(activeLeases?.count) >= x.f.assignmentFixture.route.maxConcurrentTasks);
+  // Preserve the observed full-capacity refusal, not a fabricated assignment pass.
+  await assert.rejects(coordinator.assign(x.f.identity, binding.projectId, child.receipt.jobId,
+    binding.nodeId, plan.job.inputDigest), { code: "conflict" });
+  const detail = await x.f.tasks.detail(x.f.identity, binding.projectId, child.receipt.jobId);
+  assert.equal(detail.task.state, "proposed"); assert.equal(detail.attempts.length, 0);
+  assert.deepEqual((await x.f.db.query("SELECT * FROM control_harness_runs ORDER BY id")).rows, runsBeforeAssignment);
+  assert.deepEqual(await x.states(), parentBeforeAssignment);
+  assert.equal(x.local.effects.countFull(), 1);
+  const seedBeforeRelease = await x.f.canonical.get(x.f.scope.tenantId, "lease", "lease:test");
+  const reconciled = await owner.quality!.reconcile({ ...x.request, projectId: binding.projectId,
+    jobId: x.registration.jobId }, new AbortController().signal);
+  assert.equal(reconciled.disposition, "changes_requested"); assert.ok(reconciled.capacity);
+  const released = await x.states();
+  assert.equal(released.lease.state, "released");
+  assert.deepEqual(released.job, parentBeforeAssignment.job);
+  assert.deepEqual(released.attempt, parentBeforeAssignment.attempt);
+  assert.deepEqual(await x.f.canonical.get(x.f.scope.tenantId, "lease", "lease:test"), seedBeforeRelease);
+  const assigned = await coordinator.assign(x.f.identity, binding.projectId, child.receipt.jobId,
+    binding.nodeId, plan.job.inputDigest);
+  assert.equal(assigned.receipt.startsWork, false); assert.equal(assigned.receipt.grantsExecutionAuthority, false);
+  assert.equal(assigned.receipt.leaseCurrent, true);
+  assert.notEqual(assigned.receipt.leaseId, x.registration.nativeTask!.leaseId);
+  const assignedDetail = await x.f.tasks.detail(x.f.identity, binding.projectId, child.receipt.jobId);
+  assert.equal(assignedDetail.task.state, "leased"); assert.equal(assignedDetail.attempts.length, 1);
+  assert.deepEqual(assignedDetail.attempts[0].runs, []);
+  const assignedAgain = await x.f.assignmentFixture.create(x.f.db, x.f.clock).assign(x.f.identity,
+    binding.projectId, child.receipt.jobId, binding.nodeId, plan.job.inputDigest);
+  assert.equal(assignedAgain.replayed, true); assert.deepEqual(assignedAgain.receipt, assigned.receipt);
+  assert.deepEqual((await x.f.db.query("SELECT * FROM control_harness_runs ORDER BY id")).rows, runsBeforeAssignment);
+  assert.deepEqual(await x.states(), released);
+  assert.equal(x.local.effects.countFull(), 1);
 });
