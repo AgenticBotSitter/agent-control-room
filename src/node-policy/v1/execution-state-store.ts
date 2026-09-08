@@ -45,6 +45,7 @@ export class SqliteExecutionStateStore {
       throw new Error("Durable execution state store requires a filesystem path");
     }
     this.db = new DatabaseSync(path);
+    try {
     this.db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS execution_authority_state (
@@ -81,6 +82,7 @@ export class SqliteExecutionStateStore {
       );
       PRAGMA user_version=1;
     `);
+    } catch (error) { this.db.close(); throw error; }
   }
 
   close(): void {

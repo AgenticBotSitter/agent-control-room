@@ -13,6 +13,10 @@ Use the exact private-branch SHA supplied with this handoff as the deployment pi
   node service templates or substitute this command into an automatic restart loop.
   Real enrollment, persistent journals, credential/trust ports and runtime setup
   remain separately required; the Windows permission gate is not implemented.
+  Its compiled `openPrivateNativeConfiguration` export now assembles the existing
+  persistent journals and verified policy/transport components, reducing manual
+  wiring. Use only pre-created approved private files and borrowed provisioned
+  security/credential/profile ports; this is not approval to initialize a live node.
 
 - `deploy/operator-config.mjs`: protected single-site website-only settings.
 - `scripts/private-deployment-inventory.mjs`: 64 migration and web-role source hashes;

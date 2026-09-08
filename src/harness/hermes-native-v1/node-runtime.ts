@@ -16,6 +16,7 @@ import { encodeNativeWire, decodeNativeWire } from "../v1/native-wire";
 const configuration = z.object({ queueId: localId, enrollment: enrollmentSchema, nodeKeyId: localId,
   serverId: localId, serverKeyId: localId, serverPublicKeySpki: z.string().min(16).max(4096) }).strict();
 export type NativeNodeRuntimeConfiguration = z.input<typeof configuration>;
+export const validateNativeNodeRuntimeConfiguration = (input: unknown) => configuration.parse(input);
 type Handoff = Awaited<ReturnType<typeof prepareNativeExecutionHandoff>>;
 type HandoffDependencies = Parameters<typeof prepareNativeExecutionHandoff>[1];
 export type NativeNodeRuntimeDependencies = Omit<HandoffDependencies, "deliveries" | "reporting" | "recovery"> & {

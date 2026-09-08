@@ -736,3 +736,52 @@ the actual compiled composition denial test, TypeScript and full lint passed
 (session 76187 exit zero). The compiled test is denied before credentials/network/
 native execution and must not be reported as successful physical task delivery.
 No downloads, live effects, production changes or native qualifications occurred.
+
+### Resume checkpoint after explicit launcher
+
+Committed and confirmed pushed as `a89a8d8` to the authorized private branch
+(push session 83627 exit zero). The branch had no open PR; no Actions dispatch,
+PR or merge. Unrelated private setup notes and image remain untouched/unstaged.
+Clock at final branch check was approximately 08:36 UTC; original deadline remains
+12:40:58 UTC. No test/push process from this batch remains active. A read-only
+agent audit is mapping existing persistent journal, native transport and credential
+adapters to the missing concrete operator composition. Continue on the actual
+runtime/owner-signing critical path; do not mistake the protected factory contract
+for a configured fleet or reset the overnight window.
+
+## Standard persistent native configuration assembly
+
+Added the standard assembly behind the compiled node entry, reusing existing
+SQLite bridge/run/admission/execution/effect journals and current policy, profile,
+recovery, signing, protocol authentication and HTTPS components. No new transport,
+schema, credential backend or permission protocol. Operators provide five approved
+pre-created private files; provisioned security/key custody and trusted pause/profile/
+recovery/credential sources remain borrowed, not synthesized or automatically set up.
+
+The path gate rejects aliases, hard links, symlinks, shared permissions and unsafe
+existing sidecars before opening. It does not claim protection against same-UID edits
+or safe ownership of all ancestors. Existing schema initialization writes local
+journals; synchronous setup is not preemptible. Constructors for four reused stores
+now close their database if initialization fails, allowing partial assembly cleanup.
+
+The first persistence fixture omitted the sequence-one handshake and was correctly
+rejected. Exposed the existing synthetic signed hello and recorded it before the
+lease; the next run reached a wrong receipt-property assertion. Corrected that to
+compare the exact accepted frame. No protocol/authority rule was weakened. Lint
+also rejected a control-character regex; replaced it with explicit codepoint checks.
+Three focused checks then passed with TypeScript/lint (session 3009 exit zero).
+Added corrupt-last-store cleanup instrumentation: all five database closes occur,
+no credential/key effect, and all four tests plus types passed (29939 exit zero).
+
+Independent source review found no concrete authority/ownership defect and identified
+the documentation caveats above. The fake-transport start uses actual assembled
+policy/start controllers and private persistent files, then closes/reopens the state
+and verifies exact receipt/run/effect-marker retention and denial of another start.
+This is not actual Hermes execution or physical disk-loss recovery evidence.
+
+Expanded sequential launcher/connector/TLS and persistence tests, existing admission/
+execution/effect/bridge and current-policy/profile/recovery regressions, fresh VPS
+build, compiled launcher denial and four compiled persistent-factory checks all
+passed, followed by TypeScript and full lint (session 46095 exit zero). The compiled
+factory suite requires the built export and has no source fallback. No test process
+from this block remains running. No live or production effect occurred.

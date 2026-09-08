@@ -71,6 +71,13 @@ this document. The source changes below do not establish production readiness.
   templates are non-installable; static diagnostics no longer claim startup readiness.
   This does not supply real credential/journal adapters, a continuous multi-job
   worker, Windows ACL handling, Codex runtime support or native host qualification.
+- The compiled entry also supplies standard persistent-resource assembly: five
+  existing SQLite journals plus the existing verified policy/profile/recovery and
+  transport components. A source and compiled synthetic start survives journal
+  reopen without permitting a duplicate start. Real provisioned security, owner
+  pins, supervised-profile evidence and distinct credential resolvers remain
+  explicit operator inputs; opening the local journals initializes schemas and
+  is not a read-only check or production authorization.
 
 The shared primary's storage persistence, dedicated provisioning, actual restore,
 supervisor/account, real verified owner subject and authorized startup remain
