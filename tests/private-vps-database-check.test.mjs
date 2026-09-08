@@ -50,4 +50,16 @@ test('database check selects only the fixed read-only release operation and sani
   }) }), 1);
   assert.ok(errors.every(value => value === errors[0]));
   assert.doesNotMatch(errors.join('\n'), /synthetic credential/);
+  const authoring = { web, ideaAuthoring: { synthetic: true } };
+  prepared = { mode: 'website-only', configuration: authoring };
+  let authoringChecks = 0;
+  assert.equal(await checkPrivateVpsDatabase(args, { ...runtime, loadRelease: async () => ({
+    checkPrivateWebDatabase: () => assert.fail('must check both roles'),
+    checkPrivateIdeaAuthoringDatabase: async value => {
+      assert.equal(value, authoring); authoringChecks++;
+      return { databasePreflight: 'passed', databaseClosed: true, applicationInstalled: false, listenerStarted: false, productionReady: false };
+    },
+    startPrivateIdeaAuthoringApplication: () => assert.fail('must not install'),
+  }) }), 0);
+  assert.equal(authoringChecks, 1);
 });

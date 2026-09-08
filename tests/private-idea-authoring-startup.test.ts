@@ -3,7 +3,7 @@ import test from "node:test";
 import { readFile } from "node:fs/promises";
 import { taskStartupFixture } from "./helpers/task-startup";
 import { buildIdeaLabFixtureV1 } from "../src/idea-lab/v1/fixture";
-import { createPrivateIdeaAuthoringBootstrap } from "../src/web/v1/private-idea-authoring-startup";
+import { createPrivateIdeaAuthoringBootstrap, createPrivateIdeaAuthoringDatabaseCheck } from "../src/web/v1/private-idea-authoring-startup";
 import { createPrivateWebProcess } from "../src/web/v1/private-process";
 import { instant } from "./hermes-native-fixture";
 import { request } from "./helpers/web-foundation";
@@ -41,6 +41,26 @@ test("two-role authoring mounts existing save/options/read without task planning
   await runtime.close(); assert.equal(runtime.isReady(), false);
   assert.deepEqual([f.web.closes(), f.writer.closes(), f.coordinator.closes()], [1, 1, 0]);
   assert.equal((await handle(path)).status, 503);
+});
+
+test("database-only authoring check verifies both roles and closes without installing or saving", async t => {
+  const f = await fixture(); t.after(f.close);
+  const before = (await f.raw.query("SELECT * FROM control_idea_sessions")).rows.length;
+  const result = await createPrivateIdeaAuthoringDatabaseCheck({ openDatabase: f.openDatabase, clock: () => instant + 8000 })(f.config);
+  assert.equal(result.databasePreflight, "passed"); assert.equal(result.databaseClosed, true);
+  assert.deepEqual(result.rolesVerified, ["web", "idea-authoring"]);
+  assert.equal(result.applicationInstalled, false); assert.equal(result.listenerStarted, false);
+  assert.equal(result.backupVerified, false); assert.equal(result.productionReady, false);
+  assert.deepEqual([f.web.closes(), f.writer.closes(), f.coordinator.closes()], [1, 1, 0]);
+  assert.equal((await f.raw.query("SELECT * FROM control_idea_sessions")).rows.length, before);
+});
+
+test("authoring database check never returns acceptance when either cleanup fails", async t => {
+  const f = await fixture(); t.after(f.close); let failedCloses = 0;
+  const writer = { ...f.writer, close: async () => { failedCloses++; throw new Error("synthetic cleanup failure"); } };
+  await assert.rejects(createPrivateIdeaAuthoringDatabaseCheck({ clock: () => instant + 8000,
+    openDatabase: db => db.username === "web_test" ? f.web : writer })(f.config), /cleanup_uncertain/);
+  assert.equal(f.web.closes(), 1); assert.equal(failedCloses, 1);
 });
 
 test("authoring rejects missing keys, wrong primary, shared login and executable fields before opening", async t => {

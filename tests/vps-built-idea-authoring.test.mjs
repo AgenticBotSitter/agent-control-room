@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createConfiguration } from '../deploy/operator-config.mjs';
 import { startWebsiteOnly } from '../scripts/run-private-vps.mjs';
-import { createPrivateIdeaAuthoringBootstrap, validatePrivateIdeaAuthoringConfiguration } from '../dist-vps/server/ideaAuthoring.js';
+import { createPrivateIdeaAuthoringBootstrap, createPrivateIdeaAuthoringDatabaseCheck, validatePrivateIdeaAuthoringConfiguration } from '../dist-vps/server/ideaAuthoring.js';
+import { checkPrivateVpsDatabase } from '../scripts/check-private-vps-database.mjs';
 import * as bootstrap from '../dist-vps/server/bootstrap.js';
 import { createPrivateWebProcess } from '../dist-vps/server/runtime.js';
 import { taskStartupFixture } from './helpers/task-startup.ts';
@@ -30,6 +31,21 @@ test('protected operator settings reach compiled two-role Idea authoring through
   await writeFile(path, JSON.stringify({ port: 3210, web, savedViews: { ideaIntegrityKeyHex: '43'.repeat(32) },
     ideaAuthoring: { database: { ...web.database, username: 'idea_test' }, participants: buildIdeaLabFixtureV1().session.participants } }), { mode: 0o600 });
   const signal = new AbortController().signal, prepared = await createConfiguration({ signal });
+  const checkedPools = [], reports = [], errors = [], operatorPath = join(directory, 'operator.mjs');
+  await writeFile(operatorPath, '// Injected trusted operator module for disposable test.', { mode: 0o600 });
+  const check = createPrivateIdeaAuthoringDatabaseCheck({ clock: () => instant + 8000, openDatabase: config => {
+    assert.ok(['web_test', 'idea_test'].includes(config.username));
+    const pool = f.pool(config.username); checkedPools.push(pool); return pool;
+  } });
+  assert.equal(await checkPrivateVpsDatabase(['--configuration', operatorPath], {
+    loadOperator: async () => ({ schema: 'control-room.private-vps-configuration/v1', createConfiguration }),
+    loadRelease: async () => ({ checkPrivateIdeaAuthoringDatabase: check,
+      startPrivateIdeaAuthoringApplication: () => assert.fail('database check must not install') }),
+    report: value => reports.push(value), reportError: value => errors.push(value),
+  }), 0);
+  assert.deepEqual(errors, []); assert.deepEqual(checkedPools.map(pool => pool.closes()), [1, 1]);
+  const checked = JSON.parse(reports[0]); assert.deepEqual(checked.rolesVerified, ['web', 'idea-authoring']);
+  assert.equal(checked.applicationInstalled, false); assert.equal(checked.productionReady, false);
   prepared.configuration.web = { ...prepared.configuration.web, loadKeys }; // Inject synthetic trust; no issuer request.
   let app, opens = 0, binds = 0;
   const authoring = createPrivateIdeaAuthoringBootstrap({ clock: () => instant + 8000,

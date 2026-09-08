@@ -4,7 +4,7 @@ import { parsePrivateVpsArguments, validatePrivateVpsConfigurationPath, requireP
 
 const installedRuntime = Object.freeze({
   loadOperator: path => import(pathToFileURL(path).href),
-  loadRelease: () => import('../dist-vps/server/bootstrap.js'),
+  loadRelease: async () => ({ ...await import('../dist-vps/server/bootstrap.js'), ...await import('../dist-vps/server/ideaAuthoring.js') }),
   report: message => console.log(message),
   reportError: message => console.error(message),
 });
@@ -25,9 +25,11 @@ export async function checkPrivateVpsDatabase(args, runtime = installedRuntime) 
       throw new Error('private_database_check_configuration_invalid');
     const prepared = await operator.createConfiguration({ signal: new AbortController().signal });
     if (requirePrivateVpsMode(prepared) !== 'website-only' || prepared.configuration.coordinator
-      || Object.keys(prepared.configuration).some(key => key !== 'web')) throw new Error('private_database_check_configuration_invalid');
+      || Object.keys(prepared.configuration).some(key => !['web', 'ideaAuthoring'].includes(key))) throw new Error('private_database_check_configuration_invalid');
     const release = await runtime.loadRelease();
-    const result = await release.checkPrivateWebDatabase(prepared.configuration.web);
+    const result = 'ideaAuthoring' in prepared.configuration
+      ? await release.checkPrivateIdeaAuthoringDatabase(prepared.configuration)
+      : await release.checkPrivateWebDatabase(prepared.configuration.web);
     runtime.report(JSON.stringify(result));
     return 0;
   } catch {

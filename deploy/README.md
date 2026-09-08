@@ -101,10 +101,14 @@ preflight or installation closes acquired resources; an uncertain close is not
 reported as a clean shutdown. This package supplies configuration, not authority
 to provision roles, access credentials, or start production.
 
-The existing database-only check accepts the minimal web configuration, not this
-expanded authoring configuration; it does not verify the writer role. Authoring
-startup checks both roles before installation. Do not report a web-only preflight
-as acceptance of both roles or bypass the authoring startup's check.
+The existing database-only command now recognizes the expanded authoring profile
+and verifies both web and writer roles using the same acquisition and preflight
+code as authoring startup. It closes both connections before returning a sanitized
+receipt. It does not construct services, install the application, contact an issuer,
+or start a listener. Minimal configurations still check only the web role.
+The receipt explicitly leaves backup verification and production readiness false.
+The check still reads private settings and connects to the database, so it requires
+authorization for that exact target. It is not an effect-free local source check.
 
 Local verification: `pnpm test:idea-authoring:build` compiles the release and runs
 the source/compiled configuration, role, launcher and cleanup tests sequentially

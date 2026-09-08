@@ -22,16 +22,10 @@ export function validatePrivateIdeaAuthoringConfiguration(input: PrivateIdeaAuth
   } catch { throw new Error("private_idea_authoring_config_invalid"); }
 }
 
-/** Reuses private-process request admission/drain and bounded production pools.
- * No planner, runtime, queue or provider port exists in this configuration. */
-export function createPrivateIdeaAuthoringBootstrap(dependencies: {
-  openDatabase: typeof createPrivatePostgresDatabase;
-  install: typeof installPrivateWebProcess; clock?: () => number;
-}) {
-  let started = false;
-  return Object.freeze({ async start(input: PrivateIdeaAuthoringConfiguration, signal?: AbortSignal) {
-    if (started) throw new Error("private_idea_authoring_already_attempted");
-    started = true;
+type ResourceDependencies = { openDatabase: typeof createPrivatePostgresDatabase; clock?: () => number };
+
+/** One shared acquisition/verification path for startup and database-only checks. */
+async function prepareResources(input: PrivateIdeaAuthoringConfiguration, dependencies: ResourceDependencies, signal?: AbortSignal) {
     const config = validatePrivateIdeaAuthoringConfiguration(input), clock = dependencies.clock ?? Date.now;
     const active = () => { if (signal?.aborted) throw new Error("private_idea_authoring_canceled"); };
     active();
@@ -56,6 +50,23 @@ export function createPrivateIdeaAuthoringBootstrap(dependencies: {
       const writer = dependencies.openDatabase(config.ideaAuthoring.database); pools.push(writer);
       if (web === writer || web.client === writer.client) throw new Error();
       active(); await verifyIdeaCreationDatabase(writer.client, config.ideaAuthoring.database, config.web, now); active();
+      return { config, clock, now, web, writer, close, isClosed: () => !!closed };
+    } catch {
+      await close();
+      throw new Error("private_idea_authoring_prerequisites_failed");
+    }
+}
+
+/** Reuses private-process request admission/drain and bounded production pools.
+ * No planner, runtime, queue or provider port exists in this configuration. */
+export function createPrivateIdeaAuthoringBootstrap(dependencies: ResourceDependencies & { install: typeof installPrivateWebProcess }) {
+  let started = false;
+  return Object.freeze({ async start(input: PrivateIdeaAuthoringConfiguration, signal?: AbortSignal) {
+    if (started) throw new Error("private_idea_authoring_already_attempted");
+    started = true;
+    const { config, clock, web, writer, close, isClosed } = await prepareResources(input, dependencies, signal);
+    try {
+      if (signal?.aborted) throw new Error("private_idea_authoring_canceled");
       const scope = { tenantId: config.web.tenantId, workspaceId: config.web.workspaceId }, key = config.web.ideaProjects!.integrityKey;
       const creation = new IdeaSessionCreationService(writer.client, scope, key, config.ideaAuthoring.participants, clock);
       const synthesis = new WebIdeaSynthesisOperation(writer.client, scope, key, clock);
@@ -65,7 +76,7 @@ export function createPrivateIdeaAuthoringBootstrap(dependencies: {
       const installed = dependencies.install({ ...config.web, clock, ideaCreation,
         database: { client: web.client, close } });
       let stopping = false, closing: Promise<void> | undefined;
-      return Object.freeze({ isReady: () => !stopping && !closed && web.isAvailable() && writer.isAvailable(),
+      return Object.freeze({ isReady: () => !stopping && !isClosed() && web.isAvailable() && writer.isAvailable(),
         close: () => { stopping = true; return closing ??= installed.close(); } });
     } catch {
       await close();
@@ -76,3 +87,17 @@ export function createPrivateIdeaAuthoringBootstrap(dependencies: {
 
 const production = createPrivateIdeaAuthoringBootstrap({ openDatabase: createPrivatePostgresDatabase, install: installPrivateWebProcess });
 export const startPrivateIdeaAuthoringApplication = production.start;
+
+/** Explicit two-login database preflight. No services are constructed or installed;
+ * the receipt is emitted only after both owned connections close successfully. */
+export function createPrivateIdeaAuthoringDatabaseCheck(dependencies: ResourceDependencies) {
+  return async (input: PrivateIdeaAuthoringConfiguration) => {
+    const resource = await prepareResources(input, dependencies);
+    await resource.close();
+    return Object.freeze({ schema: "control-room.private-idea-authoring-database-check/v1",
+      databasePreflight: "passed", rolesVerified: ["web", "idea-authoring"],
+      checkedAt: new Date(resource.now).toISOString(), databaseClosed: true, listenerStarted: false,
+      applicationInstalled: false, backupVerified: false, productionReady: false });
+  };
+}
+export const checkPrivateIdeaAuthoringDatabase = createPrivateIdeaAuthoringDatabaseCheck({ openDatabase: createPrivatePostgresDatabase });

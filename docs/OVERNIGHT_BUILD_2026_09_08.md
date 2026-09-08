@@ -348,3 +348,20 @@ the new seven authoring startup tests are included in the lifecycle stage. Twelv
 compiled/operator/launcher checks pass, along with TypeScript, full lint and a
 fresh VPS build. No private input was read,
 no production schema/role was changed, and no native/provider call occurred.
+
+## Two-role database-only deployment check
+
+The preceding web-only checker limitation is now resolved. Authoring startup and
+the database-only command share configuration capture, acquisition, both role
+preflights and bounded cleanup. The checker constructs no application services,
+installs nothing and reports acceptance only after both connections close. Its
+receipt explicitly leaves backup verification and production readiness false.
+The existing protected operator command selects this fixed compiled operation
+when authoring is configured; the original web-only path remains available.
+
+All 21 combined source and compiled checks pass, including close failure, failed
+role preflight, canceled startup and protected operator selection. TypeScript,
+full lint and fresh VPS compilation pass. Independent source review found no
+concrete regression. The repeatable authoring build command includes the new
+command and compiled database-check tests. These are disposable local fixtures,
+not evidence of live PostgreSQL readiness or permission to access production.

@@ -9,7 +9,8 @@ Use the exact private-branch SHA supplied with this handoff as the deployment pi
 - `deploy/operator-config.mjs`: protected single-site website-only settings.
 - `scripts/private-deployment-inventory.mjs`: 64 migration and web-role source hashes.
 - `scripts/check-private-vps-database.mjs`: existing production preflight plus close,
-  without application installation or a listener.
+  without application installation or a listener. It verifies both roles when the
+  optional Idea-authoring profile is configured, otherwise only the web role.
 - `deploy/README.md`: dedicated database/roles and initial website procedure.
 - `deploy/BACKUP_RESTORE.md`: backup, disposable restore and evidence requirements.
 - `deploy/SUPERVISION.md` and `control-room-website.service.in`: conditional systemd
