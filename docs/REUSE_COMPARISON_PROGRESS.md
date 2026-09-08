@@ -4,6 +4,31 @@
 
 ## Direct answer
 
+RC7 now separates [actual reading responsibilities](research/reuse-comparisons/f7-reader-responsibilities.md):
+current summaries/source links and borrowed collection remain, while full-article
+extraction is evaluated independently. Actual Readability0.6/jsdom26 executes five
+of six shared corpus rows (one row is preparse byte refusal); the mixed expectation
+count is5/6, with a navigation-only false positive and retained event handler.
+[Report](research/reuse-comparisons/f7-readability-fit.md) and
+[independent review](research/reuse-comparisons/f7-readability-review.md) preserve
+those limits. Temporary cohort absence independently checked by root. Miniflux's
+actual internal pure extractor has now executed the same corpus and passed230
+unchanged upstream inline tests. [Miniflux report](research/reuse-comparisons/f7-miniflux-extractor-fit.md)
+records missing title/relative-link adaptation and empty/navigation false positives;
+it needs no Miniflux service or database. The
+[bundled Mozilla DOM](research/reuse-comparisons/f7-readability-builtin-fit.md)
+produced identical returned content to jsdom on this small corpus with one installed
+package instead of40, but lacks the optional heuristic's required DOM methods and
+has MPL-2.0 file-level obligations. Both cohorts report verified cleanup.
+[Independent follow-up review](research/reuse-comparisons/f7-extractor-followup-review.md)
+found no blocking contradiction in the bounded receipts. A discriminating
+malformed-HTML comparison remains open; neither is a production extraction adapter
+or a final winner. The [actual integration map](research/reuse-comparisons/f7-article-integration-map.md)
+also establishes that native-result storage requires a completed agent run and
+cannot simply accept a downloaded source article. Its storage implementations have
+a65,536-byte cap; article inputs need a distinct honest binding, not fabricated
+native completion or silently truncated summaries.
+
 **DR-05 closes the narrow JWT-library selection:** adapt jsonwebtoken9.0.3 behind
 the existing synchronous verifier, retaining CR policy and Cloudflare Access. Both
 candidates passed mapped local cases; the choice avoids six-file async migration,
@@ -17,17 +42,18 @@ Both real JWT candidates now also pass the selected cache/rehearsal matrices:
 [root review](research/reuse-comparisons/f8-actual-preflight-review.md) close that
 narrow execution gap. The logged1.3MiB temporary cohort was removed. A separate
 four-case bootstrap experiment demonstrates preserving post-await clock high-water;
-the complete async migration and final weighted selection remain unfinished.
+the earlier open selection is superseded by DR-05 above. No async migration was
+selected; implementation still must preserve the existing clock and identity policy.
 
 Additional [cache/rehearsal boundary evidence](research/reuse-comparisons/f8-cache-rehearsal-boundaries.md)
 adds13 actual-cache baseline cases and seven awaited actual-rehearsal cases with a
 delayed current verifier. Existing rehearsal checkpoints already stop tested expired,
 cancelled and backward-clock paths before a pool opens; do not duplicate them merely
-because verification becomes async. Actual candidate-library mapping, broader clock
-contract and independent review remain open; these are not new live-login passes.
+because verification becomes async. The later actual candidate mapping and DR-05
+review supersede those narrow open comparison items. These are not live-login passes.
 
 A [working implementation plan](REUSE_IMPLEMENTATION_PLAN.md) now maps all26
-outcomes into substantial delivery batches, carries DR-01–DR-04 forward, and records
+outcomes into substantial delivery batches, carries DR-01–DR-05 forward, and records
 migration/rollback and acceptance constraints. It is explicitly incomplete: open
 RC comparisons, exact change/removal scope, comparative costs and final independent
 review must be resolved before its implementation prompt is ready.

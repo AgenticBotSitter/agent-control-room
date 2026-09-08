@@ -1,0 +1,71 @@
+{
+  "root": "/private/tmp/cr-f7-miniflux-extractor.s3s5gY",
+  "pin": "a84533db6ca0a2ff9a47800fbf0326be6d9b3170",
+  "total": 110239,
+  "files": [
+    {
+      "file": "LICENSE",
+      "local": "LICENSE",
+      "url": "https://raw.githubusercontent.com/miniflux/v2/a84533db6ca0a2ff9a47800fbf0326be6d9b3170/LICENSE",
+      "bytes": 10174,
+      "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594"
+    },
+    {
+      "file": "go.mod",
+      "local": "go.mod",
+      "url": "https://raw.githubusercontent.com/miniflux/v2/a84533db6ca0a2ff9a47800fbf0326be6d9b3170/go.mod",
+      "bytes": 1596,
+      "sha256": "64d13a594ff0039d523b06638691f8d63697945b7b8f8d61baa2c1a7b5976ad0"
+    },
+    {
+      "file": "internal/reader/readability/readability.go",
+      "local": "internal--reader--readability--readability.go",
+      "url": "https://raw.githubusercontent.com/miniflux/v2/a84533db6ca0a2ff9a47800fbf0326be6d9b3170/internal/reader/readability/readability.go",
+      "bytes": 10958,
+      "sha256": "d0fcabb2e570555613291282673193376d5768a743e06c743fa928c5792ed2ee"
+    },
+    {
+      "file": "internal/reader/readability/readability_test.go",
+      "local": "internal--reader--readability--readability_test.go",
+      "url": "https://raw.githubusercontent.com/miniflux/v2/a84533db6ca0a2ff9a47800fbf0326be6d9b3170/internal/reader/readability/readability_test.go",
+      "bytes": 76536,
+      "sha256": "1cca63052fca52474c99d3a3e5dcd15c57a1d25909381be139732561b4fc7ec8"
+    },
+    {
+      "file": "internal/reader/readability/testdata",
+      "local": "internal--reader--readability--testdata",
+      "url": "https://raw.githubusercontent.com/miniflux/v2/a84533db6ca0a2ff9a47800fbf0326be6d9b3170/internal/reader/readability/testdata",
+      "bytes": 32,
+      "sha256": "5b6ccf6a77244e9005326f1dcc84dcc46d22ed1134c54ea2901ff911d009832b"
+    },
+    {
+      "file": "internal/reader/scraper/scraper.go",
+      "local": "internal--reader--scraper--scraper.go",
+      "url": "https://raw.githubusercontent.com/miniflux/v2/a84533db6ca0a2ff9a47800fbf0326be6d9b3170/internal/reader/scraper/scraper.go",
+      "bytes": 3270,
+      "sha256": "f84aa5068fb3a09a5d03ff18bf93fd5d8fd5a0b282569da0b886dca9458b2388"
+    },
+    {
+      "file": "internal/urllib/url.go",
+      "local": "internal--urllib--url.go",
+      "url": "https://raw.githubusercontent.com/miniflux/v2/a84533db6ca0a2ff9a47800fbf0326be6d9b3170/internal/urllib/url.go",
+      "bytes": 6054,
+      "sha256": "012c76b3b238ff91611146111ab1ac491d11ab1444129598a2da627a9a054697"
+    },
+    {
+      "file": "goquery-go.mod",
+      "local": "goquery-go.mod",
+      "url": "https://raw.githubusercontent.com/PuerkitoBio/goquery/v1.12.0/go.mod",
+      "bytes": 128,
+      "sha256": "0712ec4c31ce6841c520b390f058424bde0c9148d24dac9bd219b0b950a9b6fd"
+    },
+    {
+      "file": "goquery-LICENSE",
+      "local": "goquery-LICENSE",
+      "url": "https://raw.githubusercontent.com/PuerkitoBio/goquery/v1.12.0/LICENSE",
+      "bytes": 1491,
+      "sha256": "ab79785bfa235ac1c5e16f75e0f85eb7ce0402fb72f4667fffa0729e694579b8"
+    }
+  ],
+  "status": "source-only, no code execution or toolchain installation; cleanup recorded in source report"
+}

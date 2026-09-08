@@ -1,5 +1,28 @@
 # Reuse evaluation download and cleanup ledger
 
+## RC7 article-extractor comparisons — 2026-09-08 (cleaned)
+
+Public pinned candidates were downloaded only to disposable evaluation roots,
+not installed in the application. Every cohort recorded free space above20GiB and
+remained within the4GiB retained-evaluation cap. Source/archive hashes, dependency
+locks or Go sums, commands, failures and receipts remain in the linked ledgers.
+
+| Cohort | Acquired scope / recorded disk allocation | Retained evidence |
+| --- | --- | --- |
+| Mozilla Readability0.6.0 + jsdom26.1.0 |40-package install/cache,30MiB plus44KiB separate metadata cache | [Acquisitions](research/reuse-comparisons/f7-readability-acquisitions.json), [fit](research/reuse-comparisons/f7-readability-fit.md) |
+| Same Readability with bundled JSDOMParser | One-package install/cache,292KiB | [Acquisitions](research/reuse-comparisons/f7-readability-builtin-acquisitions.json), [fit](research/reuse-comparisons/f7-readability-builtin-fit.md) |
+| Miniflux pure extractor at a84533db6ca0a2ff9a47800fbf0326be6d9b3170 | Selected source, checksum-verified Go1.26.0, isolated module/build caches and binary;564,168KiB total, not runtime RAM | [Source ledger](research/reuse-comparisons/f7-miniflux-extractor-acquisitions.json), [toolchain/module/cleanup receipt](research/reuse-comparisons/f7-miniflux-extractor-runtime-evidence.json) |
+
+Root independently checked all four exact paths named in those ledgers after author
+cleanup; all were absent. Miniflux's initial removal failed on read-only Go cache
+directories; its recorded owned-cache permission correction and final removal are
+preserved, not hidden. No root deletion was needed during this verification.
+Authored reproduction harnesses and synthetic corpus remain in
+`research/reuse-comparisons/`; candidate distributions, caches and toolchain do not.
+No application dependencies, credentials, provider calls, GitHub writes or services
+were introduced. A separate subsequent HTML-compatibility cohort is not covered by
+this cleanup statement and must retain its own receipt.
+
 ## New comparison program — 2026-09-08
 
 Fresh goal authority, source baseline44f9064. Storage140GiB before acquisition;

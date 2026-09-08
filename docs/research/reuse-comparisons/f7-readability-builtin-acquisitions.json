@@ -1,0 +1,38 @@
+{
+  "ownedRoot": "/private/tmp/cr-f7-readability-builtin.1xrQK2",
+  "initialFreeGiB": 139,
+  "otherRetainedKiB": 227136,
+  "finalAllocationKiB": 292,
+  "sourcePin": "4d5dd0bbe0bfbc44e219dc86865131e79639e30b",
+  "command": "npm install --prefix /private/tmp/cr-f7-readability-builtin.1xrQK2 --userconfig /dev/null --cache /private/tmp/cr-f7-readability-builtin.1xrQK2/cache --ignore-scripts --no-audit --no-fund --fetch-retries=0 --fetch-timeout=20000 --update-notifier=false @mozilla/readability@0.6.0",
+  "install": {
+    "exitCode": 0,
+    "added": 1,
+    "reportedMs": 321,
+    "scriptsDisabled": true
+  },
+  "lock": {
+    "name": "cr-f7-readability-builtin.1xrQK2",
+    "lockfileVersion": 3,
+    "requires": true,
+    "packages": {
+      "": {
+        "dependencies": {
+          "@mozilla/readability": "^0.6.0"
+        }
+      },
+      "node_modules/@mozilla/readability": {
+        "version": "0.6.0",
+        "resolved": "https://registry.npmjs.org/@mozilla/readability/-/readability-0.6.0.tgz",
+        "integrity": "sha512-juG5VWh4qAivzTAeMzvY9xs9HY5rAcr2E4I7tiSSCokRFi7XIZCAu92ZkSTsIj1OPceCifL3cpfteP3pDT9/QQ==",
+        "license": "Apache-2.0",
+        "engines": {
+          "node": ">=14.0.0"
+        }
+      }
+    }
+  },
+  "lockSha256": "d2f9d0e19f4176de27da50888fbcab8bbeb05e176cfd055dec2f6a73781ec0d9",
+  "sourceLicenseFinding": "JSDOMParser.js explicit MPL-2.0 header; Readability.js and Readability-readerable.js Apache-2.0. Root metadata does not override file license.",
+  "cleanup": "Completed exact-owned-root removal; absence test exited0 and printed owned-root-absent. No services or live handles."
+}

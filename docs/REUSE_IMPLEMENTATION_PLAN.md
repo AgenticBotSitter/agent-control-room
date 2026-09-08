@@ -35,6 +35,15 @@ These decisions currently delete zero production lines. They avoid unnecessary n
 infrastructure; they are not evidence that every existing custom component is needed.
 Other selections below remain pending their discriminating local tests.
 
+RC7 integration constraint: [the inspected article boundary](research/reuse-comparisons/f7-article-integration-map.md)
+rules out storing fetched articles as completed native results. Rich reading needs
+its own source-bound optional projection or evidence binding using reviewed storage
+primitives, preserving story digests and existing research actions. Current summary
+and source-link access must survive extraction failure. Existing byte stores also
+cap objects at65,536 bytes; a larger article cannot be silently truncated or force an
+unreviewed shared result-limit increase. Actual extraction comparisons do not yet
+prove that application seam or select a new persistent service.
+
 ## Outcome-to-implementation ledger
 
 Existing capability summaries come from the [26-outcome map](REMAINING_WORK_REUSE_MAP.md),

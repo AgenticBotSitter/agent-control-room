@@ -1,0 +1,49 @@
+{
+  "exitCode": 0,
+  "actualStdout": {
+    "scope": "Separately optional exported upstream heuristic on unchanged bundled DOM; no shim, no baseline parse changes.",
+    "corpusSha256": "4f7f0d52d377129144bcd2674c718f9ad5d8b77e1c165d7b804013e3cb172f6a",
+    "results": [
+      {
+        "id": "article-relative",
+        "executed": true,
+        "readerable": null,
+        "error": "doc.querySelectorAll is not a function",
+        "querySelectorAll": "undefined"
+      },
+      {
+        "id": "navigation-scripts",
+        "executed": true,
+        "readerable": null,
+        "error": "doc.querySelectorAll is not a function",
+        "querySelectorAll": "undefined"
+      },
+      {
+        "id": "empty",
+        "executed": true,
+        "readerable": null,
+        "error": "doc.querySelectorAll is not a function",
+        "querySelectorAll": "undefined"
+      },
+      {
+        "id": "navigation-only",
+        "executed": true,
+        "readerable": null,
+        "error": "doc.querySelectorAll is not a function",
+        "querySelectorAll": "undefined"
+      },
+      {
+        "id": "oversized-bytes",
+        "executed": false,
+        "reason": "same_preparse_byte_gate"
+      },
+      {
+        "id": "oversized-elements",
+        "executed": true,
+        "readerable": null,
+        "error": "doc.querySelectorAll is not a function",
+        "querySelectorAll": "undefined"
+      }
+    ]
+  }
+}

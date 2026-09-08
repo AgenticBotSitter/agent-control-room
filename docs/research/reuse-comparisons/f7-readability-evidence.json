@@ -1,0 +1,113 @@
+{
+  "initialFailure": {
+    "exitCode": 1,
+    "diagnostic": "file://<checkout>/research/reuse-comparisons/f7-readability-fit.mjs:4\nconst corpusBytes=fs.readFileSync('research/reuse-comparisons/f7-extraction-corpus.json'),corpus=JSON.parse(corpusBytes);const results=[];let resourceAttempts=0;class DenyLoader extends ResourceLoader{fetch(){resourceAttempts++;throw Error('network_forbidden_by_fixture');}}\n                                                                                                                                                                                                                                          ^\n\nError: network_forbidden_by_fixture\n    at DenyLoader.fetch (file://<checkout>/research/reuse-comparisons/f7-readability-fit.mjs:4:235)\n    at PerDocumentResourceLoader.fetch (<owned>/node_modules/jsdom/lib/jsdom/browser/resources/per-document-resource-loader.js:17:42)\n    at fetchFrame (<owned>/node_modules/jsdom/lib/jsdom/living/nodes/HTMLFrameElement-impl.js:91:28)\n    at loadFrame (<owned>/node_modules/jsdom/lib/jsdom/living/nodes/HTMLFrameElement-impl.js:184:5)\n    at HTMLIFrameElementImpl._attach (<owned>/node_modules/jsdom/lib/jsdom/living/nodes/HTMLFrameElement-impl.js:250:7)\n    at HTMLBodyElementImpl._insert (<owned>/node_modules/jsdom/lib/jsdom/living/nodes/Node-impl.js:836:14)\n    at HTMLBodyElementImpl._preInsert (<owned>/node_modules/jsdom/lib/jsdom/living/nodes/Node-impl.js:757:10)\n    at HTMLBodyElementImpl._append (<owned>/node_modules/jsdom/lib/jsdom/living/nodes/Node-impl.js:863:17)\n    at JSDOMParse5Adapter.appendChild (<owned>/node_modules/jsdom/lib/jsdom/browser/parser/html.js:100:16)\n    at Parser._attachElementToTree (<owned>/node_modules/parse5/dist/cjs/parser/index.js:283:30)\n\nNode.js v22.22.3\n",
+    "repair": "ResourceLoader denial changed throw to documented null (do not fetch), allowing iframe fixture to remain inert. No network delegation before or after."
+  },
+  "receiptCaptureNote": "After final successful run, first save orchestration referenced unavailable process variable; same stored direct result saved without a candidate rerun.",
+  "exitCode": 0,
+  "actualStdout": {
+    "candidate": "@mozilla/readability@0.6.0",
+    "dom": "jsdom@26.1.0",
+    "pins": {
+      "@mozilla/readability/Readability.js": "34dcab3d0832d0019f02990eed6b6124e029e8c32b9f0c6f2550544ff8dff174",
+      "jsdom/lib/api.js": "0653e655065e93d44d885b04a975c0bac3221513bfc7be0be0afd2a4cc99ff2e"
+    },
+    "corpusSha256": "4f7f0d52d377129144bcd2674c718f9ad5d8b77e1c165d7b804013e3cb172f6a",
+    "scope": "Actual extractor and real inert DOM, synthetic input; resource requests blocked by test port, no app collector replacement or HTML sanitization.",
+    "resourceAttempts": 1,
+    "allExpectedMatched": false,
+    "maxRssKiB": 113520,
+    "results": [
+      {
+        "id": "article-relative",
+        "bytes": 1815,
+        "candidateExecuted": true,
+        "disposition": "article",
+        "error": null,
+        "expectedMatched": true,
+        "mismatches": [],
+        "title": "Practical Agent Research",
+        "textContent": "MAIN_MARKER_A Researchers compared practical agent orchestration methods across several independent systems. The article explains what was measured, how tasks were reviewed, and why bounded permissions matter. Evidence and reproducible examples help readers distinguish useful results from marketing claims. MAIN_MARKER_A Researchers compared practical agent orchestration methods across several independent systems. The article explains what was measured, how tasks were reviewed, and why bounded permissions matter. Evidence and reproducible examples help readers distinguish useful results from marketing claims. MAIN_MARKER_A Researchers compared practical agent orchestration methods across several independent systems. The article explains what was measured, how tasks were reviewed, and why bounded permissions matter. Evidence and reproducible examples help readers distinguish useful results from marketing claims. MAIN_MARKER_B These findings support cautious integration and transparent review. MAIN_MARKER_A Researchers compared practical agent orchestration methods across several independent systems. The article explains what was measured, how tasks were reviewed, and why bounded permissions matter. Evidence and reproducible examples help readers distinguish useful results from marketing claims. MAIN_MARKER_A Researchers compared practical agent orchestration methods across several independent systems. The article explains what was measured, how tasks were reviewed, and why bounded permissions matter. Evidence and reproducible examples help readers distinguish useful results from marketing claims. Setup guide",
+        "content": "<div id=\"readability-page-1\" class=\"page\"><article><p>MAIN_MARKER_A Researchers compared practical agent orchestration methods across several independent systems. The article explains what was measured, how tasks were reviewed, and why bounded permissions matter. Evidence and reproducible examples help readers distinguish useful results from marketing claims. MAIN_MARKER_A Researchers compared practical agent orchestration methods across several independent systems. The article explains what was measured, how tasks were reviewed, and why bounded permissions matter. Evidence and reproducible examples help readers distinguish useful results from marketing claims. MAIN_MARKER_A Researchers compared practical agent orchestration methods across several independent systems. The article explains what was measured, how tasks were reviewed, and why bounded permissions matter. Evidence and reproducible examples help readers distinguish useful results from marketing claims. </p><p>MAIN_MARKER_B These findings support cautious integration and transparent review. MAIN_MARKER_A Researchers compared practical agent orchestration methods across several independent systems. The article explains what was measured, how tasks were reviewed, and why bounded permissions matter. Evidence and reproducible examples help readers distinguish useful results from marketing claims. MAIN_MARKER_A Researchers compared practical agent orchestration methods across several independent systems. The article explains what was measured, how tasks were reviewed, and why bounded permissions matter. Evidence and reproducible examples help readers distinguish useful results from marketing claims. </p><a href=\"https://example.invalid/guide\">Setup guide</a></article></div>",
+        "containsScriptTag": false,
+        "containsEventHandler": false,
+        "scriptExecuted": false,
+        "elapsedMs": 27.888625000000005
+      },
+      {
+        "id": "navigation-scripts",
+        "bytes": 2550,
+        "candidateExecuted": true,
+        "disposition": "article",
+        "error": null,
+        "expectedMatched": true,
+        "mismatches": [],
+        "title": "Practical Agent Research",
+        "textContent": "MAIN_MARKER_A Researchers compared practical agent orchestration methods across several independent systems. The article explains what was measured, how tasks were reviewed, and why bounded permissions matter. Evidence and reproducible examples help readers distinguish useful results from marketing claims. MAIN_MARKER_A Researchers compared practical agent orchestration methods across several independent systems. The article explains what was measured, how tasks were reviewed, and why bounded permissions matter. Evidence and reproducible examples help readers distinguish useful results from marketing claims. MAIN_MARKER_A Researchers compared practical agent orchestration methods across several independent systems. The article explains what was measured, how tasks were reviewed, and why bounded permissions matter. Evidence and reproducible examples help readers distinguish useful results from marketing claims. MAIN_MARKER_B These findings support cautious integration and transparent review. MAIN_MARKER_A Researchers compared practical agent orchestration methods across several independent systems. The article explains what was measured, how tasks were reviewed, and why bounded permissions matter. Evidence and reproducible examples help readers distinguish useful results from marketing claims. MAIN_MARKER_A Researchers compared practical agent orchestration methods across several independent systems. The article explains what was measured, how tasks were reviewed, and why bounded permissions matter. Evidence and reproducible examples help readers distinguish useful results from marketing claims. Setup guide",
+        "content": "<div id=\"readability-page-1\" class=\"page\"><article><p onclick=\"globalThis.EXECUTED=true\">MAIN_MARKER_A Researchers compared practical agent orchestration methods across several independent systems. The article explains what was measured, how tasks were reviewed, and why bounded permissions matter. Evidence and reproducible examples help readers distinguish useful results from marketing claims. MAIN_MARKER_A Researchers compared practical agent orchestration methods across several independent systems. The article explains what was measured, how tasks were reviewed, and why bounded permissions matter. Evidence and reproducible examples help readers distinguish useful results from marketing claims. MAIN_MARKER_A Researchers compared practical agent orchestration methods across several independent systems. The article explains what was measured, how tasks were reviewed, and why bounded permissions matter. Evidence and reproducible examples help readers distinguish useful results from marketing claims. </p><p>MAIN_MARKER_B These findings support cautious integration and transparent review. MAIN_MARKER_A Researchers compared practical agent orchestration methods across several independent systems. The article explains what was measured, how tasks were reviewed, and why bounded permissions matter. Evidence and reproducible examples help readers distinguish useful results from marketing claims. MAIN_MARKER_A Researchers compared practical agent orchestration methods across several independent systems. The article explains what was measured, how tasks were reviewed, and why bounded permissions matter. Evidence and reproducible examples help readers distinguish useful results from marketing claims. </p><a href=\"https://example.invalid/guide\">Setup guide</a></article></div>",
+        "containsScriptTag": false,
+        "containsEventHandler": true,
+        "scriptExecuted": false,
+        "elapsedMs": 9.296958999999987
+      },
+      {
+        "id": "empty",
+        "bytes": 64,
+        "candidateExecuted": true,
+        "disposition": "no_article",
+        "error": null,
+        "expectedMatched": true,
+        "mismatches": [],
+        "title": null,
+        "textContent": null,
+        "content": null,
+        "containsScriptTag": false,
+        "containsEventHandler": false,
+        "scriptExecuted": false,
+        "elapsedMs": 5.562874999999991
+      },
+      {
+        "id": "navigation-only",
+        "bytes": 83,
+        "candidateExecuted": true,
+        "disposition": "article",
+        "error": null,
+        "expectedMatched": false,
+        "mismatches": [
+          "expected_no_article"
+        ],
+        "title": "",
+        "textContent": "HomeAbout",
+        "content": "<div id=\"readability-page-1\" class=\"page\"><nav><a href=\"https://example.invalid/\">Home</a><a href=\"https://example.invalid/about\">About</a></nav></div>",
+        "containsScriptTag": false,
+        "containsEventHandler": false,
+        "scriptExecuted": false,
+        "elapsedMs": 4.996540999999979
+      },
+      {
+        "id": "oversized-bytes",
+        "bytes": 20690,
+        "disposition": "preparse_byte_rejection",
+        "candidateExecuted": false,
+        "expectedMatched": true
+      },
+      {
+        "id": "oversized-elements",
+        "bytes": 2588,
+        "candidateExecuted": true,
+        "disposition": "extractor_error",
+        "error": "Aborting parsing document; 68 elements found",
+        "expectedMatched": true,
+        "mismatches": [],
+        "title": null,
+        "textContent": null,
+        "content": null,
+        "containsScriptTag": false,
+        "containsEventHandler": false,
+        "scriptExecuted": false,
+        "elapsedMs": 2.9358749999999816
+      }
+    ]
+  }
+}
