@@ -1,0 +1,36 @@
+{
+  "python": {
+    "scope": "actual router plus actual dependency-complete generated model subset; no SDK package init or transport",
+    "python": "3.12.14",
+    "pydantic": "2.13.5",
+    "hashesVerified": 7,
+    "checks": [
+      "out of order correlates",
+      "duplicate and unknown ignored",
+      "discarded late response ignored",
+      "duplicate waiter registration overwrites old waiter",
+      "typed early event replay",
+      "same turn different thread not rejected by router",
+      "unregistered late event buffered",
+      "1001 pending turn queues admitted without router cap",
+      "32 response waiters admitted above CR16 cap",
+      "disconnect wakes response and clears pending",
+      "disconnect wakes active turn",
+      "router accepts new waiter after fail_all without closed guard",
+      "unknown model routing actual dependency path"
+    ],
+    "count": 13
+  },
+  "direct": {
+    "scope": "actual existing direct JSONL session synthetic messages, no process",
+    "count": 6,
+    "checks": [
+      "out of order responses correlate",
+      "duplicate and unknown responses rejected",
+      "server request forbidden without handler",
+      "pending requests capped at16",
+      "disconnect permanently closes request and receive",
+      "duplicate disconnect idempotent"
+    ]
+  }
+}

@@ -48,7 +48,8 @@ but that adapter has not been proved cheaper than the official Hermes interface.
 ### Agent Orchestrator source findings
 
 The worktree adapter is a real2,002-line reusable boundary, not the whole application:
-`Options` injects `ManagedRoot`, `RepoResolver`, binary and command runner;
+`Options` injects `ManagedRoot`, `RepoResolver`, binary and logger;
+the command runner is a private same-package test field, not a public option.
 `Create/Restore/Destroy/ForceDestroy/StashUncommitted/ApplyPreserved` cover substantial
 workspace ownership and recovery. It validates physical roots, detects existing
 worktrees and has Git-specific error distinctions. Router delegates scratch versus
@@ -57,6 +58,11 @@ that router when an explicit project port is supplied. Dependencies include inte
 domain/ports/gitdefault/process packages and standard Go, requiring extraction tracing.
 Upstream router tests were read; broader preserve/reclaim/force-destroy test paths
 were inventoried but **not all read or run**.
+
+Later [workspace closure](f4-workspace-closure.md) corrects this initial seam reading:
+some preservation operations bypass the private runner, and the constructor starts
+discard cleanup. Its actual isolated Git round trip now supplies narrower runtime
+evidence; neither injection nor constructor is a general effects fence.
 
 `WaitForMessageDeliveryReady` checks session existence/termination and activity,
 polls150ms, requires750ms settled readiness, and supports harness-specific first-signal

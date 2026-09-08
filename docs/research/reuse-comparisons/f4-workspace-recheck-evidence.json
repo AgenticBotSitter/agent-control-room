@@ -1,0 +1,41 @@
+{
+  "capture": "direct child stdout/stderr/exit from retained launcher",
+  "pin": "24e101914976a14145d7302f49626db3541ef8b5",
+  "fixtureSha256": "32817c8246bb35cfc387db10ae5da560b3f4df365d613f8fc173b92dc0a84d65",
+  "args": [
+    "test",
+    "-p",
+    "1",
+    "-timeout",
+    "40s",
+    "./internal/adapters/workspace/gitworktree",
+    "-run",
+    "^TestControlRoomOwnedPreservation$",
+    "-v"
+  ],
+  "environment": {
+    "PATH": "/usr/bin:/bin",
+    "HOME": "<owned-root>/home",
+    "TMPDIR": "<owned-root>/tmp",
+    "LANG": "C",
+    "LC_ALL": "C",
+    "GOTOOLCHAIN": "local",
+    "GOENV": "off",
+    "GOPROXY": "off",
+    "GOSUMDB": "off",
+    "GOWORK": "off",
+    "GOMAXPROCS": "2",
+    "GOMEMLIMIT": "256MiB",
+    "GOCACHE": "<owned-root>/cache",
+    "GOMODCACHE": "<owned-root>/modcache",
+    "CGO_ENABLED": "0",
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_CONFIG_GLOBAL": "/dev/null"
+  },
+  "elapsedMs": 7912,
+  "status": 0,
+  "signal": null,
+  "error": null,
+  "stdout": "=== RUN   TestControlRoomOwnedPreservation\n2026/09/08 08:24:34 INFO gitworktree: StashUncommitted skipping ignored paths session=sess skipped_count=1\n    controlroom_research_test.go:39: real Git: dirty refusal; tracked and untracked preservation; ignored exclusion; force removal; restore; apply; ref cleanup; no remotes\n--- PASS: TestControlRoomOwnedPreservation (0.30s)\nPASS\nok  \tgithub.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/gitworktree\t0.510s\n",
+  "stderr": ""
+}

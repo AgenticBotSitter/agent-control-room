@@ -1,0 +1,95 @@
+{
+  "guards": {
+    "command": "node research/reuse-comparisons/f2-router-guard-fit.mjs /private/tmp/control-room-f2router.99evMt /Users/alastairfraser/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3",
+    "exitCode": 0,
+    "wallTimeSeconds": 0.2475985,
+    "actualStdout": {
+      "scope": "pre-import guards with Python -O, no candidate imports in these cases",
+      "count": 6,
+      "results": [
+        {
+          "name": "valid exact tree optimized Python",
+          "exitCode": 0,
+          "expectedRejection": null
+        },
+        {
+          "name": "extra initializer rejected before import",
+          "exitCode": 1,
+          "expectedRejection": "exact source set invalid"
+        },
+        {
+          "name": "changed hash rejected before import",
+          "exitCode": 1,
+          "expectedRejection": "source hash invalid"
+        },
+        {
+          "name": "missing source rejected before import",
+          "exitCode": 1,
+          "expectedRejection": "exact source set invalid"
+        },
+        {
+          "name": "source symlink rejected before import",
+          "exitCode": 1,
+          "expectedRejection": "source symlink invalid"
+        },
+        {
+          "name": "restored exact tree optimized Python",
+          "exitCode": 0,
+          "expectedRejection": null
+        }
+      ]
+    }
+  },
+  "python": {
+    "command": "/Users/alastairfraser/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 research/reuse-comparisons/f2-router-fit.py /private/tmp/control-room-f2router.99evMt",
+    "exitCode": 0,
+    "wallTimeSeconds": 0.16194525,
+    "actualStdout": {
+      "scope": "actual router plus actual dependency-complete generated model subset; no SDK package init or transport",
+      "python": "3.12.14",
+      "pydantic": "2.13.5",
+      "hashesVerified": 7,
+      "verifiedModuleOrigins": {
+        "openai_codex.generated.v2_all": "generated/v2_all.py",
+        "openai_codex.generated.notification_registry": "generated/notification_registry.py",
+        "openai_codex.models": "models.py",
+        "openai_codex._goal": "_goal.py",
+        "openai_codex.errors": "errors.py",
+        "openai_codex._message_router": "_message_router.py"
+      },
+      "checks": [
+        "out of order correlates",
+        "duplicate and unknown ignored",
+        "discarded late response ignored",
+        "duplicate waiter registration overwrites old waiter",
+        "typed early event replay",
+        "same turn different thread not rejected by router",
+        "unregistered late event buffered",
+        "1001 pending turn queues admitted without router cap",
+        "32 response waiters admitted above CR16 cap",
+        "disconnect wakes response and clears pending",
+        "disconnect wakes active turn",
+        "router accepts new waiter after fail_all without closed guard",
+        "unknown model routing actual dependency path"
+      ],
+      "count": 13
+    }
+  },
+  "direct": {
+    "command": "node --import tsx research/reuse-comparisons/f2-router-direct-fit.ts",
+    "exitCode": 0,
+    "wallTimeSeconds": 0.000003291,
+    "actualStdout": {
+      "scope": "actual existing direct JSONL session synthetic messages, no process",
+      "count": 6,
+      "checks": [
+        "out of order responses correlate",
+        "duplicate and unknown responses rejected",
+        "server request forbidden without handler",
+        "pending requests capped at16",
+        "disconnect permanently closes request and receive",
+        "duplicate disconnect idempotent"
+      ]
+    }
+  }
+}

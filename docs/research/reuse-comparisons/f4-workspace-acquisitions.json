@@ -1,0 +1,382 @@
+{
+  "root": "/private/tmp/control-room-f4-workspace.Cm8H2s",
+  "pin": "24e101914976a14145d7302f49626db3541ef8b5",
+  "files": [
+    {
+      "path": "backend/internal/adapters/workspace/gitworktree/commands.go",
+      "bytes": 6406,
+      "sha256": "4bde4ddbe660e64f816c821f87d843fa7c184eaad60173308732cac30b17f86e"
+    },
+    {
+      "path": "backend/internal/adapters/workspace/gitworktree/discard.go",
+      "bytes": 8345,
+      "sha256": "61d84c4f4babcd1ca53abce40b99417dcb1a241cd97ff71c1b98b6ac3507c732"
+    },
+    {
+      "path": "backend/internal/adapters/workspace/gitworktree/discard_test.go",
+      "bytes": 15361,
+      "sha256": "cdb6aae886de7e44744bb185aa1d851475595ab579931ab343226aa2eb4b9861"
+    },
+    {
+      "path": "backend/internal/adapters/workspace/gitworktree/exclude_test.go",
+      "bytes": 3951,
+      "sha256": "20d0c0cbb76306f78a919e884a85a6bf3102971fed9099f04e565eb32aef5151"
+    },
+    {
+      "path": "backend/internal/adapters/workspace/gitworktree/observe_test.go",
+      "bytes": 1984,
+      "sha256": "f332c69123f5c32afefba3c169f6820f479a221d3a5a430b1a5aeab2ecf62d7b"
+    },
+    {
+      "path": "backend/internal/adapters/workspace/gitworktree/parse.go",
+      "bytes": 1270,
+      "sha256": "baaabe8bf36c80eb3aef1d267a4e0182ef70ff66f66cf8682549928197f54842"
+    },
+    {
+      "path": "backend/internal/adapters/workspace/gitworktree/remove.go",
+      "bytes": 4939,
+      "sha256": "3bbb979163b80969a0e5bd55b71c9e0658f8eb5087d06e4926e6427646d21688"
+    },
+    {
+      "path": "backend/internal/adapters/workspace/gitworktree/remove_test.go",
+      "bytes": 6230,
+      "sha256": "7a5ce7e7608512bad020ea99a49315a53d2489065d3d99dc2cc9d8e62d564c6b"
+    },
+    {
+      "path": "backend/internal/adapters/workspace/gitworktree/workspace.go",
+      "bytes": 76702,
+      "sha256": "9617901516a75f5388f24ac4c90e39add740046738e826b452f2e0132ea8692d"
+    },
+    {
+      "path": "backend/internal/adapters/workspace/gitworktree/workspace_forcedestroy_test.go",
+      "bytes": 3066,
+      "sha256": "9a9d56926a5702ad53cebf0c677c75b5a4a42f50f8d5c29a29c5c04fa8d53153"
+    },
+    {
+      "path": "backend/internal/adapters/workspace/gitworktree/workspace_integration_test.go",
+      "bytes": 51813,
+      "sha256": "856c1d9ccedd88e4065d757d85536b0c7d2667800aee965fb0bcbb18ac52a3b5"
+    },
+    {
+      "path": "backend/internal/adapters/workspace/gitworktree/workspace_preserve_test.go",
+      "bytes": 9295,
+      "sha256": "591c08cabfc05863450efa298e725c85fd419a97827f1bf8264a2152465eb0f5"
+    },
+    {
+      "path": "backend/internal/adapters/workspace/gitworktree/workspace_reclaim_test.go",
+      "bytes": 3292,
+      "sha256": "853a5103d9a0a01894fe441478a4d5159553f5fdc68247388ea3b11bcb0058c8"
+    },
+    {
+      "path": "backend/internal/adapters/workspace/gitworktree/workspace_test.go",
+      "bytes": 45013,
+      "sha256": "0f53b0131992f3723d54e9bfc9404b6c9c6a04a5d546072c75b50d81b106710f"
+    },
+    {
+      "path": "backend/internal/domain/activity.go",
+      "bytes": 2070,
+      "sha256": "0fae4f9ed6ae2564512556e2f05ebbef17c826a8fb55d8750da76bb6307c64a8"
+    },
+    {
+      "path": "backend/internal/domain/agent_readiness.go",
+      "bytes": 6618,
+      "sha256": "cbf0ec516faa0684daa75d72b2ae2cfc9c1afade279fd3168fa60268a8e3f2ad"
+    },
+    {
+      "path": "backend/internal/domain/agent_switch_observability.go",
+      "bytes": 71366,
+      "sha256": "89911c0798b372cc959d7ce03a9cd1650b348bd28fb045e942c86867dbad6a9d"
+    },
+    {
+      "path": "backend/internal/domain/agent_switching.go",
+      "bytes": 21715,
+      "sha256": "3c9db2e763a889c929cb25a79597767c7d828cc509b8e2c924b9a4a73ea69ddd"
+    },
+    {
+      "path": "backend/internal/domain/agentconfig.go",
+      "bytes": 2815,
+      "sha256": "b46721890069853d5308bc194b31c62171a6cc086c16dcd8a9ed2621ab9ca887"
+    },
+    {
+      "path": "backend/internal/domain/cleanup.go",
+      "bytes": 2827,
+      "sha256": "24bacb97ef378265d1d36df26d08dcb6b8d79949cdfe6810580d7d61a3cd83f8"
+    },
+    {
+      "path": "backend/internal/domain/codex_account.go",
+      "bytes": 10324,
+      "sha256": "101f81763a4a95649a5887ecedf1705e03076d6cdbbd80473dee68e648c28216"
+    },
+    {
+      "path": "backend/internal/domain/codex_account_switch.go",
+      "bytes": 4101,
+      "sha256": "9363405e6b4dfbae89828601eba01261366ac3e84cb864717a325640fb2da6f2"
+    },
+    {
+      "path": "backend/internal/domain/codex_capacity.go",
+      "bytes": 5952,
+      "sha256": "f5e8e49dfe9bacf00dced6a9375e3d79843eb223570b212d317c9e649e61e594"
+    },
+    {
+      "path": "backend/internal/domain/conversation.go",
+      "bytes": 32546,
+      "sha256": "0ff430f5e4fe36b713d634e76958348f6115502f6094b962773514a0433c1674"
+    },
+    {
+      "path": "backend/internal/domain/doc.go",
+      "bytes": 285,
+      "sha256": "5f51a7c2ea56831bbf9cef80567d37a260ed47fdace53c3a6b273427656fb1ce"
+    },
+    {
+      "path": "backend/internal/domain/harness.go",
+      "bytes": 2228,
+      "sha256": "f8a657c99ac2aa034c8b6c2f65b54f04a0fc3fb89cd1cc6e3fa4ccd0f9559ac0"
+    },
+    {
+      "path": "backend/internal/domain/kanban.go",
+      "bytes": 944,
+      "sha256": "24a72420c45a3f2f5bd59cbcd9fea40b9c9ec661cff31f944baafb07e642eac7"
+    },
+    {
+      "path": "backend/internal/domain/notification.go",
+      "bytes": 5135,
+      "sha256": "08cb8e4032d94d0700d4bbf3f568282b67c2799943f9529768cc83699865cc4b"
+    },
+    {
+      "path": "backend/internal/domain/pr.go",
+      "bytes": 7266,
+      "sha256": "16e16893418b0d8946aa5e1d89dfa5c274164d81f9ef5d7dbe105dab8b3a43f9"
+    },
+    {
+      "path": "backend/internal/domain/project.go",
+      "bytes": 3132,
+      "sha256": "4dd4625a5c5f7b84bea647b8a148e53459259c977d60e2c5592eacc1d675f3c0"
+    },
+    {
+      "path": "backend/internal/domain/project_import.go",
+      "bytes": 1042,
+      "sha256": "4fa51ad38d96ade94a920445b48850a3a44ac1e5b0277cbab25b5f1096c34d11"
+    },
+    {
+      "path": "backend/internal/domain/projectconfig.go",
+      "bytes": 10413,
+      "sha256": "49e5e8bf4ea6b87bb53239e5b9032c88a7437d5fab85cca74031b8015fde01b8"
+    },
+    {
+      "path": "backend/internal/domain/repository_identity.go",
+      "bytes": 3746,
+      "sha256": "176d8a4a07c4e96f6da169f7c113151690eab25e60ee4cc1f4b8ab78484d9293"
+    },
+    {
+      "path": "backend/internal/domain/review.go",
+      "bytes": 4542,
+      "sha256": "28672cdd06c2baded8ed7bcc4c0a030cf2ffcaa8715a4e54d6e907d981a19d3c"
+    },
+    {
+      "path": "backend/internal/domain/reviewerharness.go",
+      "bytes": 2495,
+      "sha256": "af343ab7742db69e9d57e15ac26c99644fa056b89ded8cabda9d5e5fba0cb650"
+    },
+    {
+      "path": "backend/internal/domain/session.go",
+      "bytes": 10720,
+      "sha256": "2978a8632c9a3276ff7fbb6e69214393f26acc7ab61542cbdb256a9c140fcc56"
+    },
+    {
+      "path": "backend/internal/domain/session_interface_transition.go",
+      "bytes": 5741,
+      "sha256": "e7b97c1a391a9e7fd17436ca47a6af7f9e6cd091cab70b5801d3b7e9e155ef8b"
+    },
+    {
+      "path": "backend/internal/domain/sessionmode.go",
+      "bytes": 2611,
+      "sha256": "7a4a70e86e467fb8d06f980cacb3273770927a8fec94ed6382967dd5bdd6bfda"
+    },
+    {
+      "path": "backend/internal/domain/status.go",
+      "bytes": 1245,
+      "sha256": "07c315302d3e56316a8c1aafe69495efc1b968469e564e4728063f3b446a34ca"
+    },
+    {
+      "path": "backend/internal/domain/text.go",
+      "bytes": 976,
+      "sha256": "4d0cc4697fdbc602d95053bce7f4f5189a4949933b153b8df8fb9364ff5947cb"
+    },
+    {
+      "path": "backend/internal/domain/tracker.go",
+      "bytes": 6657,
+      "sha256": "7b5b322c936fcf2a7f71ccc2bbd242c004a716a6e0f93d8616b7295b92251a86"
+    },
+    {
+      "path": "backend/internal/domain/usage.go",
+      "bytes": 14870,
+      "sha256": "c7778fe3d16707bbfeb7a1fb556f786796ba77a97bfee3e702fc246cdd5bf0eb"
+    },
+    {
+      "path": "backend/internal/gitdefault/resolver.go",
+      "bytes": 12883,
+      "sha256": "4df4acf858235cfd071eba7aaab0c9710fa207bf667477afca4d2557e83924bb"
+    },
+    {
+      "path": "backend/internal/ports/agent.go",
+      "bytes": 23588,
+      "sha256": "fb1f8f1c26f22b7d747dfc3a590701bd22db3f57b9a9d1dbd0b866de7139fc73"
+    },
+    {
+      "path": "backend/internal/ports/agent_continuation.go",
+      "bytes": 3776,
+      "sha256": "5e650b5f0ca321590e13659108551ffdbe6c6486c0d78c2ccb802cdbbf31480f"
+    },
+    {
+      "path": "backend/internal/ports/agent_switch_observability.go",
+      "bytes": 3841,
+      "sha256": "453427521862569a7e79b01454f50d04b23e435c73a7b49ceecaf720157600da"
+    },
+    {
+      "path": "backend/internal/ports/agent_switching.go",
+      "bytes": 9377,
+      "sha256": "29b07b8e63801d01dfc77880460f98d0c3b1e4c775818c59ba667067120c3a82"
+    },
+    {
+      "path": "backend/internal/ports/chat.go",
+      "bytes": 45142,
+      "sha256": "9da3807e39614241116ea12595f55393e16ed4f962a96fb5804f500de223a997"
+    },
+    {
+      "path": "backend/internal/ports/chat_steer.go",
+      "bytes": 3055,
+      "sha256": "88ef40b846d825365960619b4bc8a07e793ba6671165ec5ce7b3ca9672ab140e"
+    },
+    {
+      "path": "backend/internal/ports/codex_account_management.go",
+      "bytes": 4573,
+      "sha256": "b71017c3c32aca462901e87d039cfd271ad88cf4ed4e396ce1345981d6b13131"
+    },
+    {
+      "path": "backend/internal/ports/codex_accounts.go",
+      "bytes": 3004,
+      "sha256": "55c7a4d852587f5495272066b1efc3681b7d1daae72ef1e5d28dd2f7c5290633"
+    },
+    {
+      "path": "backend/internal/ports/doc.go",
+      "bytes": 285,
+      "sha256": "a18d9c63b7775546ae63843af91fd5810d52be952f437c92657511737de7fe0a"
+    },
+    {
+      "path": "backend/internal/ports/notifications.go",
+      "bytes": 1317,
+      "sha256": "9e9a88bfa70fbf655f9a30dcc153c139862b61c128598524ae899ccedc965327"
+    },
+    {
+      "path": "backend/internal/ports/outbound.go",
+      "bytes": 27230,
+      "sha256": "bbe156ae7f5ef49f0ea0f27fc47261581956735b2543ac9bb043c75a30dc6d0d"
+    },
+    {
+      "path": "backend/internal/ports/pr_observations.go",
+      "bytes": 1758,
+      "sha256": "40f64fea9b038f503ada1d25dcc4b4d7a42f6fe3eb7048f3d473bcd4f210bf93"
+    },
+    {
+      "path": "backend/internal/ports/reviewer.go",
+      "bytes": 7139,
+      "sha256": "e2c3190fc8f44a81d3238ff1ccc10ff06baacc4c65895e9c2ee60e385f761cee"
+    },
+    {
+      "path": "backend/internal/ports/runtime_observations.go",
+      "bytes": 2695,
+      "sha256": "404a5f5687a80bf6d0c643fec3afe3e4adb5f6ab5541762bd997f29db4ff3130"
+    },
+    {
+      "path": "backend/internal/ports/scm_actions.go",
+      "bytes": 2040,
+      "sha256": "9a2d399f518768224811423c66e3b107b4d78c84ef93d2b854df64251609f728"
+    },
+    {
+      "path": "backend/internal/ports/scm_observations.go",
+      "bytes": 12559,
+      "sha256": "91185df5d5349a92a8d17070b9566b2c08379c9eefce3709b638809481772d2f"
+    },
+    {
+      "path": "backend/internal/ports/session.go",
+      "bytes": 2630,
+      "sha256": "536d1877e0e610d31ed2c1766fe9ef56b41f49bdb5e658c6d67f37527d8b3155"
+    },
+    {
+      "path": "backend/internal/ports/system.go",
+      "bytes": 4138,
+      "sha256": "bb5287ed453d8a45a24827e02c05eeb009dd3516851356bfd24cde65efbb0082"
+    },
+    {
+      "path": "backend/internal/ports/telemetry.go",
+      "bytes": 1300,
+      "sha256": "4bcf5c143eb27de3c47a126262c936d8ad7388abcee2f69a73c4f618ea9dda6c"
+    },
+    {
+      "path": "backend/internal/ports/terminal_surface.go",
+      "bytes": 2065,
+      "sha256": "fb2172c7b8496960488d5324562138f17e2a17d631ecf806f619e53fb43c6291"
+    },
+    {
+      "path": "backend/internal/ports/tracker.go",
+      "bytes": 976,
+      "sha256": "cbd3f855eed54701d1724c86d704d106697bc3ff991b56af497a93863411abbf"
+    },
+    {
+      "path": "backend/internal/ports/tracker_observations.go",
+      "bytes": 4406,
+      "sha256": "e01d679d8734a0e7ea4d87cb42148836a8130b4c4306b629500103a576a923c7"
+    },
+    {
+      "path": "backend/internal/process/command.go",
+      "bytes": 552,
+      "sha256": "51e575b843b5724ea17fd055992d78bd3de3b8dac921910e876a75f625fb6e17"
+    },
+    {
+      "path": "backend/internal/process/command_other.go",
+      "bytes": 93,
+      "sha256": "29230a49b5c25c26ace8a6c082f8e3822fad9f050fd3559a7b47e5436f785552"
+    },
+    {
+      "path": "backend/internal/process/command_windows.go",
+      "bytes": 250,
+      "sha256": "9f1399e82c7894df574a9491a8131523c53aa9aef7bc885d0e17d5eac00f056b"
+    },
+    {
+      "path": "backend/pkg/contract/agent.go",
+      "bytes": 3019,
+      "sha256": "3cc4e0cef31e5f37f07de2faac07d9098048af39d94aa69add964d3f777a9f97"
+    },
+    {
+      "path": "backend/pkg/contract/kanban.go",
+      "bytes": 14386,
+      "sha256": "ccc9d07d595877d38d349f58310b693460fb78ea74ed3cdc11011aa928883f6d"
+    },
+    {
+      "path": "backend/pkg/contract/scm.go",
+      "bytes": 8329,
+      "sha256": "4efdb5c0f4d80d742ff2b7a627e77834ac2e18c0d4ec2f57640effa760870917"
+    },
+    {
+      "path": "backend/pkg/contract/status.go",
+      "bytes": 6921,
+      "sha256": "a86c7973c253772c0902095da5e97527675357d45f780de9423da27648ca8d01"
+    }
+  ],
+  "sourceURLPrefix": "https://raw.githubusercontent.com/Untrivial-ai/agent-orchestrator/24e101914976a14145d7302f49626db3541ef8b5/",
+  "toolchain": {
+    "url": "https://go.dev/dl/go1.25.7.darwin-arm64.tar.gz",
+    "sha256": "ff18369ffad05c57d5bed888b660b31385f3c913670a83ef557cdfd98ea9ae1b",
+    "bytes": 58034655,
+    "metadata": "https://go.dev/dl/?mode=json&include=all",
+    "archiveRemoved": true
+  },
+  "initialDiskFreeGiB": 140,
+  "peakMeasuredRootMiB": 317,
+  "status": "Cleaned: entire owned root removed and absence verified after tests. Initial317MiB overrun paused; root revised internal cap to400MiB under unchanged global4GiB, then actual Git and fake-runner tests completed. No binaries or sources retained.",
+  "additionalAcquisitions": [
+    {"path":"tree.json","url":"https://api.github.com/repos/Untrivial-ai/agent-orchestrator/git/trees/24e101914976a14145d7302f49626db3541ef8b5?recursive=1","bytes":1289723,"sha256":"f8a3aba0005c02f20a53c6d771c6021e95ae68aae1e07954da0c469f359e425a"},
+    {"path":"go.mod","upstreamPath":"backend/go.mod","bytes":2474,"sha256":"632a22a435b3237364c1a0b786eec14216c257720677d452c88709c2bc6a796e"},
+    {"path":"workspace.go","note":"Initial discovery download duplicated flattened workspace.go already listed","bytes":76702,"sha256":"9617901516a75f5388f24ac4c90e39add740046738e826b452f2e0132ea8692d"}
+  ]
+}

@@ -228,8 +228,9 @@
     },
     {
       "id": "F2",
-      "dossier": "reuse-comparisons/f2-codex-interfaces.md",
-      "evidence": "actual published TS parser crosses current decoder/projector; Python method subset exercised; full transport, Hermes lifecycle/file and native gates remain"
+      "dossier": "reuse-comparisons/f2-transport-fit.md",
+      "additionalDossiers": ["reuse-comparisons/f2-codex-interfaces.md", "reuse-comparisons/f2-router-fit.md"],
+      "evidence": "8 actualTS SDK transport-to-synthetic-process checks;13 actualPythonrouter plus6 currentJSONLchecks; fullSDKclientpolicy, Hermes lifecycle/file and native gates remain"
     },
     {
       "id": "F3",
@@ -239,7 +240,8 @@
     {
       "id": "F4",
       "dossier": "reuse-comparisons/f4-planner-fit.md",
-      "evidence": "12 mapped actual-planner/coordinator cases support narrow fixed-panel retention; all four source hashes and exact contributions checked on rerun; durable messaging/worktree alternatives remain"
+      "additionalDossiers": ["reuse-comparisons/f4-durable-comparison.md", "reuse-comparisons/f4-workspace-closure.md", "reuse-comparisons/f4-workspace-recheck.md"],
+      "evidence": "12 mappedplanner cases support narrowfixedpanel retention; AO actualownedGit preservation and selectedupstream tests pass; complete messaging and actualCR-to-Go lease/recovery mapping remain"
     },
     {
       "id": "F5",
@@ -254,16 +256,19 @@
     {
       "id": "F7",
       "dossier": "reuse-comparisons/f7-existing-reconciliation.md",
+      "additionalDossiers": ["reuse-comparisons/f7-candidates.md"],
       "evidence": "11 actually integrated vendor files reconciled; 60 checks including synthetic research journey and differing actual parser semantics; Miniflux/FreshRSS/RSSHub source candidates screened, not executed"
     },
     {
       "id": "F8",
-      "dossier": "reuse-comparisons/f8-operations.md",
-      "evidence": "actual Kuma conditions exercised; probe/metrics/restore E3 remains"
+      "dossier": "reuse-comparisons/f8-http-fit.md",
+      "additionalDossiers": ["reuse-comparisons/f8-operations.md"],
+      "evidence": "11 actualKuma HTTPbranch+Axios cases through currenthealthbuilder; daemon/alerts/metrics/restore remain; standardJWTlibrary comparison newly traced"
     },
     {
       "id": "F9",
       "dossier": "reuse-comparisons/f9-shipping-license-scope.md",
+      "additionalDossiers": ["reuse-comparisons/f9-entities-notice-followup.md"],
       "evidence": "30-vs28 direct dependency notice drift found; entities source+MIT provenance traced with version discrepancy; full graph and built distribution notices remain"
     }
   ],

@@ -1,0 +1,6 @@
+import fs from 'node:fs';import {spawnSync} from 'node:child_process';
+const root=process.argv[2];if(!/^\/private\/tmp\/control-room-f4-workspace\.[A-Za-z0-9]+$/.test(root??''))throw Error('owned root required');
+const file=root+'/backend__internal__adapters__workspace__gitworktree__commands.go';const original=fs.readFileSync(file);const results=[];
+function refuse(name){const r=spawnSync(process.execPath,['research/reuse-comparisons/f4-workspace-prepare.mjs',root],{encoding:'utf8',timeout:10000});if(r.status===0||fs.existsSync(root+'/module'))throw Error('failed refusal '+name);results.push({name,status:r.status,refusedBeforeCopy:true});}
+try{fs.appendFileSync(file,'\n// synthetic tamper\n');refuse('wrong hash');fs.writeFileSync(file,original);fs.renameSync(file,file+'.held');refuse('missing file');fs.renameSync(file+'.held',file);fs.writeFileSync(root+'/backend__extra.go','package extra');refuse('extra file');fs.unlinkSync(root+'/backend__extra.go');}finally{fs.writeFileSync(file,original);if(fs.existsSync(file+'.held'))fs.unlinkSync(file+'.held');if(fs.existsSync(root+'/backend__extra.go'))fs.unlinkSync(root+'/backend__extra.go');}
+fs.writeFileSync(root+'/verifier-receipt.json',JSON.stringify({capture:'direct child statuses and module-absence assertions',results},null,2));console.log(JSON.stringify(results));

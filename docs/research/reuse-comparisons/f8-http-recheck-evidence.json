@@ -1,0 +1,91 @@
+{
+  "exitCode": 0,
+  "wallTimeSeconds": 0.576768041,
+  "actualStdout": {
+    "pin": "e4821321e559c887b14e37d9979e604b221a8945",
+    "hashes": {
+      "monitor.js": "33196b8c9b943eb49830888495586f05a7697e497253249ece13eb2aa95c1785",
+      "util.ts": "630730aaf91714fb42b66c31525f8ffac705cfb6f843a9cfb5453a3861ffb0fd",
+      "util-server.js": "374c070054db0fcf6f089dc40d1b5d341729dc2533348f12e1c7162439bce90a"
+    },
+    "cases": [
+      {
+        "path": "/ready",
+        "type": "json-query",
+        "state": "pass",
+        "code": "ok",
+        "digest": "sha256:9d3445ce76f5400312f7ace101e04672a2d0a05259c7ee177cf87cfbc086b5cb"
+      },
+      {
+        "path": "/login",
+        "type": "http",
+        "state": "pass",
+        "code": "ok",
+        "digest": "sha256:8b6803751b47d73f9e60eeefc7b68a414ffa7b0544c25716fd332c5b992a19a0"
+      },
+      {
+        "path": "/login",
+        "type": "json-query",
+        "state": "fail",
+        "code": "classification",
+        "digest": "sha256:2f4c5fdd612d18783931c79e5445777cb08f0b79bfc3348b00319c9dfbe39aa1"
+      },
+      {
+        "path": "/embedded",
+        "type": "keyword",
+        "state": "pass",
+        "code": "ok",
+        "digest": "sha256:3bbb93939902953458d03ee5e4fbaf4014e43e89ad2397e140f1515fa34e7045"
+      },
+      {
+        "path": "/stale",
+        "type": "json-query",
+        "state": "fail",
+        "code": "classification",
+        "digest": "sha256:9441054e82d9c6a08780d29959a1aa782d72138447794124cfd60b6b83baa1bb"
+      },
+      {
+        "path": "/expired",
+        "type": "json-query",
+        "state": "stale",
+        "code": "ok",
+        "digest": "sha256:d9706829030b95ae7ee414b1af6bfb6a5bd2580eadc1de4886daea19ad374688"
+      },
+      {
+        "path": "/503",
+        "type": "json-query",
+        "state": "fail",
+        "code": "ERR_BAD_RESPONSE",
+        "digest": "sha256:2ac099a9a381984c7b70aadb2ef1c9dcf1b1a21ec937025a1f797ecd9beca0b5"
+      },
+      {
+        "path": "/disconnect",
+        "type": "json-query",
+        "state": "unknown",
+        "code": "ECONNRESET",
+        "digest": "sha256:8a8135fd32e12d6a8f66fe5256997af438a8fb0b3446faeddf608adce2bf886b"
+      },
+      {
+        "path": "/timeout",
+        "type": "json-query",
+        "state": "unknown",
+        "code": "ECONNABORTED",
+        "digest": "sha256:8676ad5fa2281df94b90faf5441dba4942da30367c01f10c0b2fce76f113bdcd"
+      },
+      {
+        "path": "repeat observation (not alert dedup)",
+        "state": "pass",
+        "code": "ok",
+        "digest": "sha256:9d3445ce76f5400312f7ace101e04672a2d0a05259c7ee177cf87cfbc086b5cb"
+      },
+      {
+        "path": "fixture server restarted (not Kuma daemon restart)",
+        "state": "pass",
+        "code": "ok",
+        "digest": "sha256:9d3445ce76f5400312f7ace101e04672a2d0a05259c7ee177cf87cfbc086b5cb"
+      }
+    ],
+    "hits": 11,
+    "scope": "Actual upstream HTTP branch, makeAxiosRequest, status filter, abort signal, JSON query and real Axios/dayjs/jsonata/cookie agents through actual CR health builder. Own loopback HTTP only; no full Kuma scheduler/ORM/notifications/TLS/auth/daemon persistence. Stale timestamp interpretation is research adapter input, not upstream state-query behavior."
+  }
+}

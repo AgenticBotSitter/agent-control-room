@@ -1,0 +1,48 @@
+{
+  "checks": [
+    "actual SDK spawn/argv/stdin and isolated environment reach synthetic executable; actual events cross CR result projection",
+    "public resume method forwards exact native ID to synthetic child",
+    "actual EOF transport settles; CR refuses incomplete terminal evidence",
+    "actual malformed child output refuses",
+    "nonzero synthetic process surfaces exit and stderr",
+    "SDK admits oversized line; existing CR decoder rejects it after line allocation",
+    "SDK includes 64KiB synthetic stderr in error; output redaction/bounds still required",
+    "AbortSignal stops acknowledged cooperative synthetic child; no native agent or descendant guarantee"
+  ],
+  "count": 8,
+  "receipts": [
+    {
+      "mode": "success",
+      "args": [
+        "exec",
+        "--experimental-json",
+        "--sandbox",
+        "read-only",
+        "--cd",
+        "<disposable-workspace>",
+        "--skip-git-repo-check",
+        "--config",
+        "sandbox_workspace_write.network_access=false",
+        "--config",
+        "web_search=\"disabled\"",
+        "--config",
+        "approval_policy=\"never\""
+      ],
+      "environmentKeys": [
+        "CODEX_INTERNAL_ORIGINATOR_OVERRIDE",
+        "F2_FIXTURE_MODE",
+        "F2_FIXTURE_ROOT",
+        "PATH",
+        "__CF_USER_TEXT_ENCODING"
+      ],
+      "inputBytes": 16
+    }
+  ],
+  "ownedRoot": "/private/tmp/cr-f2-transport.hsxsX4",
+  "clean": true,
+  "remaining": [],
+  "elapsedMs": 399.245583,
+  "parentPeakRssKiB": 83120,
+  "scope": "actual SDK process transport to synthetic Node emitter; no real Codex, credentials, providers, profile or plugins; memory is parent-only, not cumulative children",
+  "nativeAgentCalls": 0
+}

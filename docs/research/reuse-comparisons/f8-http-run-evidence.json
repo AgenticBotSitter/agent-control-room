@@ -1,0 +1,29 @@
+{
+  "receiptType": "sanitized transcription of successful tool output, not a rerun",
+  "command": "node --import tsx research/reuse-comparisons/f8-http-live-fit.ts /private/tmp/cr-f8-http.4Yid4F",
+  "exitCode": 0,
+  "wallTimeSeconds": 0.577022083,
+  "pin": "e4821321e559c887b14e37d9979e604b221a8945",
+  "hashes": {
+    "monitor.js": "33196b8c9b943eb49830888495586f05a7697e497253249ece13eb2aa95c1785",
+    "util.ts": "630730aaf91714fb42b66c31525f8ffac705cfb6f843a9cfb5453a3861ffb0fd",
+    "util-server.js": "374c070054db0fcf6f089dc40d1b5d341729dc2533348f12e1c7162439bce90a"
+  },
+  "cases": [
+    {"path":"/ready","type":"json-query","state":"pass","code":"ok"},
+    {"path":"/login","type":"http","state":"pass","code":"ok"},
+    {"path":"/login","type":"json-query","state":"fail","code":"classification"},
+    {"path":"/embedded","type":"keyword","state":"pass","code":"ok"},
+    {"path":"/stale","type":"json-query","state":"fail","code":"classification"},
+    {"path":"/expired","type":"json-query","state":"stale","code":"ok"},
+    {"path":"/503","type":"json-query","state":"fail","code":"ERR_BAD_RESPONSE"},
+    {"path":"/disconnect","type":"json-query","state":"unknown","code":"ECONNRESET"},
+    {"path":"/timeout","type":"json-query","state":"unknown","code":"ECONNABORTED"},
+    {"path":"repeat observation (not alert dedup)","state":"pass","code":"ok","digest":"sha256:9d3445ce76f5400312f7ace101e04672a2d0a05259c7ee177cf87cfbc086b5cb"},
+    {"path":"fixture server restarted (not Kuma daemon restart)","state":"pass","code":"ok","digest":"sha256:9d3445ce76f5400312f7ace101e04672a2d0a05259c7ee177cf87cfbc086b5cb"}
+  ],
+  "hits": 11,
+  "scope": "Actual upstream HTTP branch, makeAxiosRequest, status filter, abort signal, JSON query and real Axios/dayjs/jsonata/cookie agents through actual CR health builder. Own loopback HTTP only; no full Kuma scheduler/ORM/notifications/TLS/auth/daemon persistence. Stale timestamp interpretation is research adapter input, not upstream state-query behavior.",
+  "initialSandboxAttempt": "listen EPERM before any request; scoped approved loopback retry succeeded",
+  "cleanup": "server finally closed; exact owned temporary root removed"
+}

@@ -7,13 +7,16 @@ global cap4GiB, stop below20GiB free; heavy local services serialized. Per-famil
 exact acquisition, negative outcomes and cleanup records:
 [F1](research/reuse-comparisons/f1-acquisitions.md),
 [F2](research/reuse-comparisons/f2-acquisitions.md),
+[F2 Python router](research/reuse-comparisons/f2-router-acquisitions.md),
 [F3](research/reuse-comparisons/f3-acquisitions.md),
 [F4](research/reuse-comparisons/f4-acquisitions.md),
 [F4 mapped planner](research/reuse-comparisons/f4-planner-cleanup.md),
+[F4 actual Git/toolchain](research/reuse-comparisons/f4-workspace-closure.md),
 [F5](research/reuse-comparisons/f5-acquisitions.md),
 [F6](research/reuse-comparisons/f6-acquisitions.md),
 [F7](research/reuse-comparisons/f7-candidate-acquisitions.md),
 [F8](research/reuse-comparisons/f8-acquisitions.md),
+[F8 HTTP](research/reuse-comparisons/f8-http-fit.md),
 [F9](research/reuse-comparisons/f9-entities-notice-followup.md).
 No production dependency/source change or GitHub write. F1 (222 MiB) and F2
 (184 KiB) remain retained for continued package tests; F3/F4/F5/F6/F7/F8/F9 report exact

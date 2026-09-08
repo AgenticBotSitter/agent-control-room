@@ -1,0 +1,20 @@
+{
+  "capture": "direct child statuses and module-absence assertions",
+  "results": [
+    {
+      "name": "wrong hash",
+      "status": 1,
+      "refusedBeforeCopy": true
+    },
+    {
+      "name": "missing file",
+      "status": 1,
+      "refusedBeforeCopy": true
+    },
+    {
+      "name": "extra file",
+      "status": 1,
+      "refusedBeforeCopy": true
+    }
+  ]
+}

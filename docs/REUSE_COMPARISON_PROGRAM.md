@@ -90,6 +90,14 @@ candidate dossier across several outcomes, but test each materially different se
 | F8 Identity, backup, monitoring, validation — A2, D1, D2, D4 | Existing Access approach vs Authelia only for actual missing behavior; PostgreSQL tools vs pgBackRest; Kuma and Beszel as complementary tools; current browser/test tooling | Configuration/auth-boundary fit, isolated database restore with roles/rows and artifacts, private health probe and alert, memory footprint, resource limits and restart behavior. Actual Access account changes and VPS restore are separate E4 work, not necessary to compare source fit. |
 | F9 License, public package and contribution — D5 plus all families | Every selected upstream, transitive/vendored/build assets, existing Apache distribution and notices | Trace exact imported/executed/shipped files, obligations and changed-file notices; distinguish separate service from copied code. Verify synthetic examples, clean package boundaries and selective CI. Root license or stars are not readiness evidence. |
 
+F8 discovered subresponsibility: the current Access verifier implements JWT framing,
+RS256 verification and claim checks directly over Node crypto. Before retaining
+that custom infrastructure, compare applicable maintained JWT libraries (jose and
+jsonwebtoken are discovery candidates) at the same verifier boundary. This does
+not reopen the selected Cloudflare login provider or permit live credentials.
+Pin/license/code/tests and synthetic signed-token fit are required before choosing
+or rejecting either library; neither is currently installed or evaluated here.
+
 Do not limit a candidate to the row where we first found it. If source inspection
 reveals another useful implemented module, map it to the corresponding outcome and
 evaluate its seam. Do not give it blanket approval because another module passed.
