@@ -1428,3 +1428,33 @@ Post-remediation run 36271 passed all 20 intake cases, TypeScript, focused lint 
 diff check. Independent source re-review confirmed both findings resolved and found
 no further concrete issue. Grant production/delivery and runtime policy wiring are
 still unfinished; original overnight deadline remains 12:40:58 UTC.
+
+### Joined canonical pair to checked bridge evidence
+
+Confirmed the prior signed-pair block was saved in local commit 19e8c12. Added a
+disposable joined test from actual canonical packet/queue/envelope/intent production
+through actual PortableNodeBridge dispatch intake and checked lease command intake.
+No fixture command/attempt inserts are used. Dispatch alone cannot satisfy the lease
+reader; the retained grant then supplies its exact canonical lease/authority. The
+server records the actual node receipt and accepts grant ACK and duplicate ACK.
+Invalidating the task after dispatch receipt withholds both command and attempt,
+while preserving canonical transmission intent and the non-execution receipt.
+
+Initial run 29308 passed the positive case; the negative assertion incorrectly
+expected undefined rather than the journal's intentional unavailable exception.
+Run 34967 also found a synthetic trust revision type and a closure union-narrowing
+error. Corrected these test errors. Run 45129 passed all 13 combined cases/lint/diff;
+88574 passed TypeScript. Independent source review confirmed evidence fidelity but
+found helper setup/cleanup could leak resources after construction or handshake
+failure. Helper now establishes cleanup ownership immediately, attempts every close
+in reverse order even if one throws, and cleans failed setup. Run 50249 passed all
+13 combined cases, types/lint/diff after this correction. New regression covers
+constructor failure, handshake failure and throwing cleanup; run 20293 passed all
+three joined/cleanup tests plus types and lint.
+Independent source re-review confirmed the cleanup finding resolved and found no
+further concrete issue in the remediation; it did not execute tests or live effects.
+
+Scope remains synthetic trust/keys and manually pumped transport. This verifies the
+server-session ACK path, NOT ManagedNativeInput composition, native runtime readiness,
+real current-policy composition, provider execution or production operation. No new
+runtime feature is enabled. Original fixed deadline is unchanged at 12:40:58 UTC.
