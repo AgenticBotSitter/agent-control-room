@@ -37,6 +37,22 @@ test("restart inventory follows actual delivery, run, retained result and checke
   assert.deepEqual(final.settledRunIds, [f.x.f.prepared.binding.runId]);
   assert.equal(final.permitsFreshPickup, false); assert.equal(final.currentCleanupVerified, false);
   assert.equal(final.grantsExecutionAuthority, false);
+  // A completed run and zero active claims are insufficient when retained
+  // settlement evidence cannot be read. Do not erase it from pending work.
+  let failedHistoryReads = 0;
+  const unavailableHistory = readNativeRestartInventory(scope(f), { ...sources(f),
+    executions: { load: f.x.local.executions.load.bind(f.x.local.executions), events() {
+      failedHistoryReads++; throw new Error("synthetic unavailable settlement history");
+    } } }, currentSignal());
+  assert.ok(failedHistoryReads > 0);
+  assert.equal(unavailableHistory.activeEffects, 0);
+  assert.equal(unavailableHistory.status, "reconciliation_required");
+  assert.deepEqual(unavailableHistory.settledRunIds, []);
+  assert.deepEqual(unavailableHistory.pending, [{ runId: f.x.f.prepared.binding.runId,
+    queueId: f.queued.queueId, reason: "unsettled_run" }]);
+  assert.equal(unavailableHistory.permitsFreshPickup, false);
+  assert.equal(unavailableHistory.currentCleanupVerified, false);
+  assert.equal(unavailableHistory.grantsExecutionAuthority, false);
   const next = f.createLeaseAware(); assert.equal(next.hasAcceptedDispatch(), false); await next.close();
   const serialized = JSON.stringify(final) + JSON.stringify(f.x.local.journal.inventory()) + JSON.stringify(f.journal.nativeRestartInventory());
   assert.equal(serialized.includes(qualityText), false); assert.equal(serialized.includes("resultText"), false);

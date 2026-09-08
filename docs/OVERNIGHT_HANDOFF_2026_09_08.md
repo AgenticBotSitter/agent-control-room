@@ -119,6 +119,9 @@ Final completed checks:
 - Idea/ABS delivery command: all three stages passed (**112 / 22 / 242** cases).
 - Policy/lease/runtime rerun after the test-fidelity correction: **36 passed**;
   final focused permission-change regression with the outside assertions: **4 passed**.
+- Closing restart regression: **5 passed**, plus type-check and focused lint;
+  completed output with zero active claims remains blocked if settlement history
+  cannot be read. This is additional test coverage, not new runtime behavior.
 - Independent source reviews: concrete findings corrected and re-reviewed. These
   reviewers did not independently execute the tests or perform live qualification.
 

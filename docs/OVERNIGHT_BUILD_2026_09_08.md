@@ -1620,3 +1620,15 @@ templates, actual provisioning and verified acceptance, with the next responsibl
 party. It does not broaden operator authority or claim the VPS was rechecked.
 This is documentation-only; no production command was run and no existing tests
 were rerun unchanged. Private setup notes and poster remain excluded.
+
+### Closing restart negative-evidence regression
+
+Added an assertion path to the actual delivery/run/settlement test: after a
+synthetically settled completed run has zero active claims, make the retained
+execution-history reader fail. Prove the reader was reached, the run returns to
+unsettled pending classification, no settled IDs are advertised and all authority
+flags remain false. This covers the distinction between completed output and
+available historical settlement proof without changing production behavior.
+22771 exited zero with all five restart tests passing; 67950 exited zero for full
+type-check, focused test lint and diff whitespace verification. No live effects,
+extra dependencies or production source changes were introduced.
