@@ -1,5 +1,25 @@
 # Reuse evaluation download and cleanup ledger
 
+## RC5 current service releases — 2026-09-08 (distributions retained)
+
+Pre-download free space139GiB. Official release API selected etcd3.7.1 and
+OpenBao2.6.2; [source refresh](research/reuse-comparisons/f5-release-source-refresh.md)
+resolves their exact commits. [Acquisition receipt](research/reuse-comparisons/f5-service-acquisitions.json)
+records exact official URLs, metadata checksums, streamed size/deadline verification,
+archive-entry lists and every extracted file hash. Total allocated352,512KiB;
+exact owned retention/cleanup target `/private/tmp/cr-f5-services.vo82x7`.
+No global install, package changes, persistent service or GitHub writes.
+
+Actual etcd comparison completed, including one recorded initial harness failure
+and one focused correction. Both terminal runs cleaned their owned test-data
+directories after process termination. OpenBao binary has not been executed.
+Distributions remain intentionally available for the remaining common comparison;
+do not count them cleaned or delete them while an owned test is running. Before
+eventual exact-root cleanup, retain all needed sanitized evidence and confirm no
+owned service handles remain. No real credential/profile or production data exists
+in this cohort. Full binary/dependency license audit remains distinct from source
+root license inspection and the acquisition hash inventory.
+
 ## RC7 article-extractor comparisons — 2026-09-08 (cleaned)
 
 Public pinned candidates were downloaded only to disposable evaluation roots,
@@ -22,6 +42,15 @@ Authored reproduction harnesses and synthetic corpus remain in
 No application dependencies, credentials, provider calls, GitHub writes or services
 were introduced. A separate subsequent HTML-compatibility cohort is not covered by
 this cleanup statement and must retain its own receipt.
+
+Subsequent HTML-compatibility cohort: the same40-package pinned closure was acquired
+into its own19MiB disposable root, with scripts disabled and the same lock/integrity
+identities. [Ledger](research/reuse-comparisons/f7-html-compat-acquisitions.json)
+records139GiB initial free space, bounded npm requests and cleanup. Root independently
+checked the ledger's exact root was absent after completion. All10 extraction child
+processes terminated; none was a live provider or service. The new five-input corpus,
+two heuristic observations and [independent review](research/reuse-comparisons/f7-html-compat-review.md)
+are retained, including failures. No candidate distribution remains from this cohort.
 
 ## New comparison program — 2026-09-08
 

@@ -44,6 +44,16 @@ cap objects at65,536 bytes; a larger article cannot be silently truncated or for
 unreviewed shared result-limit increase. Actual extraction comparisons do not yet
 prove that application seam or select a new persistent service.
 
+RC2 implementation constraint: the tested TS SDK exec stream has no native turn ID.
+Its actual output maps to existing decoder/result functions but cannot substitute
+for the App Server observer without changing that identity contract. Retain current
+identity/terminal/transport-error safeguards and compare actual Python/App Server
+mapping before choosing. See [seven new cases](research/reuse-comparisons/f2-observer-fit.md).
+RC6 [journal/update primitive tests](research/reuse-comparisons/f6-update-fit.md)
+support reuse of existing durable state and close/recover code, not a claim that
+continuous pickup, release switching or fleet drain already exists. Those remain
+explicit implementation work; do not replace them with supervisor restart loops.
+
 ## Outcome-to-implementation ledger
 
 Existing capability summaries come from the [26-outcome map](REMAINING_WORK_REUSE_MAP.md),

@@ -1,0 +1,294 @@
+{
+  "exitCode": 0,
+  "actualStdout": {
+    "scope": "Actual unchanged Readability and two actual DOMs on new authored malformedHTML corpus; each extraction subprocess bounded5s; old corpus only optional upstream heuristic, no old extraction rerun.",
+    "pins": {
+      "@mozilla/readability/Readability.js": "34dcab3d0832d0019f02990eed6b6124e029e8c32b9f0c6f2550544ff8dff174",
+      "@mozilla/readability/JSDOMParser.js": "6b8eae46939f187ef4565c67f452a9098211daea80e50c9aea74d72015b73680",
+      "@mozilla/readability/Readability-readerable.js": "a98d28805804c1986ceed470678a3f409f150ee7f1d227f8c8239c005d21de65",
+      "jsdom/lib/api.js": "0653e655065e93d44d885b04a975c0bac3221513bfc7be0be0afd2a4cc99ff2e"
+    },
+    "corpusSha256": "8f733ea211a44a3430d7c4615eb936cdc6fc5dd141f623a549d1dfafbeec73b0",
+    "results": [
+      {
+        "kind": "jsdom",
+        "id": "unquoted-attributes",
+        "status": 0,
+        "signal": null,
+        "processError": null,
+        "diagnostics": {
+          "stdout": "",
+          "stderr": ""
+        },
+        "output": {
+          "kind": "jsdom",
+          "id": "unquoted-attributes",
+          "error": null,
+          "parserErrorState": null,
+          "expectedMatched": true,
+          "mismatches": [],
+          "title": "Agent Compatibility Study",
+          "textContent": "CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_B These additional findings support repeatable tests and accurate source records. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. Guide",
+          "content": "<div id=\"readability-page-1\" class=\"page\"><article><p>CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. </p><p>CORE_B These additional findings support repeatable tests and accurate source records. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. </p><a href=\"https://example.invalid/guide\">Guide</a></article></div>",
+          "resourceAttempts": 0,
+          "elapsedMs": 128.7765,
+          "maxRssKiB": 104688
+        }
+      },
+      {
+        "kind": "jsdom",
+        "id": "omitted-closing-tags",
+        "status": 0,
+        "signal": null,
+        "processError": null,
+        "diagnostics": {
+          "stdout": "",
+          "stderr": ""
+        },
+        "output": {
+          "kind": "jsdom",
+          "id": "omitted-closing-tags",
+          "error": null,
+          "parserErrorState": null,
+          "expectedMatched": true,
+          "mismatches": [],
+          "title": "Agent Compatibility Study",
+          "textContent": "CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_B Additional paragraph. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. Guide",
+          "content": "<div id=\"readability-page-1\" class=\"page\"><article><p>CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. </p><p>CORE_B Additional paragraph. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. <a href=\"https://example.invalid/guide\">Guide</a></p></article></div>",
+          "resourceAttempts": 0,
+          "elapsedMs": 122.40379099999998,
+          "maxRssKiB": 105024
+        }
+      },
+      {
+        "kind": "jsdom",
+        "id": "malformed-nesting",
+        "status": 0,
+        "signal": null,
+        "processError": null,
+        "diagnostics": {
+          "stdout": "",
+          "stderr": ""
+        },
+        "output": {
+          "kind": "jsdom",
+          "id": "malformed-nesting",
+          "error": null,
+          "parserErrorState": null,
+          "expectedMatched": true,
+          "mismatches": [],
+          "title": "Agent Compatibility Study",
+          "textContent": "CORE_A Opening CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_B Second block CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. Guide",
+          "content": "<div id=\"readability-page-1\" class=\"page\"><article><p><b>CORE_A Opening </b></p><p><b>CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. </b></p><p>CORE_B Second block CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. </p><a href=\"https://example.invalid/guide\">Guide</a></article></div>",
+          "resourceAttempts": 0,
+          "elapsedMs": 128.27162499999997,
+          "maxRssKiB": 105376
+        }
+      },
+      {
+        "kind": "jsdom",
+        "id": "base-href",
+        "status": 0,
+        "signal": null,
+        "processError": null,
+        "diagnostics": {
+          "stdout": "",
+          "stderr": ""
+        },
+        "output": {
+          "kind": "jsdom",
+          "id": "base-href",
+          "error": null,
+          "parserErrorState": null,
+          "expectedMatched": true,
+          "mismatches": [],
+          "title": "Agent Compatibility Study",
+          "textContent": "CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_B These additional findings support repeatable tests and accurate source records. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. Guide",
+          "content": "<div id=\"readability-page-1\" class=\"page\"><article><p>CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. </p><p>CORE_B These additional findings support repeatable tests and accurate source records. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. </p><a href=\"https://example.invalid/docs/guide\">Guide</a></article></div>",
+          "resourceAttempts": 0,
+          "elapsedMs": 125.165292,
+          "maxRssKiB": 104576
+        }
+      },
+      {
+        "kind": "jsdom",
+        "id": "named-entities",
+        "status": 0,
+        "signal": null,
+        "processError": null,
+        "diagnostics": {
+          "stdout": "",
+          "stderr": ""
+        },
+        "output": {
+          "kind": "jsdom",
+          "id": "named-entities",
+          "error": null,
+          "parserErrorState": null,
+          "expectedMatched": true,
+          "mismatches": [],
+          "title": "Agent Compatibility Study",
+          "textContent": "CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_B These additional findings support repeatable tests and accurate source records. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. ENTITY_MARKER © é — 😀 & End.",
+          "content": "<div id=\"readability-page-1\" class=\"page\"><article><p>CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. </p><p>CORE_B These additional findings support repeatable tests and accurate source records. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. </p><p>ENTITY_MARKER © é — 😀 &amp; End.</p></article></div>",
+          "resourceAttempts": 0,
+          "elapsedMs": 122.92383300000002,
+          "maxRssKiB": 105456
+        }
+      },
+      {
+        "kind": "builtin",
+        "id": "unquoted-attributes",
+        "status": 0,
+        "signal": null,
+        "processError": null,
+        "diagnostics": {
+          "stdout": "JSDOMParser error: Error reading attribute href, expecting '\"'\n\nJSDOMParser error: Error reading attribute ./guide class, expecting '\"'\n\nJSDOMParser error: expected '</article>' and got \n\nJSDOMParser error: expected '</body>' and got \n\nJSDOMParser error: expected '</html>' and got \n",
+          "stderr": ""
+        },
+        "output": {
+          "kind": "builtin",
+          "id": "unquoted-attributes",
+          "error": "First argument to Readability constructor should be a document object.",
+          "parserErrorState": "Error reading attribute href, expecting '\"'\nError reading attribute ./guide class, expecting '\"'\nexpected '</article>' and got \nexpected '</body>' and got \nexpected '</html>' and got \n",
+          "expectedMatched": false,
+          "mismatches": [
+            "error:First argument to Readability constructor should be a document object.",
+            "missing:CORE_A",
+            "missing:CORE_B",
+            "link_not_resolved"
+          ],
+          "title": null,
+          "textContent": null,
+          "content": null,
+          "resourceAttempts": 0,
+          "elapsedMs": 1.906542,
+          "maxRssKiB": 48160
+        }
+      },
+      {
+        "kind": "builtin",
+        "id": "omitted-closing-tags",
+        "status": 0,
+        "signal": null,
+        "processError": null,
+        "diagnostics": {
+          "stdout": "JSDOMParser error: expected '</a>' and got \n\nJSDOMParser error: expected '</p>' and got \n\nJSDOMParser error: expected '</p>' and got \n\nJSDOMParser error: expected '</article>' and got \n\nJSDOMParser error: expected '</body>' and got \n\nJSDOMParser error: expected '</html>' and got \n",
+          "stderr": ""
+        },
+        "output": {
+          "kind": "builtin",
+          "id": "omitted-closing-tags",
+          "error": "First argument to Readability constructor should be a document object.",
+          "parserErrorState": "expected '</a>' and got \nexpected '</p>' and got \nexpected '</p>' and got \nexpected '</article>' and got \nexpected '</body>' and got \nexpected '</html>' and got \n",
+          "expectedMatched": false,
+          "mismatches": [
+            "error:First argument to Readability constructor should be a document object.",
+            "missing:CORE_A",
+            "missing:CORE_B",
+            "link_not_resolved"
+          ],
+          "title": null,
+          "textContent": null,
+          "content": null,
+          "resourceAttempts": 0,
+          "elapsedMs": 2.4656249999999993,
+          "maxRssKiB": 48016
+        }
+      },
+      {
+        "kind": "builtin",
+        "id": "malformed-nesting",
+        "status": 0,
+        "signal": null,
+        "processError": null,
+        "diagnostics": {
+          "stdout": "JSDOMParser error: expected '</div>' and got </b></\n\nJSDOMParser error: expected '</p>' and got </di\n\nJSDOMParser error: expected '</article>' and got </div><p>C\n\nJSDOMParser error: expected '</body>' and got </div><\n\nJSDOMParser error: expected '</html>' and got </div><\n",
+          "stderr": ""
+        },
+        "output": {
+          "kind": "builtin",
+          "id": "malformed-nesting",
+          "error": "First argument to Readability constructor should be a document object.",
+          "parserErrorState": "expected '</div>' and got </b></\nexpected '</p>' and got </di\nexpected '</article>' and got </div><p>C\nexpected '</body>' and got </div><\nexpected '</html>' and got </div><\n",
+          "expectedMatched": false,
+          "mismatches": [
+            "error:First argument to Readability constructor should be a document object.",
+            "missing:CORE_A",
+            "missing:CORE_B",
+            "link_not_resolved"
+          ],
+          "title": null,
+          "textContent": null,
+          "content": null,
+          "resourceAttempts": 0,
+          "elapsedMs": 2.1528750000000016,
+          "maxRssKiB": 47920
+        }
+      },
+      {
+        "kind": "builtin",
+        "id": "base-href",
+        "status": 0,
+        "signal": null,
+        "processError": null,
+        "diagnostics": {
+          "stdout": "JSDOMParser error: expected '</base>' and got </head>\n",
+          "stderr": ""
+        },
+        "output": {
+          "kind": "builtin",
+          "id": "base-href",
+          "error": null,
+          "parserErrorState": "expected '</base>' and got </head>\n",
+          "expectedMatched": false,
+          "mismatches": [
+            "link_not_resolved"
+          ],
+          "title": "Agent Compatibility Study",
+          "textContent": "CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_B These additional findings support repeatable tests and accurate source records. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. Guide",
+          "content": "<div id=\"readability-page-1\" class=\"page\"><article><p>CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. </p><p>CORE_B These additional findings support repeatable tests and accurate source records. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. </p><a href=\"https://example.invalid/news/guide\">Guide</a></article></div>",
+          "resourceAttempts": 0,
+          "elapsedMs": 3.411165999999998,
+          "maxRssKiB": 48208
+        }
+      },
+      {
+        "kind": "builtin",
+        "id": "named-entities",
+        "status": 0,
+        "signal": null,
+        "processError": null,
+        "diagnostics": {
+          "stdout": "",
+          "stderr": ""
+        },
+        "output": {
+          "kind": "builtin",
+          "id": "named-entities",
+          "error": null,
+          "parserErrorState": "",
+          "expectedMatched": false,
+          "mismatches": [
+            "missing:ENTITY_MARKER © é — 😀 & End."
+          ],
+          "title": "Agent Compatibility Study",
+          "textContent": "CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_B These additional findings support repeatable tests and accurate source records. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. ENTITY_MARKER &copy; &eacute; &mdash; 😀 & End.",
+          "content": "<div id=\"readability-page-1\" class=\"page\"><article><p>CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. </p><p>CORE_B These additional findings support repeatable tests and accurate source records. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. CORE_A This original synthetic article describes practical agent research, careful comparison, and bounded implementation. Readers need the full explanation, supporting evidence, and clear next steps to judge whether a system works reliably. </p><p>ENTITY_MARKER &copy; &eacute; &mdash; &#128512; &amp; End.</p></article></div>",
+          "resourceAttempts": 0,
+          "elapsedMs": 2.9760419999999996,
+          "maxRssKiB": 48096
+        }
+      }
+    ],
+    "jsdomOptionalHeuristic": [
+      {
+        "id": "article-relative",
+        "readerable": true
+      },
+      {
+        "id": "navigation-only",
+        "readerable": false
+      }
+    ]
+  }
+}

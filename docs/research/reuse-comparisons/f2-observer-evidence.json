@@ -1,0 +1,331 @@
+{
+  "exitCode": 0,
+  "actualStdout": {
+    "scope": "Actual supported SDK resume/spawn/stream to finite synthetic executable; unchanged CR decoder/result and actual App Server observer with fake settlement sink. No native runtime or provider.",
+    "pins": {
+      "/private/tmp/cr-compare-f2.Dz7yHK/package/dist/index.js": "d62ed107033bdba802b283c77d875e4bec3deb2704a910bb7e3f95059473b16f",
+      "src/harness/codex-v1/decoder.ts": "ef18079538fd57dd6bc35d5be90fab7892d208498814d6c227ed87b5fdce8b61",
+      "src/harness/codex-v1/result.ts": "4a531f86e91ad26402fb4ac3a18dbb00ccd7482fed5ec2c857da104a4d5fdd4d",
+      "src/harness/codex-v1/isolated-jsonrpc.ts": "b224f9ab4bb3edb60b829cbaecad0df40a97cced5ebc9dc5d3e3865ff419b7ff"
+    },
+    "root": "/private/tmp/cr-f2-observer.13n2hJ",
+    "clean": true,
+    "remainingCount": 0,
+    "results": [
+      {
+        "mode": "resume",
+        "requestedThreadId": "11111111-1111-4111-8111-111111111111",
+        "returnedThreadId": "11111111-1111-4111-8111-111111111111",
+        "threadMatches": true,
+        "sdkTypes": [
+          "thread.started",
+          "turn.started",
+          "item.completed",
+          "turn.completed"
+        ],
+        "nativeTurnIdentifierPresent": false,
+        "transportError": null,
+        "projection": {
+          "runId": "run:fixture",
+          "terminalState": "succeeded",
+          "finalTextDigest": "sha256:b9b6a3ca4fd7539c0f36e496c5bda6f25715c42ac2393090f65a3c8ecfe92c29",
+          "changedFileCount": 0,
+          "verification": {
+            "started": 0,
+            "completed": 0,
+            "failed": 0
+          },
+          "usage": {
+            "inputTokens": 17,
+            "outputTokens": 8,
+            "cachedInputTokens": 5,
+            "reasoningTokens": 3
+          }
+        },
+        "projectionError": null,
+        "actualObserver": {
+          "ignored": 4,
+          "renamedStartError": "Codex isolated turn start invalid",
+          "terminal": "ambiguous",
+          "settlements": [
+            {
+              "outcome": "ambiguous",
+              "safeResultCode": "synthetic_exec_protocol_unmapped"
+            }
+          ]
+        },
+        "nativeUsage": {
+          "input_tokens": 17,
+          "cached_input_tokens": 5,
+          "cache_write_input_tokens": 4,
+          "output_tokens": 8,
+          "reasoning_output_tokens": 3
+        }
+      },
+      {
+        "mode": "wrong-thread",
+        "requestedThreadId": "11111111-1111-4111-8111-111111111111",
+        "returnedThreadId": "22222222-2222-4222-8222-222222222222",
+        "threadMatches": false,
+        "sdkTypes": [
+          "thread.started",
+          "turn.started",
+          "item.completed",
+          "turn.completed"
+        ],
+        "nativeTurnIdentifierPresent": false,
+        "transportError": null,
+        "projection": {
+          "runId": "run:fixture",
+          "terminalState": "succeeded",
+          "finalTextDigest": "sha256:b9b6a3ca4fd7539c0f36e496c5bda6f25715c42ac2393090f65a3c8ecfe92c29",
+          "changedFileCount": 0,
+          "verification": {
+            "started": 0,
+            "completed": 0,
+            "failed": 0
+          },
+          "usage": {
+            "inputTokens": 17,
+            "outputTokens": 8,
+            "cachedInputTokens": 5,
+            "reasoningTokens": 3
+          }
+        },
+        "projectionError": null,
+        "actualObserver": {
+          "ignored": 4,
+          "renamedStartError": "Codex isolated turn start invalid",
+          "terminal": "ambiguous",
+          "settlements": [
+            {
+              "outcome": "ambiguous",
+              "safeResultCode": "synthetic_exec_protocol_unmapped"
+            }
+          ]
+        },
+        "nativeUsage": {
+          "input_tokens": 17,
+          "cached_input_tokens": 5,
+          "cache_write_input_tokens": 4,
+          "output_tokens": 8,
+          "reasoning_output_tokens": 3
+        }
+      },
+      {
+        "mode": "late-message",
+        "requestedThreadId": "11111111-1111-4111-8111-111111111111",
+        "returnedThreadId": "11111111-1111-4111-8111-111111111111",
+        "threadMatches": true,
+        "sdkTypes": [
+          "thread.started",
+          "turn.started",
+          "item.completed",
+          "turn.completed",
+          "item.completed"
+        ],
+        "nativeTurnIdentifierPresent": false,
+        "transportError": null,
+        "projection": {
+          "runId": "run:fixture",
+          "terminalState": "succeeded",
+          "finalTextDigest": "sha256:b3cdc911443db6f9bc2bae59a97aea1bd3bf62e675f4e8188abb33b59cd9adf7",
+          "changedFileCount": 0,
+          "verification": {
+            "started": 0,
+            "completed": 0,
+            "failed": 0
+          },
+          "usage": {
+            "inputTokens": 17,
+            "outputTokens": 8,
+            "cachedInputTokens": 5,
+            "reasoningTokens": 3
+          }
+        },
+        "projectionError": null,
+        "actualObserver": {
+          "ignored": 5,
+          "renamedStartError": "Codex isolated turn start invalid",
+          "terminal": "ambiguous",
+          "settlements": [
+            {
+              "outcome": "ambiguous",
+              "safeResultCode": "synthetic_exec_protocol_unmapped"
+            }
+          ]
+        },
+        "nativeUsage": {
+          "input_tokens": 17,
+          "cached_input_tokens": 5,
+          "cache_write_input_tokens": 4,
+          "output_tokens": 8,
+          "reasoning_output_tokens": 3
+        }
+      },
+      {
+        "mode": "late-usage",
+        "requestedThreadId": "11111111-1111-4111-8111-111111111111",
+        "returnedThreadId": "11111111-1111-4111-8111-111111111111",
+        "threadMatches": true,
+        "sdkTypes": [
+          "thread.started",
+          "turn.started",
+          "item.completed",
+          "turn.completed",
+          "turn.completed"
+        ],
+        "nativeTurnIdentifierPresent": false,
+        "transportError": null,
+        "projection": null,
+        "projectionError": "Codex result contains events after terminal state",
+        "actualObserver": {
+          "ignored": 5,
+          "renamedStartError": "Codex isolated turn start invalid",
+          "terminal": "ambiguous",
+          "settlements": [
+            {
+              "outcome": "ambiguous",
+              "safeResultCode": "synthetic_exec_protocol_unmapped"
+            }
+          ]
+        },
+        "nativeUsage": {
+          "input_tokens": 17,
+          "cached_input_tokens": 5,
+          "cache_write_input_tokens": 4,
+          "output_tokens": 8,
+          "reasoning_output_tokens": 3
+        }
+      },
+      {
+        "mode": "failed-with-usage",
+        "requestedThreadId": "11111111-1111-4111-8111-111111111111",
+        "returnedThreadId": "11111111-1111-4111-8111-111111111111",
+        "threadMatches": true,
+        "sdkTypes": [
+          "thread.started",
+          "turn.started",
+          "item.completed",
+          "turn.failed"
+        ],
+        "nativeTurnIdentifierPresent": false,
+        "transportError": null,
+        "projection": {
+          "runId": "run:fixture",
+          "terminalState": "failed",
+          "finalTextDigest": "sha256:b9b6a3ca4fd7539c0f36e496c5bda6f25715c42ac2393090f65a3c8ecfe92c29",
+          "changedFileCount": 0,
+          "verification": {
+            "started": 0,
+            "completed": 0,
+            "failed": 0
+          },
+          "usage": {
+            "inputTokens": 0,
+            "outputTokens": 0,
+            "cachedInputTokens": 0,
+            "reasoningTokens": 0
+          }
+        },
+        "projectionError": null,
+        "actualObserver": {
+          "ignored": 4,
+          "renamedStartError": "Codex isolated turn start invalid",
+          "terminal": "ambiguous",
+          "settlements": [
+            {
+              "outcome": "ambiguous",
+              "safeResultCode": "synthetic_exec_protocol_unmapped"
+            }
+          ]
+        },
+        "nativeUsage": {
+          "input_tokens": 17,
+          "cached_input_tokens": 5,
+          "cache_write_input_tokens": 4,
+          "output_tokens": 8,
+          "reasoning_output_tokens": 3
+        }
+      },
+      {
+        "mode": "terminal-nonzero",
+        "requestedThreadId": "11111111-1111-4111-8111-111111111111",
+        "returnedThreadId": "11111111-1111-4111-8111-111111111111",
+        "threadMatches": true,
+        "sdkTypes": [
+          "thread.started",
+          "turn.started",
+          "item.completed",
+          "turn.completed"
+        ],
+        "nativeTurnIdentifierPresent": false,
+        "transportError": "Codex Exec exited with code 7: synthetic exit after terminal",
+        "projection": {
+          "runId": "run:fixture",
+          "terminalState": "succeeded",
+          "finalTextDigest": "sha256:b9b6a3ca4fd7539c0f36e496c5bda6f25715c42ac2393090f65a3c8ecfe92c29",
+          "changedFileCount": 0,
+          "verification": {
+            "started": 0,
+            "completed": 0,
+            "failed": 0
+          },
+          "usage": {
+            "inputTokens": 17,
+            "outputTokens": 8,
+            "cachedInputTokens": 5,
+            "reasoningTokens": 3
+          }
+        },
+        "projectionError": null,
+        "actualObserver": {
+          "ignored": 4,
+          "renamedStartError": "Codex isolated turn start invalid",
+          "terminal": "ambiguous",
+          "settlements": [
+            {
+              "outcome": "ambiguous",
+              "safeResultCode": "synthetic_exec_protocol_unmapped"
+            }
+          ]
+        },
+        "nativeUsage": {
+          "input_tokens": 17,
+          "cached_input_tokens": 5,
+          "cache_write_input_tokens": 4,
+          "output_tokens": 8,
+          "reasoning_output_tokens": 3
+        }
+      },
+      {
+        "mode": "eof-no-terminal",
+        "requestedThreadId": "11111111-1111-4111-8111-111111111111",
+        "returnedThreadId": "11111111-1111-4111-8111-111111111111",
+        "threadMatches": true,
+        "sdkTypes": [
+          "thread.started",
+          "turn.started",
+          "item.completed"
+        ],
+        "nativeTurnIdentifierPresent": false,
+        "transportError": null,
+        "projection": null,
+        "projectionError": "Codex result missing terminal state",
+        "actualObserver": {
+          "ignored": 3,
+          "renamedStartError": "Codex isolated turn start invalid",
+          "terminal": "ambiguous",
+          "settlements": [
+            {
+              "outcome": "ambiguous",
+              "safeResultCode": "synthetic_exec_protocol_unmapped"
+            }
+          ]
+        },
+        "nativeUsage": null
+      }
+    ],
+    "parentPeakRssKiB": 77664
+  }
+}

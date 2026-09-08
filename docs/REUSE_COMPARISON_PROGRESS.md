@@ -4,6 +4,27 @@
 
 ## Direct answer
 
+New cross-family evidence, without application changes:
+
+- RC2: [actual TS SDK observer/result comparison](research/reuse-comparisons/f2-observer-fit.md)
+  executes seven new synthetic-peer scenarios. Actual SDK output crosses current
+  decoder/result functions, but no native turn ID exists to satisfy the current
+  App Server observer. Identity, terminality and transport-error guards remain
+  necessary; unsafe research composition is not called a production vulnerability.
+  Independent review accepts this narrow scope. Python/App Server settlement remains
+  the next decisive comparison, not a rewrite of native identity requirements.
+- RC6: [actual update primitives](research/reuse-comparisons/f6-update-fit.md) and
+  independent review distinguish14 passing journal/launcher/connector checks from
+  the missing continuous worker/update coordinator. Same code under two working
+  directories is not two-version rollback acceptance. Reuse current journals/close
+  behavior and OS supervisors; do not build a bespoke process manager.
+- RC5: [real etcd3.7.1 service](research/reuse-comparisons/f5-etcd-service-fit.md)
+  completed eight CAS/restart/scoped-role observations after one preserved harness
+  correction. Exact-key WRITE permission really permits deletion; this is now E2,
+  not just a source inference. Server processes stopped and their data was removed.
+  Logged distributions remain for OpenBao and actual CR adapter comparison; no
+  custody winner, backup-restore or independent production domain is qualified.
+
 RC7 now separates [actual reading responsibilities](research/reuse-comparisons/f7-reader-responsibilities.md):
 current summaries/source links and borrowed collection remain, while full-article
 extraction is evaluated independently. Actual Readability0.6/jsdom26 executes five
@@ -21,9 +42,14 @@ produced identical returned content to jsdom on this small corpus with one insta
 package instead of40, but lacks the optional heuristic's required DOM methods and
 has MPL-2.0 file-level obligations. Both cohorts report verified cleanup.
 [Independent follow-up review](research/reuse-comparisons/f7-extractor-followup-review.md)
-found no blocking contradiction in the bounded receipts. A discriminating
-malformed-HTML comparison remains open; neither is a production extraction adapter
-or a final winner. The [actual integration map](research/reuse-comparisons/f7-article-integration-map.md)
+found no blocking contradiction in the bounded receipts. The subsequent
+[HTML compatibility comparison](research/reuse-comparisons/f7-html-compat-fit.md)
+met all five new content/link expectations with jsdom; the bundled DOM had three
+document errors and two semantic mismatches. Its supported jsdom heuristic accepted
+the selected article and rejected navigation-only input. Independent review found
+no blocking contradiction; neither is a production extraction adapter or a final
+winner. Do not build custom normalization/selectors to rescue the smaller DOM.
+The [actual integration map](research/reuse-comparisons/f7-article-integration-map.md)
 also establishes that native-result storage requires a completed agent run and
 cannot simply accept a downloaded source article. Its storage implementations have
 a65,536-byte cap; article inputs need a distinct honest binding, not fabricated

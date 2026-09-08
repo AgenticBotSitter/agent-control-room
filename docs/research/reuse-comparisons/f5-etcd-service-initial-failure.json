@@ -1,0 +1,14 @@
+{
+  "scope": "Initial actual etcd3.7.1 fixture, preserved before one focused harness repair",
+  "binarySha256": "8ffc90f61928a4b27a0ab890a0b57f17752a607abc8a8a9efc052a36bd384164",
+  "checks": ["initially_absent", "concurrent_compare_one_winner", "stale_compare_refused"],
+  "processExits": [{ "code": null, "signal": "SIGTERM" }],
+  "maxSampledRssKiB": 30016,
+  "startupMs": [837.290667],
+  "status": "failed",
+  "failure": "unclean_service_stop: null !== 0",
+  "monitorFailure": null,
+  "stateRemoved": true,
+  "distributionRetainedForFurtherComparison": true,
+  "correction": "Accept only owned requested SIGTERM or zero exit as terminal for restart experiment, retaining exact signal and making no graceful-shutdown claim. SIGKILL/spawn failures remain errors."
+}

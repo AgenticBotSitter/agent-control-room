@@ -1,0 +1,304 @@
+{
+  "root": "/private/tmp/cr-f5-services.vo82x7",
+  "scope": "Official pinned release archives; no server execution",
+  "initialFreeBytes": 149381963776,
+  "assets": [
+    {
+      "candidate": "etcd",
+      "name": "etcd-v3.7.1-darwin-arm64.zip",
+      "size": 22821078,
+      "sha256": "a3e839d9128e170c299b1592bed92d8327f258eb94923aea24a0ccf923cf27e9",
+      "url": "https://github.com/etcd-io/etcd/releases/download/v3.7.1/etcd-v3.7.1-darwin-arm64.zip",
+      "state": "extracted_not_executed",
+      "received": 22821078,
+      "actualSha256": "a3e839d9128e170c299b1592bed92d8327f258eb94923aea24a0ccf923cf27e9",
+      "archiveEntries": [
+        "etcd-v3.7.1-darwin-arm64/",
+        "etcd-v3.7.1-darwin-arm64/Documentation/",
+        "etcd-v3.7.1-darwin-arm64/Documentation/postmortems/",
+        "etcd-v3.7.1-darwin-arm64/Documentation/postmortems/v3.5-data-inconsistency.md",
+        "etcd-v3.7.1-darwin-arm64/Documentation/etcd-internals/",
+        "etcd-v3.7.1-darwin-arm64/Documentation/etcd-internals/diagrams/",
+        "etcd-v3.7.1-darwin-arm64/Documentation/etcd-internals/diagrams/write_workflow_leader.png",
+        "etcd-v3.7.1-darwin-arm64/Documentation/etcd-internals/diagrams/write_workflow_leader.drawio",
+        "etcd-v3.7.1-darwin-arm64/Documentation/etcd-internals/diagrams/write_workflow_follower.png",
+        "etcd-v3.7.1-darwin-arm64/Documentation/etcd-internals/diagrams/write_workflow_follower.drawio",
+        "etcd-v3.7.1-darwin-arm64/Documentation/etcd-internals/diagrams/etcd_internal_parts.png",
+        "etcd-v3.7.1-darwin-arm64/Documentation/etcd-internals/diagrams/etcd_internal_parts.drawio",
+        "etcd-v3.7.1-darwin-arm64/Documentation/etcd-internals/diagrams/consistent_read_workflow.png",
+        "etcd-v3.7.1-darwin-arm64/Documentation/etcd-internals/diagrams/consistent_read_workflow.drawio",
+        "etcd-v3.7.1-darwin-arm64/Documentation/dev-guide/",
+        "etcd-v3.7.1-darwin-arm64/Documentation/dev-guide/apispec/",
+        "etcd-v3.7.1-darwin-arm64/Documentation/dev-guide/apispec/swagger/",
+        "etcd-v3.7.1-darwin-arm64/Documentation/dev-guide/apispec/swagger/v3lock.swagger.json",
+        "etcd-v3.7.1-darwin-arm64/Documentation/dev-guide/apispec/swagger/v3election.swagger.json",
+        "etcd-v3.7.1-darwin-arm64/Documentation/dev-guide/apispec/swagger/rpc.swagger.json",
+        "etcd-v3.7.1-darwin-arm64/Documentation/contributor-guide/",
+        "etcd-v3.7.1-darwin-arm64/Documentation/contributor-guide/triage_prs.md",
+        "etcd-v3.7.1-darwin-arm64/Documentation/contributor-guide/triage_issues.md",
+        "etcd-v3.7.1-darwin-arm64/Documentation/contributor-guide/roadmap.md",
+        "etcd-v3.7.1-darwin-arm64/Documentation/contributor-guide/reporting_bugs.md",
+        "etcd-v3.7.1-darwin-arm64/Documentation/contributor-guide/release.md",
+        "etcd-v3.7.1-darwin-arm64/Documentation/contributor-guide/prow_jobs.md",
+        "etcd-v3.7.1-darwin-arm64/Documentation/contributor-guide/modules.svg",
+        "etcd-v3.7.1-darwin-arm64/Documentation/contributor-guide/modules.md",
+        "etcd-v3.7.1-darwin-arm64/Documentation/contributor-guide/modules-future.svg",
+        "etcd-v3.7.1-darwin-arm64/Documentation/contributor-guide/logging.md",
+        "etcd-v3.7.1-darwin-arm64/Documentation/contributor-guide/local_cluster.md",
+        "etcd-v3.7.1-darwin-arm64/Documentation/contributor-guide/features.md",
+        "etcd-v3.7.1-darwin-arm64/Documentation/contributor-guide/exit_codes.md",
+        "etcd-v3.7.1-darwin-arm64/Documentation/contributor-guide/dependency_management.md",
+        "etcd-v3.7.1-darwin-arm64/Documentation/contributor-guide/community-membership.md",
+        "etcd-v3.7.1-darwin-arm64/Documentation/contributor-guide/cherry-pick.md",
+        "etcd-v3.7.1-darwin-arm64/Documentation/contributor-guide/bump_etcd_version_k8s.md",
+        "etcd-v3.7.1-darwin-arm64/Documentation/contributor-guide/branch_management.md",
+        "etcd-v3.7.1-darwin-arm64/Documentation/README.md",
+        "etcd-v3.7.1-darwin-arm64/Documentation/OWNERS",
+        "etcd-v3.7.1-darwin-arm64/README-etcdutl.md",
+        "etcd-v3.7.1-darwin-arm64/READMEv2-etcdctl.md",
+        "etcd-v3.7.1-darwin-arm64/README-etcdctl.md",
+        "etcd-v3.7.1-darwin-arm64/README.md",
+        "etcd-v3.7.1-darwin-arm64/etcdutl",
+        "etcd-v3.7.1-darwin-arm64/etcdctl",
+        "etcd-v3.7.1-darwin-arm64/etcd"
+      ],
+      "extracted": [
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/Documentation/OWNERS",
+          "bytes": 82,
+          "sha256": "bf03e279f9067257b1f16583626c908477747a77b8af85726ede2fff1d488814"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/Documentation/README.md",
+          "bytes": 250,
+          "sha256": "6baaa9174b7f186725a0284081eae51147e5822389e058c34db4bcc7622e80f3"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/Documentation/contributor-guide/branch_management.md",
+          "bytes": 1510,
+          "sha256": "858af8088d662afd3c54f6b2cc55dbe51429e9aabf1f7b050d6dbb8f35a41c95"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/Documentation/contributor-guide/bump_etcd_version_k8s.md",
+          "bytes": 6680,
+          "sha256": "463fef6e6a1b2a768a60dd5c609b5d126bd407988219f39f738cfd7144319932"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/Documentation/contributor-guide/cherry-pick.md",
+          "bytes": 1455,
+          "sha256": "ac30c52bc20c9876c2ed5cbcd1767aad4c07015a6c3ff635dae4eadff5f3ab66"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/Documentation/contributor-guide/community-membership.md",
+          "bytes": 9921,
+          "sha256": "f29f9512b4e0d94752f44f3e964421878a42fcb0eccd434f891e9439b390322b"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/Documentation/contributor-guide/dependency_management.md",
+          "bytes": 9697,
+          "sha256": "e95a9bc90969a71a8d9254422a2c68beaa8606cd0d4ed9b4f95c6ce66d677765"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/Documentation/contributor-guide/exit_codes.md",
+          "bytes": 5399,
+          "sha256": "b8d3be4aa09344339dad300decba76875e528da18b6feb525fca29836bb6cf86"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/Documentation/contributor-guide/features.md",
+          "bytes": 5525,
+          "sha256": "f559835b644523c9c70a685529308d088bedf1b76f3dd14b9477bf5f8c85042b"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/Documentation/contributor-guide/local_cluster.md",
+          "bytes": 4582,
+          "sha256": "299cb1979deeab1cf5a6c80dfbba8650813f51537e08b3a4f300c6844da0b26e"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/Documentation/contributor-guide/logging.md",
+          "bytes": 1562,
+          "sha256": "fbdf453e38ca5cfaa6a189a9e1ca1b084e387f3db86657d5526ef92f197ad2d0"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/Documentation/contributor-guide/modules-future.svg",
+          "bytes": 132232,
+          "sha256": "813202ac11b261f5f987bf0e179ace77cc932f2abd796ac437002368a86db81d"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/Documentation/contributor-guide/modules.md",
+          "bytes": 3577,
+          "sha256": "a972129272f00e32ada86879fe736153abd888cb35cc6225f08a2a7c3fa00171"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/Documentation/contributor-guide/modules.svg",
+          "bytes": 114637,
+          "sha256": "2cede0c604081ff420d26746031178bfc33a35b1874f5818f900f6088e7d0102"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/Documentation/contributor-guide/prow_jobs.md",
+          "bytes": 10482,
+          "sha256": "a87fd24708da1c8e022e68ad72c3ba4e0bb47bcce1d04abb23c208e6342d08a4"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/Documentation/contributor-guide/release.md",
+          "bytes": 9760,
+          "sha256": "8a17135a655a1c008788580e8c5f5a3956781accdffd4003ac99d059e50a2d74"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/Documentation/contributor-guide/reporting_bugs.md",
+          "bytes": 2332,
+          "sha256": "e1cfa808c17eb15832e280d976baeba5de5cd7175788373358ec4427cf5c6273"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/Documentation/contributor-guide/roadmap.md",
+          "bytes": 7145,
+          "sha256": "a3fc719043b8ac293d9ba93f68ad505a468d99d300d182fed5508dc7da386200"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/Documentation/contributor-guide/triage_issues.md",
+          "bytes": 15521,
+          "sha256": "a56f09b33ae0f7acf58285af272744777fb3ac8bbfab5c3e4c0436d696c69044"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/Documentation/contributor-guide/triage_prs.md",
+          "bytes": 2717,
+          "sha256": "528ee79c8b1e6d32b1f66620858c9aca23d2906183fe0ead8750ad736d3bc0be"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/Documentation/dev-guide/apispec/swagger/rpc.swagger.json",
+          "bytes": 97007,
+          "sha256": "2396cc52222a0f7f461b5f0a4468562dc4cacea6a8dfc534223926f891646e01"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/Documentation/dev-guide/apispec/swagger/v3election.swagger.json",
+          "bytes": 12131,
+          "sha256": "14617334a3c16646a783a6dfae77af18331a9cb8e485591f775bc6ad00cf2ef9"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/Documentation/dev-guide/apispec/swagger/v3lock.swagger.json",
+          "bytes": 5710,
+          "sha256": "6e50b7dc49a9ceefd0dfff694843785a7b6e31e9d9f8cff461277e1bb2def6ab"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/Documentation/etcd-internals/diagrams/consistent_read_workflow.drawio",
+          "bytes": 253430,
+          "sha256": "bf24b22f82f8b123599c7073e915ac11c46ac93296344be3866e7dbb08c06f35"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/Documentation/etcd-internals/diagrams/consistent_read_workflow.png",
+          "bytes": 472856,
+          "sha256": "f08e159bf07acb147edfd265411ac3d370314be824d605160a0d5dc4e7b7a904"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/Documentation/etcd-internals/diagrams/etcd_internal_parts.drawio",
+          "bytes": 155226,
+          "sha256": "4ea51e46b6c082722c340eac7bed1464103a8c24ebecbcbddc23d17ca378c569"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/Documentation/etcd-internals/diagrams/etcd_internal_parts.png",
+          "bytes": 294326,
+          "sha256": "3ecf9933bff487aba66c90365f4c4c13aef2c134b293506f0481161edc19d60e"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/Documentation/etcd-internals/diagrams/write_workflow_follower.drawio",
+          "bytes": 370098,
+          "sha256": "d66cf10ded097b7f23c8538e2837cf7a0447cf0446820a9f29d2ef1021dde8ac"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/Documentation/etcd-internals/diagrams/write_workflow_follower.png",
+          "bytes": 630280,
+          "sha256": "87f5af5dfee928e2a0fa7c527c5ff4ed396cfb30ee4e31920fae44201857c08b"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/Documentation/etcd-internals/diagrams/write_workflow_leader.drawio",
+          "bytes": 370194,
+          "sha256": "9693323730570540d375d443107db92e31530cd514455c9c86fe0468b450121c"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/Documentation/etcd-internals/diagrams/write_workflow_leader.png",
+          "bytes": 630084,
+          "sha256": "ca82f604a5eb23b6ffd3fd84f95bb10a61073572c5411b71d8d629b07e0550d9"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/Documentation/postmortems/v3.5-data-inconsistency.md",
+          "bytes": 12156,
+          "sha256": "c984f85f84f554e9d1bc558769c2f415334d74cd33a8bae5909e21f46d8396f4"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/README-etcdctl.md",
+          "bytes": 44035,
+          "sha256": "0ed2f6c1b069fa8c5ce4c826c729cc37d992cf7b781b2da1d142823e6dffa94f"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/README-etcdutl.md",
+          "bytes": 10326,
+          "sha256": "abc0d1c2b94aa82f69985c6952573f9191572a43362bcee7e77b64843b8f254c"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/README.md",
+          "bytes": 10290,
+          "sha256": "a6036a32b40dd3055b417f61bd56812ff585ce139012b105a85c3fc9181f0ffe"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/READMEv2-etcdctl.md",
+          "bytes": 7896,
+          "sha256": "78759c83d599e8da912a05e48a745ed87aed35fd6106fe617a7e82d539662995"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/etcd",
+          "bytes": 24092770,
+          "sha256": "8ffc90f61928a4b27a0ab890a0b57f17752a607abc8a8a9efc052a36bd384164"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/etcdctl",
+          "bytes": 16262002,
+          "sha256": "0d6a41b4dfe14e50a6bb8ea89bad9358789ccf8aa55d44823676120029abb998"
+        },
+        {
+          "path": "etcd/etcd-v3.7.1-darwin-arm64/etcdutl",
+          "bytes": 16003234,
+          "sha256": "969657cadc57c632b5a8f0c32b139c44fc19e57c24c601d422619025b5d54367"
+        }
+      ]
+    },
+    {
+      "candidate": "openbao",
+      "name": "openbao_2.6.2_darwin_arm64.tar.gz",
+      "size": 76833570,
+      "sha256": "4e495376174accc0e014d31e9901f518a974f966850c839f626347eaac05fd52",
+      "url": "https://github.com/openbao/openbao/releases/download/v2.6.2/openbao_2.6.2_darwin_arm64.tar.gz",
+      "state": "extracted_not_executed",
+      "received": 76833570,
+      "actualSha256": "4e495376174accc0e014d31e9901f518a974f966850c839f626347eaac05fd52",
+      "archiveEntries": [
+        "CHANGELOG.md",
+        "LICENSE",
+        "README.md",
+        "bao"
+      ],
+      "extracted": [
+        {
+          "path": "openbao/CHANGELOG.md",
+          "bytes": 131858,
+          "sha256": "f501f92230191003852d1a636ed6f1a17ce948e543435dfdcd129714b0913777"
+        },
+        {
+          "path": "openbao/LICENSE",
+          "bytes": 15958,
+          "sha256": "d6b1a865f1c8c697d343bd4e0ce61025f91898486a1f00d727f32e8644af77d3"
+        },
+        {
+          "path": "openbao/README.md",
+          "bytes": 7136,
+          "sha256": "d0cff252352ee71e85b9bbca2d7567fe980d8579497f40280d0833a0170ea8b3"
+        },
+        {
+          "path": "openbao/bao",
+          "bytes": 193769394,
+          "sha256": "d476d17e81a35e6d70dd7e86a8ab2a3664313525118f1f1cfe0130e7a2b95f3a"
+        }
+      ]
+    }
+  ],
+  "status": "ready_not_executed",
+  "allocatedKiB": 352512
+}

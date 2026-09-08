@@ -1,0 +1,52 @@
+{
+  "scope": "Actual etcd3.7.1 loopback server; synthetic KV values and identities, not CR adapter",
+  "binarySha256": "8ffc90f61928a4b27a0ab890a0b57f17752a607abc8a8a9efc052a36bd384164",
+  "checks": [
+    {
+      "name": "initially_absent"
+    },
+    {
+      "name": "concurrent_compare_one_winner"
+    },
+    {
+      "name": "stale_compare_refused"
+    },
+    {
+      "name": "restart_preserves_full_kv_record"
+    },
+    {
+      "name": "scoped_read_allowed"
+    },
+    {
+      "name": "neighbor_read_denied",
+      "status": 403
+    },
+    {
+      "name": "administration_denied",
+      "status": 403
+    },
+    {
+      "name": "negative_boundary_write_role_can_delete",
+      "deleted": 1
+    }
+  ],
+  "processExits": [
+    {
+      "code": null,
+      "signal": "SIGTERM"
+    },
+    {
+      "code": null,
+      "signal": "SIGTERM"
+    }
+  ],
+  "maxSampledRssKiB": 32656,
+  "status": "passed_scoped_observations",
+  "startupMs": [
+    825.2045420000001,
+    138.57212499999991
+  ],
+  "monitorFailure": null,
+  "stateRemoved": true,
+  "distributionRetainedForFurtherComparison": true
+}

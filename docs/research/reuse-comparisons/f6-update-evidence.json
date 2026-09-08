@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "baseline": "8352d3e",
+  "scope": "Actual journal plus existing launcher/connector primitives; not a production update implementation",
+  "receiptType": "Condensed transcription of direct terminal results, not raw stdout archive",
+  "runs": [
+    {"command":"node scripts/qualification/platform-key-store-stage-zero.mjs --platform macos","exitCode":0,"status":"ready_for_runtime_check","toolChunk":"b8da83"},
+    {"command":"node --import tsx --test research/reuse-comparisons/f6-update-fit.test.ts","exitCode":0,"tests":2,"passed":2,"failed":0,"skipped":0,"durationMs":467.563917,"toolChunk":"921812"},
+    {"command":"node --import tsx --test --test-name-pattern='initial and recovery|bounded, ambiguous|SIGTERM|construction is inert|recover|uncertainty|close|abort' tests/private-node-launcher.test.mjs tests/native-connector-denials.test.ts","exitCode":0,"tests":12,"passed":12,"failed":0,"skipped":0,"durationMs":137.329917,"toolChunk":"9112e9"}
+  ],
+  "newFixtureAssertions": [
+    "Initial actual journal reservation created; persisted dispatching state",
+    "Fresh inert child from different working directory: reservation not created, same attempt/state",
+    "Return to first working directory: reservation still not created, same attempt/state",
+    "Persisted database SHA256 unchanged across both reopen operations",
+    "Actual journal constructor refuses synthetic user_version=2 without modifying file SHA256",
+    "Both owned temporary roots removed with absence assertions in cleanup hooks"
+  ],
+  "limitations": [
+    "Both child directories use the SAME current journal code, not different release binaries",
+    "No updater, release pointer switch, fleet pickup drain, OS supervisor or migration executed",
+    "ProviderCalls zero is the inert fixture design, not observed live provider instrumentation",
+    "Existing launcher uses injected connector/runtime and EventEmitter signals; connector tests use synthetic peer/runtime and mock timers",
+    "Synthetic future schema refusal is not a release compatibility matrix or real rollback",
+    "No downloads, app changes, installed service, credentials or network"
+  ]
+}
