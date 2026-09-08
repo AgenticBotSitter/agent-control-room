@@ -785,3 +785,41 @@ build, compiled launcher denial and four compiled persistent-factory checks all
 passed, followed by TypeScript and full lint (session 46095 exit zero). The compiled
 factory suite requires the built export and has no source fallback. No test process
 from this block remains running. No live or production effect occurred.
+
+### Resume checkpoint after persistent node assembly
+
+`dd5f7bb` committed and push confirmed (56889 exit zero); local HEAD equals the
+authorized private remote branch. Only unrelated private notes/image were dirty
+before this checkpoint. The previous turn is progress, not blocked. Clock at
+verification: 08:48:33 UTC; original deadline remains 12:40:58 UTC.
+No PR/merge/Actions/native call or production change. Source audit is now locating
+the remaining local owner-signing composition among accepted E53-E58 components.
+Do not mistake borrowed live sources or synthetic profile acceptance for actual
+custody/consent, and do not qualify the continuous fleet from a one-task command.
+
+## Owner-controlled review session composition
+
+Joined existing canonical review and paired signature issuer behind an explicit
+one-preparation/one-issue session. Trusted source and synchronous current-source fence
+remain explicit; echoed review digest does not count as consent. Only human review
+is exposed before issuance; full verified packet is returned once and intake remains
+a separate authorized operation. No endpoint, credential/channel acquisition or real
+owner action was introduced. Fixed `ownerReview.js` compiled entry is supplied.
+
+Initial three tests passed. TypeScript initially narrowed phase across async closure
+mutations incorrectly; a typed status reader resolved that without changing runtime
+behavior. Added post-issuer-await source/consent fencing, wrong-target and signature-
+handoff invalidation checks. Expanded source/intake/HTTP, five compiled scenarios,
+types and lint passed (46479 exit zero).
+
+Independent review identified a timer-only preparation deadline gap under blocking
+code. Added monotonic checks before/after load and before publication plus a controlled-
+clock overrun regression. Re-review found the gap resolved and no further concrete
+issue. The stronger final compiled/source checks are recorded below after completion.
+No key, SSH socket, credential store, owner attendance, provider or production effect.
+
+Final fresh build passed all six compiled session scenarios, TypeScript and full
+lint (47538 exit zero). A subsequent sequential source-session and existing compiled
+approval/owner-review run passed 9/9 and diff whitespace checks (89291 exit zero).
+This includes the existing browser-asset boundary check; no signing cryptography or
+approval storage was introduced into browser assets. All named test processes ended.

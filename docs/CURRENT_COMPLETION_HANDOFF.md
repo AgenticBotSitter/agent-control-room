@@ -159,6 +159,12 @@ Conversely, do not substitute a series of cosmetic edits for the unresolved crit
 
 ## Signing distinction that must not be lost
 
+The September 8 `OWNER_REVIEW_SESSION_DELIVERY.md` adds the local/compiled session
+between trusted canonical preparation, shared human review and the existing paired
+issuer. It has one preparation/issuance attempt and source/consent invalidation,
+but no owner-facing consent UI, native custody or authenticated delivery installation.
+This supersedes the lack of a reusable session controller, not the live gates below.
+
 `src/node-bridge/protected-store-signer.ts` implements node-frame signatures using the
 node key store. It is not an owner approval issuer. The accepted owner trust contract
 requires distinct owner public pins and rejects overlap with current or historical
