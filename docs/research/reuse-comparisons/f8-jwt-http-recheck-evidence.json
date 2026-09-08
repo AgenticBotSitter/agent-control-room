@@ -1,0 +1,321 @@
+{
+  "exitCode": 0,
+  "wallTimeSeconds": 0.508646875,
+  "actualStdout": {
+    "scope": "Actual auth, project-http and http-common modules; mapped JWT call and jose await; synthetic listPage service; no DB, listener, live Access or owner bootstrap.",
+    "sourceHashes": {
+      "access-verifier": "b51bc1fcde7c6c1790bd46a6ed9f3544aa808456c7b966b51d232038c2472426",
+      "project-http": "8a824353ddf0b819b8c1f8c2e0d60bd8602b21909a1b8348c55bca34aedad7ff",
+      "http-common": "3d8372bf7b297d23e56a3578f7a979248acaf50f21c349ebd02de5292f4801a6"
+    },
+    "versions": {
+      "jose": "6.2.12",
+      "jsonwebtoken": "9.0.3"
+    },
+    "results": [
+      {
+        "kind": "current",
+        "case": "valid",
+        "status": 200,
+        "serviceCalls": 1
+      },
+      {
+        "kind": "current",
+        "case": "missing",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "current",
+        "case": "bad signature",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "current",
+        "case": "wrong audience",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "current",
+        "case": "missing subject",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "current",
+        "case": "missing expiry",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "current",
+        "case": "future issued",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "current",
+        "case": "max age exact",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "current",
+        "case": "extra header",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "current",
+        "case": "wrong origin",
+        "status": 403,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "current",
+        "case": "cross site",
+        "status": 403,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "current",
+        "case": "write without origin",
+        "status": 403,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "current",
+        "case": "expired trust",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "current",
+        "case": "invalid clock",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "current",
+        "case": "new captured trust rejects old key accepts new",
+        "status": 200,
+        "serviceCalls": 1
+      },
+      {
+        "kind": "current",
+        "case": "old captured trust rejects new key",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jsonwebtoken",
+        "case": "valid",
+        "status": 200,
+        "serviceCalls": 1
+      },
+      {
+        "kind": "jsonwebtoken",
+        "case": "missing",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jsonwebtoken",
+        "case": "bad signature",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jsonwebtoken",
+        "case": "wrong audience",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jsonwebtoken",
+        "case": "missing subject",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jsonwebtoken",
+        "case": "missing expiry",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jsonwebtoken",
+        "case": "future issued",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jsonwebtoken",
+        "case": "max age exact",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jsonwebtoken",
+        "case": "extra header",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jsonwebtoken",
+        "case": "wrong origin",
+        "status": 403,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jsonwebtoken",
+        "case": "cross site",
+        "status": 403,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jsonwebtoken",
+        "case": "write without origin",
+        "status": 403,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jsonwebtoken",
+        "case": "expired trust",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jsonwebtoken",
+        "case": "invalid clock",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jsonwebtoken",
+        "case": "new captured trust rejects old key accepts new",
+        "status": 200,
+        "serviceCalls": 1
+      },
+      {
+        "kind": "jsonwebtoken",
+        "case": "old captured trust rejects new key",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jose",
+        "case": "valid",
+        "status": 200,
+        "serviceCalls": 1
+      },
+      {
+        "kind": "jose",
+        "case": "missing",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jose",
+        "case": "bad signature",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jose",
+        "case": "wrong audience",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jose",
+        "case": "missing subject",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jose",
+        "case": "missing expiry",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jose",
+        "case": "future issued",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jose",
+        "case": "max age exact",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jose",
+        "case": "extra header",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jose",
+        "case": "wrong origin",
+        "status": 403,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jose",
+        "case": "cross site",
+        "status": 403,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jose",
+        "case": "write without origin",
+        "status": 403,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jose",
+        "case": "expired trust",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jose",
+        "case": "invalid clock",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jose",
+        "case": "new captured trust rejects old key accepts new",
+        "status": 200,
+        "serviceCalls": 1
+      },
+      {
+        "kind": "jose",
+        "case": "old captured trust rejects new key",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jose",
+        "case": "held verification denial never calls service",
+        "status": 401,
+        "serviceCalls": 0
+      },
+      {
+        "kind": "jose-unadapted-negative",
+        "case": "promise reached service without await",
+        "status": 503,
+        "serviceCalls": 1
+      }
+    ],
+    "count": 50,
+    "maxRssKiB": 255104,
+    "appWrites": 0
+  }
+}

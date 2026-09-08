@@ -46,7 +46,9 @@ These are feature-specific observations, not whole-product reliability rankings.
 
 Latest concrete additions: [JWT library fit](research/reuse-comparisons/f8-jwt-fit.md)
 executes jose and jsonwebtoken through the current verifier policy (69 mapped checks,
-10 library-only observations). Full-handler async/policy-removal comparison remains;
+10 library-only observations). [Actual HTTP follow-up](research/reuse-comparisons/f8-jwt-http-fit.md)
+adds50 named scenarios and demonstrates the required jose await, denial ordering and
+full identity fields. Consolidated parsing/removal and all-caller parity remain;
 no new auth provider is selected. [Distribution audit](research/reuse-comparisons/f9-distribution-fit.md)
 finds115 actual built files without standalone notice/license files and maps external
 imports. Source-to-build freshness is unverified; generator comparison and complete

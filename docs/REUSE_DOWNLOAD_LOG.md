@@ -18,6 +18,7 @@ exact acquisition, negative outcomes and cleanup records:
 [F8](research/reuse-comparisons/f8-acquisitions.md),
 [F8 HTTP](research/reuse-comparisons/f8-http-fit.md),
 [F8 JWT libraries](research/reuse-comparisons/f8-jwt-acquisitions.md),
+[F8 JWT HTTP](research/reuse-comparisons/f8-jwt-http-acquisitions.md),
 [F9](research/reuse-comparisons/f9-entities-notice-followup.md).
 No production dependency/source change or GitHub write. F1 (222 MiB) and F2
 (184 KiB) remain retained for continued package tests; F3/F4/F5/F6/F7/F8/F9 report exact
