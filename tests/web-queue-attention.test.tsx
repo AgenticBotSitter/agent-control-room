@@ -18,7 +18,9 @@ test("owner-only recovery read is scoped, read-only and revoked with the session
     database: { client: f.client, close: async () => {} }, loadKeys: async () => trust.keys,
     queueAttention: { ...scope, read: () => { reads++; return snapshot; } } });
   t.after(() => app.close()); const render = () => new Response("shell");
+  await f.db.query(`UPDATE control_role_grants SET allowed_actions='["connections.read"]'::jsonb WHERE id='grant:web'`);
   assert.equal((await app.handle(request("/needs-me"), render)).status, 200); assert.equal(reads, 0);
+  assert.equal((await app.handle(request("/api/v1/needs-me/tasks"), render)).status, 403);
   const response = await app.handle(request("/api/v1/needs-me"), render);
   assert.equal(response.status, 200); assert.equal(response.headers.get("cache-control"), "no-store");
   assert.deepEqual(await response.json(), snapshot); assert.equal(reads, 1);
@@ -27,6 +29,7 @@ test("owner-only recovery read is scoped, read-only and revoked with the session
   assert.equal((await app.handle(request("/api/v1/needs-me", "POST"), render)).status, 400);
   await f.db.query("UPDATE control_role_grants SET role_key='operator' WHERE id='grant:web'");
   assert.equal((await app.handle(request("/api/v1/needs-me"), render)).status, 403); assert.equal(reads, 1);
+  assert.equal((await app.handle(request("/needs-me"), render)).status, 403);
   await f.db.query("UPDATE control_role_grants SET role_key='owner' WHERE id='grant:web'");
   await app.handle(request("/api/v1/session/logout", "POST"), render);
   assert.equal((await app.handle(request("/api/v1/needs-me"), render)).status, 401); assert.equal(reads, 1);

@@ -68,9 +68,25 @@ test("task attention endpoint rejects scope selectors, writes and revoked sessio
   const response = await app.handle(request("/api/v1/needs-me/tasks"), render);
   assert.equal(response.status, 200); assert.equal(response.headers.get("cache-control"), "no-store");
   assert.equal((await response.json()).items.length, 1);
+  await f.db.query(`UPDATE control_role_grants SET allowed_actions='["tasks.read","projects.read"]'::jsonb WHERE id='grant:web'`);
+  assert.equal((await app.handle(request("/needs-me"), render)).status, 200);
+  assert.equal((await app.handle(request("/api/v1/needs-me/tasks"), render)).status, 200);
+  assert.equal((await app.handle(request("/api/v1/needs-me"), render)).status, 403);
+  assert.equal((await app.handle(request("/connections"), render)).status, 403);
+  assert.equal((await app.handle(request("/needs-me?project=other"), render)).status, 400);
+  for (const actions of [["tasks.read"], ["projects.read"], []]) {
+    await f.db.query("UPDATE control_role_grants SET allowed_actions=$1 WHERE id='grant:web'", [actions]);
+    assert.equal((await app.handle(request("/needs-me"), render)).status, 403);
+  }
+  await f.db.query(`UPDATE control_role_grants SET allowed_actions='["tasks.read","projects.read"]'::jsonb,project_ids=$1 WHERE id='grant:web'`, [[f.project.projectId]]);
+  assert.equal((await app.handle(request("/needs-me"), render)).status, 403);
+  await f.db.query(`UPDATE control_role_grants SET allowed_actions='["tasks.read","idea_lab.project_read"]'::jsonb,project_ids='["*"]'::jsonb WHERE id='grant:web'`);
+  assert.equal((await app.handle(request("/needs-me"), render)).status, 200);
+  await f.db.query(`UPDATE control_role_grants SET allowed_actions='["*"]'::jsonb WHERE id='grant:web'`);
   for (const path of ["/api/v1/needs-me/tasks?tenant=other", "/api/v1/needs-me/tasks?after=a&after=b", "/api/v1/needs-me/tasks?after="])
     assert.equal((await app.handle(request(path), render)).status, 400);
   assert.equal((await app.handle(request("/api/v1/needs-me/tasks", "POST"), render)).status, 400);
   await app.handle(request("/api/v1/session/logout", "POST"), render);
   assert.equal((await app.handle(request("/api/v1/needs-me/tasks"), render)).status, 401);
+  assert.equal((await app.handle(request("/needs-me"), render)).status, 401);
 });

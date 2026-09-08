@@ -88,7 +88,7 @@ export function PrivateNewsWorkspace({ projectId, after, sourceAfter, view = "hi
     void load();
     return () => { active = false; abort.abort(); };
   }, [projectId, after, sourceAfter, view, order, refresh]);
-  return <><PrivateHeader /><main className="private-main">
+  return <><PrivateHeader /><main id="private-main" className="private-main">
     <h1>{page ? `${page.project.title} · News` : "Project news"}</h1>
     <nav aria-label="Project pages"><a href={base}>Overview</a>{" · "}<a href={`${base}/tasks`}>Tasks</a>{" · "}<a href={`${base}/news`} aria-current="page">News</a></nav>
     <NewsSourceSettings key={projectId} projectId={projectId} />

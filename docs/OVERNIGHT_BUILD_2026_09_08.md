@@ -365,3 +365,23 @@ full lint and fresh VPS compilation pass. Independent source review found no
 concrete regression. The repeatable authoring build command includes the new
 command and compiled database-check tests. These are disposable local fixtures,
 not evidence of live PostgreSQL readiness or permission to access production.
+
+## Needs Me and keyboard navigation repair
+
+The shared Needs Me shell previously required connection-inventory access even
+for an owner authorized to use the independent task inbox. It now accepts either
+existing owner permission path, with wildcard scope and precommit freshness checks.
+The recovery and task endpoints retain separate unchanged data permissions. No
+task or connection permission is granted by opening the shell. Regression cases
+cover task-only and recovery-only owners, missing/partial permissions, project-only
+scope, operator denial, malformed queries and logout.
+
+An independent worker added the missing private-main skip-link targets to Idea
+list/detail and news shells. Static rendering verifies exactly one main target
+per shell; actual keyboard focus remains browser-unverified. Main reviewed the
+patch. Independent source review found no authorization regression in either
+change. Nine focused navigation checks and 24 broader task/process/compiled checks
+pass, as do TypeScript, full lint and fresh VPS compilation. The new repeatable
+test:private-navigation command covers the focused cases. Recovery denial copy
+still says owner access is required for owners missing that permission; this is
+a wording limitation, not additional authority or a bypass.

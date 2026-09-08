@@ -319,17 +319,30 @@ export class WebTaskService {
         verificationCommands: this.verificationCommandsConfigured ? "configured" : "not_connected" });
   }
 
-  async attention(identity: VerifiedWebIdentity, after?: string) {
-    if (after !== undefined) this.id(after);
-    return this.authority.authenticated(identity, async (tx, actor) => {
+  private attentionSources(actor: WebActor): TaskAttentionPage["sources"] {
       actor.require("tasks.read", undefined, true);
       const ordinary = actor.can("projects.read", undefined, true);
       const ideas = actor.can("idea_lab.project_read", undefined, true);
       if (!ordinary && !ideas) throw new WebAccessError("access_denied");
       if (ordinary) actor.require("projects.read", undefined, true);
       if (ideas && this.ideaProjectsConfigured) actor.require("idea_lab.project_read", undefined, true);
-      const sources: TaskAttentionPage["sources"] = { ordinary: ordinary ? "included" : "not_authorized",
+      return { ordinary: ordinary ? "included" : "not_authorized",
         ideas: !ideas ? "not_authorized" : this.ideaProjectsConfigured ? "included" : "not_configured" };
+  }
+
+  /** The empty shared shell is useful with either recovery or task-inbox access.
+   * Each panel's data endpoint retains its own independent permission checks. */
+  async authorizeAttentionPage(identity: VerifiedWebIdentity): Promise<void> {
+    await this.authority.authenticated(identity, async (_, actor) => {
+      if (actor.can("connections.read", undefined, true)) actor.require("connections.read", undefined, true);
+      else this.attentionSources(actor);
+    });
+  }
+
+  async attention(identity: VerifiedWebIdentity, after?: string) {
+    if (after !== undefined) this.id(after);
+    return this.authority.authenticated(identity, async (tx, actor) => {
+      const sources = this.attentionSources(actor);
       const rows = (await tx.query<TaskRow & { has_artifacts: boolean }>(`SELECT EXISTS(
         SELECT 1 FROM control_native_artifact_receipts a WHERE a.tenant_id=j.tenant_id AND a.project_id=j.project_id AND a.job_id=j.id) AS has_artifacts, ${selection}
         JOIN projects p ON p.tenant_id=j.tenant_id AND p.id=j.project_id
@@ -340,7 +353,7 @@ export class WebTaskService {
             OR (j.payload->>'jobType'='harness.hermes.native.task' AND j.state IN ('leased','running')) OR EXISTS(
             SELECT 1 FROM control_native_artifact_receipts a WHERE a.tenant_id=j.tenant_id AND a.project_id=j.project_id AND a.job_id=j.id))
         ORDER BY j.id COLLATE "C" LIMIT 26`, [this.scope.tenantId, this.scope.workspaceId, after ?? null,
-        `adapter:manual:${sha256Digest(this.scope).slice(7, 39)}`, CONTROL_ROOM_IDEA_ADAPTER_V1, ordinary, sources.ideas === "included"])).rows;
+        `adapter:manual:${sha256Digest(this.scope).slice(7, 39)}`, CONTROL_ROOM_IDEA_ADAPTER_V1, sources.ordinary === "included", sources.ideas === "included"])).rows;
       const items: TaskAttentionPage["items"] = [];
       for (const row of rows.slice(0, 25)) {
         await this.projects.getViewInSession(tx, actor, row.project_id);

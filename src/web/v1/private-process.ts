@@ -416,7 +416,10 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             || url.searchParams.has("after") && !catalogProjectIdSchema.safeParse(url.searchParams.get("after")).success)
             throw new WebAccessError("invalid_request");
           await service.authorizeCatalog(identity);
-        } else if (["/connections", "/needs-me"].includes(url.pathname)) {
+        } else if (url.pathname === "/needs-me") {
+          if (url.search) throw new WebAccessError("invalid_request");
+          await tasks.authorizeAttentionPage(identity);
+        } else if (url.pathname === "/connections") {
           if (url.search) throw new WebAccessError("invalid_request");
           await connections.authorize(identity);
         } else if (url.pathname !== "/session") throw new WebAccessError("not_found");
