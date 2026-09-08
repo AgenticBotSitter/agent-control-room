@@ -62,4 +62,37 @@ test('database check selects only the fixed read-only release operation and sani
     startPrivateIdeaAuthoringApplication: () => assert.fail('must not install'),
   }) }), 0);
   assert.equal(authoringChecks, 1);
+  const coordinator = { nativeQueue: true, nativeQueueRecovery: true, revisionPlanning: true,
+    queueWorker: {}, nativeHttp: {}, approvals: {}, quality: {}, resultDatabase: {}, evidence: {}, sessions: {} };
+  const tasks = { web, coordinator };
+  prepared = { mode: 'agent-tasks', configuration: tasks, nativeHttps: {} };
+  let taskChecks = 0;
+  const taskRuntime = { ...runtime, loadRelease: async () => ({
+    checkPrivateWebDatabase: () => assert.fail('must check configured task roles'),
+    checkPrivateTaskDatabase: async value => {
+      assert.equal(value, tasks); taskChecks++;
+      return { databasePreflight: 'passed', databaseClosed: true, applicationInstalled: false,
+        listenerStarted: false, workersStarted: false, productionReady: false };
+    },
+    startPrivateTaskApplication: () => assert.fail('must not start tasks'),
+    createInstalledPrivateTaskHost: () => assert.fail('must not construct host'),
+  }) };
+  assert.equal(await checkPrivateVpsDatabase(args, taskRuntime), 0);
+  assert.equal(taskChecks, 1);
+  assert.equal(JSON.parse(reports.at(-1)).workersStarted, false);
+  for (const field of Object.keys(coordinator)) {
+    const partial = { ...coordinator }; delete partial[field];
+    prepared = { mode: 'agent-tasks', configuration: { web, coordinator: partial }, nativeHttps: {} };
+    assert.equal(await checkPrivateVpsDatabase(args, taskRuntime), 1, field);
+  }
+  prepared = { mode: 'agent-tasks', configuration: tasks };
+  assert.equal(await checkPrivateVpsDatabase(args, taskRuntime), 1);
+  assert.equal(taskChecks, 1);
+  prepared = { mode: 'agent-tasks', configuration: tasks, nativeHttps: {} };
+  const beforeFailure = reports.length;
+  assert.equal(await checkPrivateVpsDatabase(args, { ...taskRuntime, loadRelease: async () => ({
+    checkPrivateTaskDatabase: async () => { throw new Error('synthetic task credential must not escape'); },
+  }) }), 1);
+  assert.equal(reports.length, beforeFailure);
+  assert.doesNotMatch(errors.join('\n'), /synthetic task credential/);
 });

@@ -495,3 +495,31 @@ admin connection for app requests. The first logout expectation used 200, correc
 to the existing 204 contract. All 17 combined source/wrapper/compiled checks pass,
 as do TypeScript, full lint and a fresh VPS build. No real assertion, provisioning
 connection, native listener or production write was used.
+
+## Full task database inspection without task startup
+
+The complete sequential Idea/ABS delivery, authoring build and owner-bootstrap
+build pipeline passed after the owned owner command; its final owner suite passed
+17 checks. This is local evidence only, not a VPS rerun.
+
+Independent critical-path inspection identified that the database-only command
+could not inspect a full task deployment. Added a fixed compiled task database
+checker using the existing complete task validator and exact role preflights.
+It covers all configured task, Idea, queue and news logins without constructing
+services, preparing submissions or starting workers/listeners. It takes ownership
+only of the pools it acquires, not supplied inert runtime/checkpoint/transport ports.
+The same protected operator command routes explicit full-profile input to this
+checker, retaining the launcher's required mode fields rather than quietly reducing
+the configuration to website-only. Operator modules remain trusted code; their
+configuration factories must be inert and exact database access separately approved.
+
+Independent source review and final CLI re-review found no concrete defect. Initial
+combined source, wrapper, compiled and existing startup regressions passed 34 checks,
+plus TypeScript, lint and fresh compilation. Actual restricted-role fixtures cover
+two-role and three-role Idea profiles; the optional remaining role combinations
+are source-reviewed, not claimed as newly executed full-fleet qualification.
+Alias, cancellation and cleanup failure cases return no acceptance. The compiled
+handler remains unavailable before and after inspection. Later tests add invalid
+topology refusal before acquisition and coordinator failure before Idea acquisition.
+All nine final focused source checks pass with those additions.
+No live database contact, SQL provisioning, provider or production effect occurred.

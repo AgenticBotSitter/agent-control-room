@@ -4,7 +4,8 @@ import { parsePrivateVpsArguments, validatePrivateVpsConfigurationPath, requireP
 
 const installedRuntime = Object.freeze({
   loadOperator: path => import(pathToFileURL(path).href),
-  loadRelease: async () => ({ ...await import('../dist-vps/server/bootstrap.js'), ...await import('../dist-vps/server/ideaAuthoring.js') }),
+  loadRelease: async () => ({ ...await import('../dist-vps/server/bootstrap.js'), ...await import('../dist-vps/server/ideaAuthoring.js'),
+    ...await import('../dist-vps/server/taskDatabaseCheck.js') }),
   report: message => console.log(message),
   reportError: message => console.error(message),
 });
@@ -24,10 +25,14 @@ export async function checkPrivateVpsDatabase(args, runtime = installedRuntime) 
     if (operator.schema !== 'control-room.private-vps-configuration/v1' || typeof operator.createConfiguration !== 'function')
       throw new Error('private_database_check_configuration_invalid');
     const prepared = await operator.createConfiguration({ signal: new AbortController().signal });
-    if (requirePrivateVpsMode(prepared) !== 'website-only' || prepared.configuration.coordinator
-      || Object.keys(prepared.configuration).some(key => !['web', 'ideaAuthoring'].includes(key))) throw new Error('private_database_check_configuration_invalid');
+    const mode = requirePrivateVpsMode(prepared);
+    if (mode === 'website-only' ? prepared.configuration.coordinator
+      || Object.keys(prepared.configuration).some(key => !['web', 'ideaAuthoring'].includes(key))
+      : Object.keys(prepared.configuration).some(key => !['web', 'coordinator', 'news'].includes(key)))
+      throw new Error('private_database_check_configuration_invalid');
     const release = await runtime.loadRelease();
-    const result = 'ideaAuthoring' in prepared.configuration
+    const result = mode === 'agent-tasks' ? await release.checkPrivateTaskDatabase(prepared.configuration)
+      : 'ideaAuthoring' in prepared.configuration
       ? await release.checkPrivateIdeaAuthoringDatabase(prepared.configuration)
       : await release.checkPrivateWebDatabase(prepared.configuration.web);
     runtime.report(JSON.stringify(result));

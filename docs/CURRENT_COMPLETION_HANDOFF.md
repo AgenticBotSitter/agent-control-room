@@ -21,6 +21,14 @@ this document. The source changes below do not establish production readiness.
   acquired connections without installing an application. The source inventory
   includes the writer-role SQL when that profile is selected. Neither proves
   backup restoration or actual target readiness until separately run there.
+- The deployment-only owner bootstrap now has an explicit protected-input command
+  and owned connection cleanup. Its compiled synthetic journey proceeds through
+  restricted website login, project creation/read and logout. Real confirmed owner
+  identity, input custody and production execution remain separately required.
+- The database-check command now also accepts the existing full `agent-tasks`
+  envelope and checks configured task/Idea/news/worker roles without starting those
+  capabilities. This does not supply the full operator configuration or qualify
+  its non-database ports. Actual host connections remain separately authorized.
 - A subsequent compiled promotion test exposed a missing fresh-install native Idea
   adapter registration, previously supplied by older fixtures. Authoring now also
   requires that tenant-bound registration at preflight. The separately run setup

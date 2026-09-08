@@ -50,6 +50,11 @@ manager or rerun unchanged accepted memory tests without a reason.
 The database-check command is not an effect-free source check: it reads protected
 settings and contacts a database. Run it only with authority for that exact target.
 It performs preflight SELECT queries, but is not an arbitrary-SQL read-only sandbox.
+For a later fully configured `agent-tasks` envelope, the same command checks all
+selected task/Idea/news/worker database roles without starting those capabilities.
+It does not create the full operator configuration or validate its non-database
+resources. Keep its configuration factory inert and separately approved; see the
+full-profile inspection section in `deploy/README.md`.
 
 ## Execution order after separate approval
 

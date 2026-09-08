@@ -42,7 +42,7 @@ export type PrivateTaskStartupConfiguration = {
     evidence?: NativeEvidenceSettings & { database: PrivatePostgresConfiguration };
     sessions?: ManagedNativeSessionSettings & { database: PrivatePostgresConfiguration } };
 };
-function configuration(input: PrivateTaskStartupConfiguration) {
+export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartupConfiguration) {
   try {
     const web = validatePrivateStartupConfiguration(input.web);
     localId.parse(web.tenantId); localId.parse(web.workspaceId);
@@ -143,7 +143,7 @@ export function createPrivateTaskBootstrap(dependencies: {
     if (started) throw new Error("private_task_startup_already_attempted");
     started = true;
     if (signal?.aborted) throw new Error("private_task_startup_canceled");
-    const config = configuration(input);
+    const config = validatePrivateTaskStartupConfiguration(input);
     if (config.nativeQueue && !prepareSubmission) throw new Error("private_task_startup_config_invalid");
     if (config.queueWorker && !startWorker) throw new Error("private_task_startup_config_invalid");
     if (config.news && (!prepareNews || !startNews)) throw new Error("private_task_startup_config_invalid");

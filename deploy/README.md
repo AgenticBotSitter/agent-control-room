@@ -186,6 +186,36 @@ role name is a review condition, not permission to alter or drop it.
 
 ## Backup, restore and rollback acceptance
 
+### Later full task profile: database-only inspection
+
+The same `check-private-vps-database.mjs` command now accepts the existing explicit
+`agent-tasks` operator envelope. It retains the launcher's required full-profile
+fields and validates the actual task configuration, then checks every configured
+database role: web/coordinator, optional results/evidence/sessions, Idea writer and
+runtime, native worker, and news coordinator/ingestion/worker. It uses the existing
+exact role verifiers, including queue privileges and native Idea registration.
+This does not supply the still-required full operator configuration or private inputs.
+
+Use an approved operator module whose `createConfiguration` is inert: it may supply
+already-prepared ports but must not start resources. As with the launcher, that
+module is trusted executable code, not sandboxed JSON. The checker does not invoke
+or take ownership of supplied checkpoints, signer/runtime ports, news transport or
+key loaders. It acquires and closes only its database handles, never constructs an
+application, prepares a queue, starts a worker, contacts a provider or binds a port.
+
+All selected role checks and connection closures must succeed before a receipt is
+returned. Aliased handles/clients, cancellation and cleanup uncertainty reject the
+check. A pass is only database readiness at inspection time: it does not verify
+TLS, owner consent, actual signing, factory availability, backup restoration or a
+successful full application start. Do not run full startup merely to inspect roles;
+startup can activate already-approved queued work. Exact-target connection authority
+is still required, including for any disposable restored database.
+
+Local evidence can be reproduced sequentially with `pnpm test:task-database:build`.
+Synthetic role tests do not certify the VPS. No production check is authorized here.
+
+### Backup procedure
+
 Follow `deploy/BACKUP_RESTORE.md` for the ordered dedicated-database procedure and
 the database-only check on the disposable restore. No new backup engine is introduced.
 
