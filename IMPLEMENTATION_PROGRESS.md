@@ -648,3 +648,18 @@ in-memory test. It confirmed private-path exclusion, exact delivery binding,
 startup refusal and changing-sweep detection. The fresh compiled regression
 completed56/56 with exit0. No native execution or production integration was
 performed for this inventory change.
+
+### Recovery permission freshness checks
+
+Inspection confirmed existing signed recovery permits only exact-known-run status
+and stop, not checkout re-adoption or a new start. Do not reuse that permission
+as workspace takeover authority. The same async callback pitfall previously fixed
+for workspaces existed in recovery profile/trust freshness callbacks. A shared
+synchronous-fence check now protects both without expanding either permission.
+
+One disposable database fixture exercises valid recovery, forbidden start, and
+resolved/rejected async callbacks at both freshness checks for profile and trust.
+The actual adapter additionally refuses a late async rejection before stop bytes,
+records uncertainty and does not retry through a replacement adapter. No live
+transport, credential access or provider was used. TypeScript and three focused
+test groups passed; compiled native regressions and independent review pending.

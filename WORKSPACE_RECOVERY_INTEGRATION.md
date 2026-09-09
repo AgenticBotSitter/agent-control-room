@@ -111,3 +111,8 @@ current identities. Observation can compare these saved roots with the newly
 opened native port. A disposable replacement-root test returns changed even when
 the child path is absent in the new root. Supplying no saved roots still produces
 only an advisory observation and cannot support adoption.
+
+The existing native recovery permission authorizes exact-known-run status/stop
+only. It must not be repurposed to authorize workspace adoption, lease renewal,
+new execution or deletion. Future adoption must fit current canonical admission
+and exclusive node lifecycle ownership rather than widening that permission.

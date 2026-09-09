@@ -2,15 +2,14 @@ import { z } from "zod";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { localId } from "../harness/v1/native-run-identifiers";
 import { sha256Digest } from "../security/canonical-digest";
+import { assertSynchronousFence } from "../security/synchronous-fence";
 
 /** A promise is not completed authority. Reject it before any subsequent effect
  * and observe its rejection so a misconfigured callback cannot crash the host. */
 export function assertSynchronousWorkspaceAuthority(check: () => unknown): void {
-  const result = check();
-  if (result !== undefined) {
-    void Promise.resolve(result).catch(() => {});
+  assertSynchronousFence(check, () => {
     throw new Error("workspace_authority_must_be_synchronous");
-  }
+  });
 }
 
 const path = z.string().min(1).max(4096).refine(value => !value.includes("\0") && isAbsolute(value) && resolve(value) === value);
