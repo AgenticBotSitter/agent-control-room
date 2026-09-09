@@ -1,5 +1,15 @@
 # Local tooling acquisition log
 
+## saxes 6.0.0 original notice — 2026-09-09
+
+Downloaded only LICENSE (3011 bytes) and package.json from public commit
+`211fa0ebec9b628affc09219199639887174bfc3`, after resolving the v6.0.0 annotated
+tag. Retained under third_party/saxes; exact URLs and evidence are in PROVENANCE.md.
+No archive, package installation or executable code was downloaded in this step.
+These two files are retained as required attribution evidence; remove only if
+the dependency is removed and the affected distribution no longer includes it.
+Available storage remains approximately 137 GiB. No temporary download files remain.
+
 ## CycloneDX runtime notice assembly — 2026-09-09
 
 - Requested package: `@cyclonedx/cyclonedx-library@10.2.0`, selected DR-04 library.

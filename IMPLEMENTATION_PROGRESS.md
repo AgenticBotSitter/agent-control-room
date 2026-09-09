@@ -6,6 +6,15 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+Saxes 6.0.0 now has the complete original upstream notice retained from immutable
+release commit 211fa0ebec9b628affc09219199639887174bfc3, including historical notices.
+The release manifest matches the installed manifest except for the documented
+packaging removal of private:true. Checks preserve both manifest identity and
+the full notice checksum/length. Acquisition and provenance are recorded; five
+focused collector/report/exception tests pass. No whole-source correspondence or
+complete distribution clearance is claimed. The raw report's missing-root evidence
+remains unchanged, and entities provenance plus combined assembly are unfinished.
+
 Two named runtime notice exceptions now retain the original pg-types 2.2.0 and
 pgpass 1.0.5 README license sections. The test verifies current installed manifest,
 full README and retained-text hashes, plus verbatim containment in the installed
