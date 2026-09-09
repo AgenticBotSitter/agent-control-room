@@ -31,10 +31,13 @@ export interface CodexWorkspaceLeaseV1 {
 export class CodexWorkspaceManagerV1 {
   private readonly active = new Map<string, CodexWorkspaceLeaseV1>();
   private readonly busy = new Set<string>();
+  private readonly uncertainCreates = new Set<string>();
 
   constructor(private readonly port: CodexWorkspacePortV1) {}
 
   async prepare(input: { runId: string; repositoryRoot: string; workspaceRoot: string; revision: string }): Promise<CodexWorkspaceLeaseV1> {
+    input = { ...input };
+    if (this.uncertainCreates.has(input.runId)) throw new Error("Codex workspace creation requires reconciliation");
     if (this.busy.has(input.runId)) throw new Error("Codex workspace operation is already pending");
     this.busy.add(input.runId);
     try { return await this.prepareExclusive(input); }
@@ -55,6 +58,8 @@ export class CodexWorkspaceManagerV1 {
 
     const checkoutPath = join(workspace.realPath, `codex-${sha256Digest(input.runId).slice(7, 31)}`);
     if (relative(workspace.realPath, checkoutPath).split("/").length !== 1) throw new Error("Codex checkout must be a direct workspace child");
+    // Once the effect boundary is crossed, absence cannot be inferred from an error.
+    this.uncertainCreates.add(input.runId);
     const created = await this.port.createDetachedWorktree({ repositoryRealPath: repository.realPath, checkoutPath, revision: input.revision });
     if (created.realPath !== checkoutPath || created.repositoryRealPath !== repository.realPath || created.headRevision !== input.revision) {
       throw new Error("Codex created worktree failed identity verification");
@@ -70,10 +75,12 @@ export class CodexWorkspaceManagerV1 {
       inode: created.inode,
     };
     this.active.set(input.runId, lease);
+    this.uncertainCreates.delete(input.runId);
     return { ...lease };
   }
 
   async cleanup(lease: CodexWorkspaceLeaseV1): Promise<void> {
+    lease = { ...lease };
     if (this.busy.has(lease.runId)) throw new Error("Codex workspace operation is already pending");
     this.busy.add(lease.runId);
     try { await this.cleanupExclusive(lease); }

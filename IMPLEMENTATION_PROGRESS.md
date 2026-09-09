@@ -394,3 +394,12 @@ requirements remain the selected bounded Git port, durable recovery/ownership,
 dirty-content preservation and real disposable Git tests. A failed or uncertain
 native create cannot be retried or cleaned up merely from this in-memory guard;
 the concrete adapter/recovery protocol must establish what exists first.
+
+Workspace uncertainty guard: after crossing createDetachedWorktree, a rejected
+call or invalid readback now retains a per-run reconciliation hold instead of
+allowing immediate retry. No automatic removal is attempted. Inputs and cleanup
+leases are captured before asynchronous port access, preventing caller mutation
+from changing the in-flight operation or clearing the wrong busy key. Four source
+tests and full-source TypeScript pass. This hold lasts only for this manager's
+lifetime and deliberately provides no unverified reset API; durable reconciliation
+across process restart remains to be implemented before native/runtime wiring.

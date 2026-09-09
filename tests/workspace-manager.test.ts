@@ -2,6 +2,42 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { CodexWorkspaceManagerV1, type CodexWorkspacePortV1 } from "../src/harness/codex-v1/workspace";
 
+test("uncertain creation cannot silently retry after failure or invalid readback", async () => {
+  for (const mode of ["lost-response", "wrong-head"]) {
+    let calls = 0, removes = 0;
+    const manager = new CodexWorkspaceManagerV1({
+      inspectExisting: async path => ({ realPath: path, device: "1", inode: "2" }),
+      createDetachedWorktree: async ({ repositoryRealPath, checkoutPath }) => {
+        calls++;
+        if (mode === "lost-response") throw new Error("lost_response");
+        return { realPath: checkoutPath, repositoryRealPath, headRevision: "b".repeat(40), device: "1", inode: "2" };
+      },
+      removeWorktree: async () => { removes++; },
+    });
+    const input = { runId: "run:uncertain", repositoryRoot: "/fixture/repo", workspaceRoot: "/fixture/work", revision: "a".repeat(40) };
+    await assert.rejects(manager.prepare(input));
+    await assert.rejects(manager.prepare(input), /requires reconciliation/);
+    assert.equal(calls, 1); assert.equal(removes, 0);
+  }
+});
+
+test("preparation snapshots caller input before asynchronous inspection", async () => {
+  let release!: () => void;
+  const wait = new Promise<void>(resolve => { release = resolve; });
+  const manager = new CodexWorkspaceManagerV1({
+    inspectExisting: async path => { await wait; return { realPath: path, device: "1", inode: "2" }; },
+    createDetachedWorktree: async ({ repositoryRealPath, checkoutPath, revision }) => ({
+      realPath: checkoutPath, repositoryRealPath, headRevision: revision, device: "1", inode: "2" }),
+    removeWorktree: async () => {},
+  });
+  const input = { runId: "run:original", repositoryRoot: "/fixture/repo", workspaceRoot: "/fixture/work", revision: "a".repeat(40) };
+  const pending = manager.prepare(input);
+  input.runId = "run:changed"; input.revision = "b".repeat(40); input.workspaceRoot = "/changed";
+  release(); const lease = await pending;
+  assert.equal(lease.runId, "run:original"); assert.equal(lease.revision, "a".repeat(40));
+  assert.ok(lease.checkoutPath.startsWith("/fixture/work/"));
+});
+
 test("workspace manager serializes preparation and cleanup before awaiting the port", async () => {
   const input = { runId: "run:workspace", repositoryRoot: "/fixture/repo", workspaceRoot: "/fixture/work", revision: "a".repeat(40) };
   let creates = 0, removes = 0;
