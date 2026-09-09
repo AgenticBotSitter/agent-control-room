@@ -1,4 +1,5 @@
 "use client";
+import { SessionObservations } from './session-observations';
 import { useEffect, useRef, useState } from "react";
 import { ProjectCatalog } from "../../app/components/project-catalog";
 import { ProjectCreateForm } from "../../app/components/project-create-form";
@@ -157,6 +158,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
             </> : <p className="private-note"><a href={`/projects/${encodeURIComponent(projectId)}/tasks`}>Open project tasks</a> to prepare work, check assignment and approval, and inspect recorded progress and results. Task controls report unavailable services rather than assuming a live agent is connected.</p>}
             <p className="private-note">Saved revision {project.version} · Updated {new Date(project.updatedAt).toLocaleString()}</p>
           </section>
+          {section === "overview" && <SessionObservations projectId={projectId} />}
         </>}
       </>}
     </main>

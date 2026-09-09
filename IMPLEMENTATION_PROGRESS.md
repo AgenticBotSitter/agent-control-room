@@ -6,6 +6,17 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+The project overview now mounts a session-observation panel using the retained
+GET API and existing bounded browser JSON reader. A strict browser wire excludes
+extra metadata/authority claims and binds the response project. Refresh, focus
+and bounded periodic checks clear old rows before reauthorization; denied reads
+stop automatic checks. Hidden-page transitions clear observations, late responses
+from old project instances are discarded, and request duration counts against
+the five-second freshness ceiling. Checks pause after 40 reads until explicit
+refresh. Eight synthetic tests (including React DOM) and full-source TypeScript
+pass. Physical browser/host qualification and actual source collection remain
+open; this does not make an absent observer operational. UI review is pending.
+
 Independent follow-up review of 8a1af31e43ac2b83d0e7271ea2e0fde25f42f4f2 found
 no concrete issue in the protected observation route and captured read-only
 composition. Reviewer independently passed all six observation tests. Root's
