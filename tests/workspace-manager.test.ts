@@ -2,6 +2,18 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { CodexWorkspaceManagerV1, type CodexWorkspacePortV1 } from "../src/harness/codex-v1/workspace";
 
+test("nested roots beginning with two dots are still overlapping", async () => {
+  let creates = 0;
+  const manager = new CodexWorkspaceManagerV1({
+    inspectExisting: async path => ({ realPath: path, device: "1", inode: "2" }),
+    createDetachedWorktree: async () => { creates++; throw new Error("must_not_create"); },
+    removeWorktree: async () => {},
+  });
+  await assert.rejects(manager.prepare({ runId: "run:overlap", repositoryRoot: "/fixture/repo",
+    workspaceRoot: "/fixture/repo/..work", revision: "a".repeat(40) }), /must be disjoint/);
+  assert.equal(creates, 0);
+});
+
 test("uncertain creation cannot silently retry after failure or invalid readback", async () => {
   for (const mode of ["lost-response", "wrong-head"]) {
     let calls = 0, removes = 0;

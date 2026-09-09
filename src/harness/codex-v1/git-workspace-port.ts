@@ -83,6 +83,9 @@ export async function createGitWorkspacePort(input: {
         await verifyGit(checkoutPath);
         if ((await runGit(checkoutPath, ["rev-parse", "HEAD"])).trim() !== expected.revision)
           throw new Error("workspace_committed_work_requires_preservation");
+        const index = await runGit(checkoutPath, ["ls-files", "-v", "-z", "--"]);
+        if (index.split("\0").filter(Boolean).some(entry => !entry.startsWith("H ")))
+          throw new Error("workspace_index_flags_require_review");
         if ((await runGit(checkoutPath, ["status", "--porcelain", "--untracked-files=all", "--ignored=matching"])).trim())
           throw new Error("dirty_worktree");
         if (!same(expected, await identity(checkoutPath))) throw new Error("workspace_identity_changed");

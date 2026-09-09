@@ -121,7 +121,8 @@ function requireIdentity(identity: CodexWorkspaceIdentityV1): void {
 function overlaps(left: string, right: string): boolean {
   const leftToRight = relative(left, right);
   const rightToLeft = relative(right, left);
-  return leftToRight === "" || (!leftToRight.startsWith("..") && !isAbsolute(leftToRight)) || (!rightToLeft.startsWith("..") && !isAbsolute(rightToLeft));
+  const nested = (path: string) => !isAbsolute(path) && path !== ".." && !path.startsWith("../") && !path.startsWith("..\\");
+  return nested(leftToRight) || nested(rightToLeft);
 }
 
 function sameLease(left: CodexWorkspaceLeaseV1, right: CodexWorkspaceLeaseV1): boolean {

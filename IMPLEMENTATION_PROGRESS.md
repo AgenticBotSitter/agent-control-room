@@ -456,3 +456,12 @@ checkout. Actual Git regression creates a new commit with clean status, verifies
 removal refusal and confirms the commit and file remain. Full native fixture and
 cleanup/absence pass, as does full-source TypeScript. The fixture's final cleanup
 removes its exclusively owned synthetic cohort; it is not production cleanup logic.
+
+Independent workspace review found two gaps: manager overlap logic misclassified
+the legitimate nested name ..work, and Git index flags could conceal tracked
+edits from ordinary status. Corrected overlap using parent path components;
+cleanup now rejects non-H entries from git ls-files -v -z, including assume-unchanged
+and skip-worktree. Actual disposable Git reproduces hidden edits with empty status
+for both flags and proves cleanup refusal preserves content. Five manager tests,
+full-source TypeScript and native fixture/cleanup pass. Compiled56/56 passed at
+the pre-remediation checkpoint; final remediation re-review remains due.

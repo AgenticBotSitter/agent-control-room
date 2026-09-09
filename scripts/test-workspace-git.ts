@@ -73,6 +73,15 @@ try {
   assert.equal(await readFile(join(lease.checkoutPath, "ignored-fixture.txt"), "utf8"), "ignored but valuable\n");
   assert.equal(removals, 0);
   await rm(join(lease.checkoutPath, "ignored-fixture.txt"));
+  for (const flag of ["assume-unchanged", "skip-worktree"]) {
+    await git(lease.checkoutPath, ["update-index", `--${flag}`, "--", "fixture.txt"]);
+    await writeFile(join(lease.checkoutPath, "fixture.txt"), "hidden indexed work\n");
+    assert.equal(await git(lease.checkoutPath, ["status", "--porcelain"]), "");
+    await assert.rejects(manager.cleanup(lease), /index_flags_require_review/);
+    assert.equal(await readFile(join(lease.checkoutPath, "fixture.txt"), "utf8"), "hidden indexed work\n");
+    await writeFile(join(lease.checkoutPath, "fixture.txt"), "original\n");
+    await git(lease.checkoutPath, ["update-index", `--no-${flag}`, "--", "fixture.txt"]);
+  }
   await manager.cleanup(lease); assert.equal(removals, 1);
   await assert.rejects(stat(lease.checkoutPath), { code: "ENOENT" });
   const committedLease = await manager.prepare({ ...input, runId: "run:committed-work" });
@@ -111,7 +120,7 @@ try {
   console.log(JSON.stringify({ detachedExactRevision: true, branchAdvanceIsolated: true,
     concurrentPrepareRefused: true, dirtyWorkPreserved: true, trackedAndStagedPreserved: true,
     ignoredWorkPreserved: true, cleanLeaseRemoval: true, preexistingTargetPreserved: true,
-    lostResponsePreserved: true, cleanCommittedWorkPreserved: true }));
+    lostResponsePreserved: true, cleanCommittedWorkPreserved: true, hiddenIndexEditsPreserved: true }));
 } finally {
   // Every path under root was created by this fixture; no caller-supplied checkout.
   await rm(root, { recursive: true, force: true });
