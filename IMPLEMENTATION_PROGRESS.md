@@ -6,6 +6,17 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+Batch 6 now has a pure project-scoped projection adapted from the existing
+evaluated Herdr v0.9.0 pane-list bridge. It captures explicit workspace mappings,
+filters before duplicate-session correlation, scopes opaque keys by project,
+source, enrollment revision and observation generation, and omits raw paths,
+titles and session references. Three synthetic tests passed; no Herdr process,
+socket or agent ran. The projection is unwired: callers still need current
+project authorization, source enrollment/revocation, freshness delivery, approved
+binary identity, host isolation and protected UI integration. This is not an
+authorization service or a completed optional monitoring feature. Added its
+tests to the combined local command. Independent review remains pending.
+
 At source commit 38fd882, full-source TypeScript passed and a fresh VPS build
 plus all 56 selected compiled integration checks passed. The database, Access,
 owner-signing, checkpoint, Idea Lab, result-renderer, article/research and calendar

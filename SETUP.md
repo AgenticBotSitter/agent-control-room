@@ -36,7 +36,7 @@ resources. It is not the full private-development test suite. No GitHub credenti
 agent authentication or production database should be supplied for these checks.
 
 `pnpm test:components` runs the database, Access token, owner-signing, checkpoint,
-Idea Lab, result-rendering, article/research and calendar suites in sequence,
+Idea Lab, result-rendering, article/research, calendar and observation suites in sequence,
 stopping on the first failed suite. This keeps the component checks discoverable
 without GitHub Actions or overlapping database-heavy suites. It does not replace
 `pnpm test`, the demo checks, workspace crash qualifications, real PostgreSQL
