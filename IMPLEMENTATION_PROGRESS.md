@@ -6,6 +6,15 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+Archive preservation coverage now seeds a synthetic active workflow and running
+job/attempt rows in the fully migrated disposable database. Entire saved rows
+remain identical after archive and after reopen/replay/stale-request rejection.
+The first fixture attempt used empty payloads and was correctly rejected by the
+canonical mirror trigger; the fixture now supplies matching payload fields. No
+constraint was disabled or application behavior changed. This checks row
+preservation, not valid native execution, lease renewal or a live worker staying
+running. The focused lifecycle test passes with the database constraints enabled.
+
 Independent review of the cumulative project UI changes at `356cd55` found no
 concrete regression and passed all nine then-current focused tests. A fresh VPS
 build and all 57 compiled tests also passed. Root accepts this local UI correction,
