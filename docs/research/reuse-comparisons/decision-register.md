@@ -4,6 +4,36 @@
 all-outcomes implementation plan or permission to implement or deploy candidates.
 All26 outcome-level gates remain tracked separately in the comparison index.
 
+## DR-10 — maintained node-postgres at the existing database port
+
+Conditionally select node-postgres8.23.0 for implementation, retaining the actual
+bounded DatabaseSession, canonical transaction/precommit coupling and uncertain-outcome
+quarantine. Root accepts the narrow [direction](f1-driver-selection-draft.md) and
+[independent challenge](f1-driver-selection-review.md), not production readiness.
+
+Eight value cases, actual precommit rollback and four CR queue adapter cases pass.
+The public-release lifecycle composition also handles one active/queued shutdown
+with zero observed pool clients/waiters and tracked checkouts before return. This
+does not establish instant server cancellation, late-connect race coverage or a
+production-ready adapter. Plain Pool.end alone is explicitly not the selected design.
+
+Blanket Postgres.js string typing is rejected for global use after actual uncast
+timestamp/UUID failures. Targeted semantic typing and supported custom JSON type
+configuration remain viable alternatives, not falsely labeled broken; they require
+caller/type-policy changes that pg avoids for the present unannotated interface.
+Prefer maintained wire/type/pool code plus the necessary bounded lifecycle glue;
+no custom serializer, ORM, wire protocol or new queue is selected for this problem.
+
+No production lines removed yet. Inventory/replace existing Postgres.js runtime
+consumers, declare/notice the intentional pg dependency, and test exact settings,
+late/failed acquire, multiple leases, release/close races, full callers and uncertain
+COMMIT reconciliation. Real PG17/current roles remain acceptance gates. No automatic
+fallback between drivers or replay after uncertainty. Reopen if the concrete adapter
+fails those gates or targeted Postgres.js reuse demonstrates lower total cost.
+
+This closes a conditional implementation direction only, not RC1 engine selection,
+all database verification, the 26-outcome comparison or deployment authorization.
+
 ## DR-09 — public cron-parser expansion and matching
 
 Select the public parser/field/includesDate seam, retaining existing schedule

@@ -1,0 +1,7 @@
+{
+  "chunk_id": "b77c7a",
+  "wall_time_seconds": 0.00000225,
+  "exit_code": 0,
+  "original_token_count": 131,
+  "output": "{\"mode\":\"pg-release-destroy\",\"pendingAfterTerminate\":0,\"poolWaiting\":0,\"poolTotal\":0}\n{\"mode\":\"pg-release-destroy\",\"close\":{\"resolved\":true},\"closeMs\":183,\"outcomes\":[{\"resolved\":false,\"error\":\"database_outcome_uncertain\"},{\"resolved\":false,\"error\":\"database_outcome_uncertain\"}],\"sessionsAfterClose\":1,\"issued\":1,\"acquired\":1,\"released\":1,\"terminationCalls\":1,\"futureWorkRefused\":true}\n{\"mode\":\"pg-release-destroy\",\"cleanupSessionsAbsent\":true}\n{\"cleanup\":true,\"clusterStopped\":true,\"scope\":\"owned disposable child only\"}\n"
+}

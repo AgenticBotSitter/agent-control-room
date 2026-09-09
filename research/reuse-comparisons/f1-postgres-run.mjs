@@ -8,7 +8,7 @@ import { createRequire } from 'node:module';
 const exec = promisify(execFile);
 const root = process.argv[2];
 const mode = process.argv[3] ?? 'transaction';
-assert.ok(['transaction', 'recovery', 'worker', 'pgboss-worker'].includes(mode));
+assert.ok(['transaction', 'recovery', 'worker', 'pgboss-worker', 'cr-worker', 'cr-worker-nodepg', 'cr-worker-typed', 'json-binding', 'driver-contract', 'driver-shutdown'].includes(mode));
 assert.match(root ?? '', /^\/private\/tmp\/cr-compare-f1\.[A-Za-z0-9]+$/);
 assert.equal((await stat(root)).mode & 0o077, 0);
 const pkg = join(root, 'node_modules/@embedded-postgres/darwin-arm64');
@@ -35,15 +35,24 @@ try {
     await probe.connect();
     assert.equal((await probe.query('SHOW listen_addresses')).rows[0].listen_addresses, '', 'TCP listeners must be disabled');
   } finally { await probe.end(); }
-  const isWorker = mode === 'worker' || mode === 'pgboss-worker';
-  const fixture = resolve(`research/reuse-comparisons/${mode === 'pgboss-worker' ? 'f1-pgboss-worker-fit.mjs' : mode === 'worker' ? 'f1-dbos-worker-fit.mjs' : mode === 'recovery' ? 'f1-dbos-recovery-fit.mjs' : 'f1-dbos-fit.mjs'}`);
+  const isCrWorker = ['cr-worker', 'cr-worker-nodepg', 'cr-worker-typed'].includes(mode);
+  const isDriver = ['driver-contract', 'driver-shutdown'].includes(mode);
+  const isWorker = ['worker', 'pgboss-worker', 'json-binding'].includes(mode) || isCrWorker || isDriver;
+  const fixture = resolve(`research/reuse-comparisons/${isDriver ? `f1-${mode}-fit.ts` : mode === 'json-binding' ? 'f1-json-binding-fit.mjs' : isCrWorker ? 'f1-pgboss-cr-fit.ts' : mode === 'pgboss-worker' ? 'f1-pgboss-worker-fit.mjs' : mode === 'worker' ? 'f1-dbos-worker-fit.mjs' : mode === 'recovery' ? 'f1-dbos-recovery-fit.mjs' : 'f1-dbos-fit.mjs'}`);
   const empty = join(run, 'empty');
   if (isWorker) await mkdir(empty, { mode: 0o700 });
-  const args = isWorker ? [fixture, root, socket] : ['--import', 'tsx', fixture, root, socket];
+  const args = isDriver ? ['--import', createRequire(import.meta.url).resolve('tsx'), fixture, root, socket] : isCrWorker ? ['--import', createRequire(import.meta.url).resolve('tsx'), fixture, root, socket, mode === 'cr-worker-typed' ? 'postgres-typed' : mode === 'cr-worker-nodepg' ? 'node-pg' : 'postgres-js']
+    : isWorker ? [fixture, root, socket] : ['--import', 'tsx', fixture, root, socket];
+  if (process.argv[4] !== undefined) {
+    assert.ok(mode === 'driver-shutdown' && process.argv[4] === 'pg-release-destroy'
+      || mode === 'driver-contract' && process.argv[4] === 'uncast'); args.push(process.argv[4]);
+  }
   const result = await exec(process.execPath, args, { env, cwd: isWorker ? empty : process.cwd(), timeout: 60000, maxBuffer: 262144 });
   process.stdout.write(result.stdout);
 } catch (error) {
-  console.error(JSON.stringify({ failed: true, code: error.code, message: String(error.message).slice(0,500), output: String(error.stderr ?? '').slice(-1800) }));
+  console.error(JSON.stringify({ failed: true, code: error.code, killed: error.killed === true, signal: error.signal ?? null,
+    message: String(error.message).slice(0,500), output: String(error.stderr ?? '').slice(-1800),
+    partialStdout: String(error.stdout ?? '').slice(-1800) }));
   process.exitCode = 1;
 } finally {
   if (attempted) {

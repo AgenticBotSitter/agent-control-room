@@ -1,0 +1,11 @@
+{
+  "date": "2026-09-08",
+  "capture": "Exact completion tool result after import correction",
+  "result": {
+    "chunk_id": "c5273d",
+    "wall_time_seconds": 0.709988417,
+    "exit_code": 1,
+    "original_token_count": 212,
+    "output": "{\"failed\":true,\"code\":1,\"message\":\"Command failed: /Users/alastairfraser/.hermes/node/bin/node --import /Users/alastairfraser/Documents/Codex/Agent Control Room/node_modules/.pnpm/tsx@4.23.1/node_modules/tsx/dist/loader.mjs /Users/alastairfraser/Documents/Codex/Agent Control Room/research/reuse-comparisons/f1-pgboss-cr-fit.ts /private/tmp/cr-compare-f1.9x5bSO /private/tmp/cr-compare-f1.9x5bSO/pg-run-gN2eqf/socket\\n{\\\"failed\\\":true,\\\"message\\\":\\\"The input did not match the regular expression /synthetic-revocation/. Input:\\\\n\\\\n'Error: nat\",\"output\":\"{\\\"failed\\\":true,\\\"message\\\":\\\"The input did not match the regular expression /synthetic-revocation/. Input:\\\\n\\\\n'Error: native_task_submission_unavailable'\\\\n\\\",\\\"outcomes\\\":[],\\\"deliveries\\\":[],\\\"errors\\\":[]}\\n\"}\n{\"cleanup\":true,\"clusterStopped\":true,\"scope\":\"owned disposable child only\"}\n"
+  }
+}

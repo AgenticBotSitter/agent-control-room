@@ -1,0 +1,11 @@
+{
+  "date": "2026-09-08",
+  "capture": "Summary of terminal dbe6d3, not raw stdout",
+  "exitCode": 1,
+  "stage": "fixture import before candidate scenarios",
+  "error": "ERR_MODULE_NOT_FOUND for src/security.ts",
+  "cause": "Root authored wrong explicit import path; actual module is src/security/index.ts",
+  "correction": "One setup-only import correction; application and candidate unchanged",
+  "passedScenarios": 0,
+  "cleanup": { "clusterStopped": true, "ownedChildRemoved": true }
+}

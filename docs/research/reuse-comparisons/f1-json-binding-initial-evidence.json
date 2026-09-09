@@ -1,0 +1,10 @@
+{
+  "capture": "Exact terminal completion; first binding diagnostic produced no outcomes before outer deadline",
+  "result": {
+    "chunk_id": "42f667",
+    "wall_time_seconds": 0.000002333,
+    "exit_code": 1,
+    "original_token_count": 97,
+    "output": "{\"failed\":true,\"code\":null,\"message\":\"Command failed: /Users/alastairfraser/.hermes/node/bin/node /Users/alastairfraser/Documents/Codex/Agent Control Room/research/reuse-comparisons/f1-json-binding-fit.mjs /private/tmp/cr-compare-f1.9x5bSO /private/tmp/cr-compare-f1.9x5bSO/pg-run-tpJLfS/socket\\n\",\"output\":\"\"}\n{\"cleanup\":true,\"clusterStopped\":true,\"scope\":\"owned disposable child only\"}\n"
+  }
+}

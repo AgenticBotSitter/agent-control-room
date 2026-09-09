@@ -1,0 +1,14 @@
+{
+  "schema": "control-room.research-normalized-observation/v1",
+  "source": "exec_command chunk 1de759",
+  "command": "node --import tsx research/reuse-comparisons/f1-postgres-run.mjs /private/tmp/cr-compare-f1.9x5bSO driver-contract uncast",
+  "parentExitCode": 0,
+  "candidates": [
+    {"name":"plain", "exitCode":0, "elapsedMs":75, "timestamp":"pass", "uuid":"pass"},
+    {"name":"typed", "exitCode":0, "elapsedMs":72, "timestamp":"operator does not exist: timestamp with time zone <= text", "uuid":"operator does not exist: uuid = text"},
+    {"name":"node-pg", "exitCode":0, "elapsedMs":70, "timestamp":"pass", "uuid":"pass"}
+  ],
+  "cleanup":true,
+  "clusterStopped":true,
+  "scope":"actual drivers and CR bounded interface, synthetic rows with real timestamp/UUID predicates; not full outbox/recovery store execution; candidate exit0 means observation completed"
+}

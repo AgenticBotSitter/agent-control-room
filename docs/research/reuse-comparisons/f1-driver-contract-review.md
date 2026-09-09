@@ -1,0 +1,23 @@
+# Independent driver-contract source/receipt review
+
+2026-09-08. Reviewed the assigned driver-contract fixture, initial/corrected receipts, runner's driver-contract branch, actual bounded database and private option builder, and installed Postgres.js reserve/ReadyForQuery/Bind implementation. No execution, downloads, services, application changes or final driver selection. The subsequently added typed queue experiment is outside this review.
+
+## Finding requiring a report clarification
+
+**P2 — distinguish unexecuted binding from the observed cold-acquire failure.** The fit report says “Neither prepare:false nor fetch_types:false cures serialized JSON.” The `fetch_types:false` variant never reaches a query: its receipt contains acquire-start, close-start and closed, then `database_outcome_uncertain`. Consequently this packet does not experimentally establish JSON binding behavior with that option. `prepare:false` with `fetch_types:true` demonstrably retains the three JSON failures. Existing Bind/type source supports a separate inference that disabling array-type discovery is not a JSON serializer repair; label that inference explicitly rather than combine it with measured outcomes. This needs wording only, not another unchanged run.
+
+## Narrow accepted evidence
+
+- Corrected plain Postgres.js has **five of eight** value passes, with serialized array/object/string failures retained. Its child exit0, and the comparison parent's exit0, mean completed observation—not candidate acceptance.
+- Typed strings through public `sql.typed(value,25)` and node-postgres each have eight value passes plus an actual precommit rejection/empty-table check. The same SQL and expected values make this a useful supported-alternative comparison. Every sampled parameter has an explicit SQL cast; uncast inference and the complete application parameter surface remain unqualified.
+- Initial plain/typed receipts retain `Result(0) []` versus `[]` rollback assertion failures. Comparing `[...rows]` removes an unpromised collection prototype while preserving row values. This is a reasonable single fixture correction, not suppression of a candidate value failure: all three real plain JSON mismatches remain in the corrected receipt.
+- Cold acquisition is now localized beyond the earlier diagnostic's silence: the production-option-derived `fetch_types:false` child reports acquire-start but never acquired, then the actual wrapper returns uncertainty at roughly its five-second checkout limit. The otherwise matching `fetch_types:true` control acquires, executes SELECT, releases/reacquires and closes. Installed `reserve()` and initial `ReadyForQuery` control flow are consistent with the proposed cause; this is not a trace proving every internal step or a production outage diagnosis.
+- The actual `boundPrivateDatabase` wrapper is exercised. Postgres.js uses the actual private option builder with expressly changed socket/password/pool/connect limit and, in value variants, fetch-types setting. Node-postgres is a research driver port. Neither is full production constructor/PG17/private-role acceptance.
+
+## Bounds, cleanup and remaining gates
+
+The runner uses an owned empty working directory and Unix-socket cluster with TCP disabled. Child output/time bounds are finite (32KiB/eight seconds each; 60-second outer child command); this is not a guarantee that signal-resistant descendants would be forcibly terminated. Both retained attempts end with clusterStopped/cleanup true. Source checks absence of postmaster PID and socket after successful `pg_ctl` stop before deleting only the owned run directory; it does not independently enumerate every OS process. Normal child exits and these cleanup checks support the reported completed fixture lifecycle without inventing a general descendant-kill proof.
+
+The ordinary rollback assertion shows rejection before commit leaves the temporary marker table empty under a single-connection pool; it is not ambiguous-COMMIT, active-query cancellation or queued-lease shutdown evidence. `pool.end()` still does not satisfy the wrapper's stronger terminate-active-and-queued-work contract merely by succeeding here. Keep those finite lifecycle comparisons, parameter call-site audit and PG17/current-role/schema gates open. Process durations include startup and are not driver benchmarks; no RSS conclusion follows.
+
+Subject to the report clarification above, no additional source/receipt blocker was found for this narrow comparison. It establishes viable binding alternatives and one adverse cold-acquire observation—not whole-driver adoption, queue selection or production readiness.

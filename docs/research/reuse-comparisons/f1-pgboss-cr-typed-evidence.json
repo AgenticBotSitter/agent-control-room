@@ -1,0 +1,7 @@
+{
+  "chunk_id": "0c9684",
+  "wall_time_seconds": 0.000003291,
+  "exit_code": 0,
+  "original_token_count": 227,
+  "output": "{\n  \"candidate\": \"pg-boss12.30.0\",\n  \"driver\": \"postgres-typed\",\n  \"backend\": \"PostgreSQL18.4\",\n  \"outcomes\": [\n    {\n      \"name\": \"actual-CR-precommit-rollback\",\n      \"markerRows\": 0,\n      \"queueJob\": null\n    },\n    {\n      \"name\": \"actual-submission-to-CR-worker\",\n      \"concurrency\": 1,\n      \"heldThenDelivered\": true,\n      \"persistedOutputs\": true\n    },\n    {\n      \"name\": \"fresh-intent-operational-collision-refused\",\n      \"noAdditionalDelivery\": true\n    },\n    {\n      \"name\": \"malformed-operational-job-refused\",\n      \"state\": \"cancelled\",\n      \"noDelivery\": true\n    }\n  ],\n  \"deliveries\": [\n    \"job:held\",\n    \"job:next\"\n  ],\n  \"errors\": [],\n  \"scope\": \"actual CR SQL/submission/worker adapters; synthetic delivery port; no canonical approval, native effects, crash recovery or full task-quality journey\"\n}\n{\"cleanup\":true,\"clusterStopped\":true,\"scope\":\"owned disposable child only\"}\n"
+}

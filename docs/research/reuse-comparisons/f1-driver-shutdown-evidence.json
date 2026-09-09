@@ -1,0 +1,7 @@
+{
+  "chunk_id": "c683f2",
+  "wall_time_seconds": 3.213678042,
+  "exit_code": 0,
+  "original_token_count": 300,
+  "output": "{\"mode\":\"postgres-end\",\"close\":{\"resolved\":true},\"closeMs\":3,\"outcomes\":[{\"resolved\":false,\"error\":\"database_outcome_uncertain\"},{\"resolved\":false,\"error\":\"database_outcome_uncertain\"}],\"sessionsAfterClose\":1,\"issued\":1,\"acquired\":1,\"released\":1,\"terminationCalls\":1,\"futureWorkRefused\":true}\n{\"mode\":\"postgres-end\",\"cleanupSessionsAbsent\":true}\n{\"mode\":\"pg-pool-end\",\"close\":{\"resolved\":false,\"error\":\"database_close_uncertain\"},\"closeMs\":502,\"outcomes\":[{\"resolved\":false,\"error\":\"database_close_uncertain\"},{\"resolved\":false,\"error\":\"database_close_uncertain\"}],\"sessionsAfterClose\":1,\"issued\":1,\"acquired\":1,\"released\":1,\"terminationCalls\":1,\"futureWorkRefused\":true}\n{\"mode\":\"pg-pool-end\",\"cleanupSessionsAbsent\":true}\n{\"mode\":\"pg-tracked-client-end\",\"close\":{\"resolved\":false,\"error\":\"database_close_uncertain\"},\"closeMs\":503,\"outcomes\":[{\"resolved\":false,\"error\":\"database_close_uncertain\"},{\"resolved\":false,\"error\":\"database_close_uncertain\"}],\"sessionsAfterClose\":1,\"issued\":1,\"acquired\":1,\"released\":1,\"terminationCalls\":1,\"futureWorkRefused\":true}\n{\"mode\":\"pg-tracked-client-end\",\"cleanupSessionsAbsent\":true}\n{\"cleanup\":true,\"clusterStopped\":true,\"scope\":\"owned disposable child only\"}\n"
+}
