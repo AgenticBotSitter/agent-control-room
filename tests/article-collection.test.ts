@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { fixture, now, trust, request } from "./helpers/web-foundation";
+import { fixture, now, trust, request, origin } from "./helpers/web-foundation";
 import { createAccessVerifier } from "../src/web/v1/access-verifier";
 import { PostgresNewsSourceSettings } from "../src/project-adapters/abs-news/v1/source-settings";
 import { createControlCenterCollection } from "../src/project-adapters/abs-news/v1/control-center-collection";
 import { PostgresArticleDetails } from "../src/project-adapters/abs-news/v1/article-store";
+import { WebNewsService } from "../src/web/v1/news-service";
+import { WebTaskService } from "../src/web/v1/task-service";
+import { createTaskHttpHandler } from "../src/web/v1/task-http";
 
 test("approved collection reuses bounded reader and saves articles only when opted in", async t => {
   const f = await fixture(); t.after(() => f.db.close());
@@ -40,6 +43,35 @@ test("approved collection reuses bounded reader and saves articles only when opt
   } finally { await approved.close(); }
   assert.deepEqual(urls, [source.url, "https://example.invalid/article"]);
   assert.match((await store.get(reference.storyId, reference.storyDigest))!.text, /Useful synthetic article/);
+  // Continue the real saved-service path, not a preconstructed draft fixture.
+  const webScope = { tenantId: scope.tenantId, workspaceId: scope.workspaceId };
+  const news = new WebNewsService(f.client, webScope, { integrityKey: key }, () => now);
+  const tasks = new WebTaskService(f.client, webScope, () => now);
+  const selected = { storyId: reference.storyId, storyDigest: reference.storyDigest,
+    action: "research_brief", goal: "Verify the claims and return a source-backed research report." };
+  const draft = await news.prepare(identity, project.projectId, selected);
+  assert.equal(draft.saved, false); assert.equal(draft.dispatch, "not_requested");
+  assert.match(draft.draft.instructions, /VERIFICATION-FIRST RESEARCH/);
+  assert.ok(draft.draft.instructions.includes(reference.storyDigest));
+  assert.ok(draft.draft.instructions.includes("https://example.invalid/article"));
+  assert.equal((await tasks.list(identity, project.projectId)).tasks.length, 0);
+  await assert.rejects(news.prepare(identity, project.projectId, { ...selected, action: "setup_guide" }));
+  await assert.rejects(news.prepare(identity, project.projectId, { ...selected, storyDigest: `sha256:${"0".repeat(64)}` }));
+  const other = await f.service.create(identity, { title: "Other research project", summary: "Synthetic" }, "other-research-project");
+  await assert.rejects(news.prepare(identity, other.project.projectId, selected));
+  const handle = createTaskHttpHandler({ origin, trust, service: tasks, clock: () => now });
+  const path = `/api/v1/projects/${encodeURIComponent(project.projectId)}/tasks`;
+  const save = () => handle(request(path, "POST", draft.draft, "collected-research-save"));
+  const saved = await save(); assert.equal(saved.status, 201, await saved.clone().text());
+  const command = await saved.json(); assert.equal(command.receipt.startsWork, false);
+  const replay = await save(); assert.equal(replay.status, 200);
+  assert.deepEqual((await replay.json()).receipt, command.receipt);
+  assert.equal((await handle(request(path, "POST", { ...draft.draft, title: "Changed draft" }, "collected-research-save"))).status, 409);
+  const detail = await tasks.detail(identity, project.projectId, command.receipt.jobId);
+  assert.equal(detail.instructions, draft.draft.instructions); assert.deepEqual(detail.attempts, []);
+  assert.equal((await tasks.list(identity, project.projectId)).tasks.length, 1);
+  assert.equal((await tasks.list(identity, other.project.projectId)).tasks.length, 0);
+  assert.deepEqual(urls, [source.url, "https://example.invalid/article"]); // Preparing/saving never refetches.
   urls.length = 0;
   const exhausted = make(1, 1);
   try { await assert.rejects(exhausted.collect(new AbortController().signal)); }

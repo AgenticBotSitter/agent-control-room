@@ -4,10 +4,11 @@ Baseline: public main e901c0fe986c51ee1d0c091ce2d9b211231ec29e.
 Current working branch: codex/component-batch-4, stacked on local batches 1–3.
 All six batches remain in scope; no complete batch acceptance is claimed.
 
-Latest checkpoint: workspace recovery now retains physical root identities,
-survives tested native acknowledgement gaps and participates in the existing
-restart admission inventory. Unresolved checkouts prevent lease-aware startup.
-Safe re-adoption, live worker admission and host acceptance remain unfinished.
+Latest checkpoint: saved Idea Lab discussion-to-owner-promotion and collected
+news-to-research-task paths now have integrated disposable tests. Workspace
+recovery retains physical root identities, survives tested native acknowledgement
+gaps and participates in restart admission. Unresolved checkouts prevent startup.
+Safe re-adoption, live worker admission and host/browser acceptance remain unfinished.
 The chronological entries below retain earlier failures and superseded states.
 
 1. Database/queue/native execution — pg adapter and disposable PG17 queue/restore evidence implemented; full worker recovery remains open.
@@ -736,3 +737,21 @@ This is local synthetic integration evidence, not a process-kill test, actual
 Hermes/Codex provider execution, native PostgreSQL qualification or browser
 acceptance. Those remain open. No parallel database-heavy suites are required.
 `pnpm test:ideas` and full-source `pnpm check:demo` both passed locally.
+
+### Collected news to saved research task
+
+Extended the existing disposable collection test through WebNewsService and the
+actual task HTTP handler. The selected collector/parsers and article extractor
+produce the retained source; preparation preserves the exact story digest and
+source URL, creates no task, and makes no additional retrieval. Review-only news
+can produce verification-first research, not a setup guide. Unknown versions and
+cross-project story selection are refused. Saving returns one proposed task;
+exact retry reuses its receipt, changed-body reuse conflicts, and readback retains
+the complete draft with no execution attempts. The other project remains empty.
+
+An initial test setup passed an article-specific scope to a workspace-scoped web
+service and received not_found. Correcting the fixture composition resolved it;
+no production behavior was weakened. This test uses injected network responses
+and one migrated PGlite database, not live source/provider or production evidence.
+All 17 article/research tests and full-source TypeScript checking pass with this
+extended path. No independent review of the new integration test is claimed.
