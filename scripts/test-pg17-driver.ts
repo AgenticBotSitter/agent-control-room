@@ -2,7 +2,10 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, readdir, readFile } from "node:fs/promises";
+import { SecurityStore } from "../src/security/security-store";
+import { WebProjectService } from "../src/web/v1/project-service";
+import { WebTaskService } from "../src/web/v1/task-service";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { Pool, Client } from "pg";
@@ -36,6 +39,16 @@ try {
     username: "fixture_user", password: "fixture_only", majorVersion: 17 });
   // Test-only socket override; production still permits loopback TCP only.
   const pool = new Pool({ ...options, host: socket });
+  pool.on("connect", client => {
+    const query = client.query.bind(client);
+    client.query = ((...args: unknown[]) => {
+      const result = Reflect.apply(query, undefined, args);
+      if (result && typeof result.catch === "function") return result.catch((error: { code?: string; constraint?: string }) => {
+        console.log(JSON.stringify({ fixtureSqlFailure: error.code ?? "unknown", constraint: error.constraint })); throw error;
+      });
+      return result;
+    }) as typeof client.query;
+  });
   db = bindPrivatePgPool(pool);
   pool.on("error", () => { void db?.close().catch(() => {}); });
   assert.equal((await db.client.query<{ listen_addresses: string }>("SHOW listen_addresses")).rows[0].listen_addresses, "");
@@ -69,6 +82,42 @@ try {
   assert.deepEqual(stored?.output, { review: "pending" });
   assert.equal((await boss.fetch("fixture_task")).length, 0);
   assert.equal(queueFault, false);
+  const installer = new Client({ ...options, host: socket });
+  try {
+    await installer.connect(); await installer.query("SET search_path=public");
+    for (const file of (await readdir("db/migrations")).filter(file => file.endsWith(".sql")).sort())
+      await installer.query(await readFile(join("db/migrations", file), "utf8"));
+  } finally { await installer.end(); }
+  const now = Date.parse("2026-09-08T12:00:00Z");
+  const identity = { provider: "https://fixture.invalid", subject: "fixture-owner", tokenDigest: `sha256:${"a".repeat(64)}`,
+    issuedAt: new Date(now - 60000).toISOString(), expiresAt: new Date(now + 300000).toISOString(),
+    verificationExpiresAt: new Date(now + 300000).toISOString() };
+  await db.client.query("INSERT INTO tenants(id,display_name) VALUES('tenant:pg','Synthetic')");
+  await db.client.query("INSERT INTO workspaces(id,tenant_id,display_name) VALUES('workspace:pg','tenant:pg','Synthetic')");
+  await new SecurityStore(db.client).bootstrapOwner({ tenantId: "tenant:pg", provider: identity.provider,
+    subject: identity.subject, identityId: "identity:pg", grantId: "grant:pg", displayName: "Synthetic",
+    verifiedAt: identity.issuedAt, expiresAt: identity.expiresAt, now: new Date(now).toISOString() });
+  const projects = new WebProjectService(db.client, { tenantId: "tenant:pg", workspaceId: "workspace:pg" }, () => now);
+  const input = { title: "PG17 project", summary: "Disposable integration" };
+  const created = await projects.create(identity, input, "synthetic-project-key");
+  const replay = await projects.create(identity, input, "synthetic-project-key");
+  assert.equal(replay.replayed, true); assert.deepEqual(replay.project, created.project);
+  assert.equal((await projects.list(identity)).length, 1);
+  await assert.rejects(projects.create(identity, { ...input, title: "Changed" }, "synthetic-project-key"), { message: "conflict" });
+  const scope = { tenantId: "tenant:pg", workspaceId: "workspace:pg" };
+  const tasks = new WebTaskService(db.client, scope, () => now);
+  const draft = { title: "Synthetic task", instructions: "Read the synthetic fixture only." };
+  const proposed = await tasks.propose(identity, created.project.projectId, draft, "synthetic-task-key");
+  const again = await tasks.propose(identity, created.project.projectId, draft, "synthetic-task-key");
+  assert.equal(again.replayed, true); assert.deepEqual(again.receipt, proposed.receipt);
+  assert.equal(proposed.receipt.startsWork, false);
+  const before = await tasks.detail(identity, created.project.projectId, proposed.receipt.jobId);
+  const reconstructed = bindPrivatePgPool(new Pool({ ...options, host: socket }));
+  try {
+    const freshService = new WebTaskService(reconstructed.client, scope, () => now);
+    assert.deepEqual(await freshService.detail(identity, created.project.projectId, proposed.receipt.jobId), before);
+    assert.equal((await freshService.list(identity, created.project.projectId)).tasks.length, 1);
+  } finally { await reconstructed.close(); }
   const probe = createRehearsalProbe({ host: "127.0.0.1", port: 65435, database: "postgres",
     username: "fixture_user", password: "fixture_only", majorVersion: 17 }, "a", probeOptions =>
     createPgRehearsalTransport(new Client({ ...options, host: socket }), probeOptions.onclose));

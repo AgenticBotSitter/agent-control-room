@@ -123,6 +123,18 @@ query retained the exact backend PID, and close/cluster cleanup passed. Full-sou
 TypeScript also passed. This covers one actual probe error, not all role/lock/
 transaction-timeout rehearsal gates or complete canonical queue recovery.
 
+Full 64-migration schema and actual SecurityStore/WebProjectService now execute in
+the disposable PG17 fixture. Project creation, exact idempotent replay, one-project
+listing and changed-payload conflict refusal pass. Initial attempts failed because
+the synthetic token digest omitted the required sha256: prefix; SQLSTATE/constraint
+diagnostics identified the fixture error, corrected without schema changes. All
+attempts cleaned up. These are actual project callers, not yet native task recovery.
+
+Extended the same real schema fixture to WebTaskService.propose/detail/list:
+idempotent repeat returns the exact receipt, startsWork remains false, and a fresh
+pool/service reads the exact same saved detail and one task. This checks canonical
+proposed-work persistence, not worker crash recovery or a provider result.
+
 Next: test failed/never-settling acquisitions, active query shutdown and uncertain
 commit through the existing bounded wrapper; review actual pg shutdown behavior,
 explicit connection/session options and transitive notices before wiring. Then
