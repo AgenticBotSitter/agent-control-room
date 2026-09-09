@@ -17,6 +17,7 @@ CI=true pnpm install --frozen-lockfile
 pnpm check
 pnpm check:demo
 pnpm test:database
+pnpm test:ideas
 pnpm test:demo
 pnpm test:build:demo
 pnpm test
@@ -34,6 +35,11 @@ isolated rehearsal is on macOS; Windows and Linux installation acceptance is pen
 application and runs its selected compiled integration tests with synthetic/disposable
 resources. It is not the full private-development test suite. No GitHub credentials,
 agent authentication or production database should be supplied for these checks.
+
+`pnpm test:ideas` exercises saved multi-perspective discussion, owner-only project
+promotion and replay/uncertainty handling with an injected driver and one temporary
+in-memory database. It does not connect to Hermes or Codex, and is not evidence
+that a live fleet is operational.
 
 To compile without running the selected tests:
 

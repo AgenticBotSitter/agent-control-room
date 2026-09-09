@@ -719,3 +719,20 @@ has not received a separate independent review or physical browser acceptance.
 All changes remain local. GitHub inspection found no open public PR; the owner's
 unnumbered merge approval could not be mapped safely to an older private PR.
 No merge, push, deployment or live agent invocation was performed.
+
+### Idea Lab saved workflow integration
+
+Added `pnpm test:ideas` using the actual coordinator, run/registry stores,
+deterministic synthesis engine and authenticated owner-decision service with one
+disposable migrated PGlite database. The injected driver makes eight turns across
+four perspectives/two rounds. Round two includes every prior perspective as
+untrusted excerpts within the retained prompt limit. Completion and synthesis
+alone create no project. Unknown owner promotion is refused; the authenticated
+synthetic owner promotes once, with saved session lineage and replay handling.
+Reconstructing coordinator/store objects reuses the completed run without another
+invocation. A lost-response run remains ambiguous and is not reinvoked.
+
+This is local synthetic integration evidence, not a process-kill test, actual
+Hermes/Codex provider execution, native PostgreSQL qualification or browser
+acceptance. Those remain open. No parallel database-heavy suites are required.
+`pnpm test:ideas` and full-source `pnpm check:demo` both passed locally.
