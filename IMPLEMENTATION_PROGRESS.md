@@ -322,3 +322,17 @@ record. A PGlite transaction-level injected outbox-write failure leaves no parti
 occurrence, and a subsequent normal attempt succeeds. The latter is source-level
 rollback evidence, not a native crash simulation. Calendar9/9, full-source TypeScript
 and the expanded native fixture passed; native cleanup was confirmed.
+
+Calendar compatibility is now a durable integration regression: 42 synthetic
+definition/window cases were recovered from the original comparison and their
+outputs freshly calculated with the unchanged pre-adoption source (SHA256
+7ddc7925c7e7ba5c3f80eeeedd52c827a0cfaa69572f6370ff259b68baa9099c).
+Frozen hashes cover complete ordered outputs, including occurrence IDs and UTC/
+local times, not just counts. The integrated maintained-parser calculator matches
+all42. Total calendar suite51/51 and full-source TypeScript pass. The initial
+attempt to transfer full output vectors exceeded tool output limits and was not
+saved; the successful fixture contains complete case inputs plus count/reason and
+full-output digest. No truncated historical receipt was treated as full evidence.
+
+Do not regenerate expected hashes from the candidate implementation on an upgrade.
+Changes require an explicit schedule-policy decision and migration/replay analysis.
