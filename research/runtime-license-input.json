@@ -1,0 +1,1920 @@
+{
+  "source": "pnpm@11.19.0 licenses list --prod --json",
+  "scope": "prepared local production dependency inventory; not bundle coverage",
+  "records": [
+    {
+      "name": "@asamuzakjp/css-color",
+      "versions": [
+        "3.2.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/@asamuzakjp+css-color@3.2.0/node_modules/@asamuzakjp/css-color"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "@csstools/color-helpers",
+      "versions": [
+        "5.1.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/@csstools+color-helpers@5.1.0/node_modules/@csstools/color-helpers"
+      ],
+      "license": "MIT-0"
+    },
+    {
+      "name": "@csstools/css-calc",
+      "versions": [
+        "2.1.4"
+      ],
+      "paths": [
+        "node_modules/.pnpm/@csstools+css-calc@2.1.4_@csstools+css-parser-algorithms@3.0.5_@csstools+css-tokenizer@_e8d5cb57048a11d39451107410ea18b6/node_modules/@csstools/css-calc"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "@csstools/css-color-parser",
+      "versions": [
+        "3.1.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/@csstools+css-color-parser@3.1.0_@csstools+css-parser-algorithms@3.0.5_@csstools+css-to_ac3eaa9e6357e2e6fe2577d663b974a1/node_modules/@csstools/css-color-parser"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "@csstools/css-parser-algorithms",
+      "versions": [
+        "3.0.5"
+      ],
+      "paths": [
+        "node_modules/.pnpm/@csstools+css-parser-algorithms@3.0.5_@csstools+css-tokenizer@3.0.4/node_modules/@csstools/css-parser-algorithms"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "@csstools/css-tokenizer",
+      "versions": [
+        "3.0.4"
+      ],
+      "paths": [
+        "node_modules/.pnpm/@csstools+css-tokenizer@3.0.4/node_modules/@csstools/css-tokenizer"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "@mozilla/readability",
+      "versions": [
+        "0.6.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/@mozilla+readability@0.6.0/node_modules/@mozilla/readability"
+      ],
+      "license": "Apache-2.0"
+    },
+    {
+      "name": "@nodable/entities",
+      "versions": [
+        "3.0.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/@nodable+entities@3.0.0/node_modules/@nodable/entities"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "@types/debug",
+      "versions": [
+        "4.1.13"
+      ],
+      "paths": [
+        "node_modules/.pnpm/@types+debug@4.1.13/node_modules/@types/debug"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "@types/estree",
+      "versions": [
+        "1.0.9"
+      ],
+      "paths": [
+        "node_modules/.pnpm/@types+estree@1.0.9/node_modules/@types/estree"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "@types/estree-jsx",
+      "versions": [
+        "1.0.5"
+      ],
+      "paths": [
+        "node_modules/.pnpm/@types+estree-jsx@1.0.5/node_modules/@types/estree-jsx"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "@types/hast",
+      "versions": [
+        "3.0.5"
+      ],
+      "paths": [
+        "node_modules/.pnpm/@types+hast@3.0.5/node_modules/@types/hast"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "@types/mdast",
+      "versions": [
+        "4.0.4"
+      ],
+      "paths": [
+        "node_modules/.pnpm/@types+mdast@4.0.4/node_modules/@types/mdast"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "@types/ms",
+      "versions": [
+        "2.1.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/@types+ms@2.1.0/node_modules/@types/ms"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "@types/react",
+      "versions": [
+        "19.2.14"
+      ],
+      "paths": [
+        "node_modules/.pnpm/@types+react@19.2.14/node_modules/@types/react"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "@types/unist",
+      "versions": [
+        "2.0.11",
+        "3.0.3"
+      ],
+      "paths": [
+        "node_modules/.pnpm/@types+unist@2.0.11/node_modules/@types/unist",
+        "node_modules/.pnpm/@types+unist@3.0.3/node_modules/@types/unist"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "@ungap/structured-clone",
+      "versions": [
+        "1.4.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/@ungap+structured-clone@1.4.0/node_modules/@ungap/structured-clone"
+      ],
+      "license": "ISC"
+    },
+    {
+      "name": "agent-base",
+      "versions": [
+        "7.1.4"
+      ],
+      "paths": [
+        "node_modules/.pnpm/agent-base@7.1.4/node_modules/agent-base"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "anynum",
+      "versions": [
+        "1.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/anynum@1.0.1/node_modules/anynum"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "bail",
+      "versions": [
+        "2.0.2"
+      ],
+      "paths": [
+        "node_modules/.pnpm/bail@2.0.2/node_modules/bail"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "buffer-equal-constant-time",
+      "versions": [
+        "1.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/buffer-equal-constant-time@1.0.1/node_modules/buffer-equal-constant-time"
+      ],
+      "license": "BSD-3-Clause"
+    },
+    {
+      "name": "ccount",
+      "versions": [
+        "2.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/ccount@2.0.1/node_modules/ccount"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "character-entities",
+      "versions": [
+        "2.0.2"
+      ],
+      "paths": [
+        "node_modules/.pnpm/character-entities@2.0.2/node_modules/character-entities"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "character-entities-html4",
+      "versions": [
+        "2.1.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/character-entities-html4@2.1.0/node_modules/character-entities-html4"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "character-entities-legacy",
+      "versions": [
+        "3.0.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/character-entities-legacy@3.0.0/node_modules/character-entities-legacy"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "character-reference-invalid",
+      "versions": [
+        "2.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/character-reference-invalid@2.0.1/node_modules/character-reference-invalid"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "comma-separated-tokens",
+      "versions": [
+        "2.0.3"
+      ],
+      "paths": [
+        "node_modules/.pnpm/comma-separated-tokens@2.0.3/node_modules/comma-separated-tokens"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "cron-parser",
+      "versions": [
+        "5.10.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/cron-parser@5.10.0/node_modules/cron-parser"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "cssstyle",
+      "versions": [
+        "4.6.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/cssstyle@4.6.0/node_modules/cssstyle"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "csstype",
+      "versions": [
+        "3.2.3"
+      ],
+      "paths": [
+        "node_modules/.pnpm/csstype@3.2.3/node_modules/csstype"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "data-urls",
+      "versions": [
+        "5.0.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/data-urls@5.0.0/node_modules/data-urls"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "debug",
+      "versions": [
+        "4.4.3"
+      ],
+      "paths": [
+        "node_modules/.pnpm/debug@4.4.3_supports-color@10.2.2/node_modules/debug"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "decimal.js",
+      "versions": [
+        "10.6.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/decimal.js@10.6.0/node_modules/decimal.js"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "decode-named-character-reference",
+      "versions": [
+        "1.3.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/decode-named-character-reference@1.3.0/node_modules/decode-named-character-reference"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "dequal",
+      "versions": [
+        "2.0.3"
+      ],
+      "paths": [
+        "node_modules/.pnpm/dequal@2.0.3/node_modules/dequal"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "devlop",
+      "versions": [
+        "1.1.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/devlop@1.1.0/node_modules/devlop"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "ecdsa-sig-formatter",
+      "versions": [
+        "1.0.11"
+      ],
+      "paths": [
+        "node_modules/.pnpm/ecdsa-sig-formatter@1.0.11/node_modules/ecdsa-sig-formatter"
+      ],
+      "license": "Apache-2.0"
+    },
+    {
+      "name": "entities",
+      "versions": [
+        "2.2.0",
+        "6.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/entities@2.2.0/node_modules/entities",
+        "node_modules/.pnpm/entities@6.0.1/node_modules/entities"
+      ],
+      "license": "BSD-2-Clause"
+    },
+    {
+      "name": "escape-string-regexp",
+      "versions": [
+        "5.0.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/escape-string-regexp@5.0.0/node_modules/escape-string-regexp"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "estree-util-is-identifier-name",
+      "versions": [
+        "3.0.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/estree-util-is-identifier-name@3.0.0/node_modules/estree-util-is-identifier-name"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "extend",
+      "versions": [
+        "3.0.2"
+      ],
+      "paths": [
+        "node_modules/.pnpm/extend@3.0.2/node_modules/extend"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "fast-xml-builder",
+      "versions": [
+        "1.3.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/fast-xml-builder@1.3.1/node_modules/fast-xml-builder"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "fast-xml-parser",
+      "versions": [
+        "5.11.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/fast-xml-parser@5.11.0/node_modules/fast-xml-parser"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "hast-util-to-jsx-runtime",
+      "versions": [
+        "2.3.6"
+      ],
+      "paths": [
+        "node_modules/.pnpm/hast-util-to-jsx-runtime@2.3.6_supports-color@10.2.2/node_modules/hast-util-to-jsx-runtime"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "hast-util-whitespace",
+      "versions": [
+        "3.0.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/hast-util-whitespace@3.0.0/node_modules/hast-util-whitespace"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "html-encoding-sniffer",
+      "versions": [
+        "4.0.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/html-encoding-sniffer@4.0.0/node_modules/html-encoding-sniffer"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "html-url-attributes",
+      "versions": [
+        "3.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/html-url-attributes@3.0.1/node_modules/html-url-attributes"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "http-proxy-agent",
+      "versions": [
+        "7.0.2"
+      ],
+      "paths": [
+        "node_modules/.pnpm/http-proxy-agent@7.0.2_supports-color@10.2.2/node_modules/http-proxy-agent"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "https-proxy-agent",
+      "versions": [
+        "7.0.6"
+      ],
+      "paths": [
+        "node_modules/.pnpm/https-proxy-agent@7.0.6_supports-color@10.2.2/node_modules/https-proxy-agent"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "iconv-lite",
+      "versions": [
+        "0.6.3"
+      ],
+      "paths": [
+        "node_modules/.pnpm/iconv-lite@0.6.3/node_modules/iconv-lite"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "inline-style-parser",
+      "versions": [
+        "0.2.7"
+      ],
+      "paths": [
+        "node_modules/.pnpm/inline-style-parser@0.2.7/node_modules/inline-style-parser"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "is-alphabetical",
+      "versions": [
+        "2.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/is-alphabetical@2.0.1/node_modules/is-alphabetical"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "is-alphanumerical",
+      "versions": [
+        "2.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/is-alphanumerical@2.0.1/node_modules/is-alphanumerical"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "is-decimal",
+      "versions": [
+        "2.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/is-decimal@2.0.1/node_modules/is-decimal"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "is-hexadecimal",
+      "versions": [
+        "2.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/is-hexadecimal@2.0.1/node_modules/is-hexadecimal"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "is-plain-obj",
+      "versions": [
+        "4.1.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/is-plain-obj@4.1.0/node_modules/is-plain-obj"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "is-potential-custom-element-name",
+      "versions": [
+        "1.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/is-potential-custom-element-name@1.0.1/node_modules/is-potential-custom-element-name"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "is-unsafe",
+      "versions": [
+        "2.0.2"
+      ],
+      "paths": [
+        "node_modules/.pnpm/is-unsafe@2.0.2/node_modules/is-unsafe"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "jsdom",
+      "versions": [
+        "26.1.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/jsdom@26.1.0_supports-color@10.2.2/node_modules/jsdom"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "jsonwebtoken",
+      "versions": [
+        "9.0.3"
+      ],
+      "paths": [
+        "node_modules/.pnpm/jsonwebtoken@9.0.3/node_modules/jsonwebtoken"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "jwa",
+      "versions": [
+        "2.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/jwa@2.0.1/node_modules/jwa"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "jws",
+      "versions": [
+        "4.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/jws@4.0.1/node_modules/jws"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "lodash.includes",
+      "versions": [
+        "4.3.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/lodash.includes@4.3.0/node_modules/lodash.includes"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "lodash.isboolean",
+      "versions": [
+        "3.0.3"
+      ],
+      "paths": [
+        "node_modules/.pnpm/lodash.isboolean@3.0.3/node_modules/lodash.isboolean"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "lodash.isinteger",
+      "versions": [
+        "4.0.4"
+      ],
+      "paths": [
+        "node_modules/.pnpm/lodash.isinteger@4.0.4/node_modules/lodash.isinteger"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "lodash.isnumber",
+      "versions": [
+        "3.0.3"
+      ],
+      "paths": [
+        "node_modules/.pnpm/lodash.isnumber@3.0.3/node_modules/lodash.isnumber"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "lodash.isplainobject",
+      "versions": [
+        "4.0.6"
+      ],
+      "paths": [
+        "node_modules/.pnpm/lodash.isplainobject@4.0.6/node_modules/lodash.isplainobject"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "lodash.isstring",
+      "versions": [
+        "4.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/lodash.isstring@4.0.1/node_modules/lodash.isstring"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "lodash.once",
+      "versions": [
+        "4.1.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/lodash.once@4.1.1/node_modules/lodash.once"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "longest-streak",
+      "versions": [
+        "3.1.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/longest-streak@3.1.0/node_modules/longest-streak"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "lru-cache",
+      "versions": [
+        "10.4.3"
+      ],
+      "paths": [
+        "node_modules/.pnpm/lru-cache@10.4.3/node_modules/lru-cache"
+      ],
+      "license": "ISC"
+    },
+    {
+      "name": "luxon",
+      "versions": [
+        "3.7.2"
+      ],
+      "paths": [
+        "node_modules/.pnpm/luxon@3.7.2/node_modules/luxon"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "markdown-table",
+      "versions": [
+        "3.0.4"
+      ],
+      "paths": [
+        "node_modules/.pnpm/markdown-table@3.0.4/node_modules/markdown-table"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "mdast-util-find-and-replace",
+      "versions": [
+        "3.0.2"
+      ],
+      "paths": [
+        "node_modules/.pnpm/mdast-util-find-and-replace@3.0.2/node_modules/mdast-util-find-and-replace"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "mdast-util-from-markdown",
+      "versions": [
+        "2.0.3"
+      ],
+      "paths": [
+        "node_modules/.pnpm/mdast-util-from-markdown@2.0.3_supports-color@10.2.2/node_modules/mdast-util-from-markdown"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "mdast-util-gfm",
+      "versions": [
+        "3.1.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/mdast-util-gfm@3.1.0_supports-color@10.2.2/node_modules/mdast-util-gfm"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "mdast-util-gfm-autolink-literal",
+      "versions": [
+        "2.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/mdast-util-gfm-autolink-literal@2.0.1/node_modules/mdast-util-gfm-autolink-literal"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "mdast-util-gfm-footnote",
+      "versions": [
+        "2.1.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/mdast-util-gfm-footnote@2.1.0_supports-color@10.2.2/node_modules/mdast-util-gfm-footnote"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "mdast-util-gfm-strikethrough",
+      "versions": [
+        "2.0.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/mdast-util-gfm-strikethrough@2.0.0_supports-color@10.2.2/node_modules/mdast-util-gfm-strikethrough"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "mdast-util-gfm-table",
+      "versions": [
+        "2.0.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/mdast-util-gfm-table@2.0.0_supports-color@10.2.2/node_modules/mdast-util-gfm-table"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "mdast-util-gfm-task-list-item",
+      "versions": [
+        "2.0.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/mdast-util-gfm-task-list-item@2.0.0_supports-color@10.2.2/node_modules/mdast-util-gfm-task-list-item"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "mdast-util-mdx-expression",
+      "versions": [
+        "2.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/mdast-util-mdx-expression@2.0.1_supports-color@10.2.2/node_modules/mdast-util-mdx-expression"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "mdast-util-mdx-jsx",
+      "versions": [
+        "3.2.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/mdast-util-mdx-jsx@3.2.0_supports-color@10.2.2/node_modules/mdast-util-mdx-jsx"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "mdast-util-mdxjs-esm",
+      "versions": [
+        "2.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/mdast-util-mdxjs-esm@2.0.1_supports-color@10.2.2/node_modules/mdast-util-mdxjs-esm"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "mdast-util-phrasing",
+      "versions": [
+        "4.1.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/mdast-util-phrasing@4.1.0/node_modules/mdast-util-phrasing"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "mdast-util-to-hast",
+      "versions": [
+        "13.2.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "mdast-util-to-markdown",
+      "versions": [
+        "2.1.2"
+      ],
+      "paths": [
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "mdast-util-to-string",
+      "versions": [
+        "4.0.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/mdast-util-to-string@4.0.0/node_modules/mdast-util-to-string"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "micromark",
+      "versions": [
+        "4.0.2"
+      ],
+      "paths": [
+        "node_modules/.pnpm/micromark@4.0.2_supports-color@10.2.2/node_modules/micromark"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "micromark-core-commonmark",
+      "versions": [
+        "2.0.3"
+      ],
+      "paths": [
+        "node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "micromark-extension-gfm",
+      "versions": [
+        "3.0.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/micromark-extension-gfm@3.0.0/node_modules/micromark-extension-gfm"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "micromark-extension-gfm-autolink-literal",
+      "versions": [
+        "2.1.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/micromark-extension-gfm-autolink-literal@2.1.0/node_modules/micromark-extension-gfm-autolink-literal"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "micromark-extension-gfm-footnote",
+      "versions": [
+        "2.1.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/micromark-extension-gfm-footnote@2.1.0/node_modules/micromark-extension-gfm-footnote"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "micromark-extension-gfm-strikethrough",
+      "versions": [
+        "2.1.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/micromark-extension-gfm-strikethrough@2.1.0/node_modules/micromark-extension-gfm-strikethrough"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "micromark-extension-gfm-table",
+      "versions": [
+        "2.1.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/micromark-extension-gfm-table@2.1.1/node_modules/micromark-extension-gfm-table"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "micromark-extension-gfm-tagfilter",
+      "versions": [
+        "2.0.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/micromark-extension-gfm-tagfilter@2.0.0/node_modules/micromark-extension-gfm-tagfilter"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "micromark-extension-gfm-task-list-item",
+      "versions": [
+        "2.1.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/micromark-extension-gfm-task-list-item@2.1.0/node_modules/micromark-extension-gfm-task-list-item"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "micromark-factory-destination",
+      "versions": [
+        "2.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/micromark-factory-destination@2.0.1/node_modules/micromark-factory-destination"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "micromark-factory-label",
+      "versions": [
+        "2.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/micromark-factory-label@2.0.1/node_modules/micromark-factory-label"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "micromark-factory-space",
+      "versions": [
+        "2.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/micromark-factory-space@2.0.1/node_modules/micromark-factory-space"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "micromark-factory-title",
+      "versions": [
+        "2.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/micromark-factory-title@2.0.1/node_modules/micromark-factory-title"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "micromark-factory-whitespace",
+      "versions": [
+        "2.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/micromark-factory-whitespace@2.0.1/node_modules/micromark-factory-whitespace"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "micromark-util-character",
+      "versions": [
+        "2.1.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/micromark-util-character@2.1.1/node_modules/micromark-util-character"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "micromark-util-chunked",
+      "versions": [
+        "2.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/micromark-util-chunked@2.0.1/node_modules/micromark-util-chunked"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "micromark-util-classify-character",
+      "versions": [
+        "2.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/micromark-util-classify-character@2.0.1/node_modules/micromark-util-classify-character"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "micromark-util-combine-extensions",
+      "versions": [
+        "2.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/micromark-util-combine-extensions@2.0.1/node_modules/micromark-util-combine-extensions"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "micromark-util-decode-numeric-character-reference",
+      "versions": [
+        "2.0.2"
+      ],
+      "paths": [
+        "node_modules/.pnpm/micromark-util-decode-numeric-character-reference@2.0.2/node_modules/micromark-util-decode-numeric-character-reference"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "micromark-util-decode-string",
+      "versions": [
+        "2.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/micromark-util-decode-string@2.0.1/node_modules/micromark-util-decode-string"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "micromark-util-encode",
+      "versions": [
+        "2.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/micromark-util-encode@2.0.1/node_modules/micromark-util-encode"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "micromark-util-html-tag-name",
+      "versions": [
+        "2.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/micromark-util-html-tag-name@2.0.1/node_modules/micromark-util-html-tag-name"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "micromark-util-normalize-identifier",
+      "versions": [
+        "2.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/micromark-util-normalize-identifier@2.0.1/node_modules/micromark-util-normalize-identifier"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "micromark-util-resolve-all",
+      "versions": [
+        "2.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/micromark-util-resolve-all@2.0.1/node_modules/micromark-util-resolve-all"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "micromark-util-sanitize-uri",
+      "versions": [
+        "2.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/micromark-util-sanitize-uri@2.0.1/node_modules/micromark-util-sanitize-uri"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "micromark-util-subtokenize",
+      "versions": [
+        "2.1.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/micromark-util-subtokenize@2.1.0/node_modules/micromark-util-subtokenize"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "micromark-util-symbol",
+      "versions": [
+        "2.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/micromark-util-symbol@2.0.1/node_modules/micromark-util-symbol"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "micromark-util-types",
+      "versions": [
+        "2.0.2"
+      ],
+      "paths": [
+        "node_modules/.pnpm/micromark-util-types@2.0.2/node_modules/micromark-util-types"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "ms",
+      "versions": [
+        "2.1.3"
+      ],
+      "paths": [
+        "node_modules/.pnpm/ms@2.1.3/node_modules/ms"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "non-error",
+      "versions": [
+        "0.1.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/non-error@0.1.0/node_modules/non-error"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "nwsapi",
+      "versions": [
+        "2.2.27"
+      ],
+      "paths": [
+        "node_modules/.pnpm/nwsapi@2.2.27/node_modules/nwsapi"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "parse-entities",
+      "versions": [
+        "4.0.2"
+      ],
+      "paths": [
+        "node_modules/.pnpm/parse-entities@4.0.2/node_modules/parse-entities"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "parse5",
+      "versions": [
+        "7.3.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/parse5@7.3.0/node_modules/parse5"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "path-expression-matcher",
+      "versions": [
+        "1.6.2"
+      ],
+      "paths": [
+        "node_modules/.pnpm/path-expression-matcher@1.6.2/node_modules/path-expression-matcher"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "pg",
+      "versions": [
+        "8.23.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/pg@8.23.0/node_modules/pg"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "pg-boss",
+      "versions": [
+        "12.30.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/pg-boss@12.30.0/node_modules/pg-boss"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "pg-cloudflare",
+      "versions": [
+        "1.4.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/pg-cloudflare@1.4.0/node_modules/pg-cloudflare"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "pg-connection-string",
+      "versions": [
+        "2.14.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/pg-connection-string@2.14.0/node_modules/pg-connection-string"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "pg-int8",
+      "versions": [
+        "1.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/pg-int8@1.0.1/node_modules/pg-int8"
+      ],
+      "license": "ISC"
+    },
+    {
+      "name": "pg-pool",
+      "versions": [
+        "3.14.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/pg-pool@3.14.0_pg@8.23.0/node_modules/pg-pool"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "pg-protocol",
+      "versions": [
+        "1.16.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/pg-protocol@1.16.0/node_modules/pg-protocol"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "pg-types",
+      "versions": [
+        "2.2.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/pg-types@2.2.0/node_modules/pg-types"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "pgpass",
+      "versions": [
+        "1.0.5"
+      ],
+      "paths": [
+        "node_modules/.pnpm/pgpass@1.0.5/node_modules/pgpass"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "postgres-array",
+      "versions": [
+        "2.0.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/postgres-array@2.0.0/node_modules/postgres-array"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "postgres-bytea",
+      "versions": [
+        "1.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/postgres-bytea@1.0.1/node_modules/postgres-bytea"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "postgres-date",
+      "versions": [
+        "1.0.7"
+      ],
+      "paths": [
+        "node_modules/.pnpm/postgres-date@1.0.7/node_modules/postgres-date"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "postgres-interval",
+      "versions": [
+        "1.2.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/postgres-interval@1.2.0/node_modules/postgres-interval"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "property-information",
+      "versions": [
+        "7.2.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/property-information@7.2.0/node_modules/property-information"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "punycode",
+      "versions": [
+        "2.3.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/punycode@2.3.1/node_modules/punycode"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "react",
+      "versions": [
+        "19.2.6"
+      ],
+      "paths": [
+        "node_modules/.pnpm/react@19.2.6/node_modules/react"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "react-dom",
+      "versions": [
+        "19.2.6"
+      ],
+      "paths": [
+        "node_modules/.pnpm/react-dom@19.2.6_react@19.2.6/node_modules/react-dom"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "react-markdown",
+      "versions": [
+        "10.1.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/react-markdown@10.1.0_@types+react@19.2.14_react@19.2.6_supports-color@10.2.2/node_modules/react-markdown"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "remark-gfm",
+      "versions": [
+        "4.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/remark-gfm@4.0.1_supports-color@10.2.2/node_modules/remark-gfm"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "remark-parse",
+      "versions": [
+        "11.0.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/remark-parse@11.0.0_supports-color@10.2.2/node_modules/remark-parse"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "remark-rehype",
+      "versions": [
+        "11.1.2"
+      ],
+      "paths": [
+        "node_modules/.pnpm/remark-rehype@11.1.2/node_modules/remark-rehype"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "remark-stringify",
+      "versions": [
+        "11.0.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/remark-stringify@11.0.0/node_modules/remark-stringify"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "rrweb-cssom",
+      "versions": [
+        "0.8.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/rrweb-cssom@0.8.0/node_modules/rrweb-cssom"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "rss-parser",
+      "versions": [
+        "3.13.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/rss-parser@3.13.0/node_modules/rss-parser"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "safe-buffer",
+      "versions": [
+        "5.2.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/safe-buffer@5.2.1/node_modules/safe-buffer"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "safer-buffer",
+      "versions": [
+        "2.1.2"
+      ],
+      "paths": [
+        "node_modules/.pnpm/safer-buffer@2.1.2/node_modules/safer-buffer"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "sax",
+      "versions": [
+        "1.6.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/sax@1.6.1/node_modules/sax"
+      ],
+      "license": "BlueOak-1.0.0"
+    },
+    {
+      "name": "saxes",
+      "versions": [
+        "6.0.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/saxes@6.0.0/node_modules/saxes"
+      ],
+      "license": "ISC"
+    },
+    {
+      "name": "scheduler",
+      "versions": [
+        "0.27.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/scheduler@0.27.0/node_modules/scheduler"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "semver",
+      "versions": [
+        "7.8.5"
+      ],
+      "paths": [
+        "node_modules/.pnpm/semver@7.8.5/node_modules/semver"
+      ],
+      "license": "ISC"
+    },
+    {
+      "name": "serialize-error",
+      "versions": [
+        "13.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/serialize-error@13.0.1/node_modules/serialize-error"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "space-separated-tokens",
+      "versions": [
+        "2.0.2"
+      ],
+      "paths": [
+        "node_modules/.pnpm/space-separated-tokens@2.0.2/node_modules/space-separated-tokens"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "split2",
+      "versions": [
+        "4.2.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/split2@4.2.0/node_modules/split2"
+      ],
+      "license": "ISC"
+    },
+    {
+      "name": "stringify-entities",
+      "versions": [
+        "4.0.4"
+      ],
+      "paths": [
+        "node_modules/.pnpm/stringify-entities@4.0.4/node_modules/stringify-entities"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "strnum",
+      "versions": [
+        "2.4.2"
+      ],
+      "paths": [
+        "node_modules/.pnpm/strnum@2.4.2/node_modules/strnum"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "style-to-js",
+      "versions": [
+        "1.1.21"
+      ],
+      "paths": [
+        "node_modules/.pnpm/style-to-js@1.1.21/node_modules/style-to-js"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "style-to-object",
+      "versions": [
+        "1.0.14"
+      ],
+      "paths": [
+        "node_modules/.pnpm/style-to-object@1.0.14/node_modules/style-to-object"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "supports-color",
+      "versions": [
+        "10.2.2"
+      ],
+      "paths": [
+        "node_modules/.pnpm/supports-color@10.2.2/node_modules/supports-color"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "symbol-tree",
+      "versions": [
+        "3.2.4"
+      ],
+      "paths": [
+        "node_modules/.pnpm/symbol-tree@3.2.4/node_modules/symbol-tree"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "tagged-tag",
+      "versions": [
+        "1.0.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/tagged-tag@1.0.0/node_modules/tagged-tag"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "tldts",
+      "versions": [
+        "6.1.86"
+      ],
+      "paths": [
+        "node_modules/.pnpm/tldts@6.1.86/node_modules/tldts"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "tldts-core",
+      "versions": [
+        "6.1.86"
+      ],
+      "paths": [
+        "node_modules/.pnpm/tldts-core@6.1.86/node_modules/tldts-core"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "tough-cookie",
+      "versions": [
+        "5.1.2"
+      ],
+      "paths": [
+        "node_modules/.pnpm/tough-cookie@5.1.2/node_modules/tough-cookie"
+      ],
+      "license": "BSD-3-Clause"
+    },
+    {
+      "name": "tr46",
+      "versions": [
+        "5.1.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/tr46@5.1.1/node_modules/tr46"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "trim-lines",
+      "versions": [
+        "3.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/trim-lines@3.0.1/node_modules/trim-lines"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "trough",
+      "versions": [
+        "2.2.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/trough@2.2.0/node_modules/trough"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "type-fest",
+      "versions": [
+        "5.9.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/type-fest@5.9.0/node_modules/type-fest"
+      ],
+      "license": "(MIT OR CC0-1.0)"
+    },
+    {
+      "name": "unified",
+      "versions": [
+        "11.0.5"
+      ],
+      "paths": [
+        "node_modules/.pnpm/unified@11.0.5/node_modules/unified"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "unist-util-is",
+      "versions": [
+        "6.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/unist-util-is@6.0.1/node_modules/unist-util-is"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "unist-util-position",
+      "versions": [
+        "5.0.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/unist-util-position@5.0.0/node_modules/unist-util-position"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "unist-util-stringify-position",
+      "versions": [
+        "4.0.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/unist-util-stringify-position@4.0.0/node_modules/unist-util-stringify-position"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "unist-util-visit",
+      "versions": [
+        "5.1.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/unist-util-visit@5.1.0/node_modules/unist-util-visit"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "unist-util-visit-parents",
+      "versions": [
+        "6.0.2"
+      ],
+      "paths": [
+        "node_modules/.pnpm/unist-util-visit-parents@6.0.2/node_modules/unist-util-visit-parents"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "vfile",
+      "versions": [
+        "6.0.3"
+      ],
+      "paths": [
+        "node_modules/.pnpm/vfile@6.0.3/node_modules/vfile"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "vfile-message",
+      "versions": [
+        "4.0.3"
+      ],
+      "paths": [
+        "node_modules/.pnpm/vfile-message@4.0.3/node_modules/vfile-message"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "w3c-xmlserializer",
+      "versions": [
+        "5.0.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/w3c-xmlserializer@5.0.0/node_modules/w3c-xmlserializer"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "webidl-conversions",
+      "versions": [
+        "7.0.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/webidl-conversions@7.0.0/node_modules/webidl-conversions"
+      ],
+      "license": "BSD-2-Clause"
+    },
+    {
+      "name": "whatwg-encoding",
+      "versions": [
+        "3.1.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/whatwg-encoding@3.1.1/node_modules/whatwg-encoding"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "whatwg-mimetype",
+      "versions": [
+        "4.0.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/whatwg-mimetype@4.0.0/node_modules/whatwg-mimetype"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "whatwg-url",
+      "versions": [
+        "14.2.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/whatwg-url@14.2.0/node_modules/whatwg-url"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "ws",
+      "versions": [
+        "8.18.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/ws@8.18.0/node_modules/ws"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "xml-name-validator",
+      "versions": [
+        "5.0.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/xml-name-validator@5.0.0/node_modules/xml-name-validator"
+      ],
+      "license": "Apache-2.0"
+    },
+    {
+      "name": "xml-naming",
+      "versions": [
+        "0.3.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/xml-naming@0.3.0/node_modules/xml-naming"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "xml2js",
+      "versions": [
+        "0.5.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/xml2js@0.5.0/node_modules/xml2js"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "xmlbuilder",
+      "versions": [
+        "11.0.1"
+      ],
+      "paths": [
+        "node_modules/.pnpm/xmlbuilder@11.0.1/node_modules/xmlbuilder"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "xmlchars",
+      "versions": [
+        "2.2.0"
+      ],
+      "paths": [
+        "node_modules/.pnpm/xmlchars@2.2.0/node_modules/xmlchars"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "xtend",
+      "versions": [
+        "4.0.2"
+      ],
+      "paths": [
+        "node_modules/.pnpm/xtend@4.0.2/node_modules/xtend"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "zod",
+      "versions": [
+        "4.1.12"
+      ],
+      "paths": [
+        "node_modules/.pnpm/zod@4.1.12/node_modules/zod"
+      ],
+      "license": "MIT"
+    },
+    {
+      "name": "zwitch",
+      "versions": [
+        "2.0.4"
+      ],
+      "paths": [
+        "node_modules/.pnpm/zwitch@2.0.4/node_modules/zwitch"
+      ],
+      "license": "MIT"
+    }
+  ]
+}

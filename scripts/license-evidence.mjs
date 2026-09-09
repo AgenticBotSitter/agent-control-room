@@ -26,6 +26,7 @@ export function collectLicenseEvidence(packageDirectory, modulesDirectory) {
     return file;
   };
   const errors = [];
+  let totalBytes = 0;
   const collector = new LicenseEvidenceGatherer({ fs: {
     readdirSync(dir) {
       if (dir !== directory) throw new Error('license_directory_mismatch');
@@ -34,9 +35,18 @@ export function collectLicenseEvidence(packageDirectory, modulesDirectory) {
       return names;
     },
     statSync: file => fs.lstatSync(check(file)),
-    readFileSync: file => fs.readFileSync(check(file)),
+    readFileSync(file) {
+      check(file);
+      totalBytes += fs.lstatSync(file).size;
+      if (totalBytes > 8_000_000) throw new Error('license_total_bytes_exceeded');
+      return fs.readFileSync(file);
+    },
   } });
-  const attachments = [...collector.getFileAttachments(directory, error => errors.push(error))];
+  const attachments = [];
+  for (const attachment of collector.getFileAttachments(directory, error => errors.push(error))) {
+    if (attachments.length >= 64) throw new Error('license_attachment_count_exceeded');
+    attachments.push(attachment);
+  }
   if (errors.length) throw new Error('license_collection_incomplete');
   return attachments.map(attachment => {
     const original = fs.readFileSync(check(attachment.filePath));

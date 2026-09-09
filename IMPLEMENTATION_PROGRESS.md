@@ -6,6 +6,17 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+License collector tests now preserve multiple upstream attachments and reject
+symlinks, oversized files and cumulative input above 8 MB; output count is capped
+at 64 attachments per package. Original CycloneDX LICENSE/NOTICE equality is also
+checked. Three notice tests pass; owned temporary fixtures are removed afterward.
+The actual pnpm production inventory now returns 191 package records, retained
+with repository-relative paths in research/runtime-license-input.json. This replaces
+the older research cohort's size as an integration input, not as proof of collected
+text coverage. Default-store lookup failed; the explicit configuration form read
+the existing store successfully, without reinstalling or downloading. Graph-to-text
+identity/hash binding and current missing-text reconciliation remain next.
+
 DR-04 implementation begins with the actual pinned CycloneDX 10.2.0 public
 LicenseEvidenceGatherer, not a replacement filename walker. A build-only adapter
 confines reads to immediate regular files under an installed package, bounds
