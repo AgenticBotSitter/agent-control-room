@@ -6,6 +6,16 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+Latest checkpoint at `9a333f1`: the complete `pnpm test:components` command exits
+zero after the cancellation correction. Independent review found no concrete
+issue and reran both connector-readiness tests successfully. Root accepts the
+local correction, not physical network cancellation/cleanup qualification.
+Current focused counts are queue/connector 55, Codex read recovery 11 and result
+reader 8. IMPLEMENTATION_PACKAGES.md and COMPONENT_DECISIONS.md now reflect these
+implemented portions and the missing Codex-specific durable admission binding.
+Earlier entries below retain historical counts and pending-review states; this
+checkpoint supersedes those states only for the explicitly reviewed corrections.
+
 Independent lifecycle review at 012fbbc found reentrant cancellation in the
 admission callback could pass the pre-callback signal check and reach acquisition
 or publication. Signal/deadline are now rechecked after that callback, including

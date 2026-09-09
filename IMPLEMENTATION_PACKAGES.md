@@ -1,7 +1,7 @@
 # Settled-component implementation packages
 
 Implementation status refreshed against local branch `codex/component-batch-4`
-at `6502bff`. These updates are not yet published or available from public main.
+at `9a333f1`. These updates are not yet published or available from public main.
 Substantial work, not automatic assignments. Read
 [component decisions](COMPONENT_DECISIONS.md), [setup](SETUP.md) and
 [contribution rules](CONTRIBUTING.md). Ask for maintainer assignment first.
@@ -17,7 +17,7 @@ contributors; a local branch name alone is not an available public starting poin
 
 | Package | Implemented locally; do not duplicate | Remaining useful work | Current local verification |
 | --- | --- | --- | --- |
-| P1 project/results | Markdown renderer, protected result identity checks, task-switch isolation, clear-on-reauthorization, retained draft state tests | Accessible keyboard/mobile/browser acceptance, project history/archive/reopen workflow, separately admitted attachments | `pnpm test:results` (7 tests); physical browser acceptance remains open |
+| P1 project/results | Markdown renderer, protected result identity checks, task-switch isolation, clear-on-reauthorization, retained draft state tests, cancelled stale reads | Accessible keyboard/mobile/browser acceptance, project history/archive/reopen workflow, separately admitted attachments | `pnpm test:results` (8 tests); physical browser acceptance remains open |
 | P2 database | node-postgres adapter and pool lifecycle; previous native PG17 transaction/restore evidence; Postgres.js removal | Real queue/native recovery, release-bound operational configuration and deployment acceptance | `pnpm test:database`, `pnpm test:queue`; see POSTGRES_RESTORE_EVIDENCE.md |
 | P3 attribution | All 14 direct runtime license texts and pinned-version/byte checks | Selected CycloneDX gatherer plus pnpm graph integration; exact transitive, bundle, asset and external-runtime notice reconciliation | `pnpm test:notices`; not a full SBOM or bundle clearance |
 | P4 token/calendar | jsonwebtoken policy adapter; cron-parser/Luxon integration and occurrence persistence | Automatic dispatch/recovery, live login acceptance and release integration; no second parser/verifier | `pnpm test:access`, `pnpm test:calendar` |
@@ -28,6 +28,12 @@ Additional core work is not hidden by these contributor packages: real Idea Lab
 participants and crash recovery (DR-01); exact-ID native connector recovery and
 artifact admission (DR-17); owner key custody/consent/socket acceptance (DR-16);
 independent checkpoint placement and supported split-commit recovery (DR-15).
+For DR-17, the exact-ID projection, one-shot JSONL profile and owned read lifecycle
+are already implemented (`pnpm test:codex-recovery`, 11 tests). Do not rebuild them.
+The missing prerequisite is durable Codex-specific identity/admission evidence;
+the existing Hermes dispatch is not interchangeable. See CODEX_READ_RECOVERY.md.
+Queue/connector checks now include cancellation and synchronous-readiness
+regressions (`pnpm test:queue`, 55 tests), not live recovery acceptance.
 Optional Herdr retained-reader startup/API/UI are implemented, but actual collector
 composition/host qualification and Kuma/Beszel acceptance remain unfinished.
 
