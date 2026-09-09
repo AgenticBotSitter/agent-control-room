@@ -3,7 +3,7 @@ import { WebSessionAuthority } from './session-authority';
 import { WebProjectService } from './project-service';
 import { WebAccessError, type VerifiedWebIdentity } from './access-verifier';
 import { catalogProjectIdSchema } from './project-wire';
-import type { HerdrObservationSource } from './herdr-observation-source';
+import type { HerdrObservationReader } from './herdr-observation-source';
 
 /** Reads only retained minimized observations under existing project authority.
  * No source polling, registration, terminal command or automatic dispatch.
@@ -11,15 +11,17 @@ import type { HerdrObservationSource } from './herdr-observation-source';
 export class WebHerdrService {
   private readonly authority: WebSessionAuthority;
   private readonly projects: WebProjectService;
-  private readonly sources = new Map<string, HerdrObservationSource>();
+  private readonly sources = new Map<string, HerdrObservationReader>();
   constructor(db: DatabaseClient, scope: { tenantId: string; workspaceId: string },
-    sources: readonly HerdrObservationSource[], clock: () => number = Date.now, ideaIntegrityKey?: Uint8Array) {
+    sources: readonly HerdrObservationReader[], clock: () => number = Date.now, ideaIntegrityKey?: Uint8Array) {
     this.authority = new WebSessionAuthority(db, scope, clock);
     this.projects = new WebProjectService(db, scope, clock, ideaIntegrityKey);
     for (const source of sources) {
       if (source.tenantId !== scope.tenantId || source.workspaceId !== scope.workspaceId
-          || this.sources.has(source.projectId)) throw new Error('observation_configuration_invalid');
-      this.sources.set(source.projectId, source);
+          || this.sources.has(source.projectId) || !catalogProjectIdSchema.safeParse(source.projectId).success
+          || typeof source.view !== 'function') throw new Error('observation_configuration_invalid');
+      this.sources.set(source.projectId, Object.freeze({ tenantId: source.tenantId, workspaceId: source.workspaceId,
+        projectId: source.projectId, view: source.view.bind(source) }));
     }
   }
   async list(identity: VerifiedWebIdentity, projectId: string) {

@@ -3,7 +3,8 @@ import test from 'node:test';
 import { createHerdrObservationSource } from '../src/web/v1/herdr-observation-source';
 import { WebHerdrService } from '../src/web/v1/herdr-service';
 import { createAccessVerifier } from '../src/web/v1/access-verifier';
-import { fixture, now, token, trust } from './helpers/web-foundation';
+import { fixture, now, token, trust, origin, request } from './helpers/web-foundation';
+import { createPrivateWebProcess } from '../src/web/v1/private-process';
 
 const binding = { tenantId: 'tenant:web', workspaceId: 'workspace:web', projectId: 'project:test',
   sourceId: 'source:fixture', enrollmentRevision: '1', workspaceIds: ['workspace:herdr'] };
@@ -70,8 +71,21 @@ test('actual project authority protects retained observations and observes grant
   await assert.rejects(service.list(identity, 'project:missing'));
   assert.throws(() => new WebHerdrService(f.client, { ...scope, tenantId: 'different' }, [source]));
   assert.throws(() => new WebHerdrService(f.client, scope, [source, source]));
+  const app = createPrivateWebProcess({ origin, ...trust, ...scope, herdrObservations: [source],
+    database: { client: f.client, close: async () => {} }, clock: () => now, loadKeys: async () => trust.keys });
+  t.after(() => app.close());
+  const path = `/api/v1/projects/${encodeURIComponent(a.project.projectId)}/observations`;
+  const call = (req: Request) => app.handle(req, () => new Response('unexpected fallback', { status: 500 }));
+  const response = await call(request(path));
+  assert.equal(response.status, 200); assert.equal(response.headers.get('cache-control'), 'no-store');
+  assert.equal((await response.json()).rows.length, 1);
+  assert.equal((await call(request(path, 'POST', {}))).status, 400);
+  assert.equal((await call(request(`${path}?refresh=true`))).status, 400);
+  assert.equal((await call(request(path, 'GET', undefined, undefined, token({ exp: now / 1000 - 1 })))).status, 401);
   source.revoke();
   assert.equal((await service.list(identity, a.project.projectId)).rows.length, 0);
+  assert.equal((await (await call(request(path))).json()).status, 'not_configured');
   await f.client.query('UPDATE control_role_grants SET revoked_at=$1 WHERE id=$2', [new Date(now).toISOString(), 'grant:web']);
   await assert.rejects(service.list(identity, a.project.projectId));
+  assert.equal((await call(request(path))).status, 403);
 });

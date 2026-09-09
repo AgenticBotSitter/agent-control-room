@@ -6,6 +6,17 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+Independent review of 2e245740bcb54bb0e62858717f71228df88ce491 found no concrete
+issue in the projection/source/service and independently passed all six tests.
+The following integration adds GET `/api/v1/projects/:projectId/observations`
+to the existing private process. It accepts no query or mutation method, uses
+the existing Access verification, project authority and no-store response
+headers, and receives only a retained-reader interface. Mounted-process tests
+pass for readback, expired token, source revocation, grant revocation and rejected
+POST/query requests. Full-source TypeScript passes. UI mounting, actual collector
+composition and live acceptance remain pending; source enrollment/replacement is
+still operator-owned. The route addition is subsequent to that independent review.
+
 The optional Herdr path now includes an immutable-enrollment retained observation
 source and `WebHerdrService`, which reuses `WebSessionAuthority` and the existing
 project view checks. Reads never poll a source. Revocation clears retained rows;

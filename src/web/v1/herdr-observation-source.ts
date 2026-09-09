@@ -52,3 +52,4 @@ export function createHerdrObservationSource(input: HerdrProjectBinding, now: ()
   });
 }
 export type HerdrObservationSource = ReturnType<typeof createHerdrObservationSource>;
+export type HerdrObservationReader = Pick<HerdrObservationSource, 'tenantId' | 'workspaceId' | 'projectId' | 'view'>;
