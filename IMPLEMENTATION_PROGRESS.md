@@ -6,6 +6,18 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+Returned to core queue readiness after the optional observation integration.
+Three existing synthetic submission/worker/runtime test files were read in full
+and copied unchanged into the contributor checkout; each SHA-256 matches its
+original. No private runtime configuration or production source was exported.
+`pnpm test:queue` now passes all 50 tests and full-source TypeScript passes.
+Coverage includes transaction-local submission, canonical recovery-verifier
+refusal, immutable delivery locators, faults, cancellation, late registration
+and drain uncertainty. Tests use fake engine/database ports, not actual pg-boss
+polling against PostgreSQL or a killed worker; those integration gates remain.
+The roadmap now reflects completed observation/signing work without closing
+their outstanding host gates. No production behavior changed in this checkpoint.
+
 Independent review of a31cd5a3232866d9574e2fcbabb5c96f28be6941 found no concrete
 issue in the unwired fixed-command process adapter and passed all 15 observation
 tests. Root's full-source TypeScript rerun also passed after the explicit NODE_ENV

@@ -17,6 +17,7 @@ CI=true pnpm install --frozen-lockfile
 pnpm check
 pnpm check:demo
 pnpm test:components
+pnpm test:queue
 pnpm test:demo
 pnpm test:build:demo
 pnpm test
@@ -46,6 +47,11 @@ rehearsals, optional monitoring acceptance or live-agent/browser validation.
 promotion and replay/uncertainty handling with an injected driver and one temporary
 in-memory database. It does not connect to Hermes or Codex, and is not evidence
 that a live fleet is operational.
+
+`pnpm test:queue` runs the existing synthetic submission, pickup and worker-runtime
+contracts: transaction routing, recovery-verifier refusal, cancellation, faults,
+late callbacks and drain uncertainty. It uses fake engine/database ports, not a
+running PostgreSQL service, and does not prove native crash recovery or role grants.
 
 `pnpm test:owner-signing` checks signing ownership, cancellation and explicit
 endpoint validation. It uses generated test keys, fake socket ports and one
