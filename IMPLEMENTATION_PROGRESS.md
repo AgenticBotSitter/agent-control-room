@@ -19,6 +19,8 @@ test failed because its synthetic page omitted required false authority flags;
 correcting that fixture restored the pass without weakening production validation.
 Focused observations (15), startup (4 before the additional invalid-enrollment
 case), and full-source TypeScript passed. Native collector composition remains gated.
+Fresh full compiled build at 1d71417 passed 57/57 tests, including the additional
+invalid-enrollment startup case. Independent review of that change is pending.
 
 Follow-up transaction coverage reuses one disposable canonical approval fixture:
 after staging a recovery write, fulfilled/rejected Promise, false, and throwing
