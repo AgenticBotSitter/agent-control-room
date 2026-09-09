@@ -6,6 +6,12 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+Independent review of 06031feec92a808b80ec278cffdad54a023080ae found no
+concrete issue in the readiness-fence correction and passed all 51 queue tests.
+Root's fresh compiled application build and all 56 selected tests passed at
+that source checkpoint. The correction is accepted locally; the fake discovery
+regression is not full transactional or real worker-crash recovery evidence.
+
 Core recovery correction: ready-node queue discovery previously ignored a
 returned Promise from its synchronous readiness callback. A regression failed
 before the fix (missing expected rejection). The coordinator now reuses the
