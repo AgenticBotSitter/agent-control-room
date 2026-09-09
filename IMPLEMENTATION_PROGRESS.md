@@ -336,3 +336,22 @@ full-output digest. No truncated historical receipt was treated as full evidence
 
 Do not regenerate expected hashes from the candidate implementation on an upgrade.
 Changes require an explicit schedule-policy decision and migration/replay analysis.
+
+### Independent calendar review — acceptance held
+
+Review of 881f9fd independently reproduced two defects despite51 passing tests:
+
+- Delimiter-based outbox IDs collide for valid generated identities: tenant x /
+  schedule a:a and tenant x:a:a / schedule a produce the same outbox ID for the
+  same local time. The global outbox primary key rejects the second tenant's work.
+  A replacement needs an unambiguous encoding plus disposition of existing IDs;
+  acknowledgement and reconciliation must use the same identity contract.
+- Denver fallback windows07:00–08:00Z and08:00–09:00Z on2026-11-01 produce the
+  same01:30 occurrence key with07:30Z and08:30Z respectively. The later proposal
+  conflicts rather than replaying. This is a retained baseline defect; parity does
+  not establish correct window-independent earlier-instant behavior. Use reviewed
+  timezone-library ambiguity support rather than a new custom timezone engine.
+
+Root reproduced the split-window issue separately. Both findings must be repaired
+and regression-tested before calendar acceptance. No dispatch wiring was added.
+The review used source and effect-free tests, not native execution or production.
