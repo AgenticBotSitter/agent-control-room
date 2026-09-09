@@ -6,6 +6,14 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+At c515a93, root's sequential component suite plus the four Codex recovery tests
+passed with exit 0. The recovery command is now part of test:components rather
+than a separate manual step. Independent review passed all four recovery tests
+and found no concrete issue in exact binding, fixed messages, correlation or
+projection limits. Root accepts this effect-free protocol checkpoint only.
+Next DR-17 work is owned connection deadlines/cancellation/cleanup and current
+authenticated admission, followed by native compatibility and durable reconciliation.
+
 The separate Codex read-only JSONL profile now adapts existing framing/correlation
 patterns without importing qualification/broker authority. Fixed initialize,
 initialized and one exact thread/read are its only outbound messages. It rejects
