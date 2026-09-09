@@ -563,3 +563,15 @@ each exclusively owned temporary directory was removed and absence checked.
 Creation/removal evidence in these tests is synthetic. This is actual process-
 crash journal durability evidence, not an interrupted native Git integration
 test or safe adoption proof. Those broader recovery gates remain open.
+
+Independent source review at8477eb1 found a P1 async-authority callback defect:
+TypeScript permits async functions in void callback positions, so a rejected
+promise previously did not stop a subsequent effect. Workspace journal and port
+checks now require an undefined synchronous return, reject promises/non-undefined
+values immediately and observe promise rejection to prevent unhandled rejection.
+Regression covers each of the two transactional checks and the final pre-effect
+check for create/remove, plus creation evidence recording. No fake effects occur;
+transactional failures roll back while post-commit failures retain uncertainty.
+Thirteen combined workspace tests and TypeScript passed. Re-review is pending.
+The public component roadmap was also updated to distinguish newly implemented
+adapters from their still-open host/runtime acceptance requirements.

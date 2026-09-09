@@ -14,7 +14,7 @@ import type { ArtifactLineageRecordV1 } from "../node-executor/artifact-evidence
 import { assertNativeSnapshotProgress, nativeTaskSnapshotBodySchema, type NativeTaskSnapshotBody } from "../harness/v1/native-observation";
 import { matchNativeTaskDispatchReceipt, type NativeTaskDispatchReceiptBody } from "../harness/v1/native-delivery";
 import { localId } from "../harness/v1/native-run-identifiers";
-import { parseWorkspaceIntent, parseWorkspaceCreation } from "./workspace-intent";
+import { parseWorkspaceIntent, parseWorkspaceCreation, assertSynchronousWorkspaceAuthority } from "./workspace-intent";
 
 export class BridgeBackpressureError extends Error {
   constructor() {
@@ -139,7 +139,7 @@ export class SqliteBridgeJournal implements ReplayGuard {
     const value = parseWorkspaceIntent(input), digest = sha256Digest(value);
     const target = sha256Digest(value.checkoutPath);
     return this.transaction(() => {
-      assertCurrent();
+      assertSynchronousWorkspaceAuthority(assertCurrent);
       const prior = this.db.prepare("SELECT run_id,intent_json,intent_digest,target_digest FROM bridge_workspace_intents WHERE target_digest=? OR run_id=?")
         .all(target, value.runId) as { run_id: string; intent_json: string; intent_digest: string; target_digest: string }[];
       if (prior.length) {
@@ -148,13 +148,13 @@ export class SqliteBridgeJournal implements ReplayGuard {
         if (saved.runId !== prior[0].run_id || sha256Digest(saved) !== prior[0].intent_digest || sha256Digest(saved.checkoutPath) !== prior[0].target_digest)
           throw new Error("workspace_intent_integrity_invalid");
         if (prior[0].intent_digest !== digest) throw new Error("workspace_intent_conflict");
-        assertCurrent(); return "existing";
+        assertSynchronousWorkspaceAuthority(assertCurrent); return "existing";
       }
       const count = this.db.prepare("SELECT count(*) AS count FROM bridge_workspace_intents").get() as { count: number };
       if (count.count >= 1024) throw new BridgeBackpressureError();
       this.db.prepare("INSERT INTO bridge_workspace_intents(target_digest,run_id,intent_digest,intent_json) VALUES(?,?,?,?)")
         .run(target, value.runId, digest, JSON.stringify(value));
-      assertCurrent(); return "recorded";
+      assertSynchronousWorkspaceAuthority(assertCurrent); return "recorded";
     });
   }
 
@@ -184,29 +184,29 @@ export class SqliteBridgeJournal implements ReplayGuard {
   /** Record trusted physical readback, not a lease renewal or execution grant. */
   recordWorkspaceCreation(intentDigest: string, input: unknown, assertCurrent: () => void): "recorded" | "existing" {
     return this.transaction(() => {
-      assertCurrent();
+      assertSynchronousWorkspaceAuthority(assertCurrent);
       const saved = this.workspaceIntentInventory().find(value => value.intentDigest === intentDigest);
       if (!saved) throw new Error("workspace_intent_missing");
       const evidence = parseWorkspaceCreation(input, saved.intent), digest = sha256Digest(evidence);
       if (saved.creation) {
         if (sha256Digest(saved.creation) !== digest) throw new Error("workspace_creation_conflict");
-        assertCurrent(); return "existing";
+        assertSynchronousWorkspaceAuthority(assertCurrent); return "existing";
       }
       this.db.prepare("INSERT INTO bridge_workspace_creations(intent_digest,evidence_json,evidence_digest) VALUES(?,?,?)")
         .run(intentDigest, JSON.stringify(evidence), digest);
-      assertCurrent(); return "recorded";
+      assertSynchronousWorkspaceAuthority(assertCurrent); return "recorded";
     });
   }
 
   reserveWorkspaceRemoval(intentDigest: string, assertRemovalCurrent: () => void): "recorded" | "existing" {
     return this.transaction(() => {
-      assertRemovalCurrent();
+      assertSynchronousWorkspaceAuthority(assertRemovalCurrent);
       const saved = this.workspaceIntentInventory().find(value => value.intentDigest === intentDigest);
       if (!saved?.creation) throw new Error("workspace_creation_missing");
-      if (saved.removal) { assertRemovalCurrent(); return "existing"; }
+      if (saved.removal) { assertSynchronousWorkspaceAuthority(assertRemovalCurrent); return "existing"; }
       this.db.prepare("INSERT INTO bridge_workspace_removals(intent_digest,creation_digest,removed) VALUES(?,?,0)")
         .run(intentDigest, sha256Digest(saved.creation));
-      assertRemovalCurrent(); return "recorded";
+      assertSynchronousWorkspaceAuthority(assertRemovalCurrent); return "recorded";
     });
   }
 

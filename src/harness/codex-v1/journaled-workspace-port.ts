@@ -1,6 +1,6 @@
 import type { CodexWorkspacePortV1 } from "./workspace";
 import type { SqliteBridgeJournal } from "../../node-bridge/journal";
-import { parseWorkspaceIntent } from "../../node-bridge/workspace-intent";
+import { parseWorkspaceIntent, assertSynchronousWorkspaceAuthority } from "../../node-bridge/workspace-intent";
 import { sha256Digest } from "../../security/canonical-digest";
 
 /** Trusted node composition only; current authenticated admission is required.
@@ -23,7 +23,7 @@ export function journaledWorkspacePort(input: {
         || request.revision !== intent.revision) throw new Error("workspace_request_binding_invalid");
       if (journal.reserveWorkspaceIntent(intent, assertCurrent) !== "recorded")
         throw new Error("workspace_reconciliation_required");
-      assertCurrent();
+      assertSynchronousWorkspaceAuthority(assertCurrent);
       const evidence = await port.createDetachedWorktree({ repositoryRealPath: intent.repositoryRoot,
         checkoutPath: intent.checkoutPath, revision: intent.revision });
       journal.recordWorkspaceCreation(digest, evidence, assertCurrent);
@@ -35,7 +35,7 @@ export function journaledWorkspacePort(input: {
         throw new Error("workspace_request_binding_invalid");
       if (journal.reserveWorkspaceRemoval(digest, assertRemovalCurrent) !== "recorded")
         throw new Error("workspace_reconciliation_required");
-      assertRemovalCurrent();
+      assertSynchronousWorkspaceAuthority(assertRemovalCurrent);
       await port.removeWorktree({ repositoryRealPath: intent.repositoryRoot, checkoutPath: intent.checkoutPath });
       journal.recordWorkspaceRemoved(digest);
     },
