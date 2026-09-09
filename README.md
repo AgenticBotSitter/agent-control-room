@@ -47,6 +47,11 @@ No live agent-runtime/platform combination is claimed supported by this preview.
 
 ## Contributor starting points
 
+**New: [settled component decisions](COMPONENT_DECISIONS.md) and
+[implementation packages](IMPLEMENTATION_PACKAGES.md).** These identify what to
+reuse, what not to rebuild, and which packages still need a newer public source
+export before assignment. Selected components are not yet all integrated.
+
 - [Setup and verified check commands](SETUP.md)
 - [How to contribute and get work assigned](CONTRIBUTING.md)
 - [Substantial MVP-first work packages](WORK_PACKAGES.md)

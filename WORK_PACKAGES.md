@@ -7,6 +7,11 @@ marking a package ready. Never point contributors at the private development che
 
 ## MVP first
 
+The [component decisions roadmap](COMPONENT_DECISIONS.md) and
+[settled-component packages](IMPLEMENTATION_PACKAGES.md) now provide the specific
+reuse direction. They supplement these product outcomes. Existing issues remain
+the assignment authority; do not duplicate an active contributor's package.
+
 The minimum viable product is one private installation where an owner can create a
 project, assign useful work, watch progress, read a returned file, request a revision
 and review the revised result. Other eligible work can continue during review. Each
