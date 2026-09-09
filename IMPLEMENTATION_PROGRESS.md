@@ -6,6 +6,12 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+Independent review of b42cbd19bb1a5a81b41cc211a1e29726e6c3bbdb found no
+concrete issue in multi-source isolation, bounds or per-source visibility and
+passed all 12 observation tests. Root's fresh compiled build and all 56 selected
+application tests passed at the same source checkpoint. Multi-source local
+composition is accepted in this scope; live machine delivery remains unqualified.
+
 Multi-source project aggregation now replaces the earlier single-source limit.
 Each reader carries an opaque enrollment key, and the protected response groups
 observations with independent offline/revoked/fresh states. The overview reports
