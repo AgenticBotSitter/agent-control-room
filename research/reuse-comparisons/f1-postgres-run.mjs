@@ -3,9 +3,12 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdtemp, mkdir, readFile, stat, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { createRequire } from 'node:module';
 const exec = promisify(execFile);
 const root = process.argv[2];
+const mode = process.argv[3] ?? 'transaction';
+assert.ok(['transaction', 'recovery', 'worker', 'pgboss-worker'].includes(mode));
 assert.match(root ?? '', /^\/private\/tmp\/cr-compare-f1\.[A-Za-z0-9]+$/);
 assert.equal((await stat(root)).mode & 0o077, 0);
 const pkg = join(root, 'node_modules/@embedded-postgres/darwin-arm64');
@@ -22,9 +25,22 @@ try {
   await command('initdb', ['-D', data, '-U', 'f1_owner', '--auth-local=trust', '--auth-host=reject', '--no-locale']);
   attempted = true;
   await command('pg_ctl', ['-D', data, '-l', join(run, 'server.log'), '-w', '-t', '10', '-o', `-k ${socket} -p 65433 -h '' -c unix_socket_permissions=0700 -c shared_buffers=32MB -c max_connections=12 -c bonjour=off`, 'start']);
-  const readiness = await command('psql', ['-h', socket, '-p', '65433', '-U', 'f1_owner', '-d', 'postgres', '-At', '-c', 'show listen_addresses']);
-  assert.equal(readiness.stdout.trim(), '', 'TCP listeners must be disabled');
-  const result = await exec(process.execPath, ['--import', 'tsx', 'research/reuse-comparisons/f1-dbos-fit.mjs', root, socket], { env, timeout: 60000, maxBuffer: 262144 });
+  // This binary distribution has no psql. Use the already pinned candidate's
+  // actual pg client solely for the same read-only socket readiness assertion.
+  const requireCandidate = createRequire(join(root, 'node_modules/@dbos-inc/dbos-sdk/package.json'));
+  const { Client } = requireCandidate('pg');
+  const probe = new Client({ host: socket, port: 65433, user: 'f1_owner', database: 'postgres',
+    password: '', connectionTimeoutMillis: 3000, statement_timeout: 5000 });
+  try {
+    await probe.connect();
+    assert.equal((await probe.query('SHOW listen_addresses')).rows[0].listen_addresses, '', 'TCP listeners must be disabled');
+  } finally { await probe.end(); }
+  const isWorker = mode === 'worker' || mode === 'pgboss-worker';
+  const fixture = resolve(`research/reuse-comparisons/${mode === 'pgboss-worker' ? 'f1-pgboss-worker-fit.mjs' : mode === 'worker' ? 'f1-dbos-worker-fit.mjs' : mode === 'recovery' ? 'f1-dbos-recovery-fit.mjs' : 'f1-dbos-fit.mjs'}`);
+  const empty = join(run, 'empty');
+  if (isWorker) await mkdir(empty, { mode: 0o700 });
+  const args = isWorker ? [fixture, root, socket] : ['--import', 'tsx', fixture, root, socket];
+  const result = await exec(process.execPath, args, { env, cwd: isWorker ? empty : process.cwd(), timeout: 60000, maxBuffer: 262144 });
   process.stdout.write(result.stdout);
 } catch (error) {
   console.error(JSON.stringify({ failed: true, code: error.code, message: String(error.message).slice(0,500), output: String(error.stderr ?? '').slice(-1800) }));

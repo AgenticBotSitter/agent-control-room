@@ -1,0 +1,15 @@
+{
+  "date": "2026-09-08",
+  "capture": "Transcribed from terminal completion c40c1f, session 27184; first worker attempt, not raw file capture",
+  "command": "node --import tsx research/reuse-comparisons/f1-postgres-run.mjs /private/tmp/cr-compare-f1.9x5bSO worker",
+  "exitCode": 0,
+  "candidate": "DBOS4.27.6",
+  "backend": "PostgreSQL18.4",
+  "outcomes": [
+    { "concurrency": 1, "startedBeforeRelease": null, "statusBeforeRelease": "ENQUEUED", "bothResultsRetrieved": true, "observationWindowSeconds": 1 },
+    { "concurrency": 2, "startedBeforeRelease": "independent-2", "statusBeforeRelease": "SUCCESS", "bothResultsRetrieved": true, "observationWindowSeconds": 5 }
+  ],
+  "executions": ["wait-1", "independent-1", "wait-2", "independent-2"],
+  "cleanup": { "cleanup": true, "clusterStopped": true, "scope": "owned disposable child only" },
+  "scope": "actual synthetic queue pickup and durable review wait; no canonical admission or native effects; no process recovery tested"
+}

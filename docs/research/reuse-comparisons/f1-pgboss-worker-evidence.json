@@ -1,0 +1,12 @@
+{
+  "date": "2026-09-08",
+  "command": "node --import tsx research/reuse-comparisons/f1-postgres-run.mjs /private/tmp/cr-compare-f1.9x5bSO pgboss-worker",
+  "capture": "Exact terminal completion tool result",
+  "result": {
+    "chunk_id": "767ea6",
+    "wall_time_seconds": 0.000002625,
+    "exit_code": 0,
+    "original_token_count": 272,
+    "output": "{\n  \"candidate\": \"pg-boss12.30.0\",\n  \"backend\": \"PostgreSQL18.4\",\n  \"constructionPlanSHA256\": \"5127d532f5dd9ed17b59c9978960c467c5a188e170a71185a4fabb57a556ca94\",\n  \"outcomes\": [\n    {\n      \"case\": \"in-memory-callback-hold\",\n      \"concurrency\": 1,\n      \"bBeforeRelease\": \"created\",\n      \"bothPersistedOutputs\": true\n    },\n    {\n      \"case\": \"in-memory-callback-hold\",\n      \"concurrency\": 2,\n      \"bBeforeRelease\": \"completed\",\n      \"bothPersistedOutputs\": true\n    },\n    {\n      \"case\": \"explicit-persisted-phase-boundary\",\n      \"concurrency\": 1,\n      \"waitingOutput\": \"waiting_review\",\n      \"independentCompletedBeforeContinuation\": true,\n      \"distinctContinuation\": true,\n      \"storedParentMatched\": true\n    }\n  ],\n  \"executions\": [\n    \"A1\",\n    \"B1\",\n    \"A2\",\n    \"B2\",\n    \"phase-A\",\n    \"phase-B\",\n    \"phase-A-continuation\"\n  ],\n  \"scope\": \"one-process capacity and persisted synthetic phases only; not DBOS.recv durability, canonical approval, crash recovery or atomic continuation\"\n}\n{\"cleanup\":true,\"clusterStopped\":true,\"scope\":\"owned disposable child only\"}\n"
+  }
+}

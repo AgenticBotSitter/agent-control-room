@@ -19,7 +19,11 @@ const socket = process.argv[3];
 if (socket) assert.match(socket, new RegExp(`^${root.replaceAll('.', '\\.')}/pg-run-[A-Za-z0-9]+/socket$`));
 const pg = socket ? requireCandidate('pg') : null;
 const nativePool = socket ? new pg.Pool({ host: socket, port: 65433, database: 'postgres', user: 'f1_owner', password: '', max: 2, connectionTimeoutMillis: 3000, statement_timeout: 5000 }) : null;
-const local = socket ? createPostgresClient(`postgres://f1_owner@localhost:65433/postgres?host=${encodeURIComponent(socket)}`) : null;
+// postgres.js does not interpret libpq's ?host= URL query as a socket address.
+// Capture the exact owned socket via its supported PG environment in this sterile
+// fixture process; no application API or driver behavior is changed.
+if (socket) Object.assign(process.env, { PGHOST: socket, PGPORT: '65433', PGUSER: 'f1_owner', PGDATABASE: 'postgres', PGPASSWORD: '' });
+const local = socket ? createPostgresClient('') : null;
 const db = socket ? { query: (...args) => nativePool.query(...args), exec: sql => nativePool.query(sql), close: async () => { await local.close(); await nativePool.end(); } } : new PGlite({ extensions: { uuid_ossp } });
 const database = local?.client ?? adaptPglite(db);
 const outcomes = [];

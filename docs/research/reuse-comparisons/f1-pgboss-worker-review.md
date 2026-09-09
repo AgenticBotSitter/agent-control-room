@@ -1,0 +1,25 @@
+# Independent review: pg-boss synthetic worker comparison
+
+2026-09-08. Read-only source/receipt review of `f1-pgboss-worker-fit.mjs`, updated `f1-postgres-run.mjs`, fit report and direct evidence. Compared the earlier DBOS worker fixture and public pg-boss constructor/work/settlement/stop interfaces already inspected in preflight. No test rerun, download, service, database or application action.
+
+## Disposition
+
+**No blocker found for the narrow successful-run evidence.** The receipt records exit0, seven distinct synthetic callbacks, both1/2-capacity observations and the separate stored-phase continuation. It does not establish durable receive/approval or recovery parity with DBOS, and the report correctly declines those claims. Root retains queue architecture/final selection.
+
+## Checked claims
+
+- Actual PgBoss work callbacks, SQL pickup and completion run through the real public library and real pool.query adapter. No canned SQL answers or manual state substitutions appear. Fresh schema absence is asserted and actual getConstructionPlans output is executed, with its digest retained. The lexical SQL guard is accurately described as supplemental, not a general authorization proof.
+- Pool configuration points explicitly at the owned Unix socket/port, uses max4 and connection/statement timeouts. Runtime migrate/supervise/schedule/useListenNotify flags are false after explicit schema setup. The report accurately acknowledges manager timers and real writes rather than implying effect-free start.
+- Capacity1: A's callback starts before B is sent; after1.5s B has neither started nor left created state. Capacity2: B is required to reach stored completed state while A's Promise is still held. Both A/B outputs are then retrieved and deep-compared. Seven executions and uniqueness are asserted, and actual receipt labels match A1/B1/A2/B2 plus the three phase callbacks. This is uninterrupted-run callback uniqueness, not crash exactly-once.
+- Phase case: A's first queue job is actually completed with stored waiting_review output, independent B is actually completed before continuation submission, and the later separate ID returns A's actual job ID as stored parent. No logical task is falsely declared completed. Parent/phase fields are checked; this is not a full arbitrary payload roundtrip guarantee.
+- DBOS comparison is fair as framed: a Promise hold is explicitly not DBOS.recv; short phases are a different shape available to either system; single-process local/global capacity settings are not cross-node evidence. No unsupported performance ranking is made from different polling/observation durations.
+- Runner creates fresh data/socket/empty cwd, sterile environment, local trust restricted by socket0700 and host auth reject, explicit no TCP listen configuration and actual SHOW listen_addresses confirmation. Job SQL cannot target a configured application DB via inherited PG settings. Selected fixtures have a60s outer child limit and bounded output; database commands have20s bounds. No existing database or provider endpoint is used by these sources.
+- Retained terminal output reports cluster stop and exact owned-child cleanup. Runner checks postmaster PID-file/socket absence after pg_ctl stop before removal. This review did not independently inspect live processes or the removed path; root's separate no-pg-run observation is supplemental, not invented as reviewer evidence.
+
+## Non-blocking precision/future hardening
+
+1. `until`'s5s is a loop deadline, not a hard5s total bound: an awaited predicate may itself consume the pool statement timeout, followed by another short delay. The report's observation-limit shorthand must not become a precise maximum-latency promise. The outer60s child bound limits this successful fixture; no hung-query case was exercised.
+2. Fixture finally awaits boss.stop before pool.end; if stop throws, explicit pool.end is skipped. For a future shutdown-failure experiment, nest pool.end in its own finally and retain its outcome. This run exited0 and runner stopped the fresh cluster, so this is not a demonstrated leak in the current receipt. Stop's grace timeout is not a total subsystem bound, as preflight notes.
+3. The worker statically imports pg-boss before its package-version assertion, and the runner checks the existing embedded-PG package version rather than enforcing a new complete executable hash inventory before launch. This packet relies on the already-owned pinned cohorts/source review; it is not fresh supply-chain requalification. Do not describe the new worker as independently verifying every imported binary/source. No new acquisition occurred and no rerun is requested solely for this scope clarification.
+
+Next decisive application work remains canonical phase/outbox/continuation admission and uncertainty/recovery at equivalent task semantics. None is necessary to relabel or repeat these already honest primitive observations. Review accepts only the narrow evidence above, not engine selection or production readiness.
