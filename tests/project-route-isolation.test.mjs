@@ -30,6 +30,20 @@ test('project navigation hides old details and lifecycle actions before the new 
     assert.match(document.body.textContent, /Second project/);
     assert.doesNotMatch(document.body.textContent, /PRIVATE FIRST PROJECT/);
     assert.equal(pending.length, 2);
+    const archive = [...document.querySelectorAll('button')].find(button => button.textContent === 'Archive project');
+    await act(async () => archive.click());
+    assert.equal(pending[2].options.method, 'POST');
+    await act(async () => render('project:first'));
+    assert.equal(pending.length, 3); // Reads wait while the original save owns the client.
+    const { origin, lifecycleEditable, ...savedProject } = project('project:second');
+    await act(async () => pending[2].resolve(Response.json({ project: { ...savedProject, lifecycle: 'archived', version: 2 }, replayed: false })));
+    assert.equal(pending.length, 4, 'settling the original save must immediately reload the current route');
+    assert.equal(pending[3].options.method, 'GET');
+    assert.match(pending[3].url, /project%3Afirst$/);
+    await act(async () => pending[3].resolve(Response.json({ project: project('project:first') })));
+    assert.match(document.body.textContent, /PRIVATE FIRST PROJECT/);
+    assert.doesNotMatch(document.body.textContent, /Second project/);
+    assert.equal(pending.filter(request => request.options.method === 'POST').length, 1);
   } finally {
     await act(async () => root.unmount()); dom.window.close();
     for (const [key, descriptor] of Object.entries(saved)) {

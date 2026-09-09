@@ -45,6 +45,12 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
   const [refresh, setRefresh] = useState(0);
   const generation = useRef(0);
   const writeBusy = useRef(false);
+  const finishWrite = () => {
+    writeBusy.current = false; setPending(false);
+    // A route read may have been skipped while this save owned the client.
+    // Refresh reads only; never resubmit a completed or uncertain command here.
+    setRefresh(value => value + 1);
+  };
   const showError = (reason: unknown) => {
     const failure = reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable");
     setError(failure);
@@ -89,14 +95,14 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
       const created = await client.create(draft); setResult("created");
       window.location.assign(`/projects/${encodeURIComponent(created.projectId)}`);
     } catch (reason) { showError(reason); setResult(reason instanceof BrowserRequestError && reason.code === "invalid_request" ? "invalid" : "unavailable"); }
-    finally { writeBusy.current = false; setPending(false); }
+    finally { finishWrite(); }
   }
   async function transition(lifecycle: WebProject["lifecycle"]) {
     if (!project || !project.lifecycleEditable || project.origin !== "ordinary" || writeBusy.current || client.hasPending()) return;
     writeBusy.current = true; setPending(true); setError(undefined); generation.current++;
     try { setProject({ ...project, ...await client.transition(project, lifecycle) }); }
     catch (reason) { showError(reason); }
-    finally { writeBusy.current = false; setPending(false); }
+    finally { finishWrite(); }
   }
   async function retryOriginal() {
     if (writeBusy.current || !client.hasPending() || state !== "ready") return;
@@ -106,14 +112,14 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
       if (!projectId) { setResult("created"); window.location.assign(`/projects/${encodeURIComponent(receipt.projectId)}`); }
       else setProject(await client.get(projectId)); // A replay receipt is historical, not the current project state.
     } catch (reason) { showError(reason); }
-    finally { writeBusy.current = false; setPending(false); }
+    finally { finishWrite(); }
   }
   async function transitionIdea(action: IdeaProjectAction) {
     if (!project || writeBusy.current || client.hasPending()) return;
     writeBusy.current = true; setPending(true); setError(undefined); generation.current++;
     try { await client.transitionIdea(project, action); setProject(await client.get(project.projectId)); }
     catch (reason) { showError(reason); }
-    finally { writeBusy.current = false; setPending(false); }
+    finally { finishWrite(); }
   }
   return <div className="private-shell">
     <PrivateHeader />

@@ -6,6 +6,15 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+Project navigation during a pending save now triggers a current-route read when
+the save attempt finishes. Previously the route effect skipped its load while
+the write was busy and could leave the new view loading until the next poll.
+The extended DOM regression fails before correction (no current-route GET), then
+passes with exactly one original POST followed by a GET for the newly selected
+project. The shared save-finish path never automatically retries a command.
+This applies to creation, ordinary/Idea lifecycle saves and explicit save retries;
+the exercised regression uses ordinary archive. Uncertain keys remain client-owned.
+
 Project route isolation: a real React/jsdom regression reproduced the previous
 project's details and lifecycle buttons surviving a projectId change until the
 next fetch completed. The workspace now derives visible/actionable project state
