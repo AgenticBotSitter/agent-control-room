@@ -6,6 +6,13 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+Independent review of e8a56b6692cb5f562dad8bf4b3a6b672749a18b7 found no concrete
+issue in collector cancellation/admission or strict server output validation;
+all 12 observation tests independently passed. The native connection requirements
+and single-source-per-project limitation are recorded in
+`HERDR_OBSERVATION_INTEGRATION.md`. No live collection or complete fleet coverage
+is claimed by the implemented path.
+
 The retained source now has a collector coordinator adapted from the evaluated
 Herdr observer: one allowlisted pane-list port, endpoint identity checks before
 and after, generation changes on observed replacement, and a two-second maximum
