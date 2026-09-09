@@ -44,3 +44,23 @@ cache must not be deleted; disposable checkout links follow the cleanup policy a
 Calendar review remediation: Luxon3.7.2 promoted from the same existing cache to
 an explicit dependency, offline and scripts disabled. 643 reused, zero downloaded,
 zero added package files. Original MIT notice retained. Same cleanup scope applies.
+# Owner signing protocol preparation
+
+Preflight: 137 GiB available on the temporary filesystem. Earlier E55 directory
+and both queried pnpm cache indexes are absent. Scoped evaluation directory:
+`/private/tmp/cr-owner-signing.gwHGwO`; this exact directory is the cleanup target
+after the adapter evaluation. Do not delete shared package stores.
+
+Prepare ssh2 1.17.0 with lifecycle scripts and optional packages disabled, with
+its own cache. This authorizes no agent socket, credentials, listener or provider
+call. Keep the lock and notices for provenance. Outcome pending below.
+
+Completed: npm installed five packages with scripts/optional dependencies disabled.
+Retained size 2.9 MiB (1.8 MiB packages, 1.1 MiB isolated cache). Lock retained at
+`research/owner-signing/package-lock.json`, SHA256
+`92698bc95ad39bb265d4f50604382b1db8edaf931357501e21459a93b1ffb401`.
+ssh2 agent.js SHA256 matches the earlier evaluated source:
+`cc6987488bf45f73e0ac5d8bbe59912b70a144cd73b53c83919f188f4cc3f2be`.
+Directory remains retained for bounded integration work; no shared cache cleanup.
+No app dependency or bundled release was changed. Full third-party text inventory
+remains required before shipping this separately installed runtime.

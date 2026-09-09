@@ -755,3 +755,19 @@ no production behavior was weakened. This test uses injected network responses
 and one migrated PGlite database, not live source/provider or production evidence.
 All 17 article/research tests and full-source TypeScript checking pass with this
 extended path. No independent review of the new integration test is claimed.
+
+### Owner signing protocol closure
+
+Exported the previously implemented generic bounded-owner-signature wrapper and
+its synthetic test, preserving the one-attempt contract. Reprepared the selected
+ssh2 1.17.0 in a logged isolated directory; the agent.js hash matches the earlier
+evaluation. The new explicit-path evaluation script uses its exported AgentProtocol
+for both ends of an in-memory connection, with ephemeral Ed25519 keys only.
+Valid/denied/missing/aborted/wrong-key/short-signature cases passed; both protocol
+objects are destroyed and a second sign is refused. No custom SSH framing added.
+
+This closes protocol-to-wrapper evidence only. Actual owned connection acquisition,
+late acquisition disposal, socket permissions, dedicated custody, trusted consent,
+host acceptance and runtime wiring remain open. The app has no ssh2 dependency
+and these local tests authorize no real signer or connection. The separately
+installed package and cleanup target are recorded in DEPENDENCY_PREPARATION_LOG.md.
