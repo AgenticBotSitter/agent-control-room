@@ -16,8 +16,7 @@ From this source directory:
 CI=true pnpm install --frozen-lockfile
 pnpm check
 pnpm check:demo
-pnpm test:database
-pnpm test:ideas
+pnpm test:components
 pnpm test:demo
 pnpm test:build:demo
 pnpm test
@@ -35,6 +34,13 @@ isolated rehearsal is on macOS; Windows and Linux installation acceptance is pen
 application and runs its selected compiled integration tests with synthetic/disposable
 resources. It is not the full private-development test suite. No GitHub credentials,
 agent authentication or production database should be supplied for these checks.
+
+`pnpm test:components` runs the database, Access token, owner-signing, checkpoint,
+Idea Lab, result-rendering, article/research and calendar suites in sequence,
+stopping on the first failed suite. This keeps the component checks discoverable
+without GitHub Actions or overlapping database-heavy suites. It does not replace
+`pnpm test`, the demo checks, workspace crash qualifications, real PostgreSQL
+rehearsals, optional monitoring acceptance or live-agent/browser validation.
 
 `pnpm test:ideas` exercises saved multi-perspective discussion, owner-only project
 promotion and replay/uncertainty handling with an injected driver and one temporary

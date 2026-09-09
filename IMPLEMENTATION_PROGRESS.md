@@ -4,6 +4,18 @@ Baseline: public main e901c0fe986c51ee1d0c091ce2d9b211231ec29e.
 Current working branch: codex/component-batch-4, stacked on local batches 1–3.
 All six batches remain in scope; no complete batch acceptance is claimed.
 
+## Combined regression checkpoint
+
+At source commit 38fd882, full-source TypeScript passed and a fresh VPS build
+plus all 56 selected compiled integration checks passed. The database, Access,
+owner-signing, checkpoint, Idea Lab, result-renderer, article/research and calendar
+suites also passed sequentially. Added `pnpm test:components` for that same
+sequence and included it in contributor setup so these newer component checks
+are not omitted when contributors follow the documented commands. No new CI
+workflow, dependency, service, live agent, production database or credential was
+used. This regression does not close the outstanding integration and live gates
+listed below; it also does not rerun the separate workspace crash qualifications.
+
 Latest checkpoint: saved Idea Lab discussion-to-owner-promotion and collected
 news-to-research-task paths now have integrated disposable tests. Workspace
 recovery retains physical root identities, survives tested native acknowledgement
