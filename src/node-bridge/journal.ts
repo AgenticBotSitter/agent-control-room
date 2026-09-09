@@ -14,6 +14,7 @@ import type { ArtifactLineageRecordV1 } from "../node-executor/artifact-evidence
 import { assertNativeSnapshotProgress, nativeTaskSnapshotBodySchema, type NativeTaskSnapshotBody } from "../harness/v1/native-observation";
 import { matchNativeTaskDispatchReceipt, type NativeTaskDispatchReceiptBody } from "../harness/v1/native-delivery";
 import { localId } from "../harness/v1/native-run-identifiers";
+import { parseWorkspaceIntent } from "./workspace-intent";
 
 export class BridgeBackpressureError extends Error {
   constructor() {
@@ -128,6 +129,46 @@ export class SqliteBridgeJournal implements ReplayGuard {
 
   close(): void {
     this.db.close();
+  }
+
+  /** Trusted post-admission node composition only. Durable reservation is not
+   * execution authority. Replays remain held pending physical reconciliation.
+   * Paths are protected local material; never expose this record in diagnostics.
+   */
+  reserveWorkspaceIntent(input: unknown, assertCurrent: () => void): "recorded" | "existing" {
+    const value = parseWorkspaceIntent(input), digest = sha256Digest(value);
+    const target = sha256Digest(value.checkoutPath);
+    return this.transaction(() => {
+      assertCurrent();
+      const prior = this.db.prepare("SELECT run_id,intent_json,intent_digest,target_digest FROM bridge_workspace_intents WHERE target_digest=? OR run_id=?")
+        .all(target, value.runId) as { run_id: string; intent_json: string; intent_digest: string; target_digest: string }[];
+      if (prior.length) {
+        if (prior.length !== 1) throw new Error("workspace_intent_conflict");
+        const saved = parseWorkspaceIntent(JSON.parse(prior[0].intent_json));
+        if (saved.runId !== prior[0].run_id || sha256Digest(saved) !== prior[0].intent_digest || sha256Digest(saved.checkoutPath) !== prior[0].target_digest)
+          throw new Error("workspace_intent_integrity_invalid");
+        if (prior[0].intent_digest !== digest) throw new Error("workspace_intent_conflict");
+        assertCurrent(); return "existing";
+      }
+      const count = this.db.prepare("SELECT count(*) AS count FROM bridge_workspace_intents").get() as { count: number };
+      if (count.count >= 1024) throw new BridgeBackpressureError();
+      this.db.prepare("INSERT INTO bridge_workspace_intents(target_digest,run_id,intent_digest,intent_json) VALUES(?,?,?,?)")
+        .run(target, value.runId, digest, JSON.stringify(value));
+      assertCurrent(); return "recorded";
+    });
+  }
+
+  /** Protected node-only recovery input. Historical intents, never permission to retry. */
+  workspaceIntentInventory() {
+    const rows = this.db.prepare("SELECT target_digest,run_id,intent_digest,intent_json FROM bridge_workspace_intents ORDER BY target_digest LIMIT 1025")
+      .all() as { target_digest: string; run_id: string; intent_digest: string; intent_json: string }[];
+    if (rows.length > 1024) throw new BridgeBackpressureError();
+    return rows.map(row => {
+      const intent = parseWorkspaceIntent(JSON.parse(row.intent_json));
+      if (intent.runId !== row.run_id || sha256Digest(intent) !== row.intent_digest || sha256Digest(intent.checkoutPath) !== row.target_digest)
+        throw new Error("workspace_intent_integrity_invalid");
+      return { intent, intentDigest: row.intent_digest, disposition: "reconciliation_required" as const };
+    });
   }
 
   /** Authenticated/owner-verified delivery only. This records intake, not admission or execution.
@@ -809,6 +850,16 @@ export class SqliteBridgeJournal implements ReplayGuard {
 
   private migrate(): void {
     this.db.exec(`
+      CREATE TABLE IF NOT EXISTS bridge_workspace_intents (
+        target_digest TEXT PRIMARY KEY NOT NULL,
+        run_id TEXT NOT NULL UNIQUE,
+        intent_digest TEXT NOT NULL UNIQUE,
+        intent_json TEXT NOT NULL
+      );
+      CREATE TRIGGER IF NOT EXISTS bridge_workspace_intents_no_update BEFORE UPDATE ON bridge_workspace_intents
+        BEGIN SELECT RAISE(ABORT,'workspace intent is immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS bridge_workspace_intents_no_delete BEFORE DELETE ON bridge_workspace_intents
+        BEGIN SELECT RAISE(ABORT,'workspace intent is immutable'); END;
       CREATE TABLE IF NOT EXISTS bridge_sequences (
         connection_id TEXT NOT NULL,
         direction TEXT NOT NULL CHECK(direction IN ('node_to_server','server_to_node')),
@@ -943,6 +994,6 @@ export class SqliteBridgeJournal implements ReplayGuard {
     const eventColumns = new Set((this.db.prepare(`PRAGMA table_info(bridge_job_events)`).all() as Array<{ name: string }>).map((row) => row.name));
     if (!eventColumns.has("artifact_id")) this.db.exec(`ALTER TABLE bridge_job_events ADD COLUMN artifact_id TEXT REFERENCES bridge_artifact_lineage(artifact_id)`);
     if (!eventColumns.has("artifact_lineage_digest")) this.db.exec(`ALTER TABLE bridge_job_events ADD COLUMN artifact_lineage_digest TEXT`);
-    this.db.exec("PRAGMA user_version=4;");
+    this.db.exec("PRAGMA user_version=5;");
   }
 }

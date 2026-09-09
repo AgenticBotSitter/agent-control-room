@@ -473,3 +473,17 @@ successfully. Durable recovery is now specified in WORKSPACE_RECOVERY_INTEGRATIO
 reuse the bridge journal for protected local evidence while retaining PostgreSQL
 admission authority. This contract is the next implementation block, not a claim
 that persistence, cross-process exclusion or recovery already exists.
+
+Workspace journal implementation started: the existing bridge SQLite journal
+now holds immutable versioned intents, exact scope/attempt/lease binding, one
+target/run reservation, digest-verified protected inventory and a1024-entry cap.
+Admission checks run before and after insertion inside the existing immediate
+transaction; revocation rolls insertion back. Historical replay returns existing,
+not permission to retry. SQLite schema marker advances to5.
+
+A disposable file-backed test passed with two journal connections: exact replay,
+changed lease/job refusal, revoked-admission rollback, close/reopen persistence
+and reconciliation-required inventory. Full-source TypeScript passed. This is
+not a two-process race or crash test. Manager/port wiring, verified creation/removal
+transitions, durable release/retention policy and independent review remain open.
+No existing journal, production database or service was changed.
