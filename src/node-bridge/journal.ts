@@ -14,7 +14,7 @@ import type { ArtifactLineageRecordV1 } from "../node-executor/artifact-evidence
 import { assertNativeSnapshotProgress, nativeTaskSnapshotBodySchema, type NativeTaskSnapshotBody } from "../harness/v1/native-observation";
 import { matchNativeTaskDispatchReceipt, type NativeTaskDispatchReceiptBody } from "../harness/v1/native-delivery";
 import { localId } from "../harness/v1/native-run-identifiers";
-import { parseWorkspaceIntent } from "./workspace-intent";
+import { parseWorkspaceIntent, parseWorkspaceCreation } from "./workspace-intent";
 
 export class BridgeBackpressureError extends Error {
   constructor() {
@@ -167,7 +167,28 @@ export class SqliteBridgeJournal implements ReplayGuard {
       const intent = parseWorkspaceIntent(JSON.parse(row.intent_json));
       if (intent.runId !== row.run_id || sha256Digest(intent) !== row.intent_digest || sha256Digest(intent.checkoutPath) !== row.target_digest)
         throw new Error("workspace_intent_integrity_invalid");
-      return { intent, intentDigest: row.intent_digest, disposition: "reconciliation_required" as const };
+      const created = this.db.prepare("SELECT evidence_json,evidence_digest FROM bridge_workspace_creations WHERE intent_digest=?")
+        .get(row.intent_digest) as { evidence_json: string; evidence_digest: string } | undefined;
+      const evidence = created ? parseWorkspaceCreation(JSON.parse(created.evidence_json), intent) : undefined;
+      if (created && sha256Digest(evidence) !== created.evidence_digest) throw new Error("workspace_creation_integrity_invalid");
+      return { intent, intentDigest: row.intent_digest, ...(evidence ? { creation: evidence } : {}), disposition: "reconciliation_required" as const };
+    });
+  }
+
+  /** Record trusted physical readback, not a lease renewal or execution grant. */
+  recordWorkspaceCreation(intentDigest: string, input: unknown, assertCurrent: () => void): "recorded" | "existing" {
+    return this.transaction(() => {
+      assertCurrent();
+      const saved = this.workspaceIntentInventory().find(value => value.intentDigest === intentDigest);
+      if (!saved) throw new Error("workspace_intent_missing");
+      const evidence = parseWorkspaceCreation(input, saved.intent), digest = sha256Digest(evidence);
+      if (saved.creation) {
+        if (sha256Digest(saved.creation) !== digest) throw new Error("workspace_creation_conflict");
+        assertCurrent(); return "existing";
+      }
+      this.db.prepare("INSERT INTO bridge_workspace_creations(intent_digest,evidence_json,evidence_digest) VALUES(?,?,?)")
+        .run(intentDigest, JSON.stringify(evidence), digest);
+      assertCurrent(); return "recorded";
     });
   }
 
@@ -860,6 +881,15 @@ export class SqliteBridgeJournal implements ReplayGuard {
         BEGIN SELECT RAISE(ABORT,'workspace intent is immutable'); END;
       CREATE TRIGGER IF NOT EXISTS bridge_workspace_intents_no_delete BEFORE DELETE ON bridge_workspace_intents
         BEGIN SELECT RAISE(ABORT,'workspace intent is immutable'); END;
+      CREATE TABLE IF NOT EXISTS bridge_workspace_creations (
+        intent_digest TEXT PRIMARY KEY NOT NULL REFERENCES bridge_workspace_intents(intent_digest),
+        evidence_json TEXT NOT NULL,
+        evidence_digest TEXT NOT NULL
+      );
+      CREATE TRIGGER IF NOT EXISTS bridge_workspace_creations_no_update BEFORE UPDATE ON bridge_workspace_creations
+        BEGIN SELECT RAISE(ABORT,'workspace creation is immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS bridge_workspace_creations_no_delete BEFORE DELETE ON bridge_workspace_creations
+        BEGIN SELECT RAISE(ABORT,'workspace creation is immutable'); END;
       CREATE TABLE IF NOT EXISTS bridge_sequences (
         connection_id TEXT NOT NULL,
         direction TEXT NOT NULL CHECK(direction IN ('node_to_server','server_to_node')),
@@ -994,6 +1024,6 @@ export class SqliteBridgeJournal implements ReplayGuard {
     const eventColumns = new Set((this.db.prepare(`PRAGMA table_info(bridge_job_events)`).all() as Array<{ name: string }>).map((row) => row.name));
     if (!eventColumns.has("artifact_id")) this.db.exec(`ALTER TABLE bridge_job_events ADD COLUMN artifact_id TEXT REFERENCES bridge_artifact_lineage(artifact_id)`);
     if (!eventColumns.has("artifact_lineage_digest")) this.db.exec(`ALTER TABLE bridge_job_events ADD COLUMN artifact_lineage_digest TEXT`);
-    this.db.exec("PRAGMA user_version=5;");
+    this.db.exec("PRAGMA user_version=6;");
   }
 }

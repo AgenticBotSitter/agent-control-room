@@ -31,6 +31,20 @@ test("workspace intent survives reopen, conflicts across connections and rolls b
     first = new SqliteBridgeJournal(file);
     assert.deepEqual(first.workspaceIntentInventory(), [{ intent: value, intentDigest: sha256Digest(value), disposition: "reconciliation_required" }]);
     assert.equal(first.reserveWorkspaceIntent(value, () => {}), "existing");
+    const creation = { realPath: value.checkoutPath, repositoryRealPath: value.repositoryRoot,
+      headRevision: value.revision, device: "1", inode: "2" };
+    assert.throws(() => first!.recordWorkspaceCreation(sha256Digest(value), { ...creation, headRevision: "b".repeat(40) }, () => {}), /binding_invalid/);
+    let creationChecks = 0;
+    assert.throws(() => first!.recordWorkspaceCreation(sha256Digest(value), creation, () => {
+      if (++creationChecks === 2) throw new Error("readback_admission_revoked");
+    }), /readback_admission_revoked/);
+    assert.equal(first.workspaceIntentInventory()[0].creation, undefined);
+    assert.equal(first.recordWorkspaceCreation(sha256Digest(value), creation, () => {}), "recorded");
+    assert.equal(first.recordWorkspaceCreation(sha256Digest(value), creation, () => {}), "existing");
+    assert.throws(() => first!.recordWorkspaceCreation(sha256Digest(value), { ...creation, inode: "3" }, () => {}), /conflict/);
+    first.close(); first = new SqliteBridgeJournal(file);
+    assert.deepEqual(first.workspaceIntentInventory()[0].creation, creation);
+    assert.equal(first.workspaceIntentInventory()[0].disposition, "reconciliation_required");
     assert.equal(first.reserveWorkspaceIntent(intent("run:revoked"), () => {}), "recorded");
     assert.throws(() => first!.reserveWorkspaceIntent({ ...value, checkoutPath: "/elsewhere" }, () => {}), /invalid/);
   } finally { first?.close(); second?.close(); await rm(root, { recursive: true, force: true }); }

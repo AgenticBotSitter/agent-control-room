@@ -17,6 +17,18 @@ export const workspaceIntentSchema = z.object({
 });
 export type WorkspaceIntent = z.infer<typeof workspaceIntentSchema>;
 
+const creationSchema = z.object({
+  realPath: path, repositoryRealPath: path, headRevision: z.string().regex(/^[a-f0-9]{40}$/),
+  device: z.string().regex(/^[1-9][0-9]*$/).max(32), inode: z.string().regex(/^[1-9][0-9]*$/).max(32),
+}).strict();
+export function parseWorkspaceCreation(value: unknown, intent: WorkspaceIntent) {
+  const parsed = creationSchema.safeParse(value);
+  if (!parsed.success || parsed.data.realPath !== intent.checkoutPath
+    || parsed.data.repositoryRealPath !== intent.repositoryRoot || parsed.data.headRevision !== intent.revision)
+    throw new Error("workspace_creation_binding_invalid");
+  return parsed.data;
+}
+
 export function parseWorkspaceIntent(value: unknown): WorkspaceIntent {
   const parsed = workspaceIntentSchema.safeParse(value);
   if (!parsed.success) throw new Error("workspace_intent_invalid");

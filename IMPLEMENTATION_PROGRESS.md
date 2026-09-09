@@ -497,3 +497,17 @@ before journal_mode configuration corrected the reproduced initialization race.
 Five consecutive post-fix runs and full-source TypeScript passed. No application
 retry loop was added. This is process-contention/persistence evidence, not a killed
 Git process or verified creation/removal recovery test.
+
+Verified-creation journaling now records immutable exact path/repository/revision
+and device/inode evidence bound to a saved intent. Conflicting readback is refused;
+revoked admission rolls evidence insertion back. Reopening preserves that evidence
+but still reports reconciliation required. Journal schema marker advances to6.
+
+The new journaledWorkspacePort connects intent-before-effect and evidence-before-
+return to the existing port. Exact replay refuses another creation. Removal is
+explicitly unavailable through this composition until its durable transition is
+implemented. Tests cover reservation visibility inside the injected create call,
+creation readback, binding refusal, repeat composition and no unjournaled removal.
+File-backed journal, two-process reservation and composition tests pass, as does
+full-source TypeScript. Actual Git plus this journal composition, crash-boundary
+tests, removal transitions, reconciliation and independent review remain pending.
