@@ -54,24 +54,51 @@ const fail = (name, detail) => { results.push(["FAIL", name]); console.log(`not 
 const check = (name, pass, detail) => (pass ? ok(name, detail) : fail(name, detail));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// Names of every live process whose /proc/<pid>/cmdline contains the marker.
-// Used after shutdown to prove the demo server process (not just the pnpm
-// wrapper) is actually gone. Zombies have no cmdline and are not matched.
-function processesWithCmdline(marker) {
-  const found = [];
-  let pids = [];
-  try { pids = readdirSync("/proc").filter(n => /^\d+$/.test(n)); } catch { return found; }
-  for (const pid of pids) {
-    try {
-      const cmd = readFileSync(`/proc/${pid}/cmdline`, "utf8").replace(/\0/g, " ");
-      if (cmd.includes(marker)) found.push(Number(pid));
-    } catch { /* process vanished between readdir and read */ }
-  }
-  return found;
-}
-
 // ---- demo lifecycle ---------------------------------------------------------
 let demo = null;
+let demoPid = null; // owned wrapper PID, recorded at spawn
+let demoChildPids = []; // owned server PIDs: direct children of demoPid, snapshotted pre-shutdown
+let demoChildrenUnknown = false; // true when the snapshot was unreadable
+// Probe ONLY PIDs this script spawned. Returns "gone" (ESRCH: kernel confirms
+// absence, or only a zombie remains: dead, holds no port/files), "alive", or
+// "unverified" (EPERM/unreadable: the process may exist but we cannot inspect
+// it — reported as UNVERIFIED, never as success).
+function procState(pid) {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const m = stat.match(/\)\s+([A-Za-z])/);
+    return m ? m[1] : null;
+  } catch { return null; }
+}
+function probeOwned(pid) {
+  if (!pid) return "unverified";
+  try { process.kill(pid, 0); }
+  catch (error) {
+    if (error && error.code === "ESRCH") return "gone";
+    return "unverified";
+  }
+  // Signal succeeded: alive, unless it is a zombie (already dead, awaiting reap).
+  const state = procState(pid);
+  if (state === "Z") return "gone-zombie";
+  if (state === null) return "unverified"; // alive but state unreadable: do not claim
+  return "alive";
+}
+// Snapshot direct children of the owned wrapper via /proc — transitive closure
+// from the spawned PID only, never a machine-wide scan. Must run BEFORE SIGTERM.
+function snapshotOwnedChildren() {
+  demoChildPids = [];
+  demoChildrenUnknown = false;
+  if (!demoPid) { demoChildrenUnknown = true; return; }
+  try {
+    const tasks = readdirSync(`/proc/${demoPid}/task`);
+    for (const t of tasks) {
+      try {
+        const kids = readFileSync(`/proc/${demoPid}/task/${t}/children`, "utf8").trim();
+        for (const k of kids.split(/\s+/).filter(Boolean)) demoChildPids.push(Number(k));
+      } catch { /* task vanished mid-read */ }
+    }
+  } catch { demoChildrenUnknown = true; }
+}
 let demoDataDir = null; // set after a pre-start snapshot of /tmp
 let demoDataAmbiguous = 0; // >0 when multiple new temp dirs appeared at startup
 async function startDemo() {
@@ -80,6 +107,7 @@ async function startDemo() {
   const before = new Set(await readdir(tmpRoot).then(x => x.filter(n => n.startsWith("control-room-contributor-demo-"))));
   console.log(`# starting demo on port ${PORT} (${PNPM} demo)`);
   demo = spawn(PNPM.split(" ")[0], [...PNPM.split(" ").slice(1), "demo"], { cwd: ".", stdio: ["ignore", "pipe", "inherit"], detached: true });
+  demoPid = demo.pid ?? null;
   let output = "";
   let code = null;
   let suppressed = false;
@@ -130,7 +158,13 @@ async function stopDemo() {
   // caller's cleanup checks must not pass merely because this object was nulled.
   if (!demo) return true;
   const exited = new Promise(resolveExit => demo.once("exit", () => resolveExit(true)));
-  try { process.kill(-demo.pid, "SIGTERM"); } catch { demo.kill("SIGTERM"); }
+  snapshotOwnedChildren(); // record the owned server PID(s) before signalling
+  // Signal only owned PIDs: the wrapper's process group first (it contains the
+  // spawned server), then the wrapper itself. Never touch other PIDs.
+  try {
+    if (demoPid) process.kill(-demoPid, "SIGTERM");
+    else demo.kill("SIGTERM");
+  } catch { try { demo.kill("SIGTERM"); } catch { /* already gone */ } }
   const didExit = await Promise.race([exited, sleep(8000).then(() => false)]);
   return didExit === true;
 }
@@ -469,20 +503,28 @@ async function runJourney(context, ownerCode) {
   const demoStopped = await stopDemo(); // launcher (pnpm wrapper) exit evidence
   await sleep(1500);
 
-  // Shutdown verification, split into honest claims:
-  //  - demo-launcher-stopped: the package-manager wrapper's own exit event fired;
-  //  - demo-server-stopped:  no process with the demo server in its cmdline remains
-  //    (the wrapper exiting alone does not prove the server it spawned stopped);
-  //  - port-3000-refuses-connections and temp-data-removed then build on those.
+  // Shutdown verification, owned resources only — this script never scans the
+  // machine process table and never signals PIDs it did not spawn:
+  //  - demo-launcher-stopped: the spawned wrapper's own exit event fired;
+  //  - demo-processes-gone: signal-0 on the wrapper PID and on every owned
+  //    server PID (children snapshotted pre-shutdown) reports ESRCH, or only a
+  //    zombie remains (dead, holds no port/files). EPERM/unreadable is reported
+  //    as UNVERIFIED and fails the check — never as success.
+  // port-3000-refuses-connections and temp-data-removed then build on those.
   check("demo-launcher-stopped", demoStopped, demoStopped ? "pnpm wrapper exited on SIGTERM" : "wrapper did not exit within 8s of SIGTERM");
-  const serverProcs = processesWithCmdline("contributor-demo.mjs");
-  const serverGone = serverProcs.length === 0;
-  check("demo-server-stopped", serverGone, serverGone ? "no contributor-demo.mjs process remains" : `STILL RUNNING pid(s): ${serverProcs.join(",")}`);
+  const states = [`wrapper:${probeOwned(demoPid)}`];
+  for (const pid of demoChildPids) states.push(`server-pid-${pid}:${probeOwned(pid)}`);
+  if (demoChildrenUnknown) states.push("server-pids:unverified(snapshot unreadable)");
+  const alive = states.filter(s => s.endsWith(":alive") || s.endsWith(":unverified") || s.includes("unreadable"));
+  const procsGone = alive.length === 0;
+  check("demo-processes-gone", procsGone,
+    procsGone ? `owned PIDs gone [${states.join(" ")}]`
+    : `STILL RUNNING or UNVERIFIED [${states.join(" ")}] (not claimed stopped)`);
   const portFree = await new Promise(resolveCode => {
     fetch(ORIGIN + "/local-preview").then(() => resolveCode(false)).catch(() => resolveCode(true));
   });
   check("port-3000-refuses-connections", portFree, `${PORT} ${portFree ? "refuses connections" : "still answers"}`);
-  const stoppedCleanly = demoStopped && serverGone;
+  const stoppedCleanly = demoStopped && procsGone;
   if (demoDataDir) {
     const remains = existsSync(join(tmpdir(), demoDataDir));
     check("temp-data-removed", stoppedCleanly && !remains,
@@ -492,10 +534,12 @@ async function runJourney(context, ownerCode) {
   } else {
     ok("temp-data-removed", "no new demo temp directory was created");
   }
-  if (!serverGone) {
-    for (const pid of serverProcs) { try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ } }
-  } else if (!demoStopped) {
-    try { process.kill(-demo.pid, "SIGKILL"); } catch { /* already gone */ }
+  // Last resort: signal ONLY owned PIDs (spawned wrapper + snapshotted children).
+  if (!procsGone) {
+    for (const pid of [demoPid, ...demoChildPids]) {
+      if (!pid) continue;
+      try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+    }
   }
 
   const failed = results.filter(r => r[0] === "FAIL").length;
