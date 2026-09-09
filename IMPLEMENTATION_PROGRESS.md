@@ -4,7 +4,7 @@ Baseline: public main e901c0fe986c51ee1d0c091ce2d9b211231ec29e.
 Working branch: codex/component-batch-1. All six batches remain in scope.
 
 1. Database/queue/native execution — in progress.
-2. Token verification/signing/checkpoints — pending.
+2. Token verification/signing/checkpoints — JWT integration in progress; other gates pending.
 3. Idea Lab/readable results — pending integration acceptance.
 4. News/article extraction/research — pending integration acceptance.
 5. Calendar/isolated workspaces — pending.
@@ -134,6 +134,23 @@ Extended the same real schema fixture to WebTaskService.propose/detail/list:
 idempotent repeat returns the exact receipt, startsWork remains false, and a fresh
 pool/service reads the exact same saved detail and one task. This checks canonical
 proposed-work persistence, not worker crash recovery or a provider result.
+
+## Batch 2 checkpoint
+
+Branch codex/component-batch-2 is stacked on local batch1 e6c9520, not merged or
+published. Selected jsonwebtoken9.0.3 replaces direct RSA signature verification;
+canonical encoding, claim schema, trust expiry, identity digest and session caps
+remain enforced. Focused tests cover policy refusals, modified signature, trust
+snapshot, session cap and noncanonical encoding. Two test groups pass; original
+MIT license byte comparison passes. Independent review and compiled suite pending.
+No login provider, MFA setting, credential or live Access configuration changed.
+
+Compiled suite passed 56/56. Independent review found an epoch-zero injected-clock
+regression in jsonwebtoken's truthy clockTimestamp default. Removed duplicate
+library exp/nbf checking; existing application checks still enforce both with the
+exact injected clock and session ceiling. Added epoch-zero/expiration regression:
+three focused groups pass and full-source checking passes. This final correction
+still needs review confirmation; owner-signing/checkpoint work remains pending.
 
 Next: test failed/never-settling acquisitions, active query shutdown and uncertain
 commit through the existing bounded wrapper; review actual pg shutdown behavior,

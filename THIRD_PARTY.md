@@ -31,6 +31,10 @@ is not vendored, and feed metadata does not grant republication rights.
 
 ## Before distributing additional artifacts
 
+The selected JWT verifier retains its [notice](third_party/jsonwebtoken/NOTICE.md)
+and [original MIT license](third_party/jsonwebtoken/LICENSE). Its Apache-licensed
+consumer wrapper does not relicense the dependency or its transitive packages.
+
 The [node-postgres notice](third_party/pg/NOTICE.md) and
 [original MIT license](third_party/pg/LICENSE) cover the selected pg runtime
 dependency. Its transitive packages and development-only declarations retain

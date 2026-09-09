@@ -20,3 +20,8 @@ package removed, zero downloaded. The initial remove invocation rejected an
 unsupported flag; the corrected command used config.ignore-scripts=true.
 Shared cache was preserved; removed local dependency links are reproducible from
 the previous lockfile if rollback is required.
+
+Batch 2: jsonwebtoken 9.0.3 and @types/jsonwebtoken 9.0.10 pinned. Offline metadata
+was unavailable; authorized registry preparation downloaded 13 runtime packages
+and 2 declaration packages. Scripts disabled; free storage before: 137 GiB.
+Same disposable checkout/cache cleanup boundaries apply. Full notices remain due.

@@ -1,4 +1,5 @@
-import { createHash, createPublicKey, verify, type JsonWebKey } from "node:crypto";
+import { createHash, createPublicKey, type JsonWebKey } from "node:crypto";
+import jwt from "jsonwebtoken";
 import { z } from "zod";
 
 export class WebAccessError extends Error {
@@ -77,7 +78,11 @@ export function createAccessVerifier(trust: AccessTrust) {
       const key = keys.get(header.kid);
       if (!key || !segment.test(s)) throw new Error();
       const signature = Buffer.from(s, "base64url");
-      if (signature.toString("base64url") !== s || !verify("RSA-SHA256", Buffer.from(`${h}.${c}`), key, signature)) throw new Error();
+      if (signature.toString("base64url") !== s) throw new Error();
+      jwt.verify(token, key, { algorithms: ["RS256"], issuer: expectedIssuer, audience,
+        // Time policy below owns the injected clock and exact session ceiling.
+        // jsonwebtoken treats clockTimestamp=0 as a request for wall-clock time.
+        ignoreExpiration: true, ignoreNotBefore: true });
       const claims = claimsSchema.parse(decode(c));
       const now = nowMs / 1000;
       const expires = Math.min(claims.exp, claims.iat + maxSessionSeconds);
