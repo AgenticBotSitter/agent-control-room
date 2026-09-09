@@ -122,7 +122,7 @@ export class SqliteBridgeJournal implements ReplayGuard {
     if (!Number.isInteger(maximumPendingFrames) || maximumPendingFrames < 1) throw new Error("Pending-frame ceiling must be positive");
     this.db = new DatabaseSync(path);
     try {
-      this.db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
+      this.db.exec("PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;");
       this.migrate();
     } catch (error) { this.db.close(); throw error; }
   }

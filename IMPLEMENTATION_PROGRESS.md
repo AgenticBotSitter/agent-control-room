@@ -487,3 +487,13 @@ and reconciliation-required inventory. Full-source TypeScript passed. This is
 not a two-process race or crash test. Manager/port wiring, verified creation/removal
 transitions, durable release/retention policy and independent review remain open.
 No existing journal, production database or service was changed.
+
+Two-process reservation regression: both disposable children reach an IPC ready
+barrier, then compete for the same intent; exactly one records it and one reads
+existing. Parent waits for both exits, reopens the journal, verifies one held intent
+and confirms exact temporary-root cleanup. This initially exposed database-locked
+errors before the constructor installed busy_timeout. Installing that bounded wait
+before journal_mode configuration corrected the reproduced initialization race.
+Five consecutive post-fix runs and full-source TypeScript passed. No application
+retry loop was added. This is process-contention/persistence evidence, not a killed
+Git process or verified creation/removal recovery test.
