@@ -1,0 +1,109 @@
+# Settled-component implementation packages
+
+2026-09-08. Substantial work, not automatic assignments. Read
+[component decisions](COMPONENT_DECISIONS.md), [setup](SETUP.md) and
+[contribution rules](CONTRIBUTING.md). Ask for maintainer assignment first.
+Every issue must freeze an available public commit and exact files before coding.
+Do not fetch private code or infer permission to operate a real agent or database.
+
+## P1 — [Any OS][UI] Project navigation and accessible result reading
+
+Start with `private-app/app/workspace.tsx`, existing project routes,
+`app/components/project-catalog.tsx`, `private-app/app/task-results.tsx` and their
+browser clients. Keep canonical project/result/review IDs. Use DR-11 for formatted
+text; controlled project tabs may adapt the selected Desktop presentation after
+exact source attribution review. No whole competing application or Electron shell.
+
+Deliver separate project views, browser history/reload, archive/reopen, mobile and
+keyboard navigation, formatted text/tables/code with plain-text fallback. Closing
+a view only closes a view; it does not cancel work or delete a project. Keep raw
+HTML and automatic remote images out of the initial renderer. Protected attachments
+remain explicit follow-up work, not model-authored filesystem links.
+
+Test ordinary projects, missing/denied results, exact review matching, stale response
+after revoked access, repeated view IDs, storage refusal, accessible focus and
+uncertain lifecycle saves. Exercise actual parent/client code, not only a renderer
+with synthetic props. Extend existing demo/browser tests; add focused tests in the
+assigned issue. Coordinate with existing public issue #1 rather than duplicate it.
+
+Before assignment, the maintainer must name a focused synthetic production-panel
+and parent test entry and its command. The current contributor demo renders a
+different workspace: passing demo tests alone does not verify TaskResultsPanel.
+Contributors must not need a configured private installation to test this package.
+
+## P2 — [Any OS][Database][Maintainer review] Maintained database adapter
+
+DR-10. Existing public starting points: `src/persistence/database.ts`,
+`src/web/v1/private-postgres.ts`, `src/web/v1/bounded-database.ts`.
+Implement one node-postgres adapter while retaining session bounds, transaction
+and precommit behavior. Deliberately update package/lock/notices in this batch.
+
+Test scalar/array/JSON/null values, UUID/timestamp callers, rollback, uncertain
+commit, pending/late acquisition, active queries and repeated close. Destroying a
+lease does not prove that a server statement never ran. No automatic replay or
+silent driver fallback. A maintainer must supply the reviewed real-PG17 fixture
+scope and latest caller-test export before marking this package ready. Remove
+Postgres.js only after the import/build inventory proves it is no longer required.
+
+## P3 — [Any OS][Build tooling] Complete release attribution
+
+DR-03/04. Reuse pnpm's prepared graph and the selected build-time license-text
+gatherer; no new resolver. Combine actual bundled files, runtime dependencies,
+copied/vendor code, assets and separately installed runtime notices. Keep original
+texts and changed-file attribution; do not infer rights from package metadata alone.
+
+Deliver a deterministic release-bound notice inventory and failure tests for missing
+text, conflicting/stale hashes and omitted copied assets. Build-time tooling must
+not become a production service. Maintainers identify the exact public build entry
+and retained-text exceptions before assignment. Rollback uses the matching build
+and notices together; never mix two releases' inventories.
+
+## P4 — [Any OS][Library integration][Maintainer review] Calendar and token adapters
+
+DR-05/09. Two independently reviewable subparts may run in separate checkouts.
+Use jsonwebtoken behind the existing synchronous policy boundary; preserve issuer,
+audience, expiration, identity and cache/revocation checks. Use cron-parser field
+expansion with retained schedule grammar, timezone/DST and occurrence semantics.
+Neither library replaces permissions or the durable work engine.
+
+Require actual caller parity plus malformed input, boundary dates, sparse schedules,
+revoked identity and dependency-upgrade regression tests. Missing public calendar
+fixtures must be exported before that subpart is assigned. Do not copy private
+accounts, login metadata or scheduling data into fixtures.
+
+## P5 — [Any OS][News] Source-bound article reading
+
+DR-02/07. Reuse the existing collection/parsing and Readability/jsdom extraction,
+not a new news service. This package depends on the reviewed latest news source
+export; it is **not ready to claim from an absent module**.
+
+Deliver bounded source retrieval, saved provenance, article detail with summary/
+source-link fallback, and existing research/guide actions. A fetched article is
+not a completed native-agent result. Do not silently truncate oversized material
+or raise shared result limits. Test extraction failure, duplicate refresh, archive,
+source mismatch, private-network retrieval refusal and preserved research lineage.
+
+## P6 — [Any OS][Git adapter] Owned disposable workspaces
+
+DR-08. Use native Git detached checkout with exact revision/readback and current
+lease/ownership checks. Preserve dirty or foreign-owned work; no reset/clean over
+another person's checkout. Deliver contention, failed-create, restart and cleanup
+tests with synthetic repositories. Maintainer must export and freeze the concrete
+workspace interface/test set before assignment. No shared live checkout or copied
+credentials/node_modules between machines.
+
+## Shared verification and handoff
+
+Use Node >=22.13.0 and pnpm11.19.0. Follow SETUP.md for frozen preparation. Current
+public commands include `pnpm check:demo`, `pnpm check`, `pnpm build:demo` and
+`pnpm test:demo`. An assigned issue supplies its exact additional test files.
+Run database-heavy tests serially (`node --import tsx --test --test-concurrency=1`
+with the assigned file list); do not run several full suites in parallel on a VPS.
+Local tests do not authorize services, provider calls, credentials or deployment.
+
+Handoff: public base/head commits, changed files, upstream pins/licenses, commands
+and actual outcomes, unresolved failures, resource observations, cleanup and
+rollback notes. Do not invent a pass or hide an uncertain operation. Ordinary
+implementation mistakes can be fixed within scope; native attempts obey their
+separately stated limits. One coherent PR per deliverable, independent review,
+maintainer integration. Actions stays disabled.

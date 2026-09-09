@@ -1,5 +1,10 @@
 # Agent Control Room roadmap
 
+For the September 8 component choices, implementation order and substantial
+contributor batches, read [component decisions](COMPONENT_DECISIONS.md) and
+[implementation packages](IMPLEMENTATION_PACKAGES.md). Selected does not mean
+integrated; each package identifies missing public prerequisites before assignment.
+
 Pre-alpha roadmap. The source preview supplies a disposable demo; independent setup
 reproduction and live multi-machine acceptance remain open. These milestones preserve
 the full product direction, not release dates or claims of supported configurations.
