@@ -3,6 +3,8 @@ import test from 'node:test';
 import { fixture, now, trust, request } from './helpers/web-foundation';
 import { createAccessVerifier } from '../src/web/v1/access-verifier';
 import { WebProjectService } from '../src/web/v1/project-service';
+import { WebIdeaProjectLifecycleOperation } from '../src/web/v1/idea-project-lifecycle-operation';
+import { seedWebIdea, webIdeaKey } from './helpers/web-idea-project';
 
 test('archive and reopen retain project identity and exact historical replay across service reconstruction', async t => {
   const f = await fixture(); t.after(() => f.db.close());
@@ -49,5 +51,27 @@ test('archive and reopen retain project identity and exact historical replay acr
   assert.equal((await recovered.get(identity, project.projectId)).version, 3);
   await assert.rejects(recovered.transition(identity, project.projectId, input, 'different-stale-key'), { code: 'conflict' });
   assert.deepEqual(await recovered.get(identity, other.projectId), other);
+  assert.deepEqual(await workState(), originalWork);
+  const idea = await seedWebIdea(f.client);
+  const scope = { tenantId: 'tenant:web', workspaceId: 'workspace:web' };
+  const lifecycle = new WebIdeaProjectLifecycleOperation(f.client, scope, webIdeaKey, () => now);
+  await assert.rejects(lifecycle.transition(identity, idea.project.projectId,
+    { action: 'archive', expectedVersion: idea.project.version }, 'idea-premature-archive'), { code: 'conflict' });
+  const completed = await lifecycle.transition(identity, idea.project.projectId,
+    { action: 'complete', expectedVersion: idea.project.version }, 'idea-complete-fixture-key');
+  const archiveInput = { action: 'archive', expectedVersion: completed.project.version };
+  const ideaArchived = await lifecycle.transition(identity, idea.project.projectId, archiveInput, 'idea-archive-fixture-key');
+  assert.equal(ideaArchived.project.lifecycle, 'archived');
+  const restarted = new WebIdeaProjectLifecycleOperation(f.client, scope, webIdeaKey, () => now);
+  const ideaReopened = await restarted.transition(identity, idea.project.projectId,
+    { action: 'reopen', expectedVersion: ideaArchived.project.version }, 'idea-reopen-fixture-key');
+  assert.equal(ideaReopened.project.lifecycle, 'active');
+  const ideaReplay = await restarted.transition(identity, idea.project.projectId, archiveInput, 'idea-archive-fixture-key');
+  assert.equal(ideaReplay.replayed, true);
+  assert.deepEqual(ideaReplay.project, ideaArchived.project);
+  const retained = await idea.store.getProject('tenant:web', idea.project.projectId);
+  assert.equal(retained?.lifecycleState, 'active');
+  assert.equal(retained?.version, ideaReopened.project.version);
+  assert.equal(retained?.title, idea.project.title);
   assert.deepEqual(await workState(), originalWork);
 });

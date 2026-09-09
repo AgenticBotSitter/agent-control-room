@@ -6,6 +6,16 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+Idea lifecycle server/storage coverage now reuses the seeded signed registry,
+actual WebIdeaProjectLifecycleOperation and existing owner fixture. It rejects
+archive from active, then completes, archives, reconstructs the operation, reopens
+and replays the old archive receipt without changing the current active state.
+The initial test failed because it incorrectly attempted active-to-archived;
+the existing contract requires completion first. Corrected the DOM fixture's
+advertised actions too: completed offers archive, archived offers reopen. No
+production lifecycle rule was weakened. All 11 focused tests and TypeScript pass
+with one reused disposable database; no provider, native worker or live host used.
+
 The actual workspace/browser-client DOM workflow now runs for both ordinary and
 Idea Lab projects. Each covers route isolation, settling a save after navigation,
 uncertain archive and exact-key retry, followed by reopening an archived project

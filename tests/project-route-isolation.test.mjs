@@ -13,9 +13,9 @@ for (const projectOrigin of ['ordinary', 'idea_lab']) test(`${projectOrigin} nav
   const pending = [];
   globalThis.fetch = (url, options) => new Promise(resolve => pending.push({ url, options, resolve }));
   const root = createRoot(document.getElementById('root'));
-  const project = (id, lifecycle = 'active', version = 1) => ({ projectId: id, title: id === 'project:first' ? 'PRIVATE FIRST PROJECT' : 'Second project',
+  const project = (id, lifecycle = projectOrigin === 'idea_lab' ? 'completed' : 'active', version = 1) => ({ projectId: id, title: id === 'project:first' ? 'PRIVATE FIRST PROJECT' : 'Second project',
     summary: 'Saved purpose', lifecycle, version, origin: projectOrigin, lifecycleEditable: true,
-    ...(projectOrigin === 'idea_lab' ? { ideaLifecycleActions: lifecycle === 'archived' ? ['reopen'] : ['pause', 'complete', 'archive'] } : {}),
+    ...(projectOrigin === 'idea_lab' ? { ideaLifecycleActions: lifecycle === 'archived' ? ['reopen'] : lifecycle === 'completed' ? ['archive'] : ['pause', 'complete'] } : {}),
     createdAt: '2026-09-09T12:00:00.000Z', updatedAt: '2026-09-09T12:00:00.000Z' });
   const render = id => root.render(React.createElement(PrivateProjectWorkspace, { projectId: id, section: 'settings' }));
   try {
@@ -79,7 +79,7 @@ for (const projectOrigin of ['ordinary', 'idea_lab']) test(`${projectOrigin} nav
     assert.deepEqual(JSON.parse(pending[10].options.body), projectOrigin === 'ordinary'
       ? { lifecycle: 'active', expectedVersion: 2 } : { action: 'reopen', expectedVersion: 2 });
     assert.match(pending[10].url, /project%3Asecond\/(idea-)?lifecycle$/);
-    await act(async () => pending[10].resolve(Response.json({ project: { ...savedProject, version: 3 }, replayed: false })));
+    await act(async () => pending[10].resolve(Response.json({ project: { ...savedProject, lifecycle: 'active', version: 3 }, replayed: false })));
     await act(async () => pending[11].resolve(Response.json({ project: project('project:second', 'active', 3) })));
     assert.match(document.body.textContent, /Saved revision 3/);
     assert.equal(pending.filter(request => request.options.method === 'POST').length, 4);
