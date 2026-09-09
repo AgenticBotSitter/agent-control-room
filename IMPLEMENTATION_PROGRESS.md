@@ -377,3 +377,20 @@ and an in-memory SQL probe, not native effects. Root's compiled regression56/56
 also passed. The selected calendar calculation/store replacement is accepted for
 this tested internal-proposal scope; this is not acceptance of a running scheduler,
 automatic dispatch, crash recovery or the complete fifth batch.
+
+### Workspace integration started
+
+The existing generic Codex workspace lease manager is now present in the public
+implementation checkout. Its in-memory prepare check had an asynchronous race:
+two calls could both enter creation before either recorded an active lease.
+Preparation and cleanup now share a per-run pending-operation guard established
+before awaiting the port and cleared in finally. Two source tests pass, covering
+duplicate preparation/removal, create during removal, retained lease after removal
+refusal and changed physical identity preventing removal. Full-source TypeScript
+passes. No Git worktree or filesystem effect was performed by these injected tests.
+
+This is not durable ownership, cross-process exclusion or a native adapter. Next
+requirements remain the selected bounded Git port, durable recovery/ownership,
+dirty-content preservation and real disposable Git tests. A failed or uncertain
+native create cannot be retried or cleaned up merely from this in-memory guard;
+the concrete adapter/recovery protocol must establish what exists first.
