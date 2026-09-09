@@ -3,6 +3,15 @@
 Status: bounded response projection and one-shot JSONL profile implemented; transport, trusted admission,
 runtime reconciliation and host qualification are not implemented or accepted.
 
+`owned-read.ts` now composes the profile with a caller-owned connection attempt.
+It reuses the owned-signing acquisition pattern: synchronous ownership before
+readiness, one attempt, total operation deadline, cancellation and a separate
+bounded cleanup wait. It rechecks the caller's synchronous admission callback
+around waits and after cleanup. Failed or unfinished cleanup withholds the result.
+No default native connection, endpoint, credentials or authority implementation
+is supplied. The connector contract requires closing eventual readiness and I/O;
+fake close callbacks cannot prove that a physical connection met that contract.
+
 Official interface checked 2026-09-09:
 [App Server stored thread read](https://learn.chatgpt.com/docs/app-server).
 `thread/read` with `includeTurns: true` reads stored turns without resuming or

@@ -6,6 +6,15 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+Codex read lifecycle now composes the fixed profile with an owned connection
+attempt, adapting the existing owned-signing acquisition pattern. One-shot reads
+bound readiness/I/O waiting, abort on cancellation, wait for bounded cleanup and
+recheck admission after cleanup. Fake tests cover the three fixed outbound
+messages, pending acquisition timeout/cancel, refusal before acquisition,
+cleanup uncertainty and revocation during cleanup. Three focused tests pass;
+native connection and real admission implementation remain absent. No physical
+transport, provider or credential operation occurred.
+
 At c515a93, root's sequential component suite plus the four Codex recovery tests
 passed with exit 0. The recovery command is now part of test:components rather
 than a separate manual step. Independent review passed all four recovery tests
