@@ -607,3 +607,18 @@ workspace tests, all four native crash boundaries and the existing native Git
 preservation fixture passed with confirmed cleanup. Independent review and the
 fresh compiled regression are pending. Safe re-adoption, in-flight Git crashes,
 global admission integration and release/retention policy remain unfinished.
+
+The fresh compiled regression passed56/56. Independent source review at4a35626
+found no concrete root-identity regression, but identified a P2 fixture timeout
+cleanup gap: a killed worker could leave Git alive. The fixture now uses an owned
+POSIX process group, terminates that group on timeout and confirms its absence
+before readback/cleanup. Unconfirmed termination preserves the fixture directory.
+The first stricter run exposed asynchronous process reaping (immediate absence
+check failed; final cleanup still confirmed absence). A bounded one-second reaping
+wait fixed that false failure without weakening the absence requirement.
+
+A deterministic fifth case starts harmless Git blocked on stdin, invokes the same
+group-termination path, and proves both worker and Git group are gone. All four
+acknowledgement-gap cases plus this cleanup challenge pass; TypeScript and exact
+cleanup pass. This fifth case is not in-flight worktree modification recovery.
+Final source re-review of the cleanup correction remains pending.

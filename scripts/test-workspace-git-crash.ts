@@ -13,9 +13,28 @@ import { SqliteBridgeJournal } from "../src/node-bridge/journal";
 import { sha256Digest } from "../src/security/canonical-digest";
 
 assert.ok(process.argv[2], "supply the reviewed Git executable");
+assert.notEqual(process.platform, "win32", "this native fixture requires POSIX process groups");
 const executable = resolve(process.argv[2]);
 const execute = promisify(execFile);
-const boundaries = ["git-created", "creation-recorded", "git-removed", "removal-recorded"];
+const boundaries = ["git-created", "creation-recorded", "git-removed", "removal-recorded", "git-running"];
+function killOwnedGroup(child: ReturnType<typeof fork>): void {
+  // detached:true creates a fresh group with this child as its leader. Only
+  // signal it while this exact tracked child is still nonterminal.
+  if (child.pid && child.exitCode === null && child.signalCode === null) {
+    try { process.kill(-child.pid, "SIGKILL"); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+  }
+}
+function groupAbsent(child: ReturnType<typeof fork>): boolean {
+  if (!child.pid) return true; // failed spawn has no process group
+  try { process.kill(-child.pid, 0); return false; }
+  catch (error) { return (error as NodeJS.ErrnoException).code === "ESRCH"; }
+}
+async function waitGroupAbsent(child: ReturnType<typeof fork>): Promise<boolean> {
+  for (let wait = 0; wait < 100 && !groupAbsent(child); wait++)
+    await new Promise(resolveWait => setTimeout(resolveWait, 10));
+  return groupAbsent(child);
+}
 function fixture(root: string, boundary: string, revision: string) {
   const repositoryRoot = join(root, "repo"), workspaceRoot = join(root, "work"), hooks = join(root, "hooks");
   const runId = `run:crash-${boundary}`;
@@ -35,7 +54,17 @@ function fixture(root: string, boundary: string, revision: string) {
 if (process.argv[3] === "child") {
   const [root, boundary, revision] = process.argv.slice(4);
   assert.ok(process.send && isAbsolute(root) && boundaries.includes(boundary) && /^[a-f0-9]{40}$/.test(revision));
-  const { intent, git, journalPath } = fixture(root, boundary, revision);
+  const { intent, git, env, journalPath } = fixture(root, boundary, revision);
+  if (boundary === "git-running") {
+    // Deterministic cleanup challenge: harmless Git is blocked reading its open
+    // stdin pipe. Parent exercises the same whole-group termination as timeout.
+    const pending = execute(executable, ["hash-object", "--stdin"], {
+      cwd: intent.repositoryRoot, env, timeout: 10000, maxBuffer: 262144,
+    });
+    pending.child.once("spawn", () => process.send?.({ type: "boundary", boundary }));
+    await pending;
+    throw new Error("fixture_git_unexpectedly_completed");
+  }
   const journal = new SqliteBridgeJournal(journalPath);
   const stop = async (): Promise<never> => {
     // All Git subprocesses have exited before this acknowledgement. Parent kills
@@ -73,7 +102,7 @@ if (process.argv[3] === "child") {
     for (const boundary of boundaries) {
       const { intent, git, env, journalPath } = fixture(root, boundary, revision);
       const child = fork(fileURLToPath(import.meta.url), [executable, "child", root, boundary, revision], {
-        execArgv: ["--import", "tsx"], silent: true, env,
+        execArgv: ["--import", "tsx"], silent: true, detached: true, env,
       });
       child.stdout?.resume(); child.stderr?.resume();
       let reached = false;
@@ -81,7 +110,9 @@ if (process.argv[3] === "child") {
         child.once("error", reject);
         child.on("message", (message: { type?: string; boundary?: string }) => {
           if (message.type === "boundary" && message.boundary === boundary) {
-            reached = true; child.kill("SIGKILL");
+            reached = true;
+            if (boundary === "git-running") killOwnedGroup(child);
+            else child.kill("SIGKILL");
           }
         });
         child.once("exit", (code, signal) => {
@@ -89,9 +120,15 @@ if (process.argv[3] === "child") {
           else reject(new Error("native_fixture_boundary_not_reached"));
         });
       });
-      const timer = setTimeout(() => child.kill("SIGKILL"), 30000);
+      const timer = setTimeout(() => killOwnedGroup(child), 30000);
       children.push({ child, done, timer });
       await done; clearTimeout(timer);
+      assert.ok(await waitGroupAbsent(child), "fixture_process_group_not_terminal");
+      if (boundary === "git-running") {
+        await assert.rejects(lstat(journalPath), { code: "ENOENT" });
+        console.log(JSON.stringify({ boundary, workerTerminated: true, gitProcessGroupAbsent: true }));
+        continue;
+      }
       const journal = new SqliteBridgeJournal(journalPath);
       try {
         const saved = journal.workspaceIntentInventory()[0];
@@ -139,9 +176,16 @@ if (process.argv[3] === "child") {
   } finally {
     for (const entry of children) {
       clearTimeout(entry.timer);
-      if (entry.child.exitCode === null && entry.child.signalCode === null) entry.child.kill("SIGKILL");
+      killOwnedGroup(entry.child);
     }
     await Promise.allSettled(children.map(entry => entry.done));
+    // Reaping an orphan can lag the worker exit. Do not erase its files unless
+    // all owned groups are confirmed absent; uncertainty preserves the root.
+    const absent = await Promise.all(children.map(entry => waitGroupAbsent(entry.child)));
+    if (absent.some(value => !value)) {
+      console.log(JSON.stringify({ cleanup: false, reason: "fixture_process_group_not_terminal" }));
+      throw new Error("fixture_retained_due_to_process_uncertainty");
+    }
     // Exclusively fixture-created root; synthetic retained work is intentionally disposed.
     await rm(root, { recursive: true, force: true });
     await assert.rejects(lstat(root), { code: "ENOENT" });
