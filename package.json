@@ -17,7 +17,7 @@
     "test:calendar": "node --import tsx --test --test-concurrency=1 tests/calendar-parity.test.ts tests/cron-calendar.test.ts tests/services-v1-recurrence.test.ts tests/schedule-store.test.ts",
     "test:build:articles": "pnpm build && node --test tests/vps-built-article-extraction.test.mjs",
     "test:articles": "node --import tsx --test --test-concurrency=1 tests/article-extraction.test.mjs tests/article-detail.test.ts tests/article-store.test.ts tests/article-reader.test.mjs tests/article-collection.test.ts tests/news-research-form.test.mjs tests/news-page-binding.test.tsx",
-    "test:results": "node --import tsx --test tests/result-text.test.tsx tests/task-results-lifecycle.test.mjs",
+    "test:results": "node --import tsx --test tests/result-text.test.tsx tests/task-results-lifecycle.test.mjs tests/review-memory.test.tsx",
     "test:access": "node --import tsx --test tests/access-library.test.ts",
     "test:database": "node --import tsx --test --test-concurrency=1 tests/private-pg-driver.test.ts tests/private-pg-options.test.ts",
     "check:demo": "tsc --noEmit --incremental false",

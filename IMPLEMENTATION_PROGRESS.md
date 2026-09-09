@@ -6,6 +6,15 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+Independent review of 65753c5 found no concrete issue in reader isolation and
+refresh clearing, and independently passed five result tests. Root's fresh full
+compiled suite passed 57/57. Draft/session ownership was source-reviewed, not
+claimed as an end-to-end save test. Two existing private synthetic workspace
+cases are now adapted into review-memory.test.tsx: detached subscriber draft
+retention/exact-binding isolation and non-evicting capacity, including protected
+shell rendering. The expanded result command passes 7/7 and TypeScript passes.
+No database-heavy fixture was copied or additional dependency installed.
+
 Result lifecycle follow-up uses a matching real SHA-256/byte-length fixture, so
 late-response assertions no longer depend on content that the browser would reject
 for an invalid hash. Positive reading is proven before focus-triggered refresh.
