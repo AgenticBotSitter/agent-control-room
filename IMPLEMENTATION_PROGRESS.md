@@ -403,3 +403,19 @@ from changing the in-flight operation or clearing the wrong busy key. Four sourc
 tests and full-source TypeScript pass. This hold lasts only for this manager's
 lifetime and deliberately provides no unverified reset API; durable reconciliation
 across process restart remains to be implemented before native/runtime wiring.
+
+Native Git fit checkpoint: scripts/test-workspace-git.ts creates an empty owned
+repository with no remotes, synthetic commit identity, empty hooks/templates and
+disabled global/system Git configuration. The actual manager plus fixture-local
+Git port passed exact detached HEAD, unchanged checkout after source branch
+advancement, duplicate preparation refusal, preserved untracked dirty file, and
+clean lease removal. Fixture cleanup and absence were verified. No user checkout,
+credential store, provider, network or production service was used.
+
+The initial TypeScript check found the repository's required NODE_ENV field absent
+from the sterile subprocess environment. Added NODE_ENV=test and reran checking.
+The native receipt precedes that environment-only correction. The fixture-local
+port is deliberately not a production adapter: it relies on a freshly generated
+trusted repository, and does not qualify hostile Git configuration, ignored or
+tracked dirty content, cross-process ownership, lost responses or restart recovery.
+These remain required; no generic Git executor is exposed by this checkpoint.
