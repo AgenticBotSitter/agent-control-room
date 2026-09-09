@@ -25,7 +25,7 @@
 // by this script or written to screenshots or logs.
 
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -54,9 +54,26 @@ const fail = (name, detail) => { results.push(["FAIL", name]); console.log(`not 
 const check = (name, pass, detail) => (pass ? ok(name, detail) : fail(name, detail));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+// Names of every live process whose /proc/<pid>/cmdline contains the marker.
+// Used after shutdown to prove the demo server process (not just the pnpm
+// wrapper) is actually gone. Zombies have no cmdline and are not matched.
+function processesWithCmdline(marker) {
+  const found = [];
+  let pids = [];
+  try { pids = readdirSync("/proc").filter(n => /^\d+$/.test(n)); } catch { return found; }
+  for (const pid of pids) {
+    try {
+      const cmd = readFileSync(`/proc/${pid}/cmdline`, "utf8").replace(/\0/g, " ");
+      if (cmd.includes(marker)) found.push(Number(pid));
+    } catch { /* process vanished between readdir and read */ }
+  }
+  return found;
+}
+
 // ---- demo lifecycle ---------------------------------------------------------
 let demo = null;
 let demoDataDir = null; // set after a pre-start snapshot of /tmp
+let demoDataAmbiguous = 0; // >0 when multiple new temp dirs appeared at startup
 async function startDemo() {
   // snapshot existing temp demo dirs so we can assert ours is removed later
   const tmpRoot = tmpdir();
@@ -99,7 +116,12 @@ async function startDemo() {
     await sleep(500);
   }
   const after = new Set(await readdir(tmpRoot).then(x => x.filter(n => n.startsWith("control-room-contributor-demo-"))));
-  demoDataDir = [...after].find(n => !before.has(n)) || null;
+  const newDirs = [...after].filter(n => !before.has(n));
+  // Exact ownership: only when exactly one new demo temp directory appeared is
+  // that directory unambiguously this run's. Multiple new dirs would mean a
+  // concurrent demo — then no specific directory is provably ours.
+  if (newDirs.length === 1) { demoDataDir = newDirs[0]; demoDataAmbiguous = 0; }
+  else { demoDataDir = null; demoDataAmbiguous = newDirs.length; }
   return ownerCode;
 }
 async function stopDemo() {
@@ -230,6 +252,86 @@ async function runJourney(context, ownerCode) {
     const prevKept = await page.locator("summary:has-text('Previous sample')").count();
     check("history-read-back-without-rerun", reopened > 0 && prevKept >= 1, `sample=${reopened} previous=${prevKept}`);
     await shot(page, "4-reopen-history");
+
+    // --- Two-project isolation (issue #1 acceptance: two distinct projects) ---
+    // Keyboard-create a second project and verify the two stay fully isolated.
+    await page.locator('a:has-text("All projects")').first().click().catch(() => {});
+    await page.waitForLoadState("networkidle");
+    await page.waitForSelector("#project-title", { timeout: 10000 });
+    await page.locator("#project-title").click();
+    await page.keyboard.type("Isolation project B");
+    await page.keyboard.press("Tab");
+    await page.keyboard.type("Second synthetic project; must not share the first project's task data.");
+    const createB = await tabTo(page, f => f.tag === "BUTTON" && /create project/i.test(f.name), 8);
+    check("second-project-create-reachable", !!createB, `focus-visible=${createB?.visible}`);
+    await page.keyboard.press("Enter");
+    await page.waitForSelector("#task-title", { timeout: 10000 });
+    await page.waitForLoadState("networkidle");
+    await page.waitForTimeout(600);
+    const bTaskLinks = await page.locator('a:has-text("View task")').count();
+    const bBodyText = await page.locator("body").innerText();
+    check("project-isolation-no-cross-task", bTaskLinks === 0 && !bBodyText.includes("Acceptance task proposal"),
+      `project B shows ${bTaskLinks} task link(s)${bBodyText.includes("Acceptance task proposal") ? "; leaks project A's task title" : ""}`);
+    await shot(page, "10-isolation-b");
+
+    // Catalog lists both projects; reopening A restores its history intact.
+    await page.locator('a:has-text("All projects")').first().click();
+    await page.waitForLoadState("networkidle");
+    await page.waitForSelector("h1", { timeout: 10000 });
+    const projA = await page.locator('a:has-text("Browser acceptance project")').count();
+    const projB = await page.locator('a:has-text("Isolation project B")').count();
+    check("catalog-lists-both-projects", projA === 1 && projB === 1, `projectA=${projA} projectB=${projB}`);
+    const aLink = await tabTo(page, f => f.tag === "A" && /browser acceptance project/i.test(f.name), 30);
+    check("reopen-project-a-by-keyboard", !!aLink, `focused ${aLink?.tag || ""} "${aLink?.name || ""}"`);
+    if (aLink) {
+      await page.keyboard.press("Enter");
+      await page.waitForLoadState("networkidle");
+      await page.waitForSelector('a:has-text("View task")', { timeout: 10000 });
+      await page.locator('a:has-text("View task")').first().click();
+      await page.waitForLoadState("networkidle");
+      await page.waitForTimeout(1000);
+      const aData = await page.locator("text=SIMULATED RESULT").count();
+      check("project-a-history-intact-after-b", aData > 0, `SIMULATED RESULT present=${aData}`);
+    }
+
+    // --- Lifecycle archive / reopen, keyboard-driven (issue #1 acceptance) ---
+    await page.locator('a:has-text("All projects")').first().click();
+    await page.waitForLoadState("networkidle");
+    await page.waitForSelector("h1", { timeout: 10000 });
+    const aLink2 = await tabTo(page, f => f.tag === "A" && /browser acceptance project/i.test(f.name), 30);
+    if (aLink2) {
+      await page.keyboard.press("Enter");
+      await page.waitForLoadState("networkidle");
+    }
+    await page.waitForTimeout(700);
+    const complete = await tabTo(page, f => f.tag === "BUTTON" && /mark complete/i.test(f.name), 25);
+    check("archive-mark-complete-reachable", !!complete, `focus-visible=${complete?.visible}`);
+    if (complete) {
+      await page.keyboard.press("Enter");
+      await page.waitForTimeout(1100);
+      await shot(page, "11-before-archive");
+      const archiveBtn = await tabTo(page, f => f.tag === "BUTTON" && /archive project/i.test(f.name), 25);
+      check("archive-action-reachable-after-complete", !!archiveBtn, `focus-visible=${archiveBtn?.visible}`);
+      if (archiveBtn) {
+        await page.keyboard.press("Enter");
+        await page.waitForTimeout(1300);
+        const reopenVisible = await page.locator('button:has-text("Reopen project")').count();
+        const archiveGone = await page.locator('button:has-text("Archive project")').count();
+        const statusArchived = (await page.locator("body").innerText()).toLowerCase().includes("archived");
+        check("project-archived", reopenVisible === 1 && archiveGone === 0 && statusArchived,
+          `reopen=${reopenVisible} archiveButton=${archiveGone} statusArchived=${statusArchived}`);
+        await shot(page, "12-archived");
+        const reopen = await tabTo(page, f => f.tag === "BUTTON" && /reopen project/i.test(f.name), 25);
+        check("reopen-from-archived-reachable", !!reopen, `focus-visible=${reopen?.visible}`);
+        if (reopen) {
+          await page.keyboard.press("Enter");
+          await page.waitForTimeout(1300);
+          const activeAgain = await page.locator('button:has-text("Archive project")').count();
+          check("project-reopened-active", activeAgain === 1, `archive button available again=${activeAgain}`);
+          await shot(page, "13-reopened");
+        }
+      }
+    }
   });
 
   // Narrow-screen: no horizontal overflow on home, project and task routes.
@@ -255,7 +357,10 @@ async function runJourney(context, ownerCode) {
     }
   });
 
-  // Failure recovery on a second (same-session) page.
+  // Failure recovery on a second (same-session) page. Every POST is logged
+  // (url, body, idempotency key, whether the server accepted it) so assertions
+  // count actual requests — visible samples alone cannot prove a retry did or
+  // did not happen.
   await withPage(context, async (page) => {
     await page.setViewportSize({ width: 1280, height: 950 });
     // Two distinct loss modes:
@@ -263,19 +368,29 @@ async function runJourney(context, ownerCode) {
     //  "response" — the request is delivered and the server accepts it (route.fetch),
     //               then the client's copy of the response is dropped (lost after acceptance).
     let dropMode = null;
+    const postLog = [];
     await page.route("**/api/**", async r => {
-      if (dropMode && r.request().method() === "POST") {
-        const mode = dropMode;
-        dropMode = null;
-        if (mode === "request") return r.abort("failed");
-        if (mode === "response") { try { await r.fetch(); } catch { /* server unreachable */ } return r.abort("failed"); }
+      const req = r.request();
+      if (req.method() !== "POST") return r.continue();
+      const entry = { url: req.url(), body: req.postData() || "", key: req.headers()["idempotency-key"] || "", delivered: false };
+      postLog.push(entry);
+      const mode = dropMode;
+      if (mode) dropMode = null;
+      if (mode === "request") return r.abort("failed"); // never reaches the server
+      if (mode === "response") {
+        try { await r.fetch(); entry.delivered = true; } catch { /* server unreachable */ }
+        return r.abort("failed"); // server accepted; drop only the client's copy
       }
-      return r.continue();
+      await r.continue();
+      entry.delivered = true; // ordinary POST reached the server (no drop armed)
     });
     await page.goto(ORIGIN + "/local-preview", { waitUntil: "networkidle" });
     await page.waitForSelector("#project-title", { timeout: 10000 });
 
-    // POST lost before delivery: uncertain banner + retry that replays the exact POST.
+    // POST lost before delivery: uncertain banner + retry that replays the exact
+    // POST. The client stores the pending request (body + idempotency key) and
+    // retryPending re-sends the identical request, so the two create POSTs must
+    // carry the same body and the same key.
     await page.fill("#project-title", "Loss-injection project");
     await page.fill("#project-summary", "The create POST is dropped to test uncertain-save recovery.");
     dropMode = "request";
@@ -286,6 +401,14 @@ async function runJourney(context, ownerCode) {
     await shot(page, "7-post-lost");
     await page.click('button:has-text("Retry original save")');
     await page.waitForSelector('a:has-text("Loss-injection project")', { timeout: 10000 });
+    const createPosts = postLog.filter(e => e.body.includes("Loss-injection project"));
+    check("exactly-two-create-posts", createPosts.length === 2, `${createPosts.length} create POST(s) observed`);
+    check("retry-replays-exact-payload", createPosts.length === 2 && createPosts[0].body === createPosts[1].body,
+      createPosts.length === 2 && createPosts[0].body === createPosts[1].body ? "bodies identical" : "bodies DIFFER");
+    check("retry-reuses-idempotency-key", createPosts.length === 2 && createPosts[0].key && createPosts[0].key === createPosts[1].key,
+      createPosts.length === 2 && createPosts[0].key === createPosts[1].key ? `same key (${String(createPosts[0]?.key).slice(0, 8)}…)` : "keys missing or differ");
+    check("first-dropped-second-delivered", createPosts[0]?.delivered === false && createPosts[1]?.delivered === true,
+      `first delivered=${createPosts[0]?.delivered} second delivered=${createPosts[1]?.delivered}`);
     ok("lost-post-retry-recovers", "project re-created with the original title");
     await page.locator('a:has-text("Loss-injection project")').first().click();
     await page.waitForSelector("#task-title", { timeout: 10000 });
@@ -293,15 +416,18 @@ async function runJourney(context, ownerCode) {
 
     // Reply lost AFTER the server accepted the revision: the POST is delivered
     // (route.fetch), the server records the revision, and only the client's copy
-    // of the response is dropped. The client must show uncertain, preserve the
-    // feedback and NOT auto-repeat; the manual re-check then reconciles against
-    // the server and surfaces the revision that was recorded exactly once.
+    // of the response is dropped. The proof of "no automatic retry" is the count
+    // of simulation POSTs: exactly one revision POST may exist, before and after
+    // the manual re-check. An automatic retry would emit a second POST.
     await page.fill("#task-title", "Loss task");
     await page.fill("#task-instructions", "Simulate, then lose the revision reply after the server accepts it.");
     await page.click('button:has-text("Save proposal")');
     await page.waitForSelector('button:has-text("Simulate this task")', { timeout: 10000 });
+    const simPosts = () => postLog.filter(e => e.url.includes("/contributor-demo/simulations"));
+    const revisionPosts = () => simPosts().filter(e => e.body.includes("revision"));
     await page.click('button:has-text("Simulate this task")');
     await page.waitForSelector("text=SIMULATED RESULT", { timeout: 15000 });
+    check("initial-simulate-sent-one-post", simPosts().length === 1 && simPosts()[0].delivered, `${simPosts().length} simulation POST(s) after simulate`);
     await page.fill("textarea", "Feedback that must survive a lost reply.");
     dropMode = "response";
     await page.click('button:has-text("Request revised sample")');
@@ -310,13 +436,17 @@ async function runJourney(context, ownerCode) {
     let kept = false;
     try { kept = (await page.locator("textarea").inputValue()) === "Feedback that must survive a lost reply."; } catch { /* not present */ }
     check("lost-reply-preserves-feedback", kept, "feedback still in the textarea");
+    check("revision-request-delivered-once", revisionPosts().length === 1 && revisionPosts()[0].delivered
+      && revisionPosts()[0].body.includes("Feedback that must survive a lost reply."),
+      revisionPosts().length === 1 ? "exactly one delivered revision POST with the feedback" : `${revisionPosts().length} revision POST(s) observed`);
     const beforeRecheck = await page.locator("summary:has-text('Previous sample')").count();
-    check("no-auto-repeat-after-lost-reply", beforeRecheck === 0, `${beforeRecheck} previous sample(s) shown before re-check`);
+    check("no-revision-shown-before-recheck", beforeRecheck === 0, `${beforeRecheck} previous sample(s) shown before re-check`);
     await shot(page, "8-reply-lost");
     const recoverBtn = await page.locator('button:has-text("Check this simulation")').count();
     if (recoverBtn) {
       await page.click('button:has-text("Check this simulation")');
       await page.waitForTimeout(1500);
+      check("no-auto-retry-after-lost-reply", simPosts().length === 2, `${simPosts().length} simulation POST(s) total (exactly simulate + revision; re-check added none)`);
       const prevCount = await page.locator("summary:has-text('Previous sample')").count();
       const alertShown = await page.locator("text=was not recorded").count();
       check("recheck-reconciles-recorded-revision", prevCount === 1 && alertShown === 0,
@@ -336,23 +466,35 @@ async function runJourney(context, ownerCode) {
   let journeyError = null;
   try { await runJourney(context, code); } catch (error) { journeyError = error; console.error(`# journey aborted: ${error.message}`); }
   await browser.close();
-  const demoStopped = await stopDemo();
+  const demoStopped = await stopDemo(); // launcher (pnpm wrapper) exit evidence
   await sleep(1500);
 
-  // Shutdown verification. "demo-stopped" is true only if the demo process's
-  // own exit event fired within the stop window — not inferred from cleanup.
-  check("demo-stopped", demoStopped, demoStopped ? "process exited on SIGTERM" : "demo process did not exit within 8s of SIGTERM");
+  // Shutdown verification, split into honest claims:
+  //  - demo-launcher-stopped: the package-manager wrapper's own exit event fired;
+  //  - demo-server-stopped:  no process with the demo server in its cmdline remains
+  //    (the wrapper exiting alone does not prove the server it spawned stopped);
+  //  - port-3000-refuses-connections and temp-data-removed then build on those.
+  check("demo-launcher-stopped", demoStopped, demoStopped ? "pnpm wrapper exited on SIGTERM" : "wrapper did not exit within 8s of SIGTERM");
+  const serverProcs = processesWithCmdline("contributor-demo.mjs");
+  const serverGone = serverProcs.length === 0;
+  check("demo-server-stopped", serverGone, serverGone ? "no contributor-demo.mjs process remains" : `STILL RUNNING pid(s): ${serverProcs.join(",")}`);
   const portFree = await new Promise(resolveCode => {
     fetch(ORIGIN + "/local-preview").then(() => resolveCode(false)).catch(() => resolveCode(true));
   });
-  check("port-released-after-shutdown", portFree, `${PORT} no longer answers`);
+  check("port-3000-refuses-connections", portFree, `${PORT} ${portFree ? "refuses connections" : "still answers"}`);
+  const stoppedCleanly = demoStopped && serverGone;
   if (demoDataDir) {
     const remains = existsSync(join(tmpdir(), demoDataDir));
-    check("temp-data-removed", demoStopped && !remains, demoStopped ? (remains ? `temp dir still present: ${demoDataDir}` : demoDataDir) : "process not stopped; temp-dir check deferred");
+    check("temp-data-removed", stoppedCleanly && !remains,
+      stoppedCleanly ? (remains ? `temp dir still present: ${demoDataDir}` : `removed: ${demoDataDir}`) : "process not stopped; temp-dir check deferred");
+  } else if (demoDataAmbiguous > 0) {
+    fail("temp-data-removed", `${demoDataAmbiguous} new temp dirs appeared at startup; no single dir is provably this run's`);
   } else {
     ok("temp-data-removed", "no new demo temp directory was created");
   }
-  if (!demoStopped) {
+  if (!serverGone) {
+    for (const pid of serverProcs) { try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ } }
+  } else if (!demoStopped) {
     try { process.kill(-demo.pid, "SIGKILL"); } catch { /* already gone */ }
   }
 
