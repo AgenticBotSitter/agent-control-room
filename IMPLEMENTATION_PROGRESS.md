@@ -792,3 +792,20 @@ Independent review at aa2e390 found no concrete issue and reran all three local
 tests successfully. It inspected, but did not rerun, the pinned ssh2 script.
 Acceptance remains limited to the owned-readiness wrapper and injected contract;
 actual connector cleanup and OS-resource acceptance are not established.
+
+### Concrete signing stream ownership
+
+Added an unwired Node Duplex-to-selected-AgentProtocol adapter. It takes ownership
+of an already-created stream while connection readiness is pending, propagates
+error/end/close/abort into refusal, never creates a protocol after late readiness,
+and unpipes/destroys both objects on cleanup. Cancellation reentered during the
+protocol factory also destroys its returned object. Cleanup failure is retained
+and repeated close cannot turn it into success. It contains no socket discovery,
+key enumeration, SSH framing or credentials.
+
+Six local source tests and eight actual pinned ssh2 in-memory cases pass; the
+latter now exercise this concrete adapter rather than directly connecting the
+protocols in the test. Full-source TypeScript passes. Destruction is a local
+stream teardown request, not proof of terminal OS resources or remote cancellation.
+Real explicitly configured connection creation, permissions, custody and host
+qualification remain open; this adapter has not yet received independent review.
