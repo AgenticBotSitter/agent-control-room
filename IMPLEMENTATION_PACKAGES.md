@@ -1,10 +1,42 @@
 # Settled-component implementation packages
 
-2026-09-08. Substantial work, not automatic assignments. Read
+Implementation status refreshed against local branch `codex/component-batch-4`
+at `6502bff`. These updates are not yet published or available from public main.
+Substantial work, not automatic assignments. Read
 [component decisions](COMPONENT_DECISIONS.md), [setup](SETUP.md) and
 [contribution rules](CONTRIBUTING.md). Ask for maintainer assignment first.
 Every issue must freeze an available public commit and exact files before coding.
 Do not fetch private code or infer permission to operate a real agent or database.
+
+## Current assignment status — read before the original package descriptions
+
+The descriptions below retain the original intended outcomes, not an instruction
+to rebuild work now implemented. None of the six full batches is accepted complete.
+Freeze a published base containing the relevant implementation before assigning
+contributors; a local branch name alone is not an available public starting point.
+
+| Package | Implemented locally; do not duplicate | Remaining useful work | Current local verification |
+| --- | --- | --- | --- |
+| P1 project/results | Markdown renderer, protected result identity checks, task-switch isolation, clear-on-reauthorization, retained draft state tests | Accessible keyboard/mobile/browser acceptance, project history/archive/reopen workflow, separately admitted attachments | `pnpm test:results` (7 tests); physical browser acceptance remains open |
+| P2 database | node-postgres adapter and pool lifecycle; previous native PG17 transaction/restore evidence; Postgres.js removal | Real queue/native recovery, release-bound operational configuration and deployment acceptance | `pnpm test:database`, `pnpm test:queue`; see POSTGRES_RESTORE_EVIDENCE.md |
+| P3 attribution | All 14 direct runtime license texts and pinned-version/byte checks | Selected CycloneDX gatherer plus pnpm graph integration; exact transitive, bundle, asset and external-runtime notice reconciliation | `pnpm test:notices`; not a full SBOM or bundle clearance |
+| P4 token/calendar | jsonwebtoken policy adapter; cron-parser/Luxon integration and occurrence persistence | Automatic dispatch/recovery, live login acceptance and release integration; no second parser/verifier | `pnpm test:access`, `pnpm test:calendar` |
+| P5 news | Bounded extraction, source-bound storage/reader, collection-to-research task persistence | Qualified live sources/resource policy, physical browser acceptance and real agent research delivery | `pnpm test:articles`; no native agent execution implied |
+| P6 workspaces | Native Git port, durable intent/removal, root identities and read-only restart observations | Safe re-adoption with current admission, in-flight mutation recovery, retention and runtime composition | See WORKSPACE_RECOVERY_INTEGRATION.md; native fixture execution requires its own scope |
+
+Additional core work is not hidden by these contributor packages: real Idea Lab
+participants and crash recovery (DR-01); exact-ID native connector recovery and
+artifact admission (DR-17); owner key custody/consent/socket acceptance (DR-16);
+independent checkpoint placement and supported split-commit recovery (DR-15).
+Optional Herdr retained-reader startup/API/UI are implemented, but actual collector
+composition/host qualification and Kuma/Beszel acceptance remain unfinished.
+
+Prioritize the first real task loop: approved task → native worker → retained
+result → review → linked revision, with restart uncertainty handled honestly.
+Do not expand optional monitoring to substitute for that missing operational loop.
+Maintainers own its cross-component authority and final integration. Local tests
+and documentation can proceed; credentials, listeners, live integrations and
+production changes still require their scoped approvals.
 
 ## P1 — [Any OS][UI] Project navigation and accessible result reading
 
