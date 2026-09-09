@@ -24,7 +24,8 @@ try {
   for (const path of [repo, work, hooks]) await mkdir(path, { mode: 0o700 });
   await git(repo, ["init", "--initial-branch=fixture", "--template=" + hooks]);
   await writeFile(join(repo, "fixture.txt"), "original\n");
-  await git(repo, ["add", "--", "fixture.txt"]);
+  await writeFile(join(repo, ".gitignore"), "ignored-fixture.txt\n");
+  await git(repo, ["add", "--", "fixture.txt", ".gitignore"]);
   await git(repo, ["commit", "-m", "Synthetic initial"]);
   const revision = await git(repo, ["rev-parse", "HEAD"]);
   assert.match(revision, /^[a-f0-9]{40}$/);
@@ -51,8 +52,9 @@ try {
     removeWorktree: async input => {
       assert.equal(input.repositoryRealPath, repository);
       assert.equal(input.checkoutPath.startsWith(workspace + "/codex-"), true);
-      // Preserve both tracked and untracked data. No force, reset or broad prune.
-      if (await git(input.checkoutPath, ["status", "--porcelain", "--untracked-files=all"])) throw new Error("dirty_worktree");
+      // Ignored files can still contain valuable agent work. Preserve those too.
+      // No force, reset or broad prune.
+      if (await git(input.checkoutPath, ["status", "--porcelain", "--untracked-files=all", "--ignored=matching"])) throw new Error("dirty_worktree");
       await git(repository, ["worktree", "remove", "--", input.checkoutPath]); removals++;
     },
   };
@@ -72,12 +74,28 @@ try {
   assert.equal(removals, 0);
   // Only this test-created file is removed to exercise subsequent clean cleanup.
   await rm(join(lease.checkoutPath, "untracked.txt"));
+  await writeFile(join(lease.checkoutPath, "fixture.txt"), "tracked work\n");
+  await assert.rejects(manager.cleanup(lease), /dirty_worktree/);
+  assert.equal(await readFile(join(lease.checkoutPath, "fixture.txt"), "utf8"), "tracked work\n");
+  await git(lease.checkoutPath, ["add", "--", "fixture.txt"]);
+  await assert.rejects(manager.cleanup(lease), /dirty_worktree/);
+  assert.equal(await git(lease.checkoutPath, ["show", ":fixture.txt"]), "tracked work");
+  // Restore only fixture-owned content, including its staged version.
+  await writeFile(join(lease.checkoutPath, "fixture.txt"), "original\n");
+  await git(lease.checkoutPath, ["add", "--", "fixture.txt"]);
+  await writeFile(join(lease.checkoutPath, "ignored-fixture.txt"), "ignored but valuable\n");
+  assert.equal(await git(lease.checkoutPath, ["status", "--porcelain"]), "");
+  await assert.rejects(manager.cleanup(lease), /dirty_worktree/);
+  assert.equal(await readFile(join(lease.checkoutPath, "ignored-fixture.txt"), "utf8"), "ignored but valuable\n");
+  assert.equal(removals, 0);
+  await rm(join(lease.checkoutPath, "ignored-fixture.txt"));
   await manager.cleanup(lease); assert.equal(removals, 1);
   await assert.rejects(stat(lease.checkoutPath), { code: "ENOENT" });
   assert.equal(await git(repo, ["status", "--porcelain"]), "");
   assert.equal(await git(repo, ["remote"]), "");
   console.log(JSON.stringify({ detachedExactRevision: true, branchAdvanceIsolated: true,
-    concurrentPrepareRefused: true, dirtyWorkPreserved: true, cleanLeaseRemoval: true }));
+    concurrentPrepareRefused: true, dirtyWorkPreserved: true, trackedAndStagedPreserved: true,
+    ignoredWorkPreserved: true, cleanLeaseRemoval: true }));
 } finally {
   // Every path under root was created by this fixture; no caller-supplied checkout.
   await rm(root, { recursive: true, force: true });

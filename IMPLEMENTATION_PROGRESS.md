@@ -423,3 +423,12 @@ These remain required; no generic Git executor is exposed by this checkpoint.
 Follow-up typing correction: NODE_ENV also required a literal type rather than
 inferred string. After retaining the literal test value, full-source TypeScript
 passed. No runtime policy changed.
+
+Expanded native Git preservation evidence: tracked edits, staged edits, untracked
+files and ignored files all prevent fixture-port cleanup and remain readable.
+Ordinary porcelain status was explicitly empty with the ignored fixture present;
+the adapter check therefore includes --ignored=matching instead of trusting that
+empty result. Clean removal succeeds only after restoring/removing exact synthetic
+fixture content. The native run, cleanup/absence and full-source TypeScript passed.
+This strengthens the chosen Git-port acceptance scenarios; the fixture-local port
+still must not be represented as the production implementation or restart proof.
