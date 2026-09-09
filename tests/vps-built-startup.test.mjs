@@ -81,7 +81,7 @@ test('compiled startup refuses invalid observation enrollment before opening a d
   const effect = () => { effects++; throw new Error('unexpected effect'); };
   const reader = { tenantId: startupConfig.tenantId, workspaceId: startupConfig.workspaceId,
     projectId: 'project:fixture', sourceKey: 'ab'.repeat(32), view: effect };
-  for (const sources of [null, {}, [reader, reader], [{ ...reader, tenantId: 'foreign' }],
+  for (const sources of [null, {}, new Array(1), [undefined], [reader, reader], [{ ...reader, tenantId: 'foreign' }],
     [{ ...reader, sourceKey: 'invalid' }], [{ ...reader, view: null }]]) {
     await assert.rejects(createPrivateWebBootstrap({ openDatabase: effect, install: effect })
       .start({ ...startupConfig, herdrObservations: sources }), { message: 'private_startup_config_invalid' });

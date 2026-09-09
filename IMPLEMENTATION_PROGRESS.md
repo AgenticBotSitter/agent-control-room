@@ -21,6 +21,11 @@ Focused observations (15), startup (4 before the additional invalid-enrollment
 case), and full-source TypeScript passed. Native collector composition remains gated.
 Fresh full compiled build at 1d71417 passed 57/57 tests, including the additional
 invalid-enrollment startup case. Independent review of that change is pending.
+Review found a sparse-array validation gap: map skipped holes before resource
+acquisition. Capture now visits every slot with Array.from and rejects missing
+readers explicitly. Sparse and explicit-undefined regressions were added; a fresh
+build and all five compiled startup tests pass after correction. Full-source
+TypeScript passes. Focused remediation review remains pending.
 
 Follow-up transaction coverage reuses one disposable canonical approval fixture:
 after staging a recovery write, fulfilled/rejected Promise, false, and throwing

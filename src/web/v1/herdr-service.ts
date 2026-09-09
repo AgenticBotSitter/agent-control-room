@@ -10,7 +10,8 @@ export function captureHerdrReaders(scope: { tenantId: string; workspaceId: stri
   sources: readonly HerdrObservationReader[]): readonly HerdrObservationReader[] {
   if (!Array.isArray(sources) || sources.length > 256) throw new Error('observation_configuration_invalid');
   const groups = new Map<string, Set<string>>();
-  return Object.freeze(sources.map(source => {
+  return Object.freeze(Array.from(sources, source => {
+    if (!source || typeof source !== 'object') throw new Error('observation_configuration_invalid');
     const keys = groups.get(source.projectId) ?? new Set<string>();
     if (source.tenantId !== scope.tenantId || source.workspaceId !== scope.workspaceId
       || keys.has(source.sourceKey) || keys.size >= 16
