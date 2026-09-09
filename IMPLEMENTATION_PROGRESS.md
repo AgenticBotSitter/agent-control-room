@@ -6,6 +6,14 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+Runtime license assembly now has a deterministic plain-text renderer suitable for
+release notice output. It preserves every original attachment as bytes, retains
+the entities version discrepancy, and prominently states the limited coverage.
+Changed attachment lengths/hashes, empty attachments and a false clearance claim
+are rejected. Eight collector/report/exception/assembly/render tests pass.
+This is an output renderer, not yet release-pipeline wiring or full distribution
+clearance; independent review and bundled/vendor/assets coverage remain required.
+
 `assembleRuntimeLicenses` now combines all 193 pinned installed package instances
 with their actual original-text attachments. It reruns the current report, requires
 exact retained evidence equality, verifies the two README exceptions, saxes manifest
