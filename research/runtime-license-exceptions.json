@@ -1,0 +1,25 @@
+{
+  "scope": "Named original README text exceptions only; no blanket license inference",
+  "entries": [
+    {
+      "name": "pg-types",
+      "version": "2.2.0",
+      "sourceFile": "README.md",
+      "sourceSha256": "ecda9bca71d3f0cee4e600d1dd2bef336213f39ef2e8fca6a1a1c1c8723f643a",
+      "manifestSha256": "3ec0293cb38cc8d9475e3eb32ac5f19d195bf9fccc8b19a0714e6ecd6e7c2cf0",
+      "textFile": "third_party/pg-types/LICENSE.from-README.md",
+      "textSha256": "c565667e0560bba6502cda29fd9d461fd3acaf9dac24dda4d2758ce0f8b720cd",
+      "upstreamLocation": "https://github.com/brianc/node-pg-types/tree/v2.2.0"
+    },
+    {
+      "name": "pgpass",
+      "version": "1.0.5",
+      "sourceFile": "README.md",
+      "sourceSha256": "62549909404b5a0dcb2b4b74c9a930baf8095dbcfa1543c4ffc79378acd22b57",
+      "manifestSha256": "d75240eb4fe759c10db9f903838275348676a8bdc1f329e20a833713cd7c99bd",
+      "textFile": "third_party/pgpass/LICENSE.from-README.md",
+      "textSha256": "f660a02f22de943c8c28a93791e8571c67f9088be93226fd526842b586cb4db4",
+      "upstreamLocation": "https://github.com/hoegaarden/pgpass/tree/v1.0.5"
+    }
+  ]
+}

@@ -6,6 +6,15 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+Two named runtime notice exceptions now retain the original pg-types 2.2.0 and
+pgpass 1.0.5 README license sections. The test verifies current installed manifest,
+full README and retained-text hashes, plus verbatim containment in the installed
+source. This reuses prior evidence and current bytes without inventing license
+text or a generic README parser. Original source links and checksums are recorded
+in research/runtime-license-exceptions.json. The raw collector report still lists
+all four missing-root cases; a combined assembly has not yet hidden or resolved
+them. Saxes original text and entities source/version discrepancy remain open.
+
 The pinned production inventory now feeds the actual CycloneDX collector through
 `scripts/runtime-license-report.mjs`. The adapter verifies the current manifest/
 lock hashes, each installed name/version and path containment, and records original
