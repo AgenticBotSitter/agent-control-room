@@ -622,3 +622,8 @@ group-termination path, and proves both worker and Git group are gone. All four
 acknowledgement-gap cases plus this cleanup challenge pass; TypeScript and exact
 cleanup pass. This fifth case is not in-flight worktree modification recovery.
 Final source re-review of the cleanup correction remains pending.
+
+Source re-review at51ae4c1 accepted the fixture P2 correction with no concrete
+regression. Reviewer confirmed owned-group termination/absence and preserved
+uncertainty; native/process execution remained root-provided evidence. This closes
+the reported fixture issue, not the remaining runtime/re-adoption acceptance.
