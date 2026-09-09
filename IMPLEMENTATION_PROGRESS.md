@@ -550,3 +550,16 @@ two actual competing processes); native Git fixture passed and confirmed exact
 fixture cleanup; compiled application regression passed 56/56. No production
 service, live provider, push or GitHub Actions run. Crash-boundary recovery,
 safe re-adoption and independent review remain unfinished.
+
+### Forced-process journal durability
+
+Four new tests kill an exact disposable child with SIGKILL after its committed
+intent, creation evidence, removal intent, or removed marker. The child does not
+close/checkpoint SQLite before termination. Parent waits for terminal signal,
+reopens the file, checks the exact retained state and verifies journaled creation
+refuses replay with zero fake-port effects. All four passed, as did TypeScript;
+each exclusively owned temporary directory was removed and absence checked.
+
+Creation/removal evidence in these tests is synthetic. This is actual process-
+crash journal durability evidence, not an interrupted native Git integration
+test or safe adoption proof. Those broader recovery gates remain open.
