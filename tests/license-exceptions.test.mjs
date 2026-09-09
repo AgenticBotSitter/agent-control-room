@@ -4,6 +4,22 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 const hash = value => createHash('sha256').update(value).digest('hex');
+test('entities retained source hashes still match installed code without erasing version discrepancy', () => {
+  const evidence = JSON.parse(fs.readFileSync('third_party/nodable-entities/PROVENANCE.json', 'utf8'));
+  const directory = 'node_modules/.pnpm/@nodable+entities@3.0.0/node_modules/@nodable/entities';
+  const manifest = JSON.parse(fs.readFileSync(path.join(directory, 'package.json'), 'utf8'));
+  assert.equal(manifest.name, evidence.name); assert.equal(manifest.version, evidence.installedVersion);
+  assert.equal(evidence.sourceManifestVersion, '2.2.0'); assert.notEqual(evidence.sourceManifestVersion, manifest.version);
+  const matched = evidence.files.filter(file => file.localMatch === true);
+  assert.equal(matched.length, 8);
+  for (const file of matched) {
+    assert.ok(file.path.startsWith('Entity/'));
+    const bytes = fs.readFileSync(path.join(directory, file.path.slice('Entity/'.length)));
+    assert.equal(bytes.length, file.bytes); assert.equal(hash(bytes), file.sha256);
+  }
+  const license = fs.readFileSync('third_party/nodable-entities/LICENSE');
+  assert.equal(hash(license), evidence.files.find(file => file.path === 'LICENSE').sha256);
+});
 test('saxes pinned release manifest matches installed packaging and retains complete notice', () => {
   const installed = fs.readFileSync('node_modules/.pnpm/saxes@6.0.0/node_modules/saxes/package.json');
   assert.equal(hash(installed), '32052572b41c2a890ed0854798c48454cc5991dcaafe5fb1718a4253046acfd3');

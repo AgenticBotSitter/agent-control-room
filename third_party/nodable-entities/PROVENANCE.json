@@ -1,0 +1,80 @@
+{
+  "name": "@nodable/entities",
+  "installedVersion": "3.0.0",
+  "sourceManifestVersion": "2.2.0",
+  "sourceCommit": "d2070d76a8ba07e6c7fa142caeb51ffd756e47eb",
+  "source": "https://registry.npmjs.org/@nodable%2fentities/3.0.0",
+  "qualification": "retained prior source acquisition; manifest version discrepancy remains explicit; not full package correspondence",
+  "files": [
+    {
+      "path": "LICENSE",
+      "url": "https://raw.githubusercontent.com/nodable/val-parsers/d2070d76a8ba07e6c7fa142caeb51ffd756e47eb/LICENSE",
+      "bytes": 1064,
+      "sha256": "750cb3fb6362804957ef52caaf9b5c824015be44d494637330d7cd8834d31d40",
+      "localMatch": null
+    },
+    {
+      "path": "Entity/package.json",
+      "url": "https://raw.githubusercontent.com/nodable/val-parsers/d2070d76a8ba07e6c7fa142caeb51ffd756e47eb/Entity/package.json",
+      "bytes": 1270,
+      "sha256": "6a025503d776124cd4371fcba8383afcc30a640c5783f96093f76f19ecb66241",
+      "localMatch": false
+    },
+    {
+      "path": "Entity/README.md",
+      "url": "https://raw.githubusercontent.com/nodable/val-parsers/d2070d76a8ba07e6c7fa142caeb51ffd756e47eb/Entity/README.md",
+      "bytes": 3485,
+      "sha256": "7e3484a07c208b5c5813290a993244c6841efc3d4241c29a07ef948e8129a758",
+      "localMatch": true
+    },
+    {
+      "path": "Entity/src/EntityDecoder.js",
+      "url": "https://raw.githubusercontent.com/nodable/val-parsers/d2070d76a8ba07e6c7fa142caeb51ffd756e47eb/Entity/src/EntityDecoder.js",
+      "bytes": 25816,
+      "sha256": "a56cf2bf8174e0adf94970d70e003afcfc3923a53d0cf973f92d374cfe684544",
+      "localMatch": true
+    },
+    {
+      "path": "Entity/src/EntityEncoder.js",
+      "url": "https://raw.githubusercontent.com/nodable/val-parsers/d2070d76a8ba07e6c7fa142caeb51ffd756e47eb/Entity/src/EntityEncoder.js",
+      "bytes": 8479,
+      "sha256": "812a2077e073564d6470b8fda8ac0d20ecaaf75ddb1594d55d28acc2da8a1a71",
+      "localMatch": true
+    },
+    {
+      "path": "Entity/src/all-entities.js",
+      "url": "https://raw.githubusercontent.com/nodable/val-parsers/d2070d76a8ba07e6c7fa142caeb51ffd756e47eb/Entity/src/all-entities.js",
+      "bytes": 1497,
+      "sha256": "2f1340ab32dce314f41638b7ee6d0368b974e3302983154b815a6d49a6dfb63b",
+      "localMatch": true
+    },
+    {
+      "path": "Entity/src/entities.js",
+      "url": "https://raw.githubusercontent.com/nodable/val-parsers/d2070d76a8ba07e6c7fa142caeb51ffd756e47eb/Entity/src/entities.js",
+      "bytes": 18791,
+      "sha256": "96ec5d127a4e8cd77bdc678422f0d57c8ff9e37bcec999983da71a7b72ce9a0e",
+      "localMatch": true
+    },
+    {
+      "path": "Entity/src/entityTries.js",
+      "url": "https://raw.githubusercontent.com/nodable/val-parsers/d2070d76a8ba07e6c7fa142caeb51ffd756e47eb/Entity/src/entityTries.js",
+      "bytes": 2359,
+      "sha256": "fa2838d141fba0e8ee5bd2197956c3f6b1d23668be2c8841a585614ea7051f99",
+      "localMatch": true
+    },
+    {
+      "path": "Entity/src/index.d.ts",
+      "url": "https://raw.githubusercontent.com/nodable/val-parsers/d2070d76a8ba07e6c7fa142caeb51ffd756e47eb/Entity/src/index.d.ts",
+      "bytes": 12183,
+      "sha256": "aea4188bf00c7d6474a34adb715810cfa9e45acafb1b4931e63db0b4253c07da",
+      "localMatch": true
+    },
+    {
+      "path": "Entity/src/index.js",
+      "url": "https://raw.githubusercontent.com/nodable/val-parsers/d2070d76a8ba07e6c7fa142caeb51ffd756e47eb/Entity/src/index.js",
+      "bytes": 515,
+      "sha256": "79a65ddeda08664d00b7b82f5a903ea437de1dff54a02ed469e9cb1067cb568b",
+      "localMatch": true
+    }
+  ]
+}

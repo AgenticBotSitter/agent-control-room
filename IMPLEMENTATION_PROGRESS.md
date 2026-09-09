@@ -6,6 +6,16 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+The final named missing-root notice now retains the original entities MIT text
+and sanitized earlier source receipt. All eight recorded code/type/README hashes
+and lengths still match the currently installed package. The source manifest's
+2.2.0 versus registry/installed 3.0.0 discrepancy remains explicit in provenance
+and in the regression test; this is scoped notice evidence, not identical-package
+or legal clearance. No source was reacquired and no dependency code was executed.
+All three exception tests pass. All four missing-root cases now have retained
+text evidence, but combined attachment assembly and independent review remain
+unfinished; the original missing-root report is unchanged.
+
 Saxes 6.0.0 now has the complete original upstream notice retained from immutable
 release commit 211fa0ebec9b628affc09219199639887174bfc3, including historical notices.
 The release manifest matches the installed manifest except for the documented
