@@ -56,6 +56,24 @@ test("workspace intent survives reopen, conflicts across connections and rolls b
     assert.equal(first.workspaceIntentInventory()[0].removal, "pending");
     assert.equal(first.reserveWorkspaceRemoval(sha256Digest(value), () => {}), "existing");
     assert.equal(first.reserveWorkspaceIntent(intent("run:revoked"), () => {}), "recorded");
+    const rootsFor = (value: ReturnType<typeof intent>) => ({
+      repository: { realPath: value.repositoryRoot, device: "1", inode: "30" },
+      workspace: { realPath: value.workspaceRoot, device: "1", inode: "40" },
+      commonGit: { realPath: `${value.repositoryRoot}/.git`, device: "1", inode: "50" },
+    });
+    assert.throws(() => first!.recordWorkspaceRoots(sha256Digest(value), rootsFor(value), () => {}), /cannot_be_retrofitted/);
+    const fresh = intent("run:revoked"), freshDigest = sha256Digest(fresh), roots = rootsFor(fresh);
+    let rootChecks = 0;
+    assert.throws(() => first!.recordWorkspaceRoots(freshDigest, roots, () => {
+      if (++rootChecks === 2) throw new Error("root_capture_revoked");
+    }), /root_capture_revoked/);
+    assert.equal(first.workspaceIntentInventory().find(row => row.intentDigest === freshDigest)?.roots, undefined);
+    assert.throws(() => first!.recordWorkspaceRoots(freshDigest, { ...roots, repository: { ...roots.repository, realPath: "/foreign" } }, () => {}), /binding_invalid/);
+    assert.equal(first.recordWorkspaceRoots(freshDigest, roots, () => {}), "recorded");
+    assert.equal(first.recordWorkspaceRoots(freshDigest, roots, () => {}), "existing");
+    assert.throws(() => first!.recordWorkspaceRoots(freshDigest, { ...roots, workspace: { ...roots.workspace, inode: "41" } }, () => {}), /conflict/);
+    first.close(); first = new SqliteBridgeJournal(file);
+    assert.deepEqual(first.workspaceIntentInventory().find(row => row.intentDigest === freshDigest)?.roots, roots);
     assert.throws(() => first!.reserveWorkspaceIntent({ ...value, checkoutPath: "/elsewhere" }, () => {}), /invalid/);
   } finally { first?.close(); second?.close(); await rm(root, { recursive: true, force: true }); }
 });

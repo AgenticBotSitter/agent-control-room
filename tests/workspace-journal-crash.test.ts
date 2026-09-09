@@ -44,7 +44,8 @@ for (const boundary of ["intent", "creation", "removal", "removed"]) {
         assert.equal(journal.reserveWorkspaceIntent(saved.intent, () => {}), "existing");
         let effects = 0;
         const port = journaledWorkspacePort({ journal, intent: saved.intent, assertCurrent: () => {},
-          port: { inspectExisting: async () => { throw new Error("unexpected_inspect"); },
+          port: { inspectRootIdentities: async () => { throw new Error("unexpected_roots"); },
+            inspectExisting: async () => { throw new Error("unexpected_inspect"); },
             createDetachedWorktree: async () => { effects++; throw new Error("unexpected_create"); },
             removeWorktree: async () => { effects++; throw new Error("unexpected_remove"); } } });
         await assert.rejects(port.createDetachedWorktree({ repositoryRealPath: saved.intent.repositoryRoot,

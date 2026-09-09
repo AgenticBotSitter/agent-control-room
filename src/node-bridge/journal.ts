@@ -14,7 +14,7 @@ import type { ArtifactLineageRecordV1 } from "../node-executor/artifact-evidence
 import { assertNativeSnapshotProgress, nativeTaskSnapshotBodySchema, type NativeTaskSnapshotBody } from "../harness/v1/native-observation";
 import { matchNativeTaskDispatchReceipt, type NativeTaskDispatchReceiptBody } from "../harness/v1/native-delivery";
 import { localId } from "../harness/v1/native-run-identifiers";
-import { parseWorkspaceIntent, parseWorkspaceCreation, assertSynchronousWorkspaceAuthority } from "./workspace-intent";
+import { parseWorkspaceIntent, parseWorkspaceCreation, parseWorkspaceRoots, assertSynchronousWorkspaceAuthority } from "./workspace-intent";
 
 export class BridgeBackpressureError extends Error {
   constructor() {
@@ -167,6 +167,10 @@ export class SqliteBridgeJournal implements ReplayGuard {
       const intent = parseWorkspaceIntent(JSON.parse(row.intent_json));
       if (intent.runId !== row.run_id || sha256Digest(intent) !== row.intent_digest || sha256Digest(intent.checkoutPath) !== row.target_digest)
         throw new Error("workspace_intent_integrity_invalid");
+      const rootsRow = this.db.prepare("SELECT evidence_json,evidence_digest FROM bridge_workspace_roots WHERE intent_digest=?")
+        .get(row.intent_digest) as { evidence_json: string; evidence_digest: string } | undefined;
+      const roots = rootsRow ? parseWorkspaceRoots(JSON.parse(rootsRow.evidence_json), intent) : undefined;
+      if (rootsRow && sha256Digest(roots) !== rootsRow.evidence_digest) throw new Error("workspace_roots_integrity_invalid");
       const created = this.db.prepare("SELECT evidence_json,evidence_digest FROM bridge_workspace_creations WHERE intent_digest=?")
         .get(row.intent_digest) as { evidence_json: string; evidence_digest: string } | undefined;
       const evidence = created ? parseWorkspaceCreation(JSON.parse(created.evidence_json), intent) : undefined;
@@ -176,8 +180,27 @@ export class SqliteBridgeJournal implements ReplayGuard {
       if (removal && (!evidence || removal.creation_digest !== sha256Digest(evidence) || ![0,1].includes(removal.removed)))
         throw new Error("workspace_removal_integrity_invalid");
       return { intent, intentDigest: row.intent_digest, ...(evidence ? { creation: evidence } : {}),
+        ...(roots ? { roots } : {}),
         ...(removal ? { removal: removal.removed === 1 ? "removed" as const : "pending" as const } : {}),
         disposition: "reconciliation_required" as const };
+    });
+  }
+
+  /** Capture before creation. Never retrofit current identities onto historical work. */
+  recordWorkspaceRoots(intentDigest: string, input: unknown, assertCurrent: () => void): "recorded" | "existing" {
+    return this.transaction(() => {
+      assertSynchronousWorkspaceAuthority(assertCurrent);
+      const saved = this.workspaceIntentInventory().find(value => value.intentDigest === intentDigest);
+      if (!saved) throw new Error("workspace_intent_missing");
+      const roots = parseWorkspaceRoots(input, saved.intent), digest = sha256Digest(roots);
+      if (saved.roots) {
+        if (sha256Digest(saved.roots) !== digest) throw new Error("workspace_roots_conflict");
+        assertSynchronousWorkspaceAuthority(assertCurrent); return "existing";
+      }
+      if (saved.creation) throw new Error("workspace_roots_cannot_be_retrofitted");
+      this.db.prepare("INSERT INTO bridge_workspace_roots(intent_digest,evidence_json,evidence_digest) VALUES(?,?,?)")
+        .run(intentDigest, JSON.stringify(roots), digest);
+      assertSynchronousWorkspaceAuthority(assertCurrent); return "recorded";
     });
   }
 
@@ -910,6 +933,15 @@ export class SqliteBridgeJournal implements ReplayGuard {
         BEGIN SELECT RAISE(ABORT,'workspace intent is immutable'); END;
       CREATE TRIGGER IF NOT EXISTS bridge_workspace_intents_no_delete BEFORE DELETE ON bridge_workspace_intents
         BEGIN SELECT RAISE(ABORT,'workspace intent is immutable'); END;
+      CREATE TABLE IF NOT EXISTS bridge_workspace_roots (
+        intent_digest TEXT PRIMARY KEY NOT NULL REFERENCES bridge_workspace_intents(intent_digest),
+        evidence_json TEXT NOT NULL,
+        evidence_digest TEXT NOT NULL
+      );
+      CREATE TRIGGER IF NOT EXISTS bridge_workspace_roots_no_update BEFORE UPDATE ON bridge_workspace_roots
+        BEGIN SELECT RAISE(ABORT, 'workspace roots immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS bridge_workspace_roots_no_delete BEFORE DELETE ON bridge_workspace_roots
+        BEGIN SELECT RAISE(ABORT, 'workspace roots immutable'); END;
       CREATE TABLE IF NOT EXISTS bridge_workspace_creations (
         intent_digest TEXT PRIMARY KEY NOT NULL REFERENCES bridge_workspace_intents(intent_digest),
         evidence_json TEXT NOT NULL,
@@ -1063,6 +1095,6 @@ export class SqliteBridgeJournal implements ReplayGuard {
     const eventColumns = new Set((this.db.prepare(`PRAGMA table_info(bridge_job_events)`).all() as Array<{ name: string }>).map((row) => row.name));
     if (!eventColumns.has("artifact_id")) this.db.exec(`ALTER TABLE bridge_job_events ADD COLUMN artifact_id TEXT REFERENCES bridge_artifact_lineage(artifact_id)`);
     if (!eventColumns.has("artifact_lineage_digest")) this.db.exec(`ALTER TABLE bridge_job_events ADD COLUMN artifact_lineage_digest TEXT`);
-    this.db.exec("PRAGMA user_version=7;");
+    this.db.exec("PRAGMA user_version=8;");
   }
 }

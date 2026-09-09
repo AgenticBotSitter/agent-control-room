@@ -1,6 +1,6 @@
 import { lstat, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
-import type { CodexWorkspaceIdentityV1, CodexWorkspacePortV1 } from "./workspace";
+import type { CodexWorkspaceIdentityV1, CodexWorkspacePortV1, CodexWorkspaceRootIdentitiesV1 } from "./workspace";
 
 /** Trusted host composition supplies the pinned, bounded Git process runner.
  * The runner must isolate configuration/hooks/filters and permit no network.
@@ -12,9 +12,10 @@ export type WorkspaceGitRunner = (cwd: string, args: string[]) => Promise<string
 export type WorkspaceObservation =
   | { state: "absent" | "unchanged" | "changed" | "preserve" | "unavailable" };
 export interface ObservableGitWorkspacePort extends CodexWorkspacePortV1 {
+  inspectRootIdentities(): Promise<CodexWorkspaceRootIdentitiesV1>;
   observeCheckout(expected: CodexWorkspaceIdentityV1 & {
     repositoryRealPath: string; headRevision: string;
-  }): Promise<WorkspaceObservation>;
+  }, expectedRoots?: CodexWorkspaceRootIdentitiesV1): Promise<WorkspaceObservation>;
 }
 
 async function identity(path: string): Promise<CodexWorkspaceIdentityV1> {
@@ -57,12 +58,20 @@ export async function createGitWorkspacePort(input: {
       throw new Error("workspace_git_identity_changed");
   };
   return {
-    observeCheckout: async input => {
+    inspectRootIdentities: async () => {
+      await roots();
+      return { repository: { ...repo }, workspace: { ...root }, commonGit: { ...commonIdentity } };
+    },
+    observeCheckout: async (input, savedRoots) => {
       const expected = { ...input };
       // Optional index refresh is disabled even for status. The injected runner
       // remains responsible for configuration isolation and bounded execution.
       const read = (args: string[]) => runGit(expected.realPath, ["--no-optional-locks", ...args]);
       try {
+        // Compare persisted pre-creation identities before treating an absent
+        // child in a replacement root as evidence about the original workspace.
+        if (savedRoots && (!same(savedRoots.repository, repo) || !same(savedRoots.workspace, root)
+          || !same(savedRoots.commonGit, commonIdentity))) return { state: "changed" };
         child(expected.realPath);
         if (expected.repositoryRealPath !== repo.realPath || !/^[a-f0-9]{40}$/.test(expected.headRevision))
           return { state: "changed" };

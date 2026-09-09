@@ -18,6 +18,12 @@ export interface CodexWorkspacePortV1 {
   removeWorktree(input: { repositoryRealPath: string; checkoutPath: string }): Promise<void>;
 }
 
+export interface CodexWorkspaceRootIdentitiesV1 {
+  repository: CodexWorkspaceIdentityV1;
+  workspace: CodexWorkspaceIdentityV1;
+  commonGit: CodexWorkspaceIdentityV1;
+}
+
 export interface CodexWorkspaceLeaseV1 {
   leaseId: string;
   runId: string;

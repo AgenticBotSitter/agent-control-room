@@ -1,6 +1,7 @@
 # Workspace recovery integration contract
 
-Status: implementation contract; durable recovery is not implemented or accepted.
+Status: durable journal and observation implemented; automatic recovery/re-adoption
+and runtime integration are not implemented or accepted.
 
 ## Reuse and authority
 
@@ -86,3 +87,27 @@ and physical checks must be repeated at any future effect boundary. Safe
 re-adoption, process-kill recovery and trusted-runner qualification remain open.
 Disposable native evidence covers clean/absent/changed identity, untracked and
 ignored work, hidden index edits, new commits, failed reads and non-adoption.
+
+## Native interruption evidence
+
+`node --import tsx scripts/test-workspace-git-crash.ts /usr/bin/git` uses a
+fixture-owned repository, isolated Git configuration and four exact child workers.
+Each worker is stopped with SIGKILL after its Git subprocess has exited: after
+creation before readback, after saved creation with unfinished files, after removal
+before its marker, and after the saved removal marker. Parent waits for terminal
+signal before reopening the journal and checking the physical checkout.
+
+All four passed: expected records survived; existing content was preserved;
+removed checkouts were absent; fresh composition refused duplicate creation;
+fresh native ports did not adopt removal authority. Exact fixture cleanup passed.
+This does not test killing Git mid-command, power loss, arbitrary repository
+configuration, or resuming a worker. Safe re-adoption and current global admission
+binding remain required before runtime use.
+
+Journal schema8 now retains immutable pre-creation physical root identities.
+New journaled creation requires the native root snapshot before its effect;
+existing creation without root evidence cannot be retroactively stamped with
+current identities. Observation can compare these saved roots with the newly
+opened native port. A disposable replacement-root test returns changed even when
+the child path is absent in the new root. Supplying no saved roots still produces
+only an advisory observation and cannot support adoption.

@@ -31,6 +31,14 @@ const creationSchema = z.object({
   realPath: path, repositoryRealPath: path, headRevision: z.string().regex(/^[a-f0-9]{40}$/),
   device: z.string().regex(/^[1-9][0-9]*$/).max(32), inode: z.string().regex(/^[1-9][0-9]*$/).max(32),
 }).strict();
+const identitySchema = creationSchema.pick({ realPath: true, device: true, inode: true });
+const rootIdentitiesSchema = z.object({ repository: identitySchema, workspace: identitySchema, commonGit: identitySchema }).strict();
+export function parseWorkspaceRoots(value: unknown, intent: WorkspaceIntent) {
+  const parsed = rootIdentitiesSchema.safeParse(value);
+  if (!parsed.success || parsed.data.repository.realPath !== intent.repositoryRoot
+    || parsed.data.workspace.realPath !== intent.workspaceRoot) throw new Error("workspace_roots_binding_invalid");
+  return parsed.data;
+}
 export function parseWorkspaceCreation(value: unknown, intent: WorkspaceIntent) {
   const parsed = creationSchema.safeParse(value);
   if (!parsed.success || parsed.data.realPath !== intent.checkoutPath

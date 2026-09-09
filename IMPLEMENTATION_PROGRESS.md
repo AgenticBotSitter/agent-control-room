@@ -582,3 +582,28 @@ reran the disposable native Git fixture successfully, including cleanup/absence.
 Review acceptance applies to this callback fix and inspected journal/port scope;
 it does not certify safe re-adoption, interrupted native Git recovery, production
 authority composition or any unperformed platform acceptance.
+
+### Native acknowledgement-gap recovery and durable roots
+
+The new opt-in native Git crash fixture stops four exact workers with SIGKILL
+after completed Git creation/before readback, after persisted creation with work,
+after completed removal/before its marker, and after persisted removal. Reopened
+journals retain the expected state; physical files/absence agree; fresh composition
+performs zero duplicate Git effects. These are post-command acknowledgement gaps,
+not interruption of Git itself. Every child reached its intended boundary and
+terminated before readback; the exclusively owned fixture tree was cleaned up.
+
+Journal schema8 adds immutable pre-creation repository/workspace/common-Git
+physical identities. The journaled port captures and saves them before creation.
+Root records are bound to the admitted intent, conflict checked and cannot be
+retrofitted onto already-recorded creation without earlier roots. Legacy rows stay
+readable but do not gain invented identity evidence. Tests cover revocation
+rollback, replay, conflicting inode/path and file-backed reopen.
+
+The observer accepts saved roots and distinguishes an actual replacement workspace
+folder from absence in the original folder. Native crash tests exercise this after
+restart while retaining the original synthetic tree. TypeScript,13 combined
+workspace tests, all four native crash boundaries and the existing native Git
+preservation fixture passed with confirmed cleanup. Independent review and the
+fresh compiled regression are pending. Safe re-adoption, in-flight Git crashes,
+global admission integration and release/retention policy remain unfinished.
