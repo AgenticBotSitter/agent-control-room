@@ -14,7 +14,10 @@ export async function exerciseScheduleStore(db: DatabaseClient, reopen: () => Pr
   const proposal = { ...calculated.occurrences[0], tenantId: "tenant:calendar", targetType: "job" as const,
     targetId: "job:calendar", definitionDigest: `sha256:${"d".repeat(64)}`, createdAt: "2026-11-01T07:00:00.000Z" };
   const store = new ScheduleOccurrenceStore(db);
-  assert.equal((await store.materialize(proposal)).replayed, false);
+  const concurrent = await Promise.all(Array.from({ length: 4 }, () => store.materialize(proposal)));
+  assert.equal(concurrent.filter(result => !result.replayed).length, 1);
+  assert.equal(concurrent.filter(result => result.replayed).length, 3);
+  for (const result of concurrent) assert.deepEqual(result.occurrence, concurrent[0].occurrence);
   assert.equal((await store.materialize(proposal)).replayed, true);
   await assert.rejects(store.materialize({ ...proposal, targetId: "job:changed" }),
     (error: unknown) => error instanceof ScheduleOccurrenceError && error.safeCode === "occurrence_conflict");

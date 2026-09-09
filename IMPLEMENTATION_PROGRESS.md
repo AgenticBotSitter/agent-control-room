@@ -315,3 +315,10 @@ dispatch, execution, process-crash recovery, database-server restart or schedule
 production roles. Those gates, extended parity, review and workspace isolation
 remain open. Reproduce source checks with pnpm test:calendar and native checks with
 the documented scripts/test-pg17-driver.ts command.
+
+Expanded concurrency evidence: four simultaneous materializations on actual PG17
+produce exactly one new occurrence and three equal replays, retaining one outbox
+record. A PGlite transaction-level injected outbox-write failure leaves no partial
+occurrence, and a subsequent normal attempt succeeds. The latter is source-level
+rollback evidence, not a native crash simulation. Calendar9/9, full-source TypeScript
+and the expanded native fixture passed; native cleanup was confirmed.
