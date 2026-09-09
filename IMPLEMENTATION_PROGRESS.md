@@ -6,6 +6,20 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+Independent review of 108baf0 confirmed the recovery rollback test's transaction
+path, passed both focused tests, and found no concrete issue. Root accepts this
+local evidence with its documented PGlite/injected-submission limitations.
+
+The optional observation startup setting previously type-checked but was dropped
+by validation. Shared reader capture now preserves it, validates enrollment before
+database acquisition, and snapshots binding/method references without polling.
+Compiled startup coverage checks the protected route and post-start input mutation;
+invalid enrollment checks require zero database/install/view calls. Initial route
+test failed because its synthetic page omitted required false authority flags;
+correcting that fixture restored the pass without weakening production validation.
+Focused observations (15), startup (4 before the additional invalid-enrollment
+case), and full-source TypeScript passed. Native collector composition remains gated.
+
 Follow-up transaction coverage reuses one disposable canonical approval fixture:
 after staging a recovery write, fulfilled/rejected Promise, false, and throwing
 readiness callbacks each roll back the write and recovery audit. A subsequent

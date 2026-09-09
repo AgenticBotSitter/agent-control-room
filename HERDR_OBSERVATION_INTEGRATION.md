@@ -30,7 +30,12 @@ redistribution requires target-specific dependency/license closure first.
    projects only allowed panes and retains minimized rows. No timer or daemon is
    created by this coordinator.
 3. Supply only the source's retained reader interface in the private process's
-   optional `herdrObservations` configuration. Composition supports up to 16
+   optional `herdrObservations` configuration. Trusted startup now captures and
+   validates these readers before database acquisition instead of silently
+   discarding the setting. It captures the array, binding and bound view method;
+   it does not read observations during validation or own collector shutdown.
+   The JSON operator settings do not expose this programmatic capability.
+   Composition supports up to 16
    distinct enrollment keys per project (256 configured readers overall), with
    a 1024-row aggregate response ceiling. Duplicate keys and oversized responses
    are refused, not silently truncated. Each source retains its own freshness

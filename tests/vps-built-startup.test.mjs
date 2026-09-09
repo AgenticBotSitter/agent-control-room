@@ -30,9 +30,19 @@ test("built bootstrap import is inert and operator saved views reach actual comp
   const prepared = await createConfiguration({ signal: new AbortController().signal });
   const bootstrap = createPrivateWebBootstrap({ openDatabase: () => f.pool, install: installPrivateWebProcess, clock: () => now });
   // Trust is injected for this disposable test; never contact a real issuer.
-  const app = await bootstrap.start({ ...prepared.configuration.web, loadKeys });
+  const projectId = 'project.idea:web';
+  const sourceKey = 'ab'.repeat(32);
+  const readers = [{ tenantId: startupConfig.tenantId, workspaceId: startupConfig.workspaceId,
+    projectId, sourceKey, view: () => ({ projectId, status: 'offline', ageMs: null, rows: [],
+      executionAuthority: false, completionVerified: false, cleanupVerified: false }) }];
+  const app = await bootstrap.start({ ...prepared.configuration.web, loadKeys, herdrObservations: readers });
+  readers[0].view = () => { throw new Error('mutated reader'); };
+  readers.length = 0;
   try {
     assert.equal(app.isReady(), true);
+    const observations = await handler(request('/api/v1/projects/project.idea%3Aweb/observations'));
+    assert.equal(observations.status, 200);
+    assert.equal((await observations.json()).sources[0].sourceKey, sourceKey);
     assert.equal((await handler(request())).status, 200);
     const ideas = await handler(request('/api/v1/ideas'));
     assert.equal(ideas.status, 200); assert.equal((await ideas.json()).sessions.length, 1);
@@ -64,6 +74,19 @@ test("compiled website startup cannot silently discard task coordinator capabili
   }
   assert.equal(effects, 0);
   assert.equal((await handler(request())).status, 503);
+});
+
+test('compiled startup refuses invalid observation enrollment before opening a database', async () => {
+  let effects = 0;
+  const effect = () => { effects++; throw new Error('unexpected effect'); };
+  const reader = { tenantId: startupConfig.tenantId, workspaceId: startupConfig.workspaceId,
+    projectId: 'project:fixture', sourceKey: 'ab'.repeat(32), view: effect };
+  for (const sources of [null, {}, [reader, reader], [{ ...reader, tenantId: 'foreign' }],
+    [{ ...reader, sourceKey: 'invalid' }], [{ ...reader, view: null }]]) {
+    await assert.rejects(createPrivateWebBootstrap({ openDatabase: effect, install: effect })
+      .start({ ...startupConfig, herdrObservations: sources }), { message: 'private_startup_config_invalid' });
+  }
+  assert.equal(effects, 0);
 });
 
 test("operator configuration accepts only the restricted single-site settings without starting resources", async t => {
