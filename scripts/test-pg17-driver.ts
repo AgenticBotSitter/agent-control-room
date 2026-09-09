@@ -17,6 +17,7 @@ import { qualifyPrivatePgSession } from "../src/web/v1/private-pg-qualification"
 import { boundPrivateDatabase } from "../src/web/v1/bounded-database";
 import { bindPrivatePgPool } from "../src/web/v1/private-pg-database";
 import { articleStory } from "../tests/helpers/article-fixture";
+import { exerciseScheduleStore } from "../tests/helpers/schedule-store-scenario";
 import { PostgresAbsNewsStoreV1 } from "../src/project-adapters/abs-news/v1/postgres-store";
 import { PostgresArticleDetails } from "../src/project-adapters/abs-news/v1/article-store";
 import { readNewsArticleDetail } from "../src/project-adapters/abs-news/v1/article-detail";
@@ -94,6 +95,15 @@ try {
     for (const file of (await readdir("db/migrations")).filter(file => file.endsWith(".sql")).sort())
       await installer.query(await readFile(join("db/migrations", file), "utf8"));
   } finally { await installer.end(); }
+  let calendarDb = bindPrivatePgPool(new Pool({ ...options, host: socket }));
+  try {
+    await exerciseScheduleStore(calendarDb.client, async () => {
+      await calendarDb.close();
+      calendarDb = bindPrivatePgPool(new Pool({ ...options, host: socket }));
+      return calendarDb.client;
+    });
+    console.log(JSON.stringify({ calendarPersistence: true, freshPoolReplay: true, cancelledRemainsCancelled: true }));
+  } finally { await calendarDb.close(); }
   const now = Date.parse("2026-09-08T12:00:00Z");
   const identity = { provider: "https://fixture.invalid", subject: "fixture-owner", tokenDigest: `sha256:${"a".repeat(64)}`,
     issuedAt: new Date(now - 60000).toISOString(), expiresAt: new Date(now + 300000).toISOString(),

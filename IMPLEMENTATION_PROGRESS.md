@@ -294,3 +294,24 @@ Full-source TypeScript, compiled regression56/56, whitespace validation and exac
 upstream license comparison also pass. The article browser fixture and manual
 checklist are retained locally, but visual acceptance is still blocked by the
 locked Mac. No preview listener was started during this checkpoint.
+
+### Calendar persistence checkpoint
+
+The existing generic occurrence store is now included in the public implementation
+checkout. A shared synthetic scenario connects the selected parser/calculator to
+occurrence and outbox persistence. It verifies exact replay, conflicting target
+refusal, tenant separation, no acknowledgement before delivery, repeat reconciliation
+and one outbox record. Review found that explicit acknowledgement could resurrect
+a cancelled occurrence; it now returns occurrence_cancelled instead.
+
+The same scenario passed on disposable PG17 after closing the first pool and
+constructing a fresh pool/service. Cancelled state remains unchanged. The fixture
+also completed its existing project/task, queue, article, permission and disconnect
+checks and reported cleanup true. PGlite provides a separate passing source check;
+that check alone is not native restart evidence.
+
+Delivery markers in this scenario are fixture-seeded. It does not prove queue
+dispatch, execution, process-crash recovery, database-server restart or scheduler
+production roles. Those gates, extended parity, review and workspace isolation
+remain open. Reproduce source checks with pnpm test:calendar and native checks with
+the documented scripts/test-pg17-driver.ts command.

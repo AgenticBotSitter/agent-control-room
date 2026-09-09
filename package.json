@@ -8,6 +8,7 @@
     "node": ">=22.13.0"
   },
   "scripts": {
+    "test:calendar": "node --import tsx --test --test-concurrency=1 tests/cron-calendar.test.ts tests/services-v1-recurrence.test.ts tests/schedule-store.test.ts",
     "test:build:articles": "pnpm build && node --test tests/vps-built-article-extraction.test.mjs",
     "test:articles": "node --import tsx --test --test-concurrency=1 tests/article-extraction.test.mjs tests/article-detail.test.ts tests/article-store.test.ts tests/article-reader.test.mjs tests/article-collection.test.ts",
     "test:results": "node --import tsx --test tests/result-text.test.tsx",
