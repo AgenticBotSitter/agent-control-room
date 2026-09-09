@@ -90,9 +90,14 @@ export function TaskResultsPanel({ page, content: suppliedContent, pending, onOp
   </section></div>;
 }
 
-export function PrivateTaskResults({ projectId, jobId, reviewWorkspace, verificationWorkspace }: {
+type PrivateTaskResultsProps = {
   projectId: string; jobId: string; reviewWorkspace: TaskReviewWorkspace; verificationWorkspace?: TaskVerificationWorkspace;
-}) {
+};
+export function PrivateTaskResults(props: PrivateTaskResultsProps) {
+  return <TaskResultsReader key={JSON.stringify([props.projectId, props.jobId])} {...props} />;
+}
+
+function TaskResultsReader({ projectId, jobId, reviewWorkspace, verificationWorkspace }: PrivateTaskResultsProps) {
   const [client] = useState(() => createTaskBrowserClient());
   const [page, setPage] = useState<TaskResultsPage>(), [content, setContent] = useState<TaskResultContent>();
   const [selected, setSelected] = useState<string>(), [error, setError] = useState<BrowserRequestError>();

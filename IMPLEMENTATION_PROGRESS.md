@@ -6,6 +6,18 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+Focused independent review confirmed the sparse-reader correction at 1386aeb;
+no concrete regression found. Root accepts the correction with the prior live
+collector limitations unchanged.
+
+An asynchronous DOM result-reader regression found that changing tasks retained
+the previous selected artifact and incorrectly reported access denied for an
+authorized empty task. The reader is now keyed by JSON-encoded project/job tuple,
+resetting local selection/error state on navigation. The deferred old response
+cannot render in the new task. The new assertion failed before this change and
+passes after; all five result tests and full-source TypeScript pass. This is DOM
+workflow evidence, not physical-browser accessibility or live authorization proof.
+
 Independent review of 108baf0 confirmed the recovery rollback test's transaction
 path, passed both focused tests, and found no concrete issue. Root accepts this
 local evidence with its documented PGlite/injected-submission limitations.
