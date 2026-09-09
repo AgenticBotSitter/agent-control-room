@@ -673,3 +673,9 @@ first/final callback checks and resolved/rejected promises; no effects are recor
 for refusals and a subsequent valid simulated start still works. Malformed falsy
 callback values are rejected rather than treated as missing in start/recovery.
 TypeScript and focused tests passed; final start-path independent review pending.
+
+Independent review at569675b accepted the start/recovery changes with no concrete
+finding and reran both synthetic test files. All56 freshly compiled application
+tests also passed. The fix changes validation of callback completion, not the
+permitted operations or canonical binding rules. Safe checkout re-adoption and
+live fleet acceptance remain unfinished.
