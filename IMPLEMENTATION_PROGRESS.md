@@ -6,6 +6,17 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+`assembleRuntimeLicenses` now combines all 193 pinned installed package instances
+with their actual original-text attachments. It reruns the current report, requires
+exact retained evidence equality, verifies the two README exceptions, saxes manifest
+correspondence and entities code hashes, then uses the same upstream collector on
+the retained exception directories. Every attachment is byte-count/hash checked.
+The assembly keeps all four raw missing-root results and explicit qualifications;
+completeDistributionClearance remains false. The actual assembly test passes.
+Run `node --test tests/runtime-license-assembly.test.mjs`. This local-platform
+assembly is not yet integrated into packaged release output; independent review,
+tamper tests, bundle/vendor/assets and multi-platform coverage remain outstanding.
+
 The final named missing-root notice now retains the original entities MIT text
 and sanitized earlier source receipt. All eight recorded code/type/README hashes
 and lengths still match the currently installed package. The source manifest's
