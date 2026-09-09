@@ -6,6 +6,18 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+Independent review accepted the source behavior at 1d118bf without a concrete
+finding and independently passed its readiness matrix; physical transport gates
+remain open. Root accepts the local correction.
+
+Result reads now accept an optional caller cancellation signal, combined with
+the existing timeout. Reader cleanup aborts pending reads, and stale list responses
+cannot initiate another content request. Tests prove pre-aborted requests make
+zero transport calls, late ignored-cancellation responses are refused, and task
+navigation aborts the prior signal. Result tests pass 8/8; TypeScript passes.
+Command-save paths and exact pending save keys are unchanged. Cancellation is not
+proof that a server query stopped or that an uncooperative transport terminated.
+
 The managed-session transport check also accepted truthy non-booleans. It now
 requires literal true and uses the same rejection-observing fence for unfinished
 promises. Fake transport cases cover true, false, undefined, a string and fulfilled/

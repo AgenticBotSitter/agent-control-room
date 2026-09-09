@@ -105,17 +105,19 @@ function TaskResultsReader({ projectId, jobId, reviewWorkspace, verificationWork
   const generation = useRef(0);
   useEffect(() => {
     let live = true, busy = false; const current = ++generation.current;
+    const abort = new AbortController();
     const load = async () => {
       if (busy) return; busy = true;
       // Retained content is not evidence of current permission during refresh.
       setContent(undefined);
       if (selected) setPending(true);
       try {
-        const next = await client.results(projectId, jobId);
+        const next = await client.results(projectId, jobId, abort.signal);
+        if (!live || current !== generation.current) return;
         let result: TaskResultContent | undefined;
         if (selected) {
           if (!next.canReadContent || !next.items.some(item => item.artifactId === selected)) throw new BrowserRequestError("access_denied");
-          result = await client.resultContent(projectId, jobId, selected);
+          result = await client.resultContent(projectId, jobId, selected, abort.signal);
         }
         if (live && current === generation.current) { setPage(next); setContent(result); setError(undefined); }
       } catch (reason) {
@@ -126,7 +128,7 @@ function TaskResultsReader({ projectId, jobId, reviewWorkspace, verificationWork
     void load();
     const timer = setInterval(() => { if (!document.hidden) void load(); }, 30_000), focus = () => { void load(); };
     window.addEventListener("focus", focus);
-    return () => { live = false; clearInterval(timer); window.removeEventListener("focus", focus); };
+    return () => { live = false; abort.abort(); clearInterval(timer); window.removeEventListener("focus", focus); };
   }, [client, projectId, jobId, selected, refresh]);
   return <>
     {error && <div className="private-notice" role="alert"><p>{taskErrorMessage[error.code]} Result content has been cleared.</p>

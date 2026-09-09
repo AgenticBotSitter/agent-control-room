@@ -5,6 +5,26 @@ import { createRoot } from 'react-dom/client';
 import { JSDOM } from 'jsdom';
 import { PrivateTaskResults } from '../private-app/app/task-results.tsx';
 import { createHash } from 'node:crypto';
+import { createTaskBrowserClient } from '../src/web/v1/task-browser-client.ts';
+
+test('cancelled result reads refuse acquisition and late responses', async () => {
+  let calls = 0, release;
+  const client = createTaskBrowserClient(async () => {
+    calls++;
+    return new Promise(resolve => { release = resolve; });
+  });
+  await assert.rejects(client.results('project:test', 'job:test', AbortSignal.abort()), { code: 'unavailable' });
+  await assert.rejects(client.resultContent('project:test', 'job:test', 'artifact:test', AbortSignal.abort()), { code: 'unavailable' });
+  assert.equal(calls, 0);
+  const abort = new AbortController();
+  const reading = client.results('project:test', 'job:test', abort.signal);
+  abort.abort();
+  release(Response.json({ projectId: 'project:test', jobId: 'job:test', observedAt: '2026-09-08T12:00:00.000Z',
+    resultSource: 'configured', reviewSource: 'configured', items: [], reviews: [], canReadContent: true,
+    additionalResultsOmitted: false, additionalTargetsOmitted: false, reviewCommands: 'not_connected' }));
+  await assert.rejects(reading, { code: 'unavailable' });
+  assert.equal(calls, 1);
+});
 
 test('result reader ignores late content after leaving its task', async () => {
   const dom = new JSDOM('<div id="root"></div>', { pretendToBeVisual: true });
@@ -33,6 +53,7 @@ test('result reader ignores late content after leaving its task', async () => {
     await act(async () => pending[1].resolve(Response.json(page('job:first'))));
     assert.equal(pending.length, 3);
     await act(async () => render('job:second'));
+    assert.equal(pending[2].options.signal.aborted, true);
     assert.doesNotMatch(document.body.textContent, /Saved result file/);
     await act(async () => pending[2].resolve(Response.json({ projectId: 'project:test', jobId: 'job:first',
       artifact, text: protectedText, contentVerifiedAt: artifact.receivedAt, untrustedContent: true })));
