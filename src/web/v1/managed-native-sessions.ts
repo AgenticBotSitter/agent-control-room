@@ -12,6 +12,7 @@ import { ManagedNativeInput, nativeInputConfigurationSchema, type NativeInputCon
 import { encodeNativeWire, decodeNativeWire } from "../../harness/v1/native-wire";
 import { nativeTaskSubmissionReferenceSchema, type NativeTaskSubmissionReference } from "../../persistence/native-task-submission";
 import { queueAttentionSchema } from "./queue-attention-wire";
+import { assertSynchronousFence } from "../../security/synchronous-fence";
 
 export type ManagedNativeSessionSettings = {
   nodes: readonly ServerNodeSessionConfig[];
@@ -74,7 +75,7 @@ export class ManagedNativeSessions {
       register: routes.register?.bind(routes) });
   }
   private current(record?: Record) {
-    this.available();
+    assertSynchronousFence(() => this.available(), fail);
     const now = this.clock();
     if (this.closed || this.uncertain || !Number.isSafeInteger(now) || now < 0 || now < this.highWater) return fail();
     this.highWater = now;

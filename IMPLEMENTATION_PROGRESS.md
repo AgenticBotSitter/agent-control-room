@@ -6,6 +6,13 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+Managed session readiness now reuses the existing synchronous fence for its
+availability callback. The previous implementation ignored returned false/Promise
+values. A regression failed before correction and passes afterward, including a
+valid synchronous control and zero database/transport effects. The queue suite
+passed 53/53 and full-source TypeScript passed. This is callback admission evidence,
+not reconnect, protocol handshake or native worker execution acceptance.
+
 Shared release work: retained original license files for pg-boss, fast-xml-parser,
 React, React DOM and Zod. All 14 direct runtime dependencies now have byte-exact
 installed-license comparisons and exact-version checks in test:notices, included
