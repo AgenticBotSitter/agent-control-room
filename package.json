@@ -9,7 +9,7 @@
   },
   "scripts": {
     "test:codex-recovery": "node --import tsx --test tests/codex-read-recovery.test.ts tests/codex-read-jsonl.test.ts tests/codex-owned-read.test.ts",
-    "test:notices": "node --test tests/dependency-notices.test.mjs",
+    "test:notices": "node --test tests/dependency-notices.test.mjs tests/license-evidence.test.mjs",
     "test:queue": "node --import tsx --test --test-concurrency=1 tests/pg-boss-native-task-submission.test.ts tests/pg-boss-native-task-worker.test.ts tests/pg-boss-native-task-runtime.test.ts tests/queue-recovery-fence.test.ts tests/managed-session-readiness.test.ts tests/native-connector-readiness.test.ts",
     "test:components": "pnpm test:notices && pnpm test:database && pnpm test:queue && pnpm test:codex-recovery && pnpm test:access && pnpm test:owner-signing && pnpm test:checkpoints && pnpm test:ideas && pnpm test:results && pnpm test:articles && pnpm test:calendar && pnpm test:observations",
     "test:observations": "node --import tsx --test --test-concurrency=1 tests/herdr-observations.test.ts tests/herdr-source.test.ts tests/herdr-collector.test.ts tests/herdr-pane-port.test.ts tests/session-observations.test.mjs",
@@ -49,6 +49,7 @@
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.37.1",
+    "@cyclonedx/cyclonedx-library": "10.2.0",
     "@electric-sql/pglite": "0.3.14",
     "@eslint/js": "9.39.4",
     "@next/eslint-plugin-next": "16.2.6",

@@ -54,6 +54,9 @@ importers:
       '@cloudflare/vite-plugin':
         specifier: 1.37.1
         version: 1.37.1(vite@8.0.13(@types/node@22.19.19)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.50.0)(tsx@4.23.1))(workerd@1.20260515.1)(wrangler@4.92.0)
+      '@cyclonedx/cyclonedx-library':
+        specifier: 10.2.0
+        version: 10.2.0(ajv@8.20.0)
       '@electric-sql/pglite':
         specifier: 0.3.14
         version: 0.3.14
@@ -283,6 +286,33 @@ packages:
   '@csstools/css-tokenizer@3.0.4':
     resolution: {integrity: sha512-Vd/9EVDiu6PPJt9yAh6roZP6El1xHrdvIVGjyBsHR0RYwNHgL7FJPyIIW4fANJNG6FtyZfvlRPpFI4ZM/lubvw==}
     engines: {node: '>=18'}
+
+  '@cyclonedx/cyclonedx-library@10.2.0':
+    resolution: {integrity: sha512-hGeo1XXM0zuIeTyzJihxPxnEOeNBmgZkuPRmTR28RktlAqF9xLneonHRCzahZHLgCq/LOmtCs5vyojJlnmJ87w==}
+    engines: {node: '>=20.18.0'}
+    peerDependencies:
+      ajv: ^8.12.0
+      ajv-formats: ^3.0.1
+      ajv-formats-draft2019: ^1.6.1
+      libxmljs2: ^0.35||^0.37
+      packageurl-js: '*'
+      spdx-expression-parse: '*'
+      xmlbuilder2: ^3.0.2||^4.0.0
+    peerDependenciesMeta:
+      ajv:
+        optional: true
+      ajv-formats:
+        optional: true
+      ajv-formats-draft2019:
+        optional: true
+      libxmljs2:
+        optional: true
+      packageurl-js:
+        optional: true
+      spdx-expression-parse:
+        optional: true
+      xmlbuilder2:
+        optional: true
 
   '@electric-sql/pglite@0.3.14':
     resolution: {integrity: sha512-3DB258dhqdsArOI1fIt7cb9RpUOgcDg5hXWVgVHAeqVQ/qxtFy605QKs4gx6mFq3jWsSPqDN8TgSEsqC3OfV9Q==}
@@ -3640,6 +3670,10 @@ snapshots:
       '@csstools/css-tokenizer': 3.0.4
 
   '@csstools/css-tokenizer@3.0.4': {}
+
+  '@cyclonedx/cyclonedx-library@10.2.0(ajv@8.20.0)':
+    optionalDependencies:
+      ajv: 8.20.0
 
   '@electric-sql/pglite@0.3.14': {}
 

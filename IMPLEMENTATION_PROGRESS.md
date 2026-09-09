@@ -6,6 +6,19 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+DR-04 implementation begins with the actual pinned CycloneDX 10.2.0 public
+LicenseEvidenceGatherer, not a replacement filename walker. A build-only adapter
+confines reads to immediate regular files under an installed package, bounds
+individual files and directory entries, rejects collector errors and verifies
+decoded attachment bytes against originals. Its implementation hash matches the
+evaluated source. The first test uses actual installed React license bytes and
+rejects a package outside node_modules. Both notice checks and TypeScript pass.
+Original CycloneDX LICENSE/NOTICE are retained. The final dependency diff adds
+only this dev library; intermediate acquisition/peer-resolution issues and
+transient-cache cleanup limitations are recorded in TOOLING_ACQUISITIONS.md.
+Prepared production-graph assembly, exceptions, multi-file/negative tests, resource
+review and complete distribution notices remain unfinished. No runtime wiring.
+
 Idea lifecycle server/storage coverage now reuses the seeded signed registry,
 actual WebIdeaProjectLifecycleOperation and existing owner fixture. It rejects
 archive from active, then completes, archives, reconstructs the operation, reopens
