@@ -886,3 +886,19 @@ assertion is not backup safety. Added `pnpm test:checkpoints` for contributors.
 Authenticated transport, independent provisioning/custody, canonical split-commit
 recovery, actual restore and runtime/release acceptance remain unfinished. No etcd
 package was installed, no service was started and no native RPC was attempted.
+
+### SQL/checkpoint split detection
+
+Reused the existing staged-checkpoint regression suite and scripted exact-CAS
+peer. A new test connects that peer through the actual etcd adapter to the actual
+CompletionGateStore and one disposable migrated database. The peer advances its
+checkpoint but reports a lost acknowledgement. The SQL transaction rolls back;
+the integrity row remains unchanged and the attempted profile is absent. Fresh
+store objects then reject existing-record reads, new writes and provisioning on
+the mismatch. Only one external write occurred; there is no retry or old-anchor
+fallback. This demonstrates split detection, not recovery or distributed atomicity.
+
+Fourteen staging/split checks and full-source TypeScript pass. The split peer is
+in memory and does not prove actual etcd persistence, power-loss/crash behavior,
+authenticated transport or supported restore. A reviewed owner recovery procedure
+remains required. `pnpm test:checkpoints` now runs the complete focused set serially.
