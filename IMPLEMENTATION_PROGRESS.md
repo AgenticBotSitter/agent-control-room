@@ -6,6 +6,14 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+The managed-session transport check also accepted truthy non-booleans. It now
+requires literal true and uses the same rejection-observing fence for unfinished
+promises. Fake transport cases cover true, false, undefined, a string and fulfilled/
+rejected promises, with exactly one close and no database/sign/send calls.
+The test failed before correction. Queue tests pass 53/53 and TypeScript passes;
+fresh compiled regression and independent review are in progress. This does not
+qualify a physical transport or actual agent reconnect.
+
 Managed session readiness now reuses the existing synchronous fence for its
 availability callback. The previous implementation ignored returned false/Promise
 values. A regression failed before correction and passes afterward, including a

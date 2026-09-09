@@ -20,5 +20,20 @@ test('session admission requires a completed synchronous availability check', as
     else assert.equal(manager.queueAttention().unavailableNodes, 1);
     await new Promise<void>(resolve => setImmediate(resolve));
   }
+  for (const state of [true, false, undefined, 'ready', 'fulfilled', 'rejected']) {
+    let closes = 0;
+    const manager = new ManagedNativeSessions({ query: unexpected, transaction: unexpected, transactionWithPreCommitCheck: unexpected },
+      { ...settings, nodes: [node] }, scope,
+      { stage: unexpected, transmit: unexpected, receipt: unexpected, progress: unexpected },
+      async work => work(), () => {}, () => 1);
+    const transport = { send: unexpected, async close() { closes++; },
+      isAvailable: (() => state === 'fulfilled' ? Promise.resolve(true)
+        : state === 'rejected' ? Promise.reject(new Error('synthetic transport uncertainty')) : state) as () => boolean };
+    if (state === true) await manager.attach(node.nodeId, transport);
+    else await assert.rejects(manager.attach(node.nodeId, transport));
+    await manager.close();
+    assert.equal(closes, 1);
+    await new Promise<void>(resolve => setImmediate(resolve));
+  }
   assert.equal(effects, 0);
 });
