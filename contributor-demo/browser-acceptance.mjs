@@ -65,11 +65,26 @@ async function startDemo() {
   demo = spawn(PNPM.split(" ")[0], [...PNPM.split(" ").slice(1), "demo"], { cwd: ".", stdio: ["ignore", "pipe", "inherit"], detached: true });
   let output = "";
   let code = null;
+  let suppressed = false;
   const codeReady = new Promise((resolveCode, rejectCode) => {
     const timer = setTimeout(() => rejectCode(new Error("demo did not print an owner code within 90s")), 90_000);
     demo.stdout.on("data", chunk => {
-      output += chunk.toString();
-      process.stdout.write(chunk);
+      const text = chunk.toString();
+      output += text;
+      // Forward the demo's build output only up to the one-time-code announcement.
+      // From that point on (which includes the code itself) nothing is written to
+      // our stdout, so the code can never reach a log, terminal or screenshot.
+      if (!suppressed) {
+        const idx = output.indexOf("Paste this one-time code");
+        if (idx === -1) {
+          process.stdout.write(chunk);
+        } else {
+          const chunkStart = output.length - text.length;
+          const safeLen = Math.max(0, Math.min(text.length, idx - chunkStart));
+          if (safeLen > 0) process.stdout.write(text.slice(0, safeLen));
+          suppressed = true;
+        }
+      }
       const match = output.match(/one-time code into the owner login field on that page:\s*\n([A-Za-z0-9_-]{20,})/);
       if (match && !code) { code = match[1]; clearTimeout(timer); resolveCode(code); }
     });
@@ -88,10 +103,14 @@ async function startDemo() {
   return ownerCode;
 }
 async function stopDemo() {
-  if (!demo) return;
-  try { process.kill(-demo.pid, "SIGTERM"); } catch { demo.kill("SIGTERM"); } // signal the whole group (pnpm -> node)
-  await new Promise(resolveCode => { demo.on("exit", resolveCode); setTimeout(resolveCode, 8000); });
-  demo = null;
+  // Signal the whole process group (pnpm -> node) and return whether the demo
+  // process actually exited. Callers use this boolean as real evidence; the
+  // caller's cleanup checks must not pass merely because this object was nulled.
+  if (!demo) return true;
+  const exited = new Promise(resolveExit => demo.once("exit", () => resolveExit(true)));
+  try { process.kill(-demo.pid, "SIGTERM"); } catch { demo.kill("SIGTERM"); }
+  const didExit = await Promise.race([exited, sleep(8000).then(() => false)]);
+  return didExit === true;
 }
 
 // ---- shared browser helpers -------------------------------------------------
@@ -239,15 +258,27 @@ async function runJourney(context, ownerCode) {
   // Failure recovery on a second (same-session) page.
   await withPage(context, async (page) => {
     await page.setViewportSize({ width: 1280, height: 950 });
-    let drop = false;
-    await page.route("**/api/**", async r => { if (drop && r.request().method() === "POST") { drop = false; return r.abort("failed"); } return r.continue(); });
+    // Two distinct loss modes:
+    //  "request"  — the POST is aborted before it reaches the server (lost before delivery).
+    //  "response" — the request is delivered and the server accepts it (route.fetch),
+    //               then the client's copy of the response is dropped (lost after acceptance).
+    let dropMode = null;
+    await page.route("**/api/**", async r => {
+      if (dropMode && r.request().method() === "POST") {
+        const mode = dropMode;
+        dropMode = null;
+        if (mode === "request") return r.abort("failed");
+        if (mode === "response") { try { await r.fetch(); } catch { /* server unreachable */ } return r.abort("failed"); }
+      }
+      return r.continue();
+    });
     await page.goto(ORIGIN + "/local-preview", { waitUntil: "networkidle" });
     await page.waitForSelector("#project-title", { timeout: 10000 });
 
     // POST lost before delivery: uncertain banner + retry that replays the exact POST.
     await page.fill("#project-title", "Loss-injection project");
     await page.fill("#project-summary", "The create POST is dropped to test uncertain-save recovery.");
-    drop = true;
+    dropMode = "request";
     await page.click('button:has-text("Create project")');
     await page.waitForTimeout(1400);
     check("lost-post-shows-uncertain", (await page.locator("text=A save is unconfirmed").count()) > 0);
@@ -260,28 +291,39 @@ async function runJourney(context, ownerCode) {
     await page.waitForSelector("#task-title", { timeout: 10000 });
     ok("recovered-project-usable", "recovered project opens the task form");
 
-    // Revision POST lost: feedback preserved, no automatic retry, manual re-check.
+    // Reply lost AFTER the server accepted the revision: the POST is delivered
+    // (route.fetch), the server records the revision, and only the client's copy
+    // of the response is dropped. The client must show uncertain, preserve the
+    // feedback and NOT auto-repeat; the manual re-check then reconciles against
+    // the server and surfaces the revision that was recorded exactly once.
     await page.fill("#task-title", "Loss task");
-    await page.fill("#task-instructions", "Simulate, then drop the revision POST.");
+    await page.fill("#task-instructions", "Simulate, then lose the revision reply after the server accepts it.");
     await page.click('button:has-text("Save proposal")');
     await page.waitForSelector('button:has-text("Simulate this task")', { timeout: 10000 });
     await page.click('button:has-text("Simulate this task")');
     await page.waitForSelector("text=SIMULATED RESULT", { timeout: 15000 });
     await page.fill("textarea", "Feedback that must survive a lost reply.");
-    drop = true;
+    dropMode = "response";
     await page.click('button:has-text("Request revised sample")');
     await page.waitForTimeout(1500);
     check("lost-reply-shows-uncertain", (await page.locator("text=reply was lost or could not be verified").count()) > 0, "no automatic retry");
     let kept = false;
     try { kept = (await page.locator("textarea").inputValue()) === "Feedback that must survive a lost reply."; } catch { /* not present */ }
     check("lost-reply-preserves-feedback", kept, "feedback still in the textarea");
+    const beforeRecheck = await page.locator("summary:has-text('Previous sample')").count();
+    check("no-auto-repeat-after-lost-reply", beforeRecheck === 0, `${beforeRecheck} previous sample(s) shown before re-check`);
     await shot(page, "8-reply-lost");
     const recoverBtn = await page.locator('button:has-text("Check this simulation")').count();
     if (recoverBtn) {
       await page.click('button:has-text("Check this simulation")');
-      await page.waitForTimeout(1400);
+      await page.waitForTimeout(1500);
+      const prevCount = await page.locator("summary:has-text('Previous sample')").count();
       const alertShown = await page.locator("text=was not recorded").count();
-      check("recheck-does-not-auto-repeat", true, alertShown > 0 ? "re-check confirms the lost revision was not recorded; feedback preserved for resubmission" : "state re-read without starting work");
+      check("recheck-reconciles-recorded-revision", prevCount === 1 && alertShown === 0,
+        prevCount === 1 ? "server recorded the revision exactly once; re-check surfaced it" : `prev=${prevCount} alert=${alertShown}`);
+      await shot(page, "9-reply-reconciled");
+    } else {
+      fail("recheck-reconciles-recorded-revision", "Check this simulation control not shown after a lost reply");
     }
   });
 }
@@ -294,20 +336,24 @@ async function runJourney(context, ownerCode) {
   let journeyError = null;
   try { await runJourney(context, code); } catch (error) { journeyError = error; console.error(`# journey aborted: ${error.message}`); }
   await browser.close();
-  await stopDemo();
+  const demoStopped = await stopDemo();
   await sleep(1500);
 
-  // Shutdown verification.
+  // Shutdown verification. "demo-stopped" is true only if the demo process's
+  // own exit event fired within the stop window — not inferred from cleanup.
+  check("demo-stopped", demoStopped, demoStopped ? "process exited on SIGTERM" : "demo process did not exit within 8s of SIGTERM");
   const portFree = await new Promise(resolveCode => {
     fetch(ORIGIN + "/local-preview").then(() => resolveCode(false)).catch(() => resolveCode(true));
   });
-  check("demo-stopped", !demo, "process exited on SIGTERM");
   check("port-released-after-shutdown", portFree, `${PORT} no longer answers`);
   if (demoDataDir) {
     const remains = existsSync(join(tmpdir(), demoDataDir));
-    check("temp-data-removed", !remains, demoDataDir);
+    check("temp-data-removed", demoStopped && !remains, demoStopped ? (remains ? `temp dir still present: ${demoDataDir}` : demoDataDir) : "process not stopped; temp-dir check deferred");
   } else {
     ok("temp-data-removed", "no new demo temp directory was created");
+  }
+  if (!demoStopped) {
+    try { process.kill(-demo.pid, "SIGKILL"); } catch { /* already gone */ }
   }
 
   const failed = results.filter(r => r[0] === "FAIL").length;
