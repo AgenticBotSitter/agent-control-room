@@ -432,3 +432,19 @@ empty result. Clean removal succeeds only after restoring/removing exact synthet
 fixture content. The native run, cleanup/absence and full-source TypeScript passed.
 This strengthens the chosen Git-port acceptance scenarios; the fixture-local port
 still must not be represented as the production implementation or restart proof.
+
+Reusable native Git port checkpoint: git-workspace-port.ts now supplies the
+manager's operations using an injected trusted bounded Git runner. It pins root
+and common Git-directory identities, limits paths to direct managed children,
+refuses existing targets, verifies detached exact HEAD/common directory and holds
+uncertain effects. Removal requires its own observed identity and clean status
+including ignored files. No force/reset/prune or remote command is constructed.
+
+The native fixture now invokes this module rather than a separate fixture-only
+implementation. All prior preservation cases pass, plus pre-existing-target
+preservation and an injected lost response after actual worktree creation: the
+directory remains, retry is refused, and unverified removal is refused. Fixture
+cleanup/absence passed. Runtime remains unwired. The runner still requires a
+reviewed executable/configuration/host boundary; this does not qualify arbitrary
+repository hooks/filters, filesystem races against another local writer, durable
+cross-process ownership or recovery after restart. Independent review is pending.

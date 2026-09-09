@@ -5,7 +5,8 @@ import { promisify } from "node:util";
 import { mkdtemp, mkdir, writeFile, readFile, realpath, stat, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { CodexWorkspaceManagerV1, type CodexWorkspacePortV1 } from "../src/harness/codex-v1/workspace";
+import { CodexWorkspaceManagerV1 } from "../src/harness/codex-v1/workspace";
+import { createGitWorkspacePort } from "../src/harness/codex-v1/git-workspace-port";
 
 assert.ok(process.argv[2], "supply the reviewed Git executable");
 const executable = resolve(process.argv[2]);
@@ -31,33 +32,16 @@ try {
   assert.match(revision, /^[a-f0-9]{40}$/);
   assert.equal(await git(repo, ["remote"]), "");
   verifiedOwned = true;
-  const inspect: CodexWorkspacePortV1["inspectExisting"] = async path => {
-    const canonical = await realpath(path), info = await stat(canonical, { bigint: true });
-    assert.equal(info.isDirectory(), true);
-    return { realPath: canonical, device: String(info.dev), inode: String(info.ino) };
-  };
   const repository = await realpath(repo), workspace = await realpath(work);
   let creates = 0, removals = 0;
-  const port: CodexWorkspacePortV1 = {
-    inspectExisting: inspect,
-    createDetachedWorktree: async input => {
-      assert.equal(input.repositoryRealPath, repository);
-      assert.equal(input.checkoutPath.startsWith(workspace + "/codex-"), true);
-      creates++;
-      await git(repository, ["worktree", "add", "--detach", "--", input.checkoutPath, input.revision]);
-      const headRevision = await git(input.checkoutPath, ["rev-parse", "HEAD"]);
-      assert.equal(await git(input.checkoutPath, ["rev-parse", "--abbrev-ref", "HEAD"]), "HEAD");
-      return { ...await inspect(input.checkoutPath), repositoryRealPath: repository, headRevision };
+  const port = await createGitWorkspacePort({ repositoryRoot: repository, workspaceRoot: workspace,
+    runGit: async (cwd, args) => {
+      const result = await git(cwd, args);
+      if (args[0] === "worktree" && args[1] === "add") creates++;
+      if (args[0] === "worktree" && args[1] === "remove") removals++;
+      return result;
     },
-    removeWorktree: async input => {
-      assert.equal(input.repositoryRealPath, repository);
-      assert.equal(input.checkoutPath.startsWith(workspace + "/codex-"), true);
-      // Ignored files can still contain valuable agent work. Preserve those too.
-      // No force, reset or broad prune.
-      if (await git(input.checkoutPath, ["status", "--porcelain", "--untracked-files=all", "--ignored=matching"])) throw new Error("dirty_worktree");
-      await git(repository, ["worktree", "remove", "--", input.checkoutPath]); removals++;
-    },
-  };
+  });
   const manager = new CodexWorkspaceManagerV1(port);
   const input = { runId: "run:git-fit", repositoryRoot: repository, workspaceRoot: workspace, revision };
   const preparing = manager.prepare(input);
@@ -91,11 +75,33 @@ try {
   await rm(join(lease.checkoutPath, "ignored-fixture.txt"));
   await manager.cleanup(lease); assert.equal(removals, 1);
   await assert.rejects(stat(lease.checkoutPath), { code: "ENOENT" });
+  await assert.rejects(port.removeWorktree({ repositoryRealPath: repository,
+    checkoutPath: join(workspace, `codex-${"0".repeat(24)}`) }), /not_owned/);
+  const existing = join(workspace, `codex-${"1".repeat(24)}`);
+  await mkdir(existing); await writeFile(join(existing, "keep.txt"), "existing user-like fixture\n");
+  await assert.rejects(port.createDetachedWorktree({ repositoryRealPath: repository, checkoutPath: existing, revision }), /target_exists/);
+  assert.equal(await readFile(join(existing, "keep.txt"), "utf8"), "existing user-like fixture\n");
+  let uncertainPath = "", lostCreates = 0;
+  const lostPort = await createGitWorkspacePort({ repositoryRoot: repository, workspaceRoot: workspace,
+    runGit: async (cwd, args) => {
+      const result = await git(cwd, args);
+      if (args[0] === "worktree" && args[1] === "add") {
+        lostCreates++; uncertainPath = args[4]; throw new Error("synthetic_lost_response");
+      }
+      return result;
+    },
+  });
+  const lostManager = new CodexWorkspaceManagerV1(lostPort);
+  await assert.rejects(lostManager.prepare({ ...input, runId: "run:lost-response" }), /synthetic_lost_response/);
+  await assert.rejects(lostManager.prepare({ ...input, runId: "run:lost-response" }), /requires reconciliation/);
+  assert.equal(lostCreates, 1); assert.equal((await stat(uncertainPath)).isDirectory(), true);
+  await assert.rejects(lostPort.removeWorktree({ repositoryRealPath: repository, checkoutPath: uncertainPath }), /not_owned/);
   assert.equal(await git(repo, ["status", "--porcelain"]), "");
   assert.equal(await git(repo, ["remote"]), "");
   console.log(JSON.stringify({ detachedExactRevision: true, branchAdvanceIsolated: true,
     concurrentPrepareRefused: true, dirtyWorkPreserved: true, trackedAndStagedPreserved: true,
-    ignoredWorkPreserved: true, cleanLeaseRemoval: true }));
+    ignoredWorkPreserved: true, cleanLeaseRemoval: true, preexistingTargetPreserved: true,
+    lostResponsePreserved: true }));
 } finally {
   // Every path under root was created by this fixture; no caller-supplied checkout.
   await rm(root, { recursive: true, force: true });
