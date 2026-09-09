@@ -2,6 +2,7 @@ import type { createNativeNodeRuntime } from "../harness/hermes-native-v1/node-r
 import { nativeHttpLimits, nativeHttpRequestSchema, nativeHttpResponseSchema,
   type NativeHttpRequest, type NativeHttpResponse } from "../harness/v1/native-http-exchange";
 import { NATIVE_WIRE_MAX_BYTES } from "../harness/v1/native-wire";
+import { assertSynchronousFence } from "../security/synchronous-fence";
 
 export interface NativeHttpClient {
   exchange(request: NativeHttpRequest, signal: AbortSignal): Promise<NativeHttpResponse>;
@@ -23,7 +24,8 @@ export function createNativeHttpNodeHost(runtime: Pick<Runtime, "openWire" | "re
   const pending = new Set<Promise<unknown>>();
   function current(record?: Generation) {
     if (closed || lifetime.signal.aborted || record && (generation !== record || record.closed)) throw error();
-    available(); if (closed || lifetime.signal.aborted) throw error();
+    assertSynchronousFence(available, () => { throw error(); });
+    if (closed || lifetime.signal.aborted) throw error();
   }
   function track<T>(work: Promise<T>): Promise<T> {
     pending.add(work); void work.then(() => pending.delete(work), () => pending.delete(work)); return work;

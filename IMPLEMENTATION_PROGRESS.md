@@ -1210,3 +1210,17 @@ The updated focused recovery command passes 11 tests. Native retirement, current
 authenticated admission and durable reconciliation remain unfinished; no live
 Codex connection, provider call or credentials were used. No batch is declared
 complete by this checkpoint. All changes remain local pending an identified PR.
+
+### Worker connector readiness correction
+
+Tracing recovery composition found that the native connector and standalone HTTP
+host ignored values returned by their synchronous readiness callbacks. A new
+regression reproduced one attempted exchange with a fulfilled Promise before the
+fix. Both paths now reuse `assertSynchronousFence`, refusing unfinished Promise
+checks and non-void values while observing rejected Promises. Existing post-check
+cancellation checks remain in place. The regression exercises both real modules
+with fake I/O; no network or native agent is started.
+
+The registered queue suite passes 54 tests and a fresh compiled application build
+passes all 57 packaged tests. This correction is local and awaits independent
+review; it does not establish live recovery or authenticated Codex read admission.
