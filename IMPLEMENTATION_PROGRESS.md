@@ -6,6 +6,15 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+The actual workspace/browser-client DOM workflow now runs for both ordinary and
+Idea Lab projects. Each covers route isolation, settling a save after navigation,
+uncertain archive and exact-key retry, followed by reopening an archived project
+from revision 2 to 3. Assertions distinguish `/lifecycle` with lifecycle values
+from `/idea-lifecycle` with action names, and count explicit POSTs. All 11 focused
+tests and TypeScript pass. This closes the earlier untested Idea UI-path caveat,
+not Idea lifecycle server acceptance or physical browser qualification. No new
+runtime infrastructure or upstream UI shell was introduced.
+
 Archive preservation coverage now seeds a synthetic active workflow and running
 job/attempt rows in the fully migrated disposable database. Entire saved rows
 remain identical after archive and after reopen/replay/stale-request rejection.

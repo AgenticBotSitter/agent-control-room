@@ -5,7 +5,7 @@ import { createRoot } from 'react-dom/client';
 import { JSDOM } from 'jsdom';
 import { PrivateProjectWorkspace } from '../private-app/app/workspace.tsx';
 
-test('project navigation hides old details and lifecycle actions before the new read completes', async () => {
+for (const projectOrigin of ['ordinary', 'idea_lab']) test(`${projectOrigin} navigation and uncertain saves retain exact project identity`, async () => {
   const dom = new JSDOM('<div id="root"></div>', { pretendToBeVisual: true });
   const saved = Object.fromEntries(['window', 'document', 'IS_REACT_ACT_ENVIRONMENT', 'fetch']
     .map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
@@ -13,8 +13,9 @@ test('project navigation hides old details and lifecycle actions before the new 
   const pending = [];
   globalThis.fetch = (url, options) => new Promise(resolve => pending.push({ url, options, resolve }));
   const root = createRoot(document.getElementById('root'));
-  const project = id => ({ projectId: id, title: id === 'project:first' ? 'PRIVATE FIRST PROJECT' : 'Second project',
-    summary: 'Saved purpose', lifecycle: 'active', version: 1, origin: 'ordinary', lifecycleEditable: true,
+  const project = (id, lifecycle = 'active', version = 1) => ({ projectId: id, title: id === 'project:first' ? 'PRIVATE FIRST PROJECT' : 'Second project',
+    summary: 'Saved purpose', lifecycle, version, origin: projectOrigin, lifecycleEditable: true,
+    ...(projectOrigin === 'idea_lab' ? { ideaLifecycleActions: lifecycle === 'archived' ? ['reopen'] : ['pause', 'complete', 'archive'] } : {}),
     createdAt: '2026-09-09T12:00:00.000Z', updatedAt: '2026-09-09T12:00:00.000Z' });
   const render = id => root.render(React.createElement(PrivateProjectWorkspace, { projectId: id, section: 'settings' }));
   try {
@@ -33,9 +34,12 @@ test('project navigation hides old details and lifecycle actions before the new 
     const archive = [...document.querySelectorAll('button')].find(button => button.textContent === 'Archive project');
     await act(async () => archive.click());
     assert.equal(pending[2].options.method, 'POST');
+    assert.ok(pending[2].url.endsWith(projectOrigin === 'ordinary' ? '/lifecycle' : '/idea-lifecycle'));
+    assert.deepEqual(JSON.parse(pending[2].options.body), projectOrigin === 'ordinary'
+      ? { lifecycle: 'archived', expectedVersion: 1 } : { action: 'archive', expectedVersion: 1 });
     await act(async () => render('project:first'));
     assert.equal(pending.length, 3); // Reads wait while the original save owns the client.
-    const { origin, lifecycleEditable, ...savedProject } = project('project:second');
+    const { origin, lifecycleEditable, ideaLifecycleActions, ...savedProject } = project('project:second');
     await act(async () => pending[2].resolve(Response.json({ project: { ...savedProject, lifecycle: 'archived', version: 2 }, replayed: false })));
     assert.equal(pending.length, 4, 'settling the original save must immediately reload the current route');
     assert.equal(pending[3].options.method, 'GET');
@@ -59,7 +63,7 @@ test('project navigation hides old details and lifecycle actions before the new 
     assert.equal(pending[7].url, original.url);
     assert.equal(pending[7].options.body, original.options.body);
     assert.equal(pending[7].options.headers['idempotency-key'], original.options.headers['idempotency-key']);
-    const { origin: firstOrigin, lifecycleEditable: firstEditable, ...firstSaved } = project('project:first');
+    const { origin: firstOrigin, lifecycleEditable: firstEditable, ideaLifecycleActions: firstActions, ...firstSaved } = project('project:first');
     await act(async () => pending[7].resolve(Response.json({ project: { ...firstSaved, lifecycle: 'archived', version: 2 }, replayed: true })));
     assert.match(pending[8].url, /project%3Asecond$/);
     await act(async () => pending[8].resolve(Response.json({ project: project('project:second') })));
@@ -67,6 +71,18 @@ test('project navigation hides old details and lifecycle actions before the new 
     assert.match(document.body.textContent, /Second project/);
     assert.doesNotMatch(document.body.textContent, /PRIVATE FIRST PROJECT|Retry original save/);
     assert.equal(pending.filter(request => request.options.method === 'POST').length, 3);
+    await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
+    await act(async () => pending[9].resolve(Response.json({ project: project('project:second', 'archived', 2) })));
+    const reopen = [...document.querySelectorAll('button')].find(button => button.textContent === 'Reopen project');
+    assert.ok(reopen);
+    await act(async () => reopen.click());
+    assert.deepEqual(JSON.parse(pending[10].options.body), projectOrigin === 'ordinary'
+      ? { lifecycle: 'active', expectedVersion: 2 } : { action: 'reopen', expectedVersion: 2 });
+    assert.match(pending[10].url, /project%3Asecond\/(idea-)?lifecycle$/);
+    await act(async () => pending[10].resolve(Response.json({ project: { ...savedProject, version: 3 }, replayed: false })));
+    await act(async () => pending[11].resolve(Response.json({ project: project('project:second', 'active', 3) })));
+    assert.match(document.body.textContent, /Saved revision 3/);
+    assert.equal(pending.filter(request => request.options.method === 'POST').length, 4);
   } finally {
     await act(async () => root.unmount()); dom.window.close();
     for (const [key, descriptor] of Object.entries(saved)) {
