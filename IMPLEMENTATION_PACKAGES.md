@@ -1,7 +1,8 @@
 # Settled-component implementation packages
 
-Implementation status refreshed against local branch `codex/component-batch-4`
-at `9a333f1`. These updates are not yet published or available from public main.
+Implementation status refreshed against branch `codex/component-batch-4`
+through `478e719`. See CONTRIBUTOR_HANDOFF.md for the publication handoff and
+remaining assignment boundaries. These changes are not yet accepted into main.
 Substantial work, not automatic assignments. Read
 [component decisions](COMPONENT_DECISIONS.md), [setup](SETUP.md) and
 [contribution rules](CONTRIBUTING.md). Ask for maintainer assignment first.
@@ -17,9 +18,9 @@ contributors; a local branch name alone is not an available public starting poin
 
 | Package | Implemented locally; do not duplicate | Remaining useful work | Current local verification |
 | --- | --- | --- | --- |
-| P1 project/results | Markdown renderer, protected result identity checks, task-switch isolation, clear-on-reauthorization, retained draft state tests, cancelled stale reads | Accessible keyboard/mobile/browser acceptance, project history/archive/reopen workflow, separately admitted attachments | `pnpm test:results` (8 tests); physical browser acceptance remains open |
+| P1 project/results | Markdown renderer, protected result identity checks, task-switch isolation, clear-on-reauthorization, retained drafts, cancelled stale reads, ordinary/Idea archive-reopen and exact-key retry tests | Accessible keyboard/mobile/browser acceptance, project history presentation, separately admitted attachments | `pnpm test:results` (11 tests); physical browser acceptance remains open |
 | P2 database | node-postgres adapter and pool lifecycle; previous native PG17 transaction/restore evidence; Postgres.js removal | Real queue/native recovery, release-bound operational configuration and deployment acceptance | `pnpm test:database`, `pnpm test:queue`; see POSTGRES_RESTORE_EVIDENCE.md |
-| P3 attribution | All 14 direct runtime license texts and pinned-version/byte checks | Selected CycloneDX gatherer plus pnpm graph integration; exact transitive, bundle, asset and external-runtime notice reconciliation | `pnpm test:notices`; not a full SBOM or bundle clearance |
+| P3 attribution | Direct notices plus pinned CycloneDX collector, pnpm inventory, 193 runtime package-instance assembly and original-text rendering with explicit exception provenance | Independent review, portable inventory refresh, release output integration, bundle/asset/external-runtime coverage and unresolved entities version provenance | `pnpm test:notices` plus four runtime-license/exception test files listed in CONTRIBUTOR_HANDOFF.md; not full distribution clearance |
 | P4 token/calendar | jsonwebtoken policy adapter; cron-parser/Luxon integration and occurrence persistence | Automatic dispatch/recovery, live login acceptance and release integration; no second parser/verifier | `pnpm test:access`, `pnpm test:calendar` |
 | P5 news | Bounded extraction, source-bound storage/reader, collection-to-research task persistence | Qualified live sources/resource policy, physical browser acceptance and real agent research delivery | `pnpm test:articles`; no native agent execution implied |
 | P6 workspaces | Native Git port, durable intent/removal, root identities and read-only restart observations | Safe re-adoption with current admission, in-flight mutation recovery, retention and runtime composition | See WORKSPACE_RECOVERY_INTEGRATION.md; native fixture execution requires its own scope |
