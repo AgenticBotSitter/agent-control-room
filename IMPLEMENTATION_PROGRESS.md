@@ -6,6 +6,12 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+Independent follow-up review of 8a1af31e43ac2b83d0e7271ea2e0fde25f42f4f2 found
+no concrete issue in the protected observation route and captured read-only
+composition. Reviewer independently passed all six observation tests. Root's
+fresh build and all 56 selected compiled application tests also passed. These
+accept the scoped local implementation, not live Herdr or browser operation.
+
 Independent review of 2e245740bcb54bb0e62858717f71228df88ce491 found no concrete
 issue in the projection/source/service and independently passed all six tests.
 The following integration adds GET `/api/v1/projects/:projectId/observations`
@@ -62,7 +68,7 @@ The chronological entries below retain earlier failures and superseded states.
 3. Idea Lab/readable results — protected maintained renderer integrated; full workflow and physical browser acceptance remain open.
 4. News/article extraction/research — bounded extraction, storage, approved collection and reader integrated; qualified sources/browser/workflow acceptance remain open.
 5. Calendar/isolated workspaces — calendar parity/persistence reviewed; workspace journal, preservation and restart detection implemented; safe re-adoption/dispatch remain open.
-6. Optional session observations/operational monitoring — pending.
+6. Optional session observations/operational monitoring — project-scoped retained Herdr projection, revocation/freshness handling and protected read API implemented; UI, native collector and host monitoring acceptance pending.
 
 Attribution decisions 3/4 accompany all batches. Live deployment and owner-host
 qualifications require their separate authorization and acceptance; local unit
