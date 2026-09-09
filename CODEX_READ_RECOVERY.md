@@ -49,6 +49,23 @@ quarantine behavior or use its completed-call resume resolver as read permission
 
 Implementation order before runtime wiring:
 
+The current `harness.native.dispatch` contract is specifically Hermes: its schema
+requires `harness.hermes.native.start` and the Hermes enrollment/start contracts.
+It must not be relabeled as Codex evidence. Before the journal extension, settle
+the Codex start-receipt binding to its actual admitted broker ticket/permit and
+run, or implement a separately reviewed Codex delivery contract. A generic lease
+receipt proves historical lease intake, not permission for either harness to run.
+The journal's existing accepted-command lookup may be reused to cross-check lease
+identity, but cannot substitute for that missing Codex-specific start binding.
+
+The existing SQLite journal uses full-synchronous WAL and transactions, but its
+ordinary payload digests are integrity consistency checks, not authentication
+against a writer that can replace both payload and digest. Preserve protected
+node-storage assumptions and reverify original signed authority at admission.
+Do not advertise this extension as an authenticated restart source merely because
+it survives reopen. Production binding acceptance requires an independent review
+of the retained signed evidence and current verification path.
+
 1. Extend the existing protected node journal, not a second coordination service,
    with an immutable observation-only Codex identity record. Bind the exact pair
    to tenant/project/node/job/attempt/run, accepted delivery and pinned adapter
