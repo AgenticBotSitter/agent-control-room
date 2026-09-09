@@ -6,6 +6,16 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+An unwired pane-list process adapter now uses Node's existing subprocess API
+with fixed arguments, explicit environment, output/deadline bounds and child-close
+settlement. All 15 observation tests and full-source TypeScript pass; the new
+process tests inject EventEmitter/stream children and launch no executable.
+The credential-store command runner was inspected but not reused: it inherits
+environment and can reject before terminal close, conflicting with collector
+admission semantics. It was not modified. This narrow adapter does not verify
+binary identity, endpoint ownership or descendant cleanup, and is not supplied
+to runtime composition. Independent review is pending.
+
 Independent review of b42cbd19bb1a5a81b41cc211a1e29726e6c3bbdb found no
 concrete issue in multi-source isolation, bounds or per-source visibility and
 passed all 12 observation tests. Root's fresh compiled build and all 56 selected
