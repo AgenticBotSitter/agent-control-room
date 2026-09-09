@@ -7,6 +7,9 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { CodexWorkspaceManagerV1 } from "../src/harness/codex-v1/workspace";
 import { createGitWorkspacePort } from "../src/harness/codex-v1/git-workspace-port";
+import { journaledWorkspacePort } from "../src/harness/codex-v1/journaled-workspace-port";
+import { SqliteBridgeJournal } from "../src/node-bridge/journal";
+import { sha256Digest } from "../src/security/canonical-digest";
 
 assert.ok(process.argv[2], "supply the reviewed Git executable");
 const executable = resolve(process.argv[2]);
@@ -117,10 +120,31 @@ try {
   await assert.rejects(lostPort.removeWorktree({ repositoryRealPath: repository, checkoutPath: uncertainPath }), /not_owned/);
   assert.equal(await git(repo, ["status", "--porcelain"]), "");
   assert.equal(await git(repo, ["remote"]), "");
+  const journalPath = join(root, "workspace.sqlite"), journalRun = "run:journal-native";
+  const intent = { schema: "control-room.workspace-intent/v1", tenantId: "tenant:fixture", projectId: "project:fixture",
+    nodeId: "node:fixture", jobId: "job:fixture", attemptId: "attempt:fixture", leaseId: "lease:fixture", leaseEpoch: 1,
+    runId: journalRun, repositoryRoot: repository, workspaceRoot: workspace,
+    checkoutPath: join(workspace, `codex-${sha256Digest(journalRun).slice(7,31)}`), revision };
+  let journal = new SqliteBridgeJournal(journalPath);
+  try {
+    const durable = new CodexWorkspaceManagerV1(journaledWorkspacePort({ port, journal, intent, assertCurrent: () => {} }));
+    const savedLease = await durable.prepare({ ...input, runId: journalRun });
+    const saved = journal.workspaceIntentInventory()[0];
+    assert.equal(saved.creation?.headRevision, revision);
+    assert.equal(saved.creation?.inode, savedLease.inode);
+    const beforeReplay = creates;
+    journal.close(); journal = new SqliteBridgeJournal(journalPath);
+    const reopened = new CodexWorkspaceManagerV1(journaledWorkspacePort({ port, journal, intent, assertCurrent: () => {} }));
+    await assert.rejects(reopened.prepare({ ...input, runId: journalRun }), /reconciliation_required/);
+    assert.equal(creates, beforeReplay);
+    assert.equal((await stat(savedLease.checkoutPath)).isDirectory(), true);
+    assert.equal(journal.workspaceIntentInventory()[0].disposition, "reconciliation_required");
+  } finally { journal.close(); }
   console.log(JSON.stringify({ detachedExactRevision: true, branchAdvanceIsolated: true,
     concurrentPrepareRefused: true, dirtyWorkPreserved: true, trackedAndStagedPreserved: true,
     ignoredWorkPreserved: true, cleanLeaseRemoval: true, preexistingTargetPreserved: true,
-    lostResponsePreserved: true, cleanCommittedWorkPreserved: true, hiddenIndexEditsPreserved: true }));
+    lostResponsePreserved: true, cleanCommittedWorkPreserved: true, hiddenIndexEditsPreserved: true,
+    nativeCreationJournaled: true, journalReopenDoesNotRecreate: true }));
 } finally {
   // Every path under root was created by this fixture; no caller-supplied checkout.
   await rm(root, { recursive: true, force: true });

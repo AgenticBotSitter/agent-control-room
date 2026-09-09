@@ -511,3 +511,12 @@ creation readback, binding refusal, repeat composition and no unjournaled remova
 File-backed journal, two-process reservation and composition tests pass, as does
 full-source TypeScript. Actual Git plus this journal composition, crash-boundary
 tests, removal transitions, reconciliation and independent review remain pending.
+
+Actual Git/journal composition now passes in the disposable fixture: manager
+preparation records the intent, creates a detached checkout through the reusable
+Git port and saves matching revision/inode readback. After closing/reopening the
+file-backed journal and reconstructing composition, prepare refuses reconciliation-
+required state without another Git creation, and the checkout remains intact.
+Full native preservation fixture, exact cleanup/absence and TypeScript passed.
+This proves restart-of-composition refusal, not process-kill boundary recovery or
+safe re-adoption; those and durable removal remain unfinished.
