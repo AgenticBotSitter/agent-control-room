@@ -43,6 +43,7 @@ export function createOwnedCodexRead(options: {
     const current = () => {
       if (signal.aborted || controller.signal.aborted || performance.now() >= deadline) unavailable();
       assertSynchronousFence(check, unavailable);
+      if (signal.aborted || controller.signal.aborted || performance.now() >= deadline) unavailable();
     };
     const wait = async <T>(work: () => Promise<T>) => {
       current(); const result = await Promise.race([Promise.resolve().then(() => { current(); return work(); }), stopped]);
@@ -76,6 +77,7 @@ export function createOwnedCodexRead(options: {
       }
       if (signal.aborted) unavailable();
       try { assertSynchronousFence(check, unavailable); } catch { unavailable(); }
+      if (signal.aborted || performance.now() >= deadline) unavailable();
     }
   } });
 }

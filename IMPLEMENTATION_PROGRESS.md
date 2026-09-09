@@ -6,6 +6,14 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+Independent lifecycle review at 012fbbc found reentrant cancellation in the
+admission callback could pass the pre-callback signal check and reach acquisition
+or publication. Signal/deadline are now rechecked after that callback, including
+after cleanup. Added exact early/final callback cancellation regressions, plus
+synchronous-abort-during-open/rejected-readiness and late-send settlement cases.
+All ten recovery tests and TypeScript pass after correction. Remediation review
+is pending; the source finding and original seven-test pass are retained here.
+
 Codex read lifecycle now composes the fixed profile with an owned connection
 attempt, adapting the existing owned-signing acquisition pattern. One-shot reads
 bound readiness/I/O waiting, abort on cancellation, wait for bounded cleanup and

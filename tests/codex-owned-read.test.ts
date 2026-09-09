@@ -43,3 +43,41 @@ test('revocation prevents acquisition and failed cleanup prevents a successful o
       async close() { current = false; } }) });
   await assert.rejects(duringClose.read(new AbortController().signal));
 });
+
+test('synchronous cancellation during open observes rejected readiness and closes its owned attempt', async () => {
+  const abort = new AbortController(); let closes = 0;
+  const operation = createOwnedCodexRead({ binding, timeoutMs: 100, cleanupMs: 100, assertCurrent() {},
+    open() {
+      abort.abort();
+      return { ready: Promise.reject(new Error('synthetic readiness rejection')), async close() { closes++; } };
+    } });
+  await assert.rejects(operation.read(abort.signal), /codex_read_unavailable/);
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(closes, 1);
+});
+
+test('cancelled pending send cannot advance to another protocol message after settling late', async () => {
+  const abort = new AbortController(); let closes = 0, sends = 0, reads = 0;
+  let release!: () => void, entered!: () => void;
+  const sending = new Promise<void>(resolve => { entered = resolve; });
+  const operation = createOwnedCodexRead({ binding, timeoutMs: 1000, cleanupMs: 100, assertCurrent() {},
+    open: () => ({ ready: Promise.resolve({ send() { sends++; entered(); return new Promise<void>(resolve => { release = resolve; }); },
+      async readLine() { reads++; return responses[0]; } }), async close() { closes++; } }) });
+  const reading = operation.read(abort.signal); await sending; abort.abort();
+  await assert.rejects(reading, /codex_read_unavailable/);
+  release(); await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(sends, 1); assert.equal(reads, 0); assert.equal(closes, 1);
+});
+
+test('admission callbacks cannot cancel reentrantly and still permit acquisition or publication', async () => {
+  const early = new AbortController(); let opens = 0;
+  const beforeOpen = createOwnedCodexRead({ binding, timeoutMs: 1000, cleanupMs: 100,
+    assertCurrent() { early.abort(); }, open() { opens++; throw new Error('unexpected open'); } });
+  await assert.rejects(beforeOpen.read(early.signal), /codex_read_unavailable/); assert.equal(opens, 0);
+  const late = new AbortController(); let closed = false, index = 0;
+  const afterClose = createOwnedCodexRead({ binding, timeoutMs: 1000, cleanupMs: 100,
+    assertCurrent() { if (closed) late.abort(); },
+    open: () => ({ ready: Promise.resolve({ async send() {}, async readLine() { return responses[index++]; } }),
+      async close() { closed = true; } }) });
+  await assert.rejects(afterClose.read(late.signal), /codex_read_unavailable/); assert.equal(closed, true);
+});
