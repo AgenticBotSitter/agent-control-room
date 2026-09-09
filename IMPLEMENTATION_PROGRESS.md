@@ -787,3 +787,8 @@ timeout with zero sign requests even after late readiness. Full-source TypeScrip
 passed. This is not a real socket connector, owner custody or terminal OS-resource
 proof. The trusted connector's close obligation still requires implementation and
 host qualification; independent review of this new wrapper is pending.
+
+Independent review at aa2e390 found no concrete issue and reran all three local
+tests successfully. It inspected, but did not rerun, the pinned ssh2 script.
+Acceptance remains limited to the owned-readiness wrapper and injected contract;
+actual connector cleanup and OS-resource acceptance are not established.
