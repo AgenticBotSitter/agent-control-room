@@ -29,7 +29,13 @@ test("journaled port records before creation and refuses replay or unjournaled r
     assert.ok(journal.workspaceIntentInventory()[0].creation);
     const restartedComposition = journaledWorkspacePort({ port: underlying, journal, intent, assertCurrent: () => {} });
     await assert.rejects(restartedComposition.createDetachedWorktree(request), /reconciliation_required/);
-    await assert.rejects(port.removeWorktree(request), /removal_journal_required/);
+    await assert.rejects(port.removeWorktree(request), /removal_authority_required/);
     assert.equal(creates, 1); assert.equal(removes, 0);
+    const removal = journaledWorkspacePort({ port: underlying, journal, intent, assertCurrent: () => {}, assertRemovalCurrent: () => {} });
+    await removal.removeWorktree(request);
+    assert.equal(removes, 1);
+    assert.equal(journal.workspaceIntentInventory()[0].removal, "removed");
+    await assert.rejects(removal.removeWorktree(request), /reconciliation_required/);
+    assert.equal(removes, 1);
   } finally { journal.close(); }
 });

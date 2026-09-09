@@ -171,7 +171,13 @@ export class SqliteBridgeJournal implements ReplayGuard {
         .get(row.intent_digest) as { evidence_json: string; evidence_digest: string } | undefined;
       const evidence = created ? parseWorkspaceCreation(JSON.parse(created.evidence_json), intent) : undefined;
       if (created && sha256Digest(evidence) !== created.evidence_digest) throw new Error("workspace_creation_integrity_invalid");
-      return { intent, intentDigest: row.intent_digest, ...(evidence ? { creation: evidence } : {}), disposition: "reconciliation_required" as const };
+      const removal = this.db.prepare("SELECT creation_digest,removed FROM bridge_workspace_removals WHERE intent_digest=?")
+        .get(row.intent_digest) as { creation_digest: string; removed: number } | undefined;
+      if (removal && (!evidence || removal.creation_digest !== sha256Digest(evidence) || ![0,1].includes(removal.removed)))
+        throw new Error("workspace_removal_integrity_invalid");
+      return { intent, intentDigest: row.intent_digest, ...(evidence ? { creation: evidence } : {}),
+        ...(removal ? { removal: removal.removed === 1 ? "removed" as const : "pending" as const } : {}),
+        disposition: "reconciliation_required" as const };
     });
   }
 
@@ -189,6 +195,29 @@ export class SqliteBridgeJournal implements ReplayGuard {
       this.db.prepare("INSERT INTO bridge_workspace_creations(intent_digest,evidence_json,evidence_digest) VALUES(?,?,?)")
         .run(intentDigest, JSON.stringify(evidence), digest);
       assertCurrent(); return "recorded";
+    });
+  }
+
+  reserveWorkspaceRemoval(intentDigest: string, assertRemovalCurrent: () => void): "recorded" | "existing" {
+    return this.transaction(() => {
+      assertRemovalCurrent();
+      const saved = this.workspaceIntentInventory().find(value => value.intentDigest === intentDigest);
+      if (!saved?.creation) throw new Error("workspace_creation_missing");
+      if (saved.removal) { assertRemovalCurrent(); return "existing"; }
+      this.db.prepare("INSERT INTO bridge_workspace_removals(intent_digest,creation_digest,removed) VALUES(?,?,0)")
+        .run(intentDigest, sha256Digest(saved.creation));
+      assertRemovalCurrent(); return "recorded";
+    });
+  }
+
+  /** Trusted port must have confirmed physical absence; this records observation only. */
+  recordWorkspaceRemoved(intentDigest: string): "recorded" | "existing" {
+    return this.transaction(() => {
+      const saved = this.workspaceIntentInventory().find(value => value.intentDigest === intentDigest);
+      if (!saved?.removal) throw new Error("workspace_removal_intent_missing");
+      if (saved.removal === "removed") return "existing";
+      this.db.prepare("UPDATE bridge_workspace_removals SET removed=1 WHERE intent_digest=? AND removed=0").run(intentDigest);
+      return "recorded";
     });
   }
 
@@ -890,6 +919,16 @@ export class SqliteBridgeJournal implements ReplayGuard {
         BEGIN SELECT RAISE(ABORT,'workspace creation is immutable'); END;
       CREATE TRIGGER IF NOT EXISTS bridge_workspace_creations_no_delete BEFORE DELETE ON bridge_workspace_creations
         BEGIN SELECT RAISE(ABORT,'workspace creation is immutable'); END;
+      CREATE TABLE IF NOT EXISTS bridge_workspace_removals (
+        intent_digest TEXT PRIMARY KEY NOT NULL REFERENCES bridge_workspace_creations(intent_digest),
+        creation_digest TEXT NOT NULL,
+        removed INTEGER NOT NULL CHECK(removed IN (0,1))
+      );
+      CREATE TRIGGER IF NOT EXISTS bridge_workspace_removals_monotonic BEFORE UPDATE ON bridge_workspace_removals
+        WHEN NEW.intent_digest<>OLD.intent_digest OR NEW.creation_digest<>OLD.creation_digest OR OLD.removed<>0 OR NEW.removed<>1
+        BEGIN SELECT RAISE(ABORT,'workspace removal transition invalid'); END;
+      CREATE TRIGGER IF NOT EXISTS bridge_workspace_removals_no_delete BEFORE DELETE ON bridge_workspace_removals
+        BEGIN SELECT RAISE(ABORT,'workspace removal is immutable'); END;
       CREATE TABLE IF NOT EXISTS bridge_sequences (
         connection_id TEXT NOT NULL,
         direction TEXT NOT NULL CHECK(direction IN ('node_to_server','server_to_node')),
@@ -1024,6 +1063,6 @@ export class SqliteBridgeJournal implements ReplayGuard {
     const eventColumns = new Set((this.db.prepare(`PRAGMA table_info(bridge_job_events)`).all() as Array<{ name: string }>).map((row) => row.name));
     if (!eventColumns.has("artifact_id")) this.db.exec(`ALTER TABLE bridge_job_events ADD COLUMN artifact_id TEXT REFERENCES bridge_artifact_lineage(artifact_id)`);
     if (!eventColumns.has("artifact_lineage_digest")) this.db.exec(`ALTER TABLE bridge_job_events ADD COLUMN artifact_lineage_digest TEXT`);
-    this.db.exec("PRAGMA user_version=6;");
+    this.db.exec("PRAGMA user_version=7;");
   }
 }

@@ -45,6 +45,16 @@ test("workspace intent survives reopen, conflicts across connections and rolls b
     first.close(); first = new SqliteBridgeJournal(file);
     assert.deepEqual(first.workspaceIntentInventory()[0].creation, creation);
     assert.equal(first.workspaceIntentInventory()[0].disposition, "reconciliation_required");
+    assert.throws(() => first!.recordWorkspaceRemoved(sha256Digest(value)), /intent_missing/);
+    let removalChecks = 0;
+    assert.throws(() => first!.reserveWorkspaceRemoval(sha256Digest(value), () => {
+      if (++removalChecks === 2) throw new Error("removal_revoked");
+    }), /removal_revoked/);
+    assert.equal(first.workspaceIntentInventory()[0].removal, undefined);
+    assert.equal(first.reserveWorkspaceRemoval(sha256Digest(value), () => {}), "recorded");
+    first.close(); first = new SqliteBridgeJournal(file);
+    assert.equal(first.workspaceIntentInventory()[0].removal, "pending");
+    assert.equal(first.reserveWorkspaceRemoval(sha256Digest(value), () => {}), "existing");
     assert.equal(first.reserveWorkspaceIntent(intent("run:revoked"), () => {}), "recorded");
     assert.throws(() => first!.reserveWorkspaceIntent({ ...value, checkoutPath: "/elsewhere" }, () => {}), /invalid/);
   } finally { first?.close(); second?.close(); await rm(root, { recursive: true, force: true }); }

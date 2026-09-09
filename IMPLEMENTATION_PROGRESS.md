@@ -520,3 +520,17 @@ required state without another Git creation, and the checkout remains intact.
 Full native preservation fixture, exact cleanup/absence and TypeScript passed.
 This proves restart-of-composition refusal, not process-kill boundary recovery or
 safe re-adoption; those and durable removal remain unfinished.
+
+Durable removal transition added: a separate current-removal authority callback
+is mandatory; immutable binding to verified creation is reserved before the Git
+port runs, then a monotonic removed marker records confirmed completion. Duplicate
+or interrupted removal is held for reconciliation, never automatically retried.
+Journal schema marker advances to7. Tests cover absent authority, exact repeat,
+missing intent, revoked-removal rollback and pending state after journal reopen.
+
+The disposable native Git fixture now executes clean removal through this journal
+composition, checks physical absence before/after journal reopen and verifies the
+saved removed state and no same-run recreation. Native fixture/cleanup passed;
+three journal test groups and TypeScript passed before the final pending-state
+regression addition. Crash interruption, safe re-adoption, retention/release and
+independent review remain unfinished; no production wiring or database change.

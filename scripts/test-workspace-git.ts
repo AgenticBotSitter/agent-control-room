@@ -127,24 +127,29 @@ try {
     checkoutPath: join(workspace, `codex-${sha256Digest(journalRun).slice(7,31)}`), revision };
   let journal = new SqliteBridgeJournal(journalPath);
   try {
-    const durable = new CodexWorkspaceManagerV1(journaledWorkspacePort({ port, journal, intent, assertCurrent: () => {} }));
+    const durable = new CodexWorkspaceManagerV1(journaledWorkspacePort({ port, journal, intent,
+      assertCurrent: () => {}, assertRemovalCurrent: () => {} }));
     const savedLease = await durable.prepare({ ...input, runId: journalRun });
     const saved = journal.workspaceIntentInventory()[0];
     assert.equal(saved.creation?.headRevision, revision);
     assert.equal(saved.creation?.inode, savedLease.inode);
+    await durable.cleanup(savedLease);
+    await assert.rejects(stat(savedLease.checkoutPath), { code: "ENOENT" });
+    assert.equal(journal.workspaceIntentInventory()[0].removal, "removed");
     const beforeReplay = creates;
     journal.close(); journal = new SqliteBridgeJournal(journalPath);
     const reopened = new CodexWorkspaceManagerV1(journaledWorkspacePort({ port, journal, intent, assertCurrent: () => {} }));
     await assert.rejects(reopened.prepare({ ...input, runId: journalRun }), /reconciliation_required/);
     assert.equal(creates, beforeReplay);
-    assert.equal((await stat(savedLease.checkoutPath)).isDirectory(), true);
+    await assert.rejects(stat(savedLease.checkoutPath), { code: "ENOENT" });
+    assert.equal(journal.workspaceIntentInventory()[0].removal, "removed");
     assert.equal(journal.workspaceIntentInventory()[0].disposition, "reconciliation_required");
   } finally { journal.close(); }
   console.log(JSON.stringify({ detachedExactRevision: true, branchAdvanceIsolated: true,
     concurrentPrepareRefused: true, dirtyWorkPreserved: true, trackedAndStagedPreserved: true,
     ignoredWorkPreserved: true, cleanLeaseRemoval: true, preexistingTargetPreserved: true,
     lostResponsePreserved: true, cleanCommittedWorkPreserved: true, hiddenIndexEditsPreserved: true,
-    nativeCreationJournaled: true, journalReopenDoesNotRecreate: true }));
+    nativeCreationJournaled: true, nativeRemovalJournaled: true, journalReopenDoesNotRecreate: true }));
 } finally {
   // Every path under root was created by this fixture; no caller-supplied checkout.
   await rm(root, { recursive: true, force: true });
