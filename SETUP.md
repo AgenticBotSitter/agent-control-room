@@ -41,6 +41,13 @@ promotion and replay/uncertainty handling with an injected driver and one tempor
 in-memory database. It does not connect to Hermes or Codex, and is not evidence
 that a live fleet is operational.
 
+`pnpm test:owner-signing` checks signing ownership, cancellation and explicit
+endpoint validation. It uses generated test keys, fake socket ports and one
+owned temporary directory; it never discovers or connects to your SSH agent.
+The optional pinned ssh2 protocol evaluation is separate and requires its logged
+disposable package directory. Do not provide personal keys or SSH_AUTH_SOCK.
+Passing these tests does not authorize activating the unwired native connector.
+
 To compile without running the selected tests:
 
 ```sh

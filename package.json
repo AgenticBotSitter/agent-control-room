@@ -8,6 +8,7 @@
     "node": ">=22.13.0"
   },
   "scripts": {
+    "test:owner-signing": "node --import tsx --test tests/bounded-owner-signature.test.ts tests/owned-owner-signature.test.ts tests/owner-signing-stream.test.ts tests/private-owner-agent-endpoint.test.ts tests/native-owner-agent-ports.test.ts",
     "test:ideas": "node --import tsx --test --test-concurrency=1 tests/idea-panel-workflow.test.ts",
     "test:calendar": "node --import tsx --test --test-concurrency=1 tests/calendar-parity.test.ts tests/cron-calendar.test.ts tests/services-v1-recurrence.test.ts tests/schedule-store.test.ts",
     "test:build:articles": "pnpm build && node --test tests/vps-built-article-extraction.test.mjs",

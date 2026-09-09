@@ -860,3 +860,9 @@ created or connected. An initial alias test normalized away its intended invalid
 input with path.join; the test was corrected, not the implementation relaxed.
 Native socket/peer identity, OS-terminal teardown, dedicated custody and platform
 acceptance remain unproven. Independent review of these ports remains pending.
+
+Independent review at f3fb976 found no concrete issue and reran the three fake
+endpoint/connection tests; it inspected but did not run native-port tests. Root
+ran the new `pnpm test:owner-signing` command: all11 focused tests passed, including
+the disposable metadata check and fake socket port. No native socket attempt was
+performed. Real native qualification remains a separate authorization/gate.
