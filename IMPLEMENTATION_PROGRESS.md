@@ -419,3 +419,7 @@ port is deliberately not a production adapter: it relies on a freshly generated
 trusted repository, and does not qualify hostile Git configuration, ignored or
 tracked dirty content, cross-process ownership, lost responses or restart recovery.
 These remain required; no generic Git executor is exposed by this checkpoint.
+
+Follow-up typing correction: NODE_ENV also required a literal type rather than
+inferred string. After retaining the literal test value, full-source TypeScript
+passed. No runtime policy changed.
