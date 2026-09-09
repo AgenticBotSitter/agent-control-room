@@ -902,3 +902,9 @@ Fourteen staging/split checks and full-source TypeScript pass. The split peer is
 in memory and does not prove actual etcd persistence, power-loss/crash behavior,
 authenticated transport or supported restore. A reviewed owner recovery procedure
 remains required. `pnpm test:checkpoints` now runs the complete focused set serially.
+
+Independent review at c36051b found no concrete issue and passed all32 focused
+tests using scripted RPCs/disposable PGlite only. It accepted split detection,
+not recovery or durable etcd acceptance. CHECKPOINT_RECOVERY_REQUIREMENTS.md now
+records the remaining recovery package and the fact that a digest-only checkpoint
+cannot reconstruct rolled-back records. No checkpoint reset is an accepted repair.
