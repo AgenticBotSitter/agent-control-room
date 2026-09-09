@@ -6,6 +6,14 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+Independent UI review of dbe7876c8e273b7edf61fa75ecf19a40066d028d found no
+concrete issue and passed all eight observation tests. The build begun at that
+checkpoint passed all 56 selected compiled tests. A subsequent service check
+uses the same strict wire before returning data and rejects a reader supplying
+another project or extra metadata; all eight source/DOM tests and TypeScript
+pass after that addition. This later service check is not included in the
+earlier independent review or claimed as separately compiled acceptance.
+
 The project overview now mounts a session-observation panel using the retained
 GET API and existing bounded browser JSON reader. A strict browser wire excludes
 extra metadata/authority claims and binds the response project. Refresh, focus
@@ -79,7 +87,7 @@ The chronological entries below retain earlier failures and superseded states.
 3. Idea Lab/readable results — protected maintained renderer integrated; full workflow and physical browser acceptance remain open.
 4. News/article extraction/research — bounded extraction, storage, approved collection and reader integrated; qualified sources/browser/workflow acceptance remain open.
 5. Calendar/isolated workspaces — calendar parity/persistence reviewed; workspace journal, preservation and restart detection implemented; safe re-adoption/dispatch remain open.
-6. Optional session observations/operational monitoring — project-scoped retained Herdr projection, revocation/freshness handling and protected read API implemented; UI, native collector and host monitoring acceptance pending.
+6. Optional session observations/operational monitoring — project-scoped retained Herdr projection, revocation/freshness handling, protected read API and overview panel implemented; native collector, physical browser and host monitoring acceptance pending.
 
 Attribution decisions 3/4 accompany all batches. Live deployment and owner-host
 qualifications require their separate authorization and acceptance; local unit

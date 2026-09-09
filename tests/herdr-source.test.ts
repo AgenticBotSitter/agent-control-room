@@ -71,6 +71,11 @@ test('actual project authority protects retained observations and observes grant
   await assert.rejects(service.list(identity, 'project:missing'));
   assert.throws(() => new WebHerdrService(f.client, { ...scope, tenantId: 'different' }, [source]));
   assert.throws(() => new WebHerdrService(f.client, scope, [source, source]));
+  for (const view of [() => ({ ...source.view(), projectId: b.project.projectId }),
+    () => ({ ...source.view(), privateMetadata: 'must-not-leak' })]) {
+    await assert.rejects(new WebHerdrService(f.client, scope, [{ ...source, view }], () => now)
+      .list(identity, a.project.projectId));
+  }
   const app = createPrivateWebProcess({ origin, ...trust, ...scope, herdrObservations: [source],
     database: { client: f.client, close: async () => {} }, clock: () => now, loadKeys: async () => trust.keys });
   t.after(() => app.close());
