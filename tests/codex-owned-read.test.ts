@@ -5,6 +5,30 @@ import { createOwnedCodexRead, type CodexReadWire } from '../src/harness/codex-v
 const binding = { threadId: 'thread:fixture', turnId: 'turn:fixture' };
 const responses = ['{"id":1,"result":{}}', JSON.stringify({ id: 2, result: { thread: { id: binding.threadId,
   turns: [{ id: binding.turnId, status: 'completed' }] } } })];
+test('disconnect, restarted protocol and duplicate acknowledgement retire without retry or observation', async () => {
+  for (const fault of ['disconnect', 'restart', 'duplicate'] as const) {
+    let opens = 0, closes = 0, reads = 0;
+    const sent: string[] = [];
+    const operation = createOwnedCodexRead({ binding, timeoutMs: 1000, cleanupMs: 100, assertCurrent() {},
+      open() {
+        opens++;
+        return { ready: Promise.resolve({
+          async send(line: string) { sent.push(JSON.parse(line).method); },
+          async readLine() {
+            if (reads++ === 0) return responses[0];
+            if (fault === 'disconnect') throw new Error('synthetic lost read acknowledgement');
+            if (fault === 'restart') return '{"id":99,"result":{}}';
+            return responses[0];
+          },
+        }), async close() { closes++; } };
+      } });
+    await assert.rejects(operation.read(new AbortController().signal), /codex_read_unavailable/);
+    assert.equal(opens, 1); assert.equal(closes, 1); assert.equal(reads, 2);
+    assert.deepEqual(sent, ['initialize', 'initialized', 'thread/read']);
+    await assert.rejects(operation.read(new AbortController().signal), /codex_read_unavailable/);
+    assert.equal(opens, 1); assert.equal(closes, 1);
+  }
+});
 test('owned read emits only initialization and exact read, withholding success until cleanup', async () => {
   const sent: string[] = []; let closed = 0, reads = 0;
   const operation = createOwnedCodexRead({ binding, timeoutMs: 1000, cleanupMs: 100, assertCurrent() {},

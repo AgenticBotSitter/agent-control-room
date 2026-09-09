@@ -1198,3 +1198,15 @@ tests using scripted RPCs/disposable PGlite only. It accepted split detection,
 not recovery or durable etcd acceptance. CHECKPOINT_RECOVERY_REQUIREMENTS.md now
 records the remaining recovery package and the fact that a digest-only checkpoint
 cannot reconstruct rolled-back records. No checkpoint reset is an accepted repair.
+
+### Codex recovery lifecycle acceptance checkpoint
+
+Independent re-review accepted the cancellation correction at `798b38a` with
+10 focused checks passing. Root subsequently ran `pnpm test:components` to terminal
+exit zero and `pnpm check:demo` to exit zero. An additional scripted lifecycle
+regression covers disconnect/lost acknowledgement, unexpected restart response
+ID and duplicate acknowledgement, each without retry or result publication.
+The updated focused recovery command passes 11 tests. Native retirement, current
+authenticated admission and durable reconciliation remain unfinished; no live
+Codex connection, provider call or credentials were used. No batch is declared
+complete by this checkpoint. All changes remain local pending an identified PR.

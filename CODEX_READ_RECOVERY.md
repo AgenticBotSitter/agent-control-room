@@ -1,6 +1,6 @@
 # Exact-ID Codex read recovery
 
-Status: bounded response projection and one-shot JSONL profile implemented; transport, trusted admission,
+Status: bounded response projection, one-shot JSONL profile and owned connection lifecycle implemented; native transport, trusted admission,
 runtime reconciliation and host qualification are not implemented or accepted.
 
 `owned-read.ts` now composes the profile with a caller-owned connection attempt.
@@ -49,6 +49,14 @@ Remaining integration:
 - Qualify disconnect, server restart, lost read acknowledgement and duplicate read
   using disposable data under explicit host scope. No automated native retry is
   authorized by this module.
+
+Independent re-review of `798b38a` confirmed the reentrant cancellation correction
+and passed all 10 then-current recovery checks. A subsequent lifecycle regression
+adds scripted disconnect/lost acknowledgement, unexpected restart response ID and
+duplicate initialization acknowledgement: each closes its one owned attempt,
+returns no observation and refuses reuse. These are protocol simulations, not an
+actual server restart or physical connection retirement. The focused suite now
+passes 11 tests.
 
 Run `pnpm test:codex-recovery` for the effect-free
 projection and protocol checks. No credentials, native app-server process or provider call is
