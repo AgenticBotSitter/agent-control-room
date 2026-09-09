@@ -6,6 +6,16 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+Independent review of the cumulative project UI changes at `356cd55` found no
+concrete regression and passed all nine then-current focused tests. A fresh VPS
+build and all 57 compiled tests also passed. Root accepts this local UI correction,
+not physical browser acceptance. Added a disposable full-migration PGlite lifecycle
+test: archive, reconstruct service, reopen, replay the original archive receipt,
+reject a new stale-version request and preserve the other project. Identity,
+title, summary and creation time survive; historical replay does not alter current
+state. This is service reconstruction on the same database, not process-crash or
+native PostgreSQL proof, and does not exercise running jobs. The new test passes.
+
 Uncertain project-save route acceptance: the DOM/client test now includes an
 archive response with HTTP 500, a route switch, disabled competing lifecycle
 controls, and explicit retry. It verifies the exact original URL/body/idempotency

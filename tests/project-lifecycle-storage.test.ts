@@ -1,0 +1,30 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { fixture, now, trust, request } from './helpers/web-foundation';
+import { createAccessVerifier } from '../src/web/v1/access-verifier';
+import { WebProjectService } from '../src/web/v1/project-service';
+
+test('archive and reopen retain project identity and exact historical replay across service reconstruction', async t => {
+  const f = await fixture(); t.after(() => f.db.close());
+  const identity = createAccessVerifier(trust)(request(), now);
+  const { project } = await f.service.create(identity, { title: 'Retained project', summary: 'Retained purpose' }, 'create-lifecycle-fixture');
+  const { project: other } = await f.service.create(identity, { title: 'Other project', summary: '' }, 'create-other-fixture');
+  const input = { lifecycle: 'archived', expectedVersion: 1 };
+  const archived = await f.service.transition(identity, project.projectId, input, 'archive-lifecycle-fixture');
+  assert.equal(archived.project.lifecycle, 'archived');
+  const recovered = new WebProjectService(f.client, { tenantId: 'tenant:web', workspaceId: 'workspace:web' }, () => now);
+  assert.equal((await recovered.get(identity, project.projectId)).lifecycle, 'archived');
+  const reopened = await recovered.transition(identity, project.projectId, { lifecycle: 'active', expectedVersion: 2 }, 'reopen-lifecycle-fixture');
+  assert.equal(reopened.project.version, 3);
+  assert.equal(reopened.project.projectId, project.projectId);
+  assert.equal(reopened.project.title, project.title);
+  assert.equal(reopened.project.summary, project.summary);
+  assert.equal(reopened.project.createdAt, project.createdAt);
+  const replay = await recovered.transition(identity, project.projectId, input, 'archive-lifecycle-fixture');
+  assert.equal(replay.replayed, true);
+  assert.deepEqual(replay.project, archived.project);
+  assert.equal((await recovered.get(identity, project.projectId)).lifecycle, 'active');
+  assert.equal((await recovered.get(identity, project.projectId)).version, 3);
+  await assert.rejects(recovered.transition(identity, project.projectId, input, 'different-stale-key'), { code: 'conflict' });
+  assert.deepEqual(await recovered.get(identity, other.projectId), other);
+});
