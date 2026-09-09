@@ -20,6 +20,7 @@ import type { NativeApprovalPacketStore } from "./native-approval-packet-store";
 import { nativeTaskApprovalPacketSchema } from "../../harness/v1/native-approval-packet";
 import type { NativeTaskQueueScope } from "./native-task-queue";
 import type { ServerNodeSession } from "../../node-control/server-node-session";
+import { assertSynchronousFence } from "../../security/synchronous-fence";
 
 type CanonicalNativeApproval = ReturnType<typeof prepareNativeTaskApprovalWithLease> & {
   enrollment: NativeEnrollment; preparedAt: string; sourceInputDigest: string; inputDigest: string;
@@ -223,7 +224,7 @@ export class TaskAssignmentCoordinator {
     return this.withNativeApproval(undefined, ref.projectId, ref.jobId, ref.inputDigest, async (tx, prepared, actorId) => {
       if (prepared.request.attemptId !== ref.attemptId || signal.aborted) conflict();
       if (ready && prepared.request.nodeId !== ready.nodeId) conflict();
-      ready?.assertCurrent();
+      if (ready) assertSynchronousFence(() => ready.assertCurrent(), conflict);
       const verified = await this.approvalStore!.revalidateInSession(tx, prepared, ref.packetDigest, signal);
       // Canonical tenant/job/attempt locks are retained through commit. A missing
       // receipt alone is not proof of non-execution: even an envelope is too late.
@@ -241,7 +242,9 @@ export class TaskAssignmentCoordinator {
         idempotencyKey: `queue-recovery:${ref.queueId}:${ordinal}`, safeMetadata: { ordinal, packetDigest: ref.packetDigest },
         occurredAt: new Date(this.clock()).toISOString() });
       return { value: { recovered, ordinal: recovered ? ordinal : null }, assertFresh: () => {
-        if (signal.aborted) conflict(); ready?.assertCurrent(); verified.assertFresh();
+        if (signal.aborted) conflict();
+        if (ready) assertSynchronousFence(() => ready.assertCurrent(), conflict);
+        verified.assertFresh();
       } };
     }, ref);
   }
@@ -250,7 +253,7 @@ export class TaskAssignmentCoordinator {
   async recoverForReadyNode(input: { nodeId: string; attemptId?: string }, signal: AbortSignal, assertCurrent: () => void) {
     const nodeId = localId.parse(input.nodeId), attemptId = input.attemptId === undefined ? undefined : localId.parse(input.attemptId);
     if (!this.nativeTaskSubmission?.recoverUnsentInSession || !(signal instanceof AbortSignal) || signal.aborted) conflict();
-    const current = () => { if (signal.aborted) conflict(); assertCurrent(); };
+    const current = () => { if (signal.aborted) conflict(); assertSynchronousFence(assertCurrent, conflict); };
     current();
     const rows = (await this.db.query<{ project_id: string; job_id: string; attempt_id: string; record: { inputDigest?: string; packetDigest?: string } }>(
       `SELECT q.project_id,q.job_id,q.attempt_id,q.record FROM control_native_task_queue q

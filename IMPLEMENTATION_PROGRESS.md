@@ -6,6 +6,15 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+Core recovery correction: ready-node queue discovery previously ignored a
+returned Promise from its synchronous readiness callback. A regression failed
+before the fix (missing expected rejection). The coordinator now reuses the
+existing synchronous-fence guard for discovery and never-staged recovery checks,
+including the final readiness callback. All 51 queue tests and full-source
+TypeScript pass. The new test checks fulfilled/rejected promises and malformed
+returns before/after a fake SQL read; it does not prove live recovery or the full
+transactional recovery path. Independent review remains pending.
+
 Returned to core queue readiness after the optional observation integration.
 Three existing synthetic submission/worker/runtime test files were read in full
 and copied unchanged into the contributor checkout; each SHA-256 matches its
