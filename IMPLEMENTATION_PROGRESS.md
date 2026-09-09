@@ -827,3 +827,20 @@ closed in finally. Eight protocol cases and three paired-issuer cases pass, alon
 with full-source TypeScript. The new composed test has not been independently
 reviewed. This does not establish actual human consent, OS socket closure or real
 key custody; no such resources were used.
+
+### Explicit owner endpoint policy and connection composition
+
+Added an unwired POSIX endpoint policy requiring an explicit normalized absolute
+socket path, owner UID, owner-only immediate directory/socket permissions and
+stable canonical/device/inode observations. Preparation detects directory
+replacement during inspection; recheck refuses replaced objects and cancellation.
+The connection composition retains the selected stream/protocol adapters and
+rechecks after connection readiness, before exposing a signing protocol.
+
+Three local tests cover unsafe input/permissions/ownership, identity changes,
+cancellation and post-connect refusal with fake inspection and in-memory streams.
+Full-source TypeScript passes. No actual filesystem inspector or socket factory
+was added or invoked. This is not atomic filesystem-to-socket identity assurance,
+peer authentication, Windows support, real key custody or deployment acceptance.
+Those remain explicit work; the owner key pin and consent boundaries still apply.
+Independent review of these additions remains pending.
