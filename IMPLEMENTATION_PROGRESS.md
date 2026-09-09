@@ -6,6 +6,17 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+The retained source now has a collector coordinator adapted from the evaluated
+Herdr observer: one allowlisted pane-list port, endpoint identity checks before
+and after, generation changes on observed replacement, and a two-second maximum
+deadline. It forwards cancellation and holds admission until an ignored port
+actually settles; late responses cannot publish or trigger retries. Twelve
+observation tests pass with fake ports, disposable SQL and DOM; full-source
+TypeScript passes. No executable/socket port is supplied by this module, and
+no Herdr process was run. Pinned executable/endpoint isolation, terminal cleanup
+qualification and operator scheduling remain required before live collection.
+Independent review is pending.
+
 Independent UI review of dbe7876c8e273b7edf61fa75ecf19a40066d028d found no
 concrete issue and passed all eight observation tests. The build begun at that
 checkpoint passed all 56 selected compiled tests. A subsequent service check
