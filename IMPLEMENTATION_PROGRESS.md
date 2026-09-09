@@ -6,6 +6,13 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+DR-17 exact-ID read recovery started with the bounded stored-response projection,
+using the documented thread/read interface without modifying qualification policy.
+Two effect-free tests pass for exact turn selection, minimization and refusal of
+foreign/duplicate/malformed/oversized evidence. CODEX_READ_RECOVERY.md lists the
+required separate read-only transport/admission/reconciliation integration. This
+module makes no provider call and does not complete native connector acceptance.
+
 Independent review accepted the source behavior at 1d118bf without a concrete
 finding and independently passed its readiness matrix; physical transport gates
 remain open. Root accepts the local correction.
