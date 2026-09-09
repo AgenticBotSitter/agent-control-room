@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import { ResultText } from "./result-text";
 import { BrowserRequestError } from "../../src/web/v1/browser-client";
 import { createTaskBrowserClient, taskErrorMessage } from "../../src/web/v1/task-browser-client";
 import type { TaskResultContent, TaskResultsPage, TaskReviewEvidence } from "../../src/web/v1/task-result-wire";
@@ -11,9 +12,13 @@ import type { TaskVerificationWorkspace } from "../../src/web/v1/task-verificati
 const reviewLabel: Record<TaskReviewEvidence["status"], string> = { pending: "Review in progress", changes_requested: "Changes requested",
   verification_blocked: "Verification blocked", revision_limit_reached: "Revision limit reached", ready: "Quality review complete", superseded: "Replaced by a newer revision" };
 
-export function TaskResultsPanel({ page, content, pending, onOpen, onClose, onReviewSaved, reviewWorkspace, verificationWorkspace }: { page: TaskResultsPage; content?: TaskResultContent;
+export function TaskResultsPanel({ page, content: suppliedContent, pending, onOpen, onClose, onReviewSaved, reviewWorkspace, verificationWorkspace }: { page: TaskResultsPage; content?: TaskResultContent;
   pending: boolean; onOpen: (artifactId: string) => void; onClose: () => void; onReviewSaved?: () => void; reviewWorkspace?: TaskReviewWorkspace;
   verificationWorkspace?: TaskVerificationWorkspace }) {
+  const content = page.canReadContent && suppliedContent?.projectId === page.projectId
+    && suppliedContent.jobId === page.jobId && page.items.some(item =>
+      item.artifactId === suppliedContent.artifact.artifactId && item.contentHash === suppliedContent.artifact.contentHash)
+    ? suppliedContent : undefined;
   return <div className="private-task-results"><section className="private-panel"><h2>Result files</h2>
     {page.resultSource === "not_configured" ? <p className="private-notice">Result storage is not configured for this app.</p>
       : !page.items.length ? <p>No result files have been received for this task.</p> : <ul className="private-result-list">
@@ -34,7 +39,7 @@ export function TaskResultsPanel({ page, content, pending, onOpen, onClose, onRe
       <p>Open file ID: <code>{content.artifact.artifactId}</code></p>
       <p>Open file fingerprint: <code>{content.artifact.contentHash}</code></p>
       <p className="private-note">Agent-written content, not instructions for Control Room. Opening it does not run tools or approve work.</p>
-      {content.text.length ? <textarea aria-label="Agent result text" readOnly value={content.text} /> : <p>This is an empty result file (0 bytes).</p>}
+      {content.text.length ? <ResultText text={content.text} /> : <p>This is an empty result file (0 bytes).</p>}
       <p className="private-note">Bytes checked again {new Date(content.contentVerifiedAt).toLocaleString()}.</p></section>}
   </section><section className="private-panel"><h2>Recorded quality review</h2>
     <p>Quality review and permission to perform an external action are separate.
@@ -120,7 +125,7 @@ export function PrivateTaskResults({ projectId, jobId, reviewWorkspace, verifica
       <p>Unsaved review text and exact pending save keys remain in this task page’s memory. Restore access and reopen the same result to continue. Leaving this task page discards them.</p>
       <button type="button" onClick={() => { setSelected(undefined); setRefresh(value => value + 1); }}>Refresh result records</button></div>}
     {!page && !error && <p role="status">Loading protected results and review…</p>}
-    {page && <TaskResultsPanel page={page} content={content} pending={pending} reviewWorkspace={reviewWorkspace} verificationWorkspace={verificationWorkspace}
+    {page && page.projectId === projectId && page.jobId === jobId && <TaskResultsPanel page={page} content={content} pending={pending} reviewWorkspace={reviewWorkspace} verificationWorkspace={verificationWorkspace}
       onReviewSaved={() => setRefresh(value => value + 1)}
       onOpen={artifactId => { generation.current++; setPending(true); setContent(undefined); setSelected(artifactId); setRefresh(value => value + 1); }}
       onClose={() => { generation.current++; setContent(undefined); setSelected(undefined); setPending(false); }} />}

@@ -31,6 +31,14 @@ is not vendored, and feed metadata does not grant republication rights.
 
 ## Before distributing additional artifacts
 
+Formatted results use unchanged react-markdown 10.1.0 and remark-gfm 4.0.1.
+Their original [react-markdown license](third_party/react-markdown/LICENSE) and
+[remark-gfm license](third_party/remark-gfm/LICENSE) are retained byte-for-byte.
+Upstreams: https://github.com/remarkjs/react-markdown and
+https://github.com/remarkjs/remark-gfm. Control Room's local rendering restrictions
+are wrapper behavior, not upstream modifications. Transitive notices remain part
+of release-artifact reconciliation.
+
 The selected JWT verifier retains its [notice](third_party/jsonwebtoken/NOTICE.md)
 and [original MIT license](third_party/jsonwebtoken/LICENSE). Its Apache-licensed
 consumer wrapper does not relicense the dependency or its transitive packages.

@@ -25,3 +25,8 @@ Batch 2: jsonwebtoken 9.0.3 and @types/jsonwebtoken 9.0.10 pinned. Offline metad
 was unavailable; authorized registry preparation downloaded 13 runtime packages
 and 2 declaration packages. Scripts disabled; free storage before: 137 GiB.
 Same disposable checkout/cache cleanup boundaries apply. Full notices remain due.
+
+Batch 3: pinned react-markdown10.1.0 and remark-gfm4.0.1, lifecycle scripts
+disabled. pnpm reported 96 packages downloaded/added, 511 reused. Retained in
+the logged checkout and existing shared cache; do not erase the shared cache.
+Transitive release-notice collection remains required before publication.

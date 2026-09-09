@@ -152,6 +152,36 @@ exact injected clock and session ceiling. Added epoch-zero/expiration regression
 three focused groups pass and full-source checking passes. This final correction
 still needs review confirmation; owner-signing/checkpoint work remains pending.
 
+Independent review confirmed the JWT correction; local checkpoint 3afe669 records
+it. No live authentication settings changed.
+
+## Batch 3 checkpoint
+
+Stacked branch codex/component-batch-3 adds the selected react-markdown/remark-gfm
+renderer inside the existing TaskResultsPanel. Raw HTML is skipped, images never
+render/fetch, links allow only explicit HTTP(S), and exact plain text remains
+available. Inputs over 32768 characters use full plain text without truncation.
+Two focused rendering tests and full-source TypeScript pass. Parent authorization/
+stale-result races, browser accessibility, styling, notices and compiled acceptance
+remain unfinished; this is not full Idea Lab/project-view completion.
+
+Actual TaskResultsPanel now refuses supplied content when current read permission,
+project/job identity or listed artifact/hash no longer matches. Parent rendering
+regression covers these cases and the untrusted-content warning; three rendering
+tests pass. Added horizontally scrollable tables/code and readable blockquotes.
+This is static parent coverage, not asynchronous browser race/accessibility proof.
+
+Original react-markdown and remark-gfm license texts now compare byte-for-byte
+with installed packages; attribution names versions/upstream and remaining
+transitive release scope. test:results provides four passing groups, including
+GFM tables/code and inert file/relative/protocol-relative links. TypeScript passes.
+
+Independent focused renderer review found no concrete issue; static coverage is
+not browser or adversarial performance acceptance. Compiled suite passed 56/56.
+Additional parent render condition refuses an old page whose project/job differs
+from current props while a new request loads; subsequent source checks pass.
+Browser accessibility and asynchronous interaction acceptance remain open.
+
 Next: test failed/never-settling acquisitions, active query shutdown and uncertain
 commit through the existing bounded wrapper; review actual pg shutdown behavior,
 explicit connection/session options and transitive notices before wiring. Then

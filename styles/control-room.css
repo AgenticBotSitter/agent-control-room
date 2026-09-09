@@ -901,3 +901,10 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; }
 }
+
+.private-result-markdown { overflow-wrap: anywhere; line-height: 1.6; }
+.private-result-markdown pre { overflow-x: auto; padding: 1rem; border: 1px solid currentColor; border-radius: .4rem; }
+.private-result-markdown table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
+.private-result-markdown th, .private-result-markdown td { border: 1px solid currentColor; padding: .5rem; text-align: left; }
+.private-result-markdown blockquote { margin-inline: 0; padding-inline-start: 1rem; border-inline-start: 3px solid currentColor; }
+.private-result-markdown a { text-decoration: underline; }

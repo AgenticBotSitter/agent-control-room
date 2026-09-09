@@ -8,6 +8,7 @@
     "node": ">=22.13.0"
   },
   "scripts": {
+    "test:results": "node --import tsx --test tests/result-text.test.tsx",
     "test:access": "node --import tsx --test tests/access-library.test.ts",
     "test:database": "node --import tsx --test --test-concurrency=1 tests/private-pg-driver.test.ts tests/private-pg-options.test.ts",
     "check:demo": "tsc --noEmit --incremental false",
@@ -26,6 +27,8 @@
     "pg-boss": "12.30.0",
     "react": "19.2.6",
     "react-dom": "19.2.6",
+    "react-markdown": "10.1.0",
+    "remark-gfm": "4.0.1",
     "rss-parser": "3.13.0",
     "zod": "4.1.12"
   },
