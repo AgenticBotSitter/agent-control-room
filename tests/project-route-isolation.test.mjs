@@ -44,6 +44,29 @@ test('project navigation hides old details and lifecycle actions before the new 
     assert.match(document.body.textContent, /PRIVATE FIRST PROJECT/);
     assert.doesNotMatch(document.body.textContent, /Second project/);
     assert.equal(pending.filter(request => request.options.method === 'POST').length, 1);
+    await act(async () => [...document.querySelectorAll('button')].find(button => button.textContent === 'Archive project').click());
+    const original = pending[4];
+    await act(async () => original.resolve(new Response('', { status: 500 })));
+    assert.equal(pending[5].options.method, 'GET');
+    await act(async () => pending[5].resolve(Response.json({ project: project('project:first') })));
+    await act(async () => render('project:second'));
+    await act(async () => pending[6].resolve(Response.json({ project: project('project:second') })));
+    const retry = [...document.querySelectorAll('button')].find(button => button.textContent === 'Retry original save');
+    assert.ok(retry);
+    assert.ok([...document.querySelectorAll('button')].find(button => button.textContent === 'Archive project').disabled);
+    assert.equal(pending.filter(request => request.options.method === 'POST').length, 2, 'reads must not retry an uncertain write');
+    await act(async () => retry.click());
+    assert.equal(pending[7].url, original.url);
+    assert.equal(pending[7].options.body, original.options.body);
+    assert.equal(pending[7].options.headers['idempotency-key'], original.options.headers['idempotency-key']);
+    const { origin: firstOrigin, lifecycleEditable: firstEditable, ...firstSaved } = project('project:first');
+    await act(async () => pending[7].resolve(Response.json({ project: { ...firstSaved, lifecycle: 'archived', version: 2 }, replayed: true })));
+    assert.match(pending[8].url, /project%3Asecond$/);
+    await act(async () => pending[8].resolve(Response.json({ project: project('project:second') })));
+    assert.equal(pending.length, 9, 'one current-route refresh is enough after the retry');
+    assert.match(document.body.textContent, /Second project/);
+    assert.doesNotMatch(document.body.textContent, /PRIVATE FIRST PROJECT|Retry original save/);
+    assert.equal(pending.filter(request => request.options.method === 'POST').length, 3);
   } finally {
     await act(async () => root.unmount()); dom.window.close();
     for (const [key, descriptor] of Object.entries(saved)) {

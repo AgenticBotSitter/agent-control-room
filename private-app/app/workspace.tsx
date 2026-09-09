@@ -110,14 +110,15 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
     try {
       const receipt = await client.retryPending();
       if (!projectId) { setResult("created"); window.location.assign(`/projects/${encodeURIComponent(receipt.projectId)}`); }
-      else setProject(await client.get(projectId)); // A replay receipt is historical, not the current project state.
+      // A replay receipt is historical. finishWrite reloads the current route,
+      // which may no longer be the route where this retry began.
     } catch (reason) { showError(reason); }
     finally { finishWrite(); }
   }
   async function transitionIdea(action: IdeaProjectAction) {
     if (!project || writeBusy.current || client.hasPending()) return;
     writeBusy.current = true; setPending(true); setError(undefined); generation.current++;
-    try { await client.transitionIdea(project, action); setProject(await client.get(project.projectId)); }
+    try { await client.transitionIdea(project, action); }
     catch (reason) { showError(reason); }
     finally { finishWrite(); }
   }

@@ -6,6 +6,15 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+Uncertain project-save route acceptance: the DOM/client test now includes an
+archive response with HTTP 500, a route switch, disabled competing lifecycle
+controls, and explicit retry. It verifies the exact original URL/body/idempotency
+key, no POST from automatic reads, and display of the current project after the
+historical replay receipt. Retry and Idea lifecycle paths now use the shared
+current-route refresh instead of an extra captured-route GET. All nine focused
+tests and full TypeScript pass. This validates the injected browser workflow,
+not server-side archive persistence, physical browser or live agent effects.
+
 Project navigation during a pending save now triggers a current-route read when
 the save attempt finishes. Previously the route effect skipped its load while
 the write was busy and could leave the new view loading until the next poll.
