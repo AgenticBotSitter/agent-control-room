@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve, isAbsolute } from "node:path";
-import { createBoundedOwnerSignature } from "../src/harness/v1/bounded-owner-signature";
+import { createOwnedOwnerSignature } from "../src/harness/v1/owned-owner-signature";
 
 // Explicit disposable package path; never load ambient SSH_AUTH_SOCK or keys.
 const root = process.argv[2];
@@ -15,7 +15,7 @@ assert.equal(createHash("sha256").update(await readFile(resolve(root, "lib/agent
 const { AgentProtocol } = createRequire(import.meta.url)(root);
 const keys = generateKeyPairSync("ed25519"), wrong = generateKeyPairSync("ed25519");
 const publicKeySpki = keys.publicKey.export({ type: "spki", format: "der" }).toString("base64url");
-for (const mode of ["valid", "denied", "missing", "abort", "wrong-key", "short-signature"] as const) {
+for (const mode of ["valid", "denied", "missing", "abort", "wrong-key", "short-signature", "acquisition-abort", "acquisition-timeout"] as const) {
   const client = new AgentProtocol(true), server = new AgentProtocol(false);
   const errors: unknown[] = [];
   client.on("error", (e: unknown) => errors.push(e)); server.on("error", (e: unknown) => errors.push(e));
@@ -31,15 +31,24 @@ for (const mode of ["valid", "denied", "missing", "abort", "wrong-key", "short-s
     server.signReply(request, mode === "short-signature" ? Buffer.alloc(32)
       : sign(null, bytes, mode === "wrong-key" ? wrong.privateKey : keys.privateKey));
   });
-  const signer = createBoundedOwnerSignature({ protocol: client, publicKeySpki, timeoutMs: 100,
-    close() { closes++; client.unpipe(server); server.unpipe(client); client.destroy(); server.destroy(); } });
+  let ready!: (protocol: typeof client) => void;
+  const delayed = mode === "acquisition-abort" || mode === "acquisition-timeout";
+  const signer = createOwnedOwnerSignature({ publicKeySpki, timeoutMs: 100,
+    open() { return { ready: delayed ? new Promise(resolve => { ready = resolve; }) : Promise.resolve(client),
+      close() { closes++; client.unpipe(server); server.unpipe(client); client.destroy(); server.destroy(); } }; } });
   const bytes = Buffer.from("synthetic exact approval material");
   try {
-    if (mode === "valid") assert.equal((await signer.sign(bytes, abort.signal)).length, 64);
-    else await assert.rejects(signer.sign(bytes, abort.signal), /owner_signature_unavailable/);
+    const result = signer.sign(bytes, abort.signal);
+    if (mode === "valid") assert.equal((await result).length, 64);
+    else {
+      const rejected = assert.rejects(result, /owner_signature_unavailable/);
+      if (mode === "acquisition-abort") abort.abort();
+      await rejected;
+    }
+    if (delayed) ready(client);
     await assert.rejects(signer.sign(bytes, new AbortController().signal), /owner_signature_unavailable/);
     await new Promise<void>(resolve => setImmediate(resolve));
-    assert.equal(requests, 1); assert.equal(closes, 1);
+    assert.equal(requests, delayed ? 0 : 1); assert.equal(closes, 1);
     assert.equal(client.destroyed, true); assert.equal(server.destroyed, true);
     assert.deepEqual(errors, []);
   } finally { client.destroy(); server.destroy(); }

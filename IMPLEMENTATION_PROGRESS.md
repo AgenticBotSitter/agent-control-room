@@ -771,3 +771,19 @@ late acquisition disposal, socket permissions, dedicated custody, trusted consen
 host acceptance and runtime wiring remain open. The app has no ssh2 dependency
 and these local tests authorize no real signer or connection. The separately
 installed package and cleanup target are recorded in DEPENDENCY_PREPARATION_LOG.md.
+
+### Owned signing readiness and cancellation
+
+Added an unwired owned-connection wrapper around the retained bounded signer.
+Unlike OpenSSHAgent.sign, the injected connector must return a close handle
+synchronously, before readiness resolves. One total deadline spans readiness and
+signature; input is copied before acquisition, cancellation closes once, late
+readiness cannot sign, and the wrapper cannot be retried. A failed close prevents
+returning a successful signature. Closing does not prove remote signing cancellation.
+
+Three source tests cover the existing bounded signer and the new readiness/signing
+matrix. Eight pinned ssh2 in-memory cases passed, including acquisition abort and
+timeout with zero sign requests even after late readiness. Full-source TypeScript
+passed. This is not a real socket connector, owner custody or terminal OS-resource
+proof. The trusted connector's close obligation still requires implementation and
+host qualification; independent review of this new wrapper is pending.
