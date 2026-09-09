@@ -6,6 +6,12 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+Independent review of a31cd5a3232866d9574e2fcbabb5c96f28be6941 found no concrete
+issue in the unwired fixed-command process adapter and passed all 15 observation
+tests. Root's full-source TypeScript rerun also passed after the explicit NODE_ENV
+correction. No native process or endpoint was exercised, and no descendant-cleanup
+qualification is claimed. The port is not installed in runtime composition.
+
 An unwired pane-list process adapter now uses Node's existing subprocess API
 with fixed arguments, explicit environment, output/deadline bounds and child-close
 settlement. All 15 observation tests pass; initial full-source TypeScript failed

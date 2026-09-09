@@ -1,8 +1,10 @@
 # Optional Herdr project observations
 
 Status: local projection, retention, collection coordination, protected API and
-overview UI implemented and independently reviewed. Native port and live-host
-acceptance remain unfinished. No Herdr binary is bundled, installed or started.
+overview UI implemented and independently reviewed. A fixed-command subprocess
+port is implemented, fake-tested and reviewed but remains unwired. Executable,
+endpoint and live-host acceptance remain unfinished. No Herdr binary is bundled,
+installed or started.
 
 ## What is reused
 
@@ -66,8 +68,9 @@ by that collector. Separate collectors are not a cross-process lifecycle lock.
 - Verify the exact local endpoint and owner-only directory/socket permissions;
   protect against path replacement and qualify the actual selected host. An
   inode observation is not authenticated peer identity.
-- Supply a bounded, cancellation-aware process port with output limits and
-  terminal cleanup evidence. An injected promise is not an OS process supervisor.
+- Qualify the implemented bounded process port with the approved executable and
+  terminal cleanup evidence. Its fake-child tests do not prove OS behavior or
+  descendant cleanup. It deliberately waits for child close, not merely kill().
 - Qualify permissions and same-account exposure: Herdr's underlying API has
   mutating methods even though this adapter exposes only observations. Do not
   proxy the raw socket to the browser or call this a server-side read-only token.
