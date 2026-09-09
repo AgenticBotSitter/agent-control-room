@@ -33,7 +33,7 @@ export async function createGitWorkspacePort(input: {
   if (beneath(repo.realPath, root.realPath) || beneath(root.realPath, repo.realPath)) throw new Error("workspace_roots_overlap");
   const common = await realpath(resolve(repo.realPath, (await runGit(repo.realPath, ["rev-parse", "--git-common-dir"])).trim()));
   const commonIdentity = await identity(common);
-  const owned = new Map<string, CodexWorkspaceIdentityV1>();
+  const owned = new Map<string, CodexWorkspaceIdentityV1 & { revision: string }>();
   const pending = new Set<string>(), uncertain = new Set<string>();
   const child = (path: string) => {
     if (dirname(path) !== root.realPath || !/^codex-[a-f0-9]{24}$/.test(basename(path))) throw new Error("workspace_target_not_owned_child");
@@ -67,7 +67,7 @@ export async function createGitWorkspacePort(input: {
         await roots(); const created = await identity(checkoutPath); await verifyGit(checkoutPath);
         const headRevision = (await runGit(checkoutPath, ["rev-parse", "HEAD"])).trim();
         if (headRevision !== revision) throw new Error("workspace_revision_mismatch");
-        owned.set(checkoutPath, created); uncertain.delete(checkoutPath);
+        owned.set(checkoutPath, { ...created, revision }); uncertain.delete(checkoutPath);
         return { ...created, repositoryRealPath: repo.realPath, headRevision };
       } finally { pending.delete(checkoutPath); }
     },
@@ -81,6 +81,8 @@ export async function createGitWorkspacePort(input: {
         await roots();
         if (!same(expected, await identity(checkoutPath))) throw new Error("workspace_identity_changed");
         await verifyGit(checkoutPath);
+        if ((await runGit(checkoutPath, ["rev-parse", "HEAD"])).trim() !== expected.revision)
+          throw new Error("workspace_committed_work_requires_preservation");
         if ((await runGit(checkoutPath, ["status", "--porcelain", "--untracked-files=all", "--ignored=matching"])).trim())
           throw new Error("dirty_worktree");
         if (!same(expected, await identity(checkoutPath))) throw new Error("workspace_identity_changed");

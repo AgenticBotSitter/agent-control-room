@@ -75,6 +75,16 @@ try {
   await rm(join(lease.checkoutPath, "ignored-fixture.txt"));
   await manager.cleanup(lease); assert.equal(removals, 1);
   await assert.rejects(stat(lease.checkoutPath), { code: "ENOENT" });
+  const committedLease = await manager.prepare({ ...input, runId: "run:committed-work" });
+  await writeFile(join(committedLease.checkoutPath, "fixture.txt"), "committed agent work\n");
+  await git(committedLease.checkoutPath, ["add", "--", "fixture.txt"]);
+  await git(committedLease.checkoutPath, ["commit", "-m", "Synthetic agent work"]);
+  const agentHead = await git(committedLease.checkoutPath, ["rev-parse", "HEAD"]);
+  assert.notEqual(agentHead, revision);
+  assert.equal(await git(committedLease.checkoutPath, ["status", "--porcelain"]), "");
+  await assert.rejects(manager.cleanup(committedLease), /committed_work_requires_preservation/);
+  assert.equal(await git(committedLease.checkoutPath, ["rev-parse", "HEAD"]), agentHead);
+  assert.equal(await readFile(join(committedLease.checkoutPath, "fixture.txt"), "utf8"), "committed agent work\n");
   await assert.rejects(port.removeWorktree({ repositoryRealPath: repository,
     checkoutPath: join(workspace, `codex-${"0".repeat(24)}`) }), /not_owned/);
   const existing = join(workspace, `codex-${"1".repeat(24)}`);
@@ -101,7 +111,7 @@ try {
   console.log(JSON.stringify({ detachedExactRevision: true, branchAdvanceIsolated: true,
     concurrentPrepareRefused: true, dirtyWorkPreserved: true, trackedAndStagedPreserved: true,
     ignoredWorkPreserved: true, cleanLeaseRemoval: true, preexistingTargetPreserved: true,
-    lostResponsePreserved: true }));
+    lostResponsePreserved: true, cleanCommittedWorkPreserved: true }));
 } finally {
   // Every path under root was created by this fixture; no caller-supplied checkout.
   await rm(root, { recursive: true, force: true });

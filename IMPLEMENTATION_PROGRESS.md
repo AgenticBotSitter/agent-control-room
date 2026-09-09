@@ -448,3 +448,11 @@ cleanup/absence passed. Runtime remains unwired. The runner still requires a
 reviewed executable/configuration/host boundary; this does not qualify arbitrary
 repository hooks/filters, filesystem races against another local writer, durable
 cross-process ownership or recovery after restart. Independent review is pending.
+
+Workspace committed-content correction: clean status alone did not protect a new
+detached commit. The port now retains the admitted revision and refuses removal
+when HEAD differs, requiring preservation rather than silently dropping the
+checkout. Actual Git regression creates a new commit with clean status, verifies
+removal refusal and confirms the commit and file remain. Full native fixture and
+cleanup/absence pass, as does full-source TypeScript. The fixture's final cleanup
+removes its exclusively owned synthetic cohort; it is not production cleanup logic.
