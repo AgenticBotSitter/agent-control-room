@@ -465,3 +465,11 @@ and skip-worktree. Actual disposable Git reproduces hidden edits with empty stat
 for both flags and proves cleanup refusal preserves content. Five manager tests,
 full-source TypeScript and native fixture/cleanup pass. Compiled56/56 passed at
 the pre-remediation checkpoint; final remediation re-review remains due.
+
+Independent re-review of ffaeb65 confirmed both workspace findings resolved and
+found no concrete regression. Reviewer ran five source-only manager tests; it
+did not repeat native effects. Root reran the five tests and full-source TypeScript
+successfully. Durable recovery is now specified in WORKSPACE_RECOVERY_INTEGRATION.md:
+reuse the bridge journal for protected local evidence while retaining PostgreSQL
+admission authority. This contract is the next implementation block, not a claim
+that persistence, cross-process exclusion or recovery already exists.
