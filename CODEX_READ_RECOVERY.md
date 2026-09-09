@@ -1,6 +1,6 @@
 # Exact-ID Codex read recovery
 
-Status: bounded response projection implemented; transport, trusted admission,
+Status: bounded response projection and one-shot JSONL profile implemented; transport, trusted admission,
 runtime reconciliation and host qualification are not implemented or accepted.
 
 Official interface checked 2026-09-09:
@@ -16,9 +16,14 @@ responses. Absent exact turns remain `not_observed`, not failed or completed.
 Transcript items, paths and token metadata are not returned. Usage remains unknown;
 a stored completed status is not verified completion or verified cleanup.
 
-This is the Control Room-specific identity/minimization adapter, not a replacement
-JSON-RPC implementation. Reuse the evaluated bounded transport when exporting and
-composing its separate read-only profile. Do not widen the existing qualification
+This is the Control Room-specific identity/minimization adapter. The separate
+`read-jsonl.ts` profile adapts the existing Control Room JSONL correlation pattern
+with fixed initialization and a single thread/read request. It exposes no generic
+request method, rejects server requests, correlates IDs, bounds frames/ignored
+notifications and becomes unusable after an error or disconnect. It is not a
+socket, process launcher or full JSON-RPC library. The narrower profile avoids
+exporting qualification/broker authority just to inspect stored state. Reuse the
+evaluated bounded transport when composing it. Do not widen the existing qualification
 controller's method allowlist or use its resume operation for this purpose.
 
 Remaining integration:
@@ -36,6 +41,6 @@ Remaining integration:
   using disposable data under explicit host scope. No automated native retry is
   authorized by this module.
 
-Run `node --import tsx --test tests/codex-read-recovery.test.ts` for the effect-free
-projection checks. No credentials, native app-server process or provider call is
+Run `pnpm test:codex-recovery` for the effect-free
+projection and protocol checks. No credentials, native app-server process or provider call is
 used by those tests. A separate owner-attended qualification stays separate.

@@ -8,6 +8,7 @@
     "node": ">=22.13.0"
   },
   "scripts": {
+    "test:codex-recovery": "node --import tsx --test tests/codex-read-recovery.test.ts tests/codex-read-jsonl.test.ts",
     "test:notices": "node --test tests/dependency-notices.test.mjs",
     "test:queue": "node --import tsx --test --test-concurrency=1 tests/pg-boss-native-task-submission.test.ts tests/pg-boss-native-task-worker.test.ts tests/pg-boss-native-task-runtime.test.ts tests/queue-recovery-fence.test.ts tests/managed-session-readiness.test.ts",
     "test:components": "pnpm test:notices && pnpm test:database && pnpm test:queue && pnpm test:access && pnpm test:owner-signing && pnpm test:checkpoints && pnpm test:ideas && pnpm test:results && pnpm test:articles && pnpm test:calendar && pnpm test:observations",

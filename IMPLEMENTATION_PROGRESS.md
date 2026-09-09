@@ -6,6 +6,14 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+The separate Codex read-only JSONL profile now adapts existing framing/correlation
+patterns without importing qualification/broker authority. Fixed initialize,
+initialized and one exact thread/read are its only outbound messages. It rejects
+server requests, mismatched IDs, error replies, malformed/oversized frames and
+reuse after disconnect; ignored notifications are bounded and not exposed. Four
+effect-free recovery tests pass. It remains unwired and does not prove transport
+cleanup, native read compatibility or canonical reconciliation.
+
 DR-17 exact-ID read recovery started with the bounded stored-response projection,
 using the documented thread/read interface without modifying qualification policy.
 Two effect-free tests pass for exact turn selection, minimization and refusal of
