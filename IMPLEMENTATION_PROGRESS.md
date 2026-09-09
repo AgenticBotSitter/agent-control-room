@@ -699,3 +699,23 @@ No live agent or real server was used for these DOM checks.
 Seven combined reader/research/renderer checks passed separately. Compiled article
 verification and independent review pending; physical browser acceptance remains
 unfinished. Existing maintained extraction/rendering and task client are reused.
+
+### Project route identity regression closure
+
+The research-form change at d706bc2 received an independent source review with
+no concrete finding; the reviewer reran its two DOM tests. Compiled article
+extraction also passed. This does not constitute physical browser acceptance.
+
+The news, task-list and task-detail routes previously joined project and cursor
+or task IDs with colons for React keys. Since IDs themselves contain colons,
+different contexts could produce identical keys. A regression test reproduced
+the task-list collision before the fix. These three routes now use JSON tuple
+keys, keeping field boundaries explicit without changing routing or permissions.
+The tests call the actual route components, check adversarial tuples and stable
+identical identities. TypeScript and all 17 article/research checks pass; the
+VPS artifact rebuild and compiled extractor test also pass. The route-key change
+has not received a separate independent review or physical browser acceptance.
+
+All changes remain local. GitHub inspection found no open public PR; the owner's
+unnumbered merge approval could not be mapped safely to an older private PR.
+No merge, push, deployment or live agent invocation was performed.
