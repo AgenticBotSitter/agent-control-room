@@ -6,6 +6,17 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+Multi-source project aggregation now replaces the earlier single-source limit.
+Each reader carries an opaque enrollment key, and the protected response groups
+observations with independent offline/revoked/fresh states. The overview reports
+recent observers out of enrolled observers, never total machine coverage. Limits
+are 16 sources per project, 256 readers per process and 1024 aggregate rows; excess
+is refused rather than hidden by truncation. Synthetic two-source tests cover
+distinct keys, partial outage and isolated revocation; DOM tests cover partial
+coverage and independent expiry. All 12 observation tests and TypeScript pass.
+This is retained-reader aggregation, not a live remote transport implementation.
+Independent review is pending.
+
 Independent review of e8a56b6692cb5f562dad8bf4b3a6b672749a18b7 found no concrete
 issue in collector cancellation/admission or strict server output validation;
 all 12 observation tests independently passed. The native connection requirements

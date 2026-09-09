@@ -1,4 +1,5 @@
 import { createHerdrProjectProjection, type HerdrProjectBinding } from './herdr-observations';
+import { createHash } from 'node:crypto';
 
 /** Adaptation of the evaluated observer's epoch/freshness rules. A source is
  * operator-owned, belongs to one immutable enrollment, and has no effect ports.
@@ -7,6 +8,8 @@ import { createHerdrProjectProjection, type HerdrProjectBinding } from './herdr-
 export function createHerdrObservationSource(input: HerdrProjectBinding, now: () => number = () => performance.now()) {
   const binding = structuredClone(input);
   const projection = createHerdrProjectProjection(binding);
+  const sourceKey = createHash('sha256').update(JSON.stringify([binding.tenantId, binding.workspaceId,
+    binding.projectId, binding.sourceId, binding.enrollmentRevision])).digest('hex');
   type Rows = ReturnType<typeof projection.project>;
   let epoch = 0, revoked = false, observedAt: number | null = null, lastClock = -Infinity;
   let rows: Rows = [], online = false;
@@ -27,7 +30,7 @@ export function createHerdrObservationSource(input: HerdrProjectBinding, now: ()
       executionAuthority: false as const, completionVerified: false as const, cleanupVerified: false as const };
   };
   return Object.freeze({
-    tenantId: binding.tenantId, workspaceId: binding.workspaceId, projectId: binding.projectId,
+    tenantId: binding.tenantId, workspaceId: binding.workspaceId, projectId: binding.projectId, sourceKey,
     view,
     revoke() { revoked = true; epoch++; rows = []; observedAt = null; online = false; },
     disconnect() { epoch++; online = false; },
@@ -52,4 +55,4 @@ export function createHerdrObservationSource(input: HerdrProjectBinding, now: ()
   });
 }
 export type HerdrObservationSource = ReturnType<typeof createHerdrObservationSource>;
-export type HerdrObservationReader = Pick<HerdrObservationSource, 'tenantId' | 'workspaceId' | 'projectId' | 'view'>;
+export type HerdrObservationReader = Pick<HerdrObservationSource, 'tenantId' | 'workspaceId' | 'projectId' | 'sourceKey' | 'view'>;

@@ -28,10 +28,11 @@ redistribution requires target-specific dependency/license closure first.
    projects only allowed panes and retains minimized rows. No timer or daemon is
    created by this coordinator.
 3. Supply only the source's retained reader interface in the private process's
-   optional `herdrObservations` configuration. Current composition supports one
-   source per project and rejects duplicate mappings. Multi-host aggregation is
-   not implemented by this interface and must not be implied by its single-source
-   results.
+   optional `herdrObservations` configuration. Composition supports up to 16
+   distinct enrollment keys per project (256 configured readers overall), with
+   a 1024-row aggregate response ceiling. Duplicate keys and oversized responses
+   are refused, not silently truncated. Each source retains its own freshness
+   and revocation state. Grouping retained readers is not remote transport.
 4. GET `/api/v1/projects/:projectId/observations` reuses Access verification and
    current project authority. It does not invoke collector ports. Responses are
    validated, project-bound and `no-store`.
@@ -73,8 +74,9 @@ by that collector. Separate collectors are not a cross-process lifecycle lock.
 - Connect operator-owned scheduling and resource shutdown in the intended
   deployment. Test actual restart/disconnect and physical browser behavior with
   disposable data under separately scoped host authority.
-- Decide and implement authorized multi-source project aggregation before
-  claiming one project page observes the full Mac/PC/VPS fleet.
+- Qualify each machine's collector and delivery path before claiming the page
+  observes the full Mac/PC/VPS fleet. Current grouping is tested with injected
+  retained readers, not cross-machine connections; unenrolled machines are absent.
 
 Run `pnpm test:observations` for synthetic collector, source, API and DOM checks.
 Passing this command does not discharge any native gate above.

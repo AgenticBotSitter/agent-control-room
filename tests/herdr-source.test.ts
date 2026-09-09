@@ -65,12 +65,29 @@ test('actual project authority protects retained observations and observes grant
   source.begin().accept(raw, 1);
   const scope = { tenantId: binding.tenantId, workspaceId: binding.workspaceId };
   const service = new WebHerdrService(f.client, scope, [source], () => now);
-  assert.equal((await service.list(identity, a.project.projectId)).rows.length, 1);
-  assert.equal((await service.list(identity, b.project.projectId)).status, 'not_configured');
+  assert.equal((await service.list(identity, a.project.projectId)).sources[0].observation.rows.length, 1);
+  assert.equal((await service.list(identity, b.project.projectId)).sources.length, 0);
   await assert.rejects(service.list({ ...identity, subject: 'not-owner' }, a.project.projectId));
   await assert.rejects(service.list(identity, 'project:missing'));
   assert.throws(() => new WebHerdrService(f.client, { ...scope, tenantId: 'different' }, [source]));
   assert.throws(() => new WebHerdrService(f.client, scope, [source, source]));
+  const secondSource = createHerdrObservationSource({ ...binding, projectId: a.project.projectId,
+    sourceId: 'source:second-machine' }, () => 100);
+  secondSource.begin().accept(raw, 1);
+  const multiple = new WebHerdrService(f.client, scope, [source, secondSource], () => now);
+  const both = await multiple.list(identity, a.project.projectId);
+  assert.equal(both.sources.length, 2);
+  assert.notEqual(both.sources[0].sourceKey, both.sources[1].sourceKey);
+  assert.notEqual(both.sources[0].observation.rows[0].key, both.sources[1].observation.rows[0].key);
+  secondSource.disconnect();
+  const partial = await multiple.list(identity, a.project.projectId);
+  assert.deepEqual(partial.sources.map(item => item.observation.status), ['online', 'offline']);
+  secondSource.revoke();
+  const revoked = await multiple.list(identity, a.project.projectId);
+  assert.equal(revoked.sources[1].observation.rows.length, 0);
+  assert.equal(revoked.sources[0].observation.rows.length, 1);
+  assert.throws(() => new WebHerdrService(f.client, scope, Array.from({ length: 17 }, (_, index) => ({
+    ...source, sourceKey: index.toString(16).padStart(64, '0') })), () => now));
   for (const view of [() => ({ ...source.view(), projectId: b.project.projectId }),
     () => ({ ...source.view(), privateMetadata: 'must-not-leak' })]) {
     await assert.rejects(new WebHerdrService(f.client, scope, [{ ...source, view }], () => now)
@@ -83,13 +100,13 @@ test('actual project authority protects retained observations and observes grant
   const call = (req: Request) => app.handle(req, () => new Response('unexpected fallback', { status: 500 }));
   const response = await call(request(path));
   assert.equal(response.status, 200); assert.equal(response.headers.get('cache-control'), 'no-store');
-  assert.equal((await response.json()).rows.length, 1);
+  assert.equal((await response.json()).sources[0].observation.rows.length, 1);
   assert.equal((await call(request(path, 'POST', {}))).status, 400);
   assert.equal((await call(request(`${path}?refresh=true`))).status, 400);
   assert.equal((await call(request(path, 'GET', undefined, undefined, token({ exp: now / 1000 - 1 })))).status, 401);
   source.revoke();
-  assert.equal((await service.list(identity, a.project.projectId)).rows.length, 0);
-  assert.equal((await (await call(request(path))).json()).status, 'not_configured');
+  assert.equal((await service.list(identity, a.project.projectId)).sources[0].observation.rows.length, 0);
+  assert.equal((await (await call(request(path))).json()).sources[0].observation.status, 'not_configured');
   await f.client.query('UPDATE control_role_grants SET revoked_at=$1 WHERE id=$2', [new Date(now).toISOString(), 'grant:web']);
   await assert.rejects(service.list(identity, a.project.projectId));
   assert.equal((await call(request(path))).status, 403);
