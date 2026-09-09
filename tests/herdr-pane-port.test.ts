@@ -6,6 +6,17 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createHerdrPaneListPort } from '../src/web/v1/herdr-pane-port';
 const config = { executable: '/fixture/bin/herdr', socket: '/fixture/run/api.sock', configPath: '/fixture/config/herdr.toml',
   configRoot: '/fixture/config', stateRoot: '/fixture/state' };
+// POSIX launch semantics (fixed /usr/bin:/bin PATH, SIGKILL, socket paths) do not exist on Windows.
+// There the port must stay unwired via the explicit platform gate, asserted below.
+const posixOnly = process.platform === 'win32' ? { skip: 'POSIX-only launch semantics; Windows refusal asserted separately' } : {};
+if (process.platform === 'win32') {
+  test('pane port stays unwired on unqualified Windows platform', () => {
+    const native = { executable: 'C:\\fixture\\herdr.exe', socket: 'C:\\fixture\\api.sock',
+      configPath: 'C:\\fixture\\herdr.toml', configRoot: 'C:\\fixture', stateRoot: 'C:\\fixture\\state' };
+    assert.throws(() => createHerdrPaneListPort(native, () => { throw new Error('must not launch'); }),
+      /^Error: observation_platform_unqualified$/);
+  });
+}
 function child() {
   const events = new EventEmitter(); let kills = 0;
   const result = Object.assign(events, { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(),
@@ -13,7 +24,7 @@ function child() {
   return { process: result as unknown as ChildProcessWithoutNullStreams, kills: () => kills,
     cleanup() { result.stdin.destroy(); result.stdout.destroy(); result.stderr.destroy(); } };
 }
-test('pane port captures only explicit paths and fixed read command, and waits for child close', async t => {
+test('pane port captures only explicit paths and fixed read command, and waits for child close', posixOnly, async t => {
   const f = child(); t.after(f.cleanup); const input = { ...config };
   const port = createHerdrPaneListPort(input, (file, args, options) => {
     assert.equal(file, config.executable); assert.deepEqual(args, ['pane', 'list']);
@@ -28,7 +39,7 @@ test('pane port captures only explicit paths and fixed read command, and waits f
   f.process.emit('exit', 0, null); await Promise.resolve(); assert.equal(settled, false);
   f.process.emit('close', 0, null); assert.equal(await pending, '{"result":true}'); assert.equal(f.kills(), 0);
 });
-test('cancel and oversized output kill only the owned client and require terminal close before rejection', async t => {
+test('cancel and oversized output kill only the owned client and require terminal close before rejection', posixOnly, async t => {
   for (const mode of ['abort', 'stdout', 'stderr', 'error']) {
     const f = child(); t.after(f.cleanup); const stop = new AbortController();
     const pending = createHerdrPaneListPort(config, () => f.process)(stop.signal);
@@ -40,7 +51,7 @@ test('cancel and oversized output kill only the owned client and require termina
     f.process.emit('close', null, 'SIGKILL'); await assert.rejects(pending, /^Error: observation_unavailable$/);
   }
 });
-test('pre-abort launches nothing and invalid UTF8 is refused after close', async t => {
+test('pre-abort launches nothing and invalid UTF8 is refused after close', posixOnly, async t => {
   const stop = new AbortController(); stop.abort();
   await assert.rejects(createHerdrPaneListPort(config, () => { throw new Error('must not launch'); })(stop.signal));
   const f = child(); t.after(f.cleanup);
