@@ -4,30 +4,28 @@ Baseline: public main e901c0fe986c51ee1d0c091ce2d9b211231ec29e.
 Current working branch: codex/component-batch-4, stacked on local batches 1–3.
 All six batches remain in scope; no complete batch acceptance is claimed.
 
-Latest checkpoint: migration 0066 resolves the native logical-restore catalog
-fingerprint mismatch without weakening fingerprint verification. See
-`POSTGRES_RESTORE_EVIDENCE.md`. This supersedes the historical restore-blocked
-entries below for the disposable website profile only.
+Latest checkpoint: workspace recovery now retains physical root identities,
+survives tested native acknowledgement gaps and participates in the existing
+restart admission inventory. Unresolved checkouts prevent lease-aware startup.
+Safe re-adoption, live worker admission and host acceptance remain unfinished.
+The chronological entries below retain earlier failures and superseded states.
 
-1. Database/queue/native execution — in progress.
-2. Token verification/signing/checkpoints — JWT integration in progress; other gates pending.
-3. Idea Lab/readable results — pending integration acceptance.
-4. News/article extraction/research — pending integration acceptance.
-5. Calendar/isolated workspaces — typed calendar integration in progress.
+1. Database/queue/native execution — pg adapter and disposable PG17 queue/restore evidence implemented; full worker recovery remains open.
+2. Token verification/signing/checkpoints — JWT library integrated and reviewed; signing/checkpoint gates remain pending.
+3. Idea Lab/readable results — protected maintained renderer integrated; full workflow and physical browser acceptance remain open.
+4. News/article extraction/research — bounded extraction, storage, approved collection and reader integrated; qualified sources/browser/workflow acceptance remain open.
+5. Calendar/isolated workspaces — calendar parity/persistence reviewed; workspace journal, preservation and restart detection implemented; safe re-adoption/dispatch remain open.
 6. Optional session observations/operational monitoring — pending.
 
 Attribution decisions 3/4 accompany all batches. Live deployment and owner-host
 qualifications require their separate authorization and acceptance; local unit
 tests cannot substitute for them.
 
-The actual pg Pool composition is now implemented with session qualification and
-idle-error quarantine. A constructor/close test uses the actual pool without
-opening a connection. Existing application factories are not switched yet: the
-fixture-preparation factory supplies specialized Postgres.js options and must be
-migrated deliberately, not broken by changing the default function signature.
-Current filesystem inspection supersedes the older package note: cached PG17 was
-already extracted and used by a later restore experiment. Earlier PG18 queue
-experiments still cannot establish PG17 driver qualification.
+The pg Pool migration now includes application factories and removal of the old
+Postgres.js client. Disposable PG17 evidence covers actual callers and restores;
+see `POSTGRES_RESTORE_EVIDENCE.md`. Earlier PG18/source-only checkpoints below
+are historical, not the current acceptance evidence. Production deployment is
+not implied by these local results.
 
 ## Batch 1 checkpoint
 
@@ -644,3 +642,9 @@ and path exclusion. It also calls the actual lease-aware runtime constructor and
 proves unresolved workspace state refuses startup before key/transport composition.
 Focused tests and TypeScript passed; fresh compiled regression and independent
 review pending. This does not yet re-adopt a checkout or resume a native agent.
+
+Independent review at2ac0c7b found no concrete regression and reran the focused
+in-memory test. It confirmed private-path exclusion, exact delivery binding,
+startup refusal and changing-sweep detection. The fresh compiled regression
+completed56/56 with exit0. No native execution or production integration was
+performed for this inventory change.
