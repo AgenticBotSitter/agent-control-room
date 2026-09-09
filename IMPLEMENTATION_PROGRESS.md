@@ -1224,3 +1224,14 @@ with fake I/O; no network or native agent is started.
 The registered queue suite passes 54 tests and a fresh compiled application build
 passes all 57 packaged tests. This correction is local and awaits independent
 review; it does not establish live recovery or authenticated Codex read admission.
+
+Independent review at `fb79c38` found no concrete regression and reran the focused
+readiness test successfully. Root accepts that narrow correction; the reviewer
+explicitly did not claim handshake, late-callback or physical-cleanup coverage.
+
+Recovery source inspection identified a missing durable exact Codex turn binding:
+the generic inventory has task/run/delivery identities, while the earlier broker
+quarantines ambiguous threads and removes their raw IDs. Its observer's turn ID
+is in-memory. CODEX_READ_RECOVERY.md now specifies the prerequisite journal extension,
+capture/crash boundaries and explicit separation of observation from execution
+authority. No broker quarantine was relaxed and no second journal was introduced.

@@ -37,6 +37,43 @@ controller's method allowlist or use its resume operation for this purpose.
 
 Remaining integration:
 
+### Durable identity prerequisite — source inspection
+
+The generic node restart inventory currently retains task, attempt, lease, run and
+delivery identities, not an exact Codex thread/turn pair. A native session digest
+cannot be reversed into those IDs. The earlier Codex broker stores a thread ID
+for completed calls but quarantines threads and clears raw IDs for ambiguous
+calls/restart recovery. Its turn observer holds the turn ID in memory. That broker
+is therefore not an existing durable exact-turn recovery source. Do not change its
+quarantine behavior or use its completed-call resume resolver as read permission.
+
+Implementation order before runtime wiring:
+
+1. Extend the existing protected node journal, not a second coordination service,
+   with an immutable observation-only Codex identity record. Bind the exact pair
+   to tenant/project/node/job/attempt/run, accepted delivery and pinned adapter
+   enrollment. Capture it from correlated native responses, never browser input.
+2. Persist thread receipt before turn dispatch and turn receipt immediately after
+   acknowledgement. An interruption before a durable turn receipt remains unknown:
+   do not list/search, select the latest turn, replay dispatch or infer a turn ID.
+3. Keep observation retention distinct from execution/resume authority. Retaining
+   identifiers for a separately authorized read must not reactivate a quarantined
+   broker grant. Define retention and deletion with the protected journal owner.
+4. Revalidate authenticated delivery, enrollment and current read permission before
+   acquisition and through cleanup. Historical integrity alone is insufficient.
+5. Compose the existing owned read profile with that exact retained identity and
+   an independently qualified transport. Preserve the canonical result/event path:
+   a stored status cannot settle work, invent usage or release capacity.
+
+Required regression evidence: reopen the journal and recover only its exact pair;
+reject cross-project/node/run bindings, changed enrollment and conflicting second
+bindings; interrupt between thread/turn acknowledgement and each durable write;
+withhold read on absent turn identity; revoke read permission during acquisition,
+I/O and cleanup; show that observing a completed turn does not settle the task.
+Use generated fixture data first. Physical crash/native acceptance stays gated.
+
+### Transport and reconciliation gates
+
 - Bind tenant/project/node/run and existing thread/turn IDs to current authenticated
   admission before acquiring a connection; unknown identity cannot use list/search
   to guess its way into another task.
