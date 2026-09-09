@@ -69,3 +69,20 @@ in-memory maps and a newly constructed service object are not crash-recovery pro
 
 Platform qualification and production startup remain separate. None of this
 document enables a daemon, modifies a live database or grants new credentials.
+
+## Observation implementation checkpoint
+
+The native port now exposes `observeCheckout` separately from create/remove.
+Given saved creation identity, it reports absent, unchanged, changed, preserve,
+or unavailable. It checks pinned roots/common Git directory, physical checkout
+identity, detached HEAD, admitted revision, index flags and all ignored/untracked
+status. Optional Git index refresh is disabled for observation commands. Errors
+do not become proof of absence. No observation populates process ownership,
+releases a journal reservation or grants permission to resume/remove.
+
+These are advisory multi-read observations, not an atomic filesystem snapshot.
+Same-user races and mutations after observation remain possible; authorization
+and physical checks must be repeated at any future effect boundary. Safe
+re-adoption, process-kill recovery and trusted-runner qualification remain open.
+Disposable native evidence covers clean/absent/changed identity, untracked and
+ignored work, hidden index edits, new commits, failed reads and non-adoption.

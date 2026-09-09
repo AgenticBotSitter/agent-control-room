@@ -51,11 +51,24 @@ try {
   await assert.rejects(manager.prepare(input), /already pending|requires reconciliation/);
   const lease = await preparing;
   assert.equal(creates, 1); assert.equal(lease.revision, revision);
+  const observedIdentity = { realPath: lease.checkoutPath, device: lease.device, inode: lease.inode,
+    repositoryRealPath: repository, headRevision: revision };
+  assert.equal((await port.observeCheckout(observedIdentity)).state, "unchanged");
+  assert.equal((await port.observeCheckout({ ...observedIdentity, inode: "0" })).state, "changed");
+  const readOnlyPort = await createGitWorkspacePort({ repositoryRoot: repository, workspaceRoot: workspace,
+    runGit: async (cwd, args) => {
+      if (args.includes("status")) throw new Error("synthetic_read_failure");
+      return git(cwd, args);
+    } });
+  assert.equal((await readOnlyPort.observeCheckout(observedIdentity)).state, "unavailable");
+  await assert.rejects(readOnlyPort.removeWorktree({ repositoryRealPath: repository,
+    checkoutPath: lease.checkoutPath }), /not_owned/);
   await writeFile(join(repo, "fixture.txt"), "advanced main\n");
   await git(repo, ["add", "--", "fixture.txt"]); await git(repo, ["commit", "-m", "Advance fixture"]);
   assert.notEqual(await git(repo, ["rev-parse", "HEAD"]), revision);
   assert.equal(await git(lease.checkoutPath, ["rev-parse", "HEAD"]), revision);
   await writeFile(join(lease.checkoutPath, "untracked.txt"), "retain me\n");
+  assert.equal((await port.observeCheckout(observedIdentity)).state, "preserve");
   await assert.rejects(manager.cleanup(lease), /dirty_worktree/);
   assert.equal(await readFile(join(lease.checkoutPath, "untracked.txt"), "utf8"), "retain me\n");
   assert.equal(removals, 0);
@@ -71,6 +84,7 @@ try {
   await writeFile(join(lease.checkoutPath, "fixture.txt"), "original\n");
   await git(lease.checkoutPath, ["add", "--", "fixture.txt"]);
   await writeFile(join(lease.checkoutPath, "ignored-fixture.txt"), "ignored but valuable\n");
+  assert.equal((await port.observeCheckout(observedIdentity)).state, "preserve");
   assert.equal(await git(lease.checkoutPath, ["status", "--porcelain"]), "");
   await assert.rejects(manager.cleanup(lease), /dirty_worktree/);
   assert.equal(await readFile(join(lease.checkoutPath, "ignored-fixture.txt"), "utf8"), "ignored but valuable\n");
@@ -79,6 +93,7 @@ try {
   for (const flag of ["assume-unchanged", "skip-worktree"]) {
     await git(lease.checkoutPath, ["update-index", `--${flag}`, "--", "fixture.txt"]);
     await writeFile(join(lease.checkoutPath, "fixture.txt"), "hidden indexed work\n");
+    assert.equal((await port.observeCheckout(observedIdentity)).state, "preserve");
     assert.equal(await git(lease.checkoutPath, ["status", "--porcelain"]), "");
     await assert.rejects(manager.cleanup(lease), /index_flags_require_review/);
     assert.equal(await readFile(join(lease.checkoutPath, "fixture.txt"), "utf8"), "hidden indexed work\n");
@@ -87,12 +102,15 @@ try {
   }
   await manager.cleanup(lease); assert.equal(removals, 1);
   await assert.rejects(stat(lease.checkoutPath), { code: "ENOENT" });
+  assert.equal((await port.observeCheckout(observedIdentity)).state, "absent");
   const committedLease = await manager.prepare({ ...input, runId: "run:committed-work" });
   await writeFile(join(committedLease.checkoutPath, "fixture.txt"), "committed agent work\n");
   await git(committedLease.checkoutPath, ["add", "--", "fixture.txt"]);
   await git(committedLease.checkoutPath, ["commit", "-m", "Synthetic agent work"]);
   const agentHead = await git(committedLease.checkoutPath, ["rev-parse", "HEAD"]);
   assert.notEqual(agentHead, revision);
+  assert.equal((await port.observeCheckout({ ...observedIdentity, realPath: committedLease.checkoutPath,
+    device: committedLease.device, inode: committedLease.inode })).state, "preserve");
   assert.equal(await git(committedLease.checkoutPath, ["status", "--porcelain"]), "");
   await assert.rejects(manager.cleanup(committedLease), /committed_work_requires_preservation/);
   assert.equal(await git(committedLease.checkoutPath, ["rev-parse", "HEAD"]), agentHead);

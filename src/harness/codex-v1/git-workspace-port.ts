@@ -8,6 +8,15 @@ import type { CodexWorkspaceIdentityV1, CodexWorkspacePortV1 } from "./workspace
  */
 export type WorkspaceGitRunner = (cwd: string, args: string[]) => Promise<string>;
 
+/** Observation never confers ownership or permission to retry an effect. */
+export type WorkspaceObservation =
+  | { state: "absent" | "unchanged" | "changed" | "preserve" | "unavailable" };
+export interface ObservableGitWorkspacePort extends CodexWorkspacePortV1 {
+  observeCheckout(expected: CodexWorkspaceIdentityV1 & {
+    repositoryRealPath: string; headRevision: string;
+  }): Promise<WorkspaceObservation>;
+}
+
 async function identity(path: string): Promise<CodexWorkspaceIdentityV1> {
   const canonical = await realpath(path), info = await lstat(path, { bigint: true });
   if (canonical !== path || !info.isDirectory() || info.isSymbolicLink()) throw new Error("workspace_path_not_canonical");
@@ -26,7 +35,7 @@ function beneath(parent: string, child: string): boolean {
  */
 export async function createGitWorkspacePort(input: {
   repositoryRoot: string; workspaceRoot: string; runGit: WorkspaceGitRunner;
-}): Promise<CodexWorkspacePortV1> {
+}): Promise<ObservableGitWorkspacePort> {
   const { repositoryRoot, workspaceRoot, runGit } = input;
   if (!isAbsolute(repositoryRoot) || !isAbsolute(workspaceRoot)) throw new Error("workspace_roots_not_absolute");
   const repo = await identity(repositoryRoot), root = await identity(workspaceRoot);
@@ -48,6 +57,39 @@ export async function createGitWorkspacePort(input: {
       throw new Error("workspace_git_identity_changed");
   };
   return {
+    observeCheckout: async input => {
+      const expected = { ...input };
+      // Optional index refresh is disabled even for status. The injected runner
+      // remains responsible for configuration isolation and bounded execution.
+      const read = (args: string[]) => runGit(expected.realPath, ["--no-optional-locks", ...args]);
+      try {
+        child(expected.realPath);
+        if (expected.repositoryRealPath !== repo.realPath || !/^[a-f0-9]{40}$/.test(expected.headRevision))
+          return { state: "changed" };
+        await roots();
+        try { await lstat(expected.realPath); }
+        catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          await roots();
+          return { state: "absent" };
+        }
+        if (!same(expected, await identity(expected.realPath))) return { state: "changed" };
+        const actualCommon = await realpath(resolve(expected.realPath, (await read(["rev-parse", "--git-common-dir"])).trim()));
+        if (actualCommon !== common || (await read(["rev-parse", "--abbrev-ref", "HEAD"])).trim() !== "HEAD")
+          return { state: "changed" };
+        const head = (await read(["rev-parse", "HEAD"])).trim();
+        const index = await read(["ls-files", "-v", "-z", "--"]);
+        const status = await read(["status", "--porcelain", "--untracked-files=all", "--ignored=matching"]);
+        await roots();
+        if (!same(expected, await identity(expected.realPath))) return { state: "changed" };
+        if (head !== expected.headRevision || index.split("\0").filter(Boolean).some(entry => !entry.startsWith("H ")) || status.trim())
+          return { state: "preserve" };
+        return { state: "unchanged" };
+      } catch {
+        // Missing metadata, I/O errors, and Git failures are not proof of absence.
+        return { state: "unavailable" };
+      }
+    },
     inspectExisting: async path => {
       if (path !== repo.realPath && path !== root.realPath) child(path);
       await roots(); return identity(path);

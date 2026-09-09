@@ -534,3 +534,19 @@ saved removed state and no same-run recreation. Native fixture/cleanup passed;
 three journal test groups and TypeScript passed before the final pending-state
 regression addition. Crash interruption, safe re-adoption, retention/release and
 independent review remain unfinished; no production wiring or database change.
+
+### Read-only workspace recovery observation
+
+Added native observation of saved checkout identity without create/remove/adopt
+effects. States distinguish absent, unchanged, changed, preserved work and
+unavailable reads. Git optional locks are disabled for observation. Disposable
+Git tests cover unchanged and missing checkout, changed inode, untracked/ignored
+files, hidden index edits, committed work, read failure and refusal to remove
+through a fresh observer. Observations remain advisory rather than atomic and
+never release durable reservations or authorize another effect.
+
+Verification: TypeScript passed; eight manager/journal tests passed (including
+two actual competing processes); native Git fixture passed and confirmed exact
+fixture cleanup; compiled application regression passed 56/56. No production
+service, live provider, push or GitHub Actions run. Crash-boundary recovery,
+safe re-adoption and independent review remain unfinished.
