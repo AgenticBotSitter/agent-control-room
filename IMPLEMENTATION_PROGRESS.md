@@ -6,6 +6,19 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+Follow-up transaction coverage reuses one disposable canonical approval fixture:
+after staging a recovery write, fulfilled/rejected Promise, false, and throwing
+readiness callbacks each roll back the write and recovery audit. A subsequent
+synchronous successful callback commits both. Full-source TypeScript passed.
+This strengthens the earlier discovery-only evidence but uses PGlite and an
+injected queue submission, not a real pg-boss worker or production PostgreSQL.
+The tsx CLI first failed on its sandbox-denied IPC listener; running the same
+tests with `node --import tsx --test` avoids that unnecessary listener.
+The combined component command now includes the queue suite (52 passing tests).
+Its full sequential run passed with exit 0, covering database adapters, queue,
+Access, signing, checkpoints, ideas, results, articles, calendar and observations.
+These local component checks do not replace outstanding live acceptance gates.
+
 Independent review of 06031feec92a808b80ec278cffdad54a023080ae found no
 concrete issue in the readiness-fence correction and passed all 51 queue tests.
 Root's fresh compiled application build and all 56 selected tests passed at
