@@ -6,6 +6,14 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+Result lifecycle follow-up uses a matching real SHA-256/byte-length fixture, so
+late-response assertions no longer depend on content that the browser would reject
+for an invalid hash. Positive reading is proven before focus-triggered refresh.
+That refresh exposed retained content remaining visible while permission was
+being checked; content now clears at refresh start and remains absent on HTTP 403.
+The new assertion failed before the fix and all five result tests plus full-source
+TypeScript pass afterward. No backend authority or review workspace is changed.
+
 Focused independent review confirmed the sparse-reader correction at 1386aeb;
 no concrete regression found. Root accepts the correction with the prior live
 collector limitations unchanged.

@@ -106,7 +106,10 @@ function TaskResultsReader({ projectId, jobId, reviewWorkspace, verificationWork
   useEffect(() => {
     let live = true, busy = false; const current = ++generation.current;
     const load = async () => {
-      if (busy) return; busy = true; if (selected) setPending(true);
+      if (busy) return; busy = true;
+      // Retained content is not evidence of current permission during refresh.
+      setContent(undefined);
+      if (selected) setPending(true);
       try {
         const next = await client.results(projectId, jobId);
         let result: TaskResultContent | undefined;
