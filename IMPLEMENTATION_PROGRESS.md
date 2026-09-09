@@ -8,7 +8,9 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 An unwired pane-list process adapter now uses Node's existing subprocess API
 with fixed arguments, explicit environment, output/deadline bounds and child-close
-settlement. All 15 observation tests and full-source TypeScript pass; the new
+settlement. All 15 observation tests pass; initial full-source TypeScript failed
+because the shared ProcessEnv type requires NODE_ENV. The adapter now supplies
+an explicit production value rather than inheriting ambient configuration. The new
 process tests inject EventEmitter/stream children and launch no executable.
 The credential-store command runner was inspected but not reused: it inherits
 environment and can reject before terminal close, conflicting with collector

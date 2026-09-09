@@ -18,7 +18,7 @@ test('pane port captures only explicit paths and fixed read command, and waits f
   const port = createHerdrPaneListPort(input, (file, args, options) => {
     assert.equal(file, config.executable); assert.deepEqual(args, ['pane', 'list']);
     assert.equal(options.shell, false); assert.equal(options.cwd, config.configRoot);
-    assert.deepEqual(options.env, { PATH: '/usr/bin:/bin', HERDR_SOCKET_PATH: config.socket,
+    assert.deepEqual(options.env, { NODE_ENV: 'production', PATH: '/usr/bin:/bin', HERDR_SOCKET_PATH: config.socket,
       HERDR_CONFIG_PATH: config.configPath, XDG_CONFIG_HOME: config.configRoot, XDG_STATE_HOME: config.stateRoot });
     return f.process;
   });

@@ -22,7 +22,7 @@ export function createHerdrPaneListPort(input: {
       let child: ChildProcessWithoutNullStreams;
       try {
         child = launch(config.executable, ['pane', 'list'], { shell: false, windowsHide: true,
-          cwd: config.configRoot, env: { PATH: '/usr/bin:/bin', HERDR_SOCKET_PATH: config.socket,
+          cwd: config.configRoot, env: { NODE_ENV: 'production', PATH: '/usr/bin:/bin', HERDR_SOCKET_PATH: config.socket,
             HERDR_CONFIG_PATH: config.configPath, XDG_CONFIG_HOME: config.configRoot, XDG_STATE_HOME: config.stateRoot } });
       } catch { reject(new Error('observation_unavailable')); return; }
       let failed = false, closed = false, bytes = 0;
