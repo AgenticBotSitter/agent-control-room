@@ -31,6 +31,15 @@ is not vendored, and feed metadata does not grant republication rights.
 
 ## Before distributing additional artifacts
 
+Article extraction uses unchanged @mozilla/readability 0.6.0 and jsdom 26.1.0.
+Original [Readability license](third_party/readability/LICENSE) and
+[jsdom license](third_party/jsdom/LICENSE) are retained from the installed packages.
+Upstreams: https://github.com/mozilla/readability and https://github.com/jsdom/jsdom.
+Control Room adds bounded execution and source-binding wrappers, not modifications
+to either dependency. Preserve transitive package notices in any bundled release.
+Permission to use the extraction libraries does not grant rights to redistribute
+the articles they process.
+
 Formatted results use unchanged react-markdown 10.1.0 and remark-gfm 4.0.1.
 Their original [react-markdown license](third_party/react-markdown/LICENSE) and
 [remark-gfm license](third_party/remark-gfm/LICENSE) are retained byte-for-byte.

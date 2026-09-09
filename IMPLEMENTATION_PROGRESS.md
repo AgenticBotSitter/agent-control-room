@@ -1,7 +1,8 @@
 # Six-batch implementation progress
 
 Baseline: public main e901c0fe986c51ee1d0c091ce2d9b211231ec29e.
-Working branch: codex/component-batch-1. All six batches remain in scope.
+Current working branch: codex/component-batch-4, stacked on local batches 1–3.
+All six batches remain in scope; no complete batch acceptance is claimed.
 
 1. Database/queue/native execution — in progress.
 2. Token verification/signing/checkpoints — JWT integration in progress; other gates pending.
@@ -182,8 +183,44 @@ Additional parent render condition refuses an old page whose project/job differs
 from current props while a new request loads; subsequent source checks pass.
 Browser accessibility and asynchronous interaction acceptance remain open.
 
-Next: test failed/never-settling acquisitions, active query shutdown and uncertain
-commit through the existing bounded wrapper; review actual pg shutdown behavior,
-explicit connection/session options and transitive notices before wiring. Then
-verify actual caller values and queue/recovery semantics on disposable PostgreSQL.
-Do not remove Postgres.js until every remaining import has an accepted disposition.
+## Batch 4 checkpoint
+
+Stacked branch codex/component-batch-4 adds actual selected Readability/jsdom
+extraction of supplied HTML into source-hashed plain text. No collector replacement,
+fetching or storage yet. Input/output/element limits reject rather than truncate;
+default jsdom script/resource loading remains disabled. Two focused tests pass.
+This synchronous primitive must not be wired to live routes until isolated
+time/memory-bounded execution, source-bound storage, permissions and notices pass.
+
+Added worker-thread execution with a fixed trusted entry, no inherited Node flags,
+two-worker admission ceiling, 3-second deadline and V8 heap/stack limits. Results
+are returned only after worker exit; timeout terminates the worker. Actual worker
+test covers extraction, timeout and subsequent extraction; three tests pass.
+V8 limits are not a hard total-RSS bound or OS security sandbox. HTTP integration
+is still held pending resource review, source storage and authorization design.
+
+Worker tests now also cover simultaneous requests, capacity release and excess
+output refusal. Timeout is terminal even if a late worker message/error arrives;
+the worker receives an empty environment. Eight article tests and full-source
+TypeScript pass. Direct dependency license files are retained.
+
+Added source-detail composition using the existing reader interface and canonical
+story parser. It rechecks project/story/digest and current authority before reading,
+after reading and after extraction. Reader endpoint, content type and byte count
+must match. Repeat extraction is stable; changed bytes create a new detail digest
+without modifying the story or approved task. Tests cover cross-project/stale
+binding, revocation after extraction, cancellation and incorrect reader provenance.
+The injected reader tests do not prove network, protected routes or persistence.
+
+Independent review found jsdom's default console could log raw malformed CSS.
+A disconnected VirtualConsole fixes that leak. The reviewer also caught a weak
+regression fixture; it now uses the confirmed unterminated-comment reproducer.
+The compiled suite passed 56/56; nine focused article tests and source checking
+passed; the corrected regression fixture also passed in the final nine-test rerun.
+Independent remediation review confirmed the console fix, with no other finding.
+
+Next: source-bound detail persistence and protected reading UI, with migration,
+role/real-PG tests and browser acceptance.
+Do not claim this trusted composition itself authenticates a user or that V8 limits
+provide a hard process RSS cap. Database queue recovery, signing/checkpoints,
+Idea Lab acceptance, schedules/workspaces and operational monitoring remain open.

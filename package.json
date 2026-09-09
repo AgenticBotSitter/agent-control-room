@@ -8,6 +8,7 @@
     "node": ">=22.13.0"
   },
   "scripts": {
+    "test:articles": "node --import tsx --test --test-concurrency=1 tests/article-extraction.test.mjs tests/article-detail.test.ts",
     "test:results": "node --import tsx --test tests/result-text.test.tsx",
     "test:access": "node --import tsx --test tests/access-library.test.ts",
     "test:database": "node --import tsx --test --test-concurrency=1 tests/private-pg-driver.test.ts tests/private-pg-options.test.ts",
@@ -21,7 +22,9 @@
     "test": "node scripts/build-vps.mjs && node --import tsx --test --test-concurrency=1 tests/audit-required-hashes.test.mjs tests/vps-built-handler.test.mjs tests/vps-built-startup.test.mjs tests/vps-built-serving.test.mjs tests/vps-built-rehearsal.test.mjs tests/vps-built-preparation.test.mjs tests/vps-built-results.test.mjs tests/vps-built-owner-review.test.mjs tests/vps-built-planning.test.mjs tests/vps-built-assignment.test.mjs tests/vps-built-task-application.test.mjs tests/vps-built-task-startup.test.mjs tests/vps-built-approval.test.mjs tests/vps-built-quality.test.mjs tests/vps-built-revision-planning.test.mjs tests/vps-built-revised-result.test.mjs tests/vps-built-capacity-release.test.mjs tests/vps-built-owner-revision-interface.test.mjs tests/vps-built-result-ownership.test.mjs tests/vps-built-native-evidence.test.mjs tests/vps-built-managed-native-sessions.test.mjs tests/vps-built-launcher.test.mjs tests/vps-built-core-schema.test.mjs tests/vps-built-multi-project.test.mjs tests/vps-built-database-check.test.mjs tests/vps-built-node-launcher.test.mjs"
   },
   "dependencies": {
+    "@mozilla/readability": "0.6.0",
     "fast-xml-parser": "5.11.0",
+    "jsdom": "26.1.0",
     "jsonwebtoken": "9.0.3",
     "pg": "8.23.0",
     "pg-boss": "12.30.0",

@@ -30,3 +30,8 @@ Batch 3: pinned react-markdown10.1.0 and remark-gfm4.0.1, lifecycle scripts
 disabled. pnpm reported 96 packages downloaded/added, 511 reused. Retained in
 the logged checkout and existing shared cache; do not erase the shared cache.
 Transitive release-notice collection remains required before publication.
+
+Batch4: @mozilla/readability0.6.0 and jsdom26.1.0 pinned, scripts disabled;
+36 packages downloaded/added, 607 reused. Free space before: 137 GiB. Existing
+checkout/cache retention rules apply. whatwg-encoding deprecation reported;
+no unrequested package upgrade performed. Notices still required.
