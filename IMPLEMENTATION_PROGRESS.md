@@ -866,3 +866,23 @@ endpoint/connection tests; it inspected but did not run native-port tests. Root
 ran the new `pnpm test:owner-signing` command: all11 focused tests passed, including
 the disposable metadata check and fake socket port. No native socket attempt was
 performed. Real native qualification remains a separate authorization/gate.
+
+### Retained etcd adapter source integration
+
+Copied the existing generic five-module etcd completion-checkpoint adapter and
+two synthetic test files into this sanitized checkout, under the standing source
+export approval. No private history, endpoints, identities or credentials were
+copied. This reuses the prior adapter instead of implementing another checkpoint
+service. The port joins the existing awaited checkpoint/staging interface and
+accepts only separately provisioned scope/cluster/key-generation pins.
+
+All 18 focused tests pass: exact original-byte/value/generation/modification/lease
+comparisons, large revisions, single-Put acknowledgement checks, cancellation,
+shared deadlines, no writes before flush and no automatic initialization/retry.
+Full-source TypeScript passes. The same-domain restore diagnostic deliberately
+shows that co-restoring the database and anchor defeats independence; its passing
+assertion is not backup safety. Added `pnpm test:checkpoints` for contributors.
+
+Authenticated transport, independent provisioning/custody, canonical split-commit
+recovery, actual restore and runtime/release acceptance remain unfinished. No etcd
+package was installed, no service was started and no native RPC was attempted.

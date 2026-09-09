@@ -48,6 +48,11 @@ The optional pinned ssh2 protocol evaluation is separate and requires its logged
 disposable package directory. Do not provide personal keys or SSH_AUTH_SOCK.
 Passing these tests does not authorize activating the unwired native connector.
 
+`pnpm test:checkpoints` checks the retained etcd adapter's exact-key read/write,
+deadline, cancellation and uncertainty behavior through scripted RPC callbacks.
+It requires no etcd installation or credentials. It does not prove independent
+backup placement, authenticated service transport or split-commit recovery.
+
 To compile without running the selected tests:
 
 ```sh
