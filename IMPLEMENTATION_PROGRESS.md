@@ -679,3 +679,23 @@ finding and reran both synthetic test files. All56 freshly compiled application
 tests also passed. The fix changes validation of callback completion, not the
 permitted operations or canonical binding rules. Safe checkout re-adoption and
 live fleet acceptance remain unfinished.
+
+### Research form project isolation
+
+Mac UI access was rechecked and remains locked; no desktop bypass or preview
+listener was attempted. Automated DOM testing reproduced a real research-form
+bug: delayed project-one draft content appeared after props selected project-two.
+The form now binds its instance to exact project/story/version, aborts obsolete
+read-only preparation and never displays the old draft in the new context.
+
+An uncertain save retains its existing task client/idempotency key rather than
+being discarded on rebind. The form hides old content and offers only explicit
+retry of that original save until settled, then opens the requested context.
+Tests prove project/story version isolation, correct new-project save, and a 500
+response followed by an exact original-project/body/key retry after switching.
+No live agent or real server was used for these DOM checks.
+
+`pnpm test:articles` now includes these regressions;15/15 passed with TypeScript.
+Seven combined reader/research/renderer checks passed separately. Compiled article
+verification and independent review pending; physical browser acceptance remains
+unfinished. Existing maintained extraction/rendering and task client are reused.
