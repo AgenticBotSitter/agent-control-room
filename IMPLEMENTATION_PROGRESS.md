@@ -369,3 +369,11 @@ legacy reconciliation and refusal of a changed target payload. Native fixture
 and full-source TypeScript pass; cleanup confirmed. This does not establish live
 dispatch/recovery acceptance. No production schema migration is needed for the
 encoding; legacy rows remain under the original delivery identity.
+
+Independent remediation re-review accepted both fixes at3555f83, confirmed SQL/JS
+identity encoding equivalence for permitted ASCII identifiers and exact legacy
+payload binding, and found no concrete regression. Reviewer ran calendar52/52
+and an in-memory SQL probe, not native effects. Root's compiled regression56/56
+also passed. The selected calendar calculation/store replacement is accepted for
+this tested internal-proposal scope; this is not acceptance of a running scheduler,
+automatic dispatch, crash recovery or the complete fifth batch.
