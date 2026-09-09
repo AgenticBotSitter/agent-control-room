@@ -65,3 +65,11 @@ a release or assume the project LICENSE covers it.
 
 This file explains the source-preview scope. It is not legal certification, a
 complete software bill of materials or clearance for additional distribution formats.
+
+## Calendar calculation dependency
+
+cron-parser 5.10.0 (https://github.com/harrisiirak/cron-parser), MIT, is used for
+field expansion and date matching without upstream modifications. Its original
+license is retained at `third_party/cron-parser/LICENSE`. Control Room retains
+its numeric compatibility grammar, occurrence policy and execution authority.
+Transitive dependency notices remain part of the complete release-notice gate.

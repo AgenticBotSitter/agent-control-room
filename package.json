@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@mozilla/readability": "0.6.0",
+    "cron-parser": "5.10.0",
     "fast-xml-parser": "5.11.0",
     "jsdom": "26.1.0",
     "jsonwebtoken": "9.0.3",

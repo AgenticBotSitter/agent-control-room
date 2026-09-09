@@ -35,3 +35,8 @@ Batch4: @mozilla/readability0.6.0 and jsdom26.1.0 pinned, scripts disabled;
 36 packages downloaded/added, 607 reused. Free space before: 137 GiB. Existing
 checkout/cache retention rules apply. whatwg-encoding deprecation reported;
 no unrequested package upgrade performed. Notices still required.
+
+Batch5: cron-parser5.10.0 promoted from existing transitive cache to a pinned direct
+dependency using offline mode and disabled scripts. Report: 643 reused, zero
+downloaded, zero added package files. Free space before: 137 GiB. Existing shared
+cache must not be deleted; disposable checkout links follow the cleanup policy above.

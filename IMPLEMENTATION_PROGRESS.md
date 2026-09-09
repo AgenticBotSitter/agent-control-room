@@ -13,7 +13,7 @@ entries below for the disposable website profile only.
 2. Token verification/signing/checkpoints — JWT integration in progress; other gates pending.
 3. Idea Lab/readable results — pending integration acceptance.
 4. News/article extraction/research — pending integration acceptance.
-5. Calendar/isolated workspaces — pending.
+5. Calendar/isolated workspaces — typed calendar integration in progress.
 6. Optional session observations/operational monitoring — pending.
 
 Attribution decisions 3/4 accompany all batches. Live deployment and owner-host
@@ -275,3 +275,22 @@ Final verification after the stricter article-summary count check: compiled
 regression56/56, compiled extractor1/1, article suite13/13, full-source TypeScript,
 diff whitespace checks and disposable PG17 collection/storage all passed.
 No production template, service, live source or GitHub state changed.
+
+## Batch 5 calendar checkpoint
+
+Selected cron-parser5.10.0 is now an explicit pinned dependency. Typed compatibility
+grammar delegates field expansion and matching to upstream; the retained occurrence
+calculator keeps window bounds, stable local keys, DST deduplication and once/interval
+policy. These two reviewed generic source/test files were brought into the public
+implementation checkout without private history, identities or deployment material.
+Eight focused tests pass, covering numeric grammar, singleton-step compatibility,
+day OR semantics, impossible dates, DST and unchanged occurrence-policy cases.
+
+This is calculator integration, not a running scheduler. Durable occurrence/outbox
+replay, broader parity and upgrade regressions, native database acceptance, final
+review and isolated workspaces remain unfinished. The private source is unchanged.
+
+Full-source TypeScript, compiled regression56/56, whitespace validation and exact
+upstream license comparison also pass. The article browser fixture and manual
+checklist are retained locally, but visual acceptance is still blocked by the
+locked Mac. No preview listener was started during this checkpoint.
