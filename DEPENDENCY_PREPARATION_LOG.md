@@ -40,3 +40,7 @@ Batch5: cron-parser5.10.0 promoted from existing transitive cache to a pinned di
 dependency using offline mode and disabled scripts. Report: 643 reused, zero
 downloaded, zero added package files. Free space before: 137 GiB. Existing shared
 cache must not be deleted; disposable checkout links follow the cleanup policy above.
+
+Calendar review remediation: Luxon3.7.2 promoted from the same existing cache to
+an explicit dependency, offline and scripts disabled. 643 reused, zero downloaded,
+zero added package files. Original MIT notice retained. Same cleanup scope applies.

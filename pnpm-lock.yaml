@@ -23,6 +23,9 @@ importers:
       jsonwebtoken:
         specifier: 9.0.3
         version: 9.0.3
+      luxon:
+        specifier: 3.7.2
+        version: 3.7.2
       pg:
         specifier: 8.23.0
         version: 8.23.0

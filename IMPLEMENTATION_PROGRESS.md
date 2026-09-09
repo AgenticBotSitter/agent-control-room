@@ -355,3 +355,17 @@ Review of 881f9fd independently reproduced two defects despite51 passing tests:
 Root reproduced the split-window issue separately. Both findings must be repaired
 and regression-tested before calendar acceptance. No dispatch wiring was added.
 The review used source and effect-free tests, not native execution or production.
+
+Calendar remediation is implemented locally, pending independent re-review:
+Luxon3.7.2 getPossibleOffsets selects the earlier instant independently of the
+requested window. Split-window regressions cover Denver's hour and Lord Howe's
+half-hour fallback. All42 original parity cases still match; calendar52/52 pass.
+
+New outbox IDs use hexadecimal encoding of a length-prefixed ASCII identity tuple.
+Existing rows are not rewritten or re-enqueued. Acknowledgement/reconciliation
+accept a legacy ID only with matching tenant, topic, aggregate, idempotency key
+and exact occurrence payload. Native PG17 verifies both formerly colliding scopes,
+legacy reconciliation and refusal of a changed target payload. Native fixture
+and full-source TypeScript pass; cleanup confirmed. This does not establish live
+dispatch/recovery acceptance. No production schema migration is needed for the
+encoding; legacy rows remain under the original delivery identity.

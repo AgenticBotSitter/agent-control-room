@@ -1,4 +1,5 @@
 import { compileCronCalendar } from "./cron-calendar";
+import { isFirstLocalInstant } from "./calendar-instant.mjs";
 
 export type ScheduleKindV1 = "cron" | "interval" | "once";
 
@@ -78,7 +79,8 @@ function calculateCron(definition: ScheduleDefinitionV1, start: number, end: num
   const result: ScheduleOccurrenceV1[] = [];
   for (let current = firstMinute; current < end; current += 60_000) {
     const local = localParts(format, new Date(current));
-    if (cron.includesDate(new Date(current)) && !seenLocalTimes.has(local.key)) {
+    if (cron.includesDate(new Date(current)) && !seenLocalTimes.has(local.key)
+      && isFirstLocalInstant(current, definition.timezone)) {
       seenLocalTimes.add(local.key);
       result.push(occurrence(definition, new Date(current).toISOString(), local.key));
     }

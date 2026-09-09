@@ -73,3 +73,8 @@ field expansion and date matching without upstream modifications. Its original
 license is retained at `third_party/cron-parser/LICENSE`. Control Room retains
 its numeric compatibility grammar, occurrence policy and execution authority.
 Transitive dependency notices remain part of the complete release-notice gate.
+
+Luxon3.7.2 (https://github.com/moment/luxon), MIT, supplies ambiguity resolution
+through getPossibleOffsets without upstream modification. Its original notice is
+retained at `third_party/luxon/LICENSE.md`. This prevents later fallback instants
+from creating conflicting occurrence proposals across calculation windows.

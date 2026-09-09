@@ -2,6 +2,21 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { calculateScheduleOccurrencesV1 } from "../src/services/v1/recurrence";
 
+test("fallback selection is independent of calculation window boundaries", () => {
+  for (const [timezone, expression, first, split, last] of [
+    ["America/Denver", "30 1 * * *", "2026-11-01T07:00:00.000Z", "2026-11-01T08:00:00.000Z", "2026-11-01T09:00:00.000Z"],
+    ["Australia/Lord_Howe", "45 1 * * *", "2026-04-04T14:30:00.000Z", "2026-04-04T15:00:00.000Z", "2026-04-04T15:30:00.000Z"],
+  ]) {
+    const definition = { id: "schedule.split", kind: "cron" as const, state: "active" as const, expression, timezone };
+    const whole = calculateScheduleOccurrencesV1(definition, { startsAt: first, endsAt: last });
+    const earlier = calculateScheduleOccurrencesV1(definition, { startsAt: first, endsAt: split });
+    const later = calculateScheduleOccurrencesV1(definition, { startsAt: split, endsAt: last });
+    assert.equal(whole.occurrences.length, 1, timezone);
+    assert.deepEqual(earlier, whole, timezone);
+    assert.deepEqual(later, { occurrences: [] }, timezone);
+  }
+});
+
 test("CR6D cron creates stable local occurrence keys and honors five-field day matching", () => {
   const result = calculateScheduleOccurrencesV1({ id: "schedule.weekday", kind: "cron", state: "active", expression: "0 9 * * 1-5", timezone: "America/Denver" }, { startsAt: "2026-08-24T00:00:00.000Z", endsAt: "2026-08-25T00:00:00.000Z" });
   assert.deepEqual(result, { occurrences: [{ scheduleId: "schedule.weekday", occurrenceKey: "schedule.weekday:2026-08-24T09:00", scheduledFor: "2026-08-24T15:00:00.000Z", localTime: "2026-08-24T09:00" }] });

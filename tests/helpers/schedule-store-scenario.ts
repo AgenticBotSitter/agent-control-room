@@ -42,4 +42,25 @@ export async function exerciseScheduleStore(db: DatabaseClient, reopen: () => Pr
   assert.equal(await fresh.reconcileDelivered(other), 0);
   await assert.rejects(fresh.acknowledgeDelivery(other),
     (error: unknown) => error instanceof ScheduleOccurrenceError && error.safeCode === "occurrence_cancelled");
+  await restored.query("INSERT INTO tenants(id,display_name) VALUES ('x','Synthetic'),('x:a:a','Synthetic')");
+  const collisionCases = [["x", "a:a"], ["x:a:a", "a"]];
+  for (const [tenantId, scheduleId] of collisionCases) {
+    const item = { ...proposal, tenantId, scheduleId, occurrenceKey: `${scheduleId}:${proposal.localTime}` };
+    assert.equal((await fresh.materialize(item)).replayed, false);
+    assert.equal((await fresh.materialize(item)).replayed, true);
+  }
+  const ids = (await restored.query<{ id: string }>("SELECT id FROM control_outbox WHERE tenant_id IN ('x','x:a:a')")).rows;
+  assert.equal(ids.length, 2); assert.notEqual(ids[0].id, ids[1].id);
+  // Simulate a pre-upgrade outbox row. No rewrite or second delivery is needed.
+  const legacy = { ...proposal, tenantId: "x", scheduleId: "a:a", occurrenceKey: `a:a:${proposal.localTime}` };
+  const legacyId = `outbox:schedule:${legacy.tenantId}:${legacy.scheduleId}:${legacy.occurrenceKey}`;
+  await restored.query("UPDATE control_outbox SET id=$1,status='delivered' WHERE tenant_id='x'", [legacyId]);
+  await restored.query("UPDATE control_outbox SET payload=jsonb_set(payload,'{targetId}','\"job:wrong\"'::jsonb) WHERE tenant_id='x'");
+  const legacyAck = { tenantId: "x", scheduleId: legacy.scheduleId, occurrenceKey: legacy.occurrenceKey, deliveredAt: ack.deliveredAt };
+  assert.equal(await fresh.reconcileDelivered(legacyAck), 0);
+  await assert.rejects(fresh.acknowledgeDelivery(legacyAck),
+    (error: unknown) => error instanceof ScheduleOccurrenceError && error.safeCode === "outbox_not_delivered");
+  await restored.query("UPDATE control_outbox SET payload=jsonb_set(payload,'{targetId}',to_jsonb($1::text)) WHERE tenant_id='x'", [legacy.targetId]);
+  assert.equal(await fresh.reconcileDelivered(legacyAck), 1);
+  assert.equal((await fresh.acknowledgeDelivery(legacyAck)).replayed, true);
 }
