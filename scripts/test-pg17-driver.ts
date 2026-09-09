@@ -20,6 +20,8 @@ import { articleStory } from "../tests/helpers/article-fixture";
 import { PostgresAbsNewsStoreV1 } from "../src/project-adapters/abs-news/v1/postgres-store";
 import { PostgresArticleDetails } from "../src/project-adapters/abs-news/v1/article-store";
 import { readNewsArticleDetail } from "../src/project-adapters/abs-news/v1/article-detail";
+import { PostgresNewsSourceSettings } from "../src/project-adapters/abs-news/v1/source-settings";
+import { createControlCenterCollection } from "../src/project-adapters/abs-news/v1/control-center-collection";
 
 const bin = resolve(process.argv[2] ?? "");
 assert.ok(process.argv[2], "supply the reviewed PostgreSQL 17 bin directory");
@@ -135,6 +137,26 @@ try {
       await assert.rejects(articleReader.query(sql), { code: "42501" });
   } finally { await articleReader.end(); }
   console.log(JSON.stringify({ articleStorage: "passed", articleReaderPermissions: "passed" }));
+  const source = { id: "source:pg-article", name: "Synthetic", url: "https://example.invalid/feed", enabled: true };
+  await new PostgresNewsSourceSettings(db.client, articleScope, articleKey).save(source, 0, new Date(now).toISOString());
+  const requests: string[] = [];
+  const collector = createControlCenterCollection(db.client, { ...articleScope, sourceId: source.id, expectedRevision: 1,
+    limits: { maxArticles: 1, maxAttempts: 2, timeoutMs: 10000, maxDocumentBytes: 524288, maxReservedBodyBytes: 1048576 } }, articleKey,
+  { assertCurrent: url => { assert.equal(new URL(url).hostname, "example.invalid"); return undefined; } }, {
+    lookup: async () => [{ address: "8.8.8.8", family: 4 }],
+    fetch: async url => {
+      requests.push(url.href);
+      return url.pathname === "/feed" ? new Response(`<rss version="2.0"><channel><title>Synthetic</title><link>https://example.invalid/</link><description>Synthetic</description><item><title>PG article</title><link>https://example.invalid/article</link><description>Fixture summary</description><pubDate>${new Date(now - 3600000).toUTCString()}</pubDate></item></channel></rss>`, { headers: { "content-type": "application/rss+xml" } })
+        : new Response(html, { headers: { "content-type": "text/html" } });
+    },
+  }, () => now);
+  try {
+    const collected = await collector.collect(new AbortController().signal);
+    assert.ok("articleExtraction" in collected);
+    assert.equal(collected.articleExtraction.saved, 1);
+    assert.deepEqual(requests, [source.url, "https://example.invalid/article"]);
+  } finally { await collector.close(); }
+  console.log(JSON.stringify({ pg17ConfiguredArticleCollection: "passed", transport: "synthetic" }));
   const tasks = new WebTaskService(db.client, scope, () => now);
   const draft = { title: "Synthetic task", instructions: "Read the synthetic fixture only." };
   const proposed = await tasks.propose(identity, created.project.projectId, draft, "synthetic-task-key");

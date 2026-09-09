@@ -8,7 +8,8 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "test:articles": "node --import tsx --test --test-concurrency=1 tests/article-extraction.test.mjs tests/article-detail.test.ts tests/article-store.test.ts tests/article-reader.test.mjs",
+    "test:build:articles": "pnpm build && node --test tests/vps-built-article-extraction.test.mjs",
+    "test:articles": "node --import tsx --test --test-concurrency=1 tests/article-extraction.test.mjs tests/article-detail.test.ts tests/article-store.test.ts tests/article-reader.test.mjs tests/article-collection.test.ts",
     "test:results": "node --import tsx --test tests/result-text.test.tsx",
     "test:access": "node --import tsx --test tests/access-library.test.ts",
     "test:database": "node --import tsx --test --test-concurrency=1 tests/private-pg-driver.test.ts tests/private-pg-options.test.ts",

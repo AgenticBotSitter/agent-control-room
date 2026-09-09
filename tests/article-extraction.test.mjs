@@ -47,3 +47,13 @@ test("malformed article styles do not escape through the default virtual console
     assert.deepEqual(errors, []);
   } finally { console.error = original; }
 });
+
+test("collection cancellation terminates extraction and returns worker capacity", async () => {
+  const stop = new AbortController();
+  const work = extractArticleBounded("<article>Fixture</article>", "https://example.invalid/article", { signal: stop.signal });
+  stop.abort();
+  assert.equal((await work).status, "cancelled");
+  assert.equal((await extractArticleBounded("<article>Fixture</article>", "https://example.invalid/article", { signal: stop.signal })).status, "cancelled");
+  const html = `<article><p>${"Fresh article worker fixture. ".repeat(100)}</p></article>`;
+  assert.equal((await extractArticleBounded(html, "https://example.invalid/article")).status, "extracted");
+});

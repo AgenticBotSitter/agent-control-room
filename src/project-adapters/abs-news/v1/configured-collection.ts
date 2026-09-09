@@ -4,6 +4,9 @@ import { projectWorkspaceSafeIdSchemaV1 as id } from "../../../project-workspace
 import { PostgresNewsSourceSettings } from "./source-settings";
 import { AbsControlCenterIngestion } from "./control-center-ingestion";
 import type { createControlCenterCollectionReader } from "./control-center-reader";
+import { PostgresAbsNewsStoreV1 } from "./postgres-store";
+import { PostgresArticleDetails } from "./article-store";
+import { readNewsArticleDetail } from "./article-detail";
 
 const scopeSchema = z.object({ tenantId: id, workspaceId: id, projectId: id }).strict();
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: work => work(tx),
@@ -40,5 +43,22 @@ export async function collectConfiguredControlCenterSource(db: DatabaseClient, s
     }, async () => { await check(); signal.throwIfAborted(); }),
   };
   const { enabled: _enabled, ...upstreamSource } = source.source; void _enabled;
-  return new AbsControlCenterIngestion(guarded, { ...scope, source: upstreamSource }, key).collect(reader, signal, clock);
+  const result = await new AbsControlCenterIngestion(guarded, { ...scope, source: upstreamSource }, key).collect(reader, signal, clock);
+  // Older approved plans omit maxArticles and perform no extra reads. The opt-in
+  // is part of the plan digest; extraction shares the discovery transport budget.
+  if (!reader.maxArticles) return result;
+  const news = new PostgresAbsNewsStoreV1(guarded, scope, key), details = new PostgresArticleDetails(guarded, scope, key);
+  const summary = { attempted: 0, saved: 0, unavailable: 0, skipped: Math.max(0, result.receipt.stories.length - reader.maxArticles) };
+  for (const reference of result.receipt.stories.slice(0, reader.maxArticles)) {
+    signal.throwIfAborted(); await verify(db); summary.attempted++;
+    const detail = await readNewsArticleDetail({ ...scope, ...reference }, {
+      getStory: storyId => news.getStory(storyId), reader: { read: reader.readArticle },
+      authority: { assertCurrent: reader.assertArticleCurrent },
+    }, signal);
+    // Parser refusal is explicit. Transport, authority and storage uncertainty
+    // propagate to the existing held-attempt path, never a retry or success.
+    if (detail.status === "extracted") { await details.save(detail); summary.saved++; }
+    else summary.unavailable++;
+  }
+  return { ...result, articleExtraction: summary };
 }

@@ -36,7 +36,7 @@ export async function readNewsArticleDetail(bindingValue: unknown, ports: {
   if (body.endpointUrl !== story.canonicalUrl || body.contentType.split(";", 1)[0].trim().toLowerCase() !== "text/html"
     || typeof body.text !== "string" || body.byteCount !== Buffer.byteLength(body.text, "utf8") || body.byteCount > 524288)
     throw new Error("news_article_body_rejected");
-  const result = await extractArticleBounded(body.text, story.canonicalUrl);
+  const result = await extractArticleBounded(body.text, story.canonicalUrl, { signal });
   await checkStory();
   if (result.status !== "extracted") return { ...binding, canonicalUrl: story.canonicalUrl,
     status: "unavailable" as const, reason: result.status };

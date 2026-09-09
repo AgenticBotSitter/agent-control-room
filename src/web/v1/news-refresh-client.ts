@@ -11,7 +11,8 @@ export const newsRefreshDescriptionSchema = z.union([base, base.extend({ configu
   sourceDigest: digest, sourceLabel: z.string().min(1).max(180), endpointUrl: z.string().url().max(2000), mode: z.enum(["feed", "discovery"]),
   sourceCurrent: z.boolean(), allowedOrigins: z.array(z.string().url()).min(1).max(16),
   limits: z.object({ timeoutMs: z.number().int().min(1).max(30000), maxAttempts: z.number().int().min(1).max(1000),
-    maxDocumentBytes: z.number().int().min(1).max(50 * 1024 * 1024), maxReservedBodyBytes: z.number().int().min(1).max(100 * 1024 * 1024) }).strict(),
+    maxDocumentBytes: z.number().int().min(1).max(50 * 1024 * 1024), maxReservedBodyBytes: z.number().int().min(1).max(100 * 1024 * 1024),
+    maxArticles: z.number().int().min(1).max(10).optional() }).strict(),
 }).strict()]);
 export type NewsRefreshDescription = z.infer<typeof newsRefreshDescriptionSchema>;
 const proposalSchema = z.object({ jobId: id, inputDigest: digest, sourceDigest: digest, replayed: z.boolean(), startsWork: z.literal(false) }).strict();

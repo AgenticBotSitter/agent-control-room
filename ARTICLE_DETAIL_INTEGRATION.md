@@ -47,10 +47,24 @@ separate known gate; these tests do not override it.
 
 ## Remaining integration
 
-Connect the existing authorized collection action to bounded extraction and save
-after a fresh authority check. Do not make GET trigger fetching. The current
-storage/reader checkpoint can display retained extractions, but production
-collection does not yet populate them automatically.
+The existing configured discovery collection now supports optional `limits.maxArticles`
+(1–10). Omitted means no article reads, preserving old approvals. The field is
+included in the configuration/plan digest and shown in the approval description.
+An operator must explicitly add it to a newly approved template to enable it;
+no existing deployment/template has been changed by this implementation.
+
+Article reads reuse the discovery reader's approved destinations, request count,
+reserved-body budget and deadline. Extraction receives the same cancellation
+signal. It saves only under the unchanged source revision and exact story binding.
+Transport/storage uncertainty propagates to the existing held path; parser refusal
+prevents confirmed completion. Metadata may already be retained when an article
+fails. A source summary alone is not full-reading success.
+
+The Node build now includes the fixed parser worker and its module beside generated
+importers, and exposes a compiled extraction entry for packaging tests. Both source
+and compiled cancellation/extraction tests pass. Disposable real PostgreSQL tested
+the configured collector through retained article storage with synthetic HTTP
+responses. This does not claim a live source read or native agent research result.
 
 Deployment of the migration and role changes requires its operator gate.
 Do not reuse native-result storage or raise its shared size limit. Article text

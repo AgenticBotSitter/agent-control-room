@@ -248,3 +248,25 @@ schema fixture passed and reported cleanup. No deployment or GitHub push occurre
 Still missing: authorized ingestion wiring to populate article detail automatically,
 physical-browser accessibility/visual acceptance, hostile parser resource policy
 and live source acceptance. The full six-batch objective remains incomplete.
+
+### Approved collection integration
+
+The ingestion-wiring item above is now implemented as explicit optional maxArticles
+in the approved discovery limits. Old plans do not gain new reads. The collector
+reuses the existing guarded HTTP transport and all shared budgets, then saves
+extractions under unchanged source settings. Parser failures prevent confirmation;
+transport/authority/database uncertainty propagates instead of retrying.
+
+Source collection tests cover opt-in, old behavior, exhausted request budget and
+source disabling before save. Actual PG17 configured collection/storage passed
+using synthetic HTTP and cleaned up. Build inspection exposed missing worker assets;
+the Node build now emits them beside generated importers, with an actual compiled
+worker test. Independent review caught cancellation not reaching the parser;
+signal-driven worker termination fixes it, with source/compiled regressions and
+accepted remediation review. Initial TypeScript options-inference failure was fixed
+by an explicit named options parameter and JSDoc, not a type-check suppression.
+
+Final verification after the stricter article-summary count check: compiled
+regression56/56, compiled extractor1/1, article suite13/13, full-source TypeScript,
+diff whitespace checks and disposable PG17 collection/storage all passed.
+No production template, service, live source or GitHub state changed.

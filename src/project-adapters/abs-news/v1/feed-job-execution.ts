@@ -82,7 +82,16 @@ export function createAbsFeedJobExecution(databases: { coordinator: DatabaseClie
           || Date.parse(checked.status.checkedAt) < startedAt || Date.parse(checked.status.checkedAt) > clock())
           throw new Error("abs_feed_result_mismatch");
         current();
-        outcome = checked.status.state === "available" ? "confirmed" : "failed";
+        const articleSummary = "articleExtraction" in result ? z.object({ attempted: z.number().int().min(0).max(10),
+          saved: z.number().int().min(0).max(10), unavailable: z.number().int().min(0).max(10),
+          skipped: z.number().int().min(0) }).strict()
+          .refine(value => value.saved + value.unavailable === value.attempted).parse(result.articleExtraction) : undefined;
+        const articlesComplete = discovery?.limits.maxArticles
+          ? !!articleSummary && articleSummary.unavailable === 0
+            && articleSummary.attempted === Math.min(discovery.limits.maxArticles, checked.storyCount)
+            && articleSummary.skipped + articleSummary.attempted === checked.storyCount
+          : !articleSummary;
+        outcome = checked.status.state === "available" && articlesComplete ? "confirmed" : "failed";
         if (outcome === "confirmed") receiptDigest = checked.receiptDigest;
       } catch {
         // Once marked, missing results, cancellation, cleanup failure and storage
