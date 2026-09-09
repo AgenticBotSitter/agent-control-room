@@ -575,3 +575,10 @@ transactional failures roll back while post-commit failures retain uncertainty.
 Thirteen combined workspace tests and TypeScript passed. Re-review is pending.
 The public component roadmap was also updated to distinguish newly implemented
 adapters from their still-open host/runtime acceptance requirements.
+
+Independent re-review at4ae681b accepted the async-authority remediation, ran
+seven permitted fake/in-memory tests and found no concrete regression. Root also
+reran the disposable native Git fixture successfully, including cleanup/absence.
+Review acceptance applies to this callback fix and inspected journal/port scope;
+it does not certify safe re-adoption, interrupted native Git recovery, production
+authority composition or any unperformed platform acceptance.
