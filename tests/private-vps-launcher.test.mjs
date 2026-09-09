@@ -25,6 +25,12 @@ test('operator mode cannot silently enable workers or accept an incomplete agent
     assert.throws(() => requirePrivateVpsMode({ ...website, configuration: { coordinator: { [field]: true } } }));
   }
   assert.throws(() => requirePrivateVpsMode({ ...website, nativeHttps: {} }));
+  for (const value of [{}, undefined]) {
+    assert.throws(() => requirePrivateVpsMode({ ...website, configuration: { coordinator: { ideaRuntime: value } } }));
+    assert.throws(() => requirePrivateVpsMode({ ...website, configuration: { coordinator: {}, news: value } }));
+  }
+  assert.equal(requirePrivateVpsMode({ ...website, configuration: { web: { ideaProjects: {}, news: {} },
+    coordinator: { ideaCreation: {} } } }), 'website-only');
   const coordinator = { nativeQueue: true, nativeQueueRecovery: true, revisionPlanning: true,
     queueWorker: {}, nativeHttp: {}, approvals: {}, quality: {}, resultDatabase: {}, evidence: {}, sessions: {} };
   const agent = { mode: 'agent-tasks', nativeHttps: {}, configuration: { coordinator } };

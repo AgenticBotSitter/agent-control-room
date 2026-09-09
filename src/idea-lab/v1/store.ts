@@ -95,7 +95,26 @@ export class IdeaLabProjectRegistryStoreV1 {
       `SELECT payload,session_auth_tag FROM control_idea_sessions WHERE tenant_id=$1 AND session_id=$2`, [tenantId,sessionId]);
     if (!result.rows[0]) return undefined;
     const session = parseIdeaLabSessionV1(result.rows[0].payload);
+    if (session.tenantId !== tenantId || session.sessionId !== sessionId) throw new IdeaLabErrorV1("integrity_failed");
     this.#verifyTag("session",session.tenantId,session.sessionId,session.sessionDigest,result.rows[0].session_auth_tag); return session;
+  }
+
+  /** Complete, cursor-based catalog for the private workspace; immutable session IDs order pages. */
+  async listSessionPage(tenantId: string, workspaceId: string, after?: string) {
+    ideaIdSchemaV1.parse(tenantId); ideaIdSchemaV1.parse(workspaceId);
+    if (after !== undefined) ideaIdSchemaV1.parse(after);
+    const rows = await this.#query<{ session_id: string; payload: unknown; session_auth_tag: string }>(
+      `SELECT session_id,payload,session_auth_tag FROM control_idea_sessions
+       WHERE tenant_id=$1 AND workspace_id=$2 AND ($3::text IS NULL OR session_id COLLATE "C" > $3 COLLATE "C")
+       ORDER BY session_id COLLATE "C" LIMIT 51`, [tenantId, workspaceId, after ?? null]);
+    const sessions = rows.rows.slice(0, 50).map(row => {
+      const session = parseIdeaLabSessionV1(row.payload);
+      if (session.tenantId !== tenantId || session.workspaceId !== workspaceId || session.sessionId !== row.session_id)
+        throw new IdeaLabErrorV1("integrity_failed");
+      this.#verifyTag("session", tenantId, session.sessionId, session.sessionDigest, row.session_auth_tag);
+      return session;
+    });
+    return { sessions, nextCursor: rows.rows.length > 50 ? sessions.at(-1)!.sessionId : null };
   }
 
   async listSessions(tenantId:string,workspaceId:string,limit=25):Promise<IdeaLabSessionV1[]>{
@@ -226,8 +245,9 @@ export class IdeaLabProjectRegistryStoreV1 {
   async authorizeOwnerDecision(input:{authorizationId:string;policyDecisionId:string;decision:unknown}):Promise<{authorizationDigest:string;replayed:boolean}>{
     const raw=parseExactIdeaLabV1(ideaDecisionSchemaV1,input.decision),session=await this.getSession(raw.tenantId,raw.sessionId),synthesis=await this.getSynthesis(raw.tenantId,raw.sessionId);
     if(!session||!synthesis)throw new IdeaLabErrorV1("not_found");const decision=parseIdeaLabDecisionV1(input.decision,session,synthesis);
+    // The referenced policy is immutable; a read must not require UPDATE authority.
     return this.#transaction(async tx=>{const policy=await tx.query<{identity_id:string;action:string;resource_type:string;resource_id:string;allowed:boolean;request_digest:string;grant_ids:string[];decided_at:string|Date;expires_at:string|Date}>(
-      `SELECT identity_id,action,resource_type,resource_id,allowed,request_digest,grant_ids,decided_at,expires_at FROM control_policy_decisions WHERE tenant_id=$1 AND id=$2 FOR UPDATE`,[decision.tenantId,input.policyDecisionId]);
+      `SELECT identity_id,action,resource_type,resource_id,allowed,request_digest,grant_ids,decided_at,expires_at FROM control_policy_decisions WHERE tenant_id=$1 AND id=$2`,[decision.tenantId,input.policyDecisionId]);
       const row=policy.rows[0];if(!row||!row.allowed||row.action!=="idea_lab.owner_decide"||row.resource_type!=="idea_lab_session"||row.resource_id!==decision.sessionId
         ||iso(row.decided_at)!==decision.decidedAt||time(iso(row.expires_at))<=time(decision.decidedAt))throw new IdeaLabErrorV1("authorization_denied");
       const grants=await tx.query<{id:string;role_key:string;revoked_at?:string;expires_at?:string}>(`SELECT id,role_key,revoked_at,expires_at FROM control_role_grants WHERE tenant_id=$1 AND identity_id=$2`,[decision.tenantId,row.identity_id]);

@@ -17,8 +17,17 @@ does not mean its code cannot appear in a later compiled build.
 
 The retained [Control Center attribution](third_party/control-center/NOTICE.md)
 and [MIT license](third_party/control-center/LICENSE) document the project's upstream
-curation adaptation. That adapted curation implementation is not included in this
-initial demo source subset; these notices do not imply the news module is ready.
+curation, discovery, article-reading presentation and bounded HTTP-reader
+adaptations included under `src/vendor/control-center` and the news snapshot UI.
+The notice maps upstream revision, original files and local changes. Including
+this source does not qualify live collection or agent execution.
+
+The [RSS parser notice](third_party/rss-parser/NOTICE.md) and
+[original MIT license](third_party/rss-parser/LICENSE) cover the selected
+rss-parser dependency. The lockfile also pins fast-xml-parser and their respective
+transitive dependencies. Preserve each installed package's own notices; neither
+this document nor our Apache license replaces those terms. Full-article content
+is not vendored, and feed metadata does not grant republication rights.
 
 ## Before distributing additional artifacts
 

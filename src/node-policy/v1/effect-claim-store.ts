@@ -73,6 +73,7 @@ export class SqliteEffectClaimStore {
       throw new Error("Durable effect claim store requires a filesystem path");
     }
     this.db = new DatabaseSync(path);
+    try {
     this.db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS effect_claims (
@@ -129,6 +130,7 @@ export class SqliteEffectClaimStore {
       );
       PRAGMA user_version=1;
     `);
+    } catch (error) { this.db.close(); throw error; }
   }
 
   close(): void {
@@ -217,17 +219,53 @@ export class SqliteEffectClaimStore {
   }
 
   apply(claimKey: string, event: Exclude<EffectClaimEventV1, { kind: "marker_committed" }>): { disposition: "applied" | "duplicate"; snapshot: EffectClaimSnapshotV1 } {
+    return this.applyWithinGuard(claimKey, event);
+  }
+
+  /** Trusted local settlement seam, not evidence verification. Both checks run
+   * synchronously under the write lock; a failed post-write check rolls back the
+   * event and capacity change. The caller must verify all non-claim evidence.
+   * Exact replay also requires the expected CURRENT snapshot and fresh checks. */
+  applyChecked(claimKey: string, event: Exclude<EffectClaimEventV1, { kind: "marker_committed" }>, guard: {
+    expectedSnapshotDigest: string;
+    verifyCurrent(snapshotDigest: string): true;
+  }): { disposition: "applied" | "duplicate"; snapshot: EffectClaimSnapshotV1 } {
+    const expectedSnapshotDigest = guard.expectedSnapshotDigest, verifyCurrent = guard.verifyCurrent.bind(guard);
+    if (!/^sha256:[a-f0-9]{64}$/.test(expectedSnapshotDigest)) throw new EffectClaimConflictError("Invalid expected effect snapshot");
+    return this.applyWithinGuard(claimKey, event, { expectedSnapshotDigest, verifyCurrent });
+  }
+
+  private applyWithinGuard(claimKey: string, input: Exclude<EffectClaimEventV1, { kind: "marker_committed" }>, guard?: {
+    expectedSnapshotDigest: string;
+    verifyCurrent(snapshotDigest: string): true;
+  }): { disposition: "applied" | "duplicate"; snapshot: EffectClaimSnapshotV1 } {
+    // A trusted reader must not accidentally mutate the event being committed.
+    const event = structuredClone(input);
     assertNoSecretMaterial(event, "effect claim event");
     return this.transaction(() => {
+      const before = this.requireFullWithin(claimKey), beforeDigest = sha256Digest(before);
+      const check = (expected: string) => {
+        if (guard) {
+          const accepted: unknown = guard.verifyCurrent(expected);
+          // Reject async verification without leaving a late rejection unobserved.
+          // Do not invoke arbitrary thenables to decide synchronous acceptance.
+          if (accepted instanceof Promise) Promise.prototype.then.call(accepted, undefined, () => undefined);
+          if (accepted !== true) throw new EffectClaimConflictError("Effect settlement check failed");
+        }
+        if (sha256Digest(this.requireFullWithin(claimKey)) !== expected) throw new EffectClaimConflictError("Effect snapshot changed during verification");
+      };
+      if (guard && guard.expectedSnapshotDigest !== beforeDigest) throw new EffectClaimConflictError("Effect snapshot is stale");
+      if (guard) check(beforeDigest);
       const eventDigest = sha256Digest(event);
       const prior = this.db.prepare(`SELECT event_digest FROM effect_claim_events WHERE claim_key=? AND event_id=?`).get(claimKey,event.eventId) as { event_digest: string } | undefined;
       if (prior) {
         if (prior.event_digest !== eventDigest) throw new EffectClaimConflictError("Effect event ID was reused with different content");
+        if (guard) check(beforeDigest);
         return { disposition: "duplicate", snapshot: this.requireFullWithin(claimKey) };
       }
-      const before = this.requireFullWithin(claimKey);
       const after = applyEffectClaimEvent(before,event);
       this.persistTransition(before,after,event);
+      if (guard) check(sha256Digest(after));
       return { disposition: "applied", snapshot: after };
     });
   }
@@ -261,6 +299,20 @@ export class SqliteEffectClaimStore {
     }
     const snapshot = this.loadFullWithin(claimKey, true);
     return snapshot ? { kind: "full", snapshot } : undefined;
+  }
+
+  /** Historical protected-store evidence, not current cleanup or execution authority. */
+  confirmation(claimKey: string): { snapshot: EffectClaimSnapshotV1; event: Extract<EffectClaimEventV1, { kind: "confirmed" }> } | undefined {
+    return this.transaction(() => {
+      const lookup = this.load(claimKey);
+      if (lookup?.kind !== "full" || lookup.snapshot.state !== "confirmed") return undefined;
+      const row = this.db.prepare(`SELECT event_json FROM effect_claim_events WHERE claim_key=? ORDER BY sequence DESC LIMIT 1`).get(claimKey) as { event_json: string } | undefined;
+      if (!row) throw new EffectClaimConflictError("Effect confirmation event is missing");
+      const event = JSON.parse(row.event_json) as EffectClaimEventV1;
+      if (event.kind !== "confirmed" || event.destinationReceiptDigest !== lookup.snapshot.destinationReceiptDigest
+        || event.occurredAt !== lookup.snapshot.updatedAt) throw new EffectClaimConflictError("Effect confirmation event mismatch");
+      return { snapshot: lookup.snapshot, event };
+    });
   }
 
   compactTerminal(claimKey: string, horizons: EffectRetentionHorizonsV1, compactedAt: string): { disposition: "compacted" | "retained_unknown_horizon" | "retained_until"; retainUntil?: string; tombstone?: EffectClaimTombstoneV1 } {
@@ -376,8 +428,8 @@ export class SqliteEffectClaimStore {
   }
 
   private verifyHistoryWithin(snapshot: EffectClaimSnapshotV1): void {
-    const rows = this.db.prepare(`SELECT event_digest,transition_digest,event_json,from_state,to_state FROM effect_claim_events WHERE claim_key=? ORDER BY sequence`).all(snapshot.claimKey) as Array<{
-      event_digest: string; transition_digest: string; event_json: string; from_state: string | null; to_state: string;
+    const rows = this.db.prepare(`SELECT event_id,occurred_at,event_digest,transition_digest,event_json,from_state,to_state FROM effect_claim_events WHERE claim_key=? ORDER BY sequence`).all(snapshot.claimKey) as Array<{
+      event_id: string; occurred_at: string; event_digest: string; transition_digest: string; event_json: string; from_state: string | null; to_state: string;
     }>;
     if (rows.length !== snapshot.version) throw new EffectClaimConflictError("Effect history length mismatch");
     let priorState: string | null = null;
@@ -390,8 +442,9 @@ export class SqliteEffectClaimStore {
       createdAt: snapshot.createdAt,
     });
     for (const [index,row] of rows.entries()) {
-      const event = JSON.parse(row.event_json) as object;
+      const event = JSON.parse(row.event_json) as { eventId: string; occurredAt: string };
       if (sha256Digest(event) !== row.event_digest
+        || event.eventId !== row.event_id || event.occurredAt !== row.occurred_at
         || row.transition_digest !== sha256Digest({ event,fromState: row.from_state,toState: row.to_state })
         || row.from_state !== priorState) throw new EffectClaimConflictError("Effect history digest or chain mismatch");
       priorState = row.to_state;

@@ -49,8 +49,14 @@ No live agent-runtime/platform combination is claimed supported by this preview.
 
 **New: [settled component decisions](COMPONENT_DECISIONS.md) and
 [implementation packages](IMPLEMENTATION_PACKAGES.md).** These identify what to
-reuse, what not to rebuild, and which packages still need a newer public source
-export before assignment. Selected components are not yet all integrated.
+reuse, what not to rebuild, and which packages still need focused test exports
+before assignment. All 17 implementation directions are recorded; selected
+components are not yet all integrated.
+
+The September 8 source refresh adds sanitized Idea Lab and news workflows,
+connector updates and generic database/operator templates. The public package
+passes `pnpm check`, `pnpm build` and all 56 compiled tests in `pnpm test`.
+Templates are not configured services, and these checks are not production acceptance.
 
 - [Setup and verified check commands](SETUP.md)
 - [How to contribute and get work assigned](CONTRIBUTING.md)

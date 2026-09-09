@@ -16,6 +16,32 @@ import { nodeExchange } from "./helpers/web-node.ts";
 import { EventEmitter, once } from "node:events";
 import { startPrivateHostLifecycle, createPrivateTaskHost, createInstalledPrivateTaskHost } from "../dist-vps/server/taskHost.js";
 
+test("compiled host retains the captured secondary address across asynchronous bootstrap", async t => {
+  const f = await taskStartupFixture(); t.after(f.close);
+  const configuration = { ...f.config, web: { ...f.config.web,
+    secondaryAccess: { origin: "https://secondary.example.invalid", audience: "secondary-app" } } };
+  const server = new EventEmitter();
+  server.listen = (_options, callback) => { queueMicrotask(callback); return server; };
+  server.close = callback => { queueMicrotask(() => callback?.()); return server; };
+  server.closeIdleConnections = () => {}; server.closeAllConnections = () => {};
+  let capturedApplication;
+  const host = createPrivateTaskHost({ openDatabase: f.openDatabase, clock: () => instant + 8000,
+    install(options) {
+      capturedApplication = options;
+      configuration.web.secondaryAccess.origin = "https://changed.example.invalid";
+    }, createServer: () => server });
+  const app = await host.start({ configuration, port: 3210,
+    handler: request => capturedApplication.handle(request, () => new Response("synthetic render")),
+    assets: { count: 0, digest: "synthetic", respond: () => undefined } });
+  t.after(() => app.close());
+  for (const [hostName, expected] of [["secondary.example.invalid", 401], ["changed.example.invalid", 403]]) {
+    const exchange = nodeExchange(); exchange.input.rawHeaders[1] = hostName;
+    const finished = once(exchange.output, "finish", { signal: AbortSignal.timeout(5000) });
+    server.emit("request", exchange.input, exchange.output); await finished;
+    assert.equal(exchange.output.statusCode, expected, exchange.body());
+  }
+});
+
 test("compiled two-pool bootstrap mounts protected planning, assignment and page rendering under shared logout", async t => {
   assert.equal(typeof startPrivateTaskApplication, "function");
   assert.equal((await handler(request())).status, 503);

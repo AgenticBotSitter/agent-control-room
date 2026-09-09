@@ -15,13 +15,13 @@ import { NativeQueueAuthority } from "./native-queue-authority";
 import { WebProjectService } from "./project-service";
 import type { TaskExecutionPlanner } from "./task-execution-planner";
 import { enrollmentSchema, type NativeEnrollment } from "../../harness/v1/native-run-contracts";
-import { prepareNativeTaskApproval } from "../../harness/v1/native-task-approval-binding";
+import { prepareNativeTaskApprovalWithLease } from "../../harness/v1/native-task-lease-grant";
 import type { NativeApprovalPacketStore } from "./native-approval-packet-store";
 import { nativeTaskApprovalPacketSchema } from "../../harness/v1/native-approval-packet";
 import type { NativeTaskQueueScope } from "./native-task-queue";
 import type { ServerNodeSession } from "../../node-control/server-node-session";
 
-type CanonicalNativeApproval = ReturnType<typeof prepareNativeTaskApproval> & {
+type CanonicalNativeApproval = ReturnType<typeof prepareNativeTaskApprovalWithLease> & {
   enrollment: NativeEnrollment; preparedAt: string; sourceInputDigest: string; inputDigest: string;
 };
 
@@ -204,7 +204,13 @@ export class TaskAssignmentCoordinator {
     return this.withNativeApproval(undefined, ref.projectId, ref.jobId, ref.inputDigest, async (tx, prepared) => {
       if (prepared.request.attemptId !== ref.attemptId) conflict();
       const verified = await this.approvalStore!.revalidateInSession(tx, prepared, ref.packetDigest, signal);
-      return { value: { nodeId: prepared.request.nodeId }, assertFresh: verified.assertFresh };
+      // The queue reference is a locator, not authority. Return only the routing
+      // binding derived inside canonical approval/intent revalidation; no prompt,
+      // enrollment, signing material or credentials leave this lookup.
+      return { value: Object.freeze({ nodeId: prepared.request.nodeId,
+        task: Object.freeze({ projectId: prepared.binding.projectId, jobId: prepared.request.jobId,
+          attemptId: prepared.request.attemptId, inputDigest: prepared.inputDigest }) }),
+      assertFresh: verified.assertFresh };
     }, ref);
   }
   /** Optional trusted recovery composition only, never a browser endpoint. Recovery
@@ -310,11 +316,11 @@ export class TaskAssignmentCoordinator {
     digestSchema.parse(expectedPacketDigest);
     if (!this.approvalStore || signal.aborted) conflict();
     const store = this.approvalStore;
-    return session.stageNativeDispatch((sign, channel) => this.withNativeApproval(identity, projectId, jobId, expectedInputDigest,
+    return session.stageNativeDispatch((sign, channel, signLease) => this.withNativeApproval(identity, projectId, jobId, expectedInputDigest,
       async (tx, prepared, actorId, nodeKeyId, deadline) => {
         if (expectedAttemptId !== undefined && prepared.request.attemptId !== expectedAttemptId) conflict();
         if (channel.tenantId !== this.scope.tenantId || channel.nodeId !== prepared.request.nodeId || channel.nodeKeyId !== nodeKeyId) conflict();
-        const saved = await store.stageDeliveryEnvelopeInSession(tx, prepared, expectedPacketDigest, actorId, signal, sign, channel, deadline);
+        const saved = await store.stageDeliveryEnvelopeInSession(tx, prepared, expectedPacketDigest, actorId, signal, sign, channel, deadline, signLease);
         await appendAuditWith(tx, { id: `audit:envelope:${saved.receipt.queueId}`, tenantId: this.scope.tenantId, actorId, actorType: "human",
           action: "native.delivery.staged", targetType: "job", targetId: jobId, correlationId: saved.receipt.queueId,
           idempotencyKey: `envelope:${saved.receipt.queueId}`, safeMetadata: { frameDigest: saved.receipt.frameDigest }, occurredAt: saved.receipt.stagedAt });
@@ -335,12 +341,12 @@ export class TaskAssignmentCoordinator {
     digestSchema.parse(expectedPacketDigest);
     if (!this.approvalStore || signal.aborted) conflict();
     const store = this.approvalStore;
-    return session.sendPreparedNativeDispatch((frame, channel) => this.withNativeApproval(identity, projectId, jobId, expectedInputDigest,
+    return session.sendPreparedNativeDispatch((frame, channel, leaseFrame) => this.withNativeApproval(identity, projectId, jobId, expectedInputDigest,
       async (tx, prepared, actorId, nodeKeyId, deadline, assertAuthorizationTime) => {
         if (expectedAttemptId !== undefined && prepared.request.attemptId !== expectedAttemptId) conflict();
         if (channel.tenantId !== this.scope.tenantId || channel.nodeId !== prepared.request.nodeId || channel.nodeKeyId !== nodeKeyId
             || Date.parse(frame.expiresAt) > deadline) conflict();
-        const saved = await store.recordTransmissionInSession(tx, prepared, expectedPacketDigest, actorId, signal, frame, channel);
+        const saved = await store.recordTransmissionInSession(tx, prepared, expectedPacketDigest, actorId, signal, frame, channel, leaseFrame);
         const checkedAt = this.clock();
         const assertFresh = () => {
           assertAuthorizationTime(); saved.assertFresh(); const now = this.clock();
@@ -349,7 +355,7 @@ export class TaskAssignmentCoordinator {
         await appendAuditWith(tx, { id: `audit:transmit:${saved.receipt.queueId}`, tenantId: this.scope.tenantId, actorId, actorType: "human",
           action: "native.delivery.transmission_requested", targetType: "job", targetId: jobId, correlationId: saved.receipt.queueId,
           idempotencyKey: `transmit:${saved.receipt.queueId}`, safeMetadata: { frameDigest: saved.receipt.frameDigest }, occurredAt: saved.receipt.requestedAt });
-        return { value: { value: saved.receipt, assertFresh }, assertFresh };
+        return { value: { value: saved.receipt, assertFresh, ...(saved.receipt.leaseFrameDigest ? { leaseFrameDigest: saved.receipt.leaseFrameDigest } : {}) }, assertFresh };
       }, queue));
   }
   private async withNativeApproval<T>(identity: VerifiedWebIdentity | undefined, projectId: string, jobId: string, expectedInputDigest: string,
@@ -384,7 +390,7 @@ export class TaskAssignmentCoordinator {
         [this.scope.tenantId, node.id, node.identityKeyId])).rows[0];
       const now = this.clock();
       if (!Number.isSafeInteger(now) || !key || new Date(key.valid_from).getTime() > now) conflict();
-      const prepared = prepareNativeTaskApproval({ job, attempt: stored.attempt, lease: stored.lease, input: plan.input,
+      const prepared = prepareNativeTaskApprovalWithLease({ job, attempt: stored.attempt, lease: stored.lease, input: plan.input,
         enrollment, nodeClass: configured.nodeClass, now });
       preparedAt = now; deadline = Math.min(prepared.start.deadline, key.valid_until ? new Date(key.valid_until).getTime() : Infinity);
       if (!Number.isFinite(deadline) || deadline <= now) conflict();

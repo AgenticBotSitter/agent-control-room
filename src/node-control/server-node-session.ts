@@ -1,9 +1,9 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
-import { NATIVE_DELIVERY_FEATURE, nativeTaskDispatchBodySchema, matchNativeTaskDispatchReceipt, type NativeTaskDispatchBody } from "../harness/v1/native-delivery";
+import { NATIVE_DELIVERY_FEATURE, NATIVE_LEASE_DELIVERY_FEATURE, nativeTaskDispatchBodySchema, matchNativeTaskDispatchReceipt, type NativeTaskDispatchBody } from "../harness/v1/native-delivery";
 import { sha256Digest } from "../security";
 import { NodeProtocolAuthenticator, NODE_PROTOCOL_V1, NODE_PROTOCOL_MAX_FRAME_BYTES,
-  signedNodeFrameSchema, verifyNodeFrameSignature, type NodeMessageBodyMap,
+  signedNodeFrameSchema, leaseGrantSchema, verifyNodeFrameSignature, type NodeMessageBodyMap,
   type SignedNodeFrame, type UnsignedNodeFrame } from "../node-protocol/v1";
 
 const configSchema = z.object({
@@ -26,6 +26,7 @@ export interface ServerNodeSessionPorts {
 }
 
 export interface ServerNativeChannel {
+  readonly leaseDelivery?: true;
   readonly tenantId: string;
   readonly nodeId: string;
   readonly nodeKeyId: string;
@@ -47,6 +48,7 @@ export class ServerNodeSession {
   private readonly config: z.output<typeof configSchema>;
   private state: "new" | "negotiating" | "reconciling" | "ready" | "prepared" | "transmitting" | "sent" | "receipted" | "recovered" | "closed" = "new";
   private preparedFrame?: SignedNodeFrame<"harness.native.dispatch">;
+  private preparedLease?: SignedNodeFrame<"job.lease.grant">;
   private recoveredFrame?: SignedNodeFrame<"harness.native.dispatch">;
   private nativeDeliveryRecorded = false;
   private busy = false;
@@ -155,17 +157,20 @@ export class ServerNodeSession {
     return Object.freeze({ tenantId: this.config.tenantId, nodeId: this.config.nodeId, nodeKeyId: this.config.nodeKeyId,
       connectionId: this.connectionId, maxFrameBytes: this.maxFrameBytes, expiresAt: new Date(this.deadline).toISOString(),
       grantsExecutionAuthority: false as const,
+      ...(this.features.includes(NATIVE_LEASE_DELIVERY_FEATURE) ? { leaseDelivery: true as const } : {}),
       assertCurrent: () => { this.now(); if (this.busy || this.state !== "ready") throw new Error("Server native channel is unavailable"); },
     });
   }
 
   /** Trusted coordinator transaction only. A reserved sequence cannot be reused or transmitted here. */
-  async stageNativeDispatch<T>(commit: (sign: (body: NativeTaskDispatchBody, deadline: number) => Promise<SignedNodeFrame<"harness.native.dispatch">>, channel: NativeEnvelopeChannel) => Promise<T>): Promise<T> {
+  async stageNativeDispatch<T>(commit: (sign: (body: NativeTaskDispatchBody, deadline: number) => Promise<SignedNodeFrame<"harness.native.dispatch">>, channel: NativeEnvelopeChannel,
+    signLease: (body: NodeMessageBodyMap["job.lease.grant"]) => Promise<SignedNodeFrame<"job.lease.grant">>) => Promise<T>): Promise<T> {
     const available = this.nativeDeliveryChannel();
     if (!available) throw new Error("Native delivery channel unavailable");
     return this.bounded(async () => {
       let signed = false;
       let reserved: SignedNodeFrame<"harness.native.dispatch"> | undefined;
+      let reservedLease: SignedNodeFrame<"job.lease.grant"> | undefined, leaseSigned = false;
       const assertCurrent = () => { this.now(); if (this.state !== "ready") throw new Error("Native envelope reservation is unavailable"); };
       const channel = Object.freeze({ ...available, serverId: this.config.serverId, serverKeyId: this.config.serverKeyId,
         serverPublicKeySpki: this.config.serverPublicKeySpki, assertCurrent });
@@ -178,34 +183,58 @@ export class ServerNodeSession {
             !Number.isSafeInteger(deadline) || deadline <= this.now()) throw new Error("Native envelope scope or deadline mismatch");
         const frame = await this.signFrame("harness.native.dispatch", body, undefined, Math.min(deadline, body.start.deadline));
         assertCurrent(); reserved = structuredClone(frame); return frame;
-      }, channel);
+      }, channel, async input => {
+        assertCurrent();
+        if (!available.leaseDelivery || !reserved || leaseSigned) throw new Error("Native lease reservation unavailable");
+        leaseSigned = true;
+        const body = leaseGrantSchema.parse(input), r = reserved.body.request;
+        if (body.nodeId !== r.nodeId || body.jobId !== r.jobId || body.attemptId !== r.attemptId
+          || body.leaseId !== r.leaseId || body.leaseEpoch !== r.leaseEpoch || body.authorityDigest !== r.authorityDigest
+          || body.authority.projectId !== r.projectId) throw new Error("Native lease reservation mismatch");
+        const frame = await this.signFrame("job.lease.grant", body, reserved.messageId,
+          Math.min(Date.parse(reserved.expiresAt), Date.parse(body.expiresAt), Date.parse(body.authority.expiresAt)));
+        assertCurrent(); reservedLease = structuredClone(frame); return frame;
+      });
       assertCurrent();
       if (!signed || !reserved) throw new Error("Native envelope transaction did not reserve a frame");
+      if (available.leaseDelivery && !reservedLease) throw new Error("Native lease transaction did not reserve a frame");
       this.preparedFrame = reserved;
+      this.preparedLease = reservedLease;
       this.state = "prepared";
       return value;
     });
   }
 
   /** Trusted coordinator callback must commit a unique transmission intent before this sends once. */
-  async sendPreparedNativeDispatch<T>(commit: (frame: SignedNodeFrame<"harness.native.dispatch">, channel: NativeEnvelopeChannel) => Promise<{ value: T; assertFresh(): void }>) {
+  async sendPreparedNativeDispatch<T>(commit: (frame: SignedNodeFrame<"harness.native.dispatch">, channel: NativeEnvelopeChannel,
+    leaseFrame?: SignedNodeFrame<"job.lease.grant">) => Promise<{ value: T; assertFresh(): void; leaseFrameDigest?: string }>) {
     if (this.state !== "prepared" || !this.preparedFrame) throw new Error("No prepared native envelope is available");
     const frame = structuredClone(this.preparedFrame);
+    const leaseFrame = this.preparedLease ? structuredClone(this.preparedLease) : undefined;
     return this.bounded(async () => {
       const assertCurrent = () => {
-        if (this.now() >= Date.parse(frame.expiresAt) || this.state !== "prepared") throw new Error("Prepared native transmission is unavailable");
+        // The entry check owns the prepared-only one-shot slot. The captured
+        // freshness fence also covers this same bounded operation between sends.
+        if (this.now() >= Date.parse(frame.expiresAt) || !["prepared", "transmitting"].includes(this.state)) throw new Error("Prepared native transmission is unavailable");
       };
       assertCurrent();
       const channel: NativeEnvelopeChannel = Object.freeze({ tenantId: this.config.tenantId, nodeId: this.config.nodeId,
         nodeKeyId: this.config.nodeKeyId, connectionId: this.connectionId!, maxFrameBytes: this.maxFrameBytes,
         expiresAt: new Date(this.deadline).toISOString(), grantsExecutionAuthority: false,
         serverId: this.config.serverId, serverKeyId: this.config.serverKeyId, serverPublicKeySpki: this.config.serverPublicKeySpki, assertCurrent });
-      const result = await commit(structuredClone(frame), channel);
+      const result = await commit(structuredClone(frame), channel, leaseFrame ? structuredClone(leaseFrame) : undefined);
       assertCurrent(); result.assertFresh(); assertCurrent();
+      if (result.leaseFrameDigest !== (leaseFrame ? sha256Digest(leaseFrame) : undefined)) throw new Error("Native lease transmission intent mismatch");
       // No awaited work between consuming the local slot and entering the transport.
       this.state = "transmitting";
       await this.ports.send(JSON.stringify(frame));
       this.now();
+      if (leaseFrame) {
+        result.assertFresh();
+        if (this.now() >= Date.parse(leaseFrame.expiresAt)) throw new Error("Native lease transmission expired");
+        await this.ports.send(JSON.stringify(leaseFrame)); this.now();
+        this.outboundIds.add(leaseFrame.messageId);
+      }
       this.state = "sent";
       return { receipt: result.value, transportResult: "returned_without_receipt" as const, deliveryConfirmed: false as const };
     });
@@ -291,7 +320,7 @@ export class ServerNodeSession {
     this.outboundIds.add(signed.messageId);
   }
 
-  private async signFrame<T extends "connection.accepted" | "node.reconciliation.request" | "protocol.ack" | "harness.native.dispatch">(type: T, body: NodeMessageBodyMap[T], causationId?: string, deadline = this.deadline): Promise<SignedNodeFrame<T>> {
+  private async signFrame<T extends "connection.accepted" | "node.reconciliation.request" | "protocol.ack" | "harness.native.dispatch" | "job.lease.grant">(type: T, body: NodeMessageBodyMap[T], causationId?: string, deadline = this.deadline): Promise<SignedNodeFrame<T>> {
     const frame = { protocol: NODE_PROTOCOL_V1, direction: "server_to_node", senderKind: "control_room",
       tenantId: this.config.tenantId, actorId: this.config.serverId, keyId: this.config.serverKeyId,
       connectionId: this.connectionId!, sequence: ++this.outboundSequence, messageId: `message:${randomUUID()}`,

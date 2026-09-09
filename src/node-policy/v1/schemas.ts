@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { canonicalNetworkDestinationSchema } from "../../security/canonical-network-destination";
+export { canonicalNetworkDestinationSchema } from "../../security/canonical-network-destination";
 import {
   APPROVAL_ATTESTATION_SCHEMA_V1,
   NODE_CEILING_SCHEMA_V1,
@@ -49,22 +51,7 @@ function isCanonicalFilesystemPath(value: string): boolean {
   return root || !value.endsWith(separator);
 }
 
-function isCanonicalNetworkDestination(value: string): boolean {
-  const match = /^https:\/\/([a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?):([1-9][0-9]{0,4})$/.exec(value);
-  if (!match || match[1].includes("..")) return false;
-  const labels = match[1].split(".");
-  if (labels.some((label) => label.length > 63 || label.startsWith("-") || label.endsWith("-") || !/^[a-z0-9-]+$/.test(label))) return false;
-  if (Number(match[2]) > 65_535) return false;
-  try {
-    if (new URL(`https://${match[1]}`).hostname !== match[1]) return false;
-  } catch {
-    return false;
-  }
-  return true;
-}
-
 export const canonicalFilesystemPathSchema = z.string().min(1).max(1_024).refine(isCanonicalFilesystemPath, "filesystem path must be absolute and canonical");
-export const canonicalNetworkDestinationSchema = z.string().min(12).max(300).refine(isCanonicalNetworkDestination, "network destination must be canonical https host and explicit port");
 
 const signedArtifactShape = {
   signatureAlgorithm: z.literal("Ed25519"),

@@ -147,11 +147,13 @@ export class SecurityStore {
       const expiresAt = new Date(Math.min(...expiryCandidates)).toISOString();
       if (Date.parse(expiresAt) <= Date.parse(request.occurredAt)) throw new Error("Authorization proof has no valid lifetime");
 
+      // Policies are append-only (including a database trigger). The identity
+      // lock above serializes this principal; reading history needs no UPDATE grant.
       const existing = await tx.query<{
         identity_id: string; allowed: boolean; reason_codes: string[]; grant_ids: string[];
         strong_factor_evidence_id?: string | null; request_digest: string; expires_at: string | Date;
       }>(`SELECT identity_id,allowed,reason_codes,grant_ids,strong_factor_evidence_id,request_digest,expires_at
-          FROM control_policy_decisions WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, [request.tenantId, input.decisionId]);
+          FROM control_policy_decisions WHERE tenant_id=$1 AND id=$2`, [request.tenantId, input.decisionId]);
       if (existing.rows[0]) {
         const prior = existing.rows[0], priorExpiry = typeof prior.expires_at === "string"
           ? new Date(prior.expires_at).toISOString() : prior.expires_at.toISOString();

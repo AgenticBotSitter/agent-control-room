@@ -107,7 +107,7 @@ test("early network close failure still waits for bounded application cleanup", 
   await new Promise(resolve => setImmediate(resolve)); assert.equal(settled, false); assert.equal(f.counts().dbCloses, 1);
   finish(); await rejected; assert.equal(settled, true);
 });
-test("only the reviewed private HTTP module owns native HTTP imports; legacy net authority stays separate", async () => {
+test("reviewed HTTP listener and outbound request imports stay separate; legacy net authority stays separate", async () => {
   async function files(directory: string): Promise<string[]> {
     const entries = await readdir(directory, { withFileTypes: true });
     return (await Promise.all(entries.map(entry => entry.isDirectory() ? files(join(directory, entry.name))
@@ -122,15 +122,27 @@ test("only the reviewed private HTTP module owns native HTTP imports; legacy net
     let ownsHttp = false;
     function visit(node: ts.Node) {
       if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)
-        && node.moduleSpecifier.text === "node:http" && !node.importClause?.isTypeOnly) ownsHttp = true;
-      if (ts.isCallExpression(node) && node.arguments.some(arg => ts.isStringLiteral(arg) && arg.text === "node:http")) ownsHttp = true;
+        && node.moduleSpecifier.text === "node:http" && !node.importClause?.isTypeOnly) {
+        ownsHttp = true;
+        if (path.replaceAll("\\", "/") === "src/vendor/control-center/pinned-fetch.ts") {
+          const clause = node.importClause;
+          assert.equal(clause?.name, undefined, "outbound client cannot import the default HTTP namespace");
+          assert.ok(clause?.namedBindings && ts.isNamedImports(clause.namedBindings));
+          assert.deepEqual(clause.namedBindings.elements.map(entry => (entry.propertyName ?? entry.name).text), ["request"]);
+        }
+      }
+      if (ts.isCallExpression(node) && node.arguments.some(arg => ts.isStringLiteral(arg) && arg.text === "node:http")) {
+        assert.notEqual(path.replaceAll("\\", "/"), "src/vendor/control-center/pinned-fetch.ts", "outbound client cannot dynamically acquire HTTP authority");
+        ownsHttp = true;
+      }
       ts.forEachChild(node, visit);
     }
     visit(tree); if (ownsHttp) owners.push(path.replaceAll("\\", "/"));
   }
-  assert.deepEqual(owners, ["src/web/v1/private-serving.ts"]);
+  assert.deepEqual(owners.sort(), ["src/vendor/control-center/pinned-fetch.ts", "src/web/v1/private-serving.ts"]);
   // E60/E63 explicitly compose serving in the supplied-resource host. No other
   // consumer or additional native HTTP owner is admitted by this inventory.
+  // The adopted news client is separately restricted above to the request API.
   assert.deepEqual(consumers, ["src/web/v1/private-task-host.ts"]);
   const host = await readFile("src/web/v1/private-task-host.ts", "utf8");
   assert.doesNotMatch(host, /from ["']node:(?:http|net)["']|process\.env|process\.on\(|private-loopback-physical-native-driver/);

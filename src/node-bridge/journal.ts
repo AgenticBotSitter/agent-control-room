@@ -3,6 +3,7 @@ import { assertNoSecretMaterial, sha256Digest } from "../security";
 import {
   opaqueTokenDigest,
   signedNodeFrameSchema,
+  reconciliationAttemptSchema,
   type JobEventBody,
   type NodeOperationAcknowledgementBody,
   type NodeOperationRequestBody,
@@ -12,6 +13,7 @@ import {
 import type { ArtifactLineageRecordV1 } from "../node-executor/artifact-evidence";
 import { assertNativeSnapshotProgress, nativeTaskSnapshotBodySchema, type NativeTaskSnapshotBody } from "../harness/v1/native-observation";
 import { matchNativeTaskDispatchReceipt, type NativeTaskDispatchReceiptBody } from "../harness/v1/native-delivery";
+import { localId } from "../harness/v1/native-run-identifiers";
 
 export class BridgeBackpressureError extends Error {
   constructor() {
@@ -118,8 +120,10 @@ export class SqliteBridgeJournal implements ReplayGuard {
   constructor(path: string, private readonly maximumPendingFrames = 10_000) {
     if (!Number.isInteger(maximumPendingFrames) || maximumPendingFrames < 1) throw new Error("Pending-frame ceiling must be positive");
     this.db = new DatabaseSync(path);
-    this.db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
-    this.migrate();
+    try {
+      this.db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
+      this.migrate();
+    } catch (error) { this.db.close(); throw error; }
   }
 
   close(): void {
@@ -165,6 +169,32 @@ export class SqliteBridgeJournal implements ReplayGuard {
     const r = matchNativeTaskDispatchReceipt(JSON.parse(row.receipt_json), frame);
     if (sha256Digest(r) !== row.receipt_digest) throw new Error("native_delivery_integrity_invalid");
     return { frame, receipt: r };
+  }
+
+  /** Bounded historical restart metadata only. Contains no prompts, approvals or
+   * result bytes. Unknown attempts are included, never filtered out as irrelevant. */
+  nativeRestartInventory() {
+    return this.transaction(() => {
+      const rows = this.db.prepare("SELECT queue_id,tenant_id,job_id,attempt_id FROM bridge_native_deliveries ORDER BY queue_id LIMIT 1025")
+        .all() as { queue_id: string; tenant_id: string; job_id: string; attempt_id: string }[];
+      const attempts = this.db.prepare("SELECT attempt_id FROM bridge_attempts ORDER BY attempt_id LIMIT 1025").all() as { attempt_id: string }[];
+      if (rows.length > 1024 || attempts.length > 1024) throw new BridgeBackpressureError();
+      return { deliveries: rows.map(row => {
+        const saved = this.acceptedNativeDelivery(row.queue_id); if (!saved) throw new Error("native_delivery_integrity_invalid");
+        const body = saved.frame.body, request = body.request;
+        if (request.tenantId !== row.tenant_id || request.jobId !== row.job_id || request.attemptId !== row.attempt_id)
+          throw new Error("native_delivery_integrity_invalid");
+        return { queueId: row.queue_id, tenantId: request.tenantId, nodeId: request.nodeId,
+          projectId: request.projectId, jobId: request.jobId, attemptId: request.attemptId,
+          leaseId: request.leaseId, leaseEpoch: request.leaseEpoch, runId: body.start.runId,
+          bindingDigest: body.bindingDigest, deliveryDigest: sha256Digest(saved) };
+      }), attempts: attempts.map(row => {
+        const saved = this.attemptSummary(row.attempt_id);
+        if (!saved) throw new Error("native_attempt_inventory_invalid");
+        const { jobId, ...summary } = saved;
+        return { ...reconciliationAttemptSchema.parse(summary), jobId: localId.parse(jobId) };
+      }) };
+    });
   }
 
   appendNativeSnapshot(input: NativeTaskSnapshotBody, recordedAt: string): "recorded" | "duplicate" {
@@ -616,7 +646,10 @@ export class SqliteBridgeJournal implements ReplayGuard {
 
   /** Exact accepted transport record, not current signing trust or lease permission. */
   acceptedCommand(messageId: string): { frame: SignedNodeFrame; receivedAt: string } | undefined {
-    return this.transaction(() => {
+    return this.transaction(() => this.acceptedCommandWithinTransaction(messageId));
+  }
+
+  private acceptedCommandWithinTransaction(messageId: string): { frame: SignedNodeFrame; receivedAt: string } | undefined {
       const command = this.db.prepare("SELECT frame_json,frame_digest,received_at FROM bridge_commands WHERE message_id=?").get(messageId) as
         { frame_json: string; frame_digest: string; received_at: string } | undefined;
       const inbox = this.db.prepare("SELECT frame_digest,received_at,connection_id,sequence,nonce_digest,expires_at FROM bridge_inbox WHERE message_id=?").get(messageId) as
@@ -630,6 +663,58 @@ export class SqliteBridgeJournal implements ReplayGuard {
         || frame.sequence !== inbox.sequence || opaqueTokenDigest(frame.nonce) !== inbox.nonce_digest
         || frame.expiresAt !== inbox.expires_at) throw new Error("Accepted command evidence unavailable");
       return { frame, receivedAt: inbox.received_at };
+  }
+
+  /** Trusted intake only, after authenticated replay consumption. Atomically records
+   * an initial grant and its attempt; does not verify signing trust, admit execution,
+   * renew a lease or reconcile unknown prior state. The supplied synchronous fence
+   * must recheck the captured channel, exact task binding and current authority. */
+  recordInitialLease(input: SignedNodeFrame<"job.lease.grant">, receivedAt: string, assertFresh: () => true): "recorded" | "duplicate" {
+    const frame = signedNodeFrameSchema.parse(input);
+    if (frame.type !== "job.lease.grant" || frame.direction !== "server_to_node" || frame.senderKind !== "control_room")
+      throw new Error("Initial lease evidence unavailable");
+    const at = Date.parse(receivedAt), grant = frame.body;
+    if (!Number.isFinite(at) || at < Date.parse(frame.sentAt) || at >= Date.parse(frame.expiresAt)
+      || at < Date.parse(grant.acquiredAt) || at >= Date.parse(grant.expiresAt)
+      || at >= Date.parse(grant.authority.expiresAt)) throw new Error("Initial lease evidence unavailable");
+    const fence = () => {
+      const result: unknown = assertFresh();
+      if (result !== true) {
+        if (result instanceof Promise) void result.catch(() => {});
+        throw new Error("Initial lease freshness unavailable");
+      }
+    };
+    return this.transaction(() => {
+      fence();
+      const priorCommand = this.db.prepare("SELECT message_id FROM bridge_commands WHERE message_id=?").get(frame.messageId);
+      const prior = this.attemptSummary(grant.attemptId);
+      if (prior) {
+        const { jobId, ...reported } = prior; void jobId;
+        reconciliationAttemptSchema.parse(reported);
+      }
+      let disposition: "recorded" | "duplicate";
+      if (priorCommand || prior) {
+        if (!priorCommand || !prior || prior.jobId !== grant.jobId || prior.leaseId !== grant.leaseId
+          || prior.leaseEpoch !== grant.leaseEpoch || !["leased", "running", "waiting"].includes(prior.state))
+          throw new Error("Initial lease conflicts with retained attempt");
+        disposition = "duplicate";
+      } else {
+        this.recordCommand(frame, receivedAt);
+        this.upsertAttempt({ attemptId: grant.attemptId, jobId: grant.jobId, leaseId: grant.leaseId,
+          leaseEpoch: grant.leaseEpoch, state: "leased", lastEventSequence: 0, checkpointIds: [] }, receivedAt);
+        disposition = "recorded";
+      }
+      const verify = () => {
+        const saved = this.acceptedCommandWithinTransaction(frame.messageId);
+        if (!saved || sha256Digest(saved.frame) !== sha256Digest(frame) || saved.receivedAt !== receivedAt)
+          throw new Error("Initial lease receipt unavailable");
+      };
+      verify();
+      const attemptDigest = sha256Digest(this.attemptSummary(grant.attemptId));
+      fence(); verify();
+      if (sha256Digest(this.attemptSummary(grant.attemptId)) !== attemptDigest)
+        throw new Error("Initial lease changed during acceptance");
+      return disposition;
     });
   }
 

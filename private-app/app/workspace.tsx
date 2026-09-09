@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { ProjectCatalog } from "../../app/components/project-catalog";
 import { ProjectCreateForm } from "../../app/components/project-create-form";
 import { BrowserRequestError, browserErrorMessage, createProjectBrowserClient } from "../../src/web/v1/browser-client";
-import type { ProjectCatalogPage, ProjectView, WebProject } from "../../src/web/v1/project-wire";
+import type { IdeaProjectAction, ProjectCatalogPage, ProjectView, WebProject } from "../../src/web/v1/project-wire";
 import { ProjectCatalogNavigation } from "../../app/components/project-catalog-navigation";
 import { PrivateHeader } from "./private-header";
 
@@ -13,6 +13,20 @@ export function ProjectSaveRecovery({ pending, onRetry }: { pending: boolean; on
     <p>Retry sends only the original save with its original request key. It does not start an agent. Keep this tab open until the save is resolved.</p>
     <button type="button" disabled={pending} onClick={onRetry}>Retry original save</button>
   </section>;
+}
+
+export function IdeaProjectStatusActions({ project, pending, onAction }: {
+  project: ProjectView; pending: boolean; onAction: (action: IdeaProjectAction) => void;
+}) {
+  if (project.origin !== "idea_lab" || !project.lifecycleEditable) return null;
+  return <div className="private-actions">{project.ideaLifecycleActions?.map(action =>
+    <button type="button" key={action} disabled={pending} onClick={() => onAction(action)}>
+      {{ pause: "Pause project", resume: "Resume project", complete: "Mark complete", archive: "Archive project", reopen: "Reopen project" }[action]}</button>)}</div>;
+}
+
+export function ProjectIdeaOrigin({ project }: { project: ProjectView }) {
+  return project.origin === "idea_lab" && project.sourceIdeaSessionId
+    ? <p><a href={`/ideas/${encodeURIComponent(project.sourceIdeaSessionId)}`}>View original Idea Lab discussion and decision</a></p> : null;
 }
 
 export function PrivateProjectWorkspace({ projectId, section = "overview", after }: { projectId?: string; section?: string; after?: string }) {
@@ -90,6 +104,13 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
     } catch (reason) { showError(reason); }
     finally { writeBusy.current = false; setPending(false); }
   }
+  async function transitionIdea(action: IdeaProjectAction) {
+    if (!project || writeBusy.current || client.hasPending()) return;
+    writeBusy.current = true; setPending(true); setError(undefined); generation.current++;
+    try { await client.transitionIdea(project, action); setProject(await client.get(project.projectId)); }
+    catch (reason) { showError(reason); }
+    finally { writeBusy.current = false; setPending(false); }
+  }
   return <div className="private-shell">
     <PrivateHeader />
     <main id="private-main">
@@ -114,9 +135,11 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
         {state === "loading" && <p role="status">Loading project…</p>}
         {state === "ready" && project && <>
           <div className="private-heading"><span className="private-state">{project.lifecycle} · {project.origin === "idea_lab" ? "From Idea Lab" : "Ordinary project"}</span><h1>{project.title}</h1></div>
+          <ProjectIdeaOrigin project={project} />
           <nav className="private-tabs" aria-label="Project pages">
             <a href={`/projects/${encodeURIComponent(projectId)}`} aria-current={section === "overview" ? "page" : undefined}>Overview</a>
             <a href={`/projects/${encodeURIComponent(projectId)}/tasks`}>Tasks</a>
+            <a href={`/projects/${encodeURIComponent(projectId)}/news`}>News</a>
             <a href={`/projects/${encodeURIComponent(projectId)}/settings`} aria-current={section === "settings" ? "page" : undefined}>Settings</a>
           </nav>
           <section className="private-panel"><h2>{section === "settings" ? "Project status" : "Purpose"}</h2>
@@ -126,7 +149,9 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
                 .filter(value => value !== project.lifecycle && (project.lifecycle !== "archived" || value === "active"))
                 .map(value => <button type="button" key={value} disabled={pending || client.hasPending()} onClick={() => { void transition(value); }}>
                   {{ active: "Reopen project", paused: "Pause project", completed: "Mark complete", archived: "Archive project" }[value]}</button>)}</div>
-                : <p className="private-note">{project.origin === "idea_lab" ? "Idea Lab status is read-only here. Its existing history is preserved; lifecycle controls are not connected to this private view yet."
+                : project.lifecycleEditable && project.origin === "idea_lab" ? <IdeaProjectStatusActions project={project}
+                  pending={pending || client.hasPending()} onAction={action => { void transitionIdea(action); }} />
+                : <p className="private-note">{project.origin === "idea_lab" ? "No Idea Lab status changes are available with the current access and configuration. Its history is preserved."
                   : "Your current access allows viewing this project, not changing its status."}</p>}
               <p className="private-note">Status changes preserve history. They do not stop running work. Closing this tab does not change the project.</p>
             </> : <p className="private-note"><a href={`/projects/${encodeURIComponent(projectId)}/tasks`}>Open project tasks</a> to prepare work, check assignment and approval, and inspect recorded progress and results. Task controls report unavailable services rather than assuming a live agent is connected.</p>}

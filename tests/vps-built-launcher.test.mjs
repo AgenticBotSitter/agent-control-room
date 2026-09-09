@@ -68,3 +68,24 @@ test('operator failure is sanitized before host creation and removes signal hand
   assert.deepEqual(errors, ['Control Room startup failed; cleanup may require operator attention.']);
   assert.equal(signals.eventNames().length, 0);
 });
+
+test('website-only rejects Idea runtime and news workers before assets, databases or host creation', { skip: typeof process.getuid !== 'function' }, async t => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'cr-launcher-mode-refusal-')));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, 'operator.mjs');
+  await writeFile(path, '// Synthetic configuration; never executed.', { mode: 0o600 });
+  for (const configuration of [{ coordinator: { ideaRuntime: {} } }, { coordinator: {}, news: {} }]) {
+    const signals = new EventEmitter(), messages = [], errors = [];
+    const unexpected = () => { assert.fail('Rejected mode must not acquire runtime resources'); };
+    const code = await runPrivateVps(['--configuration', path], {
+      signals, report: value => messages.push(value), reportError: value => errors.push(value),
+      async loadRelease() { return [{ startPrivateHostLifecycle: hostModule.startPrivateHostLifecycle,
+        createInstalledPrivateTaskHost: unexpected }, { loadPrivateClientAssets: unexpected }, renderer]; },
+      async loadOperator() { return { schema: 'control-room.private-vps-configuration/v1',
+        createConfiguration: async () => ({ mode: 'website-only', port: 3210, configuration }) }; },
+    });
+    assert.equal(code, 1); assert.deepEqual(messages, []);
+    assert.deepEqual(errors, ['Control Room startup failed; cleanup may require operator attention.']);
+    assert.equal(signals.eventNames().length, 0);
+  }
+});

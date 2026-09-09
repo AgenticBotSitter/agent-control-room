@@ -36,6 +36,18 @@ export const nativeTaskTemplateSchema = z.object({ id: localId, adapter: z.liter
   catch { context.addIssue({ code: "custom", message: "unsupported native destination" }); }
 });
 export type NativeTaskTemplate = z.infer<typeof nativeTaskTemplateSchema>;
+/** Explicit server configuration only. No fallback template or project-ID substitution. */
+export function captureNativeTaskTemplates(config: { template: NativeTaskTemplate; additionalTemplates?: readonly NativeTaskTemplate[] }) {
+  const template = nativeTaskTemplateSchema.parse(config.template);
+  const additional = config.additionalTemplates === undefined ? []
+    : z.array(nativeTaskTemplateSchema).max(15).parse(config.additionalTemplates);
+  const all = [template, ...additional];
+  for (const value of all) assertNoSecretMaterial(value);
+  if (new Set(all.map(value => value.id)).size !== all.length
+    || new Set(all.map(value => value.authority.projectId)).size !== all.length)
+    throw new Error("task_execution_templates_ambiguous");
+  return { template, ...(config.additionalTemplates === undefined ? {} : { additionalTemplates: additional }) };
+}
 const initialPlanSchema = z.object({ schema: z.literal("control-room.task-execution-plan/v1"), tenantId: localId,
   projectId: localId, sourceJobId: localId, sourceDigest: digestSchema, sourceInputDigest: digestSchema,
   templateDigest: digestSchema, plannedBy: localId, plannedAt: instant,
@@ -47,6 +59,7 @@ const revisionPlanSchema = initialPlanSchema.extend({ schema: z.literal("control
 const planSchema = z.discriminatedUnion("schema", [initialPlanSchema, revisionPlanSchema]);
 type Plan = z.infer<typeof planSchema>;
 export type TaskPlanningOperation = Readonly<{ tenantId: string; workspaceId: string; plan: TaskExecutionPlanner["plan"];
+  supportsProject?: (projectId: string) => boolean;
   readSaved?: TaskExecutionPlanner["readSaved"] }>;
 type Row = { tenant_id: string; project_id: string; source_job_id: string; job_id: string; plan: unknown; auth_tag: string };
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: async work => work(tx),
@@ -59,17 +72,18 @@ const immutableJob = (job: JobRecord) => ({ ...job, state: "proposed", version: 
  * planning and an authenticated historical receipt, never this writer's raw read/bindReview
  * methods or a live executor. */
 export class TaskExecutionPlanner {
-  private readonly template: NativeTaskTemplate;
+  private readonly templates: ReadonlyMap<string, NativeTaskTemplate>;
   private readonly key: Uint8Array;
   private readonly reviewKey: Uint8Array;
   private readonly checkpoints: AwaitableRollbackCheckpointStoreV1;
   private readonly projects: WebProjectService;
   private readonly revisionSource?: NativeResultSubmissionService;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
-    config: { template: NativeTaskTemplate; integrityKey: Uint8Array; reviewIntegrityKey: Uint8Array;
+    config: { template: NativeTaskTemplate; additionalTemplates?: readonly NativeTaskTemplate[]; integrityKey: Uint8Array; reviewIntegrityKey: Uint8Array;
       checkpoints: AwaitableRollbackCheckpointStoreV1; ideaIntegrityKey?: Uint8Array }, private readonly clock: () => number = Date.now,
     revisionResults?: ConstructorParameters<typeof NativeResultSubmissionService>[1]) {
-    this.template = nativeTaskTemplateSchema.parse(config.template); assertNoSecretMaterial(this.template);
+    const captured = captureNativeTaskTemplates(config);
+    this.templates = new Map([captured.template, ...(captured.additionalTemplates ?? [])].map(value => [value.authority.projectId, value]));
     if (!(config.integrityKey instanceof Uint8Array) || config.integrityKey.length !== 32
       || !(config.reviewIntegrityKey instanceof Uint8Array) || config.reviewIntegrityKey.length !== 32) fail();
     this.key = Uint8Array.from(config.integrityKey); this.reviewKey = Uint8Array.from(config.reviewIntegrityKey);
@@ -85,8 +99,10 @@ export class TaskExecutionPlanner {
     purpose: plan.schema === "control-room.task-execution-plan/v1" ? "task-execution-plan/v1" : "task-execution-plan/v2", plan }); }
   webOperation(): TaskPlanningOperation {
     return Object.freeze({ tenantId: this.scope.tenantId, workspaceId: this.scope.workspaceId, plan: this.plan.bind(this),
+      supportsProject: this.supportsProject.bind(this),
       readSaved: this.readSaved.bind(this) });
   }
+  supportsProject(projectId: string) { return this.templates.has(projectId); }
   /** Historical receipt only; never replans or applies current template expiry to saved evidence. */
   async readSaved(identity: VerifiedWebIdentity, projectId: string, sourceJobId: string) {
     localId.parse(projectId); localId.parse(sourceJobId);
@@ -141,10 +157,11 @@ export class TaskExecutionPlanner {
    * source uniqueness serves as reconciliation identity across browser keys and service restarts. */
   async plan(identity: VerifiedWebIdentity, projectId: string, sourceJobId: string, expectedInputDigest: string) {
     localId.parse(projectId); localId.parse(sourceJobId); digestSchema.parse(expectedInputDigest);
+    let template: NativeTaskTemplate | undefined;
     let materializing = false;
     const requireTemplateTime = () => {
       const now = this.clock();
-      if (!Number.isSafeInteger(now) || Date.parse(this.template.authority.expiresAt) < now + this.template.authority.maxDurationSeconds * 1000)
+      if (!template || !Number.isSafeInteger(now) || Date.parse(template.authority.expiresAt) < now + template.authority.maxDurationSeconds * 1000)
         throw new WebAccessError("conflict");
     };
     const db: DatabaseClient = { query: this.db.query.bind(this.db), transaction: this.db.transaction.bind(this.db),
@@ -156,7 +173,9 @@ export class TaskExecutionPlanner {
       const project = await this.projects.getViewInSession(tx, actor, projectId);
       const source = await this.source(tx, projectId, sourceJobId);
       if (source.job.inputDigest !== expectedInputDigest) throw new WebAccessError("conflict");
-      const templateDigest = sha256Digest(this.template), sourceDigest = sha256Digest(source);
+      template = this.templates.get(projectId);
+      if (!template) throw new WebAccessError("conflict");
+      const templateDigest = sha256Digest(template), sourceDigest = sha256Digest(source);
       const prior = (await tx.query<Row>("SELECT * FROM control_task_execution_plans WHERE tenant_id=$1 AND source_job_id=$2",
         [this.scope.tenantId, sourceJobId])).rows[0];
       if (prior) {
@@ -165,17 +184,17 @@ export class TaskExecutionPlanner {
         await this.checkedJob(tx, plan);
         return { receipt: this.receipt(plan), replayed: true };
       }
-      if (project.lifecycle !== "active" || this.template.authority.projectId !== projectId)
+      if (project.lifecycle !== "active" || template.authority.projectId !== projectId)
         throw new WebAccessError("conflict");
       // Identity/source locks may have waited. Sample current time here and again at commit,
       // but do not apply today's template expiry to exact historical reconciliation.
       requireTemplateTime(); materializing = true;
       const suffix = sha256Digest({ tenantId: this.scope.tenantId, sourceJobId }).slice(7);
       const base = { contractVersion: DOMAIN_CONTRACT_VERSION, tenantId: this.scope.tenantId, version: 0, createdAt: actor.now, updatedAt: actor.now };
-      const input = { prompt: source.request.objective, instructions: this.template.instructions };
+      const input = { prompt: source.request.objective, instructions: template.instructions };
       const plan = planSchema.parse({ schema: "control-room.task-execution-plan/v1", tenantId: this.scope.tenantId,
         projectId, sourceJobId, sourceDigest, sourceInputDigest: expectedInputDigest, templateDigest, plannedBy: actor.id, plannedAt: actor.now, input,
-        acceptanceProfileId: this.template.acceptanceProfileId, acceptanceProfileDigest: this.template.acceptanceProfileDigest,
+        acceptanceProfileId: template.acceptanceProfileId, acceptanceProfileDigest: template.acceptanceProfileDigest,
         request: { ...base, kind: "request", id: `request:execution:${suffix}`, projectId, title: source.request.title,
           objective: source.request.objective, state: "draft", priority: source.request.priority,
           requestedBy: { actorId: actor.id, actorType: "human" }, idempotencyKey: `execution:${suffix}` },
@@ -184,7 +203,7 @@ export class TaskExecutionPlanner {
           authorityMode: "control_room_native", state: "proposed", jobIds: [`job:execution:${suffix}`] },
         job: { ...base, kind: "job", id: `job:execution:${suffix}`, projectId, workflowId: `workflow:execution:${suffix}`,
           jobType: "harness.hermes.native.task", specVersion: "1.0.0", inputDigest: sha256Digest(input), state: "proposed",
-          priority: source.job.priority, requiredCapability: "harness.hermes.native.runs.v1", dependsOnJobIds: [], authority: this.template.authority,
+          priority: source.job.priority, requiredCapability: "harness.hermes.native.runs.v1", dependsOnJobIds: [], authority: template.authority,
           retryPolicy: { maxAttempts: 1, backoffSeconds: 0, retryableFailureCodes: [], retryAfterOrphan: false, ambiguousEffectPolicy: "attention" } } });
       await this.profile(tx, plan, actor.now); assertNoSecretMaterial(plan);
       // The inert-proposal materializer deliberately rejects this richer envelope. Use the existing
@@ -205,13 +224,14 @@ export class TaskExecutionPlanner {
     identity = { ...identity }; const input = taskRevisionRequestSchema.parse(value); assertNoSecretMaterial(input);
     localId.parse(projectId); localId.parse(sourceJobId);
     if (!this.revisionSource || !(signal instanceof AbortSignal)) return fail();
+    let template: NativeTaskTemplate | undefined;
     const started = this.clock(); let highWater = started, materializing = false;
     const current = () => {
       const now = this.clock();
       if (signal.aborted || !Number.isSafeInteger(started) || started < 0 || !Number.isSafeInteger(now)
         || now < highWater || now - started > 10_000) return fail();
       highWater = now;
-      if (materializing && Date.parse(this.template.authority.expiresAt) < now + this.template.authority.maxDurationSeconds * 1000)
+      if (materializing && (!template || Date.parse(template.authority.expiresAt) < now + template.authority.maxDurationSeconds * 1000))
         throw new WebAccessError("conflict");
     };
     current();
@@ -264,7 +284,9 @@ export class TaskExecutionPlanner {
         reviewId: review.id, reviewDigest: sha256Digest(review), findingIds, feedbackDigest: sha256Digest(input.feedback),
         sourcePlanDigest: sha256Digest(source), revisionNumber: context.snapshot.revisionNumber + 1,
         originalPrompt: source.schema === "control-room.task-execution-plan/v1" ? source.input.prompt : source.revision.originalPrompt });
-      const sourceDigest = sha256Digest(revision), templateDigest = sha256Digest(this.template);
+      template = this.templates.get(projectId);
+      if (!template) throw new WebAccessError("conflict");
+      const sourceDigest = sha256Digest(revision), templateDigest = sha256Digest(template);
       const prior = (await tx.query<Row>("SELECT * FROM control_task_execution_plans WHERE tenant_id=$1 AND source_job_id=$2",
         [this.scope.tenantId, sourceJobId])).rows[0];
       if (prior) {
@@ -275,15 +297,15 @@ export class TaskExecutionPlanner {
       }
       if (project.lifecycle !== "active" || context.snapshot.status !== "changes_requested"
         || revision.revisionNumber > context.profile.maximumRevisionRounds || !["leased", "running"].includes(context.job.state)
-        || this.template.authority.projectId !== projectId || this.template.acceptanceProfileId !== context.profile.id
-        || this.template.acceptanceProfileDigest !== source.acceptanceProfileDigest) throw new WebAccessError("conflict");
+        || template.authority.projectId !== projectId || template.acceptanceProfileId !== context.profile.id
+        || template.acceptanceProfileDigest !== source.acceptanceProfileDigest) throw new WebAccessError("conflict");
       materializing = true; current();
       const prompt = JSON.stringify({ originalTask: revision.originalPrompt, previousResult: context.result.text, requestedChanges: input.feedback });
       // Complete-context limit: never silently truncate the previous result or feedback.
       if (prompt.length > 4000) throw new WebAccessError("conflict");
       const suffix = sha256Digest({ tenantId: this.scope.tenantId, sourceJobId, targetDigest: input.targetDigest }).slice(7);
       const base = { contractVersion: DOMAIN_CONTRACT_VERSION, tenantId: this.scope.tenantId, version: 0, createdAt: actor.now, updatedAt: actor.now };
-      const nextInput = { prompt, instructions: this.template.instructions };
+      const nextInput = { prompt, instructions: template.instructions };
       const plan = revisionPlanSchema.parse({ schema: "control-room.task-execution-plan/v2", tenantId: this.scope.tenantId,
         projectId, sourceJobId, sourceDigest, sourceInputDigest: context.job.inputDigest, templateDigest, plannedBy: actor.id,
         plannedAt: actor.now, input: nextInput, revision, acceptanceProfileId: context.profile.id,
@@ -296,7 +318,7 @@ export class TaskExecutionPlanner {
           authorityMode: "control_room_native", state: "proposed", jobIds: [`job:revision:${suffix}`] },
         job: { ...base, kind: "job", id: `job:revision:${suffix}`, projectId, workflowId: `workflow:revision:${suffix}`,
           jobType: "harness.hermes.native.task", specVersion: "1.0.0", inputDigest: sha256Digest(nextInput), state: "proposed",
-          priority: source.job.priority, requiredCapability: "harness.hermes.native.runs.v1", dependsOnJobIds: [], authority: this.template.authority,
+          priority: source.job.priority, requiredCapability: "harness.hermes.native.runs.v1", dependsOnJobIds: [], authority: template.authority,
           retryPolicy: { maxAttempts: 1, backoffSeconds: 0, retryableFailureCodes: [], retryAfterOrphan: false, ambiguousEffectPolicy: "attention" } } });
       assertNoSecretMaterial(plan); current();
       const canonical = new CanonicalStore(joined(tx));

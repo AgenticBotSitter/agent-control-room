@@ -1,5 +1,5 @@
 import { createHash, generateKeyPairSync } from "node:crypto";
-import { taskAssignmentFixture } from "./task-assignment";
+import { taskAssignmentFixture, type TaskSourcePreparation } from "./task-assignment";
 import { nativeLeaseEvidenceFixture } from "./native-lease-evidence";
 import { binding, enrollment, instant } from "../hermes-native-fixture";
 import { TaskAssignmentCoordinator } from "../../src/web/v1/task-assignment-coordinator";
@@ -10,8 +10,8 @@ import { sha256Digest } from "../../src/security";
 import type { DatabaseClient } from "../../src/persistence/database";
 import type { NativeTaskSubmission } from "../../src/persistence/native-task-submission";
 
-export async function canonicalApprovalStorageFixture() {
-  const f = await taskAssignmentFixture(), native = await nativeLeaseEvidenceFixture(); await f.assign();
+export async function canonicalApprovalStorageFixture(prepareSource?: TaskSourcePreparation) {
+  const f = await taskAssignmentFixture(prepareSource), native = await nativeLeaseEvidenceFixture(); await f.assign();
   let now = instant + 9000; const clock = () => now, keys = generateKeyPairSync("ed25519");
   const spki = keys.publicKey.export({ type: "spki", format: "der" }).toString("base64url");
   const pin = { keyId: "approval-key:storage", algorithm: "ed25519", spki,

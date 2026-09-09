@@ -74,8 +74,10 @@ accounts, login metadata or scheduling data into fixtures.
 ## P5 — [Any OS][News] Source-bound article reading
 
 DR-02/07. Reuse the existing collection/parsing and Readability/jsdom extraction,
-not a new news service. This package depends on the reviewed latest news source
-export; it is **not ready to claim from an absent module**.
+not a new news service. The sanitized collection source is now included under
+`src/project-adapters/` with news web modules under `src/web/v1/`. Before assignment,
+freeze the exact public commit and focused news test entry; the source refresh
+does not itself complete the article-extraction integration.
 
 Deliver bounded source retrieval, saved provenance, article detail with summary/
 source-link fallback, and existing research/guide actions. A fetched article is

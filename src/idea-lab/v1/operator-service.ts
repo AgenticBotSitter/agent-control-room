@@ -2,18 +2,21 @@ import { z } from "zod";
 import type { DatabaseClient } from "../../persistence/database";
 import { SecurityStore, sha256Digest, type VerifiedAuthentication } from "../../security";
 import { isHostProxyV1 } from "../../security/host-value";
-import { buildIdeaLabSessionV1, buildIdeaLabSynthesisV1, parseIdeaLabSessionV1 } from "./contracts";
+import { buildIdeaLabSessionV1, parseIdeaLabSessionV1 } from "./contracts";
 import { buildIdeaLabBotRunV1, buildRepositoryFakeProviderEvidenceV1, IdeaLabBotCoordinatorV1, type IdeaLabBotPanelDriverV1,
   type IdeaLabBotRunV1 } from "./coordinator";
 import { IdeaLabBotRunStoreV1 } from "./coordinator-store";
 import { IdeaLabErrorV1 } from "./errors";
+import { buildIdeaLabOwnerPromptV1 } from "./discussion-prompt";
 import { parseExactIdeaLabV1 } from "./exact";
 import { capturedIdeaTimeFromMillisecondsV1, capturedIdeaTimeMillisecondsV1, capturedIdeaTimeNowV1,
   IDEA_LAB_SESSION_PROJECTION_V1,
   ideaIdSchemaV1, ideaLabSessionProjectionSchemaV1,
   ideaLabelSchemaV1, ideaParticipantSchemaV1, ideaTextSchemaV1, ideaTimeSchemaV1 } from "./schemas";
 import { IdeaLabProjectRegistryStoreV1 } from "./store";
-import type { IdeaLabContributionV1, IdeaLabParticipantV1, IdeaLabSessionProjectionV1, IdeaLabSynthesisV1 } from "./types";
+import type { IdeaLabParticipantV1, IdeaLabSessionProjectionV1, IdeaLabSynthesisV1 } from "./types";
+import { DeterministicIdeaLabSynthesisEngineV1 } from "./synthesis-engine";
+export { DeterministicIdeaLabSynthesisEngineV1 } from "./synthesis-engine";
 
 const createInputSchema=z.object({commandId:ideaIdSchemaV1,title:ideaLabelSchemaV1,ideaSummary:ideaTextSchemaV1,
   targetCustomer:z.string().min(1).max(300),maxRounds:z.number().int().min(1).max(3),
@@ -23,24 +26,6 @@ const commandInputSchema=z.object({commandId:ideaIdSchemaV1,sessionId:ideaIdSche
 export class IdeaLabOperatorServiceErrorV1 extends Error {
   constructor(readonly safeCode:"invalid_operator_request"|"owner_forbidden"|"idea_not_found"|"state_conflict"|
     "operator_boundary_unavailable"){super(safeCode);this.name="IdeaLabOperatorServiceErrorV1";}
-}
-
-function mean(values:number[]):number{return values.length?Math.round(values.reduce((sum,value)=>sum+value,0)/values.length):50;}
-function perspective(contributions:IdeaLabContributionV1[],names:string[]):number[]{return contributions.filter(item=>names.includes(item.perspective)).map(item=>item.confidencePercent);}
-
-export class DeterministicIdeaLabSynthesisEngineV1 {
-  build(session:unknown,contributions:IdeaLabContributionV1[],synthesizedAt:string):IdeaLabSynthesisV1{
-    const parsed=parseIdeaLabSessionV1(session),all=contributions.map(item=>item.confidencePercent),fallback=mean(all);
-    const score=(names:string[])=>{const values=perspective(contributions,names);return values.length?mean(values):fallback;};
-    const risks=contributions.filter(item=>item.perspective==="skeptic"||item.perspective==="risk");
-    const next=[...contributions].sort((a,b)=>b.confidencePercent-a.confidencePercent||a.contributionId.localeCompare(b.contributionId))[0];
-    return buildIdeaLabSynthesisV1(parsed,contributions,{marketDemand:score(["customer","market"]),
-      feasibility:score(["operations","technology"]),differentiation:score(["market","growth"]),
-      durability:Math.max(0,100-score(["skeptic","risk"])),ownerFit:score(["customer","operations"]),
-      riskPercent:score(["skeptic","risk"]),executiveSummary:`The bounded panel completed ${contributions.length} safe contributions across ${parsed.participants.length} distinct perspectives. The score is mechanical and remains advisory until the owner decides.`,
-      nextExperiment:next?.suggestedExperiment??"Collect one bounded customer observation before making a project decision.",
-      dissentingPerspectiveCodes:[...new Set(risks.map(item=>item.primaryRiskCode))].sort().slice(0,6),synthesizedAt});
-  }
 }
 
 export class IdeaLabProtectedOperatorServiceV1 {
@@ -71,16 +56,19 @@ export class IdeaLabProtectedOperatorServiceV1 {
       ideaSummary:input.ideaSummary,targetCustomer:input.targetCustomer,participants:this.#participants,maxRounds:input.maxRounds,
       maxDurationSeconds:input.maxDurationSeconds,maxCostUsd:input.maxCostUsd,
       createdByIdentityDigest:sha256Digest({tenantId:authentication.tenantId,identityId:policy.identityId,purpose:"idea_lab_creator_v1"}),createdAt:input.requestedAt});
+    try { buildIdeaLabOwnerPromptV1(session); } catch { throw new IdeaLabOperatorServiceErrorV1("invalid_operator_request"); }
     try{await this.#registry.registerSession(session);return this.project(session,undefined,undefined,undefined,session.createdAt);}
     catch(error){if(error instanceof IdeaLabErrorV1&&error.safeCode==="duplicate_record")throw new IdeaLabOperatorServiceErrorV1("state_conflict");throw new IdeaLabOperatorServiceErrorV1("operator_boundary_unavailable");}
   }
   async start(value:unknown,authentication:VerifiedAuthentication):Promise<IdeaLabSessionProjectionV1>{
     const {input,session,now}=await this.#command(value,authentication,"idea_lab.panel_start");
     const existingRun=await this.#ledger.get(this.runId(session));if(existingRun&&["completed","cancelled","failed_definite","ambiguous"].includes(existingRun.state))return this.current(session,existingRun,now);
+    let safePrompt: string;
+    try { safePrompt = buildIdeaLabOwnerPromptV1(session); } catch { throw new IdeaLabOperatorServiceErrorV1("invalid_operator_request"); }
     const expiry = capturedIdeaTimeFromMillisecondsV1(capturedIdeaTimeMillisecondsV1(input.requestedAt)! + 300_000);
     if (!expiry) throw new IdeaLabOperatorServiceErrorV1("invalid_operator_request");
     const evidence=session.participants.map((participant,index)=>buildRepositoryFakeProviderEvidenceV1(session,participant,{evidenceId:`evidence.idea:${sha256Digest({commandId:input.commandId,index}).slice(7,31)}`,capturedAt:input.requestedAt,expiresAt:expiry}));
-    try{const run=await this.#coordinator.execute({runId:this.runId(session),session,evidence,safePrompt:`Evaluate the bounded idea titled ${session.title}. Retain only a safe structured contribution.`});return this.current(session,run,now);}
+    try{const run=await this.#coordinator.execute({runId:this.runId(session),session,evidence,safePrompt});return this.current(session,run,now);}
     catch(error){if(error instanceof IdeaLabErrorV1&&["duplicate_record","state_conflict"].includes(error.safeCode))throw new IdeaLabOperatorServiceErrorV1("state_conflict");throw new IdeaLabOperatorServiceErrorV1("operator_boundary_unavailable");}
   }
   async cancel(value:unknown,authentication:VerifiedAuthentication):Promise<IdeaLabSessionProjectionV1>{
@@ -88,7 +76,10 @@ export class IdeaLabProtectedOperatorServiceV1 {
     if(!run)run=await this.#ledger.prepare(buildIdeaLabBotRunV1({runId:this.runId(session),tenantId:session.tenantId,workspaceId:session.workspaceId,
       sessionId:session.sessionId,sessionDigest:session.sessionDigest,evidenceDigests:session.participants.map(participant=>sha256Digest({sessionDigest:session.sessionDigest,participantId:participant.participantId,purpose:"cancelled_before_evidence"})).sort(),
       state:"prepared",attempts:[],messagesUsed:0,costUsd:0,safeCode:"prepared",providerContacted:false,startedAt:now,updatedAt:now}));let cancelled:IdeaLabBotRunV1;
-    try{cancelled=await this.#ledger.cancel(run.runId,now);}catch{throw new IdeaLabOperatorServiceErrorV1("state_conflict");}
+    try{const requested=await this.#ledger.requestCancel(run.runId,now);
+      cancelled=requested.attempts.at(-1)?.state==="provider_marked"||!["prepared","running"].includes(requested.state)
+        ?requested:await this.#ledger.cancel(run.runId,now);
+    }catch{throw new IdeaLabOperatorServiceErrorV1("state_conflict");}
     return this.current(session,cancelled,now);
   }
   async synthesize(value:unknown,authentication:VerifiedAuthentication):Promise<IdeaLabSessionProjectionV1>{

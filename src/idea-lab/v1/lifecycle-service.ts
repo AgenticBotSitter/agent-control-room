@@ -46,6 +46,9 @@ export class IdeaLabProjectLifecycleServiceV1{
     if(current.version===input.expectedVersion+1&&current.lifecycleState===toState){let event;try{event=await this.#registry.getLatestProjectLifecycleEvent(authentication.tenantId,input.projectId);}catch{throw new IdeaLabProjectLifecycleServiceErrorV1("lifecycle_boundary_unavailable");}
       if(event?.actorIdentityDigest===actorIdentityDigest&&event.safeReasonCode===safeReasonCode&&event.occurredAt===input.requestedAt)return current;}
     if(current.version!==input.expectedVersion)throw new IdeaLabProjectLifecycleServiceErrorV1("state_conflict");
+    // Both actions target active, but their grants are not interchangeable.
+    if(input.action==="resume"&&current.lifecycleState!=="paused"||input.action==="reopen"&&current.lifecycleState!=="archived")
+      throw new IdeaLabProjectLifecycleServiceErrorV1("state_conflict");
     try{return await this.#registry.transitionProject({tenantId:authentication.tenantId,projectId:input.projectId,
       expectedVersion:input.expectedVersion,toState,actorIdentityDigest,safeReasonCode,occurredAt:input.requestedAt});}
     catch(error){if(error instanceof IdeaLabErrorV1&&(error.safeCode==="state_conflict"||error.safeCode==="not_found"))throw new IdeaLabProjectLifecycleServiceErrorV1(error.safeCode==="not_found"?"project_not_found":"state_conflict");throw new IdeaLabProjectLifecycleServiceErrorV1("lifecycle_boundary_unavailable");}

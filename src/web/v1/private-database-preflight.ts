@@ -3,29 +3,71 @@ import { verifyPgBossApplicationPermissions } from "../../persistence/pg-boss-ap
 import { verifyPgBossNativeWorkerPermissions } from "../../persistence/pg-boss-native-task-permissions";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import type { PrivatePostgresConfiguration } from "./private-postgres";
+import { CONTROL_ROOM_IDEA_ADAPTER_V1 } from "../../idea-lab/v1/schemas";
 
-// Generated from public-candidate migrations 0001-0058, including generic external-content
-// identifiers, using the catalog query below, not a mutable database marker.
-export const privateWebSchemaDigest = "1d03ff658c8c413abebca42b783f3bd7e18320b51c24e35fb3c96c8cea712199";
+/** Optional authoring prerequisite, read through the existing web role.
+ * Registration is operator setup, never a startup repair or connectivity claim. */
+export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tenantId: string }) {
+  const rows = (await db.query<{ valid: boolean }>(`SELECT tenant_id=$2 AND
+    source_system='control_room_native_ideas' AND contract_version='1.0.0' AND
+    authority_mode='control_room_native' AND status <> 'disabled' AS valid
+    FROM adapter_registry WHERE id=$1`, [CONTROL_ROOM_IDEA_ADAPTER_V1, scope.tenantId])).rows;
+  if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
+}
+
+// Generated from public migrations 0001-0064, including generic external-content
+// migrations 0025/0026. Catalog query below; not a mutable database marker.
+export const privateWebSchemaDigest = "8a58c3e600c32b046af83274cdcd3ecf0fb7d517c3a133961b44680e568a2d96";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
+  "control_abs_story_versions", "control_abs_source_observations", "control_abs_source_settings", "control_abs_story_archives",
+  "control_idea_sessions", "control_idea_contributions", "control_idea_syntheses", "control_idea_decisions", "control_idea_bot_run_events",
   "adapter_registry", "projects", "control_manual_project_heads", "control_web_project_commands", "audit_events",
-  "control_audit_chain_heads", "control_project_lifecycle_events", "control_connection_registry_heads",
+  "control_audit_chain_heads", "control_project_lifecycle_events", "control_policy_decisions", "control_connection_registry_heads",
   "control_connection_enrollments", "control_connection_authenticated_telemetry_receipts", "control_requests", "control_workflows",
   "control_jobs", "control_attempts", "control_harness_runs", "control_harness_run_events", "control_web_task_commands",
   "control_artifact_manifests", "control_native_artifact_receipts", "control_completion_gate_records", "control_completion_gate_integrity", "control_web_task_review_commands", "control_native_review_plans"] as const;
 const inserts = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
-  "control_jobs", "control_web_task_commands", "control_completion_gate_records", "control_web_task_review_commands"]);
+  "control_jobs", "control_web_task_commands", "control_completion_gate_records", "control_web_task_review_commands", "control_abs_source_settings", "control_abs_story_archives",
+  "control_policy_decisions", "control_project_lifecycle_events"]);
 const updates: Record<string, readonly string[]> = {
   control_identities: ["web_lock"], control_role_grants: ["web_lock"], workspaces: ["web_lock"],
   control_connection_registry_heads: ["web_lock"], control_web_sessions: ["revoked_at"],
   control_completion_gate_integrity: ["web_lock", "revision", "record_count", "state_digest", "state_auth_tag"],
   control_completion_gate_records: ["web_lock"],
-  projects: ["domain_state", "source_version", "normalized_state", "updated_at"],
+  projects: ["domain_state", "source_version", "normalized_state", "updated_at", "payload", "observed_at"],
   control_manual_project_heads: ["lifecycle", "version", "updated_at"],
   control_audit_chain_heads: ["head_hash", "event_count", "updated_at"],
 };
 const fail = () => { throw new Error("private_database_preflight_failed"); };
+const ideaCreationReads = ["workspaces", "control_identities", "control_role_grants", "control_web_sessions",
+  "control_idea_sessions", "control_idea_bot_run_events", "control_idea_contributions", "control_idea_syntheses",
+  "control_idea_decisions", "control_idea_owner_authorizations", "control_policy_decisions", "projects",
+  "control_project_lifecycle_events", "audit_events", "control_audit_chain_heads"];
+const ideaCreationInserts = new Set(["control_web_sessions", "control_idea_sessions", "control_idea_bot_run_events", "audit_events", "control_audit_chain_heads",
+  "control_policy_decisions", "control_idea_owner_authorizations", "control_idea_decisions", "projects", "control_project_lifecycle_events", "control_idea_syntheses"]);
+const ideaCreationUpdates: Record<string, readonly string[]> = { workspaces: ["web_lock"], control_identities: ["web_lock"],
+  control_role_grants: ["web_lock"], control_web_sessions: ["revoked_at"], control_audit_chain_heads: ["head_hash", "event_count", "updated_at"] };
+const ideaRuntimeReads = ["workspaces", "control_identities", "control_role_grants", "control_idea_sessions",
+  "control_idea_contributions", "control_idea_bot_run_events", "control_idea_decisions"];
+const ideaRuntimeInserts = new Set(["control_idea_contributions", "control_idea_bot_run_events"]);
+const ideaRuntimeUpdates: Record<string, readonly string[]> = { workspaces: ["web_lock"] };
+const newsIngestionReads = ["workspaces", "projects", "control_identities", "control_role_grants", "control_abs_story_versions", "control_abs_source_observations", "control_abs_discovery_baselines", "control_abs_source_settings", "control_abs_story_archives"];
+const newsIngestionInserts = new Set(["control_abs_story_versions", "control_abs_source_observations", "control_abs_discovery_baselines"]);
+const newsIngestionUpdates: Record<string, readonly string[]> = { workspaces: ["web_lock"], projects: ["coordinator_lock"] };
+const newsCoordinatorReads = ["tenants", "workspaces", "projects", "control_manual_project_heads", "control_identities", "control_role_grants",
+  "control_web_sessions", "control_requests", "control_workflows", "control_jobs", "control_attempts", "control_leases", "control_nodes",
+  "control_job_dependencies", "control_transition_events", "control_outbox", "control_approvals", "control_effect_intents",
+  "control_approval_consumptions", "control_policy_decisions", "control_abs_feed_plans", "control_abs_source_settings", "audit_events", "control_audit_chain_heads"];
+const newsCoordinatorInserts = new Set(["control_web_sessions", "control_requests", "control_workflows", "control_jobs", "control_attempts",
+  "control_leases", "control_transition_events", "control_outbox", "control_approvals", "control_effect_intents", "control_approval_consumptions",
+  "control_policy_decisions", "control_abs_feed_plans", "audit_events", "control_audit_chain_heads"]);
+const newsCoordinatorUpdates: Record<string, readonly string[]> = {
+  ...Object.fromEntries(["control_jobs", "control_attempts", "control_leases", "control_approvals", "control_effect_intents"].map(table => [table, ["state", "version", "payload", "updated_at"]])),
+  ...Object.fromEntries(["tenants", "projects", "control_manual_project_heads", "control_nodes"].map(table => [table, ["coordinator_lock"]])),
+  ...Object.fromEntries(["workspaces", "control_identities", "control_role_grants"].map(table => [table, ["web_lock"]])),
+  control_web_sessions: ["revoked_at"], control_audit_chain_heads: ["head_hash", "event_count", "updated_at"],
+};
 const coordinatorReads = ["tenants", "workspaces", "control_identities", "control_role_grants", "control_web_sessions",
   "projects", "control_manual_project_heads", "control_requests", "control_workflows", "control_jobs",
   "control_attempts", "control_leases", "control_task_execution_plans", "control_nodes", "control_node_keys",
@@ -101,12 +143,39 @@ export async function readPrivateWebSchemaDigest(db: DatabaseSession) {
 }
 
 /** Trusted bootstrap choice, never an HTTP permission policy. Omitted stays queue-free. */
-export type NativeQueueDatabaseOption = { nativeQueue: true; nativeQueueRecovery?: true };
+export type NativeQueueDatabaseOption = { nativeQueue: true; nativeQueueRecovery?: true;
+  /** Queue schema is present for news, but native task submission is not enabled. */
+  nativeQueueProducer?: false };
+export type NewsQueueDatabaseOption = { newsQueue: true };
 
 /** Read-only setup gate; never grants, migrates, creates an owner, or repairs a failed prerequisite. */
 export async function verifyPrivateDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,
   scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, queue?: NativeQueueDatabaseOption) {
   return verifyDatabase(db, config, scope, now, "web", queue);
+}
+
+/** Owner Idea commands: no participant result, job, queue or provider execution writes. */
+export async function verifyIdeaCreationDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,
+  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, queue?: NativeQueueDatabaseOption) {
+  return verifyDatabase(db, config, scope, now, "ideas", queue);
+}
+
+/** Canonical news coordination; feed submission privileges require explicit configuration. */
+export async function verifyNewsCoordinatorDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,
+  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, queue?: NativeQueueDatabaseOption | NewsQueueDatabaseOption) {
+  return verifyDatabase(db, config, scope, now, "newsCoordinator", queue);
+}
+
+/** News observations only. Cannot create projects, authorize proposals or dispatch jobs. */
+export async function verifyNewsIngestionDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,
+  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, queue?: NativeQueueDatabaseOption) {
+  return verifyDatabase(db, config, scope, now, "newsIngestion", queue);
+}
+
+/** Discussion writer only. Cannot create sessions, authorize decisions or dispatch jobs. */
+export async function verifyIdeaRuntimeDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,
+  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, queue?: NativeQueueDatabaseOption) {
+  return verifyDatabase(db, config, scope, now, "ideaRuntime", queue);
 }
 
 /** Exact task-coordinator profile. No request-selected role or caller-supplied permission policy. */
@@ -171,12 +240,14 @@ async function verifySession(tx: DatabaseSession, config: PrivatePostgresConfigu
 }
 
 async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,
-  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, kind: "web" | "coordinator" | "results" | "evidence" | "sessions", queue?: NativeQueueDatabaseOption) {
-  const withQueue = queue?.nativeQueue === true;
-  const role = { web: "control_room_private_web", coordinator: "control_room_task_coordinator", results: "control_room_native_results", evidence: "control_room_native_evidence", sessions: "control_room_native_sessions" }[kind];
-  const allowedReads = kind === "sessions" ? sessionReads : kind === "evidence" ? evidenceReads : kind === "results" ? resultReads : kind === "coordinator" ? coordinatorReads : privateWebReadTables;
-  const allowedInserts = kind === "sessions" ? sessionInserts : kind === "evidence" ? evidenceInserts : kind === "results" ? resultInserts : kind === "coordinator" ? coordinatorInserts : inserts;
-  const allowedUpdates = kind === "sessions" ? sessionUpdates : kind === "evidence" ? evidenceUpdates : kind === "results" ? resultUpdates : kind === "coordinator" ? coordinatorUpdates : updates;
+  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, kind: "web" | "coordinator" | "results" | "evidence" | "sessions" | "ideas" | "ideaRuntime" | "newsIngestion" | "newsCoordinator", queue?: NativeQueueDatabaseOption | NewsQueueDatabaseOption) {
+  const feedProducer = kind === "newsCoordinator" && !!queue && "newsQueue" in queue && queue.newsQueue === true;
+  const withQueue = feedProducer || !!queue && "nativeQueue" in queue && queue.nativeQueue === true;
+  const recovery = kind === "coordinator" && !!queue && "nativeQueueRecovery" in queue && queue.nativeQueueRecovery === true;
+  const role = { web: "control_room_private_web", coordinator: "control_room_task_coordinator", results: "control_room_native_results", evidence: "control_room_native_evidence", sessions: "control_room_native_sessions", ideas: "control_room_idea_creation", ideaRuntime: "control_room_idea_runtime", newsIngestion: "control_room_news_ingestion", newsCoordinator: "control_room_news_coordinator" }[kind];
+  const allowedReads = kind === "newsCoordinator" ? newsCoordinatorReads : kind === "newsIngestion" ? newsIngestionReads : kind === "ideaRuntime" ? ideaRuntimeReads : kind === "ideas" ? ideaCreationReads : kind === "sessions" ? sessionReads : kind === "evidence" ? evidenceReads : kind === "results" ? resultReads : kind === "coordinator" ? coordinatorReads : privateWebReadTables;
+  const allowedInserts = kind === "newsCoordinator" ? newsCoordinatorInserts : kind === "newsIngestion" ? newsIngestionInserts : kind === "ideaRuntime" ? ideaRuntimeInserts : kind === "ideas" ? ideaCreationInserts : kind === "sessions" ? sessionInserts : kind === "evidence" ? evidenceInserts : kind === "results" ? resultInserts : kind === "coordinator" ? coordinatorInserts : inserts;
+  const allowedUpdates = kind === "newsCoordinator" ? newsCoordinatorUpdates : kind === "newsIngestion" ? newsIngestionUpdates : kind === "ideaRuntime" ? ideaRuntimeUpdates : kind === "ideas" ? ideaCreationUpdates : kind === "sessions" ? sessionUpdates : kind === "evidence" ? evidenceUpdates : kind === "results" ? resultUpdates : kind === "coordinator" ? coordinatorUpdates : updates;
   try {
     await db.transaction(async tx => {
       await verifySession(tx, config, role);
@@ -198,7 +269,8 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
           WHERE a.grantee=0 OR a.grantee IN (SELECT oid FROM pg_roles WHERE pg_has_role(oid,'MEMBER')))
         OR NOT has_schema_privilege('public','USAGE') AS unsafe`, [withQueue])).rows[0];
       if (unsafe?.unsafe !== false) fail();
-      if (withQueue) await verifyPgBossApplicationPermissions(tx, kind === "coordinator", kind === "coordinator" && queue?.nativeQueueRecovery === true);
+      if (withQueue) await verifyPgBossApplicationPermissions(tx,
+        kind === "coordinator" && !(queue && "nativeQueueProducer" in queue && queue.nativeQueueProducer === false) || feedProducer, recovery);
       const columns = (await tx.query<{ table_name: string; column_name: string; read: boolean; insert: boolean; update: boolean; extra: boolean }>(`
         SELECT c.relname AS table_name,a.attname AS column_name,
           has_column_privilege(c.oid,a.attnum,'SELECT') AS read,

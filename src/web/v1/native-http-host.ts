@@ -8,8 +8,11 @@ import { nativeEvidenceRegistrationSchema } from "./native-evidence-receiver";
 import type { ManagedNativeSessions } from "./managed-native-sessions";
 import { createNativeHttpNodeHandler } from "./native-http-node-handler";
 
-const peerSchema = z.object({ nodeId: localId, certificateDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
-  task: nativeEvidenceRegistrationSchema }).strict();
+const peerIdentity = { nodeId: localId, certificateDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/) };
+const peerSchema = z.union([
+  z.object({ ...peerIdentity, task: nativeEvidenceRegistrationSchema }).strict(),
+  z.object({ ...peerIdentity, assignment: z.literal("queue") }).strict(),
+]);
 export type NativeHttpPeer = z.input<typeof peerSchema>;
 export type NativeHttpSettings = { origin: string; peers: readonly NativeHttpPeer[];
   isPeerCurrent(nodeId: string, certificateDigest: string): boolean };
@@ -98,6 +101,9 @@ export function createNativeHttpHost(input: NativeHttpSettings & {
       const command = nativeHttpRequestSchema.parse(JSON.parse(body)); current(peer);
       if (controller.signal.aborted || socket.destroyed) throw error();
       if (command.operation === "open") {
+        // No client-supplied task selector and no implicit outstanding-task
+        // recovery. Queue binding is initial-only until recovery is integrated.
+        if ("assignment" in peer && command.mode !== "initial") throw error();
         const previous = records.get(peer.nodeId);
         if (previous) await closeRecord(previous);
         current(peer); if (controller.signal.aborted) throw error();
@@ -118,7 +124,8 @@ export function createNativeHttpHost(input: NativeHttpSettings & {
             if (records.get(captured.nodeId) === captured) records.delete(captured.nodeId); },
           isAvailable: () => { try { current(configured, captured); return true; } catch { return false; } },
         };
-        const wire = await attach(peer.nodeId, transport, { mode: command.mode, task: peer.task });
+        const wire = await attach(peer.nodeId, transport, "task" in peer
+          ? { mode: command.mode, task: peer.task } : { mode: "initial", assignment: "queue" });
         record.wire = wire;
         if (record.closed || controller.signal.aborted || closed) {
           try { await wire.close(); } catch { uncertain = true; }

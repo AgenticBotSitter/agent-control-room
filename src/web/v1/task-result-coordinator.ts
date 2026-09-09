@@ -3,7 +3,7 @@ import type { DatabaseClient, DatabaseSession } from "../../persistence/database
 import { localId } from "../../harness/v1/native-run-identifiers";
 import { HarnessRunStoreV1 } from "../../harness/v1/store";
 import { NativeResultSubmissionService } from "../../completion-gate/v1/native-result-submission";
-import { TaskExecutionPlanner } from "./task-execution-planner";
+import { TaskExecutionPlanner, captureNativeTaskTemplates } from "./task-execution-planner";
 import { captureTaskQualityConfiguration, type TaskQualityConfiguration } from "./task-quality-coordinator";
 import { sha256Digest } from "../../security";
 
@@ -24,7 +24,7 @@ export class TaskResultCoordinator {
     this.scope = Object.freeze({ tenantId: localId.parse(scope.tenantId), workspaceId: localId.parse(scope.workspaceId) });
     this.quality = captureTaskQualityConfiguration(quality);
     // The outer lifecycle validates matching review keys; this reader captures independent copies.
-    this.planning = { ...planning, template: structuredClone(planning.template), integrityKey: Uint8Array.from(planning.integrityKey),
+    this.planning = { ...planning, ...captureNativeTaskTemplates(planning), integrityKey: Uint8Array.from(planning.integrityKey),
       reviewIntegrityKey: Uint8Array.from(planning.reviewIntegrityKey),
       checkpoints: { read: planning.checkpoints.read.bind(planning.checkpoints), initialize: deny, advance: deny },
       ...(planning.ideaIntegrityKey ? { ideaIntegrityKey: Uint8Array.from(planning.ideaIntegrityKey) } : {}) };

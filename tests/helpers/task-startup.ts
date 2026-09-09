@@ -6,6 +6,8 @@ import type { PrivateTaskStartupConfiguration } from "../../src/web/v1/private-t
 
 export async function taskStartupFixture(base?: Awaited<ReturnType<typeof taskAssignmentFixture>>) {
   const f = base ?? await taskAssignmentFixture();
+  await f.raw.query("SELECT set_config('control_room.setup_tenant_id',$1,false)", [f.scope.tenantId]);
+  await f.raw.exec(await readFile("db/setup/private_idea_adapter.sql", "utf8"));
   await f.raw.exec(await readFile("db/roles/private_web_roles.sql", "utf8"));
   await f.raw.exec(await readFile("db/roles/task_coordinator_roles.sql", "utf8"));
   await f.raw.exec(`CREATE ROLE web_test LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
@@ -16,7 +18,7 @@ export async function taskStartupFixture(base?: Awaited<ReturnType<typeof taskAs
   // One disposable PGlite backend, serialized transactions with actual LOGIN session identities.
   // This proves SQL privileges, not physical independent PostgreSQL connections or concurrency.
   // Only the known PGlite database TEMP metadata limitation is injected; both real gates run.
-  const pool = (login: "web_test" | "coordinator_test") => {
+  const pool = (login: "web_test" | "coordinator_test" | "idea_test" | "idea_runtime_test" | "news_test" | "ingestion_test") => {
     let closes = 0, available = true;
     const client: DatabaseClient = {
       query: (sql, params) => client.transaction(tx => tx.query(sql, params)),
@@ -42,5 +44,5 @@ export async function taskStartupFixture(base?: Awaited<ReturnType<typeof taskAs
       database, tasks: { ...f.ownerKeys, harnessIntegrityKey: f.ownerKeys.harnessIntegrityKey } },
     coordinator: { database: { ...database, username: "coordinator_test" }, planning: f.plannerConfig, routes: [f.route] },
   };
-  return { ...f, web, coordinator, config, openDatabase: (db: { username: string }) => db.username === "web_test" ? web : coordinator };
+  return { ...f, web, coordinator, config, pool, openDatabase: (db: { username: string }) => db.username === "web_test" ? web : coordinator };
 }

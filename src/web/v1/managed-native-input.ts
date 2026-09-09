@@ -4,9 +4,12 @@ import { nativeEvidenceRegistrationSchema, type NativeEvidenceReceiver } from ".
 import type { ManagedNativeSessions } from "./managed-native-sessions";
 import { localId, digestSchema } from "../../harness/v1/native-run-identifiers";
 
-export const nativeInputConfigurationSchema = z.object({ mode: z.enum(["initial", "recover"]),
-  task: nativeEvidenceRegistrationSchema }).strict();
+export const nativeInputConfigurationSchema = z.union([
+  z.object({ mode: z.enum(["initial", "recover"]), task: nativeEvidenceRegistrationSchema }).strict(),
+  z.object({ mode: z.literal("initial"), assignment: z.literal("queue") }).strict(),
+]);
 export type NativeInputConfiguration = z.infer<typeof nativeInputConfigurationSchema>;
+type TaskBinding = z.infer<typeof nativeEvidenceRegistrationSchema>;
 type Handle = Awaited<ReturnType<ManagedNativeSessions["attach"]>>;
 const unavailable = () => new Error("native_input_unavailable");
 const commandSchema = z.object({
@@ -26,6 +29,7 @@ export class ManagedNativeInput {
   readonly nodeId: string;
   readonly grantsExecutionAuthority = false;
   private readonly config: NativeInputConfiguration;
+  private task?: TaskBinding;
   private readonly handle: Handle;
   private readonly register: NativeEvidenceReceiver["register"];
   private readonly available: () => void;
@@ -38,6 +42,7 @@ export class ManagedNativeInput {
   private readonly pending = new Set<AbortController>();
   constructor(handle: Handle, config: NativeInputConfiguration, register: NativeEvidenceReceiver["register"], available: () => void) {
     this.nodeId = handle.nodeId; this.config = nativeInputConfigurationSchema.parse(config);
+    this.task = "task" in this.config ? Object.freeze(this.config.task) : undefined;
     this.handle = Object.freeze({ ...handle }); this.register = register; this.available = available;
   }
   private current() { if (this.closed) throw unavailable(); this.available(); }
@@ -99,14 +104,15 @@ export class ManagedNativeInput {
         if (frame.type === "node.reconciliation.report") {
           if (this.state !== "reconciling") throw unavailable();
           if (this.config.mode === "recover") {
-            await this.handle.recover(this.config.task, current); this.state = "reporting";
+            if (!this.task) throw unavailable();
+            await this.handle.recover(this.task, current); this.state = "reporting";
           } else this.state = "ready";
         }
         return { kind: "reconciliation" as const };
       }
       if (frame.type === "harness.native.dispatch.receipt" && this.config.mode === "initial" && this.state === "sent") {
-        const receipt = await this.handle.receipt(copy, current), task = this.config.task;
-        if (receipt.nodeReportedDisposition !== "recorded" || receipt.projectId !== task.projectId
+        const receipt = await this.handle.receipt(copy, current), task = this.task;
+        if (!task || receipt.nodeReportedDisposition !== "recorded" || receipt.projectId !== task.projectId
           || receipt.jobId !== task.jobId || receipt.attemptId !== task.attemptId) throw unavailable();
         const registration = await this.register(task, current); this.current(); this.state = "reporting";
         return { kind: "receipt" as const, receipt, registration };
@@ -117,15 +123,37 @@ export class ManagedNativeInput {
       throw unavailable();
     });
   }
+  /** Internal canonical-queue composition. Uses the same FIFO and task binding as
+   * owner commands so a queued dispatch cannot bypass receipt lifecycle ownership.
+   * The supplied work still performs canonical stage/transmit revalidation. */
+  deliverQueued<T>(input: TaskBinding, signal: AbortSignal, work: (signal: AbortSignal) => Promise<T>) {
+    let task: TaskBinding;
+    try { task = nativeEvidenceRegistrationSchema.parse(input); } catch { return this.reject(); }
+    return this.enqueue(Buffer.byteLength(JSON.stringify(task)), signal, async current => {
+      if (this.config.mode !== "initial" || this.state !== "ready") throw unavailable();
+      const expected = this.task;
+      if (expected && (task.projectId !== expected.projectId || task.jobId !== expected.jobId
+        || task.attemptId !== expected.attemptId || task.inputDigest !== expected.inputDigest)) throw unavailable();
+      // Only the manager's canonically revalidated queue path may bind an unbound
+      // generation. Binding is immutable for its whole lifetime, including failure.
+      if (!expected) {
+        if (!("assignment" in this.config) || this.config.assignment !== "queue") throw unavailable();
+        this.task = Object.freeze(task);
+      }
+      const result = await work(current); this.current();
+      if (current.aborted) throw unavailable();
+      this.state = "sent"; return result;
+    });
+  }
   stage(identity: Parameters<Handle["stage"]>[0], input: Parameters<Handle["stage"]>[1], signal: AbortSignal) {
     let captured: ReturnType<typeof captureCommand>;
     try { captured = captureCommand(identity, input); } catch { return this.reject(); }
     const { actor, task, size } = captured;
     return this.enqueue(size, signal, async current => {
-      if (this.config.mode !== "initial" || this.state !== "ready" || task.projectId !== this.config.task.projectId
-        || task.jobId !== this.config.task.jobId || task.inputDigest !== this.config.task.inputDigest) throw unavailable();
+      if ("assignment" in this.config || this.config.mode !== "initial" || this.state !== "ready" || !this.task
+        || task.projectId !== this.task.projectId || task.jobId !== this.task.jobId || task.inputDigest !== this.task.inputDigest) throw unavailable();
       const result = await this.handle.stage(actor, task, current);
-      if (!("attemptId" in result) || result.attemptId !== this.config.task.attemptId) throw unavailable();
+      if (!("attemptId" in result) || result.attemptId !== this.task.attemptId) throw unavailable();
       this.state = "prepared"; return result;
     });
   }
@@ -134,8 +162,8 @@ export class ManagedNativeInput {
     try { captured = captureCommand(identity, input); } catch { return this.reject(); }
     const { actor, task, size } = captured;
     return this.enqueue(size, signal, async current => {
-      if (this.config.mode !== "initial" || this.state !== "prepared" || task.projectId !== this.config.task.projectId
-        || task.jobId !== this.config.task.jobId || task.inputDigest !== this.config.task.inputDigest) throw unavailable();
+      if ("assignment" in this.config || this.config.mode !== "initial" || this.state !== "prepared" || !this.task
+        || task.projectId !== this.task.projectId || task.jobId !== this.task.jobId || task.inputDigest !== this.task.inputDigest) throw unavailable();
       const result = await this.handle.transmit(actor, task, current); this.state = "sent"; return result;
     });
   }

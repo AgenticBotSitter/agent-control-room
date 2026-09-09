@@ -1,11 +1,12 @@
-import { assertNoSecretMaterial } from "../../security";
 import { localId } from "../../harness/v1/native-run-identifiers";
 import { createPrivatePostgresDatabase, validatePrivatePostgresConfiguration, type PrivatePostgresConfiguration } from "./private-postgres";
-import { verifyPrivateDatabase, verifyTaskCoordinatorDatabase, verifyNativeResultDatabase, verifyNativeEvidenceDatabase, verifyNativeSessionDatabase } from "./private-database-preflight";
+import { verifyPrivateDatabase, verifyTaskCoordinatorDatabase, verifyNativeResultDatabase, verifyNativeEvidenceDatabase, verifyNativeSessionDatabase, verifyIdeaCreationDatabase, verifyIdeaRuntimeDatabase, verifyPrivateIdeaAdapter } from "./private-database-preflight";
+import { z } from "zod";
+import { ideaParticipantSchemaV1 } from "../../idea-lab/v1/schemas";
 import { validatePrivateStartupConfiguration, type PrivateStartupConfiguration } from "./private-startup";
 import { installPrivateApplication } from "./private-process";
 import { createPrivateTaskApplication } from "./private-task-application";
-import { nativeTaskTemplateSchema } from "./task-execution-planner";
+import { captureNativeTaskTemplates } from "./task-execution-planner";
 import { validateTaskAssignmentRoutes, validateNativeApprovalEnrollments } from "./task-assignment-coordinator";
 import type { TaskCoordinatorConfiguration, TaskCoordinatorDatabase } from "./task-coordinator-lifecycle";
 import { captureTaskQualityConfiguration, validateTaskQualityKeys } from "./task-quality-coordinator";
@@ -17,21 +18,30 @@ import type { DatabaseSession } from "../../persistence/database";
 import type { NativeTaskSubmission } from "../../persistence/native-task-submission";
 import { composePrivateTaskWorkerApplication } from "./private-task-worker-application";
 import type { NativeQueueWorkerStartupConfiguration } from "./native-queue-worker-startup";
+import { captureNewsStartupConfiguration, type NewsStartupConfiguration } from "./news-startup-configuration";
+import { verifyNewsCoordinatorDatabase, verifyNewsIngestionDatabase } from "./private-database-preflight";
+import { createNewsDiscoveryIntegration } from "./news-discovery-integration";
+import type { NewsQueueWorkerStartupConfiguration } from "./news-queue-worker-startup";
+import type { preparePgBossAbsFeedSubmission } from "../../persistence/pg-boss-abs-feed-submission";
 
 type OwnedQueueWorker = { close(): Promise<void>; status(): { accepting: boolean } };
 
 export type PrivateTaskStartupConfiguration = {
   web: PrivateStartupConfiguration;
+  news?: NewsStartupConfiguration;
   coordinator: Pick<TaskCoordinatorConfiguration, "planning" | "routes" | "approvals" | "quality" | "revisionPlanning" | "nativeHttp"> & {
     nativeQueue?: true;
     nativeQueueRecovery?: true;
     /** Explicit local composition; no default worker factory or deployment activation. */
     queueWorker?: { database: PrivatePostgresConfiguration; concurrency?: number };
     database: PrivatePostgresConfiguration; resultDatabase?: PrivatePostgresConfiguration;
+    ideaCreation?: { database: PrivatePostgresConfiguration; integrityKey: Uint8Array; participants: unknown[] };
+    /** Already prepared inert ports; ownership transfers after configuration validation. No runtime factory is invoked here. */
+    ideaRuntime?: Omit<NonNullable<TaskCoordinatorConfiguration["ideaRuntime"]>, "database"> & { database: PrivatePostgresConfiguration };
     evidence?: NativeEvidenceSettings & { database: PrivatePostgresConfiguration };
     sessions?: ManagedNativeSessionSettings & { database: PrivatePostgresConfiguration } };
 };
-function configuration(input: PrivateTaskStartupConfiguration) {
+export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartupConfiguration) {
   try {
     const web = validatePrivateStartupConfiguration(input.web);
     localId.parse(web.tenantId); localId.parse(web.workspaceId);
@@ -39,11 +49,10 @@ function configuration(input: PrivateTaskStartupConfiguration) {
     if (database.host !== web.database.host || database.port !== web.database.port || database.database !== web.database.database
       || database.username === web.database.username) throw new Error();
     const key = (value: Uint8Array) => { if (!(value instanceof Uint8Array) || value.length !== 32) throw new Error(); return Uint8Array.from(value); };
-    const p = input.coordinator.planning, template = nativeTaskTemplateSchema.parse(p.template);
-    assertNoSecretMaterial(template);
+    const p = input.coordinator.planning, templates = captureNativeTaskTemplates(p);
     const read = p.checkpoints.read.bind(p.checkpoints);
     const denied = (): never => { throw new Error("private_task_checkpoint_write_denied"); };
-    const planning = { template, integrityKey: key(p.integrityKey), reviewIntegrityKey: key(p.reviewIntegrityKey),
+    const planning = { ...templates, integrityKey: key(p.integrityKey), reviewIntegrityKey: key(p.reviewIntegrityKey),
       checkpoints: Object.freeze({ read, initialize: denied, advance: denied }),
       ...(p.ideaIntegrityKey ? { ideaIntegrityKey: key(p.ideaIntegrityKey) } : {}) };
     const routes = validateTaskAssignmentRoutes(input.coordinator.routes), a = input.coordinator.approvals;
@@ -81,7 +90,30 @@ function configuration(input: PrivateTaskStartupConfiguration) {
       || queueWorker.database.port !== database.port || queueWorker.database.database !== database.database
       || [web.database.username, database.username, resultDatabase!.username, evidence!.database.username, sessions.database.username].includes(queueWorker.database.username)
       || !Number.isSafeInteger(queueWorker.concurrency) || queueWorker.concurrency < 1 || queueWorker.concurrency > 8)) throw new Error();
-    return { web, database, planning, routes, approvals, quality, revisionPlanning, resultDatabase, evidence, sessions, nativeHttp, nativeQueue, nativeQueueRecovery, queueWorker };
+    const i = input.coordinator.ideaCreation;
+    const ideaCreation = i ? { database: validatePrivatePostgresConfiguration(i.database), integrityKey: key(i.integrityKey),
+      participants: z.array(ideaParticipantSchemaV1).min(3).max(6).parse(i.participants) } : undefined;
+    if (ideaCreation && (!web.ideaProjects || !timingSafeEqual(ideaCreation.integrityKey, web.ideaProjects.integrityKey)
+      || ideaCreation.database.host !== database.host || ideaCreation.database.port !== database.port
+      || ideaCreation.database.database !== database.database
+      || [web.database, database, resultDatabase, evidence?.database, sessions?.database, queueWorker?.database]
+        .some(value => value?.username === ideaCreation.database.username)
+      || new Set(ideaCreation.participants.map(value => value.participantId)).size !== ideaCreation.participants.length)) throw new Error();
+    const ir = input.coordinator.ideaRuntime;
+    const ideaRuntime = ir ? { database: validatePrivatePostgresConfiguration(ir.database), close: ir.close.bind(ir),
+      runtime: Object.freeze({ resolve: ir.runtime.resolve.bind(ir.runtime),
+        driver: Object.freeze({ mode: ir.runtime.driver.mode, invoke: ir.runtime.driver.invoke.bind(ir.runtime.driver) }),
+        evidenceAuthority: Object.freeze({ verify: ir.runtime.evidenceAuthority.verify.bind(ir.runtime.evidenceAuthority) }),
+        admissionAuthority: Object.freeze({ consume: ir.runtime.admissionAuthority.consume.bind(ir.runtime.admissionAuthority) }) }) } : undefined;
+    if (ideaRuntime && (!ideaCreation || ideaRuntime.runtime.driver.mode !== "hermes_bot_mode_filtered"
+      || ideaRuntime.database.host !== database.host || ideaRuntime.database.port !== database.port
+      || ideaRuntime.database.database !== database.database
+      || [web.database, database, resultDatabase, evidence?.database, sessions?.database, queueWorker?.database, ideaCreation.database]
+        .some(value => value?.username === ideaRuntime.database.username))) throw new Error();
+    const news = input.news ? captureNewsStartupConfiguration(input.news, web,
+      [web.database, database, resultDatabase, evidence?.database, sessions?.database, queueWorker?.database,
+        ideaCreation?.database, ideaRuntime?.database].filter((value): value is PrivatePostgresConfiguration => !!value)) : undefined;
+    return { web, database, planning, routes, approvals, quality, revisionPlanning, resultDatabase, evidence, sessions, nativeHttp, nativeQueue, nativeQueueRecovery, queueWorker, ideaCreation, ideaRuntime, news };
   } catch { throw new Error("private_task_startup_config_invalid"); }
 }
 
@@ -97,18 +129,35 @@ export function createPrivateTaskBootstrap(dependencies: {
   prepareNativeSubmission?: (db: DatabaseSession) => Promise<NativeTaskSubmission & { close(): Promise<void> }>;
   /** Normally bound to the verified worker bootstrap; never supplied by a request. */
   startNativeWorker?: (config: NativeQueueWorkerStartupConfiguration) => Promise<OwnedQueueWorker>;
+  prepareNewsSubmission?: (db: DatabaseSession) => ReturnType<typeof preparePgBossAbsFeedSubmission>;
+  startNewsWorker?: (config: NewsQueueWorkerStartupConfiguration) => Promise<OwnedQueueWorker>;
 }) {
   const prepareSubmission = dependencies.prepareNativeSubmission?.bind(dependencies);
   const startWorker = dependencies.startNativeWorker?.bind(dependencies);
+  const prepareNews = dependencies.prepareNewsSubmission?.bind(dependencies);
+  const startNews = dependencies.startNewsWorker?.bind(dependencies);
   let started = false;
   return Object.freeze({ async start(input: PrivateTaskStartupConfiguration, signal?: AbortSignal) {
     if (started) throw new Error("private_task_startup_already_attempted");
     started = true;
     if (signal?.aborted) throw new Error("private_task_startup_canceled");
-    const config = configuration(input);
+    const config = validatePrivateTaskStartupConfiguration(input);
     if (config.nativeQueue && !prepareSubmission) throw new Error("private_task_startup_config_invalid");
     if (config.queueWorker && !startWorker) throw new Error("private_task_startup_config_invalid");
-    const queue = config.nativeQueue ? { nativeQueue: true as const,
+    if (config.news && (!prepareNews || !startNews)) throw new Error("private_task_startup_config_invalid");
+    // Validated prepared ports are now owned, even if a later database preflight fails.
+    // Memoization prevents duplicate cleanup when application construction also closes them.
+    let runtimeClose: Promise<void> | undefined;
+    const closeIdeaRuntime = config.ideaRuntime ? () => {
+      runtimeClose ??= (async () => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try { await Promise.race([Promise.resolve().then(config.ideaRuntime!.close), new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error("idea_runtime_cleanup_uncertain")), 5000);
+        })]); } finally { clearTimeout(timer); }
+      })(); return runtimeClose;
+    } : undefined;
+    const queue = config.nativeQueue || config.news ? { nativeQueue: true as const,
+      ...(!config.nativeQueue ? { nativeQueueProducer: false as const } : {}),
       ...(config.nativeQueueRecovery ? { nativeQueueRecovery: true as const } : {}) } : undefined;
     let submission: (NativeTaskSubmission & { close(): Promise<void> }) | undefined;
     let abandoned = false, preparationUncertain = false;
@@ -116,11 +165,36 @@ export function createPrivateTaskBootstrap(dependencies: {
     const resources = new Set<TaskCoordinatorDatabase>();
     let application: Awaited<ReturnType<typeof createPrivateTaskApplication>> | undefined;
     let worker: OwnedQueueWorker | undefined;
+    let newsWorker: OwnedQueueWorker | undefined;
+    let newsSubmission: Awaited<ReturnType<typeof preparePgBossAbsFeedSubmission>> | undefined;
+    let newsIntegration: ReturnType<typeof createNewsDiscoveryIntegration> | undefined;
+    const newsCloses: (() => Promise<void>)[] = [];
     let workerUncertain = false;
     const startupAbort = new AbortController();
     const cancelStartup = () => { abandoned = true; startupAbort.abort(); };
     const requireActive = () => { if (abandoned || signal?.aborted) throw new Error("private_task_startup_canceled"); };
     signal?.addEventListener("abort", cancelStartup, { once: true });
+    // Capture cleanup as soon as an asynchronous news factory returns, including
+    // late completion after cancellation or timeout. No uncertain factory retry.
+    async function acquireNews<T extends { close(): Promise<void> }>(factory: () => Promise<T>) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const pending = Promise.resolve().then(() => { requireActive(); return factory(); }).then(async raw => {
+        if (!raw || typeof raw.close !== "function") throw new Error();
+        const closeRaw = raw.close.bind(raw); let closing: Promise<void> | undefined;
+        const close = () => closing ??= (async () => {
+          let deadline: ReturnType<typeof setTimeout> | undefined;
+          try { await Promise.race([Promise.resolve().then(closeRaw), new Promise<never>((_, reject) => {
+            deadline = setTimeout(() => reject(new Error("private_task_startup_cleanup_uncertain")), 5000);
+          })]); } finally { clearTimeout(deadline); }
+        })();
+        newsCloses.push(close);
+        if (abandoned || signal?.aborted) { await close(); throw new Error(); }
+        return { raw, close };
+      }).catch(error => { preparationUncertain = true; throw error; });
+      try { return await Promise.race([pending, new Promise<never>((_, reject) => {
+        timer = setTimeout(() => { abandoned = true; preparationUncertain = true; startupAbort.abort(); reject(new Error()); }, 30_000);
+      })]); } finally { clearTimeout(timer); }
+    }
     // Own every returned resource immediately; memoized bounded close tolerates construction failure
     // before or after ownership transfers to the combined application, without a second pool close.
     function open(database: PrivatePostgresConfiguration) {
@@ -171,8 +245,39 @@ export function createPrivateTaskBootstrap(dependencies: {
         await verifyNativeSessionDatabase(sessionDatabase.client, config.sessions!.database, config.web, now, queue);
         requireActive();
       }
-      if ([web, coordinator, resultDatabase, evidenceDatabase, sessionDatabase].some(pool => pool && !pool.isAvailable())) throw new Error();
-      if (queue) {
+      const ideaDatabase = config.ideaCreation ? open(config.ideaCreation.database) : undefined;
+      if (ideaDatabase) {
+        await verifyPrivateIdeaAdapter(web.client, config.web); requireActive();
+        if ([web, coordinator, resultDatabase, evidenceDatabase, sessionDatabase].some(pool => pool?.client === ideaDatabase.client)) throw new Error();
+        await verifyIdeaCreationDatabase(ideaDatabase.client, config.ideaCreation!.database, config.web, now, queue);
+        requireActive();
+      }
+      if ([web, coordinator, resultDatabase, evidenceDatabase, sessionDatabase, ideaDatabase].some(pool => pool && !pool.isAvailable())) throw new Error();
+      const ideaRuntimeDatabase = config.ideaRuntime ? open(config.ideaRuntime.database) : undefined;
+      if (ideaRuntimeDatabase) {
+        if ([web, coordinator, resultDatabase, evidenceDatabase, sessionDatabase, ideaDatabase].some(pool => pool?.client === ideaRuntimeDatabase.client)) throw new Error();
+        await verifyIdeaRuntimeDatabase(ideaRuntimeDatabase.client, config.ideaRuntime!.database, config.web, now, queue);
+        requireActive();
+        if (!ideaRuntimeDatabase.isAvailable()) throw new Error();
+      }
+      if (config.news) {
+        const news = config.news, coord = open(news.coordinatorDatabase), ingest = open(news.ingestionDatabase);
+        if (new Set(acquired.map(pool => pool.client)).size !== acquired.length) throw new Error();
+        await verifyNewsCoordinatorDatabase(coord.client, news.coordinatorDatabase, config.web, now, { newsQueue: true });
+        requireActive();
+        await verifyNewsIngestionDatabase(ingest.client, news.ingestionDatabase, config.web, now, { nativeQueue: true });
+        requireActive();
+        const prepared = await acquireNews(() => prepareNews!({ async query(sql, values) {
+          requireActive(); if (!coord.isAvailable()) throw new Error("news_submission_unavailable");
+          return coord.client.query(sql, values);
+        } }));
+        if (typeof prepared.raw.enqueueInSession !== "function") throw new Error();
+        newsSubmission = { ...prepared.raw, enqueueInSession: prepared.raw.enqueueInSession.bind(prepared.raw), close: prepared.close };
+        newsIntegration = createNewsDiscoveryIntegration(news.configuration,
+          { coordinator: coord.client, ingestion: ingest.client }, news.integrityKey, newsSubmission,
+          news.authority, news.transport, clock);
+      }
+      if (config.nativeQueue) {
         let timer: ReturnType<typeof setTimeout> | undefined;
         const pending = Promise.resolve().then(() => { requireActive(); return prepareSubmission!({ query: async (sql, values) => {
           if (abandoned || !coordinator.isAvailable()) throw new Error("native_task_submission_unavailable");
@@ -207,10 +312,13 @@ export function createPrivateTaskBootstrap(dependencies: {
         })]); } finally { clearTimeout(timer); }
       }
       requireActive();
-      application = await createPrivateTaskApplication({ ...config.web, database: web, clock }, {
+      application = await createPrivateTaskApplication({ ...config.web, database: web, clock,
+        ...(newsIntegration ? { newsCollections: newsIntegration.web } : {}) }, {
         scope: { tenantId: config.web.tenantId, workspaceId: config.web.workspaceId }, database: coordinator,
         planning: config.planning, routes: config.routes, approvals: config.approvals, quality: config.quality,
         revisionPlanning: config.revisionPlanning, resultDatabase, clock,
+        ideaCreation: ideaDatabase ? { ...config.ideaCreation!, database: ideaDatabase } : undefined,
+        ideaRuntime: ideaRuntimeDatabase ? { ...config.ideaRuntime!, database: ideaRuntimeDatabase, close: closeIdeaRuntime! } : undefined,
         evidence: evidenceDatabase ? { ...config.evidence!, database: evidenceDatabase } : undefined,
         sessions: sessionDatabase ? { ...config.sessions!, database: sessionDatabase } : undefined,
         nativeHttp: config.nativeHttp,
@@ -225,7 +333,9 @@ export function createPrivateTaskBootstrap(dependencies: {
         const pending = Promise.resolve().then(() => { requireActive(); return startWorker!({ ...workerConfig,
           application: { host: config.database.host, port: config.database.port, database: config.database.database,
             loginNames: [config.web.database.username, config.database.username, config.resultDatabase!.username,
-              config.evidence!.database.username, config.sessions!.database.username] },
+              config.evidence!.database.username, config.sessions!.database.username,
+              ...(config.ideaCreation ? [config.ideaCreation.database.username] : []),
+              ...(config.ideaRuntime ? [config.ideaRuntime.database.username] : [])] },
           deliver: async (reference, signal) => {
             if (abandoned) throw new Error("native_task_delivery_unresolved");
             return deliver(reference, AbortSignal.any([signal, startupAbort.signal]));
@@ -255,7 +365,34 @@ export function createPrivateTaskBootstrap(dependencies: {
           timer = setTimeout(() => { abandoned = true; workerUncertain = true; reject(new Error()); }, 30_000);
         })]); } finally { clearTimeout(timer); }
       }
-      const installed = worker ? composePrivateTaskWorkerApplication(application, worker) : application;
+      if (config.news && newsIntegration) {
+        const news = config.news, collect = newsIntegration.collect;
+        const prepared = await acquireNews(() => startNews!({ database: news.workerDatabase,
+          application: { host: news.coordinatorDatabase.host, port: news.coordinatorDatabase.port,
+            database: news.coordinatorDatabase.database, coordinatorLogin: news.coordinatorDatabase.username,
+            ingestionLogin: news.ingestionDatabase.username }, concurrency: news.concurrency,
+          collect: async (reference, signal) => {
+            requireActive();
+            return collect(reference, AbortSignal.any([signal, startupAbort.signal]));
+          } }));
+        if (typeof prepared.raw.status !== "function") throw new Error();
+        newsWorker = Object.freeze({ close: prepared.close, status: prepared.raw.status.bind(prepared.raw) });
+      }
+      const readyApplication = application;
+      let newsClosing: Promise<void> | undefined;
+      const ownedApplication = config.news ? {
+        handle: readyApplication.handle,
+        isReady: () => !newsClosing && acquired.every(pool => pool.isAvailable()) && readyApplication.isReady(),
+        close: () => newsClosing ??= (async () => {
+          const appResult = await Promise.allSettled([readyApplication.close()]);
+          const producerResult = newsSubmission ? await Promise.allSettled([newsSubmission.close()]) : [];
+          const poolResults = await Promise.allSettled(acquired.map(pool => pool.close()));
+          if ([...appResult, ...producerResult, ...poolResults].some(result => result.status === "rejected"))
+            throw new Error("private_task_startup_cleanup_uncertain");
+        })(),
+      } : application;
+      const workers = [worker, newsWorker].filter((value): value is OwnedQueueWorker => !!value);
+      const installed = workers.length ? composePrivateTaskWorkerApplication(ownedApplication, workers) : ownedApplication;
       requireActive();
       if (!installed.isReady()) throw new Error();
       dependencies.install(installed);
@@ -274,11 +411,13 @@ export function createPrivateTaskBootstrap(dependencies: {
     } catch {
       abandoned = true;
       startupAbort.abort();
-      const workerCleanup = worker ? await Promise.allSettled([worker.close()]) : [];
+      const workerCleanup = await Promise.allSettled([worker, newsWorker].filter((value): value is OwnedQueueWorker => !!value).map(value => value.close()));
       const appCleanup = application ? await Promise.allSettled([application.close()]) : [];
       const producerCleanup = submission ? await Promise.allSettled([submission.close()]) : [];
-      const results = application ? [] : await Promise.allSettled(acquired.map(pool => pool.close()));
-      if (preparationUncertain || workerUncertain || [...workerCleanup, ...appCleanup, ...producerCleanup, ...results].some(result => result.status === "rejected")) throw new Error("private_task_startup_cleanup_uncertain");
+      const runtimeCleanup = closeIdeaRuntime ? await Promise.allSettled([closeIdeaRuntime()]) : [];
+      const newsCleanup = await Promise.allSettled(newsCloses.map(close => close()));
+      const results = await Promise.allSettled(acquired.map(pool => pool.close()));
+      if (preparationUncertain || workerUncertain || [...workerCleanup, ...appCleanup, ...producerCleanup, ...runtimeCleanup, ...newsCleanup, ...results].some(result => result.status === "rejected")) throw new Error("private_task_startup_cleanup_uncertain");
       throw new Error("private_task_startup_prerequisites_failed");
     } finally { signal?.removeEventListener("abort", cancelStartup); }
   } });
