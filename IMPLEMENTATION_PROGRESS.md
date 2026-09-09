@@ -844,3 +844,19 @@ was added or invoked. This is not atomic filesystem-to-socket identity assurance
 peer authentication, Windows support, real key custody or deployment acceptance.
 Those remain explicit work; the owner key pin and consent boundaries still apply.
 Independent review of these additions remains pending.
+
+### Native owner-agent ports, still unwired
+
+Added native lstat/realpath metadata inspection with before/after identity checks
+and symlink/alias refusal, plus an explicit Node Socket factory that connects only
+when its returned effect function is called. No ambient SSH agent is read. The
+socket port retains connection failure observers; synchronous connect failure
+requests destruction and returns a sanitized error. Neither port is runtime-wired.
+
+Eleven focused tests and full-source TypeScript pass. Actual filesystem inspection
+uses only an owned temporary directory/symlink, removed with an ENOENT check in
+finally. Socket tests inject an EventEmitter-based fake; no native socket was
+created or connected. An initial alias test normalized away its intended invalid
+input with path.join; the test was corrected, not the implementation relaxed.
+Native socket/peer identity, OS-terminal teardown, dedicated custody and platform
+acceptance remain unproven. Independent review of these ports remains pending.
