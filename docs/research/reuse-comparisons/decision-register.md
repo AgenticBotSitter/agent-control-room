@@ -4,6 +4,13 @@
 all-outcomes implementation plan or permission to implement or deploy candidates.
 All26 outcome-level gates remain tracked separately in the comparison index.
 
+## DR-09 — public cron-parser expansion and matching
+
+Select the public parser/field/includesDate seam, retaining existing schedule
+grammar, bounded scan and occurrence authority. Root accepts the42-case comparison
+and independent review; see [selection and alternative costs](f1-calendar-selection.md).
+This closes standard calculator matching selection, not queue or scheduler delivery.
+
 ## DR-08 — native Git for the initial detached checkout
 
 Select native Git's detached-worktree operation behind the existing

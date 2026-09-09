@@ -1,0 +1,282 @@
+{
+  "versions": {
+    "dbos": "4.27.6",
+    "boss": "12.30.0",
+    "parser": "5.10.0",
+    "luxon": "3.7.2"
+  },
+  "files": [
+    {
+      "root": "dbos",
+      "path": "package.json",
+      "bytes": 3083,
+      "sha256": "a4041019e40fff4f568a08ff16da2834724a36a9634de66243c3c7ebfc6c73f5"
+    },
+    {
+      "root": "boss",
+      "path": "package.json",
+      "bytes": 3207,
+      "sha256": "72f89c78727d3bb15c535f8eef148aee6dbf78eaeaedcc1f9825840e7c31a2f0"
+    },
+    {
+      "root": "parser",
+      "path": "package.json",
+      "bytes": 3600,
+      "sha256": "b302295ef94320de3076de0c20ed58a3ba12f8a5bd1066c5e8f8b233a6a969ee"
+    },
+    {
+      "root": "luxon",
+      "path": "package.json",
+      "bytes": 2872,
+      "sha256": "bf8c55f4072d01467c1c0c49807722f79577680ac1ff7fa7c030a83716d3db4f"
+    },
+    {
+      "root": "dbos",
+      "path": "dist/src/scheduler/crontab.js",
+      "bytes": 12495,
+      "sha256": "0f2fff0fb5a1c88d46fec2427cfd5d36c2e5d5a6e620094511db4f4defa9ebe8"
+    },
+    {
+      "root": "dbos",
+      "path": "dist/src/scheduler/scheduler.js",
+      "bytes": 13164,
+      "sha256": "fb98dc9a616dbc9b976cb93328d33b0aabd377c325b33b25ff024d18e4b14997"
+    },
+    {
+      "root": "boss",
+      "path": "dist/timekeeper.js",
+      "bytes": 10753,
+      "sha256": "5f771025d6a84baf6dbe3c22f69704541b3b488cb35c7b05e9bce5aa834c4d23"
+    },
+    {
+      "root": "parser",
+      "path": "dist/CronDate.js",
+      "bytes": 15577,
+      "sha256": "1345c616c0a66ce4d995dac97b09934290aea24863bf7f87f47b7931ca8750ad"
+    },
+    {
+      "root": "parser",
+      "path": "dist/CronExpression.js",
+      "bytes": 23581,
+      "sha256": "4816289635b1a93b7c517ceb13d21019b1cbb4df829f4719b966c5064324264b"
+    },
+    {
+      "root": "parser",
+      "path": "dist/CronExpressionParser.js",
+      "bytes": 21038,
+      "sha256": "bdf36cad3728053f0a95eb6daea499b61e27b20b21ca092c3497b960980f861b"
+    },
+    {
+      "root": "parser",
+      "path": "dist/CronFieldCollection.js",
+      "bytes": 15099,
+      "sha256": "75b7db04a6142ae3eabc071104f4e90555f9abc32699e0d9257e8229b47552fc"
+    },
+    {
+      "root": "parser",
+      "path": "dist/CronFileParser.js",
+      "bytes": 2592,
+      "sha256": "86d31181a06357d3a74338855f84520b7ffe22edcb8b0634e4bb1d23d247b385"
+    },
+    {
+      "root": "parser",
+      "path": "dist/fields/CronDayOfMonth.js",
+      "bytes": 2170,
+      "sha256": "bcc17fb80752ae625cdb1b7e862ecc3fe41fc2130b97b44e02d59a0a1c584e2b"
+    },
+    {
+      "root": "parser",
+      "path": "dist/fields/CronDayOfWeek.js",
+      "bytes": 1767,
+      "sha256": "ab0a1254051e1aa1ba2d5dd8330209db652c2c4fa82097d74a345ce2861ae7bb"
+    },
+    {
+      "root": "parser",
+      "path": "dist/fields/CronField.js",
+      "bytes": 7776,
+      "sha256": "06ab91635638ac6284a3fbdf5646001ae7832c5765487a74fc393cd8c2154307"
+    },
+    {
+      "root": "parser",
+      "path": "dist/fields/CronHour.js",
+      "bytes": 1080,
+      "sha256": "c129935bb3949e6d3a458738be938f8cf1c965054d93a8e095caf66ab09f3ca9"
+    },
+    {
+      "root": "parser",
+      "path": "dist/fields/CronMinute.js",
+      "bytes": 1114,
+      "sha256": "c1723b2498f5095ed9d3178f1f2a17d62cc98510c668013beb0a29d4652bfd6d"
+    },
+    {
+      "root": "parser",
+      "path": "dist/fields/CronMonth.js",
+      "bytes": 1273,
+      "sha256": "8ef65d0d13277552c181a1ceca59813aebb00fd58d2d5660f00fe1f10ef46120"
+    },
+    {
+      "root": "parser",
+      "path": "dist/fields/CronSecond.js",
+      "bytes": 1114,
+      "sha256": "a8b792d0b3a64342cbe1d7c570241fbbba8b36321ed6083bd08d376a0c23c9a9"
+    },
+    {
+      "root": "parser",
+      "path": "dist/fields/index.js",
+      "bytes": 1139,
+      "sha256": "c59d0fb093e6b0c55166aabb539159267d8632748c4e0479b375f6a23c9858a0"
+    },
+    {
+      "root": "parser",
+      "path": "dist/fields/types.js",
+      "bytes": 77,
+      "sha256": "d43aa81f5bc89faa359e0f97c814ba25155591ff078fbb9bfd40f8c7c9683230"
+    },
+    {
+      "root": "parser",
+      "path": "dist/index.js",
+      "bytes": 2050,
+      "sha256": "71cc2bfedca63581688961f8b8b8b4a15cbe6aeab426d342c1477bf1de86b040"
+    },
+    {
+      "root": "parser",
+      "path": "dist/types/CronDate.d.ts",
+      "bytes": 7301,
+      "sha256": "e0378d58bc07cd8c6ddf4deaf7ef6932370688424a97d72d1fe3d998f9edb27f"
+    },
+    {
+      "root": "parser",
+      "path": "dist/types/CronExpression.d.ts",
+      "bytes": 4518,
+      "sha256": "f0454292ae7bb06660e6f9426ec463fc546237da8cf48155a2284ab7289cda98"
+    },
+    {
+      "root": "parser",
+      "path": "dist/types/CronExpressionParser.d.ts",
+      "bytes": 2019,
+      "sha256": "7bd1ba1e662f79af88003568c512c9567d7b234691eadcd74b7e8b1bd5685ded"
+    },
+    {
+      "root": "parser",
+      "path": "dist/types/CronFieldCollection.d.ts",
+      "bytes": 5551,
+      "sha256": "f318a8d5e9979dcca83c6851cbe0c675d1e1cd65a1aae253082078c222cb4044"
+    },
+    {
+      "root": "parser",
+      "path": "dist/types/CronFileParser.d.ts",
+      "bytes": 882,
+      "sha256": "2f93f865c1d55bbf8cb8c747d68ce9d4795548aafeb4e0e490f1bb7c6ae23364"
+    },
+    {
+      "root": "parser",
+      "path": "dist/types/fields/CronDayOfMonth.d.ts",
+      "bytes": 1512,
+      "sha256": "98550858dff995b188c0912f16cc6c92dbbf7f7fc62962e14d51560fe471754b"
+    },
+    {
+      "root": "parser",
+      "path": "dist/types/fields/CronDayOfWeek.d.ts",
+      "bytes": 1228,
+      "sha256": "05a15844c1a4ca7ac0a0cbd4ee244c105fe888c4aa77fc2bf72c5c9cba4599d8"
+    },
+    {
+      "root": "parser",
+      "path": "dist/types/fields/CronField.d.ts",
+      "bytes": 4478,
+      "sha256": "4139c6277aa23f8873ba6d6b9dff3796bdff2805e341558da51f68d6bb6994ef"
+    },
+    {
+      "root": "parser",
+      "path": "dist/types/fields/CronHour.d.ts",
+      "bytes": 839,
+      "sha256": "7ce64f3efcc736cf86899be506e89560c8d6aac76895d33a67f517b92f468262"
+    },
+    {
+      "root": "parser",
+      "path": "dist/types/fields/CronMinute.d.ts",
+      "bytes": 858,
+      "sha256": "b2b482dcb310d8110c0ca47456dd249036b080d50a172dcb8d52c0a295eb7990"
+    },
+    {
+      "root": "parser",
+      "path": "dist/types/fields/CronMonth.d.ts",
+      "bytes": 954,
+      "sha256": "0f563acb4cb930991d9c3d6d8c28e47728420575b4de98f0eb39362b66983780"
+    },
+    {
+      "root": "parser",
+      "path": "dist/types/fields/CronSecond.d.ts",
+      "bytes": 858,
+      "sha256": "191d9c750e9b08dc6b02671a85b858c43f8a814d33252b0d926690c97841f1e8"
+    },
+    {
+      "root": "parser",
+      "path": "dist/types/fields/index.d.ts",
+      "bytes": 238,
+      "sha256": "20ba8e44d581de5c8070ff25a986c7ce7186641fa1f637a978bd5ba30420213e"
+    },
+    {
+      "root": "parser",
+      "path": "dist/types/fields/types.d.ts",
+      "bytes": 1029,
+      "sha256": "f8aefb17f91f20a8964466075f78ef600f0a64c0aceb154a7894127342122672"
+    },
+    {
+      "root": "parser",
+      "path": "dist/types/index.d.ts",
+      "bytes": 446,
+      "sha256": "71d6519f08f5568e4a98d233eff98f60c4da3314a380e0c83a42b6c40bb30bdb"
+    },
+    {
+      "root": "parser",
+      "path": "dist/types/utils/random.d.ts",
+      "bytes": 396,
+      "sha256": "ec7572c0adf07e365a6ec9f1ba11f65149c7d7e4684aebd535d726baaab86784"
+    },
+    {
+      "root": "parser",
+      "path": "dist/utils/random.js",
+      "bytes": 1234,
+      "sha256": "9ec1a54c966226fba7bed78d0ca6fb7b28087c2bf49dd4f7c77f86af328d4046"
+    },
+    {
+      "root": "luxon",
+      "path": "build/node/luxon.js",
+      "bytes": 261910,
+      "sha256": "89f0e65bc957cb4574f66f8b4b76b855631d810e5249bf7f5fb98e1e30ace7ca"
+    },
+    {
+      "root": "luxon",
+      "path": "build/node/luxon.js.map",
+      "bytes": 504551,
+      "sha256": "8207ae566b9ce987afe014e6f61fa863914d2fbe57d8b4f4ea2a373bf97b00d4"
+    },
+    {
+      "root": "checkout",
+      "path": "src/services/v1/recurrence.ts",
+      "bytes": 7899,
+      "sha256": "7ddc7925c7e7ba5c3f80eeeedd52c827a0cfaa69572f6370ff259b68baa9099c"
+    },
+    {
+      "root": "checkout",
+      "path": "src/services/v1/occurrence-store.ts",
+      "bytes": 7163,
+      "sha256": "d497dcd6e82e9e7156eb04cfeabc5a11b2445b234a16311c5cabeeb267e06c4d"
+    },
+    {
+      "root": "checkout",
+      "path": "tests/services-v1-recurrence.test.ts",
+      "bytes": 3216,
+      "sha256": "aa7eae7465bef4ff82ba573b2badcd589894ad3cfb9d8937bbe372056cc0a072"
+    },
+    {
+      "root": "checkout",
+      "path": "tests/services-v1-occurrence-store.test.ts",
+      "bytes": 4110,
+      "sha256": "97ceaeabe6e0425583320ecd760403f3c0819b9fc998678607a0b64112cc395a"
+    }
+  ],
+  "acquisitions": "none; already installed package roots only",
+  "dbosRoot": "/private/tmp/cr-compare-f1.9x5bSO/node_modules/@dbos-inc/dbos-sdk"
+}

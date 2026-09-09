@@ -1,0 +1,210 @@
+{
+  "command": "node --import tsx f1-calendar-fit.mjs; sterile PATH and TZ=UTC",
+  "harnessSha256": "74d73cd1e89b5fc2f525a859490211ed85e80c4432a516b460e195f9c5cfa357",
+  "actualStdout": "{\n  \"scope\": \"Actual calendar primitives only; no scheduler delivery/database/occurrence store execution\",\n  \"versions\": {\n    \"dbos\": \"4.27.6\",\n    \"boss\": \"12.30.0\",\n    \"parser\": \"5.10.0\",\n    \"luxon\": \"3.7.2\"\n  },\n  \"caseCount\": 6,\n  \"rows\": [\n    {\n      \"name\": \"utc-quarter-hour\",\n      \"cron\": \"*/15 * * * *\",\n      \"zone\": \"UTC\",\n      \"start\": \"2026-09-07T00:00:00.000Z\",\n      \"end\": \"2026-09-07T01:00:00.000Z\",\n      \"dbosWakeupCalls\": 5,\n      \"dbos\": [\n        \"2026-09-07T00:00:00.000Z\",\n        \"2026-09-07T00:15:00.000Z\",\n        \"2026-09-07T00:30:00.000Z\",\n        \"2026-09-07T00:45:00.000Z\"\n      ],\n      \"pgBossCalendarNext\": [\n        \"2026-09-07T00:00:00.000Z\",\n        \"2026-09-07T00:15:00.000Z\",\n        \"2026-09-07T00:30:00.000Z\",\n        \"2026-09-07T00:45:00.000Z\"\n      ],\n      \"pgBossCalendarPreviousAtEnd\": \"2026-09-07T00:45:00.000Z\",\n      \"currentCR\": [\n        {\n          \"scheduleId\": \"schedule.utc-quarter-hour\",\n          \"occurrenceKey\": \"schedule.utc-quarter-hour:2026-09-07T00:00\",\n          \"scheduledFor\": \"2026-09-07T00:00:00.000Z\",\n          \"localTime\": \"2026-09-07T00:00\"\n        },\n        {\n          \"scheduleId\": \"schedule.utc-quarter-hour\",\n          \"occurrenceKey\": \"schedule.utc-quarter-hour:2026-09-07T00:15\",\n          \"scheduledFor\": \"2026-09-07T00:15:00.000Z\",\n          \"localTime\": \"2026-09-07T00:15\"\n        },\n        {\n          \"scheduleId\": \"schedule.utc-quarter-hour\",\n          \"occurrenceKey\": \"schedule.utc-quarter-hour:2026-09-07T00:30\",\n          \"scheduledFor\": \"2026-09-07T00:30:00.000Z\",\n          \"localTime\": \"2026-09-07T00:30\"\n        },\n        {\n          \"scheduleId\": \"schedule.utc-quarter-hour\",\n          \"occurrenceKey\": \"schedule.utc-quarter-hour:2026-09-07T00:45\",\n          \"scheduledFor\": \"2026-09-07T00:45:00.000Z\",\n          \"localTime\": \"2026-09-07T00:45\"\n        }\n      ]\n    },\n    {\n      \"name\": \"denver-spring-gap\",\n      \"cron\": \"30 2 * * *\",\n      \"zone\": \"America/Denver\",\n      \"start\": \"2026-03-08T08:00:00.000Z\",\n      \"end\": \"2026-03-08T11:00:00.000Z\",\n      \"dbosWakeupCalls\": 4,\n      \"dbos\": [],\n      \"pgBossCalendarNext\": [\n        \"2026-03-08T09:30:00.000Z\"\n      ],\n      \"pgBossCalendarPreviousAtEnd\": \"2026-03-07T09:30:00.000Z\",\n      \"currentCR\": []\n    },\n    {\n      \"name\": \"denver-fall-repeat\",\n      \"cron\": \"30 1 * * *\",\n      \"zone\": \"America/Denver\",\n      \"start\": \"2026-11-01T07:00:00.000Z\",\n      \"end\": \"2026-11-01T10:00:00.000Z\",\n      \"dbosWakeupCalls\": 5,\n      \"dbos\": [\n        \"2026-11-01T07:30:00.000Z\",\n        \"2026-11-01T08:30:00.000Z\"\n      ],\n      \"pgBossCalendarNext\": [\n        \"2026-11-01T07:30:00.000Z\"\n      ],\n      \"pgBossCalendarPreviousAtEnd\": \"2026-11-01T08:30:00.000Z\",\n      \"currentCR\": [\n        {\n          \"scheduleId\": \"schedule.denver-fall-repeat\",\n          \"occurrenceKey\": \"schedule.denver-fall-repeat:2026-11-01T01:30\",\n          \"scheduledFor\": \"2026-11-01T07:30:00.000Z\",\n          \"localTime\": \"2026-11-01T01:30\"\n        }\n      ]\n    },\n    {\n      \"name\": \"missed-window\",\n      \"cron\": \"*/5 * * * *\",\n      \"zone\": \"UTC\",\n      \"start\": \"2026-09-07T00:00:00.000Z\",\n      \"end\": \"2026-09-07T00:18:00.000Z\",\n      \"dbosWakeupCalls\": 5,\n      \"dbos\": [\n        \"2026-09-07T00:00:00.000Z\",\n        \"2026-09-07T00:05:00.000Z\",\n        \"2026-09-07T00:10:00.000Z\",\n        \"2026-09-07T00:15:00.000Z\"\n      ],\n      \"pgBossCalendarNext\": [\n        \"2026-09-07T00:00:00.000Z\",\n        \"2026-09-07T00:05:00.000Z\",\n        \"2026-09-07T00:10:00.000Z\",\n        \"2026-09-07T00:15:00.000Z\"\n      ],\n      \"pgBossCalendarPreviousAtEnd\": \"2026-09-07T00:15:00.000Z\",\n      \"currentCR\": [\n        {\n          \"scheduleId\": \"schedule.missed-window\",\n          \"occurrenceKey\": \"schedule.missed-window:2026-09-07T00:00\",\n          \"scheduledFor\": \"2026-09-07T00:00:00.000Z\",\n          \"localTime\": \"2026-09-07T00:00\"\n        },\n        {\n          \"scheduleId\": \"schedule.missed-window\",\n          \"occurrenceKey\": \"schedule.missed-window:2026-09-07T00:05\",\n          \"scheduledFor\": \"2026-09-07T00:05:00.000Z\",\n          \"localTime\": \"2026-09-07T00:05\"\n        },\n        {\n          \"scheduleId\": \"schedule.missed-window\",\n          \"occurrenceKey\": \"schedule.missed-window:2026-09-07T00:10\",\n          \"scheduledFor\": \"2026-09-07T00:10:00.000Z\",\n          \"localTime\": \"2026-09-07T00:10\"\n        },\n        {\n          \"scheduleId\": \"schedule.missed-window\",\n          \"occurrenceKey\": \"schedule.missed-window:2026-09-07T00:15\",\n          \"scheduledFor\": \"2026-09-07T00:15:00.000Z\",\n          \"localTime\": \"2026-09-07T00:15\"\n        }\n      ]\n    },\n    {\n      \"name\": \"restricted-dom-or-dow\",\n      \"cron\": \"0 9 1 * 1\",\n      \"zone\": \"UTC\",\n      \"start\": \"2026-09-07T08:59:00.000Z\",\n      \"end\": \"2026-09-07T09:01:00.000Z\",\n      \"dbosWakeupCalls\": 1,\n      \"dbos\": [],\n      \"pgBossCalendarNext\": [\n        \"2026-09-07T09:00:00.000Z\"\n      ],\n      \"pgBossCalendarPreviousAtEnd\": \"2026-09-07T09:00:00.000Z\",\n      \"currentCR\": [\n        {\n          \"scheduleId\": \"schedule.restricted-dom-or-dow\",\n          \"occurrenceKey\": \"schedule.restricted-dom-or-dow:2026-09-07T09:00\",\n          \"scheduledFor\": \"2026-09-07T09:00:00.000Z\",\n          \"localTime\": \"2026-09-07T09:00\"\n        }\n      ]\n    },\n    {\n      \"name\": \"offset-range-step\",\n      \"cron\": \"1-5/2 * * * *\",\n      \"zone\": \"UTC\",\n      \"start\": \"2026-09-07T00:00:00.000Z\",\n      \"end\": \"2026-09-07T00:06:00.000Z\",\n      \"dbosWakeupCalls\": 3,\n      \"dbos\": [\n        \"2026-09-07T00:02:00.000Z\",\n        \"2026-09-07T00:04:00.000Z\"\n      ],\n      \"pgBossCalendarNext\": [\n        \"2026-09-07T00:01:00.000Z\",\n        \"2026-09-07T00:03:00.000Z\",\n        \"2026-09-07T00:05:00.000Z\"\n      ],\n      \"pgBossCalendarPreviousAtEnd\": \"2026-09-07T00:05:00.000Z\",\n      \"currentCR\": [\n        {\n          \"scheduleId\": \"schedule.offset-range-step\",\n          \"occurrenceKey\": \"schedule.offset-range-step:2026-09-07T00:01\",\n          \"scheduledFor\": \"2026-09-07T00:01:00.000Z\",\n          \"localTime\": \"2026-09-07T00:01\"\n        },\n        {\n          \"scheduleId\": \"schedule.offset-range-step\",\n          \"occurrenceKey\": \"schedule.offset-range-step:2026-09-07T00:03\",\n          \"scheduledFor\": \"2026-09-07T00:03:00.000Z\",\n          \"localTime\": \"2026-09-07T00:03\"\n        },\n        {\n          \"scheduleId\": \"schedule.offset-range-step\",\n          \"occurrenceKey\": \"schedule.offset-range-step:2026-09-07T00:05\",\n          \"scheduledFor\": \"2026-09-07T00:05:00.000Z\",\n          \"localTime\": \"2026-09-07T00:05\"\n        }\n      ]\n    }\n  ],\n  \"elapsedMs\": 94.439708\n}\n",
+  "exitCode": 0,
+  "parsed": {
+    "scope": "Actual calendar primitives only; no scheduler delivery/database/occurrence store execution",
+    "versions": {
+      "dbos": "4.27.6",
+      "boss": "12.30.0",
+      "parser": "5.10.0",
+      "luxon": "3.7.2"
+    },
+    "caseCount": 6,
+    "rows": [
+      {
+        "name": "utc-quarter-hour",
+        "cron": "*/15 * * * *",
+        "zone": "UTC",
+        "start": "2026-09-07T00:00:00.000Z",
+        "end": "2026-09-07T01:00:00.000Z",
+        "dbosWakeupCalls": 5,
+        "dbos": [
+          "2026-09-07T00:00:00.000Z",
+          "2026-09-07T00:15:00.000Z",
+          "2026-09-07T00:30:00.000Z",
+          "2026-09-07T00:45:00.000Z"
+        ],
+        "pgBossCalendarNext": [
+          "2026-09-07T00:00:00.000Z",
+          "2026-09-07T00:15:00.000Z",
+          "2026-09-07T00:30:00.000Z",
+          "2026-09-07T00:45:00.000Z"
+        ],
+        "pgBossCalendarPreviousAtEnd": "2026-09-07T00:45:00.000Z",
+        "currentCR": [
+          {
+            "scheduleId": "schedule.utc-quarter-hour",
+            "occurrenceKey": "schedule.utc-quarter-hour:2026-09-07T00:00",
+            "scheduledFor": "2026-09-07T00:00:00.000Z",
+            "localTime": "2026-09-07T00:00"
+          },
+          {
+            "scheduleId": "schedule.utc-quarter-hour",
+            "occurrenceKey": "schedule.utc-quarter-hour:2026-09-07T00:15",
+            "scheduledFor": "2026-09-07T00:15:00.000Z",
+            "localTime": "2026-09-07T00:15"
+          },
+          {
+            "scheduleId": "schedule.utc-quarter-hour",
+            "occurrenceKey": "schedule.utc-quarter-hour:2026-09-07T00:30",
+            "scheduledFor": "2026-09-07T00:30:00.000Z",
+            "localTime": "2026-09-07T00:30"
+          },
+          {
+            "scheduleId": "schedule.utc-quarter-hour",
+            "occurrenceKey": "schedule.utc-quarter-hour:2026-09-07T00:45",
+            "scheduledFor": "2026-09-07T00:45:00.000Z",
+            "localTime": "2026-09-07T00:45"
+          }
+        ]
+      },
+      {
+        "name": "denver-spring-gap",
+        "cron": "30 2 * * *",
+        "zone": "America/Denver",
+        "start": "2026-03-08T08:00:00.000Z",
+        "end": "2026-03-08T11:00:00.000Z",
+        "dbosWakeupCalls": 4,
+        "dbos": [],
+        "pgBossCalendarNext": [
+          "2026-03-08T09:30:00.000Z"
+        ],
+        "pgBossCalendarPreviousAtEnd": "2026-03-07T09:30:00.000Z",
+        "currentCR": []
+      },
+      {
+        "name": "denver-fall-repeat",
+        "cron": "30 1 * * *",
+        "zone": "America/Denver",
+        "start": "2026-11-01T07:00:00.000Z",
+        "end": "2026-11-01T10:00:00.000Z",
+        "dbosWakeupCalls": 5,
+        "dbos": [
+          "2026-11-01T07:30:00.000Z",
+          "2026-11-01T08:30:00.000Z"
+        ],
+        "pgBossCalendarNext": [
+          "2026-11-01T07:30:00.000Z"
+        ],
+        "pgBossCalendarPreviousAtEnd": "2026-11-01T08:30:00.000Z",
+        "currentCR": [
+          {
+            "scheduleId": "schedule.denver-fall-repeat",
+            "occurrenceKey": "schedule.denver-fall-repeat:2026-11-01T01:30",
+            "scheduledFor": "2026-11-01T07:30:00.000Z",
+            "localTime": "2026-11-01T01:30"
+          }
+        ]
+      },
+      {
+        "name": "missed-window",
+        "cron": "*/5 * * * *",
+        "zone": "UTC",
+        "start": "2026-09-07T00:00:00.000Z",
+        "end": "2026-09-07T00:18:00.000Z",
+        "dbosWakeupCalls": 5,
+        "dbos": [
+          "2026-09-07T00:00:00.000Z",
+          "2026-09-07T00:05:00.000Z",
+          "2026-09-07T00:10:00.000Z",
+          "2026-09-07T00:15:00.000Z"
+        ],
+        "pgBossCalendarNext": [
+          "2026-09-07T00:00:00.000Z",
+          "2026-09-07T00:05:00.000Z",
+          "2026-09-07T00:10:00.000Z",
+          "2026-09-07T00:15:00.000Z"
+        ],
+        "pgBossCalendarPreviousAtEnd": "2026-09-07T00:15:00.000Z",
+        "currentCR": [
+          {
+            "scheduleId": "schedule.missed-window",
+            "occurrenceKey": "schedule.missed-window:2026-09-07T00:00",
+            "scheduledFor": "2026-09-07T00:00:00.000Z",
+            "localTime": "2026-09-07T00:00"
+          },
+          {
+            "scheduleId": "schedule.missed-window",
+            "occurrenceKey": "schedule.missed-window:2026-09-07T00:05",
+            "scheduledFor": "2026-09-07T00:05:00.000Z",
+            "localTime": "2026-09-07T00:05"
+          },
+          {
+            "scheduleId": "schedule.missed-window",
+            "occurrenceKey": "schedule.missed-window:2026-09-07T00:10",
+            "scheduledFor": "2026-09-07T00:10:00.000Z",
+            "localTime": "2026-09-07T00:10"
+          },
+          {
+            "scheduleId": "schedule.missed-window",
+            "occurrenceKey": "schedule.missed-window:2026-09-07T00:15",
+            "scheduledFor": "2026-09-07T00:15:00.000Z",
+            "localTime": "2026-09-07T00:15"
+          }
+        ]
+      },
+      {
+        "name": "restricted-dom-or-dow",
+        "cron": "0 9 1 * 1",
+        "zone": "UTC",
+        "start": "2026-09-07T08:59:00.000Z",
+        "end": "2026-09-07T09:01:00.000Z",
+        "dbosWakeupCalls": 1,
+        "dbos": [],
+        "pgBossCalendarNext": [
+          "2026-09-07T09:00:00.000Z"
+        ],
+        "pgBossCalendarPreviousAtEnd": "2026-09-07T09:00:00.000Z",
+        "currentCR": [
+          {
+            "scheduleId": "schedule.restricted-dom-or-dow",
+            "occurrenceKey": "schedule.restricted-dom-or-dow:2026-09-07T09:00",
+            "scheduledFor": "2026-09-07T09:00:00.000Z",
+            "localTime": "2026-09-07T09:00"
+          }
+        ]
+      },
+      {
+        "name": "offset-range-step",
+        "cron": "1-5/2 * * * *",
+        "zone": "UTC",
+        "start": "2026-09-07T00:00:00.000Z",
+        "end": "2026-09-07T00:06:00.000Z",
+        "dbosWakeupCalls": 3,
+        "dbos": [
+          "2026-09-07T00:02:00.000Z",
+          "2026-09-07T00:04:00.000Z"
+        ],
+        "pgBossCalendarNext": [
+          "2026-09-07T00:01:00.000Z",
+          "2026-09-07T00:03:00.000Z",
+          "2026-09-07T00:05:00.000Z"
+        ],
+        "pgBossCalendarPreviousAtEnd": "2026-09-07T00:05:00.000Z",
+        "currentCR": [
+          {
+            "scheduleId": "schedule.offset-range-step",
+            "occurrenceKey": "schedule.offset-range-step:2026-09-07T00:01",
+            "scheduledFor": "2026-09-07T00:01:00.000Z",
+            "localTime": "2026-09-07T00:01"
+          },
+          {
+            "scheduleId": "schedule.offset-range-step",
+            "occurrenceKey": "schedule.offset-range-step:2026-09-07T00:03",
+            "scheduledFor": "2026-09-07T00:03:00.000Z",
+            "localTime": "2026-09-07T00:03"
+          },
+          {
+            "scheduleId": "schedule.offset-range-step",
+            "occurrenceKey": "schedule.offset-range-step:2026-09-07T00:05",
+            "scheduledFor": "2026-09-07T00:05:00.000Z",
+            "localTime": "2026-09-07T00:05"
+          }
+        ]
+      }
+    ],
+    "elapsedMs": 94.439708
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "command": "node f1-calendar-previous-fit.mjs; sterile TZ=UTC",
+  "harnessSha256": "3fba2bd69a3d09466b9b6fb1daab2634aee2cca15ba0326746034e96dd6d014e",
+  "actualStdout": "{\n  \"scope\": \"Actual calendar prev used by pg-boss; no shouldSendIt or scheduler execution. Difference is measurement, not delivery.\",\n  \"rows\": [\n    {\n      \"name\": \"spring-shift-candidate-window\",\n      \"cron\": \"30 2 * * *\",\n      \"tz\": \"America/Denver\",\n      \"now\": \"2026-03-08T09:30:30.000Z\",\n      \"actualPrevious\": \"2026-03-07T09:30:00.000Z\",\n      \"differenceSeconds\": 86430\n    },\n    {\n      \"name\": \"fall-first-window\",\n      \"cron\": \"30 1 * * *\",\n      \"tz\": \"America/Denver\",\n      \"now\": \"2026-11-01T07:30:30.000Z\",\n      \"actualPrevious\": \"2026-11-01T07:30:00.000Z\",\n      \"differenceSeconds\": 30\n    },\n    {\n      \"name\": \"fall-second-window\",\n      \"cron\": \"30 1 * * *\",\n      \"tz\": \"America/Denver\",\n      \"now\": \"2026-11-01T08:30:30.000Z\",\n      \"actualPrevious\": \"2026-11-01T08:30:00.000Z\",\n      \"differenceSeconds\": 30\n    },\n    {\n      \"name\": \"missed-three-minute-window\",\n      \"cron\": \"*/5 * * * *\",\n      \"tz\": \"UTC\",\n      \"now\": \"2026-09-07T00:18:00.000Z\",\n      \"actualPrevious\": \"2026-09-07T00:15:00.000Z\",\n      \"differenceSeconds\": 180\n    },\n    {\n      \"name\": \"near-thirty-second-window\",\n      \"cron\": \"*/5 * * * *\",\n      \"tz\": \"UTC\",\n      \"now\": \"2026-09-07T00:15:30.000Z\",\n      \"actualPrevious\": \"2026-09-07T00:15:00.000Z\",\n      \"differenceSeconds\": 30\n    }\n  ]\n}\n",
+  "exitCode": 0,
+  "parsed": {
+    "scope": "Actual calendar prev used by pg-boss; no shouldSendIt or scheduler execution. Difference is measurement, not delivery.",
+    "rows": [
+      {
+        "name": "spring-shift-candidate-window",
+        "cron": "30 2 * * *",
+        "tz": "America/Denver",
+        "now": "2026-03-08T09:30:30.000Z",
+        "actualPrevious": "2026-03-07T09:30:00.000Z",
+        "differenceSeconds": 86430
+      },
+      {
+        "name": "fall-first-window",
+        "cron": "30 1 * * *",
+        "tz": "America/Denver",
+        "now": "2026-11-01T07:30:30.000Z",
+        "actualPrevious": "2026-11-01T07:30:00.000Z",
+        "differenceSeconds": 30
+      },
+      {
+        "name": "fall-second-window",
+        "cron": "30 1 * * *",
+        "tz": "America/Denver",
+        "now": "2026-11-01T08:30:30.000Z",
+        "actualPrevious": "2026-11-01T08:30:00.000Z",
+        "differenceSeconds": 30
+      },
+      {
+        "name": "missed-three-minute-window",
+        "cron": "*/5 * * * *",
+        "tz": "UTC",
+        "now": "2026-09-07T00:18:00.000Z",
+        "actualPrevious": "2026-09-07T00:15:00.000Z",
+        "differenceSeconds": 180
+      },
+      {
+        "name": "near-thirty-second-window",
+        "cron": "*/5 * * * *",
+        "tz": "UTC",
+        "now": "2026-09-07T00:15:30.000Z",
+        "actualPrevious": "2026-09-07T00:15:00.000Z",
+        "differenceSeconds": 30
+      }
+    ]
+  }
+}
