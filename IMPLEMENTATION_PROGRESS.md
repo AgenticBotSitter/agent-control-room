@@ -6,6 +6,19 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+The pinned production inventory now feeds the actual CycloneDX collector through
+`scripts/runtime-license-report.mjs`. The adapter verifies the current manifest/
+lock hashes, each installed name/version and path containment, and records original
+manifest/text hashes. The retained report covers 193 package instances from 191
+pnpm records: 189 have root text, four do not (`@nodable/entities`, `pg-types`,
+`pgpass`, `saxes`). Missing text is retained as negative evidence, not an exemption.
+The report is metadata, not a distributable bundle of original texts or a complete
+SBOM; nested/vendor/assets and current named exceptions remain unfinished.
+Run `node --test tests/runtime-license-report.test.mjs` to reproduce it and verify
+stale pins, foreign package identity and path escape are refused. The focused
+report plus collector tests pass 3/3. This inventory snapshot is local-platform
+specific and is not yet part of the portable contributor test command.
+
 License collector tests now preserve multiple upstream attachments and reject
 symlinks, oversized files and cumulative input above 8 MB; output count is capped
 at 64 attachments per package. Original CycloneDX LICENSE/NOTICE equality is also

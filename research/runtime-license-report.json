@@ -1,0 +1,2711 @@
+{
+  "schema": "control-room.runtime-license-report/v1",
+  "manifestSha256": "f586abb9ce729783d9bd923e5fab6d68de1e613383fff1fc5b9417490af3eada",
+  "lockSha256": "6fdb15b4d7cea20edc11feeadaea07aabb7a6ccbcf7a40d0c75c130b535299f9",
+  "inventorySha256": "a364dfbda410c587757275276874b09f49560aee26d1f7c910203f9b66e46ef7",
+  "scope": "prepared runtime root texts only; not complete distribution clearance",
+  "packages": 193,
+  "missing": [
+    {
+      "name": "@nodable/entities",
+      "version": "3.0.0"
+    },
+    {
+      "name": "pg-types",
+      "version": "2.2.0"
+    },
+    {
+      "name": "pgpass",
+      "version": "1.0.5"
+    },
+    {
+      "name": "saxes",
+      "version": "6.0.0"
+    }
+  ],
+  "results": [
+    {
+      "name": "@asamuzakjp/css-color",
+      "version": "3.2.0",
+      "path": "node_modules/.pnpm/@asamuzakjp+css-color@3.2.0/node_modules/@asamuzakjp/css-color",
+      "manifestSha256": "fb3f2ac15e94187480a4c34e7ad69463e0ec6e7c94a4f35a946b8cfac983bcc9",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1092,
+          "sha256": "1156c4bf9aa3982ff6157a4a8615906f225e4f46126dc41bf14df9aa7d74601b"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "@csstools/color-helpers",
+      "version": "5.1.0",
+      "path": "node_modules/.pnpm/@csstools+color-helpers@5.1.0/node_modules/@csstools/color-helpers",
+      "manifestSha256": "ed0659c5bac8547eb6ce5bf4c0f7ea77f43835095e4460e3956ecd63143c0cfd",
+      "attachments": [
+        {
+          "file": "LICENSE.md",
+          "bytes": 930,
+          "sha256": "947e32047a166cd05f04e45938d172b412c07cbee0b9735afd14bae30e02c2f6"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "@csstools/css-calc",
+      "version": "2.1.4",
+      "path": "node_modules/.pnpm/@csstools+css-calc@2.1.4_@csstools+css-parser-algorithms@3.0.5_@csstools+css-tokenizer@_e8d5cb57048a11d39451107410ea18b6/node_modules/@csstools/css-calc",
+      "manifestSha256": "963c23fedd6df9a4428f87819c8cbbe6bbd7e16169cfdb5e832f462f8d65eefa",
+      "attachments": [
+        {
+          "file": "LICENSE.md",
+          "bytes": 1111,
+          "sha256": "d00d032f517721b45c56c70c46bf904ebb71ad313df4d4db7722266b38069665"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "@csstools/css-color-parser",
+      "version": "3.1.0",
+      "path": "node_modules/.pnpm/@csstools+css-color-parser@3.1.0_@csstools+css-parser-algorithms@3.0.5_@csstools+css-to_ac3eaa9e6357e2e6fe2577d663b974a1/node_modules/@csstools/css-color-parser",
+      "manifestSha256": "294fd9dacab143694b97ac81d21f45a78e683655f37c718c330a3494530dcb60",
+      "attachments": [
+        {
+          "file": "LICENSE.md",
+          "bytes": 1111,
+          "sha256": "d00d032f517721b45c56c70c46bf904ebb71ad313df4d4db7722266b38069665"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "@csstools/css-parser-algorithms",
+      "version": "3.0.5",
+      "path": "node_modules/.pnpm/@csstools+css-parser-algorithms@3.0.5_@csstools+css-tokenizer@3.0.4/node_modules/@csstools/css-parser-algorithms",
+      "manifestSha256": "2ede4a8a1bafd777c50af276310c5bb4b5274585ebf079059663a3c43a185742",
+      "attachments": [
+        {
+          "file": "LICENSE.md",
+          "bytes": 1111,
+          "sha256": "d00d032f517721b45c56c70c46bf904ebb71ad313df4d4db7722266b38069665"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "@csstools/css-tokenizer",
+      "version": "3.0.4",
+      "path": "node_modules/.pnpm/@csstools+css-tokenizer@3.0.4/node_modules/@csstools/css-tokenizer",
+      "manifestSha256": "304f952c40d6a6070d5a00b26fe84ff594f0b450a7a9d8496c0d87fe49c9a753",
+      "attachments": [
+        {
+          "file": "LICENSE.md",
+          "bytes": 1111,
+          "sha256": "d00d032f517721b45c56c70c46bf904ebb71ad313df4d4db7722266b38069665"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "@mozilla/readability",
+      "version": "0.6.0",
+      "path": "node_modules/.pnpm/@mozilla+readability@0.6.0/node_modules/@mozilla/readability",
+      "manifestSha256": "03c0d0f4786f73f1928024baa179f7e5a363da9f819368253de4c3d712ddf632",
+      "attachments": [
+        {
+          "file": "LICENSE.md",
+          "bytes": 553,
+          "sha256": "a5b1e8181751ce05b85b7bfaa832b785e87086250a5148e679d17ca9bdcfa958"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "@nodable/entities",
+      "version": "3.0.0",
+      "path": "node_modules/.pnpm/@nodable+entities@3.0.0/node_modules/@nodable/entities",
+      "manifestSha256": "548526ce0e1cad9ffe904fba19067013c9fea336eafd3cd52a337ec44406c9ed",
+      "attachments": [],
+      "status": "missing_root_text"
+    },
+    {
+      "name": "@types/debug",
+      "version": "4.1.13",
+      "path": "node_modules/.pnpm/@types+debug@4.1.13/node_modules/@types/debug",
+      "manifestSha256": "3593dbd35512e263c1a4ed9e30545e7f8ffb2f7efabc4e536dddc0868be4e872",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1141,
+          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "@types/estree",
+      "version": "1.0.9",
+      "path": "node_modules/.pnpm/@types+estree@1.0.9/node_modules/@types/estree",
+      "manifestSha256": "3537a6a503f57901111d8a29df81962887653deb199b9a795c7fb50bbfdd1bdc",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1141,
+          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "@types/estree-jsx",
+      "version": "1.0.5",
+      "path": "node_modules/.pnpm/@types+estree-jsx@1.0.5/node_modules/@types/estree-jsx",
+      "manifestSha256": "ba60d7c597e351e26bf117d99b6e25981ad8ea4d4f7fae5f936ebb16396fa972",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1141,
+          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "@types/hast",
+      "version": "3.0.5",
+      "path": "node_modules/.pnpm/@types+hast@3.0.5/node_modules/@types/hast",
+      "manifestSha256": "403fd6e55486fc6d7ebf23c0642649421ca48a291296ba467d298e391e327466",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1141,
+          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "@types/mdast",
+      "version": "4.0.4",
+      "path": "node_modules/.pnpm/@types+mdast@4.0.4/node_modules/@types/mdast",
+      "manifestSha256": "5a41865d64d4cedba58313fad775cf56bd0474d724343172bcea9f8ad24db563",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1141,
+          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "@types/ms",
+      "version": "2.1.0",
+      "path": "node_modules/.pnpm/@types+ms@2.1.0/node_modules/@types/ms",
+      "manifestSha256": "bbd8f5322ea82216e826e522a6a4ec2ed3086b57a25234d0044673eb374b8e2d",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1141,
+          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "@types/react",
+      "version": "19.2.14",
+      "path": "node_modules/.pnpm/@types+react@19.2.14/node_modules/@types/react",
+      "manifestSha256": "e8beff67b2575112eff5757dc8e9310a78fc6e7d2d44d9d7a8204026f4ab81b7",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1141,
+          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "@types/unist",
+      "version": "2.0.11",
+      "path": "node_modules/.pnpm/@types+unist@2.0.11/node_modules/@types/unist",
+      "manifestSha256": "018b88713444b719834f13ab3ee85076205adb88d9c351a955458d6112cae2ec",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1141,
+          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "@types/unist",
+      "version": "3.0.3",
+      "path": "node_modules/.pnpm/@types+unist@3.0.3/node_modules/@types/unist",
+      "manifestSha256": "9aaa6fc2ba9d3eacf1888c727b8b0bf47e4cd9e8e39908a6c91683c39a9bdcd7",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1141,
+          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "@ungap/structured-clone",
+      "version": "1.4.0",
+      "path": "node_modules/.pnpm/@ungap+structured-clone@1.4.0/node_modules/@ungap/structured-clone",
+      "manifestSha256": "8f931c21e4c0b37c35d5ffef35e0bc057f3cbd0224b026b21a5bdb82a98cbd8f",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 765,
+          "sha256": "dc6d4961d8b6ee747231582ae9c53ce1d66bf76bc9f5a28f554c0e97210953bf"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "agent-base",
+      "version": "7.1.4",
+      "path": "node_modules/.pnpm/agent-base@7.1.4/node_modules/agent-base",
+      "manifestSha256": "7a08cb2fe1d2b788e0a7bf6a9b7597dbeeeae804698c2fbd15de786d284d327c",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1101,
+          "sha256": "8d8c55319c7729d57be811c747452636688d54f19701ee0752b6b15ad3771d9a"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "anynum",
+      "version": "1.0.1",
+      "path": "node_modules/.pnpm/anynum@1.0.1/node_modules/anynum",
+      "manifestSha256": "41c5d60f0aa8b5f4133aeff56573a8c4130d4d1c19dc240398ff806b40a4470e",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1077,
+          "sha256": "8e75fc0e776c62ccadb8178ece8d3daa9ba7601fb0a49b2dfb0ea9a7a5c0aa07"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "bail",
+      "version": "2.0.2",
+      "path": "node_modules/.pnpm/bail@2.0.2/node_modules/bail",
+      "manifestSha256": "337981479ea353a473e2b8126adf545c299e368cf7fa31f21d92fd9b40cb029f",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "buffer-equal-constant-time",
+      "version": "1.0.1",
+      "path": "node_modules/.pnpm/buffer-equal-constant-time@1.0.1/node_modules/buffer-equal-constant-time",
+      "manifestSha256": "2d3df7ecb57811cf6fc43be180d9801c7c70928e5388391a6f258d889449ef4e",
+      "attachments": [
+        {
+          "file": "LICENSE.txt",
+          "bytes": 1518,
+          "sha256": "751d0e80fb5c828f8c3de198cc760e1e05377e47c8263ab6ee2f10cdc19ba658"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "ccount",
+      "version": "2.0.1",
+      "path": "node_modules/.pnpm/ccount@2.0.1/node_modules/ccount",
+      "manifestSha256": "007abbcac7038e503a221330fac2515793aa0dfba231b2d54734d2af76b32ed9",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "character-entities",
+      "version": "2.0.2",
+      "path": "node_modules/.pnpm/character-entities@2.0.2/node_modules/character-entities",
+      "manifestSha256": "3eaa974f1a9ede7187797d85eb1c799616144cd5ff75d094d30a44bec7d07d88",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "character-entities-html4",
+      "version": "2.1.0",
+      "path": "node_modules/.pnpm/character-entities-html4@2.1.0/node_modules/character-entities-html4",
+      "manifestSha256": "20b0c6f32ba0c1a0152d4fa5f6650f7345ac7ac36c1e115f7c50bc7f85178aa6",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "character-entities-legacy",
+      "version": "3.0.0",
+      "path": "node_modules/.pnpm/character-entities-legacy@3.0.0/node_modules/character-entities-legacy",
+      "manifestSha256": "51e40ca4e6f95c4bc6f2141f8dbb262ffcc33580c40742702f3579cb3bdf2a64",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "character-reference-invalid",
+      "version": "2.0.1",
+      "path": "node_modules/.pnpm/character-reference-invalid@2.0.1/node_modules/character-reference-invalid",
+      "manifestSha256": "e66c10112582a0daee6dc8e1f97db4206ce1920b7f8d65141d7b924762c1384c",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "comma-separated-tokens",
+      "version": "2.0.3",
+      "path": "node_modules/.pnpm/comma-separated-tokens@2.0.3/node_modules/comma-separated-tokens",
+      "manifestSha256": "c474231549263b0173a3d66f4fc1c4bac2c7517390b2a8e3f09ea1a1f401726b",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "cron-parser",
+      "version": "5.10.0",
+      "path": "node_modules/.pnpm/cron-parser@5.10.0/node_modules/cron-parser",
+      "manifestSha256": "b302295ef94320de3076de0c20ed58a3ba12f8a5bd1066c5e8f8b233a6a969ee",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1084,
+          "sha256": "7eba1c8774e8bcb77356bafc70ac9de8383e7592bb79ab979130ab757d40f53d"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "cssstyle",
+      "version": "4.6.0",
+      "path": "node_modules/.pnpm/cssstyle@4.6.0/node_modules/cssstyle",
+      "manifestSha256": "3ae39b91b47978c901883b4f3e93c83b3d281c5b72c257c8a050022fb15caa8f",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1050,
+          "sha256": "768faff9f6908c78d848b18770b2a93e3361d6e2ee35edf45c6a5ddf1f7cb185"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "csstype",
+      "version": "3.2.3",
+      "path": "node_modules/.pnpm/csstype@3.2.3/node_modules/csstype",
+      "manifestSha256": "c818b74a9bc1556488b7ec2a65399224738f6619228f9a6491c5c02ca91f849e",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1062,
+          "sha256": "11d55bd4541c75ee7879547ac49089c489163dae49551389713c3d026cab383e"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "data-urls",
+      "version": "5.0.0",
+      "path": "node_modules/.pnpm/data-urls@5.0.0/node_modules/data-urls",
+      "manifestSha256": "96689c6cf175e892589fae35fce2e639eb391e59773b681634d89629c7e2ad77",
+      "attachments": [
+        {
+          "file": "LICENSE.txt",
+          "bytes": 1069,
+          "sha256": "528eec83cb836a0adda9f8fc3d6a2a70a710d6cc0be9a155f92212c8df28acfa"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "debug",
+      "version": "4.4.3",
+      "path": "node_modules/.pnpm/debug@4.4.3_supports-color@10.2.2/node_modules/debug",
+      "manifestSha256": "ea8e33d63fe5f3a4c36609b6c3df8e2ef1f8b8ba2fc3a2e1e53cb27291f384af",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1139,
+          "sha256": "3a61c6c96caf5c1d9b623fb9b04c822b783dfcb78aa7e49c76a3f643e6ed7f95"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "decimal.js",
+      "version": "10.6.0",
+      "path": "node_modules/.pnpm/decimal.js@10.6.0/node_modules/decimal.js",
+      "manifestSha256": "d7e3794828ee8bc94818613c9d901a9e7c857e6ffcf027245e661ddfc63d9b72",
+      "attachments": [
+        {
+          "file": "LICENCE.md",
+          "bytes": 1104,
+          "sha256": "3108b546bcff5d346923a82f48b2d252ca722f9088076db6d145f6b67757ad6c"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "decode-named-character-reference",
+      "version": "1.3.0",
+      "path": "node_modules/.pnpm/decode-named-character-reference@1.3.0/node_modules/decode-named-character-reference",
+      "manifestSha256": "b034b006d03650d0995148196898eac08012de40712cb984e968c7b99d96b55e",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "dequal",
+      "version": "2.0.3",
+      "path": "node_modules/.pnpm/dequal@2.0.3/node_modules/dequal",
+      "manifestSha256": "a41e430cd3d990700f1544c5ffece552449ab758d778fa34ad5458cf6ec35d6b",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1114,
+          "sha256": "306fa513e39b23a6e8747520de761809d206b99800ef41907b530226574c59ae"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "devlop",
+      "version": "1.1.0",
+      "path": "node_modules/.pnpm/devlop@1.1.0/node_modules/devlop",
+      "manifestSha256": "fbb56102cf3bd0e07a8075bfda80825b3ccd78a37642c92cef54a55fbed709dd",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "6f296a5eccc1dc96714bb94ebaa9cac25b0a1467d74cc5263ac4d0646ab01f62"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "ecdsa-sig-formatter",
+      "version": "1.0.11",
+      "path": "node_modules/.pnpm/ecdsa-sig-formatter@1.0.11/node_modules/ecdsa-sig-formatter",
+      "manifestSha256": "f8c0805a13487310192db6ae04452c4315f5538ae87d7bc20de2904902c34027",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 11312,
+          "sha256": "50a6b24f8defc31a078aa9799a91d776f83948071574854f12473362aee74d0d"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "entities",
+      "version": "2.2.0",
+      "path": "node_modules/.pnpm/entities@2.2.0/node_modules/entities",
+      "manifestSha256": "e551da4eee00694ea973b9d0a0aaa696256007fc4083a80c8fb2b005c788fca1",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1260,
+          "sha256": "cb992345949ccd6e8394b2cd6c465f7b897c864f845937dbf64e8997f389e164"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "entities",
+      "version": "6.0.1",
+      "path": "node_modules/.pnpm/entities@6.0.1/node_modules/entities",
+      "manifestSha256": "2b110e5a5a7a7bcbc843b885105a952630299cb1a7817b4b321d69479cfa7086",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1260,
+          "sha256": "cb992345949ccd6e8394b2cd6c465f7b897c864f845937dbf64e8997f389e164"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "escape-string-regexp",
+      "version": "5.0.0",
+      "path": "node_modules/.pnpm/escape-string-regexp@5.0.0/node_modules/escape-string-regexp",
+      "manifestSha256": "6d7ae0240943e38cb8a8dd35242584b2c3415a2bca83aa86497d3b7b1bef08ef",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1117,
+          "sha256": "5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "estree-util-is-identifier-name",
+      "version": "3.0.0",
+      "path": "node_modules/.pnpm/estree-util-is-identifier-name@3.0.0/node_modules/estree-util-is-identifier-name",
+      "manifestSha256": "d0f734156695c70baee2e43c094adde322839ddc23a517ea0039b3ff6a6567f9",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "extend",
+      "version": "3.0.2",
+      "path": "node_modules/.pnpm/extend@3.0.2/node_modules/extend",
+      "manifestSha256": "8d891b3f00bead114c4741d8a594e7aaa59114f53782ec9a9319a619709dc14f",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1081,
+          "sha256": "97af7428f93afbab9bf79cd09254da1357161794f4255eb1b4599f04dd2d2e7c"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "fast-xml-builder",
+      "version": "1.3.1",
+      "path": "node_modules/.pnpm/fast-xml-builder@1.3.1/node_modules/fast-xml-builder",
+      "manifestSha256": "304416f412412cd967ee1139f0eadfebaa263e92bfbfa264bedbb37055d5c27e",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1077,
+          "sha256": "8e75fc0e776c62ccadb8178ece8d3daa9ba7601fb0a49b2dfb0ea9a7a5c0aa07"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "fast-xml-parser",
+      "version": "5.11.0",
+      "path": "node_modules/.pnpm/fast-xml-parser@5.11.0/node_modules/fast-xml-parser",
+      "manifestSha256": "c61593381ea333fce34ff4e5bf2e3062f83cf31c7474920fe73a5771aac69b75",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1073,
+          "sha256": "7883225d5e84a6bbb9b170c3d891b4bf6d6259cee869c86bd86381a927071745"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "hast-util-to-jsx-runtime",
+      "version": "2.3.6",
+      "path": "node_modules/.pnpm/hast-util-to-jsx-runtime@2.3.6_supports-color@10.2.2/node_modules/hast-util-to-jsx-runtime",
+      "manifestSha256": "30dc325d26a45aed9ca3c9c686249cc40f9e234019d220dd954dad488d9fab49",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "hast-util-whitespace",
+      "version": "3.0.0",
+      "path": "node_modules/.pnpm/hast-util-whitespace@3.0.0/node_modules/hast-util-whitespace",
+      "manifestSha256": "50a1eeeab4c354912b9f61e5b7aad22762dcbd96f740e58146f303bc4826f0b4",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "html-encoding-sniffer",
+      "version": "4.0.0",
+      "path": "node_modules/.pnpm/html-encoding-sniffer@4.0.0/node_modules/html-encoding-sniffer",
+      "manifestSha256": "0f5b9675c7c9ca79af66e0d3d061b8affe25bfec7699b49859262cddf6b63b1d",
+      "attachments": [
+        {
+          "file": "LICENSE.txt",
+          "bytes": 1069,
+          "sha256": "528eec83cb836a0adda9f8fc3d6a2a70a710d6cc0be9a155f92212c8df28acfa"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "html-url-attributes",
+      "version": "3.0.1",
+      "path": "node_modules/.pnpm/html-url-attributes@3.0.1/node_modules/html-url-attributes",
+      "manifestSha256": "0bd29e79398437b88c9647434c40c48168d87b22f7448f5f083f4f2d8ab063d8",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1070,
+          "sha256": "e18cf5173e928f808f0cd208097fee8fbec9d28fc0255213938e4c559e29ff58"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "http-proxy-agent",
+      "version": "7.0.2",
+      "path": "node_modules/.pnpm/http-proxy-agent@7.0.2_supports-color@10.2.2/node_modules/http-proxy-agent",
+      "manifestSha256": "38b61961aa0ba3028f2e120b3d883179281f6ba25fe22ff2214bf9f363161b65",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1102,
+          "sha256": "71368fd0f5b4129191e9afcd1e1ef2dc89a9090d3e4d80bbab92dafd032b3bef"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "https-proxy-agent",
+      "version": "7.0.6",
+      "path": "node_modules/.pnpm/https-proxy-agent@7.0.6_supports-color@10.2.2/node_modules/https-proxy-agent",
+      "manifestSha256": "b08c1977d38f14f4be7fb5be33aab545e3e5a6e2e12100733a6ad97dec995206",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1101,
+          "sha256": "8d8c55319c7729d57be811c747452636688d54f19701ee0752b6b15ad3771d9a"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "iconv-lite",
+      "version": "0.6.3",
+      "path": "node_modules/.pnpm/iconv-lite@0.6.3/node_modules/iconv-lite",
+      "manifestSha256": "3a9582fd121f841c245d1fcf84ef0b9e41c94b785b8d7eb63f9f5aec9bad0b98",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1064,
+          "sha256": "ac779f7314c74f232ef847ea86e714abe25cf6eeb5cc97b69451b74e2af6492d"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "inline-style-parser",
+      "version": "0.2.7",
+      "path": "node_modules/.pnpm/inline-style-parser@0.2.7/node_modules/inline-style-parser",
+      "manifestSha256": "905dabd170bc0374e32e35b8c5d02068b5ffb797120dd7de0f6bc172a7ae8abd",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1098,
+          "sha256": "395c95f20598da653ff1eb1cb9d74947c7fac689697147f1d192fd0242a0e635"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "is-alphabetical",
+      "version": "2.0.1",
+      "path": "node_modules/.pnpm/is-alphabetical@2.0.1/node_modules/is-alphabetical",
+      "manifestSha256": "764861182abad511ee66eea255053304c637a9ff1928f52a5800ac7043ba6a3b",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "is-alphanumerical",
+      "version": "2.0.1",
+      "path": "node_modules/.pnpm/is-alphanumerical@2.0.1/node_modules/is-alphanumerical",
+      "manifestSha256": "e6ac8f7e567d2c8079b7c0954e3cb64ceb7834e64f2a4568996935e1f3d58c6b",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "is-decimal",
+      "version": "2.0.1",
+      "path": "node_modules/.pnpm/is-decimal@2.0.1/node_modules/is-decimal",
+      "manifestSha256": "aa18d6561f45c1aa9fa982727a9b315719296572287268314e866a2bbb50e684",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "is-hexadecimal",
+      "version": "2.0.1",
+      "path": "node_modules/.pnpm/is-hexadecimal@2.0.1/node_modules/is-hexadecimal",
+      "manifestSha256": "cf249c4bb356b19911930acfaf501dbf59df1f4ecb39f007afe7fb32b5555350",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "is-plain-obj",
+      "version": "4.1.0",
+      "path": "node_modules/.pnpm/is-plain-obj@4.1.0/node_modules/is-plain-obj",
+      "manifestSha256": "ac84142050cd4d1854c489a3d61e0c991550195ae5ae37d9347b736424b09c59",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1117,
+          "sha256": "5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "is-potential-custom-element-name",
+      "version": "1.0.1",
+      "path": "node_modules/.pnpm/is-potential-custom-element-name@1.0.1/node_modules/is-potential-custom-element-name",
+      "manifestSha256": "9b41645708a8d3fdae25ceac23c0b8861be9010c6c9dbb9770d0018e803bd1d9",
+      "attachments": [
+        {
+          "file": "LICENSE-MIT.txt",
+          "bytes": 1077,
+          "sha256": "483acb265f182907d1caf6cff9c16c96f31325ed23792832cc5d8b12d5f88c8a"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "is-unsafe",
+      "version": "2.0.2",
+      "path": "node_modules/.pnpm/is-unsafe@2.0.2/node_modules/is-unsafe",
+      "manifestSha256": "0fb03fbe6e0df6090d778679929c7c34c9fca298bc72190468217171e8154943",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1077,
+          "sha256": "8e75fc0e776c62ccadb8178ece8d3daa9ba7601fb0a49b2dfb0ea9a7a5c0aa07"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "jsdom",
+      "version": "26.1.0",
+      "path": "node_modules/.pnpm/jsdom@26.1.0_supports-color@10.2.2/node_modules/jsdom",
+      "manifestSha256": "9670cfae0de2c46a3276fa20815328e3903275b04cc8969a6f6be01f2c580043",
+      "attachments": [
+        {
+          "file": "LICENSE.txt",
+          "bytes": 1056,
+          "sha256": "242d37e7cab25cbafc36cc973ee88f9345fddf066afe4f72b7ac3d9ad4e24cce"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "jsonwebtoken",
+      "version": "9.0.3",
+      "path": "node_modules/.pnpm/jsonwebtoken@9.0.3/node_modules/jsonwebtoken",
+      "manifestSha256": "3a49dada910349920f89122254957f18d3b887159b0cb14a672cb5ba85fed17e",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1121,
+          "sha256": "2144eb6894cb440fde6b2b3aaae3b617c8f1dc9bb19813079dcf62ec6c517042"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "jwa",
+      "version": "2.0.1",
+      "path": "node_modules/.pnpm/jwa@2.0.1/node_modules/jwa",
+      "manifestSha256": "53610fa0143c2cdef9d280e0c029ededf688930648358d4f3e35a081d75219d8",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1068,
+          "sha256": "3320319f8a5f42bc4254e65471eca7a5ea4dc8c883c4c24b4868e36b14890bcf"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "jws",
+      "version": "4.0.1",
+      "path": "node_modules/.pnpm/jws@4.0.1/node_modules/jws",
+      "manifestSha256": "a934389f53e2ac8909d5399410c1ede3e35397be9e9f521bde25b61e1fee0b2f",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1068,
+          "sha256": "3320319f8a5f42bc4254e65471eca7a5ea4dc8c883c4c24b4868e36b14890bcf"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "lodash.includes",
+      "version": "4.3.0",
+      "path": "node_modules/.pnpm/lodash.includes@4.3.0/node_modules/lodash.includes",
+      "manifestSha256": "475341d4a8eb63cee296d0be3d0180bcf3731d2b9837d3ba74280044bc1e8f48",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1951,
+          "sha256": "ffd8b33b354585f4ce119f19c53728281e48a97b074491eb6bf6d5c5ff305272"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "lodash.isboolean",
+      "version": "3.0.3",
+      "path": "node_modules/.pnpm/lodash.isboolean@3.0.3/node_modules/lodash.isboolean",
+      "manifestSha256": "2eb21a69e5934d240b5f9b731eb088646c496e0255667ab852fce32e82048d2e",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1233,
+          "sha256": "25a399d4a42f419445101092a1fc3f9b4bfe06d614f84128222d79e3a2105fe7"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "lodash.isinteger",
+      "version": "4.0.4",
+      "path": "node_modules/.pnpm/lodash.isinteger@4.0.4/node_modules/lodash.isinteger",
+      "manifestSha256": "7247346b82f902b15d2698360d45af5dfb5164f628bdc57b83c996b939a27408",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1951,
+          "sha256": "ffd8b33b354585f4ce119f19c53728281e48a97b074491eb6bf6d5c5ff305272"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "lodash.isnumber",
+      "version": "3.0.3",
+      "path": "node_modules/.pnpm/lodash.isnumber@3.0.3/node_modules/lodash.isnumber",
+      "manifestSha256": "73b6302bec5815d609e434b440bd8ecd45d3d71b650c0de88d400cab13891000",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1233,
+          "sha256": "25a399d4a42f419445101092a1fc3f9b4bfe06d614f84128222d79e3a2105fe7"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "lodash.isplainobject",
+      "version": "4.0.6",
+      "path": "node_modules/.pnpm/lodash.isplainobject@4.0.6/node_modules/lodash.isplainobject",
+      "manifestSha256": "c76488b831ad65dfa3a3e51201c9eb2193313ba1bee05bad910e9c6fa613bcd7",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1951,
+          "sha256": "ffd8b33b354585f4ce119f19c53728281e48a97b074491eb6bf6d5c5ff305272"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "lodash.isstring",
+      "version": "4.0.1",
+      "path": "node_modules/.pnpm/lodash.isstring@4.0.1/node_modules/lodash.isstring",
+      "manifestSha256": "6fb3bb13e2d77b249269f9b39d3bd0629206cccb44bf04968643a49678882d0e",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1233,
+          "sha256": "25a399d4a42f419445101092a1fc3f9b4bfe06d614f84128222d79e3a2105fe7"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "lodash.once",
+      "version": "4.1.1",
+      "path": "node_modules/.pnpm/lodash.once@4.1.1/node_modules/lodash.once",
+      "manifestSha256": "7702448f49d390b35edfe095daa8bd684aba40069e0359c2bacf79606d1468e0",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1951,
+          "sha256": "ffd8b33b354585f4ce119f19c53728281e48a97b074491eb6bf6d5c5ff305272"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "longest-streak",
+      "version": "3.1.0",
+      "path": "node_modules/.pnpm/longest-streak@3.1.0/node_modules/longest-streak",
+      "manifestSha256": "fe48cd537de554b59fcb057d28c4b10cfef569817040ae61beb8a9b323bf82df",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1106,
+          "sha256": "9f084fac69d8cf1e6ce983ba5a3499c7695ed74a26ec625c38f0fd19fddd5e10"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "lru-cache",
+      "version": "10.4.3",
+      "path": "node_modules/.pnpm/lru-cache@10.4.3/node_modules/lru-cache",
+      "manifestSha256": "a7e05794a5dc81dfc79a0f186c5219f442f2f735b08a3e9b91aba59833badc2d",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 775,
+          "sha256": "451ec07eeb9c4e1b86de9abdaa426462a8be48f887ec7421cf0bbb9c769555ab"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "luxon",
+      "version": "3.7.2",
+      "path": "node_modules/.pnpm/luxon@3.7.2/node_modules/luxon",
+      "manifestSha256": "bf8c55f4072d01467c1c0c49807722f79577680ac1ff7fa7c030a83716d3db4f",
+      "attachments": [
+        {
+          "file": "LICENSE.md",
+          "bytes": 1076,
+          "sha256": "6cb2f2bf697ee9c6fa9eb8f227c63ee6e7a3cba42d4717f14c745ef9b6cbc006"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "markdown-table",
+      "version": "3.0.4",
+      "path": "node_modules/.pnpm/markdown-table@3.0.4/node_modules/markdown-table",
+      "manifestSha256": "545694864e591196ed1cfc43b5b973b1662722cd081d3d113b25f298ac6d02f9",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "mdast-util-find-and-replace",
+      "version": "3.0.2",
+      "path": "node_modules/.pnpm/mdast-util-find-and-replace@3.0.2/node_modules/mdast-util-find-and-replace",
+      "manifestSha256": "7257228953a3a5577a5dbabe7946af43975751ff0b9fd77309e5fecd63972288",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "mdast-util-from-markdown",
+      "version": "2.0.3",
+      "path": "node_modules/.pnpm/mdast-util-from-markdown@2.0.3_supports-color@10.2.2/node_modules/mdast-util-from-markdown",
+      "manifestSha256": "4f7c4700c78d6781af46eb12b2f908b0503d8beefa8b2cea0fbfe9de8444e438",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "mdast-util-gfm",
+      "version": "3.1.0",
+      "path": "node_modules/.pnpm/mdast-util-gfm@3.1.0_supports-color@10.2.2/node_modules/mdast-util-gfm",
+      "manifestSha256": "5d3d27f68e6aac77039850c2587d49b2d8047f1fb46914d1f67eaec0a52c8fe1",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "mdast-util-gfm-autolink-literal",
+      "version": "2.0.1",
+      "path": "node_modules/.pnpm/mdast-util-gfm-autolink-literal@2.0.1/node_modules/mdast-util-gfm-autolink-literal",
+      "manifestSha256": "aaf24f25ff1d5dee2b19c2da3704f98fbc67ac2bdf9424858aeb19430649c50b",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "mdast-util-gfm-footnote",
+      "version": "2.1.0",
+      "path": "node_modules/.pnpm/mdast-util-gfm-footnote@2.1.0_supports-color@10.2.2/node_modules/mdast-util-gfm-footnote",
+      "manifestSha256": "b91f4521e33413134bda4b3a481b165c764efd453cb7fb379f5b71b09309e11a",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "mdast-util-gfm-strikethrough",
+      "version": "2.0.0",
+      "path": "node_modules/.pnpm/mdast-util-gfm-strikethrough@2.0.0_supports-color@10.2.2/node_modules/mdast-util-gfm-strikethrough",
+      "manifestSha256": "58a2747007773f1d8b95bbb233589e6be6bdbdfe23612522d58ffeec1c7c98b2",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "mdast-util-gfm-table",
+      "version": "2.0.0",
+      "path": "node_modules/.pnpm/mdast-util-gfm-table@2.0.0_supports-color@10.2.2/node_modules/mdast-util-gfm-table",
+      "manifestSha256": "8ab7c1402602e721347f377b537374d4f2dfdef7794f4c7b0711ad1f39e2239f",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "mdast-util-gfm-task-list-item",
+      "version": "2.0.0",
+      "path": "node_modules/.pnpm/mdast-util-gfm-task-list-item@2.0.0_supports-color@10.2.2/node_modules/mdast-util-gfm-task-list-item",
+      "manifestSha256": "156ef1ae561ef1558f5e3210c41f238a4707d9f451eecda92d832ef821d5e7f1",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "mdast-util-mdx-expression",
+      "version": "2.0.1",
+      "path": "node_modules/.pnpm/mdast-util-mdx-expression@2.0.1_supports-color@10.2.2/node_modules/mdast-util-mdx-expression",
+      "manifestSha256": "bdc0c68b4eca52b0ffc6e50ce48fb8366d994d2065d99200a081191d05294985",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "mdast-util-mdx-jsx",
+      "version": "3.2.0",
+      "path": "node_modules/.pnpm/mdast-util-mdx-jsx@3.2.0_supports-color@10.2.2/node_modules/mdast-util-mdx-jsx",
+      "manifestSha256": "6bbb6d4cb8876c914de97eaa11c5ef99550e9f93056d8a5d2c3297864135d2f9",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "mdast-util-mdxjs-esm",
+      "version": "2.0.1",
+      "path": "node_modules/.pnpm/mdast-util-mdxjs-esm@2.0.1_supports-color@10.2.2/node_modules/mdast-util-mdxjs-esm",
+      "manifestSha256": "e1b80111851201ba096f838cae4f534a22791bc8f3ab46c10596b31c34f1c52e",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "mdast-util-phrasing",
+      "version": "4.1.0",
+      "path": "node_modules/.pnpm/mdast-util-phrasing@4.1.0/node_modules/mdast-util-phrasing",
+      "manifestSha256": "c020a54303d9d422c9def6ba5416db74c0f30b2783f2a84b7248b0d61c2ac113",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1150,
+          "sha256": "b6d1a4e1831b177acc96f22a817d4f0f4c18419355badc3125754445fc69e3a7"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "mdast-util-to-hast",
+      "version": "13.2.1",
+      "path": "node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast",
+      "manifestSha256": "aa1e17fedf46914534ba0c67016734edc6d0fc919057556eb1034160f795b596",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "mdast-util-to-markdown",
+      "version": "2.1.2",
+      "path": "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown",
+      "manifestSha256": "79a01b2e7f0c1bdf3f3b1a2a9ba40d8d9d3378eba98b2909bddda41a90d870d1",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "mdast-util-to-string",
+      "version": "4.0.0",
+      "path": "node_modules/.pnpm/mdast-util-to-string@4.0.0/node_modules/mdast-util-to-string",
+      "manifestSha256": "0acb725dee2ee1c9d374b240c7a972da04cc94d13663b58fa52be009c3271a13",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "micromark",
+      "version": "4.0.2",
+      "path": "node_modules/.pnpm/micromark@4.0.2_supports-color@10.2.2/node_modules/micromark",
+      "manifestSha256": "e2423e9665ea6d21d78cb520e812249cdbce2428bd6a6e9b38438a2569b05f2d",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "micromark-core-commonmark",
+      "version": "2.0.3",
+      "path": "node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark",
+      "manifestSha256": "f6b039e198e40c6ede380cc41da4c840555c18fd5f2be43a559fb5c4221c034d",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "micromark-extension-gfm",
+      "version": "3.0.0",
+      "path": "node_modules/.pnpm/micromark-extension-gfm@3.0.0/node_modules/micromark-extension-gfm",
+      "manifestSha256": "f0c6ffb3bbbf52b1e5d939566b8d68097cbdd061598f09fde72af8a38c948bee",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "micromark-extension-gfm-autolink-literal",
+      "version": "2.1.0",
+      "path": "node_modules/.pnpm/micromark-extension-gfm-autolink-literal@2.1.0/node_modules/micromark-extension-gfm-autolink-literal",
+      "manifestSha256": "778b72859fb329cbca8ea93653b8b11da652f93147e2752773eef42b9091eaca",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "micromark-extension-gfm-footnote",
+      "version": "2.1.0",
+      "path": "node_modules/.pnpm/micromark-extension-gfm-footnote@2.1.0/node_modules/micromark-extension-gfm-footnote",
+      "manifestSha256": "6d01f1d739fa38fbe2784fcb9143554b2f19e4c1193f7d62efae46fb7d3b36d6",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "807a88522a850092aece49486207c17c313c4d5708ac276524840fe1caa0b0fa"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "micromark-extension-gfm-strikethrough",
+      "version": "2.1.0",
+      "path": "node_modules/.pnpm/micromark-extension-gfm-strikethrough@2.1.0/node_modules/micromark-extension-gfm-strikethrough",
+      "manifestSha256": "5a115643dd899a6c828ab236bbeab6aaf2108276f5cbc989662d6204f5ab677a",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "micromark-extension-gfm-table",
+      "version": "2.1.1",
+      "path": "node_modules/.pnpm/micromark-extension-gfm-table@2.1.1/node_modules/micromark-extension-gfm-table",
+      "manifestSha256": "77614bfc3e826a49007c78569df530d2a0832188cce1b54dd4fe81b056540dc2",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "micromark-extension-gfm-tagfilter",
+      "version": "2.0.0",
+      "path": "node_modules/.pnpm/micromark-extension-gfm-tagfilter@2.0.0/node_modules/micromark-extension-gfm-tagfilter",
+      "manifestSha256": "6ae932bac51e13e4b1fe4071c2a60f567b68e7a26ef60649d6401bab94bdf0b4",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "micromark-extension-gfm-task-list-item",
+      "version": "2.1.0",
+      "path": "node_modules/.pnpm/micromark-extension-gfm-task-list-item@2.1.0/node_modules/micromark-extension-gfm-task-list-item",
+      "manifestSha256": "2497c18c449db1459392e6e70bca781256cab6a69b3a35fc55acbd0360ceb85c",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "micromark-factory-destination",
+      "version": "2.0.1",
+      "path": "node_modules/.pnpm/micromark-factory-destination@2.0.1/node_modules/micromark-factory-destination",
+      "manifestSha256": "71e61f23d5e171525c8934e9a8ac51e649107e4658082938d19dab172533b483",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "micromark-factory-label",
+      "version": "2.0.1",
+      "path": "node_modules/.pnpm/micromark-factory-label@2.0.1/node_modules/micromark-factory-label",
+      "manifestSha256": "2c1c73d0087a1195a34bff62b47d5119a49f210636b3759c6d459886b559ee5e",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "micromark-factory-space",
+      "version": "2.0.1",
+      "path": "node_modules/.pnpm/micromark-factory-space@2.0.1/node_modules/micromark-factory-space",
+      "manifestSha256": "26349d7f4aa3c2a4eb91fca569e2b5f70cfc8df1517d360542f8b99ab61a6961",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "micromark-factory-title",
+      "version": "2.0.1",
+      "path": "node_modules/.pnpm/micromark-factory-title@2.0.1/node_modules/micromark-factory-title",
+      "manifestSha256": "5b7d184aeb5ff4fa8b63a338800e80400a631ee594ff0d698a5a4668eddc9a16",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "micromark-factory-whitespace",
+      "version": "2.0.1",
+      "path": "node_modules/.pnpm/micromark-factory-whitespace@2.0.1/node_modules/micromark-factory-whitespace",
+      "manifestSha256": "ea0cbec4d722111585387048046a248ce272e3c587e228cc3cf98fe4919e48c6",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "micromark-util-character",
+      "version": "2.1.1",
+      "path": "node_modules/.pnpm/micromark-util-character@2.1.1/node_modules/micromark-util-character",
+      "manifestSha256": "bf43c5df782cf1cf985d89a8f01fd1a7b7b4bae9bf2b9c07e633c2379b1dbd7f",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "micromark-util-chunked",
+      "version": "2.0.1",
+      "path": "node_modules/.pnpm/micromark-util-chunked@2.0.1/node_modules/micromark-util-chunked",
+      "manifestSha256": "20e4e68a94fb62188c9139721be97740ec32f77464b23c40677a89aee72584f6",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "micromark-util-classify-character",
+      "version": "2.0.1",
+      "path": "node_modules/.pnpm/micromark-util-classify-character@2.0.1/node_modules/micromark-util-classify-character",
+      "manifestSha256": "f84c7e2b5f54a05fa725645d31810ad8531c278901d661c714d114ad978e634d",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "micromark-util-combine-extensions",
+      "version": "2.0.1",
+      "path": "node_modules/.pnpm/micromark-util-combine-extensions@2.0.1/node_modules/micromark-util-combine-extensions",
+      "manifestSha256": "43686ee41cc83e2460aaa49821d7f36b0b7fd525e88b253e10b1556520196554",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "micromark-util-decode-numeric-character-reference",
+      "version": "2.0.2",
+      "path": "node_modules/.pnpm/micromark-util-decode-numeric-character-reference@2.0.2/node_modules/micromark-util-decode-numeric-character-reference",
+      "manifestSha256": "b4eda7dc69734392cf0c79313423b21dacfe03ae43002e5fc18151613f37f532",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "micromark-util-decode-string",
+      "version": "2.0.1",
+      "path": "node_modules/.pnpm/micromark-util-decode-string@2.0.1/node_modules/micromark-util-decode-string",
+      "manifestSha256": "3fde5acb664658ceef73bd64e17041e9762819a06ccee998d058d04e8ec34a2e",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "micromark-util-encode",
+      "version": "2.0.1",
+      "path": "node_modules/.pnpm/micromark-util-encode@2.0.1/node_modules/micromark-util-encode",
+      "manifestSha256": "1758618d3101cb94280c1ddb827bb329790f7d95058cdc616d50352811c7d5ba",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "micromark-util-html-tag-name",
+      "version": "2.0.1",
+      "path": "node_modules/.pnpm/micromark-util-html-tag-name@2.0.1/node_modules/micromark-util-html-tag-name",
+      "manifestSha256": "d541066042522d8c5247964225d3a9f08f7b902b75682ab57ceecfeee45ed90c",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "micromark-util-normalize-identifier",
+      "version": "2.0.1",
+      "path": "node_modules/.pnpm/micromark-util-normalize-identifier@2.0.1/node_modules/micromark-util-normalize-identifier",
+      "manifestSha256": "b22a2066064ff412b8f9ded011a14d3fac87c37c696da2d8e8a57a0c9c88dea0",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "micromark-util-resolve-all",
+      "version": "2.0.1",
+      "path": "node_modules/.pnpm/micromark-util-resolve-all@2.0.1/node_modules/micromark-util-resolve-all",
+      "manifestSha256": "f786149ff20e6ab653b42ddf8109d4f14e839b80800513698f7de790b3819628",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "micromark-util-sanitize-uri",
+      "version": "2.0.1",
+      "path": "node_modules/.pnpm/micromark-util-sanitize-uri@2.0.1/node_modules/micromark-util-sanitize-uri",
+      "manifestSha256": "a694d9800a68d5d52916675f9231c16bf7e764658a9045d86b74c29736b59dd6",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "micromark-util-subtokenize",
+      "version": "2.1.0",
+      "path": "node_modules/.pnpm/micromark-util-subtokenize@2.1.0/node_modules/micromark-util-subtokenize",
+      "manifestSha256": "8dd7a96c44ac602941d16b0078cef059821871b047a6f6309ffd61bb470cd420",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "micromark-util-symbol",
+      "version": "2.0.1",
+      "path": "node_modules/.pnpm/micromark-util-symbol@2.0.1/node_modules/micromark-util-symbol",
+      "manifestSha256": "713151401c413cbfd443283e5e721f914b06b8f3a372e9821139bde73e3c909d",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "micromark-util-types",
+      "version": "2.0.2",
+      "path": "node_modules/.pnpm/micromark-util-types@2.0.2/node_modules/micromark-util-types",
+      "manifestSha256": "4bf761498edc00e674903db57fc6a8cf478677363adc776b8ac115771e791cd3",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "ms",
+      "version": "2.1.3",
+      "path": "node_modules/.pnpm/ms@2.1.3/node_modules/ms",
+      "manifestSha256": "1a6b4d9739790c0b94ab96c8cc0507e281c164c311ff4fbf5e57fb8d26290b40",
+      "attachments": [
+        {
+          "file": "license.md",
+          "bytes": 1079,
+          "sha256": "1662fae9b5314d11cf51284e2dcd1f006a354f7343f08712a730fcff9a359801"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "non-error",
+      "version": "0.1.0",
+      "path": "node_modules/.pnpm/non-error@0.1.0/node_modules/non-error",
+      "manifestSha256": "37019b134aef000584708a17cdd87b192a123a5a9e0d32c1933747937da83b85",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1117,
+          "sha256": "5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "nwsapi",
+      "version": "2.2.27",
+      "path": "node_modules/.pnpm/nwsapi@2.2.27/node_modules/nwsapi",
+      "manifestSha256": "7261653333c2b25b7796678c8490cf4c65869464e6243bb34c0bdf897650ef93",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1084,
+          "sha256": "2aebdf8ae67777ccb2fa66b32066c1a16bd71085011bb4085dc7408e2947d2c2"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "parse-entities",
+      "version": "4.0.2",
+      "path": "node_modules/.pnpm/parse-entities@4.0.2/node_modules/parse-entities",
+      "manifestSha256": "7af95256ec23ae6e1095852c4e8a85f836ed4ea1cbaffe5a34ab2cef817ebabb",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1101,
+          "sha256": "5d0698266086f217bb11ea0499d33453e401fe479fb9126ad04e625e63d3557b"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "parse5",
+      "version": "7.3.0",
+      "path": "node_modules/.pnpm/parse5@7.3.0/node_modules/parse5",
+      "manifestSha256": "8196284780fe95c3245a40e3c17b45fc85ef709f1211775987d037e5e873fe95",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1109,
+          "sha256": "8c535800331e1e4439835555b3f9edc7fe9dee2fab0d8bbbd5a982e8b8343d4d"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "path-expression-matcher",
+      "version": "1.6.2",
+      "path": "node_modules/.pnpm/path-expression-matcher@1.6.2/node_modules/path-expression-matcher",
+      "manifestSha256": "625ca3a27a289160508a79773ddfd7bf678a6401bd96321cac0bc43ebebe01f8",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1056,
+          "sha256": "75486ea0af9309140ca6e2c401d7e67bea8f4892344e5707f6394dc5e83dfc44"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "pg",
+      "version": "8.23.0",
+      "path": "node_modules/.pnpm/pg@8.23.0/node_modules/pg",
+      "manifestSha256": "e42dd36cba6e9dd8dbb6f773a2f7be8a8c3c273e18b155e42e75961a4cb8bc28",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1077,
+          "sha256": "192b8f5c96900f04a1271dec39688655d7416c1c6ea84a508e18b50d2b6751f3"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "pg-boss",
+      "version": "12.30.0",
+      "path": "node_modules/.pnpm/pg-boss@12.30.0/node_modules/pg-boss",
+      "manifestSha256": "72f89c78727d3bb15c535f8eef148aee6dbf78eaeaedcc1f9825840e7c31a2f0",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1076,
+          "sha256": "51ad77d655782ec9ea2a624529a37f25cb82bd41ae38d85d15cdb0d4dd9c5689"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "pg-cloudflare",
+      "version": "1.4.0",
+      "path": "node_modules/.pnpm/pg-cloudflare@1.4.0/node_modules/pg-cloudflare",
+      "manifestSha256": "26a5017fe5fa14bb2eaa90fb87a2c54becc2666516ef79ee591694bcb9533531",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1077,
+          "sha256": "192b8f5c96900f04a1271dec39688655d7416c1c6ea84a508e18b50d2b6751f3"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "pg-connection-string",
+      "version": "2.14.0",
+      "path": "node_modules/.pnpm/pg-connection-string@2.14.0/node_modules/pg-connection-string",
+      "manifestSha256": "5e07e70c64af1e8695a91f9371b713106eeed3b52a1d6b7f7238a33f01dd3f20",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1082,
+          "sha256": "2244b5486c4427001b6756a87b9a297d427c111dcc3ba64a097492a8979c23d0"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "pg-int8",
+      "version": "1.0.1",
+      "path": "node_modules/.pnpm/pg-int8@1.0.1/node_modules/pg-int8",
+      "manifestSha256": "147155887a41bb6f69ff98b3dde827b7e6a8214c3a71938da4babf8e12adff2e",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 750,
+          "sha256": "4e8e87ccdfc7e4b47fd89015f78468aa53b6bf43ab6e6e12d43e8f55294911de"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "pg-pool",
+      "version": "3.14.0",
+      "path": "node_modules/.pnpm/pg-pool@3.14.0_pg@8.23.0/node_modules/pg-pool",
+      "manifestSha256": "0a9924def9e06f791b09a44eaefb227f323a39199887f6ce17b44cb5a9193134",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1073,
+          "sha256": "4f15ee7fc2a72082859d7e0d12dfa4bcdd70b1c744ad3850d07780730ac08557"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "pg-protocol",
+      "version": "1.16.0",
+      "path": "node_modules/.pnpm/pg-protocol@1.16.0/node_modules/pg-protocol",
+      "manifestSha256": "4ee6a91e60a002e828e64dfab04c232bba566db233a905a1a15e475a0336c73d",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1077,
+          "sha256": "192b8f5c96900f04a1271dec39688655d7416c1c6ea84a508e18b50d2b6751f3"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "pg-types",
+      "version": "2.2.0",
+      "path": "node_modules/.pnpm/pg-types@2.2.0/node_modules/pg-types",
+      "manifestSha256": "3ec0293cb38cc8d9475e3eb32ac5f19d195bf9fccc8b19a0714e6ecd6e7c2cf0",
+      "attachments": [],
+      "status": "missing_root_text"
+    },
+    {
+      "name": "pgpass",
+      "version": "1.0.5",
+      "path": "node_modules/.pnpm/pgpass@1.0.5/node_modules/pgpass",
+      "manifestSha256": "d75240eb4fe759c10db9f903838275348676a8bdc1f329e20a833713cd7c99bd",
+      "attachments": [],
+      "status": "missing_root_text"
+    },
+    {
+      "name": "postgres-array",
+      "version": "2.0.0",
+      "path": "node_modules/.pnpm/postgres-array@2.0.0/node_modules/postgres-array",
+      "manifestSha256": "dcd6a505fcbc032b409ee2838ab2c776dea3a9cfe02b736364b6cb82a946665f",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1111,
+          "sha256": "f057f36739d53d228a746de4440c1e0c644ecde06d6beab45337d39c9d12a393"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "postgres-bytea",
+      "version": "1.0.1",
+      "path": "node_modules/.pnpm/postgres-bytea@1.0.1/node_modules/postgres-bytea",
+      "manifestSha256": "9125568c5fb51a65b8f11adb0080c2775b99ee82822d73bff8b56b2a9d47d7aa",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1111,
+          "sha256": "f057f36739d53d228a746de4440c1e0c644ecde06d6beab45337d39c9d12a393"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "postgres-date",
+      "version": "1.0.7",
+      "path": "node_modules/.pnpm/postgres-date@1.0.7/node_modules/postgres-date",
+      "manifestSha256": "03f9edefa96697072075e02df045cc61ed4ca2f8dfffb1ff87f4070bc3404151",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1111,
+          "sha256": "f057f36739d53d228a746de4440c1e0c644ecde06d6beab45337d39c9d12a393"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "postgres-interval",
+      "version": "1.2.0",
+      "path": "node_modules/.pnpm/postgres-interval@1.2.0/node_modules/postgres-interval",
+      "manifestSha256": "cc3056db105e66c9128cb8a387cda782d5f1ae9281be90de0b8d26a90af89c57",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1111,
+          "sha256": "f057f36739d53d228a746de4440c1e0c644ecde06d6beab45337d39c9d12a393"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "property-information",
+      "version": "7.2.0",
+      "path": "node_modules/.pnpm/property-information@7.2.0/node_modules/property-information",
+      "manifestSha256": "6cacc66c65e31d11d9d4e5677c1375667faf334e585b69a9d319a0ca25676530",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1101,
+          "sha256": "5d0698266086f217bb11ea0499d33453e401fe479fb9126ad04e625e63d3557b"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "punycode",
+      "version": "2.3.1",
+      "path": "node_modules/.pnpm/punycode@2.3.1/node_modules/punycode",
+      "manifestSha256": "e025033bd11110af671fb8eb62f0db8895073ccdca70b596aa94a27eb5bf9acb",
+      "attachments": [
+        {
+          "file": "LICENSE-MIT.txt",
+          "bytes": 1077,
+          "sha256": "483acb265f182907d1caf6cff9c16c96f31325ed23792832cc5d8b12d5f88c8a"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "react",
+      "version": "19.2.6",
+      "path": "node_modules/.pnpm/react@19.2.6/node_modules/react",
+      "manifestSha256": "e631b6ac066fa758d9b36f226d96e8fc05425d1e8993ffcc99c6de2d6aa7268c",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1088,
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "react-dom",
+      "version": "19.2.6",
+      "path": "node_modules/.pnpm/react-dom@19.2.6_react@19.2.6/node_modules/react-dom",
+      "manifestSha256": "2c195b9bfa1b4f7dee5dd6f955c0fbb716e83c3e9c2e7a80b5e19c5a18507718",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1088,
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "react-markdown",
+      "version": "10.1.0",
+      "path": "node_modules/.pnpm/react-markdown@10.1.0_@types+react@19.2.14_react@19.2.6_supports-color@10.2.2/node_modules/react-markdown",
+      "manifestSha256": "c6b7d280b5e5a6b620ad252abfd318560f2223562e67414fcc3dcd1f784e89c5",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1079,
+          "sha256": "f6196c64e144f9a6fa9154c3a80bc8b89615a9567934b83a8951879f06ba2aef"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "remark-gfm",
+      "version": "4.0.1",
+      "path": "node_modules/.pnpm/remark-gfm@4.0.1_supports-color@10.2.2/node_modules/remark-gfm",
+      "manifestSha256": "c199482a69355b610bd1ff225b097776d4a990445b11e5f4c618930dacc8c79d",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "remark-parse",
+      "version": "11.0.0",
+      "path": "node_modules/.pnpm/remark-parse@11.0.0_supports-color@10.2.2/node_modules/remark-parse",
+      "manifestSha256": "47be70916ff853a6c35d8d858844c7b104d100f70999d579884859cf8d88a50c",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "413654b0a78b98661dce96d2aff2e4d075603d220b8483e28b1aa010ccc138b4"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "remark-rehype",
+      "version": "11.1.2",
+      "path": "node_modules/.pnpm/remark-rehype@11.1.2/node_modules/remark-rehype",
+      "manifestSha256": "f9886f99f9f38652d56ca256aa713e359e085ed42f7d89fd66671b49f4b83b64",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "remark-stringify",
+      "version": "11.0.0",
+      "path": "node_modules/.pnpm/remark-stringify@11.0.0/node_modules/remark-stringify",
+      "manifestSha256": "19ab4ef62890334f44384811ca42b366a6f58d0d14f80a6546f418e4bceea196",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "413654b0a78b98661dce96d2aff2e4d075603d220b8483e28b1aa010ccc138b4"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "rrweb-cssom",
+      "version": "0.8.0",
+      "path": "node_modules/.pnpm/rrweb-cssom@0.8.0/node_modules/rrweb-cssom",
+      "manifestSha256": "a744aef499d2528d0f3fd5c4673e5fcd0155312dd6672d69b6d4a07bf29f8f95",
+      "attachments": [
+        {
+          "file": "LICENSE.txt",
+          "bytes": 1054,
+          "sha256": "e539937c489c4928ad7461669ec017f4d916fb3565fc26f5b8a0ce816d2ed23c"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "rss-parser",
+      "version": "3.13.0",
+      "path": "node_modules/.pnpm/rss-parser@3.13.0/node_modules/rss-parser",
+      "manifestSha256": "1bcad58a5212f0aab7767d9f662745d1c59c721578b2ce85e611d26722a10d2d",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1070,
+          "sha256": "66fa72d1e76ca487fde9f153ac1183b906733f314d556645cb614e90961da634"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "safe-buffer",
+      "version": "5.2.1",
+      "path": "node_modules/.pnpm/safe-buffer@5.2.1/node_modules/safe-buffer",
+      "manifestSha256": "e4018fdbfe625433371f48274fee26f520bbe865e0d8c85bf3aa07424134b90c",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1081,
+          "sha256": "c7cc929b57080f4b9d0c6cf57669f0463fc5b39906344dfc8d3bc43426b30eac"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "safer-buffer",
+      "version": "2.1.2",
+      "path": "node_modules/.pnpm/safer-buffer@2.1.2/node_modules/safer-buffer",
+      "manifestSha256": "4247a3a63c45a6a7ced1557fe4dd9d2a163af4915d594b95e5867b69a53edb52",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1094,
+          "sha256": "4bc935e71be198c67ddf3c2b5fddb195f6edc182bfc155a96a6db61b44b494b9"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "sax",
+      "version": "1.6.1",
+      "path": "node_modules/.pnpm/sax@1.6.1/node_modules/sax",
+      "manifestSha256": "d7e5ff764b48b9532d1b9a8b481b8d54336e6309e362571e993645b790bea657",
+      "attachments": [
+        {
+          "file": "LICENSE.md",
+          "bytes": 1552,
+          "sha256": "8a1af140fdfbf5afd3df27f7e662f989c5b963a300020dfafce42033cae9e004"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "saxes",
+      "version": "6.0.0",
+      "path": "node_modules/.pnpm/saxes@6.0.0/node_modules/saxes",
+      "manifestSha256": "32052572b41c2a890ed0854798c48454cc5991dcaafe5fb1718a4253046acfd3",
+      "attachments": [],
+      "status": "missing_root_text"
+    },
+    {
+      "name": "scheduler",
+      "version": "0.27.0",
+      "path": "node_modules/.pnpm/scheduler@0.27.0/node_modules/scheduler",
+      "manifestSha256": "393bb96b7e481bf50189a1a02c7e0e7f4d01acba5abc6fbe7d214638624462fc",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1088,
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "semver",
+      "version": "7.8.5",
+      "path": "node_modules/.pnpm/semver@7.8.5/node_modules/semver",
+      "manifestSha256": "7c94cb7f2a53c27b20d76386ec144c062894dbcc909cfabd0f728c37874b1776",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 765,
+          "sha256": "4ec3d4c66cd87f5c8d8ad911b10f99bf27cb00cdfcff82621956e379186b016b"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "serialize-error",
+      "version": "13.0.1",
+      "path": "node_modules/.pnpm/serialize-error@13.0.1/node_modules/serialize-error",
+      "manifestSha256": "66f4c32c81cbbc79bf9ecabdae0e9209b0b93c958aea96db6eb287553cc88541",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1117,
+          "sha256": "5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "space-separated-tokens",
+      "version": "2.0.2",
+      "path": "node_modules/.pnpm/space-separated-tokens@2.0.2/node_modules/space-separated-tokens",
+      "manifestSha256": "ca188b0d34a0cfcfa025597058c3302401155788219f78682243a34f8e5092f1",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "split2",
+      "version": "4.2.0",
+      "path": "node_modules/.pnpm/split2@4.2.0/node_modules/split2",
+      "manifestSha256": "87b734c3087c8d9ed5d76d1bff00db30f960831ba8705dd18d73b180d08d2140",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 764,
+          "sha256": "c372ef2fa1dfcb124ed807609751e75e3a009f108c5724916b489288fcb88a0c"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "stringify-entities",
+      "version": "4.0.4",
+      "path": "node_modules/.pnpm/stringify-entities@4.0.4/node_modules/stringify-entities",
+      "manifestSha256": "76ab255c4aa582d55d726e40a16910d1cef0d5fc4cf47018d4c957c695d2d341",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1106,
+          "sha256": "9f084fac69d8cf1e6ce983ba5a3499c7695ed74a26ec625c38f0fd19fddd5e10"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "strnum",
+      "version": "2.4.2",
+      "path": "node_modules/.pnpm/strnum@2.4.2/node_modules/strnum",
+      "manifestSha256": "38bf3bf508c5f454549308baf2b4c56ed01c14dfa29bb3efd51308cecb8efd70",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1077,
+          "sha256": "2aa16be0f4fad003a352a955a43314e9d1d8deef7034060a82ac9c49f32b81e2"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "style-to-js",
+      "version": "1.1.21",
+      "path": "node_modules/.pnpm/style-to-js@1.1.21/node_modules/style-to-js",
+      "manifestSha256": "ef8bc5b200a5a0e06ffea8b5ebb4bb596a3dbc9821a7144a5f3244d5f4b2231b",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1110,
+          "sha256": "bbb380e5c1a717079378d6ea4d33c8a5a81655d4612b749f882e34e46712aab5"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "style-to-object",
+      "version": "1.0.14",
+      "path": "node_modules/.pnpm/style-to-object@1.0.14/node_modules/style-to-object",
+      "manifestSha256": "54ea1a1438b9cb9a02e9f62339d1f4d17c6d896224fe431495605f7e5a4972f3",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1110,
+          "sha256": "896c9fd6b5fc48ac31800b9d29a6e3ffcb0c2d534ed077ebfa5c2fa388cc38b7"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "supports-color",
+      "version": "10.2.2",
+      "path": "node_modules/.pnpm/supports-color@10.2.2/node_modules/supports-color",
+      "manifestSha256": "f208d0897ad657613dbd6199357f1b2c082d975fffa316933cad58851eff00ed",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1117,
+          "sha256": "5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "symbol-tree",
+      "version": "3.2.4",
+      "path": "node_modules/.pnpm/symbol-tree@3.2.4/node_modules/symbol-tree",
+      "manifestSha256": "962fd6c0ed18cdec3bdb7df4684da775e294078a8302504e8ce04c711e1c37d4",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1084,
+          "sha256": "9ea1eccdabe469767a9edb9249a840b2461cf91b2434bf8a3e2fc1f414311cb1"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "tagged-tag",
+      "version": "1.0.0",
+      "path": "node_modules/.pnpm/tagged-tag@1.0.0/node_modules/tagged-tag",
+      "manifestSha256": "85d0af116e49402c9cfca1bb434c1de2d86ce724d0465d4c7daafca07810c12e",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1117,
+          "sha256": "5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "tldts",
+      "version": "6.1.86",
+      "path": "node_modules/.pnpm/tldts@6.1.86/node_modules/tldts",
+      "manifestSha256": "8fc9dbe6e0a8df99b75822328567cc7d3ab4ef26ddb06147282adf848c68a02a",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1078,
+          "sha256": "c64182d48160db948b6aa97a984f1a32974ce4d2053900361264cd33853796cb"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "tldts-core",
+      "version": "6.1.86",
+      "path": "node_modules/.pnpm/tldts-core@6.1.86/node_modules/tldts-core",
+      "manifestSha256": "e21fa7ad451e99f5d383bef1c43f28fe281ec9281902b02970bee0ed1d66dbbf",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1078,
+          "sha256": "c64182d48160db948b6aa97a984f1a32974ce4d2053900361264cd33853796cb"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "tough-cookie",
+      "version": "5.1.2",
+      "path": "node_modules/.pnpm/tough-cookie@5.1.2/node_modules/tough-cookie",
+      "manifestSha256": "2ad6a529c400c79b160294f1dcfb29731c1d84645fa95adbb4e8485d671e95af",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1485,
+          "sha256": "22ec6791c91ba42c0516a05f4cbdde019aae4687f8a38c5ca7e8a69ee68f851d"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "tr46",
+      "version": "5.1.1",
+      "path": "node_modules/.pnpm/tr46@5.1.1/node_modules/tr46",
+      "manifestSha256": "b85fd677375acd34c10d188bc282ff805f7073ea44bdda590142f2d6d216c28d",
+      "attachments": [
+        {
+          "file": "LICENSE.md",
+          "bytes": 1076,
+          "sha256": "499d6d466d064e0460427967a344e2a32fcb86ea8c6cd1a285ec4f1fa03fba67"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "trim-lines",
+      "version": "3.0.1",
+      "path": "node_modules/.pnpm/trim-lines@3.0.1/node_modules/trim-lines",
+      "manifestSha256": "c279da1994b06098ed6f7fde2755c78c017e91e245c35bb4770232f116597c21",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1106,
+          "sha256": "9f084fac69d8cf1e6ce983ba5a3499c7695ed74a26ec625c38f0fd19fddd5e10"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "trough",
+      "version": "2.2.0",
+      "path": "node_modules/.pnpm/trough@2.2.0/node_modules/trough",
+      "manifestSha256": "ced4e1e0914cb51aac812dee30936fa47b15286927180dd97c0e257f05f07e1e",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "6c03fd41cfd7c92d8aa8a2fa521b94b2683f059123281dcf921ddea9216b6254"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "type-fest",
+      "version": "5.9.0",
+      "path": "node_modules/.pnpm/type-fest@5.9.0/node_modules/type-fest",
+      "manifestSha256": "a2e0db80f15c56f59cd3cf9ba21ffe0757bf9174c3568f2d2fccfd9f3effd821",
+      "attachments": [
+        {
+          "file": "license-cc0",
+          "bytes": 7048,
+          "sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499"
+        },
+        {
+          "file": "license-mit",
+          "bytes": 1117,
+          "sha256": "5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "unified",
+      "version": "11.0.5",
+      "path": "node_modules/.pnpm/unified@11.0.5/node_modules/unified",
+      "manifestSha256": "f91a44220f8b7c4a4de6ebaab6fc23b92d29a95cb7e5e6a7f0f24d199779fbad",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "05811400116ed61f1a7693b78fe8ca6598c155a12f3978e609db4df648a4cb3d"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "unist-util-is",
+      "version": "6.0.1",
+      "path": "node_modules/.pnpm/unist-util-is@6.0.1/node_modules/unist-util-is",
+      "manifestSha256": "0838fa706c4cbda37f47ac4c915fab0b6be3c99aeeb81060d22ec6532fae6272",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "82974dbf2639d13edab95c32ed9cb6c0867ede272cd2e07ce47ce8548fe55c05"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "unist-util-position",
+      "version": "5.0.0",
+      "path": "node_modules/.pnpm/unist-util-position@5.0.0/node_modules/unist-util-position",
+      "manifestSha256": "dc3ad29ef3bd19907cbeeda81cf6ea872f15cfff319b4663c7206d16a2a1cf40",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "unist-util-stringify-position",
+      "version": "4.0.0",
+      "path": "node_modules/.pnpm/unist-util-stringify-position@4.0.0/node_modules/unist-util-stringify-position",
+      "manifestSha256": "2fb7e8fcbf4e701e62f07887bd9f16e699e29c87a19acd128c11788fb9e27c0e",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "unist-util-visit",
+      "version": "5.1.0",
+      "path": "node_modules/.pnpm/unist-util-visit@5.1.0/node_modules/unist-util-visit",
+      "manifestSha256": "98bf89a2331cae3cb26b4ad27a1cc78cb0f00edb9a7534491b111a34423e9a8a",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "unist-util-visit-parents",
+      "version": "6.0.2",
+      "path": "node_modules/.pnpm/unist-util-visit-parents@6.0.2/node_modules/unist-util-visit-parents",
+      "manifestSha256": "6b00f27056337866d9206719b72a62c299a11903cdf622f307c92059723845e1",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "vfile",
+      "version": "6.0.3",
+      "path": "node_modules/.pnpm/vfile@6.0.3/node_modules/vfile",
+      "manifestSha256": "359ca117da48c3c42c73b9032369a412c5ad3462549d85aba090461e35227745",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "05811400116ed61f1a7693b78fe8ca6598c155a12f3978e609db4df648a4cb3d"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "vfile-message",
+      "version": "4.0.3",
+      "path": "node_modules/.pnpm/vfile-message@4.0.3/node_modules/vfile-message",
+      "manifestSha256": "407fa964ad59ce6c07cd50f0e6c77366744b952910a5bbb64def63a55bf6a82d",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "w3c-xmlserializer",
+      "version": "5.0.0",
+      "path": "node_modules/.pnpm/w3c-xmlserializer@5.0.0/node_modules/w3c-xmlserializer",
+      "manifestSha256": "56d3dbb5448f88c83cdc77fe3a5074dcb4936f140ed7e5f81a81ac910152acde",
+      "attachments": [
+        {
+          "file": "LICENSE.md",
+          "bytes": 1105,
+          "sha256": "ab654de803cdaa9e2819ab2e934bdf7f757e308649ec231d78e80e92425cdc34"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "webidl-conversions",
+      "version": "7.0.0",
+      "path": "node_modules/.pnpm/webidl-conversions@7.0.0/node_modules/webidl-conversions",
+      "manifestSha256": "6737cdc9d0dc816e0b3151b2dd5e60feaa4344c3605848526fbc7e33b570bbf0",
+      "attachments": [
+        {
+          "file": "LICENSE.md",
+          "bytes": 1323,
+          "sha256": "a889cc4dbee2ae172c179856b25d75b0b7a5a136e1b97109b9b590b2ff1a879c"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "whatwg-encoding",
+      "version": "3.1.1",
+      "path": "node_modules/.pnpm/whatwg-encoding@3.1.1/node_modules/whatwg-encoding",
+      "manifestSha256": "207f2db76f561b68705a0b36d05b838728e425f994cbd89ed030da179e88bbf4",
+      "attachments": [
+        {
+          "file": "LICENSE.txt",
+          "bytes": 1069,
+          "sha256": "528eec83cb836a0adda9f8fc3d6a2a70a710d6cc0be9a155f92212c8df28acfa"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "whatwg-mimetype",
+      "version": "4.0.0",
+      "path": "node_modules/.pnpm/whatwg-mimetype@4.0.0/node_modules/whatwg-mimetype",
+      "manifestSha256": "6a93238d0e3aba0d633c948ac670bf022b091e0f502203482ed2bc759d8668ff",
+      "attachments": [
+        {
+          "file": "LICENSE.txt",
+          "bytes": 1069,
+          "sha256": "528eec83cb836a0adda9f8fc3d6a2a70a710d6cc0be9a155f92212c8df28acfa"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "whatwg-url",
+      "version": "14.2.0",
+      "path": "node_modules/.pnpm/whatwg-url@14.2.0/node_modules/whatwg-url",
+      "manifestSha256": "9c681e4d93cd24529e10d25f76baa1c18b1d6a314be11da79f05a3375c637b88",
+      "attachments": [
+        {
+          "file": "LICENSE.txt",
+          "bytes": 1076,
+          "sha256": "db480f236292a093e77a83c35431a8496624e1e664a3547768a9ce2bdde39877"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "ws",
+      "version": "8.18.0",
+      "path": "node_modules/.pnpm/ws@8.18.0/node_modules/ws",
+      "manifestSha256": "2325e3ac70900fbbd08f858f6ecb2a7f8a66ead76ad225ac3fd24b992b36e9e4",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1183,
+          "sha256": "2b29dcfe0d6471f7e8c92c5fb38c9f93edee10330937055440192f1832b1ecef"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "xml-name-validator",
+      "version": "5.0.0",
+      "path": "node_modules/.pnpm/xml-name-validator@5.0.0/node_modules/xml-name-validator",
+      "manifestSha256": "08d74267200473a56d572d7453324e896d98150077c9af7e9efb73faaf447de6",
+      "attachments": [
+        {
+          "file": "LICENSE.txt",
+          "bytes": 10173,
+          "sha256": "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "xml-naming",
+      "version": "0.3.0",
+      "path": "node_modules/.pnpm/xml-naming@0.3.0/node_modules/xml-naming",
+      "manifestSha256": "e6ff1758837bca3ca6877308c0d51f9e3e47efd07497fa62c8291fd88ab8216f",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1077,
+          "sha256": "8e75fc0e776c62ccadb8178ece8d3daa9ba7601fb0a49b2dfb0ea9a7a5c0aa07"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "xml2js",
+      "version": "0.5.0",
+      "path": "node_modules/.pnpm/xml2js@0.5.0/node_modules/xml2js",
+      "manifestSha256": "6694abf5891ad4c2991561ce456eecc580099f84f148749bd544bc4216729b67",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1079,
+          "sha256": "c51452ef1dfd5606c9fe266930fa6bf7e8a534d52973b6475df5bf212cad5b0a"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "xmlbuilder",
+      "version": "11.0.1",
+      "path": "node_modules/.pnpm/xmlbuilder@11.0.1/node_modules/xmlbuilder",
+      "manifestSha256": "7e2f254e4004b5ea5f6ee351541afe893f8dfc66f8b527774c5a57860a8778d8",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1101,
+          "sha256": "e368bc4263b466cf98c225af15e300549e00da8859416a4536109e9654d434a8"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "xmlchars",
+      "version": "2.2.0",
+      "path": "node_modules/.pnpm/xmlchars@2.2.0/node_modules/xmlchars",
+      "manifestSha256": "a91c0b20003ff9399dde1de8c59681f1b6901c6fb1aac71780a3a876dc548583",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1086,
+          "sha256": "45d196313c2647d313cc65ca9b093d2d6974b64d35ee7346f2c60c9d518dff2c"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "xtend",
+      "version": "4.0.2",
+      "path": "node_modules/.pnpm/xtend@4.0.2/node_modules/xtend",
+      "manifestSha256": "b02ffef8cda96c5c3ee00a00390e63f608362c2ddfb3ed754e181d013a45d48a",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1078,
+          "sha256": "82e67379203d5794e7c44549847d8d64ae6904591381682360470898bd306821"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "zod",
+      "version": "4.1.12",
+      "path": "node_modules/.pnpm/zod@4.1.12/node_modules/zod",
+      "manifestSha256": "8fafce7fd929141a91d78d66fa4b275415ac68cd9c81f9e3160868a5fab4122f",
+      "attachments": [
+        {
+          "file": "LICENSE",
+          "bytes": 1072,
+          "sha256": "3f1189b28e3866e0d979968d466b78f813f76827cfdca1fbb124cc0a5c8841f8"
+        }
+      ],
+      "status": "root_text_collected"
+    },
+    {
+      "name": "zwitch",
+      "version": "2.0.4",
+      "path": "node_modules/.pnpm/zwitch@2.0.4/node_modules/zwitch",
+      "manifestSha256": "01d215553746b3bd19ae5b31cab656830d38e40b6edea656b9b18256916cda0a",
+      "attachments": [
+        {
+          "file": "license",
+          "bytes": 1099,
+          "sha256": "ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d"
+        }
+      ],
+      "status": "root_text_collected"
+    }
+  ]
+}
