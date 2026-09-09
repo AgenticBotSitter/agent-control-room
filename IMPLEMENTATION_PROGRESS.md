@@ -809,3 +809,21 @@ protocols in the test. Full-source TypeScript passes. Destruction is a local
 stream teardown request, not proof of terminal OS resources or remote cancellation.
 Real explicitly configured connection creation, permissions, custody and host
 qualification remain open; this adapter has not yet received independent review.
+
+Independent review at 86cc8fc found no concrete issue and reran all six source
+tests. It inspected, but did not execute, the pinned protocol script. Acceptance
+is local stream teardown behavior, not native connection or custody qualification.
+
+### Paired signing to canonical intake
+
+Extended the pinned ssh2 evaluation through the actual native owner approval
+issuer and canonical approval storage fixture. A complete pair opens two owned
+connections and stores once, with replay returning the saved receipt and no work
+start. Losing the second response refuses the whole packet; withdrawal of the
+synthetic consent gate after the first signature prevents a second connection.
+Neither refusal adds a stored packet, and reissuing the consumed issuer is refused.
+All created in-memory streams are destroyed; the shared disposable fixture is
+closed in finally. Eight protocol cases and three paired-issuer cases pass, along
+with full-source TypeScript. The new composed test has not been independently
+reviewed. This does not establish actual human consent, OS socket closure or real
+key custody; no such resources were used.

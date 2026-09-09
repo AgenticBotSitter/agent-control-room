@@ -5,6 +5,8 @@ import { readFile } from "node:fs/promises";
 import { resolve, isAbsolute } from "node:path";
 import { createOwnedOwnerSignature } from "../src/harness/v1/owned-owner-signature";
 import { ownOwnerSigningStream } from "../src/harness/v1/owner-signing-stream";
+import { createNativeOwnerApprovalIssuer } from "../src/harness/v1/native-owner-approval-issuer";
+import { canonicalApprovalStorageFixture } from "../tests/helpers/canonical-approval-storage";
 
 // Explicit disposable package path; never load ambient SSH_AUTH_SOCK or keys.
 const root = process.argv[2];
@@ -57,3 +59,52 @@ for (const mode of ["valid", "denied", "missing", "abort", "wrong-key", "short-s
   } finally { client.destroy(); server.destroy(); }
   process.stdout.write(`${mode}: passed; owned in-memory protocols destroyed; no retry\n`);
 }
+
+// One disposable canonical fixture, reused serially. Synthetic consent and keys
+// prove composition, not real owner presence or custody.
+const f = await canonicalApprovalStorageFixture();
+try {
+  const keyId = f.packet.approval.body.approvalKeyId;
+  const publicKeySpki = Buffer.from((await f.approvals.resolveApprovalKey(keyId))!).toString("base64url");
+  for (const mode of ["complete", "second-lost", "consent-withdrawn"] as const) {
+    let channels = 0, closes = 0, consent = true;
+    const streams: Array<InstanceType<typeof AgentProtocol>> = [];
+    const issuer = createNativeOwnerApprovalIssuer({ ...f.prepared, approvalKeyId: keyId, issuedAt: f.clock(),
+      recoveryExpiresAt: f.prepared.start.deadline + 120000,
+      approvalNonce: `synthetic-${mode}-approval`, recoveryNonce: `synthetic-${mode}-recovery` }, {
+      publicKeySpki, timeoutMs: 1000, clock: f.clock,
+      assertOwnerConsentCurrent(digest) {
+        assert.equal(digest, issuer.reviewDigest);
+        if (!consent) throw new Error("synthetic consent withdrawn");
+      },
+      sign(bytes, signal) {
+        return createOwnedOwnerSignature({ publicKeySpki, timeoutMs: 100,
+          open(signal) {
+            channels++; const ordinal = channels;
+            const server = new AgentProtocol(false), protocol = new AgentProtocol(true);
+            streams.push(server, protocol);
+            server.on("error", () => {}); protocol.on("error", () => {});
+            server.on("sign", (request: unknown, _key: unknown, data: Buffer) => {
+              if (mode === "second-lost" && ordinal === 2) return;
+              server.signReply(request, Buffer.from(f.sign(JSON.parse(data.toString())).signature, "base64url"));
+              if (mode === "consent-withdrawn") consent = false;
+            });
+            const owned = ownOwnerSigningStream({ stream: server, signal, connected: Promise.resolve(), createProtocol: () => protocol });
+            return { ready: owned.ready, close() { closes++; owned.close(); } };
+          } }).sign(bytes, signal);
+      },
+    });
+    try {
+      if (mode === "complete") {
+        const packet = await issuer.issue(new AbortController().signal);
+        assert.equal((await f.save(packet)).startsWork, false);
+        assert.equal((await f.save(packet)).replayed, true);
+      } else await assert.rejects(issuer.issue(new AbortController().signal), /owner_approval_issuance_uncertain/);
+      await assert.rejects(issuer.issue(new AbortController().signal));
+      assert.equal(channels, mode === "consent-withdrawn" ? 1 : 2); assert.equal(closes, channels);
+      assert.equal(await f.count(), 1);
+      assert.ok(streams.every(stream => stream.destroyed));
+    } finally { for (const stream of streams) stream.destroy(); }
+    process.stdout.write(`paired issuer ${mode}: passed; no dispatch or retry\n`);
+  }
+} finally { await f.close(); }
