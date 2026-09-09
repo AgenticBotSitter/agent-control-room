@@ -32,6 +32,7 @@ export function createNativeHttpNodeHost(runtime: Pick<Runtime, "openWire" | "re
   }
   async function exchange(input: NativeHttpRequest, signal: AbortSignal, record?: Generation) {
     current(record); const request = nativeHttpRequestSchema.parse(input);
+    if (signal.aborted) throw error();
     const result = await track(client.exchange(request, signal)); current(record);
     if (signal.aborted) throw error();
     const value = nativeHttpResponseSchema.parse(result);

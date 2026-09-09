@@ -1235,3 +1235,12 @@ quarantines ambiguous threads and removes their raw IDs. Its observer's turn ID
 is in-memory. CODEX_READ_RECOVERY.md now specifies the prerequisite journal extension,
 capture/crash boundaries and explicit separation of observation from execution
 authority. No broker quarantine was relaxed and no second journal was introduced.
+
+### Cancellation at the HTTP exchange boundary
+
+A follow-up regression reproduced an exchange after the last readiness callback
+cancelled the caller's signal. The host now checks that signal immediately before
+invoking the client, in addition to its existing post-response check. The test
+failed with one fake exchange before correction and passes with zero afterward.
+Full-source TypeScript and all 55 queue/connector tests pass. This is a fake-I/O
+regression, not physical network qualification; independent review remains pending.

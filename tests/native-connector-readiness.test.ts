@@ -3,6 +3,16 @@ import test from 'node:test';
 import { createNativeConnector } from '../src/node-bridge/native-connector';
 import { createNativeHttpNodeHost } from '../src/node-bridge/native-http-host';
 
+test('HTTP host cancellation inside the final readiness check prevents exchange', async () => {
+  const abort = new AbortController(); let checks = 0, exchanges = 0;
+  const host = createNativeHttpNodeHost({ async openWire() {}, async receiveWire() {}, async disconnected() { return 0; } },
+    { async exchange() { exchanges++; throw new Error('unexpected exchange'); }, async close() {} },
+    () => { if (++checks === 3) abort.abort(); });
+  await assert.rejects(host.open('recover', abort.signal));
+  await host.close();
+  assert.equal(checks, 3); assert.equal(exchanges, 0);
+});
+
 test('connector and standalone HTTP host refuse incomplete readiness before I/O', async () => {
   for (const kind of ['connector', 'host'] as const) {
     for (const value of ['fulfilled', 'rejected', 'false'] as const) {
