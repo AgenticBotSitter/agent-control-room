@@ -224,3 +224,27 @@ role/real-PG tests and browser acceptance.
 Do not claim this trusted composition itself authenticates a user or that V8 limits
 provide a hard process RSS cap. Database queue recovery, signing/checkpoints,
 Idea Lab acceptance, schedules/workspaces and operational monitoring remain open.
+
+### Article storage and protected reader
+
+Added immutable migration0065, source-bound HMAC/digest-verified store, web SELECT
+and ingestion SELECT/INSERT permissions, and retained-only authenticated GET.
+The news page now opens stored article text through the maintained renderer.
+Actual disposable PG17 save/replay/readback and denied reader writes passed with
+cluster cleanup. Source tests connect the extractor/store to the actual HTTP
+process, including expired access and invalid requests. Fake-DOM tests cover old
+project responses, reading/closing, unavailable text and focus-time access loss.
+
+The first compiled regression run failed22 checks because the SQL web-role template
+had not gained the new SELECT privilege; this was corrected to match preflight,
+without granting web writes. Targeted compiled schema tests then passed3/3.
+Independent review found indexed-digest replay and indefinitely retained open text.
+Both were corrected with regression tests; remediation review found no additional
+concrete issue. Revalidation is periodic, not a hard browser timing guarantee.
+Final verification: article suite11/11, compiled suite56/56, renderer suite4/4,
+full-source TypeScript and diff whitespace checks passed. Disposable PG17 final
+schema fixture passed and reported cleanup. No deployment or GitHub push occurred.
+
+Still missing: authorized ingestion wiring to populate article detail automatically,
+physical-browser accessibility/visual acceptance, hostile parser resource policy
+and live source acceptance. The full six-batch objective remains incomplete.

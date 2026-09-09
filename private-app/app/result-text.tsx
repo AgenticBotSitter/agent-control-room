@@ -3,8 +3,8 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 /** Presentation only. No HTML interpretation, remote images, commands or file access. */
-export function ResultText({ text }: { text: string }) {
-  const plain = <textarea aria-label="Agent result text" readOnly value={text} />;
+export function ResultText({ text, label = "Agent result text" }: { text: string; label?: string }) {
+  const plain = <textarea aria-label={label} readOnly value={text} />;
   // Keep the exact original available and bound synchronous Markdown parsing.
   if (text.length > 32768) return <><p>Large result shown as plain text.</p>{plain}</>;
   return <>
