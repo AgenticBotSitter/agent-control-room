@@ -16,6 +16,7 @@ From this source directory:
 CI=true pnpm install --frozen-lockfile
 pnpm check
 pnpm check:demo
+pnpm test:database
 pnpm test:demo
 pnpm test:build:demo
 pnpm test

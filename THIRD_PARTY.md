@@ -31,6 +31,11 @@ is not vendored, and feed metadata does not grant republication rights.
 
 ## Before distributing additional artifacts
 
+The [node-postgres notice](third_party/pg/NOTICE.md) and
+[original MIT license](third_party/pg/LICENSE) cover the selected pg runtime
+dependency. Its transitive packages and development-only declarations retain
+their own licenses; preserve these when preparing a bundled release.
+
 If a release adds bundled JavaScript, a container, native libraries, WASM, fonts,
 images or vendored source, review that exact artifact's contents and applicable
 notices/source obligations first. The source-preview inventory is not clearance

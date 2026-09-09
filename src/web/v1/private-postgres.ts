@@ -1,4 +1,5 @@
 import postgres from "postgres";
+import { createPrivatePgDatabase } from "./private-pg-database";
 import { boundPrivateDatabase, PrivateDatabaseError, type PrivateDatabaseDriver } from "./bounded-database";
 
 export interface PrivatePostgresConfiguration {
@@ -36,7 +37,12 @@ export type PrivateSqlFactory = (options: ReturnType<typeof privatePostgresOptio
 /** Explicit effect boundary. Merely importing this module creates no client or connection.
  * The factory seam is trusted server composition/test code, never request input.
  */
-export function createPrivatePostgresDatabase(config: PrivatePostgresConfiguration,
+export function createPrivatePostgresDatabase(config: PrivatePostgresConfiguration) {
+  return createPrivatePgDatabase(config);
+}
+
+/** Temporary explicit fixture-only adapter. Never used as runtime fallback. */
+export function createLegacyFixturePostgresDatabase(config: PrivatePostgresConfiguration,
   createSql: PrivateSqlFactory = options => postgres(options)) {
   const sql = createSql(privatePostgresOptions(config));
   const driver: PrivateDatabaseDriver = {

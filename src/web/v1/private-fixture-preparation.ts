@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import postgres from "postgres";
 import { z } from "zod";
 import type { DatabaseSession } from "../../persistence/database";
-import { createPrivatePostgresDatabase, privatePostgresOptions, validatePrivatePostgresConfiguration,
+import { createPrivatePostgresDatabase, createLegacyFixturePostgresDatabase, privatePostgresOptions, validatePrivatePostgresConfiguration,
   type PrivatePostgresConfiguration } from "./private-postgres";
 import { privateWebSchemaDigest, readPrivateWebSchemaDigest } from "./private-database-preflight";
 import { rehearsalScopeDigest, type RehearsalMaterial } from "./private-database-rehearsal";
@@ -162,7 +162,7 @@ function createPreparation(dependencies: Dependencies, execution: FixturePrepara
 
 /** Explicit operator effect only; no env/credential loading, provisioning, DDL or import-time I/O. */
 export function createNativePrivateFixturePreparation() {
-  return createPreparation({ openDatabase: config => createPrivatePostgresDatabase(config,
+  return createPreparation({ openDatabase: config => createLegacyFixturePostgresDatabase(config,
     () => postgres(fixturePreparationPostgresOptions(config))), clock: Date.now, monotonic: () => performance.now() }, "native_postgres");
 }
 export function createInjectedPrivateFixturePreparation(dependencies: Dependencies) {
