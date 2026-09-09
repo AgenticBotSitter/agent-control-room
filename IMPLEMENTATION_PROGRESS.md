@@ -4,6 +4,11 @@ Baseline: public main e901c0fe986c51ee1d0c091ce2d9b211231ec29e.
 Current working branch: codex/component-batch-4, stacked on local batches 1–3.
 All six batches remain in scope; no complete batch acceptance is claimed.
 
+Latest checkpoint: migration 0066 resolves the native logical-restore catalog
+fingerprint mismatch without weakening fingerprint verification. See
+`POSTGRES_RESTORE_EVIDENCE.md`. This supersedes the historical restore-blocked
+entries below for the disposable website profile only.
+
 1. Database/queue/native execution — in progress.
 2. Token verification/signing/checkpoints — JWT integration in progress; other gates pending.
 3. Idea Lab/readable results — pending integration acceptance.

@@ -42,8 +42,10 @@ Local evidence covers actual extractor to store to authenticated process GET,
 expired access, duplicate query parameters, refused POST, immutable rows, HMAC/key
 replay refusal and fake-DOM reader interactions. Real disposable PG17 confirms
 save/replay/readback and a dedicated SELECT-only login's denied mutations. The
-existing strict full native schema fingerprint/restore acceptance remains a
-separate known gate; these tests do not override it.
+strict native website-profile restore check now passes after additive migration
+0066. Two successive logical restores preserve the exact fingerprint, table data,
+relation/function ownership and effective ACLs, and restricted project readback.
+This is disposable evidence, not production backup or artifact-pairing acceptance.
 
 ## Remaining integration
 
