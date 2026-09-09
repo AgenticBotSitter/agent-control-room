@@ -12,18 +12,18 @@ const nativeLabel: Record<NonNullable<TaskRun["nativeState"]>, string> = { prepa
 const date = (value: string) => new Date(value).toLocaleString();
 export const taskUrl = (projectId: string, jobId?: string) => `/projects/${encodeURIComponent(projectId)}/tasks${jobId ? `/${encodeURIComponent(jobId)}` : ""}`;
 
-export function TaskProposalForm({ draft, setDraft, pending, uncertain, onSave }: { draft: TaskDraft;
-  setDraft: (value: TaskDraft) => void; pending: boolean; uncertain: boolean; onSave: () => void }) {
+export function TaskProposalForm({ draft, setDraft, pending, preparing = false, uncertain, onSave }: { draft: TaskDraft;
+  setDraft: (value: TaskDraft) => void; pending: boolean; preparing?: boolean; uncertain: boolean; onSave: () => void }) {
   return <form className="private-create" onSubmit={event => { event.preventDefault(); onSave(); }}>
     <h2>Propose a task</h2><p className="private-note">Save what you want done. Saving does not assign or start an agent.
       Open the saved task to check preparation and assignment availability.</p>
     <label htmlFor="task-title">Task title</label><input id="task-title" required maxLength={120} value={draft.title}
-      disabled={pending || uncertain} onChange={event => setDraft({ ...draft, title: event.target.value })} />
+      disabled={pending || preparing || uncertain} onChange={event => setDraft({ ...draft, title: event.target.value })} />
     <label htmlFor="task-instructions">What should the agent deliver?</label>
-    <textarea id="task-instructions" required rows={8} maxLength={4000} value={draft.instructions} disabled={pending || uncertain}
+    <textarea id="task-instructions" required rows={8} maxLength={4000} value={draft.instructions} disabled={pending || preparing || uncertain}
       aria-describedby="task-secrets-note" onChange={event => setDraft({ ...draft, instructions: event.target.value })} />
     <p id="task-secrets-note" className="private-note">Include the desired result and limits. Never paste passwords, tokens or private keys.</p>
-    <button type="submit" disabled={pending || uncertain}>{pending ? "Saving proposal…" : "Save proposal"}</button>
+    <button type="submit" disabled={pending || preparing || uncertain}>{preparing ? "Reading experiment…" : pending ? "Saving proposal…" : "Save proposal"}</button>
   </form>;
 }
 

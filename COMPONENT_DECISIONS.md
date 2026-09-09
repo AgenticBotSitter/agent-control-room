@@ -26,6 +26,12 @@ with a concrete compatibility, security, licensing or measured performance findi
 | DR-09 Calendar calculation | cron-parser 5.10.0 field expansion/matching; retain schedule policy | 42 selected parity cases after a documented compatibility correction | Typed integration, occurrence-store/replay and upgrade regressions; not queue selection |
 | DR-10 Database client | Conditional node-postgres 8.23.0 at existing bounded database interface | Actual values, transaction/queue and release/close comparisons; simple Pool.end alone is insufficient | Late acquisition, bounded close, uncertain commit and real PostgreSQL 17 caller checks |
 | DR-11 Formatted results | react-markdown 10.1.0 + remark-gfm 4.0.1 inside retained result panel | 11 checks with actual panel/library code and independent review; less desktop/global-state coupling | Actual parent/auth races, enabled review, accessible browser rendering, bounded resources and protected attachments |
+| DR-12 Optional session observations | Operator-managed Herdr v0.9.0 pane-list interface; retain CR project/result authority | Actual local binary/socket/duplicate/reconnect/restart observations and independent challenge support advisory metadata only | Bind approved executable identity; authorized project/source mapping and cache revocation; host isolation; no generic socket proxy or inferred execution authority |
+| DR-13 Work engine | Conditionally retain pg-boss 12.30.0 and existing CR adapters | Both pg-boss and DBOS pass the short review-phase comparison; no required replacement benefit demonstrated | Canonical admission/replay, uncertain start, crash, drain, occurrence and PG17-role gates; exhaustive comparison remains incomplete |
+| DR-14 Monitoring | Conditional Kuma reachability/alerts; optional Beszel host metrics | Kuma condition/database tests and inspected interfaces; Beszel source evidence only | Daemon/notification/restart and actual host metrics tests, protected readiness, release/notices; Beszel disabled until accepted and useful |
+| DR-15 Integrity checkpoint | Conditional retention of existing etcd adapter | Actual CR/service binding; OpenBao remains viable with narrower deletion permissions but a different identity/CAS mapping | Independent placement/pins, authenticated transport, supported restore and split-commit recovery; etcd credential can delete, missing head must fail closed |
+| DR-16 Owner signing | Conditional dedicated owner-controlled agent using ssh2 protocol and retained bounded issuer/review | Synthetic framing, verification and paired issuance tested; no real custody proven | Owned connection cancellation, dedicated key/pins, trusted exact consent and platform qualification; no ambient agent or forwarded owner key |
+| DR-17 Native connectors/files | Conditional Hermes structured APIs and Codex App Server through bounded TS transport; separate attachment admission | Existing source and synthetic fit evidence; Python SDK remains viable | Exact-ID read recovery, event/usage gaps, export containment, full lifecycle and host qualification; no blind resume/new turn |
 
 These are dependency targets, not instructions to install every package immediately.
 Pin direct/transitive dependencies intentionally and preserve their actual license
@@ -51,16 +57,13 @@ need not ship. Source names/version metadata are not blanket security clearance.
 Not every donor is accepted. Some experiments deliberately retained negative
 findings. A passing synthetic comparison is not native-host compatibility.
 
-## Open decisions — do not build competing replacements yet
+## Conditional choices and unfinished validation
 
-| Area | Candidates / retained baseline | Decisive remaining question |
-| --- | --- | --- |
-| Durable work engine | Existing pg-boss; DBOS; viable Hatchet integration | Canonical claims, review without blocking other work, restart and uncertain start; choose one engine |
-| Native clients and files | Official Hermes interfaces; Codex App Server/SDK; current adapters | Exact thread/turn identity, usage and artifact recovery without repeating work |
-| Independent integrity checkpoint | etcd and OpenBao | Actual adapter binding, supported restore and split-commit recovery; one independent anchor, not two business databases |
-| Owner signing custody | Existing signing contract and supported platform agents | Exact consent/key binding and host-specific custody; never reuse ambient credentials implicitly |
-| Session observation | Herdr plus retained project/result model | Authenticated project/session mapping, disconnect and duplicates |
-| Monitoring | Uptime Kuma and complementary Beszel | Real daemon alerts/persistence/restart and representative host metrics, not just helper functions |
+All 17 integration directions are now recorded above. This is not completion of
+the exhaustive comparison or implementation: several choices are conditional.
+Their outstanding comparative and acceptance tests remain in the final column.
+Reopen a direction on failed requirements or demonstrated replacement benefit;
+do not install competing stacks merely because those tests are unfinished.
 
 PostgreSQL remains the sole transactional authority. Native PostgreSQL logical
 backup tools remain the direction for a dedicated database; a real restore test

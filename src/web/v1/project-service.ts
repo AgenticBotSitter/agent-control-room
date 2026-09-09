@@ -6,6 +6,10 @@ import { sha256Digest } from "../../security/digest";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 import { IdeaLabProjectRegistryStoreV1 } from "../../idea-lab/v1/store";
 import { CONTROL_ROOM_IDEA_ADAPTER_V1 } from "../../idea-lab/v1/schemas";
+import { assertProjectLifecycleTransitionV1 } from "../../idea-lab/v1/contracts";
+import { ideaLabProjectLifecycleActionsV1 } from "../../idea-lab/v1/lifecycle-service";
+import type { WebIdeaProjectLifecycleOperation } from "./idea-project-lifecycle-operation";
+import { ideaProjectActionTarget } from "./project-wire";
 
 import { catalogProjectIdSchema, projectCreateSchema, projectTransitionSchema, projectViewSchema,
   type ProjectCatalogPage, type ProjectView, type WebProject } from "./project-wire";
@@ -17,7 +21,8 @@ export class WebProjectService {
   private readonly authority: WebSessionAuthority;
   private readonly ideas?: IdeaLabProjectRegistryStoreV1;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
-    clock: () => number = Date.now, ideaIntegrityKey?: Uint8Array) {
+    clock: () => number = Date.now, ideaIntegrityKey?: Uint8Array,
+    private readonly ideaLifecycle?: WebIdeaProjectLifecycleOperation) {
     this.authority = new WebSessionAuthority(db, scope, clock);
     if (ideaIntegrityKey !== undefined) this.ideas = new IdeaLabProjectRegistryStoreV1(db, ideaIntegrityKey);
   }
@@ -101,10 +106,21 @@ export class WebProjectService {
       if (!this.ideas) throw new Error("idea_catalog_not_configured");
       const idea = await this.ideas.getProjectInSession(tx, this.scope.tenantId, this.scope.workspaceId, projectId);
       if (!idea) throw new WebAccessError("not_found");
-      // Preserve the existing authenticated Idea lifecycle; this integration is read-only for Idea projects.
+      // A project-scoped grant must not reveal workspace-wide discussion IDs.
+      // Register the optional read for the same transaction's precommit check.
+      const canReadDiscussion = actor.can("idea_lab.session_read", undefined, true);
+      if (canReadDiscussion) actor.require("idea_lab.session_read", undefined, true);
+      const actions = this.ideaLifecycle ? ideaLabProjectLifecycleActionsV1.filter(action => {
+        if (action === "resume" && idea.lifecycleState !== "paused" || action === "reopen" && idea.lifecycleState !== "archived") return false;
+        try { assertProjectLifecycleTransitionV1(idea.lifecycleState, ideaProjectActionTarget[action]); }
+        catch { return false; }
+        return actor.can(`idea_lab.project_${action}`, projectId, true);
+      }) : [];
       return projectViewSchema.parse({ projectId: idea.projectId, title: idea.title, summary: idea.summary,
         lifecycle: idea.lifecycleState, version: idea.version, createdAt: iso(idea.createdAt), updatedAt: iso(idea.updatedAt),
-        origin: "idea_lab", lifecycleEditable: false });
+        origin: "idea_lab", lifecycleEditable: actions.length > 0,
+        ...(canReadDiscussion ? { sourceIdeaSessionId: idea.sourceIdeaSessionId } : {}),
+        ...(this.ideaLifecycle ? { ideaLifecycleActions: actions } : {}) });
     }
     actor.require("projects.read", projectId);
     if (adapterId !== this.manualAdapterId()) throw new WebAccessError("not_found");
@@ -178,6 +194,11 @@ export class WebProjectService {
       // Project lifecycle never cancels a job, changes a lease or creates an external effect.
       return project;
     });
+  }
+
+  async transitionIdea(identity: VerifiedWebIdentity, projectId: string, value: unknown, key: string) {
+    if (!this.ideaLifecycle) throw new Error("idea_lifecycle_not_configured");
+    return this.ideaLifecycle.transition(identity, projectId, value, key);
   }
 
   private async command(identity: VerifiedWebIdentity, action: string, projectId: string | undefined, value: unknown, key: string,

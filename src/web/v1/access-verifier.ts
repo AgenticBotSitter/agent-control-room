@@ -24,6 +24,16 @@ export interface AccessTrust {
   maxSessionSeconds: number;
 }
 
+/** Trusted deployment input only; never derive this map from forwarded headers. */
+export function captureWebOrigins(primary: { origin: string; audience: string }, secondary?: { origin: string; audience: string }) {
+  const site = z.object({ origin: z.string().url().refine(value => {
+    const url = new URL(value); return url.protocol === "https:" && url.origin === value && !url.hostname.includes("*");
+  }), audience: z.string().trim().min(1).max(256) }).strict();
+  const first = site.parse(primary), second = secondary === undefined ? undefined : site.parse(secondary);
+  if (second && (first.origin === second.origin || first.audience === second.audience)) throw new Error("invalid_web_origins");
+  return Object.freeze([Object.freeze(first), ...(second ? [Object.freeze(second)] : [])]);
+}
+
 export interface VerifiedWebIdentity {
   provider: string;
   subject: string;

@@ -16,7 +16,7 @@ const forwarded = new Set(["accept", "accept-language", "cf-access-jwt-assertion
   "next-router-segment-prefetch", "next-url"]);
 class RequestFailure extends Error { constructor(readonly status: number) { super("private_request_rejected"); } }
 
-function requestHead(input: IncomingMessage, origin: string, localDemo: boolean) {
+function requestHead(input: IncomingMessage, origins: readonly string[], localDemo: boolean) {
   if (input.socket.remoteAddress !== "127.0.0.1" || input.httpVersion !== "1.1") throw new RequestFailure(403);
   const method = input.method;
   const target = input.url;
@@ -24,9 +24,6 @@ function requestHead(input: IncomingMessage, origin: string, localDemo: boolean)
   if (!target || Buffer.byteLength(target) > privateHttpLimits.urlBytes || !target.startsWith("/")
     || target.startsWith("//") || /[\\\s#]/u.test(target)
     || [...target].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) throw new RequestFailure(400);
-  const url = new URL(target, origin);
-  // Do not normalize ambiguous paths into a different route before authorization.
-  if (url.origin !== origin || `${url.pathname}${url.search}` !== target) throw new RequestFailure(400);
   const all = new Map<string, string>(), headers = new Headers();
   const raw = input.rawHeaders;
   if (raw.length % 2 || raw.length > privateHttpLimits.headerCount * 2) throw new RequestFailure(431);
@@ -41,7 +38,11 @@ function requestHead(input: IncomingMessage, origin: string, localDemo: boolean)
     all.set(name, value);
     if (forwarded.has(name) || localDemo && name === "cookie") headers.set(name, value);
   }
-  if (all.get("host") !== new URL(origin).host) throw new RequestFailure(403);
+  const origin = origins.find(value => new URL(value).host === all.get("host"));
+  if (!origin) throw new RequestFailure(403);
+  const url = new URL(target, origin);
+  // Select only a configured host, never X-Forwarded-Host or an absolute target.
+  if (url.origin !== origin || `${url.pathname}${url.search}` !== target) throw new RequestFailure(400);
   if (localDemo && [...all.keys()].some(name => name === "forwarded" || name.startsWith("x-forwarded-"))) throw new RequestFailure(403);
   if (["upgrade", "expect", "trailer", "content-encoding"].some(name => all.has(name))) throw new RequestFailure(400);
   const length = all.get("content-length"), transfer = all.get("transfer-encoding");
@@ -119,6 +120,7 @@ async function deliver(output: ServerResponse, response: Response, method: strin
  */
 interface NodeHandlerOptions {
   origin: string; application: PrivateServingApplication; handler: PrivateBuiltHandler; assets: PrivateClientAssets;
+  secondaryOrigin?: string;
   /** Test-only shortening, never a production extension. */
   timing?: { bodyMs?: number; requestMs?: number; drainMs?: number };
 }
@@ -126,6 +128,11 @@ interface NodeHandlerOptions {
 export function createPrivateNodeHandler(options: NodeHandlerOptions) {
   const origin = new URL(options.origin);
   if (origin.protocol !== "https:" || origin.origin !== options.origin) throw new Error("private_serving_config_invalid");
+  if (options.secondaryOrigin !== undefined) {
+    const secondary = new URL(options.secondaryOrigin);
+    if (secondary.protocol !== "https:" || secondary.origin !== options.secondaryOrigin || secondary.origin === origin.origin
+      || secondary.hostname.includes("*")) throw new Error("private_serving_config_invalid");
+  }
   return createNodeHandler(options, false);
 }
 
@@ -141,6 +148,8 @@ export function createContributorDemoNodeHandler(options: NodeHandlerOptions) {
 function createNodeHandler(options: NodeHandlerOptions, localDemo: boolean) {
   const origin = new URL(options.origin);
   if (origin.origin !== options.origin) throw new Error("private_serving_config_invalid");
+  if (localDemo && options.secondaryOrigin !== undefined) throw new Error("demo_serving_config_invalid");
+  const origins = Object.freeze([options.origin, ...(options.secondaryOrigin ? [options.secondaryOrigin] : [])]);
   const limits = { ...privateHttpLimits, ...options.timing };
   for (const name of ["bodyMs", "requestMs", "drainMs"] as const)
     if (!Number.isSafeInteger(limits[name]) || limits[name] < 1 || limits[name] > privateHttpLimits[name]) throw new Error("private_serving_config_invalid");
@@ -158,7 +167,7 @@ function createNodeHandler(options: NodeHandlerOptions, localDemo: boolean) {
       const timer = setTimeout(() => { controller.abort(); input.destroy(); output.destroy(); }, limits.requestMs);
       try {
         if (!admitted) throw new RequestFailure(503);
-        const head = requestHead(input, options.origin, localDemo);
+        const head = requestHead(input, origins, localDemo);
         const body = await consumeBody(input, signal, head.expectedLength, limits.bodyMs, head.bodyLimit);
         if (signal.aborted) return;
         if (head.method !== "POST" && body.length) throw new RequestFailure(400);

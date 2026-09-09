@@ -15,12 +15,13 @@ import { NativeResultSubmissionService } from "../../src/completion-gate/v1/nati
 import { NativeTaskResultService } from "../../src/node-control/native-task-result-service";
 import { sha256Digest } from "../../src/security";
 import { response, statusBody } from "../hermes-native-fixture";
+import type { TaskSourcePreparation } from "./task-assignment";
 
 /** Explicit in-process wiring, not a mounted runtime: real controllers/stores with synthetic
  * owner keys, qualification and native transport. All assertions use the newly planned job;
  * the reused fixture also contains unrelated pre-existing result/review records. */
-export async function nativeTaskLifecycleFixture(configuration: { serverFeatures?: string[] } = {}) {
-  const f = await canonicalApprovalStorageFixture();
+export async function nativeTaskLifecycleFixture(configuration: { serverFeatures?: string[]; prepareSource?: TaskSourcePreparation } = {}) {
+  const f = await canonicalApprovalStorageFixture(configuration.prepareSource);
   const local = await nativeStartAuthorityFixture(undefined, f.prepared.enrollment, f.assignmentFixture);
   assert.equal(sha256Digest(local.prepared.binding), sha256Digest(f.prepared.binding));
   local.policy.approvalKey = await resolvePinnedApprovalKey(f.approvals, f.approvals.binding(), f.packet.approval.body.approvalKeyId);

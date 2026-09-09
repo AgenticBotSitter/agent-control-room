@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { assertIdeaLabDiscussionCapacityV1, buildIdeaLabDiscussionPromptV1 } from "./discussion-prompt";
 import { sha256Digest } from "../../security";
 import { IdeaLabErrorV1 } from "./errors";
 import { parseExactIdeaLabV1 } from "./exact";
@@ -57,6 +58,7 @@ export const ideaLabBotRunSchemaV1 = z.object({
   attempts: z.array(attemptSchema).max(18), messagesUsed: z.number().int().min(0).max(18),
   costUsd: z.number().min(0).max(25), safeCode: ideaCodeSchemaV1, retryPermitted: z.literal(false),
   providerContacted: z.boolean(), startedAt: ideaTimeSchemaV1, updatedAt: ideaTimeSchemaV1,
+  cancellationRequestedAt: ideaTimeSchemaV1.optional(),
   grantsApproval: z.literal(false), grantsCommandAuthority: z.literal(false), grantsLeaseAuthority: z.literal(false),
   grantsExecutionAuthority: z.literal(false), automaticProjectCreationAllowed: z.literal(false), runDigest: ideaDigestSchemaV1,
 }).strict();
@@ -128,7 +130,9 @@ export function parseIdeaLabBotRunV1(value: unknown): IdeaLabBotRunV1 {
   if (sha256Digest(withoutDigest(parsed, "runDigest")) !== parsed.runDigest
     || parsed.messagesUsed !== parsed.attempts.filter((item) => item.state === "completed").length
     || parsed.costUsd !== parsed.attempts.reduce((sum, item) => sum + (item.state === "completed" ? item.costUsd : 0), 0)
-    || new Set(parsed.evidenceDigests).size !== parsed.evidenceDigests.length || invalidAttemptChronology) {
+    || new Set(parsed.evidenceDigests).size !== parsed.evidenceDigests.length || invalidAttemptChronology
+    || parsed.cancellationRequestedAt && (timeMillisecondsV1(parsed.cancellationRequestedAt) < timeMillisecondsV1(parsed.startedAt)
+      || timeMillisecondsV1(parsed.cancellationRequestedAt) > timeMillisecondsV1(parsed.updatedAt))) {
     throw new IdeaLabErrorV1("integrity_failed");
   }
   return parsed;
@@ -189,7 +193,7 @@ export class IdeaLabBotCoordinatorV1 {
   async execute(input: { runId: string; session: unknown; evidence: unknown[]; safePrompt: string;
     liveAdmission?: unknown; cancelRequested?: () => boolean }): Promise<IdeaLabBotRunV1> {
     const session = parseIdeaLabSessionV1(input.session);
-    if (input.safePrompt.length < 1 || input.safePrompt.length > 800) throw new IdeaLabErrorV1("invalid_input");
+    assertIdeaLabDiscussionCapacityV1(session, input.safePrompt);
     const evidence = input.evidence.map((item) => parseIdeaLabProviderSessionEvidenceV1(item, session));
     if (evidence.length !== session.participants.length || evidence.some((item) => item.mode !== this.driver.mode)
       || new Set(evidence.map((item) => item.participantId)).size !== session.participants.length
@@ -228,20 +232,62 @@ export class IdeaLabBotCoordinatorV1 {
       costUsd: 0, safeCode: "prepared", providerContacted: false, startedAt: now, updatedAt: now }));
     if (run.state !== "prepared") return run.state === "running" ? this.ledger.recover(run.runId, this.clock()) : run;
     for (let round = 1; round <= session.maxRounds; round += 1) for (const participant of session.participants) {
-      if (input.cancelRequested?.()) return this.ledger.cancel(run.runId, this.clock());
+      const current = await this.ledger.get(run.runId);
+      if (current?.state === "cancelled") return current;
+      if (current?.cancellationRequestedAt || input.cancelRequested?.()) return this.ledger.cancel(run.runId, this.clock());
       if (timeMillisecondsV1(this.clock()) - timeMillisecondsV1(run.startedAt) >= session.maxDurationSeconds * 1000
         || run.messagesUsed >= session.maxMessages || run.costUsd >= session.maxCostUsd) {
         return this.ledger.failDefinite(run.runId, "budget_exhausted_before_provider", this.clock());
       }
       const participantEvidence = evidence.find((item) => item.participantId === participant.participantId)!;
+      let safePrompt: string;
+      try {
+        safePrompt = buildIdeaLabDiscussionPromptV1({ session, participantId: participant.participantId,
+          round, prompt: input.safePrompt, contributions: round === 1 ? []
+            : await this.registry.listContributions(session.tenantId, session.sessionId) });
+      } catch {
+        return this.ledger.failDefinite(run.runId, "discussion_context_unavailable", this.clock());
+      }
+      if (liveAdmission) {
+        // A panel may outlive its evidence or owner window. Recheck before each
+        // new marker; same-admission consumption is an inert authority replay.
+        try {
+          const checkedAt = this.clock();
+          parseIdeaLabLivePanelAdmissionV1(liveAdmission, session, evidence, run.runId, checkedAt);
+          if (timeMillisecondsV1(participantEvidence.capturedAt) > timeMillisecondsV1(checkedAt)
+            || timeMillisecondsV1(participantEvidence.expiresAt) <= timeMillisecondsV1(checkedAt)
+            || !await this.providerEvidenceAuthority!.verify(participantEvidence, checkedAt)
+            || !await this.livePanelAdmissionAuthority!.consume({ admission: liveAdmission, session, evidence, now: checkedAt })) {
+            throw new IdeaLabErrorV1("authorization_denied");
+          }
+          // Verification can wait on storage. Do not use an expired observation
+          // merely because it was current before that wait.
+          const current = this.clock();
+          parseIdeaLabLivePanelAdmissionV1(liveAdmission, session, evidence, run.runId, current);
+          if (timeMillisecondsV1(current) < timeMillisecondsV1(checkedAt)
+            || timeMillisecondsV1(participantEvidence.expiresAt) <= timeMillisecondsV1(current)) throw new IdeaLabErrorV1("authorization_denied");
+        } catch {
+          return this.ledger.failDefinite(run.runId, "panel_authority_unavailable_before_provider", this.clock());
+        }
+      }
+      if (timeMillisecondsV1(this.clock()) - timeMillisecondsV1(run.startedAt) >= session.maxDurationSeconds * 1000) {
+        return this.ledger.failDefinite(run.runId, "budget_exhausted_before_provider", this.clock());
+      }
       const attemptId = `attempt.idea:${sha256Digest({ runId: run.runId, participantId: participant.participantId, round }).slice(7, 31)}`;
       const startedAt = this.clock(), markerDigest = sha256Digest({ runDigest: run.runDigest, attemptId,
         evidenceDigest: participantEvidence.evidenceDigest, startedAt });
-      run = await this.ledger.markProvider(run.runId, { attemptId, participantId: participant.participantId,
+      try { run = await this.ledger.markProvider(run.runId, { attemptId, participantId: participant.participantId,
         participantIdentityDigest: participant.identityDigest, round, state: "provider_marked", markerDigest,
-        costUsd: 0, messagesUsed: 0, startedAt });
+        costUsd: 0, messagesUsed: 0, startedAt }); }
+      catch (error) {
+        const latest = await this.ledger.get(run.runId);
+        if (latest?.state === "cancelled") return latest;
+        if (latest?.cancellationRequestedAt && ["prepared", "running"].includes(latest.state)
+          && latest.attempts.at(-1)?.state !== "provider_marked") return this.ledger.cancel(run.runId, this.clock());
+        throw error;
+      }
       let raw: unknown;
-      try { raw = await this.driver.invoke({ session, participant, round, safePrompt: input.safePrompt,
+      try { raw = await this.driver.invoke({ session, participant, round, safePrompt,
         evidence: participantEvidence, markerDigest, ...(liveAdmission ? { liveAdmission } : {}) }); }
       catch { return this.ledger.markAmbiguous(run.runId, attemptId, "provider_outcome_unknown", this.clock()); }
       let result: IdeaLabBotDriverResultV1;
@@ -268,7 +314,7 @@ export class IdeaLabBotCoordinatorV1 {
       await this.registry.recordContribution(contribution);
       run = await this.ledger.settleCompleted(run.runId, attemptId, result.providerReceiptDigest,
         contribution.contributionDigest, result.costUsd, result.providerContacted, this.clock());
-      if (input.cancelRequested?.()) return this.ledger.cancel(run.runId, this.clock());
+      if (run.cancellationRequestedAt || input.cancelRequested?.()) return this.ledger.cancel(run.runId, this.clock());
     }
     return this.ledger.complete(run.runId, this.clock());
   }

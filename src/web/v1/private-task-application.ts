@@ -1,18 +1,27 @@
 import { createPrivateWebProcess, type PrivateWebProcessOptions } from "./private-process";
 import { createTaskCoordinatorLifecycle, type TaskCoordinatorConfiguration, type TaskCoordinatorDatabase } from "./task-coordinator-lifecycle";
 import { validateTaskQualityKeys } from "./task-quality-coordinator";
+import { timingSafeEqual } from "node:crypto";
 
 /** Trusted composition for two separately verified resources; not a deployment preflight bypass.
  * No pools are opened here. The separate task bootstrap verifies both roles before calling this factory.
  */
-export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOptions, "planning" | "assignment" | "approvals" | "submission" | "revisions" | "queueAttention" | "database"> & { database: TaskCoordinatorDatabase },
+export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOptions, "planning" | "assignment" | "approvals" | "submission" | "revisions" | "queueAttention" | "ideaCreation" | "database"> & { database: TaskCoordinatorDatabase },
   coordinator: TaskCoordinatorConfiguration) {
-  if ("planning" in web || "assignment" in web || "approvals" in web || "submission" in web || "revisions" in web || "queueAttention" in web || web.tenantId !== coordinator.scope.tenantId
+  if ("ideaCreation" in web || "planning" in web || "assignment" in web || "approvals" in web || "submission" in web || "revisions" in web || "queueAttention" in web || web.tenantId !== coordinator.scope.tenantId
     || web.workspaceId !== coordinator.scope.workspaceId || web.database.client === coordinator.database.client
     || coordinator.resultDatabase?.client === web.database.client
     || coordinator.evidence?.database.client === web.database.client
     || coordinator.sessions?.database.client === web.database.client
+    || coordinator.ideaCreation?.database.client === web.database.client
+    || coordinator.ideaRuntime?.database.client === web.database.client
     || typeof web.database.isAvailable !== "function" || typeof web.database.close !== "function")
+    throw new Error("private_task_application_config_invalid");
+  if (coordinator.ideaCreation && (!web.ideaProjects
+    || !(coordinator.ideaCreation.integrityKey instanceof Uint8Array)
+    || !(web.ideaProjects.integrityKey instanceof Uint8Array)
+    || coordinator.ideaCreation.integrityKey.length !== 32 || web.ideaProjects.integrityKey.length !== 32
+    || !timingSafeEqual(coordinator.ideaCreation.integrityKey, web.ideaProjects.integrityKey)))
     throw new Error("private_task_application_config_invalid");
   // Until construction succeeds, the caller retains both resources.
   if (coordinator.quality) validateTaskQualityKeys(coordinator.quality, coordinator.planning.reviewIntegrityKey, web.tasks);
@@ -29,7 +38,7 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
     return poolClose;
   } };
   let app: ReturnType<typeof createPrivateWebProcess>;
-  try { app = createPrivateWebProcess({ ...web, database, planning: tasks.planning, assignment: tasks.assignment, approvals: tasks.approvals, submission: tasks.submission, revisions: tasks.revisions, queueAttention: tasks.queueAttention }); }
+  try { app = createPrivateWebProcess({ ...web, database, planning: tasks.planning, assignment: tasks.assignment, approvals: tasks.approvals, submission: tasks.submission, revisions: tasks.revisions, queueAttention: tasks.queueAttention, ideaCreation: tasks.ideaCreation }); }
   catch {
     const results = await Promise.allSettled([tasks.close(), database.close()]);
     if (results.some(result => result.status === "rejected")) throw new Error("private_task_application_cleanup_uncertain");

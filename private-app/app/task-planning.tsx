@@ -24,8 +24,8 @@ export function TaskPlanningPanel({ options, receipt, error, pending, uncertain,
 
 /** Kept mounted by the task page even when a refresh loses authorization. Hide data on failed
  * reads while retaining only the exact pending command for explicit reconciliation. */
-export function PrivateTaskPlanning({ detail }: { detail?: TaskDetail }) {
-  const [client] = useState(() => createTaskPlanningBrowserClient());
+export function PrivateTaskPlanning({ detail, client: suppliedClient }: { detail?: TaskDetail; client?: ReturnType<typeof createTaskPlanningBrowserClient> }) {
+  const [client] = useState(() => suppliedClient ?? createTaskPlanningBrowserClient());
   const [options, setOptions] = useState<TaskPlanningOptions>();
   const [receipt, setReceipt] = useState<TaskPlanningReceipt>();
   const [error, setError] = useState<BrowserRequestError>();

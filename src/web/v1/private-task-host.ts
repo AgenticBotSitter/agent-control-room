@@ -29,6 +29,7 @@ export function createPrivateTaskHost(dependencies: Parameters<typeof createPriv
     if (attempted) throw new Error("private_task_host_already_attempted");
     attempted = true;
     const { port, handler, assets, signal } = input, origin = input.configuration.web.origin;
+    const secondaryOrigin = input.configuration.web.secondaryAccess?.origin;
     if (!Number.isSafeInteger(port) || port < 1 || port > 65535 || typeof handler !== "function"
       || !assets || typeof assets.respond !== "function") throw new Error("private_task_host_config_invalid");
     if (input.nativeHttps && (!input.configuration.coordinator.nativeHttp
@@ -59,6 +60,7 @@ export function createPrivateTaskHost(dependencies: Parameters<typeof createPriv
         requireActive();
       }
       service = createPrivateNodeService({ origin, port, handler, assets, createServer,
+        secondaryOrigin,
         application: { isReady: ready, close: closeApplication } });
       await service.start();
       requireActive();

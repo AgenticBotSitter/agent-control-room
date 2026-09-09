@@ -53,7 +53,9 @@ export function createTaskApprovalBrowserClient(transport: typeof fetch = fetch)
     if (value.projectId !== expected.projectId || value.jobId !== expected.jobId || value.inputDigest !== expected.inputDigest) throw new Error();
   };
   return {
-    hasPending: () => !!pending,
+    // Local digest preparation precedes pending identity allocation but may still
+    // continue into a write; navigation must retain that in-flight operation too.
+    hasPending: () => busy || !!pending,
     async read(projectId: string, jobId: string, inputDigest: string) {
       const expected = scope(projectId, jobId, inputDigest);
       try {

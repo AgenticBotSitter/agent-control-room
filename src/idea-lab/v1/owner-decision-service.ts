@@ -4,15 +4,11 @@ import { SecurityStore, sha256Digest, type VerifiedAuthentication } from "../../
 import { buildIdeaLabDecisionV1 } from "./contracts";
 import { IdeaLabErrorV1 } from "./errors";
 import { parseExactIdeaLabV1 } from "./exact";
-import { capturedIdeaTimeMillisecondsV1, ideaCodeSchemaV1, ideaIdSchemaV1,
-  projectCreationSpecSchemaV1 } from "./schemas";
+import { capturedIdeaTimeMillisecondsV1, ideaIdSchemaV1, ideaOwnerIntentSchemaV1 } from "./schemas";
 import { IdeaLabProjectRegistryStoreV1 } from "./store";
 import type { IdeaLabDecisionV1, ProjectRegistryProjectionV1 } from "./types";
 
-const ownerIntentSchema = z.object({
-  decision: z.enum(["create_project", "save", "reject"]), safeReasonCode: ideaCodeSchemaV1,
-  project: projectCreationSpecSchemaV1.optional(),
-}).strict();
+export const ownerIntentSchema = ideaOwnerIntentSchemaV1;
 
 export class IdeaLabOwnerDecisionServiceErrorV1 extends Error {
   constructor(readonly safeCode: "invalid_owner_decision" | "authentication_required" | "owner_forbidden" |

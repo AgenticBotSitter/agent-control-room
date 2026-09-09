@@ -7,6 +7,7 @@ import { localId, digestSchema } from "./native-run-identifiers";
 import { nativeTaskApprovalPacketSchema } from "./native-approval-packet";
 
 export const NATIVE_DELIVERY_FEATURE = "harness.native.dispatch.v1" as const;
+export const NATIVE_LEASE_DELIVERY_FEATURE = "harness.native.lease.v1" as const;
 export const nativeTaskDispatchBodySchema = z.object({
   schema: z.literal("control-room.native-task-dispatch/v1"), queueId: localId, inputDigest: digestSchema,
   enrollmentDigest: digestSchema, bindingDigest: digestSchema, packetDigest: digestSchema,

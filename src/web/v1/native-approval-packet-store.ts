@@ -12,13 +12,13 @@ import { enqueueNativeTaskInSession, readNativeTaskQueueInSession, readNativeTas
 import { persistNativeDeliveryPreparation, readNativeDeliveryPreparationReceipt, readNativeDeliveryPreparationInSession } from "./native-delivery-preparation";
 import { assertNativeDeliveryEnvelopeAbsent, persistNativeDeliveryEnvelope, readNativeDeliveryEnvelopeReceipt } from "./native-delivery-envelope";
 import type { ServerNodeSession, NativeEnvelopeChannel } from "../../node-control/server-node-session";
-import type { SignedNodeFrame } from "../../node-protocol/v1";
+import type { SignedNodeFrame, NodeMessageBodyMap } from "../../node-protocol/v1";
 import { persistNativeTransmissionIntent, readNativeTransmissionIntentReceipt } from "./native-transmission-intent";
 import { nativeTaskDispatchBodySchema } from "../../harness/v1/native-delivery";
 import { persistNativeDeliveryReceipt, readNativeDeliveryReceipt } from "./native-delivery-receipt";
 
 type Trust = Omit<Parameters<typeof createNativeApprovalIntake>[1], "clock">;
-type Prepared = ReturnType<typeof prepareNativeTaskApproval> & { enrollment: NativeEnrollment; inputDigest: string };
+type Prepared = ReturnType<typeof prepareNativeTaskApproval> & { enrollment: NativeEnrollment; inputDigest: string; leaseGrant?: NodeMessageBodyMap["job.lease.grant"] };
 const recordSchema = z.object({ schema: z.literal("control-room.canonical-native-approval-packet/v1"),
   tenantId: localId, projectId: localId, jobId: localId, attemptId: localId, nodeId: localId,
   leaseId: localId, leaseEpoch: z.number().int().positive(), inputDigest: digestSchema,
@@ -150,7 +150,8 @@ export class NativeApprovalPacketStore {
     return readNativeDeliveryPreparationReceipt(tx, this.key, scope);
   }
   async stageDeliveryEnvelopeInSession(tx: DatabaseSession, prepared: Prepared, expectedPacketDigest: string, actorId: string,
-    signal: AbortSignal, sign: Parameters<Parameters<ServerNodeSession["stageNativeDispatch"]>[0]>[0], channel: NativeEnvelopeChannel, deadline: number) {
+    signal: AbortSignal, sign: Parameters<Parameters<ServerNodeSession["stageNativeDispatch"]>[0]>[0], channel: NativeEnvelopeChannel, deadline: number,
+    signLease?: Parameters<Parameters<ServerNodeSession["stageNativeDispatch"]>[0]>[2]) {
     const p = await this.prepareDeliveryInSession(tx, prepared, expectedPacketDigest, actorId, signal);
     const scope = { tenantId: prepared.request.tenantId, projectId: prepared.request.projectId, jobId: prepared.request.jobId,
       attemptId: prepared.request.attemptId, inputDigest: prepared.inputDigest };
@@ -159,8 +160,10 @@ export class NativeApprovalPacketStore {
     if (!saved) throw new Error("native_delivery_preparation_unavailable");
     p.assertFresh(); channel.assertCurrent();
     const frame = await sign(saved.body, deadline);
+    if (channel.leaseDelivery && (!signLease || !prepared.leaseGrant)) return fail();
+    const leaseFrame = channel.leaseDelivery ? await signLease!(prepared.leaseGrant!) : undefined;
     p.assertFresh(); channel.assertCurrent();
-    const receipt = await persistNativeDeliveryEnvelope(tx, this.key, frame, channel, actorId, this.clock());
+    const receipt = await persistNativeDeliveryEnvelope(tx, this.key, frame, channel, actorId, this.clock(), leaseFrame);
     const assertFresh = () => { p.assertFresh(); channel.assertCurrent(); };
     assertFresh(); return { receipt, assertFresh };
   }
@@ -168,10 +171,11 @@ export class NativeApprovalPacketStore {
     return readNativeDeliveryEnvelopeReceipt(tx, this.key, scope);
   }
   async recordTransmissionInSession(tx: DatabaseSession, prepared: Prepared, expectedPacketDigest: string, actorId: string,
-    signal: AbortSignal, frame: SignedNodeFrame<"harness.native.dispatch">, channel: NativeEnvelopeChannel) {
+    signal: AbortSignal, frame: SignedNodeFrame<"harness.native.dispatch">, channel: NativeEnvelopeChannel, leaseFrame?: SignedNodeFrame<"job.lease.grant">) {
     const p = await this.prepareDeliveryInSession(tx, prepared, expectedPacketDigest, actorId, signal);
     if (frame.bodyDigest !== p.receipt.bodyDigest) throw new Error("native_transmission_body_mismatch");
-    const receipt = await persistNativeTransmissionIntent(tx, this.key, frame, channel, actorId, this.clock());
+    if (leaseFrame && (!prepared.leaseGrant || sha256Digest(leaseFrame.body) !== sha256Digest(prepared.leaseGrant))) return fail();
+    const receipt = await persistNativeTransmissionIntent(tx, this.key, frame, channel, actorId, this.clock(), leaseFrame);
     const assertFresh = () => { p.assertFresh(); channel.assertCurrent(); };
     assertFresh(); return { receipt, assertFresh };
   }

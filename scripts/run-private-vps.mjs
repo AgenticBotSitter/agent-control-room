@@ -31,6 +31,8 @@ const installedRuntime = Object.freeze({
   loadRelease: () => Promise.all([
     import('../dist-vps/server/taskHost.js'), import('../dist-vps/server/serving.js'),
     import('../dist-vps/server/index.js'),
+    import('../dist-vps/server/bootstrap.js'),
+    import('../dist-vps/server/ideaAuthoring.js'),
   ]),
 });
 
@@ -38,14 +40,17 @@ const installedRuntime = Object.freeze({
  * actual resource, role, trust pin and authority; this cannot certify them. */
 export function requirePrivateVpsMode(prepared) {
   const coordinator = prepared?.configuration?.coordinator;
-  if (!coordinator || !['website-only', 'agent-tasks'].includes(prepared.mode)) {
+  if (!prepared?.configuration || !['website-only', 'agent-tasks'].includes(prepared.mode)) {
     throw new Error('private_vps_mode_invalid');
   }
+  if ('ideaAuthoring' in prepared.configuration && (prepared.mode !== 'website-only' || coordinator))
+    throw new Error('private_vps_mode_invalid');
   if (prepared.mode === 'website-only') {
-    if (coordinator.nativeQueue || coordinator.queueWorker || coordinator.nativeHttp || prepared.nativeHttps) {
+    if (coordinator?.nativeQueue || coordinator?.queueWorker || coordinator?.nativeHttp || prepared.nativeHttps
+      || coordinator && 'ideaRuntime' in coordinator || 'news' in prepared.configuration) {
       throw new Error('private_vps_mode_invalid');
     }
-  } else if (coordinator.nativeQueue !== true || coordinator.nativeQueueRecovery !== true
+  } else if (!coordinator || coordinator.nativeQueue !== true || coordinator.nativeQueueRecovery !== true
     || coordinator.revisionPlanning !== true || !coordinator.queueWorker || !coordinator.nativeHttp
     || !coordinator.approvals || !coordinator.quality || !coordinator.resultDatabase
     || !coordinator.evidence || !coordinator.sessions || !prepared.nativeHttps) {
@@ -65,7 +70,7 @@ export async function runPrivateVps(args, runtime = installedRuntime) {
   }
   await validatePrivateVpsConfigurationPath(parsed.configurationPath);
   // Fixed paths in this release, not cwd or a request-supplied module search path.
-  const [{ createInstalledPrivateTaskHost, startPrivateHostLifecycle }, serving, renderer] = await runtime.loadRelease();
+  const [{ createInstalledPrivateTaskHost, startPrivateHostLifecycle }, serving, renderer, bootstrap, ideaAuthoring] = await runtime.loadRelease();
   let mode;
   const lifecycle = startPrivateHostLifecycle({ signals: runtime.signals, async start(signal) {
     const active = () => { if (signal.aborted) throw new Error('private_vps_start_canceled'); };
@@ -79,6 +84,9 @@ export async function runPrivateVps(args, runtime = installedRuntime) {
     mode = requirePrivateVpsMode(prepared);
     const assets = await serving.loadPrivateClientAssets(fileURLToPath(new URL('../dist-vps/client', import.meta.url)));
     active();
+    if (mode === 'website-only' && !prepared.configuration.coordinator) {
+      return startWebsiteOnly(prepared, { bootstrap, ideaAuthoring, serving, handler: renderer.default, assets, signal });
+    }
     return createInstalledPrivateTaskHost().start({
       configuration: prepared.configuration, port: prepared.port, nativeHttps: prepared.nativeHttps,
       handler: renderer.default, assets, signal,
@@ -101,6 +109,40 @@ export async function runPrivateVps(args, runtime = installedRuntime) {
   }
   runtime.report('Control Room private host closed.');
   return 0;
+}
+
+/** Reuses the restricted production web bootstrap, with no task planner or worker.
+ * Cleanup ownership transfers to the existing loopback service after construction.
+ */
+export async function startWebsiteOnly(prepared, { bootstrap, ideaAuthoring, serving, handler, assets, signal }) {
+  requirePrivateVpsMode(prepared);
+  const port = prepared.port;
+  if (prepared.mode !== 'website-only' || prepared.configuration.coordinator
+    || Object.keys(prepared.configuration).some(key => !['web', 'ideaAuthoring'].includes(key))
+    || !Number.isSafeInteger(port) || port < 1 || port > 65535)
+    throw new Error('private_vps_mode_invalid');
+  const config = bootstrap.validatePrivateStartupConfiguration(prepared.configuration.web);
+  const authoring = 'ideaAuthoring' in prepared.configuration
+    ? ideaAuthoring.validatePrivateIdeaAuthoringConfiguration(prepared.configuration) : undefined;
+  if (signal.aborted) throw new Error('private_vps_start_canceled');
+  const application = authoring ? await ideaAuthoring.startPrivateIdeaAuthoringApplication(authoring, signal)
+    : await bootstrap.startPrivateWebApplication(config);
+  let service;
+  const close = () => service ? service.close() : application.close();
+  const cancel = () => { void close().catch(() => {}); };
+  signal.addEventListener('abort', cancel, { once: true });
+  try {
+    if (signal.aborted) throw new Error('private_vps_start_canceled');
+    service = serving.createPrivateNodeService({ origin: config.origin,
+      secondaryOrigin: config.secondaryAccess?.origin, port,
+      application, handler, assets });
+    await service.start();
+    if (signal.aborted) throw new Error('private_vps_start_canceled');
+    return service;
+  } catch (error) {
+    await close();
+    throw error;
+  } finally { signal.removeEventListener('abort', cancel); }
 }
 
 // Import is inert. A service manager owns final termination if cleanup cannot finish.

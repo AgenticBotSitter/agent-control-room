@@ -169,7 +169,7 @@ const offerDecision = z.object({
   if (value.decision === "rejected" && !value.safeReasonCode) context.addIssue({ code: "custom", path: ["safeReasonCode"], message: "rejections require a safe reason" });
   if (value.decision === "accepted" && value.safeReasonCode) context.addIssue({ code: "custom", path: ["safeReasonCode"], message: "accepted leases cannot carry a rejection reason" });
 });
-const leaseGrant = z.object({
+export const leaseGrantSchema = z.object({
   offerId: id,
   nodeId: id,
   ...leaseIdentity,
@@ -266,16 +266,17 @@ const reconciliationRequest = z.object({
   lastAcknowledgedNodeSequence: z.number().int().nonnegative(),
   requestedAttemptIds: z.array(id).max(1_000),
 }).strict();
-const reconciliationReport = z.object({
-  lastAcknowledgedServerSequence: z.number().int().nonnegative(),
-  attempts: z.array(z.object({
+export const reconciliationAttemptSchema = z.object({
     attemptId: id,
     leaseId: id,
     leaseEpoch: z.number().int().positive(),
     state: z.enum(["leased", "running", "waiting", "completed", "failed", "cancelled"]),
     lastEventSequence: z.number().int().nonnegative(),
     checkpointIds: z.array(id).max(1_000),
-  }).strict()).max(1_000),
+  }).strict();
+const reconciliationReport = z.object({
+  lastAcknowledgedServerSequence: z.number().int().nonnegative(),
+  attempts: z.array(reconciliationAttemptSchema).max(1_000),
 }).strict();
 const protocolError = z.object({
   code: z.enum(["unsupported_version", "malformed_frame", "unauthenticated", "replayed", "expired", "forbidden", "rate_limited"]),
@@ -353,7 +354,7 @@ export const signedNodeFrameSchema = z.discriminatedUnion("type", [
   frame("node.fleet.signal", fleetSignalEnvelopeSchema),
   frame("job.offer", jobOffer),
   frame("job.offer.decision", offerDecision),
-  frame("job.lease.grant", leaseGrant),
+  frame("job.lease.grant", leaseGrantSchema),
   frame("job.lease.renewed", leaseRenewed),
   frame("job.event", jobEvent),
   frame("harness.native.snapshot", nativeTaskSnapshotBodySchema, { direction: "node_to_server", senderKind: "node" }),

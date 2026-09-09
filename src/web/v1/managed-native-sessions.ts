@@ -39,6 +39,7 @@ type Routes = {
   register?: NativeEvidenceReceiver["register"];
 };
 type Record = {
+  inputOwner?: ManagedNativeInput;
   readinessAttempted?: boolean; readinessAbort?: AbortController;
   readinessState?: "running" | "complete" | "uncertain";
   readinessResult?: Awaited<ReturnType<TaskAssignmentCoordinator["recoverForReadyNode"]>>;
@@ -133,12 +134,16 @@ export class ManagedNativeSessions {
     if (!routes || ref.tenantId !== this.scope.tenantId || !(signal instanceof AbortSignal) || signal.aborted) fail();
     this.current();
     const target = await this.admit(() => routes!.locate(ref, signal));
+    const task = nativeEvidenceRegistrationSchema.parse(target.task);
+    if (task.projectId !== ref.projectId || task.jobId !== ref.jobId || task.attemptId !== ref.attemptId
+      || task.inputDigest !== ref.inputDigest) return fail();
     const record = this.records.get(target.nodeId);
     if (!record || record.expectedAttemptId !== undefined && record.expectedAttemptId !== ref.attemptId) return fail();
-    return this.operation(record, signal, async session => {
-      await routes!.stage(ref, session, signal); this.current(record);
-      return routes!.transmit(ref, session, signal);
+    const deliver = (current: AbortSignal) => this.operation(record, current, async session => {
+      await routes!.stage(ref, session, current); this.current(record);
+      return routes!.transmit(ref, session, current);
     });
+    return record.inputOwner ? record.inputOwner.deliverQueued(task, signal, deliver) : deliver(signal);
   }
   private async notifyReady(record: Record, callerSignal: AbortSignal) {
     const ready = this.routes.queue?.ready, channel = record.session?.nativeDeliveryChannel();
@@ -200,11 +205,13 @@ export class ManagedNativeSessions {
   }
   private attachInputOwned(nodeId: string, input: NativeSessionTransport, configuration: NativeInputConfiguration, packet: boolean) {
     const config = nativeInputConfigurationSchema.parse(configuration);
-    if (!this.routes.register || !this.routes.recover) return Promise.reject(new Error("native_input_unavailable"));
-    return this.attachOwned(nodeId, input, config.task.attemptId, packet).then(({ handle, record }) => {
+    if (!this.routes.register || !this.routes.recover || "assignment" in config && !this.routes.queue)
+      return Promise.reject(new Error("native_input_unavailable"));
+    return this.attachOwned(nodeId, input, "task" in config ? config.task.attemptId : undefined, packet).then(({ handle, record }) => {
       const owner = new ManagedNativeInput(handle, config,
         (value, signal) => this.operation(record, signal, async () => this.routes.register!(value, signal, () => this.current(record))),
         () => this.current(record));
+      record.inputOwner = owner;
       return Object.freeze({ nodeId, grantsExecutionAuthority: false as const,
         receive: owner.receive.bind(owner), stage: owner.stage.bind(owner),
         transmit: owner.transmit.bind(owner), close: owner.close.bind(owner) });

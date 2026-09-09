@@ -45,6 +45,12 @@ export function createTaskReviewWorkspace(makeClient = createTaskReviewBrowserCl
     };
   }
   return {
+    hasPending() {
+      return [...sessions.values()].some(session => {
+        const snapshot = session.getSnapshot();
+        return snapshot.pending || snapshot.revisionPending || session.client.hasPending() || session.revisionClient.hasPending();
+      });
+    },
     get(binding: ReviewWorkspaceBinding) {
       const key = JSON.stringify([binding.projectId, binding.jobId, binding.artifactId, binding.targetId, binding.targetDigest, binding.contentHash]);
       let session = sessions.get(key);

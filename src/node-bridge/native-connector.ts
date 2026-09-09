@@ -45,31 +45,39 @@ export function createNativeConnector(runtime: Runtime, client: NativeHttpClient
     run(mode: "initial" | "recover", signal: AbortSignal): Promise<NativeConnectorResult> {
       current(signal); if (attempted || !(signal instanceof AbortSignal) || !["initial", "recover"].includes(mode)) throw unavailable();
       attempted = true; const controller = new AbortController(), abort = () => controller.abort();
+      const deadline = performance.now() + settings.timeoutMs;
+      // Timers can be delayed by busy trusted code. Refuse the next connector
+      // operation even when the timeout callback has not received a turn yet.
+      const runningCurrent = () => {
+        current(controller.signal);
+        if (performance.now() >= deadline) { controller.abort(); throw unavailable(); }
+      };
       lifetime.signal.addEventListener("abort", abort, { once: true }); signal.addEventListener("abort", abort, { once: true });
       const timer = setTimeout(abort, settings.timeoutMs);
       let rejectStopped!: (error: Error) => void;
       const stopped = new Promise<never>((_, reject) => { rejectStopped = reject; });
       const stop = () => rejectStopped(unavailable()); controller.signal.addEventListener("abort", stop, { once: true });
       const work = track(Promise.resolve().then(async (): Promise<NativeConnectorResult> => {
-        current(controller.signal); await host.open(mode, controller.signal);
+        runningCurrent(); await host.open(mode, controller.signal);
         let started = false, state: NativeState | "waiting" = "waiting";
         for (let cycles = 1; cycles <= settings.maxCycles; cycles++) {
-          current(controller.signal); await host.step(controller.signal); current(controller.signal);
-          if (ready() === true) {
+          runningCurrent(); await host.step(controller.signal); runningCurrent();
+          const dispatchReady = ready(); runningCurrent();
+          if (dispatchReady === true) {
             const snapshot = snapshotSchema.parse(await (mode === "initial" && !started ? start(controller.signal) : poll(controller.signal)));
-            started = true; state = snapshot.state; current(controller.signal);
-            await host.step(controller.signal); current(controller.signal);
+            started = true; state = snapshot.state; runningCurrent();
+            await host.step(controller.signal); runningCurrent();
             const disposition = terminalNativeState(state) ? "terminal"
               : state === "ambiguous" || snapshot.availability !== "current" ? "uncertain" : undefined;
             if (disposition) { await host.disconnect(controller.signal); return Object.freeze({ disposition, state, cycles }); }
           }
-          if (cycles < settings.maxCycles) { await pause(settings.intervalMs, controller.signal); current(controller.signal); }
+          if (cycles < settings.maxCycles) { await pause(settings.intervalMs, controller.signal); runningCurrent(); }
           else { await host.disconnect(controller.signal); return Object.freeze({ disposition: "bounded", state, cycles }); }
         }
         throw unavailable();
       }));
       return (async () => {
-        try { const result = await Promise.race([work, stopped]); current(controller.signal); return result; }
+        try { const result = await Promise.race([work, stopped]); runningCurrent(); return result; }
         catch { throw unavailable(); }
         finally {
           try { await close(); }
