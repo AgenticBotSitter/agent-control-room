@@ -6,6 +6,13 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+Shared release work: retained original license files for pg-boss, fast-xml-parser,
+React, React DOM and Zod. All 14 direct runtime dependencies now have byte-exact
+installed-license comparisons and exact-version checks in test:notices, included
+in test:components. The notice test passed. No package download occurred. This
+closes direct runtime notice coverage only, not transitive/native/bundle licensing
+or a complete release SBOM; those artifact-specific obligations remain open.
+
 Independent review of 65753c5 found no concrete issue in reader isolation and
 refresh clearing, and independently passed five result tests. Root's fresh full
 compiled suite passed 57/57. Draft/session ownership was source-reviewed, not

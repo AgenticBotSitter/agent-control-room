@@ -31,6 +31,17 @@ is not vendored, and feed metadata does not grant republication rights.
 
 ## Before distributing additional artifacts
 
+All 14 direct runtime dependencies now retain their original installed license
+text. `pnpm test:notices` checks the exact version and license bytes and fails if
+a new direct dependency lacks a mapping. This does not enumerate transitive or
+build-tool dependencies, nor inspect bundled artifacts.
+
+Additional unchanged dependencies: pg-boss 12.30.0 (MIT, Tim Jones),
+fast-xml-parser 5.11.0 (MIT, Amit Kumar Gupta), React and React DOM 19.2.6
+(MIT, Meta Platforms, Inc. and affiliates), and Zod 4.1.12 (MIT, Colin McDonnell).
+Their license files are retained under the matching `third_party` directories.
+No upstream dependency code was modified or copied into application source.
+
 Article extraction uses unchanged @mozilla/readability 0.6.0 and jsdom 26.1.0.
 Original [Readability license](third_party/readability/LICENSE) and
 [jsdom license](third_party/jsdom/LICENSE) are retained from the installed packages.
