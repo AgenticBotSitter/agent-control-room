@@ -14,3 +14,9 @@ Added @types/pg 8.15.5 as a pinned development dependency, scripts disabled.
 One package downloaded/added, 496 reused. Stored in the same shared pnpm cache
 and linked into this disposable checkout; no global setting changed. This is
 compile-time declaration material, not a second runtime driver.
+
+Removed postgres 3.4.7 after the final caller/import inventory. pnpm reported one
+package removed, zero downloaded. The initial remove invocation rejected an
+unsupported flag; the corrected command used config.ignore-scripts=true.
+Shared cache was preserved; removed local dependency links are reproducible from
+the previous lockfile if rollback is required.

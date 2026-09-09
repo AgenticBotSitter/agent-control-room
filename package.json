@@ -22,7 +22,6 @@
     "fast-xml-parser": "5.11.0",
     "pg": "8.23.0",
     "pg-boss": "12.30.0",
-    "postgres": "3.4.7",
     "react": "19.2.6",
     "react-dom": "19.2.6",
     "rss-parser": "3.13.0",

@@ -1,6 +1,4 @@
-import postgres from "postgres";
 import { createPrivatePgDatabase } from "./private-pg-database";
-import { boundPrivateDatabase, PrivateDatabaseError, type PrivateDatabaseDriver } from "./bounded-database";
 
 export interface PrivatePostgresConfiguration {
   /** First supported topology: app and private primary on the same VPS, TCP loopback only. */
@@ -29,37 +27,9 @@ export function privatePostgresOptions(input: PrivatePostgresConfiguration) {
       idle_in_transaction_session_timeout: 5000, timezone: "UTC" } };
 }
 
-export type PrivateSqlFactory = (options: ReturnType<typeof privatePostgresOptions>) => {
-  reserve(): Promise<{ unsafe(statement: string, params: never[], options: { prepare: boolean; simple: boolean }): PromiseLike<readonly unknown[]>;
-    release(): void }>;
-  end(options: { timeout: number }): Promise<void>;
-};
 /** Explicit effect boundary. Merely importing this module creates no client or connection.
  * The factory seam is trusted server composition/test code, never request input.
  */
 export function createPrivatePostgresDatabase(config: PrivatePostgresConfiguration) {
   return createPrivatePgDatabase(config);
-}
-
-/** Temporary explicit fixture-only adapter. Never used as runtime fallback. */
-export function createLegacyFixturePostgresDatabase(config: PrivatePostgresConfiguration,
-  createSql: PrivateSqlFactory = options => postgres(options)) {
-  const sql = createSql(privatePostgresOptions(config));
-  const driver: PrivateDatabaseDriver = {
-    async acquire() {
-      try {
-        const lease = await sql.reserve();
-        return { async query<T>(statement: string, params: unknown[] = []) {
-          try {
-            // Disable postgres.js's transparent prepared-plan retry. Still use parameterized extended protocol.
-            const queryOptions = { prepare: false, simple: false };
-            const rows = await lease.unsafe(statement, params as never[], queryOptions);
-            return { rows: rows as unknown as T[] };
-          } catch { throw new PrivateDatabaseError("database_outcome_uncertain"); }
-        }, release: () => lease.release() };
-      } catch { throw new PrivateDatabaseError("database_unavailable"); }
-    },
-    terminate: () => sql.end({ timeout: 0 }),
-  };
-  return boundPrivateDatabase(driver);
 }

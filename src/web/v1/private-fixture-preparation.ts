@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
-import postgres from "postgres";
+import { Pool as PgPool } from "pg";
+import { bindPrivatePgPool } from "./private-pg-database";
+import { privatePgOptions } from "./private-pg-options";
 import { z } from "zod";
 import type { DatabaseSession } from "../../persistence/database";
-import { createPrivatePostgresDatabase, createLegacyFixturePostgresDatabase, privatePostgresOptions, validatePrivatePostgresConfiguration,
+import { createPrivatePostgresDatabase, validatePrivatePostgresConfiguration,
   type PrivatePostgresConfiguration } from "./private-postgres";
 import { privateWebSchemaDigest, readPrivateWebSchemaDigest } from "./private-database-preflight";
 import { rehearsalScopeDigest, type RehearsalMaterial } from "./private-database-rehearsal";
@@ -54,8 +56,7 @@ export function fixtureMigratorScopeDigest(config: PrivatePostgresConfiguration)
   return sha({ host: value.host, port: value.port, database: value.database, username: value.username, majorVersion: value.majorVersion });
 }
 export function fixturePreparationPostgresOptions(config: PrivatePostgresConfiguration) {
-  const options = privatePostgresOptions(config);
-  return { ...options, max: 1, connection: { ...options.connection, application_name: "control-room-rehearsal-setup" } };
+  return Object.freeze({ ...privatePgOptions(config), max: 1, application_name: "control-room-rehearsal-setup" });
 }
 
 function createPreparation(dependencies: Dependencies, execution: FixturePreparationEvidence["execution"]) {
@@ -162,8 +163,8 @@ function createPreparation(dependencies: Dependencies, execution: FixturePrepara
 
 /** Explicit operator effect only; no env/credential loading, provisioning, DDL or import-time I/O. */
 export function createNativePrivateFixturePreparation() {
-  return createPreparation({ openDatabase: config => createLegacyFixturePostgresDatabase(config,
-    () => postgres(fixturePreparationPostgresOptions(config))), clock: Date.now, monotonic: () => performance.now() }, "native_postgres");
+  return createPreparation({ openDatabase: config => bindPrivatePgPool(new PgPool(fixturePreparationPostgresOptions(config))),
+    clock: Date.now, monotonic: () => performance.now() }, "native_postgres");
 }
 export function createInjectedPrivateFixturePreparation(dependencies: Dependencies) {
   return createPreparation(dependencies, "injected_test");

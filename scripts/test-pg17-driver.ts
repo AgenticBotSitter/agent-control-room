@@ -5,12 +5,14 @@ import { promisify } from "node:util";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { Pool } from "pg";
+import { Pool, Client } from "pg";
+import { createRehearsalProbe, createPgRehearsalTransport } from "../src/web/v1/private-rehearsal-probe";
 import { PgBoss, getConstructionPlans } from "pg-boss";
 import { privatePgOptions } from "../src/web/v1/private-pg-options";
 import { createPrivatePgDriver } from "../src/web/v1/private-pg-driver";
 import { qualifyPrivatePgSession } from "../src/web/v1/private-pg-qualification";
 import { boundPrivateDatabase } from "../src/web/v1/bounded-database";
+import { bindPrivatePgPool } from "../src/web/v1/private-pg-database";
 
 const bin = resolve(process.argv[2] ?? "");
 assert.ok(process.argv[2], "supply the reviewed PostgreSQL 17 bin directory");
@@ -34,7 +36,7 @@ try {
     username: "fixture_user", password: "fixture_only", majorVersion: 17 });
   // Test-only socket override; production still permits loopback TCP only.
   const pool = new Pool({ ...options, host: socket });
-  db = boundPrivateDatabase(createPrivatePgDriver(pool, qualifyPrivatePgSession));
+  db = bindPrivatePgPool(pool);
   pool.on("error", () => { void db?.close().catch(() => {}); });
   assert.equal((await db.client.query<{ listen_addresses: string }>("SHOW listen_addresses")).rows[0].listen_addresses, "");
   await db.client.query("CREATE TABLE public.fixture_values (id uuid PRIMARY KEY, body jsonb, tags text[])");
@@ -67,7 +69,49 @@ try {
   assert.deepEqual(stored?.output, { review: "pending" });
   assert.equal((await boss.fetch("fixture_task")).length, 0);
   assert.equal(queueFault, false);
-  console.log(JSON.stringify({ pg17: true, tcpDisabled: true, qualification: true, values: true, preCommitRollback: true, queueRoundTrip: true }));
+  const probe = createRehearsalProbe({ host: "127.0.0.1", port: 65435, database: "postgres",
+    username: "fixture_user", password: "fixture_only", majorVersion: 17 }, "a", probeOptions =>
+    createPgRehearsalTransport(new Client({ ...options, host: socket }), probeOptions.onclose));
+  try {
+    const first = (await probe.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+    await probe.query("SET statement_timeout='20ms'");
+    await assert.rejects(probe.query("SELECT pg_sleep(1)"), { message: "57014" });
+    assert.equal((await probe.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0].pid, first);
+  } finally { await probe.close(); }
+  assert.equal(probe.isClosed(), true);
+  await pool.query("CREATE ROLE fixture_reader LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS");
+  await pool.query("REVOKE CREATE ON SCHEMA public FROM PUBLIC");
+  await pool.query("GRANT USAGE ON SCHEMA public TO fixture_reader");
+  await pool.query("GRANT SELECT ON public.fixture_values TO fixture_reader");
+  for (const denied of ["DELETE FROM public.fixture_values", "CREATE TABLE public.forbidden (id int)"]) {
+    const restrictedPool = new Pool({ ...options, host: socket, user: "fixture_reader" });
+    const restricted = bindPrivatePgPool(restrictedPool);
+    restrictedPool.on("error", () => { void restricted.close().catch(() => {}); });
+    try {
+      assert.equal((await restricted.client.query<{ n: number }>("SELECT count(*)::int AS n FROM public.fixture_values")).rows[0].n, 1);
+      await assert.rejects(restricted.client.query(denied), { message: "database_outcome_uncertain" });
+      assert.equal(restricted.isAvailable(), false);
+    } finally { await restricted.close(); }
+  }
+  assert.equal((await db.client.query<{ n: number }>("SELECT count(*)::int AS n FROM public.fixture_values")).rows[0].n, 1);
+  const interrupted = bindPrivatePgPool(new Pool({ ...options, host: socket }));
+  let entered!: (pid: number) => void;
+  let resume!: () => void;
+  const ready = new Promise<number>(resolve => { entered = resolve; });
+  const callbackWait = new Promise<void>(resolve => { resume = resolve; });
+  const operation = interrupted.client.transaction(async session => {
+    const pid = (await session.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+    entered(pid); await callbackWait;
+  });
+  const rejected = assert.rejects(operation);
+  try {
+    const pid = await ready;
+    // Only the backend just acquired from this owned fixture is terminated.
+    assert.equal((await pool.query("SELECT pg_terminate_backend($1) AS stopped", [pid])).rows[0].stopped, true);
+    await rejected;
+    assert.equal(interrupted.isAvailable(), false);
+  } finally { resume(); await interrupted.close(); }
+  console.log(JSON.stringify({ pg17: true, tcpDisabled: true, qualification: true, values: true, preCommitRollback: true, queueRoundTrip: true, restrictedReadAndDeniedWrites: true, checkedOutDisconnect: true }));
 } finally {
   try { try { await boss?.stop({ graceful: false }); } finally { await db?.close(); } }
   finally {
