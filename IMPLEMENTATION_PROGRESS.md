@@ -6,6 +6,15 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+Project route isolation: a real React/jsdom regression reproduced the previous
+project's details and lifecycle buttons surviving a projectId change until the
+next fetch completed. The workspace now derives visible/actionable project state
+only from the exact current route ID. It leaves the client mounted to preserve
+uncertain save request keys; it does not reset or replay writes. The regression
+passes after correction, with two read requests and no command request. Full
+TypeScript and all nine result/project tests pass. This is synthetic DOM evidence,
+not physical browser, archive/reopen persistence or full workflow acceptance.
+
 Latest checkpoint at `9a333f1`: the complete `pnpm test:components` command exits
 zero after the cancellation correction. Independent review found no concrete
 issue and reran both connector-readiness tests successfully. Root accepts the

@@ -34,7 +34,10 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
   const [client] = useState(() => createProjectBrowserClient());
   const [projects, setProjects] = useState<ProjectView[]>([]);
   const [catalog, setCatalog] = useState<ProjectCatalogPage>();
-  const [project, setProject] = useState<ProjectView>();
+  const [retainedProject, setProject] = useState<ProjectView>();
+  // Route changes must hide the previous project's data and actions immediately.
+  // Keep the client mounted so an uncertain save retains its original request key.
+  const project = retainedProject?.projectId === projectId ? retainedProject : undefined;
   const [state, setState] = useState<"loading" | "ready" | "unavailable">("loading");
   const [error, setError] = useState<BrowserRequestError>();
   const [pending, setPending] = useState(false);
@@ -133,7 +136,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
             : state === "ready" && <p className="private-note">Your current access does not allow creating ordinary projects.</p>}</div>
       </> : <>
         <a href="/projects" className="private-back">← All projects</a>
-        {state === "loading" && <p role="status">Loading project…</p>}
+        {(state === "loading" || state === "ready" && !project) && <p role="status">Loading project…</p>}
         {state === "ready" && project && <>
           <div className="private-heading"><span className="private-state">{project.lifecycle} · {project.origin === "idea_lab" ? "From Idea Lab" : "Ordinary project"}</span><h1>{project.title}</h1></div>
           <ProjectIdeaOrigin project={project} />
