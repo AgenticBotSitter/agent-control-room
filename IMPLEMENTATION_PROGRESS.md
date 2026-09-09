@@ -627,3 +627,20 @@ Source re-review at51ae4c1 accepted the fixture P2 correction with no concrete
 regression. Reviewer confirmed owned-group termination/absence and preserved
 uncertainty; native/process execution remained root-provided evidence. This closes
 the reported fixture issue, not the remaining runtime/re-adoption acceptance.
+
+### Workspace evidence joined to restart admission
+
+The existing native restart inventory now includes bounded workspace metadata
+from the same bridge-journal transaction. Raw paths, inode/device values and root
+details are omitted; an evidence digest detects changed records across the two
+existing restart sweeps. Unresolved workspaces keep the inventory in reconciliation
+state even without a delivery/run, rather than disappearing from startup checks.
+Matching deliveries must agree on project/job/run/lease identity. Saved removal
+is historical only and never becomes fresh cleanup or pickup authority.
+
+A focused real-journal test exercises missing/matching/mismatched delivery metadata,
+foreign node scope, metadata changing between sweeps, pending and historical removal,
+and path exclusion. It also calls the actual lease-aware runtime constructor and
+proves unresolved workspace state refuses startup before key/transport composition.
+Focused tests and TypeScript passed; fresh compiled regression and independent
+review pending. This does not yet re-adopt a checkout or resume a native agent.

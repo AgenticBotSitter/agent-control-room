@@ -307,6 +307,11 @@ export class SqliteBridgeJournal implements ReplayGuard {
         if (!saved) throw new Error("native_attempt_inventory_invalid");
         const { jobId, ...summary } = saved;
         return { ...reconciliationAttemptSchema.parse(summary), jobId: localId.parse(jobId) };
+      }), workspaces: this.workspaceIntentInventory().map(saved => {
+        const { tenantId, nodeId, projectId, jobId, attemptId, leaseId, leaseEpoch, runId } = saved.intent;
+        return { tenantId, nodeId, projectId, jobId, attemptId, leaseId, leaseEpoch, runId,
+          state: saved.removal === "removed" ? "historically_removed" as const : "reconciliation_required" as const,
+          evidenceDigest: sha256Digest(saved) };
       }) };
     });
   }
