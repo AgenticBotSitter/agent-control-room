@@ -47,6 +47,12 @@ test("known-run recovery refuses asynchronous freshness fences at either check",
       await new Promise<void>(resolve => setImmediate(resolve));
     } finally { controller.close(); }
   }
+  for (const invalid of [false, null, 0]) {
+    const controller = createNativeRecoveryAuthority(config, { ...deps,
+      assertProfileCurrent: async () => invalid as unknown as () => void });
+    try { await assert.rejects(controller.authority.check("status", f.prepared.binding), /native_recovery_authority_unavailable/); }
+    finally { controller.close(); }
+  }
   let lateChecks = 0, stopBytes = 0;
   const late = createNativeRecoveryAuthority(config, { ...deps, readCurrent: async () => ({ ...trust,
     assertFresh: () => { if (++lateChecks >= 3) return Promise.reject(new Error("late_revocation")); },

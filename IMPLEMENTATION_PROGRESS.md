@@ -663,3 +663,13 @@ The actual adapter additionally refuses a late async rejection before stop bytes
 records uncertainty and does not retry through a replacement adapter. No live
 transport, credential access or provider was used. TypeScript and three focused
 test groups passed; compiled native regressions and independent review pending.
+
+Recovery review at78176d3 found no concrete regression and reran all three focused
+tests; five freshly compiled managed-session/native-evidence tests passed. The
+same defect was then reproduced in start-authority with a failing expected-rejection
+test. Start policy/profile freshness now uses the same synchronous fence before
+admission/effect markers. A one-database matrix covers both check/mark operations,
+first/final callback checks and resolved/rejected promises; no effects are recorded
+for refusals and a subsequent valid simulated start still works. Malformed falsy
+callback values are rejected rather than treated as missing in start/recovery.
+TypeScript and focused tests passed; final start-path independent review pending.

@@ -82,8 +82,8 @@ export function createNativeRecoveryAuthority(config: { enrollment: unknown; bin
           const profileFresh = await profile(enrollment, time(), controller.signal);
           if (controller.signal.aborted || time() >= deadline) return unavailable();
           const freshness = () => {
-            if (profileFresh) assertSynchronousFence(profileFresh, unavailable);
-            if (assertFresh) assertSynchronousFence(assertFresh, unavailable);
+            if (profileFresh !== undefined) assertSynchronousFence(profileFresh, unavailable);
+            if (assertFresh !== undefined) assertSynchronousFence(assertFresh, unavailable);
           };
           live(current); freshness(); durable();
           return freshness;
