@@ -13,6 +13,8 @@ rejected promises, with exactly one close and no database/sign/send calls.
 The test failed before correction. Queue tests pass 53/53 and TypeScript passes;
 fresh compiled regression and independent review are in progress. This does not
 qualify a physical transport or actual agent reconnect.
+The fresh compiled application run at 1d118bf subsequently passed 57/57; review
+is still pending. No production resources or physical listener were started.
 
 Managed session readiness now reuses the existing synchronous fence for its
 availability callback. The previous implementation ignored returned false/Promise
