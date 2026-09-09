@@ -13,6 +13,8 @@ const record = (value: unknown): Record<string, unknown> => {
   return value as Record<string, unknown>;
 };
 export type HerdrProjectBinding = Readonly<{
+  tenantId: string;
+  workspaceId: string;
   projectId: string;
   sourceId: string;
   enrollmentRevision: string;
@@ -30,7 +32,7 @@ export function createHerdrProjectProjection(input: HerdrProjectBinding) {
     throw new Error('invalid_observation');
   const permitted = new Set(input.workspaceIds.map(label));
   if (permitted.size !== input.workspaceIds.length) throw new Error('invalid_observation');
-  const scope = [projectId, sourceId, revision];
+  const scope = [label(input.tenantId), label(input.workspaceId), projectId, sourceId, revision];
   return Object.freeze({
     projectId,
     project(raw: string, generation: number) {

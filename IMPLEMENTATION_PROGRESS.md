@@ -6,6 +6,18 @@ All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint
 
+The optional Herdr path now includes an immutable-enrollment retained observation
+source and `WebHerdrService`, which reuses `WebSessionAuthority` and the existing
+project view checks. Reads never poll a source. Revocation clears retained rows;
+disconnect/replacement tickets reject late publication; freshness uses the start
+of observation rather than late arrival, with a five-second ceiling. Clock
+regression permanently invalidates that source. Keys now include tenant and
+workspace scope as well. Six tests pass, including actual disposable SQL project
+authorization and revoked-grant refusal; full-source TypeScript passes. The
+application route/UI and native observation collector are not yet wired, and
+source enrollment is trusted operator composition rather than a management API.
+Independent review is pending. No real Herdr socket/process was used.
+
 Batch 6 now has a pure project-scoped projection adapted from the existing
 evaluated Herdr v0.9.0 pane-list bridge. It captures explicit workspace mappings,
 filters before duplicate-session correlation, scopes opaque keys by project,

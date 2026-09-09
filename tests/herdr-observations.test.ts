@@ -6,7 +6,7 @@ const pane = (workspace_id: string, pane_id: string) => ({ workspace_id, tab_id:
   agent: 'hermes', agent_status: 'done', cwd: '/private/example', title: 'private prompt',
   agent_session: { kind: 'id', source: 'hermes', agent: 'hermes', value: 'private-session' } });
 const wire = (panes: unknown[]) => JSON.stringify({ id: 'cli:pane:list', result: { type: 'pane_list', panes } });
-const binding = () => ({ projectId: 'project-a', sourceId: 'source-a', enrollmentRevision: '1', workspaceIds: ['a'] });
+const binding = () => ({ tenantId: 'tenant-a', workspaceId: 'workspace-a', projectId: 'project-a', sourceId: 'source-a', enrollmentRevision: '1', workspaceIds: ['a'] });
 
 test('project projection filters before duplicate correlation and omits private metadata', () => {
   const projection = createHerdrProjectProjection(binding());
@@ -29,7 +29,7 @@ test('captured mappings and correlation identities isolate projects, enrollments
   assert.equal(first.length, 1);
   assert.deepEqual(projection.project(raw, 1), first);
   assert.notEqual(projection.project(raw, 2)[0].key, first[0].key);
-  for (const change of [{ projectId: 'b' }, { sourceId: 'b' }, { enrollmentRevision: '2' }]) {
+  for (const change of [{ tenantId: 'b' }, { workspaceId: 'b' }, { projectId: 'b' }, { sourceId: 'b' }, { enrollmentRevision: '2' }]) {
     assert.notEqual(createHerdrProjectProjection({ ...binding(), ...change }).project(raw, 1)[0].key, first[0].key);
   }
   assert.deepEqual(createHerdrProjectProjection({ ...binding(), workspaceIds: [] }).project(raw, 1), []);
