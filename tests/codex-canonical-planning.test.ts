@@ -18,6 +18,7 @@ import { computeAuthorityDigest, sha256Digest } from "../src/security";
 import { TaskAssignmentCoordinator, type TaskAssignmentRoute } from "../src/web/v1/task-assignment-coordinator";
 import { TaskExecutionPlanner, type NativeTaskTemplate } from "../src/web/v1/task-execution-planner";
 import { ServerNodeSession } from "../src/node-control/server-node-session";
+import { ManagedNativeSessions, type ManagedNativeSessionSettings } from "../src/web/v1/managed-native-sessions";
 import { FixedWindowProtocolRateLimiter, NODE_PROTOCOL_V1, NodeProtocolAuthenticator, signNodeFrame,
   type SignedNodeFrame } from "../src/node-protocol/v1";
 import { binding, instant } from "./hermes-native-fixture";
@@ -201,6 +202,89 @@ test("owner planning and assignment produce one canonical Codex reservation with
     assert.equal(jobRecordSchema.parse(await new CanonicalStore(f.db).get(binding.tenantId, "job", saved.job.id)).state, "leased");
     await assert.rejects(f.assignment.enqueueCodexTask(f.identity, binding.projectId, saved.job.id, saved.job.inputDigest,
       permit, new AbortController().signal));
+  } finally { await f.close(); }
+});
+
+test("shared managed queue routes Codex once and completes only after its authenticated receipt", async () => {
+  const f = await setup();
+  let nativeStageCalls = 0, nativeReceiptCalls = 0, nativeRegistrations = 0;
+  const server = generateKeyPairSync("ed25519");
+  const serverSpki = server.publicKey.export({ format: "der", type: "spki" }).toString("base64url");
+  const toNode: string[] = [], transport = { available: true, async send(raw: string) { toNode.push(raw); },
+    async close() { transport.available = false; }, isAvailable: () => transport.available };
+  const settings: ManagedNativeSessionSettings = { nodes: [{ tenantId: binding.tenantId, nodeId: binding.nodeId,
+    nodeKeyId: "key:test", serverId: "server:managed-codex", serverKeyId: "key:managed-codex",
+    serverPublicKeySpki: serverSpki, transportIdentity: "transport:managed-codex", features: [CODEX_DELIVERY_FEATURE],
+    maxFrameBytes: 131_072, heartbeatIntervalSeconds: 30 }], async sign(frame) { return signNodeFrame(frame, server.privateKey); } };
+  const routes: ConstructorParameters<typeof ManagedNativeSessions>[3] = {
+    queue: { locate: f.assignment.locateQueuedHarnessDelivery.bind(f.assignment),
+      stage: async (...args) => { nativeStageCalls++; return f.assignment.stageApprovedQueueDelivery(...args); },
+      transmit: f.assignment.transmitApprovedQueueDelivery.bind(f.assignment),
+      codexStage: f.assignment.stageApprovedCodexQueueDelivery.bind(f.assignment),
+      codexTransmit: f.assignment.transmitApprovedCodexQueueDelivery.bind(f.assignment) },
+    stage: f.assignment.stageQueuedNativeDelivery.bind(f.assignment),
+    transmit: f.assignment.transmitQueuedNativeDelivery.bind(f.assignment),
+    receipt: async () => { nativeReceiptCalls++; throw new Error("native receipt must not run"); },
+    codexReceipt: f.assignment.receiveCodexDeliveryReceipt.bind(f.assignment),
+    progress: async () => { throw new Error("Codex progress must not use native snapshots"); },
+    recover: async () => { throw new Error("Codex must not use native recovery"); },
+    register: async () => { nativeRegistrations++; throw new Error("Codex must not register a native run"); },
+  };
+  const manager = new ManagedNativeSessions(f.db, settings, f.scope, routes, work => work(), () => {}, () => instant + 8000);
+  try {
+    const handle = await manager.attachInput(binding.nodeId, transport, { mode: "initial", assignment: "queue" });
+    const connectionId = "connection:managed-codex";
+    const hello = signNodeFrame({ protocol: NODE_PROTOCOL_V1, direction: "node_to_server", senderKind: "node",
+      tenantId: binding.tenantId, actorId: binding.nodeId, keyId: "key:test", connectionId, sequence: 1,
+      messageId: "message:managed-codex-hello", correlationId: "correlation:managed-codex",
+      nonce: "managed_codex_hello_nonce_123456789", sentAt: at(8000), expiresAt: at(120_000),
+      type: "connection.hello", body: { supportedProtocols: [NODE_PROTOCOL_V1], features: [CODEX_DELIVERY_FEATURE],
+        requestedMaxFrameBytes: 131_072, lastAcknowledgedServerSequence: 0, unresolvedAttemptIds: [] } }, f.keys.privateKey);
+    await handle.receive(JSON.stringify(hello), undefined, new AbortController().signal);
+    const handshake = toNode.map(raw => JSON.parse(raw) as SignedNodeFrame), last = Math.max(...handshake.map(frame => frame.sequence));
+    const report = signNodeFrame({ protocol: NODE_PROTOCOL_V1, direction: "node_to_server", senderKind: "node",
+      tenantId: binding.tenantId, actorId: binding.nodeId, keyId: "key:test", connectionId, sequence: 2,
+      messageId: "message:managed-codex-report", correlationId: "correlation:managed-codex",
+      nonce: "managed_codex_report_nonce_123456789", sentAt: at(8000), expiresAt: at(120_000),
+      type: "node.reconciliation.report", body: { lastAcknowledgedServerSequence: last, attempts: [] } }, f.keys.privateKey);
+    await handle.receive(JSON.stringify(report), undefined, new AbortController().signal); toNode.length = 0;
+    const { reference } = await assignAndQueue(f);
+    let settled = false;
+    const delivery = manager.deliverApproved(reference, new AbortController().signal).finally(() => { settled = true; });
+    for (let i = 0; i < 20 && toNode.length === 0; i++) await new Promise(resolve => setImmediate(resolve));
+    assert.equal(toNode.length, 1); assert.equal(settled, false); assert.equal(nativeStageCalls, 0);
+    const dispatch = JSON.parse(toNode[0]) as SignedNodeFrame<"harness.codex.dispatch">;
+    assert.equal(dispatch.type, "harness.codex.dispatch");
+    const receiptBody = { schema: "control-room.codex-task-dispatch-receipt/v1" as const,
+      queueId: dispatch.body.queueId, dispatchMessageId: dispatch.messageId, dispatchBodyDigest: dispatch.bodyDigest,
+      tenantId: dispatch.body.start.tenantId, projectId: dispatch.body.start.projectId, nodeId: dispatch.body.start.nodeId,
+      jobId: dispatch.body.start.jobId, attemptId: dispatch.body.start.attemptId, permitDigest: dispatch.body.permitDigest,
+      enrollmentDigest: dispatch.body.start.enrollmentDigest, recordedAt: at(8000), disposition: "recorded" as const,
+      safeReason: "none" as const, startsWork: false as const, grantsExecutionAuthority: false as const };
+    const receipt = signNodeFrame({ protocol: NODE_PROTOCOL_V1, direction: "node_to_server", senderKind: "node",
+      tenantId: binding.tenantId, actorId: binding.nodeId, keyId: "key:test", connectionId, sequence: 3,
+      messageId: "message:managed-codex-receipt", correlationId: "correlation:managed-codex",
+      causationId: dispatch.messageId, nonce: "managed_codex_receipt_nonce_123456789", sentAt: at(8000),
+      expiresAt: at(120_000), type: "harness.codex.dispatch.receipt", body: receiptBody }, f.keys.privateKey);
+    await handle.receive(JSON.stringify(receipt), undefined, new AbortController().signal);
+    const completed = await delivery;
+    assert.equal(completed.kind, "codex"); assert.equal(completed.deliveryConfirmed, true);
+    assert.equal(nativeReceiptCalls, 0); assert.equal(nativeRegistrations, 0);
+    assert.equal((await f.db.query("SELECT id FROM control_harness_runs WHERE tenant_id=$1 AND job_id=$2",
+      [binding.tenantId, dispatch.body.start.jobId])).rows.length, 0);
+  } finally { await manager.close(); await f.close(); }
+});
+
+test("Codex authority callbacks are captured before caller mutation", async () => {
+  const f = await setup();
+  try {
+    const configured = f.codexConfig.enrollments[0];
+    configured.approvals.binding = () => ({ tenantId: "tenant:changed", nodeId: "node:changed", nodeClass: "changed" });
+    configured.approvals.assertAvailable = () => { throw new Error("mutated authority callback"); };
+    configured.approvals.resolveApprovalKey = async () => undefined;
+    configured.security.currentServerTrustRevision = () => "trust-revision:changed";
+    const queued = await assignAndQueue(f);
+    assert.equal(queued.reference.jobId, queued.saved.job.id);
   } finally { await f.close(); }
 });
 

@@ -7,7 +7,7 @@ import { validatePrivateStartupConfiguration, type PrivateStartupConfiguration }
 import { installPrivateApplication } from "./private-process";
 import { createPrivateTaskApplication } from "./private-task-application";
 import { captureNativeTaskTemplates } from "./task-execution-planner";
-import { validateTaskAssignmentRoutes, validateNativeApprovalEnrollments } from "./task-assignment-coordinator";
+import { validateTaskAssignmentRoutes, validateNativeApprovalEnrollments, type CodexPermitConfiguration } from "./task-assignment-coordinator";
 import type { TaskCoordinatorConfiguration, TaskCoordinatorDatabase } from "./task-coordinator-lifecycle";
 import { captureTaskQualityConfiguration, validateTaskQualityKeys } from "./task-quality-coordinator";
 import { captureNativeEvidenceSettings, type NativeEvidenceSettings } from "./native-evidence-receiver";
@@ -23,6 +23,7 @@ import { verifyNewsCoordinatorDatabase, verifyNewsIngestionDatabase } from "./pr
 import { createNewsDiscoveryIntegration } from "./news-discovery-integration";
 import type { NewsQueueWorkerStartupConfiguration } from "./news-queue-worker-startup";
 import type { preparePgBossAbsFeedSubmission } from "../../persistence/pg-boss-abs-feed-submission";
+import { CODEX_APP_SERVER_CAPABILITY, CODEX_DELIVERY_FEATURE } from "../../harness/codex-v1/delivery-contract";
 
 type OwnedQueueWorker = { close(): Promise<void>; status(): { accepting: boolean } };
 
@@ -30,6 +31,7 @@ export type PrivateTaskStartupConfiguration = {
   web: PrivateStartupConfiguration;
   news?: NewsStartupConfiguration;
   coordinator: Pick<TaskCoordinatorConfiguration, "planning" | "routes" | "approvals" | "quality" | "revisionPlanning" | "nativeHttp"> & {
+    codex?: CodexPermitConfiguration;
     nativeQueue?: true;
     nativeQueueRecovery?: true;
     /** Explicit local composition; no default worker factory or deployment activation. */
@@ -82,6 +84,17 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
       || sessions.database.host !== database.host || sessions.database.port !== database.port || sessions.database.database !== database.database
       || [web.database.username, database.username, resultDatabase!.username, evidence.database.username].includes(sessions.database.username)
       || sessions.nodes.some(node => node.tenantId !== web.tenantId || !evidence.enrollments.some(e => e.nodeId === node.nodeId)))) throw new Error();
+    const c = input.coordinator.codex;
+    const codex: CodexPermitConfiguration | undefined = c ? Object.freeze({ integrityKey: key(c.integrityKey),
+      enrollments: Object.freeze(c.enrollments.map(value => Object.freeze({ ...value,
+        approvals: Object.freeze({ binding: value.approvals.binding.bind(value.approvals),
+          assertAvailable: value.approvals.assertAvailable.bind(value.approvals),
+          resolveApprovalKey: value.approvals.resolveApprovalKey.bind(value.approvals) }),
+        security: Object.freeze({ currentServerTrustRevision: value.security.currentServerTrustRevision.bind(value.security) }) }))) }) : undefined;
+    if (codex && (!nativeQueue || !sessions || !codex.enrollments.length || codex.enrollments.some(value =>
+      value.tenantId !== web.tenantId
+      || !routes.some(route => route.nodeId === value.nodeId && route.capabilityProbeId === CODEX_APP_SERVER_CAPABILITY)
+      || !sessions.nodes.some(node => node.nodeId === value.nodeId && node.features.includes(CODEX_DELIVERY_FEATURE))))) throw new Error();
     const nativeHttp = input.coordinator.nativeHttp ? captureNativeHttpSettings(input.coordinator.nativeHttp) : undefined;
     if (nativeHttp && (!sessions || nativeHttp.peers.some(peer => !sessions.nodes.some(node => node.nodeId === peer.nodeId)))) throw new Error();
     const w = input.coordinator.queueWorker;
@@ -113,7 +126,7 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
     const news = input.news ? captureNewsStartupConfiguration(input.news, web,
       [web.database, database, resultDatabase, evidence?.database, sessions?.database, queueWorker?.database,
         ideaCreation?.database, ideaRuntime?.database].filter((value): value is PrivatePostgresConfiguration => !!value)) : undefined;
-    return { web, database, planning, routes, approvals, quality, revisionPlanning, resultDatabase, evidence, sessions, nativeHttp, nativeQueue, nativeQueueRecovery, queueWorker, ideaCreation, ideaRuntime, news };
+    return { web, database, planning, routes, approvals, codex, quality, revisionPlanning, resultDatabase, evidence, sessions, nativeHttp, nativeQueue, nativeQueueRecovery, queueWorker, ideaCreation, ideaRuntime, news };
   } catch { throw new Error("private_task_startup_config_invalid"); }
 }
 
@@ -316,6 +329,7 @@ export function createPrivateTaskBootstrap(dependencies: {
         ...(newsIntegration ? { newsCollections: newsIntegration.web } : {}) }, {
         scope: { tenantId: config.web.tenantId, workspaceId: config.web.workspaceId }, database: coordinator,
         planning: config.planning, routes: config.routes, approvals: config.approvals, quality: config.quality,
+        codex: config.codex,
         revisionPlanning: config.revisionPlanning, resultDatabase, clock,
         ideaCreation: ideaDatabase ? { ...config.ideaCreation!, database: ideaDatabase } : undefined,
         ideaRuntime: ideaRuntimeDatabase ? { ...config.ideaRuntime!, database: ideaRuntimeDatabase, close: closeIdeaRuntime! } : undefined,

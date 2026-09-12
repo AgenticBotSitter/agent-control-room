@@ -85,7 +85,7 @@ export class PinnedApprovalTrustStore implements ApprovalTrustStore {
 }
 
 /** Scope-check the node's configured trust before adapting it to start/recovery evaluation input. */
-export async function resolvePinnedApprovalKey(store: PinnedApprovalTrustStore,
+export async function resolvePinnedApprovalKey(store: Pick<PinnedApprovalTrustStore, "binding" | "resolveApprovalKey">,
   expected: { tenantId: string; nodeId: string; nodeClass: string }, keyId: string): Promise<ResolvedApprovalKeyV1 | undefined> {
   const binding = store.binding();
   if (binding.tenantId !== expected.tenantId || binding.nodeId !== expected.nodeId || binding.nodeClass !== expected.nodeClass) return fail();

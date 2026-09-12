@@ -29,18 +29,24 @@ export type NativeSessionTransport = { send(raw: string): Promise<void>; close()
 const taskSchema = z.object({ projectId: localId, jobId: localId, inputDigest: digestSchema, packetDigest: digestSchema }).strict();
 type Task = z.infer<typeof taskSchema>;
 type Routes = {
-  queue?: { locate: TaskAssignmentCoordinator["locateApprovedQueueDelivery"];
+  queue?: { locate: TaskAssignmentCoordinator["locateQueuedHarnessDelivery"];
     ready?: TaskAssignmentCoordinator["recoverForReadyNode"];
-    stage: TaskAssignmentCoordinator["stageApprovedQueueDelivery"]; transmit: TaskAssignmentCoordinator["transmitApprovedQueueDelivery"] };
+    stage: TaskAssignmentCoordinator["stageApprovedQueueDelivery"]; transmit: TaskAssignmentCoordinator["transmitApprovedQueueDelivery"];
+    codexStage?: TaskAssignmentCoordinator["stageApprovedCodexQueueDelivery"];
+    codexTransmit?: TaskAssignmentCoordinator["transmitApprovedCodexQueueDelivery"] };
   stage: TaskAssignmentCoordinator["stageQueuedNativeDelivery"];
   transmit: TaskAssignmentCoordinator["transmitQueuedNativeDelivery"];
   receipt: (session: ServerNodeSession, raw: string | Uint8Array, signal: AbortSignal) => ReturnType<NativeApprovalPacketStore["receiveDeliveryReceipt"]>;
+  codexReceipt?: TaskAssignmentCoordinator["receiveCodexDeliveryReceipt"];
   progress: NativeEvidenceReceiver["receive"];
   recover?: NativeEvidenceReceiver["recover"];
   register?: NativeEvidenceReceiver["register"];
 };
 type Record = {
   inputOwner?: ManagedNativeInput;
+  harnessKind?: "hermes" | "codex";
+  pendingDelivery?: { kind: "hermes" | "codex"; task: z.infer<typeof nativeEvidenceRegistrationSchema>;
+    promise: Promise<void>; resolve(): void; reject(error: Error): void };
   readinessAttempted?: boolean; readinessAbort?: AbortController;
   readinessState?: "running" | "complete" | "uncertain";
   readinessResult?: Awaited<ReturnType<TaskAssignmentCoordinator["recoverForReadyNode"]>>;
@@ -65,14 +71,20 @@ export class ManagedNativeSessions {
   constructor(private readonly db: DatabaseClient, settings: ManagedNativeSessionSettings,
     private readonly scope: { tenantId: string; workspaceId: string }, routes: Routes,
     private readonly admit: <T>(work: () => Promise<T>) => Promise<T>,
-    private readonly available: () => void, private readonly clock: () => number = Date.now) {
+    private readonly available: () => void, private readonly clock: () => number = Date.now,
+    private readonly receiptTimeoutMs = 20_000) {
     this.settings = captureManagedNativeSessionSettings(settings);
+    if (!Number.isSafeInteger(receiptTimeoutMs) || receiptTimeoutMs < 1 || receiptTimeoutMs > 20_000)
+      throw new Error("native_sessions_config_invalid");
     if (this.settings.nodes.some(node => node.tenantId !== scope.tenantId)) throw new Error("native_sessions_config_invalid");
+    const codexRoutes = [routes.queue?.codexStage, routes.queue?.codexTransmit, routes.codexReceipt].filter(Boolean).length;
+    if (codexRoutes !== 0 && codexRoutes !== 3) throw new Error("native_sessions_config_invalid");
     this.routes = Object.freeze({ stage: routes.stage.bind(routes), transmit: routes.transmit.bind(routes),
       queue: routes.queue ? Object.freeze({ locate: routes.queue.locate.bind(routes.queue), stage: routes.queue.stage.bind(routes.queue),
-        transmit: routes.queue.transmit.bind(routes.queue), ready: routes.queue.ready?.bind(routes.queue) }) : undefined,
+        transmit: routes.queue.transmit.bind(routes.queue), codexStage: routes.queue.codexStage?.bind(routes.queue),
+        codexTransmit: routes.queue.codexTransmit?.bind(routes.queue), ready: routes.queue.ready?.bind(routes.queue) }) : undefined,
       receipt: routes.receipt.bind(routes), progress: routes.progress.bind(routes), recover: routes.recover?.bind(routes),
-      register: routes.register?.bind(routes) });
+      register: routes.register?.bind(routes), codexReceipt: routes.codexReceipt?.bind(routes) });
   }
   private current(record?: Record) {
     assertSynchronousFence(() => this.available(), fail);
@@ -105,6 +117,8 @@ export class ManagedNativeSessions {
   private closeRecord(record: Record): Promise<void> {
     if (record.closing) return record.closing;
     record.closed = true; record.session?.disconnect();
+    record.pendingDelivery?.reject(new Error("native_task_delivery_unresolved"));
+    record.pendingDelivery = undefined;
     record.readinessAbort?.abort();
     if (this.records.get(record.nodeId) === record) this.records.delete(record.nodeId);
     record.closing = (async () => {
@@ -146,12 +160,46 @@ export class ManagedNativeSessions {
     if (task.projectId !== ref.projectId || task.jobId !== ref.jobId || task.attemptId !== ref.attemptId
       || task.inputDigest !== ref.inputDigest) return fail();
     const record = this.records.get(target.nodeId);
-    if (!record || record.expectedAttemptId !== undefined && record.expectedAttemptId !== ref.attemptId) return fail();
+    if (!record || !record.inputOwner || record.expectedAttemptId !== undefined && record.expectedAttemptId !== ref.attemptId) return fail();
+    if (record.harnessKind && record.harnessKind !== target.kind) return fail();
+    record.harnessKind = target.kind;
+    if (record.pendingDelivery) return fail();
+    let resolveReceipt!: () => void, rejectReceipt!: (error: Error) => void;
+    const pending = { kind: target.kind, task,
+      promise: new Promise<void>((resolve, reject) => { resolveReceipt = resolve; rejectReceipt = reject; }),
+      resolve: resolveReceipt, reject: rejectReceipt };
+    pending.promise.catch(() => {});
+    record.pendingDelivery = pending;
     const deliver = (current: AbortSignal) => this.operation(record, current, async session => {
+      if (target.kind === "codex") {
+        if (!routes!.codexStage || !routes!.codexTransmit) return fail();
+        await routes!.codexStage(ref, session, current); this.current(record);
+        const result = await routes!.codexTransmit(ref, session, current);
+        return Object.freeze({ kind: "codex" as const, transmissionRecorded: true as const, ...result });
+      }
       await routes!.stage(ref, session, current); this.current(record);
-      return routes!.transmit(ref, session, current);
+      const result = await routes!.transmit(ref, session, current);
+      return Object.freeze({ kind: "hermes" as const, transmissionRecorded: true as const, ...result });
     });
-    return record.inputOwner ? record.inputOwner.deliverQueued(task, signal, deliver) : deliver(signal);
+    try {
+      const transmitted = await (record.inputOwner ? record.inputOwner.deliverQueued(task, target.kind, signal, deliver) : deliver(signal));
+      if (signal.aborted) return fail();
+      let receiptTimer: ReturnType<typeof setTimeout> | undefined;
+      try { await Promise.race([pending.promise, new Promise<never>((_, reject) => {
+        const abort = () => reject(new Error("native_task_delivery_unresolved"));
+        signal.addEventListener("abort", abort, { once: true });
+        pending.promise.finally(() => signal.removeEventListener("abort", abort)).catch(() => {});
+      }), new Promise<never>((_, reject) => { receiptTimer = setTimeout(() => reject(
+        new Error("native_task_delivery_unresolved")), this.receiptTimeoutMs); })]); }
+      finally { clearTimeout(receiptTimer); }
+      this.current(record);
+      return Object.freeze({ ...transmitted, deliveryConfirmed: true as const, transmissionRecorded: true as const });
+    } catch (error) {
+      if (record.pendingDelivery === pending) {
+        try { await this.closeRecord(record); } catch { throw new Error("native_session_close_uncertain"); }
+      }
+      throw error;
+    }
   }
   private async notifyReady(record: Record, callerSignal: AbortSignal) {
     const ready = this.routes.queue?.ready, channel = record.session?.nativeDeliveryChannel();
@@ -274,7 +322,24 @@ export class ManagedNativeSessions {
           },
           stage: (identity: VerifiedWebIdentity, value: Task, signal: AbortSignal) => task("stage", identity, value, signal),
           transmit: (identity: VerifiedWebIdentity, value: Task, signal: AbortSignal) => task("transmit", identity, value, signal),
-          receipt: (raw: string | Uint8Array, signal: AbortSignal) => { const copy = frame(raw); return this.operation(record, signal, session => this.routes.receipt(session, copy, signal)); },
+          receipt: (raw: string | Uint8Array, signal: AbortSignal) => {
+            const copy = frame(raw);
+            if (record.harnessKind === "codex") return Promise.reject(new Error("native_session_unavailable"));
+            return this.operation(record, signal, session => this.routes.receipt(session, copy, signal));
+          },
+          codexReceipt: (raw: string | Uint8Array, signal: AbortSignal) => {
+            const copy = frame(raw);
+            if (record.harnessKind !== "codex" || !this.routes.codexReceipt)
+              return Promise.reject(new Error("native_session_unavailable"));
+            return this.operation(record, signal, session => this.routes.codexReceipt!(session, copy, signal));
+          },
+          completeQueuedDelivery: (kind: "hermes" | "codex", value: z.infer<typeof nativeEvidenceRegistrationSchema>) => {
+            const task = nativeEvidenceRegistrationSchema.parse(value), pending = record.pendingDelivery;
+            this.current(record);
+            if (!pending || pending.kind !== kind || pending.task.projectId !== task.projectId || pending.task.jobId !== task.jobId
+              || pending.task.attemptId !== task.attemptId || pending.task.inputDigest !== task.inputDigest) return fail();
+            record.pendingDelivery = undefined; pending.resolve();
+          },
           recover: (value: z.infer<typeof nativeEvidenceRegistrationSchema>, signal: AbortSignal) => {
             const copy = nativeEvidenceRegistrationSchema.parse(value);
             return this.operation(record, signal, session => this.routes.recover ? this.routes.recover(session, copy, signal) : Promise.reject(new Error("native_recovery_unavailable")));
