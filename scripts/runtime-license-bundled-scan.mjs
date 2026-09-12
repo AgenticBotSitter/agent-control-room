@@ -39,6 +39,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 
@@ -125,7 +126,12 @@ export function scanBundledCode({
   return rows;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Portable CLI entry guard. Uses the existing path/fileURLToPath
+// resolution pattern (see scripts/runtime-license-report.mjs) so the
+// same script can run unmodified on POSIX with `node ./script.mjs`
+// (entry guard true) and on Windows where argv[1] is a backslash path
+// (positional argv[2]/process.cwd() still works the same).
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const repoRoot = process.argv[2] || process.cwd();
   const rows = scanBundledCode({ repoRoot });
   process.stdout.write(JSON.stringify({

@@ -36,10 +36,28 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { isAbsolute, sep } from 'node:path';
+import { isAbsolute, resolve as pathResolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import process from 'node:process';
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
+
+/**
+ * Resolve the pnpm executable name for the current platform.
+ *
+ * - macOS / Linux: `pnpm` (POSIX resolves the shim directly).
+ * - Windows: `pnpm.cmd` because the pnpm installer registers a `.cmd`
+ *   shim that PATHEXT searches when `execFile`/`execFileSync` is invoked
+ *   without a shell. Without `.cmd`, the call fails with ENOENT even
+ *   when pnpm is on PATH.
+ *
+ * Centralised so a single import change covers both `licenses list` and
+ * `--version` invocations, and so the Windows path is testable in one
+ * place.
+ */
+export function pnpmCommand() {
+  return process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
+}
 
 /**
  * Resolve a pnpm path entry to a forward-slash, repo-relative
@@ -62,7 +80,7 @@ function relativizePath(entry) {
 function pnpmLicensesJson(repoRoot) {
   let raw;
   try {
-    raw = execFileSync('pnpm', ['licenses', 'list', '--prod', '--json'], {
+    raw = execFileSync(pnpmCommand(), ['licenses', 'list', '--prod', '--json'], {
       cwd: repoRoot,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -143,7 +161,7 @@ export function prepareRuntimeLicenseInventory({
 
 function readPnpmVersion(repoRoot) {
   try {
-    const out = execFileSync('pnpm', ['--version'], { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    const out = execFileSync(pnpmCommand(), ['--version'], { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     return out.trim();
   } catch {
     return 'unknown';
@@ -168,7 +186,13 @@ function parseArgs(argv) {
   return args;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Portable CLI entry guard. `import.meta.url` is a `file://` URL on every
+// platform; matching it against the raw `process.argv[1]` string only works
+// on POSIX because Windows argv[1] is a backslash path, while the URL has
+// forward slashes (and a `/C:/` prefix), and posix argv has no leading
+// `file://`. Resolving both sides through `path`/`fileURLToPath` is the
+// existing portable pattern (see scripts/runtime-license-report.mjs).
+if (process.argv[1] && pathResolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = parseArgs(process.argv);
   const payload = prepareRuntimeLicenseInventory(args);
   const text = JSON.stringify(payload, null, 2) + '\n';

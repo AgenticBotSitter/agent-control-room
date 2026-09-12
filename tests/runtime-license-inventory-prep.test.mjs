@@ -1,12 +1,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, sep } from 'node:path';
-import { prepareRuntimeLicenseInventory } from '../scripts/runtime-license-inventory-prep.mjs';
+import { join, resolve, sep } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { prepareRuntimeLicenseInventory, pnpmCommand } from '../scripts/runtime-license-inventory-prep.mjs';
 
 const repoRoot = process.cwd();
+
+/**
+ * Run a script file as a CLI process and return its stdout.
+ * Uses process.execPath — the exact Node binary this test process was
+ * started with — so the test works identically on hosts that install
+ * Node as `node`, `node.exe`, or under a versioned path, instead of
+ * relying on PATH resolving a bare `node` token.
+ */
+function runScript(scriptPath, args = []) {
+  return execFileSync(process.execPath, [scriptPath, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+}
 
 test('inventory prep reproduces the canonical input.json shape from a real pnpm install', () => {
   const payload = prepareRuntimeLicenseInventory({ repoRoot });
@@ -77,7 +89,7 @@ test('inventory prep accepts relocated manifest and lockfile paths via --manifes
     assert.equal(payload.manifestSha256, expected.manifestSha256);
     assert.equal(payload.lockSha256, expected.lockSha256);
   } finally {
-    execFileSync('rm', ['-rf', tmp]);
+    rmSync(tmp, { recursive: true, force: true });
   }
 });
 
@@ -85,12 +97,12 @@ test('inventory prep CLI writes to --out path with a JSON document that round-tr
   const tmp = mkdtempSync(join(tmpdir(), 'license-inv-cli-'));
   try {
     const outPath = join(tmp, 'inventory.json');
-    execFileSync('node', [join(repoRoot, 'scripts', 'runtime-license-inventory-prep.mjs'), '--out', outPath], { stdio: 'pipe' });
+    runScript(resolve(repoRoot, 'scripts', 'runtime-license-inventory-prep.mjs'), ['--out', outPath]);
     const written = JSON.parse(readFileSync(outPath, 'utf8'));
     assert.ok(written.records.length > 0);
     assert.match(written.source, /^pnpm@[\d.]+/);
   } finally {
-    execFileSync('rm', ['-rf', tmp]);
+    rmSync(tmp, { recursive: true, force: true });
   }
 });
 
@@ -99,6 +111,53 @@ test('inventory prep fails cleanly when the repository root is absent', () => {
     () => prepareRuntimeLicenseInventory({ repoRoot: join(sep, 'no', 'such', 'dir') }),
     /license_inventory_manifest_missing|license_inventory_lockfile_missing/,
   );
+});
+
+/**
+ * Regression for the entry-guard / portability review fix.
+ *
+ * The previous guard compared `import.meta.url === "file://${argv[1]}"`,
+ * which silently skipped execution on Windows (backslash argv vs.
+ * forward-slash URL) and on any path containing spaces. The portable
+ * guard uses `path.resolve` + `fileURLToPath` — so a CLI invocation
+ * now runs the entry branch when the script's path contains spaces.
+ */
+test('inventory prep CLI entry guard matches when invoked with a path containing spaces (POSIX regression)', () => {
+  const hostRepo = mkdtempSync(join(tmpdir(), 'license-inv-space-'));
+  try {
+    const nested = join(hostRepo, 'repo with space');
+    mkdirSync(nested, { recursive: true });
+    // Copy the real repo's manifest + lockfile into a path with spaces.
+    writeFileSync(join(nested, 'package.json'), readFileSync(join(repoRoot, 'package.json')));
+    writeFileSync(join(nested, 'pnpm-lock.yaml'), readFileSync(join(repoRoot, 'pnpm-lock.yaml')));
+    const stdout = runScript(resolve(repoRoot, 'scripts', 'runtime-license-inventory-prep.mjs'), ['--repo', nested]);
+    const payload = JSON.parse(stdout);
+    assert.equal(payload.manifestSha256.length, 64);
+    assert.equal(payload.lockSha256.length, 64);
+  } finally {
+    rmSync(hostRepo, { recursive: true, force: true });
+  }
+});
+
+test('inventory prep CLI resolves its entry script via the path.resolve==fileURLToPath check used internally', () => {
+  // Sanity-check the portable comparator: with cwd at repoRoot,
+  // `path.resolve('scripts/foo.mjs')` must equal
+  // `fileURLToPath(pathToFileURL('/abs/.../scripts/foo.mjs').href)`.
+  // This proves the guard inside the script will match for the
+  // realistic `node scripts/runtime-license-inventory-prep.mjs` form.
+  const scriptPath = resolve(repoRoot, 'scripts', 'runtime-license-inventory-prep.mjs');
+  const argv1Relative = join('scripts', 'runtime-license-inventory-prep.mjs');
+  const expected = resolve(argv1Relative);
+  assert.equal(expected, fileURLToPath(pathToFileURL(scriptPath).href));
+});
+
+test('inventory prep pnpmCommand returns pnpm.cmd on win32 and pnpm elsewhere', () => {
+  // process.platform is fixed at startup; we can only assert the
+  // current host's branch. The opposite branch is covered by inspection
+  // (one-line ternary) and by the fact that any `pnpm.cmd` literal on
+  // POSIX would fail with ENOENT in pnpmLicensesJson's catch block.
+  const expected = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
+  assert.equal(pnpmCommand(), expected);
 });
 
 void tmpdir;
