@@ -14,13 +14,17 @@ grants. Login is not task approval, signing consent or permission to retry uncer
 work. Native execution and checkpoint-dependent completion remain disabled until their
 separate connector, custody and recovery gates pass.
 
-Control Room currently implements a Cloudflare Access assertion profile, not generic
-OIDC. Preserve its deployment-selected RS256 keys, RSA 2048-bit minimum, exact
+The packaged operator configuration currently deploys the Cloudflare Access assertion
+profile, not generic OIDC. Trusted server composition also accepts one fixed RS256
+gateway-assertion profile with a server-selected custom `x-` header and fixed
+`iss`/`aud`/`sub` mapping. That seam has no discovery, arbitrary key URL, claim remapping
+or operator-file wiring, so it is not yet a second deployable login provider. Preserve
+deployment-selected RS256 keys, RSA 2048-bit minimum, exact
 issuer/audience/subject/session expiry, token digest, same-origin checks, bounded key
 loading, single-flight refresh, backoff and no stale-key fallback. The request cannot
 select its issuer, audience, key URL or header.
 
-Cloudflare's signed assertion does not currently give this code proven per-request MFA
+Neither implemented assertion profile gives this code proven per-request MFA
 evidence. An installation may be qualified as **gateway-policy-enforced MFA** only when
 the operator verifies that the saved external policy requires MFA and direct origin
 access is impossible. Do not describe that as a locally verified strong-factor claim.
@@ -98,5 +102,6 @@ queue and restricted role ports. No second backup engine is selected.
 - Missing usage and cost remain unknown. A budget UI cannot infer zero or grant more
   effects because upstream usage is absent.
 
-These rules settle Q4, Q5, Q7, Q8 and Q10 at the contract level. Real deployment,
+These rules settle Q4, Q5, Q7, Q8 and Q10 at the contract level. A deployable non-Cloudflare
+provider profile, real deployment,
 native connector and restore qualifications remain explicit release gates.

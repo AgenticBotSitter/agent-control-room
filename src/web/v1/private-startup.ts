@@ -2,7 +2,7 @@ import { createPrivatePostgresDatabase, validatePrivatePostgresConfiguration,
   type PrivatePostgresConfiguration } from "./private-postgres";
 import { verifyPrivateDatabase } from "./private-database-preflight";
 import { installPrivateWebProcess, type PrivateWebProcessOptions } from "./private-process";
-import { captureWebOrigins } from "./access-verifier";
+import { captureGatewayAssertionProviderProfileV1, captureWebOrigins } from "./access-verifier";
 import { captureHerdrReaders } from "./herdr-service";
 import { parseProductConfigurationV1 } from "../../config/v1/product-configuration";
 export { createAccessKeyLoader } from "./access-key-cache";
@@ -26,6 +26,8 @@ export function validatePrivateStartupConfiguration(input: PrivateStartupConfigu
       || typeof input.loadKeys !== "function") throw new Error();
     return Object.freeze({ origin: exactOrigin(input.origin), issuer: exactOrigin(input.issuer), audience: reference(input.audience),
       ...(sites[1] ? { secondaryAccess: sites[1] } : {}),
+      ...(input.gatewayAssertionProfile === undefined ? {} : {
+        gatewayAssertionProfile: captureGatewayAssertionProviderProfileV1(input.gatewayAssertionProfile) }),
       tenantId: reference(input.tenantId), workspaceId: reference(input.workspaceId), ownerIdentityId: reference(input.ownerIdentityId),
       maxSessionSeconds: input.maxSessionSeconds, loadKeys: input.loadKeys,
       database: validatePrivatePostgresConfiguration(input.database),

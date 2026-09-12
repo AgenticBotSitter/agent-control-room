@@ -12,7 +12,7 @@
     "test:notices": "node --test tests/dependency-notices.test.mjs tests/license-evidence.test.mjs",
     "test:queue": "node --import tsx --test --test-concurrency=1 tests/pg-boss-native-task-submission.test.ts tests/pg-boss-native-task-worker.test.ts tests/pg-boss-native-task-runtime.test.ts tests/queue-recovery-fence.test.ts tests/managed-session-readiness.test.ts tests/native-connector-readiness.test.ts",
     "test:contracts": "node --import tsx --test tests/connector-profile.test.ts tests/product-configuration.test.ts tests/product-configuration-binding.test.ts",
-    "test:product-shell": "node --import tsx --test tests/private-shell-navigation.test.tsx",
+    "test:product-shell": "node --import tsx --test tests/private-shell-navigation.test.tsx tests/product-configuration-summary.test.tsx",
     "test:components": "pnpm test:contracts && pnpm test:product-shell && pnpm test:notices && pnpm test:database && pnpm test:queue && pnpm test:codex-recovery && pnpm test:access && pnpm test:owner-signing && pnpm test:checkpoints && pnpm test:ideas && pnpm test:results && pnpm test:articles && pnpm test:calendar && pnpm test:observations",
     "test:observations": "node --import tsx --test --test-concurrency=1 tests/herdr-observations.test.ts tests/herdr-source.test.ts tests/herdr-collector.test.ts tests/herdr-pane-port.test.ts tests/session-observations.test.mjs",
     "test:checkpoints": "node --import tsx --test --test-concurrency=1 tests/completion-etcd-checkpoint-record.test.ts tests/completion-bounded-checkpoint-call.test.ts tests/completion-staged-checkpoint.test.ts tests/completion-checkpoint-split.test.ts",

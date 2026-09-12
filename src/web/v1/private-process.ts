@@ -1,6 +1,7 @@
 import type { DatabaseClient } from "../../persistence/database";
 import { createAccessKeyCache, type AccessKeyLoader } from "./access-key-cache";
-import { captureWebOrigins, createAccessVerifier, requireSameOrigin, WebAccessError } from "./access-verifier";
+import { captureGatewayAssertionProviderProfileV1, captureWebOrigins, cloudflareAccessGatewayAssertionProfileV1,
+  createAccessVerifier, requireSameOrigin, WebAccessError, type GatewayAssertionProviderProfileV1 } from "./access-verifier";
 import { privateResponseHeaders, webFailure, readBoundedJson } from "./http-common";
 import { createProjectHttpHandler } from "./project-http";
 import { WebProjectService } from "./project-service";
@@ -36,6 +37,8 @@ export interface PrivateWebProcessOptions {
   origin: string; issuer: string; audience: string; tenantId: string; workspaceId: string;
   /** Optional separately approved private address; same services, distinct Access audience. */
   secondaryAccess?: { origin: string; audience: string };
+  /** Server-selected signed gateway assertion mapping. Omission preserves Cloudflare Access. */
+  gatewayAssertionProfile?: GatewayAssertionProviderProfileV1;
   maxSessionSeconds: number; loadKeys: AccessKeyLoader;
   /** A single process-owned pool, supplied by the separately reviewed deployment bootstrap. */
   database: { client: DatabaseClient; close: () => Promise<void> };
@@ -86,6 +89,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const moduleEnabled = (name: keyof ProductConfigurationV1["modules"]) =>
     productConfiguration === undefined || productConfiguration.modules[name];
   const sites = captureWebOrigins({ origin: options.origin, audience: options.audience }, options.secondaryAccess);
+  const gatewayAssertionProfile = captureGatewayAssertionProviderProfileV1(
+    options.gatewayAssertionProfile ?? cloudflareAccessGatewayAssertionProfileV1);
   const newsCollections = new Map<string, { describe: WebNewsCollectionPlanning["describe"]; status: WebNewsCollectionPlanning["status"]; history: WebNewsCollectionPlanning["history"];
     propose: WebNewsCollectionPlanning["propose"]; approve: WebNewsCollectionAdmission["approve"] }>();
   for (const entry of options.newsCollections ?? []) {
@@ -146,7 +151,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     prepare: options.approvals.prepare.bind(options.approvals), store: options.approvals.store.bind(options.approvals),
     read: options.approvals.read.bind(options.approvals) }) : undefined;
   if (!Number.isSafeInteger(drainMs) || drainMs < 1 || drainMs > 30_000) throw new Error("invalid_private_app_config");
-  const keys = createAccessKeyCache({ ...options, clock });
+  const keys = createAccessKeyCache({ ...options, gatewayAssertionProfile, clock });
   const service = new WebProjectService(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock, options.ideaProjects?.integrityKey,
     options.ideaProjects ? new WebIdeaProjectLifecycleOperation(options.database.client,
@@ -183,10 +188,10 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
         const site = sites.find(candidate => candidate.origin === url.origin);
         if (!site) throw new WebAccessError("access_denied");
         requireSameOrigin(request, site.origin);
-        // Identity credentials only arrive on the verified edge assertion header. Never consume an app cookie/header alias.
-        if (!request.headers.get("cf-access-jwt-assertion")) throw new WebAccessError("authentication_required");
+        // Identity credentials only arrive on the server-selected gateway assertion header.
+        // Never consume an app cookie, authorization header or request-selected alias.
         const trust = { ...await keys.get(), audience: site.audience };
-        const identity = createAccessVerifier(trust)(request, clock());
+        const identity = createAccessVerifier(trust, gatewayAssertionProfile)(request, clock());
         if (url.pathname.startsWith("/api/")) {
           if (url.pathname === "/api/v1/product-configuration") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");

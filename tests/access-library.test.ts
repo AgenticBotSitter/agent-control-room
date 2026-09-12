@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createAccessVerifier } from "../src/web/v1/access-verifier";
+import { captureGatewayAssertionProviderProfileV1, createAccessVerifier,
+  GATEWAY_ASSERTION_PROVIDER_PROFILE_SCHEMA_V1 } from "../src/web/v1/access-verifier";
 import { trust, token, now } from "./helpers/web-foundation";
 
 test("maintained JWT verifier preserves owner claims and rejects invalid policy", () => {
@@ -35,4 +36,44 @@ test("epoch zero uses the supplied clock rather than the machine clock", () => {
   const request = new Request("https://fixture.invalid", { headers: { "cf-access-jwt-assertion": signed } });
   assert.equal(verify(request, 0).issuedAt, "1970-01-01T00:00:00.000Z");
   assert.throws(() => verify(request, 60000), { message: "authentication_required" });
+});
+
+const genericProfile = () => ({ schema: GATEWAY_ASSERTION_PROVIDER_PROFILE_SCHEMA_V1,
+  profileId: "rs256_gateway_assertion" as const, algorithm: "RS256" as const,
+  assertionHeader: "x-test-gateway-assertion", claimContract: "standard_gateway_subject" as const,
+  subjectClaim: "sub" as const, audienceClaim: "aud" as const, issuerClaim: "iss" as const,
+  mfaPolicy: "gateway_policy_external" as const });
+
+test("a configured RS256 gateway profile maps only its exact assertion header and fixed claims", () => {
+  const profile = genericProfile(), verify = createAccessVerifier(trust, profile);
+  const signed = token({ type: undefined, amr: ["pwd", "mfa"], acr: "untrusted-by-control-room" });
+  const configured = new Request("https://fixture.invalid", { headers: { [profile.assertionHeader]: signed } });
+  const identity = verify(configured, now);
+  assert.equal(identity.subject, "test-owner");
+  assert.equal("mfa" in identity, false);
+  assert.deepEqual(Object.keys(identity).sort(),
+    ["expiresAt", "issuedAt", "provider", "subject", "tokenDigest", "verificationExpiresAt"]);
+  for (const headers of [
+    [["cf-access-jwt-assertion", signed]], [["authorization", `Bearer ${signed}`]],
+    [[profile.assertionHeader, signed], ["cf-access-jwt-assertion", signed]],
+  ] as Array<Array<[string, string]>>) assert.throws(() => verify(new Request("https://fixture.invalid", { headers }), now),
+    { message: "authentication_required" });
+  for (const changes of [{ aud: ["wrong"] }, { iss: "https://wrong.invalid" },
+    { exp: now / 1000 }, { nbf: now / 1000 + 1 }, { iat: now / 1000 + 1 }])
+    assert.throws(() => verify(new Request("https://fixture.invalid",
+      { headers: { [profile.assertionHeader]: token({ type: undefined, ...changes }) } }), now), { message: "authentication_required" });
+});
+
+test("gateway assertion profiles are exact, isolated and cannot configure OIDC or MFA inference", () => {
+  const input = genericProfile(), captured = captureGatewayAssertionProviderProfileV1(input);
+  input.assertionHeader = "x-mutated-gateway-assertion";
+  assert.equal(captured.assertionHeader, "x-test-gateway-assertion"); assert.equal(Object.isFrozen(captured), true);
+  for (const invalid of [
+    { ...genericProfile(), profileId: "oidc" },
+    { ...genericProfile(), assertionHeader: "authorization" },
+    { ...genericProfile(), assertionHeader: "cf-access-jwt-assertion" },
+    { ...genericProfile(), assertionHeader: "x-forwarded-assertion" },
+    { ...genericProfile(), mfaClaim: "amr" },
+    { ...genericProfile(), discoveryUrl: "https://issuer.invalid/.well-known/openid-configuration" },
+  ]) assert.throws(() => captureGatewayAssertionProviderProfileV1(invalid));
 });

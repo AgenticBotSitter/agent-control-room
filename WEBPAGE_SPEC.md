@@ -90,8 +90,8 @@ make placeholder navigation look operational before its backing service exists.
 
 ## Code, reuse and acceptance
 
-Implementation reference: public `main`, reconciled by PR #32 at
-`aebbbf165bdabcc4da6e6fd08e7e247fd66e9ae6`; each issue records its exact newer base.
+Implementation reference: public `main`, reconciled through PR #34 at
+`37e1baa7618b0f965103e48883b772a52e9a2374`; each issue records its exact newer base.
 Relevant existing code: `private-app/app/workspace.tsx`, `task-workspace.tsx`,
 `task-results.tsx`, `idea-workspace.tsx`, `news-workspace.tsx`, project routes and
 `src/web/v1/browser-client.ts`. Do not start from the older preview and rebuild them.

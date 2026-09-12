@@ -3,13 +3,17 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import handler from "../dist-vps/server/index.js";
-import { createPrivateWebBootstrap, startPrivateWebApplication } from "../dist-vps/server/bootstrap.js";
+import { createPrivateWebBootstrap, startPrivateWebApplication, validatePrivateStartupConfiguration } from "../dist-vps/server/bootstrap.js";
 import { installPrivateWebProcess } from "../dist-vps/server/runtime.js";
 import { limitedWebFixture, startupConfig } from "./helpers/web-startup.ts";
 import { now, request } from "./helpers/web-foundation.ts";
 import { mkdtemp, writeFile, rm, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createConfiguration } from "../deploy/operator-config.mjs";
+
+const gatewayProfile = () => ({ schema: "control-room.gateway-assertion-provider/v1", profileId: "rs256_gateway_assertion",
+  algorithm: "RS256", assertionHeader: "x-test-gateway-assertion", claimContract: "standard_gateway_subject",
+  subjectClaim: "sub", audienceClaim: "aud", issuerClaim: "iss", mfaPolicy: "gateway_policy_external" });
 
 test("built bootstrap import is inert and operator saved views reach actual compiled routes", async t => {
   assert.equal(typeof startPrivateWebApplication, "function");
@@ -61,7 +65,21 @@ test("database startup, role checks and credential configuration stay out of bro
   const files = dir => readdirSync(dir, { withFileTypes: true }).flatMap(entry => entry.isDirectory()
     ? files(join(dir, entry.name)) : [join(dir, entry.name)]);
   for (const file of files("dist-vps/client").filter(path => path.endsWith(".js")))
-    assert.doesNotMatch(readFileSync(file, "utf8"), /private_startup_prerequisites_failed|control_room_private_web|database_outcome_uncertain|transaction_timeout/);
+    assert.doesNotMatch(readFileSync(file, "utf8"),
+      /private_startup_prerequisites_failed|control_room_private_web|database_outcome_uncertain|transaction_timeout|rs256_gateway_assertion|gateway_policy_external/);
+});
+
+test("compiled startup captures only implemented server assertion profiles before resources open", () => {
+  const input = gatewayProfile();
+  const captured = validatePrivateStartupConfiguration({ ...startupConfig, gatewayAssertionProfile: input });
+  input.assertionHeader = "x-mutated-gateway-assertion";
+  assert.equal(captured.gatewayAssertionProfile.assertionHeader, "x-test-gateway-assertion");
+  assert.equal(Object.isFrozen(captured.gatewayAssertionProfile), true);
+  for (const invalid of [{ ...gatewayProfile(), profileId: "oidc" }, { ...gatewayProfile(), mfaClaim: "amr" },
+    { ...gatewayProfile(), assertionHeader: "authorization" }, { ...gatewayProfile(), keysUrl: "https://keys.invalid/jwks" }])
+    assert.throws(() => validatePrivateStartupConfiguration({ ...startupConfig, gatewayAssertionProfile: invalid }),
+      /private_startup_config_invalid/);
+  assert.equal(validatePrivateStartupConfiguration(startupConfig).gatewayAssertionProfile, undefined);
 });
 
 test("compiled website startup cannot silently discard task coordinator capabilities", async () => {

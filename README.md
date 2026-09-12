@@ -125,8 +125,8 @@ No live agent-runtime/platform combination is claimed supported by this preview.
 ## Contributor starting points
 
 **Current implementation baseline:** public `main`, reconciled and verified through
-[PR #33](https://github.com/AgenticBotSitter/agent-control-room/pull/33) at
-`6bd86541b57dd7fe5d2370ed542f0b3869f41eee`. The
+[PR #34](https://github.com/AgenticBotSitter/agent-control-room/pull/34) at
+`37e1baa7618b0f965103e48883b772a52e9a2374`. The
 [September 9 contributor handoff](CONTRIBUTOR_HANDOFF.md) remains historical evidence;
 new contributions use the base recorded in their issue. This is not production
 acceptance and does not supersede active contributors' branches.
