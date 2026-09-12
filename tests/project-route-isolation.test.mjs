@@ -51,8 +51,10 @@ test('network read errors render a project-error notice distinct from permission
     // 503 maps to BrowserFailureCode "unavailable" which is NOT in the permission-collapse
     // list, so ProjectErrorNotice renders. Class assertion is stable across copy edits.
     assert.ok(document.querySelector('.private-project-error'), 'expected project-error notice on 5xx');
-    // Retry control is present.
-    const retry = [...document.querySelectorAll('button')].find(button => button.textContent === 'Refresh this project');
+    // Retry control is present. Class assertion keeps this stable across
+    // copy edits to the button label; same pattern the maintainer
+    // requested for the other ProjectErrorNotice tests (issue #10 review).
+    const retry = document.querySelector('.private-project-error button');
     assert.ok(retry, 'expected refresh button on project-error notice');
   } finally {
     await act(async () => root.unmount()); dom.window.close();
