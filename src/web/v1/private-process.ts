@@ -29,6 +29,8 @@ import { taskAttentionPageSchema } from "./task-attention-wire";
 import { taskDeliveryStatusSchema } from "./task-delivery-wire";
 import { newsCollectionStatusSchema, newsCollectionHistorySchema } from "./news-collection-status-wire";
 import { ideaCreationOptionsSchema } from "./idea-wire";
+import { parseProductConfigurationV1, type ProductConfigurationV1 } from "../../config/v1/product-configuration";
+import { WebSessionAuthority } from "./session-authority";
 
 export interface PrivateWebProcessOptions {
   origin: string; issuer: string; audience: string; tenantId: string; workspaceId: string;
@@ -43,6 +45,8 @@ export interface PrivateWebProcessOptions {
   news?: { integrityKey: Uint8Array };
   /** Optional retained observations only; source lifecycle stays with the operator. */
   herdrObservations?: readonly HerdrObservationReader[];
+  /** Portable presentation/module selection. It cannot grant runtime authority or alter resource limits. */
+  productConfiguration?: Readonly<ProductConfigurationV1>;
   /** Explicit operations from the trusted collector composition. This process does
    * not create readers, worker pools, schedules or collection authority. */
   newsCollections?: readonly { tenantId: string; workspaceId: string; projectId: string; sourceId: string;
@@ -77,6 +81,10 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   if (origin.protocol !== "https:" || origin.origin !== options.origin || !options.tenantId || !options.workspaceId)
     throw new Error("invalid_private_app_config");
   const clock = options.clock ?? Date.now;
+  const productConfiguration = options.productConfiguration === undefined ? undefined
+    : parseProductConfigurationV1(options.productConfiguration);
+  const moduleEnabled = (name: keyof ProductConfigurationV1["modules"]) =>
+    productConfiguration === undefined || productConfiguration.modules[name];
   const sites = captureWebOrigins({ origin: options.origin, audience: options.audience }, options.secondaryAccess);
   const newsCollections = new Map<string, { describe: WebNewsCollectionPlanning["describe"]; status: WebNewsCollectionPlanning["status"]; history: WebNewsCollectionPlanning["history"];
     propose: WebNewsCollectionPlanning["propose"]; approve: WebNewsCollectionAdmission["approve"] }>();
@@ -153,6 +161,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     options.herdrObservations ?? [], clock, options.ideaProjects?.integrityKey);
   const ideas = new WebIdeaService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
     options.ideaProjects?.integrityKey, clock, !!ideaCreation, !!ideaCreation?.stop, !!ideaCreation?.decide, !!ideaCreation?.start, !!ideaCreation?.synthesize);
+  const productConfigurationAuthority = new WebSessionAuthority(options.database.client,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock, "workspace_configuration");
   const ownerReviews = options.tasks?.ownerReviews ? new WebTaskReviewService(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, { ...options.tasks.ownerReviews,
       harnessIntegrityKey: options.tasks.harnessIntegrityKey, results: options.tasks.results!, ideaIntegrityKey: options.ideaProjects?.integrityKey }, clock) : undefined;
@@ -178,20 +188,31 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
         const trust = { ...await keys.get(), audience: site.audience };
         const identity = createAccessVerifier(trust)(request, clock());
         if (url.pathname.startsWith("/api/")) {
+          if (url.pathname === "/api/v1/product-configuration") {
+            if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+            if (!productConfiguration) throw new WebAccessError("not_found");
+            return await productConfigurationAuthority.authenticated(identity, async (_, actor) => {
+              actor.require("projects.read", undefined, true);
+              return Response.json(productConfiguration, { headers: privateResponseHeaders });
+            });
+          }
           const observations = /^\/api\/v1\/projects\/([^/]+)\/observations$/.exec(url.pathname);
           if (observations) {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+            if (!moduleEnabled("sessionObservations")) throw new WebAccessError("not_found");
             let projectId: string;
             try { projectId = decodeURIComponent(observations[1]); } catch { throw new WebAccessError("invalid_request"); }
             return Response.json(await herdr.list(identity, projectId), { headers: privateResponseHeaders });
           }
           if (url.pathname === "/api/v1/ideas/options") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+            if (!moduleEnabled("ideaLab")) throw new WebAccessError("not_found");
             if (!ideaCreation?.options) throw new Error("idea_creation_not_configured");
             return Response.json(ideaCreationOptionsSchema.parse(await ideaCreation.options(identity)), { headers: privateResponseHeaders });
           }
           const ideaSynthesis = /^\/api\/v1\/ideas\/([^/]+)\/synthesis$/.exec(url.pathname);
           if (ideaSynthesis) {
+            if (!moduleEnabled("ideaLab")) throw new WebAccessError("not_found");
             if (request.method !== "POST" || url.search || !request.body
               || request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") throw new WebAccessError("invalid_request");
             if (!ideaCreation?.synthesize) throw new Error("idea_synthesis_not_configured");
@@ -201,6 +222,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           }
           const ideaStart = /^\/api\/v1\/ideas\/([^/]+)\/start$/.exec(url.pathname);
           if (ideaStart) {
+            if (!moduleEnabled("ideaLab")) throw new WebAccessError("not_found");
             if (request.method !== "POST" || url.search || !request.body
               || request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") throw new WebAccessError("invalid_request");
             if (!ideaCreation?.start) throw new Error("idea_start_not_configured");
@@ -210,6 +232,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           }
           const ideaDecision = /^\/api\/v1\/ideas\/([^/]+)\/decision$/.exec(url.pathname);
           if (ideaDecision) {
+            if (!moduleEnabled("ideaLab")) throw new WebAccessError("not_found");
             if (request.method !== "POST" || url.search || !request.body
               || request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") throw new WebAccessError("invalid_request");
             if (!ideaCreation?.decide) throw new Error("idea_decision_not_configured");
@@ -219,6 +242,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           }
           const ideaStop = /^\/api\/v1\/ideas\/([^/]+)\/stop$/.exec(url.pathname);
           if (ideaStop) {
+            if (!moduleEnabled("ideaLab")) throw new WebAccessError("not_found");
             if (request.method !== "POST" || url.search || !request.body
               || request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") throw new WebAccessError("invalid_request");
             if (!ideaCreation?.stop) throw new Error("idea_stop_not_configured");
@@ -227,6 +251,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           }
           const ideaRoute = /^\/api\/v1\/ideas(?:\/([^/]+))?$/.exec(url.pathname);
           if (ideaRoute) {
+            if (!moduleEnabled("ideaLab")) throw new WebAccessError("not_found");
             if (request.method === "POST" && ideaRoute[1] === undefined) {
               if (url.search || !request.body || request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json"
                 || !/^[A-Za-z0-9:_-]{8,160}$/.test(request.headers.get("idempotency-key") ?? "")) throw new WebAccessError("invalid_request");
@@ -245,6 +270,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           }
           const collectionRoute = /^\/api\/v1\/projects\/([^/]+)\/news\/sources\/([^/]+)\/collection(?:\/(propose|approve|status|history))?$/.exec(url.pathname);
           if (collectionRoute) {
+            if (!moduleEnabled("news")) throw new WebAccessError("not_found");
             let projectId: string, sourceId: string;
             try { projectId = decodeURIComponent(collectionRoute[1]); sourceId = decodeURIComponent(collectionRoute[2]); }
             catch { throw new WebAccessError("invalid_request"); }
@@ -301,6 +327,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           }
           const newsSources = /^\/api\/v1\/projects\/([^/]+)\/news\/sources$/.exec(url.pathname);
           if (newsSources) {
+            if (!moduleEnabled("news")) throw new WebAccessError("not_found");
             let projectId: string;
             try { projectId = decodeURIComponent(newsSources[1]); } catch { throw new WebAccessError("invalid_request"); }
             if (request.method === "GET") {
@@ -314,6 +341,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           }
           const newsArticle = /^\/api\/v1\/projects\/([^/]+)\/news\/article$/.exec(url.pathname);
           if (newsArticle) {
+            if (!moduleEnabled("news")) throw new WebAccessError("not_found");
             const keys = ["storyId", "storyDigest", "detailDigest"];
             if (request.method !== "GET" || [...url.searchParams.keys()].some(key => !keys.includes(key))
               || keys.some(key => url.searchParams.getAll(key).length > 1)
@@ -325,6 +353,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           const newsPrepare = /^\/api\/v1\/projects\/([^/]+)\/news\/prepare$/.exec(url.pathname);
           const newsArchive = /^\/api\/v1\/projects\/([^/]+)\/news\/archive$/.exec(url.pathname);
           if (newsArchive) {
+            if (!moduleEnabled("news")) throw new WebAccessError("not_found");
             if (request.method !== "POST" || url.search || !request.body
               || request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") throw new WebAccessError("invalid_request");
             let projectId: string;
@@ -332,6 +361,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             return Response.json(await news.archive(identity, projectId, await readBoundedJson(request.body, 2048)), { headers: privateResponseHeaders });
           }
           if (newsPrepare) {
+            if (!moduleEnabled("news")) throw new WebAccessError("not_found");
             if (request.method !== "POST" || url.search || !request.body
               || request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json")
               throw new WebAccessError("invalid_request");
@@ -342,6 +372,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           }
           const newsRoute = /^\/api\/v1\/projects\/([^/]+)\/news$/.exec(url.pathname);
           if (newsRoute) {
+            if (!moduleEnabled("news")) throw new WebAccessError("not_found");
             if (request.method !== "GET" || [...url.searchParams.keys()].some(key => !["after", "sourceAfter", "view", "order"].includes(key))
               || ["after", "sourceAfter", "view", "order"].some(key => url.searchParams.getAll(key).length > 1)) throw new WebAccessError("invalid_request");
             let projectId: string;
@@ -408,6 +439,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
         const ideaPage = /^\/ideas(?:\/([^/]+))?$/.exec(url.pathname);
         const detail = /^\/projects\/([^/]+)(?:\/(overview|settings))?$/.exec(url.pathname);
         if (ideaPage) {
+          if (!moduleEnabled("ideaLab")) throw new WebAccessError("not_found");
           if ([...url.searchParams.keys()].some(key => key !== "after") || url.searchParams.getAll("after").length > 1
             || ideaPage[1] && url.search) throw new WebAccessError("invalid_request");
           let sessionId: string | undefined;
@@ -423,6 +455,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             throw new WebAccessError("invalid_request");
           if (jobId) await tasks.detail(identity, id, jobId); else await tasks.authorize(identity, id);
         } else if (newsPage) {
+          if (!moduleEnabled("news")) throw new WebAccessError("not_found");
           if ([...url.searchParams.keys()].some(key => !["after", "sourceAfter", "view", "order"].includes(key))
             || ["after", "sourceAfter", "view", "order"].some(key => url.searchParams.getAll(key).length > 1)
             || url.searchParams.has("view") && !["history", "archive", "fresh"].includes(url.searchParams.get("view")!)

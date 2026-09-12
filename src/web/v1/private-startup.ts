@@ -4,6 +4,7 @@ import { verifyPrivateDatabase } from "./private-database-preflight";
 import { installPrivateWebProcess, type PrivateWebProcessOptions } from "./private-process";
 import { captureWebOrigins } from "./access-verifier";
 import { captureHerdrReaders } from "./herdr-service";
+import { parseProductConfigurationV1 } from "../../config/v1/product-configuration";
 export { createAccessKeyLoader } from "./access-key-cache";
 
 export type PrivateStartupConfiguration = Omit<PrivateWebProcessOptions, "database" | "clock" | "drainMs" | "planning" | "assignment" | "approvals" | "submission" | "queueAttention" | "revisions" | "ideaCreation" | "newsCollections"> & {
@@ -31,6 +32,7 @@ export function validatePrivateStartupConfiguration(input: PrivateStartupConfigu
       ...(input.herdrObservations !== undefined ? { herdrObservations: captureHerdrReaders(input, input.herdrObservations) } : {}),
       ...(input.ideaProjects ? { ideaProjects: { integrityKey: key(input.ideaProjects.integrityKey) } } : {}),
       ...(input.news ? { news: { integrityKey: key(input.news.integrityKey) } } : {}),
+      ...(input.productConfiguration === undefined ? {} : { productConfiguration: parseProductConfigurationV1(input.productConfiguration) }),
       ...(input.tasks ? { tasks: { harnessIntegrityKey: key(input.tasks.harnessIntegrityKey),
         ...(input.tasks.results ? { results: { ...input.tasks.results, integrityKey: key(input.tasks.results.integrityKey) } } : {}),
         ...(input.tasks.reviews ? { reviews: { ...input.tasks.reviews, integrityKey: key(input.tasks.reviews.integrityKey) } } : {}),

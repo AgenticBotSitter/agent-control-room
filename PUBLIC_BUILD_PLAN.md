@@ -60,8 +60,9 @@ using a unique contributor/worker identifier when several bots share one GitHub 
 ## Starting revision and branch transition
 
 Public `main` is the common implementation baseline, reconciled and verified through
-PR #32 at `aebbbf165bdabcc4da6e6fd08e7e247fd66e9ae6`. That merge retains the component
-implementation, public collaboration plan, CI and PR #23's LF/Windows refusal slice.
+PR #33 at `6bd86541b57dd7fe5d2370ed542f0b3869f41eee`. That baseline retains the component
+implementation, public collaboration plan, CI and PR #23's LF/Windows refusal slice,
+and adds the reviewed shared connector, security/configuration and product-shell contracts.
 It does not constitute production or live harness qualification.
 
 Existing PRs keep their recorded targets. Before any new implementation starts, the
@@ -250,8 +251,9 @@ historical PR authorship is preserved, not erased.
 
 ### Review checkpoint — September 12
 
-- Accepted: PR #32 reconciled the public plan, CI and component implementation on
-  public main at `aebbbf165bdabcc4da6e6fd08e7e247fd66e9ae6`; it includes Linux
+- Accepted: PRs #32 and #33 reconciled the public plan, CI, component implementation,
+  shared contracts and global product shell on public main at
+  `6bd86541b57dd7fe5d2370ed542f0b3869f41eee`; the baseline includes Linux
   rehearsal/browser tooling, original notice evidence and PR #23's LF/Windows
   platform-refusal slice. These do not establish a complete production release.
 - PR #13: release implementation passed 23 artifact/ignore and 3 selected static
@@ -298,11 +300,11 @@ required to understand these questions.
 
 | ID | Decision/status | Remaining proof gate and responsible role |
 | --- | --- | --- |
-| Q1 | Settled: public `main` at `aebbbf165bdabcc4da6e6fd08e7e247fd66e9ae6` is the reconciled baseline | New issues record an immutable main-derived base; active contributor PRs keep ownership until accepted |
+| Q1 | Settled: public `main` at `6bd86541b57dd7fe5d2370ed542f0b3869f41eee` is the reconciled baseline | New issues record an immutable main-derived base; active contributor PRs keep ownership until accepted |
 | Q2 | Settled contract: Hermes uses `asimons81/hermes-gpt` pin `89cbfbe232d62dfb8c3cb4f9af04c6c32f956e73` through FastMCP continue/status/result; cancel, replay, events and usage are unsupported | Harness integration: unmodified actual-interface continue/status/result plus busy, truncation, lost-submit and restart/orphaned evidence |
 | Q3 | Settled contract: Codex uses App Server `0.150.0-alpha.8` over parent-owned stdio; read-only recovery is `thread/read(includeTurns: true)` | Core integration: exact-binary schema and restart read test, then canonical task/result wiring without auto-approval |
 | Q4 | Settled policy: canonical approval, conditional dedicated Ed25519 signer and independent authenticated checkpoint; unsupported execution stays disabled | Security/operations with independent review: real custody/consent, independent placement and both split-commit restore orders |
-| Q5 | Implemented contract: versioned non-secret product configuration for branding, modules, limits and templates | Frontend/release: two configurations and isolated stores using one built artifact; no credentials in export |
+| Q5 | Implemented: versioned non-secret product configuration for branding, modules, limits and templates is captured by startup and served only after gateway plus local owner authorization | Frontend/release: extend configuration use beyond shell branding/module navigation; final release still proves two deployed configurations from one artifact and no credentials in export |
 | Q6 | Published initial support matrix distinguishes source, contributor, server and native evidence | Platform roles: complete Windows worker/browser evidence and separately authorize native host qualification |
 | Q7 | Settled initial mode: current Cloudflare assertion profile with externally enforced MFA; generic OIDC is not claimed | Security/operations: implement provider profiles and negative tests; live direct-origin/MFA-policy verification remains deployment work |
 | Q8 | Settled restore/update contract: logical PostgreSQL tools, independent checkpoint pair, drain/reconcile and schema-compatible rollback | Operations/persistence: disposable exact restore and old/new release rehearsal; production effects remain unauthorized |
