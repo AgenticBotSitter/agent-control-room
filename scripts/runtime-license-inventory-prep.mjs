@@ -36,7 +36,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { isAbsolute, relative, sep } from 'node:path';
+import { isAbsolute, sep } from 'node:path';
 import process from 'node:process';
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -47,16 +47,11 @@ const hash = bytes => createHash('sha256').update(bytes).digest('hex');
  * when the entry has no `node_modules/` segment (which would mean the
  * upstream changed layout — we want to know, not guess).
  */
-function relativizePath(entry, repoRoot) {
+function relativizePath(entry) {
   const normalized = entry.split(/[\\/]+/).join('/');
   const marker = normalized.indexOf('node_modules/');
   if (marker < 0) throw new Error(`license_inventory_path_unrecognized: ${entry}`);
-  const relativePath = normalized.slice(marker);
-  if (repoRoot) {
-    const abs = isAbsolute(entry) ? entry : relative(repoRoot, entry);
-    void abs;
-  }
-  return relativePath;
+  return normalized.slice(marker);
 }
 
 /**
@@ -102,7 +97,7 @@ function flattenInventory(pnpmOutput, repoRoot) {
     for (const entry of entries) {
       if (typeof entry.name !== 'string' || !Array.isArray(entry.versions) || !entry.versions.length) continue;
       if (!Array.isArray(entry.paths) || !entry.paths.length) continue;
-      const paths = entry.paths.map(p => relativizePath(p, repoRoot));
+      const paths = entry.paths.map(relativizePath);
       const license = (typeof entry.license === 'string' && entry.license) ? entry.license : bucketLicense;
       records.push({ name: entry.name, versions: entry.versions, paths, license });
     }
