@@ -9,6 +9,8 @@ import { catalogProjectIdSchema } from "./project-wire";
 import { WebConnectionService, type WebConnectionKeys } from "./connection-service";
 import { WebTaskService, type WebTaskKeys } from "./task-service";
 import { WebNewsService } from "./news-service";
+import { WebHerdrService } from "./herdr-service";
+import type { HerdrObservationReader } from "./herdr-observation-source";
 import type { WebNewsCollectionPlanning } from "./news-collection-planning";
 import type { WebNewsCollectionAdmission } from "./news-collection-admission";
 import { projectWorkspaceSafeIdSchemaV1 } from "../../project-workspace/v1";
@@ -39,6 +41,8 @@ export interface PrivateWebProcessOptions {
   ideaProjects?: { integrityKey: Uint8Array };
   /** Read-only retained ABS source verification. Does not configure collection. */
   news?: { integrityKey: Uint8Array };
+  /** Optional retained observations only; source lifecycle stays with the operator. */
+  herdrObservations?: readonly HerdrObservationReader[];
   /** Explicit operations from the trusted collector composition. This process does
    * not create readers, worker pools, schedules or collection authority. */
   newsCollections?: readonly { tenantId: string; workspaceId: string; projectId: string; sourceId: string;
@@ -145,6 +149,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     { ...options.tasks, ideaIntegrityKey: options.ideaProjects?.integrityKey });
   const news = new WebNewsService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
     { integrityKey: options.news?.integrityKey, ideaIntegrityKey: options.ideaProjects?.integrityKey }, clock);
+  const herdr = new WebHerdrService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
+    options.herdrObservations ?? [], clock, options.ideaProjects?.integrityKey);
   const ideas = new WebIdeaService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
     options.ideaProjects?.integrityKey, clock, !!ideaCreation, !!ideaCreation?.stop, !!ideaCreation?.decide, !!ideaCreation?.start, !!ideaCreation?.synthesize);
   const ownerReviews = options.tasks?.ownerReviews ? new WebTaskReviewService(options.database.client,
@@ -172,6 +178,13 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
         const trust = { ...await keys.get(), audience: site.audience };
         const identity = createAccessVerifier(trust)(request, clock());
         if (url.pathname.startsWith("/api/")) {
+          const observations = /^\/api\/v1\/projects\/([^/]+)\/observations$/.exec(url.pathname);
+          if (observations) {
+            if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+            let projectId: string;
+            try { projectId = decodeURIComponent(observations[1]); } catch { throw new WebAccessError("invalid_request"); }
+            return Response.json(await herdr.list(identity, projectId), { headers: privateResponseHeaders });
+          }
           if (url.pathname === "/api/v1/ideas/options") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
             if (!ideaCreation?.options) throw new Error("idea_creation_not_configured");
@@ -298,6 +311,16 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             if (request.method !== "POST" || url.search || !request.body
               || request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") throw new WebAccessError("invalid_request");
             return Response.json(await news.saveSourceSetting(identity, projectId, await readBoundedJson(request.body, 8192)), { headers: privateResponseHeaders });
+          }
+          const newsArticle = /^\/api\/v1\/projects\/([^/]+)\/news\/article$/.exec(url.pathname);
+          if (newsArticle) {
+            const keys = ["storyId", "storyDigest", "detailDigest"];
+            if (request.method !== "GET" || [...url.searchParams.keys()].some(key => !keys.includes(key))
+              || keys.some(key => url.searchParams.getAll(key).length > 1)
+              || ["storyId", "storyDigest"].some(key => !url.searchParams.has(key))) throw new WebAccessError("invalid_request");
+            let projectId: string;
+            try { projectId = decodeURIComponent(newsArticle[1]); } catch { throw new WebAccessError("invalid_request"); }
+            return Response.json(await news.article(identity, projectId, Object.fromEntries(url.searchParams)), { headers: privateResponseHeaders });
           }
           const newsPrepare = /^\/api\/v1\/projects\/([^/]+)\/news\/prepare$/.exec(url.pathname);
           const newsArchive = /^\/api\/v1\/projects\/([^/]+)\/news\/archive$/.exec(url.pathname);

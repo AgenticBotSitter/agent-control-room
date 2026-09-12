@@ -1,5 +1,6 @@
 import { sha256Digest } from "../../security";
 import { verifyArtifactSignature } from "../../node-policy/v1/crypto";
+import { assertSynchronousFence } from "../../security/synchronous-fence";
 import type { SqliteEffectClaimStore } from "../../node-policy/v1/effect-claim-store";
 import type { SqliteExecutionStateStore } from "../../node-policy/v1/execution-state-store";
 import { bindingSchema, enrollmentSchema, snapshotSchema,
@@ -80,8 +81,12 @@ export function createNativeRecoveryAuthority(config: { enrollment: unknown; bin
             || !verifyArtifactSignature(permission, trust.approvalKey.publicKeySpki)) return unavailable();
           const profileFresh = await profile(enrollment, time(), controller.signal);
           if (controller.signal.aborted || time() >= deadline) return unavailable();
-          live(current); profileFresh?.(); assertFresh?.(); durable();
-          return () => { profileFresh?.(); assertFresh?.(); };
+          const freshness = () => {
+            if (profileFresh !== undefined) assertSynchronousFence(profileFresh, unavailable);
+            if (assertFresh !== undefined) assertSynchronousFence(assertFresh, unavailable);
+          };
+          live(current); freshness(); durable();
+          return freshness;
         })();
         started = true; void work.then(() => { active--; }, () => { active--; });
         const assertFresh = await Promise.race([work, new Promise<never>((_, reject) => {

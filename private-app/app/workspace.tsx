@@ -1,4 +1,5 @@
 "use client";
+import { SessionObservations } from './session-observations';
 import { useEffect, useRef, useState } from "react";
 import { ProjectCatalog } from "../../app/components/project-catalog";
 import { ProjectCreateForm } from "../../app/components/project-create-form";
@@ -33,7 +34,10 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
   const [client] = useState(() => createProjectBrowserClient());
   const [projects, setProjects] = useState<ProjectView[]>([]);
   const [catalog, setCatalog] = useState<ProjectCatalogPage>();
-  const [project, setProject] = useState<ProjectView>();
+  const [retainedProject, setProject] = useState<ProjectView>();
+  // Route changes must hide the previous project's data and actions immediately.
+  // Keep the client mounted so an uncertain save retains its original request key.
+  const project = retainedProject?.projectId === projectId ? retainedProject : undefined;
   const [state, setState] = useState<"loading" | "ready" | "unavailable">("loading");
   const [error, setError] = useState<BrowserRequestError>();
   const [pending, setPending] = useState(false);
@@ -41,6 +45,12 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
   const [refresh, setRefresh] = useState(0);
   const generation = useRef(0);
   const writeBusy = useRef(false);
+  const finishWrite = () => {
+    writeBusy.current = false; setPending(false);
+    // A route read may have been skipped while this save owned the client.
+    // Refresh reads only; never resubmit a completed or uncertain command here.
+    setRefresh(value => value + 1);
+  };
   const showError = (reason: unknown) => {
     const failure = reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable");
     setError(failure);
@@ -85,14 +95,14 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
       const created = await client.create(draft); setResult("created");
       window.location.assign(`/projects/${encodeURIComponent(created.projectId)}`);
     } catch (reason) { showError(reason); setResult(reason instanceof BrowserRequestError && reason.code === "invalid_request" ? "invalid" : "unavailable"); }
-    finally { writeBusy.current = false; setPending(false); }
+    finally { finishWrite(); }
   }
   async function transition(lifecycle: WebProject["lifecycle"]) {
     if (!project || !project.lifecycleEditable || project.origin !== "ordinary" || writeBusy.current || client.hasPending()) return;
     writeBusy.current = true; setPending(true); setError(undefined); generation.current++;
     try { setProject({ ...project, ...await client.transition(project, lifecycle) }); }
     catch (reason) { showError(reason); }
-    finally { writeBusy.current = false; setPending(false); }
+    finally { finishWrite(); }
   }
   async function retryOriginal() {
     if (writeBusy.current || !client.hasPending() || state !== "ready") return;
@@ -100,16 +110,17 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
     try {
       const receipt = await client.retryPending();
       if (!projectId) { setResult("created"); window.location.assign(`/projects/${encodeURIComponent(receipt.projectId)}`); }
-      else setProject(await client.get(projectId)); // A replay receipt is historical, not the current project state.
+      // A replay receipt is historical. finishWrite reloads the current route,
+      // which may no longer be the route where this retry began.
     } catch (reason) { showError(reason); }
-    finally { writeBusy.current = false; setPending(false); }
+    finally { finishWrite(); }
   }
   async function transitionIdea(action: IdeaProjectAction) {
     if (!project || writeBusy.current || client.hasPending()) return;
     writeBusy.current = true; setPending(true); setError(undefined); generation.current++;
-    try { await client.transitionIdea(project, action); setProject(await client.get(project.projectId)); }
+    try { await client.transitionIdea(project, action); }
     catch (reason) { showError(reason); }
-    finally { writeBusy.current = false; setPending(false); }
+    finally { finishWrite(); }
   }
   return <div className="private-shell">
     <PrivateHeader />
@@ -132,7 +143,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
             : state === "ready" && <p className="private-note">Your current access does not allow creating ordinary projects.</p>}</div>
       </> : <>
         <a href="/projects" className="private-back">← All projects</a>
-        {state === "loading" && <p role="status">Loading project…</p>}
+        {(state === "loading" || state === "ready" && !project) && <p role="status">Loading project…</p>}
         {state === "ready" && project && <>
           <div className="private-heading"><span className="private-state">{project.lifecycle} · {project.origin === "idea_lab" ? "From Idea Lab" : "Ordinary project"}</span><h1>{project.title}</h1></div>
           <ProjectIdeaOrigin project={project} />
@@ -157,6 +168,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
             </> : <p className="private-note"><a href={`/projects/${encodeURIComponent(projectId)}/tasks`}>Open project tasks</a> to prepare work, check assignment and approval, and inspect recorded progress and results. Task controls report unavailable services rather than assuming a live agent is connected.</p>}
             <p className="private-note">Saved revision {project.version} · Updated {new Date(project.updatedAt).toLocaleString()}</p>
           </section>
+          {section === "overview" && <SessionObservations projectId={projectId} />}
         </>}
       </>}
     </main>

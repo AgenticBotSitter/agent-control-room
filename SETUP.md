@@ -6,7 +6,8 @@ the disposable local demo and synthetic integration tests, not a production inst
 
 ## Requirements
 
-- Node.js 22.13.0 or newer (current rehearsal: Node 22.22.3 on macOS).
+- Node.js 22.13.0 or newer (current rehearsals: Node 22.22.3 on macOS;
+  Node 22.13.0 on Debian 13 GNU/Linux x86_64).
 - pnpm 11.19.0.
 - Access to the public npm registry for dependencies not already cached.
 
@@ -16,6 +17,8 @@ From this source directory:
 CI=true pnpm install --frozen-lockfile
 pnpm check
 pnpm check:demo
+pnpm test:components
+pnpm test:queue
 pnpm test:demo
 pnpm test:build:demo
 pnpm test
@@ -26,13 +29,43 @@ above. It may download the pinned package manager; do not substitute the newest 
 Keep the lockfile and disabled dependency-build policy unchanged.
 
 In Windows PowerShell, set `$env:CI = "true"` and then run
-`pnpm install --frozen-lockfile` instead of the Unix-style first line. The current
-isolated rehearsal is on macOS; Windows and Linux installation acceptance is pending.
+`pnpm install --frozen-lockfile` instead of the Unix-style first line. The isolated
+rehearsals run on macOS and on Debian 13 GNU/Linux (x86_64, Node 22.13.0,
+pnpm 11.19.0, bash); Windows installation acceptance remains pending.
 
 `pnpm check` checks the standalone TypeScript source. `pnpm test` builds the standalone
 application and runs its selected compiled integration tests with synthetic/disposable
 resources. It is not the full private-development test suite. No GitHub credentials,
 agent authentication or production database should be supplied for these checks.
+
+`pnpm test:components` runs the database, Access token, owner-signing, checkpoint,
+Idea Lab, result-rendering, article/research, calendar and observation suites in sequence,
+stopping on the first failed suite. This keeps the component checks discoverable
+without GitHub Actions or overlapping database-heavy suites. It does not replace
+`pnpm test`, the demo checks, workspace crash qualifications, real PostgreSQL
+rehearsals, optional monitoring acceptance or live-agent/browser validation.
+
+`pnpm test:ideas` exercises saved multi-perspective discussion, owner-only project
+promotion and replay/uncertainty handling with an injected driver and one temporary
+in-memory database. It does not connect to Hermes or Codex, and is not evidence
+that a live fleet is operational.
+
+`pnpm test:queue` runs the existing synthetic submission, pickup and worker-runtime
+contracts: transaction routing, recovery-verifier refusal, cancellation, faults,
+late callbacks and drain uncertainty. It uses fake engine/database ports, not a
+running PostgreSQL service, and does not prove native crash recovery or role grants.
+
+`pnpm test:owner-signing` checks signing ownership, cancellation and explicit
+endpoint validation. It uses generated test keys, fake socket ports and one
+owned temporary directory; it never discovers or connects to your SSH agent.
+The optional pinned ssh2 protocol evaluation is separate and requires its logged
+disposable package directory. Do not provide personal keys or SSH_AUTH_SOCK.
+Passing these tests does not authorize activating the unwired native connector.
+
+`pnpm test:checkpoints` checks the retained etcd adapter's exact-key read/write,
+deadline, cancellation and uncertainty behavior through scripted RPC callbacks.
+It requires no etcd installation or credentials. It does not prove independent
+backup placement, authenticated service transport or split-commit recovery.
 
 To compile without running the selected tests:
 
@@ -79,11 +112,55 @@ important work in this demo. The current demo login lasts 15 minutes; after expi
 restart for a fresh disposable session and code. This is not the planned production
 login experience.
 
+## Repeatable browser acceptance
+
+`contributor-demo/browser-acceptance.mjs` drives the whole disposable journey in a
+real browser and is the repeatable interaction check for this demo. It starts its
+own demo instance (build + launch on port 3000), reads the one-time code from the
+demo's own output, completes every check below, stops the demo with SIGTERM and
+verifies that the port and the temporary demo data directory are released. It
+prints TAP-style `ok`/`not ok` lines and exits nonzero on any failure. The owner
+code is never printed by the script and is not captured in screenshots or logs.
+
+Prerequisites are the pinned install above plus a Playwright installation with a
+Chromium browser. Playwright is intentionally not a repository dependency: point
+the script at one with the `PLAYWRIGHT_MODULE` environment variable (an absolute
+path to a directory containing `playwright`), or make a `playwright` package
+resolvable next to this checkout. Screenshots are written only when `ACR_SHOTS`
+names an existing directory.
+
+```sh
+node contributor-demo/browser-acceptance.mjs
+```
+
+The command checks: a skip link is the first focusable element and lands in the
+main region; login, project creation, task proposal, sample simulation and
+revision requests all work with the keyboard alone with a visible focus ring;
+every interactive control has an accessible name; sample text is rendered escaped
+(no raw HTML); reloading the page keeps the session and reopens task history
+without rerunning work; two keyboard-created projects stay isolated (no cross-task
+leak, both listed in the catalog, the first project's history intact) and a
+project can be completed, archived and reopened by keyboard; the home, project and
+task routes have no horizontal overflow at a 375px viewport; a POST lost before
+delivery shows the uncertain-save notice and its retry replays the exact original
+request (asserted on the request log: same body and same idempotency key, first
+attempt dropped, retry delivered); and a revision reply lost after the server
+accepted it preserves the typed feedback with no automatic retry (asserted by
+counting simulation POSTs — exactly one revision POST, before and after the
+read-only re-check). Cleanup is asserted in separate claims: the launcher exits,
+no `contributor-demo.mjs` server process remains, port 3000 refuses connections,
+and the run's own temporary directory (recorded only when exactly one new demo
+directory appeared) is removed. It was verified on Debian 13
+GNU/Linux (x86_64) with Chromium through Playwright 1.59; runs on other operating
+systems and browser builds are not yet acceptance evidence.
+
 ## Still awaiting acceptance
 
 The demo command and its simulated flow pass automated tests and one local desktop
-browser trial on macOS, including revision/history and shutdown cleanup. Keyboard,
-mobile and other operating-system acceptance remain incomplete. There is no supported `pnpm dev` or
+browser trial on macOS, including revision/history and shutdown cleanup. The
+repeatable browser acceptance command above adds automated keyboard and
+narrow-screen coverage on Linux; physical keyboard/mobile acceptance on other
+operating systems and further browser-build coverage remain incomplete. There is no supported `pnpm dev` or
 `pnpm start` command here. Hermes and Codex live compatibility, PostgreSQL deployment,
 production owner login, approval key custody
 and independent integrity storage require separate configuration and acceptance.

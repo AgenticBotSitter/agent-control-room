@@ -52,6 +52,43 @@ top-level scan reports most of the closure as absent.
 
 ## Before distributing additional artifacts
 
+All 14 direct runtime dependencies now retain their original installed license
+text. `pnpm test:notices` checks the exact version and license bytes and fails if
+a new direct dependency lacks a mapping. This does not enumerate transitive or
+build-tool dependencies, nor inspect bundled artifacts.
+
+Additional unchanged dependencies: pg-boss 12.30.0 (MIT, Tim Jones),
+fast-xml-parser 5.11.0 (MIT, Amit Kumar Gupta), React and React DOM 19.2.6
+(MIT, Meta Platforms, Inc. and affiliates), and Zod 4.1.12 (MIT, Colin McDonnell).
+Their license files are retained under the matching `third_party` directories.
+No upstream dependency code was modified or copied into application source.
+
+Article extraction uses unchanged @mozilla/readability 0.6.0 and jsdom 26.1.0.
+Original [Readability license](third_party/readability/LICENSE) and
+[jsdom license](third_party/jsdom/LICENSE) are retained from the installed packages.
+Upstreams: https://github.com/mozilla/readability and https://github.com/jsdom/jsdom.
+Control Room adds bounded execution and source-binding wrappers, not modifications
+to either dependency. Preserve transitive package notices in any bundled release.
+Permission to use the extraction libraries does not grant rights to redistribute
+the articles they process.
+
+Formatted results use unchanged react-markdown 10.1.0 and remark-gfm 4.0.1.
+Their original [react-markdown license](third_party/react-markdown/LICENSE) and
+[remark-gfm license](third_party/remark-gfm/LICENSE) are retained byte-for-byte.
+Upstreams: https://github.com/remarkjs/react-markdown and
+https://github.com/remarkjs/remark-gfm. Control Room's local rendering restrictions
+are wrapper behavior, not upstream modifications. Transitive notices remain part
+of release-artifact reconciliation.
+
+The selected JWT verifier retains its [notice](third_party/jsonwebtoken/NOTICE.md)
+and [original MIT license](third_party/jsonwebtoken/LICENSE). Its Apache-licensed
+consumer wrapper does not relicense the dependency or its transitive packages.
+
+The [node-postgres notice](third_party/pg/NOTICE.md) and
+[original MIT license](third_party/pg/LICENSE) cover the selected pg runtime
+dependency. Its transitive packages and development-only declarations retain
+their own licenses; preserve these when preparing a bundled release.
+
 If a release adds bundled JavaScript, a container, native libraries, WASM, fonts,
 images or vendored source, review that exact artifact's contents and applicable
 notices/source obligations first. The source-preview inventory is not clearance
@@ -75,3 +112,16 @@ the artifact's actual contents rather than against this repository's source list
 
 This file explains the source-preview scope. It is not legal certification, a
 complete software bill of materials or clearance for additional distribution formats.
+
+## Calendar calculation dependency
+
+cron-parser 5.10.0 (https://github.com/harrisiirak/cron-parser), MIT, is used for
+field expansion and date matching without upstream modifications. Its original
+license is retained at `third_party/cron-parser/LICENSE`. Control Room retains
+its numeric compatibility grammar, occurrence policy and execution authority.
+Transitive dependency notices remain part of the complete release-notice gate.
+
+Luxon3.7.2 (https://github.com/moment/luxon), MIT, supplies ambiguity resolution
+through getPossibleOffsets without upstream modification. Its original notice is
+retained at `third_party/luxon/LICENSE.md`. This prevents later fallback instants
+from creating conflicting occurrence proposals across calculation windows.

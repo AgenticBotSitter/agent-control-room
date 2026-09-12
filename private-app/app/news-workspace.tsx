@@ -8,6 +8,7 @@ import { NewsResearchForm } from "./news-research-form";
 import { newsReadingView, type NewsReadingView } from "../../src/web/v1/news-reading-view";
 import type { IndustrySortOrder } from "../../src/vendor/control-center/industry";
 import { NewsDailySnapshot } from "./news-daily-snapshot";
+import { NewsArticleReader } from "./news-article-reader";
 import { NewsSourceSettings } from "./news-source-settings";
 import { createNewsArchiveClient } from "../../src/web/v1/news-archive-client";
 import { installNewsNavigationGuard } from "../../src/web/v1/news-navigation-guard";
@@ -115,6 +116,7 @@ export function PrivateNewsWorkspace({ projectId, after, sourceAfter, view = "hi
         {!reading!.stories.length ? <p>No saved stories in this view on this page.</p> : reading!.stories.map(story => <article className="private-panel" key={story.storyId}>
           <h2><a href={story.canonicalUrl} target="_blank" rel="noopener noreferrer">{story.title}</a></h2>
           <p>{story.summary}</p><p>{story.verificationState === "verified" ? "Source evidence retained" : "Source needs review"} · {story.queue.replaceAll("_", " ")}</p>
+          <NewsArticleReader key={`${projectId}:${story.storyId}:${story.storyDigest}`} projectId={projectId} storyId={story.storyId} storyDigest={story.storyDigest} canonicalUrl={story.canonicalUrl} />
           <p>{story.sourceLabel ?? new URL(story.canonicalUrl).hostname}{story.publishedAt ? ` · Published ${story.publishedAt}` : story.discoveredAt ? ` · Discovered ${story.discoveredAt}` : " · Date unknown"}</p>
           <button type="button" disabled={!!selected || archiveHeld || !page.canPrepare}
             onClick={() => setSelected(story)}>{story.verificationState === "review_only" ? "Research and verify" : "Research, compare or draft"}</button>

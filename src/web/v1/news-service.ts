@@ -13,6 +13,7 @@ import { z } from "zod";
 import { PostgresNewsSourceSettings, newsSourceSettingSchema } from "../../project-adapters/abs-news/v1/source-settings";
 import { appendAuditWith } from "../../audit/audit-store";
 import { PostgresNewsStoryArchives } from "../../project-adapters/abs-news/v1/story-archives";
+import { PostgresArticleDetails } from "../../project-adapters/abs-news/v1/article-store";
 
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx),
   transaction: async work => work(tx), transactionWithPreCommitCheck: async (work, check) => {
@@ -43,6 +44,22 @@ export class WebNewsService {
       if (!this.key) return { projectId, configured: false, sources: [], nextCursor: null, canEdit: false };
       const page = await new PostgresNewsSourceSettings(joined(tx), { ...this.scope, projectId }, this.key).list(after);
       return { ...page, projectId, configured: true, canEdit: project.lifecycle === "active" && actor.can("news.sources.manage", projectId, true) };
+    });
+  }
+  /** Retained content only: an authenticated GET never fetches an article. */
+  async article(identity: VerifiedWebIdentity, projectId: string, value: unknown) {
+    const input = z.object({ storyId: catalogProjectIdSchema,
+      storyDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+      detailDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional() }).strict().safeParse(value);
+    if (!input.success || !catalogProjectIdSchema.safeParse(projectId).success) throw new WebAccessError("invalid_request");
+    return this.authority.authenticated(identity, async (tx, actor) => {
+      actor.require("tasks.read", projectId);
+      await this.projects.getViewInSession(tx, actor, projectId);
+      if (!this.key) throw new WebAccessError("not_found");
+      const store = new PostgresArticleDetails(joined(tx), { ...this.scope, projectId }, this.key);
+      const record = await store.get(input.data.storyId, input.data.storyDigest, input.data.detailDigest);
+      if (!record) throw new WebAccessError("not_found");
+      return record;
     });
   }
   async saveSourceSetting(identity: VerifiedWebIdentity, projectId: string, value: unknown) {

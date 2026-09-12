@@ -14,7 +14,7 @@ export function contributorDemoSelection(search: string) {
 export function ContributorDemoView({ search }: { search: string }) {
   let selected;
   try { selected = contributorDemoSelection(search); }
-  catch { return <main><h1>Invalid demo link</h1><a href="/local-preview">Open projects</a></main>; }
+  catch { return <main id="private-main"><h1>Invalid demo link</h1><a href="/local-preview">Open projects</a></main>; }
   return <><div className="private-shell"><header className="private-header">
     <strong className="private-brand">Agent Control Room</strong>
     <span>Disposable contributor demo · no real agents</span>

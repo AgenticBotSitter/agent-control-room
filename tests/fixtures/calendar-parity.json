@@ -1,0 +1,697 @@
+{
+  "baselineSha256": "7ddc7925c7e7ba5c3f80eeeedd52c827a0cfaa69572f6370ff259b68baa9099c",
+  "cases": [
+    {
+      "name": "utc-quarter-hour",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "active",
+        "expression": "*/15 * * * *",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-09-07T00:00:00.000Z",
+        "endsAt": "2026-09-07T01:00:00.000Z"
+      },
+      "count": 4,
+      "sha256": "3fb60ce43ff3e190d94e61d162929b69c4dedec11a7245756efbcc954da23de5"
+    },
+    {
+      "name": "denver-spring-gap",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "active",
+        "expression": "30 2 * * *",
+        "timezone": "America/Denver"
+      },
+      "range": {
+        "startsAt": "2026-03-08T08:00:00.000Z",
+        "endsAt": "2026-03-08T11:00:00.000Z"
+      },
+      "count": 0,
+      "sha256": "8f0874b12e7e2a5bafc59eaaaf6438bee0195a7199624c3e280ded986315993c"
+    },
+    {
+      "name": "denver-fall-repeat",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "active",
+        "expression": "30 1 * * *",
+        "timezone": "America/Denver"
+      },
+      "range": {
+        "startsAt": "2026-11-01T07:00:00.000Z",
+        "endsAt": "2026-11-01T10:00:00.000Z"
+      },
+      "count": 1,
+      "sha256": "7bcf07698f43903be2a5ab1152b4f19c541c22f477ba01f919cc8bc1724e7a76"
+    },
+    {
+      "name": "missed-window",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "active",
+        "expression": "*/5 * * * *",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-09-07T00:00:00.000Z",
+        "endsAt": "2026-09-07T00:18:00.000Z"
+      },
+      "count": 4,
+      "sha256": "c7214f644651b399419e0e1eb5d1d16a964d57c5d8786a595b12685dd9fd050b"
+    },
+    {
+      "name": "restricted-dom-or-dow",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "active",
+        "expression": "0 9 1 * 1",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-09-07T08:59:00.000Z",
+        "endsAt": "2026-09-07T09:01:00.000Z"
+      },
+      "count": 1,
+      "sha256": "ff453e38e06003e5370f3d54a4f3b253e782098a37846ce3e5edd0b2cf8cad08"
+    },
+    {
+      "name": "offset-range-step",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "active",
+        "expression": "1-5/2 * * * *",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-09-07T00:00:00.000Z",
+        "endsAt": "2026-09-07T00:06:00.000Z"
+      },
+      "count": 3,
+      "sha256": "07cb1b6d504efcc671a414115dd96127bdbb79f22c31ed9364f51888c97ddcc8"
+    },
+    {
+      "name": "valid:1/2 * * * *",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "active",
+        "expression": "1/2 * * * *",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-02-01T00:00:00.000Z",
+        "endsAt": "2026-02-03T00:00:00.000Z"
+      },
+      "count": 48,
+      "sha256": "976455588f83127068d1dc68da84562675fd9d3f5cb741cf36300e3be6c64138"
+    },
+    {
+      "name": "valid:1,1 * * * *",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "active",
+        "expression": "1,1 * * * *",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-02-01T00:00:00.000Z",
+        "endsAt": "2026-02-03T00:00:00.000Z"
+      },
+      "count": 48,
+      "sha256": "976455588f83127068d1dc68da84562675fd9d3f5cb741cf36300e3be6c64138"
+    },
+    {
+      "name": "valid:1-5,3-7 * * * *",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "active",
+        "expression": "1-5,3-7 * * * *",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-02-01T00:00:00.000Z",
+        "endsAt": "2026-02-03T00:00:00.000Z"
+      },
+      "count": 336,
+      "sha256": "7c867ec2d30c3c16d75aa0c3065f026e8a82b59acc94c15133976d85cd051d09"
+    },
+    {
+      "name": "valid:*,1 * * * *",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "active",
+        "expression": "*,1 * * * *",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-02-01T00:00:00.000Z",
+        "endsAt": "2026-02-03T00:00:00.000Z"
+      },
+      "count": 2880,
+      "sha256": "12ed52ebf336042877b6342164ff53091619a6a9c98e81280b92c8abca4e9030"
+    },
+    {
+      "name": "valid:0 0 */1 * 2",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "active",
+        "expression": "0 0 */1 * 2",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-02-01T00:00:00.000Z",
+        "endsAt": "2026-02-03T00:00:00.000Z"
+      },
+      "count": 2,
+      "sha256": "eb2d54164f427eea8b33316012a5d76636ce5d7f184c498a5b94a45f93342395"
+    },
+    {
+      "name": "valid:0 0 1-31 * 2",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "active",
+        "expression": "0 0 1-31 * 2",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-02-01T00:00:00.000Z",
+        "endsAt": "2026-02-03T00:00:00.000Z"
+      },
+      "count": 2,
+      "sha256": "eb2d54164f427eea8b33316012a5d76636ce5d7f184c498a5b94a45f93342395"
+    },
+    {
+      "name": "valid:0 0 *,1 * 2",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "active",
+        "expression": "0 0 *,1 * 2",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-02-01T00:00:00.000Z",
+        "endsAt": "2026-02-03T00:00:00.000Z"
+      },
+      "count": 2,
+      "sha256": "eb2d54164f427eea8b33316012a5d76636ce5d7f184c498a5b94a45f93342395"
+    },
+    {
+      "name": "valid:0 0 * * 0,7",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "active",
+        "expression": "0 0 * * 0,7",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-02-01T00:00:00.000Z",
+        "endsAt": "2026-02-03T00:00:00.000Z"
+      },
+      "count": 1,
+      "sha256": "f36cf8d4cb64ca8566777f4f775cc8f71e21ec520251c96f8da460d73764fcb7"
+    },
+    {
+      "name": "valid:0 0 * * 5-7",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "active",
+        "expression": "0 0 * * 5-7",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-02-01T00:00:00.000Z",
+        "endsAt": "2026-02-03T00:00:00.000Z"
+      },
+      "count": 1,
+      "sha256": "f36cf8d4cb64ca8566777f4f775cc8f71e21ec520251c96f8da460d73764fcb7"
+    },
+    {
+      "name": "valid:0 0 * * 0-7/2",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "active",
+        "expression": "0 0 * * 0-7/2",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-02-01T00:00:00.000Z",
+        "endsAt": "2026-02-03T00:00:00.000Z"
+      },
+      "count": 1,
+      "sha256": "f36cf8d4cb64ca8566777f4f775cc8f71e21ec520251c96f8da460d73764fcb7"
+    },
+    {
+      "name": "valid:0 0 31 2 1",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "active",
+        "expression": "0 0 31 2 1",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-02-01T00:00:00.000Z",
+        "endsAt": "2026-02-03T00:00:00.000Z"
+      },
+      "count": 1,
+      "sha256": "6ebbe5e55ab0cda839ab92a1259b53003663e922dc6c89f973ed6b97ea59642e"
+    },
+    {
+      "name": "valid:0 0 31 2 *",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "active",
+        "expression": "0 0 31 2 *",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-02-01T00:00:00.000Z",
+        "endsAt": "2026-02-03T00:00:00.000Z"
+      },
+      "count": 0,
+      "sha256": "8f0874b12e7e2a5bafc59eaaaf6438bee0195a7199624c3e280ded986315993c"
+    },
+    {
+      "name": "invalid:01 * * * *",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "active",
+        "expression": "01 * * * *",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-09-07T00:00:00.000Z",
+        "endsAt": "2026-09-07T01:00:00.000Z"
+      },
+      "count": 0,
+      "reason": "invalid_schedule",
+      "sha256": "109bde2d32b880d59ff4c8f01603da5af3fbf9dfddd8deac65bc8d4f71a30002"
+    },
+    {
+      "name": "invalid:1/61 * * * *",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "active",
+        "expression": "1/61 * * * *",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-09-07T00:00:00.000Z",
+        "endsAt": "2026-09-07T01:00:00.000Z"
+      },
+      "count": 0,
+      "reason": "invalid_schedule",
+      "sha256": "109bde2d32b880d59ff4c8f01603da5af3fbf9dfddd8deac65bc8d4f71a30002"
+    },
+    {
+      "name": "invalid:1/0 * * * *",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "active",
+        "expression": "1/0 * * * *",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-09-07T00:00:00.000Z",
+        "endsAt": "2026-09-07T01:00:00.000Z"
+      },
+      "count": 0,
+      "reason": "invalid_schedule",
+      "sha256": "109bde2d32b880d59ff4c8f01603da5af3fbf9dfddd8deac65bc8d4f71a30002"
+    },
+    {
+      "name": "invalid:1/ * * * *",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "active",
+        "expression": "1/ * * * *",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-09-07T00:00:00.000Z",
+        "endsAt": "2026-09-07T01:00:00.000Z"
+      },
+      "count": 0,
+      "reason": "invalid_schedule",
+      "sha256": "109bde2d32b880d59ff4c8f01603da5af3fbf9dfddd8deac65bc8d4f71a30002"
+    },
+    {
+      "name": "invalid:1//2 * * * *",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "active",
+        "expression": "1//2 * * * *",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-09-07T00:00:00.000Z",
+        "endsAt": "2026-09-07T01:00:00.000Z"
+      },
+      "count": 0,
+      "reason": "invalid_schedule",
+      "sha256": "109bde2d32b880d59ff4c8f01603da5af3fbf9dfddd8deac65bc8d4f71a30002"
+    },
+    {
+      "name": "invalid:5-1 * * * *",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "active",
+        "expression": "5-1 * * * *",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-09-07T00:00:00.000Z",
+        "endsAt": "2026-09-07T01:00:00.000Z"
+      },
+      "count": 0,
+      "reason": "invalid_schedule",
+      "sha256": "109bde2d32b880d59ff4c8f01603da5af3fbf9dfddd8deac65bc8d4f71a30002"
+    },
+    {
+      "name": "invalid:1,,2 * * * *",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "active",
+        "expression": "1,,2 * * * *",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-09-07T00:00:00.000Z",
+        "endsAt": "2026-09-07T01:00:00.000Z"
+      },
+      "count": 0,
+      "reason": "invalid_schedule",
+      "sha256": "109bde2d32b880d59ff4c8f01603da5af3fbf9dfddd8deac65bc8d4f71a30002"
+    },
+    {
+      "name": "invalid:60 * * * *",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "active",
+        "expression": "60 * * * *",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-09-07T00:00:00.000Z",
+        "endsAt": "2026-09-07T01:00:00.000Z"
+      },
+      "count": 0,
+      "reason": "invalid_schedule",
+      "sha256": "109bde2d32b880d59ff4c8f01603da5af3fbf9dfddd8deac65bc8d4f71a30002"
+    },
+    {
+      "name": "invalid:* * * * MON",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "active",
+        "expression": "* * * * MON",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-09-07T00:00:00.000Z",
+        "endsAt": "2026-09-07T01:00:00.000Z"
+      },
+      "count": 0,
+      "reason": "invalid_schedule",
+      "sha256": "109bde2d32b880d59ff4c8f01603da5af3fbf9dfddd8deac65bc8d4f71a30002"
+    },
+    {
+      "name": "invalid:@daily",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "active",
+        "expression": "@daily",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-09-07T00:00:00.000Z",
+        "endsAt": "2026-09-07T01:00:00.000Z"
+      },
+      "count": 0,
+      "reason": "invalid_schedule",
+      "sha256": "109bde2d32b880d59ff4c8f01603da5af3fbf9dfddd8deac65bc8d4f71a30002"
+    },
+    {
+      "name": "invalid:0 * * * * *",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "active",
+        "expression": "0 * * * * *",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-09-07T00:00:00.000Z",
+        "endsAt": "2026-09-07T01:00:00.000Z"
+      },
+      "count": 0,
+      "reason": "invalid_schedule",
+      "sha256": "109bde2d32b880d59ff4c8f01603da5af3fbf9dfddd8deac65bc8d4f71a30002"
+    },
+    {
+      "name": "invalid:* * * *",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "active",
+        "expression": "* * * *",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-09-07T00:00:00.000Z",
+        "endsAt": "2026-09-07T01:00:00.000Z"
+      },
+      "count": 0,
+      "reason": "invalid_schedule",
+      "sha256": "109bde2d32b880d59ff4c8f01603da5af3fbf9dfddd8deac65bc8d4f71a30002"
+    },
+    {
+      "name": "invalid:0 0 L * *",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "active",
+        "expression": "0 0 L * *",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-09-07T00:00:00.000Z",
+        "endsAt": "2026-09-07T01:00:00.000Z"
+      },
+      "count": 0,
+      "reason": "invalid_schedule",
+      "sha256": "109bde2d32b880d59ff4c8f01603da5af3fbf9dfddd8deac65bc8d4f71a30002"
+    },
+    {
+      "name": "invalid:0 0 ? * *",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "active",
+        "expression": "0 0 ? * *",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-09-07T00:00:00.000Z",
+        "endsAt": "2026-09-07T01:00:00.000Z"
+      },
+      "count": 0,
+      "reason": "invalid_schedule",
+      "sha256": "109bde2d32b880d59ff4c8f01603da5af3fbf9dfddd8deac65bc8d4f71a30002"
+    },
+    {
+      "name": "invalid:0 0 * * 1#2",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "active",
+        "expression": "0 0 * * 1#2",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-09-07T00:00:00.000Z",
+        "endsAt": "2026-09-07T01:00:00.000Z"
+      },
+      "count": 0,
+      "reason": "invalid_schedule",
+      "sha256": "109bde2d32b880d59ff4c8f01603da5af3fbf9dfddd8deac65bc8d4f71a30002"
+    },
+    {
+      "name": "invalid:0 0 * JAN *",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "active",
+        "expression": "0 0 * JAN *",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-09-07T00:00:00.000Z",
+        "endsAt": "2026-09-07T01:00:00.000Z"
+      },
+      "count": 0,
+      "reason": "invalid_schedule",
+      "sha256": "109bde2d32b880d59ff4c8f01603da5af3fbf9dfddd8deac65bc8d4f71a30002"
+    },
+    {
+      "name": "paused-before-invalid-expression",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "paused",
+        "expression": "bad",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-09-07T00:00:00.000Z",
+        "endsAt": "2026-09-07T01:00:00.000Z"
+      },
+      "count": 0,
+      "sha256": "8f0874b12e7e2a5bafc59eaaaf6438bee0195a7199624c3e280ded986315993c"
+    },
+    {
+      "name": "disabled",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "disabled",
+        "expression": "*/15 * * * *",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-09-07T00:00:00.000Z",
+        "endsAt": "2026-09-07T01:00:00.000Z"
+      },
+      "count": 0,
+      "sha256": "8f0874b12e7e2a5bafc59eaaaf6438bee0195a7199624c3e280ded986315993c"
+    },
+    {
+      "name": "invalid-zone",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "active",
+        "expression": "*/15 * * * *",
+        "timezone": "not/a-zone"
+      },
+      "range": {
+        "startsAt": "2026-09-07T00:00:00.000Z",
+        "endsAt": "2026-09-07T01:00:00.000Z"
+      },
+      "count": 0,
+      "reason": "invalid_schedule",
+      "sha256": "109bde2d32b880d59ff4c8f01603da5af3fbf9dfddd8deac65bc8d4f71a30002"
+    },
+    {
+      "name": "invalid-id",
+      "definition": {
+        "id": "!bad",
+        "kind": "cron",
+        "state": "active",
+        "expression": "*/15 * * * *",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-09-07T00:00:00.000Z",
+        "endsAt": "2026-09-07T01:00:00.000Z"
+      },
+      "count": 0,
+      "reason": "invalid_schedule",
+      "sha256": "109bde2d32b880d59ff4c8f01603da5af3fbf9dfddd8deac65bc8d4f71a30002"
+    },
+    {
+      "name": "once",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "once",
+        "state": "active",
+        "expression": "2026-09-07T00:15:00.000Z",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-09-07T00:00:00.000Z",
+        "endsAt": "2026-09-07T01:00:00.000Z"
+      },
+      "count": 1,
+      "sha256": "dcf11e2b7425fdc82ffeb1b9bd31e3a3e97c96b7b68830c1306a2312cb8d8e8d"
+    },
+    {
+      "name": "interval",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "interval",
+        "state": "active",
+        "expression": "900",
+        "timezone": "UTC",
+        "anchorAt": "2026-09-07T00:01:00.000Z"
+      },
+      "range": {
+        "startsAt": "2026-09-07T00:00:00.000Z",
+        "endsAt": "2026-09-07T01:00:00.000Z"
+      },
+      "count": 4,
+      "sha256": "e9629acb9bccf3a2bb15a9b0a7f2ca6424e99e11723e460b14223c2935cc24a8"
+    },
+    {
+      "name": "window-subminute",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "active",
+        "expression": "* * * * *",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-09-07T00:00:01.000Z",
+        "endsAt": "2026-09-07T00:02:00.000Z"
+      },
+      "count": 1,
+      "sha256": "9e94b571a252f91451f528602aca710d89fcd3060bdd96aba58eeb7bd34d8077"
+    },
+    {
+      "name": "oversized-window",
+      "definition": {
+        "id": "schedule.fixture",
+        "kind": "cron",
+        "state": "active",
+        "expression": "*/15 * * * *",
+        "timezone": "UTC"
+      },
+      "range": {
+        "startsAt": "2026-01-01T00:00:00.000Z",
+        "endsAt": "2026-03-01T00:00:00.000Z"
+      },
+      "count": 0,
+      "reason": "range_too_large",
+      "sha256": "02659fcd6c2ecc5ccbc5503d3d13be2105da41931ed3364ec3cb95813885837c"
+    }
+  ]
+}

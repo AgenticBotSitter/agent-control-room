@@ -15,11 +15,11 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations 0001-0064, including generic external-content
+// Generated from public migrations 0001-0066, including generic external-content
 // migrations 0025/0026. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "8a58c3e600c32b046af83274cdcd3ecf0fb7d517c3a133961b44680e568a2d96";
+export const privateWebSchemaDigest = "bb294bb80683f80afd269882e072b41a7b402a5509af800648c7cbaf179f0cfa";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
-  "control_abs_story_versions", "control_abs_source_observations", "control_abs_source_settings", "control_abs_story_archives",
+  "control_abs_story_versions", "control_abs_source_observations", "control_abs_source_settings", "control_abs_story_archives", "control_abs_article_details",
   "control_idea_sessions", "control_idea_contributions", "control_idea_syntheses", "control_idea_decisions", "control_idea_bot_run_events",
   "adapter_registry", "projects", "control_manual_project_heads", "control_web_project_commands", "audit_events",
   "control_audit_chain_heads", "control_project_lifecycle_events", "control_policy_decisions", "control_connection_registry_heads",
@@ -52,8 +52,8 @@ const ideaRuntimeReads = ["workspaces", "control_identities", "control_role_gran
   "control_idea_contributions", "control_idea_bot_run_events", "control_idea_decisions"];
 const ideaRuntimeInserts = new Set(["control_idea_contributions", "control_idea_bot_run_events"]);
 const ideaRuntimeUpdates: Record<string, readonly string[]> = { workspaces: ["web_lock"] };
-const newsIngestionReads = ["workspaces", "projects", "control_identities", "control_role_grants", "control_abs_story_versions", "control_abs_source_observations", "control_abs_discovery_baselines", "control_abs_source_settings", "control_abs_story_archives"];
-const newsIngestionInserts = new Set(["control_abs_story_versions", "control_abs_source_observations", "control_abs_discovery_baselines"]);
+const newsIngestionReads = ["workspaces", "projects", "control_identities", "control_role_grants", "control_abs_story_versions", "control_abs_source_observations", "control_abs_discovery_baselines", "control_abs_source_settings", "control_abs_story_archives", "control_abs_article_details"];
+const newsIngestionInserts = new Set(["control_abs_story_versions", "control_abs_source_observations", "control_abs_discovery_baselines", "control_abs_article_details"]);
 const newsIngestionUpdates: Record<string, readonly string[]> = { workspaces: ["web_lock"], projects: ["coordinator_lock"] };
 const newsCoordinatorReads = ["tenants", "workspaces", "projects", "control_manual_project_heads", "control_identities", "control_role_grants",
   "control_web_sessions", "control_requests", "control_workflows", "control_jobs", "control_attempts", "control_leases", "control_nodes",

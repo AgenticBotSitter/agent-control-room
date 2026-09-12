@@ -102,7 +102,7 @@ export function LocalProjectWorkspace({ projectId, jobId, after, contributorDemo
   }
   const project = page?.project ?? detail?.project;
   const held = pending || uncertain || reading;
-  return <div className="private-shell"><main>
+  return <div className="private-shell"><main id="private-main" tabIndex={-1}>
     <div className="private-heading"><h1>{project?.title ?? "Local project preview"}</h1>
       <p>Projects and proposals are saved locally. This preview cannot assign or start agents.</p></div>
     {error && <p role="alert">{error}</p>}

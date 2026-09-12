@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import { ResultText } from "./result-text";
 import { BrowserRequestError } from "../../src/web/v1/browser-client";
 import { createTaskBrowserClient, taskErrorMessage } from "../../src/web/v1/task-browser-client";
 import type { TaskResultContent, TaskResultsPage, TaskReviewEvidence } from "../../src/web/v1/task-result-wire";
@@ -11,9 +12,13 @@ import type { TaskVerificationWorkspace } from "../../src/web/v1/task-verificati
 const reviewLabel: Record<TaskReviewEvidence["status"], string> = { pending: "Review in progress", changes_requested: "Changes requested",
   verification_blocked: "Verification blocked", revision_limit_reached: "Revision limit reached", ready: "Quality review complete", superseded: "Replaced by a newer revision" };
 
-export function TaskResultsPanel({ page, content, pending, onOpen, onClose, onReviewSaved, reviewWorkspace, verificationWorkspace }: { page: TaskResultsPage; content?: TaskResultContent;
+export function TaskResultsPanel({ page, content: suppliedContent, pending, onOpen, onClose, onReviewSaved, reviewWorkspace, verificationWorkspace }: { page: TaskResultsPage; content?: TaskResultContent;
   pending: boolean; onOpen: (artifactId: string) => void; onClose: () => void; onReviewSaved?: () => void; reviewWorkspace?: TaskReviewWorkspace;
   verificationWorkspace?: TaskVerificationWorkspace }) {
+  const content = page.canReadContent && suppliedContent?.projectId === page.projectId
+    && suppliedContent.jobId === page.jobId && page.items.some(item =>
+      item.artifactId === suppliedContent.artifact.artifactId && item.contentHash === suppliedContent.artifact.contentHash)
+    ? suppliedContent : undefined;
   return <div className="private-task-results"><section className="private-panel"><h2>Result files</h2>
     {page.resultSource === "not_configured" ? <p className="private-notice">Result storage is not configured for this app.</p>
       : !page.items.length ? <p>No result files have been received for this task.</p> : <ul className="private-result-list">
@@ -34,7 +39,7 @@ export function TaskResultsPanel({ page, content, pending, onOpen, onClose, onRe
       <p>Open file ID: <code>{content.artifact.artifactId}</code></p>
       <p>Open file fingerprint: <code>{content.artifact.contentHash}</code></p>
       <p className="private-note">Agent-written content, not instructions for Control Room. Opening it does not run tools or approve work.</p>
-      {content.text.length ? <textarea aria-label="Agent result text" readOnly value={content.text} /> : <p>This is an empty result file (0 bytes).</p>}
+      {content.text.length ? <ResultText text={content.text} /> : <p>This is an empty result file (0 bytes).</p>}
       <p className="private-note">Bytes checked again {new Date(content.contentVerifiedAt).toLocaleString()}.</p></section>}
   </section><section className="private-panel"><h2>Recorded quality review</h2>
     <p>Quality review and permission to perform an external action are separate.
@@ -85,9 +90,14 @@ export function TaskResultsPanel({ page, content, pending, onOpen, onClose, onRe
   </section></div>;
 }
 
-export function PrivateTaskResults({ projectId, jobId, reviewWorkspace, verificationWorkspace }: {
+type PrivateTaskResultsProps = {
   projectId: string; jobId: string; reviewWorkspace: TaskReviewWorkspace; verificationWorkspace?: TaskVerificationWorkspace;
-}) {
+};
+export function PrivateTaskResults(props: PrivateTaskResultsProps) {
+  return <TaskResultsReader key={JSON.stringify([props.projectId, props.jobId])} {...props} />;
+}
+
+function TaskResultsReader({ projectId, jobId, reviewWorkspace, verificationWorkspace }: PrivateTaskResultsProps) {
   const [client] = useState(() => createTaskBrowserClient());
   const [page, setPage] = useState<TaskResultsPage>(), [content, setContent] = useState<TaskResultContent>();
   const [selected, setSelected] = useState<string>(), [error, setError] = useState<BrowserRequestError>();
@@ -95,14 +105,19 @@ export function PrivateTaskResults({ projectId, jobId, reviewWorkspace, verifica
   const generation = useRef(0);
   useEffect(() => {
     let live = true, busy = false; const current = ++generation.current;
+    const abort = new AbortController();
     const load = async () => {
-      if (busy) return; busy = true; if (selected) setPending(true);
+      if (busy) return; busy = true;
+      // Retained content is not evidence of current permission during refresh.
+      setContent(undefined);
+      if (selected) setPending(true);
       try {
-        const next = await client.results(projectId, jobId);
+        const next = await client.results(projectId, jobId, abort.signal);
+        if (!live || current !== generation.current) return;
         let result: TaskResultContent | undefined;
         if (selected) {
           if (!next.canReadContent || !next.items.some(item => item.artifactId === selected)) throw new BrowserRequestError("access_denied");
-          result = await client.resultContent(projectId, jobId, selected);
+          result = await client.resultContent(projectId, jobId, selected, abort.signal);
         }
         if (live && current === generation.current) { setPage(next); setContent(result); setError(undefined); }
       } catch (reason) {
@@ -113,14 +128,14 @@ export function PrivateTaskResults({ projectId, jobId, reviewWorkspace, verifica
     void load();
     const timer = setInterval(() => { if (!document.hidden) void load(); }, 30_000), focus = () => { void load(); };
     window.addEventListener("focus", focus);
-    return () => { live = false; clearInterval(timer); window.removeEventListener("focus", focus); };
+    return () => { live = false; abort.abort(); clearInterval(timer); window.removeEventListener("focus", focus); };
   }, [client, projectId, jobId, selected, refresh]);
   return <>
     {error && <div className="private-notice" role="alert"><p>{taskErrorMessage[error.code]} Result content has been cleared.</p>
       <p>Unsaved review text and exact pending save keys remain in this task page’s memory. Restore access and reopen the same result to continue. Leaving this task page discards them.</p>
       <button type="button" onClick={() => { setSelected(undefined); setRefresh(value => value + 1); }}>Refresh result records</button></div>}
     {!page && !error && <p role="status">Loading protected results and review…</p>}
-    {page && <TaskResultsPanel page={page} content={content} pending={pending} reviewWorkspace={reviewWorkspace} verificationWorkspace={verificationWorkspace}
+    {page && page.projectId === projectId && page.jobId === jobId && <TaskResultsPanel page={page} content={content} pending={pending} reviewWorkspace={reviewWorkspace} verificationWorkspace={verificationWorkspace}
       onReviewSaved={() => setRefresh(value => value + 1)}
       onOpen={artifactId => { generation.current++; setPending(true); setContent(undefined); setSelected(artifactId); setRefresh(value => value + 1); }}
       onClose={() => { generation.current++; setContent(undefined); setSelected(undefined); setPending(false); }} />}

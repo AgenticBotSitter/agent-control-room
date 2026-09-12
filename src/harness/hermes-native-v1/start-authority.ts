@@ -1,4 +1,5 @@
 import { sha256Digest } from "../../security";
+import { assertSynchronousFence } from "../../security/synchronous-fence";
 import { computeAdmissionId, type SqliteLocalAdmissionStore } from "../../node-policy/v1/admission-store";
 import { computeExecutionId, type ExecutionIdentityV1 } from "../../node-policy/v1/execution-authority";
 import type { SqliteExecutionStateStore } from "../../node-policy/v1/execution-state-store";
@@ -74,7 +75,11 @@ export function createNativeStartAuthority(config: { enrollment: unknown; reques
         if (controller.signal.aborted) return denied(); live(current);
         const profileFresh = await profileCurrent(enrollment, time(), controller.signal);
         if (controller.signal.aborted || time() >= deadline) return denied(); live(current);
-        profileFresh?.(); assertFresh?.();
+        const freshness = () => {
+          if (profileFresh !== undefined) assertSynchronousFence(profileFresh, denied);
+          if (assertFresh !== undefined) assertSynchronousFence(assertFresh, denied);
+        };
+        freshness();
         const now = time(), at = new Date(now).toISOString();
         if (policy.paused !== false) return denied();
         const existing = effects.load(binding.effectClaimKey);
@@ -90,7 +95,7 @@ export function createNativeStartAuthority(config: { enrollment: unknown; reques
         if (binding.deadline > Math.min(Date.parse(policy.lease.expiresAt), Date.parse(policy.lease.authority.expiresAt),
           Date.parse(request.approval!.body.expiresAt), now + policy.ceiling.maxDurationSeconds * 1000,
           now + policy.lease.authority.maxDurationSeconds * 1000)) return denied();
-        return { policy, decision, now, at, assertFresh: () => { profileFresh?.(); assertFresh?.(); } };
+        return { policy, decision, now, at, assertFresh: freshness };
       })();
       started = true;
       // Cancellation is advisory. An unresolved resolver retains its slot even after the caller
