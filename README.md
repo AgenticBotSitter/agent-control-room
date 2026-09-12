@@ -76,9 +76,10 @@ Hermes and Codex are the first integration priorities. Claude Code, OpenClaw and
 harnesses are proposed contributor tracks, not current compatibility claims. Start with
 the minimum usable project-to-task-to-result-to-revision experience before expansion.
 
-Run ordinary checks locally. GitHub Actions remains disabled; batch meaningful pushes
-and reviews. Small local commits are welcome. Do not add scheduled builds, automatic
-deployment or privileged runners for public contributions.
+Run ordinary checks locally and use the public CI checks on pull requests and main.
+Standard GitHub-hosted runners are free for this public repository. External
+contributors' runs require maintainer approval. Batch meaningful pushes and reviews;
+do not add scheduled builds, automatic deployment or privileged runners.
 
 ## How the pieces fit
 

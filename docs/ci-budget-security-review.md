@@ -1,99 +1,47 @@
-# Budget and security review: continuous integration
+# Public CI: reviewed settings
 
-`.gitignore` carries the rule "Do not add automation without an explicit
-budget/security review." This is that review, for `.github/workflows/ci.yml`.
-It is a recommendation. Adding the workflow requires removing the `.gitignore`
-entry that currently blocks it, and that decision belongs to the repository
-owner.
+Enabled September 12, 2026 with owner authorization; workflow introduced by PR #15.
+This supersedes earlier instructions to keep public Actions disabled.
 
-## Why now
+## Scope and cost
 
-The private repository's GitHub Actions minutes are exhausted (3,000 of 3,000
-used, resetting in 19 days), so no automated verification runs there at present.
-This repository is public and has never run a workflow, so its capacity is
-entirely unused.
+CI runs type checks, contributor-demo tests/build and compiled server tests on
+standard `ubuntu-latest` runners for pull requests and pushes to main. Manual dispatch
+is available. There are no schedules, deployments, provider calls or private-host jobs.
+Standard hosted runner minutes are free for public repositories; the private owner's
+monthly allowance does not limit these jobs. Larger runners and storage/cache have
+separate billing. Dependency caches are used; no build artifacts are uploaded.
+See [GitHub billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions).
 
-## Budget
+## Verified repository settings
 
-Public repositories get unlimited free standard-runner minutes. This workflow
-uses `ubuntu-latest` only, so it consumes none of any account's included budget.
+- Actions enabled with `allowed_actions: selected`.
+- All external contributors require maintainer approval to run fork PR workflows.
+- Default workflow permissions are read-only; workflows cannot approve PR reviews.
+- Broad GitHub-owned/Marketplace allow options are disabled. Only these external
+  action pins are allowed, each verified in its upstream repository:
+  - `actions/checkout@11d5960a326750d5838078e36cf38b85af677262`
+  - `pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1`
+  - `actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020`
+- Repository secret inventory was empty at enablement; the workflow references none.
+  No claim is made here about future organization secrets or future workflow changes.
 
-Three jobs, each capped with `timeout-minutes` (15, 25, 30). `concurrency` with
-`cancel-in-progress` means a burst of pushes leaves one run per ref, not one per
-push. There is no scheduled trigger, so the workflow never runs on its own.
+The workflow uses `pull_request`, not `pull_request_target`, read-only contents
+permission, checkout without persisted credentials, frozen dependency installation
+with lifecycle scripts disabled, per-job timeouts and cancellation of superseded runs.
+These restrictions do not make arbitrary test code trusted: tests execute the PR code
+on disposable hosted runners. Maintainers review workflow/lockfile changes and never
+approve a request to run public PR code on private machines or with deployment secrets.
+Selected-actions policy does not replace review of shell steps or local actions.
 
-Storage: the workflow uploads no artifacts and produces no cache beyond the
-dependency cache `actions/setup-node` manages. Included storage is 0.5 GB of 2 GB
-used today.
+## Evidence and maintenance
 
-## Security
+First actual hosted run: [34694230466](https://github.com/AgenticBotSitter/agent-control-room/actions/runs/34694230466),
+main revision `680e471a06f5ec4a57fd4390c55313c1909fdd88`. Consult the run for final
+status; local passes alone are not hosted-run evidence. This workflow covers current
+main, not unmerged component-branch integrations or live harness compatibility.
 
-The relevant fact is that this repository is public, so anyone at all can open a
-pull request and cause this workflow to run. Every mitigation below follows from
-treating the checked-out code as hostile.
-
-| Risk | Mitigation |
-|---|---|
-| Fork PR reads secrets or writes to the repo | `pull_request`, never `pull_request_target`. Fork runs get a read-only token and no secrets. `permissions: contents: read` at the top level. |
-| Dependency lifecycle scripts execute on the runner | `pnpm install --frozen-lockfile --ignore-scripts` in all three jobs. |
-| A moved tag silently changes what an action does | All three actions pinned to full commit SHAs, with the version in a trailing comment. |
-| A token left behind in the checkout's git config | `persist-credentials: false` on every checkout. |
-| Unreviewed lockfile changes pulling new packages | `--frozen-lockfile` fails the run rather than resolving something new. |
-
-Two residual risks, both accepted rather than eliminated:
-
-**The tests run the pull request's code.** That is what a test is. `--ignore-scripts`
-removes the path that runs dependency code *before* any test does, but a pull
-request that edits a test still executes on the runner. With no secrets and a
-read-only token the reachable damage is runner compute, which is the standard
-exposure of CI on any public repository.
-
-**Compute abuse by a stranger opening pull requests.** GitHub's default for public
-repositories requires maintainer approval before a first-time contributor's
-workflow runs. Confirm that setting is on, under Settings → Actions → General →
-"Fork pull request workflows from outside collaborators". Consider the stricter
-"Require approval for all outside collaborators".
-
-## What the workflow runs
-
-Only scripts this repository already defines: `check:demo` and `check`
-(typechecks), `test:demo` and `test:build:demo`, and `test`. The `test` script
-builds the server bundle before testing, so the build is covered and there is no
-separate build job.
-
-No lint job: this repository installs eslint transitively but defines no eslint
-config and no lint script, so there is nothing to run.
-
-## Verification
-
-Every command was run locally against a clean
-`pnpm install --frozen-lockfile --ignore-scripts` of this repository, rather than
-reasoned about:
-
-| Command | Result |
-|---|---|
-| `pnpm run check:demo` | exit 0 |
-| `pnpm run check` | exit 0 |
-| `pnpm run test:demo` | 30 / 30 pass |
-| `pnpm run test:build:demo` | 2 / 2 pass |
-| `pnpm run test` | 56 / 56 pass |
-
-88 tests, no failures. This was confirmed both with and without
-`--ignore-scripts`, so the hardening does not change the result.
-
-What this does not establish: the workflow has never executed on GitHub's
-runners. A local pass on macOS is evidence that the scripts work, not proof the
-workflow file is correct. The first run on `ubuntu-latest` is the real test, and
-it may fail for environment reasons this review cannot anticipate.
-
-## Follow-up
-
-The pinned actions are the `v4` majors, matching the sibling private repository.
-`actions/checkout` and `actions/setup-node` are at `v7` and `pnpm/action-setup`
-at `v6`. Upgrading is worth doing separately, where a failure is attributable.
-
-## Standing
-
-This review covers adding CI to this repository. It grants nothing else. It is
-not a publication decision, and it does not bear on the public tree disposition,
-which remains blocked before independent review.
+When updating action pins, review upstream changes and update the exact repository
+allowlist with the workflow. Use targeted local checks during work, normal CI on code
+PRs, and combined integration checks before release. Do not suppress code verification
+with skip-ci. No automatic deployment or branch-protection requirements were added.

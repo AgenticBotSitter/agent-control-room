@@ -87,8 +87,9 @@ Use [CONTRIBUTING.md](CONTRIBUTING.md), the
   decisions. Reserve shared paths early; contributors can propose improvements.
 - Existing native/provider attempt limits remain binding. Ordinary debugging permission
   does not authorize deployment, credentials, persistent services or uncertain retries.
-- Keep local commits and meaningful pushes. Actions remains disabled; no scheduled
-  builds, automatic deployment or privileged public-PR runners are introduced here.
+- Keep local commits and meaningful pushes. Public CI is enabled on standard hosted
+  runners with read-only permissions and approval for external contributors. No
+  scheduled builds, automatic deployment or privileged public-PR runners are enabled.
 
 ## Build and release sequence
 

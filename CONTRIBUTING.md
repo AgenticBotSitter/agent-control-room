@@ -78,10 +78,14 @@ the contributor remains responsible for understanding and checking the result.
 
 ## Submit useful evidence
 
-Run checks locally and batch meaningful pushes and review requests. GitHub Actions
-remains disabled. Do not add workflows, scheduled jobs, automatic deployments or
-self-hosted public-PR runners without explicit maintainer approval. Local commits and
-ordinary Git pushes do not themselves consume Actions runner minutes.
+Run checks locally and batch meaningful pushes and review requests. Public CI is
+enabled for pull requests and main using free standard GitHub-hosted runners.
+External contributors' runs require maintainer approval; tokens are read-only and
+cannot approve PRs. The repository allows only the reviewed pinned external actions.
+Do not add workflows, scheduled jobs, automatic deployments or self-hosted public-PR
+runners without explicit maintainer approval. Do not use skip-ci on code changes.
+Private-repository minute quotas do not apply to these public standard-runner jobs;
+storage/cache and larger runners have separate limits and billing.
 
 Use this short PR summary:
 
