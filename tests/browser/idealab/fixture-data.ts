@@ -100,8 +100,8 @@ const labAParticipants = [
 
 const labA: LabConfig = {
   sessionId: labAId,
-  title: "Synthetic lab A — completed panel with one visible gap",
-  ideaSummary: "A disposable idea used to prove partial-participant failure stays visible after a completed panel.",
+  title: "Synthetic lab A — completed panel ready for decision",
+  ideaSummary: "A disposable idea with a complete six-turn panel, saved synthesis and an available owner decision.",
   targetCustomer: "Contributors validating the Idea Lab journey",
   maxRounds: 2,
   maxDurationSeconds: 300,
@@ -113,6 +113,7 @@ const labA: LabConfig = {
     contribution(labAId, labAParticipants[2].participantId, 1, 3, "Synthetic opinion round 1 from the customer.", "injected_only"),
     contribution(labAId, labAParticipants[0].participantId, 2, 4, "Synthetic opinion round 2 from the skeptic.", "injected_only"),
     contribution(labAId, labAParticipants[1].participantId, 2, 5, "Synthetic opinion round 2 from the builder.", "injected_only"),
+    contribution(labAId, labAParticipants[2].participantId, 2, 6, "Synthetic opinion round 2 from the customer.", "injected_only"),
   ],
   run: {
     runId: `${labAId}:run1`,
@@ -185,4 +186,55 @@ const labB: LabConfig = {
 
 export const digests = { sessionDigest: DIGEST_A, synthesisDigest: DIGEST_B };
 
-export const labs: Record<string, LabConfig> = { [labAId]: labA, [labBId]: labB };
+// Lab C: 3 participants x 2 rounds. Five turns settled, the sixth failed
+// definitely — the panel shows the failure and the missing contribution, and
+// offers no synthesis or decision. A genuine partial-failure state: the gap
+// stays visible instead of unlocking a decision on incomplete evidence.
+const labCId = "idea:lab:partial-failure";
+const labCParticipants = [
+  participant(labCId, 1, "Gail Skeptic", "skeptic"),
+  participant(labCId, 2, "Hugo Hacker", "hacker"),
+  participant(labCId, 3, "Ivy Investor", "investor"),
+];
+
+const labC: LabConfig = {
+  sessionId: labCId,
+  title: "Synthetic lab C — failed turn stays visible, no decision offered",
+  ideaSummary: "A disposable idea used to prove a failed turn blocks synthesis and decision instead of hiding.",
+  targetCustomer: "Contributors validating the Idea Lab journey",
+  maxRounds: 2,
+  maxDurationSeconds: 300,
+  maxCostUsd: 5,
+  participants: labCParticipants,
+  contributions: [
+    contribution(labCId, labCParticipants[0].participantId, 1, 1, "Synthetic opinion round 1 from the skeptic.", "injected_only"),
+    contribution(labCId, labCParticipants[1].participantId, 1, 2, "Synthetic opinion round 1 from the hacker.", "injected_only"),
+    contribution(labCId, labCParticipants[2].participantId, 1, 3, "Synthetic opinion round 1 from the investor.", "injected_only"),
+    contribution(labCId, labCParticipants[0].participantId, 2, 4, "Synthetic opinion round 2 from the skeptic.", "injected_only"),
+    contribution(labCId, labCParticipants[1].participantId, 2, 5, "Synthetic opinion round 2 from the hacker.", "injected_only"),
+  ],
+  run: {
+    runId: `${labCId}:run1`,
+    state: "failed_definite",
+    messagesUsed: 5,
+    costUsd: 0,
+    providerContacted: false,
+    cancellationRequestedAt: null,
+    attempts: [
+      { participantId: labCParticipants[0].participantId, round: 1, state: "completed" },
+      { participantId: labCParticipants[1].participantId, round: 1, state: "completed" },
+      { participantId: labCParticipants[2].participantId, round: 1, state: "completed" },
+      { participantId: labCParticipants[0].participantId, round: 2, state: "completed" },
+      { participantId: labCParticipants[1].participantId, round: 2, state: "completed" },
+      { participantId: labCParticipants[2].participantId, round: 2, state: "failed_definite" },
+    ],
+  },
+  synthesis: null,
+  canSynthesize: false,
+  canStart: false,
+  canStop: false,
+  canDecide: false,
+  canPromote: false,
+};
+
+export const labs: Record<string, LabConfig> = { [labAId]: labA, [labBId]: labB, [labCId]: labC };
