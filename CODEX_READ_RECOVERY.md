@@ -183,7 +183,14 @@ transaction can then reserve one eligible configured node and one canonical leas
 
 This checkpoint still starts nothing. The lease receipt grants no execution
 authority, and Codex plans are explicitly refused by the Hermes-native approval
-and result-binding paths. The next integration must issue a separately reviewed,
-Codex-specific owner permit and compose that permit with the existing durable
-Codex queue/delivery records. It must not reinterpret a Hermes approval packet,
-silently select a workspace, or treat a reported capability as local admission.
+and result-binding paths. A separate Codex-only permit builder now reconstructs
+the exact assigned lease, connector, workspace and machine binding for owner
+review, signs one bounded approval without a Hermes recovery permission, verifies
+that signature against current pinned trust, and writes the existing shared queue
+intent. Repeated or changed permits fail closed.
+
+The next integration must connect that queued intent to the already bounded
+server delivery worker and node-local admission, then return the exact Codex
+result to the existing review lifecycle. It must not expose permit construction
+as a browser request, silently select a workspace, or treat a reported capability
+as local admission.
