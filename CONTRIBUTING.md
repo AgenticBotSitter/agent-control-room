@@ -37,6 +37,12 @@ One local macOS desktop browser trial passed; wider platform/accessibility accep
 and live operation remain unfinished. This is not a production release.
 
 Start with an issue marked ready and read its acceptance criteria before claiming it.
+Reuse is part of each assignment. Follow the reuse ledger and bounded-evaluation rules
+in [PUBLIC_BUILD_PLAN.md](PUBLIC_BUILD_PLAN.md). Name the decision IDs, donor/pin,
+existing evidence, remaining fit test and final attribution. Integrate settled choices;
+do not restart comparisons or build parallel infrastructure. Missing shared contracts
+are maintainer work, not a reason to invent them.
+
 Every ready issue should identify:
 
 - The outcome and exact public base revision.
