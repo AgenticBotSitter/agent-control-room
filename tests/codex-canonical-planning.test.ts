@@ -32,7 +32,7 @@ async function setup() {
   const route: TaskAssignmentRoute = { nodeId: binding.nodeId, executorId: authority.allowedExecutor,
     capabilityProbeId: CODEX_APP_SERVER_CAPABILITY, maxConcurrentTasks: 8, requiredScratchBytes: 100, leaseSeconds: 60 };
   const signals = new FleetSignalStore(f.db);
-  const common = { schemaVersion: "1.0.0", tenantId: binding.tenantId, nodeId: binding.nodeId, sequence: 1,
+  const common = { schemaVersion: "1.0.0" as const, tenantId: binding.tenantId, nodeId: binding.nodeId, sequence: 1,
     observedAt: at(6000), expiresAt: at(120_000), trust: "reported" as const };
   const telemetry: FleetSignalEnvelope = { ...common, fingerprint: sha256Digest("codex-telemetry"), kind: "telemetry",
     source: "telemetry_port", payload: { samplingIntervalSeconds: 30,
