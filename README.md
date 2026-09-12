@@ -13,6 +13,9 @@ Project contact: [Alastair@agenticbotsitter.com](mailto:Alastair@agenticbotsitte
 
 ## Help finish the public release
 
+**[Start here: live work queue](WORK_QUEUE.md)** — ready work, progress, decisions
+needed and accepted outcomes for human and bot contributors.
+
 Humans and bots are welcome. See the [public build plan and focus areas](PUBLIC_BUILD_PLAN.md)
 and [coordination issue #12](https://github.com/AgenticBotSitter/agent-control-room/issues/12).
 Choose work by your expertise and platform; maintainers confirm non-overlapping
