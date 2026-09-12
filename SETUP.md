@@ -6,7 +6,8 @@ the disposable local demo and synthetic integration tests, not a production inst
 
 ## Requirements
 
-- Node.js 22.13.0 or newer (current rehearsal: Node 22.22.3 on macOS).
+- Node.js 22.13.0 or newer (current rehearsals: Node 22.22.3 on macOS;
+  Node 22.13.0 on Debian 13 GNU/Linux x86_64).
 - pnpm 11.19.0.
 - Access to the public npm registry for dependencies not already cached.
 
@@ -28,8 +29,9 @@ above. It may download the pinned package manager; do not substitute the newest 
 Keep the lockfile and disabled dependency-build policy unchanged.
 
 In Windows PowerShell, set `$env:CI = "true"` and then run
-`pnpm install --frozen-lockfile` instead of the Unix-style first line. The current
-isolated rehearsal is on macOS; Windows and Linux installation acceptance is pending.
+`pnpm install --frozen-lockfile` instead of the Unix-style first line. The isolated
+rehearsals run on macOS and on Debian 13 GNU/Linux (x86_64, Node 22.13.0,
+pnpm 11.19.0, bash); Windows installation acceptance remains pending.
 
 `pnpm check` checks the standalone TypeScript source. `pnpm test` builds the standalone
 application and runs its selected compiled integration tests with synthetic/disposable
