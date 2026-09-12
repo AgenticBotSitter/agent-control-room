@@ -5,9 +5,24 @@ import { fileURLToPath } from 'node:url';
 import { collectLicenseEvidence } from './license-evidence.mjs';
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
+/** Narrow `package.json` to the fields that actually determine the license inventory,
+ *  then hash a stable canonical serialization. Top-level fields like `scripts`,
+ *  `name`, formatting, or key order do not move this hash, so unrelated `main`
+ *  churn stops invalidating every open PR's license pin. See issue #38. */
+export function manifestSubsetHash(repository = process.cwd()) {
+  const manifest = JSON.parse(fs.readFileSync(path.join(repository, 'package.json'), 'utf8'));
+  const subset = {};
+  for (const key of ['dependencies', 'devDependencies', 'optionalDependencies']) {
+    const field = manifest[key];
+    if (field && typeof field === 'object' && Object.keys(field).length) {
+      subset[key] = Object.fromEntries(Object.keys(field).sort().map(k => [k, field[k]]));
+    }
+  }
+  return hash(Buffer.from(JSON.stringify(subset)));
+}
 /** Uses a captured pnpm inventory, never discovers its own dependency graph. */
 export function runtimeLicenseReport(input, repository = process.cwd()) {
-  if (input.manifestSha256 !== hash(fs.readFileSync(path.join(repository, 'package.json')))
+  if (input.manifestSha256 !== manifestSubsetHash(repository)
     || input.lockSha256 !== hash(fs.readFileSync(path.join(repository, 'pnpm-lock.yaml')))) throw new Error('license_inventory_stale');
   if (!Array.isArray(input.records) || !input.records.length || input.records.length > 4096) throw new Error('license_inventory_invalid');
   const modules = path.join(repository, 'node_modules'), seen = new Set(), results = [];
