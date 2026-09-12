@@ -21,11 +21,10 @@ name: CI
 # existed to run. That convention now suppresses the verification it predates.
 # Leave it off.
 #
-# Every test lane package.json defines must appear in a job below. The first
-# version of this workflow ran three lanes and silently skipped the rest, so a
-# test could pass review, be committed, and never execute again. The lane-drift
-# job fails if a test file exists that no script reaches - add it to a named lane
-# rather than widening a glob, so what runs stays reviewable.
+# Every test must be reachable from a command a job below actually runs. The
+# lane-drift job follows package-script chains from those workflow commands and
+# fails on any unregistered top-level or nested test. An unused package script
+# cannot satisfy it.
 on:
   push:
     branches: [main]
@@ -147,5 +146,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
-      - name: Fail if any test file is unreachable from package.json scripts
+      - name: Test the lane coverage checker
+        run: node --test tests/check-test-lane-coverage.test.mjs
+      - name: Fail if any test file is unreachable from GitHub Actions
         run: node scripts/check-test-lane-coverage.mjs
