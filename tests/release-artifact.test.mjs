@@ -344,3 +344,49 @@ test("clean manifest over exact tree verifies OK", () => {
     assert.equal(verify.checked, 2);
   } finally { cleanup(root); }
 });
+
+// ---- Update via a separate checkout preserves the old release tree ----
+// (maintainer review correction 2: update must not mutate the live checkout.)
+
+test("building the next release in a separate checkout leaves the previous manifest and files untouched", () => {
+  // Two independent disposable checkouts representing (previous) live and (next) candidate.
+  const prev = gitFixture();
+  const next = gitFixture();
+  // Give them divergent content so the manifests are distinguishable.
+  const prevTree = join(prev.root, "dist-vps", "server");
+  mkdirSync(prevTree, { recursive: true });
+  writeFileSync(join(prevTree, "index.js"), "console.log(1);\n");
+  writeFileSync(join(prevTree, "serving.js"), "export {};\n");
+  const nextTree = join(next.root, "dist-vps", "server");
+  mkdirSync(nextTree, { recursive: true });
+  writeFileSync(join(nextTree, "index.js"), "console.log(2);\n");
+  writeFileSync(join(nextTree, "serving.js"), "export {};\n");
+
+  try {
+    // Build the previous release.
+    const prevOut = assembleRelease({ repoRoot: prev.root, revision: prev.head });
+    const prevManifestBytes = readFileSync(prevOut.manifestPath, "utf8");
+    const prevIndexBytes = readFileSync(join(prev.root, "dist-vps", "server", "index.js"), "utf8");
+    const prevServingBytes = readFileSync(join(prev.root, "dist-vps", "server", "serving.js"), "utf8");
+    // Now simulate the documented update procedure: a separate sibling checkout
+    // for the new SHA. We do not write to prev.root at all.
+    mkdirSync(join(next.root, "dist-prev"), { recursive: true });
+    writeFileSync(join(next.root, "dist-prev", MANIFEST_NAME), prevManifestBytes);
+    const nextOut = assembleRelease({
+      repoRoot: next.root,
+      revision: next.head,
+      previousManifestPath: join("dist-prev", MANIFEST_NAME),
+    });
+    const nextManifest = JSON.parse(readFileSync(nextOut.manifestPath, "utf8"));
+    assert.equal(nextManifest.previousRevision, prev.head);
+    assert.equal(nextManifest.revision, next.head);
+
+    // The previous release tree must be byte-identical to its pre-update state.
+    assert.equal(readFileSync(prevOut.manifestPath, "utf8"), prevManifestBytes, "previous manifest must be untouched");
+    assert.equal(readFileSync(join(prev.root, "dist-vps", "server", "index.js"), "utf8"), prevIndexBytes, "previous index.js must be untouched");
+    assert.equal(readFileSync(join(prev.root, "dist-vps", "server", "serving.js"), "utf8"), prevServingBytes, "previous serving.js must be untouched");
+  } finally {
+    cleanup(prev.root);
+    cleanup(next.root);
+  }
+});

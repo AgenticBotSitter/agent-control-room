@@ -30,7 +30,7 @@
     "check": "tsc --project tsconfig.vps.json",
     "build": "node scripts/build-vps.mjs",
     "test": "node scripts/build-vps.mjs && node --import tsx --test --test-concurrency=1 tests/audit-required-hashes.test.mjs tests/vps-built-handler.test.mjs tests/vps-built-startup.test.mjs tests/vps-built-serving.test.mjs tests/vps-built-rehearsal.test.mjs tests/vps-built-preparation.test.mjs tests/vps-built-results.test.mjs tests/vps-built-owner-review.test.mjs tests/vps-built-planning.test.mjs tests/vps-built-assignment.test.mjs tests/vps-built-task-application.test.mjs tests/vps-built-task-startup.test.mjs tests/vps-built-approval.test.mjs tests/vps-built-quality.test.mjs tests/vps-built-revision-planning.test.mjs tests/vps-built-revised-result.test.mjs tests/vps-built-capacity-release.test.mjs tests/vps-built-owner-revision-interface.test.mjs tests/vps-built-result-ownership.test.mjs tests/vps-built-native-evidence.test.mjs tests/vps-built-managed-native-sessions.test.mjs tests/vps-built-launcher.test.mjs tests/vps-built-core-schema.test.mjs tests/vps-built-multi-project.test.mjs tests/vps-built-database-check.test.mjs tests/vps-built-node-launcher.test.mjs",
-    "test:release": "node --test tests/release-artifact.test.mjs tests/release-preflight.test.mjs && node --import tsx --test tests/release-example-config.test.ts"
+    "test:release": "node --test tests/release-artifact.test.mjs tests/release-preflight.test.mjs tests/release-ignore-policy.test.mjs && node --import tsx --test tests/release-example-config.test.ts"
   },
   "dependencies": {
     "@mozilla/readability": "0.6.0",
