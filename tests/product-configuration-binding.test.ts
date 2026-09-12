@@ -44,7 +44,7 @@ test("two same-artifact processes retain distinct immutable portable configurati
 test("startup capture does not retain a mutable owner-settings product configuration", () => {
   const input = configuration("Isolated", false);
   const startup = validatePrivateStartupConfiguration({ origin, ...trust, tenantId: "tenant:web", workspaceId: "workspace:web",
-    loadKeys: async () => trust.keys, clock: () => now, productConfiguration: input, ownerIdentityId: "identity:web", database: {
+    loadKeys: async () => trust.keys, productConfiguration: input, ownerIdentityId: "identity:web", database: {
     host: "127.0.0.1", port: 5432, database: "template1", username: "web_test", password: "synthetic-only", majorVersion: 17,
   } });
   input.displayName = "mutated";
