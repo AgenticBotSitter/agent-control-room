@@ -1,0 +1,92 @@
+name: CI
+
+# Added under the .gitignore rule "Do not add automation without an explicit
+# budget/security review." That review is docs/ci-budget-security-review.md;
+# read it before changing anything here.
+#
+# Budget: this repository is public, so GitHub's standard runners are free for
+# it and this workflow draws on no account's included-minutes budget.
+#
+# Security: this repository is public, so anyone can open a pull request and
+# cause this to run. Every step below assumes the checked-out code is hostile.
+#  - `pull_request` (never `pull_request_target`) so fork runs get a read-only
+#    token and no access to secrets.
+#  - `--ignore-scripts` so installing dependencies cannot execute their
+#    lifecycle scripts. The tests still run the code; this removes the path that
+#    runs it before any test does.
+#  - Actions pinned to commit SHAs, because a tag can be moved.
+#  - `persist-credentials: false` so no token is left in the git config.
+#
+# Commits here have historically been marked [skip ci] because no workflow
+# existed to run. That convention now suppresses the verification it predates.
+# Leave it off.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Type check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Type check contributor demo
+        run: pnpm run check:demo
+      - name: Type check server build
+        run: pnpm run check
+
+  test-demo:
+    name: Contributor demo tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Demo tests
+        run: pnpm run test:demo
+      - name: Demo build test
+        run: pnpm run test:build:demo
+
+  test-server:
+    name: Server build tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      # The `test` script builds the server bundle first, so this covers the
+      # build as well and there is no separate build job.
+      - name: Build and test
+        run: pnpm run test
