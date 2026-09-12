@@ -9,7 +9,7 @@ import { codexTaskDispatchBodySchemaV1 } from './delivery-contract';
  */
 export function createCodexApprovalIntakeV1(config: { body: unknown; expectedEnrollmentDigest: string;
   expectedConnectorProfileDigest: string; expectedWorkspaceIntentDigest: string }, dependencies: {
-  approvals: PinnedApprovalTrustStore;
+  approvals: Pick<PinnedApprovalTrustStore, 'binding' | 'assertAvailable' | 'resolveApprovalKey'>;
   security: Pick<SqliteNodeSecurityStateRepository, 'currentServerTrustRevision'>;
   clock?: () => number;
 }) {

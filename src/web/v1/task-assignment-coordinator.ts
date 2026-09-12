@@ -47,7 +47,7 @@ export type TaskAssignmentRoute = z.infer<typeof routeSchema>;
 export type NativeApprovalEnrollment = { enrollment: NativeEnrollment; nodeClass: string };
 export type CodexPermitEnrollment = CodexOwnerPermitBindingV1 & {
   approvalKeyId: string;
-  approvals: PinnedApprovalTrustStore;
+  approvals: Pick<PinnedApprovalTrustStore, "binding" | "assertAvailable" | "resolveApprovalKey">;
   security: Pick<SqliteNodeSecurityStateRepository, "currentServerTrustRevision">;
 };
 export type CodexPermitConfiguration = Readonly<{ integrityKey: Uint8Array; enrollments: readonly CodexPermitEnrollment[] }>;
@@ -97,7 +97,11 @@ export class TaskAssignmentCoordinator {
           && route.capabilityProbeId === CODEX_APP_SERVER_CAPABILITY)) unavailable();
         if (typeof value.approvals?.binding !== "function" || typeof value.approvals?.assertAvailable !== "function"
           || typeof value.approvals?.resolveApprovalKey !== "function" || typeof value.security?.currentServerTrustRevision !== "function") unavailable();
-        return Object.freeze({ ...binding, approvalKeyId: localId.parse(approvalKeyId), approvals, security });
+        return Object.freeze({ ...binding, approvalKeyId: localId.parse(approvalKeyId),
+          approvals: Object.freeze({ binding: approvals.binding.bind(approvals),
+            assertAvailable: approvals.assertAvailable.bind(approvals),
+            resolveApprovalKey: approvals.resolveApprovalKey.bind(approvals) }),
+          security: Object.freeze({ currentServerTrustRevision: security.currentServerTrustRevision.bind(security) }) });
       });
       this.codex = Object.freeze({ integrityKey: Uint8Array.from(codex.integrityKey), enrollments: Object.freeze(values) });
     }
@@ -167,6 +171,30 @@ export class TaskAssignmentCoordinator {
             inputDigest: ref.inputDigest }), startsWork: false as const }),
           assertFresh: () => { assertCurrent(); queued.authority.assertFresh(); } };
       }, { reference: ref, signal });
+  }
+  /** Trusted shared-queue discriminator. The queue reference is only a locator:
+   * the selected harness path performs the complete canonical authority check. */
+  async locateQueuedHarnessDelivery(input: NativeTaskSubmissionReference, signal: AbortSignal) {
+    const ref = nativeTaskSubmissionReferenceSchema.parse(input);
+    if (!this.nativeTaskSubmission || !(signal instanceof AbortSignal) || signal.aborted
+      || ref.tenantId !== this.scope.tenantId) conflict();
+    const kind = await this.db.transaction(async tx => {
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
+        [this.scope.tenantId, ref.projectId]);
+      const job = await this.job(tx, ref.projectId, ref.jobId);
+      const plan = await this.planner.readInSession(tx, ref.jobId);
+      if (!plan || plan.tenantId !== ref.tenantId || plan.projectId !== ref.projectId
+        || job.inputDigest !== ref.inputDigest || signal.aborted) conflict();
+      if (job.jobType === CODEX_APP_SERVER_JOB_TYPE && plan.schema === "control-room.task-execution-plan/v3") return "codex" as const;
+      if (job.jobType === "harness.hermes.native.task"
+        && (plan.schema === "control-room.task-execution-plan/v1" || plan.schema === "control-room.task-execution-plan/v2")) return "hermes" as const;
+      return conflict();
+    });
+    if (signal.aborted) conflict();
+    if (kind === "codex") return this.locateApprovedCodexQueueDelivery(ref, signal);
+    const target = await this.locateApprovedQueueDelivery(ref, signal);
+    return Object.freeze({ kind: "hermes" as const, ...target, startsWork: false as const });
   }
   /** Stages one signed Codex envelope and stores it before any transport send. */
   async stageApprovedCodexQueueDelivery(input: NativeTaskSubmissionReference, session: ServerNodeSession, signal: AbortSignal) {
@@ -423,9 +451,13 @@ export class TaskAssignmentCoordinator {
     current();
     const rows = (await this.db.query<{ project_id: string; job_id: string; attempt_id: string; record: { inputDigest?: string; packetDigest?: string } }>(
       `SELECT q.project_id,q.job_id,q.attempt_id,q.record FROM control_native_task_queue q
+       JOIN control_jobs j ON j.tenant_id=q.tenant_id AND j.project_id=q.project_id AND j.id=q.job_id
+       JOIN control_task_execution_plans p ON p.tenant_id=q.tenant_id AND p.project_id=q.project_id AND p.job_id=q.job_id
        JOIN control_attempts a ON a.tenant_id=q.tenant_id AND a.job_id=q.job_id AND a.id=q.attempt_id
        JOIN control_leases l ON l.tenant_id=q.tenant_id AND l.job_id=q.job_id AND l.attempt_id=q.attempt_id
        WHERE q.tenant_id=$1 AND a.node_id=$2 AND l.state='active' AND l.expires_at>$3
+         AND j.payload->>'jobType'='harness.hermes.native.task'
+         AND p.plan->>'schema' IN ('control-room.task-execution-plan/v1','control-room.task-execution-plan/v2')
          AND ($4::text IS NULL OR q.attempt_id=$4)
          AND NOT EXISTS(SELECT 1 FROM control_native_delivery_envelopes e WHERE e.tenant_id=q.tenant_id AND e.job_id=q.job_id AND e.attempt_id=q.attempt_id)
        ORDER BY q.job_id,q.attempt_id LIMIT 33`, [this.scope.tenantId, nodeId, new Date(this.clock()).toISOString(), attemptId ?? null])).rows;

@@ -2,7 +2,8 @@ import type { DatabaseClient, DatabaseSession } from "../../persistence/database
 import { nativeTaskSubmissionReferenceSchema, type NativeTaskSubmission } from "../../persistence/native-task-submission";
 import { localId } from "../../harness/v1/native-run-identifiers";
 import { TaskExecutionPlanner, type TaskPlanningOperation } from "./task-execution-planner";
-import { TaskAssignmentCoordinator, type TaskAssignmentOperation, type TaskAssignmentRoute, type NativeApprovalEnrollment } from "./task-assignment-coordinator";
+import { TaskAssignmentCoordinator, type TaskAssignmentOperation, type TaskAssignmentRoute, type NativeApprovalEnrollment,
+  type CodexPermitConfiguration } from "./task-assignment-coordinator";
 import type { NativeApprovalPacketStore } from "./native-approval-packet-store";
 import { nativeTaskApprovalPacketSchema } from "../../harness/v1/native-approval-packet";
 import { TaskQualityCoordinator, taskQualityRequestSchema, taskQualitySweepRequestSchema, type TaskQualityConfiguration, type TaskQualityOperation } from "./task-quality-coordinator";
@@ -35,6 +36,8 @@ export type TaskCoordinatorConfiguration = {
    * after construction; drained and stopped before the underlying pool closes.
    * Never derived from an HTTP request or enabled implicitly by approval storage. */
   nativeSubmission?: NativeTaskSubmission & { close?: () => Promise<void> };
+  /** Reviewed Codex permit bindings. Configuration alone starts no process or workspace. */
+  codex?: CodexPermitConfiguration;
   quality?: TaskQualityConfiguration;
   revisionPlanning?: true;
   /** An already verified, separately owned bounded control-plane pool. Never the private-web login. */
@@ -166,7 +169,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   // Constructors validate and snapshot immutable templates, keys, route records and scope without SQL.
   const planner = new TaskExecutionPlanner(db, scope, input.planning, input.clock, input.revisionPlanning ? input.quality : undefined);
   const assignment = new TaskAssignmentCoordinator(db, scope, planner, input.routes, input.clock,
-    input.approvals?.enrollments, input.approvals?.store, nativeSubmission);
+    input.approvals?.enrollments, input.approvals?.store, nativeSubmission, input.codex);
   if (input.quality && (input.quality.integrityKey.length !== input.planning.reviewIntegrityKey.length
     || !timingSafeEqual(input.quality.integrityKey, input.planning.reviewIntegrityKey)))
     throw new Error("task_coordinator_config_invalid");
@@ -225,11 +228,14 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     },
   }) : undefined;
   const sessions = sessionPool ? new ManagedNativeSessions(guardedDatabase(sessionPool), sessionSettings!, scope, {
-    queue: nativeSubmission ? { locate: assignment.locateApprovedQueueDelivery.bind(assignment),
+    queue: nativeSubmission ? { locate: assignment.locateQueuedHarnessDelivery.bind(assignment),
       ...(nativeSubmission.recoverUnsentInSession ? { ready: assignment.recoverForReadyNode.bind(assignment) } : {}),
-      stage: assignment.stageApprovedQueueDelivery.bind(assignment), transmit: assignment.transmitApprovedQueueDelivery.bind(assignment) } : undefined,
+      stage: assignment.stageApprovedQueueDelivery.bind(assignment), transmit: assignment.transmitApprovedQueueDelivery.bind(assignment),
+      ...(input.codex ? { codexStage: assignment.stageApprovedCodexQueueDelivery.bind(assignment),
+        codexTransmit: assignment.transmitApprovedCodexQueueDelivery.bind(assignment) } : {}) } : undefined,
     stage: assignment.stageQueuedNativeDelivery.bind(assignment), transmit: assignment.transmitQueuedNativeDelivery.bind(assignment),
     receipt: (session, raw, signal) => receipt!(db, session, raw, signal), progress: receiver!.receive.bind(receiver),
+    ...(input.codex ? { codexReceipt: assignment.receiveCodexDeliveryReceipt.bind(assignment) } : {}),
     recover: receiver!.recover.bind(receiver),
     register: receiver!.register.bind(receiver),
   }, run, check, input.clock) : undefined;
@@ -310,7 +316,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     ...(ideaCreation ? { ideaCreation } : {}),
     ...(nativeSubmission && sessions ? { queueDelivery: async (ref: Parameters<ManagedNativeSessions["deliverApproved"]>[0], signal: AbortSignal) => {
       const result = await sessions.deliverApproved(ref, signal);
-      if (!result.deliveryConfirmed) throw new Error("native_task_delivery_unresolved");
+      if (!result.transmissionRecorded || !result.deliveryConfirmed) throw new Error("native_task_delivery_unresolved");
       return { disposition: "delivered" as const };
     } } : {}),
     ...(submission ? { submission } : {}),
