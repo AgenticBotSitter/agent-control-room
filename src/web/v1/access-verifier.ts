@@ -10,11 +10,39 @@ export class WebAccessError extends Error {
 
 const segment = /^[A-Za-z0-9_-]+$/;
 const headerSchema = z.object({ alg: z.literal("RS256"), kid: z.string().min(1).max(256), typ: z.literal("JWT").optional() }).strict();
-const claimsSchema = z.object({
+const baseClaimsSchema = z.object({
   iss: z.string(), aud: z.array(z.string()).min(1).max(16), sub: z.string().min(1).max(256),
-  type: z.literal("app"), iat: z.number().int().nonnegative(), exp: z.number().int().positive(),
+  iat: z.number().int().nonnegative(), exp: z.number().int().positive(),
   nbf: z.number().int().nonnegative().optional(),
 }).passthrough();
+const cloudflareClaimsSchema = baseClaimsSchema.extend({ type: z.literal("app") });
+
+export const GATEWAY_ASSERTION_PROVIDER_PROFILE_SCHEMA_V1 = "control-room.gateway-assertion-provider/v1" as const;
+const profileBase = {
+  schema: z.literal(GATEWAY_ASSERTION_PROVIDER_PROFILE_SCHEMA_V1), algorithm: z.literal("RS256"),
+  subjectClaim: z.literal("sub"), audienceClaim: z.literal("aud"), issuerClaim: z.literal("iss"),
+  mfaPolicy: z.literal("gateway_policy_external"),
+};
+const customAssertionHeader = z.string().min(3).max(80).regex(/^x-[a-z0-9]+(?:-[a-z0-9]+)*$/).refine(value =>
+  !["x-forwarded-", "x-original-", "x-rewrite-", "x-control-room-"].some(prefix => value.startsWith(prefix)));
+export const gatewayAssertionProviderProfileSchemaV1 = z.discriminatedUnion("profileId", [
+  z.object({ ...profileBase, profileId: z.literal("cloudflare_access"),
+    assertionHeader: z.literal("cf-access-jwt-assertion"), claimContract: z.literal("cloudflare_access_app") }).strict(),
+  z.object({ ...profileBase, profileId: z.literal("rs256_gateway_assertion"),
+    assertionHeader: customAssertionHeader, claimContract: z.literal("standard_gateway_subject") }).strict(),
+]);
+export type GatewayAssertionProviderProfileV1 = z.infer<typeof gatewayAssertionProviderProfileSchemaV1>;
+export const cloudflareAccessGatewayAssertionProfileV1: GatewayAssertionProviderProfileV1 = Object.freeze({
+  schema: GATEWAY_ASSERTION_PROVIDER_PROFILE_SCHEMA_V1, profileId: "cloudflare_access", algorithm: "RS256",
+  assertionHeader: "cf-access-jwt-assertion", claimContract: "cloudflare_access_app",
+  subjectClaim: "sub", audienceClaim: "aud", issuerClaim: "iss", mfaPolicy: "gateway_policy_external",
+});
+
+/** Trusted server configuration only. This selects one implemented gateway assertion mapping;
+ * it is not OIDC discovery and cannot configure claims, MFA inference or key retrieval. */
+export function captureGatewayAssertionProviderProfileV1(value: unknown): GatewayAssertionProviderProfileV1 {
+  return Object.freeze(gatewayAssertionProviderProfileSchemaV1.parse(value));
+}
 
 export interface AccessTrust {
   issuer: string;
@@ -52,7 +80,9 @@ function decode(value: string): unknown {
 }
 
 /** Pure credential verification; no discovery, network, credential store or provider call. */
-export function createAccessVerifier(trust: AccessTrust) {
+export function createAccessVerifier(trust: AccessTrust,
+  profileValue: GatewayAssertionProviderProfileV1 = cloudflareAccessGatewayAssertionProfileV1) {
+  const profile = captureGatewayAssertionProviderProfileV1(profileValue);
   const issuer = new URL(trust.issuer);
   if (issuer.protocol !== "https:" || issuer.origin !== trust.issuer || !trust.audience
     || !Number.isSafeInteger(trust.validUntilMs) || !Number.isSafeInteger(trust.maxSessionSeconds)
@@ -69,7 +99,10 @@ export function createAccessVerifier(trust: AccessTrust) {
   const { issuer: expectedIssuer, audience, validUntilMs, maxSessionSeconds } = trust;
   return (request: Request, nowMs: number): VerifiedWebIdentity => {
     try {
-      const token = request.headers.get("cf-access-jwt-assertion");
+      // The server-selected profile owns the only accepted header. A Cloudflare header beside
+      // the generic profile is confusion, not a fallback or request-selected provider.
+      if (profile.profileId !== "cloudflare_access" && request.headers.has("cf-access-jwt-assertion")) throw new Error();
+      const token = request.headers.get(profile.assertionHeader);
       if (!token || token.length > 16_384 || !Number.isSafeInteger(nowMs) || nowMs >= validUntilMs) throw new Error();
       const parts = token.split(".");
       if (parts.length !== 3) throw new Error();
@@ -83,7 +116,7 @@ export function createAccessVerifier(trust: AccessTrust) {
         // Time policy below owns the injected clock and exact session ceiling.
         // jsonwebtoken treats clockTimestamp=0 as a request for wall-clock time.
         ignoreExpiration: true, ignoreNotBefore: true });
-      const claims = claimsSchema.parse(decode(c));
+      const claims = (profile.claimContract === "cloudflare_access_app" ? cloudflareClaimsSchema : baseClaimsSchema).parse(decode(c));
       const now = nowMs / 1000;
       const expires = Math.min(claims.exp, claims.iat + maxSessionSeconds);
       if (claims.iss !== expectedIssuer || !claims.aud.includes(audience) || claims.iat > now

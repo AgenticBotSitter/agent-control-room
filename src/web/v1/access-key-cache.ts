@@ -1,4 +1,5 @@
-import { createAccessVerifier, type AccessTrust } from "./access-verifier";
+import { cloudflareAccessGatewayAssertionProfileV1, createAccessVerifier,
+  type AccessTrust, type GatewayAssertionProviderProfileV1 } from "./access-verifier";
 import { readBoundedJson } from "./http-common";
 import { z } from "zod";
 
@@ -27,6 +28,7 @@ export function createAccessKeyLoader(issuer: string, transport: typeof fetch): 
 /** One refresh per process, on demand. No request-triggered unknown-key refresh or stale fallback. */
 export function createAccessKeyCache(options: {
   issuer: string; audience: string; maxSessionSeconds: number; loadKeys: AccessKeyLoader; clock: () => number;
+  gatewayAssertionProfile?: GatewayAssertionProviderProfileV1;
   freshForMs?: number; timeoutMs?: number;
 }) {
   const freshForMs = options.freshForMs ?? 300_000;
@@ -62,7 +64,7 @@ export function createAccessKeyCache(options: {
           })]);
           const trust: AccessTrust = { issuer: options.issuer, audience: options.audience,
             maxSessionSeconds: options.maxSessionSeconds, keys: structuredClone(keys), validUntilMs: started + freshForMs };
-          createAccessVerifier(trust);
+          createAccessVerifier(trust, options.gatewayAssertionProfile ?? cloudflareAccessGatewayAssertionProfileV1);
           if (closed || signal.aborted || now() >= trust.validUntilMs) throw new Error("access_keys_unavailable");
           cached = trust; return trust;
         } catch {
