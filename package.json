@@ -8,7 +8,7 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "test:codex-recovery": "node --import tsx --test tests/codex-delivery-contract.test.ts tests/codex-node-intake.test.ts tests/codex-server-delivery.test.ts tests/codex-server-delivery-persistence.test.ts tests/codex-admission-contract.test.ts tests/codex-start-journal.test.ts tests/codex-read-recovery.test.ts tests/codex-read-jsonl.test.ts tests/codex-owned-read.test.ts",
+    "test:codex-recovery": "node --import tsx --test tests/codex-delivery-contract.test.ts tests/codex-node-intake.test.ts tests/codex-server-delivery.test.ts tests/codex-server-delivery-persistence.test.ts tests/codex-canonical-planning.test.ts tests/codex-admission-contract.test.ts tests/codex-start-journal.test.ts tests/codex-read-recovery.test.ts tests/codex-read-jsonl.test.ts tests/codex-owned-read.test.ts",
     "test:notices": "node --test tests/dependency-notices.test.mjs tests/license-evidence.test.mjs",
     "test:queue": "node --import tsx --test --test-concurrency=1 tests/pg-boss-native-task-submission.test.ts tests/pg-boss-native-task-worker.test.ts tests/pg-boss-native-task-runtime.test.ts tests/queue-recovery-fence.test.ts tests/managed-session-readiness.test.ts tests/native-connector-readiness.test.ts",
     "test:contracts": "node --import tsx --test tests/connector-profile.test.ts tests/product-configuration.test.ts tests/product-configuration-binding.test.ts",

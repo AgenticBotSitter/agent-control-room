@@ -21,13 +21,14 @@ import { nativeTaskApprovalPacketSchema } from "../../harness/v1/native-approval
 import type { NativeTaskQueueScope } from "./native-task-queue";
 import type { ServerNodeSession } from "../../node-control/server-node-session";
 import { assertSynchronousFence } from "../../security/synchronous-fence";
+import { CODEX_APP_SERVER_CAPABILITY, CODEX_APP_SERVER_JOB_TYPE } from "../../harness/codex-v1/delivery-contract";
 
 type CanonicalNativeApproval = ReturnType<typeof prepareNativeTaskApprovalWithLease> & {
   enrollment: NativeEnrollment; preparedAt: string; sourceInputDigest: string; inputDigest: string;
 };
 
 const routeSchema = z.object({ nodeId: localId, executorId: localId,
-  capabilityProbeId: z.literal("harness.hermes.native.runs.v1"),
+  capabilityProbeId: z.enum(["harness.hermes.native.runs.v1", CODEX_APP_SERVER_CAPABILITY]),
   maxConcurrentTasks: z.number().int().min(1).max(8), requiredScratchBytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   leaseSeconds: z.number().int().min(1).max(300) }).strict();
 export type TaskAssignmentRoute = z.infer<typeof routeSchema>;
@@ -128,6 +129,9 @@ export class TaskAssignmentCoordinator {
       if (project.origin !== "ordinary") conflict();
       const job = await this.job(tx, projectId, jobId), plan = await this.planner.readInSession(tx, jobId);
       if (!plan || plan.projectId !== projectId || plan.tenantId !== this.scope.tenantId || job.inputDigest !== expectedInputDigest) conflict();
+      // The native approval store and its packet format are Hermes-specific. A Codex
+      // reservation must use the separate bounded owner-permit path instead.
+      if (job.jobType === CODEX_APP_SERVER_JOB_TYPE || plan.schema === "control-room.task-execution-plan/v3") conflict();
       return read(store, tx, { tenantId: this.scope.tenantId, projectId, jobId,
         attemptId: this.ids(jobId).attemptId, inputDigest: expectedInputDigest });
     });
@@ -380,6 +384,8 @@ export class TaskAssignmentCoordinator {
       if (project.lifecycle !== "active" || project.origin !== "ordinary") conflict();
       const job = await this.job(tx, projectId, jobId), plan = await this.planner.readInSession(tx, jobId), stored = await this.stored(tx, job);
       if (!plan || plan.projectId !== projectId || plan.tenantId !== this.scope.tenantId || !stored || job.inputDigest !== expectedInputDigest) conflict();
+      // Never reinterpret a Codex plan as a Hermes native approval packet.
+      if (job.jobType === CODEX_APP_SERVER_JOB_TYPE || plan.schema === "control-room.task-execution-plan/v3") conflict();
       const configured = this.enrollments.find(e => e.enrollment.nodeId === stored.lease.nodeId), route = this.routes.find(r => r.nodeId === stored.lease.nodeId);
       if (!configured || !route || route.executorId !== job.authority.allowedExecutor) conflict();
       const enrollment = configured.enrollment;
