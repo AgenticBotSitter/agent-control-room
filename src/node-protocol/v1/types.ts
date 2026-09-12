@@ -2,6 +2,7 @@ import type { ArtifactManifestRecord, AuthorityEnvelope } from "../../domain/v1"
 import type { FleetSignalEnvelope } from "../../node-fleet/v1/schemas";
 import type { NativeTaskSnapshotBody } from "../../harness/v1/native-observation";
 import type { NativeTaskDispatchBody, NativeTaskDispatchReceiptBody } from "../../harness/v1/native-delivery";
+import type { CodexTaskDispatchBodyV1, CodexTaskDispatchReceiptBodyV1 } from "../../harness/codex-v1/delivery-contract";
 
 export const NODE_PROTOCOL_V1 = "control-room-node/v1" as const;
 export const NODE_PROTOCOL_SUPPORTED_VERSIONS = [NODE_PROTOCOL_V1] as const;
@@ -295,6 +296,8 @@ export interface NodeMessageBodyMap {
   "harness.native.snapshot": NativeTaskSnapshotBody;
   "harness.native.dispatch": NativeTaskDispatchBody;
   "harness.native.dispatch.receipt": NativeTaskDispatchReceiptBody;
+  "harness.codex.dispatch": CodexTaskDispatchBodyV1;
+  "harness.codex.dispatch.receipt": CodexTaskDispatchReceiptBodyV1;
   "job.cancel": CancelRequestBody;
   "job.cancel.ack": CancelAcknowledgementBody;
   "node.reconciliation.request": ReconciliationRequestBody;

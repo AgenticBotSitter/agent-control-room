@@ -1,9 +1,9 @@
 # Exact-ID Codex read recovery
 
 Status: exact selected-package schema is generated, sanitized and bound to the
-bounded response projection. The one-shot JSONL profile, owned connection lifecycle
-and effect-free start-admission contract are implemented; native transport, signed
-delivery intake, durable identity storage, physical restart read, runtime
+bounded response projection. The one-shot JSONL profile, owned connection lifecycle,
+effect-free start-admission contract and signed delivery/owner-permit intake contract
+are implemented; native transport/session wiring, durable identity storage, physical restart read, runtime
 reconciliation and host qualification are not implemented or accepted.
 
 Exact-package schema evidence was generated from `@openai/codex@0.150.0-alpha.8`
@@ -90,10 +90,17 @@ are not retained. Every product-facing capability on these records is deliberate
 receipt proves only that the exact start request received a correlated initial
 response. It is not permission to start, retry, resume or read, and it cannot mark
 canonical work complete. Its ordinary SHA-256 digests detect accidental or
-conflicting changes but are not authentication. The next layer must accept this
-contract only after separately authenticated Codex delivery, permit, pinned
-enrollment and current local admission are verified, then protect the immutable
-journal record with node-owned integrity.
+conflicting changes but are not authentication.
+
+`src/harness/codex-v1/delivery-contract.ts` now carries the authenticated handoff
+through the existing signed node protocol as `harness.codex.dispatch`. It reuses
+the node signature and pinned owner-approval trust while binding the exact prompt,
+workspace intent, connector profile, enrollment, lease, deadline and machine.
+It creates no second queue, signer or transport. `approval-intake.ts` verifies the
+owner signature and current trust revision, but grants no execution, retry or
+resume authority. The start contract may be constructed only after the outer frame,
+recorded delivery, verified permit, pinned enrollment and current local admission
+are all available, then protected by the node-owned journal.
 
 The existing SQLite journal uses full-synchronous WAL and transactions, but its
 ordinary payload digests are integrity consistency checks, not authentication
@@ -103,10 +110,11 @@ Do not advertise this extension as an authenticated restart source merely becaus
 it survives reopen. Production binding acceptance requires an independent review
 of the retained signed evidence and current verification path.
 
-1. Define and verify the separately signed Codex delivery/permit intake that is
-   allowed to construct the effect-free admission contract. Do not expose its
-   constructor or dispatcher to browser input, reuse an initialized-connection
-   identity, or treat the contract digest as a signature.
+1. Wire the signed Codex frame into the existing one-shot node session and bridge
+   delivery slot. Require negotiated Codex capability, the canonical lease pair,
+   durable receipt and current local policy before constructing the start admission.
+   Do not expose its constructor or dispatcher to browser input, reuse an
+   initialized-connection identity, or treat the contract digest as a signature.
 2. Extend the existing protected node journal, not a second coordination service,
    with an immutable observation-only Codex identity record. Bind the exact pair
    to tenant/project/node/job/attempt/run, accepted delivery and pinned adapter
