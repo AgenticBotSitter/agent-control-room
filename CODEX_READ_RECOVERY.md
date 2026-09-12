@@ -172,3 +172,18 @@ passes 11 tests.
 Run `pnpm test:codex-recovery` for the effect-free
 projection and protocol checks. No credentials, native app-server process or provider call is
 used by those tests. A separate owner-attended qualification stays separate.
+
+### Canonical planning and assignment checkpoint
+
+Codex now enters the existing `TaskExecutionPlanner` and
+`TaskAssignmentCoordinator` instead of a second planner or queue. A server-owned
+Codex template creates a signed `control-room.task-execution-plan/v3` that binds
+the exact connector-profile and workspace-intent digests. The existing assignment
+transaction can then reserve one eligible configured node and one canonical lease.
+
+This checkpoint still starts nothing. The lease receipt grants no execution
+authority, and Codex plans are explicitly refused by the Hermes-native approval
+and result-binding paths. The next integration must issue a separately reviewed,
+Codex-specific owner permit and compose that permit with the existing durable
+Codex queue/delivery records. It must not reinterpret a Hermes approval packet,
+silently select a workspace, or treat a reported capability as local admission.

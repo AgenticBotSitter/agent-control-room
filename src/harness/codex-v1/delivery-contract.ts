@@ -7,6 +7,9 @@ import { digestSchema, localId } from '../v1/native-run-identifiers';
 
 export const CODEX_START_OPERATION = 'harness.codex.app-server.start' as const;
 export const CODEX_DELIVERY_FEATURE = 'harness.codex.dispatch.v1' as const;
+export const CODEX_APP_SERVER_ADAPTER = 'codex-app-server/v1' as const;
+export const CODEX_APP_SERVER_CAPABILITY = 'harness.codex.app-server.v1' as const;
+export const CODEX_APP_SERVER_JOB_TYPE = 'harness.codex.app-server.task' as const;
 const instant = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const text = (bytes: number) => z.string().refine(value => Buffer.byteLength(value, 'utf8') <= bytes);
 

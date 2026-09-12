@@ -11,6 +11,8 @@ import { CompletionGateStoreV1, completionAcceptanceProfileSchemaV1, completionR
 import { NativeResultSubmissionService } from "../../completion-gate/v1/native-result-submission";
 import { HarnessRunStoreV1 } from "../../harness/v1/store";
 import { HERMES_NATIVE_ADAPTER, localId, digestSchema } from "../../harness/v1/native-run-identifiers";
+import { CODEX_APP_SERVER_ADAPTER, CODEX_APP_SERVER_CAPABILITY, CODEX_APP_SERVER_JOB_TYPE,
+  CODEX_START_OPERATION } from "../../harness/codex-v1/delivery-contract";
 import { parseCanonicalHttpsDestination } from "../../node-policy/v1/network-target-guard";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 import { WebSessionAuthority } from "./session-authority";
@@ -21,17 +23,24 @@ import { taskRevisionContextSchema, taskRevisionRequestSchema, type TaskRevision
 const instant = z.string().datetime().refine(value => new Date(value).toISOString() === value);
 /** Server-owned template, never accepted from a browser or worker request. This first planning
  * class describes one approval-required native text turn, not arbitrary tools or a runnable grant. */
-export const nativeTaskTemplateSchema = z.object({ id: localId, adapter: z.literal(HERMES_NATIVE_ADAPTER),
+export const nativeTaskTemplateSchema = z.object({ id: localId, adapter: z.enum([HERMES_NATIVE_ADAPTER, CODEX_APP_SERVER_ADAPTER]),
   instructions: z.string().max(8192).refine(value => Buffer.byteLength(value, "utf8") <= 8192),
   authority: authorityEnvelopeSchema, acceptanceProfileId: localId, acceptanceProfileDigest: digestSchema,
+  connectorProfileDigest: digestSchema.optional(), workspaceIntentDigest: digestSchema.optional(),
 }).strict().superRefine((value, context) => {
   const a = value.authority;
+  const hermes = value.adapter === HERMES_NATIVE_ADAPTER;
   if (a.allowedExecutor === "executor:unassigned" || a.allowedOperations.length !== 1
-    || a.allowedOperations[0] !== "harness.hermes.native.start" || a.filesystemRoots.length || a.credentialRefs.length !== 1
-    || a.networkPolicy !== "allowlist" || a.allowedNetworkDestinations.length !== 1
+    || a.allowedOperations[0] !== (hermes ? "harness.hermes.native.start" : CODEX_START_OPERATION)
+    || a.filesystemRoots.length !== (hermes ? 0 : 1) || a.credentialRefs.length !== 1
+    || a.networkPolicy !== (hermes ? "allowlist" : "none") || a.allowedNetworkDestinations.length !== (hermes ? 1 : 0)
     || a.effectPolicy !== "approval_required" || a.maxConcurrentEffects !== 1 || a.maxDurationSeconds > 300
     || a.maxCostUsd !== undefined || a.parentDigest !== undefined || a.maxRisk !== "low"
     || computeAuthorityDigest(a) !== a.digest) context.addIssue({ code: "custom", message: "unsupported native task template" });
+  if (hermes ? value.connectorProfileDigest !== undefined || value.workspaceIntentDigest !== undefined
+    : value.connectorProfileDigest === undefined || value.workspaceIntentDigest === undefined) {
+    context.addIssue({ code: "custom", message: "unsupported native task template" });
+  }
   try { for (const destination of a.allowedNetworkDestinations) parseCanonicalHttpsDestination(destination); }
   catch { context.addIssue({ code: "custom", message: "unsupported native destination" }); }
 });
@@ -56,7 +65,9 @@ const initialPlanSchema = z.object({ schema: z.literal("control-room.task-execut
   acceptanceProfileId: localId, acceptanceProfileDigest: digestSchema,
 }).strict();
 const revisionPlanSchema = initialPlanSchema.extend({ schema: z.literal("control-room.task-execution-plan/v2"), revision: taskRevisionContextSchema });
-const planSchema = z.discriminatedUnion("schema", [initialPlanSchema, revisionPlanSchema]);
+const codexPlanSchema = initialPlanSchema.extend({ schema: z.literal("control-room.task-execution-plan/v3"),
+  adapter: z.literal(CODEX_APP_SERVER_ADAPTER), connectorProfileDigest: digestSchema, workspaceIntentDigest: digestSchema });
+const planSchema = z.discriminatedUnion("schema", [initialPlanSchema, revisionPlanSchema, codexPlanSchema]);
 type Plan = z.infer<typeof planSchema>;
 export type TaskPlanningOperation = Readonly<{ tenantId: string; workspaceId: string; plan: TaskExecutionPlanner["plan"];
   supportsProject?: (projectId: string) => boolean;
@@ -95,8 +106,9 @@ export class TaskExecutionPlanner {
       this.revisionSource = new NativeResultSubmissionService(db, { ...revisionResults, checkpoints: this.checkpoints });
     }
   }
-  private tag(plan: Plan) { return hmacSha256Tag(this.key, {
-    purpose: plan.schema === "control-room.task-execution-plan/v1" ? "task-execution-plan/v1" : "task-execution-plan/v2", plan }); }
+  private tag(plan: Plan) { return hmacSha256Tag(this.key, { purpose: plan.schema === "control-room.task-execution-plan/v1"
+    ? "task-execution-plan/v1" : plan.schema === "control-room.task-execution-plan/v2"
+      ? "task-execution-plan/v2" : "task-execution-plan/v3", plan }); }
   webOperation(): TaskPlanningOperation {
     return Object.freeze({ tenantId: this.scope.tenantId, workspaceId: this.scope.workspaceId, plan: this.plan.bind(this),
       supportsProject: this.supportsProject.bind(this),
@@ -116,7 +128,7 @@ export class TaskExecutionPlanner {
         [this.scope.tenantId, sourceJobId])).rows[0];
       if (!row) return null;
       const plan = this.verify(row);
-      if (plan.schema !== "control-room.task-execution-plan/v1" || plan.projectId !== projectId
+      if (plan.schema === "control-room.task-execution-plan/v2" || plan.projectId !== projectId
         || plan.sourceJobId !== sourceJobId || plan.sourceDigest !== sha256Digest(source)
         || plan.sourceInputDigest !== source.job.inputDigest) fail();
       await this.checkedJob(tx, plan);
@@ -192,18 +204,23 @@ export class TaskExecutionPlanner {
       const suffix = sha256Digest({ tenantId: this.scope.tenantId, sourceJobId }).slice(7);
       const base = { contractVersion: DOMAIN_CONTRACT_VERSION, tenantId: this.scope.tenantId, version: 0, createdAt: actor.now, updatedAt: actor.now };
       const input = { prompt: source.request.objective, instructions: template.instructions };
-      const plan = planSchema.parse({ schema: "control-room.task-execution-plan/v1", tenantId: this.scope.tenantId,
+      const codex = template.adapter === CODEX_APP_SERVER_ADAPTER;
+      const plan = planSchema.parse({ schema: codex ? "control-room.task-execution-plan/v3" : "control-room.task-execution-plan/v1",
+        ...(codex ? { adapter: CODEX_APP_SERVER_ADAPTER, connectorProfileDigest: template.connectorProfileDigest,
+          workspaceIntentDigest: template.workspaceIntentDigest } : {}), tenantId: this.scope.tenantId,
         projectId, sourceJobId, sourceDigest, sourceInputDigest: expectedInputDigest, templateDigest, plannedBy: actor.id, plannedAt: actor.now, input,
         acceptanceProfileId: template.acceptanceProfileId, acceptanceProfileDigest: template.acceptanceProfileDigest,
         request: { ...base, kind: "request", id: `request:execution:${suffix}`, projectId, title: source.request.title,
           objective: source.request.objective, state: "draft", priority: source.request.priority,
           requestedBy: { actorId: actor.id, actorType: "human" }, idempotencyKey: `execution:${suffix}` },
         workflow: { ...base, kind: "workflow", id: `workflow:execution:${suffix}`, projectId, requestId: `request:execution:${suffix}`,
-          definitionVersion: "native-task-plan/v1", definitionDigest: sha256Digest({ sourceDigest, templateDigest }),
+          definitionVersion: codex ? "codex-task-plan/v1" : "native-task-plan/v1", definitionDigest: sha256Digest({ sourceDigest, templateDigest }),
           authorityMode: "control_room_native", state: "proposed", jobIds: [`job:execution:${suffix}`] },
         job: { ...base, kind: "job", id: `job:execution:${suffix}`, projectId, workflowId: `workflow:execution:${suffix}`,
-          jobType: "harness.hermes.native.task", specVersion: "1.0.0", inputDigest: sha256Digest(input), state: "proposed",
-          priority: source.job.priority, requiredCapability: "harness.hermes.native.runs.v1", dependsOnJobIds: [], authority: template.authority,
+          jobType: template.adapter === HERMES_NATIVE_ADAPTER ? "harness.hermes.native.task" : CODEX_APP_SERVER_JOB_TYPE,
+          specVersion: "1.0.0", inputDigest: sha256Digest(input), state: "proposed",
+          priority: source.job.priority, requiredCapability: template.adapter === HERMES_NATIVE_ADAPTER
+            ? "harness.hermes.native.runs.v1" : CODEX_APP_SERVER_CAPABILITY, dependsOnJobIds: [], authority: template.authority,
           retryPolicy: { maxAttempts: 1, backoffSeconds: 0, retryableFailureCodes: [], retryAfterOrphan: false, ambiguousEffectPolicy: "attention" } } });
       await this.profile(tx, plan, actor.now); assertNoSecretMaterial(plan);
       // The inert-proposal materializer deliberately rejects this richer envelope. Use the existing
@@ -283,9 +300,9 @@ export class TaskExecutionPlanner {
         fromTargetId: input.targetId, fromTargetDigest: input.targetDigest, fromContentHash: input.contentHash,
         reviewId: review.id, reviewDigest: sha256Digest(review), findingIds, feedbackDigest: sha256Digest(input.feedback),
         sourcePlanDigest: sha256Digest(source), revisionNumber: context.snapshot.revisionNumber + 1,
-        originalPrompt: source.schema === "control-room.task-execution-plan/v1" ? source.input.prompt : source.revision.originalPrompt });
+        originalPrompt: source.schema === "control-room.task-execution-plan/v2" ? source.revision.originalPrompt : source.input.prompt });
       template = this.templates.get(projectId);
-      if (!template) throw new WebAccessError("conflict");
+      if (!template || template.adapter !== HERMES_NATIVE_ADAPTER) throw new WebAccessError("conflict");
       const sourceDigest = sha256Digest(revision), templateDigest = sha256Digest(template);
       const prior = (await tx.query<Row>("SELECT * FROM control_task_execution_plans WHERE tenant_id=$1 AND source_job_id=$2",
         [this.scope.tenantId, sourceJobId])).rows[0];
@@ -388,7 +405,7 @@ export class TaskExecutionPlanner {
     if (!row) return fail();
     const plan = this.verify(row);
     if (plan.tenantId !== this.scope.tenantId || plan.projectId !== projectId || plan.job.id !== jobId) return fail();
-    if (plan.schema === "control-room.task-execution-plan/v1") return;
+    if (plan.schema !== "control-room.task-execution-plan/v2") return;
     const { fromRunId, fromJobId } = plan.revision;
     const run = await tx.query(`SELECT id FROM control_harness_runs
       WHERE tenant_id=$1 AND project_id=$2 AND id=$3 AND job_id=$4 FOR UPDATE`,
@@ -402,6 +419,9 @@ export class TaskExecutionPlanner {
   async bindReview(jobId: string, runId: string, harnessIntegrityKey: Uint8Array,
     submission: Pick<NativeResultSubmissionService, "register"> & Partial<Pick<NativeResultSubmissionService, "registerRevision">>) {
     const plan = await this.read(jobId); if (!plan) return fail();
+    // Codex delivery evidence is not a Hermes native run. Its result adapter will
+    // bind the delivery receipt to review in a later, explicit integration step.
+    if (plan.schema === "control-room.task-execution-plan/v3") return fail();
     const inspected = await new HarnessRunStoreV1(this.db, harnessIntegrityKey).inspect(plan.tenantId, runId);
     if (!inspected?.run.nativeTask || inspected.run.jobId !== jobId || inspected.run.projectId !== plan.projectId
       || inspected.run.nativeTask.inputDigest !== plan.job.inputDigest || Date.parse(inspected.run.createdAt) < Date.parse(plan.plannedAt)) return fail();
