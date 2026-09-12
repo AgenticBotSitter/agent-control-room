@@ -28,9 +28,10 @@ node scripts/release/verify-artifact.mjs
 ```
 
 `build-release.mjs` refuses before any effect when `dist-vps/` is missing, the
-revision is not a 40-hex SHA, or `dist-release/` already exists (pass
-`--overwrite` to replace). Record the manifest's `revision` and `totalBytes`
-in your install log.
+revision is not a 40-hex SHA, the passed revision is not exactly the checkout's
+current clean Git `HEAD` (the manifest proves build provenance), or
+`dist-release/` already exists (pass `--overwrite` to replace). Record the
+manifest's `revision` and `totalBytes` in your install log.
 
 ## 3. Write the operator configuration
 
@@ -42,14 +43,20 @@ symlink. Never commit it.
 ## 4. Preflight, then start
 
 ```sh
-node scripts/release/preflight.mjs --configuration /home/operator/control-room-config.mjs --port <port> --artifact dist-release
+node scripts/release/preflight.mjs --configuration /home/operator/control-room-config.mjs --artifact dist-release
+# Optional explicit bind probe (opens a listener — an effect):
+node scripts/release/preflight.mjs --configuration /home/operator/control-room-config.mjs --artifact dist-release --port <port> --bind-probe
 node scripts/run-private-vps.mjs --configuration /home/operator/control-room-config.mjs
 ```
 
-Preflight is read-only and exits 1 with a failure list when anything is wrong
-(Node/pnpm versions, loopback bind, config trust, artifact integrity). Do not
-start when preflight fails. See `supervisor.md` for the unprivileged service
-template and `restore-checklist.md` before first start against real data.
+Static preflight makes no listener effect: it checks versions, config-file
+custody and artifact integrity, and exits 1 with a failure list when anything
+is wrong. The loopback bind probe is opt-in (`--bind-probe`) because opening
+a listener is a real effect. Preflight validates the config FILE, not what a
+running process would load from it — the runtime's own validators re-check
+every loaded value at startup. Do not start when preflight fails. See
+`supervisor.md` for the unprivileged service template and
+`restore-checklist.md` before first start against real data.
 
 ## 5. Live-start gate (separately approved)
 

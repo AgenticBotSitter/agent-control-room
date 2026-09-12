@@ -2,7 +2,7 @@
 // Fixture files and ephemeral ports only — no system changes.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtempSync, rmSync, writeFileSync, symlinkSync, chmodSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, symlinkSync, chmodSync, mkdirSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -73,9 +73,42 @@ test("full preflight passes on valid inputs, fails closed on bad ones", async ()
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test("artifact check verifies integrity, skips cleanly when absent", () => {
-  const skipped = checkArtifact(".", "");
-  assert.equal(skipped.ok, true);
-  const missing = checkArtifact(".", "dist-nope");
-  assert.equal(missing.ok, false);
+test("artifact check is required when a build tree exists; verifies manifest exactly", () => {
+  const root = mkdtempSync(join(tmpdir(), "pf-"));
+  try {
+    // no build tree, no artifact: acceptable
+    const noTree = checkArtifact(root, "");
+    assert.equal(noTree.ok, true);
+    // build tree exists, artifact required
+    mkdirSync(join(root, "dist-vps"), { recursive: true });
+    const noArtifact = checkArtifact(root, "");
+    assert.equal(noArtifact.ok, false);
+    const noManifest = checkArtifact(root, "dist-release");
+    assert.equal(noManifest.ok, false);
+    const missing = checkArtifact(".", "dist-nope");
+    assert.equal(missing.ok, false);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("static preflight performs NO bind effect; bind probe is opt-in", async () => {
+  // occupy an ephemeral port to prove static mode does not probe it
+  const holder = createServer();
+  await new Promise(resolve => holder.listen(0, "127.0.0.1", resolve));
+  const port = holder.address().port;
+  try {
+    const dir = mkdtempSync(join(tmpdir(), "pf-static-"));
+    const config = join(dir, "operator.mjs");
+    writeFileSync(config, "export {};\n");
+    chmodSync(config, 0o600);
+    // static run with a port that is occupied: must still pass, because static mode never binds
+    const pass = await runPreflight({ configuration: config, port, artifact: "" });
+    assert.equal(pass.ok, true);
+    assert.deepEqual(pass.failures, []);
+    // bind probe run against the same occupied port must fail honestly
+    const probed = await runPreflight({ configuration: config, port, artifact: "", bindProbe: true });
+    assert.equal(probed.ok, false);
+    assert.deepEqual(probed.failures, ["bind"]);
+  } finally {
+    await new Promise(resolve => holder.close(resolve));
+  }
 });

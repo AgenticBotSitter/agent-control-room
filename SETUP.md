@@ -140,7 +140,7 @@ directory or another checkout. Temporary rehearsal logs are not release content.
 ## Installable release (issue #9)
 
 The operator release package lives in `scripts/release/` (manifest builder,
-artifact verifier, read-only preflight), `docs/operations/` (install,
+artifact verifier, static preflight), `docs/operations/` (install,
 update/rollback, restore checklist, unprivileged supervisor guide),
 `examples/release/` (generic operator config, env names, user service unit)
 and `tests/release-*.test.mjs|ts`. Run it with:
@@ -149,7 +149,7 @@ and `tests/release-*.test.mjs|ts`. Run it with:
 node scripts/build-vps.mjs
 node scripts/release/build-release.mjs --revision <exact-40-hex-sha>
 node scripts/release/verify-artifact.mjs
-node scripts/release/preflight.mjs --configuration /absolute/operator-config.mjs --port <n> --artifact dist-release
+node scripts/release/preflight.mjs --configuration /absolute/operator-config.mjs --artifact dist-release
 pnpm test:release
 ```
 
