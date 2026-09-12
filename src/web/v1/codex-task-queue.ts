@@ -35,22 +35,24 @@ export function codexApprovalPacketDigestV1(value: unknown) {
 
 /** Digest of the complete immutable machine/work binding. Prompt text is bound by inputDigest. */
 export function codexExecutionBindingDigestV1(value: unknown) {
-  const { prompt: _prompt, instructions: _instructions, ...binding } = codexTaskDispatchBodySchemaV1.parse(value).start;
-  void _prompt; void _instructions;
+  const { schema: _schema, prompt: _prompt, instructions: _instructions, ...binding } = codexTaskDispatchBodySchemaV1.parse(value).start;
+  void _schema; void _prompt; void _instructions;
   return sha256Digest({ schema: "control-room.codex-execution-binding/v1", ...binding });
 }
 
 function permits(authority: AuthorityEnvelope, body: CodexTaskDispatchBodyV1, now: number) {
   const request = body.request;
+  if (request.target.kind !== "filesystem") return false;
+  const canonicalPath = request.target.canonicalPath;
   const risk = { low: 0, medium: 1, high: 2, critical: 3 } as const;
-  const withinRoot = request.target.kind === "filesystem" && authority.filesystemRoots.some(root => root === "/"
-    || request.target.canonicalPath === root || request.target.canonicalPath.startsWith(`${root}/`));
+  const withinRoot = authority.filesystemRoots.some(root => root === "/"
+    || canonicalPath === root || canonicalPath.startsWith(`${root}/`));
   return authority.digest === request.authorityDigest && authority.projectId === request.projectId
     && authority.allowedExecutor === request.executorId && authority.allowedOperations.includes(request.operationId)
     && request.credentialRefs.every(ref => authority.credentialRefs.includes(ref))
     && authority.effectPolicy !== "none" && risk[request.risk] <= risk[authority.maxRisk]
     && request.estimatedDurationSeconds <= authority.maxDurationSeconds
-    && (request.estimatedCostUsd === undefined || authority.maxCostUsd !== undefined && request.estimatedCostUsd <= authority.maxCostUsd)
+    && request.estimatedCostUsd === undefined
     && Date.parse(authority.expiresAt) >= body.start.deadline && Date.parse(authority.expiresAt) > now && withinRoot;
 }
 
