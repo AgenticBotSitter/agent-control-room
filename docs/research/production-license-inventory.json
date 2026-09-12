@@ -1,30 +1,30 @@
 {
-  "generatedFrom": "package.json dependencies, resolved against the local node_modules",
+  "generatedFrom": "package.json dependencies, resolved against the local install",
   "grantsCertification": false,
   "grantsReleaseAuthority": false,
   "packageCount": 38,
   "byLicense": {
-    "MIT": 31,
+    "MIT": 32,
     "BSD-2-Clause": 1,
     "ISC": 2,
     "Unlicense": 1,
     "BlueOak-1.0.0": 1,
     "(MIT OR CC0-1.0)": 1
   },
-  "notInstalled": [
-    "scheduler"
-  ],
-  "missingLicenseText": [
-    {
-      "name": "@nodable/entities",
-      "license": "MIT"
-    },
+  "unresolved": [],
+  "licenseTextInReadmeOnly": [
     {
       "name": "pg-types",
       "license": "MIT"
     },
     {
       "name": "pgpass",
+      "license": "MIT"
+    }
+  ],
+  "noLicenseTextAnywhere": [
+    {
+      "name": "@nodable/entities",
       "license": "MIT"
     },
     {
@@ -37,7 +37,8 @@
       "installed": true,
       "version": "3.0.0",
       "license": "MIT",
-      "files": []
+      "files": [],
+      "textLocation": "none"
     },
     "anynum": {
       "installed": true,
@@ -45,7 +46,8 @@
       "license": "MIT",
       "files": [
         "LICENSE"
-      ]
+      ],
+      "textLocation": "license-file"
     },
     "cron-parser": {
       "installed": true,
@@ -53,7 +55,8 @@
       "license": "MIT",
       "files": [
         "LICENSE"
-      ]
+      ],
+      "textLocation": "license-file"
     },
     "entities": {
       "installed": true,
@@ -61,7 +64,8 @@
       "license": "BSD-2-Clause",
       "files": [
         "LICENSE"
-      ]
+      ],
+      "textLocation": "license-file"
     },
     "fast-xml-builder": {
       "installed": true,
@@ -69,7 +73,8 @@
       "license": "MIT",
       "files": [
         "LICENSE"
-      ]
+      ],
+      "textLocation": "license-file"
     },
     "fast-xml-parser": {
       "installed": true,
@@ -77,7 +82,8 @@
       "license": "MIT",
       "files": [
         "LICENSE"
-      ]
+      ],
+      "textLocation": "license-file"
     },
     "is-unsafe": {
       "installed": true,
@@ -85,7 +91,8 @@
       "license": "MIT",
       "files": [
         "LICENSE"
-      ]
+      ],
+      "textLocation": "license-file"
     },
     "luxon": {
       "installed": true,
@@ -93,7 +100,8 @@
       "license": "MIT",
       "files": [
         "LICENSE.md"
-      ]
+      ],
+      "textLocation": "license-file"
     },
     "non-error": {
       "installed": true,
@@ -101,7 +109,8 @@
       "license": "MIT",
       "files": [
         "license"
-      ]
+      ],
+      "textLocation": "license-file"
     },
     "path-expression-matcher": {
       "installed": true,
@@ -109,7 +118,8 @@
       "license": "MIT",
       "files": [
         "LICENSE"
-      ]
+      ],
+      "textLocation": "license-file"
     },
     "pg": {
       "installed": true,
@@ -117,7 +127,8 @@
       "license": "MIT",
       "files": [
         "LICENSE"
-      ]
+      ],
+      "textLocation": "license-file"
     },
     "pg-boss": {
       "installed": true,
@@ -125,7 +136,8 @@
       "license": "MIT",
       "files": [
         "LICENSE"
-      ]
+      ],
+      "textLocation": "license-file"
     },
     "pg-connection-string": {
       "installed": true,
@@ -133,7 +145,8 @@
       "license": "MIT",
       "files": [
         "LICENSE"
-      ]
+      ],
+      "textLocation": "license-file"
     },
     "pg-int8": {
       "installed": true,
@@ -141,7 +154,8 @@
       "license": "ISC",
       "files": [
         "LICENSE"
-      ]
+      ],
+      "textLocation": "license-file"
     },
     "pg-pool": {
       "installed": true,
@@ -149,7 +163,8 @@
       "license": "MIT",
       "files": [
         "LICENSE"
-      ]
+      ],
+      "textLocation": "license-file"
     },
     "pg-protocol": {
       "installed": true,
@@ -157,25 +172,29 @@
       "license": "MIT",
       "files": [
         "LICENSE"
-      ]
+      ],
+      "textLocation": "license-file"
     },
     "pg-types": {
       "installed": true,
       "version": "2.2.0",
       "license": "MIT",
-      "files": []
+      "files": [],
+      "textLocation": "readme"
     },
     "pgpass": {
       "installed": true,
       "version": "1.0.5",
       "license": "MIT",
-      "files": []
+      "files": [],
+      "textLocation": "readme"
     },
     "postgres": {
       "installed": true,
       "version": "3.4.7",
       "license": "Unlicense",
-      "files": []
+      "files": [],
+      "textLocation": "none"
     },
     "postgres-array": {
       "installed": true,
@@ -183,7 +202,8 @@
       "license": "MIT",
       "files": [
         "license"
-      ]
+      ],
+      "textLocation": "license-file"
     },
     "postgres-bytea": {
       "installed": true,
@@ -191,7 +211,8 @@
       "license": "MIT",
       "files": [
         "license"
-      ]
+      ],
+      "textLocation": "license-file"
     },
     "postgres-date": {
       "installed": true,
@@ -199,7 +220,8 @@
       "license": "MIT",
       "files": [
         "license"
-      ]
+      ],
+      "textLocation": "license-file"
     },
     "postgres-interval": {
       "installed": true,
@@ -207,7 +229,8 @@
       "license": "MIT",
       "files": [
         "license"
-      ]
+      ],
+      "textLocation": "license-file"
     },
     "react": {
       "installed": true,
@@ -215,7 +238,8 @@
       "license": "MIT",
       "files": [
         "LICENSE"
-      ]
+      ],
+      "textLocation": "license-file"
     },
     "react-dom": {
       "installed": true,
@@ -223,7 +247,8 @@
       "license": "MIT",
       "files": [
         "LICENSE"
-      ]
+      ],
+      "textLocation": "license-file"
     },
     "rss-parser": {
       "installed": true,
@@ -231,7 +256,8 @@
       "license": "MIT",
       "files": [
         "LICENSE"
-      ]
+      ],
+      "textLocation": "license-file"
     },
     "sax": {
       "installed": true,
@@ -239,10 +265,17 @@
       "license": "BlueOak-1.0.0",
       "files": [
         "LICENSE.md"
-      ]
+      ],
+      "textLocation": "license-file"
     },
     "scheduler": {
-      "installed": false
+      "installed": true,
+      "version": "0.27.0",
+      "license": "MIT",
+      "files": [
+        "LICENSE"
+      ],
+      "textLocation": "license-file"
     },
     "serialize-error": {
       "installed": true,
@@ -250,7 +283,8 @@
       "license": "MIT",
       "files": [
         "license"
-      ]
+      ],
+      "textLocation": "license-file"
     },
     "split2": {
       "installed": true,
@@ -258,7 +292,8 @@
       "license": "ISC",
       "files": [
         "LICENSE"
-      ]
+      ],
+      "textLocation": "license-file"
     },
     "strnum": {
       "installed": true,
@@ -266,7 +301,8 @@
       "license": "MIT",
       "files": [
         "LICENSE"
-      ]
+      ],
+      "textLocation": "license-file"
     },
     "tagged-tag": {
       "installed": true,
@@ -274,7 +310,8 @@
       "license": "MIT",
       "files": [
         "license"
-      ]
+      ],
+      "textLocation": "license-file"
     },
     "type-fest": {
       "installed": true,
@@ -283,7 +320,8 @@
       "files": [
         "license-cc0",
         "license-mit"
-      ]
+      ],
+      "textLocation": "license-file"
     },
     "xml-naming": {
       "installed": true,
@@ -291,7 +329,8 @@
       "license": "MIT",
       "files": [
         "LICENSE"
-      ]
+      ],
+      "textLocation": "license-file"
     },
     "xml2js": {
       "installed": true,
@@ -299,7 +338,8 @@
       "license": "MIT",
       "files": [
         "LICENSE"
-      ]
+      ],
+      "textLocation": "license-file"
     },
     "xmlbuilder": {
       "installed": true,
@@ -307,7 +347,8 @@
       "license": "MIT",
       "files": [
         "LICENSE"
-      ]
+      ],
+      "textLocation": "license-file"
     },
     "xtend": {
       "installed": true,
@@ -315,7 +356,8 @@
       "license": "MIT",
       "files": [
         "LICENSE"
-      ]
+      ],
+      "textLocation": "license-file"
     },
     "zod": {
       "installed": true,
@@ -323,7 +365,8 @@
       "license": "MIT",
       "files": [
         "LICENSE"
-      ]
+      ],
+      "textLocation": "license-file"
     }
   }
 }
