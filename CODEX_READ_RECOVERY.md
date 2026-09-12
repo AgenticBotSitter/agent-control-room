@@ -110,11 +110,14 @@ Do not advertise this extension as an authenticated restart source merely becaus
 it survives reopen. Production binding acceptance requires an independent review
 of the retained signed evidence and current verification path.
 
-1. Wire the signed Codex frame into the existing one-shot node session and bridge
-   delivery slot. Require negotiated Codex capability, the canonical lease pair,
-   durable receipt and current local policy before constructing the start admission.
-   Do not expose its constructor or dispatcher to browser input, reuse an
-   initialized-connection identity, or treat the contract digest as a signature.
+1. The signed Codex frame now uses a negotiated one-shot server-session sender and
+   the existing node bridge intake. The server signs once, requires its caller to
+   save transmission intent before its only send, and accepts only the exact signed
+   receipt. The next server composition must persist that Codex envelope, intent and
+   receipt against the canonical queue/lease so a replacement connection cannot
+   create a second send slot. Current local policy remains mandatory before start.
+   Do not expose these constructors to browser input, reuse an initialized-connection
+   identity, or treat a contract digest as a signature.
 2. `src/harness/codex-v1/start-journal.ts` now provides the protected,
    observation-only SQLite record for the exact correlated receipt pair. It binds
    tenant/project/node/job/attempt/run, accepted delivery, connection attempt and

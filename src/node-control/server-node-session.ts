@@ -1,7 +1,10 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { NATIVE_DELIVERY_FEATURE, NATIVE_LEASE_DELIVERY_FEATURE, nativeTaskDispatchBodySchema, matchNativeTaskDispatchReceipt, type NativeTaskDispatchBody } from "../harness/v1/native-delivery";
+import { CODEX_DELIVERY_FEATURE, codexTaskDispatchBodySchemaV1, matchCodexTaskDispatchReceiptV1,
+  type CodexTaskDispatchBodyV1 } from "../harness/codex-v1/delivery-contract";
 import { sha256Digest } from "../security";
+import { assertSynchronousFence } from "../security/synchronous-fence";
 import { NodeProtocolAuthenticator, NODE_PROTOCOL_V1, NODE_PROTOCOL_MAX_FRAME_BYTES,
   signedNodeFrameSchema, leaseGrantSchema, verifyNodeFrameSignature, type NodeMessageBodyMap,
   type SignedNodeFrame, type UnsignedNodeFrame } from "../node-protocol/v1";
@@ -42,14 +45,17 @@ export interface NativeEnvelopeChannel extends ServerNativeChannel {
   readonly serverKeyId: string;
   readonly serverPublicKeySpki: string;
 }
+export interface CodexEnvelopeChannel extends NativeEnvelopeChannel {}
 
 /** One explicitly owned supplied transport session. No listener or key loading. */
 export class ServerNodeSession {
   private readonly config: z.output<typeof configSchema>;
-  private state: "new" | "negotiating" | "reconciling" | "ready" | "prepared" | "transmitting" | "sent" | "receipted" | "recovered" | "closed" = "new";
+  private state: "new" | "negotiating" | "reconciling" | "ready" | "prepared" | "transmitting" | "sent" | "receipted" | "recovered"
+    | "codex_prepared" | "codex_transmitting" | "codex_sent" | "codex_receipted" | "closed" = "new";
   private preparedFrame?: SignedNodeFrame<"harness.native.dispatch">;
   private preparedLease?: SignedNodeFrame<"job.lease.grant">;
   private recoveredFrame?: SignedNodeFrame<"harness.native.dispatch">;
+  private preparedCodexFrame?: SignedNodeFrame<"harness.codex.dispatch">;
   private nativeDeliveryRecorded = false;
   private busy = false;
   private highWater = -Infinity;
@@ -135,7 +141,9 @@ export class ServerNodeSession {
     // A delayed handshake ACK may follow explicit staging or receipt, and a retained
     // outbox may place progress before its final ACK. Only ACKs are allowed outside
     // reconciliation; accepting one never changes delivery or execution state.
-    if (!["reconciling", "ready", "prepared", "sent", "receipted", "recovered"].includes(this.state)) throw new Error("Server node session is not accepting reconciliation");
+    if (!["reconciling", "ready", "prepared", "sent", "receipted", "recovered",
+      "codex_prepared", "codex_transmitting", "codex_sent", "codex_receipted"].includes(this.state))
+      throw new Error("Server node session is not accepting reconciliation");
     await this.bounded(async () => {
       const frame = await this.authenticate(raw);
       this.now();
@@ -159,6 +167,88 @@ export class ServerNodeSession {
       grantsExecutionAuthority: false as const,
       ...(this.features.includes(NATIVE_LEASE_DELIVERY_FEATURE) ? { leaseDelivery: true as const } : {}),
       assertCurrent: () => { this.now(); if (this.busy || this.state !== "ready") throw new Error("Server native channel is unavailable"); },
+    });
+  }
+
+  codexDeliveryChannel(): ServerNativeChannel | undefined {
+    try { this.now(); } catch { return undefined; }
+    if (this.busy || this.state !== "ready" || !this.connectionId || !this.features.includes(CODEX_DELIVERY_FEATURE)) return undefined;
+    return Object.freeze({ tenantId: this.config.tenantId, nodeId: this.config.nodeId, nodeKeyId: this.config.nodeKeyId,
+      connectionId: this.connectionId, maxFrameBytes: this.maxFrameBytes, expiresAt: new Date(this.deadline).toISOString(),
+      grantsExecutionAuthority: false as const,
+      assertCurrent: () => { this.now(); if (this.busy || this.state !== "ready") throw new Error("Server Codex channel is unavailable"); },
+    });
+  }
+
+  /** Reserve one exact signed Codex delivery. This records no execution result and
+   * does not create a workspace, start App Server, or permit retry. */
+  async stageCodexDispatch<T>(commit: (sign: (body: CodexTaskDispatchBodyV1, deadline: number) => Promise<SignedNodeFrame<"harness.codex.dispatch">>,
+    channel: CodexEnvelopeChannel) => Promise<T>): Promise<T> {
+    const available = this.codexDeliveryChannel();
+    if (!available) throw new Error("Codex delivery channel unavailable");
+    return this.bounded(async () => {
+      let signed = false, reserved: SignedNodeFrame<"harness.codex.dispatch"> | undefined;
+      const assertCurrent = () => { this.now(); if (this.state !== "ready") throw new Error("Codex envelope reservation is unavailable"); };
+      const channel: CodexEnvelopeChannel = Object.freeze({ ...available, serverId: this.config.serverId,
+        serverKeyId: this.config.serverKeyId, serverPublicKeySpki: this.config.serverPublicKeySpki, assertCurrent });
+      const value = await commit(async (input, deadline) => {
+        assertCurrent();
+        if (signed) throw new Error("Codex envelope already reserved");
+        signed = true;
+        const body = codexTaskDispatchBodySchemaV1.parse(input);
+        if (body.start.tenantId !== this.config.tenantId || body.start.nodeId !== this.config.nodeId
+          || !Number.isSafeInteger(deadline) || deadline <= this.now()) throw new Error("Codex envelope scope or deadline mismatch");
+        const frame = await this.signFrame("harness.codex.dispatch", body, undefined, Math.min(deadline, body.start.deadline));
+        assertCurrent(); reserved = structuredClone(frame); return frame;
+      }, channel);
+      assertCurrent();
+      if (!signed || !reserved) throw new Error("Codex envelope transaction did not reserve a frame");
+      this.preparedCodexFrame = reserved; this.state = "codex_prepared";
+      return value;
+    });
+  }
+
+  /** Commit a one-shot transmission intent before the only transport send. A
+   * missing receipt is ambiguous and never creates another send slot. */
+  async sendPreparedCodexDispatch<T>(commit: (frame: SignedNodeFrame<"harness.codex.dispatch">,
+    channel: CodexEnvelopeChannel) => Promise<{ value: T; assertFresh(): void }>) {
+    if (this.state !== "codex_prepared" || !this.preparedCodexFrame) throw new Error("No prepared Codex envelope is available");
+    const frame = structuredClone(this.preparedCodexFrame);
+    return this.bounded(async () => {
+      const assertCurrent = () => {
+        if (this.now() >= Date.parse(frame.expiresAt) || !["codex_prepared", "codex_transmitting"].includes(this.state))
+          throw new Error("Prepared Codex transmission is unavailable");
+      };
+      const channel: CodexEnvelopeChannel = Object.freeze({ tenantId: this.config.tenantId, nodeId: this.config.nodeId,
+        nodeKeyId: this.config.nodeKeyId, connectionId: this.connectionId!, maxFrameBytes: this.maxFrameBytes,
+        expiresAt: new Date(this.deadline).toISOString(), grantsExecutionAuthority: false,
+        serverId: this.config.serverId, serverKeyId: this.config.serverKeyId,
+        serverPublicKeySpki: this.config.serverPublicKeySpki, assertCurrent });
+      const result = await commit(structuredClone(frame), channel);
+      assertCurrent();
+      assertSynchronousFence(result.assertFresh, () => { throw new Error("Prepared Codex transmission is unavailable"); });
+      assertCurrent(); this.state = "codex_transmitting";
+      await this.ports.send(JSON.stringify(frame)); this.now(); this.state = "codex_sent";
+      return { receipt: result.value, transportResult: "returned_without_receipt" as const, deliveryConfirmed: false as const };
+    });
+  }
+
+  /** Authenticated receipt evidence only. It proves node storage, not execution. */
+  async acceptCodexReceipt<T>(raw: string | Uint8Array, commit: (receipt: SignedNodeFrame<"harness.codex.dispatch.receipt">,
+    dispatch: SignedNodeFrame<"harness.codex.dispatch">, assertCurrent: () => void) => Promise<T>): Promise<T> {
+    if (this.state !== "codex_sent" || !this.preparedCodexFrame) throw new Error("Codex receipt has no sent envelope");
+    const dispatch = structuredClone(this.preparedCodexFrame);
+    return this.bounded(async () => {
+      const frame = await this.authenticate(raw);
+      if (frame.type !== "harness.codex.dispatch.receipt") throw new Error("Expected Codex receipt");
+      matchCodexTaskDispatchReceiptV1(frame.body, { messageId: dispatch.messageId, body: dispatch.body });
+      const assertCurrent = () => {
+        const now = this.now();
+        if (this.state !== "codex_sent" || now >= Date.parse(frame.expiresAt) || Date.parse(frame.body.recordedAt) > now
+          || Date.parse(frame.body.recordedAt) < Date.parse(dispatch.sentAt)) throw new Error("Codex receipt window unavailable");
+      };
+      assertCurrent(); const value = await commit(structuredClone(frame), dispatch, assertCurrent);
+      assertCurrent(); this.state = "codex_receipted"; return value;
     });
   }
 
@@ -320,7 +410,7 @@ export class ServerNodeSession {
     this.outboundIds.add(signed.messageId);
   }
 
-  private async signFrame<T extends "connection.accepted" | "node.reconciliation.request" | "protocol.ack" | "harness.native.dispatch" | "job.lease.grant">(type: T, body: NodeMessageBodyMap[T], causationId?: string, deadline = this.deadline): Promise<SignedNodeFrame<T>> {
+  private async signFrame<T extends "connection.accepted" | "node.reconciliation.request" | "protocol.ack" | "harness.native.dispatch" | "harness.codex.dispatch" | "job.lease.grant">(type: T, body: NodeMessageBodyMap[T], causationId?: string, deadline = this.deadline): Promise<SignedNodeFrame<T>> {
     const frame = { protocol: NODE_PROTOCOL_V1, direction: "server_to_node", senderKind: "control_room",
       tenantId: this.config.tenantId, actorId: this.config.serverId, keyId: this.config.serverKeyId,
       connectionId: this.connectionId!, sequence: ++this.outboundSequence, messageId: `message:${randomUUID()}`,
