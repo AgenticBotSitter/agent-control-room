@@ -1,7 +1,8 @@
 # Six-batch implementation progress
 
-Baseline: public main e901c0fe986c51ee1d0c091ce2d9b211231ec29e.
-Current working branch: codex/component-batch-4, stacked on local batches 1–3.
+Historical baseline: public main e901c0fe986c51ee1d0c091ce2d9b211231ec29e.
+The recorded component branch was later reconciled into public `main` by PR #32 at
+`aebbbf165bdabcc4da6e6fd08e7e247fd66e9ae6`.
 All six batches remain in scope; no complete batch acceptance is claimed.
 
 ## Combined regression checkpoint

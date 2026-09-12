@@ -1,8 +1,9 @@
 # Settled-component implementation packages
 
-Implementation status refreshed against branch `codex/component-batch-4`
-through `478e719`. See CONTRIBUTOR_HANDOFF.md for the publication handoff and
-remaining assignment boundaries. These changes are not yet accepted into main.
+Historical implementation status was refreshed against `codex/component-batch-4`
+through `478e719`; that work is now on public `main` through PR #32 at
+`aebbbf165bdabcc4da6e6fd08e7e247fd66e9ae6`. See PUBLIC_BUILD_PLAN.md and the
+live issue for current assignment boundaries.
 Substantial work, not automatic assignments. Read
 [component decisions](COMPONENT_DECISIONS.md), [setup](SETUP.md) and
 [contribution rules](CONTRIBUTING.md). Ask for maintainer assignment first.
@@ -13,8 +14,8 @@ Do not fetch private code or infer permission to operate a real agent or databas
 
 The descriptions below retain the original intended outcomes, not an instruction
 to rebuild work now implemented. None of the six full batches is accepted complete.
-Freeze a published base containing the relevant implementation before assigning
-contributors; a local branch name alone is not an available public starting point.
+Freeze the issue's published main-derived base before assigning contributors; an
+unpublished or historical branch name is not a current starting point.
 
 | Package | Implemented locally; do not duplicate | Remaining useful work | Current local verification |
 | --- | --- | --- | --- |

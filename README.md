@@ -54,9 +54,9 @@ follow the core loop. No live harness compatibility is claimed by the demo.
    git switch -c contribution/my-feature ISSUE_BASE_SHA
    ```
 
-   Replace ISSUE_BASE_SHA with the confirmed issue revision. **Important:** main is
-   the preview; some newer code is on `codex/component-batch-4`. Every assignment
-   names its correct starting commit and PR target. Do not guess or rebuild that code.
+   Replace ISSUE_BASE_SHA with the confirmed issue revision. Public `main` is the
+   reconciled implementation baseline. Every assignment still names its immutable
+   starting commit and owned paths; do not guess or duplicate an active contribution.
 3. Use Node >=22.13 and pnpm 11.19.0. Prepare with
    `pnpm install --frozen-lockfile --ignore-scripts` (downloads dependencies), then
    `pnpm check:demo` and the issue's targeted checks. For the optional disposable
@@ -124,11 +124,12 @@ No live agent-runtime/platform combination is claimed supported by this preview.
 
 ## Contributor starting points
 
-**Latest implementation handoff:** [September 9 contributor handoff](CONTRIBUTOR_HANDOFF.md).
-The six-batch implementation is on `codex/component-batch-4` for review, not yet
-accepted into main. Use that branch for the latest code; do not duplicate completed
-components from older roadmap descriptions. No complete batch or production
-installation is claimed finished.
+**Current implementation baseline:** public `main`, reconciled and verified through
+[PR #32](https://github.com/AgenticBotSitter/agent-control-room/pull/32) at
+`aebbbf165bdabcc4da6e6fd08e7e247fd66e9ae6`. The
+[September 9 contributor handoff](CONTRIBUTOR_HANDOFF.md) remains historical evidence;
+new contributions use the base recorded in their issue. This is not production
+acceptance and does not supersede active contributors' branches.
 
 **New: [settled component decisions](COMPONENT_DECISIONS.md) and
 [implementation packages](IMPLEMENTATION_PACKAGES.md).** These identify what to
@@ -146,6 +147,9 @@ Templates are not configured services, and these checks are not production accep
 - [Substantial MVP-first work packages](WORK_PACKAGES.md)
 - [Full roadmap and completion criteria](ROADMAP.md)
 - [Architecture and trust boundaries](docs/ARCHITECTURE.md)
+- [Shared connector and result contract](docs/SHARED_CONNECTOR_CONTRACT.md)
+- [Security, portable configuration and recovery contract](docs/SECURITY_CONFIGURATION_CONTRACT.md)
+- [Honest platform and connector support matrix](docs/SUPPORT_MATRIX.md)
 
 Hermes and Codex are the first integration priorities. Claude Code, OpenClaw and other
 harnesses are proposed contributor tracks, not current compatibility claims. Start with

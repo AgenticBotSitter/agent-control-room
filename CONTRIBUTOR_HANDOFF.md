@@ -2,18 +2,18 @@
 
 ## Start here
 
-Latest implementation branch: `codex/component-batch-4`. This branch contains the
-stacked local implementation batches, not just batch four. Code checkpoint before
-this handoff: `478e719`. Freeze the current published commit when taking an assignment.
-Main remains the earlier preview until review and integration are complete.
+This is the historical September 9 handoff. Its implementation was reconciled into
+public `main` by PR #32 at `aebbbf165bdabcc4da6e6fd08e7e247fd66e9ae6`.
+New assignments use the immutable base recorded in their live issue; do not branch
+from the former `codex/component-batch-4` handoff unless an active PR explicitly does.
 
 All 17 component directions are settled; none of the six complete delivery batches
 is accepted finished. Selection is not integration, simulated tests are not live
 compatibility, and compiled templates are not an operational deployment.
 
-Read COMPONENT_DECISIONS.md, IMPLEMENTATION_PACKAGES.md, IMPLEMENTATION_PROGRESS.md
-and CONTRIBUTING.md. The progress file preserves historical checkpoints; its newest
-entries supersede earlier unfinished statements about the same component.
+Read PUBLIC_BUILD_PLAN.md and the live issue first. COMPONENT_DECISIONS.md,
+IMPLEMENTATION_PACKAGES.md and IMPLEMENTATION_PROGRESS.md preserve historical detail;
+newer public-plan decisions supersede earlier unfinished statements.
 
 ## Substantial remaining work
 
