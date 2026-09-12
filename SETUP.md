@@ -112,11 +112,55 @@ important work in this demo. The current demo login lasts 15 minutes; after expi
 restart for a fresh disposable session and code. This is not the planned production
 login experience.
 
+## Repeatable browser acceptance
+
+`contributor-demo/browser-acceptance.mjs` drives the whole disposable journey in a
+real browser and is the repeatable interaction check for this demo. It starts its
+own demo instance (build + launch on port 3000), reads the one-time code from the
+demo's own output, completes every check below, stops the demo with SIGTERM and
+verifies that the port and the temporary demo data directory are released. It
+prints TAP-style `ok`/`not ok` lines and exits nonzero on any failure. The owner
+code is never printed by the script and is not captured in screenshots or logs.
+
+Prerequisites are the pinned install above plus a Playwright installation with a
+Chromium browser. Playwright is intentionally not a repository dependency: point
+the script at one with the `PLAYWRIGHT_MODULE` environment variable (an absolute
+path to a directory containing `playwright`), or make a `playwright` package
+resolvable next to this checkout. Screenshots are written only when `ACR_SHOTS`
+names an existing directory.
+
+```sh
+node contributor-demo/browser-acceptance.mjs
+```
+
+The command checks: a skip link is the first focusable element and lands in the
+main region; login, project creation, task proposal, sample simulation and
+revision requests all work with the keyboard alone with a visible focus ring;
+every interactive control has an accessible name; sample text is rendered escaped
+(no raw HTML); reloading the page keeps the session and reopens task history
+without rerunning work; two keyboard-created projects stay isolated (no cross-task
+leak, both listed in the catalog, the first project's history intact) and a
+project can be completed, archived and reopened by keyboard; the home, project and
+task routes have no horizontal overflow at a 375px viewport; a POST lost before
+delivery shows the uncertain-save notice and its retry replays the exact original
+request (asserted on the request log: same body and same idempotency key, first
+attempt dropped, retry delivered); and a revision reply lost after the server
+accepted it preserves the typed feedback with no automatic retry (asserted by
+counting simulation POSTs — exactly one revision POST, before and after the
+read-only re-check). Cleanup is asserted in separate claims: the launcher exits,
+no `contributor-demo.mjs` server process remains, port 3000 refuses connections,
+and the run's own temporary directory (recorded only when exactly one new demo
+directory appeared) is removed. It was verified on Debian 13
+GNU/Linux (x86_64) with Chromium through Playwright 1.59; runs on other operating
+systems and browser builds are not yet acceptance evidence.
+
 ## Still awaiting acceptance
 
 The demo command and its simulated flow pass automated tests and one local desktop
-browser trial on macOS, including revision/history and shutdown cleanup. Keyboard,
-mobile and other operating-system acceptance remain incomplete. There is no supported `pnpm dev` or
+browser trial on macOS, including revision/history and shutdown cleanup. The
+repeatable browser acceptance command above adds automated keyboard and
+narrow-screen coverage on Linux; physical keyboard/mobile acceptance on other
+operating systems and further browser-build coverage remain incomplete. There is no supported `pnpm dev` or
 `pnpm start` command here. Hermes and Codex live compatibility, PostgreSQL deployment,
 production owner login, approval key custody
 and independent integrity storage require separate configuration and acceptance.

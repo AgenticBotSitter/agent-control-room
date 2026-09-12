@@ -38,10 +38,12 @@ test("standalone browser output references only its emitted assets and excludes 
   const root = "dist-contributor/client";
   const html = readFileSync(`${root}/index.html`, "utf8");
   assert.match(html, /Agent Control Room/);
-  const assets = [...html.matchAll(/(?:src|href)="([^"]+)"/g)].map(match => match[1]);
+  const assets = [...html.matchAll(/(?:src|href)="([^"]+)"|class="skip-link" href="([^"]+)"/g)].map(match => match[1] ?? match[2]);
   assert.ok(assets.some(path => path.endsWith(".js")));
   assert.ok(assets.some(path => path.endsWith(".css")));
+  assert.match(html, /class="skip-link" href="#private-main"/);
   for (const path of assets) {
+    if (path.startsWith("#")) continue; // same-page fragment (skip link), not an emitted asset
     assert.match(path, /^\/(?:favicon\.svg|_next\/static\/[A-Za-z0-9_.-]+)$/);
     assert.ok(readFileSync(`${root}${path}`).length > 0);
   }
