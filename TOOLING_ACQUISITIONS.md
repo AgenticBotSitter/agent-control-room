@@ -1,5 +1,23 @@
 # Local tooling acquisition log
 
+## Codex App Server start-schema evidence — 2026-09-12
+
+- Requested package: `@openai/codex@0.150.0-alpha.8` with its selected
+  `0.150.0-alpha.8-darwin-arm64` platform artifact.
+- Purpose: generate the non-experimental App Server schemas locally and retain
+  only sanitized facts for `thread/start` and `turn/start`.
+- Free space before acquisition: approximately 106 GiB on the local data volume.
+- Temporary size: approximately 412 MiB, including the isolated npm cache and
+  generated schema bundle.
+- Network/provider effects: package acquisition only. No provider call, thread,
+  turn, credential inspection, plugin, MCP server or production effect occurred.
+- Retained: bounded package/version, schema file sizes and SHA-256 values,
+  required start fields, and explicit scope limitations in
+  `research/codex-app-server-0.150.0-alpha.8-start-schema-evidence.json`.
+- Cleanup: the isolated cache, package runtime and full generated schemas were
+  removed after the retained evidence and its tests passed. Nothing from this
+  acquisition is needed at runtime.
+
 ## saxes 6.0.0 original notice — 2026-09-09
 
 Downloaded only LICENSE (3011 bytes) and package.json from public commit
