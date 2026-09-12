@@ -11,6 +11,70 @@ Maintainer: Alastair Fraser. Main website: [agenticbotsitter.com](https://agenti
 
 Project contact: [Alastair@agenticbotsitter.com](mailto:Alastair@agenticbotsitter.com).
 
+## Join the build — start here
+
+Everything needed to contribute is public. No invitation, private repository, paid
+agent subscription or access to our machines is needed. Humans and bots are welcome.
+This README is the front door; detailed documents are optional depth, not a hunt.
+
+**Current priority:** finish a real mixed-harness project → task → result → review
+workflow, using existing proven components. One configurable public product serves
+everyone; no separate private core.
+
+| What you want to know | Direct link / answer |
+| --- | --- |
+| What can I take on now? | [Ready assignments](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aready) — filter platform/difficulty, request a reservation |
+| What is being worked or reviewed? | [Working](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aworking) · [In review](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Ain-review) · [Open PRs](https://github.com/AgenticBotSitter/agent-control-room/pulls) |
+| What is blocked, and who decides? | [Needs decision](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aneeds-decision) — each names the missing input |
+| What has been accepted? | [Completed outcomes](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aclosed+label%3Astatus%3Adone) · [Merged contributions](https://github.com/AgenticBotSitter/agent-control-room/pulls?q=is%3Apr+is%3Amerged) — partial PRs do not imply a whole feature is finished |
+| What is the full plan and what are we borrowing? | [All outcomes, reuse decisions and next steps](PUBLIC_BUILD_PLAN.md) · [Attribution](THIRD_PARTY.md) |
+| Where do I ask or propose a different useful contribution? | [Coordination issue #12](https://github.com/AgenticBotSitter/agent-control-room/issues/12) — describe your expertise and a substantial non-overlapping outcome |
+
+**Already available:** disposable project/task/revision demo, substantial source and
+component tests, public CI, Linux rehearsal/browser-tooling contributions and retained
+upstream notices. **Still to finish:** real Hermes/Codex integration and recovery,
+customizable product webpage, release/install/rollback, portable notices, platform
+acceptance and a verified multi-worker release. Optional Idea Lab/news/extensions
+follow the core loop. No live harness compatibility is claimed by the demo.
+
+### Contribute in five steps
+
+1. Pick a ready issue fitting your platform and skills. Comment with the slice you
+   want; the maintainer confirms ownership to prevent duplicate work. No special bot
+   name is required. Small non-overlapping typo fixes can be proposed directly.
+2. Fork this repository using GitHub's **Fork** button, then clone **your fork**:
+
+   ```sh
+   git clone https://github.com/YOUR-USERNAME/agent-control-room.git
+   cd agent-control-room
+   git remote add upstream https://github.com/AgenticBotSitter/agent-control-room.git
+   git fetch upstream
+   git switch -c contribution/my-feature ISSUE_BASE_SHA
+   ```
+
+   Replace ISSUE_BASE_SHA with the confirmed issue revision. **Important:** main is
+   the preview; some newer code is on `codex/component-batch-4`. Every assignment
+   names its correct starting commit and PR target. Do not guess or rebuild that code.
+3. Use Node >=22.13 and pnpm 11.19.0. Prepare with
+   `pnpm install --frozen-lockfile --ignore-scripts` (downloads dependencies), then
+   `pnpm check:demo` and the issue's targeted checks. For the optional disposable
+   webpage try `pnpm demo`; never include its login code in screenshots or logs.
+   [Setup details, including PowerShell and pnpm installation](SETUP.md).
+4. Build the whole assigned outcome, reuse the selected upstream component and retain
+   notices. Fix ordinary test failures normally. Commit only intended files:
+   `git add PATHS`, `git commit -m "Describe the outcome"`, then
+   `git push -u origin contribution/my-feature`. Never commit credentials or local data.
+5. Open **Compare & pull request** on GitHub against the issue's target branch. State
+   outcome, base/head, checks/results, limitations and borrowed sources. Maintainers
+   review/merge; public CI checks the contribution. Continue other reserved independent
+   work while review is pending. [Full contribution guide](CONTRIBUTING.md).
+
+No eligible work in the ready view? Offer a concrete capability in #12; maintainers
+must supply a safe independent slice or identify the decision blocking it, rather
+than tell contributors the whole project is finished. Our [worker instructions](skills/public-build-worker/SKILL.md)
+and [review instructions](skills/public-build-review/SKILL.md) are optional reusable
+guides; there is no private controller or mandatory result-manifest ceremony.
+
 ## Help finish the public release
 
 **[Start here: live work queue](WORK_QUEUE.md)** — ready work, progress, decisions
