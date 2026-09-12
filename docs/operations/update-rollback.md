@@ -30,16 +30,23 @@ node scripts/build-vps.mjs
 node scripts/release/build-release.mjs --revision "$NEW_SHA" \
   --previous-manifest "<path-to-live>/dist-release/manifest.json" \
   --out dist-release --overwrite
-node scripts/release/verify-artifact.mjs --manifest dist-release/manifest.json
+node scripts/release/verify-artifact.mjs --artifact dist-release
 node scripts/release/preflight.mjs --configuration <path>/control-room-config.mjs \
-  --manifest dist-release/manifest.json
+  --artifact dist-release
 
 # 3. Switch the service over only after the new tree passes preflight and the
 #    smoke test below.
+#
+#    Update the user systemd unit (or your supervisor's equivalent) so that
+#    WorkingDirectory= and ExecStart= both point at $NEW_DIR, then reload the
+#    manager before starting. Skipping daemon-reload leaves the supervisor
+#    reading the OLD definition and starting the previous checkout.
+$EDITOR ~/.config/systemd/user/control-room.service
+# (set WorkingDirectory=$NEW_DIR and ExecStart=…${NEW_DIR}/scripts/run-private-vps.mjs)
+systemctl --user daemon-reload
 systemctl --user stop control-room
 # (or SIGTERM the supervised process and confirm exit)
 systemctl --user start control-room
-# start command points at $NEW_DIR
 ```
 
 Equivalent for a checkout-based installation:
@@ -48,21 +55,40 @@ Equivalent for a checkout-based installation:
 # Add the new SHA as a worktree rather than replacing the current checkout:
 cd control-room
 git fetch origin
+# Capture the LIVE checkout's manifest path NOW, before we change cwd below —
+# `$(pwd)` inside the worktree build points at the NEW checkout, which has no
+# manifest yet.
+LIVE_MANIFEST="$(pwd)/dist-release/manifest.json"
 git worktree add ../control-room-<new-sha> <new-exact-sha>
 (cd ../control-room-<new-sha> && CI=true pnpm install --frozen-lockfile)
 (cd ../control-room-<new-sha> && node scripts/build-vps.mjs)
 (cd ../control-room-<new-sha> && node scripts/release/build-release.mjs \
    --revision <new-sha> \
-   --previous-manifest $(pwd)/dist-release/manifest.json \
+   --previous-manifest "$LIVE_MANIFEST" \
    --out dist-release --overwrite)
 (cd ../control-room-<new-sha> && node scripts/release/verify-artifact.mjs \
-   --manifest dist-release/manifest.json)
+   --artifact dist-release)
+(cd ../control-room-<new-sha> && node scripts/release/preflight.mjs \
+   --configuration <path>/control-room-config.mjs \
+   --artifact dist-release)
 ```
 
-After the new tree passes preflight and the smoke test, point the service at
-`../control-room-<new-sha>` (or `control-room-<new-sha>` depending on layout)
-and start. The previous checkout, its `dist-vps/` and its `dist-release/`
-artifact are still on disk and untouched until the new release is confirmed.
+After the new tree passes preflight and the smoke test, edit the service
+unit so `WorkingDirectory=` and `ExecStart=` both point at the new worktree
+(`../control-room-<new-sha>`), then `systemctl --user daemon-reload` before
+`systemctl --user start control-room`:
+
+```sh
+$EDITOR ~/.config/systemd/user/control-room.service
+# (set WorkingDirectory=../control-room-<new-sha> and
+#  ExecStart=…/control-room-<new-sha>/scripts/run-private-vps.mjs)
+systemctl --user daemon-reload
+systemctl --user stop control-room
+systemctl --user start control-room
+```
+
+The previous checkout, its `dist-vps/` and its `dist-release/` artifact are
+still on disk and untouched until the new release is confirmed.
 
 Smoke test after start: owner login works, one project page renders, no error
 in the first 60 seconds of logs. Any failure → roll back immediately, do not
