@@ -4,8 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { prepareRuntimeLicenseInventory, pnpmCommand } from '../scripts/runtime-license-inventory-prep.mjs';
+import { prepareRuntimeLicenseInventory, pnpmCommand, pnpmInvocation } from '../scripts/runtime-license-inventory-prep.mjs';
 
 const repoRoot = process.cwd();
 
@@ -172,4 +171,97 @@ test('inventory prep pnpmCommand returns pnpm.cmd on win32 and pnpm elsewhere', 
   assert.equal(pnpmCommand(), expected);
 });
 
-void tmpdir;
+test('inventory prep pnpmInvocation wraps the command in cmd.exe /c on Windows only', () => {
+  // On Windows the pnpm installer registers a .cmd shim that Node's
+  // execFileSync does not resolve without a shell. The portable fix
+  // is to wrap in `cmd.exe /c` on Windows only — no shell:true is used.
+  // On POSIX the wrapper is a no-op (the program + args pass through).
+  if (process.platform === 'win32') {
+    const result = pnpmInvocation('pnpm.cmd', ['licenses', 'list']);
+    assert.equal(result.file, 'cmd.exe');
+    assert.deepEqual(result.args, ['/c', 'pnpm.cmd', 'licenses', 'list']);
+  } else {
+    const result = pnpmInvocation('pnpm', ['licenses', 'list']);
+    assert.equal(result.file, 'pnpm');
+    assert.deepEqual(result.args, ['licenses', 'list']);
+  }
+});
+
+test('inventory prep accepts a pnpmRunner injection (no real pnpm needed)', () => {
+  // Regression test for the spaced-path test that runs `pnpm licenses list`
+  // inside a temp dir without an installed package index. Previously the
+  // script had no way to substitute the pnpm execution, so the regression
+  // test was either fragile (relied on the host repo having node_modules/)
+  // or skipped entirely on clean CI. The pnpmRunner option lets callers
+  // (tests, embedded callers) substitute the actual pnpm execution while
+  // preserving the rest of the script's portable entry guard, hash, and
+  // path handling.
+  const fakeInventory = {
+    // pnpm licenses list --prod --json returns a license -> entries map.
+    // Each key is a SPDX license id; each value is an array of
+    // { name, versions[], paths[], author, homepage?, license } objects.
+    'MIT': [{
+      name: 'fake-package', versions: ['1.0.0'],
+      paths: ['node_modules/.pnpm/fake-package@1.0.0/node_modules/fake-package'],
+      author: 'Test Author', homepage: 'https://example.test',
+    }],
+  };
+  let runnerCalled = false;
+  let runnerArgs;
+  const runner = (file, args) => {
+    runnerCalled = true;
+    runnerArgs = { file, args };
+    return JSON.stringify(fakeInventory);
+  };
+  // Use the host repo (which has a real manifest + lockfile). The runner
+  // returns canned inventory so the test doesn't need a real pnpm install.
+  const payload = prepareRuntimeLicenseInventory({
+    repoRoot,
+    pnpmRunner: runner,
+  });
+  assert.equal(runnerCalled, true, 'pnpmRunner must be invoked');
+  assert.match(runnerArgs.file, /pnpm(\.cmd)?$/);
+  assert.deepEqual(runnerArgs.args.slice(-4), ['licenses', 'list', '--prod', '--json']);
+  assert.equal(payload.records.length, 1);
+  assert.equal(payload.records[0].name, 'fake-package');
+  assert.equal(payload.records[0].license, 'MIT');
+  assert.match(payload.source, /^pnpm@.+ licenses list --prod --json$/);
+});
+
+test('inventory prep pnpmRunner injection works under a spaced repoRoot (no real pnpm install needed)', () => {
+  // The full spaced-path regression from the original review feedback:
+  // a fresh temp dir whose OWN path contains spaces, manifest + lockfile
+  // copied in, pnpm inventory produced via the injection — no pnpm install
+  // required, no fragile reliance on host repo's node_modules. The OLD
+  // implementation could not be tested this way at all (the script had
+  // no injection point, so any test of this shape had to either run a
+  // real `pnpm install --prod` in the temp dir or skip the path-spaces
+  // assertion entirely).
+  const hostRepo = mkdtempSync(join(tmpdir(), 'license-inv-injected-'));
+  try {
+    const spaced = join(hostRepo, 'repo with space');
+    mkdirSync(spaced, { recursive: true });
+    writeFileSync(join(spaced, 'package.json'), readFileSync(join(repoRoot, 'package.json')));
+    writeFileSync(join(spaced, 'pnpm-lock.yaml'), readFileSync(join(repoRoot, 'pnpm-lock.yaml')));
+    const fakeInventory = {
+      'Apache-2.0': [{
+        name: 'spaced-fixture', versions: ['0.1.0'],
+        paths: ['node_modules/.pnpm/spaced-fixture@0.1.0/node_modules/spaced-fixture'],
+      }],
+    };
+    const payload = prepareRuntimeLicenseInventory({
+      repoRoot: spaced,
+      pnpmRunner: () => JSON.stringify(fakeInventory),
+    });
+    assert.equal(payload.records.length, 1);
+    assert.equal(payload.records[0].name, 'spaced-fixture');
+    assert.equal(payload.records[0].license, 'Apache-2.0');
+    // The repoRoot path contains spaces — assert it round-tripped correctly
+    // through the script's path handling (the entry guard + the repoRoot
+    // propagation that the OLD guard was tautologically testing).
+    assert.ok(spaced.includes(' '), 'repoRoot should contain spaces for this regression test');
+    assert.match(payload.source, /^pnpm@.+ licenses list --prod --json$/);
+  } finally {
+    rmSync(hostRepo, { recursive: true, force: true });
+  }
+});

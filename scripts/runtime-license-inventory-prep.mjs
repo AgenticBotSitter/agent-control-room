@@ -60,6 +60,22 @@ export function pnpmCommand() {
 }
 
 /**
+ * Wrap a (program, args) pair so it executes correctly on every platform.
+ *
+ * Returns { file, args } suitable for execFileSync. On Windows the pnpm
+ * installer registers a `.cmd` shim that Node's execFileSync does not
+ * resolve without a shell (execFileSync bypasses the shell, so it does
+ * not search PATHEXT for `.cmd`). The portable fix is to wrap in
+ * `cmd.exe /c` on Windows only — no `shell: true` is used, so argument
+ * quoting stays explicit and platform-independent. On macOS / Linux the
+ * wrapper is a no-op.
+ */
+export function pnpmInvocation(program, args) {
+  if (process.platform === 'win32') return { file: 'cmd.exe', args: ['/c', program, ...args] };
+  return { file: program, args };
+}
+
+/**
  * Resolve a pnpm path entry to a forward-slash, repo-relative
  * `node_modules/...` path. Throws license_inventory_path_unrecognized
  * when the entry has no `node_modules/` segment (which would mean the
@@ -77,10 +93,12 @@ function relativizePath(entry) {
  * directory. Returns the parsed JSON object. Cross-platform: pnpm
  * handles its own platform differences.
  */
-function pnpmLicensesJson(repoRoot) {
+function pnpmLicensesJson(repoRoot, pnpmRunner) {
   let raw;
   try {
-    raw = execFileSync(pnpmCommand(), ['licenses', 'list', '--prod', '--json'], {
+    const { file, args } = pnpmInvocation(pnpmCommand(), ['licenses', 'list', '--prod', '--json']);
+    const exec = pnpmRunner || execFileSync;
+    raw = exec(file, args, {
       cwd: repoRoot,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -139,6 +157,13 @@ export function prepareRuntimeLicenseInventory({
   repoRoot = process.cwd(),
   manifestPath = 'package.json',
   lockfilePath = 'pnpm-lock.yaml',
+  // Dependency injection hook for the spaced-path regression test
+  // (and any other environment where the caller needs to substitute
+  // pnpm execution). When provided, must mirror execFileSync's
+  // signature (file, args, options) -> Buffer|string. The wrapper
+  // around pnpmCommand/pnpmInvocation is preserved so callers still
+  // get portable Windows-cmd.exe handling for the default branch.
+  pnpmRunner,
 } = {}) {
   if (typeof repoRoot !== 'string' || !repoRoot) throw new Error('license_inventory_repo_root_missing');
   const resolve = candidate => isAbsolute(candidate) ? candidate : `${repoRoot}${sep}${candidate}`;
@@ -148,7 +173,7 @@ export function prepareRuntimeLicenseInventory({
   if (!existsSync(lockfileAbs)) throw new Error(`license_inventory_lockfile_missing: ${lockfileAbs}`);
   const manifestBytes = readFileSync(manifestAbs);
   const lockfileBytes = readFileSync(lockfileAbs);
-  const records = flattenInventory(pnpmLicensesJson(repoRoot), repoRoot);
+  const records = flattenInventory(pnpmLicensesJson(repoRoot, pnpmRunner), repoRoot);
   const sortedPayload = {
     manifestSha256: hash(manifestBytes),
     lockSha256: hash(lockfileBytes),
@@ -161,7 +186,8 @@ export function prepareRuntimeLicenseInventory({
 
 function readPnpmVersion(repoRoot) {
   try {
-    const out = execFileSync(pnpmCommand(), ['--version'], { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    const { file, args } = pnpmInvocation(pnpmCommand(), ['--version']);
+    const out = execFileSync(file, args, { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     return out.trim();
   } catch {
     return 'unknown';
