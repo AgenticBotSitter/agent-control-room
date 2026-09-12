@@ -48,9 +48,9 @@ scheduling and optional monitoring must not delay the first real mixed-harness l
 | Install, update and rollback | Intermediate/advanced tooling; Linux | Reproducible artifact, generic setup, integrity checks, documented upgrade/rollback | [#9](../../issues/9), existing PR #13; open for additional capacity with explicit handoff |
 | Windows and cross-platform readiness | Intermediate platform work; Windows | Portable setup, line endings, worker constraints and browser acceptance | [#2](../../issues/2) |
 | Release notices and attribution | Intermediate build tooling; any OS | Actual shipped dependency-instance/vendor coverage, original notices, packaging checks | [#11](../../issues/11), reuse useful PR #16 provenance |
-| Core execution and recovery | Advanced backend; maintainer-coordinated | Admission, queue pickup, real Codex integration, durable identity and safe recovery | Propose an isolated implementation/test slice in [#12](../../issues/12); maintainer owns shared contracts |
-| Independent review | Advanced in the relevant boundary | Concrete risk-focused review of execution, authorization, persistence or release candidate | Offer expertise in [#12](../../issues/12); no mandatory second review for routine UI/docs |
-| Additional harness adapters | Intermediate/advanced integration | A supported upstream adapter plus conformance evidence, without another scheduler | Propose the harness and tested capabilities in [#12](../../issues/12); initial release prioritizes the first two |
+| Core execution and recovery | Advanced backend; maintainer-coordinated | Admission, queue pickup, real Codex integration, durable identity and safe recovery | [#26](../../issues/26); maintainer owns shared contracts |
+| Independent review | Advanced in the relevant boundary | Concrete risk-focused review of execution, authorization, persistence or release candidate | [#21](../../issues/21); no mandatory second review for routine UI/docs |
+| Additional harness adapters | Intermediate/advanced integration | A supported upstream adapter plus conformance evidence, without another scheduler | [#30](../../issues/30); initial release prioritizes the first two |
 
 These areas are not exclusive to a named bot or organization. Existing contributors
 retain ownership of their active branches. Ask for a clearly separated part or a
@@ -63,6 +63,9 @@ Public main currently contains the earlier source preview. More implementation i
 `codex/component-batch-4`, inspected at
 `7b9d6782318d5d5266ea9e444cba8b67de65691b`. This documentation publication does not
 merge or accept that implementation. Do not rebuild features already on that branch.
+The Windows portability slice PR #23 subsequently landed on that public integration
+branch at `b2c10345044aae8fea38385d3d4b5a693704cf90`. It is not a Windows production
+qualification. Main publication and component integration are distinct gates.
 
 Existing PRs keep their recorded targets. Before any new implementation starts, the
 maintainer records its immutable base SHA, exact target branch, owned paths and ready
@@ -239,6 +242,119 @@ Intermediate-capability agents/contributors take specified implementation; advan
 reviewers examine silent-failure boundaries. The lead owns architecture/security,
 integration and final acceptance. No vendor/model is required. Concentrate independent
 review on consequential changes, not ordinary wording or every repair.
+
+## Complete remaining work and open questions
+
+This inventory expands the outcome and reuse ledgers above; it does not replace them.
+It covers the agreed product scope, including deferred features, not every possible
+future feature. An issue is a substantial work package, not one job per row or test.
+Live issue status overrides this dated review snapshot. All assignments are by role;
+historical PR authorship is preserved, not erased.
+
+### Review checkpoint — September 12
+
+- Accepted: source preview, component implementations/evidence, Linux rehearsal and
+  browser tooling, CI, original third-party notice evidence, and PR #23's LF/Windows
+  platform-refusal slice. These do not establish a complete production release.
+- PR #13: release implementation passed 23 artifact/ignore and 3 selected static
+  preflight checks in independent review. Update-guide commands need one correction.
+- PR #24: 7 focused checks passed; command entry detection, pnpm invocation and test
+  cleanup need a consolidated portability repair. Release clearance remains unfinished.
+- PR #25: 12 focused UI checks passed; project-version and uncertain-write messages
+  need correction. Full webpage/customization remains broader than this slice.
+- PR #14: useful source inspection and synthetic scenarios, not an upstream connector.
+  Requires truthful unsupported-capability handling and actual upstream API mapping.
+- #21 supplied useful source review identifying the real Codex integration gap. A
+  read-only observation deliberately not writing completion is not itself a bug.
+  Do not remove other harness enum values merely because native registration currently
+  specializes Hermes. Verify the exact admitted path rather than adopting that proposal.
+
+### Whole delivery packages
+
+Direct assignments: [core execution #26](../../issues/26), [webpage #10](../../issues/10),
+[browser/accessibility #1](../../issues/1), [Hermes #8](../../issues/8),
+[Windows #2](../../issues/2), [release/operations #9](../../issues/9),
+[notices #11](../../issues/11), [workflows #27](../../issues/27),
+[configuration/auth #28](../../issues/28), [schedules/context #29](../../issues/29),
+[extensions/visibility #30](../../issues/30), [independent review #21](../../issues/21).
+The live labels distinguish immediately implementable work from decisions that must
+be recorded first. Proposal/source-review help is welcome on those decisions too.
+
+| Package / role | Remaining implementation and evidence | Dependencies / ready work |
+| --- | --- | --- |
+| Core integration — advanced backend and integration lead | Reconcile main/component baseline; version supported adapter/configuration contracts; wire real task admission → pg-boss → upstream identity → canonical result → review/revision → capacity release. Connect actual Codex and Hermes, not observations presented as execution. Test replay, transaction failure, expiry, drain, restart and two projects. Includes A3–5, B1/B3/B6/B9 | Q1–Q4 below; source tracing/conformance proposals can proceed now, shared contract writes require lead decision |
+| Product workspace — frontend/accessibility, any OS (#10/#1) | Complete WEBPAGE_SPEC.md: project lifecycle, worker eligibility, task/attempt/result/revision, attention, protected files; two configurations; responsive/keyboard/deep-link behavior. Product-panel/browser acceptance, not only demo screenshots. Includes A5–7, B8 | Existing clients/components; Q5 for serialization only. Presentation and actual-panel acceptance can proceed independently; reserve paths against PR #25 |
+| Harness and host interoperability — Mac/Linux/Windows integration (#8/#2) | Real supported upstream mapping, version/capability inventory, independently installed worker setup, reconnect and bounded artifact transfer. Preserve unsupported status. Windows checkout/install/test portability, while Linux-only server custody remains intact. Includes B3–9 | Q2/Q3/Q6; actual-source API fit and platform fixes can proceed without credentials; live gate separately authorized |
+| Persistent installation and recovery — Linux/backend operations (#9) | Release artifact plus original notices; fresh generic configuration, restricted database roles/migrations, verified persistence, supervisor, health and private ingress. Restore rows/ACLs/artifacts into disposable storage; stage update separately, drain, cut over and roll back safely. Includes A1/A2/A4, D1–4 | Q4/Q7/Q8; generic tooling and runbook review proceed now; production effects are not authorized by an issue |
+| Distribution, provenance and contribution — build/tooling, any OS (#11) | Actual package-instance inventory across platforms, copied-source/assets/bundle coverage, original notices and exceptions; ship them in exact artifact; sanitize public evidence, reconcile branches, publish support matrix, contributor setup and release notes. Includes D5 and one-product guarantee | PR #24 repair, #9 artifact interface and Q1/Q9; no new license census needed |
+| Idea Lab and research workflows — workflow/frontend integration, any OS | Bounded real multi-participant discussion, partial failures, retained contributions, decision/promotion; configurable news sources, attributed reading, research/guide/compare/draft task and review/revision. No implicit publishing or installation. Includes C1–4 | Reuse existing DR-01/02/07 code; fixture/product integration can proceed now, real completion depends on core execution |
+| Schedules, reusable skills and team capacity — backend/product | Eligible recurring dispatch, timezone/missed-run semantics, duplicate prevention, concurrency/review-wait release; procedures and knowledge with versions/provenance; capabilities, skills, limits and model/effort shown before pickup; allocation and bottleneck views. Includes B1/B2/B7/B9 | Existing DR-06/08/09/13; Q10. Basic bounded follow-up is MVP; advanced calendar/forecast/optimization follows |
+| Extensions and operator visibility — adapters/product | Optional Herdr read-only sessions, health/alerts, resource histories, incidents, notification destinations, additional harness conformance/examples; generic project packs and rich media/diff review. Includes B5, C5, D2 and later presentation | Q11–Q14. Minimal extension contract is MVP; extra adapters/services/packs are subsequent work, not forgotten or fake-complete |
+
+### Decisions and evaluations still open
+
+Every row names a specific question and decision role. Contributors can gather code
+evidence and propose the answer; only shared authority/security choices require the
+lead to decide. Native tests require their own explicit scope. No private files are
+required to understand these questions.
+
+| ID | Exact unresolved question | Responsible role / existing evidence / next discriminator |
+| --- | --- | --- |
+| Q1 | Which reviewed component SHA becomes the common public main/release baseline, with which required checks? | Integration lead: preserve existing PR targets, reconcile docs/CI/package differences and verify an assembled candidate; do not force-rewrite main |
+| Q2 | Which actual Hermes interface supports bounded submit/status/result, and what is honestly unsupported for cancel/replay/restart? | Harness integration + lead: inspect full pin of hermes-gpt beyond 11db8ac and supported Hermes interfaces; test actual MCP/session-job mapping. Do not require upstream to implement our REST/SSE vocabulary |
+| Q3 | How does official Codex start/events/explicit-ID read/resume bind to canonical attempts and results? | Core integration: reuse Codex App Server and existing read-recovery/workspace code; conformance across actual transport and persistence. A projection must not silently become execution authority |
+| Q4 | What initial supported authority/custody and rollback guarantees can actually be satisfied? | Security/integration lead with independent reviewer: retained ssh2/etcd ports; settle independent checkpoint placement, signing custody, split-commit and restore. Keep unsupported execution disabled; no deadline-driven bypass |
+| Q5 | Which non-secret configuration fields, defaults and version/migration rules are portable? | Core/configuration lead: existing project/settings wires plus WEBPAGE_SPEC; same artifact/two stores, export/import no credentials. Frontend can implement presentation before serializer approval |
+| Q6 | What is supported on each host: contributor demo, remote worker, or production server? | Platform lead: Windows LF/refusal evidence accepted; test path/launcher/notice portability. Linux private server first; do not weaken POSIX custody to claim Windows server support |
+| Q7 | What generic owner-auth and ingress setup is the documented initial mode? | Security/operations lead: configured identity verification (DR-05), private backend/PostgreSQL, MFA at configured identity layer, expiry/denial/revocation. No hidden hostname as the security boundary; no personal domain required |
+| Q8 | Can release, data, journal/checkpoint and artifacts be restored consistently and updates drain safely? | Operations + persistence lead: native PostgreSQL logical tools and existing lifecycle/queue ports; disposable restore and old/new release rollback. No new backup engine by default |
+| Q9 | Does the exact distributed artifact have complete license texts/provenance, including bundles and platform graph differences? | Distribution role: DR-03/04 and PR #16/#24; package instances, copied files, generated bundles, assets and exceptions. Successful scanner output alone is not clearance |
+| Q10 | Which schedule, budget, retry and concurrency semantics are exposed in the initial mode? | Scheduler/core lead: preserve bounded follow-up, distinguish unknown usage, use existing cron/Luxon/pg-boss. Specify missed occurrence and review-wait behavior before UI promises |
+| Q11 | Does optional Herdr observation fit selected host isolation and current upstream version? | Adapter role: retained 0.9 source pin and actual Mac evaluation in the ledger; check only relevant delta, scope/stale/restart/project binding. SSH/Windows/binary redistribution remain unqualified |
+| Q12 | Does a donor UI component actually reduce missing tabs/session work without bringing a second application store? | Frontend: current protected panels first; one bounded Desktop/WebUI source/component fit when necessary, exact license and changed files. No routine layout benchmark contest |
+| Q13 | What minimal extension/conformance and artifact contract supports additional harnesses and workflows safely? | Core/adapter lead: public existing harness manifests, events, artifact and project wires; explicitly list unsupported operations, versioning, isolation, removal and credential references; no second scheduler |
+| Q14 | What optional notification/monitoring integrations justify running extra services? | Operator-visibility role: Kuma conditional, Beszel source-only, Herdr observer; begin with existing health. Specify delivery/retry/dedup, private data and resource costs; no service installed by default |
+
+Settled reuse choices remain settled. No required repeat comparison for pnpm,
+Readability, cron/Luxon, pg, pg-boss, Markdown, JWT or the attributed collector.
+Fallbacks only activate on a demonstrated missing requirement. Hermes Studio remains
+license-gated; evaluate exact rights before copying, not after publication.
+
+### Public evidence and missing handoff rule
+
+The implementation branch exposes relevant test sources directly: `test:database`,
+`test:queue`, `test:codex-recovery`, `test:results`, `test:articles`, `test:ideas`,
+`test:calendar`, `test:observations`, `test:owner-signing` and `test:checkpoints` in
+package.json. Reuse ledger summaries do **not** mean every historical private research
+report has been exported. Do not tell a worker to retrieve a private report.
+
+For any required retained report absent publicly, the integration lead supplies a
+sanitized excerpt containing source pin, actual checked interface, outcome/limitation
+and reproduction/check reference in the assignment, or marks that prerequisite open.
+Existing public code/tests and the explicit questions above permit source review and
+bounded fit work now. Raw host evidence, tokens and personal setup stay private.
+
+### Release checklist and later scope
+
+Initial usable release requires all of: common reviewed baseline; generic setup and
+auth; two real supported harnesses; isolated projects/workspaces; task/progress/
+result/review/revision; bounded follow-up; honest disconnect/uncertainty handling;
+protected artifacts; same artifact with two configurations; portable notices;
+fresh install, backup restore, drain/update/rollback; documented host/capability
+support; actual product browser/keyboard/mobile tests and bounded sustained resource
+evidence. Do not call a mock-only preview that release.
+
+After that, finish the already-agreed optional scope: multi-bot ideas and promotion;
+generic news/research; advanced recurring work; additional harnesses (including
+Claude/OpenClaw contributions); optional sessions and consoles; notifications;
+procedures/knowledge; rich document/code/audio/video review; resource trends,
+capacity/bottleneck recommendations and incidents; removable project packs.
+Personal branding and workflows use these same public interfaces, not another core.
+
+The promotional website remains a separate public-information surface linking this
+repository. It must not publish private application routing, identities or operational
+data. This task does not deploy either site. No private host configuration is a
+prerequisite for contributing to the public product.
 
 For new ideas, record affected outcome/decision, existing donor, release necessity,
 dependencies, owner and test change in this same plan and linked issues. Reopen settled

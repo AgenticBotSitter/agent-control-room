@@ -28,6 +28,8 @@ everyone; no separate private core.
 | What is blocked, and who decides? | [Needs decision](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aneeds-decision) — each names the missing input |
 | What has been accepted? | [Completed outcomes](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aclosed+label%3Astatus%3Adone) · [Merged contributions](https://github.com/AgenticBotSitter/agent-control-room/pulls?q=is%3Apr+is%3Amerged) — partial PRs do not imply a whole feature is finished |
 | What is the full plan and what are we borrowing? | [All outcomes, reuse decisions and next steps](PUBLIC_BUILD_PLAN.md) · [Attribution](THIRD_PARTY.md) |
+| Exactly what remains, including unanswered questions? | [Complete remaining-work inventory](PUBLIC_BUILD_PLAN.md#complete-remaining-work-and-open-questions) — substantial workstreams, dependencies, decisions and release gates |
+| What should the webpage look like and do? | [Public webpage specification](WEBPAGE_SPEC.md) — layout, every core screen, optional modules, error states and acceptance |
 | Where do I ask or propose a different useful contribution? | [Coordination issue #12](https://github.com/AgenticBotSitter/agent-control-room/issues/12) — describe your expertise and a substantial non-overlapping outcome |
 
 **Already available:** disposable project/task/revision demo, substantial source and
