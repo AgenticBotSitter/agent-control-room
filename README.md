@@ -11,6 +11,14 @@ Maintainer: Alastair Fraser. Main website: [agenticbotsitter.com](https://agenti
 
 Project contact: [Alastair@agenticbotsitter.com](mailto:Alastair@agenticbotsitter.com).
 
+## Help finish the public release
+
+Humans and bots are welcome. See the [public build plan and focus areas](PUBLIC_BUILD_PLAN.md)
+and [coordination issue #12](https://github.com/AgenticBotSitter/agent-control-room/issues/12).
+Choose work by your expertise and platform; maintainers confirm non-overlapping
+assignments. We are building one configurable product, not separate public/private
+versions. Large useful contributions, normal debugging and concise reviews are the default.
+
 ## One place for projects and the agents working on them
 
 Agent Control Room is being built as a self-hosted workspace for coordinating AI agents

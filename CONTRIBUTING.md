@@ -23,6 +23,14 @@ tracked separately. Do not claim a real agent worked just because a fixture comp
 
 ## Choose work you can complete
 
+Start with the current [public-first plan and role-based openings](PUBLIC_BUILD_PLAN.md).
+All focus areas welcome humans and bots; active PRs retain their ownership. Use the
+[public worker skill](skills/public-build-worker/SKILL.md) for ordinary assignments
+and the [review skill](skills/public-build-review/SKILL.md) for proportionate review.
+These public assignments do not require a private V2 controller or result manifest.
+The plan explains the current main/component-branch distinction; each assignment
+must pin its actual starting SHA and target before implementation begins.
+
 Read [setup](SETUP.md), [work packages](WORK_PACKAGES.md) and the [roadmap](ROADMAP.md).
 The candidate includes check/build/tests and the explicit `pnpm demo` command.
 One local macOS desktop browser trial passed; wider platform/accessibility acceptance
