@@ -8,6 +8,17 @@ component acceptance. This file reports current product readiness and the next b
 
 ## Current position
 
+**Latest live setup checkpoint:** After explicit owner approval, the Control Room
+Access application was created. Reopening its saved configuration verified the
+selected single private hostname, existing exact-owner Allow policy, Cloudflare-only
+login, custom authenticator MFA for 168 hours and a one-week application session.
+The first interrupted click was checked against the application inventory (no new
+application) before keyboard submission; the subsequent inventory showed the new
+application. No DNS or tunnel route was changed. This supersedes the unsaved-draft
+statements below, not the outstanding origin/deployment/live-login acceptance gates.
+This checkpoint remains local and uncommitted following the earlier commit-review
+rejection; no repository publication is authorized by the account setup approval.
+
 **Current owner decision:** Deploy only one private application address on the owner's
 separate existing domain, selected in the private conversation. Keep the public project
 domain informational with no private login link. Use Cloudflare Access and the owner's
@@ -25,16 +36,22 @@ route. An unsaved Access draft selects the private hostname and Cloudflare-only 
 Independent MFA methods were all disabled during that inspection. After explicit
 owner approval, Authenticator application was enabled in Access settings and verified
 On after a full reload. Other MFA methods and account-wide domain blocking remain
-Off. Owner authenticator enrollment and owner-only application MFA enforcement remain
-unfinished. No route, DNS or application was saved; the Access draft remains unsaved.
+Off. Owner authenticator enrollment is now verified in the administrative user MFA
+device inventory; no secret or code was inspected. Application MFA enforcement remains
+unsaved. No route, DNS or Control Room application was saved.
 The enrollment link initially failed because the App Launcher had no policy. With
 explicit owner approval, the existing exact-owner-email Allow policy was reused
 unchanged for the launcher, Cloudflare-only login selected and a six-hour launcher
 session saved. Reload confirmed all three settings. The enrollment entry now reaches
 "Secure your account with MFA" and the authenticator setup button after sign-in in
 Chrome. No setup button was pressed, QR/secret read, or authenticator enrolled.
-The owner must complete enrollment. This launcher change does not deploy Control Room
+The owner subsequently completed enrollment, verified above. This launcher change does not deploy Control Room
 or grant access to it; individual application permissions remain separate.
+The refreshed Control Room Access draft now has the selected single hostname,
+Cloudflare-only login, the verified existing exact-owner Allow policy, customized
+Authenticator application MFA for 168 hours and a one-week application session.
+The existing policy inherits application MFA and is not modified for other apps.
+Creation still requires explicit approval; a prepared browser form is not protection.
 Do not deploy a second private address or populate `secondaryAccess`. The optional
 dual-address code remains unused. Hostnames stay out of public export configuration.
 Workplace use remains subject to employer policy, not assumed from domain reachability.

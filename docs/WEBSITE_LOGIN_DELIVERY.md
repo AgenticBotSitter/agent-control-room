@@ -1,5 +1,22 @@
 # Public website and single private application delivery
 
+## Latest checkpoint — saved Access application
+
+The owner explicitly approved creation after reviewing the exact hostname, owner-only
+Cloudflare login, authenticator MFA and seven-day maximum session. The application
+was created and reopened: stored identity selection excludes other providers, the
+existing verified exact-owner policy is attached unchanged, customized authenticator
+MFA is 168 hours, and the application session is one week. An interrupted initial
+click was followed by an inventory check showing no application before keyboard
+submission. The successful submission appeared in inventory and saved settings were
+read back. No duplicate, DNS record, tunnel route or server deployment was created.
+
+Owner enrollment was separately verified in administrative MFA metadata. An actual
+enforced login to a running Control Room instance, app audience/issuer configuration
+on the server, production resources and private-origin routing remain unverified.
+Earlier unsaved-draft notes below are historical. This latest receipt is local and
+uncommitted; the prior commit-review rejection was not retried or bypassed.
+
 2026-09-07. Owner superseded dual-private-address delivery with one private address
 on a separate existing domain. The exact chosen hostname remains in private operator
 configuration/conversation, not public source. Finish that login/application and the
@@ -216,6 +233,30 @@ stopped before that setup button: no QR code, TOTP secret, verification code or
 recovery material was accessed, and owner enrollment remains pending. This verifies
 the enrollment entry flow in Chrome, not another browser session or Control Room
 deployment. No DNS, tunnel route or Control Room application was saved.
+
+### Verified owner enrollment and final application draft
+
+After the owner reported completion, the administrative user inventory confirmed an
+Authenticator application entry for the same Cloudflare owner identity. Only device
+metadata was read; no setup secret, QR code, verification code or recovery material.
+Owner enrollment is complete; a real enforced Control Room login is not yet proven.
+
+The stale pre-enablement app draft was refreshed and reconstructed. Its selected
+single private hostname, existing verified exact-owner Allow policy, Cloudflare-only
+login, custom Authenticator application MFA (168 hours) and one-week application
+session are visible in the unsaved form. The domain chooser initially triggered a
+validation dialog rather than selecting a domain; it refused creation. The selection
+was corrected and observed before proceeding. No Create submission with a valid
+configuration was made. Saving this security-sensitive application awaits explicit
+approval; DNS and service routing remain absent.
+
+The existing reusable policy is unchanged and inherits application/organization MFA,
+not an explicit MFA-disable override. Cloudflare's current documentation distinguishes
+this inheritance from policy overrides: https://developers.cloudflare.com/cloudflare-one/access-controls/policies/mfa-requirements/.
+This permits app-specific MFA without changing the launcher or tracker. The seven-day
+settings target trusted personal devices, not unattended/shared workplace sessions;
+shorter upstream requirements and explicit logout still apply. The unsaved draft is
+not live login acceptance, and the public website remains separate.
 
 ## Public copy checkpoint
 

@@ -8,6 +8,6 @@ authoritative in `docs/*_ACCEPTANCE.md`.
 
 | File | What it is |
 |---|---|
-| `BUILD_EVALUATION_2026_09_11.md` | Independent evaluation of the build plan, completed work and repository state |
 | `BUILD_PLAN.md` | Reuse-first, execution-first build sequence |
 | `MODEL_ALLOCATION.md` | Model and effort per stage |
+| `IP01_IP04_REVIEW_2026_09_11.md` | Independent review of Stage 1 IP-01 (jsonwebtoken) and IP-04 (node-postgres) at `c93b18ad` |
