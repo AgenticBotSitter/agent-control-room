@@ -1,0 +1,4 @@
+# Byte-pinned evidence requires LF worktree bytes on every OS.
+# Without this, default Windows checkouts convert LF to CRLF, which shifts the
+# pinned schema digest (privateWebSchemaDigest) and breaks preflight gates.
+* text=auto eol=lf

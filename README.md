@@ -124,6 +124,12 @@ No live agent-runtime/platform combination is claimed supported by this preview.
 
 ## Contributor starting points
 
+**Latest implementation handoff:** [September 9 contributor handoff](CONTRIBUTOR_HANDOFF.md).
+The six-batch implementation is on `codex/component-batch-4` for review, not yet
+accepted into main. Use that branch for the latest code; do not duplicate completed
+components from older roadmap descriptions. No complete batch or production
+installation is claimed finished.
+
 **New: [settled component decisions](COMPONENT_DECISIONS.md) and
 [implementation packages](IMPLEMENTATION_PACKAGES.md).** These identify what to
 reuse, what not to rebuild, and which packages still need focused test exports

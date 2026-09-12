@@ -62,12 +62,23 @@ export function readNativeRestartInventory(scope: { tenantId: string; nodeId: st
       if (!delivery) { unknownAttempts++; continue; }
       if (attempt.jobId !== delivery.jobId || attempt.leaseId !== delivery.leaseId || attempt.leaseEpoch !== delivery.leaseEpoch) fail();
     }
+    const pendingWorkspaces: { runId: string; reason: "workspace_without_delivery" | "workspace_reconciliation_required"; evidenceDigest: string }[] = [];
+    for (const workspace of wire.workspaces) {
+      current();
+      if (workspace.tenantId !== tenantId || workspace.nodeId !== nodeId) fail();
+      const delivery = byAttempt.get(workspace.attemptId);
+      if (delivery && (workspace.runId !== delivery.runId || workspace.projectId !== delivery.projectId
+        || workspace.jobId !== delivery.jobId || workspace.leaseId !== delivery.leaseId || workspace.leaseEpoch !== delivery.leaseEpoch)) fail();
+      if (workspace.state !== "historically_removed") pendingWorkspaces.push({ runId: workspace.runId,
+        reason: delivery ? "workspace_reconciliation_required" : "workspace_without_delivery", evidenceDigest: workspace.evidenceDigest });
+    }
     current();
-    return { native, wire, activeEffects, pending, settled, unknownAttempts };
+    return { native, wire, activeEffects, pending, settled, unknownAttempts, pendingWorkspaces };
   };
   const before = read(false), after = read(true); current();
   if (sha256Digest(before) !== sha256Digest(after)) fail();
-  return Object.freeze({ status: before.pending.length || before.unknownAttempts || before.activeEffects ? "reconciliation_required" as const : "no_unresolved_local_work" as const,
+  return Object.freeze({ status: before.pending.length || before.unknownAttempts || before.activeEffects || before.pendingWorkspaces.length ? "reconciliation_required" as const : "no_unresolved_local_work" as const,
+    pendingWorkspaces: before.pendingWorkspaces,
     pending: before.pending, settledRunIds: before.settled.map(row => row.runId), unknownAttempts: before.unknownAttempts,
     activeEffects: before.activeEffects, evidenceDigest: sha256Digest(before), grantsExecutionAuthority: false as const,
     permitsFreshPickup: false as const, currentCleanupVerified: false as const });

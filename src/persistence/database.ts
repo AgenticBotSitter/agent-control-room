@@ -1,5 +1,4 @@
 import type { PGlite as PGliteType } from "@electric-sql/pglite";
-import postgres from "postgres";
 import { dataMethodV1, isHostProxyV1 } from "../security/host-value";
 import { createExactPgliteReceiverV1 } from "./pglite-provenance";
 
@@ -84,42 +83,6 @@ export async function createRepositorySimulationDatabaseV1(options: { testOnly: 
     query: <T = Record<string, unknown>>(statement: string, params: unknown[] = []) => query<T>(statement, params),
     close: async () => { await close(); },
   });
-}
-
-export function createPostgresClient(connectionString: string): {
-  client: DatabaseClient;
-  close: () => Promise<void>;
-} {
-  const sql = postgres(connectionString, {
-    max: 8,
-    idle_timeout: 20,
-    connect_timeout: 10,
-    prepare: true,
-  });
-
-  const adapt = (session: typeof sql): DatabaseSession => ({
-    async query<T>(statement: string, params: unknown[] = []) {
-      const rows = await session.unsafe(statement, params as never[]);
-      return { rows: rows as unknown as T[] };
-    },
-  });
-
-  return {
-    client: {
-      ...adapt(sql),
-      transaction<T>(callback: (session: DatabaseSession) => Promise<T>) {
-        return sql.begin((transaction) => callback(adapt(transaction as typeof sql))) as Promise<T>;
-      },
-      transactionWithPreCommitCheck<T>(callback: (session: DatabaseSession) => Promise<T>, preCommitCheck: () => void | Promise<void>) {
-        return sql.begin(async (transaction) => {
-          const result = await callback(adapt(transaction as typeof sql));
-          await preCommitCheck();
-          return result;
-        }) as Promise<T>;
-      },
-    },
-    close: () => sql.end({ timeout: 5 }),
-  };
 }
 
 export function adaptPglite(db: {

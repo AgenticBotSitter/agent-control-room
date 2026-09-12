@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { safeFetchText } from "../../../vendor/control-center/safe-fetch";
+import { safeFetchText, type SafeFetchOptions } from "../../../vendor/control-center/safe-fetch";
 import type { PinnedFetchDependencies } from "../../../vendor/control-center/pinned-fetch";
 import { createIndustrySourceReader } from "../../../vendor/control-center/source-reader";
 import { captureAbsCurrentSourceAuthority, type AbsCurrentSourceAuthority } from "./current-source-authority";
@@ -9,6 +9,7 @@ export const controlCenterCollectionLimitsSchema = z.object({ maxAttempts: z.num
   timeoutMs: z.number().int().min(1).max(30_000),
   maxDocumentBytes: z.number().int().min(1).max(50 * 1024 * 1024),
   maxReservedBodyBytes: z.number().int().min(1).max(100 * 1024 * 1024),
+  maxArticles: z.number().int().min(1).max(10).optional(),
 }).strict();
 /** Glue only: borrow discovery and pinned HTTP. Application supplies the transport,
  * current source authority and cancellation signal. Byte budget is
@@ -18,7 +19,7 @@ export function createControlCenterCollectionReader(value: unknown, source: AbsC
   const limits = controlCenterCollectionLimitsSchema.parse(value), assertCurrent = captureAbsCurrentSourceAuthority(source);
   const deadline = AbortSignal.any([signal, AbortSignal.timeout(limits.timeoutMs)]);
   const lookup = dependencies.lookup.bind(dependencies), fetch = dependencies.fetch.bind(dependencies);
-  let attempts = 0, reservedBodyBytes = 0;
+  let attempts = 0, reservedBodyBytes = 0, articles = 0;
   const check = (url: string): undefined => {
     deadline.throwIfAborted();
     // Discovery endpoints may legitimately contain queries (unlike canonical story
@@ -27,7 +28,7 @@ export function createControlCenterCollectionReader(value: unknown, source: AbsC
     absNewsDiscoveryEndpointSchemaV1.parse(new URL(url).toString());
     assertCurrent(url); deadline.throwIfAborted();
   };
-  const reader = createIndustrySourceReader({ now, async readText(url, options) {
+  const readText = async (url: string, options?: SafeFetchOptions) => {
     check(url);
     const maxBytes = Math.min(options?.maxBytes ?? limits.maxDocumentBytes, limits.maxDocumentBytes);
     if (reservedBodyBytes + maxBytes > limits.maxReservedBodyBytes) throw new Error("news_collection_body_budget_exhausted");
@@ -40,8 +41,19 @@ export function createControlCenterCollectionReader(value: unknown, source: AbsC
         return fetch(target, address, init);
       },
     });
-  } });
-  return Object.freeze({ ...reader, signal: deadline,
+  };
+  const reader = createIndustrySourceReader({ now, readText });
+  return Object.freeze({ ...reader, signal: deadline, maxArticles: limits.maxArticles ?? 0,
+    assertArticleCurrent: check,
+    async readArticle(url: string, signal: AbortSignal) {
+      if (!limits.maxArticles || articles >= limits.maxArticles) throw new Error("news_article_not_approved");
+      articles++;
+      signal.throwIfAborted();
+      const result = await readText(url, { maxBytes: 524288, headers: { Accept: "text/html" } });
+      signal.throwIfAborted(); check(url);
+      return { text: result.text, byteCount: Buffer.byteLength(result.text, "utf8"),
+        contentType: result.contentType, endpointUrl: result.finalUrl };
+    },
     async readSource(...args: Parameters<typeof reader.readSource>) {
       const configured = { ...args[0] };
       check(configured.url);

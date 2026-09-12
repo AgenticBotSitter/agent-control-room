@@ -12,6 +12,7 @@ import { ManagedNativeInput, nativeInputConfigurationSchema, type NativeInputCon
 import { encodeNativeWire, decodeNativeWire } from "../../harness/v1/native-wire";
 import { nativeTaskSubmissionReferenceSchema, type NativeTaskSubmissionReference } from "../../persistence/native-task-submission";
 import { queueAttentionSchema } from "./queue-attention-wire";
+import { assertSynchronousFence } from "../../security/synchronous-fence";
 
 export type ManagedNativeSessionSettings = {
   nodes: readonly ServerNodeSessionConfig[];
@@ -74,12 +75,19 @@ export class ManagedNativeSessions {
       register: routes.register?.bind(routes) });
   }
   private current(record?: Record) {
-    this.available();
+    assertSynchronousFence(() => this.available(), fail);
     const now = this.clock();
     if (this.closed || this.uncertain || !Number.isSafeInteger(now) || now < 0 || now < this.highWater) return fail();
     this.highWater = now;
     if (record && (record.closed || this.records.get(record.nodeId) !== record || record.signal?.aborted)) return fail();
-    try { if (record && !record.transport.isAvailable()) return fail(); } catch { return fail(); }
+    try {
+      if (record) {
+        const available: unknown = record.transport.isAvailable();
+        // Only literal true is a completed transport check; consume rejected
+        // promises without granting admission or leaving an unhandled rejection.
+        assertSynchronousFence(() => available === true ? undefined : available === undefined ? false : available, fail);
+      }
+    } catch { return fail(); }
   }
   private database(record: Record): DatabaseClient {
     const wrap = (tx: DatabaseSession): DatabaseSession => ({ query: async <T>(sql: string, params?: unknown[]) => {

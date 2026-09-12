@@ -1,10 +1,49 @@
 # Settled-component implementation packages
 
-2026-09-08. Substantial work, not automatic assignments. Read
+Implementation status refreshed against branch `codex/component-batch-4`
+through `478e719`. See CONTRIBUTOR_HANDOFF.md for the publication handoff and
+remaining assignment boundaries. These changes are not yet accepted into main.
+Substantial work, not automatic assignments. Read
 [component decisions](COMPONENT_DECISIONS.md), [setup](SETUP.md) and
 [contribution rules](CONTRIBUTING.md). Ask for maintainer assignment first.
 Every issue must freeze an available public commit and exact files before coding.
 Do not fetch private code or infer permission to operate a real agent or database.
+
+## Current assignment status — read before the original package descriptions
+
+The descriptions below retain the original intended outcomes, not an instruction
+to rebuild work now implemented. None of the six full batches is accepted complete.
+Freeze a published base containing the relevant implementation before assigning
+contributors; a local branch name alone is not an available public starting point.
+
+| Package | Implemented locally; do not duplicate | Remaining useful work | Current local verification |
+| --- | --- | --- | --- |
+| P1 project/results | Markdown renderer, protected result identity checks, task-switch isolation, clear-on-reauthorization, retained drafts, cancelled stale reads, ordinary/Idea archive-reopen and exact-key retry tests | Accessible keyboard/mobile/browser acceptance, project history presentation, separately admitted attachments | `pnpm test:results` (11 tests); physical browser acceptance remains open |
+| P2 database | node-postgres adapter and pool lifecycle; previous native PG17 transaction/restore evidence; Postgres.js removal | Real queue/native recovery, release-bound operational configuration and deployment acceptance | `pnpm test:database`, `pnpm test:queue`; see POSTGRES_RESTORE_EVIDENCE.md |
+| P3 attribution | Direct notices plus pinned CycloneDX collector, pnpm inventory, 193 runtime package-instance assembly and original-text rendering with explicit exception provenance | Independent review, portable inventory refresh, release output integration, bundle/asset/external-runtime coverage and unresolved entities version provenance | `pnpm test:notices` plus four runtime-license/exception test files listed in CONTRIBUTOR_HANDOFF.md; not full distribution clearance |
+| P4 token/calendar | jsonwebtoken policy adapter; cron-parser/Luxon integration and occurrence persistence | Automatic dispatch/recovery, live login acceptance and release integration; no second parser/verifier | `pnpm test:access`, `pnpm test:calendar` |
+| P5 news | Bounded extraction, source-bound storage/reader, collection-to-research task persistence | Qualified live sources/resource policy, physical browser acceptance and real agent research delivery | `pnpm test:articles`; no native agent execution implied |
+| P6 workspaces | Native Git port, durable intent/removal, root identities and read-only restart observations | Safe re-adoption with current admission, in-flight mutation recovery, retention and runtime composition | See WORKSPACE_RECOVERY_INTEGRATION.md; native fixture execution requires its own scope |
+
+Additional core work is not hidden by these contributor packages: real Idea Lab
+participants and crash recovery (DR-01); exact-ID native connector recovery and
+artifact admission (DR-17); owner key custody/consent/socket acceptance (DR-16);
+independent checkpoint placement and supported split-commit recovery (DR-15).
+For DR-17, the exact-ID projection, one-shot JSONL profile and owned read lifecycle
+are already implemented (`pnpm test:codex-recovery`, 11 tests). Do not rebuild them.
+The missing prerequisite is durable Codex-specific identity/admission evidence;
+the existing Hermes dispatch is not interchangeable. See CODEX_READ_RECOVERY.md.
+Queue/connector checks now include cancellation and synchronous-readiness
+regressions (`pnpm test:queue`, 55 tests), not live recovery acceptance.
+Optional Herdr retained-reader startup/API/UI are implemented, but actual collector
+composition/host qualification and Kuma/Beszel acceptance remain unfinished.
+
+Prioritize the first real task loop: approved task → native worker → retained
+result → review → linked revision, with restart uncertainty handled honestly.
+Do not expand optional monitoring to substitute for that missing operational loop.
+Maintainers own its cross-component authority and final integration. Local tests
+and documentation can proceed; credentials, listeners, live integrations and
+production changes still require their scoped approvals.
 
 ## P1 — [Any OS][UI] Project navigation and accessible result reading
 

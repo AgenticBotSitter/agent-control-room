@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { assertSynchronousFence } from "../security/synchronous-fence";
 import type { createNativeNodeRuntime } from "../harness/hermes-native-v1/node-runtime";
 import { snapshotSchema, terminalNativeState, type NativeState } from "../harness/hermes-native-v1/contracts";
 import { createNativeHttpNodeHost, type NativeHttpClient } from "./native-http-host";
@@ -30,7 +31,8 @@ export function createNativeConnector(runtime: Runtime, client: NativeHttpClient
   const lifetime = new AbortController(), pending = new Set<Promise<unknown>>();
   let attempted = false, closed = false, closing: Promise<void> | undefined;
   function current(signal?: AbortSignal) { if (closed || lifetime.signal.aborted || signal?.aborted) throw unavailable();
-    available(); if (closed || lifetime.signal.aborted || signal?.aborted) throw unavailable(); }
+    assertSynchronousFence(available, () => { throw unavailable(); });
+    if (closed || lifetime.signal.aborted || signal?.aborted) throw unavailable(); }
   function track<T>(work: Promise<T>) { pending.add(work); void work.then(() => pending.delete(work), () => pending.delete(work)); return work; }
   function close() {
     if (closing) return closing; closed = true; lifetime.abort();

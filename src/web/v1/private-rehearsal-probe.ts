@@ -1,4 +1,5 @@
-import postgres from "postgres";
+import { Client } from "pg";
+import { privatePgOptions } from "./private-pg-options";
 import { privatePostgresOptions, type PrivatePostgresConfiguration } from "./private-postgres";
 import type { DatabaseSession } from "../../persistence/database";
 
@@ -28,8 +29,28 @@ export type RehearsalProbeSqlFactory = (options: ReturnType<typeof rehearsalProb
  * Unlike the application pool, this probe can observe four expected PostgreSQL SQLSTATEs.
  * The fixed workload must decide which one is expected; none is an application write retry signal.
  */
+export function createPgRehearsalTransport(client: Client, onclose: () => void): ReturnType<RehearsalProbeSqlFactory> {
+    let ended = false;
+    let connecting: Promise<void> | undefined;
+    client.on("end", onclose);
+    client.on("error", () => { ended = true; });
+    return {
+      async reserve() {
+        if (ended) throw new Error("probe_unavailable");
+        await (connecting ??= client.connect());
+        if (ended) throw new Error("probe_unavailable");
+        return { async unsafe(statement, params) {
+          if (ended) throw new Error("probe_unavailable");
+          return (await client.query(statement, params)).rows;
+        } };
+      },
+      async end() { ended = true; await client.end(); },
+    };
+}
+
 export function createRehearsalProbe(config: PrivatePostgresConfiguration, slot: "a" | "b",
-  createSql: RehearsalProbeSqlFactory = options => postgres(options)): RehearsalProbe {
+  createSql: RehearsalProbeSqlFactory = options => createPgRehearsalTransport(
+    new Client({ ...privatePgOptions(config), application_name: options.connection.application_name }), options.onclose)): RehearsalProbe {
   let closed = false, stopped = false, active = false;
   let closing: Promise<void> | undefined;
   let reserved: ReturnType<ReturnType<RehearsalProbeSqlFactory>["reserve"]> | undefined;

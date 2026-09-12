@@ -76,6 +76,7 @@ export function NewsSourceRefresh({ projectId, sourceId, disabled, onHold }: {
         <p>Allowed sites: {description.allowedOrigins.join(", ")}</p>
         <p>Up to {description.limits.maxAttempts} connection attempts in {description.limits.timeoutMs / 1000} seconds.
           Maximum reserved page content: {Math.ceil(description.limits.maxReservedBodyBytes / 1024)} KiB. No agent task or publishing.</p>
+        <p>{description.limits.maxArticles ? `Also extract up to ${description.limits.maxArticles} articles within the same connection, time and byte limits.` : "Article extraction is not included in this approval."}</p>
         {!description.canRefresh ? <p>{description.sourceCurrent ? "An authorized owner and active project are required." : "This source changed or was disabled. Its collector configuration needs updating."}</p>
           : !state.proposed ? <button type="button" disabled={held} onClick={() => void run("propose")}>Prepare refresh</button>
             : state.canApprove ? <><p>The job is prepared. Approving allows the collection to run.</p><button type="button" disabled={held} onClick={() => void run("approve")}>Approve and queue refresh</button></>

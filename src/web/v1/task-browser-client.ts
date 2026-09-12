@@ -23,17 +23,19 @@ export function createTaskBrowserClient(transport: typeof fetch = fetch, makeKey
   const path = (id: string) => `/api/v1/projects/${encodeURIComponent(id)}/tasks`;
   const failure = (status: number): BrowserFailureCode => ({ 400: "invalid_request", 401: "authentication_required", 403: "access_denied",
     404: "not_found", 409: "conflict" } as Record<number, BrowserFailureCode>)[status] ?? "unavailable";
-  async function call(url: string, command?: { body: string; key: string }) {
+  async function call(url: string, command?: { body: string; key: string }, signal?: AbortSignal) {
     try {
+      signal?.throwIfAborted();
       return await transport(url, { method: command ? "POST" : "GET", credentials: "same-origin", redirect: "error", cache: "no-store",
-        signal: AbortSignal.timeout(10_000), headers: { accept: "application/json", "x-requested-with": "XMLHttpRequest",
+        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000), headers: { accept: "application/json", "x-requested-with": "XMLHttpRequest",
           ...(command ? { "content-type": "application/json", "idempotency-key": command.key } : {}) },
         ...(command ? { body: command.body } : {}) });
     } catch { throw new BrowserRequestError(command ? "uncertain" : "unavailable"); }
   }
-  async function read(url: string) {
-    const response = await call(url); if (!response.ok) throw new BrowserRequestError(failure(response.status));
-    return json(response);
+  async function read(url: string, signal?: AbortSignal) {
+    const response = await call(url, undefined, signal); signal?.throwIfAborted();
+    if (!response.ok) throw new BrowserRequestError(failure(response.status));
+    const result = await json(response); signal?.throwIfAborted(); return result;
   }
   async function commit(): Promise<TaskReceipt> {
     if (!pending || busy) throw new BrowserRequestError("uncertain");
@@ -114,20 +116,20 @@ export function createTaskBrowserClient(transport: typeof fetch = fetch, makeKey
         return value;
       } catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable"); }
     },
-    async results(projectId: string, jobId: string) {
+    async results(projectId: string, jobId: string, signal?: AbortSignal) {
       try {
         checkId(projectId); checkId(jobId);
-        const page = taskResultsPageSchema.parse(await read(`${path(projectId)}/${encodeURIComponent(jobId)}/results`));
+        const page = taskResultsPageSchema.parse(await read(`${path(projectId)}/${encodeURIComponent(jobId)}/results`, signal));
         if (page.projectId !== projectId || page.jobId !== jobId || new Set(page.items.map(item => item.artifactId)).size !== page.items.length
           || page.reviews.some(review => review.matchingArtifactIds.some(id => review.kind !== "document"
             || !page.items.some(item => item.artifactId === id && item.contentHash === review.contentHash)))) throw new Error();
         return page;
       } catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable"); }
     },
-    async resultContent(projectId: string, jobId: string, artifactId: string) {
+    async resultContent(projectId: string, jobId: string, artifactId: string, signal?: AbortSignal) {
       try {
         checkId(projectId); checkId(jobId); checkId(artifactId);
-        const content = taskResultContentSchema.parse(await read(`${path(projectId)}/${encodeURIComponent(jobId)}/results/${encodeURIComponent(artifactId)}`));
+        const content = taskResultContentSchema.parse(await read(`${path(projectId)}/${encodeURIComponent(jobId)}/results/${encodeURIComponent(artifactId)}`, signal));
         if (content.projectId !== projectId || content.jobId !== jobId || content.artifact.artifactId !== artifactId) throw new Error();
         const bytes = new TextEncoder().encode(content.text);
         const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map(value => value.toString(16).padStart(2, "0")).join("");

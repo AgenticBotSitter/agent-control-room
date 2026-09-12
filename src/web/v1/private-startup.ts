@@ -3,6 +3,7 @@ import { createPrivatePostgresDatabase, validatePrivatePostgresConfiguration,
 import { verifyPrivateDatabase } from "./private-database-preflight";
 import { installPrivateWebProcess, type PrivateWebProcessOptions } from "./private-process";
 import { captureWebOrigins } from "./access-verifier";
+import { captureHerdrReaders } from "./herdr-service";
 export { createAccessKeyLoader } from "./access-key-cache";
 
 export type PrivateStartupConfiguration = Omit<PrivateWebProcessOptions, "database" | "clock" | "drainMs" | "planning" | "assignment" | "approvals" | "submission" | "queueAttention" | "revisions" | "ideaCreation" | "newsCollections"> & {
@@ -27,6 +28,7 @@ export function validatePrivateStartupConfiguration(input: PrivateStartupConfigu
       tenantId: reference(input.tenantId), workspaceId: reference(input.workspaceId), ownerIdentityId: reference(input.ownerIdentityId),
       maxSessionSeconds: input.maxSessionSeconds, loadKeys: input.loadKeys,
       database: validatePrivatePostgresConfiguration(input.database),
+      ...(input.herdrObservations !== undefined ? { herdrObservations: captureHerdrReaders(input, input.herdrObservations) } : {}),
       ...(input.ideaProjects ? { ideaProjects: { integrityKey: key(input.ideaProjects.integrityKey) } } : {}),
       ...(input.news ? { news: { integrityKey: key(input.news.integrityKey) } } : {}),
       ...(input.tasks ? { tasks: { harnessIntegrityKey: key(input.tasks.harnessIntegrityKey),
