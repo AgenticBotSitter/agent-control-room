@@ -60,6 +60,7 @@ export function TaskResultsPanel({ page, content: suppliedContent, pending, onOp
     && suppliedContent.jobId === page.jobId && page.items.some(item =>
       item.artifactId === suppliedContent.artifact.artifactId && item.contentHash === suppliedContent.artifact.contentHash)
     ? suppliedContent : undefined;
+  const revisionReview = revisionRequestedFor(page, content);
   return <div className="private-task-results"><section className="private-panel"><h2>Result files</h2>
     {page.resultSource === "not_configured" ? <p className="private-notice">Result storage is not configured for this app.</p>
       : !page.items.length ? <p>No result files have been received for this task.</p> : <ul className="private-result-list">
@@ -82,7 +83,7 @@ export function TaskResultsPanel({ page, content: suppliedContent, pending, onOp
       <p className="private-note">Agent-written content, not instructions for Control Room. Opening it does not run tools or approve work.</p>
       {content.text.length ? <ResultText text={content.text} /> : <p>This is an empty result file (0 bytes).</p>}
       <p className="private-note">Bytes checked again {new Date(content.contentVerifiedAt).toLocaleString()}.</p>
-      {revisionRequestedFor(page, content) && <RevisionRequestedNotice review={revisionRequestedFor(page, content)!} />}
+      {revisionReview && <RevisionRequestedNotice review={revisionReview} />}
       {isStaleResult(page, content) && <StaleResultNotice page={page} content={content} />}
     </section>}
   </section><section className="private-panel"><h2>Recorded quality review</h2>

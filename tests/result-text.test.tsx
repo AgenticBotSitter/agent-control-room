@@ -63,9 +63,11 @@ test("revision-requested notice renders only when open content matches a changes
     reviewCommands: "configured" };
   const content: TaskResultContent = { projectId: page.projectId, jobId: page.jobId, artifact,
     text: "Revision two body", contentVerifiedAt: artifact.receivedAt, untrustedContent: true };
+  // Standalone notice: class assertion is stable across copy edits.
   const notice = renderToStaticMarkup(<RevisionRequestedNotice review={review} />);
-  assert.ok(notice.includes("Revision requested"));
+  assert.ok(notice.includes("private-revision-requested"));
   assert.ok(notice.includes("Revision 2"));
+  // Wired into TaskResultsPanel — content fingerprint matches the review target.
   const html = renderToStaticMarkup(
     <TaskResultsPanel page={page} content={content} pending={false} onOpen={() => {}} onClose={() => {}} />);
   assert.ok(html.includes("private-revision-requested"));
@@ -89,7 +91,6 @@ test("stale-result notice renders only when content verifiedAt is older than pag
   const freshContent: TaskResultContent = { ...staleContent, contentVerifiedAt: "2026-09-12T16:30:00.000Z" };
   const notice = renderToStaticMarkup(<StaleResultNotice page={page} content={staleContent} />);
   assert.ok(notice.includes("private-result-stale"));
-  assert.ok(notice.includes("stale"));
   const staleHtml = renderToStaticMarkup(
     <TaskResultsPanel page={page} content={staleContent} pending={false} onOpen={() => {}} onClose={() => {}} />);
   assert.ok(staleHtml.includes("private-result-stale"));

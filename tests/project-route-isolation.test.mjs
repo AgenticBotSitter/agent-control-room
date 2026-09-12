@@ -43,18 +43,19 @@ test('network read errors render a project-error notice distinct from permission
   const saved = Object.fromEntries(['window', 'document', 'IS_REACT_ACT_ENVIRONMENT', 'fetch']
     .map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true });
-  const pending = [];
   globalThis.fetch = () => Promise.resolve(new Response('', { status: 503 }));
   const root = createRoot(document.getElementById('root'));
   try {
     await act(async () => root.render(React.createElement(PrivateProjectWorkspace, { projectId: 'project:fail', section: 'overview' })));
     await act(async () => new Promise(resolve => setTimeout(resolve, 50)));
-    // 503 is not in the permission-collapse list, so the page settles to a read-error notice
-    // and the project body remains hidden behind the "unavailable" umbrella.
-    assert.match(document.body.textContent, /project read failed|Read|read error|Project read failed/i);
+    // 503 maps to BrowserFailureCode "unavailable" which is NOT in the permission-collapse
+    // list, so ProjectErrorNotice renders. Class assertion is stable across copy edits.
+    assert.ok(document.querySelector('.private-project-error'), 'expected project-error notice on 5xx');
+    // Retry control is present.
+    const retry = [...document.querySelectorAll('button')].find(button => button.textContent === 'Refresh this project');
+    assert.ok(retry, 'expected refresh button on project-error notice');
   } finally {
     await act(async () => root.unmount()); dom.window.close();
-    void pending;
     for (const [key, descriptor] of Object.entries(saved)) {
       if (descriptor) Object.defineProperty(globalThis, key, descriptor); else delete globalThis[key];
     }
