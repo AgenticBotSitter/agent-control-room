@@ -4,6 +4,13 @@ Permanent entry point for people and bots. Read the [build/reuse plan](PUBLIC_BU
 and [worker skill](skills/public-build-worker/SKILL.md). Issues are the live status
 record; no documentation commit is needed every time a job changes state.
 
+Public `main` is the reconciled implementation baseline through PR #32 at
+`aebbbf165bdabcc4da6e6fd08e7e247fd66e9ae6`. Connector, security/configuration and
+support decisions are published in [the shared connector contract](docs/SHARED_CONNECTOR_CONTRACT.md),
+[the security/configuration contract](docs/SECURITY_CONFIGURATION_CONTRACT.md) and
+[the support matrix](docs/SUPPORT_MATRIX.md). New work must use the exact base in its
+issue; active contributor branches retain ownership until accepted or handed off.
+
 ## Live views
 
 - [Ready](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aready)

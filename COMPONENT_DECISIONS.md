@@ -105,9 +105,9 @@ independent reviewers should not approve their own changes.
 
 ## Publishing and economical collaboration
 
-Actions remains disabled. Use local checks, small local commits if useful, and
-batch a coherent outcome into a PR. Git commits/pushes are not themselves Actions
-minutes; workflows consume the budget. Do not introduce scheduled polling builds,
-automatic deployments or privileged runners. Do not weaken verification merely
-to reduce CI use. Claim work through maintainer-confirmed issue assignment, not
-by assuming an unacknowledged comment reserves it.
+Public CI is enabled for pull requests and `main`; standard public GitHub-hosted
+runners do not consume the private repository's exhausted Actions allowance. Batch a
+coherent outcome into a PR and avoid scheduled polling builds, automatic deployments
+or privileged runners. Do not weaken verification merely to reduce CI use. Claim work
+through maintainer-confirmed issue assignment, not by assuming an unacknowledged
+comment reserves it.
