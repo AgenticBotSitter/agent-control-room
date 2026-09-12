@@ -1,0 +1,329 @@
+{
+  "generatedFrom": "package.json dependencies, resolved against the local node_modules",
+  "grantsCertification": false,
+  "grantsReleaseAuthority": false,
+  "packageCount": 38,
+  "byLicense": {
+    "MIT": 31,
+    "BSD-2-Clause": 1,
+    "ISC": 2,
+    "Unlicense": 1,
+    "BlueOak-1.0.0": 1,
+    "(MIT OR CC0-1.0)": 1
+  },
+  "notInstalled": [
+    "scheduler"
+  ],
+  "missingLicenseText": [
+    {
+      "name": "@nodable/entities",
+      "license": "MIT"
+    },
+    {
+      "name": "pg-types",
+      "license": "MIT"
+    },
+    {
+      "name": "pgpass",
+      "license": "MIT"
+    },
+    {
+      "name": "postgres",
+      "license": "Unlicense"
+    }
+  ],
+  "packages": {
+    "@nodable/entities": {
+      "installed": true,
+      "version": "3.0.0",
+      "license": "MIT",
+      "files": []
+    },
+    "anynum": {
+      "installed": true,
+      "version": "1.0.1",
+      "license": "MIT",
+      "files": [
+        "LICENSE"
+      ]
+    },
+    "cron-parser": {
+      "installed": true,
+      "version": "5.10.0",
+      "license": "MIT",
+      "files": [
+        "LICENSE"
+      ]
+    },
+    "entities": {
+      "installed": true,
+      "version": "2.2.0",
+      "license": "BSD-2-Clause",
+      "files": [
+        "LICENSE"
+      ]
+    },
+    "fast-xml-builder": {
+      "installed": true,
+      "version": "1.3.1",
+      "license": "MIT",
+      "files": [
+        "LICENSE"
+      ]
+    },
+    "fast-xml-parser": {
+      "installed": true,
+      "version": "5.11.0",
+      "license": "MIT",
+      "files": [
+        "LICENSE"
+      ]
+    },
+    "is-unsafe": {
+      "installed": true,
+      "version": "2.0.2",
+      "license": "MIT",
+      "files": [
+        "LICENSE"
+      ]
+    },
+    "luxon": {
+      "installed": true,
+      "version": "3.7.2",
+      "license": "MIT",
+      "files": [
+        "LICENSE.md"
+      ]
+    },
+    "non-error": {
+      "installed": true,
+      "version": "0.1.0",
+      "license": "MIT",
+      "files": [
+        "license"
+      ]
+    },
+    "path-expression-matcher": {
+      "installed": true,
+      "version": "1.6.2",
+      "license": "MIT",
+      "files": [
+        "LICENSE"
+      ]
+    },
+    "pg": {
+      "installed": true,
+      "version": "8.23.0",
+      "license": "MIT",
+      "files": [
+        "LICENSE"
+      ]
+    },
+    "pg-boss": {
+      "installed": true,
+      "version": "12.30.0",
+      "license": "MIT",
+      "files": [
+        "LICENSE"
+      ]
+    },
+    "pg-connection-string": {
+      "installed": true,
+      "version": "2.14.0",
+      "license": "MIT",
+      "files": [
+        "LICENSE"
+      ]
+    },
+    "pg-int8": {
+      "installed": true,
+      "version": "1.0.1",
+      "license": "ISC",
+      "files": [
+        "LICENSE"
+      ]
+    },
+    "pg-pool": {
+      "installed": true,
+      "version": "3.14.0",
+      "license": "MIT",
+      "files": [
+        "LICENSE"
+      ]
+    },
+    "pg-protocol": {
+      "installed": true,
+      "version": "1.16.0",
+      "license": "MIT",
+      "files": [
+        "LICENSE"
+      ]
+    },
+    "pg-types": {
+      "installed": true,
+      "version": "2.2.0",
+      "license": "MIT",
+      "files": []
+    },
+    "pgpass": {
+      "installed": true,
+      "version": "1.0.5",
+      "license": "MIT",
+      "files": []
+    },
+    "postgres": {
+      "installed": true,
+      "version": "3.4.7",
+      "license": "Unlicense",
+      "files": []
+    },
+    "postgres-array": {
+      "installed": true,
+      "version": "2.0.0",
+      "license": "MIT",
+      "files": [
+        "license"
+      ]
+    },
+    "postgres-bytea": {
+      "installed": true,
+      "version": "1.0.1",
+      "license": "MIT",
+      "files": [
+        "license"
+      ]
+    },
+    "postgres-date": {
+      "installed": true,
+      "version": "1.0.7",
+      "license": "MIT",
+      "files": [
+        "license"
+      ]
+    },
+    "postgres-interval": {
+      "installed": true,
+      "version": "1.2.0",
+      "license": "MIT",
+      "files": [
+        "license"
+      ]
+    },
+    "react": {
+      "installed": true,
+      "version": "19.2.6",
+      "license": "MIT",
+      "files": [
+        "LICENSE"
+      ]
+    },
+    "react-dom": {
+      "installed": true,
+      "version": "19.2.6",
+      "license": "MIT",
+      "files": [
+        "LICENSE"
+      ]
+    },
+    "rss-parser": {
+      "installed": true,
+      "version": "3.13.0",
+      "license": "MIT",
+      "files": [
+        "LICENSE"
+      ]
+    },
+    "sax": {
+      "installed": true,
+      "version": "1.6.1",
+      "license": "BlueOak-1.0.0",
+      "files": [
+        "LICENSE.md"
+      ]
+    },
+    "scheduler": {
+      "installed": false
+    },
+    "serialize-error": {
+      "installed": true,
+      "version": "13.0.1",
+      "license": "MIT",
+      "files": [
+        "license"
+      ]
+    },
+    "split2": {
+      "installed": true,
+      "version": "4.2.0",
+      "license": "ISC",
+      "files": [
+        "LICENSE"
+      ]
+    },
+    "strnum": {
+      "installed": true,
+      "version": "2.4.2",
+      "license": "MIT",
+      "files": [
+        "LICENSE"
+      ]
+    },
+    "tagged-tag": {
+      "installed": true,
+      "version": "1.0.0",
+      "license": "MIT",
+      "files": [
+        "license"
+      ]
+    },
+    "type-fest": {
+      "installed": true,
+      "version": "5.9.0",
+      "license": "(MIT OR CC0-1.0)",
+      "files": [
+        "license-cc0",
+        "license-mit"
+      ]
+    },
+    "xml-naming": {
+      "installed": true,
+      "version": "0.3.0",
+      "license": "MIT",
+      "files": [
+        "LICENSE"
+      ]
+    },
+    "xml2js": {
+      "installed": true,
+      "version": "0.5.0",
+      "license": "MIT",
+      "files": [
+        "LICENSE"
+      ]
+    },
+    "xmlbuilder": {
+      "installed": true,
+      "version": "11.0.1",
+      "license": "MIT",
+      "files": [
+        "LICENSE"
+      ]
+    },
+    "xtend": {
+      "installed": true,
+      "version": "4.0.2",
+      "license": "MIT",
+      "files": [
+        "LICENSE"
+      ]
+    },
+    "zod": {
+      "installed": true,
+      "version": "4.1.12",
+      "license": "MIT",
+      "files": [
+        "LICENSE"
+      ]
+    }
+  }
+}
