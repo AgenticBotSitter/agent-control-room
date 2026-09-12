@@ -13,6 +13,7 @@ import { NativeTaskSnapshotService } from "../src/node-control/native-task-snaps
 import { DatabaseNodeKeyResolver, DatabaseReplayGuard, FixedWindowProtocolRateLimiter, NodeProtocolAuthenticator,
   NODE_PROTOCOL_V1, publicKeyFingerprint, signNodeFrame, type SignedNodeFrame } from "../src/node-protocol/v1";
 import { binding, digest, input, instant, nativeRunId } from "./hermes-native-fixture";
+import { suppliedNativeFixtureDatabase } from "./helpers/native-fixture-database";
 
 export const at = (offset = 0) => new Date(instant + offset).toISOString();
 export const inputDigest = sha256Digest({ prompt: input.prompt, instructions: input.instructions });
@@ -25,12 +26,14 @@ export function snapshot(patch: Partial<NativeSnapshot> = {}): NativeSnapshot {
 export const observation = (patch: Partial<NativeSnapshot> = {}) => nativeTaskObservation(snapshot(patch), registration.nativeTask!);
 
 export async function nativeTaskFixture() {
-  const raw = new PGlite();
+  const supplied = await suppliedNativeFixtureDatabase();
+  const local = supplied ? undefined : new PGlite();
+  const raw = supplied?.raw ?? local!;
   for (const name of (await readdir(resolve("db/migrations"))).filter(name => name.endsWith(".sql")).sort()) {
     await raw.exec(await readFile(resolve("db/migrations", name), "utf8"));
   }
   await raw.query(`INSERT INTO tenants(id,display_name) VALUES ('tenant:test','Synthetic task'),('tenant:other','Other')`);
-  const db = adaptPglite(raw), canonical = new CanonicalStore(db);
+  const db = supplied?.db ?? adaptPglite(local!), canonical = new CanonicalStore(db);
   const common = { contractVersion: DOMAIN_CONTRACT_VERSION, tenantId: "tenant:test", version: 0, createdAt: at(-60_000), updatedAt: at(-60_000) } as const;
   const request: RequestRecord = { ...common, kind: "request", id: "request:test", projectId: binding.projectId,
     title: "Native evidence fixture", objective: "Record synthetic native observations without executing work", state: "draft", priority: 50,
