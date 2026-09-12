@@ -18,7 +18,7 @@ import { persistCodexDeliveryEnvelope, readCodexDeliveryEnvelopeReceipt } from "
 import { persistCodexDeliveryReceipt, readCodexDeliveryReceipt } from "../src/web/v1/codex-delivery-receipt";
 import { persistCodexTransmissionIntent, readCodexTransmissionIntentReceipt } from "../src/web/v1/codex-transmission-intent";
 import { codexApprovalPacketDigestV1, codexExecutionBindingDigestV1,
-  enqueueCodexTaskInSession } from "../src/web/v1/codex-task-queue";
+  enqueueCodexTaskInSession, readCodexApprovalPacketInSession } from "../src/web/v1/codex-task-queue";
 import { readNativeTaskQueueIntentInSession } from "../src/web/v1/native-task-queue";
 import { instant } from "./hermes-native-fixture";
 import { nativeTaskFixture } from "./native-task-fixture";
@@ -206,6 +206,21 @@ test("Codex queue refuses altered canonical authority without writing evidence",
       (SELECT count(*) FROM control_native_approval_packets)::text AS approvals,
       (SELECT count(*) FROM control_native_task_queue)::text AS queued`);
     assert.deepEqual(counts.rows[0], { approvals: "0", queued: "0" });
+    await f.close();
+  } finally { await rm(dataDir, { recursive: true, force: true }); }
+});
+
+test("Codex approval readback refuses the wrong integrity key", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "control-room-codex-delivery-"));
+  try {
+    const f = await persistedFixture(dataDir);
+    const scope = { tenantId: "tenant:test", projectId: "project:test", jobId: "job:test",
+      attemptId: "attempt:test", inputDigest: f.body.start.inputDigest };
+    assert.equal((await f.db.transaction(tx => readCodexApprovalPacketInSession(tx, f.key, scope)))?.body.queueId,
+      f.body.queueId);
+    await assert.rejects(f.db.transaction(tx => readCodexApprovalPacketInSession(tx,
+      new Uint8Array(32).fill(30), scope)),
+      /codex_task_queue_unavailable/);
     await f.close();
   } finally { await rm(dataDir, { recursive: true, force: true }); }
 });

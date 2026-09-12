@@ -18,7 +18,7 @@ import { enrollmentSchema, type NativeEnrollment } from "../../harness/v1/native
 import { prepareNativeTaskApprovalWithLease } from "../../harness/v1/native-task-lease-grant";
 import type { NativeApprovalPacketStore } from "./native-approval-packet-store";
 import { nativeTaskApprovalPacketSchema } from "../../harness/v1/native-approval-packet";
-import type { NativeTaskQueueScope } from "./native-task-queue";
+import { readNativeTaskQueueIntentInSession, type NativeTaskQueueScope } from "./native-task-queue";
 import type { ServerNodeSession } from "../../node-control/server-node-session";
 import { assertSynchronousFence } from "../../security/synchronous-fence";
 import { CODEX_APP_SERVER_CAPABILITY, CODEX_APP_SERVER_JOB_TYPE } from "../../harness/codex-v1/delivery-contract";
@@ -29,7 +29,11 @@ import { ownerApprovalAttestationSchema } from "../../node-policy/v1/schemas";
 import type { PinnedApprovalTrustStore } from "../../node-policy/v1/pinned-approval-trust";
 import type { SqliteNodeSecurityStateRepository } from "../../node-policy/v1/persistent-security-state";
 import { createCodexApprovalIntakeV1 } from "../../harness/codex-v1/approval-intake";
-import { enqueueCodexTaskInSession } from "./codex-task-queue";
+import { codexApprovalPacketDigestV1, enqueueCodexTaskInSession, readCodexApprovalPacketInSession,
+  type VerifiedCodexDeliveryAuthorityV1 } from "./codex-task-queue";
+import { persistCodexDeliveryEnvelope } from "./codex-delivery-envelope";
+import { persistCodexTransmissionIntent } from "./codex-transmission-intent";
+import { persistCodexDeliveryReceipt } from "./codex-delivery-receipt";
 
 type CanonicalNativeApproval = ReturnType<typeof prepareNativeTaskApprovalWithLease> & {
   enrollment: NativeEnrollment; preparedAt: string; sourceInputDigest: string; inputDigest: string;
@@ -132,11 +136,103 @@ export class TaskAssignmentCoordinator {
           security: configured.security, clock: this.clock })(signal);
         if (signal.aborted) conflict(); assertCurrent(); verified.assertFresh();
         const queued = await enqueueCodexTaskInSession(tx, this.codex!.integrityKey, body, verified, actorId, this.clock());
+        if (!queued.receipt.replayed && this.nativeTaskSubmission) await this.nativeTaskSubmission.enqueueInSession(tx, {
+          schema: "control-room.native-task-submission/v1", tenantId: this.scope.tenantId, projectId,
+          jobId, attemptId: queued.receipt.attemptId, queueId: queued.receipt.queueId,
+          inputDigest: expectedInputDigest, packetDigest: queued.receipt.packetDigest,
+        });
+        if (!queued.receipt.replayed) await appendAuditWith(tx, {
+          id: `audit:codex:${queued.receipt.queueId}`, tenantId: this.scope.tenantId, actorId, actorType: "human",
+          action: "codex.task.queued", targetType: "job", targetId: jobId, correlationId: queued.receipt.queueId,
+          idempotencyKey: `codex:${queued.receipt.queueId}`, safeMetadata: { packetDigest: queued.receipt.packetDigest },
+          occurredAt: queued.receipt.queuedAt,
+        });
         return { value: Object.freeze({ ...queued.receipt, startsWork: false as const,
           grantsExecutionAuthority: false as const }), assertFresh: () => {
             if (signal.aborted) conflict(); assertCurrent(); verified.assertFresh();
           } };
       });
+  }
+  /** Trusted shared-queue lookup. Harness kind is proved from the locked job and v3 plan. */
+  async locateApprovedCodexQueueDelivery(input: NativeTaskSubmissionReference, signal: AbortSignal) {
+    const ref = nativeTaskSubmissionReferenceSchema.parse(input);
+    if (!this.nativeTaskSubmission || !(signal instanceof AbortSignal) || signal.aborted
+      || ref.tenantId !== this.scope.tenantId) conflict();
+    return this.withCodexPermit(undefined, ref.projectId, ref.jobId, ref.inputDigest, undefined,
+      async (_tx, _prepared, assertCurrent, _actorId, _configured, _nodeKeyId, _deadline, queued) => {
+        if (!queued || queued.body.start.attemptId !== ref.attemptId) conflict();
+        assertCurrent(); queued.authority.assertFresh();
+        return { value: Object.freeze({ kind: "codex" as const, nodeId: queued.body.start.nodeId,
+          task: Object.freeze({ projectId: ref.projectId, jobId: ref.jobId, attemptId: ref.attemptId,
+            inputDigest: ref.inputDigest }), startsWork: false as const }),
+          assertFresh: () => { assertCurrent(); queued.authority.assertFresh(); } };
+      }, { reference: ref, signal });
+  }
+  /** Stages one signed Codex envelope and stores it before any transport send. */
+  async stageApprovedCodexQueueDelivery(input: NativeTaskSubmissionReference, session: ServerNodeSession, signal: AbortSignal) {
+    const ref = nativeTaskSubmissionReferenceSchema.parse(input);
+    if (!this.nativeTaskSubmission || !(signal instanceof AbortSignal) || signal.aborted
+      || ref.tenantId !== this.scope.tenantId) conflict();
+    return session.stageCodexDispatch((sign, channel) => this.withCodexPermit(undefined, ref.projectId, ref.jobId,
+      ref.inputDigest, undefined, async (tx, _prepared, assertCurrent, actorId, _configured, nodeKeyId, deadline, queued) => {
+        if (!queued || queued.body.start.attemptId !== ref.attemptId || channel.tenantId !== ref.tenantId
+          || channel.nodeId !== queued.body.start.nodeId || channel.nodeKeyId !== nodeKeyId
+          || queued.body.start.deadline > deadline) conflict();
+        assertCurrent(); queued.authority.assertFresh(); channel.assertCurrent();
+        const frame = await sign(queued.body, queued.body.start.deadline);
+        const receipt = await persistCodexDeliveryEnvelope(tx, this.codex!.integrityKey, frame, channel,
+          actorId, this.clock(), queued.authority);
+        const assertFresh = () => {
+          if (signal.aborted) conflict(); assertCurrent(); queued.authority.assertFresh(); channel.assertCurrent();
+        };
+        await appendAuditWith(tx, { id: `audit:codex-envelope:${receipt.queueId}`, tenantId: ref.tenantId,
+          actorId, actorType: "human", action: "codex.delivery.staged", targetType: "job", targetId: ref.jobId,
+          correlationId: receipt.queueId, idempotencyKey: `codex-envelope:${receipt.queueId}`,
+          safeMetadata: { frameDigest: receipt.frameDigest }, occurredAt: receipt.stagedAt });
+        return { value: receipt, assertFresh };
+      }, { reference: ref, signal }));
+  }
+  /** Commits the unique transmission intent before the session performs its only send. */
+  async transmitApprovedCodexQueueDelivery(input: NativeTaskSubmissionReference, session: ServerNodeSession, signal: AbortSignal) {
+    const ref = nativeTaskSubmissionReferenceSchema.parse(input);
+    if (!this.nativeTaskSubmission || !(signal instanceof AbortSignal) || signal.aborted
+      || ref.tenantId !== this.scope.tenantId) conflict();
+    return session.sendPreparedCodexDispatch((frame, channel) => this.withCodexPermit(undefined, ref.projectId, ref.jobId,
+      ref.inputDigest, undefined, async (tx, _prepared, assertCurrent, actorId, _configured, nodeKeyId, deadline, queued) => {
+        if (!queued || queued.body.start.attemptId !== ref.attemptId
+          || sha256Digest(frame.body) !== sha256Digest(queued.body)
+          || channel.tenantId !== ref.tenantId || channel.nodeId !== queued.body.start.nodeId
+          || channel.nodeKeyId !== nodeKeyId || Date.parse(frame.expiresAt) > deadline) conflict();
+        const receipt = await persistCodexTransmissionIntent(tx, this.codex!.integrityKey, frame, channel,
+          actorId, this.clock(), queued.authority);
+        const assertFresh = () => {
+          if (signal.aborted) conflict(); assertCurrent(); queued.authority.assertFresh(); channel.assertCurrent();
+        };
+        await appendAuditWith(tx, { id: `audit:codex-transmit:${receipt.queueId}`, tenantId: ref.tenantId,
+          actorId, actorType: "human", action: "codex.delivery.transmission_requested", targetType: "job", targetId: ref.jobId,
+          correlationId: receipt.queueId, idempotencyKey: `codex-transmit:${receipt.queueId}`,
+          safeMetadata: { frameDigest: receipt.frameDigest }, occurredAt: receipt.requestedAt });
+        return { value: { value: receipt, assertFresh }, assertFresh };
+      }, { reference: ref, signal }));
+  }
+  /** Records only the machine's authenticated storage receipt; it cannot start or settle work. */
+  async receiveCodexDeliveryReceipt(session: ServerNodeSession, raw: string | Uint8Array, signal: AbortSignal) {
+    if (!this.codex || !(signal instanceof AbortSignal) || signal.aborted) conflict();
+    return session.acceptCodexReceipt(raw, async (frame, dispatch, assertCurrent) => {
+      let fence = () => { if (signal.aborted) conflict(); assertCurrent(); };
+      const value = await this.db.transactionWithPreCommitCheck(async tx => {
+        const result = await persistCodexDeliveryReceipt(tx, this.codex!.integrityKey, frame, dispatch, this.clock, fence);
+        const previous = fence; fence = () => { previous(); result.assertFresh(); };
+        await appendAuditWith(tx, { id: `audit:codex-receipt:${frame.body.queueId}`, tenantId: frame.tenantId,
+          projectId: frame.body.projectId, actorId: frame.actorId, actorType: "worker",
+          action: "codex.delivery.receipt_recorded", targetType: "attempt", targetId: frame.body.attemptId,
+          correlationId: frame.body.queueId, idempotencyKey: `codex-receipt:${frame.body.queueId}`,
+          safeMetadata: { receiptFrameDigest: sha256Digest(frame), disposition: frame.body.disposition,
+            safeReason: frame.body.safeReason }, occurredAt: result.value.receivedAt });
+        fence(); return result.value;
+      }, () => fence());
+      fence(); return value;
+    });
   }
   /** Trusted coordinator/signing integration only. Not included in the browser operation surface.
    * Enrollment is configured at construction, never supplied by the approval request. */
@@ -431,10 +527,13 @@ export class TaskAssignmentCoordinator {
         return { value: { value: saved.receipt, assertFresh, ...(saved.receipt.leaseFrameDigest ? { leaseFrameDigest: saved.receipt.leaseFrameDigest } : {}) }, assertFresh };
       }, queue));
   }
-  private async withCodexPermit<T>(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string,
+  private async withCodexPermit<T>(identity: VerifiedWebIdentity | undefined, projectId: string, jobId: string, expectedInputDigest: string,
     issued: { issuedAt: number; approvalNonce: string; approvalKeyId: string } | undefined,
     finish: (tx: DatabaseSession, prepared: CodexOwnerPermitPreparationInputV1, assertCurrent: () => void,
-      actorId: string, configured: CodexPermitEnrollment) => Promise<{ value: T; assertFresh?: () => void }>) {
+      actorId: string, configured: CodexPermitEnrollment, nodeKeyId: string, deadline: number,
+      queued?: { body: ReturnType<typeof codexTaskDispatchBodySchemaV1.parse>;
+        authority: VerifiedCodexDeliveryAuthorityV1 }) => Promise<{ value: T; assertFresh?: () => void }>,
+    queue?: { reference: NativeTaskSubmissionReference; signal: AbortSignal }) {
     localId.parse(projectId); localId.parse(jobId); digestSchema.parse(expectedInputDigest);
     if (!this.codex) conflict();
     let finishFence: (() => void) | undefined;
@@ -442,7 +541,7 @@ export class TaskAssignmentCoordinator {
       transactionWithPreCommitCheck: (work, check) => this.db.transactionWithPreCommitCheck(work, async () => {
         await check(); finishFence?.();
       }) };
-    return new WebSessionAuthority(db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
+    const operation = async (tx: DatabaseSession, actor: WebActor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.approve", projectId, true);
       await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
@@ -466,8 +565,15 @@ export class TaskAssignmentCoordinator {
       const node = nodeRecordSchema.parse(nodeRow.payload);
       if (node.id !== configured.nodeId || node.tenantId !== this.scope.tenantId || node.state !== "active"
         || node.state !== nodeRow.state || node.version !== Number(nodeRow.version)) conflict();
-      const now = this.clock(), deadline = Math.min(Date.parse(stored.lease.expiresAt), Date.parse(job.authority.expiresAt), configured.validUntil);
-      if (!Number.isSafeInteger(now) || now < 0 || now >= deadline) conflict();
+      const key = (await tx.query<{ valid_from: string | Date; valid_until: string | Date | null }>(
+        "SELECT valid_from,valid_until FROM control_node_keys WHERE tenant_id=$1 AND node_id=$2 AND id=$3 AND state='active' FOR SHARE",
+        [this.scope.tenantId, node.id, node.identityKeyId])).rows[0];
+      const now = this.clock(), keyFrom = key ? new Date(key.valid_from).getTime() : NaN;
+      const keyUntil = key?.valid_until ? new Date(key.valid_until).getTime() : Infinity;
+      const deadline = Math.min(Date.parse(stored.lease.expiresAt), Date.parse(job.authority.expiresAt),
+        configured.validUntil, keyUntil);
+      if (!Number.isSafeInteger(now) || now < 0 || !key || !Number.isFinite(keyFrom)
+        || Number.isNaN(keyUntil) || keyFrom > now || now >= deadline) conflict();
       const trustedScope = { tenantId: this.scope.tenantId, nodeId: configured.nodeId, nodeClass: configured.nodeClass };
       if (sha256Digest(configured.approvals.binding()) !== sha256Digest(trustedScope)) conflict();
       const trustRevision = configured.security.currentServerTrustRevision();
@@ -481,20 +587,51 @@ export class TaskAssignmentCoordinator {
           || sha256Digest(configured.approvals.binding()) !== sha256Digest(trustedScope)) conflict();
       };
       assertCurrent();
-      const issuedAt = issued?.issuedAt ?? now;
+      const storedApproval = queue
+        ? await readCodexApprovalPacketInSession(tx, this.codex!.integrityKey, queue.reference) : null;
+      if (queue && (!storedApproval || storedApproval.packetDigest !== queue.reference.packetDigest
+        || queue.signal.aborted)) conflict();
+      const savedPermit = storedApproval?.body.permit.body;
+      const effectiveIssued = issued ?? (savedPermit ? { issuedAt: Date.parse(savedPermit.issuedAt),
+        approvalNonce: savedPermit.nonce, approvalKeyId: savedPermit.approvalKeyId } : undefined);
+      const issuedAt = effectiveIssued?.issuedAt ?? now;
       if (!Number.isSafeInteger(issuedAt) || issuedAt < Date.parse(stored.lease.acquiredAt) || issuedAt > now
-        || issued && issued.approvalKeyId !== configured.approvalKeyId) conflict();
+        || effectiveIssued && effectiveIssued.approvalKeyId !== configured.approvalKeyId) conflict();
       const { approvalKeyId: _approvalKeyId, approvals: _approvals, security: _security, ...configuredBinding } = configured;
       const prepared: CodexOwnerPermitPreparationInputV1 = { job, attempt: stored.attempt, lease: stored.lease,
         input: plan.input, binding: prepareCodexOwnerPermitBinding(configuredBinding), approvalKeyId: configured.approvalKeyId,
-        issuedAt, approvalNonce: issued?.approvalNonce ?? sha256Digest({ purpose: "codex-owner-permit-nonce/v1",
+        issuedAt, approvalNonce: effectiveIssued?.approvalNonce ?? sha256Digest({ purpose: "codex-owner-permit-nonce/v1",
           tenantId: this.scope.tenantId, projectId, jobId, attemptId: stored.attempt.id,
           leaseEpoch: stored.lease.epoch, issuedAt }).slice(7) };
+      let queued: { body: ReturnType<typeof codexTaskDispatchBodySchemaV1.parse>;
+        authority: VerifiedCodexDeliveryAuthorityV1 } | undefined;
+      if (storedApproval && queue) {
+        const material = prepareCodexOwnerPermitMaterial(prepared);
+        const body = codexTaskDispatchBodySchemaV1.parse({ schema: "control-room.codex-task-dispatch/v1",
+          queueId: storedApproval.body.queueId, start: material.start, request: material.request,
+          permit: storedApproval.body.permit, permitDigest: storedApproval.body.permitDigest });
+        if (sha256Digest(body) !== sha256Digest(storedApproval.body)
+          || codexApprovalPacketDigestV1(body) !== storedApproval.packetDigest) conflict();
+        const authority = await createCodexApprovalIntakeV1({ body,
+          expectedEnrollmentDigest: configured.enrollmentDigest,
+          expectedConnectorProfileDigest: configured.connectorProfileDigest,
+          expectedWorkspaceIntentDigest: configured.workspaceIntentDigest }, { approvals: configured.approvals,
+          security: configured.security, clock: this.clock })(queue.signal);
+        if (queue.signal.aborted) conflict();
+        queued = { body, authority };
+      }
       prepareCodexOwnerPermitMaterial(prepared); assertCurrent();
-      const result = await finish(tx, prepared, assertCurrent, actor.id, configured);
+      const result = await finish(tx, prepared, assertCurrent, actor.id, configured, node.identityKeyId, deadline, queued);
       finishFence = result.assertFresh ?? assertCurrent;
       return result.value;
-    });
+    };
+    if (queue) {
+      const store = { readQueueIntentInSession: (tx: DatabaseSession, scope: NativeTaskQueueScope) =>
+        readNativeTaskQueueIntentInSession(tx, this.codex!.integrityKey, scope) };
+      return new NativeQueueAuthority(db, this.scope, store, this.clock).authenticated(queue.reference, operation);
+    }
+    if (!identity) conflict();
+    return new WebSessionAuthority(db, this.scope, this.clock, "task").authenticated(identity, operation);
   }
 
   private async withNativeApproval<T>(identity: VerifiedWebIdentity | undefined, projectId: string, jobId: string, expectedInputDigest: string,

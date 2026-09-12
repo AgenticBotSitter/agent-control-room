@@ -189,8 +189,15 @@ review, signs one bounded approval without a Hermes recovery permission, verifie
 that signature against current pinned trust, and writes the existing shared queue
 intent. Repeated or changed permits fail closed.
 
-The next integration must connect that queued intent to the already bounded
-server delivery worker and node-local admission, then return the exact Codex
-result to the existing review lifecycle. It must not expose permit construction
-as a browser request, silently select a workspace, or treat a reported capability
-as local admission.
+The queued Codex intent now reaches the existing operational submission port and
+the trusted coordinator can carry its exact signed packet through the existing
+server session: durable envelope, one committed transmission intent, one transport
+send, and one authenticated node-storage receipt. The combined PGlite/session
+test keeps the canonical job leased and proves no harness run is created. A missing
+receipt remains unconfirmed; neither send nor receipt is execution evidence.
+
+The next integration must route Codex entries through the managed connection and
+shared worker without sending them into the Hermes approval/result path, then bind
+node-local admission and the exact Codex start journal before any App Server start.
+It must not expose permit construction as a browser request, silently select a
+workspace, treat a reported capability as local admission, or retry an uncertain send.
