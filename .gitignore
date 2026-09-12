@@ -4,6 +4,8 @@ node_modules/
 /dist/
 /dist-vps/
 /dist-contributor/
+/dist-release/
+/dist-release-*/
 /coverage/
 *.tsbuildinfo
 

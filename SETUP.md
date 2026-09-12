@@ -182,3 +182,24 @@ edits. Dependencies (`node_modules`) and generated output (`dist-vps` and
 `dist-contributor`) can be recreated;
 inspect exact paths before removing them. Do not delete a shared package cache, home
 directory or another checkout. Temporary rehearsal logs are not release content.
+
+## Installable release (issue #9)
+
+The operator release package lives in `scripts/release/` (manifest builder,
+artifact verifier, static preflight), `docs/operations/` (install,
+update/rollback, restore checklist, unprivileged supervisor guide),
+`examples/release/` (generic operator config, env names, user service unit)
+and `tests/release-*.test.mjs|ts`. Run it with:
+
+```sh
+node scripts/build-vps.mjs
+node scripts/release/build-release.mjs --revision <exact-40-hex-sha>
+node scripts/release/verify-artifact.mjs
+node scripts/release/preflight.mjs --configuration /absolute/operator-config.mjs --artifact dist-release
+pnpm test:release
+```
+
+SETUP coordination note: PR #6 (Linux rehearsal docs) and PR #7 (browser
+acceptance command) touch the rehearsal/acceptance sections above; this section
+is additive and does not edit their regions. If #6/#7 merge first, this branch
+rebases onto them without content changes here.

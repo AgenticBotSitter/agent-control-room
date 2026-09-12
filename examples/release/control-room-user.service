@@ -1,0 +1,20 @@
+[Unit]
+Description=Agent Control Room private host (unprivileged user unit)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Substitute the bracketed values; paths must be absolute.
+WorkingDirectory=[/home/operator/control-room]
+ExecStart=[/home/operator/.local/bin/node] scripts/run-private-vps.mjs --configuration [/home/operator/control-room-config.mjs]
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=60
+# Least privilege: no new privileges, private tmp, loopback networking is all
+# the host needs (it binds 127.0.0.1 only).
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target
