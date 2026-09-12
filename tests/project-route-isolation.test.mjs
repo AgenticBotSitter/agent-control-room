@@ -5,7 +5,7 @@ import { createRoot } from 'react-dom/client';
 import { JSDOM } from 'jsdom';
 import { PrivateProjectWorkspace } from '../private-app/app/workspace.tsx';
 
-test('idea-lab project reopen renders a revision notice without obscuring lifecycle controls', async () => {
+test('idea-lab project version alone does not prove a reopen event or retained history', async () => {
   const dom = new JSDOM('<div id="root"></div>', { pretendToBeVisual: true });
   const saved = Object.fromEntries(['window', 'document', 'IS_REACT_ACT_ENVIRONMENT', 'fetch']
     .map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
@@ -13,23 +13,32 @@ test('idea-lab project reopen renders a revision notice without obscuring lifecy
   const pending = [];
   globalThis.fetch = (url, options) => new Promise(resolve => pending.push({ url, options, resolve }));
   const root = createRoot(document.getElementById('root'));
-  const reopenedProject = { projectId: 'project:reopened', title: 'Reopened idea', summary: 'Reopened idea body',
+  // version=3 with no reopen event (e.g. a pause→resume that bumped the saved revision).
+  // The notice must still render (it names the saved version), but it must NOT claim
+  // that the project was reopened or that any earlier revisions remain recorded —
+  // the response only proves the current saved version.
+  const versionedProject = { projectId: 'project:versioned', title: 'Versioned idea', summary: 'Versioned idea body',
     lifecycle: 'active', version: 3, origin: 'idea_lab', lifecycleEditable: true,
     ideaLifecycleActions: ['pause', 'complete'], createdAt: '2026-09-09T12:00:00.000Z', updatedAt: '2026-09-09T12:00:00.000Z' };
   const render = (projectId, section) => root.render(React.createElement(PrivateProjectWorkspace, { projectId, section }));
   try {
-    // Settings section is where idea-lab lifecycle controls live.
-    await act(async () => render('project:reopened', 'settings'));
-    await act(async () => pending[0].resolve(Response.json({ project: reopenedProject })));
-    assert.match(document.body.textContent, /Reopened idea/);
-    assert.match(document.body.textContent, /reopened/i);
+    await act(async () => render('project:versioned', 'settings'));
+    await act(async () => pending[0].resolve(Response.json({ project: versionedProject })));
+    assert.match(document.body.textContent, /Versioned idea/);
+    // Notice names the saved revision — but only the version, no cause inferred.
+    assert.ok(document.querySelector('.private-project-revision'), 'expected revision notice for saved version >= 2');
+    assert.match(document.body.textContent, /saved revision 3/i);
+    // Negative assertion: the notice must NOT claim reopen or retained history.
+    assert.doesNotMatch(document.body.textContent, /reopened/i);
+    assert.doesNotMatch(document.body.textContent, /history remains recorded/i);
+    assert.doesNotMatch(document.body.textContent, /earlier revisions/i);
     // Pause control is still present — the notice never replaces the controls.
     assert.ok([...document.querySelectorAll('button')].some(button => button.textContent === 'Pause project'));
     // An ordinary project with the same version does NOT show the notice on settings either.
-    const ordinaryProject = { ...reopenedProject, origin: 'ordinary' };
+    const ordinaryProject = { ...versionedProject, origin: 'ordinary' };
     await act(async () => render('project:ordinary', 'settings'));
     await act(async () => pending[1].resolve(Response.json({ project: ordinaryProject })));
-    assert.doesNotMatch(document.body.textContent, /reopened/i);
+    assert.doesNotMatch(document.body.textContent, /saved revision 3/i);
   } finally {
     await act(async () => root.unmount()); dom.window.close();
     for (const [key, descriptor] of Object.entries(saved)) {

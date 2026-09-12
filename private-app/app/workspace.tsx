@@ -35,11 +35,13 @@ export function ProjectRevisionNotice({ project }: { project: ProjectView }) {
   // A versioned idea-lab project whose lifecycle is currently editable is one that has been
   // replaced or retained across a non-active state. We deliberately do NOT claim "reopen":
   // a paused project that resumes also bumps its version past 2 without any reopening event.
-  // The notice names the saved revision and the project history; it does not infer a cause.
+  // The notice names the saved version only; it does not infer a cause, a reopen event,
+  // or anything about retained history (the response only proves the current saved version,
+  // not that any earlier revisions are still recorded).
   if (project.lifecycle !== "active" || !project.lifecycleEditable) return null;
-  return <div className="private-notice private-project-revision" role="status" aria-label="Project has a saved revision past its initial version">
-    <p>This idea-lab project has a saved revision ({project.version}) past its initial version. Its history of earlier revisions remains recorded.</p>
-    <p>Closing this tab does not change saved revisions. The Tasks page shows only what is recorded for the project currently open here.</p>
+  return <div className="private-notice private-project-revision" role="status" aria-label="Project is on a saved revision past its initial version">
+    <p>This idea-lab project is on saved revision {project.version}.</p>
+    <p>Closing this tab does not change the saved revision. The Tasks page shows what is recorded for the project currently open here.</p>
   </div>;
 }
 
