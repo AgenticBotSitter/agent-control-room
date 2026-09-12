@@ -45,6 +45,38 @@ const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 
 const DEFAULT_VENDOR_ROOTS = ['src/vendor', 'vendor', 'assets/vendor'];
 
+// Hard bound on the number of vendor roots per invocation. The scanner
+// walks every root synchronously, so an unbounded `--roots` list is a
+// trivial local-DoS vector (e.g. `--roots $(yes x | head -100000)`).
+const MAX_VENDOR_ROOTS = 32;
+
+/**
+ * Parse and bound a `--roots <csv>` value into a vendorRoots array.
+ *
+ * Bounds (each violation throws a `license_bundled_*` error):
+ *   - empty / whitespace-only input is rejected;
+ *   - entries are trimmed, empty segments dropped, trailing slashes
+ *     stripped, backslashes normalized to forward slashes;
+ *   - absolute paths and `..` segments are rejected — roots must stay
+ *     inside the repository;
+ *   - at most MAX_VENDOR_ROOTS entries.
+ */
+export function parseVendorRoots(value) {
+  if (typeof value !== 'string' || !value.trim()) throw new Error('license_bundled_roots_empty');
+  const roots = [];
+  for (const raw of value.split(',')) {
+    const entry = raw.trim().replace(/\\/g, '/').replace(/\/+$/, '');
+    if (!entry) continue;
+    if (path.isAbsolute(entry) || entry === '..' || entry.startsWith('../') || entry.includes('/../') || entry.endsWith('/..')) {
+      throw new Error(`license_bundled_root_outside_repo: ${raw.trim()}`);
+    }
+    roots.push(entry);
+  }
+  if (roots.length === 0) throw new Error('license_bundled_roots_empty');
+  if (roots.length > MAX_VENDOR_ROOTS) throw new Error(`license_bundled_too_many_roots: ${roots.length} > ${MAX_VENDOR_ROOTS}`);
+  return roots;
+}
+
 /**
  * Recursively enumerate every regular file under `root`, returning
  * repo-relative forward-slash paths. Symlinks, devices, FIFOs, and
@@ -132,11 +164,29 @@ export function scanBundledCode({
 // (entry guard true) and on Windows where argv[1] is a backslash path
 // (positional argv[2]/process.cwd() still works the same).
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const repoRoot = process.argv[2] || process.cwd();
-  const rows = scanBundledCode({ repoRoot });
+  let repoRoot = process.cwd();
+  let vendorRoots = DEFAULT_VENDOR_ROOTS;
+  const rest = process.argv.slice(2);
+  // Optional positional repoRoot (back-compat with the original form:
+  // `node script.mjs <repoRoot>`). Any `--flag` in first position means
+  // no positional root was given.
+  if (rest.length > 0 && !rest[0].startsWith('--')) repoRoot = rest.shift();
+  for (let i = 0; i < rest.length; i++) {
+    const flag = rest[i];
+    if (flag === '--roots') {
+      const next = rest[i + 1];
+      if (next === undefined) throw new Error('license_bundled_roots_empty');
+      vendorRoots = parseVendorRoots(next);
+      i++;
+    } else {
+      throw new Error(`license_bundled_unknown_flag: ${flag}`);
+    }
+  }
+  const rows = scanBundledCode({ repoRoot, vendorRoots });
   process.stdout.write(JSON.stringify({
     schema: 'control-room.runtime-license-bundled-scan/v1',
     repoRoot,
+    vendorRoots,
     rows,
   }, null, 2) + '\n');
 }
