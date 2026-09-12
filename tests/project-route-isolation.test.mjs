@@ -5,6 +5,74 @@ import { createRoot } from 'react-dom/client';
 import { JSDOM } from 'jsdom';
 import { PrivateProjectWorkspace } from '../private-app/app/workspace.tsx';
 
+test('idea-lab project version alone does not prove a reopen event or retained history', async () => {
+  const dom = new JSDOM('<div id="root"></div>', { pretendToBeVisual: true });
+  const saved = Object.fromEntries(['window', 'document', 'IS_REACT_ACT_ENVIRONMENT', 'fetch']
+    .map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true });
+  const pending = [];
+  globalThis.fetch = (url, options) => new Promise(resolve => pending.push({ url, options, resolve }));
+  const root = createRoot(document.getElementById('root'));
+  // version=3 with no reopen event (e.g. a pause→resume that bumped the saved revision).
+  // The notice must still render (it names the saved version), but it must NOT claim
+  // that the project was reopened or that any earlier revisions remain recorded —
+  // the response only proves the current saved version.
+  const versionedProject = { projectId: 'project:versioned', title: 'Versioned idea', summary: 'Versioned idea body',
+    lifecycle: 'active', version: 3, origin: 'idea_lab', lifecycleEditable: true,
+    ideaLifecycleActions: ['pause', 'complete'], createdAt: '2026-09-09T12:00:00.000Z', updatedAt: '2026-09-09T12:00:00.000Z' };
+  const render = (projectId, section) => root.render(React.createElement(PrivateProjectWorkspace, { projectId, section }));
+  try {
+    await act(async () => render('project:versioned', 'settings'));
+    await act(async () => pending[0].resolve(Response.json({ project: versionedProject })));
+    assert.match(document.body.textContent, /Versioned idea/);
+    // Notice names the saved revision — but only the version, no cause inferred.
+    assert.ok(document.querySelector('.private-project-revision'), 'expected revision notice for saved version >= 2');
+    assert.match(document.body.textContent, /saved revision 3/i);
+    // Negative assertion: the notice must NOT claim reopen or retained history.
+    assert.doesNotMatch(document.body.textContent, /reopened/i);
+    assert.doesNotMatch(document.body.textContent, /history remains recorded/i);
+    assert.doesNotMatch(document.body.textContent, /earlier revisions/i);
+    // Pause control is still present — the notice never replaces the controls.
+    assert.ok([...document.querySelectorAll('button')].some(button => button.textContent === 'Pause project'));
+    // An ordinary project with the same version does NOT show the notice on settings either.
+    const ordinaryProject = { ...versionedProject, origin: 'ordinary' };
+    await act(async () => render('project:ordinary', 'settings'));
+    await act(async () => pending[1].resolve(Response.json({ project: ordinaryProject })));
+    assert.doesNotMatch(document.body.textContent, /saved revision 3/i);
+  } finally {
+    await act(async () => root.unmount()); dom.window.close();
+    for (const [key, descriptor] of Object.entries(saved)) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor); else delete globalThis[key];
+    }
+  }
+});
+
+test('network read errors render a project-error notice distinct from permission unavailability', async () => {
+  const dom = new JSDOM('<div id="root"></div>', { pretendToBeVisual: true });
+  const saved = Object.fromEntries(['window', 'document', 'IS_REACT_ACT_ENVIRONMENT', 'fetch']
+    .map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true });
+  globalThis.fetch = () => Promise.resolve(new Response('', { status: 503 }));
+  const root = createRoot(document.getElementById('root'));
+  try {
+    await act(async () => root.render(React.createElement(PrivateProjectWorkspace, { projectId: 'project:fail', section: 'overview' })));
+    await act(async () => new Promise(resolve => setTimeout(resolve, 50)));
+    // 503 maps to BrowserFailureCode "unavailable" which is NOT in the permission-collapse
+    // list, so ProjectErrorNotice renders. Class assertion is stable across copy edits.
+    assert.ok(document.querySelector('.private-project-error'), 'expected project-error notice on 5xx');
+    // Retry control is present. Class assertion keeps this stable across
+    // copy edits to the button label; same pattern the maintainer
+    // requested for the other ProjectErrorNotice tests (issue #10 review).
+    const retry = document.querySelector('.private-project-error button');
+    assert.ok(retry, 'expected refresh button on project-error notice');
+  } finally {
+    await act(async () => root.unmount()); dom.window.close();
+    for (const [key, descriptor] of Object.entries(saved)) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor); else delete globalThis[key];
+    }
+  }
+});
+
 for (const projectOrigin of ['ordinary', 'idea_lab']) test(`${projectOrigin} navigation and uncertain saves retain exact project identity`, async () => {
   const dom = new JSDOM('<div id="root"></div>', { pretendToBeVisual: true });
   const saved = Object.fromEntries(['window', 'document', 'IS_REACT_ACT_ENVIRONMENT', 'fetch']

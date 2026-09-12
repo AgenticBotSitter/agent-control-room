@@ -30,6 +30,36 @@ export function ProjectIdeaOrigin({ project }: { project: ProjectView }) {
     ? <p><a href={`/ideas/${encodeURIComponent(project.sourceIdeaSessionId)}`}>View original Idea Lab discussion and decision</a></p> : null;
 }
 
+export function ProjectRevisionNotice({ project }: { project: ProjectView }) {
+  if (project.origin !== "idea_lab" || project.version < 2) return null;
+  // A versioned idea-lab project whose lifecycle is currently editable is one that has been
+  // replaced or retained across a non-active state. We deliberately do NOT claim "reopen":
+  // a paused project that resumes also bumps its version past 2 without any reopening event.
+  // The notice names the saved version only; it does not infer a cause, a reopen event,
+  // or anything about retained history (the response only proves the current saved version,
+  // not that any earlier revisions are still recorded).
+  if (project.lifecycle !== "active" || !project.lifecycleEditable) return null;
+  return <div className="private-notice private-project-revision" role="status" aria-label="Project is on a saved revision past its initial version">
+    <p>This idea-lab project is on saved revision {project.version}.</p>
+    <p>Closing this tab does not change the saved revision. The Tasks page shows what is recorded for the project currently open here.</p>
+  </div>;
+}
+
+/** Network and transient errors are distinct from permission errors. A permission failure
+ * (authentication_required / access_denied / not_found) collapses the page to `unavailable` and
+ * is already rendered above. This notice is for everything else: connection failures, server
+ * 5xx, malformed responses, request timeouts, AND write-side `uncertain` errors (a save that
+ * could not be confirmed by the server — these flow through here because they share the same
+ * recovery action). */
+export function ProjectErrorNotice({ error, onRetry, pending }: { error: BrowserRequestError; onRetry: () => void; pending: boolean }) {
+  if (["authentication_required", "access_denied", "not_found"].includes(error.code)) return null;
+  return <div className="private-notice private-project-error" role="alert" aria-label="Project data could not be loaded">
+    <p>{browserErrorMessage[error.code]}</p>
+    <p>This may be a read failure or an unconfirmed prior save; other projects on this page were not affected. Refreshing will reload current state without replaying any saved action whose outcome is unknown.</p>
+    <button type="button" disabled={pending} onClick={onRetry}>Refresh current state</button>
+  </div>;
+}
+
 export function PrivateProjectWorkspace({ projectId, section = "overview", after }: { projectId?: string; section?: string; after?: string }) {
   const [client] = useState(() => createProjectBrowserClient());
   const [projects, setProjects] = useState<ProjectView[]>([]);
@@ -129,6 +159,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
       {error && <div className="private-notice" role="alert"><p>{browserErrorMessage[error.code]}</p>
         {error.code === "authentication_required" ? <><p>This also ends Access sessions for other protected applications.</p><a href="/cdn-cgi/access/logout">Sign in again</a></>
           : <button type="button" disabled={pending} onClick={() => setRefresh(value => value + 1)}>Refresh saved state</button>}</div>}
+      {projectId && error && <ProjectErrorNotice error={error} onRetry={() => setRefresh(value => value + 1)} pending={pending} />}
       {!projectId ? <>
         <div className="private-heading"><h1>Projects</h1><p>Open a project here or use “Open in new tab” to monitor several projects side by side. Closing a tab does not stop work, complete or archive its project.</p></div>
         <div className="private-columns"><div><ProjectCatalog state={state} projects={projects} paginated />
@@ -147,6 +178,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
         {state === "ready" && project && <>
           <div className="private-heading"><span className="private-state">{project.lifecycle} · {project.origin === "idea_lab" ? "From Idea Lab" : "Ordinary project"}</span><h1>{project.title}</h1></div>
           <ProjectIdeaOrigin project={project} />
+          <ProjectRevisionNotice project={project} />
           <nav className="private-tabs" aria-label="Project pages">
             <a href={`/projects/${encodeURIComponent(projectId)}`} aria-current={section === "overview" ? "page" : undefined}>Overview</a>
             <a href={`/projects/${encodeURIComponent(projectId)}/tasks`}>Tasks</a>
