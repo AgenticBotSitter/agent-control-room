@@ -68,6 +68,12 @@ and returns an explicit unknown state when the turn receipt is absent. It is an
 observation record only: it cannot list or guess sessions and grants no start, retry,
 resume or read authority. Runtime composition still must connect signed delivery,
 current admission, the owned App Server process and these ordered journal writes.
+The portable node bridge now negotiates `harness.codex.dispatch.v1`, verifies the
+owner permit and exact local enrollment/profile/workspace bindings, records one
+immutable private delivery, and returns one signed receipt. It never replays an
+uncertain receipt across reconnect, and this intake path has no process or workspace
+effect port. Server-side delivery ownership and the actual start composition remain
+separately required.
 Actual admission still requires a test that `thread/read(includeTurns: true)` after
 process restart reads the exact thread without resuming or starting work. Production
 WebSocket transport, dynamic tools and automatic approval are outside the initial contract.

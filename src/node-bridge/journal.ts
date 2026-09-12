@@ -13,6 +13,7 @@ import {
 import type { ArtifactLineageRecordV1 } from "../node-executor/artifact-evidence";
 import { assertNativeSnapshotProgress, nativeTaskSnapshotBodySchema, type NativeTaskSnapshotBody } from "../harness/v1/native-observation";
 import { matchNativeTaskDispatchReceipt, type NativeTaskDispatchReceiptBody } from "../harness/v1/native-delivery";
+import { matchCodexTaskDispatchReceiptV1, type CodexTaskDispatchReceiptBodyV1 } from '../harness/codex-v1/delivery-contract';
 import { localId } from "../harness/v1/native-run-identifiers";
 import { parseWorkspaceIntent, parseWorkspaceCreation, parseWorkspaceRoots, assertSynchronousWorkspaceAuthority } from "./workspace-intent";
 
@@ -283,6 +284,49 @@ export class SqliteBridgeJournal implements ReplayGuard {
     const r = matchNativeTaskDispatchReceipt(JSON.parse(row.receipt_json), frame);
     if (sha256Digest(r) !== row.receipt_digest) throw new Error("native_delivery_integrity_invalid");
     return { frame, receipt: r };
+  }
+
+  /** Authenticated Codex delivery and owner permit evidence only. The private
+   * prompt is never returned by the public receipt or restart inventory. */
+  recordCodexDelivery(input: SignedNodeFrame<'harness.codex.dispatch'>,
+    receipt: CodexTaskDispatchReceiptBodyV1, assertCurrent: () => void) {
+    const parsed = signedNodeFrameSchema.parse(input);
+    if (parsed.type !== 'harness.codex.dispatch') throw new Error('codex_delivery_type_invalid');
+    const matched = matchCodexTaskDispatchReceiptV1(receipt, { messageId: parsed.messageId, body: parsed.body });
+    const start = parsed.body.start;
+    assertNoSecretMaterial(parsed.body, 'codex delivery');
+    if (matched.disposition !== 'recorded' || Date.parse(matched.recordedAt) < Date.parse(parsed.sentAt)
+      || Date.parse(matched.recordedAt) >= Date.parse(parsed.expiresAt)) throw new Error('codex_delivery_time_invalid');
+    return this.transaction(() => {
+      assertSynchronousWorkspaceAuthority(assertCurrent);
+      if (this.db.prepare('SELECT message_id FROM bridge_codex_deliveries WHERE queue_id=? OR message_id=?')
+        .get(parsed.body.queueId, parsed.messageId)) throw new Error('codex_delivery_already_recorded');
+      const count = (this.db.prepare('SELECT count(*) AS count FROM bridge_codex_deliveries').get() as { count: number }).count;
+      if (count >= 1024) throw new BridgeBackpressureError();
+      this.db.prepare(`INSERT INTO bridge_codex_deliveries
+        (queue_id,message_id,tenant_id,project_id,node_id,job_id,attempt_id,run_id,frame_json,frame_digest,receipt_json,receipt_digest)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`).run(parsed.body.queueId, parsed.messageId, start.tenantId,
+        start.projectId, start.nodeId, start.jobId, start.attemptId, start.runId, JSON.stringify(parsed),
+        sha256Digest(parsed), JSON.stringify(matched), sha256Digest(matched));
+      assertSynchronousWorkspaceAuthority(assertCurrent); return structuredClone(matched);
+    });
+  }
+
+  /** Protected historical evidence, not current execution or read authority. */
+  acceptedCodexDelivery(queueId: string) {
+    const row = this.db.prepare(`SELECT message_id,frame_json,frame_digest,receipt_json,receipt_digest
+      FROM bridge_codex_deliveries WHERE queue_id=?`).get(queueId) as { message_id: string; frame_json: string;
+        frame_digest: string; receipt_json: string; receipt_digest: string } | undefined;
+    if (!row) return undefined;
+    const frame = signedNodeFrameSchema.parse(JSON.parse(row.frame_json));
+    if (frame.type !== 'harness.codex.dispatch' || frame.body.queueId !== queueId
+      || frame.messageId !== row.message_id || sha256Digest(frame) !== row.frame_digest) {
+      throw new Error('codex_delivery_integrity_invalid');
+    }
+    const receipt = matchCodexTaskDispatchReceiptV1(JSON.parse(row.receipt_json),
+      { messageId: frame.messageId, body: frame.body });
+    if (sha256Digest(receipt) !== row.receipt_digest) throw new Error('codex_delivery_integrity_invalid');
+    return { frame, receipt };
   }
 
   /** Bounded historical restart metadata only. Contains no prompts, approvals or
@@ -1036,6 +1080,25 @@ export class SqliteBridgeJournal implements ReplayGuard {
         BEGIN SELECT RAISE(ABORT,'native delivery is immutable'); END;
       CREATE TRIGGER IF NOT EXISTS bridge_native_deliveries_no_delete BEFORE DELETE ON bridge_native_deliveries
         BEGIN SELECT RAISE(ABORT,'native delivery is immutable'); END;
+      CREATE TABLE IF NOT EXISTS bridge_codex_deliveries (
+        queue_id TEXT PRIMARY KEY NOT NULL,
+        message_id TEXT NOT NULL UNIQUE,
+        tenant_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        node_id TEXT NOT NULL,
+        job_id TEXT NOT NULL,
+        attempt_id TEXT NOT NULL,
+        run_id TEXT NOT NULL UNIQUE,
+        frame_json TEXT NOT NULL,
+        frame_digest TEXT NOT NULL,
+        receipt_json TEXT NOT NULL,
+        receipt_digest TEXT NOT NULL,
+        UNIQUE(tenant_id,job_id,attempt_id)
+      );
+      CREATE TRIGGER IF NOT EXISTS bridge_codex_deliveries_no_update BEFORE UPDATE ON bridge_codex_deliveries
+        BEGIN SELECT RAISE(ABORT,'codex delivery is immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS bridge_codex_deliveries_no_delete BEFORE DELETE ON bridge_codex_deliveries
+        BEGIN SELECT RAISE(ABORT,'codex delivery is immutable'); END;
       CREATE TABLE IF NOT EXISTS bridge_node_control_state (
         node_id TEXT PRIMARY KEY,
         node_version INTEGER NOT NULL CHECK(node_version>=0),
@@ -1100,6 +1163,6 @@ export class SqliteBridgeJournal implements ReplayGuard {
     const eventColumns = new Set((this.db.prepare(`PRAGMA table_info(bridge_job_events)`).all() as Array<{ name: string }>).map((row) => row.name));
     if (!eventColumns.has("artifact_id")) this.db.exec(`ALTER TABLE bridge_job_events ADD COLUMN artifact_id TEXT REFERENCES bridge_artifact_lineage(artifact_id)`);
     if (!eventColumns.has("artifact_lineage_digest")) this.db.exec(`ALTER TABLE bridge_job_events ADD COLUMN artifact_lineage_digest TEXT`);
-    this.db.exec("PRAGMA user_version=8;");
+    this.db.exec("PRAGMA user_version=9;");
   }
 }

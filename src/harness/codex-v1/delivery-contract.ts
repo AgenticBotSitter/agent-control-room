@@ -6,6 +6,7 @@ import { sha256Digest } from '../../security/canonical-digest';
 import { digestSchema, localId } from '../v1/native-run-identifiers';
 
 export const CODEX_START_OPERATION = 'harness.codex.app-server.start' as const;
+export const CODEX_DELIVERY_FEATURE = 'harness.codex.dispatch.v1' as const;
 const instant = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const text = (bytes: number) => z.string().refine(value => Buffer.byteLength(value, 'utf8') <= bytes);
 
