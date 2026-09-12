@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { NATIVE_DELIVERY_FEATURE } from "../harness/v1/native-delivery";
+import { CODEX_DELIVERY_FEATURE } from '../harness/codex-v1/delivery-contract';
 import { sha256Digest } from "../security";
 import {
   NODE_PROTOCOL_MAX_FRAME_BYTES,
@@ -18,6 +19,7 @@ import {
 import { SqliteBridgeJournal } from "./journal";
 import type { BridgeCommandHandler } from "./admission-handler";
 import type { NativeDispatchIntakeHandler } from "./native-dispatch-handler";
+import type { CodexDispatchIntakeHandlerV1 } from './codex-dispatch-handler';
 import { nativeTaskSnapshotBodySchema, type NativeTaskSnapshotBody } from "../harness/v1/native-observation";
 
 export type BridgeState = "stopped" | "connecting" | "authenticating" | "reconciling" | "online" | "backing_off" | "draining";
@@ -63,6 +65,8 @@ export interface NativeDeliveryChannel {
   assertCurrent(): void;
 }
 
+export interface CodexDeliveryChannel extends NativeDeliveryChannel {}
+
 export interface OpenBridgeOptions {
   now: string;
   transportIdentity: string;
@@ -88,6 +92,7 @@ export class PortableNodeBridge {
     private readonly idFactory: () => string = randomUUID,
     private readonly commandHandler?: BridgeCommandHandler,
     private readonly nativeHandler?: NativeDispatchIntakeHandler,
+    private readonly codexHandler?: CodexDispatchIntakeHandlerV1,
   ) {
     this.identity = Object.freeze({ ...identity, features: Object.freeze([...identity.features]) });
     this.serverAuthenticator = Object.freeze({ verify: serverAuthenticator.verify.bind(serverAuthenticator) });
@@ -111,6 +116,26 @@ export class PortableNodeBridge {
             this.statusValue.connectionId !== status.connectionId ||
             !this.statusValue.enabledFeatures?.includes(NATIVE_DELIVERY_FEATURE)) {
           throw new Error("Native delivery channel is no longer current");
+        }
+      },
+    });
+  }
+
+  codexDeliveryChannel(): CodexDeliveryChannel | undefined {
+    const status = this.statusValue;
+    if (!this.connectionReconciled || status.state !== 'online' || status.lastSafeErrorCode || !this.transport
+      || !status.connectionId || !status.maxFrameBytes || !this.identity.features.includes(CODEX_DELIVERY_FEATURE)
+      || !status.enabledFeatures?.includes(CODEX_DELIVERY_FEATURE)) return undefined;
+    const generation = this.connectionGeneration, transport = this.transport;
+    return Object.freeze({ tenantId: this.identity.tenantId, nodeId: this.identity.nodeId,
+      connectionId: status.connectionId, maxFrameBytes: status.maxFrameBytes,
+      grantsExecutionAuthority: false as const,
+      assertCurrent: () => {
+        if (!this.connectionReconciled || generation !== this.connectionGeneration || transport !== this.transport
+          || this.statusValue.state !== 'online' || this.statusValue.lastSafeErrorCode
+          || this.statusValue.connectionId !== status.connectionId
+          || !this.statusValue.enabledFeatures?.includes(CODEX_DELIVERY_FEATURE)) {
+          throw new Error('Codex delivery channel is no longer current');
         }
       },
     });
@@ -194,6 +219,19 @@ export class PortableNodeBridge {
         await this.sendBody("harness.native.dispatch.receipt", receipt, true, receipt.recordedAt, frame.correlationId, frame.messageId);
         channel.assertCurrent();
         return;
+      } catch (error) { if (generation === this.connectionGeneration) this.failTransport(); throw error; }
+    }
+
+    if (frame.type === 'harness.codex.dispatch') {
+      try {
+        const channel = this.codexDeliveryChannel();
+        if (delivery !== 'accepted' || !channel || !this.codexHandler) throw new Error('Codex intake channel unavailable');
+        const receipt = await this.codexHandler.accept(frame, channel);
+        channel.assertCurrent();
+        this.journal.markInboundProcessed(frame.messageId, receipt.recordedAt);
+        await this.sendBody('harness.codex.dispatch.receipt', receipt, true,
+          receipt.recordedAt, frame.correlationId, frame.messageId);
+        channel.assertCurrent(); return;
       } catch (error) { if (generation === this.connectionGeneration) this.failTransport(); throw error; }
     }
 
@@ -383,8 +421,9 @@ export class PortableNodeBridge {
     this.journal.requeueNativeSnapshotsForConnection(current);
     this.journal.retireSupersededControlFrames(current);
     for (const pending of this.journal.pendingOutbound(current)) {
-      // Native receipt uncertainty is reconciled explicitly; never replay it over a replacement connection.
-      if (pending.frame.type === "harness.native.dispatch.receipt") continue;
+      // Delivery-receipt uncertainty is reconciled explicitly; never replay it over a replacement connection.
+      if (pending.frame.type === "harness.native.dispatch.receipt"
+        || pending.frame.type === 'harness.codex.dispatch.receipt') continue;
       try {
         await this.requireTransport().send(JSON.stringify(pending.frame));
         this.journal.markSent(pending.frame.messageId, now);
@@ -442,13 +481,14 @@ export class PortableNodeBridge {
       type,
       body,
     } as UnsignedNodeFrame<TType>;
-    const materialDigest = type === "harness.native.dispatch.receipt" ? sha256Digest(unsigned) : undefined;
+    const materialDigest = type === "harness.native.dispatch.receipt" || type === 'harness.codex.dispatch.receipt'
+      ? sha256Digest(unsigned) : undefined;
     const frame = await this.signer.sign(unsigned) as SignedNodeFrame<TType>;
     if (generation !== this.connectionGeneration || transport !== this.transport) throw new Error("Bridge connection changed during signing");
     if (materialDigest) {
       const { signature, bodyDigest, ...material } = signedNodeFrameSchema.parse(frame);
       if (!signature || bodyDigest !== sha256Digest(body) || sha256Digest(material) !== materialDigest
-        || Buffer.byteLength(JSON.stringify(frame)) > (this.statusValue.maxFrameBytes ?? 0)) throw new Error("Native receipt signer changed the negotiated frame");
+        || Buffer.byteLength(JSON.stringify(frame)) > (this.statusValue.maxFrameBytes ?? 0)) throw new Error("Delivery receipt signer changed the negotiated frame");
     }
     const disposition = frame.type === "harness.native.snapshot"
       ? this.journal.stageNativeSnapshotOutbound(frame as SignedNodeFrame<"harness.native.snapshot">, now)
