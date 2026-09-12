@@ -1,7 +1,17 @@
 # Exact-ID Codex read recovery
 
-Status: bounded response projection, one-shot JSONL profile and owned connection lifecycle implemented; native transport, trusted admission,
-runtime reconciliation and host qualification are not implemented or accepted.
+Status: exact selected-package schema is generated, sanitized and bound to the
+bounded response projection. The one-shot JSONL profile and owned connection
+lifecycle are implemented; native transport, trusted admission, physical restart
+read, runtime reconciliation and host qualification are not implemented or accepted.
+
+Exact-package schema evidence was generated from `@openai/codex@0.150.0-alpha.8`
+without experimental methods. The retained evidence records the package/platform
+versions, generated v2 bundle byte count and SHA-256, and only the `thread/read`
+shape used here. The full generated bundle and temporary package were not retained.
+`schema-contract.ts` binds the adapter to that evidence, and the focused suite fails
+if the package pin, digest, method, required projection fields or statuses drift.
+This evidence made no provider call and does not claim an actual read or restart.
 
 `owned-read.ts` now composes the profile with a caller-owned connection attempt.
 It reuses the owned-signing acquisition pattern: synchronous ownership before
@@ -16,7 +26,8 @@ Official interface checked 2026-09-09:
 [App Server stored thread read](https://learn.chatgpt.com/docs/app-server).
 `thread/read` with `includeTurns: true` reads stored turns without resuming or
 subscribing. It is distinct from resuming a thread and starting a new turn.
-Version-specific protocol compatibility must still be pinned at qualification.
+Version-specific protocol compatibility is pinned for this narrow generated-schema
+contract. Native process and restart behavior still require separate qualification.
 
 `src/harness/codex-v1/read-recovery.ts` creates a fixed read request for a previously
 known thread and projects only its exact known turn status. It rejects foreign

@@ -55,10 +55,11 @@ present in the codebase. `thread/read` is the required read-only recovery primit
 resume and a new turn are never substitutes for status inspection. Inbound App Server
 approval requests remain unsupported, not silently accepted.
 
-Actual admission requires generated/inspected schema from the exact binary and a test
-that `thread/read(includeTurns: true)` after process restart reads the exact thread
-without resuming or starting work. Production WebSocket transport, dynamic tools and
-automatic approval are outside the initial contract.
+The non-experimental schema generated from the exact selected package is now retained
+as sanitized version/digest/`thread/read` evidence and bound to the narrow adapter.
+Actual admission still requires a test that `thread/read(includeTurns: true)` after
+process restart reads the exact thread without resuming or starting work. Production
+WebSocket transport, dynamic tools and automatic approval are outside the initial contract.
 
 ## Optional components
 

@@ -1,0 +1,35 @@
+{
+  "schema": "agent-control-room.codex-app-server-schema-evidence/v1",
+  "package": "@openai/codex",
+  "version": "0.150.0-alpha.8",
+  "platformArtifactVersion": "0.150.0-alpha.8-darwin-arm64",
+  "generatedBundle": "codex_app_server_protocol.v2.schemas.json",
+  "generatedBundleBytes": 545742,
+  "generatedBundleSha256": "fef60935ec72c842ed361ce064693691e415b0f45a2c1351bda13c6013b0a7bf",
+  "experimentalSchemaIncluded": false,
+  "threadRead": {
+    "method": "thread/read",
+    "paramsRequired": [
+      "threadId"
+    ],
+    "includeTurnsType": "boolean",
+    "responseRequired": [
+      "thread"
+    ],
+    "threadRequiredForProjection": [
+      "id",
+      "turns"
+    ],
+    "turnRequiredForProjection": [
+      "id",
+      "status"
+    ],
+    "turnStatuses": [
+      "completed",
+      "interrupted",
+      "failed",
+      "inProgress"
+    ]
+  },
+  "scope": "Sanitized exact-package generated-schema evidence only. No provider call, thread read, process-restart test, credential inspection or production qualification is claimed."
+}
