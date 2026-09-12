@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import type { DatabaseSession } from "../../persistence/database";
 import { jobRecordSchema, attemptRecordSchema, leaseRecordSchema, nodeRecordSchema, type AuthorityEnvelope } from "../../domain/v1";
 import { codexTaskDispatchBodySchemaV1, type CodexTaskDispatchBodyV1 } from "../../harness/codex-v1/delivery-contract";
@@ -15,7 +16,7 @@ const approvalRecordSchema = z.object({ schema: z.literal("control-room.canonica
   acceptedBy: localId, acceptedAt: z.string().datetime(),
 }).strict();
 type ApprovalRecord = z.infer<typeof approvalRecordSchema>;
-type ApprovalRow = { record: unknown; auth_tag: string };
+type ApprovalRow = { tenant_id: string; project_id: string; job_id: string; attempt_id: string; record: unknown; auth_tag: string };
 
 export type VerifiedCodexDeliveryAuthorityV1 = Readonly<{
   deliveryBodyDigest: string;
@@ -38,6 +39,27 @@ export function codexExecutionBindingDigestV1(value: unknown) {
   const { schema: _schema, prompt: _prompt, instructions: _instructions, ...binding } = codexTaskDispatchBodySchemaV1.parse(value).start;
   void _schema; void _prompt; void _instructions;
   return sha256Digest({ schema: "control-room.codex-execution-binding/v1", ...binding });
+}
+
+/** Authenticated readback of the exact approved Codex packet. Historical storage
+ * is evidence only; callers must still revalidate current canonical state and owner trust. */
+export async function readCodexApprovalPacketInSession(tx: DatabaseSession, key: Uint8Array,
+  scope: { tenantId: string; projectId: string; jobId: string; attemptId: string; inputDigest: string }) {
+  const row = (await tx.query<ApprovalRow>(`SELECT tenant_id,project_id,job_id,attempt_id,record,auth_tag
+    FROM control_native_approval_packets WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3`,
+    [scope.tenantId, scope.jobId, scope.attemptId])).rows[0];
+  if (!row) return null;
+  const record = approvalRecordSchema.parse(row.record);
+  const expected = Buffer.from(hmacSha256Tag(key, { purpose: "canonical-codex-approval-packet/v1", record }));
+  const actual = Buffer.from(row.auth_tag);
+  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)
+    || row.tenant_id !== record.tenantId || row.project_id !== record.projectId
+    || row.job_id !== record.jobId || row.attempt_id !== record.attemptId
+    || record.tenantId !== scope.tenantId || record.projectId !== scope.projectId
+    || record.jobId !== scope.jobId || record.attemptId !== scope.attemptId
+    || record.body.start.inputDigest !== scope.inputDigest
+    || record.packetDigest !== codexApprovalPacketDigestV1(record.body)) return fail();
+  return record;
 }
 
 function permits(authority: AuthorityEnvelope, body: CodexTaskDispatchBodyV1, now: number) {
@@ -94,8 +116,8 @@ export async function enqueueCodexTaskInSession(tx: DatabaseSession, key: Uint8A
     tenantId: start.tenantId, projectId: start.projectId, jobId: start.jobId, attemptId: start.attemptId,
     packetDigest, body, acceptedBy: actorId, acceptedAt: new Date(now).toISOString() });
   const tag = hmacSha256Tag(key, { purpose: "canonical-codex-approval-packet/v1", record });
-  const prior = (await tx.query<ApprovalRow>(`SELECT record,auth_tag FROM control_native_approval_packets
-    WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3`, [start.tenantId, start.jobId, start.attemptId])).rows[0];
+  const prior = await readCodexApprovalPacketInSession(tx, key, { tenantId: start.tenantId,
+    projectId: start.projectId, jobId: start.jobId, attemptId: start.attemptId, inputDigest: start.inputDigest });
   if (prior) return fail();
   await tx.query(`INSERT INTO control_native_approval_packets(tenant_id,project_id,job_id,attempt_id,record,auth_tag)
     VALUES($1,$2,$3,$4,$5,$6)`, [start.tenantId, start.projectId, start.jobId, start.attemptId, record, tag]);

@@ -2,17 +2,24 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync, sign } from "node:crypto";
 import test from "node:test";
 import { CODEX_APP_SERVER_ADAPTER, CODEX_APP_SERVER_CAPABILITY, CODEX_APP_SERVER_JOB_TYPE,
-  CODEX_START_OPERATION } from "../src/harness/codex-v1/delivery-contract";
+  CODEX_DELIVERY_FEATURE, CODEX_START_OPERATION } from "../src/harness/codex-v1/delivery-contract";
 import { createCodexOwnerPermitIssuer } from "../src/harness/codex-v1/owner-permit";
 import type { PinnedApprovalTrustStore } from "../src/node-policy/v1/pinned-approval-trust";
 import { FleetSignalStore } from "../src/node-fleet/v1/fleet-signal-store";
 import type { FleetSignalEnvelope } from "../src/node-fleet/v1/schemas";
 import { CanonicalStore } from "../src/persistence/canonical-store";
+import type { NativeTaskSubmissionReference } from "../src/persistence/native-task-submission";
 import { jobRecordSchema } from "../src/domain/v1";
 import { readNativeTaskQueueIntentInSession } from "../src/web/v1/native-task-queue";
+import { readCodexDeliveryEnvelopeReceipt } from "../src/web/v1/codex-delivery-envelope";
+import { readCodexTransmissionIntentReceipt } from "../src/web/v1/codex-transmission-intent";
+import { readCodexDeliveryReceipt } from "../src/web/v1/codex-delivery-receipt";
 import { computeAuthorityDigest, sha256Digest } from "../src/security";
 import { TaskAssignmentCoordinator, type TaskAssignmentRoute } from "../src/web/v1/task-assignment-coordinator";
 import { TaskExecutionPlanner, type NativeTaskTemplate } from "../src/web/v1/task-execution-planner";
+import { ServerNodeSession } from "../src/node-control/server-node-session";
+import { FixedWindowProtocolRateLimiter, NODE_PROTOCOL_V1, NodeProtocolAuthenticator, signNodeFrame,
+  type SignedNodeFrame } from "../src/node-protocol/v1";
 import { binding, instant } from "./hermes-native-fixture";
 import { at } from "./native-task-fixture";
 import { ownerReviewFixture } from "./helpers/web-owner-review";
@@ -59,8 +66,62 @@ async function setup() {
       workspaceIntentDigest: template.workspaceIntentDigest!, credentialRef: authority.credentialRefs[0],
       filesystemRoot: authority.filesystemRoots[0], validUntil: instant + 180_000, approvalKeyId, approvals,
       security: { currentServerTrustRevision: () => "trust-revision:codex-test" } }] };
-  const assignment = new TaskAssignmentCoordinator(f.db, f.scope, planner, [route], () => instant + 8000, [], undefined, undefined, codexConfig);
-  return { ...f, authority, template, planner, planned, route, assignment, approvalKeys, publicKeySpki, codexIntegrityKey, codexConfig };
+  const submissions: NativeTaskSubmissionReference[] = [];
+  const submission = { async enqueueInSession(_tx: unknown, reference: NativeTaskSubmissionReference) {
+    submissions.push(structuredClone(reference));
+  } };
+  const assignment = new TaskAssignmentCoordinator(f.db, f.scope, planner, [route], () => instant + 8000,
+    [], undefined, submission, codexConfig);
+  return { ...f, authority, template, planner, planned, route, assignment, approvalKeys, publicKeySpki,
+    codexIntegrityKey, codexConfig, submissions };
+}
+
+async function connectedCodexSession(f: Awaited<ReturnType<typeof setup>>, nodeKeyId = "key:test") {
+  const server = generateKeyPairSync("ed25519");
+  const serverSpki = server.publicKey.export({ format: "der", type: "spki" }).toString("base64url");
+  const nodeSpki = f.keys.publicKey.export({ format: "der", type: "spki" }).toString("base64url");
+  const toNode: string[] = [];
+  const authentication = new NodeProtocolAuthenticator({ async resolve(value) {
+    return { ...value, algorithm: "ed25519" as const, publicKeySpki: nodeSpki, state: "active" as const,
+      principalState: "active" as const, validFrom: at(-60_000) };
+  } }, { async consume() { return "accepted" as const; } }, new FixedWindowProtocolRateLimiter(100, 60));
+  const session = new ServerNodeSession({ tenantId: binding.tenantId, nodeId: binding.nodeId, nodeKeyId,
+    serverId: "server:codex-test", serverKeyId: "server-key:codex-test", serverPublicKeySpki: serverSpki,
+    transportIdentity: "transport:codex-test", features: [CODEX_DELIVERY_FEATURE], maxFrameBytes: 131_072,
+    heartbeatIntervalSeconds: 30 }, { authentication, clock: () => instant + 8000,
+    async sign(frame) { return signNodeFrame(frame, server.privateKey); }, async send(raw) { toNode.push(raw); } });
+  const connectionId = "connection:codex-canonical";
+  const hello = signNodeFrame({ protocol: NODE_PROTOCOL_V1, direction: "node_to_server", senderKind: "node",
+    tenantId: binding.tenantId, actorId: binding.nodeId, keyId: nodeKeyId, connectionId, sequence: 1,
+    messageId: "message:codex-canonical-hello", correlationId: "correlation:codex-canonical",
+    nonce: "codex_canonical_hello_nonce_123456789", sentAt: at(8000), expiresAt: at(120_000),
+    type: "connection.hello", body: { supportedProtocols: [NODE_PROTOCOL_V1], features: [CODEX_DELIVERY_FEATURE],
+      requestedMaxFrameBytes: 131_072, lastAcknowledgedServerSequence: 0, unresolvedAttemptIds: [] } }, f.keys.privateKey);
+  await session.acceptHello(JSON.stringify(hello));
+  const sent = toNode.map(raw => JSON.parse(raw) as SignedNodeFrame);
+  const lastSequence = Math.max(...sent.map(frame => frame.sequence));
+  const report = signNodeFrame({ protocol: NODE_PROTOCOL_V1, direction: "node_to_server", senderKind: "node",
+    tenantId: binding.tenantId, actorId: binding.nodeId, keyId: nodeKeyId, connectionId, sequence: 2,
+    messageId: "message:codex-canonical-reconcile", correlationId: "correlation:codex-canonical",
+    nonce: "codex_canonical_reconcile_nonce_123456", sentAt: at(8000), expiresAt: at(120_000),
+    type: "node.reconciliation.report", body: { lastAcknowledgedServerSequence: lastSequence, attempts: [] } }, f.keys.privateKey);
+  await session.receive(JSON.stringify(report));
+  toNode.length = 0;
+  return { session, toNode, connectionId, serverSpki };
+}
+
+async function assignAndQueue(f: Awaited<ReturnType<typeof setup>>) {
+  const saved = await f.planner.read(f.planned.receipt.jobId);
+  if (!saved || saved.schema !== "control-room.task-execution-plan/v3") throw new Error("missing Codex plan");
+  const assigned = await f.assignment.assign(f.identity, binding.projectId, saved.job.id, binding.nodeId, saved.job.inputDigest);
+  const approval = await f.assignment.prepareCodexOwnerPermit(f.identity, binding.projectId, saved.job.id, saved.job.inputDigest);
+  const issuer = createCodexOwnerPermitIssuer(approval.input, { publicKeySpki: f.publicKeySpki, timeoutMs: 1000,
+    clock: () => instant + 8000, assertOwnerConsentCurrent: () => approval.assertCurrent(),
+    sign: async bytes => sign(null, bytes, f.approvalKeys.privateKey) });
+  const permit = await issuer.issue(new AbortController().signal);
+  await f.assignment.enqueueCodexTask(f.identity, binding.projectId, saved.job.id, saved.job.inputDigest,
+    permit, new AbortController().signal);
+  return { saved, assigned, permit, reference: f.submissions[0]! };
 }
 
 test("owner planning and assignment produce one canonical Codex reservation without starting work", async () => {
@@ -94,12 +155,64 @@ test("owner planning and assignment produce one canonical Codex reservation with
     const queued = await f.assignment.enqueueCodexTask(f.identity, binding.projectId, saved.job.id, saved.job.inputDigest,
       permit, new AbortController().signal);
     assert.equal(queued.startsWork, false); assert.equal(queued.grantsExecutionAuthority, false);
+    assert.equal(f.submissions.length, 1);
+    assert.deepEqual(f.submissions[0], { schema: "control-room.native-task-submission/v1",
+      tenantId: binding.tenantId, projectId: binding.projectId, jobId: saved.job.id,
+      attemptId: assigned.receipt.attemptId, queueId: queued.queueId,
+      inputDigest: saved.job.inputDigest, packetDigest: queued.packetDigest });
     const intent = await f.db.transaction(tx => readNativeTaskQueueIntentInSession(tx, f.codexIntegrityKey,
       { tenantId: binding.tenantId, projectId: binding.projectId, jobId: saved.job.id,
         attemptId: assigned.receipt.attemptId, inputDigest: saved.job.inputDigest }));
     assert.equal(intent?.jobId, saved.job.id);
+    const reference = f.submissions[0]!;
+    const routed = await f.assignment.locateApprovedCodexQueueDelivery(reference, new AbortController().signal);
+    assert.deepEqual({ kind: routed.kind, nodeId: routed.nodeId, startsWork: routed.startsWork },
+      { kind: "codex", nodeId: binding.nodeId, startsWork: false });
+    const link = await connectedCodexSession(f);
+    const staged = await f.assignment.stageApprovedCodexQueueDelivery(reference, link.session, new AbortController().signal);
+    assert.equal(staged.startsWork, false);
+    const sent = await f.assignment.transmitApprovedCodexQueueDelivery(reference, link.session, new AbortController().signal);
+    assert.equal(sent.deliveryConfirmed, false); assert.equal(link.toNode.length, 1);
+    const dispatch = JSON.parse(link.toNode.shift()!) as SignedNodeFrame<"harness.codex.dispatch">;
+    const receiptBody = { schema: "control-room.codex-task-dispatch-receipt/v1" as const,
+      queueId: dispatch.body.queueId, dispatchMessageId: dispatch.messageId, dispatchBodyDigest: dispatch.bodyDigest,
+      tenantId: dispatch.body.start.tenantId, projectId: dispatch.body.start.projectId, nodeId: dispatch.body.start.nodeId,
+      jobId: dispatch.body.start.jobId, attemptId: dispatch.body.start.attemptId, permitDigest: dispatch.body.permitDigest,
+      enrollmentDigest: dispatch.body.start.enrollmentDigest, recordedAt: at(8000), disposition: "recorded" as const,
+      safeReason: "none" as const, startsWork: false as const, grantsExecutionAuthority: false as const };
+    const nodeReceipt = signNodeFrame({ protocol: NODE_PROTOCOL_V1, direction: "node_to_server", senderKind: "node",
+      tenantId: binding.tenantId, actorId: binding.nodeId, keyId: "key:test", connectionId: link.connectionId,
+      sequence: 3, messageId: "message:codex-canonical-receipt", correlationId: "correlation:codex-canonical",
+      causationId: dispatch.messageId, nonce: "codex_canonical_receipt_nonce_123456789", sentAt: at(8000),
+      expiresAt: at(120_000), type: "harness.codex.dispatch.receipt", body: receiptBody }, f.keys.privateKey);
+    const received = await f.assignment.receiveCodexDeliveryReceipt(link.session, JSON.stringify(nodeReceipt),
+      new AbortController().signal);
+    assert.equal(received.executionConfirmed, false); assert.equal(received.startsWork, false);
+    const scope = { tenantId: binding.tenantId, projectId: binding.projectId, jobId: saved.job.id,
+      attemptId: assigned.receipt.attemptId, inputDigest: saved.job.inputDigest };
+    const evidence = await f.db.transaction(async tx => Promise.all([
+      readCodexDeliveryEnvelopeReceipt(tx, f.codexIntegrityKey, scope),
+      readCodexTransmissionIntentReceipt(tx, f.codexIntegrityKey, scope),
+      readCodexDeliveryReceipt(tx, f.codexIntegrityKey, scope),
+    ]));
+    assert.ok(evidence.every(Boolean));
+    assert.equal((await f.db.query("SELECT id FROM control_harness_runs WHERE tenant_id=$1 AND job_id=$2",
+      [binding.tenantId, saved.job.id])).rows.length, 0);
+    assert.equal(jobRecordSchema.parse(await new CanonicalStore(f.db).get(binding.tenantId, "job", saved.job.id)).state, "leased");
     await assert.rejects(f.assignment.enqueueCodexTask(f.identity, binding.projectId, saved.job.id, saved.job.inputDigest,
       permit, new AbortController().signal));
+  } finally { await f.close(); }
+});
+
+test("Codex delivery refuses a connection using a non-canonical node key", async () => {
+  const f = await setup();
+  try {
+    const { reference } = await assignAndQueue(f);
+    const link = await connectedCodexSession(f, "key:alternate");
+    await assert.rejects(f.assignment.stageApprovedCodexQueueDelivery(reference, link.session,
+      new AbortController().signal));
+    assert.equal(link.toNode.length, 0);
+    assert.equal((await f.db.query("SELECT message_id FROM control_codex_delivery_envelopes")).rows.length, 0);
   } finally { await f.close(); }
 });
 
