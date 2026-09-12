@@ -4,7 +4,7 @@ import { readFileSync, lstatSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import ts from 'typescript';
-import { publicExportImports } from './public-export-imports.mjs';
+import { publicExportImports, publicExportBuildEntries } from './public-export-imports.mjs';
 
 const root = process.cwd();
 const args = process.argv.slice(2);
@@ -29,6 +29,8 @@ if (!parsed || parsed.errors.length) throw new Error('Invalid standalone TypeScr
 const { options } = parsed;
 const compilerSeeds = parsed.fileNames.map(file => path.relative(root, file)).sort();
 const seeds = [...compilerSeeds, 'scripts/build-vps.mjs', 'scripts/run-private-vps.mjs'];
+const buildSeeds = publicExportBuildEntries('vite.vps.config.ts', readFileSync('vite.vps.config.ts', 'utf8'));
+seeds.push(...buildSeeds);
 const testSeeds = includeCompiledTests ? [...new Set([
   ...(JSON.parse(readFileSync('package.json', 'utf8')).scripts['test:build:vps'].match(/tests\/[A-Za-z0-9_./-]+\.test\.[cm]?[jt]sx?/g) ?? []),
   'tests/vps-build-profile.test.ts', 'tests/private-vps-launcher.test.mjs',
@@ -91,4 +93,4 @@ console.log(JSON.stringify({ schema: 'control-room.public-export-planning-invent
     'Built-output imports from the launcher are expected outside tracked source; builds must supply them.',
     'Untracked and ignored files are not inventoried; never copy them implicitly.',
     'Private planning report; contains internal paths and must not be published.'],
-  closureCount: closure.size, compilerSeeds, testSeeds, demoSeeds, external: [...external].sort(), dynamic, unresolved, entries }, null, 2));
+  closureCount: closure.size, compilerSeeds, buildSeeds, testSeeds, demoSeeds, external: [...external].sort(), dynamic, unresolved, entries }, null, 2));

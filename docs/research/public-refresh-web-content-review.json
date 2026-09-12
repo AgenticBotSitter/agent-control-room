@@ -1,0 +1,475 @@
+{
+  "schema": "control-room.public-refresh-content-review/v1",
+  "scope": "changed/new src/web/v1 build closure excluding private-database-preflight.ts",
+  "privateBase": "bc0a61a0fc22e1b58a5322bde52df8bf74ab9b5b",
+  "publicBase": "42ecea2117852991eacf014b8228551e79a061b7",
+  "files": 66,
+  "bytes": 589398,
+  "allManifestHashesMatched": true,
+  "publicationApproved": false,
+  "fullContentRead": true,
+  "entries": [
+    {
+      "path": "src/web/v1/abs-research-draft.ts",
+      "sha256": "f772f0859dbe815fd55f79bcfd81bb75332d810982f3cdf85e4ff656453ad104",
+      "bytes": 2229,
+      "publicSha256": null,
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/access-verifier.ts",
+      "sha256": "b51bc1fcde7c6c1790bd46a6ed9f3544aa808456c7b966b51d232038c2472426",
+      "bytes": 6113,
+      "publicSha256": "4f530f5add22cce9b3f50474870368121c31d4490b949877c66d72447cbe0298",
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/bounded-queue-worker-startup.ts",
+      "sha256": "e4f40a6e6b8638fd034c9b741039c9e3bbe034e2c010e18af9ecd9e278fc2d82",
+      "bytes": 6078,
+      "publicSha256": null,
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/browser-client.ts",
+      "sha256": "7955b5e565775805f167a9c8bef50565d264bc8c956c2fd2ad4d38b06462ef9c",
+      "bytes": 8893,
+      "publicSha256": "fba27d5e65ed4fb6322c0dd8829a5d9776a69e1049ceeafd3b9967b6304006c4",
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/idea-browser-client.ts",
+      "sha256": "219c1a4380e8994dc0ce2ac5a9d9f8afdcb6837aa9829d2ab46ecef297194d16",
+      "bytes": 2330,
+      "publicSha256": null,
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/idea-create-client.ts",
+      "sha256": "2c9d5f9111bac34d421066cef73cfc7896d4f3c601de7c51426067e95769c924",
+      "bytes": 3004,
+      "publicSha256": null,
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/idea-create-operation.ts",
+      "sha256": "8d6302569e8af6fba2169033a5461e42755d933ed3e23829e4d9ae3b8df4af79",
+      "bytes": 9469,
+      "publicSha256": null,
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/idea-decision-client.ts",
+      "sha256": "14ad75b8035bd2a68d2bd833eda35be3ccd4ed3457894780338742775d5acc4a",
+      "bytes": 2644,
+      "publicSha256": null,
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/idea-decision-operation.ts",
+      "sha256": "2ecb9d50e8823aca3deced0bd7db5fc40c5462136d9e635a247e053500667320",
+      "bytes": 6350,
+      "publicSha256": null,
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/idea-detail-refresh.ts",
+      "sha256": "5619dab8583a1e479bb4c692f4d86496d723cbd17bedcd73a00efc5ae1d80d71",
+      "bytes": 1841,
+      "publicSha256": null,
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/idea-experiment-draft.ts",
+      "sha256": "112faed0edfdb2ea7308d7c37e565e28e8af5be36ab309725d525a5c3e4326e4",
+      "bytes": 2190,
+      "publicSha256": null,
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/idea-project-lifecycle-operation.ts",
+      "sha256": "ab285c990220126dd2bba3018794e82a91b6e9035161038842b34f36105f10d3",
+      "bytes": 5625,
+      "publicSha256": null,
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/idea-service.ts",
+      "sha256": "bcfe2b4f8c667297a0512d50021d5264e8cd84eef2ca1a6bbc069b2a5f3055c5",
+      "bytes": 6662,
+      "publicSha256": null,
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/idea-start-client.ts",
+      "sha256": "c3a66c6e4fcfd1d37625bca29ca11feef4ee56a389e32e986c22f8807ea4742e",
+      "bytes": 1889,
+      "publicSha256": null,
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/idea-start-operation.ts",
+      "sha256": "3ebbc8c1f7f43667131023a062661370bfcfddcd1756bcf71599f6d9aa8a32fc",
+      "bytes": 7578,
+      "publicSha256": null,
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/idea-stop-client.ts",
+      "sha256": "7cfe21b04c68749f4bf8a78d002a0f846d55ab1d08eab87c548ef61f32ec9f16",
+      "bytes": 1825,
+      "publicSha256": null,
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/idea-synthesis-client.ts",
+      "sha256": "bdce08ad8127229b52359a200b257f259e23a688e081603bc3413c63e0792564",
+      "bytes": 1855,
+      "publicSha256": null,
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/idea-synthesis-operation.ts",
+      "sha256": "994542f75c663b3e8ecb05f7f9afe11e4bf3f3d32225f4017073b13375600244",
+      "bytes": 4473,
+      "publicSha256": null,
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/idea-wire.ts",
+      "sha256": "66eddf9cf986f662a6faf7ac5be763549334588f7ed968232b8375d9051063af",
+      "bytes": 9152,
+      "publicSha256": null,
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/installed-native-queue.ts",
+      "sha256": "83e36923e670ddd9c0c4cfd28ae88f1738d33e606b7598b7ee65b5cf51da4d71",
+      "bytes": 2830,
+      "publicSha256": "28dbdc5baa5de7d7f239f35e14b941e5710c18ac43df625fdc96e4d9f4fd8164",
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/managed-native-input.ts",
+      "sha256": "4fad0217c8e4066f9d6cefe9524df378c6d8f9ad30da67b311b929cab9ea8ff1",
+      "bytes": 10627,
+      "publicSha256": "6ca28b5fdacfc5b1941fb8518e74f10e86e297c6186b0b57eceed407b789e7e4",
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/managed-native-sessions.ts",
+      "sha256": "c3203a08920b1d7ca3f1236a7e7c510d2b048bc21f25ec103314fb9015ac88ed",
+      "bytes": 20023,
+      "publicSha256": "8d983466724643f93ec152f8b9238aacf224e218f6b642582328f68d38994f88",
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/native-approval-packet-store.ts",
+      "sha256": "b9c78e5184034860adff86dcc18a6a8be34aaa5e5ddabd27aa27236c060f79cd",
+      "bytes": 16391,
+      "publicSha256": "d62a23c0d0e4e6e5dc0631cdfca607e8285e4fd912aa22a99e579644e7369e1b",
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/native-delivery-envelope.ts",
+      "sha256": "f34ac4fbe906a80b714a04b01b67ecaea6c51811fd43e7bdd7b900ed5efb6d0b",
+      "bytes": 5896,
+      "publicSha256": "659a9efe2ecb8c4a1659acc5880b1a81388685d71da576a9b1d02f67cc708ac2",
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/native-http-host.ts",
+      "sha256": "44ad8c13966195f76dca7ff4f56f0a4e8a568bd2d89d5c127f7246cb4ea461e0",
+      "bytes": 13135,
+      "publicSha256": "31fe7cd346d50e34dcd277a1431a42208f18bd75f8cbcece4991b50346f1342c",
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/native-queue-worker-startup.ts",
+      "sha256": "0d414f091564f0b99661cff137dabcb5c4789a5b49fe79b49ccfaafc4190804b",
+      "bytes": 1176,
+      "publicSha256": "b46b1dc78a3835aec33252f232dee3cafc7dcc360d629b3b37c552070e4bb878",
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/native-transmission-intent.ts",
+      "sha256": "0f410c09a4fce76c86ddef214a089fdb6072f1be7a849c4d870771fc9bc341e1",
+      "bytes": 4833,
+      "publicSha256": "fc14648c84e74b207e51c095afa69fa806e157824ea15130b2a1104771978725",
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/news-archive-client.ts",
+      "sha256": "d2095f847facca5fd908ce8ce3011596585aa4719ceb6f18efb9f06bc55c7494",
+      "bytes": 3029,
+      "publicSha256": null,
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/news-collection-admission.ts",
+      "sha256": "bc62b51abf167d98ef2b6c8de00e36bb90ea9cbfdc69ea576a36ea80698ddc88",
+      "bytes": 12572,
+      "publicSha256": null,
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/news-collection-planning.ts",
+      "sha256": "5b84c38c2f808e8b376d0e75bfb3d779de6603759dffa7cb0b0c01af6d9bf97e",
+      "bytes": 13604,
+      "publicSha256": null,
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/news-collection-status-wire.ts",
+      "sha256": "4d9a24e25d40ec836e6cf3f2496a9d72d229152606045e7fa698dd7da11dc975",
+      "bytes": 2842,
+      "publicSha256": null,
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/news-discovery-integration.ts",
+      "sha256": "238d9017b8f8fb4dfa457dca207a13eb8d6715ae73b4a8fab97bb30af3b44699",
+      "bytes": 6107,
+      "publicSha256": null,
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/news-navigation-guard.ts",
+      "sha256": "bca534bacfe20595b095004b1b95b9fa9dabe5beb1bf564387e93cb360aa77bb",
+      "bytes": 1013,
+      "publicSha256": null,
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/news-queue-worker-startup.ts",
+      "sha256": "7e9407ceecf8b50369b8db4c177b3b65de556ac454567894160c066eb835446d",
+      "bytes": 2481,
+      "publicSha256": null,
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/news-reading-view.ts",
+      "sha256": "a51b27f89aa79bb6f443c6a98b8517e9d7744db5b636bafbb576aec7d40003fc",
+      "bytes": 1509,
+      "publicSha256": null,
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/news-refresh-client.ts",
+      "sha256": "06cd91a6ecf536181f0649a625226ebd2a29cb833c84410dcf986443dec28fda",
+      "bytes": 8902,
+      "publicSha256": null,
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/news-service.ts",
+      "sha256": "19fa9503d8c775707f3b9088da4693f94736dc4db27f06378d4d716ab95fc2b2",
+      "bytes": 10997,
+      "publicSha256": null,
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/news-source-client.ts",
+      "sha256": "87957895b12f14c060606f94eafad7ac87be02c549f5316434af5436cad739be",
+      "bytes": 4695,
+      "publicSha256": null,
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/news-startup-configuration.ts",
+      "sha256": "bee1ae7135c1bf1b861ba9bfed5854390f78d691f2a39dca9541099c594f0701",
+      "bytes": 2684,
+      "publicSha256": null,
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/news-status-observer.ts",
+      "sha256": "c27d74b0c3d469a343e50b5fdba7994c14ea8a033f672abe3499430d27d1b1ba",
+      "bytes": 1353,
+      "publicSha256": null,
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/news-wire.ts",
+      "sha256": "9f98f192f216b06bd5243b0f2765d8eea851aea4c8b50104fabbdc5e80ac5add",
+      "bytes": 2988,
+      "publicSha256": null,
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/private-idea-authoring-startup.ts",
+      "sha256": "5e835df728cd41691e248ac9e6a0ae6d62803659d05e5d5db328de6bbcf797c9",
+      "bytes": 7181,
+      "publicSha256": null,
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/private-node-handler.ts",
+      "sha256": "a8158352d53481f68f192e1972fb5cd51bcc75f986a7c49b93bf32787239bf69",
+      "bytes": 13812,
+      "publicSha256": "f6300f24f65c1759ea2fd2adc78a27df7f997cdbda4c3cee99e0b80758cd3337",
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/private-owner-bootstrap.ts",
+      "sha256": "a562fe42b7010de891ac411ac782eb93543259184befb2b150d4743a1a024e39",
+      "bytes": 7051,
+      "publicSha256": null,
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/private-owner-review.ts",
+      "sha256": "db8db0ab63f52d7bc319cf81b2725343aaeb17a4c2f44a00da70e3137217e54f",
+      "bytes": 1196,
+      "publicSha256": null,
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/private-process.ts",
+      "sha256": "79b5261c991634e61f6c89a15fe94e759606448b619b28c838adf6929a9b4aea",
+      "bytes": 39887,
+      "publicSha256": "146316ca71b9ade91686fc10ed6362a0a5e437e8a9323e96f37d6d3ea78b95e9",
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/private-startup.ts",
+      "sha256": "f0306ba5917fd1501be9a417c25f976962900930530046643b34ff3e75679ffd",
+      "bytes": 7180,
+      "publicSha256": "03da24a90923257e8faad6ebd7b27c0a07ee5d3c7ef989f61abb309bcc4d05c4",
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/private-task-application.ts",
+      "sha256": "bfb753c04d2d1bb82dd3ce4f02640cb8dedc97db020deb79ad7b81e630726e06",
+      "bytes": 4893,
+      "publicSha256": "fea08077198c8015e9d1d9f7619f0c3420eac54be7b4f25975d9a3cc73fe0c11",
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/private-task-database-check.ts",
+      "sha256": "7ae2e933f6716281236e50894ed8f0e0594963b9c8fff661dc6624359c3380e0",
+      "bytes": 5871,
+      "publicSha256": null,
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/private-task-host.ts",
+      "sha256": "f7d40bffd3b08d27c0e9f3d590b0489045079f2ee9dee55819e7a897a55d8963",
+      "bytes": 5169,
+      "publicSha256": "1539cd0def82d51b03e32acb1f9d114a886dbcb39f0976de8cc3188a63e45e0a",
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/private-task-startup.ts",
+      "sha256": "c7992c3bedf487da22441cea1a0f3dd75882620d74e4192c0ee63baf1f073c9f",
+      "bytes": 32976,
+      "publicSha256": "20266faa3a400b1b494e55f9b3d54de2867eac2beaa16ee801b387fa57cd6b62",
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/private-task-worker-application.ts",
+      "sha256": "afa137f2f0d0db95a8311d29e2428bcb5016a71d913309786769bc7034389536",
+      "bytes": 2952,
+      "publicSha256": "f7bea75e897e1e16a331bda5375cb461abbb405a176bd7bdaea7e47a695c2b4d",
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/project-http.ts",
+      "sha256": "8a824353ddf0b819b8c1f8c2e0d60bd8602b21909a1b8348c55bca34aedad7ff",
+      "bytes": 3800,
+      "publicSha256": "15b391f73800d8247a0f39cd00eb6e36b76800bd234c93b20c3c04e58bd92819",
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/project-service.ts",
+      "sha256": "27ceb0dbe183ce36cbd9b4785f1de01df73dce978ba5559cce8ea36e1554a989",
+      "bytes": 16676,
+      "publicSha256": "bb385d9828c1ce74b4e65d419f78b6634905a1156e3c0ac74291548df4475de2",
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/project-wire.ts",
+      "sha256": "eb1c72128bc012b9f5a11b5c0433f5ce03589b153e89a007c0ae4abd7864e8f7",
+      "bytes": 2980,
+      "publicSha256": "2058c793ea42e3ea9a969c3511d8c98c8b2474720c5805db402429ba22e8838a",
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/task-approval-browser-client.ts",
+      "sha256": "ba2bcae73ef69045a0069a159d824959873464c998e8e0ab7da4db4d6af2f301",
+      "bytes": 7849,
+      "publicSha256": "3dd8a221221af98f83128b0473441eec3fca6a6e61e2f047ea31a2363988c8e4",
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/task-assignment-coordinator.ts",
+      "sha256": "84480cfdaddd2bc400b9e0fdd75d9f7ad85c470a96d379dac857d1ca67689b81",
+      "bytes": 49366,
+      "publicSha256": "18d49dd97aa4b893b1c751df0155752e916d00208e5ed3cdb6a444b455bd9d99",
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/task-browser-client.ts",
+      "sha256": "df017b64e719c6b02ae8204a7071a12823e3fda029821aa4002087b6a5d3dd53",
+      "bytes": 9305,
+      "publicSha256": "0a8b70546e409f63b9e4c05b85bff4883ba25057ba7017cb5a54a8d65ad43849",
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/task-coordinator-lifecycle.ts",
+      "sha256": "980130992507a36ac8b3661bc210c9c347895ff1bac43529f0eb7a4d135e1c7c",
+      "bytes": 28813,
+      "publicSha256": "cc2be826d099fcf58ac9e81ffd4a335d8c3e365e0e6b1cbf75bfc58d6e7f0d4b",
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/task-execution-planner.ts",
+      "sha256": "5a8443697a3ffb9813dd83ca64d8296017b94a97ab029b93366b9e31641ca31e",
+      "bytes": 34766,
+      "publicSha256": "efda4867092b82abdc55b5238efdc6297dd54ba3c822c84420dfbf740389d2d3",
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/task-execution-workspace.ts",
+      "sha256": "28876d7d86c54fd465122a5bdce39ff6827cf1d4f893639dbe2dd49bea96bbe7",
+      "bytes": 2639,
+      "publicSha256": null,
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/task-http.ts",
+      "sha256": "9874644900e425edd03aeebe9bda0bc7d09a233571b1ca9a823ce9e73e96c6e0",
+      "bytes": 18808,
+      "publicSha256": "8769337a35bdfa25233ca71820609aa707d0ca7d5a0c75cd66b06c2f29154a1d",
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/task-result-coordinator.ts",
+      "sha256": "41995da2d48faf5d877fc9976da807f2ad73b9db77797caa1b09799e650a6d61",
+      "bytes": 7651,
+      "publicSha256": "da9e2dea7a0c372c3d7c163c22df4e46ea750d0f634a13a5df2c5a584097ef5b",
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/task-review-workspace.ts",
+      "sha256": "ed48bc6ee643345fab58b650ae0c48826443f3944d3902a50a54be81cbd769c3",
+      "bytes": 4379,
+      "publicSha256": "fea0d36e1e7bcb32f04c7269cf790ec0fa9798a829b93c9bba4fddf5334fb9eb",
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/task-service.ts",
+      "sha256": "6ae896ff7c561db8530c000800b9770525fc240ed89e6606635f6e255a36b942",
+      "bytes": 30047,
+      "publicSha256": "26c49fa1bc808b287e64619134e5c03f25e69a41395733d6b2ed409188736aa8",
+      "fullContentRead": true
+    },
+    {
+      "path": "src/web/v1/task-verification-workspace.ts",
+      "sha256": "545d04f2a2586388e13182e61d9871e3c749709c421f60e8120785d000476184",
+      "bytes": 4264,
+      "publicSha256": "745fa42c27256acf21baf01d2610ff8d31a2ad4d7f29d928d08c67a798c96a0b",
+      "fullContentRead": true
+    }
+  ]
+}

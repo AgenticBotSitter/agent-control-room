@@ -22,3 +22,26 @@ export function publicExportImports(file, source) {
   visit(ast);
   return { imports: [...new Set(imports)], dynamic };
 }
+
+// Build entry strings are not imports. Inspect the config without executing plugins.
+export function publicExportBuildEntries(file, source) {
+  const ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+  const entries = [];
+  function visit(node) {
+    if (ts.isPropertyAssignment(node) && node.name.getText(ast) === 'input') {
+      if (!ts.isObjectLiteralExpression(node.initializer)) throw new Error('Nonliteral build input requires review');
+      for (const property of node.initializer.properties) {
+        if (!ts.isPropertyAssignment(property) || !ts.isStringLiteral(property.initializer))
+          throw new Error('Nonliteral build entry requires review');
+        const value = property.initializer.text;
+        if (!/^src\/[A-Za-z0-9_./-]+\.[cm]?[jt]sx?$/.test(value) || value.split('/').includes('..'))
+          throw new Error('Unexpected build entry requires review');
+        entries.push(value);
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(ast);
+  if (!entries.length) throw new Error('No build entries found');
+  return [...new Set(entries)].sort();
+}

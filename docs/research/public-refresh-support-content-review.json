@@ -1,0 +1,354 @@
+{
+  "scope": "Disclosure source review only, no publication/security approval",
+  "privateBase": "bc0a61a0fc22e1b58a5322bde52df8bf74ab9b5b",
+  "publicBase": "42ecea2117852991eacf014b8228551e79a061b7",
+  "comparison": "git show main:path, not public working bytes",
+  "status": "complete source disclosure read; root publication decision required",
+  "selectedCount": 41,
+  "reviewedCount": 41,
+  "pendingCount": 0,
+  "excluded": [
+    "tests/helpers/web-foundation.ts",
+    "tests/vps-built-core-schema.test.mjs",
+    "tests/vps-built-handler.test.mjs"
+  ],
+  "entries": [
+    {
+      "path": "scripts/run-private-node.mjs",
+      "sha256": "0ac5baa89b4bb293f273aaee6cbe4fad12e86e6fb98c422489bb3a609414f8d9",
+      "bytes": 5366,
+      "fullContentRead": true,
+      "publicMainStatus": "new",
+      "publicMainSha256": null
+    },
+    {
+      "path": "scripts/run-private-vps.mjs",
+      "sha256": "a9452afd2d51f956e9bee5143780b0ed8c3b5c3ae0731d8b308195a840e3eb20",
+      "bytes": 7803,
+      "fullContentRead": true,
+      "publicMainStatus": "changed",
+      "publicMainSha256": "e614be53aea37c81ad3e3fc42309c2af7835d6a5f4650fafab0820d8600fc86f"
+    },
+    {
+      "path": "src/domain/v1/validators.ts",
+      "sha256": "27c31c34ffa3d9a15301d7cb76dd9674d0b15745f41f2294bd2d4e3aade599e7",
+      "bytes": 12944,
+      "fullContentRead": true,
+      "publicMainStatus": "changed",
+      "publicMainSha256": "f04bfeb7a16d33e501fad35b90118d363cd636a329937a05f7bbe3d8399f3028"
+    },
+    {
+      "path": "src/idea-lab/v1/coordinator-store.ts",
+      "sha256": "4aabf0170bdf2db00dac68ff7586f9d3b5752886cf518c33f6aedfafcad3f394",
+      "bytes": 12967,
+      "fullContentRead": true,
+      "publicMainStatus": "changed",
+      "publicMainSha256": "c692761aa7ec334e8cf6babb359f4d870908e17ca130eebfa3c125bcf3b1aa80"
+    },
+    {
+      "path": "src/idea-lab/v1/coordinator.ts",
+      "sha256": "88cf973479d8d11a58140b4828c0a3b58c55e154cd415ff4553ba8626d615bd9",
+      "bytes": 22776,
+      "fullContentRead": true,
+      "publicMainStatus": "changed",
+      "publicMainSha256": "e32c7f380b7337afeb20f4aaf81fa34091084cb0480158e46c318a5e84f64832"
+    },
+    {
+      "path": "src/idea-lab/v1/discussion-prompt.ts",
+      "sha256": "4940d712188ba358eda3c38d06974d00f76ba16b9f886e0486abe79442cbf684",
+      "bytes": 3334,
+      "fullContentRead": true,
+      "publicMainStatus": "new",
+      "publicMainSha256": null
+    },
+    {
+      "path": "src/idea-lab/v1/lifecycle-service.ts",
+      "sha256": "92f2d76ac34d0c92afad19c15d63d06cb69b4636eb1fb18921caa0d841754025",
+      "bytes": 5863,
+      "fullContentRead": true,
+      "publicMainStatus": "changed",
+      "publicMainSha256": "2b93e6df17e763962e397882874eee501c8e80684c21d5b3cc219d646860ad6a"
+    },
+    {
+      "path": "src/idea-lab/v1/operator-service.ts",
+      "sha256": "8ff72c0bdf31e54e6c8102e8a90ef27a09ff052972e0181433434fcfa2ac2a97",
+      "bytes": 14476,
+      "fullContentRead": true,
+      "publicMainStatus": "changed",
+      "publicMainSha256": "39246681b4590e19f477d811a209d187772283bab5526e74385713d5fa98d6db"
+    },
+    {
+      "path": "src/idea-lab/v1/owner-decision-service.ts",
+      "sha256": "5099a42a6ca568f827d4d95f04c4077849887034d8d490a6b2284ad8c5afd9be",
+      "bytes": 4968,
+      "fullContentRead": true,
+      "publicMainStatus": "changed",
+      "publicMainSha256": "fb9216b09474c1621454621a8c2291111af46a9af50528f7f605a5ec61b3c387"
+    },
+    {
+      "path": "src/idea-lab/v1/schemas.ts",
+      "sha256": "4939c9a945600becb7c6c229066479cd57e0b1d457f3eac6e480f672cfaacd0f",
+      "bytes": 12425,
+      "fullContentRead": true,
+      "publicMainStatus": "changed",
+      "publicMainSha256": "b8e92fc2d6cddf5e5fad435d33a6c37aa726f209720e5679996f60dcf3c46f46"
+    },
+    {
+      "path": "src/idea-lab/v1/store.ts",
+      "sha256": "7bcf381d4f56341c8c38cd038e1e5c004ddf52692f14e1e4a819263ce8b08eaa",
+      "bytes": 33365,
+      "fullContentRead": true,
+      "publicMainStatus": "changed",
+      "publicMainSha256": "1369c55addca41b3d065f5cb30df5e93885780669a3b75a59c6b006970d0c9c8"
+    },
+    {
+      "path": "src/idea-lab/v1/synthesis-engine.ts",
+      "sha256": "a9e50c65d1c086912d8c498ba5a03cc68f5b111b12ce3e7d0e2acd8c69fd0643",
+      "bytes": 3064,
+      "fullContentRead": true,
+      "publicMainStatus": "new",
+      "publicMainSha256": null
+    },
+    {
+      "path": "src/persistence/canonical-store.ts",
+      "sha256": "41c39c5a248097842d8bac0f7b3bf5b5eee7726493365db6f696c8a1a624dd6b",
+      "bytes": 94863,
+      "fullContentRead": true,
+      "publicMainStatus": "changed",
+      "publicMainSha256": "2809f905c1d7b07eba39368da9048ce30e190848d115f9b49ff7db9c819a46c8"
+    },
+    {
+      "path": "src/persistence/pg-boss-abs-feed-runtime.ts",
+      "sha256": "e96a0464edc8709518aa82983f0857fbc7c218e535a2115b9ac3b7b2c0073ce6",
+      "bytes": 1381,
+      "fullContentRead": true,
+      "publicMainStatus": "new",
+      "publicMainSha256": null
+    },
+    {
+      "path": "src/persistence/pg-boss-abs-feed-submission.ts",
+      "sha256": "a5c4222ac06269ecd44420e90343adca9f80758b432361c8639897002def2dfd",
+      "bytes": 1075,
+      "fullContentRead": true,
+      "publicMainStatus": "new",
+      "publicMainSha256": null
+    },
+    {
+      "path": "src/persistence/pg-boss-abs-feed-worker.ts",
+      "sha256": "ac3fe075788c1f37cf43ee00fc429eb1c1926639d9f52c5dbce266dc90dfc27f",
+      "bytes": 2691,
+      "fullContentRead": true,
+      "publicMainStatus": "new",
+      "publicMainSha256": null
+    },
+    {
+      "path": "src/persistence/pg-boss-bounded-runtime.ts",
+      "sha256": "e570874cf373c02b82a479e09af5dd9817134fcab5d8a4d3aad9ad4bc74e17c1",
+      "bytes": 7314,
+      "fullContentRead": true,
+      "publicMainStatus": "new",
+      "publicMainSha256": null
+    },
+    {
+      "path": "src/persistence/pg-boss-bounded-submission.ts",
+      "sha256": "bb7cfc6b7e5abea5507071926756eca21a85ff941fb2cf6a7ac9a7960bd548e7",
+      "bytes": 7197,
+      "fullContentRead": true,
+      "publicMainStatus": "new",
+      "publicMainSha256": null
+    },
+    {
+      "path": "src/persistence/pg-boss-bounded-worker.ts",
+      "sha256": "c44ae8d24eb18132459203b1c3e9df5404722c128eca83a8780729370def8256",
+      "bytes": 6036,
+      "fullContentRead": true,
+      "publicMainStatus": "new",
+      "publicMainSha256": null
+    },
+    {
+      "path": "src/persistence/pg-boss-native-task-runtime.ts",
+      "sha256": "da27588f407eccba2d4d9cb72c1120aa03ef22f72a2a327023e254e89708f483",
+      "bytes": 985,
+      "fullContentRead": true,
+      "publicMainStatus": "changed",
+      "publicMainSha256": "b93f96991bff5a6e7cf50e08f307f0fd14f3963e277563022748c5812b55a81f"
+    },
+    {
+      "path": "src/persistence/pg-boss-native-task-submission.ts",
+      "sha256": "fc25e1f92df50a00e6784202e6f29419aff6332a4ea84f333bd225dda0df65c7",
+      "bytes": 2656,
+      "fullContentRead": true,
+      "publicMainStatus": "changed",
+      "publicMainSha256": "20b342a21e47577b855e534a6a54ce0b1f8be2fdce421183ab975b77a377f817"
+    },
+    {
+      "path": "src/persistence/pg-boss-native-task-worker.ts",
+      "sha256": "3b8320893765c5167c9d35a3914923bba678790397a16416196f88fa40b69cef",
+      "bytes": 1627,
+      "fullContentRead": true,
+      "publicMainStatus": "changed",
+      "publicMainSha256": "0fbe9f1a295b698a207c6ac15ad94bd42281e561ead4c814261188953191fa66"
+    },
+    {
+      "path": "src/security/canonical-network-destination.ts",
+      "sha256": "f71d220059c126fdf8b53d414ca9b450a683f5ec77a8e3bff526f098e97042c0",
+      "bytes": 1140,
+      "fullContentRead": true,
+      "publicMainStatus": "new",
+      "publicMainSha256": null
+    },
+    {
+      "path": "src/security/security-store.ts",
+      "sha256": "83f554d6763b8792dda1a6b1be416206ee046d548719d66f4a7541c5a8981f88",
+      "bytes": 12852,
+      "fullContentRead": true,
+      "publicMainStatus": "changed",
+      "publicMainSha256": "88e9fb6c0e84a1536fdf83becb1374daefbea3e20643b6c5abe2f3013088486f"
+    },
+    {
+      "path": "styles/control-room.css",
+      "sha256": "af4cff91b7d8f89031d9b0f73b4333eac20ac92b0b4724fae3773ed07cdbe0ea",
+      "bytes": 96611,
+      "fullContentRead": true,
+      "publicMainStatus": "changed",
+      "publicMainSha256": "b3754e1d908ac148d3433f5fce147f046557fde820bca16ff1d49726dc2028c7"
+    },
+    {
+      "path": "tests/helpers/canonical-approval-storage.ts",
+      "sha256": "9471da11c41e845fafa15e6c7f5f7bc167bae1859b89943e159df2699bff7cf2",
+      "bytes": 3672,
+      "fullContentRead": true,
+      "publicMainStatus": "changed",
+      "publicMainSha256": "f8d4f7831c4246443365f9ded4936a9e2fc14c544300c3be46d9d89ea7df3db3"
+    },
+    {
+      "path": "tests/helpers/managed-native-session.ts",
+      "sha256": "9d94725ecee1ee091a1fb61ce2005f9720d1825f64ed2ba40ec37023bbc952ef",
+      "bytes": 20274,
+      "fullContentRead": true,
+      "publicMainStatus": "new",
+      "publicMainSha256": null
+    },
+    {
+      "path": "tests/helpers/native-lease-evidence.ts",
+      "sha256": "8250ee02ddefc445e339fe851a9d65aa0109aae06eb9bd077c7ec1cce983c179",
+      "bytes": 5826,
+      "fullContentRead": true,
+      "publicMainStatus": "changed",
+      "publicMainSha256": "f9f7f3dbd4f1ab33f0d3be4c393ecc54338d695a8f579d26671255b43574ba07"
+    },
+    {
+      "path": "tests/helpers/native-node-runtime.ts",
+      "sha256": "1f89dc4ce046e923b1179e5afdc90bbf12f8c533fae788589cceb3b9860b31fb",
+      "bytes": 8855,
+      "fullContentRead": true,
+      "publicMainStatus": "new",
+      "publicMainSha256": null
+    },
+    {
+      "path": "tests/helpers/native-quality-completion.ts",
+      "sha256": "8a33a01d2fdfd0ab087dc601dec2ea3b247d791766bd0e43ee7b03a291815620",
+      "bytes": 7531,
+      "fullContentRead": true,
+      "publicMainStatus": "changed",
+      "publicMainSha256": "32429d1a952c0833d0e62b6669acacb06148d65872746d345a615a1909fc708c"
+    },
+    {
+      "path": "tests/helpers/native-task-lifecycle.ts",
+      "sha256": "37cec41088967b7f3af5a95558cb8f718e70987ad473794ebc5f27c92202908a",
+      "bytes": 8121,
+      "fullContentRead": true,
+      "publicMainStatus": "changed",
+      "publicMainSha256": "fa84170c474a38f0765231a11b698374f115740dae0f168f576418be2c4aba5d"
+    },
+    {
+      "path": "tests/helpers/task-assignment.ts",
+      "sha256": "205d0ed0c38d894e92d813e5846ebb8bb6cc9a7274e94721d63e6e7e2e99a172",
+      "bytes": 4725,
+      "fullContentRead": true,
+      "publicMainStatus": "changed",
+      "publicMainSha256": "630b0b5ffa167b87f743696adffc9361f05e7fc0acec5b6614cfce9bf6d1dea2"
+    },
+    {
+      "path": "tests/helpers/task-startup.ts",
+      "sha256": "cc708922606b947668a98955f14f2865af3742fee2b836c9722a0e0ac6a02889",
+      "bytes": 3569,
+      "fullContentRead": true,
+      "publicMainStatus": "changed",
+      "publicMainSha256": "d7cff61275f84814e5be21ab147f9baaea055538fe8676a85fe23859a1d39f46"
+    },
+    {
+      "path": "tests/private-vps-launcher.test.mjs",
+      "sha256": "f2765bf07f767ee435ef7e9cb09ac63388d61d7e72e2a7164524fa03416cac07",
+      "bytes": 4511,
+      "fullContentRead": true,
+      "publicMainStatus": "changed",
+      "publicMainSha256": "14a9cf9d00a2324f252c17fe41d8d586b7514817dad72d2367168be253f07621"
+    },
+    {
+      "path": "tests/vps-built-database-check.test.mjs",
+      "sha256": "cbbb8b909f43c42fe95be8c535fc5a4a617dbcde77f91fd97930ab61f86acf86",
+      "bytes": 1070,
+      "fullContentRead": true,
+      "publicMainStatus": "new",
+      "publicMainSha256": null
+    },
+    {
+      "path": "tests/vps-built-launcher.test.mjs",
+      "sha256": "4cc162664d5f8de31d94dce41fb8906cb683fbbca786c170b860206dfaf66efa",
+      "bytes": 5870,
+      "fullContentRead": true,
+      "publicMainStatus": "changed",
+      "publicMainSha256": "b259ffda71dc520670871eb70a297a39b406602696d3f7447c3d0861ba824457"
+    },
+    {
+      "path": "tests/vps-built-multi-project.test.mjs",
+      "sha256": "2ab5a27cfffae110e3de62edb6a0548e7ea52a455d62f4b83c919e151ef05691",
+      "bytes": 4048,
+      "fullContentRead": true,
+      "publicMainStatus": "new",
+      "publicMainSha256": null
+    },
+    {
+      "path": "tests/vps-built-node-launcher.test.mjs",
+      "sha256": "469f32535908395f0ffa6a0725a51896b4ef39b5aa4c1a53e532cc8da0dbdd2f",
+      "bytes": 2746,
+      "fullContentRead": true,
+      "publicMainStatus": "new",
+      "publicMainSha256": null
+    },
+    {
+      "path": "tests/vps-built-startup.test.mjs",
+      "sha256": "f5d25aef8ccee6cc47a2e294c6d5bdc90d686280435fd27f7d2b1a10e43b7708",
+      "bytes": 6770,
+      "fullContentRead": true,
+      "publicMainStatus": "changed",
+      "publicMainSha256": "e7c80e3e7383b1bb76e5ee42fe569d4441546340b34d41b190d2b9e53a56274b"
+    },
+    {
+      "path": "tests/vps-built-task-startup.test.mjs",
+      "sha256": "eefc174d2f0868526d07eb6de4409685e5993756b799f011968ca1de13472cca",
+      "bytes": 10568,
+      "fullContentRead": true,
+      "publicMainStatus": "changed",
+      "publicMainSha256": "99fdd5902a816e3ee588c03193c55ffeb23b1d40e8f9a7e1f64ddf2accf8ea59"
+    },
+    {
+      "path": "vite.vps.config.ts",
+      "sha256": "0be17b2445d91721648500143d66b373796c1a5fec65380fece856641858f289",
+      "bytes": 1955,
+      "fullContentRead": true,
+      "publicMainStatus": "changed",
+      "publicMainSha256": "b0ef850cd6a472bb9b6f0f875888ba44a9ede922aff79deceb6f7d2b4368e87e"
+    }
+  ],
+  "findings": [
+    {
+      "id": "SUPPORT-D1",
+      "path": "styles/control-room.css",
+      "type": "consumer-specific naming",
+      "detail": "New Wayfarer comment and wayfarer selectors absent from public main; no records/endpoints. Root must explicitly retain or sanitize before export."
+    }
+  ],
+  "hashRecheck": "All 41 current source hashes rechecked unchanged after full-content reads"
+}
