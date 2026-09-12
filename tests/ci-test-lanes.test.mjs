@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { createTestLanePlan, runTestLane } from "../scripts/run-ci-test-lane.mjs";
+import { createTestLanePlan, createTestRuntimeMap, runTestLane } from "../scripts/run-ci-test-lane.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const prefix = "node --import tsx --test ";
@@ -14,7 +14,11 @@ const main = ["tests/zeta.test.ts", "tests/alpha.test.tsx", "tests/echo.test.mjs
   "tests/yankee.test.ts", "tests/charlie.test.ts", "tests/delta.test.ts", "tests/foxtrot.test.ts", "tests/xray.test.ts"];
 const scripts = () => ({ pretest: command(["tests/pre-two.test.ts", "tests/pre-one.test.mjs"]),
   test: command(main), posttest: command(["tests/post.test.tsx"]) });
-const inventory = value => [value.pretest, value.test, value.posttest].flatMap(script => script.slice(prefix.length).split(" "));
+/** Segment-aware: the lifecycle may join several runtimes with `&&`, so collect declared test files only. */
+const inventory = value => [value.pretest, value.test, value.posttest]
+  .flatMap(script => script.split("&&"))
+  .flatMap(segment => segment.trim().split(/\s+/))
+  .filter(token => /\.test\.(?:ts|tsx|mjs)$/.test(token));
 function syntheticTree(t, value = scripts()) {
   const directory = mkdtempSync(join(tmpdir(), "control-room-ci-lanes-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
@@ -54,7 +58,7 @@ test("main shards use deterministic sorted round-robin while pre/post preserve f
 });
 
 test("lane inventory rejects unsupported command syntax, paths, duplicate entries and empty shards", () => {
-  for (const value of [null, undefined, "", "pnpm test", "node --test tests/a.test.ts", "node --import tsx --test",
+  for (const value of [null, undefined, "", "pnpm test", "node --test", "node --inspect --test tests/a.test.ts", "node --import tsx --test",
     `${prefix}tests/a.test.ts && node tests/b.test.ts`, `${prefix}tests/*.test.ts`,
     `${prefix}--test-name-pattern=quality tests/a.test.ts`, `${prefix}'tests/a.test.ts'`,
     `${prefix}tests/a.test.ts;echo`, `${prefix}$TEST_FILE`, `${prefix}tests/a.test.ts\nnode evil.mjs`])
@@ -130,4 +134,26 @@ test("importing the runner in an empty working directory is inert", t => {
     { cwd: directory, encoding: "utf8", timeout: 5000 });
   assert.equal(imported.status, 0, imported.stderr); assert.equal(imported.signal, null); assert.equal(imported.error, undefined);
   assert.equal(imported.stdout, ""); assert.equal(imported.stderr, "");
+});
+
+test("a tsx-free lifecycle segment keeps its own runtime and is never relaunched under the tsx loader", t => {
+  const value = { pretest: command(["tests/pre-one.test.mjs"]),
+    test: `${command(main)} && node --test tests/launcher.test.mjs`,
+    posttest: command(["tests/post.test.tsx"]) };
+  const runtimeOf = createTestRuntimeMap(value);
+  assert.equal(runtimeOf.get("tests/launcher.test.mjs"), "node");
+  assert.equal(runtimeOf.get("tests/zeta.test.ts"), "tsx");
+  assert.equal(inventory(value).includes("tests/launcher.test.mjs"), true);
+
+  const plan = createTestLanePlan(value), lane = Object.keys(plan).find(name =>
+    name.startsWith("main-") && plan[name].includes("tests/launcher.test.mjs"));
+  const directory = syntheticTree(t, value), launches = [];
+  const spawn = (_executable, args) => { launches.push(args); return { status: 0 }; };
+  return runTestLane({ scripts: value, lane, root: directory, spawn }).then(status => {
+    assert.equal(status, 0);
+    const plain = launches.find(args => args.includes("tests/launcher.test.mjs"));
+    assert.ok(plain, "the tsx-free file must still be launched");
+    assert.equal(plain.includes("tsx"), false, "tsx loader must not be applied to that file");
+    for (const args of launches.filter(value => value !== plain)) assert.equal(args.includes("tsx"), true);
+  });
 });

@@ -9,22 +9,45 @@ const invalid = () => { throw new Error("ci_test_lane_configuration_invalid"); }
 const reuseTests = new Set(["scripts/research/pg-boss-submission-integration.test.mjs",
   "scripts/research/pg-boss-worker-integration.test.mjs"]);
 
+const runtimes = Object.freeze({ "node --import tsx --test": "tsx", "node --test": "node" });
+
+/** One `&&`-joined segment list. Each segment declares its own runtime; no shell, glob or discovery. */
 function parseScript(command) {
-  if (typeof command !== "string") return invalid();
-  const tokens = command.trim().split(/\s+/);
-  if (tokens.slice(0, 4).join(" ") !== "node --import tsx --test" || tokens.length <= 4) return invalid();
-  const files = tokens.slice(4);
-  for (const file of files) {
-    if ((!/^tests\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_.-]+\.test\.(?:ts|tsx|mjs)$/.test(file) && !reuseTests.has(file))
-      || file.split("/").some(part => part === "." || part === "..")) return invalid();
+  if (typeof command !== "string" || /[\n\r;|'"`$*?()<>]/.test(command)) return invalid();
+  const segments = command.split("&&").map(segment => segment.trim());
+  if (segments.length === 0) return invalid();
+  const entries = [];
+  for (const segment of segments) {
+    const tokens = segment.split(/\s+/);
+    const runtime = runtimes[tokens.slice(0, 4).join(" ")] ?? runtimes[tokens.slice(0, 2).join(" ")];
+    const start = runtime === "tsx" ? 4 : 2;
+    if (!runtime || tokens.length <= start) return invalid();
+    for (const file of tokens.slice(start)) {
+      if ((!/^tests\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_.-]+\.test\.(?:ts|tsx|mjs)$/.test(file) && !reuseTests.has(file))
+        || file.split("/").some(part => part === "." || part === "..")) return invalid();
+      entries.push(Object.freeze({ file, runtime }));
+    }
   }
-  return files;
+  return entries;
+}
+
+/** Exact runtime for every lifecycle file. A tsx-free segment must not be re-run under the tsx loader. */
+export function createTestRuntimeMap(scripts) {
+  if (!scripts || typeof scripts !== "object" || Array.isArray(scripts)) return invalid();
+  const map = new Map();
+  for (const key of ["pretest", "test", "posttest"])
+    for (const { file, runtime } of parseScript(scripts[key])) {
+      if (map.has(file)) return invalid();
+      map.set(file, runtime);
+    }
+  return Object.freeze(map);
 }
 
 /** Pure inventory partition. Package scripts remain the source of truth; no test discovery/filtering. */
 export function createTestLanePlan(scripts) {
   if (!scripts || typeof scripts !== "object" || Array.isArray(scripts)) return invalid();
-  const pre = parseScript(scripts.pretest), main = parseScript(scripts.test), post = parseScript(scripts.posttest);
+  const names = command => parseScript(command).map(entry => entry.file);
+  const pre = names(scripts.pretest), main = names(scripts.test), post = names(scripts.posttest);
   const all = [...pre, ...main, ...post];
   if (new Set(all).size !== all.length || main.length < 4) return invalid();
   const sorted = [...main].sort();
@@ -42,13 +65,20 @@ export async function runTestLane({ scripts, lane, root = repositoryRoot, spawn 
     const path = resolve(directory, file), stat = await lstat(path), canonical = await realpath(path);
     if (!stat.isFile() || !canonical.startsWith(`${directory}${sep}`)) return invalid();
   }
-  let result;
-  try {
-    result = spawn(process.execPath, ["--import", "tsx", "--test", "--test-concurrency=1", ...plan[lane]],
-      { cwd: directory, stdio: "inherit", shell: false });
-  } catch { return 1; }
-  if (!result || result.error || result.signal || !Number.isInteger(result.status) || result.status < 0 || result.status > 255) return 1;
-  return result.status;
+  const runtimeOf = createTestRuntimeMap(scripts);
+  const groups = [["tsx", ["--import", "tsx", "--test", "--test-concurrency=1"]],
+    ["node", ["--test", "--test-concurrency=1"]]];
+  for (const [runtime, flags] of groups) {
+    const files = plan[lane].filter(file => runtimeOf.get(file) === runtime);
+    if (files.length === 0) continue;
+    let result;
+    try { result = spawn(process.execPath, [...flags, ...files], { cwd: directory, stdio: "inherit", shell: false }); }
+    catch { return 1; }
+    if (!result || result.error || result.signal || !Number.isInteger(result.status)
+      || result.status < 0 || result.status > 255) return 1;
+    if (result.status !== 0) return result.status;
+  }
+  return 0;
 }
 
 async function main(args) {

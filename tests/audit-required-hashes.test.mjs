@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
-import { privateWebSchemaDigest, readPrivateWebSchemaDigest } from "../src/web/v1/private-database-preflight.ts";
+import { privateWebMigrationRange, privateWebSchemaDigest, privateWebTableCount,
+  readPrivateWebSchemaDigest } from "../src/web/v1/private-database-preflight.ts";
 
 const root = new URL("../db/migrations/", import.meta.url);
 const fix = "0058_audit_chain_required_hashes.sql";
@@ -30,6 +31,17 @@ function insert(db, id, hashes, version = 1) {
 test("all missing-hash combinations are rejected while complete and legacy records remain valid", async t => {
   const db = await database(t, true);
   assert.equal(await readPrivateWebSchemaDigest(db), privateWebSchemaDigest);
+  // The digest was pinned here and stayed current; the table count was not, and silently drifted
+  // from 138 (migrations 0001-0054) while 0055-0064 added seven tables. Pin both together.
+  const applied = await db.query(`SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+    WHERE n.nspname='public' AND c.relkind IN ('r','p')`);
+  assert.equal(applied.rows.length, privateWebTableCount);
+  // Third constant on the same axis. Derive the declared range from the files actually applied,
+  // and require a gapless sequence, so a new migration cannot leave the literal silently false.
+  const numbers = readdirSync(root).filter(n => n.endsWith(".sql")).map(n => Number(n.slice(0, 4))).sort((a, b) => a - b);
+  assert.deepEqual(numbers, numbers.map((_, index) => index + 1));
+  const pad = value => String(value).padStart(4, "0");
+  assert.equal(privateWebMigrationRange, `${pad(numbers[0])}-${pad(numbers.at(-1))}`);
   for (let mask = 1; mask < 8; mask++) {
     const hashes = [0, 1, 2].map(bit => mask & (1 << bit) ? null : hash);
     await assert.rejects(insert(db, `audit:missing:${mask}`, hashes), /ck_audit_chain_v1_required_hashes/);

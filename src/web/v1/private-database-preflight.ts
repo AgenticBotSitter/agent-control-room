@@ -17,6 +17,10 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 
 // Generated from migrations 0001-0064 using the catalog query below, not a mutable database marker.
 export const privateWebSchemaDigest = "f3431786139ea22bd6f50f5fe06cf518540a469bd49f7222fc8362dffdb7edba";
+// Regenerate with the digest above, never on its own: both describe the same reviewed schema.
+// tests/audit-required-hashes.test.mjs pins each against actually applied migrations.
+export const privateWebTableCount = 145;
+export const privateWebMigrationRange = "0001-0064" as const;
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "control_abs_story_versions", "control_abs_source_observations", "control_abs_source_settings", "control_abs_story_archives",
   "control_idea_sessions", "control_idea_contributions", "control_idea_syntheses", "control_idea_decisions", "control_idea_bot_run_events",

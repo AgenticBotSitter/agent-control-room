@@ -1,0 +1,6 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "incremental": false },
+  "include": ["research/**/*.ts", "research/**/*.mts"],
+  "exclude": ["node_modules"]
+}

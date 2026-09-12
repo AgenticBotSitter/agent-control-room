@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { readFile, readdir } from "node:fs/promises";
+import { resolvePublicUrl } from "../src/vendor/control-center/pinned-fetch";
 import type { Server, ServerOptions } from "node:http";
 import type { ListenOptions } from "node:net";
 import { join } from "node:path";
@@ -128,7 +129,30 @@ test("only the reviewed private HTTP module owns native HTTP imports; legacy net
     }
     visit(tree); if (ownsHttp) owners.push(path.replaceAll("\\", "/"));
   }
-  assert.deepEqual(owners, ["src/web/v1/private-serving.ts"]);
+  // Inbound serving and the outbound source client are separate responsibilities. Both touch
+  // node:http, so name each one rather than letting either quietly acquire the other's powers.
+  const outbound = ["src/vendor/control-center/pinned-fetch.ts"];
+  assert.deepEqual(owners.filter(path => !outbound.includes(path)), ["src/web/v1/private-serving.ts"]);
+  assert.deepEqual(owners.filter(path => outbound.includes(path)), outbound,
+    "outbound source fetching stays in the pinned client; no other module may acquire it");
+
+  // The outbound client is only admissible while it stays a client with a working address guard.
+  // Behaviour, not spelling: identifier pins stayed green when the credential throw was neutered.
+  const client = await readFile(outbound[0], "utf8");
+  assert.doesNotMatch(client, /\.listen\s*\(|createServer\s*\(|process\.env/);
+  const lookup = async (): Promise<{ address: string; family: 4 | 6 }[]> => [{ address: "93.184.216.34", family: 4 }];
+  const refuses = async (value: string, why: string) => {
+    await assert.rejects(() => resolvePublicUrl(value, lookup), why);
+    await assert.rejects(() => resolvePublicUrl(value), why);
+  };
+  await refuses("https://user:secret@example.com/a", "URL credentials must be refused");
+  await refuses("https://localhost/a", "localhost must be refused");
+  await refuses("https://host.local/a", "mDNS names must be refused");
+  await refuses("ftp://example.com/a", "non-HTTP schemes must be refused");
+  for (const address of ["10.0.0.1", "127.0.0.1", "169.254.1.1", "192.168.1.1", "::1", "fd00::1", "fe80::1"])
+    await assert.rejects(() => resolvePublicUrl("https://example.com/a",
+      async () => [{ address, family: address.includes(":") ? 6 : 4 }]), `${address} must be refused`);
+  assert.equal((await resolvePublicUrl("https://example.com/a", lookup)).url.hostname, "example.com");
   // E60/E63 explicitly compose serving in the supplied-resource host. No other
   // consumer or additional native HTTP owner is admitted by this inventory.
   assert.deepEqual(consumers, ["src/web/v1/private-task-host.ts"]);
