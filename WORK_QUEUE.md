@@ -15,8 +15,12 @@ record; no documentation commit is needed every time a job changes state.
 
 Filter further by platform and difficulty labels. Intermediate means specified
 implementation/testing; advanced means shared-boundary reasoning or independent
-review. No particular vendor/model is required. Johnny5 is designated webpage lead
-in #10. Other areas are advertised by capability; preserve current PR ownership.
+review. No particular vendor/model is required. Every area, including the webpage,
+is advertised by responsibility rather than bot name; preserve current PR ownership.
+
+The [complete remaining-work inventory](PUBLIC_BUILD_PLAN.md#complete-remaining-work-and-open-questions)
+includes release blockers and later features. The [webpage specification](WEBPAGE_SPEC.md)
+defines the actual interface; contributors need no private design files or chat history.
 
 ## Keep the queue current
 
