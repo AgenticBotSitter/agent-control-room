@@ -154,3 +154,23 @@ test('missing or repeated reservation and a lost send close the one-shot session
     assert.equal(f.session.codexDeliveryChannel(), undefined); await f.close();
   }
 });
+
+test('a durable transmission record prevents a replacement connection from sending again', async () => {
+  let transmissionRecorded = false;
+  const first = await connected();
+  await first.session.stageCodexDispatch(async sign => sign(first.body, first.body.start.deadline));
+  await first.session.sendPreparedCodexDispatch(async frame => {
+    assert.equal(transmissionRecorded, false); transmissionRecorded = true;
+    return { value: frame.messageId, assertFresh() {} };
+  });
+  assert.equal(first.toNode.length, 1); first.session.disconnect(); await first.close();
+
+  const replacement = await connected();
+  await replacement.session.stageCodexDispatch(async sign => sign(replacement.body, replacement.body.start.deadline));
+  await assert.rejects(replacement.session.sendPreparedCodexDispatch(async () => {
+    if (transmissionRecorded) throw new Error('durable_codex_transmission_already_exists');
+    return { value: undefined, assertFresh() {} };
+  }), /durable_codex_transmission_already_exists/);
+  assert.equal(replacement.toNode.length, 0); assert.equal(transmissionRecorded, true);
+  await replacement.close();
+});

@@ -111,11 +111,14 @@ it survives reopen. Production binding acceptance requires an independent review
 of the retained signed evidence and current verification path.
 
 1. The signed Codex frame now uses a negotiated one-shot server-session sender and
-   the existing node bridge intake. The server signs once, requires its caller to
-   save transmission intent before its only send, and accepts only the exact signed
-   receipt. The next server composition must persist that Codex envelope, intent and
-   receipt against the canonical queue/lease so a replacement connection cannot
-   create a second send slot. Current local policy remains mandatory before start.
+   the existing node bridge intake. The server signs once, saves the exact envelope
+   and transmission intent before its only send, and retains only the exact signed
+   receipt. Those append-only records bind a shared queue entry to the complete verified
+   Codex approval packet and exact machine/work settings, so a replacement connection
+   cannot create a second send slot. The queue collaborator checks the locked canonical
+   job, attempt, lease, node and recalculated job-authority digest before insertion.
+   Canonical Codex planning and owner-review composition must still supply that path,
+   and current local policy remains mandatory before start.
    Do not expose these constructors to browser input, reuse an initialized-connection
    identity, or treat a contract digest as a signature.
 2. `src/harness/codex-v1/start-journal.ts` now provides the protected,
