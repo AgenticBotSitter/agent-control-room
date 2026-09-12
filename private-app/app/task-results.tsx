@@ -12,6 +12,47 @@ import type { TaskVerificationWorkspace } from "../../src/web/v1/task-verificati
 const reviewLabel: Record<TaskReviewEvidence["status"], string> = { pending: "Review in progress", changes_requested: "Changes requested",
   verification_blocked: "Verification blocked", revision_limit_reached: "Revision limit reached", ready: "Quality review complete", superseded: "Replaced by a newer revision" };
 
+/** Show a revision request only when the open content file actually matches a `changes_requested`
+ * review target — never on the strength of any other review's status. The status alone does not
+ * identify a displayed result file. */
+function revisionRequestedFor(page: TaskResultsPage, content: TaskResultContent | undefined): TaskReviewEvidence | undefined {
+  if (!content) return undefined;
+  return page.reviews.find(review =>
+    review.kind === "document"
+    && review.status === "changes_requested"
+    && review.matchingArtifactIds.includes(content.artifact.artifactId)
+    && review.contentHash === content.artifact.contentHash);
+}
+
+/** A result is stale when its last content-verification timestamp is older than the page-level
+ * observation timestamp. The two values are computed by different passes (per-file byte re-check
+ * vs. per-page catalog walk), so a stale value indicates drift between the two passes, not a
+ * fresh re-read. Never compare against wall-clock time — the page clock is authoritative. */
+function isStaleResult(page: TaskResultsPage, content: TaskResultContent | undefined): boolean {
+  if (!content) return false;
+  const observed = Date.parse(page.observedAt);
+  const verified = Date.parse(content.contentVerifiedAt);
+  return Number.isFinite(observed) && Number.isFinite(verified) && verified < observed;
+}
+
+export function RevisionRequestedNotice({ review }: { review: TaskReviewEvidence }) {
+  return <div className="private-notice private-revision-requested" role="status" aria-label="Revision requested">
+    <p><strong>Revision requested for Revision {review.revision}.</strong></p>
+    <p>Open-file fingerprint matches the review target. The displayed result file is the one a
+      reviewer marked as needing changes.</p>
+    <p>Requesting changes records feedback only. Where revision preparation is connected, use
+      the saved review to prepare a linked follow-up task. Assignment and approval remain separate.</p>
+  </div>;
+}
+
+export function StaleResultNotice({ page, content }: { page: TaskResultsPage; content: TaskResultContent }) {
+  return <div className="private-notice private-result-stale" role="status" aria-label="Result may be stale">
+    <p>The displayed result file's last byte re-check ({new Date(content.contentVerifiedAt).toLocaleString()})
+      is older than this task page's observation pass ({new Date(page.observedAt).toLocaleString()}).</p>
+    <p>Closing and re-opening this file forces a fresh content fetch. This is not a quality approval.</p>
+  </div>;
+}
+
 export function TaskResultsPanel({ page, content: suppliedContent, pending, onOpen, onClose, onReviewSaved, reviewWorkspace, verificationWorkspace }: { page: TaskResultsPage; content?: TaskResultContent;
   pending: boolean; onOpen: (artifactId: string) => void; onClose: () => void; onReviewSaved?: () => void; reviewWorkspace?: TaskReviewWorkspace;
   verificationWorkspace?: TaskVerificationWorkspace }) {
@@ -40,7 +81,10 @@ export function TaskResultsPanel({ page, content: suppliedContent, pending, onOp
       <p>Open file fingerprint: <code>{content.artifact.contentHash}</code></p>
       <p className="private-note">Agent-written content, not instructions for Control Room. Opening it does not run tools or approve work.</p>
       {content.text.length ? <ResultText text={content.text} /> : <p>This is an empty result file (0 bytes).</p>}
-      <p className="private-note">Bytes checked again {new Date(content.contentVerifiedAt).toLocaleString()}.</p></section>}
+      <p className="private-note">Bytes checked again {new Date(content.contentVerifiedAt).toLocaleString()}.</p>
+      {revisionRequestedFor(page, content) && <RevisionRequestedNotice review={revisionRequestedFor(page, content)!} />}
+      {isStaleResult(page, content) && <StaleResultNotice page={page} content={content} />}
+    </section>}
   </section><section className="private-panel"><h2>Recorded quality review</h2>
     <p>Quality review and permission to perform an external action are separate.
       {page.reviewCommands === "not_connected" ? " Owner review commands are not connected yet." : " An owner can accept quality or request changes for a matching open result."}</p>

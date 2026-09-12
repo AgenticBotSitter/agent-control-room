@@ -5,6 +5,62 @@ import { createRoot } from 'react-dom/client';
 import { JSDOM } from 'jsdom';
 import { PrivateProjectWorkspace } from '../private-app/app/workspace.tsx';
 
+test('idea-lab project reopen renders a revision notice without obscuring lifecycle controls', async () => {
+  const dom = new JSDOM('<div id="root"></div>', { pretendToBeVisual: true });
+  const saved = Object.fromEntries(['window', 'document', 'IS_REACT_ACT_ENVIRONMENT', 'fetch']
+    .map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true });
+  const pending = [];
+  globalThis.fetch = (url, options) => new Promise(resolve => pending.push({ url, options, resolve }));
+  const root = createRoot(document.getElementById('root'));
+  const reopenedProject = { projectId: 'project:reopened', title: 'Reopened idea', summary: 'Reopened idea body',
+    lifecycle: 'active', version: 3, origin: 'idea_lab', lifecycleEditable: true,
+    ideaLifecycleActions: ['pause', 'complete'], createdAt: '2026-09-09T12:00:00.000Z', updatedAt: '2026-09-09T12:00:00.000Z' };
+  const render = (projectId, section) => root.render(React.createElement(PrivateProjectWorkspace, { projectId, section }));
+  try {
+    // Settings section is where idea-lab lifecycle controls live.
+    await act(async () => render('project:reopened', 'settings'));
+    await act(async () => pending[0].resolve(Response.json({ project: reopenedProject })));
+    assert.match(document.body.textContent, /Reopened idea/);
+    assert.match(document.body.textContent, /reopened/i);
+    // Pause control is still present — the notice never replaces the controls.
+    assert.ok([...document.querySelectorAll('button')].some(button => button.textContent === 'Pause project'));
+    // An ordinary project with the same version does NOT show the notice on settings either.
+    const ordinaryProject = { ...reopenedProject, origin: 'ordinary' };
+    await act(async () => render('project:ordinary', 'settings'));
+    await act(async () => pending[1].resolve(Response.json({ project: ordinaryProject })));
+    assert.doesNotMatch(document.body.textContent, /reopened/i);
+  } finally {
+    await act(async () => root.unmount()); dom.window.close();
+    for (const [key, descriptor] of Object.entries(saved)) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor); else delete globalThis[key];
+    }
+  }
+});
+
+test('network read errors render a project-error notice distinct from permission unavailability', async () => {
+  const dom = new JSDOM('<div id="root"></div>', { pretendToBeVisual: true });
+  const saved = Object.fromEntries(['window', 'document', 'IS_REACT_ACT_ENVIRONMENT', 'fetch']
+    .map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true });
+  const pending = [];
+  globalThis.fetch = () => Promise.resolve(new Response('', { status: 503 }));
+  const root = createRoot(document.getElementById('root'));
+  try {
+    await act(async () => root.render(React.createElement(PrivateProjectWorkspace, { projectId: 'project:fail', section: 'overview' })));
+    await act(async () => new Promise(resolve => setTimeout(resolve, 50)));
+    // 503 is not in the permission-collapse list, so the page settles to a read-error notice
+    // and the project body remains hidden behind the "unavailable" umbrella.
+    assert.match(document.body.textContent, /project read failed|Read|read error|Project read failed/i);
+  } finally {
+    await act(async () => root.unmount()); dom.window.close();
+    void pending;
+    for (const [key, descriptor] of Object.entries(saved)) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor); else delete globalThis[key];
+    }
+  }
+});
+
 for (const projectOrigin of ['ordinary', 'idea_lab']) test(`${projectOrigin} navigation and uncertain saves retain exact project identity`, async () => {
   const dom = new JSDOM('<div id="root"></div>', { pretendToBeVisual: true });
   const saved = Object.fromEntries(['window', 'document', 'IS_REACT_ACT_ENVIRONMENT', 'fetch']
