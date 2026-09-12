@@ -32,7 +32,8 @@ const receipt = (record: Record) => {
     executionConfirmed: false as const, grantsExecutionAuthority: false as const };
 };
 
-export async function readCodexDeliveryReceipt(tx: DatabaseSession, key: Uint8Array, scope: NativeTaskQueueScope) {
+export async function readCodexDeliveryReceiptEvidenceInSession(tx: DatabaseSession, key: Uint8Array,
+  scope: NativeTaskQueueScope) {
   const row = (await tx.query<Row>("SELECT tenant_id,project_id,job_id,attempt_id,record,auth_tag FROM control_codex_delivery_receipts WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3",
     [scope.tenantId, scope.jobId, scope.attemptId])).rows[0];
   if (!row) return null;
@@ -41,7 +42,15 @@ export async function readCodexDeliveryReceipt(tx: DatabaseSession, key: Uint8Ar
     || row.tenant_id !== body.tenantId || row.project_id !== body.projectId || row.job_id !== body.jobId || row.attempt_id !== body.attemptId
     || body.tenantId !== scope.tenantId || body.projectId !== scope.projectId || body.jobId !== scope.jobId || body.attemptId !== scope.attemptId
     || record.frame.bodyDigest !== sha256Digest(body)) return fail();
-  return receipt(record);
+  return Object.freeze({ frame: record.frame as SignedNodeFrame<"harness.codex.dispatch.receipt">,
+    inputDigest: record.inputDigest, dispatchFrameDigest: record.dispatchFrameDigest,
+    receivedAt: record.receivedAt });
+}
+
+export async function readCodexDeliveryReceipt(tx: DatabaseSession, key: Uint8Array, scope: NativeTaskQueueScope) {
+  const evidence = await readCodexDeliveryReceiptEvidenceInSession(tx, key, scope);
+  if (!evidence) return null;
+  return receipt(schema.parse({ schema: "control-room.codex-delivery-receipt/v1", ...evidence }));
 }
 
 /** Called only from authenticated Codex receipt handling. It records receipt evidence and grants no authority. */

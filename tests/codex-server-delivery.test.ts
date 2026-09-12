@@ -3,6 +3,7 @@ import { generateKeyPairSync } from 'node:crypto';
 import { test } from 'node:test';
 import { CODEX_DELIVERY_FEATURE, CODEX_START_OPERATION, codexTaskDispatchBodySchemaV1,
   codexTaskPayloadDigestV1 } from '../src/harness/codex-v1/delivery-contract.ts';
+import { CODEX_ACTIVATION_FEATURE, buildCodexTaskActivationV1 } from '../src/harness/codex-v1/activation-contract.ts';
 import { CodexDispatchIntakeHandlerV1 } from '../src/node-bridge/codex-dispatch-handler.ts';
 import { PortableNodeBridge } from '../src/node-bridge/bridge.ts';
 import { SqliteBridgeJournal } from '../src/node-bridge/journal.ts';
@@ -49,7 +50,7 @@ function codexBody(now: number, approvalPrivateKey: ReturnType<typeof generateKe
       attemptId: start.attemptId }).slice(7)}`, start, request, permit, permitDigest: sha256Digest(permit) });
 }
 
-async function connected() {
+async function connected(activation = false) {
   let now = initial;
   const approval = generateKeyPairSync('ed25519'), server = generateKeyPairSync('ed25519'), node = generateKeyPairSync('ed25519');
   const approvalSpki = approval.publicKey.export({ type: 'spki', format: 'der' }).toString('base64url');
@@ -65,13 +66,13 @@ async function connected() {
   { approvals, security: { currentServerTrustRevision: () => 'trust-revision:1' } }, () => now);
   const toNode: string[] = [], toServer: string[] = [], serverFrames: SignedNodeFrame[] = [];
   const bridge = new PortableNodeBridge({ tenantId: 'tenant:test', nodeId: 'node:test', keyId: 'node-key:test',
-    features: [CODEX_DELIVERY_FEATURE] }, journal, { async sign(frame) { return signNodeFrame(frame, node.privateKey); } },
+    features: [CODEX_DELIVERY_FEATURE, ...(activation ? [CODEX_ACTIVATION_FEATURE] : [])] }, journal, { async sign(frame) { return signNodeFrame(frame, node.privateKey); } },
   new NodeProtocolAuthenticator({ async resolve(value) { return { ...value, algorithm: 'ed25519', publicKeySpki: serverSpki,
     state: 'active', principalState: 'active', validFrom: new Date(now - 1000).toISOString() }; } }, journal,
   new FixedWindowProtocolRateLimiter(100, 60)), undefined, undefined, undefined, handler);
   const session = new ServerNodeSession({ tenantId: 'tenant:test', nodeId: 'node:test', nodeKeyId: 'node-key:test',
     serverId: 'server:test', serverKeyId: 'server-key:test', serverPublicKeySpki: serverSpki,
-    transportIdentity: 'transport:test', features: [CODEX_DELIVERY_FEATURE], maxFrameBytes: 131_072,
+    transportIdentity: 'transport:test', features: [CODEX_DELIVERY_FEATURE, ...(activation ? [CODEX_ACTIVATION_FEATURE] : [])], maxFrameBytes: 131_072,
     heartbeatIntervalSeconds: 30 }, { clock: () => now,
     authentication: new NodeProtocolAuthenticator({ async resolve(value) { return { ...value, algorithm: 'ed25519',
       publicKeySpki: nodeSpki, state: 'active', principalState: 'active', validFrom: new Date(now - 1000).toISOString() }; } },
@@ -173,4 +174,57 @@ test('a durable transmission record prevents a replacement connection from sendi
   }), /durable_codex_transmission_already_exists/);
   assert.equal(replacement.toNode.length, 0); assert.equal(transmissionRecorded, true);
   await replacement.close();
+});
+
+test('server prepares and sends one activation only after the durable recorded receipt', async () => {
+  const f = await connected(true), order: string[] = [];
+  await f.session.stageCodexDispatch(async sign => sign(f.body, f.body.start.deadline));
+  await f.session.sendPreparedCodexDispatch(async frame => ({ value: frame.messageId, assertFresh() {} }));
+  const dispatchRaw = f.toNode.shift()!, dispatch = JSON.parse(dispatchRaw) as SignedNodeFrame<'harness.codex.dispatch'>;
+  f.advance(); await f.bridge.receive(dispatchRaw, new Date(initial + 1).toISOString());
+  const receiptRaw = f.toServer.shift()!, receipt = JSON.parse(receiptRaw) as SignedNodeFrame<'harness.codex.dispatch.receipt'>;
+  await f.session.acceptCodexReceipt(receiptRaw, async () => { order.push('receipt_committed'); return receipt.body; });
+  const admissionDigest = sha256Digest('current-admission');
+  const staged = await f.session.stageCodexActivation(async ({ sign, dispatch: exactDispatch, receipt: exactReceipt, channel }) => {
+    order.push('activation_committed');
+    const frame = await sign(activatedAt => buildCodexTaskActivationV1({
+      dispatch: exactDispatch as never, receipt: exactReceipt as never, currentAdmissionDigest: admissionDigest,
+      receiptReceivedAt: new Date(initial + 1).toISOString(), activatedAt,
+      activationExpiresAt: new Date(f.body.start.deadline).toISOString(),
+    }), f.body.start.deadline);
+    return { value: frame.body.activationId, assertFresh: channel.assertCurrent };
+  });
+  assert.match(staged, /^codex-activation:/); assert.deepEqual(order, ['receipt_committed', 'activation_committed']);
+  const sent = await f.session.sendPreparedCodexActivation();
+  assert.equal(sent.activationId, staged); assert.equal(f.toNode.length, 1);
+  const activation = JSON.parse(f.toNode[0]!) as SignedNodeFrame<'harness.codex.dispatch.activation'>;
+  assert.equal(activation.causationId, receipt.messageId); assert.equal(activation.body.dispatchMessageId, dispatch.messageId);
+  await assert.rejects(f.session.sendPreparedCodexActivation());
+  await assert.rejects(f.session.stageCodexActivation(async () => ({ value: undefined, assertFresh() {} })));
+  await f.close();
+});
+
+test('activation requires negotiated support and a completed synchronous freshness fence', async () => {
+  for (const activation of [false, true]) {
+    const f = await connected(activation);
+    await f.session.stageCodexDispatch(async sign => sign(f.body, f.body.start.deadline));
+    await f.session.sendPreparedCodexDispatch(async frame => ({ value: frame.messageId, assertFresh() {} }));
+    const dispatchRaw = f.toNode.shift()!; f.advance();
+    await f.bridge.receive(dispatchRaw, new Date(initial + 1).toISOString());
+    const receiptRaw = f.toServer.shift()!;
+    await f.session.acceptCodexReceipt(receiptRaw, async receipt => receipt.body);
+    if (!activation) {
+      await assert.rejects(f.session.stageCodexActivation(async () => ({ value: undefined, assertFresh() {} })),
+        /activation channel unavailable/);
+    } else {
+      await assert.rejects(f.session.stageCodexActivation(async ({ sign, dispatch, receipt }) => {
+        await sign(activatedAt => buildCodexTaskActivationV1({ dispatch: dispatch as never, receipt: receipt as never,
+          currentAdmissionDigest: sha256Digest('current-admission'), receiptReceivedAt: new Date(initial + 1).toISOString(),
+          activatedAt, activationExpiresAt: new Date(f.body.start.deadline).toISOString() }), f.body.start.deadline);
+        return { value: undefined, assertFresh: (() => false) as () => void };
+      }));
+      assert.equal(f.toNode.length, 0);
+    }
+    await f.close();
+  }
 });

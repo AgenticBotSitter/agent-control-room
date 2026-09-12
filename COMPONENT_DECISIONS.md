@@ -37,7 +37,7 @@ with a concrete compatibility, security, licensing or measured performance findi
 | DR-14 Monitoring | Selected built-in readiness and Needs attention for MVP; Kuma/Beszel deferred removable options | Existing built-in health is the release baseline; Kuma condition/database tests and Beszel source evidence remain optional evidence | External services are not an MVP blocker. Reopen only for a demonstrated alert/host-metric need, then prove protected health, restart/resource cost and actual signals |
 | DR-15 Integrity checkpoint | Selected existing etcd adapter as independent authenticated CAS rollback detector; OpenBao only a named fallback | Actual CR/service binding exists; etcd does not repair split commits | Qualification pending and required for persistent writes: independent placement/credentials, missing-head refusal, both split-commit orders/lost acknowledgements, backup/WAL binding and full restore acceptance |
 | DR-16 Owner signing | Selected dedicated owner-controlled Ed25519 signer; ssh2 is bounded remote transport only | Owned connection/cancellation, pinned-protocol evaluation and paired canonical issuance tested locally; no real custody proven | Qualification pending for effectful execution: dedicated custody/pins, exact consent, real peer permissions, timeout/cleanup, revocation and platform review; no ambient or forwarded personal key |
-| DR-17 Native connectors/files | Selected Hermes via pinned hermes-gpt FastMCP and Codex App Server 0.150.0-alpha.8 via owned stdio/TS transport; separate attachment admission | Exact-ID Codex projection, one-shot JSONL, owned read lifecycle, owner permit and signed shared-queue delivery are implemented. Python SDK is fallback only | MVP blocker is integration/acceptance: local admission/start journal, real lifecycle/results/recovery, truthful Hermes gaps and bounded protected artifacts. No new connector contest. See CODEX_READ_RECOVERY.md |
+| DR-17 Native connectors/files | Selected Hermes via pinned hermes-gpt FastMCP and Codex App Server 0.150.0-alpha.8 via owned stdio/TS transport; separate attachment admission | Exact-ID Codex projection, one-shot JSONL, owned read lifecycle, owner permit, signed shared-queue delivery and the Codex post-receipt activation fence are implemented. Python SDK is fallback only | MVP blocker is integration/acceptance: local one-shot start authority/runtime, exact result schema/projection, real lifecycle/results/recovery, truthful Hermes gaps and bounded protected artifacts. No new connector contest. See CODEX_READ_RECOVERY.md |
 
 These are dependency targets, not instructions to install every package immediately.
 Pin direct/transitive dependencies intentionally and preserve their actual license
@@ -82,6 +82,21 @@ pairing, independent copies and deployment acceptance remain unfinished.
 Codex recovery must distinguish reading retained state, reconnecting/subscribing,
 and starting a new turn. Existing qualification resume is not read-only recovery.
 Missing usage/identity stays unknown; a disconnect never authorizes blind retry.
+
+### Codex delivery activation fence
+
+After a Codex node acknowledges receipt of one signed delivery, Control Room now
+stores a separate, signed activation record before it can ask that node to begin.
+The activation is bound to that exact delivery, receipt, job attempt, lease, node
+connection and current admission record. Replaying the same activation is harmless;
+a replacement connection cannot use it as a second start.
+
+This is deliberately **not** permission to run arbitrary work. The activation only
+acknowledges the already-recorded delivery path. It grants no execution, retry,
+resume or thread-reading authority, and it has no effect port. The next two Codex
+blocks are a local one-shot start authority/runtime that consumes this fence, then
+an exact upstream result-schema/projection path into Control Room's normal result,
+review and revision records. Both still require their stated real-machine evidence.
 
 ## Delivery order and contributor boundaries
 
