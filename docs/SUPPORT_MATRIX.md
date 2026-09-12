@@ -13,6 +13,7 @@ qualified. “Planned” is not a compatibility claim.
 | Codex App Server | Source and earlier bounded qualification evidence | Parent-owned stdio direction; start/events/interrupt concepts | Exact selected-binary schema plus read-only `thread/read` restart test and canonical task/result wiring |
 | Herdr | Optional/deferred | Operator-installed read-only pane observations | Selected-host native isolation and lifecycle qualification; never task authority |
 | Cloudflare Access profile | Implemented policy shape, deployment-specific acceptance separate | Signed RS256 assertion, issuer/audience/session and exact-origin checks | Generic provider profiles and live direct-origin/MFA-policy acceptance |
+| Injected RS256 gateway profile | Source/fixture tested, not operator-deployable | Fixed server-selected header plus issuer/audience/subject mapping; same local authorization | Safe operator key source/profile wiring and live direct-origin/MFA-policy acceptance; not OIDC discovery |
 | Idea Lab and news | Substantial synthetic/disposable integration | Saved discussion/promotion and attributed collect/read/research-draft flows | Real participant task execution and common result/review path |
 
 The initial release targets a Linux private server with browser clients and separately
