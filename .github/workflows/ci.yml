@@ -20,6 +20,12 @@ name: CI
 # Commits here have historically been marked [skip ci] because no workflow
 # existed to run. That convention now suppresses the verification it predates.
 # Leave it off.
+#
+# Every test lane package.json defines must appear in a job below. The first
+# version of this workflow ran three lanes and silently skipped the rest, so a
+# test could pass review, be committed, and never execute again. The lane-drift
+# job fails if a test file exists that no script reaches - add it to a named lane
+# rather than widening a glob, so what runs stays reviewable.
 on:
   push:
     branches: [main]
@@ -90,3 +96,56 @@ jobs:
       # build as well and there is no separate build job.
       - name: Build and test
         run: pnpm run test
+
+  test-components:
+    name: Component lanes
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      # Chains contracts, product shell, notices, database, queue, codex
+      # recovery, access, owner signing, checkpoints, ideas, results, articles,
+      # calendar, observations, workspaces, native fences, release licenses and
+      # the build profile. These cover the security boundaries the
+      # configuration contract commits to; none of them ran in CI before.
+      - name: Component lanes
+        run: pnpm run test:components
+
+  test-articles:
+    name: Article build lane
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Article build lane
+        run: pnpm run test:build:articles
+
+  lane-drift:
+    name: Every test file is in a lane
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Fail if any test file is unreachable from package.json scripts
+        run: node scripts/check-test-lane-coverage.mjs

@@ -11,6 +11,12 @@
     "vite.vps.config.ts",
     "src/web/v1/private-process.ts",
     "src/web/v1/private-startup.ts",
+    "src/web/v1/private-idea-authoring-startup.ts",
+    "src/web/v1/private-owner-bootstrap.ts",
+    "src/web/v1/private-owner-review.ts",
+    "src/web/v1/private-task-database-check.ts",
+    "src/node-bridge/private-node-entry.ts",
+    "src/config/v1/product-configuration.ts",
     "src/web/v1/private-serving.ts",
     "src/web/v1/private-database-rehearsal.ts",
     "src/web/v1/private-fixture-preparation.ts",
@@ -18,7 +24,8 @@
     "src/web/v1/private-task-startup.ts",
     "src/web/v1/installed-native-queue.ts",
     "src/persistence/pg-boss-schema-inspection.ts",
-    "src/web/v1/private-task-host.ts"
+    "src/web/v1/private-task-host.ts",
+    "src/project-adapters/abs-news/v1/article-extraction-runtime.mjs"
   ],
   "exclude": ["node_modules", "dist-vps", ".next"]
 }
