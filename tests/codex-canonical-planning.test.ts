@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
+import { generateKeyPairSync, sign } from "node:crypto";
 import test from "node:test";
 import { CODEX_APP_SERVER_ADAPTER, CODEX_APP_SERVER_CAPABILITY, CODEX_APP_SERVER_JOB_TYPE,
   CODEX_START_OPERATION } from "../src/harness/codex-v1/delivery-contract";
+import { createCodexOwnerPermitIssuer } from "../src/harness/codex-v1/owner-permit";
+import type { PinnedApprovalTrustStore } from "../src/node-policy/v1/pinned-approval-trust";
 import { FleetSignalStore } from "../src/node-fleet/v1/fleet-signal-store";
 import type { FleetSignalEnvelope } from "../src/node-fleet/v1/schemas";
 import { CanonicalStore } from "../src/persistence/canonical-store";
 import { jobRecordSchema } from "../src/domain/v1";
+import { readNativeTaskQueueIntentInSession } from "../src/web/v1/native-task-queue";
 import { computeAuthorityDigest, sha256Digest } from "../src/security";
 import { TaskAssignmentCoordinator, type TaskAssignmentRoute } from "../src/web/v1/task-assignment-coordinator";
 import { TaskExecutionPlanner, type NativeTaskTemplate } from "../src/web/v1/task-execution-planner";
@@ -43,8 +47,20 @@ async function setup() {
       probeVersion: "1.0.0", outcome: "pass", reasonCode: "reported_only" } };
   await signals.ingestAuthenticated(telemetry, at(6000), binding);
   await signals.ingestAuthenticated(capability, at(6000), binding);
-  const assignment = new TaskAssignmentCoordinator(f.db, f.scope, planner, [route], () => instant + 8000);
-  return { ...f, authority, template, planner, planned, route, assignment };
+  const approvalKeys = generateKeyPairSync("ed25519"), approvalKeyId = "approval-key:codex-test";
+  const publicKeySpki = approvalKeys.publicKey.export({ format: "der", type: "spki" }).toString("base64url");
+  const approvals = { binding: () => ({ tenantId: binding.tenantId, nodeId: binding.nodeId, nodeClass: "personal-compute" }),
+    assertAvailable() {}, async resolveApprovalKey(keyId: string) {
+      return keyId === approvalKeyId ? new Uint8Array(Buffer.from(publicKeySpki, "base64url")) : undefined;
+    } } as unknown as PinnedApprovalTrustStore;
+  const codexIntegrityKey = new Uint8Array(32).fill(83);
+  const codexConfig = { integrityKey: codexIntegrityKey, enrollments: [{ tenantId: binding.tenantId, nodeId: binding.nodeId, nodeClass: "personal-compute",
+      enrollmentDigest: sha256Digest("codex-enrollment"), connectorProfileDigest: template.connectorProfileDigest!,
+      workspaceIntentDigest: template.workspaceIntentDigest!, credentialRef: authority.credentialRefs[0],
+      filesystemRoot: authority.filesystemRoots[0], validUntil: instant + 180_000, approvalKeyId, approvals,
+      security: { currentServerTrustRevision: () => "trust-revision:codex-test" } }] };
+  const assignment = new TaskAssignmentCoordinator(f.db, f.scope, planner, [route], () => instant + 8000, [], undefined, undefined, codexConfig);
+  return { ...f, authority, template, planner, planned, route, assignment, approvalKeys, publicKeySpki, codexIntegrityKey, codexConfig };
 }
 
 test("owner planning and assignment produce one canonical Codex reservation without starting work", async () => {
@@ -69,6 +85,21 @@ test("owner planning and assignment produce one canonical Codex reservation with
     const replay = await f.assignment.assign(f.identity, binding.projectId, saved.job.id, binding.nodeId, saved.job.inputDigest);
     assert.equal(replay.replayed, true);
     assert.deepEqual(replay.receipt, assigned.receipt);
+    const approval = await f.assignment.prepareCodexOwnerPermit(f.identity, binding.projectId, saved.job.id, saved.job.inputDigest);
+    const issuer = createCodexOwnerPermitIssuer(approval.input, { publicKeySpki: f.publicKeySpki, timeoutMs: 1000,
+      clock: () => instant + 8000, assertOwnerConsentCurrent: () => approval.assertCurrent(),
+      sign: async bytes => sign(null, bytes, f.approvalKeys.privateKey) });
+    assert.match(issuer.reviewDigest, /^sha256:[a-f0-9]{64}$/);
+    const permit = await issuer.issue(new AbortController().signal);
+    const queued = await f.assignment.enqueueCodexTask(f.identity, binding.projectId, saved.job.id, saved.job.inputDigest,
+      permit, new AbortController().signal);
+    assert.equal(queued.startsWork, false); assert.equal(queued.grantsExecutionAuthority, false);
+    const intent = await f.db.transaction(tx => readNativeTaskQueueIntentInSession(tx, f.codexIntegrityKey,
+      { tenantId: binding.tenantId, projectId: binding.projectId, jobId: saved.job.id,
+        attemptId: assigned.receipt.attemptId, inputDigest: saved.job.inputDigest }));
+    assert.equal(intent?.jobId, saved.job.id);
+    await assert.rejects(f.assignment.enqueueCodexTask(f.identity, binding.projectId, saved.job.id, saved.job.inputDigest,
+      permit, new AbortController().signal));
   } finally { await f.close(); }
 });
 
@@ -86,5 +117,13 @@ test("Codex templates cannot borrow Hermes network authority or bypass explicit 
     await assert.rejects(f.assignment.assign(f.identity, binding.projectId, f.planned.receipt.jobId,
       "node:other", f.planned.receipt.inputDigest));
     assert.equal((await f.planner.read(f.planned.receipt.jobId))?.job.state, "proposed");
+    const assigned = await f.assignment.assign(f.identity, binding.projectId, f.planned.receipt.jobId,
+      binding.nodeId, f.planned.receipt.inputDigest);
+    const wrongConfig = { ...f.codexConfig, enrollments: f.codexConfig.enrollments.map(value => ({ ...value,
+      connectorProfileDigest: sha256Digest("wrong-connector") })) };
+    const wrongCoordinator = new TaskAssignmentCoordinator(f.db, f.scope, f.planner, [f.route], () => instant + 8000,
+      [], undefined, undefined, wrongConfig);
+    await assert.rejects(wrongCoordinator.prepareCodexOwnerPermit(f.identity, binding.projectId, assigned.receipt.jobId,
+      assigned.receipt.inputDigest));
   } finally { await f.close(); }
 });
