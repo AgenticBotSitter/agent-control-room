@@ -1,0 +1,29 @@
+{
+  "root": "/private/tmp/cr-f8-kuma-release-OiEJq7",
+  "run": "/private/tmp/cr-f8-kuma-release-OiEJq7/inspection-FbQ1zV",
+  "scope": "validated extraction and native metadata only; addon not loaded, no npm scripts or daemon",
+  "reports": [
+    {
+      "archive": "source.tar.gz",
+      "members": 855,
+      "expandedBytes": 8322626
+    },
+    {
+      "archive": "dist.tar.gz",
+      "members": 254,
+      "expandedBytes": 12479953
+    },
+    {
+      "archive": "sqlite-native.tar.gz",
+      "members": 1,
+      "expandedBytes": 1967294
+    }
+  ],
+  "addonSha256": "438e399fa51ddeea12ac706551be30b6478d5fa5e9ca8a060be0dbda39a3e9fd",
+  "metadata": {
+    "file": "/private/tmp/cr-f8-kuma-release-OiEJq7/inspection-FbQ1zV/napi-v6-darwin-arm64/node_sqlite3.node: Mach-O 64-bit bundle arm64\n",
+    "libraries": "/private/tmp/cr-f8-kuma-release-OiEJq7/inspection-FbQ1zV/napi-v6-darwin-arm64/node_sqlite3.node:\n\t/usr/lib/libc++.1.dylib (compatibility version 1.0.0, current version 1300.23.0)\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1311.100.3)\n",
+    "signature": "",
+    "signatureVerified": true
+  }
+}

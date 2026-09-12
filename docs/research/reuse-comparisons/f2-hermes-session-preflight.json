@@ -1,0 +1,20 @@
+{
+  "command": "bundled python3 -I -B; importlib.util.find_spec only",
+  "exitCode": 0,
+  "result": {
+    "python": "3.12.14",
+    "dependencies": {
+      "fastapi": false,
+      "starlette": false,
+      "aiohttp": false,
+      "pydantic": true,
+      "multipart": false
+    },
+    "candidateExecuted": false
+  },
+  "availableDiskKiBBefore": 145456356,
+  "downloadedBytes": 0,
+  "retainedBytes": 0,
+  "temporaryRootsCreated": 0,
+  "cleanup": "No owned root, fixture state, listener or child peer was created."
+}

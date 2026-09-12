@@ -1,0 +1,7 @@
+{
+  "chunk_id": "6453e8",
+  "wall_time_seconds": 0.000002625,
+  "exit_code": 0,
+  "original_token_count": 195,
+  "output": "{\"schema\":\"control-room.research-download/v1\",\"root\":\"/private/tmp/cr-f8-pg17.2FlFtD\",\"path\":\"/private/tmp/cr-f8-pg17.2FlFtD/Postgres-2.9.6-17.dmg\",\"url\":\"https://github.com/PostgresApp/PostgresApp/releases/download/v2.9.6/Postgres-2.9.6-17.dmg\",\"revision\":\"0e7a7084f7467ceacbaf757019b6e9bb1fb5ab7d\",\"expectedBytes\":119621638,\"expectedSha256\":\"b38bb00b8c8702a568270aab85995c550f7f93d1503b818efdc5ff9a519b7168\",\"freeBefore\":148885504000,\"bytes\":119621638,\"status\":\"downloaded-digest-verified-signature-unverified\",\"downloadedSha256\":\"b38bb00b8c8702a568270aab85995c550f7f93d1503b818efdc5ff9a519b7168\",\"cleanup\":\"retained; exact owned root only\",\"effects\":\"download only; no mount, app execution, install, service or database\",\"finalUrlHost\":\"release-assets.githubusercontent.com\"}\n"
+}

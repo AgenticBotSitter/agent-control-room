@@ -1,0 +1,28 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import {createHash} from 'node:crypto';
+import {spawn,execFileSync} from 'node:child_process';
+const root='/private/tmp/cr-f3-renderer.XRtXHb';
+const receipt=JSON.parse(await fs.readFile('docs/research/reuse-comparisons/f3-renderer-acquisitions.json','utf8'));
+const original=JSON.parse(await fs.readFile(root+'/package-lock.json','utf8'));
+const names=['react','react-dom','react-markdown','remark-gfm','react-syntax-highlighter','jsdom'];
+const deps=Object.fromEntries(names.map(n=>[n,original.packages['node_modules/'+n].version]));
+const packages={'':{name:'f3-renderer-disposable',version:'0.0.0',dependencies:deps}};
+function add(key){if(packages[key])return; const item=original.packages[key];if(!item)throw Error('missing '+key);packages[key]={...item};delete packages[key].dev;delete packages[key].peer;
+ for(const n of Object.keys(item.dependencies??{})){let base=key;let k;while(base){const candidate=base+'/node_modules/'+n;if(original.packages[candidate]){k=candidate;break;}base=path.dirname(base);if(base==='.')base='';}k??='node_modules/'+n;add(k);}}
+for(const n of names)add('node_modules/'+n);
+await fs.mkdir(root+'/selected');await fs.mkdir(root+'/cache');await fs.mkdir(root+'/home');
+await fs.writeFile(root+'/user.npmrc','');await fs.writeFile(root+'/global.npmrc','');
+await fs.writeFile(root+'/selected/package.json',JSON.stringify(packages['']));
+const lock=JSON.stringify({name:'f3-renderer-disposable',version:'0.0.0',lockfileVersion:3,requires:true,packages},null,2);
+await fs.writeFile(root+'/selected/package-lock.json',lock);
+receipt.install={packages:Object.entries(packages).filter(([k])=>k).map(([key,v])=>({key,version:v.version,resolved:v.resolved,integrity:v.integrity,license:v.license})),lockSha256:createHash('sha256').update(lock).digest('hex'),status:'prepared'};
+const save=()=>fs.writeFile('docs/research/reuse-comparisons/f3-renderer-acquisitions.json',JSON.stringify(receipt,null,2));await save();
+const npm=path.join(path.dirname(process.execPath),'npm');let output='';let stopped=null;
+const args=['ci','--ignore-scripts','--legacy-peer-deps','--omit=optional','--no-audit','--no-fund','--fetch-retries=0','--fetch-timeout=15000','--cache',root+'/cache','--userconfig',root+'/user.npmrc','--globalconfig',root+'/global.npmrc'];
+const child=spawn(npm,args,{cwd:root+'/selected',env:{PATH:path.dirname(process.execPath)+':/usr/bin:/bin',HOME:root+'/home',TMPDIR:root,CI:'true'},stdio:['ignore','pipe','pipe']});
+child.stdout.on('data',b=>{output+=b;if(output.length>65536){stopped='output';child.kill();}});child.stderr.on('data',b=>{output+=b;if(output.length>65536){stopped='output';child.kill();}});
+const interval=setInterval(()=>{const kib=Number(execFileSync('/usr/bin/du',['-sk',root],{encoding:'utf8'}).split(/\s/)[0]);if(kib>51200){stopped='cohort cap';child.kill();}},1000);
+const timer=setTimeout(()=>{stopped='60 second timeout';child.kill();},60000);
+const terminal=await new Promise(resolve=>child.on('exit',(code,signal)=>resolve({code,signal})));clearInterval(interval);clearTimeout(timer);
+receipt.install={...receipt.install,args,terminal,stopped,output,allocationKiB:Number(execFileSync('/usr/bin/du',['-sk',root],{encoding:'utf8'}).split(/\s/)[0]),status:'terminal'};await save();console.log(JSON.stringify(receipt.install));

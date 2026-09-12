@@ -721,6 +721,77 @@ Three generated-gRPC-client/codec diagnostics pass with a fake channel (five com
 E69/E70 tests). gRPC/proto-loader installed license files are Apache-2.0; upstream
 protocol provenance and full transitive clearance remain required before adoption.
 No service, resolver or physical connection created. Retention status unchanged.
+# 2026-09-08 — isolated PostgreSQL17 tooling
+
+## Kuma matching release archives and inspection
+
+Owned root `/private/tmp/cr-f8-kuma-release-OiEJq7`; free space before acquisition
+148,204,154,880bytes. Exact source2,164,813bytes, matched dist7,299,676bytes and
+SQLite native archive903,679bytes. URLs/hashes and provenance distinctions in
+`docs/research/reuse-comparisons/f8-kuma-package-acquisition.json`. The dist matched
+its published digest; source/native first-observed digests are not upstream signatures.
+Validated archive members (regular files/directories only, no traversal/links)
+extracted under owned `inspection-FbQ1zV`; total cohort34,840KiB.855 source members,
+254 UI members and one native addon. Native metadata is ARM64, two system dylibs,
+ad-hoc linker signature with no team identity. Code-signature integrity passes,
+but no publisher-signature authentication is claimed. No addon load, npm scripts,
+compilation, service or provider call. Keep for bounded dependency/daemon evaluation;
+remove only this exact root after evidence saved and future handles confirmed absent.
+
+Follow-up in the same cohort:574 runtime packages prepared from the exact release
+lock with scripts/dev/optional disabled; measured288,816KiB after installation,
+148,164,968,448bytes free before. `f8-kuma-dependencies-evidence.json` records
+commands, lock identity, terminal status and warnings. The inspected addon was
+copied into its expected package binding and one offline SQLite preparation ran
+with actual upstream migrations/settings.29 tables and persisted checkUpdate=false;
+DB closed/process exited0. `f8-kuma-offline-evidence.json` records the retained
+owned offline data directory. No daemon/listener/provider; no unlogged new root.
+
+## Kuma release-pairing source reads
+
+31 bounded public HTTP reads across three source-only invocations,4,848,948bytes
+total, zero retained upstream source bytes. Initial free space148,198,912,000bytes.
+Exact tag/pins/URLs/hashes and package differences saved in
+`docs/research/reuse-comparisons/f8-kuma-release-pairing.json` and
+`f8-kuma-release-delta.json`. One verbose output truncated; the final invocation
+retained a complete receipt. No package/native download, service or cleanup root.
+
+## Minimal Markdown comparison cohorts
+
+`/private/tmp/cr-f3-minimal-xmkpnc` is a retained420KiB failed npm configuration
+attempt; no dependency install succeeded there. `/private/tmp/cr-f3-minimal-whsUi0`
+retains83,940KiB of pinned script-disabled React/Markdown/GFM/jsdom research packages
+and isolated npm cache. Free space before the successful preparation was
+148,303,536,128bytes. Exact142 package URLs/integrities and lock hash, both attempts
+and output are in `docs/research/reuse-comparisons/f3-minimal-acquisitions.json`.
+No scripts, native providers, personal npm config or application dependency edits.
+The11-check in-memory render run unmounted/closed; no service persists. Keep for
+independent review, then remove only these two exact owned roots after saving
+evidence. Both remain within the4GiB total retained cap.
+
+Downloaded only the pinned Postgres.app2.9.6 single-PG17 DMG into
+`/private/tmp/cr-f8-pg17.2FlFtD/Postgres-2.9.6-17.dmg`; exact URL, source revision,
+expected/observed bytes and SHA256 are in the owned acquisition.json and
+`research/reuse-comparisons/f8-pg17-acquisition-evidence.json` under docs.
+119,621,638 bytes match published SHA256
+`b38bb00b8c8702a568270aab85995c550f7f93d1503b818efdc5ff9a519b7168`.
+148,885,504,000 bytes free before acquisition. Existing known retained F1 and F5
+cohorts total572,272KiB; this archive adds about114MiB, below the4GiB cap.
+No package mount, application/native binary execution, install, service or database
+in this acquisition. Signature/notarization and actual dylib inventory remain
+unverified. Retain this exact owned root for inspection; remove only this root
+after any future mount/process is confirmed absent and evidence is saved.
+
+Subsequent inspection/preparation completed: copied the signed bundle into this
+same owned root (about403,504KiB), verified deep signatures and notarization,
+checked the16-file ARM64 library closure and six PG17.11 version commands.
+Temporary image mounts detached. Five disposable restore runs stopped and removed
+their own clusters; no persistent service or TCP listener was installed. Archive,
+bundle and sanitized receipts remain retained, below the4GiB cohort cap. See
+`docs/research/reuse-comparisons/f8-pg17-preparation-evidence.json` and
+`f8-pg17-restore-fit.md`. Save evidence and confirm mounts/processes absent before
+deleting this exact owned root; never remove any other Postgres installation.
+
 # 2026-09-07 — Control Center reading cohort
 
 Before acquisition, `df -h .` showed 140 GiB free. Read three pinned public source
@@ -747,3 +818,25 @@ At local checkpoint 91e62ae, retained adapted code totaled 14,790 bytes. SHA256:
 `291fc245b943c48feaeb5807ef5f60b1ec8b31f0f8f6cdd7782c998be0c6cb48`;
 pinned-fetch `1fafc239bb2a06038c2c7f54d0026f736e64f938ff37976e075b2021e20112ca`;
 safe-fetch `986fe50ac2579e6a97f2bebbfcce6c1fd8b87eb709f5bc04c6310e2d8427e03f`.
+
+# 2026-09-08 public refresh clone (publication preparation)
+
+Downloaded a shallow public Git clone of AgenticBotSitter/agent-control-room at
+cc565d2acf33883316a5784fd0c8ba56fe2eb389 to
+/private/tmp/cr-public-refresh.3pzcHT/repo. Prior free-space observation was about
+138 GiB. Measured clone size: 6,028 KiB. No dependencies or compiled/native
+artifacts installed in this clone. Synced main to merged roadmap 42ecea2117852991eacf014b8228551e79a061b7.
+Retain for the reviewed sanitized source refresh; remove the exact owned temporary
+root only after preserving unpublished changes and verifying remote publication.
+Completed documentation publication is recorded in
+research/public-refresh-publication-receipt.md. Do not delete retained source
+before the outstanding application export is complete.
+
+Public candidate dependency preparation: pnpm11.19.0, frozen lock, scripts disabled.
+Before preparation138GiB free. Offline attempt stopped on missing fast-xml-parser
+tarball; explicitly authorized online preparation then reported489reused,
+0downloaded,489added. Exact versions/integrities are in the candidate lockfile.
+Installed only under /private/tmp/cr-public-refresh.3pzcHT/repo/node_modules and
+the pnpm-managed store; no dependencies copied between checkouts. Keep candidate
+dependencies until verification completes. Do not recursively delete the shared
+pnpm store as part of this cohort cleanup.

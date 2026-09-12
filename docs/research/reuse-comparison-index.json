@@ -10,20 +10,101 @@
   "crossJourneyEvidence": "reuse-comparisons/cross-journey-revision-fit.md",
   "decisionStatusNote": "Outcome status is not product acceptance. Settled responsibility choices below must not be reopened solely because implementation or target qualification remains.",
   "settledResponsibilityDecisions": [
-    { "id": "DR-01", "outcomes": ["C1"], "scope": "Fixed-panel participant selection loop", "evidence": "reuse-comparisons/decision-register.md#dr-01--keep-fixed-panel-participant-selection" },
-    { "id": "DR-02", "outcomes": ["C3"], "scope": "Existing collection and distinct parsing boundaries", "evidence": "reuse-comparisons/decision-register.md" },
-    { "id": "DR-03", "outcomes": ["D5"], "scope": "Prepared runtime dependency identity graph", "evidence": "reuse-comparisons/decision-register.md" },
-    { "id": "DR-04", "outcomes": ["D5"], "scope": "Original license text gathering", "evidence": "reuse-comparisons/decision-register.md" },
-    { "id": "DR-05", "outcomes": ["A2"], "scope": "Synchronous JWT primitive; Access policy retained", "evidence": "reuse-comparisons/f8-jwt-selection-review.md" },
-    { "id": "DR-06", "outcomes": ["B7"], "scope": "Canonical task authority versus optional notification delivery", "evidence": "reuse-comparisons/f4-delivery-review.md" },
-    { "id": "DR-07", "outcomes": ["C3"], "scope": "Default extraction primitive, not complete reader", "evidence": "reuse-comparisons/f7-extractor-selection-review.md" },
-    { "id": "DR-08", "outcomes": ["B7"], "scope": "Native Git initial detached checkout with CR ownership checks; concrete adapter and recovery unbuilt", "evidence": "reuse-comparisons/f4-workspace-selection-review.md" }
+    {
+      "id": "DR-11",
+      "outcomes": ["A7", "C1"],
+      "scope": "Maintained Markdown/GFM inside retained result authority; attachments and full transcript remain separate",
+      "evidence": "reuse-comparisons/f3-minimal-selection.md"
+    },
+    {
+      "id": "DR-01",
+      "outcomes": [
+        "C1"
+      ],
+      "scope": "Fixed-panel participant selection loop",
+      "evidence": "reuse-comparisons/decision-register.md#dr-01--keep-fixed-panel-participant-selection"
+    },
+    {
+      "id": "DR-02",
+      "outcomes": [
+        "C3"
+      ],
+      "scope": "Existing collection and distinct parsing boundaries",
+      "evidence": "reuse-comparisons/decision-register.md"
+    },
+    {
+      "id": "DR-03",
+      "outcomes": [
+        "D5"
+      ],
+      "scope": "Prepared runtime dependency identity graph",
+      "evidence": "reuse-comparisons/decision-register.md"
+    },
+    {
+      "id": "DR-04",
+      "outcomes": [
+        "D5"
+      ],
+      "scope": "Original license text gathering",
+      "evidence": "reuse-comparisons/decision-register.md"
+    },
+    {
+      "id": "DR-05",
+      "outcomes": [
+        "A2"
+      ],
+      "scope": "Synchronous JWT primitive; Access policy retained",
+      "evidence": "reuse-comparisons/f8-jwt-selection-review.md"
+    },
+    {
+      "id": "DR-06",
+      "outcomes": [
+        "B7"
+      ],
+      "scope": "Canonical task authority versus optional notification delivery",
+      "evidence": "reuse-comparisons/f4-delivery-review.md"
+    },
+    {
+      "id": "DR-07",
+      "outcomes": [
+        "C3"
+      ],
+      "scope": "Default extraction primitive, not complete reader",
+      "evidence": "reuse-comparisons/f7-extractor-selection-review.md"
+    },
+    {
+      "id": "DR-08",
+      "outcomes": [
+        "B7"
+      ],
+      "scope": "Native Git initial detached checkout with CR ownership checks; concrete adapter and recovery unbuilt",
+      "evidence": "reuse-comparisons/f4-workspace-selection-review.md"
+    },
+    {
+      "id": "DR-09",
+      "outcomes": [
+        "B2"
+      ],
+      "scope": "Public calendar expansion and matching; retained policy and scanner; not scheduler completion",
+      "evidence": "reuse-comparisons/f1-calendar-selection.md"
+    },
+    {
+      "id": "DR-10",
+      "outcomes": [
+        "A1",
+        "A5",
+        "B1"
+      ],
+      "scope": "Conditional maintained node-postgres database-port direction; lifecycle/caller/PG17 implementation pending, not queue choice",
+      "evidence": "reuse-comparisons/f1-driver-selection-review.md"
+    }
   ],
   "outcomes": [
     {
       "id": "A1",
       "families": [
-        "F6", "F8"
+        "F6",
+        "F8"
       ],
       "status": "comparison_incomplete",
       "decision": null
@@ -67,13 +148,16 @@
       "families": [
         "F3"
       ],
-      "status": "comparison_incomplete",
-      "decision": null
+      "status": "comparison_sufficient_synthesis_pending",
+      "decision": null,
+      "remaining": "Protected project/tab/action comparison is sufficient for conditional synthesis. Complete module/license/cost disposition and packet. Full keyboard/mobile/archive/reload behavior is implementation acceptance, not another dashboard contest."
     },
     {
       "id": "A7",
       "families": [
-        "F2", "F3", "F8"
+        "F2",
+        "F3",
+        "F8"
       ],
       "status": "comparison_incomplete",
       "decision": null
@@ -166,16 +250,18 @@
         "F3",
         "F4"
       ],
-      "status": "comparison_incomplete",
-      "decision": null
+      "status": "comparison_sufficient_synthesis_pending",
+      "decision": null,
+      "remaining": "Existing atomic owner promotion/project linkage is retained. No distinct promotion donor contest remains. Shared execution/display selection, first task and browser acceptance remain open."
     },
     {
       "id": "C3",
       "families": [
         "F7"
       ],
-      "status": "comparison_incomplete",
-      "decision": null
+      "status": "comparison_sufficient_synthesis_pending",
+      "decision": null,
+      "remaining": "DR-02/DR-07 select collection/parsers and Readability/jsdom extraction. Source-bound reading, retrieval, notices and real source acceptance remain implementation. No repeat reader-service contest without a named new gap."
     },
     {
       "id": "C4",
@@ -199,7 +285,8 @@
         "F8"
       ],
       "status": "comparison_incomplete",
-      "decision": null
+      "decision": null,
+      "remaining": "Actual PG17 full64-migration restore measured. Safety gate rejects one equivalent CHECK text. Native tools retained; restore-stable schema is implementation dependency. Task-role and canonical artifact coverage remain unqualified."
     },
     {
       "id": "D2",
@@ -214,8 +301,9 @@
       "families": [
         "F6"
       ],
-      "status": "comparison_incomplete",
-      "decision": null
+      "status": "comparison_sufficient_synthesis_pending",
+      "decision": null,
+      "remaining": "Supervisor/immutable-release source and journal evidence supports synthesis. Continuous pickup/drain/version/rollback are implementation; real service registration remains host qualification."
     },
     {
       "id": "D4",
@@ -231,70 +319,119 @@
         "F4",
         "F9"
       ],
-      "status": "comparison_incomplete",
-      "decision": null
+      "status": "comparison_sufficient_synthesis_pending",
+      "decision": null,
+      "remaining": "Graph/text/plugin comparisons have representative evidence. Final notices assembly, candidate accounting, complete packets and goal prompt remain required deliverables, not new primitive comparisons."
     }
   ],
   "families": [
     {
       "id": "F1",
       "dossier": "reuse-comparisons/f1-queue-fit.md",
-      "evidence": "actual DBOS fixture failures; native PG setup permission pending; Hatchet source partial"
+      "additionalDossiers": [
+        "reuse-comparisons/f1-postgres-transaction-fit.md",
+        "reuse-comparisons/f1-dbos-recovery-fit.md",
+        "reuse-comparisons/f1-postgres-review.md",
+        "reuse-comparisons/f1-dbos-worker-fit.md",
+        "reuse-comparisons/f1-calendar-fit.md",
+        "reuse-comparisons/f1-calendar-root-disposition.md",
+        "reuse-comparisons/f1-hatchet-review.md"
+      ],
+      "evidence": "Approved local PostgreSQL setup completed. Actual DBOS transaction/client cases pass within synthetic scope; public worker pickup shows review wait occupies concurrency1 and independent work completes at concurrency2. Calendar/DST differences and current Hatchet v1 source inspected. No final work-engine winner; canonical admission, process recovery, competing phase behavior and occurrence integration remain."
     },
     {
       "id": "F2",
       "dossier": "reuse-comparisons/f2-transport-fit.md",
-      "additionalDossiers": ["reuse-comparisons/f2-codex-interfaces.md", "reuse-comparisons/f2-router-fit.md", "reuse-comparisons/f2-python-observer-fit.md", "reuse-comparisons/f2-python-ordering-source.md", "reuse-comparisons/f2-current-ordering-fit.md", "reuse-comparisons/f2-current-ordering-review.md"],
-      "evidence": "Actual TS/Python clients and CR observer mapping exercised with synthetic peers. Current qualification runtime also refuses same-turn early events; in-memory replay makes no second turn. Offline Python mapping is not online lifecycle. No final transport winner; supported ordering/recovery, Hermes files and native gates remain."
+      "additionalDossiers": [
+        "reuse-comparisons/f2-codex-interfaces.md",
+        "reuse-comparisons/f2-router-fit.md",
+        "reuse-comparisons/f2-python-observer-fit.md",
+        "reuse-comparisons/f2-python-ordering-source.md",
+        "reuse-comparisons/f2-current-ordering-fit.md",
+        "reuse-comparisons/f2-current-ordering-review.md"
+      ],
+      "evidence": "Actual TS/Python clients and CR observer mapping exercised with synthetic peers. Current qualification runtime refuses same-turn early events; in-memory replay makes no second turn. Hermes actual session download handler has12 reviewed streamed-response cases with synthetic session resolution, not actual router authentication or containment. No final transport winner; supported ordering/recovery, attachment intake and native gates remain."
     },
     {
       "id": "F3",
       "dossier": "reuse-comparisons/f3-mounted-fit.md",
-      "additionalDossiers": ["reuse-comparisons/f3-journey-fit.md", "reuse-comparisons/f3-journey-review.md"],
-      "evidence": "Earlier17 mounted project checks plus11 new result/transcript DOM checks. Root retains CR result/review authority; Desktop prose-derived approval controls are not a drop-in replacement. Synthetic401 is not live auth. Actual full renderer/navigation, CSS/mobile and native session coverage remain."
+      "additionalDossiers": [
+        "reuse-comparisons/f3-journey-fit.md",
+        "reuse-comparisons/f3-journey-review.md"
+      ],
+      "evidence": "Earlier17 mounted project checks plus11 result/transcript DOM checks; actual Desktop renderer20 cases independently reviewed with three scoped adaptation findings. WebUI renderer source comparison remains separate. Root retains CR result/review authority. Synthetic401 is not live auth. Final presentation choice, complete navigation, CSS/mobile and native session coverage remain."
     },
     {
       "id": "F4",
       "dossier": "reuse-comparisons/f4-planner-fit.md",
-      "additionalDossiers": ["reuse-comparisons/f4-durable-comparison.md", "reuse-comparisons/f4-workspace-closure.md", "reuse-comparisons/f4-workspace-recheck.md", "reuse-comparisons/f4-delivery-fit.md", "reuse-comparisons/f4-delivery-review.md"],
+      "additionalDossiers": [
+        "reuse-comparisons/f4-durable-comparison.md",
+        "reuse-comparisons/f4-workspace-closure.md",
+        "reuse-comparisons/f4-workspace-recheck.md",
+        "reuse-comparisons/f4-delivery-fit.md",
+        "reuse-comparisons/f4-delivery-review.md"
+      ],
       "evidence": "DR-01 retains fixed-panel selection. DR-06 retains immutable task authority after actual Maestro delivery/queue comparison; notification routing remains conditional reuse for a named gap. AO actual Git evidence exists; CR lease/ownership/recovery mapping and discussion promotion remain."
     },
     {
       "id": "F5",
       "dossier": "reuse-comparisons/f5-checkpoint-comparison.md",
-      "additionalDossiers": ["reuse-comparisons/f5-etcd-service-fit.md", "reuse-comparisons/f5-openbao-service-fit.md", "reuse-comparisons/f5-etcd-adapter-fit.md", "reuse-comparisons/f5-etcd-adapter-review.md"],
+      "additionalDossiers": [
+        "reuse-comparisons/f5-etcd-service-fit.md",
+        "reuse-comparisons/f5-openbao-service-fit.md",
+        "reuse-comparisons/f5-etcd-adapter-fit.md",
+        "reuse-comparisons/f5-etcd-adapter-review.md"
+      ],
       "evidence": "Actual etcd/OpenBao service operations confirm different delete permissions. Existing CR etcd adapter executes scoped advance, lost-callback uncertainty and restart with explicit reauthentication. OpenBao canonical adapter parity, supported restore, SQL split-commit and independent custody remain; no final store winner."
     },
     {
       "id": "F6",
       "dossier": "reuse-comparisons/f6-supervisor-fit.md",
-      "additionalDossiers": ["reuse-comparisons/f6-update-fit.md"],
+      "additionalDossiers": [
+        "reuse-comparisons/f6-update-fit.md"
+      ],
       "evidence": "WinSW/native OS supervisor contracts inspected; current static conformance and journal/close/recover primitives exercised. Same code under two paths is not two-version rollout. Continuous worker, actual release switch and per-platform native acceptance remain."
     },
     {
       "id": "F7",
       "dossier": "reuse-comparisons/f7-existing-reconciliation.md",
-      "additionalDossiers": ["reuse-comparisons/f7-candidates.md", "reuse-comparisons/f7-readability-fit.md", "reuse-comparisons/f7-miniflux-extractor-fit.md", "reuse-comparisons/f7-html-compat-fit.md", "reuse-comparisons/f7-article-integration-map.md"],
+      "additionalDossiers": [
+        "reuse-comparisons/f7-candidates.md",
+        "reuse-comparisons/f7-readability-fit.md",
+        "reuse-comparisons/f7-miniflux-extractor-fit.md",
+        "reuse-comparisons/f7-html-compat-fit.md",
+        "reuse-comparisons/f7-article-integration-map.md"
+      ],
       "evidence": "DR-02 retains borrowed collection/two parsers; DR-07 selects Readability0.6/jsdom26.1 for the extractor primitive after actual alternatives and independent synthesis. Full service reader APIs remain distinct. Actual source-bound reader interface, restart/uncertainty, resources and shipping notices remain open."
     },
     {
       "id": "F8",
       "dossier": "reuse-comparisons/f8-http-fit.md",
-      "additionalDossiers": ["reuse-comparisons/f8-operations.md", "reuse-comparisons/f8-jwt-fit.md", "reuse-comparisons/f8-jwt-http-fit.md"],
+      "additionalDossiers": [
+        "reuse-comparisons/f8-operations.md",
+        "reuse-comparisons/f8-jwt-fit.md",
+        "reuse-comparisons/f8-jwt-http-fit.md"
+      ],
       "evidence": "DR-05 selects jsonwebtoken9.0.3 for synchronous verifier after consolidated policy/project/bootstrap/dispatch/cache/rehearsal comparison and independent challenge; typed import, full shipping notices/build and owner acceptance remain implementation gates. Operations remains incomplete:11 actualKuma HTTP cases; daemon/alerts/metrics/current-schema restore still open."
     },
     {
       "id": "F9",
       "dossier": "reuse-comparisons/f9-shipping-license-scope.md",
-      "additionalDossiers": ["reuse-comparisons/f9-entities-notice-followup.md", "reuse-comparisons/f9-distribution-fit.md", "reuse-comparisons/f9-tooling-fit.md", "reuse-comparisons/f9-plugin-fit.md"],
+      "additionalDossiers": [
+        "reuse-comparisons/f9-entities-notice-followup.md",
+        "reuse-comparisons/f9-distribution-fit.md",
+        "reuse-comparisons/f9-tooling-fit.md",
+        "reuse-comparisons/f9-plugin-fit.md"
+      ],
       "evidence": "DR-03 selects prepared pnpm graph; DR-04 selects CycloneDX text gatherer. Actual isolated client/RSC/SSR Vite notice-plugin build passed and independent review verified113 artifact hashes. Three missing thirdparty texts already retained. Full copied/vendor/assets/external provenance and final notice assembly remain incomplete; stage cleaned."
     }
   ],
   "next": [
-    "Authorize or replace package-local PostgreSQL hydration step; continue unaffected comparisons meanwhile",
-    "F3 actual full renderer/navigation/accessibility beyond accepted narrow DOM experiments",
-    "F4 remaining AO ownership/recovery and saved discussion promotion; do not reopen DR-01 or DR-06 unchanged",
-    "F2 supported lifecycle/recovery and Hermes interfaces; F5 common adapter/restore; F6 updates; F7 source-bound reading; F9 actual shipping build",
-    "Independent review and implementation plan only after decisive comparisons"
+    "RC1 representative canonical review/restart/uncertainty work-engine comparison; DR-09 calendar and DR-10 driver direction are settled",
+    "RC2 exact-ID lifecycle/usage recovery and required-harness capability/file mapping; do not re-evaluate the same async wrapper",
+    "RC3 authenticated Herdr observation and minimal protected Markdown composition, then disposition existing project/renderer evidence",
+    "RC5 custody-interface disposition and common checkpoint adapter/restore/split-commit comparison",
+    "RC9 finish actual Kuma/Beszel fit; current-schema PG17 restore now identifies a concrete schema-fingerprint implementation blocker, with failed gate retained",
+    "Consolidate closure-a-outcomes.md, closure-b-outcomes.md and closure-cd-outcomes.md; disposition finite optional-candidate accounting and finish implementation packets/goal prompt without reopening settled primitives"
   ]
 }

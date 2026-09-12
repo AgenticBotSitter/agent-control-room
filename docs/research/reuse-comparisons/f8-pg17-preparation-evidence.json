@@ -1,0 +1,241 @@
+{
+  "root": "/private/tmp/cr-f8-pg17.2FlFtD",
+  "scope": "owned copy, system signature/dependency inspection and version-only CLI checks; no GUI/database/service",
+  "mounted": false,
+  "detached": true,
+  "resumedExistingCopy": true,
+  "observations": [
+    {
+      "operation": "copied-signature",
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "operation": "system-policy-assessment",
+      "exit": 0,
+      "stdout": "",
+      "stderr": "/private/tmp/cr-f8-pg17.2FlFtD/Postgres.app: accepted\nsource=Notarized Developer ID\n"
+    }
+  ],
+  "closure": [
+    {
+      "path": "bin/postgres",
+      "sha256": "55876b0c92f90a293b8a0ba779fea3598b48fee7f36ede1efb06d67f98e92cd2",
+      "selfIds": [],
+      "dependencies": [
+        "@loader_path/../lib/libzstd.1.dylib",
+        "@loader_path/../lib/liblz4.1.dylib",
+        "@loader_path/../lib/libxml2.2.dylib",
+        "@loader_path/../lib/libssl.3.dylib",
+        "@loader_path/../lib/libcrypto.3.dylib",
+        "/usr/lib/libz.1.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "@loader_path/../lib/libicui18n.75.dylib",
+        "@loader_path/../lib/libicuuc.75.dylib"
+      ]
+    },
+    {
+      "path": "bin/initdb",
+      "sha256": "991a1821b0b621a4c89580fb3643cca620b675ddbe5386fdb2b7f668235ba3b1",
+      "selfIds": [],
+      "dependencies": [
+        "@loader_path/../lib/libpq.5.dylib",
+        "@loader_path/../lib/libicuuc.75.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ]
+    },
+    {
+      "path": "bin/pg_ctl",
+      "sha256": "cbf539d3da49ed3de554dbcfcaec518096cf76537a83a9591a612e055ee9153d",
+      "selfIds": [],
+      "dependencies": [
+        "/usr/lib/libSystem.B.dylib"
+      ]
+    },
+    {
+      "path": "bin/pg_dump",
+      "sha256": "45692854004feb4f88fcdcdca58842d29d53bd915f500d5f2727a770fc09fc11",
+      "selfIds": [],
+      "dependencies": [
+        "@loader_path/../lib/libpq.5.dylib",
+        "@loader_path/../lib/libzstd.1.dylib",
+        "@loader_path/../lib/liblz4.1.dylib",
+        "@loader_path/../lib/libcrypto.3.dylib",
+        "/usr/lib/libz.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ]
+    },
+    {
+      "path": "bin/pg_restore",
+      "sha256": "9aab2bb4e8e8c82c3f847827b03b4d7756d58f69a5d9e440f6355090fef98dd6",
+      "selfIds": [],
+      "dependencies": [
+        "@loader_path/../lib/libpq.5.dylib",
+        "@loader_path/../lib/libzstd.1.dylib",
+        "@loader_path/../lib/liblz4.1.dylib",
+        "@loader_path/../lib/libcrypto.3.dylib",
+        "/usr/lib/libz.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ]
+    },
+    {
+      "path": "bin/psql",
+      "sha256": "329b8a0d0d40e5a606ff693702114883e543b19743139c4b94185f641d10ab3e",
+      "selfIds": [],
+      "dependencies": [
+        "@loader_path/../lib/libpq.5.dylib",
+        "/usr/lib/libedit.3.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ]
+    },
+    {
+      "path": "lib/postgresql/plpgsql.dylib",
+      "sha256": "193c4d93d5c3e6d9107c2042343bb366aca5cf3dc9b456c5d321efd8cad0bb21",
+      "selfIds": [],
+      "dependencies": [
+        "/usr/lib/libSystem.B.dylib"
+      ]
+    },
+    {
+      "path": "lib/libzstd.1.5.7.dylib",
+      "sha256": "1ed47b592fa1e464919f47f9eb789ce7aab69ab6fcf1099dba0cf433c8e71add",
+      "selfIds": [
+        "/Applications/Postgres.app/Contents/Versions/17/lib/libzstd.1.dylib"
+      ],
+      "dependencies": [
+        "/usr/lib/libSystem.B.dylib"
+      ]
+    },
+    {
+      "path": "lib/liblz4.1.10.0.dylib",
+      "sha256": "ca620b446f195135770580c6eab78f71602c9eeba594dc4566ae140bbc0d5b6e",
+      "selfIds": [
+        "/Applications/Postgres.app/Contents/Versions/17/lib/liblz4.1.dylib"
+      ],
+      "dependencies": [
+        "/usr/lib/libSystem.B.dylib"
+      ]
+    },
+    {
+      "path": "lib/libxml2.2.dylib",
+      "sha256": "29e231fa1bd2142c2ee1da32e784467d347a46be40095d3d4a643451157abe59",
+      "selfIds": [
+        "/Applications/Postgres.app/Contents/Versions/17/lib/libxml2.2.dylib"
+      ],
+      "dependencies": [
+        "/usr/lib/libiconv.2.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ]
+    },
+    {
+      "path": "lib/libssl.3.dylib",
+      "sha256": "cdc0074247ad27854534882f1bbf2befb98fd728e4cedf81ebadec8dc60fa272",
+      "selfIds": [
+        "/Applications/Postgres.app/Contents/Versions/17/lib/libssl.3.dylib"
+      ],
+      "dependencies": [
+        "@loader_path/libcrypto.3.dylib",
+        "/usr/lib/libz.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ]
+    },
+    {
+      "path": "lib/libcrypto.3.dylib",
+      "sha256": "957b45e63a1cbcb8a26621166560c51ae59cd82a8995b1b89e73e42c0b4bbd5a",
+      "selfIds": [
+        "/Applications/Postgres.app/Contents/Versions/17/lib/libcrypto.3.dylib"
+      ],
+      "dependencies": [
+        "/usr/lib/libz.1.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ]
+    },
+    {
+      "path": "lib/libicui18n.75.1.dylib",
+      "sha256": "d0b627ec030adb8c19cc8b768c813cd135268e47e6bf5942b9edaa76b6e2c942",
+      "selfIds": [
+        "/Applications/Postgres.app/Contents/Versions/17/lib/libicui18n.75.dylib"
+      ],
+      "dependencies": [
+        "@loader_path/libicuuc.75.dylib",
+        "@loader_path/libicudata.75.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "/usr/lib/libc++.1.dylib"
+      ]
+    },
+    {
+      "path": "lib/libicuuc.75.1.dylib",
+      "sha256": "c3121e86b80d6abfe228ec88cccacd275315e9700a976fc797e7f61e5f6b758e",
+      "selfIds": [
+        "/Applications/Postgres.app/Contents/Versions/17/lib/libicuuc.75.dylib"
+      ],
+      "dependencies": [
+        "@loader_path/libicudata.75.dylib",
+        "/usr/lib/libSystem.B.dylib",
+        "/usr/lib/libc++.1.dylib"
+      ]
+    },
+    {
+      "path": "lib/libpq.5.dylib",
+      "sha256": "5a048308150b6a3eac97972f24eb3833b67a40a2c36bf7772446ea9700f9ec0f",
+      "selfIds": [
+        "/Applications/Postgres.app/Contents/Versions/17/lib/libpq.5.dylib"
+      ],
+      "dependencies": [
+        "@loader_path/libssl.3.dylib",
+        "@loader_path/libcrypto.3.dylib",
+        "/usr/lib/libSystem.B.dylib"
+      ]
+    },
+    {
+      "path": "lib/libicudata.75.1.dylib",
+      "sha256": "02c29855ae83255ae2c37a71b708f312dd982fa42436523fe4372cabc5a572cf",
+      "selfIds": [
+        "/Applications/Postgres.app/Contents/Versions/17/lib/libicudata.75.dylib"
+      ],
+      "dependencies": [
+        "/usr/lib/libSystem.B.dylib"
+      ]
+    }
+  ],
+  "versions": [
+    {
+      "name": "postgres",
+      "exit": 0,
+      "stdout": "postgres (PostgreSQL) 17.11 (Postgres.app)\n",
+      "stderr": ""
+    },
+    {
+      "name": "initdb",
+      "exit": 0,
+      "stdout": "initdb (PostgreSQL) 17.11 (Postgres.app)\n",
+      "stderr": ""
+    },
+    {
+      "name": "pg_ctl",
+      "exit": 0,
+      "stdout": "pg_ctl (PostgreSQL) 17.11 (Postgres.app)\n",
+      "stderr": ""
+    },
+    {
+      "name": "pg_dump",
+      "exit": 0,
+      "stdout": "pg_dump (PostgreSQL) 17.11 (Postgres.app)\n",
+      "stderr": ""
+    },
+    {
+      "name": "pg_restore",
+      "exit": 0,
+      "stdout": "pg_restore (PostgreSQL) 17.11 (Postgres.app)\n",
+      "stderr": ""
+    },
+    {
+      "name": "psql",
+      "exit": 0,
+      "stdout": "psql (PostgreSQL) 17.11 (Postgres.app)\n",
+      "stderr": ""
+    }
+  ],
+  "prepared": true
+}

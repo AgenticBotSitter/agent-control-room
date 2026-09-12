@@ -1,0 +1,39 @@
+{
+  "root": "/private/tmp/cr-f8-kuma-release-OiEJq7",
+  "freeBytes": 148204154880,
+  "sourceCommit": "1f0755fb044fe08e99fccde6722062fb2bf6c8f4",
+  "scope": "acquire only; no extraction, native loading or service startup",
+  "sources": [
+    {
+      "name": "source.tar.gz",
+      "url": "https://codeload.github.com/louislam/uptime-kuma/tar.gz/1f0755fb044fe08e99fccde6722062fb2bf6c8f4",
+      "cap": 20971520,
+      "provenance": "official immutable source URL; observed archive hash, not an upstream signed checksum",
+      "observedBytes": 2164813,
+      "observedSha256": "a4a33ee05145ace8f05669a30f4a034aae49905f56aa16468debabb5bf71af92",
+      "status": "acquired-not-executed"
+    },
+    {
+      "name": "dist.tar.gz",
+      "url": "https://github.com/louislam/uptime-kuma/releases/download/2.5.3/dist.tar.gz",
+      "cap": 7299676,
+      "expectedBytes": 7299676,
+      "sha256": "6af8ea6cb9fc9486860eb4916337205d72caeebe1fa5a0f1ce9d4ae06474baa1",
+      "provenance": "previously inspected official release asset digest",
+      "observedBytes": 7299676,
+      "observedSha256": "6af8ea6cb9fc9486860eb4916337205d72caeebe1fa5a0f1ce9d4ae06474baa1",
+      "status": "acquired-not-executed"
+    },
+    {
+      "name": "sqlite-native.tar.gz",
+      "url": "https://github.com/louislam/node-sqlite3/releases/download/v15.1.6/napi-v6-darwin-arm64-unknown.tar.gz",
+      "cap": 903679,
+      "expectedBytes": 903679,
+      "provenance": "official release URL over TLS; no independent published checksum located; acquisition is not approval to load",
+      "observedBytes": 903679,
+      "observedSha256": "263270e3e292d26d72345852a339ab46a3840b899da726ef1d48535da7a28660",
+      "status": "acquired-not-executed"
+    }
+  ],
+  "status": "acquired-not-executed"
+}

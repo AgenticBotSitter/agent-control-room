@@ -1,0 +1,1043 @@
+{
+  "root": "/private/tmp/cr-f3-webui-renderer.U2Jo3s",
+  "rootCleanup": { "removed": true, "absenceVerified": true, "dateLocal": "2026-09-08", "diskKiBBefore": 39456, "evidence": "Root terminal7ca633 after source/lock hash and no-open-handle checks", "retained": "Authored reports/scripts/ledger and failed-run receipts only" },
+  "budgetGate": {
+    "status": "failed",
+    "capBytes": 10485760,
+    "observedDecodedSourceAndCacheBytes": 17190400,
+    "compressedWireBytes": "unmeasured",
+    "cause": "npm response bodies were not included in pre-execution cap enforcement",
+    "disposition": "root confirmed cap includes all public response bodies; acquisition and runtime stopped, no further allowance",
+    "cleanup": "retained pending root review and authorization"
+  },
+  "pin": "e168b67e4278df618d1cab61fdb3a8dc55b29a81",
+  "files": [
+    {
+      "path": "static/ui.js",
+      "url": "https://raw.githubusercontent.com/nesquena/hermes-webui/e168b67e4278df618d1cab61fdb3a8dc55b29a81/static/ui.js",
+      "status": 200,
+      "bytes": 1044888,
+      "sha256": "b44cea72661e8db93b3b184a49eb3a18ab675b2abcab765cc9a908012869c5f3"
+    },
+    {
+      "path": "static/messages.js",
+      "url": "https://raw.githubusercontent.com/nesquena/hermes-webui/e168b67e4278df618d1cab61fdb3a8dc55b29a81/static/messages.js",
+      "status": 200,
+      "bytes": 444895,
+      "sha256": "fe5a91948a80e716937cd9fe47bdaa0b08b75a7c108f6b30f973c90183773bce"
+    },
+    {
+      "path": "static/vendor/smd.min.js",
+      "url": "https://raw.githubusercontent.com/nesquena/hermes-webui/e168b67e4278df618d1cab61fdb3a8dc55b29a81/static/vendor/smd.min.js",
+      "status": 200,
+      "bytes": 12586,
+      "sha256": "20c0a39e6ec48b99e2f505f8488d2342fb3000d03523a7ced6cd94c14b15e8c5"
+    },
+    {
+      "path": "LICENSE",
+      "url": "https://raw.githubusercontent.com/nesquena/hermes-webui/e168b67e4278df618d1cab61fdb3a8dc55b29a81/LICENSE",
+      "status": 200,
+      "bytes": 1083,
+      "sha256": "ad6b89c03f01d83966cb8bff66986090abc9ae3a3a7fff710a7501c233d7d4bf"
+    },
+    {
+      "path": "static/index.html",
+      "url": "https://raw.githubusercontent.com/nesquena/hermes-webui/e168b67e4278df618d1cab61fdb3a8dc55b29a81/static/index.html",
+      "status": 200,
+      "bytes": 221617,
+      "sha256": "4850e0f609c56ef5619dcb023f95398224b053fcca6b1125d4f8a2923f9b2a3c"
+    }
+  ],
+  "bytes": 1725069,
+  "status": "source acquired",
+  "setup": {
+    "args": [
+      "install",
+      "--save-exact",
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+      "--omit=optional",
+      "--fetch-retries=0",
+      "--fetch-timeout=15000",
+      "--cache",
+      "/private/tmp/cr-f3-webui-renderer.U2Jo3s/cache",
+      "--userconfig",
+      "/private/tmp/cr-f3-webui-renderer.U2Jo3s/user.npmrc",
+      "--globalconfig",
+      "/private/tmp/cr-f3-webui-renderer.U2Jo3s/global.npmrc",
+      "jsdom@26.1.0",
+      "prismjs@1.29.0"
+    ],
+    "terminal": {
+      "code": 0,
+      "signal": null
+    },
+    "stopped": null,
+    "output": "npm warn deprecated whatwg-encoding@3.1.1: Use @exodus/bytes instead for a more spec-conformant and faster implementation\n\nadded 40 packages in 1s\n",
+    "finalKiB": 39456,
+    "sampledPeakKiB": 39456,
+    "lockSha256": "f44ed81e3d7a60f1442a073a0b4a781a8efde26a971f59da58bedc98cfd8d6d4",
+    "packages": [
+      {
+        "key": "node_modules/@asamuzakjp/css-color",
+        "version": "3.2.0",
+        "url": "https://registry.npmjs.org/@asamuzakjp/css-color/-/css-color-3.2.0.tgz",
+        "integrity": "sha512-K1A6z8tS3XsmCMM86xoWdn7Fkdn9m6RSVtocUrJYIwZnFVkng/PvkEoWtOWmP+Scc6saYWHWZYbndEEXxl24jw==",
+        "license": "MIT",
+        "manifestBytes": 2359,
+        "manifestSha256": "fb3f2ac15e94187480a4c34e7ad69463e0ec6e7c94a4f35a946b8cfac983bcc9"
+      },
+      {
+        "key": "node_modules/@csstools/color-helpers",
+        "version": "5.1.0",
+        "url": "https://registry.npmjs.org/@csstools/color-helpers/-/color-helpers-5.1.0.tgz",
+        "integrity": "sha512-S11EXWJyy0Mz5SYvRmY8nJYTFFd1LCNV+7cXyAgQtOOuzb4EsgfqDufL+9esx72/eLhsRdGZwaldu/h+E4t4BA==",
+        "license": "MIT-0",
+        "manifestBytes": 1269,
+        "manifestSha256": "ed0659c5bac8547eb6ce5bf4c0f7ea77f43835095e4460e3956ecd63143c0cfd"
+      },
+      {
+        "key": "node_modules/@csstools/css-calc",
+        "version": "2.1.4",
+        "url": "https://registry.npmjs.org/@csstools/css-calc/-/css-calc-2.1.4.tgz",
+        "integrity": "sha512-3N8oaj+0juUw/1H3YwmDDJXCgTB1gKU6Hc/bB502u9zR0q2vd786XJH9QfrKIEgFlZmhZiq6epXl4rHqhzsIgQ==",
+        "license": "MIT",
+        "manifestBytes": 1324,
+        "manifestSha256": "963c23fedd6df9a4428f87819c8cbbe6bbd7e16169cfdb5e832f462f8d65eefa"
+      },
+      {
+        "key": "node_modules/@csstools/css-color-parser",
+        "version": "3.1.0",
+        "url": "https://registry.npmjs.org/@csstools/css-color-parser/-/css-color-parser-3.1.0.tgz",
+        "integrity": "sha512-nbtKwh3a6xNVIp/VRuXV64yTKnb1IjTAEEh3irzS+HkKjAOYLTGNb9pmVNntZ8iVBHcWDA2Dof0QtPgFI1BaTA==",
+        "license": "MIT",
+        "manifestBytes": 1452,
+        "manifestSha256": "294fd9dacab143694b97ac81d21f45a78e683655f37c718c330a3494530dcb60"
+      },
+      {
+        "key": "node_modules/@csstools/css-parser-algorithms",
+        "version": "3.0.5",
+        "url": "https://registry.npmjs.org/@csstools/css-parser-algorithms/-/css-parser-algorithms-3.0.5.tgz",
+        "integrity": "sha512-DaDeUkXZKjdGhgYaHNJTV9pV7Y9B3b644jCLs9Upc3VeNGg6LWARAT6O+Q+/COo+2gg/bM5rhpMAtf70WqfBdQ==",
+        "license": "MIT",
+        "manifestBytes": 1349,
+        "manifestSha256": "2ede4a8a1bafd777c50af276310c5bb4b5274585ebf079059663a3c43a185742"
+      },
+      {
+        "key": "node_modules/@csstools/css-tokenizer",
+        "version": "3.0.4",
+        "url": "https://registry.npmjs.org/@csstools/css-tokenizer/-/css-tokenizer-3.0.4.tgz",
+        "integrity": "sha512-Vd/9EVDiu6PPJt9yAh6roZP6El1xHrdvIVGjyBsHR0RYwNHgL7FJPyIIW4fANJNG6FtyZfvlRPpFI4ZM/lubvw==",
+        "license": "MIT",
+        "manifestBytes": 1218,
+        "manifestSha256": "304f952c40d6a6070d5a00b26fe84ff594f0b450a7a9d8496c0d87fe49c9a753"
+      },
+      {
+        "key": "node_modules/agent-base",
+        "version": "7.1.4",
+        "url": "https://registry.npmjs.org/agent-base/-/agent-base-7.1.4.tgz",
+        "integrity": "sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==",
+        "license": "MIT",
+        "manifestBytes": 1059,
+        "manifestSha256": "7a08cb2fe1d2b788e0a7bf6a9b7597dbeeeae804698c2fbd15de786d284d327c"
+      },
+      {
+        "key": "node_modules/cssstyle",
+        "version": "4.6.0",
+        "url": "https://registry.npmjs.org/cssstyle/-/cssstyle-4.6.0.tgz",
+        "integrity": "sha512-2z+rWdzbbSZv6/rhtvzvqeZQHrBaqgogqt85sqFNbabZOuFbCVFb8kPeEtZjiKkbrm395irpNKiYeFeLiQnFPg==",
+        "license": "MIT",
+        "manifestBytes": 1952,
+        "manifestSha256": "3ae39b91b47978c901883b4f3e93c83b3d281c5b72c257c8a050022fb15caa8f"
+      },
+      {
+        "key": "node_modules/data-urls",
+        "version": "5.0.0",
+        "url": "https://registry.npmjs.org/data-urls/-/data-urls-5.0.0.tgz",
+        "integrity": "sha512-ZYP5VBHshaDAiVZxjbRVcFJpc+4xGgT0bK3vzy1HLN8jTO975HEbuYzZJcHoQEY5K1a0z8YayJkyVETa08eNTg==",
+        "license": "MIT",
+        "manifestBytes": 922,
+        "manifestSha256": "96689c6cf175e892589fae35fce2e639eb391e59773b681634d89629c7e2ad77"
+      },
+      {
+        "key": "node_modules/debug",
+        "version": "4.4.3",
+        "url": "https://registry.npmjs.org/debug/-/debug-4.4.3.tgz",
+        "integrity": "sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==",
+        "license": "MIT",
+        "manifestBytes": 1479,
+        "manifestSha256": "ea8e33d63fe5f3a4c36609b6c3df8e2ef1f8b8ba2fc3a2e1e53cb27291f384af"
+      },
+      {
+        "key": "node_modules/decimal.js",
+        "version": "10.6.0",
+        "url": "https://registry.npmjs.org/decimal.js/-/decimal.js-10.6.0.tgz",
+        "integrity": "sha512-YpgQiITW3JXGntzdUmyUR1V812Hn8T1YVXhCu+wO3OpS4eU9l4YdD3qjyiKdV6mvV29zapkMeD390UVEf2lkUg==",
+        "license": "MIT",
+        "manifestBytes": 1190,
+        "manifestSha256": "d7e3794828ee8bc94818613c9d901a9e7c857e6ffcf027245e661ddfc63d9b72"
+      },
+      {
+        "key": "node_modules/entities",
+        "version": "6.0.1",
+        "url": "https://registry.npmjs.org/entities/-/entities-6.0.1.tgz",
+        "integrity": "sha512-aN97NXWF6AWBTahfVOIrB/NShkzi5H7F9r1s9mD3cDj4Ko5f2qhhVoYMibXF7GlLveb/D2ioWay8lxI97Ven3g==",
+        "license": "BSD-2-Clause",
+        "manifestBytes": 3659,
+        "manifestSha256": "2b110e5a5a7a7bcbc843b885105a952630299cb1a7817b4b321d69479cfa7086"
+      },
+      {
+        "key": "node_modules/html-encoding-sniffer",
+        "version": "4.0.0",
+        "url": "https://registry.npmjs.org/html-encoding-sniffer/-/html-encoding-sniffer-4.0.0.tgz",
+        "integrity": "sha512-Y22oTqIU4uuPgEemfz7NDJz6OeKf12Lsu+QC+s3BVpda64lTiMYCyGwg5ki4vFxkMwQdeZDl2adZoqUgdFuTgQ==",
+        "license": "MIT",
+        "manifestBytes": 636,
+        "manifestSha256": "0f5b9675c7c9ca79af66e0d3d061b8affe25bfec7699b49859262cddf6b63b1d"
+      },
+      {
+        "key": "node_modules/http-proxy-agent",
+        "version": "7.0.2",
+        "url": "https://registry.npmjs.org/http-proxy-agent/-/http-proxy-agent-7.0.2.tgz",
+        "integrity": "sha512-T1gkAiYYDWYx3V5Bmyu7HcfcvL7mUrTWiM6yOfa3PIphViJ/gFPbvidQ+veqSOHci/PxBcDabeUNCzpOODJZig==",
+        "license": "MIT",
+        "manifestBytes": 1084,
+        "manifestSha256": "38b61961aa0ba3028f2e120b3d883179281f6ba25fe22ff2214bf9f363161b65"
+      },
+      {
+        "key": "node_modules/https-proxy-agent",
+        "version": "7.0.6",
+        "url": "https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-7.0.6.tgz",
+        "integrity": "sha512-vK9P5/iUfdl95AI+JVyUuIcVtd4ofvtrOr3HNtM2yxC9bnMbEdp3x01OhQNnjb8IJYi38VlTE3mBXwcfvywuSw==",
+        "license": "MIT",
+        "manifestBytes": 1223,
+        "manifestSha256": "b08c1977d38f14f4be7fb5be33aab545e3e5a6e2e12100733a6ad97dec995206"
+      },
+      {
+        "key": "node_modules/iconv-lite",
+        "version": "0.6.3",
+        "url": "https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.6.3.tgz",
+        "integrity": "sha512-4fCk79wshMdzMp2rH06qWrJE4iolqLhCUH+OiuIgU++RB0+94NlDL81atO7GX55uUKueo0txHNtvEyI6D7WdMw==",
+        "license": "MIT",
+        "manifestBytes": 1131,
+        "manifestSha256": "3a9582fd121f841c245d1fcf84ef0b9e41c94b785b8d7eb63f9f5aec9bad0b98"
+      },
+      {
+        "key": "node_modules/is-potential-custom-element-name",
+        "version": "1.0.1",
+        "url": "https://registry.npmjs.org/is-potential-custom-element-name/-/is-potential-custom-element-name-1.0.1.tgz",
+        "integrity": "sha512-bCYeRA2rVibKZd+s2625gGnGF/t7DSqDs4dP7CrLA1m7jKWz6pps0LpYLJN8Q64HtmPKJ1hrN3nzPNKFEKOUiQ==",
+        "license": "MIT",
+        "manifestBytes": 936,
+        "manifestSha256": "9b41645708a8d3fdae25ceac23c0b8861be9010c6c9dbb9770d0018e803bd1d9"
+      },
+      {
+        "key": "node_modules/jsdom",
+        "version": "26.1.0",
+        "url": "https://registry.npmjs.org/jsdom/-/jsdom-26.1.0.tgz",
+        "integrity": "sha512-Cvc9WUhxSMEo4McES3P7oK3QaXldCfNWp7pl2NNeiIFlCoLr3kfq9kb1fxftiwk1FLV7CvpvDfonxtzUDeSOPg==",
+        "license": "MIT",
+        "manifestBytes": 2957,
+        "manifestSha256": "9670cfae0de2c46a3276fa20815328e3903275b04cc8969a6f6be01f2c580043"
+      },
+      {
+        "key": "node_modules/lru-cache",
+        "version": "10.4.3",
+        "url": "https://registry.npmjs.org/lru-cache/-/lru-cache-10.4.3.tgz",
+        "integrity": "sha512-JNAzZcXrCt42VGLuYz0zfAzDfAvJWW6AfYlDBQyDV5DClI2m5sAmK+OIO7s59XfsRsWHp02jAJrRadPRGTt6SQ==",
+        "license": "ISC",
+        "manifestBytes": 2827,
+        "manifestSha256": "a7e05794a5dc81dfc79a0f186c5219f442f2f735b08a3e9b91aba59833badc2d"
+      },
+      {
+        "key": "node_modules/ms",
+        "version": "2.1.3",
+        "url": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
+        "integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==",
+        "license": "MIT",
+        "manifestBytes": 732,
+        "manifestSha256": "1a6b4d9739790c0b94ab96c8cc0507e281c164c311ff4fbf5e57fb8d26290b40"
+      },
+      {
+        "key": "node_modules/nwsapi",
+        "version": "2.2.27",
+        "url": "https://registry.npmjs.org/nwsapi/-/nwsapi-2.2.27.tgz",
+        "integrity": "sha512-gQPNF78qebCQ6tvVFBYrvJdBNOrYZm90ZlXgpIFm06p6qHDHq/XC4TnJftN6OMbxVE0UTBAoRgcsDeJBBooITw==",
+        "license": "MIT",
+        "manifestBytes": 885,
+        "manifestSha256": "7261653333c2b25b7796678c8490cf4c65869464e6243bb34c0bdf897650ef93"
+      },
+      {
+        "key": "node_modules/parse5",
+        "version": "7.3.0",
+        "url": "https://registry.npmjs.org/parse5/-/parse5-7.3.0.tgz",
+        "integrity": "sha512-IInvU7fabl34qmi9gY8XOVxhYyMyuH2xUNpb2q8/Y+7552KlejkRvqvD19nMoUW/uQGGbqNpA6Tufu5FL5BZgw==",
+        "license": "MIT",
+        "manifestBytes": 1396,
+        "manifestSha256": "8196284780fe95c3245a40e3c17b45fc85ef709f1211775987d037e5e873fe95"
+      },
+      {
+        "key": "node_modules/prismjs",
+        "version": "1.29.0",
+        "url": "https://registry.npmjs.org/prismjs/-/prismjs-1.29.0.tgz",
+        "integrity": "sha512-Kx/1w86q/epKcmte75LNrEoT+lX8pBpavuAbvJWRXar7Hz8jrtF+e3vY751p0R8H9HdArwaCTNDDzHg/ScJK1Q==",
+        "license": "MIT",
+        "manifestBytes": 2254,
+        "manifestSha256": "461c386a600eb61bafeb3ac48de943f026255dbf6376caa83357beb85960e186"
+      },
+      {
+        "key": "node_modules/punycode",
+        "version": "2.3.1",
+        "url": "https://registry.npmjs.org/punycode/-/punycode-2.3.1.tgz",
+        "integrity": "sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==",
+        "license": "MIT",
+        "manifestBytes": 1227,
+        "manifestSha256": "e025033bd11110af671fb8eb62f0db8895073ccdca70b596aa94a27eb5bf9acb"
+      },
+      {
+        "key": "node_modules/rrweb-cssom",
+        "version": "0.8.0",
+        "url": "https://registry.npmjs.org/rrweb-cssom/-/rrweb-cssom-0.8.0.tgz",
+        "integrity": "sha512-guoltQEx+9aMf2gDZ0s62EcV8lsXR+0w8915TC3ITdn2YueuNjdAYh/levpU9nFaoChh9RUS5ZdQMrKfVEN9tw==",
+        "license": "MIT",
+        "manifestBytes": 572,
+        "manifestSha256": "a744aef499d2528d0f3fd5c4673e5fcd0155312dd6672d69b6d4a07bf29f8f95"
+      },
+      {
+        "key": "node_modules/safer-buffer",
+        "version": "2.1.2",
+        "url": "https://registry.npmjs.org/safer-buffer/-/safer-buffer-2.1.2.tgz",
+        "integrity": "sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg==",
+        "license": "MIT",
+        "manifestBytes": 822,
+        "manifestSha256": "4247a3a63c45a6a7ced1557fe4dd9d2a163af4915d594b95e5867b69a53edb52"
+      },
+      {
+        "key": "node_modules/saxes",
+        "version": "6.0.0",
+        "url": "https://registry.npmjs.org/saxes/-/saxes-6.0.0.tgz",
+        "integrity": "sha512-xAg7SOnEhrm5zI3puOOKyy1OMcMlIJZYNJY7xLBwSze0UjhPLnWfj2GF2EpT0jmzaJKIWKHLsaSSajf35bcYnA==",
+        "license": "ISC",
+        "manifestBytes": 2845,
+        "manifestSha256": "32052572b41c2a890ed0854798c48454cc5991dcaafe5fb1718a4253046acfd3"
+      },
+      {
+        "key": "node_modules/symbol-tree",
+        "version": "3.2.4",
+        "url": "https://registry.npmjs.org/symbol-tree/-/symbol-tree-3.2.4.tgz",
+        "integrity": "sha512-9QNk5KwDF+Bvz+PyObkmSYjI5ksVUYtjW7AU22r2NKcfLJcXp96hkDWU3+XndOsUb+AQ9QhfzfCT2O+CNWT5Tw==",
+        "license": "MIT",
+        "manifestBytes": 1296,
+        "manifestSha256": "962fd6c0ed18cdec3bdb7df4684da775e294078a8302504e8ce04c711e1c37d4"
+      },
+      {
+        "key": "node_modules/tldts",
+        "version": "6.1.86",
+        "url": "https://registry.npmjs.org/tldts/-/tldts-6.1.86.tgz",
+        "integrity": "sha512-WMi/OQ2axVTf/ykqCQgXiIct+mSQDFdH2fkwhPwgEwvJ1kSzZRiinb0zF2Xb8u4+OqPChmyI6MEu4EezNJz+FQ==",
+        "license": "MIT",
+        "manifestBytes": 2501,
+        "manifestSha256": "8fc9dbe6e0a8df99b75822328567cc7d3ab4ef26ddb06147282adf848c68a02a"
+      },
+      {
+        "key": "node_modules/tldts-core",
+        "version": "6.1.86",
+        "url": "https://registry.npmjs.org/tldts-core/-/tldts-core-6.1.86.tgz",
+        "integrity": "sha512-Je6p7pkk+KMzMv2XXKmAE3McmolOQFdxkKw0R8EYNr7sELW46JqnNeTX8ybPiQgvg1ymCoF8LXs5fzFaZvJPTA==",
+        "license": "MIT",
+        "manifestBytes": 2111,
+        "manifestSha256": "e21fa7ad451e99f5d383bef1c43f28fe281ec9281902b02970bee0ed1d66dbbf"
+      },
+      {
+        "key": "node_modules/tough-cookie",
+        "version": "5.1.2",
+        "url": "https://registry.npmjs.org/tough-cookie/-/tough-cookie-5.1.2.tgz",
+        "integrity": "sha512-FVDYdxtnj0G6Qm/DhNPSb8Ju59ULcup3tuJxkFb5K8Bv2pUXILbf0xZWU8PX8Ov19OXljbUyveOFwRMwkXzO+A==",
+        "license": "BSD-3-Clause",
+        "manifestBytes": 4064,
+        "manifestSha256": "2ad6a529c400c79b160294f1dcfb29731c1d84645fa95adbb4e8485d671e95af"
+      },
+      {
+        "key": "node_modules/tr46",
+        "version": "5.1.1",
+        "url": "https://registry.npmjs.org/tr46/-/tr46-5.1.1.tgz",
+        "integrity": "sha512-hdF5ZgjTqgAntKkklYw0R03MG2x/bSzTtkxmIRw/sTNV8YXsCJ1tfLAX23lhxhHJlEf3CRCOCGGWw3vI3GaSPw==",
+        "license": "MIT",
+        "manifestBytes": 1009,
+        "manifestSha256": "b85fd677375acd34c10d188bc282ff805f7073ea44bdda590142f2d6d216c28d"
+      },
+      {
+        "key": "node_modules/w3c-xmlserializer",
+        "version": "5.0.0",
+        "url": "https://registry.npmjs.org/w3c-xmlserializer/-/w3c-xmlserializer-5.0.0.tgz",
+        "integrity": "sha512-o8qghlI8NZHU1lLPrpi2+Uq7abh4GGPpYANlalzWxyWteJOCsr/P+oPBA49TOLu5FTZO4d3F9MnWJfiMo4BkmA==",
+        "license": "MIT",
+        "manifestBytes": 598,
+        "manifestSha256": "56d3dbb5448f88c83cdc77fe3a5074dcb4936f140ed7e5f81a81ac910152acde"
+      },
+      {
+        "key": "node_modules/webidl-conversions",
+        "version": "7.0.0",
+        "url": "https://registry.npmjs.org/webidl-conversions/-/webidl-conversions-7.0.0.tgz",
+        "integrity": "sha512-VwddBukDzu71offAQR975unBIGqfKZpM+8ZX6ySk8nYhVoo5CYaZyzt3YBvYtRtO+aoGlqxPg/B87NGVZ/fu6g==",
+        "license": "BSD-2-Clause",
+        "manifestBytes": 982,
+        "manifestSha256": "6737cdc9d0dc816e0b3151b2dd5e60feaa4344c3605848526fbc7e33b570bbf0"
+      },
+      {
+        "key": "node_modules/whatwg-encoding",
+        "version": "3.1.1",
+        "url": "https://registry.npmjs.org/whatwg-encoding/-/whatwg-encoding-3.1.1.tgz",
+        "integrity": "sha512-6qN4hJdMwfYBtE3YBTTHhoeuUrDBPZmbQaxWAqSALV/MeEnR5z1xd8UKud2RAkFoPkmB+hli1TZSnyi84xz1vQ==",
+        "license": "MIT",
+        "manifestBytes": 703,
+        "manifestSha256": "207f2db76f561b68705a0b36d05b838728e425f994cbd89ed030da179e88bbf4"
+      },
+      {
+        "key": "node_modules/whatwg-mimetype",
+        "version": "4.0.0",
+        "url": "https://registry.npmjs.org/whatwg-mimetype/-/whatwg-mimetype-4.0.0.tgz",
+        "integrity": "sha512-QaKxh0eNIi2mE9p2vEdzfagOKHCcj1pJ56EEHGQOVxp8r9/iszLUUV7v89x9O1p/T+NlTM5W7jW6+cz4Fq1YVg==",
+        "license": "MIT",
+        "manifestBytes": 991,
+        "manifestSha256": "6a93238d0e3aba0d633c948ac670bf022b091e0f502203482ed2bc759d8668ff"
+      },
+      {
+        "key": "node_modules/whatwg-url",
+        "version": "14.2.0",
+        "url": "https://registry.npmjs.org/whatwg-url/-/whatwg-url-14.2.0.tgz",
+        "integrity": "sha512-De72GdQZzNTUBBChsXueQUnPKDkg/5A5zp7pFDuQAj5UFoENpiACU0wlCvzpAGnTkj++ihpKwKyYewn/XNUbKw==",
+        "license": "MIT",
+        "manifestBytes": 1356,
+        "manifestSha256": "9c681e4d93cd24529e10d25f76baa1c18b1d6a314be11da79f05a3375c637b88"
+      },
+      {
+        "key": "node_modules/ws",
+        "version": "8.21.3",
+        "url": "https://registry.npmjs.org/ws/-/ws-8.21.3.tgz",
+        "integrity": "sha512-201TZ/kPWxoPr/OKWjquZR1SWKXcvxdH+e1xrx89b3YbmzLMFCLfnaG1HFIgWzJOEWZ7MvpK++odZufgYR50Rw==",
+        "license": "MIT",
+        "manifestBytes": 1829,
+        "manifestSha256": "a56a3fd55945a3ce177e3ca165dafae6f7eb03b7aefd58c092ac723d5741a6fb"
+      },
+      {
+        "key": "node_modules/xml-name-validator",
+        "version": "5.0.0",
+        "url": "https://registry.npmjs.org/xml-name-validator/-/xml-name-validator-5.0.0.tgz",
+        "integrity": "sha512-EvGK8EJ3DhaHfbRlETOWAS5pO9MZITeauHKJyb8wyajUfQUenkIg2MvLDTZ4T/TgIcm3HU0TFBgWWboAZ30UHg==",
+        "license": "Apache-2.0",
+        "manifestBytes": 699,
+        "manifestSha256": "08d74267200473a56d572d7453324e896d98150077c9af7e9efb73faaf447de6"
+      },
+      {
+        "key": "node_modules/xmlchars",
+        "version": "2.2.0",
+        "url": "https://registry.npmjs.org/xmlchars/-/xmlchars-2.2.0.tgz",
+        "integrity": "sha512-JZnDKK8B0RCDw84FNdDAIpZK+JuJw+s7Lz8nksI7SIuU3UXJJslUthsi+uWBUYOwPFwW7W7PRLRfUKpxjtjFCw==",
+        "license": "MIT",
+        "manifestBytes": 2064,
+        "manifestSha256": "a91c0b20003ff9399dde1de8c59681f1b6901c6fb1aac71780a3a876dc548583"
+      }
+    ],
+    "cachedPublicResponses": [
+      {
+        "url": "https://registry.npmjs.org/lru-cache/-/lru-cache-10.4.3.tgz",
+        "cachedDecodedBytes": 181128,
+        "sha256": "0ea17b527beaaaac504ea7a7aaab90db0581dc9a2e117bfbdba44789f15496ed",
+        "integrity": "sha512-JNAzZcXrCt42VGLuYz0zfAzDfAvJWW6AfYlDBQyDV5DClI2m5sAmK+OIO7s59XfsRsWHp02jAJrRadPRGTt6SQ==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/xml-name-validator",
+        "cachedDecodedBytes": 11085,
+        "sha256": "5eaf2e214dc4647d6ce45dc4ad9bfd69bed3609bfa1c8a8a5e779f6ca0f7b2a9",
+        "integrity": "sha512-JYYnHZ07FkwNsLzG5jmG/lI0Ol2G1C6saDtVlwCMc1mgThTUWN5bAp0v/cQKYIsDF0t3UPgIBdKon07yaTeVxA==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/utf-8-validate",
+        "cachedDecodedBytes": 77012,
+        "sha256": "b0c480a09bbeb93d196c7041f2453cfb5bc919a29c33c7a954e9691266a56e2a",
+        "integrity": "sha512-gFFHpyoaWberTupuTTPWtGcL4GqJhHQanH45HdBPPqSKJV819BWzD4fUuuFrN08qFtj41ZgUPn2V3KiydHa8CQ==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/@csstools%2fcss-calc",
+        "cachedDecodedBytes": 78369,
+        "sha256": "653cddec495a645f39c7fe5ace72bf6f2c0176c74f22c2de8ccbe69c11d2a187",
+        "integrity": "sha512-Kte3+jGncEeIFhWT6Q/erlz4H7q1UOOAsRWarlkhodoKBNODLa5ZccEkkQrqCgTK6QjeDF7uFi4uuOak901yFw==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/@csstools%2fcss-tokenizer",
+        "cachedDecodedBytes": 61164,
+        "sha256": "244ddbbfe3774d7e382ac7cbe1dc91fdfa4012af07306946771e0acf413d2391",
+        "integrity": "sha512-1Ku2Dwb0k3n9Ch8kLJ/RWIUukw616cqLeyIKhZTy0Ikg2Kh28CK8Z2xVlOTQ2J8t5APjvDB7JqyLDXDhONe0Kg==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/symbol-tree/-/symbol-tree-3.2.4.tgz",
+        "cachedDecodedBytes": 8805,
+        "sha256": "8a69700a00d00bdbbadf116f94398cc37f38ecdda559dc6220e17eb977b94abc",
+        "integrity": "sha512-9QNk5KwDF+Bvz+PyObkmSYjI5ksVUYtjW7AU22r2NKcfLJcXp96hkDWU3+XndOsUb+AQ9QhfzfCT2O+CNWT5Tw==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/html-encoding-sniffer/-/html-encoding-sniffer-4.0.0.tgz",
+        "cachedDecodedBytes": 3850,
+        "sha256": "11c97fd835c46da51a793b369dbee136da1bdfd41417a17b93f9b53fad77d4cb",
+        "integrity": "sha512-Y22oTqIU4uuPgEemfz7NDJz6OeKf12Lsu+QC+s3BVpda64lTiMYCyGwg5ki4vFxkMwQdeZDl2adZoqUgdFuTgQ==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/@csstools/css-color-parser/-/css-color-parser-3.1.0.tgz",
+        "cachedDecodedBytes": 20357,
+        "sha256": "492d6a310a91735b721329f89e3e99304ef6e87c98df70c20eed3a97a64220da",
+        "integrity": "sha512-nbtKwh3a6xNVIp/VRuXV64yTKnb1IjTAEEh3irzS+HkKjAOYLTGNb9pmVNntZ8iVBHcWDA2Dof0QtPgFI1BaTA==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/xmlchars/-/xmlchars-2.2.0.tgz",
+        "cachedDecodedBytes": 11752,
+        "sha256": "bdf900298963e4bd95b76aa95e96d29f05687e6ae662d617061778267b576da8",
+        "integrity": "sha512-JZnDKK8B0RCDw84FNdDAIpZK+JuJw+s7Lz8nksI7SIuU3UXJJslUthsi+uWBUYOwPFwW7W7PRLRfUKpxjtjFCw==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/tldts-core/-/tldts-core-6.1.86.tgz",
+        "cachedDecodedBytes": 45526,
+        "sha256": "f75448d0aa827cc18c8344c8e0f703a68d977f294d81f16d73e8126a0a9bfe84",
+        "integrity": "sha512-Je6p7pkk+KMzMv2XXKmAE3McmolOQFdxkKw0R8EYNr7sELW46JqnNeTX8ybPiQgvg1ymCoF8LXs5fzFaZvJPTA==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/nwsapi",
+        "cachedDecodedBytes": 98885,
+        "sha256": "5ffdb6fe68efcc5fba8a8d382424e24bb26013fc26f31bbaae01f923241eefbd",
+        "integrity": "sha512-TB3gZU8ugPLNt/tQ84AAfsruL9wMnP7bafKT/2A2Ae1UUdj0/ta+OIY8bLuLbxE/Zo6mLZnZHF1rYYan+G4fCQ==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/rrweb-cssom/-/rrweb-cssom-0.8.0.tgz",
+        "cachedDecodedBytes": 20726,
+        "sha256": "6b975deba1561fbc7c6ce1e3982e354e958a34cc36097491083b472c8a922370",
+        "integrity": "sha512-guoltQEx+9aMf2gDZ0s62EcV8lsXR+0w8915TC3ITdn2YueuNjdAYh/levpU9nFaoChh9RUS5ZdQMrKfVEN9tw==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
+        "cachedDecodedBytes": 2967,
+        "sha256": "f6616e15e530ed552f9daa2d3ce71963947c6bc7c98c9b64fd3e673fd02622c6",
+        "integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/safer-buffer",
+        "cachedDecodedBytes": 18521,
+        "sha256": "1748de8ecde91aaa3203f0f3bf1eb176662611415f6a3ef993e896c6efa27103",
+        "integrity": "sha512-JIII3taqQ5niG1U6KriVIN4Sjz3XWBXxplOKq1sA86yDlPxkyG5LKBvwlbndxRxdVcSCu5owg7TdPI59ICA8bw==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/is-potential-custom-element-name/-/is-potential-custom-element-name-1.0.1.tgz",
+        "cachedDecodedBytes": 1905,
+        "sha256": "b6e425bb136422af133754814046a640c1573349755c63130c424abcee398621",
+        "integrity": "sha512-bCYeRA2rVibKZd+s2625gGnGF/t7DSqDs4dP7CrLA1m7jKWz6pps0LpYLJN8Q64HtmPKJ1hrN3nzPNKFEKOUiQ==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/punycode",
+        "cachedDecodedBytes": 61278,
+        "sha256": "f939136719058b7519d90da4bada687056329c114f9028751709a394d5ab0af0",
+        "integrity": "sha512-YNTfwSEzl926tB27tx/nsVt1Y3m1ToTLXKK3zX5RdAyDgP3toX11XD0iH82s0EE+98+qpGrO6mWxODMa3UM7LA==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/whatwg-mimetype",
+        "cachedDecodedBytes": 28179,
+        "sha256": "05af55a303ed35c211d16b9811acb9dab53368ce2859c356e312267fd0faf9e1",
+        "integrity": "sha512-CigDWyQwFk61YWOXC1LV6ChHFzFLoFX0AC7uaos0nYeBSCgZegoUU0Y2i6T+BaaX379NOy6zUskWewUzo0M80Q==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/http-proxy-agent/-/http-proxy-agent-7.0.2.tgz",
+        "cachedDecodedBytes": 6290,
+        "sha256": "785f73faa92bfba8d61da20bf59325ab2b3dca1bbc0bbac523406f404d8a6f02",
+        "integrity": "sha512-T1gkAiYYDWYx3V5Bmyu7HcfcvL7mUrTWiM6yOfa3PIphViJ/gFPbvidQ+veqSOHci/PxBcDabeUNCzpOODJZig==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/http-proxy-agent",
+        "cachedDecodedBytes": 57253,
+        "sha256": "8c1fa743ea79a24b0f440ef3fc0f1c945ceec82e6517f9b7c6c253ee8c4674dd",
+        "integrity": "sha512-i35WL4f01aqhASvw3R1ScoQwfXKhul629uT0QWqaxOT0oUm7KopE2oKKg1O707Q7o2+G/TJv2kC/ahUxMLKUhg==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/ws/-/ws-8.21.3.tgz",
+        "cachedDecodedBytes": 35016,
+        "sha256": "df3454ef205791ce50b5b9241762dcf9bfe1aa9f7f01d3057229be7dac0c2dc3",
+        "integrity": "sha512-201TZ/kPWxoPr/OKWjquZR1SWKXcvxdH+e1xrx89b3YbmzLMFCLfnaG1HFIgWzJOEWZ7MvpK++odZufgYR50Rw==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/https-proxy-agent",
+        "cachedDecodedBytes": 83792,
+        "sha256": "cccb93754a2c7d476382e682b5425502fd569e46b3af0f55246ff68c8c111a94",
+        "integrity": "sha512-cmpt1iy+p2cwwgI+UwERA27pg4cugIz4KlrKpUFhUphZrmDQliAcimV0/fCLSJw225XdeHR2852l82uFlVJwgw==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/canvas",
+        "cachedDecodedBytes": 353371,
+        "sha256": "e5acc6cd6095263213b6a4db8d3978f58f5828d05949acbf42e6ea3707434f8e",
+        "integrity": "sha512-7LfVjH/hBWWVv0CqvZUZ7YAfFi8CfQTKb7e/xBrNzbbAd/amaobOddCwdAxsF8zs9zPPaaq7XfAR9ik6is9D0w==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/saxes/-/saxes-6.0.0.tgz",
+        "cachedDecodedBytes": 35374,
+        "sha256": "1cdf52fbbe1ccbd175c365d2b8e63f46e590e74aff23fa6a44a6ec51522e96db",
+        "integrity": "sha512-xAg7SOnEhrm5zI3puOOKyy1OMcMlIJZYNJY7xLBwSze0UjhPLnWfj2GF2EpT0jmzaJKIWKHLsaSSajf35bcYnA==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/tr46/-/tr46-5.1.1.tgz",
+        "cachedDecodedBytes": 64015,
+        "sha256": "62dbfa0e7959c7bf972b157afcbedd7432116891c374b7de3f78224bd7e4d7e6",
+        "integrity": "sha512-hdF5ZgjTqgAntKkklYw0R03MG2x/bSzTtkxmIRw/sTNV8YXsCJ1tfLAX23lhxhHJlEf3CRCOCGGWw3vI3GaSPw==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/agent-base",
+        "cachedDecodedBytes": 72085,
+        "sha256": "5c89a4d9c12eb28aa8c003758470a20782da897350a755112b369ae9fdddb07e",
+        "integrity": "sha512-EGtWMiX7McNmVVByLHaTAh0y5Y0kCPp61I6XnpqMZ0Z3hbRgW9FAXsC55TlssNVccGsg7DcyU/SuYE7beiTicw==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/agent-base",
+        "cachedDecodedBytes": 72085,
+        "sha256": "5c89a4d9c12eb28aa8c003758470a20782da897350a755112b369ae9fdddb07e",
+        "integrity": "sha512-EGtWMiX7McNmVVByLHaTAh0y5Y0kCPp61I6XnpqMZ0Z3hbRgW9FAXsC55TlssNVccGsg7DcyU/SuYE7beiTicw==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/data-urls",
+        "cachedDecodedBytes": 37311,
+        "sha256": "68b3b360be6af00f8de60d77482d712e797d564761b1d1ff3393527915a171ab",
+        "integrity": "sha512-Qsm8cYtrS2A6fMsKtcOTYj3osUpA9izEYBjeJenCVrc2xFaB2MVYCtykizyTpruR4M395Iiu3LzLHt5rieeLdA==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/@csstools/css-calc/-/css-calc-2.1.4.tgz",
+        "cachedDecodedBytes": 19365,
+        "sha256": "2971adbbee310145798494965c74d2228bcede97b2f9dd369f8d5e6909340236",
+        "integrity": "sha512-3N8oaj+0juUw/1H3YwmDDJXCgTB1gKU6Hc/bB502u9zR0q2vd786XJH9QfrKIEgFlZmhZiq6epXl4rHqhzsIgQ==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/@csstools/css-parser-algorithms/-/css-parser-algorithms-3.0.5.tgz",
+        "cachedDecodedBytes": 10026,
+        "sha256": "11418fddd5e05444e4b24705d5313e5e26ba9b7a07c9099062fdab3206653e7e",
+        "integrity": "sha512-DaDeUkXZKjdGhgYaHNJTV9pV7Y9B3b644jCLs9Upc3VeNGg6LWARAT6O+Q+/COo+2gg/bM5rhpMAtf70WqfBdQ==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/nwsapi/-/nwsapi-2.2.27.tgz",
+        "cachedDecodedBytes": 23996,
+        "sha256": "9fc1fce0fc9da572e16bba8f94f99176d3ab543e3d5ce1a39d9015172ae8cb8e",
+        "integrity": "sha512-gQPNF78qebCQ6tvVFBYrvJdBNOrYZm90ZlXgpIFm06p6qHDHq/XC4TnJftN6OMbxVE0UTBAoRgcsDeJBBooITw==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/@csstools%2fcss-parser-algorithms",
+        "cachedDecodedBytes": 66140,
+        "sha256": "a03ea1402669ca90b136366c282198294f539cdcfe7f8b84cd866b5c7b4eb817",
+        "integrity": "sha512-RF26Wez3q0uWwBJEr7sYAII/3RukYMBeN7vqo4VcpfTQR4VWhIMujjInFTXOrQjDgt9MDBu7n1QSREQJEaiokg==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/whatwg-encoding",
+        "cachedDecodedBytes": 25704,
+        "sha256": "c7098d1860023bd9e975422c2c7f234481c00f929959caeed4755ca8a954a148",
+        "integrity": "sha512-wAFahBFUpO9PcjXqoZLKwS4jbuSbgylOowCjxNowa7m/1v3zqREgzREmmjDnSd5P+e9zKC0DatAWAXyh5w/CUQ==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/entities",
+        "cachedDecodedBytes": 104868,
+        "sha256": "c5d1e1c837492a95a130daac448f065f2e01c581fb82625b057bad070c314fcf",
+        "integrity": "sha512-ykHVeLR5YxGdWyfbNEtMdl4b/T9SPBfDVXmxwPnPeccoNHNXsdFpBghgbU9QP3QqWQX3j9Ox55iVcF1cXwmwHw==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/tldts",
+        "cachedDecodedBytes": 3481383,
+        "sha256": "bb69e001a409bdac395edfa2e61886455fdc2c7374631d4fe35eb1cd6cfa43f1",
+        "integrity": "sha512-2pLIkLl8mr4+XFQ6YZbdUt8C3ZDdLjs02LFbv9ubI8QRowrIPG32zpgCjZXok29puoQ1vpWz+M1nx62PIZJcaQ==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-7.0.6.tgz",
+        "cachedDecodedBytes": 8998,
+        "sha256": "960f89e8e5240882f64249d04a538421dd39d62ffacc138544647cc3251bc0e0",
+        "integrity": "sha512-vK9P5/iUfdl95AI+JVyUuIcVtd4ofvtrOr3HNtM2yxC9bnMbEdp3x01OhQNnjb8IJYi38VlTE3mBXwcfvywuSw==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/cssstyle",
+        "cachedDecodedBytes": 165320,
+        "sha256": "287dba1a747349f2dfebf570625b830a59ea6321a46d0f803b41f77e0837d4fc",
+        "integrity": "sha512-mPNq0t3qDUrt+kybX2vASB+7lvUuJRqQSFyzULEq5l05Ki+w4zerSj7TziafLye78bPvqhgpKc8AMUbsIYw3Ww==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/prismjs/-/prismjs-1.29.0.tgz",
+        "cachedDecodedBytes": 540152,
+        "sha256": "e3b4e4286835f6f01a2cfaf8d0545542dd3da9dcc904fd134d4aface3aef499c",
+        "integrity": "sha512-Kx/1w86q/epKcmte75LNrEoT+lX8pBpavuAbvJWRXar7Hz8jrtF+e3vY751p0R8H9HdArwaCTNDDzHg/ScJK1Q==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/whatwg-encoding/-/whatwg-encoding-3.1.1.tgz",
+        "cachedDecodedBytes": 4222,
+        "sha256": "86295e4f0565d4d0de730180dcc32ccf8c4a001831d361a1493b4e9a25e5c8d3",
+        "integrity": "sha512-6qN4hJdMwfYBtE3YBTTHhoeuUrDBPZmbQaxWAqSALV/MeEnR5z1xd8UKud2RAkFoPkmB+hli1TZSnyi84xz1vQ==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/saxes",
+        "cachedDecodedBytes": 228593,
+        "sha256": "427344699d0c6e769bc59ee3dfc4e0c0ce3335446f180c52a8472d8d355276d4",
+        "integrity": "sha512-xTca6mLULkXfmmQK6eQU7fpA0O9vRTepyUoYC3Y4h9Ijv4VbDz3KIH+Oqa0aICZRIKh1RP6oCzKcCPd318k9Sg==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/ws",
+        "cachedDecodedBytes": 447661,
+        "sha256": "d4ade5a3f1340f50063e5f929bcd5543314a6c0796e48139740818b5a3f4230f",
+        "integrity": "sha512-HFPgAibZSm/NZi+IbamTbhAtg5QjldhCx3igu+wsRQuyDzyk9B0cqyPbDseO6I+nIaNhZGPzxZYq1F30b96PJA==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.6.3.tgz",
+        "cachedDecodedBytes": 190667,
+        "sha256": "7127ec148f994f031eff658a50dc0629f6010775a8202213b0526ec5e30fc8f4",
+        "integrity": "sha512-4fCk79wshMdzMp2rH06qWrJE4iolqLhCUH+OiuIgU++RB0+94NlDL81atO7GX55uUKueo0txHNtvEyI6D7WdMw==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/ms",
+        "cachedDecodedBytes": 92208,
+        "sha256": "a594a3e5b5e1adc7c4453ea84815f1d2c275de380ac24303000c439f55aabb60",
+        "integrity": "sha512-Bw+rsScZM+EJTgiHZmZKBe1ixSIY/M99TX4YN3myZYvniWiIUyV3tAQR/L61IA5vCq5CvVrDL3F0cxksRQqkcQ==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/agent-base/-/agent-base-7.1.4.tgz",
+        "cachedDecodedBytes": 7812,
+        "sha256": "7dd4a61668a9a4e8d4e903f1a254f94d53dafd3f316f2b9b597c5ad8c79cb57e",
+        "integrity": "sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/symbol-tree",
+        "cachedDecodedBytes": 60614,
+        "sha256": "f88dbb9667b7ac171b4acbd42dbfbf125e74bc6b37aaaffa616611651e6a8bfe",
+        "integrity": "sha512-8T1f9WN/kaKlGRKnP/HpQjmcnkjnzZTIh5mbo/GcbLHf38yKSo8A9G0FVfDmiceMyijGNMwLvRDTZhKpMXM9Kw==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/iconv-lite",
+        "cachedDecodedBytes": 126462,
+        "sha256": "67a8ed6f8e2592721f381c7000dce2f46296dc32cb15b2b576b222c0f391df8a",
+        "integrity": "sha512-useWO9kYJl2xlP1Yd0KbKgASyoCHxpeqIAA8wkYUiOmMq043030dC6Ik/OrTFdpS6MTcWXHgBe79KW+l4NyKkg==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/safer-buffer/-/safer-buffer-2.1.2.tgz",
+        "cachedDecodedBytes": 12035,
+        "sha256": "78812f65ae3b98071ce1c9bacbe0666f4220d0b2753c2a11530eb27df440a3b3",
+        "integrity": "sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/w3c-xmlserializer",
+        "cachedDecodedBytes": 36375,
+        "sha256": "2560f343c3159505d81d996d1cadbf926ae198cd0c75b5849d5ad0ab5a45ad24",
+        "integrity": "sha512-InV0FKtP4jQrr5Sso7o4gBM0BrmIwN2ppIvzJ2XpgIvI3kJJauTYOo5N4ItHeSwm8tTL7kKfgi3C8aRh/kTBAw==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/bufferutil",
+        "cachedDecodedBytes": 52668,
+        "sha256": "23471499c03d397f1ff5947ba52f28c894193b0c67cf5ee5bad6ef8796c76942",
+        "integrity": "sha512-Imjcz7kftMQyzQ5QohWfIL7Bz6ytbwtxjTrheeSkPl7+lTlXCp8gJLOAEn7ovMCGUvQpYHHbTQhUclYiiKhoig==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/tldts/-/tldts-6.1.86.tgz",
+        "cachedDecodedBytes": 728769,
+        "sha256": "80d90fdad94b1c9f2415bb64829a00a5d577f3b2ce97c566e5b080d5b420ccc6",
+        "integrity": "sha512-WMi/OQ2axVTf/ykqCQgXiIct+mSQDFdH2fkwhPwgEwvJ1kSzZRiinb0zF2Xb8u4+OqPChmyI6MEu4EezNJz+FQ==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/@csstools/color-helpers/-/color-helpers-5.1.0.tgz",
+        "cachedDecodedBytes": 16994,
+        "sha256": "b95d5f63268d0d884b2c5caeecba9f08b81ff1ca4d75923c12673afca080d7aa",
+        "integrity": "sha512-S11EXWJyy0Mz5SYvRmY8nJYTFFd1LCNV+7cXyAgQtOOuzb4EsgfqDufL+9esx72/eLhsRdGZwaldu/h+E4t4BA==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/tr46",
+        "cachedDecodedBytes": 47377,
+        "sha256": "c02ab44a7c09cbed7908427a4b789d9dccd55c92696e841073d8cd03b891c90e",
+        "integrity": "sha512-an68tT++Dx70mEa1nrLUVlZsiEcQyEF/DxQ0vKbvUVT1eO86yRtkw9OAhfmoqYlMmj3LuRyl0UQD3WmBTQ9BVQ==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/@csstools/css-tokenizer/-/css-tokenizer-3.0.4.tgz",
+        "cachedDecodedBytes": 15149,
+        "sha256": "0a92d4d311b7acf320aadcb632acde29569711f8eadcca9f0e980f3af93f4339",
+        "integrity": "sha512-Vd/9EVDiu6PPJt9yAh6roZP6El1xHrdvIVGjyBsHR0RYwNHgL7FJPyIIW4fANJNG6FtyZfvlRPpFI4ZM/lubvw==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/entities/-/entities-6.0.1.tgz",
+        "cachedDecodedBytes": 112438,
+        "sha256": "a4de957ab0852f6c91eae59a6000ced5a25a04f0b6e1c3062fbad732a6b5479d",
+        "integrity": "sha512-aN97NXWF6AWBTahfVOIrB/NShkzi5H7F9r1s9mD3cDj4Ko5f2qhhVoYMibXF7GlLveb/D2ioWay8lxI97Ven3g==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/whatwg-url/-/whatwg-url-14.2.0.tgz",
+        "cachedDecodedBytes": 19402,
+        "sha256": "b26982a9855af10a5cd8fedbdba5ac73db4b8eab1f81528104f585039fac863e",
+        "integrity": "sha512-De72GdQZzNTUBBChsXueQUnPKDkg/5A5zp7pFDuQAj5UFoENpiACU0wlCvzpAGnTkj++ihpKwKyYewn/XNUbKw==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/tldts-core",
+        "cachedDecodedBytes": 3115214,
+        "sha256": "4029b0767f3f75ff1bbeaae7a90e3936513d0c2783432f7a290fe7f12bbd967b",
+        "integrity": "sha512-E3MJhNJcwa0GYZVaEX96g5zDfbQAzb8Q+WLaaxjz2GgH1Pmxi8QXqHc4f/FypDNGrwIEnDuYzfEUbqacbmA79g==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/debug",
+        "cachedDecodedBytes": 195840,
+        "sha256": "7cd3d7bd97fdfb4af9fb90023decb619a19811c5e5aae94c3b66935cce37abae",
+        "integrity": "sha512-HFToUc2s14+HOr6QNPFEmFH/bR9SKh5r/fq+AomSAQTjRYDOeSqx3LCNVlLxIXiLZDV8Booyq1Y7STJB6XGELA==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/debug",
+        "cachedDecodedBytes": 195840,
+        "sha256": "7cd3d7bd97fdfb4af9fb90023decb619a19811c5e5aae94c3b66935cce37abae",
+        "integrity": "sha512-HFToUc2s14+HOr6QNPFEmFH/bR9SKh5r/fq+AomSAQTjRYDOeSqx3LCNVlLxIXiLZDV8Booyq1Y7STJB6XGELA==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/parse5",
+        "cachedDecodedBytes": 123116,
+        "sha256": "b52181c645584122f3e94452bdd080322d3f7d3ac2a15c5b4a9b106e7e95721b",
+        "integrity": "sha512-pn6MTCY9/e9eIlb5zdJ+YPjIdRjIeVvFdk+qAp/fRew/NP+quAM31Fn/LpnvVXz5/zWn7FdkfkgfGnqZZL7s8A==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/@csstools%2fcss-color-parser",
+        "cachedDecodedBytes": 134239,
+        "sha256": "ab064eff98c0fbe2df728f19d173538098758d8f2b8969537669c71fe80a1f07",
+        "integrity": "sha512-WKl9jNIlqOn6rw+NKv91pYcvosF2mlruIsGd8KLsXF7IOVsv2/7f6ufkkdL17wyJo+dlfqDQWmQ02JclYhqHxA==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/prismjs",
+        "cachedDecodedBytes": 114949,
+        "sha256": "e15fb4e1b256503d5676239597b8a355619bf96e90a913e2eb0ba97354e399d9",
+        "integrity": "sha512-ZZ09bxlnqMPQrWs16CeeDNhjARxEDDl0M3OGlKNdkwp9HHPJuSV6+7/oW6Z03NUrtaLJuKfL1r8oq17KK8TIyA==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/jsdom",
+        "cachedDecodedBytes": 1074418,
+        "sha256": "922034908cfd7acf016b2fc7871858a7247206f83f40d0887f9a5b5238b7a12e",
+        "integrity": "sha512-oWMJDTog83/Wq2GtkxdPbDCJfDfHyfPKagzJ98HjLavz5C2dzRDwYqrGGJJbjuqgXZKEwsLZOs+oSb0JEygN6A==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/jsdom/-/jsdom-26.1.0.tgz",
+        "cachedDecodedBytes": 359773,
+        "sha256": "5619b4779f68dec3ae076a97ccc5b8e4aeceaef7d4821ebcfcc1eb124b192000",
+        "integrity": "sha512-Cvc9WUhxSMEo4McES3P7oK3QaXldCfNWp7pl2NNeiIFlCoLr3kfq9kb1fxftiwk1FLV7CvpvDfonxtzUDeSOPg==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/parse5/-/parse5-7.3.0.tgz",
+        "cachedDecodedBytes": 86603,
+        "sha256": "9316ca7af41da9e85071b62b9605aa0a6aaeb0463f833c29e7a331e7898f0420",
+        "integrity": "sha512-IInvU7fabl34qmi9gY8XOVxhYyMyuH2xUNpb2q8/Y+7552KlejkRvqvD19nMoUW/uQGGbqNpA6Tufu5FL5BZgw==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/decimal.js/-/decimal.js-10.6.0.tgz",
+        "cachedDecodedBytes": 69924,
+        "sha256": "433210122e8149972f64054c54b0ce0872e5f15a3c5835aab57ff1a8e6d071b1",
+        "integrity": "sha512-YpgQiITW3JXGntzdUmyUR1V812Hn8T1YVXhCu+wO3OpS4eU9l4YdD3qjyiKdV6mvV29zapkMeD390UVEf2lkUg==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/whatwg-mimetype/-/whatwg-mimetype-4.0.0.tgz",
+        "cachedDecodedBytes": 5268,
+        "sha256": "d1618a0f551c0b9d770f9ae15b54313956713d1430298e59dfc4f5d4b4bb5183",
+        "integrity": "sha512-QaKxh0eNIi2mE9p2vEdzfagOKHCcj1pJ56EEHGQOVxp8r9/iszLUUV7v89x9O1p/T+NlTM5W7jW6+cz4Fq1YVg==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/w3c-xmlserializer/-/w3c-xmlserializer-5.0.0.tgz",
+        "cachedDecodedBytes": 5349,
+        "sha256": "7fea0c33bb82228932e677a4c7aaaad45bdb04541d8517e40700355cbefebd03",
+        "integrity": "sha512-o8qghlI8NZHU1lLPrpi2+Uq7abh4GGPpYANlalzWxyWteJOCsr/P+oPBA49TOLu5FTZO4d3F9MnWJfiMo4BkmA==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/webidl-conversions",
+        "cachedDecodedBytes": 46073,
+        "sha256": "6ed628f8f154598ad5bd6a28681b015e309788f7fd51c0682f89b7657d31fa39",
+        "integrity": "sha512-ZkXxjESgDcSDwUnjToUU6h0LGzN/sx7TcrzihGy8Pqu4MEJ+XmyoHWmc2DnPSGWmXhrRUjQPaYasnHNlO3Exbw==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/debug/-/debug-4.4.3.tgz",
+        "cachedDecodedBytes": 13449,
+        "sha256": "89c1ac9c946ee8905a875837114528e97eeae35e03be3190584b2216af43e4a7",
+        "integrity": "sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/data-urls/-/data-urls-5.0.0.tgz",
+        "cachedDecodedBytes": 3475,
+        "sha256": "207c4648a8378e07c1816b15ed67b966d250dd099c488f4b2918ea9fad54f52a",
+        "integrity": "sha512-ZYP5VBHshaDAiVZxjbRVcFJpc+4xGgT0bK3vzy1HLN8jTO975HEbuYzZJcHoQEY5K1a0z8YayJkyVETa08eNTg==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/@asamuzakjp%2fcss-color",
+        "cachedDecodedBytes": 220887,
+        "sha256": "4c69c9c54cacf8c9c0dc97e15c628bf519cb9826069ae60db5ca4781265934c8",
+        "integrity": "sha512-yOh84Ohr2i6llfwDJpujTmSa+WZu4NfYP1fIHcxW2Z3PmM+e1VKF7RgGRhQqcIzrF3roMAyX2LLPmfK1SHKo1w==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/xmlchars",
+        "cachedDecodedBytes": 33578,
+        "sha256": "77baf5cb58173dd1d3e446493e075835aa22f1daf87431b23fc6674bf7fd03b6",
+        "integrity": "sha512-PRrMoW26iA8XMMoaCCfqLQwbFg87Xb7ztl+Xx1W/4D/44TmUhIZGPLxN56N2sARXcVfPu8ay0X35L/mb0ikM3g==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/cssstyle/-/cssstyle-4.6.0.tgz",
+        "cachedDecodedBytes": 31100,
+        "sha256": "c3698bac3074af4449a75345eabc31d5b43fdeb8267cffe0b2907c196fde5929",
+        "integrity": "sha512-2z+rWdzbbSZv6/rhtvzvqeZQHrBaqgogqt85sqFNbabZOuFbCVFb8kPeEtZjiKkbrm395irpNKiYeFeLiQnFPg==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/whatwg-url",
+        "cachedDecodedBytes": 177251,
+        "sha256": "61621562600fa0d3347ec77eb4952d0dcffb429ff15274ff5460c57b3c50dc04",
+        "integrity": "sha512-415LAdcbKgI0nw+lVT/AZLY6S2sztiRYaS/P4bsPkuLNhiO9v/Ua7WOl10IQi/gNymeNA3jkZdirzQ7dWfTv8Q==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/decimal.js",
+        "cachedDecodedBytes": 107790,
+        "sha256": "ef34577d2c625a56d19932a6797dc81d3ba293e2ac9bc8fa23658fa84a66374a",
+        "integrity": "sha512-wyYcGUQLMJAfr8R7fAJpwFrcxU5TMQIliYGAlTUGhNOqSIakyIdkWanyy0m4NvgWHPzTMozpSpp5Bgmyj0xRWg==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/html-encoding-sniffer",
+        "cachedDecodedBytes": 23370,
+        "sha256": "6a33fc5ec415dc97ddc89a94988484eb27e0c3b837db29a54ce4153dc4160e98",
+        "integrity": "sha512-xGpk8EqQiWbLnQzv7D96hdKUkh/2P+3OtgWiGtbceC/dsCcOLam+CI29QwiFhK0CSmjg8KWTz9yjQnxK7jKghw==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/tough-cookie",
+        "cachedDecodedBytes": 152921,
+        "sha256": "c2b32cb0bd060beb6a3af0f2b310f0ffb228eb8f2231a1ffca288332cdc7be8b",
+        "integrity": "sha512-Hy89vA+fvDcjxyr+A615GOpQmnt5bi9vB5eNdo8wNrUchoimPi/QdtsnLktj7YwTqzWnLs6ZeboXQ064QAwm2w==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/@asamuzakjp/css-color/-/css-color-3.2.0.tgz",
+        "cachedDecodedBytes": 387190,
+        "sha256": "b65bd3770651faf0b081aad7c2b4b7d4ec575f466c4cc881313e4a3ed0a38759",
+        "integrity": "sha512-K1A6z8tS3XsmCMM86xoWdn7Fkdn9m6RSVtocUrJYIwZnFVkng/PvkEoWtOWmP+Scc6saYWHWZYbndEEXxl24jw==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/rrweb-cssom",
+        "cachedDecodedBytes": 10104,
+        "sha256": "01d0241d428ca23b6bfb21a2aec98afa4b3427a94914d4f375e9f52134cd198d",
+        "integrity": "sha512-sDhKQxJUZ1AyJTn2KLS49tIUsE0/M9rXUZKBBneGjZWfDQL2jfZfTctHWvdb/A79aJCSFVG2NIbGLB4EAzcE7g==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/tough-cookie/-/tough-cookie-5.1.2.tgz",
+        "cachedDecodedBytes": 49926,
+        "sha256": "73baea52c8cdd34f301126e7b4e47c19ec43e228d49c9db5230b1dc3039ac43b",
+        "integrity": "sha512-FVDYdxtnj0G6Qm/DhNPSb8Ju59ULcup3tuJxkFb5K8Bv2pUXILbf0xZWU8PX8Ov19OXljbUyveOFwRMwkXzO+A==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/lru-cache",
+        "cachedDecodedBytes": 460407,
+        "sha256": "a8ee852d5b7087cd46a6305af2dd17748f0832a2e6191dc4cf8c45519d0a33a7",
+        "integrity": "sha512-HBxJkh3ci6BrfperNYjUWglmf1B9B9AENHX98Iiyg8ERaEvAew3CctzeuksqQ8T4Q4zN10apLvM9KR9snOUj+Q==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/@csstools%2fcolor-helpers",
+        "cachedDecodedBytes": 47131,
+        "sha256": "1b86cb3ebc5921b6d1b4a64c01e2bddc32a332cd1b2271ec768f9e05a6ec729b",
+        "integrity": "sha512-lZDe0oYGNIORcMJ/z9gK9nCaIjno3sVUKurUh7/1jDOvnqaQzcqNB/P7njDQfBNXVtJPHbgnwljHJEsuJmte3A==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/is-potential-custom-element-name",
+        "cachedDecodedBytes": 6810,
+        "sha256": "89c5979798fdff6f0ce0b3dfff9644d2a8ea17319e93a3cc677b01f928220d29",
+        "integrity": "sha512-Dy2t5mA8tcVm/mAAgVpL/+7iT3hZ2+gfkj5gPJLpTXV1qwrfWSKUx4irQ1b0J/EV5hFUPjl+QAUSlL7f78MFRw==",
+        "kind": "registry metadata"
+      },
+      {
+        "url": "https://registry.npmjs.org/webidl-conversions/-/webidl-conversions-7.0.0.tgz",
+        "cachedDecodedBytes": 7556,
+        "sha256": "fd4d12781018d99e2cc68cf2d997215a0b301761ab26ac2a171116960419e454",
+        "integrity": "sha512-VwddBukDzu71offAQR975unBIGqfKZpM+8ZX6ySk8nYhVoo5CYaZyzt3YBvYtRtO+aoGlqxPg/B87NGVZ/fu6g==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/punycode/-/punycode-2.3.1.tgz",
+        "cachedDecodedBytes": 7603,
+        "sha256": "e4ce59f9fbac44349abab87279ab658f6b4614916bec5e088ae3be9323e193bb",
+        "integrity": "sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==",
+        "kind": "package archive"
+      },
+      {
+        "url": "https://registry.npmjs.org/xml-name-validator/-/xml-name-validator-5.0.0.tgz",
+        "cachedDecodedBytes": 4678,
+        "sha256": "3d40b1428dae32a6328ea20543abaafb72101a2652a95f43ec8757fef213f0be",
+        "integrity": "sha512-EvGK8EJ3DhaHfbRlETOWAS5pO9MZITeauHKJyb8wyajUfQUenkIg2MvLDTZ4T/TgIcm3HU0TFBgWWboAZ30UHg==",
+        "kind": "package archive"
+      }
+    ],
+    "cachedDecodedBytes": 15465331,
+    "byteScope": "Cache-body decoded sizes, not compressed wire bytes; duplicates retained. Source and npm responses are separately tabulated but both count toward the failed total response budget."
+  }
+}

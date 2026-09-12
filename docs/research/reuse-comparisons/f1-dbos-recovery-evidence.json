@@ -1,0 +1,8 @@
+{
+  "receiptKind": "complete tool-returned command result",
+  "chunk_id": "62ecef",
+  "wall_time_seconds": 0.690040084,
+  "exit_code": 0,
+  "original_token_count": 268,
+  "output": "{\n  \"candidate\": \"DBOS4.27.6\",\n  \"backend\": \"PostgreSQL18.4\",\n  \"outcomes\": [\n    {\n      \"name\": \"concurrent-client-same-id\",\n      \"rows\": 1,\n      \"retainedInput\": [\n        {\n          \"value\": \"left\"\n        }\n      ],\n      \"returnedHandles\": 2,\n      \"limit\": \"parallel client submissions, not guaranteed overlapping engine critical sections; no canonical admission\"\n    },\n    {\n      \"name\": \"independent-submissions\",\n      \"rows\": 2,\n      \"limit\": \"enqueue only, no pickup or review wait\"\n    },\n    {\n      \"name\": \"lost-caller-ack-read-recovery\",\n      \"dispatchesBefore\": 5,\n      \"dispatchesAfter\": 5,\n      \"limit\": \"injected after known transaction commit, not network loss during server commit\"\n    },\n    {\n      \"name\": \"client-reconstruction\",\n      \"preservedInputs\": true,\n      \"newSubmissions\": 0,\n      \"limit\": \"client objects recreated, not engine/process crash or worker execution recovery\"\n    }\n  ],\n  \"dispatches\": 5,\n  \"scope\": \"synthetic queue/client only\"\n}\n{\"cleanup\":true,\"clusterStopped\":true,\"scope\":\"owned disposable child only\"}\n"
+}

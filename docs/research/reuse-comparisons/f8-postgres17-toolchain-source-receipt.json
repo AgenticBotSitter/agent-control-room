@@ -1,0 +1,613 @@
+{
+  "mode": "source/metadata only; no binary archive downloads, installers, signature-tool execution or database",
+  "observedMac": {
+    "version": "26.6.2",
+    "architecture": "arm64"
+  },
+  "responseBudget": {
+    "limitBytes": 3145728,
+    "knownDecodedBytes": 449552,
+    "lostBatchUpperBoundBytes": 300000,
+    "conservativeTotalBytes": 749552,
+    "disposition": "within cap including conservative full reservation for output-truncated batch"
+  },
+  "sourceReceiptFailure": {
+    "urls": [
+      "https://raw.githubusercontent.com/PostgresApp/PostgresApp/0e7a7084f7467ceacbaf757019b6e9bb1fb5ab7d/README.md",
+      "https://raw.githubusercontent.com/PostgresApp/PostgresApp/0e7a7084f7467ceacbaf757019b6e9bb1fb5ab7d/Postgres.xcodeproj/project.pbxproj",
+      "https://raw.githubusercontent.com/PostgresApp/PostgresApp/0e7a7084f7467ceacbaf757019b6e9bb1fb5ab7d/buildscripts/postgres.entitlements",
+      "https://raw.githubusercontent.com/PostgresApp/PostgresApp/0e7a7084f7467ceacbaf757019b6e9bb1fb5ab7d/Postgres/dsa_pub.pem"
+    ],
+    "reason": "First four-response command output was truncated; orchestrator JSON parsing failed. No response hashes/sizes from that first attempt are claimed measured. The full300000-byte enforced command cap is charged conservatively. One corrected filtered-output reread yielded exact receipts.",
+    "correctionCount": 1
+  },
+  "reads": [
+    {
+      "url": "https://api.github.com/repos/PostgresApp/PostgresApp/releases/latest",
+      "status": 200,
+      "bytes": 12702,
+      "sha256": "8c0dddf2664f61d14ccd43f2ab76a7a1990ccf12bc8a81c93f3735b780a5ae08"
+    },
+    {
+      "url": "https://formulae.brew.sh/api/formula/postgresql@17.json",
+      "status": 200,
+      "bytes": 6414,
+      "sha256": "0a04f05c80d633f2677266380ea8e61ecda5c5843a6f7558e95b5044b679aa5d"
+    },
+    {
+      "url": "https://api.github.com/repos/PostgresApp/PostgresApp/git/ref/tags/v2.9.6",
+      "status": 200,
+      "bytes": 351,
+      "sha256": "bf1862855faafc0e6d9d3af54fabdcc9859991a7e8a494cacb89ae23cb09d0f8"
+    },
+    {
+      "url": "https://postgresapp.com/documentation/cli-tools.html",
+      "status": 200,
+      "bytes": 8588,
+      "sha256": "2787daead15942e62a5f2aab84278443fa4ca3e770bdef0dcc18208cf05ec9dc"
+    },
+    {
+      "url": "https://postgresapp.com/downloads.html",
+      "status": 200,
+      "bytes": 9383,
+      "sha256": "9ed1d0c9fc0049bd4d7c73bd5d3021d2218540c86d693eda6fdf7c8e1956208b"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/Homebrew/homebrew-core/c6bf5b32ffa8aea22b82a7241a2ebc6873c628cc/Formula/p/postgresql@17.rb",
+      "status": 200,
+      "bytes": 6728,
+      "sha256": "7df68c8ed14eab1f5b721b96ef988530de1b7d743dc84df4521668cc0fb3e714"
+    },
+    {
+      "url": "https://api.github.com/repos/PostgresApp/PostgresApp/git/trees/0e7a7084f7467ceacbaf757019b6e9bb1fb5ab7d?recursive=1",
+      "status": 200,
+      "bytes": 207231,
+      "sha256": "e70d68d63ab4cd7acbc21c3a8863cb5ec1a5e94482eccba5932272b2eac2354a"
+    },
+    {
+      "path": "src-17/makefile",
+      "url": "https://raw.githubusercontent.com/PostgresApp/PostgresApp/0e7a7084f7467ceacbaf757019b6e9bb1fb5ab7d/src-17/makefile",
+      "status": 200,
+      "bytes": 50836,
+      "sha256": "00aa945285d6b319b12e7834a9c000a1a0b1a7b20a244b78455a153578aeafd1"
+    },
+    {
+      "path": "buildscripts/01-build.sh",
+      "url": "https://raw.githubusercontent.com/PostgresApp/PostgresApp/0e7a7084f7467ceacbaf757019b6e9bb1fb5ab7d/buildscripts/01-build.sh",
+      "status": 200,
+      "bytes": 5277,
+      "sha256": "dbb55ab5eff5dbd24ee07597cf28fd095aae2c066863d4deb7718ddd9c0ea942"
+    },
+    {
+      "path": "buildscripts/02-notarize.sh",
+      "url": "https://raw.githubusercontent.com/PostgresApp/PostgresApp/0e7a7084f7467ceacbaf757019b6e9bb1fb5ab7d/buildscripts/02-notarize.sh",
+      "status": 200,
+      "bytes": 1411,
+      "sha256": "24de38136c300ba20960ffb3502c0f030e3bede429d550b3bb3e4c97bb439a25"
+    },
+    {
+      "path": "docs/sparkle/updates_17.xml",
+      "url": "https://raw.githubusercontent.com/PostgresApp/PostgresApp/0e7a7084f7467ceacbaf757019b6e9bb1fb5ab7d/docs/sparkle/updates_17.xml",
+      "status": 200,
+      "bytes": 1907,
+      "sha256": "d574d85ec5d79e50f9843137e1c7962e48f954a72b3b5b8dcfa743b8911dc597"
+    },
+    {
+      "path": "Postgres/Info.plist",
+      "url": "https://raw.githubusercontent.com/PostgresApp/PostgresApp/0e7a7084f7467ceacbaf757019b6e9bb1fb5ab7d/Postgres/Info.plist",
+      "status": 200,
+      "bytes": 1542,
+      "sha256": "35c82c72947dbf3dbcc21a6cfe1c7c0eabdc9f9c1b066cb0d8ee0d5d5f8a0c8d"
+    },
+    {
+      "path": "LICENSE",
+      "url": "https://raw.githubusercontent.com/PostgresApp/PostgresApp/0e7a7084f7467ceacbaf757019b6e9bb1fb5ab7d/LICENSE",
+      "status": 200,
+      "bytes": 1194,
+      "sha256": "ae1df550073c3777dfa612d12d9e7f87b8ef4a5c354cd8ec839ab8ec47c7d939"
+    },
+    {
+      "path": "README.md",
+      "url": "https://raw.githubusercontent.com/PostgresApp/PostgresApp/0e7a7084f7467ceacbaf757019b6e9bb1fb5ab7d/README.md",
+      "status": 200,
+      "bytes": 8864,
+      "sha256": "9e11ce9f896aa7b11fb4e452afc34b792d10189230f935c9fb75c8d513ed8f24"
+    },
+    {
+      "path": "Postgres.xcodeproj/project.pbxproj",
+      "url": "https://raw.githubusercontent.com/PostgresApp/PostgresApp/0e7a7084f7467ceacbaf757019b6e9bb1fb5ab7d/Postgres.xcodeproj/project.pbxproj",
+      "status": 200,
+      "bytes": 56715,
+      "sha256": "12073c480c4909f1d4055c4de790fb9692fe60f492196610684ce8d36755d936"
+    },
+    {
+      "path": "buildscripts/postgres.entitlements",
+      "url": "https://raw.githubusercontent.com/PostgresApp/PostgresApp/0e7a7084f7467ceacbaf757019b6e9bb1fb5ab7d/buildscripts/postgres.entitlements",
+      "status": 200,
+      "bytes": 334,
+      "sha256": "80ac79c2a79078a88dd26bc1de04254f553539062411fd137e8df4883a3c070b"
+    },
+    {
+      "path": "Postgres/dsa_pub.pem",
+      "url": "https://raw.githubusercontent.com/PostgresApp/PostgresApp/0e7a7084f7467ceacbaf757019b6e9bb1fb5ab7d/Postgres/dsa_pub.pem",
+      "status": 200,
+      "bytes": 2218,
+      "sha256": "5237674584d45e1ee3654ce8ec1003994b449c257f7e676ff545643bbfa73c0c"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/PostgresApp/PostgresApp/0e7a7084f7467ceacbaf757019b6e9bb1fb5ab7d/Postgres/CopyBinaries.sh",
+      "status": 200,
+      "bytes": 8270,
+      "sha256": "1b4468de0cd84db46dd18a8293884d2ef4f97d42e4595f72618c66cf263391fb"
+    },
+    {
+      "url": "https://docs.brew.sh/Bottles",
+      "status": 200,
+      "bytes": 15722,
+      "sha256": "d3f3157945a3dffbcfaa3d4f523c488d4391ecff2e606635329098cc7abe98e4"
+    },
+    {
+      "url": "https://formulae.brew.sh/api/formula/icu4c@78.json",
+      "status": 200,
+      "bytes": 3931,
+      "sha256": "165b5c7de6e90add8f060586d7044669cc8be6242a35ba15bda401d086a23667"
+    },
+    {
+      "url": "https://formulae.brew.sh/api/formula/krb5.json",
+      "status": 200,
+      "bytes": 4354,
+      "sha256": "1a52133dff8b3a5c52d12f2482afa78bdbd07246da59c7d0b2873c9d1e40b827"
+    },
+    {
+      "url": "https://formulae.brew.sh/api/formula/lz4.json",
+      "status": 200,
+      "bytes": 3332,
+      "sha256": "2a7c71ebafc772d6e81084cf40779cdbd32265470e9f4aed166d9148a8303388"
+    },
+    {
+      "url": "https://formulae.brew.sh/api/formula/openssl@3.json",
+      "status": 200,
+      "bytes": 4209,
+      "sha256": "bc1d9b29189643c9d4a12577a06327dec354b95c96bd8dbeff32d3e80c37c6c9"
+    },
+    {
+      "url": "https://formulae.brew.sh/api/formula/readline.json",
+      "status": 200,
+      "bytes": 4767,
+      "sha256": "8b0e6ba1857189610a628dd8a235a999c581d4364ed407a2f4c021100b22b56c"
+    },
+    {
+      "url": "https://formulae.brew.sh/api/formula/zstd.json",
+      "status": 200,
+      "bytes": 4322,
+      "sha256": "f3b5668e6d3e4ef252e0ef72518df4e21e33e069154d0a476cdc4e0d6d4243a3"
+    },
+    {
+      "url": "https://formulae.brew.sh/api/formula/gettext.json",
+      "status": 200,
+      "bytes": 4203,
+      "sha256": "ef65ac86e293cf4d4a4f2182831018589e5d5f2ae130ff26c4d714a0ac46634d"
+    },
+    {
+      "url": "https://formulae.brew.sh/api/formula/ca-certificates.json",
+      "status": 200,
+      "bytes": 3508,
+      "sha256": "920898e1d35cdc4249bbeec799812bcc2f8768dbcbeccab44886fc324d199282"
+    },
+    {
+      "url": "https://formulae.brew.sh/api/formula/xz.json",
+      "status": 200,
+      "bytes": 4169,
+      "sha256": "fd1188315427bd597112b46b583656472cacee1592cbacd6c8df25c2037a9ff0"
+    },
+    {
+      "url": "https://formulae.brew.sh/api/formula/json-c.json",
+      "status": 200,
+      "bytes": 3353,
+      "sha256": "b0cc14933631dc518dab9f10f350981010f2de3d6163abe9db8a1eca5d1ae7d4"
+    },
+    {
+      "url": "https://formulae.brew.sh/api/formula/libunistring.json",
+      "status": 200,
+      "bytes": 3717,
+      "sha256": "bd58206d4a41a303874f83ff1f1588782fd7be16422b1daec331f89a750344da"
+    }
+  ],
+  "postgresApp": {
+    "sourcePin": "0e7a7084f7467ceacbaf757019b6e9bb1fb5ab7d",
+    "tag": "v2.9.6",
+    "releaseId": 369517163,
+    "releaseImmutable": false,
+    "postgresVersion": "17.11",
+    "assets": [
+      {
+        "name": "Postgres-2.9.6-14-15-16-17-18.dmg",
+        "id": 512422087,
+        "url": "https://github.com/PostgresApp/PostgresApp/releases/download/v2.9.6/Postgres-2.9.6-14-15-16-17-18.dmg",
+        "sizeBytes": 532978656,
+        "publishedDigest": "sha256:ee67776540fb0d29cbd119ea4db4cac3c182349ed53048fdf79766a588ac86b3"
+      },
+      {
+        "name": "Postgres-2.9.6-17.dmg",
+        "id": 512422908,
+        "url": "https://github.com/PostgresApp/PostgresApp/releases/download/v2.9.6/Postgres-2.9.6-17.dmg",
+        "sizeBytes": 119621638,
+        "publishedDigest": "sha256:b38bb00b8c8702a568270aab85995c550f7f93d1503b818efdc5ff9a519b7168"
+      }
+    ],
+    "sparkleDSASignature": "MCwCFE8ZNIusPdLbwydAXnRh0loRV6aAAhRDpGEp8mQeLnvtLC1YVwNb6q9/Mg==",
+    "publicKeySha256": "5237674584d45e1ee3654ce8ec1003994b449c257f7e676ff545643bbfa73c0c",
+    "signatureVerification": "not performed"
+  },
+  "homebrew": {
+    "sourcePin": "c6bf5b32ffa8aea22b82a7241a2ebc6873c628cc",
+    "formulaSha256": "7df68c8ed14eab1f5b721b96ef988530de1b7d743dc84df4521668cc0fb3e714",
+    "version": "17.11",
+    "bottle": {
+      "cellar": "/opt/homebrew/Cellar",
+      "url": "https://ghcr.io/v2/homebrew/core/postgresql/17/blobs/sha256:1fbc3c17f3da21f29363a6a942aa9db176e5d808d2c39e86f225ee9f665147db",
+      "sha256": "1fbc3c17f3da21f29363a6a942aa9db176e5d808d2c39e86f225ee9f665147db"
+    },
+    "dependencies": [
+      {
+        "receipt": {
+          "url": "https://formulae.brew.sh/api/formula/icu4c@78.json",
+          "status": 200,
+          "bytes": 3931,
+          "sha256": "165b5c7de6e90add8f060586d7044669cc8be6242a35ba15bda401d086a23667"
+        },
+        "name": "icu4c@78",
+        "version": "78.3",
+        "revision": 0,
+        "license": "Unicode-3.0",
+        "dependencies": [],
+        "uses_from_macos": [],
+        "sourcePin": "c6bf5b32ffa8aea22b82a7241a2ebc6873c628cc",
+        "bottles": {
+          "arm64_tahoe": {
+            "cellar": ":any",
+            "url": "https://ghcr.io/v2/homebrew/core/icu4c/78/blobs/sha256:0476be299494b97e50a48b0ba08811255300228aef664058e555480d6aee4fb5",
+            "sha256": "0476be299494b97e50a48b0ba08811255300228aef664058e555480d6aee4fb5"
+          },
+          "arm64_sequoia": {
+            "cellar": ":any",
+            "url": "https://ghcr.io/v2/homebrew/core/icu4c/78/blobs/sha256:d1206febbce23e5014f51b631afd7129b2a247ee18a9f97226cd5889e66c1686",
+            "sha256": "d1206febbce23e5014f51b631afd7129b2a247ee18a9f97226cd5889e66c1686"
+          },
+          "arm64_sonoma": {
+            "cellar": ":any",
+            "url": "https://ghcr.io/v2/homebrew/core/icu4c/78/blobs/sha256:e15b43778ccf194d2ebef8122ff654899825df30aa339ad39578c66500eaa6d8",
+            "sha256": "e15b43778ccf194d2ebef8122ff654899825df30aa339ad39578c66500eaa6d8"
+          }
+        }
+      },
+      {
+        "receipt": {
+          "url": "https://formulae.brew.sh/api/formula/krb5.json",
+          "status": 200,
+          "bytes": 4354,
+          "sha256": "1a52133dff8b3a5c52d12f2482afa78bdbd07246da59c7d0b2873c9d1e40b827"
+        },
+        "name": "krb5",
+        "version": "1.22.2",
+        "revision": 0,
+        "license": "BSD-2-Clause AND BSD-2-Clause-first-lines AND BSD-3-Clause AND BSD-4-Clause AND Brian-Gladman-2-Clause AND CMU-Mach-nodoc AND FSFULLRWD AND HPND AND HPND-export2-US AND HPND-export-US AND HPND-export-US-acknowledgement AND HPND-export-US-modify AND ISC AND MIT AND MIT-CMU AND OLDAP-2.8 AND OpenVision AND (BSD-2-Clause OR GPL-2.0-or-later)",
+        "dependencies": [
+          "openssl@3"
+        ],
+        "uses_from_macos": [
+          {
+            "bison": "build"
+          }
+        ],
+        "sourcePin": "c6bf5b32ffa8aea22b82a7241a2ebc6873c628cc",
+        "bottles": {
+          "arm64_tahoe": {
+            "cellar": "/opt/homebrew/Cellar",
+            "url": "https://ghcr.io/v2/homebrew/core/krb5/blobs/sha256:2968bf9d040cd58eb2933ddf03cd004d1f9abe8b19bd7f028ea8666ad47714ab",
+            "sha256": "2968bf9d040cd58eb2933ddf03cd004d1f9abe8b19bd7f028ea8666ad47714ab"
+          },
+          "arm64_sequoia": {
+            "cellar": "/opt/homebrew/Cellar",
+            "url": "https://ghcr.io/v2/homebrew/core/krb5/blobs/sha256:a9db2ba99f3e99279c4aac0277cdba955510d27f09bde6051b100e660c1a1c28",
+            "sha256": "a9db2ba99f3e99279c4aac0277cdba955510d27f09bde6051b100e660c1a1c28"
+          },
+          "arm64_sonoma": {
+            "cellar": "/opt/homebrew/Cellar",
+            "url": "https://ghcr.io/v2/homebrew/core/krb5/blobs/sha256:b63debb64f3b2d7875f0868e5cefbe3375ff635df7f0d1e4fc76f3716cdbb3a5",
+            "sha256": "b63debb64f3b2d7875f0868e5cefbe3375ff635df7f0d1e4fc76f3716cdbb3a5"
+          }
+        }
+      },
+      {
+        "receipt": {
+          "url": "https://formulae.brew.sh/api/formula/lz4.json",
+          "status": 200,
+          "bytes": 3332,
+          "sha256": "2a7c71ebafc772d6e81084cf40779cdbd32265470e9f4aed166d9148a8303388"
+        },
+        "name": "lz4",
+        "version": "1.10.0",
+        "revision": 0,
+        "license": "BSD-2-Clause",
+        "dependencies": [],
+        "uses_from_macos": [],
+        "sourcePin": "c6bf5b32ffa8aea22b82a7241a2ebc6873c628cc",
+        "bottles": {
+          "arm64_tahoe": {
+            "cellar": ":any",
+            "url": "https://ghcr.io/v2/homebrew/core/lz4/blobs/sha256:538e2d6b920b663fcad6b99c1eb294c1157ea9a35d7a50bf0c632df4f427bdf5",
+            "sha256": "538e2d6b920b663fcad6b99c1eb294c1157ea9a35d7a50bf0c632df4f427bdf5"
+          },
+          "arm64_sequoia": {
+            "cellar": ":any",
+            "url": "https://ghcr.io/v2/homebrew/core/lz4/blobs/sha256:97e9c430fd82ccaaf619accc534157e9adfe2f2742ee7c47bfc481b3660b5d3f",
+            "sha256": "97e9c430fd82ccaaf619accc534157e9adfe2f2742ee7c47bfc481b3660b5d3f"
+          },
+          "arm64_sonoma": {
+            "cellar": ":any",
+            "url": "https://ghcr.io/v2/homebrew/core/lz4/blobs/sha256:bad7f434a13146990b5a021a020583b19d0fa9b082d5b8e36b31f517d512572b",
+            "sha256": "bad7f434a13146990b5a021a020583b19d0fa9b082d5b8e36b31f517d512572b"
+          }
+        }
+      },
+      {
+        "receipt": {
+          "url": "https://formulae.brew.sh/api/formula/openssl@3.json",
+          "status": 200,
+          "bytes": 4209,
+          "sha256": "bc1d9b29189643c9d4a12577a06327dec354b95c96bd8dbeff32d3e80c37c6c9"
+        },
+        "name": "openssl@3",
+        "version": "3.6.4",
+        "revision": 0,
+        "license": "Apache-2.0",
+        "dependencies": [
+          "ca-certificates"
+        ],
+        "uses_from_macos": [],
+        "sourcePin": "c6bf5b32ffa8aea22b82a7241a2ebc6873c628cc",
+        "bottles": {
+          "arm64_tahoe": {
+            "cellar": "/opt/homebrew/Cellar",
+            "url": "https://ghcr.io/v2/homebrew/core/openssl/3/blobs/sha256:8c7dab98311d025fda379dba80eaf985af1ceca26c403c66318b3c7d43a028b9",
+            "sha256": "8c7dab98311d025fda379dba80eaf985af1ceca26c403c66318b3c7d43a028b9"
+          },
+          "arm64_sequoia": {
+            "cellar": "/opt/homebrew/Cellar",
+            "url": "https://ghcr.io/v2/homebrew/core/openssl/3/blobs/sha256:b7139450ed389be82f807daaadffa778d9c4753a3b2d8f784da1cf7383994ee2",
+            "sha256": "b7139450ed389be82f807daaadffa778d9c4753a3b2d8f784da1cf7383994ee2"
+          },
+          "arm64_sonoma": {
+            "cellar": "/opt/homebrew/Cellar",
+            "url": "https://ghcr.io/v2/homebrew/core/openssl/3/blobs/sha256:01887accd1964e9940ba516509e948eed9850d58d55cc02ca52c503435750685",
+            "sha256": "01887accd1964e9940ba516509e948eed9850d58d55cc02ca52c503435750685"
+          }
+        }
+      },
+      {
+        "receipt": {
+          "url": "https://formulae.brew.sh/api/formula/readline.json",
+          "status": 200,
+          "bytes": 4767,
+          "sha256": "8b0e6ba1857189610a628dd8a235a999c581d4364ed407a2f4c021100b22b56c"
+        },
+        "name": "readline",
+        "version": "8.3.3",
+        "revision": 0,
+        "license": "GPL-3.0-or-later",
+        "dependencies": [],
+        "uses_from_macos": [
+          "ncurses"
+        ],
+        "sourcePin": "c6bf5b32ffa8aea22b82a7241a2ebc6873c628cc",
+        "bottles": {
+          "arm64_tahoe": {
+            "cellar": ":any",
+            "url": "https://ghcr.io/v2/homebrew/core/readline/blobs/sha256:1c6234c033c83ea742d50aa45fd60821947fa800d5cadecb0a1aa045564bb7d1",
+            "sha256": "1c6234c033c83ea742d50aa45fd60821947fa800d5cadecb0a1aa045564bb7d1"
+          },
+          "arm64_sequoia": {
+            "cellar": ":any",
+            "url": "https://ghcr.io/v2/homebrew/core/readline/blobs/sha256:2e055f7b620fcbe1f809e850a23a68daa429edcf9b484b1967f9a49d89ebed8e",
+            "sha256": "2e055f7b620fcbe1f809e850a23a68daa429edcf9b484b1967f9a49d89ebed8e"
+          },
+          "arm64_sonoma": {
+            "cellar": ":any",
+            "url": "https://ghcr.io/v2/homebrew/core/readline/blobs/sha256:15440b045b3e8294c8cbb819b32ba26520ce53b18bf947166a21a38e34662d84",
+            "sha256": "15440b045b3e8294c8cbb819b32ba26520ce53b18bf947166a21a38e34662d84"
+          }
+        }
+      },
+      {
+        "receipt": {
+          "url": "https://formulae.brew.sh/api/formula/zstd.json",
+          "status": 200,
+          "bytes": 4322,
+          "sha256": "f3b5668e6d3e4ef252e0ef72518df4e21e33e069154d0a476cdc4e0d6d4243a3"
+        },
+        "name": "zstd",
+        "version": "1.5.7",
+        "revision": 1,
+        "license": "(BSD-3-Clause OR GPL-2.0-only) AND BSD-2-Clause AND MIT",
+        "dependencies": [
+          "lz4",
+          "xz"
+        ],
+        "uses_from_macos": [],
+        "sourcePin": "c6bf5b32ffa8aea22b82a7241a2ebc6873c628cc",
+        "bottles": {
+          "arm64_tahoe": {
+            "cellar": ":any",
+            "url": "https://ghcr.io/v2/homebrew/core/zstd/blobs/sha256:628a4ef53428d0078e3d76d297171ce8d0294f5ec1de3f20305e08c4dd333565",
+            "sha256": "628a4ef53428d0078e3d76d297171ce8d0294f5ec1de3f20305e08c4dd333565"
+          },
+          "arm64_sequoia": {
+            "cellar": ":any",
+            "url": "https://ghcr.io/v2/homebrew/core/zstd/blobs/sha256:d72adf48460a8384b256f88061cd7b9df4977df7fa2e0794051d427db754a565",
+            "sha256": "d72adf48460a8384b256f88061cd7b9df4977df7fa2e0794051d427db754a565"
+          },
+          "arm64_sonoma": {
+            "cellar": ":any",
+            "url": "https://ghcr.io/v2/homebrew/core/zstd/blobs/sha256:35b5150b27512a94ebaee7b4399aaa8adf42d247e6968319e4aeac3c05365281",
+            "sha256": "35b5150b27512a94ebaee7b4399aaa8adf42d247e6968319e4aeac3c05365281"
+          }
+        }
+      },
+      {
+        "receipt": {
+          "url": "https://formulae.brew.sh/api/formula/gettext.json",
+          "status": 200,
+          "bytes": 4203,
+          "sha256": "ef65ac86e293cf4d4a4f2182831018589e5d5f2ae130ff26c4d714a0ac46634d"
+        },
+        "name": "gettext",
+        "version": "1.0",
+        "revision": 0,
+        "license": "GPL-3.0-or-later AND LGPL-2.1-or-later",
+        "dependencies": [
+          "json-c",
+          "libunistring"
+        ],
+        "uses_from_macos": [
+          "curl",
+          "libxml2",
+          "ncurses"
+        ],
+        "sourcePin": "c6bf5b32ffa8aea22b82a7241a2ebc6873c628cc",
+        "bottles": {
+          "arm64_tahoe": {
+            "cellar": "/opt/homebrew/Cellar",
+            "url": "https://ghcr.io/v2/homebrew/core/gettext/blobs/sha256:2b713227e438f51d025d76df24cfa45a2b813b61718df7bb91a6cedb1091037b",
+            "sha256": "2b713227e438f51d025d76df24cfa45a2b813b61718df7bb91a6cedb1091037b"
+          },
+          "arm64_sequoia": {
+            "cellar": "/opt/homebrew/Cellar",
+            "url": "https://ghcr.io/v2/homebrew/core/gettext/blobs/sha256:dde3cd0db0d7549fadf762b901f8c548dae99e3c592a6e6d41f60e1436253e5e",
+            "sha256": "dde3cd0db0d7549fadf762b901f8c548dae99e3c592a6e6d41f60e1436253e5e"
+          },
+          "arm64_sonoma": {
+            "cellar": "/opt/homebrew/Cellar",
+            "url": "https://ghcr.io/v2/homebrew/core/gettext/blobs/sha256:d11a97db1d735fb9860a9637e72b2765ef93536851d36c8f0b5cbbc22b539c5a",
+            "sha256": "d11a97db1d735fb9860a9637e72b2765ef93536851d36c8f0b5cbbc22b539c5a"
+          }
+        }
+      },
+      {
+        "receipt": {
+          "url": "https://formulae.brew.sh/api/formula/ca-certificates.json",
+          "status": 200,
+          "bytes": 3508,
+          "sha256": "920898e1d35cdc4249bbeec799812bcc2f8768dbcbeccab44886fc324d199282"
+        },
+        "name": "ca-certificates",
+        "version": "2026-08-13",
+        "revision": 0,
+        "license": "MPL-2.0",
+        "dependencies": [],
+        "uses_from_macos": [],
+        "sourcePin": "c6bf5b32ffa8aea22b82a7241a2ebc6873c628cc",
+        "bottles": {}
+      },
+      {
+        "receipt": {
+          "url": "https://formulae.brew.sh/api/formula/xz.json",
+          "status": 200,
+          "bytes": 4169,
+          "sha256": "fd1188315427bd597112b46b583656472cacee1592cbacd6c8df25c2037a9ff0"
+        },
+        "name": "xz",
+        "version": "5.8.3",
+        "revision": 0,
+        "license": "0BSD AND GPL-2.0-or-later",
+        "dependencies": [],
+        "uses_from_macos": [],
+        "sourcePin": "c6bf5b32ffa8aea22b82a7241a2ebc6873c628cc",
+        "bottles": {
+          "arm64_tahoe": {
+            "cellar": ":any",
+            "url": "https://ghcr.io/v2/homebrew/core/xz/blobs/sha256:55c891f5d47142fe923c87df0e3343d7ef2bc7d368c67892b4ad2c80e53069d5",
+            "sha256": "55c891f5d47142fe923c87df0e3343d7ef2bc7d368c67892b4ad2c80e53069d5"
+          },
+          "arm64_sequoia": {
+            "cellar": ":any",
+            "url": "https://ghcr.io/v2/homebrew/core/xz/blobs/sha256:c4be907ac8459f8b3e764c06287cc88b79c1d5c16a2db1c0335e1facf4fd4dbe",
+            "sha256": "c4be907ac8459f8b3e764c06287cc88b79c1d5c16a2db1c0335e1facf4fd4dbe"
+          },
+          "arm64_sonoma": {
+            "cellar": ":any",
+            "url": "https://ghcr.io/v2/homebrew/core/xz/blobs/sha256:0a6e40dbeea3358a1277f347ef9b892070096a79a81cda90edfedbfe721c4ba3",
+            "sha256": "0a6e40dbeea3358a1277f347ef9b892070096a79a81cda90edfedbfe721c4ba3"
+          }
+        }
+      },
+      {
+        "receipt": {
+          "url": "https://formulae.brew.sh/api/formula/json-c.json",
+          "status": 200,
+          "bytes": 3353,
+          "sha256": "b0cc14933631dc518dab9f10f350981010f2de3d6163abe9db8a1eca5d1ae7d4"
+        },
+        "name": "json-c",
+        "version": "0.19",
+        "revision": 0,
+        "license": "MIT",
+        "dependencies": [],
+        "uses_from_macos": [],
+        "sourcePin": "c6bf5b32ffa8aea22b82a7241a2ebc6873c628cc",
+        "bottles": {
+          "arm64_tahoe": {
+            "cellar": ":any",
+            "url": "https://ghcr.io/v2/homebrew/core/json-c/blobs/sha256:f2da9c816501d9c3c0e5f883b60b3d2758b35a3995e20d541d4b029d8b35ef13",
+            "sha256": "f2da9c816501d9c3c0e5f883b60b3d2758b35a3995e20d541d4b029d8b35ef13"
+          },
+          "arm64_sequoia": {
+            "cellar": ":any",
+            "url": "https://ghcr.io/v2/homebrew/core/json-c/blobs/sha256:5624048dbb067f1a6d3784081029c3d738edeefd57188ce6724bb93d01aa53aa",
+            "sha256": "5624048dbb067f1a6d3784081029c3d738edeefd57188ce6724bb93d01aa53aa"
+          },
+          "arm64_sonoma": {
+            "cellar": ":any",
+            "url": "https://ghcr.io/v2/homebrew/core/json-c/blobs/sha256:ce9c5f6c7095110cd5c9336b9277e1845cc55bb0fc98c7550576587fd28abbb1",
+            "sha256": "ce9c5f6c7095110cd5c9336b9277e1845cc55bb0fc98c7550576587fd28abbb1"
+          }
+        }
+      },
+      {
+        "receipt": {
+          "url": "https://formulae.brew.sh/api/formula/libunistring.json",
+          "status": 200,
+          "bytes": 3717,
+          "sha256": "bd58206d4a41a303874f83ff1f1588782fd7be16422b1daec331f89a750344da"
+        },
+        "name": "libunistring",
+        "version": "1.4.2",
+        "revision": 0,
+        "license": "GPL-2.0-or-later OR LGPL-3.0-or-later",
+        "dependencies": [],
+        "uses_from_macos": [],
+        "sourcePin": "c6bf5b32ffa8aea22b82a7241a2ebc6873c628cc",
+        "bottles": {
+          "arm64_tahoe": {
+            "cellar": ":any",
+            "url": "https://ghcr.io/v2/homebrew/core/libunistring/blobs/sha256:bae6d6d8dffc573c039a850a96e36f1b7fd846abd9ccada8260b7e888b5a3646",
+            "sha256": "bae6d6d8dffc573c039a850a96e36f1b7fd846abd9ccada8260b7e888b5a3646"
+          },
+          "arm64_sequoia": {
+            "cellar": ":any",
+            "url": "https://ghcr.io/v2/homebrew/core/libunistring/blobs/sha256:463b68c92d30d845df10b1b137aa8e41a744f1ce2d2cab024dd26c766335b797",
+            "sha256": "463b68c92d30d845df10b1b137aa8e41a744f1ce2d2cab024dd26c766335b797"
+          },
+          "arm64_sonoma": {
+            "cellar": ":any",
+            "url": "https://ghcr.io/v2/homebrew/core/libunistring/blobs/sha256:dc4d4b4406a2c7032dd838ae362ecaeba114d8ac9d9daaa18f760d1d71ba3577",
+            "sha256": "dc4d4b4406a2c7032dd838ae362ecaeba114d8ac9d9daaa18f760d1d71ba3577"
+          }
+        }
+      }
+    ],
+    "archiveSizes": "not obtained; no archive request",
+    "relocation": "PostgreSQL17/krb5/OpenSSL/gettext use explicitCellar, not standalone extraction accepted"
+  },
+  "retention": "Only authored report/receipt; public source was memory-only, no temporary download directory"
+}

@@ -1,0 +1,240 @@
+{
+  "count": 17,
+  "checks": [
+    "settled actual table/strike/inline",
+    "settled raw script/event/javascript no executable DOM sinks",
+    "settled HTTPS/mail preserved but ordinary relative Markdown link absent",
+    "actual Prism1.29 JavaScript token positive",
+    "second highlight leaves marked block unchanged",
+    "actual settled diff colored lines",
+    "settled box glyph text preserved",
+    "query-string image remains image unlike Desktop",
+    "actual file image uses host media route and current session",
+    "PDF is actual lazy placeholder not qualified file download",
+    "actual video markup with no media load",
+    "actual shared raster-data positive",
+    "encoded SVG and HTML data not embedded",
+    "actual parser split javascript/raw HTML blocked with HTTPS positive",
+    "actual streaming relative link differs from settled",
+    "actual streaming raster-data positive",
+    "actual streaming encoded-SVG src removed"
+  ],
+  "failure": {
+    "name": "AssertionError",
+    "message": "The expression evaluated to a falsy value:\n\n  assert.ok(code.element.querySelector('.token'))\n",
+    "stack": "AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:\n\n  assert.ok(code.element.querySelector('.token'))\n\n    at file:///Users/alastairfraser/Documents/Codex/Agent%20Control%20Room/research/reuse-comparisons/f3-webui-renderer-fit.mjs:40:197\n    at check (file:///Users/alastairfraser/Documents/Codex/Agent%20Control%20Room/research/reuse-comparisons/f3-webui-renderer-fit.mjs:21:25)\n    at file:///Users/alastairfraser/Documents/Codex/Agent%20Control%20Room/research/reuse-comparisons/f3-webui-renderer-fit.mjs:40:130\n    at ModuleJob.run (node:internal/modules/esm/module_job:343:25)\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:681:26)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)"
+  },
+  "observations": [],
+  "warnings": [],
+  "elapsedMs": 21.461000000000013,
+  "imports": [
+    {
+      "file": "ui.js",
+      "name": "esc",
+      "sha256": "cd3c7c1715f7561b6959819938f7f03695102c21cd6fe8da170e1e8ff3b286b6"
+    },
+    {
+      "file": "ui.js",
+      "name": "_matchBacktickFenceLine",
+      "sha256": "199dc11aa4f0838e581feaf1bd876ea814825322f3753a624687ddad8c6ad2d1"
+    },
+    {
+      "file": "ui.js",
+      "name": "_isBacktickFenceClose",
+      "sha256": "3d59391aca1308f65c87d7d292abf51e5aec13e3a70257d8a7d9421b340751b9"
+    },
+    {
+      "file": "ui.js",
+      "name": "_IMAGE_EXTS",
+      "sha256": "7e543da670f44c1827375081f3dfc83f2c95a7d5fa2bb70564cd5c80723f6689"
+    },
+    {
+      "file": "ui.js",
+      "name": "_PDF_EXTS",
+      "sha256": "d1bc3fa32e94d26291f0a1043ccf1857bcad82a3232afb203d3c6d7111d69a72"
+    },
+    {
+      "file": "ui.js",
+      "name": "_HTML_EXTS",
+      "sha256": "d07a9194fcf2465d16506b44127c09cbaa6b3ab6bf7242e4221e637ef4c38d55"
+    },
+    {
+      "file": "ui.js",
+      "name": "_SVG_EXTS",
+      "sha256": "21882305ad90095b14bdfee30fc0be59666fdaecb38d82b2b6ae17f78331e31c"
+    },
+    {
+      "file": "ui.js",
+      "name": "_AUDIO_EXTS",
+      "sha256": "c1d8f30e9a0f8ba08665c34e2abb9380648ab298c2b7627e0c602958f5662df6"
+    },
+    {
+      "file": "ui.js",
+      "name": "_VIDEO_EXTS",
+      "sha256": "f8ab3675a243dcf18a5fbb74463c037c01c578447a32b1a5355245c44b062b9f"
+    },
+    {
+      "file": "ui.js",
+      "name": "_CSV_EXTS",
+      "sha256": "321ea6406ec7e621ab9d46e0d40bc7659693addeadf8accb5df8b040cbbfe1db"
+    },
+    {
+      "file": "ui.js",
+      "name": "_EXCALIDRAW_EXTS",
+      "sha256": "79378d07ceee1f3b9609aae8a6dbc49b42084fba5e22d30687a46eaa5d16e3c6"
+    },
+    {
+      "file": "ui.js",
+      "name": "MEDIA_PLAYBACK_RATES",
+      "sha256": "fcd932aaa4b1cbd441997166b9b13ed5a0c0184064651f38da9e28cd404ad833"
+    },
+    {
+      "file": "ui.js",
+      "name": "MEDIA_PLAYBACK_STORAGE_KEY",
+      "sha256": "b55aad2c4879a48c60dce7e06af82e5fd723ffa200f34a80dbd921e580268538"
+    },
+    {
+      "file": "ui.js",
+      "name": "_getStoredMediaPlaybackRate",
+      "sha256": "49d1ce418dcaf8713f49516f9f562f9ab2434a64277c29aca0c7ad319c24c581"
+    },
+    {
+      "file": "ui.js",
+      "name": "_mediaKindForName",
+      "sha256": "ec3d6510ddd39e3befc6d24ea81f28c63d525acf9bc9b370a657c9b669a56bbd"
+    },
+    {
+      "file": "ui.js",
+      "name": "_mediaSpeedControlsHtml",
+      "sha256": "bc5c96f0983c3aec49b24d019f8abe3cb24e148a7d5c94025322eb2a857fb867"
+    },
+    {
+      "file": "ui.js",
+      "name": "_mediaPlayerHtml",
+      "sha256": "3ca489c384aa857f5f22e44fda8766aa770c8d8b7d796295f5912c2258ca8e26"
+    },
+    {
+      "file": "ui.js",
+      "name": "_DATA_IMAGE_RE",
+      "sha256": "42ba1a6b03029d7bf97baaba29faf82d27670368c3b45a9e3382b2324b090c7f"
+    },
+    {
+      "file": "ui.js",
+      "name": "_DATA_IMAGE_SVG_RE",
+      "sha256": "c174df9c6d2e321a5f6a4fdea4067b3c84be67cc78057de283e1ab917834bd3e"
+    },
+    {
+      "file": "ui.js",
+      "name": "_DATA_IMAGE_MAX_LEN",
+      "sha256": "07a0668ad24d2d08abb2752d25049af85fce86c36ef67ecc4e665f3b9440847b"
+    },
+    {
+      "file": "ui.js",
+      "name": "_isSafeDataImageUri",
+      "sha256": "6f57b9702d30b3584f1b7eaecd0a52472a1f08c6b8141cfbe817709563bd870a"
+    },
+    {
+      "file": "ui.js",
+      "name": "_dataImageHtml",
+      "sha256": "8266630578ffe699b183c1e4a9f536764e478ace35dbf4532a5941b08dcf1f72"
+    },
+    {
+      "file": "ui.js",
+      "name": "_mdImageHtml",
+      "sha256": "06c2bb043f82c360c515828e7deda492eb45d8b1445314ccb3368d82552ac360"
+    },
+    {
+      "file": "ui.js",
+      "name": "_inlineMediaHtmlForRef",
+      "sha256": "523997994780cca005dccbc1ed069be9fc2234e237284c3ce0ab0f1ecbe78dab"
+    },
+    {
+      "file": "ui.js",
+      "name": "renderMd",
+      "sha256": "3e34e2bf85bf708b329ef111d09da90ef1b321fc8897a1bce412153b0f4170ac"
+    },
+    {
+      "file": "ui.js",
+      "name": "highlightCode",
+      "sha256": "399ae0757654d1836b50c520535bb70cd0f7d5bb43d2dd4d086bff52dd57d153"
+    },
+    {
+      "file": "messages.js",
+      "name": "_SMD_SAFE_URL_RE",
+      "sha256": "6fba3c8583eea2b76cbcda696c291a0fff2df57d9a4296062db1ff948456b51a"
+    },
+    {
+      "file": "messages.js",
+      "name": "_SMD_SAFE_IMG_URL_RE",
+      "sha256": "f46a11e446510203043727489586d04e88452f522b38c213bbf89dff101bfb91"
+    },
+    {
+      "file": "messages.js",
+      "name": "_smdImgSrcAllowed",
+      "sha256": "81b220b22b353dbad9d6befe5fb21a0dcf83ac668e47c9f0a3038f86fa09831a"
+    },
+    {
+      "file": "messages.js",
+      "name": "_smdLinkHref",
+      "sha256": "c6ac55a57388ac56103e5da6b932210f4801d3282fca1ee668745a6b9b73fe84"
+    },
+    {
+      "file": "messages.js",
+      "name": "_sanitizeSmdLinks",
+      "sha256": "8b7d305620d3f5aad61443daf884f333e3e69d6d3d2e09095196233514010649"
+    },
+    {
+      "file": "messages.js",
+      "name": "_MEDIA_TAIL_MAX",
+      "sha256": "dd4d42f66fd13079e4809407b72db8fe3038a72d39cfa41a5da48373d9afd96d"
+    },
+    {
+      "file": "messages.js",
+      "name": "_SMD_MEDIA_PREFIX",
+      "sha256": "a279556d9061f8b17c2fd209c1f3769a4638bb85a91d1ce50c91dda25605c9b5"
+    },
+    {
+      "file": "messages.js",
+      "name": "_smdMediaPrefixTail",
+      "sha256": "f658e229d853e4daff4173c78ea870d4a20b5a0d8fab91122a9c28aaeda87b48"
+    },
+    {
+      "file": "messages.js",
+      "name": "_smdAppendPlainText",
+      "sha256": "b7c68369d7b6ad8875baf052260f8a99fd70edf803a3714ca5fbde96c7d6a957"
+    },
+    {
+      "file": "messages.js",
+      "name": "_smdMediaWriteText",
+      "sha256": "75a1547995e98deb7e73803cf52dd023c0429af4ba1688ea9ca2161627f4f11e"
+    },
+    {
+      "file": "messages.js",
+      "name": "_smdMediaTailSet",
+      "sha256": "6f7b15d074da53628a4388c3969e7578afddff7d9d4d1a947a70f69f6ec4c7fc"
+    },
+    {
+      "file": "messages.js",
+      "name": "_smdMediaTailEntryChunk",
+      "sha256": "4ac4842d35e1d47bd479fd833eed4ee816d86309c73c9b3aa6320c3b55fc50c3"
+    },
+    {
+      "file": "messages.js",
+      "name": "_smdMediaTailSameOwner",
+      "sha256": "2dcc7d2c967c628f3df71e0fe5ec57cd55267a91810fc82ebb8bc51ab839415d"
+    },
+    {
+      "file": "messages.js",
+      "name": "_smdMediaRefHasReliableBoundary",
+      "sha256": "76d92a4b4ba339a6c7a8cb4ced763dd3390946d0e2f0f23e4932248c57ac662d"
+    },
+    {
+      "file": "messages.js",
+      "name": "_smdMediaTailFlushEntry",
+      "sha256": "a2bfd7634615990d44ab60615135551789e7012b2a2d15cbf92eb661b6f466ba"
+    },
+    {
+      "file": "messages.js",
+      "name": "_smdMediaTailFlush",
+      "sha256": "38eb189790acba8e8886981a91b2e3912b9cfcfd6292d3753ff5128a518b5609"
+    },

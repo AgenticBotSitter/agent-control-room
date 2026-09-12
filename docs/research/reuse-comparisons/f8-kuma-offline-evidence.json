@@ -1,0 +1,10 @@
+{
+  "data": "/private/tmp/cr-f8-kuma-release-OiEJq7/offline-data-BoNMHr",
+  "scope": "actual offline SQLite initialization/migrations/settings only; no daemon/listener/provider",
+  "passed": true,
+  "sqliteVersion": "3.41.1",
+  "tables": 29,
+  "checkUpdate": false,
+  "rawSetting": "false",
+  "closed": true
+}

@@ -1,0 +1,30 @@
+{
+  "scope": "actual current request/planning interfaces, synthetic data, no native/provider calls",
+  "checks": [
+    "actual initialized JSONL port excludes read recovery",
+    "actual controller excludes read recovery",
+    "resume selects exact thread but suppresses stored turns",
+    "missing known identity refused",
+    "rejected read has no pending request and close is terminal"
+  ],
+  "sources": [
+    {
+      "file": "isolated-jsonrpc.ts",
+      "sha256": "b224f9ab4bb3edb60b829cbaecad0df40a97cced5ebc9dc5d3e3865ff419b7ff"
+    },
+    {
+      "file": "isolated-controller.ts",
+      "sha256": "aebb7f498de1932b6749ce674c185e6cb74822fceaecb30fdc7054d4a881fd5d"
+    },
+    {
+      "file": "isolated-runtime.ts",
+      "sha256": "398c56e2036ddd0f4aecf1fe8964e3ff1849fcc88fd7143f46826ec3eb022aca"
+    },
+    {
+      "file": "isolated-topology.ts",
+      "sha256": "0587d7a668cf885e1f76653f7bc427321ab48a44c0c039c1218308b80f1029f4"
+    }
+  ],
+  "cleanup": "in-memory session closed; no files/processes/services created",
+  "conclusion": "Supported upstream read is absent from current qualification port; existing resume is not read-only recovery"
+}

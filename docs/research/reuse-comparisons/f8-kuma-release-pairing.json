@@ -1,0 +1,162 @@
+{
+  "scope": "public source metadata/hash comparison only; no retained source or execution",
+  "availableBytes": 148198912000,
+  "tag": "2.5.3",
+  "pin": "1f0755fb044fe08e99fccde6722062fb2bf6c8f4",
+  "old": "e4821321e559c887b14e37d9979e604b221a8945",
+  "comparison": [
+    {
+      "path": "package.json",
+      "equal": true,
+      "oldBytes": 11490,
+      "releaseBytes": 11490
+    },
+    {
+      "path": "package-lock.json",
+      "equal": false,
+      "oldBytes": 721525,
+      "releaseBytes": 721449
+    },
+    {
+      "path": "server/server.js",
+      "equal": true,
+      "oldBytes": 70153,
+      "releaseBytes": 70153
+    },
+    {
+      "path": "server/database.js",
+      "equal": false,
+      "oldBytes": 37103,
+      "releaseBytes": 37210
+    },
+    {
+      "path": "server/uptime-kuma-server.js",
+      "equal": true,
+      "oldBytes": 20944,
+      "releaseBytes": 20944
+    },
+    {
+      "path": "server/check-version.js",
+      "equal": true,
+      "oldBytes": 1870,
+      "releaseBytes": 1870
+    },
+    {
+      "path": "server/config.js",
+      "equal": true,
+      "oldBytes": 1650,
+      "releaseBytes": 1650
+    },
+    {
+      "path": "server/notification.js",
+      "equal": false,
+      "oldBytes": 14113,
+      "releaseBytes": 13831
+    }
+  ],
+  "reads": [
+    {
+      "url": "https://api.github.com/repos/louislam/uptime-kuma/git/ref/tags/2.5.3",
+      "status": 200,
+      "bytes": 347,
+      "sha256": "7172239ccf71f8252b2d7ecdd1cc6830902cae407522bf7b459df604cc411b88"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/e4821321e559c887b14e37d9979e604b221a8945/package.json",
+      "status": 200,
+      "bytes": 11490,
+      "sha256": "cb382abcefd6ddb1e51ff7b760431703ca843df1e94befae90b7b92174d2e9d9"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/1f0755fb044fe08e99fccde6722062fb2bf6c8f4/package.json",
+      "status": 200,
+      "bytes": 11490,
+      "sha256": "cb382abcefd6ddb1e51ff7b760431703ca843df1e94befae90b7b92174d2e9d9"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/e4821321e559c887b14e37d9979e604b221a8945/package-lock.json",
+      "status": 200,
+      "bytes": 721525,
+      "sha256": "13cee09231188c146aac5fe3d799b6a3ced1b68f07a43d57c8002122172e8280"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/1f0755fb044fe08e99fccde6722062fb2bf6c8f4/package-lock.json",
+      "status": 200,
+      "bytes": 721449,
+      "sha256": "b2dab7d5ac30439698c48dee39a2a2deb56cc9519b3e6c6e204dd92e9aaf5d6c"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/e4821321e559c887b14e37d9979e604b221a8945/server/server.js",
+      "status": 200,
+      "bytes": 70153,
+      "sha256": "161b4379770ab0940181a2d6c8196f2e68de7b4399750f14a142a022dfd64da0"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/1f0755fb044fe08e99fccde6722062fb2bf6c8f4/server/server.js",
+      "status": 200,
+      "bytes": 70153,
+      "sha256": "161b4379770ab0940181a2d6c8196f2e68de7b4399750f14a142a022dfd64da0"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/e4821321e559c887b14e37d9979e604b221a8945/server/database.js",
+      "status": 200,
+      "bytes": 37103,
+      "sha256": "a155d869e9540fd34955b56634acc6ca0ef17b2a7f01c6ae8e31d5b21481bba6"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/1f0755fb044fe08e99fccde6722062fb2bf6c8f4/server/database.js",
+      "status": 200,
+      "bytes": 37210,
+      "sha256": "2da326c5abf52e5bbd95360cf174333624b2c2a0c69c6e2bff408d47fca7af81"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/e4821321e559c887b14e37d9979e604b221a8945/server/uptime-kuma-server.js",
+      "status": 200,
+      "bytes": 20944,
+      "sha256": "1d4934f23c141df3c560624008e2d4c73c8e47c4080e94e2c19129d4b9a75980"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/1f0755fb044fe08e99fccde6722062fb2bf6c8f4/server/uptime-kuma-server.js",
+      "status": 200,
+      "bytes": 20944,
+      "sha256": "1d4934f23c141df3c560624008e2d4c73c8e47c4080e94e2c19129d4b9a75980"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/e4821321e559c887b14e37d9979e604b221a8945/server/check-version.js",
+      "status": 200,
+      "bytes": 1870,
+      "sha256": "b8af6d22b2aed54c21de0f977442c33101367e966d5b508c415cad5a3f26011e"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/1f0755fb044fe08e99fccde6722062fb2bf6c8f4/server/check-version.js",
+      "status": 200,
+      "bytes": 1870,
+      "sha256": "b8af6d22b2aed54c21de0f977442c33101367e966d5b508c415cad5a3f26011e"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/e4821321e559c887b14e37d9979e604b221a8945/server/config.js",
+      "status": 200,
+      "bytes": 1650,
+      "sha256": "cbe5f46555f9f83b565af0b783d02f79915b8b094f47414a0a898ce0c9b99b65"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/1f0755fb044fe08e99fccde6722062fb2bf6c8f4/server/config.js",
+      "status": 200,
+      "bytes": 1650,
+      "sha256": "cbe5f46555f9f83b565af0b783d02f79915b8b094f47414a0a898ce0c9b99b65"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/e4821321e559c887b14e37d9979e604b221a8945/server/notification.js",
+      "status": 200,
+      "bytes": 14113,
+      "sha256": "231d909f7596e60b03fe92dfa340809da66572d9c3d91787c7d7ad81a3932f12"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/louislam/uptime-kuma/1f0755fb044fe08e99fccde6722062fb2bf6c8f4/server/notification.js",
+      "status": 200,
+      "bytes": 13831,
+      "sha256": "d8a3a44468b00d80bcfc6737ab40834d31f6cf0b0d472ee7a8488d6e8044cc02"
+    }
+  ],
+  "totalBytes": 1757792
+}

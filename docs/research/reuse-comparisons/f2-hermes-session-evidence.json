@@ -1,0 +1,196 @@
+{
+  "command": "sterile-python -I -B f2-hermes-session-fit.py <owned>",
+  "harnessSha256": "0a1b97452b2b2f397ea6a322b24a212bdcc2960c9a72c7a46f915a7459c6f77d",
+  "firstRun": {
+    "exitCode": 0,
+    "caseCount": 12,
+    "readout": "Full JSON not retained because initial tool output limit truncated it; this identical capture is the evidence below."
+  },
+  "actualStdout": "{\n  \"cases\": [\n    {\n      \"name\": \"known-session-relative\",\n      \"actual\": {\n        \"status\": 200,\n        \"body\": \"correct project A artifact\",\n        \"sha256\": \"5158991fb1d0d5c7054b3c280e72bbd61ccb661ade6b3dc218d6dc84bfbab6b6\",\n        \"headers\": {\n          \"content-type\": \"text/plain; charset=utf-8\",\n          \"accept-ranges\": \"bytes\",\n          \"content-disposition\": \"attachment; filename=\\\"report.txt\\\"\",\n          \"content-length\": \"26\",\n          \"last-modified\": \"Tue, 08 Sep 2026 23:36:59 GMT\",\n          \"etag\": \"\\\"75d3186a0d682edb5115461b65849d47\\\"\"\n        }\n      },\n      \"resolverCalls\": 1\n    },\n    {\n      \"name\": \"second-valid-session-same-name\",\n      \"actual\": {\n        \"status\": 200,\n        \"body\": \"other project B artifact\",\n        \"sha256\": \"b2c521b9af4a64207c370fe7cf443fe0795304bf34ee1e0aaba78188f511a737\",\n        \"headers\": {\n          \"content-type\": \"text/plain; charset=utf-8\",\n          \"accept-ranges\": \"bytes\",\n          \"content-disposition\": \"attachment; filename=\\\"report.txt\\\"\",\n          \"content-length\": \"24\",\n          \"last-modified\": \"Tue, 08 Sep 2026 23:36:59 GMT\",\n          \"etag\": \"\\\"2bcde66f6df0fa659df335e4460a630c\\\"\"\n        }\n      },\n      \"resolverCalls\": 1\n    },\n    {\n      \"name\": \"known-session-absolute\",\n      \"actual\": {\n        \"status\": 200,\n        \"body\": \"correct project A artifact\",\n        \"sha256\": \"5158991fb1d0d5c7054b3c280e72bbd61ccb661ade6b3dc218d6dc84bfbab6b6\",\n        \"headers\": {\n          \"content-type\": \"text/plain; charset=utf-8\",\n          \"accept-ranges\": \"bytes\",\n          \"content-disposition\": \"attachment; filename=\\\"report.txt\\\"\",\n          \"content-length\": \"26\",\n          \"last-modified\": \"Tue, 08 Sep 2026 23:36:59 GMT\",\n          \"etag\": \"\\\"75d3186a0d682edb5115461b65849d47\\\"\"\n        }\n      },\n      \"resolverCalls\": 1\n    },\n    {\n      \"name\": \"known-session-file-uri\",\n      \"actual\": {\n        \"status\": 200,\n        \"body\": \"correct project A artifact\",\n        \"sha256\": \"5158991fb1d0d5c7054b3c280e72bbd61ccb661ade6b3dc218d6dc84bfbab6b6\",\n        \"headers\": {\n          \"content-type\": \"text/plain; charset=utf-8\",\n          \"accept-ranges\": \"bytes\",\n          \"content-disposition\": \"attachment; filename=\\\"report.txt\\\"\",\n          \"content-length\": \"26\",\n          \"last-modified\": \"Tue, 08 Sep 2026 23:36:59 GMT\",\n          \"etag\": \"\\\"75d3186a0d682edb5115461b65849d47\\\"\"\n        }\n      },\n      \"resolverCalls\": 1\n    },\n    {\n      \"name\": \"wrong-profile-even-absolute\",\n      \"actual\": {\n        \"status\": 404,\n        \"detail\": \"Session not found\"\n      },\n      \"resolverCalls\": 1\n    },\n    {\n      \"name\": \"unknown-session\",\n      \"actual\": {\n        \"status\": 404,\n        \"detail\": \"Session not found\"\n      },\n      \"resolverCalls\": 1\n    },\n    {\n      \"name\": \"empty-session\",\n      \"actual\": {\n        \"status\": 404,\n        \"detail\": \"Session not found\"\n      },\n      \"resolverCalls\": 0\n    },\n    {\n      \"name\": \"parent-reaches-other-project\",\n      \"actual\": {\n        \"status\": 200,\n        \"body\": \"other project B artifact\",\n        \"sha256\": \"b2c521b9af4a64207c370fe7cf443fe0795304bf34ee1e0aaba78188f511a737\",\n        \"headers\": {\n          \"content-type\": \"text/plain; charset=utf-8\",\n          \"accept-ranges\": \"bytes\",\n          \"content-disposition\": \"attachment; filename=\\\"report.txt\\\"\",\n          \"content-length\": \"24\",\n          \"last-modified\": \"Tue, 08 Sep 2026 23:36:59 GMT\",\n          \"etag\": \"\\\"2bcde66f6df0fa659df335e4460a630c\\\"\"\n        }\n      },\n      \"resolverCalls\": 1\n    },\n    {\n      \"name\": \"absolute-reaches-other-project\",\n      \"actual\": {\n        \"status\": 200,\n        \"body\": \"other project B artifact\",\n        \"sha256\": \"b2c521b9af4a64207c370fe7cf443fe0795304bf34ee1e0aaba78188f511a737\",\n        \"headers\": {\n          \"content-type\": \"text/plain; charset=utf-8\",\n          \"accept-ranges\": \"bytes\",\n          \"content-disposition\": \"attachment; filename=\\\"report.txt\\\"\",\n          \"content-length\": \"24\",\n          \"last-modified\": \"Tue, 08 Sep 2026 23:36:59 GMT\",\n          \"etag\": \"\\\"2bcde66f6df0fa659df335e4460a630c\\\"\"\n        }\n      },\n      \"resolverCalls\": 1\n    },\n    {\n      \"name\": \"sensitive-name-refused\",\n      \"actual\": {\n        \"status\": 403,\n        \"detail\": \"Access to sensitive files is not allowed\"\n      },\n      \"resolverCalls\": 1\n    },\n    {\n      \"name\": \"changed-after-handler-before-response-stream\",\n      \"actual\": {\n        \"status\": 200,\n        \"body\": \"replacement after handler validation\",\n        \"sha256\": \"1ec98b76ae34e280f51d2a3b8b47fb7123b924b8c8e72b49fdd24bdb190916bb\",\n        \"headers\": {\n          \"content-type\": \"text/plain; charset=utf-8\",\n          \"accept-ranges\": \"bytes\",\n          \"content-disposition\": \"attachment; filename=\\\"report.txt\\\"\",\n          \"content-length\": \"36\",\n          \"last-modified\": \"Tue, 08 Sep 2026 23:36:59 GMT\",\n          \"etag\": \"\\\"ae64efb68bc8dccce169bf448877a5ba\\\"\"\n        }\n      }\n    },\n    {\n      \"name\": \"changed-between-downloads\",\n      \"actual\": {\n        \"status\": 200,\n        \"body\": \"third version on next download\",\n        \"sha256\": \"089398a0d332f6093cd3953e722786c2c6391296e655d9973b907d11138e520c\",\n        \"headers\": {\n          \"content-type\": \"text/plain; charset=utf-8\",\n          \"accept-ranges\": \"bytes\",\n          \"content-disposition\": \"attachment; filename=\\\"report.txt\\\"\",\n          \"content-length\": \"30\",\n          \"last-modified\": \"Tue, 08 Sep 2026 23:36:59 GMT\",\n          \"etag\": \"\\\"d78e4cf5582eefa8e9250f52d1939cb6\\\"\"\n        }\n      },\n      \"resolverCalls\": 1\n    }\n  ],\n  \"caseCount\": 12,\n  \"verifiedInstalledFiles\": 314,\n  \"sourcesUnmodified\": true,\n  \"scope\": \"actual handler and FileResponse ASGI bytes; synthetic session resolver; no router/auth dispatch or CR admission\",\n  \"substitutions\": [\n    \"get_session_detail uses two synthetic session/profile tuples and owned cwd paths\",\n    \"local ASGI scope/send sink/receive guard instead of HTTP server\"\n  ],\n  \"frameworkVersions\": {\n    \"fastapi\": \"0.133.1\",\n    \"starlette\": \"1.3.1\",\n    \"pydantic\": \"2.13.4\"\n  },\n  \"elapsedSeconds\": 0.023278709006262943\n}\n",
+  "exitCode": 0,
+  "parsed": {
+    "cases": [
+      {
+        "name": "known-session-relative",
+        "actual": {
+          "status": 200,
+          "body": "correct project A artifact",
+          "sha256": "5158991fb1d0d5c7054b3c280e72bbd61ccb661ade6b3dc218d6dc84bfbab6b6",
+          "headers": {
+            "content-type": "text/plain; charset=utf-8",
+            "accept-ranges": "bytes",
+            "content-disposition": "attachment; filename=\"report.txt\"",
+            "content-length": "26",
+            "last-modified": "Tue, 08 Sep 2026 23:36:59 GMT",
+            "etag": "\"75d3186a0d682edb5115461b65849d47\""
+          }
+        },
+        "resolverCalls": 1
+      },
+      {
+        "name": "second-valid-session-same-name",
+        "actual": {
+          "status": 200,
+          "body": "other project B artifact",
+          "sha256": "b2c521b9af4a64207c370fe7cf443fe0795304bf34ee1e0aaba78188f511a737",
+          "headers": {
+            "content-type": "text/plain; charset=utf-8",
+            "accept-ranges": "bytes",
+            "content-disposition": "attachment; filename=\"report.txt\"",
+            "content-length": "24",
+            "last-modified": "Tue, 08 Sep 2026 23:36:59 GMT",
+            "etag": "\"2bcde66f6df0fa659df335e4460a630c\""
+          }
+        },
+        "resolverCalls": 1
+      },
+      {
+        "name": "known-session-absolute",
+        "actual": {
+          "status": 200,
+          "body": "correct project A artifact",
+          "sha256": "5158991fb1d0d5c7054b3c280e72bbd61ccb661ade6b3dc218d6dc84bfbab6b6",
+          "headers": {
+            "content-type": "text/plain; charset=utf-8",
+            "accept-ranges": "bytes",
+            "content-disposition": "attachment; filename=\"report.txt\"",
+            "content-length": "26",
+            "last-modified": "Tue, 08 Sep 2026 23:36:59 GMT",
+            "etag": "\"75d3186a0d682edb5115461b65849d47\""
+          }
+        },
+        "resolverCalls": 1
+      },
+      {
+        "name": "known-session-file-uri",
+        "actual": {
+          "status": 200,
+          "body": "correct project A artifact",
+          "sha256": "5158991fb1d0d5c7054b3c280e72bbd61ccb661ade6b3dc218d6dc84bfbab6b6",
+          "headers": {
+            "content-type": "text/plain; charset=utf-8",
+            "accept-ranges": "bytes",
+            "content-disposition": "attachment; filename=\"report.txt\"",
+            "content-length": "26",
+            "last-modified": "Tue, 08 Sep 2026 23:36:59 GMT",
+            "etag": "\"75d3186a0d682edb5115461b65849d47\""
+          }
+        },
+        "resolverCalls": 1
+      },
+      {
+        "name": "wrong-profile-even-absolute",
+        "actual": {
+          "status": 404,
+          "detail": "Session not found"
+        },
+        "resolverCalls": 1
+      },
+      {
+        "name": "unknown-session",
+        "actual": {
+          "status": 404,
+          "detail": "Session not found"
+        },
+        "resolverCalls": 1
+      },
+      {
+        "name": "empty-session",
+        "actual": {
+          "status": 404,
+          "detail": "Session not found"
+        },
+        "resolverCalls": 0
+      },
+      {
+        "name": "parent-reaches-other-project",
+        "actual": {
+          "status": 200,
+          "body": "other project B artifact",
+          "sha256": "b2c521b9af4a64207c370fe7cf443fe0795304bf34ee1e0aaba78188f511a737",
+          "headers": {
+            "content-type": "text/plain; charset=utf-8",
+            "accept-ranges": "bytes",
+            "content-disposition": "attachment; filename=\"report.txt\"",
+            "content-length": "24",
+            "last-modified": "Tue, 08 Sep 2026 23:36:59 GMT",
+            "etag": "\"2bcde66f6df0fa659df335e4460a630c\""
+          }
+        },
+        "resolverCalls": 1
+      },
+      {
+        "name": "absolute-reaches-other-project",
+        "actual": {
+          "status": 200,
+          "body": "other project B artifact",
+          "sha256": "b2c521b9af4a64207c370fe7cf443fe0795304bf34ee1e0aaba78188f511a737",
+          "headers": {
+            "content-type": "text/plain; charset=utf-8",
+            "accept-ranges": "bytes",
+            "content-disposition": "attachment; filename=\"report.txt\"",
+            "content-length": "24",
+            "last-modified": "Tue, 08 Sep 2026 23:36:59 GMT",
+            "etag": "\"2bcde66f6df0fa659df335e4460a630c\""
+          }
+        },
+        "resolverCalls": 1
+      },
+      {
+        "name": "sensitive-name-refused",
+        "actual": {
+          "status": 403,
+          "detail": "Access to sensitive files is not allowed"
+        },
+        "resolverCalls": 1
+      },
+      {
+        "name": "changed-after-handler-before-response-stream",
+        "actual": {
+          "status": 200,
+          "body": "replacement after handler validation",
+          "sha256": "1ec98b76ae34e280f51d2a3b8b47fb7123b924b8c8e72b49fdd24bdb190916bb",
+          "headers": {
+            "content-type": "text/plain; charset=utf-8",
+            "accept-ranges": "bytes",
+            "content-disposition": "attachment; filename=\"report.txt\"",
+            "content-length": "36",
+            "last-modified": "Tue, 08 Sep 2026 23:36:59 GMT",
+            "etag": "\"ae64efb68bc8dccce169bf448877a5ba\""
+          }
+        }
+      },
+      {
+        "name": "changed-between-downloads",
+        "actual": {
+          "status": 200,
+          "body": "third version on next download",
+          "sha256": "089398a0d332f6093cd3953e722786c2c6391296e655d9973b907d11138e520c",
+          "headers": {
+            "content-type": "text/plain; charset=utf-8",
+            "accept-ranges": "bytes",
+            "content-disposition": "attachment; filename=\"report.txt\"",
+            "content-length": "30",
+            "last-modified": "Tue, 08 Sep 2026 23:36:59 GMT",
+            "etag": "\"d78e4cf5582eefa8e9250f52d1939cb6\""
+          }
+        },
+        "resolverCalls": 1
+      }
+    ],
+    "caseCount": 12,
+    "verifiedInstalledFiles": 314,
+    "sourcesUnmodified": true,
+    "scope": "actual handler and FileResponse ASGI bytes; synthetic session resolver; no router/auth dispatch or CR admission",
+    "substitutions": [
+      "get_session_detail uses two synthetic session/profile tuples and owned cwd paths",
+      "local ASGI scope/send sink/receive guard instead of HTTP server"
+    ],
+    "frameworkVersions": {
+      "fastapi": "0.133.1",
+      "starlette": "1.3.1",
+      "pydantic": "2.13.4"
+    },
+    "elapsedSeconds": 0.023278709006262943
+  }
+}

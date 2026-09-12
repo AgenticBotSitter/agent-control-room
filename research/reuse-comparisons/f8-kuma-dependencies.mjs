@@ -1,0 +1,27 @@
+import fs from 'node:fs/promises';
+import {execFileSync,spawn} from 'node:child_process';
+import {join,dirname} from 'node:path';
+import {createHash} from 'node:crypto';
+const root='/private/tmp/cr-f8-kuma-release-OiEJq7';
+const inspection=JSON.parse(await fs.readFile(join(root,'inspection.json'),'utf8'));
+const source=join(inspection.run,'uptime-kuma-1f0755fb044fe08e99fccde6722062fb2bf6c8f4');
+const freeBytes=Number(execFileSync('/bin/df',['-k','.'],{encoding:'utf8'}).trim().split('\n').at(-1).split(/\s+/)[3])*1024;
+if(freeBytes<20*1024**3)throw Error('storage floor');
+const lock=await fs.readFile(join(source,'package-lock.json'));
+if(createHash('sha256').update(lock).digest('hex')!=='b2dab7d5ac30439698c48dee39a2a2deb56cc9519b3e6c6e204dd92e9aaf5d6c')throw Error('lock mismatch');
+await fs.mkdir(join(root,'npm-home'));await fs.mkdir(join(root,'npm-cache'));
+for(const name of ['user.npmrc','global.npmrc'])await fs.writeFile(join(root,name),'',{flag:'wx'});
+const args=['ci','--ignore-scripts','--omit=dev','--omit=optional','--no-audit','--no-fund','--fetch-retries=0','--fetch-timeout=15000',
+ '--cache',join(root,'npm-cache'),'--userconfig',join(root,'user.npmrc'),'--globalconfig',join(root,'global.npmrc')];
+const receipt={root,source,freeBytes,args,lockSha256:createHash('sha256').update(lock).digest('hex'),status:'planned',scope:'script-disabled dependency preparation only; no addon load/daemon'};
+const save=()=>fs.writeFile(join(root,'dependencies.json'),JSON.stringify(receipt,null,2));await save();
+const child=spawn(join(dirname(process.execPath),'npm'),args,{cwd:source,env:{PATH:dirname(process.execPath)+':/usr/bin:/bin',HOME:join(root,'npm-home'),TMPDIR:root,CI:'true'},stdio:['ignore','pipe','pipe']});
+let output='',reason,killTimer;
+const stop=why=>{if(reason)return;reason=why;child.kill('SIGTERM');killTimer=setTimeout(()=>child.kill('SIGKILL'),2000);};
+for(const stream of [child.stdout,child.stderr])stream.on('data',b=>{output+=b;if(output.length>65536)stop('output cap');});
+const timer=setTimeout(()=>stop('60s deadline'),60000);
+const monitor=setInterval(()=>{if(Number(execFileSync('/usr/bin/du',['-sk',root],{encoding:'utf8'}).split(/\s+/)[0])>512000)stop('500MiB cap');},1000);
+const terminal=await new Promise((resolve,reject)=>{child.on('exit',(code,signal)=>resolve({code,signal}));child.on('error',reject);});
+clearTimeout(timer);clearInterval(monitor);clearTimeout(killTimer);
+Object.assign(receipt,{terminal,reason,output,allocatedKiB:Number(execFileSync('/usr/bin/du',['-sk',root],{encoding:'utf8'}).split(/\s+/)[0]),status:'terminal'});
+await save();console.log(JSON.stringify(receipt,null,2));if(terminal.code!==0||reason)process.exitCode=1;

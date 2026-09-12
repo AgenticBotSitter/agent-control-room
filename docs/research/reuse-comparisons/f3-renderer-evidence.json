@@ -1,0 +1,56 @@
+{
+  "checks": [
+    "actual GFM table/strike/inline and no executable script",
+    "unsafe link invokes no runtime port or preview",
+    "HTTPS/relative actual preview dispatch; mailto synthetic port",
+    "actual lazy Prism renders token positive",
+    "copy passes exact code to synthetic clipboard port",
+    "actual diff classes",
+    "box remains plain after highlighter positive",
+    "long initially collapsed",
+    "same message streaming retains expansion",
+    "negative finding separate message same source offset inherits expansion",
+    "actual direct img src; no native read",
+    "actual lightbox portal",
+    "actual Escape hook closes portal",
+    "nonimage uses actual download chip synthetic save",
+    "local read starts via synthetic port",
+    "new local request acknowledged",
+    "late prior markdown media response does not restore image",
+    "current media response renders",
+    "negative finding query-string image becomes download chip",
+    "negative standalone same component direct source update retains old resolved src"
+  ],
+  "count": 20,
+  "failure": null,
+  "elapsedMs": 271.75712500000003,
+  "calls": [
+    [
+      "external",
+      "mailto:test@example.invalid"
+    ],
+    [
+      "copy",
+      "const answer = 42;"
+    ],
+    [
+      "save",
+      "/fixture/report.pdf",
+      "report.pdf"
+    ],
+    [
+      "read",
+      "/fixture/old.png"
+    ],
+    [
+      "read",
+      "/fixture/new.png"
+    ]
+  ],
+  "previewEvents": [
+    "https://example.invalid/a",
+    "/path"
+  ],
+  "cleanup": "both roots unmounted, copy timers cleared, DOM closed",
+  "scope": "actual selected renderer and media bodies; synthetic ports and translation/icons, JSDOM no browser layout/resources"
+}

@@ -1,0 +1,23 @@
+{
+  "revision": "553df1c691fe8bf7747e50da22f1342984495ae0",
+  "mode": "memory-only source reads; no execution",
+  "sourcePrefix": "https://raw.githubusercontent.com/openai/codex/553df1c691fe8bf7747e50da22f1342984495ae0/",
+  "requestDeadlineMs": 15000,
+  "responseCount": 12,
+  "responseBodyBytes": 542121,
+  "retainedSourceBytes": 0,
+  "cleanup": "No temporary root created; no source bytes retained",
+  "responses": [
+    {"url":"https://api.github.com/repos/openai/codex/contents/sdk/python/src/openai_codex?ref=553df1c691fe8bf7747e50da22f1342984495ae0","status":200,"bytes":19918,"sha256":"6a209eb64b95942449f153d9c559e412f60201acd401b898f8c974b08400fb48","count":1},
+    {"path":"sdk/python/src/openai_codex/async_client.py","status":200,"bytes":14803,"sha256":"03ff8ce0f6de0b838ab4c48da90734e616e9acba037b4786a400d74837bad964","count":2},
+    {"path":"sdk/python/src/openai_codex/_message_router.py","status":200,"bytes":11855,"sha256":"69a3cca523c833c92bc9c99337399f6f450e45f41822ef3f051c15e0fb9fe7be","count":1},
+    {"path":"sdk/python/src/openai_codex/client.py","status":200,"bytes":30896,"sha256":"76bdb1e63c62987c3530ea763e9655a06b308cbc4e18cb51958e85b6c23aec3b","count":2},
+    {"path":"sdk/python/src/openai_codex/generated/v2_all.py","status":200,"bytes":326654,"sha256":"03eefef8398b4adc29995d88c04a22b9bb5ee210e3ecfed69fd41aeb2cc72941","count":1},
+    {"path":"codex-rs/app-server/src/request_processors/thread_lifecycle.rs","status":200,"bytes":33700,"sha256":"2c7c8e10662e509cfc735f320ef46070ba544046130303a5c755a071fd638384","count":2},
+    {"path":"sdk/python/tests/test_async_client.py","status":404,"bytes":14,"sha256":"d5558cd419c8d46bdc958064cb97f963d1ea793866414c025906ec15033512ed","count":1},
+    {"url":"https://api.github.com/repos/openai/codex/contents/sdk/python/tests?ref=553df1c691fe8bf7747e50da22f1342984495ae0","status":200,"bytes":21030,"sha256":"aeb8cfb01adfc6ecfc57195aca5e5ead112140efba3724acf4c61dfa0603a969","count":1},
+    {"path":"sdk/python/tests/test_async_client_behavior.py","status":200,"bytes":3852,"sha256":"1d7c4db9c8b15333291269e92b3263238e4ae6dfaef6816cef888af01374fc79","count":1}
+  ],
+  "officialDocumentation": "https://learn.chatgpt.com/docs/app-server",
+  "documentationBytes": "Tool-managed retrieval, not measured in raw source ledger"
+}

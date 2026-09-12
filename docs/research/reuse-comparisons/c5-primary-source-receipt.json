@@ -1,0 +1,260 @@
+{
+  "baseline": "d87af13",
+  "date": "2026-09-08",
+  "scope": "Memory-only public source; no installs or candidate execution",
+  "pins": {
+    "openclaw": "c41d3410d2809d54245eefd6a18844daeccd323b",
+    "cli": "8e02f6ddce21f4c2585d2be501651c1d6b16246a",
+    "python": "f1315c69a74db1c15fed2e5974918495d90b7d57",
+    "typescript": "969e1d552badd4f9f9eeda236f523d51c09c0a8d"
+  },
+  "records": [
+    {
+      "url": "https://raw.githubusercontent.com/openclaw/openclaw/c41d3410d2809d54245eefd6a18844daeccd323b/LICENSE",
+      "status": 200,
+      "bytes": 1170,
+      "sha256": "73571b25326281d369087f469842c02444fe39faaecebda4d82ed21ff3a1c29d",
+      "reads": 1
+    },
+    {
+      "url": "https://raw.githubusercontent.com/openclaw/openclaw/c41d3410d2809d54245eefd6a18844daeccd323b/package.json",
+      "status": 200,
+      "bytes": 136174,
+      "sha256": "eb0442e16e79c65958174bd04f6f57f68b7bc07c9e86980a36be7ad826bee3d9",
+      "reads": 2
+    },
+    {
+      "url": "https://raw.githubusercontent.com/openclaw/openclaw/c41d3410d2809d54245eefd6a18844daeccd323b/src/gateway/server-methods/agent.ts",
+      "status": 200,
+      "bytes": 353,
+      "sha256": "67ba71e2ce1ae4b934da377424888c84a200f62f6549b3737db373bb8bd14f54",
+      "reads": 1
+    },
+    {
+      "url": "https://raw.githubusercontent.com/openclaw/openclaw/c41d3410d2809d54245eefd6a18844daeccd323b/src/gateway/server-methods/chat.ts",
+      "status": 200,
+      "bytes": 6456,
+      "sha256": "f9af82c01a4fdfe01c4bd8bceacef5e8c60b467199be7f037226c6c90b95f3cd",
+      "reads": 1
+    },
+    {
+      "url": "https://raw.githubusercontent.com/openclaw/openclaw/c41d3410d2809d54245eefd6a18844daeccd323b/src/gateway/server-methods/agent-run-handler.ts",
+      "status": 200,
+      "bytes": 1586,
+      "sha256": "3fe8935d205f4a3185e45583acd87cf4615f17aedc76f5eb2dabecdc7deda650",
+      "reads": 1
+    },
+    {
+      "url": "https://raw.githubusercontent.com/openclaw/openclaw/c41d3410d2809d54245eefd6a18844daeccd323b/src/gateway/server-methods/agent-wait.ts",
+      "status": 200,
+      "bytes": 1782,
+      "sha256": "0e7a9199eb0eea4578f5fe4b833b9bf46c4f1d7704935f9547ea8774303aea38",
+      "reads": 1
+    },
+    {
+      "url": "https://raw.githubusercontent.com/openclaw/openclaw/c41d3410d2809d54245eefd6a18844daeccd323b/src/gateway/server-methods/agent.test.ts",
+      "status": 200,
+      "bytes": 538,
+      "sha256": "11103e920b28980c7ad6d65f7f01991c63bb3240aa8b167b1eb8829bdf996ebb",
+      "reads": 1
+    },
+    {
+      "url": "https://raw.githubusercontent.com/openclaw/openclaw/c41d3410d2809d54245eefd6a18844daeccd323b/src/gateway/server-methods/agent-wait.test.ts",
+      "status": 404,
+      "bytes": 14,
+      "sha256": "d5558cd419c8d46bdc958064cb97f963d1ea793866414c025906ec15033512ed",
+      "reads": 1
+    },
+    {
+      "url": "https://raw.githubusercontent.com/openclaw/openclaw/c41d3410d2809d54245eefd6a18844daeccd323b/THIRD_PARTY_NOTICES.md",
+      "status": 200,
+      "bytes": 2855,
+      "sha256": "c1d1bbc550feee74853eba104e347341569cbbbe37a9f77659993ca0766277d5",
+      "reads": 1
+    },
+    {
+      "url": "https://raw.githubusercontent.com/openclaw/openclaw/c41d3410d2809d54245eefd6a18844daeccd323b/src/gateway/agent-turn/agent-turn-service.ts",
+      "status": 200,
+      "bytes": 25667,
+      "sha256": "6fd09c5c6a465dd2915ba89b3129e06f783c985878da18bdc9d1d2c53927c0fa",
+      "reads": 1
+    },
+    {
+      "url": "https://raw.githubusercontent.com/openclaw/openclaw/c41d3410d2809d54245eefd6a18844daeccd323b/src/gateway/server-methods/agent.base.test-utils.ts",
+      "status": 200,
+      "bytes": 61903,
+      "sha256": "7e8c6515fb5c0515a4a32b8cd8546b43c4036970e453162746944324ac3d97f0",
+      "reads": 2
+    },
+    {
+      "url": "https://raw.githubusercontent.com/openclaw/openclaw/c41d3410d2809d54245eefd6a18844daeccd323b/src/gateway/server-methods/agent.abort-integration.test-utils.ts",
+      "status": 200,
+      "bytes": 90439,
+      "sha256": "fcd9f97da5700b6b6ee029f4580fb34217b59869dc504a56095c3c912e718d46",
+      "reads": 1
+    },
+    {
+      "url": "https://raw.githubusercontent.com/openclaw/openclaw/c41d3410d2809d54245eefd6a18844daeccd323b/src/gateway/agent-turn/agent-dedupe.ts",
+      "status": 200,
+      "bytes": 5799,
+      "sha256": "8c74565de331d9611025d5252501f46211fd67ced9257b458ebfdd59af4009cf",
+      "reads": 1
+    },
+    {
+      "url": "https://raw.githubusercontent.com/anthropics/claude-code/8e02f6ddce21f4c2585d2be501651c1d6b16246a/LICENSE.md",
+      "status": 200,
+      "bytes": 150,
+      "sha256": "728158fd1037143fad6907e8fa34804177e598b7326519503fe83cafdef849e6",
+      "reads": 2
+    },
+    {
+      "url": "https://raw.githubusercontent.com/anthropics/claude-agent-sdk-typescript/969e1d552badd4f9f9eeda236f523d51c09c0a8d/LICENSE.md",
+      "status": 200,
+      "bytes": 150,
+      "sha256": "728158fd1037143fad6907e8fa34804177e598b7326519503fe83cafdef849e6",
+      "reads": 2
+    },
+    {
+      "url": "https://raw.githubusercontent.com/anthropics/claude-agent-sdk-typescript/969e1d552badd4f9f9eeda236f523d51c09c0a8d/README.md",
+      "status": 200,
+      "bytes": 2502,
+      "sha256": "d7f8965afea6198e0448bb8a3f3e0806d4dd6cfb3696cab21b1ee36faaef2065",
+      "reads": 2
+    },
+    {
+      "url": "https://raw.githubusercontent.com/anthropics/claude-agent-sdk-python/f1315c69a74db1c15fed2e5974918495d90b7d57/LICENSE",
+      "status": 200,
+      "bytes": 1070,
+      "sha256": "cebdde8a8fb9ee59e5eaaed19578bf8085aa7047562259c31f38f225c26f6812",
+      "reads": 2
+    },
+    {
+      "url": "https://raw.githubusercontent.com/anthropics/claude-agent-sdk-python/f1315c69a74db1c15fed2e5974918495d90b7d57/pyproject.toml",
+      "status": 200,
+      "bytes": 3786,
+      "sha256": "00bcff397a21f835b90a8ca9c1765250b47b46e85346ebcecdbd344e3bb4693a",
+      "reads": 2
+    },
+    {
+      "url": "https://raw.githubusercontent.com/anthropics/claude-agent-sdk-python/f1315c69a74db1c15fed2e5974918495d90b7d57/src/claude_agent_sdk/_version.py",
+      "status": 200,
+      "bytes": 73,
+      "sha256": "e4f9b359a3a754c73eadb3beea9ce80f2239029dd6f85d0bd73402cc46a494e4",
+      "reads": 2
+    },
+    {
+      "url": "https://raw.githubusercontent.com/anthropics/claude-agent-sdk-python/f1315c69a74db1c15fed2e5974918495d90b7d57/src/claude_agent_sdk/_internal/query.py",
+      "status": 200,
+      "bytes": 45284,
+      "sha256": "c24f24ac2cb45a7debd3ba8fb945c65ffca7f1414ee0fb37a49fc500e1afcb8c",
+      "reads": 2
+    },
+    {
+      "url": "https://raw.githubusercontent.com/anthropics/claude-agent-sdk-python/f1315c69a74db1c15fed2e5974918495d90b7d57/src/claude_agent_sdk/_internal/transport/subprocess_cli.py",
+      "status": 200,
+      "bytes": 53357,
+      "sha256": "748227e42cb9802d7316fabc836428d69bd219b63ef1b2f9f8f7a86a72a03e45",
+      "reads": 1
+    },
+    {
+      "url": "https://raw.githubusercontent.com/anthropics/claude-agent-sdk-python/f1315c69a74db1c15fed2e5974918495d90b7d57/tests/test_close_cancellation.py",
+      "status": 200,
+      "bytes": 7637,
+      "sha256": "8f0d3266f6d01ada50d04cdea381c2e3988251f7fbdf9c4e17d26bee14689d9a",
+      "reads": 1
+    },
+    {
+      "url": "https://api.github.com/repos/openclaw/openclaw/commits?per_page=1",
+      "status": 200,
+      "bytes": 4746,
+      "sha256": "7f57e44b08c7d3942ebed2a2e52851a014c64bade8770dafc1a9771992ef0770",
+      "reads": 1,
+      "resolvedPin": "c41d3410d2809d54245eefd6a18844daeccd323b"
+    },
+    {
+      "url": "https://api.github.com/repos/anthropics/claude-code/commits?per_page=1",
+      "status": 200,
+      "bytes": 3392,
+      "sha256": "39b91bd02b459dc4c6c7ff6ba612fad49628c1d9be0b888157cb32ed434c3ea0",
+      "reads": 1,
+      "resolvedPin": "8e02f6ddce21f4c2585d2be501651c1d6b16246a"
+    },
+    {
+      "url": "https://api.github.com/repos/anthropics/claude-agent-sdk-python/commits?per_page=1",
+      "status": 200,
+      "bytes": 3479,
+      "sha256": "9f316352ab83042cd29b7fe7dfbf4a134e944bc45ccd97832f0bb44eb4bcd783",
+      "reads": 1,
+      "resolvedPin": "f1315c69a74db1c15fed2e5974918495d90b7d57"
+    },
+    {
+      "url": "https://api.github.com/repos/anthropics/claude-agent-sdk-typescript/commits?per_page=1",
+      "status": 200,
+      "bytes": 3491,
+      "sha256": "6c654a61072efb387a50f6544ec189cfb6f51d316f6159d15d7d49c8fc35b132",
+      "reads": 1,
+      "resolvedPin": "969e1d552badd4f9f9eeda236f523d51c09c0a8d"
+    },
+    {
+      "url": "https://api.github.com/repos/anthropics/claude-code/git/trees/8e02f6ddce21f4c2585d2be501651c1d6b16246a?recursive=1",
+      "status": 200,
+      "bytes": 84135,
+      "sha256": "083918f1e5c60273ca39beb29f8c1c5765b1b8ab3456318794a09572c1e80fea",
+      "reads": 1,
+      "truncated": false
+    },
+    {
+      "url": "https://api.github.com/repos/anthropics/claude-agent-sdk-python/git/trees/f1315c69a74db1c15fed2e5974918495d90b7d57?recursive=1",
+      "status": 200,
+      "bytes": 43010,
+      "sha256": "74f8a9a0ce87a2e130cb972e5e3bec3f5c9b64a5bbe4c3a89322043b94279eea",
+      "reads": 1,
+      "truncated": false
+    },
+    {
+      "url": "https://api.github.com/repos/anthropics/claude-agent-sdk-typescript/git/trees/969e1d552badd4f9f9eeda236f523d51c09c0a8d?recursive=1",
+      "status": 200,
+      "bytes": 13225,
+      "sha256": "5f511d54f96138189d133d911c88997657182ef39b69e68b1471e0c54e1ebe14",
+      "reads": 1,
+      "truncated": false
+    },
+    {
+      "url": "https://registry.npmjs.org/@anthropic-ai%2fclaude-code/latest",
+      "status": 200,
+      "bytes": 3272,
+      "sha256": "df13bdf430e2193e779df44e981a6df0475a3a6fd7eb9a64d5552064eb26fa41",
+      "reads": 1,
+      "resolvedVersion": "2.1.265"
+    },
+    {
+      "url": "https://registry.npmjs.org/@anthropic-ai%2fclaude-agent-sdk/latest",
+      "status": 200,
+      "bytes": 3818,
+      "sha256": "5e7e54deeef6e50a3de6891711fc6c4011918b3f2eeb2bfb2071a05a45693b45",
+      "reads": 1,
+      "resolvedVersion": "0.3.265"
+    }
+  ],
+  "completedResponseBytesIncludingRepeatedReads": 862405,
+  "failures": [
+    {
+      "url": "https://api.github.com/repos/openclaw/openclaw/commits?per_page=1",
+      "failure": "sandbox DNS ENOTFOUND",
+      "responseBytes": 0
+    },
+    {
+      "url": "https://api.github.com/repos/openclaw/openclaw/git/trees/c41d3410d2809d54245eefd6a18844daeccd323b?recursive=1",
+      "failure": "stream stopped when accumulated bytes exceeded 2500000; entire body not consumed, no retry",
+      "bytes": null,
+      "sha256": null,
+      "limitation": "Crossing-chunk byte count was not printed before throw, so exact total acquisition bytes cannot be reconstructed. Per-request timeout 15000ms; selected requests subsequently used 100000-180000 byte limits. No complete tree or source retained."
+    }
+  ],
+  "cleanup": "All candidate bytes existed only in bounded reader process memory; all commands exited. No temporary files or services created.",
+  "limitations": [
+    "Source excerpts and focused tests read, not full repository audit.",
+    "Several initial tool outputs truncated; selected files fetched again and reads counts retained.",
+    "5MiB authorization: completed response byte total is exact; oversized interrupted response partial length is unknown beyond 2500000. Do not claim an exact aggregate byte measurement."
+  ]
+}

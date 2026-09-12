@@ -1,0 +1,19 @@
+{
+  "scope": "actual result panel with one research JSX substitution; real Markdown/GFM and byte checker; synthetic props, JSDOM not live auth/browser",
+  "sourceSha256": "59113ba094fa61be716ae75f88573c3d07658e2cdb9eb1d784e871edcbf9ab4b",
+  "checks": [
+    "GFM heading table and disabled checklist inside actual protected panel",
+    "exact code text retained without highlighter dependency",
+    "existing authority warning and canonical artifact ID retained",
+    "raw HTML omitted and Markdown image makes no resource element",
+    "only explicit HTTPS navigation emitted",
+    "prose cannot create review commands",
+    "switch clears previous text and identity",
+    "existing empty result state preserved",
+    "large bounded result renders",
+    "close only calls supplied view callback",
+    "parent removing authorized content clears rendered body"
+  ],
+  "elapsedMs": 610.4247920000001,
+  "cleanup": "React root unmounted and DOM closed; no network/process/provider/clipboard/media calls"
+}

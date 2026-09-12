@@ -177,3 +177,19 @@ Thus there is a viable candidate setup path without altering Kuma code. Remainin
 decisions are exact release pairing, acceptable native binary provenance and
 reviewed full dependency/startup closure under the 500 MiB allowance. Full daemon
 execution remains pending, not rejected, and no full monitoring acceptance follows.
+
+**Later source pairing resolution:** `f8-kuma-release-pairing.md` resolves the
+actual2.5.3 tag to1f0755fb044fe08e99fccde6722062fb2bf6c8f4. Five inspected backend
+files match the screening pin; database/notification/lock differences are retained.
+Use exact release source/lock with its matching dist, not mixed screening source.
+Native-addon setup and actual daemon evidence remain pending.
+
+**Archive/native metadata inspection completed:** matching source/dist plus the
+official SQLite release archive are now retained in the logged owned cohort.
+See `f8-kuma-package-acquisition.json` and `f8-kuma-package-inspection.json`.
+Validated extraction found a Mach-O ARM64 addon linked only to libc++/libSystem.
+Strict code-signature verification passes, but subsequent codesign display shows
+`Signature=adhoc`, `TeamIdentifier=not set`: integrity is not publisher identity.
+The first observed native archive hash is recorded, not mislabeled as a published
+checksum. This narrows compatibility/provenance uncertainty without executing
+the addon. No npm runtime closure, offline initialization or daemon is qualified.

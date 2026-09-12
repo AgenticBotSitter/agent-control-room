@@ -4,6 +4,144 @@
 all-outcomes implementation plan or permission to implement or deploy candidates.
 All26 outcome-level gates remain tracked separately in the comparison index.
 
+## DR-17 — conditional upstream native interfaces and separate attachments
+
+Root accepts `f2-native-direction.md` after independent compare_ui challenge.
+Use upstream Hermes structured run/session/download interfaces through existing
+adapters; retain final-text receipts and separately admit bounded attachments.
+No Hermes fork, copied router or new SSH/file-transfer engine. Export scope and
+actual project/run/attempt association remain mandatory.
+
+For Codex, select official App Server protocol through current bounded TypeScript
+transport as the initial route, not the qualification runtime as finished recovery.
+A separate reviewed exact-thread/turn read operation is required; qualification
+permissions remain unchanged. Resume/new input is not read-only recovery. Unknown
+usage/identity and early-completion ordering remain unresolved. No blind retries.
+
+The independent challenge accepts this practical integration choice while preserving
+the Python SDK as a viable typed-interface alternative; no lifecycle or cost winner
+is proven. Reopen if supported SDK adaptation removes more required custom work or
+the chosen route fails acceptance. Full lifecycle/host/common-candidate tests remain
+unfinished. No provider, credential, native process or application change occurred.
+
+## DR-16 — conditional dedicated owner-agent signing route
+
+Root accepts `f5-signing-direction.md` after independent compare_ui challenge.
+Target dedicated owner-controlled OpenSSH-agent-compatible Ed25519 custody with
+maintained ssh2 protocol support behind E56/E57/E58's bounded signer, paired issuer
+and exact review. No ambient endpoint discovery, login/node key reuse, agent
+forwarding or web-server private-key storage. No actual custody is established.
+
+The reviewed interface condition is mandatory: high-level OpenSSHAgent.sign owns
+an internal stream without exposing E56's required close/cancel handle. Do not
+promise unchanged composition; demonstrate owned transport lifetime or reopen the
+route. Synthetic protocol/issuer tests are not native endpoint or consent evidence.
+Mac/Linux first qualification and separate Windows endpoint/permission mapping remain
+required. Explicit transaction-review signers remain viable alternatives, not proven
+inferior. Platform comparison, native cancellation, key/pin provisioning, trusted
+consent and recovery remain unfinished. No real key or service was touched.
+
+## DR-15 — conditional etcd independent checkpoint
+
+Root accepts `f5-checkpoint-direction.md` after independent compare_ui challenge.
+Retain the existing etcd adapter as the single checkpoint integration target.
+Actual service/adapter binding evidence supports continuity; OpenBao's narrower
+delete/recreate permissions remain a meaningful alternative, not a failed candidate.
+No measured superiority or complete common-candidate comparison is claimed.
+
+The reviewer found no contradiction with CR8B's fail-closed contract provided the
+mandatory independent placement, trusted pins and owner recovery remain intact.
+Etcd runtime READWRITE permits deletion: missing state must refuse, never recreate
+or accept a rolled-back database. Independence is required, not already established.
+Sharing the protected database's rollback domain or runtime replacement of trusted
+pins would fail acceptance. Do not weaken these requirements to retain this choice.
+
+Supported restore, split commits, transport authentication, common adapter comparison
+and exact target release/notices remain open. Reopen on failed requirements or a
+required deletion-prevention model. No production custody, endpoint or role changed.
+
+## DR-14 — conditional Kuma monitoring; optional Beszel metrics
+
+Root accepts `f8-monitoring-direction.md` after independent compare_ui challenge.
+Use separately managed Kuma for reachability/notifications. Beszel is the optional
+host-metrics integration target, disabled until actual runtime fit and need justify
+the added hub/agents. Existing adequate operator-managed host monitoring is a viable
+lower-installation alternative; no claim that both services are required for MVP.
+
+Retain exact CR health/task authority. Reuse upstream monitoring/history/notification
+machinery, not a custom engine or copied full UI. Kuma has executed condition and
+offline database evidence; Beszel has source evidence only. Full daemon alerts,
+restart/persistence, protected readiness mapping, Beszel runtime and host permissions,
+actual resource cost, supported release and complete notices remain unperformed
+acceptance/comparison work. No production service or credential configured.
+
+This settles integration targets conditionally, not RC9 closure or an empirical
+whole-product winner. Reopen for failed capability, host/resource incompatibility,
+or a proven simpler existing monitoring arrangement. The earlier pinned source
+reports and negative/missing evidence remain authoritative at their stated scope.
+
+## DR-13 — conditionally retain pg-boss as the sole work engine
+
+Root accepts `f1-engine-direction.md` following independent compare_ui challenge.
+Retain pg-boss12.30.0 at the existing submission/worker boundary; no competing queue
+or workflow engine is selected. Actual CR integration, joined canonical review and
+fresh-process result retrieval support this implementation direction. They do not
+prove production readiness, lower measured cost or superior recovery.
+
+DBOS4.27.6 passes the same short-phase comparison and remains a viable alternative.
+Hatchet's inspected public/outbox route remains viable but unexecuted; its additional
+remote receipt/expiry mapping is not a demonstrated failure. No required advantage
+currently warrants replacing the tested existing interface. Custom queue internals
+are not justified. Retain canonical authority regardless of engine.
+
+This is a conditional component choice under incomplete evidence, comparable to
+DR-10—not completion of exhaustive RC1 evaluation. Keep all outstanding canonical
+admission/duplicate, uncertain start, worker crash, drain/restart, occurrence and
+PG17-role gates; preserve unperformed Hatchet comparative cases. Reopen on a failed
+required acceptance test or a concrete workflow requirement that changes the tradeoff.
+The independent challenge accepted this distinction; no experiment or failed gate
+was waived. No production code, dependency, service or deployment changed.
+
+## DR-12 — optional Herdr session observation
+
+Select the evaluated Herdr v0.9.0 pane-list interface for optional, operator-managed
+advisory session observations behind the retained Control Room project model.
+Do not replace native execution, canonical task/result authority or add a generic
+socket proxy. No custom multiplexer or terminal scraping is justified for this view.
+
+Root accepts the narrow direction in `remaining-decision-closeout.md`, supported
+by the actual eight-check binary receipt and five source tests documented in
+`../HERDR_ADAPTER_EVALUATION.md`. The independent compare_ui challenge found no
+material blocker to this conditional direction. Its executable-identity finding
+is accepted: the current prototype accepts an absolute binary path but does not
+enforce its version/hash. Approved source enrollment must bind the executable
+identity/version, not assume the historical test pin verifies future executions.
+
+Project authorization, revocation of cached visibility, approved source/workspace
+mapping, metadata minimization and stale-generation handling remain mandatory
+mount acceptance tests. Opaque hashes are not authorization. Same-account upstream
+socket access includes mutating operations, so a read-only wrapper alone does not
+establish privilege separation. Windows, SSH and real-agent integration remain
+unqualified. Operator-managed installation is not permission to bundle the binary:
+native/Zig dependency and full notice closure remains required for redistribution.
+
+Retain current job/result UI; full Hermes WebUI/Desktop embedding is not shown to
+remove equivalent observation work. These UI donors remain viable for presentation,
+not falsely rejected by an unperformed discovery benchmark. No production lines
+removed or dependency/service installed. Integration cost remains unmeasured.
+Reopen on inadequate project/host isolation, incompatible upstream pane interface,
+or an approved interactive-control requirement. This settles component direction,
+not production acceptance or all RC2/RC3 responsibilities.
+
+## DR-11 — maintained Markdown/GFM in the existing result panel
+
+Select react-markdown10.1.0 and remark-gfm4.0.1 with a minimal CR navigation/resource
+adapter, retained result/review authority and plain-text fallback. Actual11-check
+panel comparison and independent challenge support this narrow choice. See
+`f3-minimal-selection.md` for alternatives, rubric/unknowns and review disposition.
+Attachments/media, complete transcript and actual protected-parent/browser gates
+remain implementation responsibilities; no whole-renderer or RC3 completion claim.
+
 ## DR-10 — maintained node-postgres at the existing database port
 
 Conditionally select node-postgres8.23.0 for implementation, retaining the actual

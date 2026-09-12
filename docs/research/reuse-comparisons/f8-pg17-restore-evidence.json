@@ -1,0 +1,143 @@
+[
+  {
+    "stage": "inventory",
+    "migrations": 64,
+    "inventorySha256": "128c04d81b4a23b5269225aa3c6a2f434ab3b7c618ef25914ba094b21111762c"
+  },
+  {
+    "stage": "preflight-query",
+    "database": "fixture_source",
+    "querySha256": "bf5450404f9e72042f69b7bc31c465bcb07c92474f7278430fac6d45364b0a7e",
+    "rows": [
+      {
+        "valid": true,
+        "database_temp": false
+      }
+    ]
+  },
+  {
+    "stage": "preflight-query",
+    "database": "fixture_source",
+    "querySha256": "24514f4ff3ce6310fb8e5d6232447a05591c089f6700e21ee2b8439a3258e159",
+    "rows": [
+      {
+        "rolname": "control_room_private_web",
+        "valid": true
+      },
+      {
+        "rolname": "fixture_web",
+        "valid": true
+      }
+    ]
+  },
+  {
+    "stage": "preflight-query",
+    "database": "fixture_source",
+    "querySha256": "f5272f48dbdb95dcf9dcfb9c9372d51c7dd427d7423409ace0a3384602870cc0",
+    "rows": [
+      {
+        "unsafe": false
+      }
+    ]
+  },
+  {
+    "stage": "schema-fingerprint",
+    "database": "fixture_source",
+    "digest": "f3431786139ea22bd6f50f5fe06cf518540a469bd49f7222fc8362dffdb7edba"
+  },
+  {
+    "stage": "preflight-query",
+    "database": "fixture_source",
+    "querySha256": "7aa059b5b097fded8ddce21511704fd6c8eacc650f7334d8f8d48c886ae72291",
+    "rows": [
+      {
+        "valid": true
+      }
+    ]
+  },
+  {
+    "stage": "source-preflight-and-project",
+    "passed": true
+  },
+  {
+    "stage": "preflight-query",
+    "database": "fixture_restore",
+    "querySha256": "bf5450404f9e72042f69b7bc31c465bcb07c92474f7278430fac6d45364b0a7e",
+    "rows": [
+      {
+        "valid": true,
+        "database_temp": false
+      }
+    ]
+  },
+  {
+    "stage": "preflight-query",
+    "database": "fixture_restore",
+    "querySha256": "24514f4ff3ce6310fb8e5d6232447a05591c089f6700e21ee2b8439a3258e159",
+    "rows": [
+      {
+        "rolname": "control_room_private_web",
+        "valid": true
+      },
+      {
+        "rolname": "fixture_web",
+        "valid": true
+      }
+    ]
+  },
+  {
+    "stage": "preflight-query",
+    "database": "fixture_restore",
+    "querySha256": "f5272f48dbdb95dcf9dcfb9c9372d51c7dd427d7423409ace0a3384602870cc0",
+    "rows": [
+      {
+        "unsafe": false
+      }
+    ]
+  },
+  {
+    "stage": "schema-fingerprint",
+    "database": "fixture_restore",
+    "digest": "e56870af68cbc06ff07be73fd04588fb7875ab22bc4c65b02f8785b0591e6d5b"
+  },
+  {
+    "stage": "schema-differences",
+    "count": 1,
+    "differences": [
+      {
+        "kind": "constraint",
+        "name": "control_connection_enrollment_protocol_deliveries.control_connection_enrollment_protocol_delive_delivery_id_check",
+        "before": "[\"CHECK ((((char_length(delivery_id) >= 3) AND (char_length(delivery_id) <= 160)) AND (delivery_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]*$'::text)))\", true]",
+        "after": "[\"CHECK (((char_length(delivery_id) >= 3) AND (char_length(delivery_id) <= 160) AND (delivery_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]*$'::text)))\", true]"
+      }
+    ]
+  },
+  {
+    "stage": "restored-preflight",
+    "passed": false,
+    "message": "private_database_preflight_failed"
+  },
+  {
+    "stage": "whole-db-restore",
+    "passed": false,
+    "tables": 145,
+    "populatedTables": 11,
+    "rowsOwnershipRelationAclEqual": true,
+    "restrictedPreflight": false,
+    "projectReadable": true,
+    "forbiddenOperationsRefused": 4,
+    "archiveBytes": 699638,
+    "archiveSha256": "34e6a18072f350315048e6dc484c26c814a6bcc349569818838778d7932c0283",
+    "artifactBytesVerified": true,
+    "missingTamperedRejected": true,
+    "scope": "website-only full schema with synthetic owner/project; artifact digest in project summary, not native-result manifest; no agent/task-authoring role qualification"
+  },
+  {
+    "failed": true,
+    "message": "restored safety gate remains an implementation blocker\n\nfalse !== true\n"
+  },
+  {
+    "cleanup": true,
+    "clusterStopped": true
+  }
+]

@@ -1,5 +1,12 @@
 # F1 first comparison checkpoint — not a queue selection decision
 
+**Latest status:** The setup failures below are historical, preserved evidence.
+Owner-approved hydration and disposable PostgreSQL transaction/client tests have
+since succeeded; see `f1-postgres-transaction-fit.md`, `f1-dbos-recovery-fit.md`
+and `f1-postgres-review.md`. Actual public worker pickup and durable review wait
+are now exercised in `f1-dbos-worker-fit.md`. Current Hatchet v1 inspection is in
+`f1-hatchet-seam.md` / `f1-hatchet-review.md`. No final queue selection is implied.
+
 2026-09-08. Existing pg-boss 12.30.0 baseline remains installed. This experiment
 does not replace it, run workers or qualify an external effect. F1 remains open.
 

@@ -1,0 +1,130 @@
+{
+  "pin": "e168b67e4278df618d1cab61fdb3a8dc55b29a81",
+  "mode": "memory-only source read; no candidate execution/install",
+  "reads": [
+    {
+      "url": "https://api.github.com/repos/nesquena/hermes-webui/git/trees/e168b67e4278df618d1cab61fdb3a8dc55b29a81?recursive=1",
+      "status": 200,
+      "bytes": 486937,
+      "sha256": "10866fa0259efeb998b6900459838e84e76deaa02b92e646d03da05417b91326"
+    },
+    {
+      "path": "static/sessions.js",
+      "url": "https://raw.githubusercontent.com/nesquena/hermes-webui/e168b67e4278df618d1cab61fdb3a8dc55b29a81/static/sessions.js",
+      "status": 200,
+      "bytes": 447250,
+      "sha256": "598be491bc0a4309d6cacfc04b7b15a0aec192569e7098f2a8cc68c835bfbcb3"
+    },
+    {
+      "path": "package.json",
+      "url": "https://raw.githubusercontent.com/nesquena/hermes-webui/e168b67e4278df618d1cab61fdb3a8dc55b29a81/package.json",
+      "status": 200,
+      "bytes": 622,
+      "sha256": "c3f1c2ac7a5a3a151759adcc5cc5ed617204770687a3b6d97c369d46e347b926"
+    },
+    {
+      "path": "templates/index.html",
+      "url": "https://raw.githubusercontent.com/nesquena/hermes-webui/e168b67e4278df618d1cab61fdb3a8dc55b29a81/templates/index.html",
+      "status": 404,
+      "bytes": 14,
+      "sha256": "d5558cd419c8d46bdc958064cb97f963d1ea793866414c025906ec15033512ed"
+    },
+    {
+      "path": "static/utils.js",
+      "url": "https://raw.githubusercontent.com/nesquena/hermes-webui/e168b67e4278df618d1cab61fdb3a8dc55b29a81/static/utils.js",
+      "status": 404,
+      "bytes": 14,
+      "sha256": "d5558cd419c8d46bdc958064cb97f963d1ea793866414c025906ec15033512ed"
+    },
+    {
+      "url": "https://api.github.com/repos/nesquena/hermes-webui/git/trees/e168b67e4278df618d1cab61fdb3a8dc55b29a81?recursive=1",
+      "status": 200,
+      "bytes": 486937,
+      "sha256": "10866fa0259efeb998b6900459838e84e76deaa02b92e646d03da05417b91326"
+    },
+    {
+      "path": "static/messages.js",
+      "url": "https://raw.githubusercontent.com/nesquena/hermes-webui/e168b67e4278df618d1cab61fdb3a8dc55b29a81/static/messages.js",
+      "status": 200,
+      "bytes": 444895,
+      "sha256": "fe5a91948a80e716937cd9fe47bdaa0b08b75a7c108f6b30f973c90183773bce"
+    },
+    {
+      "path": "static/index.html",
+      "url": "https://raw.githubusercontent.com/nesquena/hermes-webui/e168b67e4278df618d1cab61fdb3a8dc55b29a81/static/index.html",
+      "status": 200,
+      "bytes": 221617,
+      "sha256": "4850e0f609c56ef5619dcb023f95398224b053fcca6b1125d4f8a2923f9b2a3c"
+    },
+    {
+      "path": "static/ui.js",
+      "url": "https://raw.githubusercontent.com/nesquena/hermes-webui/e168b67e4278df618d1cab61fdb3a8dc55b29a81/static/ui.js",
+      "status": 200,
+      "bytes": 1044888,
+      "sha256": "b44cea72661e8db93b3b184a49eb3a18ab675b2abcab765cc9a908012869c5f3"
+    },
+    {
+      "path": "static/ui.js",
+      "url": "https://raw.githubusercontent.com/nesquena/hermes-webui/e168b67e4278df618d1cab61fdb3a8dc55b29a81/static/ui.js",
+      "status": 200,
+      "bytes": 1044888,
+      "sha256": "b44cea72661e8db93b3b184a49eb3a18ab675b2abcab765cc9a908012869c5f3"
+    },
+    {
+      "path": "static/messages.js",
+      "url": "https://raw.githubusercontent.com/nesquena/hermes-webui/e168b67e4278df618d1cab61fdb3a8dc55b29a81/static/messages.js",
+      "status": 200,
+      "bytes": 444895,
+      "sha256": "fe5a91948a80e716937cd9fe47bdaa0b08b75a7c108f6b30f973c90183773bce"
+    },
+    {
+      "path": "tests/test_issue6209_data_image_renderer.py",
+      "url": "https://raw.githubusercontent.com/nesquena/hermes-webui/e168b67e4278df618d1cab61fdb3a8dc55b29a81/tests/test_issue6209_data_image_renderer.py",
+      "status": 200,
+      "bytes": 5510,
+      "sha256": "19300f610f663e4f698ffc3e8cd999a92a952663113f1845714319a7f877be67"
+    },
+    {
+      "path": "tests/test_issue_code_syntax_highlight.py",
+      "url": "https://raw.githubusercontent.com/nesquena/hermes-webui/e168b67e4278df618d1cab61fdb3a8dc55b29a81/tests/test_issue_code_syntax_highlight.py",
+      "status": 200,
+      "bytes": 1079,
+      "sha256": "36279d091807cd3544976c78d4bb7a39347c22b12f4c2322a5c9102ac8120674"
+    },
+    {
+      "path": "LICENSE",
+      "url": "https://raw.githubusercontent.com/nesquena/hermes-webui/e168b67e4278df618d1cab61fdb3a8dc55b29a81/LICENSE",
+      "status": 200,
+      "bytes": 1083,
+      "sha256": "ad6b89c03f01d83966cb8bff66986090abc9ae3a3a7fff710a7501c233d7d4bf"
+    },
+    {
+      "path": "package.json",
+      "url": "https://raw.githubusercontent.com/nesquena/hermes-webui/e168b67e4278df618d1cab61fdb3a8dc55b29a81/package.json",
+      "status": 200,
+      "bytes": 622,
+      "sha256": "c3f1c2ac7a5a3a151759adcc5cc5ed617204770687a3b6d97c369d46e347b926"
+    },
+    {
+      "path": "static/vendor/smd.min.js",
+      "url": "https://raw.githubusercontent.com/nesquena/hermes-webui/e168b67e4278df618d1cab61fdb3a8dc55b29a81/static/vendor/smd.min.js",
+      "status": 200,
+      "bytes": 12586,
+      "sha256": "20c0a39e6ec48b99e2f505f8488d2342fb3000d03523a7ced6cd94c14b15e8c5",
+      "sha384": "T6r95ocN9t3W8tUK2Fa6FPaO7bJryyjyW0WCalrUnpgtm2qXr5xcN4vwPYEJ6vHa"
+    },
+    {
+      "path": "tests/test_renderer_js_behaviour.py",
+      "url": "https://raw.githubusercontent.com/nesquena/hermes-webui/e168b67e4278df618d1cab61fdb3a8dc55b29a81/tests/test_renderer_js_behaviour.py",
+      "status": 200,
+      "bytes": 35516,
+      "sha256": "9c1763aa49710c3e0ae30788ad7c6d324848b623e128296f01972ea43112541f",
+      "sha384": "yVZYUOmrWmM/Z6bDrCvN7nE/jDDa1uiX/8nEEhJY5jt4mUizxYv2RV+DR5RzFRQE"
+    }
+  ],
+  "bytes": 4679353,
+  "status": "bounded source inspection complete; actual runtime/helper-license closure incomplete",
+  "limitBytes": 4718592,
+  "adjustment": "Root approved additional1.5MiB after original3MiB limit; same pin and source-only scope",
+  "retention": "Only authored receipt/report retained; no upstream files/install/temp roots"
+}

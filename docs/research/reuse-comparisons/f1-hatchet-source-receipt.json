@@ -1,0 +1,156 @@
+{
+  "pin": "4be0bdc7b96c33579f134d859960d4345035cd40",
+  "records": [
+    {
+      "url": "https://api.github.com/repos/hatchet-dev/hatchet/git/trees/4be0bdc7b96c33579f134d859960d4345035cd40?recursive=1",
+      "status": 200,
+      "bytes": 1540172,
+      "sha256": "d2b483fce886e2105905b13b4d02da10e292ce79ea239ca6cea7e9b5efddc04f"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/hatchet-dev/hatchet/4be0bdc7b96c33579f134d859960d4345035cd40/sdks/typescript/src/v1/client/admin.ts",
+      "status": 200,
+      "bytes": 15308,
+      "sha256": "6c6536a19be4783ac1db650b2743e464d45633b75f4cd8100371ca0b36fbca4a"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/hatchet-dev/hatchet/4be0bdc7b96c33579f134d859960d4345035cd40/sdks/typescript/src/v1/client/client.ts",
+      "status": 200,
+      "bytes": 24281,
+      "sha256": "e4a9aa8faadd33af653e08f77bc76c99fa6286b859c5bbb05df8805d41a9f3db"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/hatchet-dev/hatchet/4be0bdc7b96c33579f134d859960d4345035cd40/sdks/typescript/src/v1/client/admin.test.ts",
+      "status": 200,
+      "bytes": 5864,
+      "sha256": "407322f2c65c91dfa2acb5de425f1540bcb3e945e38fc73fb07da476a41b40ee"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/hatchet-dev/hatchet/4be0bdc7b96c33579f134d859960d4345035cd40/sdks/typescript/src/v1/task.ts",
+      "status": 200,
+      "bytes": 12712,
+      "sha256": "c734bbd76de050ddd843e80416cc4057207bb83aa7ca8c12225bafbef82c917f"
+    },
+    {
+      "url": "https://api.github.com/repos/hatchet-dev/hatchet/git/trees/4be0bdc7b96c33579f134d859960d4345035cd40?recursive=1",
+      "status": 200,
+      "bytes": 1540172,
+      "sha256": "d2b483fce886e2105905b13b4d02da10e292ce79ea239ca6cea7e9b5efddc04f"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/hatchet-dev/hatchet/4be0bdc7b96c33579f134d859960d4345035cd40/sdks/typescript/src/v1/client/admin.ts",
+      "status": 200,
+      "bytes": 15308,
+      "sha256": "6c6536a19be4783ac1db650b2743e464d45633b75f4cd8100371ca0b36fbca4a"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/hatchet-dev/hatchet/4be0bdc7b96c33579f134d859960d4345035cd40/sdks/typescript/src/v1/client/client.ts",
+      "status": 200,
+      "bytes": 24281,
+      "sha256": "e4a9aa8faadd33af653e08f77bc76c99fa6286b859c5bbb05df8805d41a9f3db"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/hatchet-dev/hatchet/4be0bdc7b96c33579f134d859960d4345035cd40/api/v1/server/handlers/v1/workflow-runs/trigger.go",
+      "status": 200,
+      "bytes": 5040,
+      "sha256": "e9159496c696041b6131ba0dc847b51cf455373ac05ca7fa340fde3c029e6829"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/hatchet-dev/hatchet/4be0bdc7b96c33579f134d859960d4345035cd40/sdks/typescript/src/v1/examples/idempotency/idempotency.e2e.ts",
+      "status": 200,
+      "bytes": 5522,
+      "sha256": "9f4bd464b62404fc6389c4d7bb6dec9ea490fcaf9a1d99f0da10b061cca79476"
+    },
+    {
+      "url": "https://api.github.com/repos/hatchet-dev/hatchet/git/trees/4be0bdc7b96c33579f134d859960d4345035cd40?recursive=1",
+      "status": 200,
+      "bytes": 1540172,
+      "sha256": "d2b483fce886e2105905b13b4d02da10e292ce79ea239ca6cea7e9b5efddc04f"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/hatchet-dev/hatchet/4be0bdc7b96c33579f134d859960d4345035cd40/internal/services/admin/server_v1.go",
+      "status": 200,
+      "bytes": 12403,
+      "sha256": "dae4b5a4555ca32c86ae1f85277f79b75ca99339ef2582ff89711bcd6fbc9603"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/hatchet-dev/hatchet/4be0bdc7b96c33579f134d859960d4345035cd40/internal/services/admin/v1/server.go",
+      "status": 200,
+      "bytes": 44772,
+      "sha256": "7a416b1b10461cc16e5041337c86b9b0da7d9b88dc17ab2c6e3397dcc975bed2"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/hatchet-dev/hatchet/4be0bdc7b96c33579f134d859960d4345035cd40/pkg/repository/task.go",
+      "status": 200,
+      "bytes": 158841,
+      "sha256": "ab58c67f0ed06d247001f122341ea60b227868796a7fb71fed680b9c43badf3a"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/hatchet-dev/hatchet/4be0bdc7b96c33579f134d859960d4345035cd40/pkg/repository/idempotency.go",
+      "status": 200,
+      "bytes": 2342,
+      "sha256": "7be89b78a48741687aca2d66f2faec149f1e3418c28007b956b8b365fa928d6e"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/hatchet-dev/hatchet/4be0bdc7b96c33579f134d859960d4345035cd40/sdks/typescript/src/util/retrier.ts",
+      "status": 200,
+      "bytes": 1261,
+      "sha256": "a74df49d617b81979ea74c9c563b256595743bd2f9893b9a1ff77d4b27be646b"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/hatchet-dev/hatchet/4be0bdc7b96c33579f134d859960d4345035cd40/internal/services/admin/v1/server.go",
+      "status": 200,
+      "bytes": 44772,
+      "sha256": "7a416b1b10461cc16e5041337c86b9b0da7d9b88dc17ab2c6e3397dcc975bed2"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/hatchet-dev/hatchet/4be0bdc7b96c33579f134d859960d4345035cd40/internal/services/admin/server_v1.go",
+      "status": 200,
+      "bytes": 12403,
+      "sha256": "dae4b5a4555ca32c86ae1f85277f79b75ca99339ef2582ff89711bcd6fbc9603"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/hatchet-dev/hatchet/4be0bdc7b96c33579f134d859960d4345035cd40/pkg/repository/trigger.go",
+      "status": 200,
+      "bytes": 94240,
+      "sha256": "6ff553ff218ff6e413b630e16609d0ffabb9b66625c2c45deb685a2c2bba3b43"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/hatchet-dev/hatchet/4be0bdc7b96c33579f134d859960d4345035cd40/sdks/typescript/src/v1/task.ts",
+      "status": 200,
+      "bytes": 12712,
+      "sha256": "c734bbd76de050ddd843e80416cc4057207bb83aa7ca8c12225bafbef82c917f"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/hatchet-dev/hatchet/4be0bdc7b96c33579f134d859960d4345035cd40/sdks/typescript/src/v1/examples/idempotency/workflow.ts",
+      "status": 200,
+      "bytes": 1203,
+      "sha256": "ec36734c962ae505981379eaa4490165376a115561143927bc304cfa32fec585"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/hatchet-dev/hatchet/4be0bdc7b96c33579f134d859960d4345035cd40/pkg/repository/trigger.go",
+      "status": 200,
+      "bytes": 94240,
+      "sha256": "6ff553ff218ff6e413b630e16609d0ffabb9b66625c2c45deb685a2c2bba3b43"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/hatchet-dev/hatchet/4be0bdc7b96c33579f134d859960d4345035cd40/sdks/typescript/src/v1/embedded.ts",
+      "status": 200,
+      "bytes": 15074,
+      "sha256": "7c70bf7658345fa2fd57cef145782bb83b273a52bfeea4bac4e8321f813ecf69"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/hatchet-dev/hatchet/4be0bdc7b96c33579f134d859960d4345035cd40/sdks/typescript/src/v1/index.ts",
+      "status": 200,
+      "bytes": 1093,
+      "sha256": "e2f6a100311924e0d18d29ab56eccf56090726de3a1948fb69f53597a91614a5"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/hatchet-dev/hatchet/4be0bdc7b96c33579f134d859960d4345035cd40/sdks/typescript/src/v1/client/client.interface.ts",
+      "status": 200,
+      "bytes": 1076,
+      "sha256": "fc17867f213c32e0aa1193a25452b88d4b8e05856df6f326a6693e51202bc079"
+    }
+  ],
+  "treeTruncated": false
+}

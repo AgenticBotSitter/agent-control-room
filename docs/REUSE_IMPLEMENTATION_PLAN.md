@@ -23,6 +23,15 @@ Preserve canonical project/job/attempt/review IDs and private configuration.
 
 ## Settled source reuse
 
+DR-10 now conditionally selects maintained node-postgres8.23.0 at the existing
+database port; [direction and implementation scope](research/reuse-comparisons/f1-driver-selection-draft.md)
+and [review](research/reuse-comparisons/f1-driver-selection-review.md) preserve the
+alternative costs and remaining acceptance. Plain Pool.end is not sufficient;
+bounded pending/lease lifecycle composition must be implemented and race-tested.
+This supersedes the earlier driver-choice-pending paragraphs below, not their
+observations or the distinct work-engine/production gates. Do not repeat closed
+binding comparisons before attempting that concrete implementation packet.
+
 | Decision | Implement / retain | Do not import or replace | Remaining implementation acceptance |
 | --- | --- | --- | --- |
 | DR-01 | Existing fixed-panel selection loop, bounded to six participants and three rounds | Hermes dynamic planner solely to replace this loop; this does not reject Hermes execution | Existing round/budget/receipt tests plus saved discussion promotion; real participants separately qualified |
@@ -33,6 +42,11 @@ Preserve canonical project/job/attempt/review IDs and private configuration.
 | DR-06 | Current immutable task/attempt/receipt authority; Maestro routing is conditional reuse for a named notification gap | Unchanged Maestro local inbox/wake status as task acknowledgement; a new general notification framework without a required channel | Actual native lifecycle still required; future notification adoption needs ingress/digest/restart/transport fit, not wake-as-completion |
 | DR-07 | Readability0.6.0 + jsdom26.1.0 as the default bounded extraction primitive; retain existing collection | Custom article scoring, HTML repair/selector engine, or an extra reader service solely for extraction | Source-bound detail/storage/rendering, lineage/fallback, bounded resources and complete package/file notices; not full reader completion |
 | DR-08 | Native Git detached worktree operation behind existing workspace identity/lease checks | Unchanged AO branch-oriented Restore as the exact checkout port; a new worktree engine | Actual concrete port, detached readback, concurrent ownership, failed-create/restart reconciliation and no-loss conflict/dirty handling; AO remains selective preservation donor |
+
+DR-09 additionally selects public cron-parser5.10 field expansion/includesDate
+behind existing schedule policy; see [selection](research/reuse-comparisons/f1-calendar-selection.md).
+Typed integration, parity/upgrade/resource checks and occurrence-store acceptance
+remain. This is not work-engine selection.
 
 These decisions currently delete zero production lines. They avoid unnecessary new
 infrastructure; they are not evidence that every existing custom component is needed.
@@ -72,11 +86,63 @@ support reuse of existing durable state and close/recover code, not a claim that
 continuous pickup, release switching or fleet drain already exists. Those remain
 explicit implementation work; do not replace them with supervisor restart loops.
 
+C5 now has a [named extension inventory](research/reuse-comparisons/c5-extension-dispositions.md)
+and a [pinned OpenClaw/Claude source screen](research/reuse-comparisons/c5-primary-source-screen.md).
+Use the latter instead of the archived blanket SDK-license claim. The inspected
+Python binding has MIT source; the inspected TypeScript repository specifies
+Commercial Terms. External-runtime use and copied implementation are different
+decisions, and no optional runtime is qualified. OpenClaw's inspected Node range
+differs from this app's Node22 baseline; plan a separately versioned runtime if
+chosen, not an incidental core Node upgrade. Other archived names retain explicit
+missing-E1 entries rather than a false evaluated/support badge.
+
+RC1 actual DBOS/PostgreSQL transaction and read-recovery evidence is now
+[independently reviewed](research/reuse-comparisons/f1-postgres-review.md).
+The owner-approved setup is no longer pending. Same-session commit/rollback,
+duplicate input retention and client reconstruction are demonstrated within their
+synthetic scope; canonical admission, actual worker recovery and scheduling remain
+selection work. No fresh SQL-marker rerun is needed to replace these receipts.
+The subsequent [actual worker comparison](research/reuse-comparisons/f1-dbos-worker-fit.md)
+shows durable review wait occupies a concurrency1 slot; concurrency2 allows another
+job to finish before review release. Plan review as an explicit canonical phase or
+account for waiting capacity. This is evidence for comparing integration designs,
+not approval to replace pg-boss or claim continuous fleet completion.
+The matching [pg-boss worker comparison](research/reuse-comparisons/f1-pgboss-worker-fit.md)
+also passed: one held callback blocks capacity1, capacity2 lets B finish, and an
+explicit persisted waiting-review phase lets B finish at capacity1 before a distinct
+continuation runs. These are actual queue primitives, not canonical approval or
+process recovery. This strengthens testing the existing phase/outbox integration
+before adding a second engine. Both worker reports have independent narrow review.
+The [joined application adapter test](research/reuse-comparisons/f1-pgboss-cr-fit.md)
+now passes four scenarios with maintained node-postgres and existing CR bounds.
+The generic Postgres.js route exposes a serialized-JSON mismatch. DR-10 now selects
+the maintained node-postgres direction after the subsequent binding/lifecycle
+comparison. Implement its accepted packet; neither the queue nor canonical
+authority needs rewriting solely because the earlier driver seam failed.
+
+The supported Postgres.js typed-parameter alternative now also passes the same four
+queue cases and eight sampled value cases plus precommit rollback. Its startup
+configuration still differs from production: fetch_types:false cold acquisition hit
+the actual wrapper deadline in the local socket fixture. The binding comparison's
+independent review is accepted with its measured-versus-inferred correction.
+See [driver comparison](research/reuse-comparisons/f1-driver-contract-fit.md).
+The earlier [shutdown comparison](research/reuse-comparisons/f1-driver-shutdown-fit.md)
+records insufficient simple close compositions; later reviewed public-release
+evidence supports DR-10's conditional choice. No experiment proves server-side
+non-execution after uncertain acknowledgement. Implement the planned lifecycle
+races/caller coverage and preserve uncertainty; ordinary Pool.end alone is not
+the accepted termination composition. Do not repeat driver selection.
+
 RC3 root decision: preserve the existing result/review authority UI. The unchanged
 Hermes Desktop MessageRow derives Approve/Deny controls from assistant prose and is
 not a replacement for those controls. Its presentation pieces remain candidates,
 but adapting them must remove that misleading action path rather than attach no-op
-callbacks. Actual renderer/media closure and complete navigation remain open. See
+callbacks. Actual Desktop/WebUI renderer comparisons now exist, as does the
+11-check direct Markdown/GFM composition in `research/reuse-comparisons/f3-minimal-fit.md`.
+The latter favors a small maintained renderer inside the existing result panel,
+pending independent challenge; attachments/media remain distinct responsibilities.
+IP-05 specifies project navigation implementation rather than another full-dashboard
+contest. See
 [mounted comparison](research/reuse-comparisons/f3-journey-fit.md) and
 [independent root review](research/reuse-comparisons/f3-journey-review.md).
 
@@ -96,7 +162,31 @@ ordinary data CAS differs from etcd's combined create/mod/value comparisons. Res
 the actual object-binding and restore model before creating a Bao-specific adapter;
 do not fabricate equivalent etcd responses or quietly broaden metadata permissions.
 
+RC9 current-schema restore has now been executed on real PG17.11. Native dump and
+restore preserve the checked145-table rows/ownership/permissions; Control Room's
+actual gate rejects one semantically equivalent CHECK-expression text change.
+`research/reuse-comparisons/f8-pg17-restore-fit.md` retains the failed gate and
+identifies a reviewed restore-stable schema contract as required implementation.
+Keep native backup tools; do not start another backup-engine comparison. Canonical
+artifact pairing, selected task roles, independent backup and target persistence
+remain separate acceptance requirements.
+
+RC2 current-port evidence now confirms thread/read is absent from the qualification
+allowlist, and existing resume continues with a new turn rather than inspecting
+the old attempt. `research/reuse-comparisons/f2-recovery-port-fit.md` records five
+effect-free checks. Both direct transport and SDK choices need a distinct reviewed
+reconciliation boundary; neither may auto-repeat uncertain work. Exact-ID snapshot
+and usage comparison remain open, not solved by this negative interface evidence.
+
 ## Outcome-to-implementation ledger
+
+Scheduling migration must preserve the current grammar and canonical occurrence
+policy, not automatically inherit the selected queue's calendar defaults. The
+[actual calendar comparison](research/reuse-comparisons/f1-calendar-fit.md) and
+[root disposition](research/reuse-comparisons/f1-calendar-root-disposition.md)
+record DST/day-field/range-step differences. Public parser reuse remains a credible
+replacement for custom parsing; actual recurrence-to-store compatibility is still
+required before changing schedules. No daemon backfill is proven by enumeration.
 
 Existing capability summaries come from the [26-outcome map](REMAINING_WORK_REUSE_MAP.md),
 not new production acceptance. RC references identify comparison blockers, not owner
@@ -133,6 +223,11 @@ added after selection; unknown cost is not zero.
 | D5 Public contribution | Existing export/provenance/review material; DR-03/04 | RC10 complete release scope and substantial packets | Exact source/license inventory, generic examples, reproducible local checks, reviewed export and economical CI; never publish private configuration |
 
 ## Substantial build batches and dependency order
+
+[Selected implementation packets](REUSE_SELECTED_IMPLEMENTATION_PACKETS.md)
+now provide exact initial login and article-reading file/command/rollback scope.
+They are partial handoff material; remaining packets and the final goal prompt
+must still be completed after unresolved choices are settled.
 
 1. **Close comparison decisions.** Finish RC1–RC10's decision-changing cases, not
    repeated happy paths. Record surveyed alternatives, actual interface tests,
@@ -199,7 +294,7 @@ explicit minimum single-host B4/B6/B8/B9 prerequisites in the first-task batch.
 This is draft correction, not final acceptance of unresolved comparisons.
 
 - All 26 original outcome IDs are mapped above; none is declared fully accepted.
-- Eight settled narrow decisions (DR-01 through DR-08) are separated from open
+- Nine settled narrow decisions (DR-01 through DR-09) are separated from open
   responsibility decisions; an unbuilt outcome can have a settled component choice.
 - Exact source/change/deletion lists, comparative costs/rubric, final independent
   review and the final implementation prompt remain unfinished.

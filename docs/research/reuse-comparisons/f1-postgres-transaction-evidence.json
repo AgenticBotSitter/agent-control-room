@@ -1,0 +1,30 @@
+{
+  "date": "2026-09-08",
+  "receiptKind": "root transcription of tool-returned terminal output, not a raw stdout capture file",
+  "command": "node --import tsx research/reuse-comparisons/f1-postgres-run.mjs /private/tmp/cr-compare-f1.9x5bSO",
+  "hydration": {
+    "ownerApproved": true,
+    "linksCreatedAndVerified": 17,
+    "manifestSha256": "badbb4ed4901bcdc87c47e2f0e57778289e1e481bf7baf33e422e240a6e33e67",
+    "scriptSha256": "3596fdda55321a3672bd77bcaecf00d46462914409346ccfa1932a19c5977e11",
+    "scope": "exact disposable package native/lib only"
+  },
+  "attempts": [
+    { "exitCode": 1, "stage": "initdb", "failure": "sandbox shmget Operation not permitted", "serverStarted": false, "childCleanupReported": true },
+    { "exitCode": 1, "stage": "readiness", "failure": "packaged psql ENOENT", "serverStoppedAndChildRemoved": true },
+    { "exitCode": 1, "stage": "application driver connection", "failure": "ECONNREFUSED after successful DBOS schema migration; postgres.js does not use libpq host query for socket selection", "serverStoppedAndChildRemoved": true },
+    { "exitCode": 0, "stage": "completed", "serverStoppedAndChildRemoved": true }
+  ],
+  "candidate": "DBOS 4.27.6",
+  "backend": "PostgreSQL18.4",
+  "outcomes": [
+    "actual DBOS schema migration on disposable database",
+    "current Control Room DatabaseSession seam commits marker and actual candidate enqueue",
+    "current precommit rejection rolls back marker and candidate enqueue",
+    "same workflow ID retains original inputs after changed-payload replay",
+    "unsupported return-existing policy refuses in caller-owned transaction"
+  ],
+  "scope": "actual candidate and unchanged CR database adapter; no worker, concurrent pickup, canonical task admission or native execution",
+  "distributionRetained": true,
+  "newDownloads": 0
+}
