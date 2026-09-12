@@ -1,9 +1,10 @@
 # Exact-ID Codex read recovery
 
 Status: exact selected-package schema is generated, sanitized and bound to the
-bounded response projection. The one-shot JSONL profile and owned connection
-lifecycle are implemented; native transport, trusted admission, physical restart
-read, runtime reconciliation and host qualification are not implemented or accepted.
+bounded response projection. The one-shot JSONL profile, owned connection lifecycle
+and effect-free start-admission contract are implemented; native transport, signed
+delivery intake, durable identity storage, physical restart read, runtime
+reconciliation and host qualification are not implemented or accepted.
 
 Exact-package schema evidence was generated from `@openai/codex@0.150.0-alpha.8`
 without experimental methods. The retained evidence records the package/platform
@@ -67,7 +68,32 @@ the Codex start-receipt binding to its actual admitted broker ticket/permit and
 run, or implement a separately reviewed Codex delivery contract. A generic lease
 receipt proves historical lease intake, not permission for either harness to run.
 The journal's existing accepted-command lookup may be reused to cross-check lease
-identity, but cannot substitute for that missing Codex-specific start binding.
+identity, but cannot substitute for Codex-specific signed delivery and current
+admission evidence.
+
+`src/harness/codex-v1/admission-contract.ts` now defines the non-I/O portion of
+that binding. It binds the exact tenant, node, project, job, attempt, run, lease,
+input, enrollment, delivery, permit, current-admission and pinned adapter identity.
+Its response dispatcher claims one verified initialized-connection identity for
+the process lifetime, allows only one outstanding request, never reuses a JSON-RPC
+id on that connection, and consumes failed response attempts without retry. It accepts a thread or turn
+identifier only from that dispatcher's matching JSON-RPC result id,
+requires a persistent root thread and an initially `inProgress` turn, and retains
+only response digests rather than response content. OpenAI's App Server contract
+documents that `thread/start` returns a `thread`, while `turn/start` returns the
+initial `turn`; event notifications are separate and are never accepted here:
+[Codex App Server](https://learn.chatgpt.com/docs/app-server).
+
+The start shapes are also pinned to sanitized hashes and required-field facts
+generated from the exact selected package; the full schemas and temporary package
+are not retained. Every product-facing capability on these records is deliberately false. A turn
+receipt proves only that the exact start request received a correlated initial
+response. It is not permission to start, retry, resume or read, and it cannot mark
+canonical work complete. Its ordinary SHA-256 digests detect accidental or
+conflicting changes but are not authentication. The next layer must accept this
+contract only after separately authenticated Codex delivery, permit, pinned
+enrollment and current local admission are verified, then protect the immutable
+journal record with node-owned integrity.
 
 The existing SQLite journal uses full-synchronous WAL and transactions, but its
 ordinary payload digests are integrity consistency checks, not authentication
@@ -77,19 +103,23 @@ Do not advertise this extension as an authenticated restart source merely becaus
 it survives reopen. Production binding acceptance requires an independent review
 of the retained signed evidence and current verification path.
 
-1. Extend the existing protected node journal, not a second coordination service,
+1. Define and verify the separately signed Codex delivery/permit intake that is
+   allowed to construct the effect-free admission contract. Do not expose its
+   constructor or dispatcher to browser input, reuse an initialized-connection
+   identity, or treat the contract digest as a signature.
+2. Extend the existing protected node journal, not a second coordination service,
    with an immutable observation-only Codex identity record. Bind the exact pair
    to tenant/project/node/job/attempt/run, accepted delivery and pinned adapter
    enrollment. Capture it from correlated native responses, never browser input.
-2. Persist thread receipt before turn dispatch and turn receipt immediately after
+3. Persist thread receipt before turn dispatch and turn receipt immediately after
    acknowledgement. An interruption before a durable turn receipt remains unknown:
    do not list/search, select the latest turn, replay dispatch or infer a turn ID.
-3. Keep observation retention distinct from execution/resume authority. Retaining
+4. Keep observation retention distinct from execution/resume authority. Retaining
    identifiers for a separately authorized read must not reactivate a quarantined
    broker grant. Define retention and deletion with the protected journal owner.
-4. Revalidate authenticated delivery, enrollment and current read permission before
+5. Revalidate authenticated delivery, enrollment and current read permission before
    acquisition and through cleanup. Historical integrity alone is insufficient.
-5. Compose the existing owned read profile with that exact retained identity and
+6. Compose the existing owned read profile with that exact retained identity and
    an independently qualified transport. Preserve the canonical result/event path:
    a stored status cannot settle work, invent usage or release capacity.
 

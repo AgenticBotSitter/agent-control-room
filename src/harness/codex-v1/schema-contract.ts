@@ -14,3 +14,27 @@ export const CODEX_APP_SERVER_READ_CONTRACT = Object.freeze({
   turnRequiredForProjection: Object.freeze(['id', 'status'] as const),
   turnStatuses: Object.freeze(['completed', 'interrupted', 'failed', 'inProgress'] as const),
 });
+
+/** Sanitized binding to the generated non-experimental start schemas from the
+ * same exact package. Full generated schemas are intentionally not vendored. */
+export const CODEX_APP_SERVER_START_CONTRACT = Object.freeze({
+  package: '@openai/codex' as const,
+  version: '0.150.0-alpha.8' as const,
+  generatedBundleSha256: 'fef60935ec72c842ed361ce064693691e415b0f45a2c1351bda13c6013b0a7bf' as const,
+  threadStart: Object.freeze({
+    method: 'thread/start' as const,
+    paramsSchemaSha256: '792e2f32e37cece971bd616664ea2053741acbed4e9c92e9d1766427718f2ecd' as const,
+    responseSchemaSha256: 'aada537e66378f593806c7737e527313d8c31106481c1a847bca2f864fcb8af8' as const,
+    responseRequired: Object.freeze(['approvalPolicy', 'approvalsReviewer', 'cwd', 'model', 'modelProvider', 'sandbox', 'thread'] as const),
+    threadRequiredForAdmission: Object.freeze(['ephemeral', 'id', 'sessionId'] as const),
+  }),
+  turnStart: Object.freeze({
+    method: 'turn/start' as const,
+    paramsSchemaSha256: 'ff2e7e0796fbe2ad99e5ec7d489cc8c8630b75f2ab8f17857711107587e3197d' as const,
+    responseSchemaSha256: 'f9135743455be09b45285538b65757bee6a14862960385ee4fb452c40fbf476a' as const,
+    paramsRequired: Object.freeze(['input', 'threadId'] as const),
+    responseRequired: Object.freeze(['turn'] as const),
+    turnRequiredForAdmission: Object.freeze(['id', 'items', 'status'] as const),
+    initialStatus: 'inProgress' as const,
+  }),
+});

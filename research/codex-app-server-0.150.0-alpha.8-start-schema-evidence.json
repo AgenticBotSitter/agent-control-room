@@ -1,0 +1,31 @@
+{
+  "schema": "agent-control-room.codex-app-server-start-schema-evidence/v1",
+  "package": "@openai/codex",
+  "version": "0.150.0-alpha.8",
+  "platformArtifactVersion": "0.150.0-alpha.8-darwin-arm64",
+  "generatedBundle": "codex_app_server_protocol.v2.schemas.json",
+  "generatedBundleBytes": 545742,
+  "generatedBundleSha256": "fef60935ec72c842ed361ce064693691e415b0f45a2c1351bda13c6013b0a7bf",
+  "experimentalSchemaIncluded": false,
+  "threadStart": {
+    "method": "thread/start",
+    "paramsSchemaBytes": 10180,
+    "paramsSchemaSha256": "792e2f32e37cece971bd616664ea2053741acbed4e9c92e9d1766427718f2ecd",
+    "responseSchemaBytes": 68016,
+    "responseSchemaSha256": "aada537e66378f593806c7737e527313d8c31106481c1a847bca2f864fcb8af8",
+    "responseRequired": ["approvalPolicy", "approvalsReviewer", "cwd", "model", "modelProvider", "sandbox", "thread"],
+    "threadRequiredForAdmission": ["ephemeral", "id", "sessionId"]
+  },
+  "turnStart": {
+    "method": "turn/start",
+    "paramsSchemaBytes": 16606,
+    "paramsSchemaSha256": "ff2e7e0796fbe2ad99e5ec7d489cc8c8630b75f2ab8f17857711107587e3197d",
+    "paramsRequired": ["input", "threadId"],
+    "responseSchemaBytes": 48867,
+    "responseSchemaSha256": "f9135743455be09b45285538b65757bee6a14862960385ee4fb452c40fbf476a",
+    "responseRequired": ["turn"],
+    "turnRequiredForAdmission": ["id", "items", "status"],
+    "initialStatus": "inProgress"
+  },
+  "scope": "Sanitized exact-package generated-schema evidence only. No provider call, thread or turn start, credential inspection, native transport, runtime admission or production qualification is claimed. Temporary package and full generated schemas were removed after extracting these bounded facts."
+}
