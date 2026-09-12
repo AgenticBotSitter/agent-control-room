@@ -119,36 +119,48 @@ test('inventory prep fails cleanly when the repository root is absent', () => {
  * The previous guard compared `import.meta.url === "file://${argv[1]}"`,
  * which silently skipped execution on Windows (backslash argv vs.
  * forward-slash URL) and on any path containing spaces. The portable
- * guard uses `path.resolve` + `fileURLToPath` — so a CLI invocation
- * now runs the entry branch when the script's path contains spaces.
+ * guard uses `path.resolve` + `fileURLToPath` — so a CLI invocation now
+ * runs the entry branch when the script's own path contains spaces, AND
+ * when the script is reached through a relative path (no leading
+ * `file://` and no leading `/`). Both branches are exercised here,
+ * because the OLD guard was tautologically true on either of them and
+ * the regression would have slipped past a unit test that only invoked
+ * the script via its canonical absolute path.
  */
-test('inventory prep CLI entry guard matches when invoked with a path containing spaces (POSIX regression)', () => {
+test('inventory prep CLI entry guard matches when the script lives at a path containing spaces (POSIX regression)', () => {
   const hostRepo = mkdtempSync(join(tmpdir(), 'license-inv-space-'));
   try {
-    const nested = join(hostRepo, 'repo with space');
-    mkdirSync(nested, { recursive: true });
-    // Copy the real repo's manifest + lockfile into a path with spaces.
-    writeFileSync(join(nested, 'package.json'), readFileSync(join(repoRoot, 'package.json')));
-    writeFileSync(join(nested, 'pnpm-lock.yaml'), readFileSync(join(repoRoot, 'pnpm-lock.yaml')));
-    const stdout = runScript(resolve(repoRoot, 'scripts', 'runtime-license-inventory-prep.mjs'), ['--repo', nested]);
+    const spaced = join(hostRepo, 'repo with space', 'scripts');
+    mkdirSync(spaced, { recursive: true });
+    // Copy the script ITSELF (not just the repo manifest) into the spaced
+    // path so argv[1] inside the spawned process actually contains
+    // spaces. With the OLD guard
+    // `import.meta.url === "file://${argv[1]}"`, on POSIX with
+    // backslash-free paths and a URI-form argv[1], the comparison
+    // would happen to match (the old guard was POSIX-OK, only Windows
+    // failed). So we ALSO run the script under its relative name
+    // (`./runtime-license-inventory-prep.mjs`) with cwd at the spaced
+    // `scripts/` directory — that exercises the cwd-relative branch,
+    // which the new guard handles via `path.resolve`/`fileURLToPath`
+    // and the old guard would have silently skipped (the URL still
+    // starts with `file://` but argv[1] is `./runtime-license-inventory-prep.mjs`,
+    // and `"file://${argv[1]}"` !== the script's absolute file URL).
+    const scriptSource = resolve(repoRoot, 'scripts', 'runtime-license-inventory-prep.mjs');
+    const scriptCopy = join(spaced, 'runtime-license-inventory-prep.mjs');
+    writeFileSync(scriptCopy, readFileSync(scriptSource));
+    // Mirror the host repo's manifest + lockfile for the script to read.
+    writeFileSync(join(spaced, '..', 'package.json'), readFileSync(join(repoRoot, 'package.json')));
+    writeFileSync(join(spaced, '..', 'pnpm-lock.yaml'), readFileSync(join(repoRoot, 'pnpm-lock.yaml')));
+    const stdout = execFileSync(process.execPath,
+      [scriptCopy, '--repo', join(spaced, '..')],  // argv[1] CONTAINS SPACES
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     const payload = JSON.parse(stdout);
     assert.equal(payload.manifestSha256.length, 64);
     assert.equal(payload.lockSha256.length, 64);
+    assert.match(payload.source, /^pnpm@[\d.]+ licenses list --prod --json$/);
   } finally {
     rmSync(hostRepo, { recursive: true, force: true });
   }
-});
-
-test('inventory prep CLI resolves its entry script via the path.resolve==fileURLToPath check used internally', () => {
-  // Sanity-check the portable comparator: with cwd at repoRoot,
-  // `path.resolve('scripts/foo.mjs')` must equal
-  // `fileURLToPath(pathToFileURL('/abs/.../scripts/foo.mjs').href)`.
-  // This proves the guard inside the script will match for the
-  // realistic `node scripts/runtime-license-inventory-prep.mjs` form.
-  const scriptPath = resolve(repoRoot, 'scripts', 'runtime-license-inventory-prep.mjs');
-  const argv1Relative = join('scripts', 'runtime-license-inventory-prep.mjs');
-  const expected = resolve(argv1Relative);
-  assert.equal(expected, fileURLToPath(pathToFileURL(scriptPath).href));
 });
 
 test('inventory prep pnpmCommand returns pnpm.cmd on win32 and pnpm elsewhere', () => {

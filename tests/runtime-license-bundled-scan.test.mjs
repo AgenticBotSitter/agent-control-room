@@ -1,10 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
 import { scanBundledCode } from '../scripts/runtime-license-bundled-scan.mjs';
 
 const repoRoot = process.cwd();
@@ -100,32 +99,33 @@ test('bundled scan returns an empty rows array when no vendor root exists', () =
  * containing spaces. The portable guard matches the existing
  * `path.resolve == fileURLToPath` pattern, so a CLI invocation runs
  * the entry branch regardless of platform.
+ *
+ * The regression value of these tests comes from invoking the script
+ * by argv[1] forms that the OLD guard could NOT have matched: the
+ * script living under a spaced path, AND the script being launched
+ * by its `./<file>` relative form with cwd at `scripts/`. The old
+ * guard was tautologically true on the canonical absolute-path
+ * invocation, so a unit test that ONLY used the absolute path would
+ * not have caught a regression.
  */
-test('bundled scan CLI entry guard matches when invoked with a path containing spaces', () => {
+test('bundled scan CLI entry guard matches when the script lives at a path containing spaces', () => {
   const hostRepo = mkdtempSync(join(tmpdir(), 'bundled-scan-space-'));
   try {
-    const nested = join(hostRepo, 'repo with space');
-    mkdirSync(nested, { recursive: true });
+    const spaced = join(hostRepo, 'repo with space', 'scripts');
+    mkdirSync(spaced, { recursive: true });
+    const scriptSource = resolve(repoRoot, 'scripts', 'runtime-license-bundled-scan.mjs');
+    const scriptCopy = join(spaced, 'runtime-license-bundled-scan.mjs');
+    writeFileSync(scriptCopy, readFileSync(scriptSource));
     const out = execFileSync(process.execPath,
-      [resolve(repoRoot, 'scripts', 'runtime-license-bundled-scan.mjs'), nested],
+      [scriptCopy, spaced],  // argv[1] CONTAINS SPACES; positional argv[2] is the spaced repo
       { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     const payload = JSON.parse(out);
     assert.equal(payload.schema, 'control-room.runtime-license-bundled-scan/v1');
-    assert.equal(payload.repoRoot, nested);
+    assert.equal(payload.repoRoot, spaced);
     assert.ok(Array.isArray(payload.rows));
   } finally {
     rmSync(hostRepo, { recursive: true, force: true });
   }
-});
-
-test('bundled scan CLI entry guard matches via the path.resolve==fileURLToPath check used internally', () => {
-  // Sanity-check the portable comparator exactly the way the script's
-  // guard computes it. With cwd at repoRoot,
-  // `path.resolve('scripts/foo.mjs')` must equal
-  // `fileURLToPath(pathToFileURL(abs/.../scripts/foo.mjs).href)`.
-  const scriptPath = resolve(repoRoot, 'scripts', 'runtime-license-bundled-scan.mjs');
-  const argv1Relative = join('scripts', 'runtime-license-bundled-scan.mjs');
-  assert.equal(resolve(argv1Relative), fileURLToPath(pathToFileURL(scriptPath).href));
 });
 
 void sep;
