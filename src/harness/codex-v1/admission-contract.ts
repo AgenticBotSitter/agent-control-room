@@ -238,6 +238,11 @@ function verifyThreadReceipt(value: unknown) {
   return receipt;
 }
 
+/** Validates an already-correlated receipt without granting any capability. */
+export function verifyCodexThreadStartReceiptV1(value: unknown): CodexThreadStartReceiptV1 {
+  return verifyThreadReceipt(value);
+}
+
 function verifyTurnIntent(value: unknown) {
   const intent = codexTurnStartIntentSchemaV1.parse(value);
   if (intent.intentDigest !== sha256Digest(withoutIntentDigest(intent))) return fail();

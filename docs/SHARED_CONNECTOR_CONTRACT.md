@@ -62,7 +62,12 @@ contract. It reuses the existing node signature and pinned owner-approval trust 
 binding the exact input, workspace intent, connector profile, enrollment and lease.
 Its receipt proves intake only; it grants no permission to launch App Server, retry,
 resume, read or complete work. Session/bridge delivery wiring and durable accepted-ID
-storage remain required before native use.
+storage remain required before native use. The node-private Codex start journal now
+stores the exact correlated thread receipt before its turn receipt, survives reopen,
+and returns an explicit unknown state when the turn receipt is absent. It is an
+observation record only: it cannot list or guess sessions and grants no start, retry,
+resume or read authority. Runtime composition still must connect signed delivery,
+current admission, the owned App Server process and these ordered journal writes.
 Actual admission still requires a test that `thread/read(includeTurns: true)` after
 process restart reads the exact thread without resuming or starting work. Production
 WebSocket transport, dynamic tools and automatic approval are outside the initial contract.

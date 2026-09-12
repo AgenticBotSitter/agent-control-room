@@ -115,13 +115,15 @@ of the retained signed evidence and current verification path.
    durable receipt and current local policy before constructing the start admission.
    Do not expose its constructor or dispatcher to browser input, reuse an
    initialized-connection identity, or treat the contract digest as a signature.
-2. Extend the existing protected node journal, not a second coordination service,
-   with an immutable observation-only Codex identity record. Bind the exact pair
-   to tenant/project/node/job/attempt/run, accepted delivery and pinned adapter
-   enrollment. Capture it from correlated native responses, never browser input.
-3. Persist thread receipt before turn dispatch and turn receipt immediately after
-   acknowledgement. An interruption before a durable turn receipt remains unknown:
-   do not list/search, select the latest turn, replay dispatch or infer a turn ID.
+2. `src/harness/codex-v1/start-journal.ts` now provides the protected,
+   observation-only SQLite record for the exact correlated receipt pair. It binds
+   tenant/project/node/job/attempt/run, accepted delivery, connection attempt and
+   pinned enrollment; refuses altered schemas or records; and exposes no browser,
+   queue, retry, resume or read-permission surface.
+3. The journal requires the thread receipt to be durable before accepting its turn
+   receipt. A reopen after only the thread write returns `turn_not_recorded` with
+   no read identity. It never lists/searches, selects a latest turn, replays a
+   dispatch or infers a turn ID. Runtime composition must preserve this write order.
 4. Keep observation retention distinct from execution/resume authority. Retaining
    identifiers for a separately authorized read must not reactivate a quarantined
    broker grant. Define retention and deletion with the protected journal owner.
