@@ -1,5 +1,11 @@
 # Component decisions and implementation roadmap
 
+Current integration order, outcome coverage, remaining bounded evaluations and
+assignment requirements live in [PUBLIC_BUILD_PLAN.md](PUBLIC_BUILD_PLAN.md).
+The historical decision evidence below does not imply current main contains every
+component-branch implementation. Public CI is now enabled; older disabled-CI wording
+below is superseded by docs/ci-budget-security-review.md.
+
 Updated 2026-09-08. **Selected for implementation does not mean implemented.**
 This is the public, sanitized summary of the reuse assessment. The published
 application remains a pre-alpha contributor preview; no live fleet is certified.
