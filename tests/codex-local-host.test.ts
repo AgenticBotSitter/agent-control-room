@@ -165,10 +165,23 @@ function startHost(f: Awaited<ReturnType<typeof portableActivation>>, starts: Sq
     initializedConnectionDigest: sha256Digest('codex-host-initialized'), threadStartRequestId: 10,
     turnStartRequestId: 20, workspaceIntent: f.workspaceIntent, bridgeJournal: f.journal,
     startJournal: starts, authority, workspacePort: workspacePort(f.workspaceIntent, effects),
-    openStartSession: async () => { opened++; return { async writeLine(line) {
-      sent.push(JSON.parse(line).method); await options.write?.(line);
-    }, async readLine() { return responses.shift(); }, async close() { closed++; await options.close?.(); } }; },
-    startTimeoutMs: 1_000, clock: f.clock });
+    acquireProcess(binding) {
+      opened++; assert.equal(binding.mode, 'initial');
+      assert.equal(binding.connectionAttemptId, f.connectionAttemptId);
+      assert.equal(binding.initializedConnectionDigest, sha256Digest('codex-host-initialized'));
+      let resolveExit!: (value: { code: number | null; signal: string | null }) => void;
+      const exited = new Promise<{ code: number | null; signal: string | null }>(resolve => { resolveExit = resolve; });
+      let resolveStdoutEnd!: (value: undefined) => void;
+      const stdoutEnd = new Promise<undefined>(resolve => { resolveStdoutEnd = resolve; });
+      return { ready: Promise.resolve({ async writeStdin(bytes) {
+        const line = new TextDecoder().decode(bytes); sent.push(JSON.parse(line).method); await options.write?.(line);
+      }, async readStdout() { const line = responses.shift();
+        return line === undefined ? stdoutEnd : new TextEncoder().encode(`${line}\n`); },
+      async readStderr() { return undefined; }, async closeStdin() {},
+      async terminate() { resolveStdoutEnd(undefined); resolveExit({ code: null, signal: 'SIGTERM' }); }, exited }),
+      async close() { closed++; await options.close?.(); } };
+    },
+    startTimeoutMs: 1_000, processCleanupTimeoutMs: 100, clock: f.clock });
   return { host, effects, sent, opened: () => opened, closed: () => closed };
 }
 
@@ -177,15 +190,26 @@ function recoverHost(starts: SqliteCodexStartJournalV1, rawResult: unknown,
   let opened = 0, closed = 0, reads = 0;
   const responses = ['{"id":1,"result":{}}', JSON.stringify({ id: 2, result: rawResult })];
   const host = createCodexLocalHostV1({ mode: 'recover', runId: intent().runId, startJournal: starts,
+    connectionAttemptId: 'connection-attempt:codex-host-recover',
+    initializedConnectionDigest: sha256Digest('codex-host-recover-initialized'),
     authority: { assertCurrent() { if (options.revoked) throw new Error('revoked'); } },
-    openReadSession(identity) { opened++; assert.equal(identity.threadId, 'thread:durable-host'); return {
-      ready: Promise.resolve({ async send(line) {
-        const request = JSON.parse(line); if (request.method === 'thread/read') {
+    acquireProcess(binding) {
+      opened++; assert.equal(binding.mode, 'recover'); assert.equal(binding.threadId, 'thread:durable-host');
+      assert.equal(binding.connectionAttemptId, 'connection-attempt:codex-host-recover');
+      let resolveExit!: (value: { code: number | null; signal: string | null }) => void;
+      const exited = new Promise<{ code: number | null; signal: string | null }>(resolve => { resolveExit = resolve; });
+      let resolveStdoutEnd!: (value: undefined) => void;
+      const stdoutEnd = new Promise<undefined>(resolve => { resolveStdoutEnd = resolve; });
+      return { ready: Promise.resolve({ async writeStdin(bytes) {
+        const request = JSON.parse(new TextDecoder().decode(bytes)); if (request.method === 'thread/read') {
           assert.deepEqual(request.params, { threadId: 'thread:durable-host', includeTurns: true });
         }
-      }, async readLine() { return responses[reads++]!; } }),
-      async close() { closed++; await options.close?.(); },
-    }; }, readTimeoutMs: 1_000, cleanupTimeoutMs: 100 });
+      }, async readStdout() { const line = responses[reads++];
+        return line === undefined ? stdoutEnd : new TextEncoder().encode(`${line}\n`); },
+      async readStderr() { return undefined; }, async closeStdin() {},
+      async terminate() { resolveStdoutEnd(undefined); resolveExit({ code: null, signal: 'SIGTERM' }); }, exited }),
+      async close() { closed++; await options.close?.(); } };
+    }, readTimeoutMs: 1_000, cleanupTimeoutMs: 200, processCleanupTimeoutMs: 100 });
   return { host, opened: () => opened, closed: () => closed };
 }
 

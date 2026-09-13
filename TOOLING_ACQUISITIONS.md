@@ -1,5 +1,31 @@
 # Local tooling acquisition log
 
+## Codex TypeScript SDK fit evaluation — 2026-09-13
+
+- Downloaded one isolated npm archive for `@openai/codex-sdk@0.154.0` into a
+  temporary directory after confirming approximately 118 GiB free space.
+- Archive size: 21,186 bytes. SHA-256:
+  `1b64f9731c03838062c6ec4ea8374bffd17fe9b7a79aafe9115263e94b1c1f05`.
+- Purpose: check whether the current official SDK can replace the existing
+  App Server connector before adding more custom process code.
+- Decision: do not replace the MVP App Server path. Keep the SDK as a deferred
+  optional batch-job adapter because it lacks the exact passive turn-read and
+  interactive approval surfaces required by Control Room.
+- Retained repository evidence:
+  `research/codex-sdk-0.154.0-fit-evidence.json`. No SDK code, archive or
+  dependency is retained in the repository.
+- Temporary directory pattern: `/private/tmp/acr-codex-sdk-eval.<temporary-id>`;
+  remove the exact tracked local directory after
+  the decision commit is reviewed. The archive is not needed after that point.
+- The SDK depends on current `@openai/codex@0.154.0`. Its 4,902-byte package
+  archive and 116,501,639-byte Mac ARM64 archive were also downloaded only to
+  pin the candidate identity. SHA-256 values are retained in the evidence file.
+  The binary was not extracted or run. Replacing the existing
+  `0.150.0-alpha.8` pin requires a separately authorized schema-generation and
+  compatibility review.
+- Network/provider effects: npm package download only. No install, Codex process,
+  credential access, provider call, thread, turn, plugin, MCP server or deployment.
+
 ## Codex App Server start-schema evidence — 2026-09-12
 
 - Requested package: `@openai/codex@0.150.0-alpha.8` with its selected

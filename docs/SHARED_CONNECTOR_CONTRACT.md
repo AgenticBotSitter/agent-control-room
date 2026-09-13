@@ -110,11 +110,15 @@ activation evidence, current admission, the exact protected workspace intent, th
 owned App Server process and ordered no-replay journal writes. It is inert on import
 and requires an explicit one-shot start call with every native port supplied by a
 trusted host. A private `codex-local-v1` configuration and launcher seam can now
-open the two protected journals and compose either that initial
-start or the exact durable read, but every authority, workspace, native-session,
-timeout and clock port is still supplied explicitly. The seam exposes no credential
-discovery, listener, provider API, canonical writer, retry, resume or new-turn port,
-so this is not live enablement or host qualification.
+open the two protected journals and compose either that initial start or the exact
+durable read. A shared fake-tested adapter beneath both fixed JSONL profiles converts
+one synchronously owned, explicitly injected process byte port into strict UTF-8
+newline frames. It owns readiness, pending I/O, stdin close, termination, reader
+drain and valid terminal-exit evidence; any cleanup uncertainty withholds the
+observation. Every authority, workspace, process-acquisition, timeout and clock port
+is still supplied explicitly. The seam exposes no executable, environment or
+credential discovery, listener, provider API, canonical writer, retry, resume or
+new-turn port, so this is not live enablement or host qualification.
 The matching local read composition now accepts only that journal's exact saved
 thread and turn identity, rechecks current authority around each native read, and
 exposes no resume or new-turn method. A completed recovery read now carries a pinned
