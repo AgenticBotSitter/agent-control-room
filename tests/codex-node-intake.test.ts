@@ -3,6 +3,8 @@ import { generateKeyPairSync } from 'node:crypto';
 import { test } from 'node:test';
 import { CODEX_START_OPERATION, codexTaskDispatchBodySchemaV1,
   codexTaskPayloadDigestV1 } from '../src/harness/codex-v1/delivery-contract.ts';
+import { buildCodexTaskActivationV1, CODEX_ACTIVATION_FEATURE } from '../src/harness/codex-v1/activation-contract.ts';
+import { CodexActivationIntakeHandlerV1 } from '../src/node-bridge/codex-activation-handler.ts';
 import { CodexDispatchIntakeHandlerV1 } from '../src/node-bridge/codex-dispatch-handler.ts';
 import { PortableNodeBridge } from '../src/node-bridge/bridge.ts';
 import { SqliteBridgeJournal } from '../src/node-bridge/journal.ts';
@@ -155,4 +157,74 @@ test('portable bridge negotiates Codex delivery, records it, and returns one sig
     lastAcknowledgedNodeSequence: 1, requestedAttemptIds: [] })), at);
   assert.equal(reconnected.some(value => JSON.parse(value).type === 'harness.codex.dispatch.receipt'), false);
   await bridge.disconnected(); f.handler.close(); f.journal.close();
+});
+
+test('portable bridge records the exact post-receipt activation without starting work', async () => {
+  const f = setup(), server = generateKeyPairSync('ed25519'), node = generateKeyPairSync('ed25519');
+  const serverSpki = server.publicKey.export({ type: 'spki', format: 'der' }).toString('base64url');
+  const sent: string[] = []; let id = 0;
+  const admissionDigest = sha256Digest('current-admission');
+  const activationHandler = new CodexActivationIntakeHandlerV1(f.journal, {
+    currentAdmissionDigest: () => admissionDigest,
+    assertCurrent() {},
+  }, () => now + 4);
+  const features = ['harness.codex.dispatch.v1', CODEX_ACTIVATION_FEATURE];
+  const bridge = new PortableNodeBridge({ tenantId: 'tenant:test', nodeId: 'node:test', keyId: 'node-key:test', features },
+    f.journal, { async sign(frame) { return signNodeFrame(frame, node.privateKey); } },
+    new NodeProtocolAuthenticator({ async resolve(value) { return { ...value, algorithm: 'ed25519',
+      publicKeySpki: serverSpki, state: 'active', principalState: 'active',
+      validFrom: new Date(now - 1000).toISOString() }; } }, f.journal, { async consume() {} }),
+    () => `activation-test-${++id}`, undefined, undefined, f.handler, activationHandler);
+  const transport = { async send(value: string) { sent.push(value); }, async close() {} };
+  const at = new Date(now + 1).toISOString();
+  await bridge.open(transport, { now: at, transportIdentity: 'transport:test' });
+  const hello = JSON.parse(sent[0]) as { messageId: string; connectionId: string };
+  const serverFrame = (sequence: number, type: UnsignedNodeFrame['type'], body: UnsignedNodeFrame['body'],
+    sentAt = at, causationId?: string) => signNodeFrame({ protocol: NODE_PROTOCOL_V1, direction: 'server_to_node',
+      messageId: `message:activation-server:${sequence}`, correlationId: 'correlation:activation',
+      ...(causationId ? { causationId } : sequence === 1 ? { causationId: hello.messageId } : {}),
+      tenantId: 'tenant:test', actorId: 'control-room:test', senderKind: 'control_room', keyId: 'server-key:test',
+      connectionId: hello.connectionId, sequence, sentAt, expiresAt: new Date(deadline).toISOString(),
+      nonce: `synthetic_activation_nonce_${sequence}_123456789012`, type, body } as UnsignedNodeFrame, server.privateKey);
+  await bridge.receive(JSON.stringify(serverFrame(1, 'connection.accepted', {
+    selectedProtocol: NODE_PROTOCOL_V1, enabledFeatures: features,
+    maxFrameBytes: 131_072, heartbeatIntervalSeconds: 30, serverTime: at })), at);
+  await bridge.receive(JSON.stringify(serverFrame(2, 'node.reconciliation.request', {
+    lastAcknowledgedNodeSequence: 1, requestedAttemptIds: [] })), at);
+  const dispatch = serverFrame(3, 'harness.codex.dispatch', f.body);
+  await bridge.receive(JSON.stringify(dispatch), at);
+  const receipt = sent.map(value => JSON.parse(value) as ReturnType<typeof signNodeFrame>)
+    .find(value => value.type === 'harness.codex.dispatch.receipt');
+  assert.ok(receipt && receipt.type === 'harness.codex.dispatch.receipt');
+  const receiptReceivedAt = new Date(now + 3).toISOString();
+  const activatedAt = new Date(now + 4).toISOString();
+  const activationBody = buildCodexTaskActivationV1({ dispatch: dispatch as never, receipt: receipt as never,
+    currentAdmissionDigest: admissionDigest, receiptReceivedAt, activatedAt,
+    activationExpiresAt: new Date(deadline).toISOString() });
+  const activation = serverFrame(4, 'harness.codex.dispatch.activation', activationBody, activatedAt, receipt.messageId);
+  let rejectedWrites = 0;
+  const rejectingHandler = new CodexActivationIntakeHandlerV1({
+    recordCodexActivation() { rejectedWrites += 1; throw new Error('unexpected_activation_write'); },
+  } as never, {
+    currentAdmissionDigest: () => admissionDigest,
+    assertCurrent: (() => false) as unknown as () => void,
+  }, () => now + 4);
+  await assert.rejects(rejectingHandler.accept(activation as never, {
+    tenantId: 'tenant:test', nodeId: 'node:test', connectionId: hello.connectionId,
+    maxFrameBytes: 131_072, grantsExecutionAuthority: false, assertCurrent() {},
+  }), /codex_activation_intake_unavailable/);
+  assert.equal(rejectedWrites, 0);
+  rejectingHandler.close();
+  await bridge.receive(JSON.stringify(activation), activatedAt);
+  await bridge.receive(JSON.stringify(activation), activatedAt);
+  const saved = f.journal.acceptedCodexActivation(f.body.queueId);
+  assert.equal(saved?.frame.body.activationId, activationBody.activationId);
+  assert.equal(saved?.frame.body.startsWork, false);
+  assert.equal(saved?.frame.body.grantsExecutionAuthority, false);
+  assert.equal(saved?.frame.body.permitsRetry, false);
+  assert.equal(saved?.frame.body.permitsResume, false);
+  assert.equal(saved?.frame.body.permitsThreadRead, false);
+  assert.equal(sent.map(value => JSON.parse(value)).filter(value => value.type === 'protocol.ack'
+    && value.body.acknowledgedMessageIds.includes(activation.messageId)).length, 2);
+  await bridge.disconnected(); activationHandler.close(); f.handler.close(); f.journal.close();
 });

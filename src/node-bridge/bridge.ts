@@ -20,6 +20,8 @@ import { SqliteBridgeJournal } from "./journal";
 import type { BridgeCommandHandler } from "./admission-handler";
 import type { NativeDispatchIntakeHandler } from "./native-dispatch-handler";
 import type { CodexDispatchIntakeHandlerV1 } from './codex-dispatch-handler';
+import type { CodexActivationIntakeHandlerV1 } from './codex-activation-handler';
+import { CODEX_ACTIVATION_FEATURE } from '../harness/codex-v1/activation-contract';
 import { nativeTaskSnapshotBodySchema, type NativeTaskSnapshotBody } from "../harness/v1/native-observation";
 
 export type BridgeState = "stopped" | "connecting" | "authenticating" | "reconciling" | "online" | "backing_off" | "draining";
@@ -66,6 +68,7 @@ export interface NativeDeliveryChannel {
 }
 
 export interface CodexDeliveryChannel extends NativeDeliveryChannel {}
+export interface CodexActivationChannel extends NativeDeliveryChannel {}
 
 export interface OpenBridgeOptions {
   now: string;
@@ -93,6 +96,7 @@ export class PortableNodeBridge {
     private readonly commandHandler?: BridgeCommandHandler,
     private readonly nativeHandler?: NativeDispatchIntakeHandler,
     private readonly codexHandler?: CodexDispatchIntakeHandlerV1,
+    private readonly codexActivationHandler?: CodexActivationIntakeHandlerV1,
   ) {
     this.identity = Object.freeze({ ...identity, features: Object.freeze([...identity.features]) });
     this.serverAuthenticator = Object.freeze({ verify: serverAuthenticator.verify.bind(serverAuthenticator) });
@@ -136,6 +140,26 @@ export class PortableNodeBridge {
           || this.statusValue.connectionId !== status.connectionId
           || !this.statusValue.enabledFeatures?.includes(CODEX_DELIVERY_FEATURE)) {
           throw new Error('Codex delivery channel is no longer current');
+        }
+      },
+    });
+  }
+
+  codexActivationChannel(): CodexActivationChannel | undefined {
+    const status = this.statusValue;
+    if (!this.connectionReconciled || status.state !== 'online' || status.lastSafeErrorCode || !this.transport
+      || !status.connectionId || !status.maxFrameBytes || !this.identity.features.includes(CODEX_ACTIVATION_FEATURE)
+      || !status.enabledFeatures?.includes(CODEX_ACTIVATION_FEATURE)) return undefined;
+    const generation = this.connectionGeneration, transport = this.transport;
+    return Object.freeze({ tenantId: this.identity.tenantId, nodeId: this.identity.nodeId,
+      connectionId: status.connectionId, maxFrameBytes: status.maxFrameBytes,
+      grantsExecutionAuthority: false as const,
+      assertCurrent: () => {
+        if (!this.connectionReconciled || generation !== this.connectionGeneration || transport !== this.transport
+          || this.statusValue.state !== 'online' || this.statusValue.lastSafeErrorCode
+          || this.statusValue.connectionId !== status.connectionId
+          || !this.statusValue.enabledFeatures?.includes(CODEX_ACTIVATION_FEATURE)) {
+          throw new Error('Codex activation channel is no longer current');
         }
       },
     });
@@ -246,6 +270,21 @@ export class PortableNodeBridge {
     if (delivery === "duplicate" && priorStatus === "processed") {
       await this.sendAcknowledgement(frame, "duplicate", now);
       return;
+    }
+
+    if (frame.type === 'harness.codex.dispatch.activation') {
+      try {
+        const channel = this.codexActivationChannel();
+        if (!channel || !this.codexActivationHandler
+          || (delivery !== 'accepted' && !(delivery === 'duplicate' && priorStatus === 'received')))
+          throw new Error('Codex activation intake unavailable');
+        await this.codexActivationHandler.accept(frame, channel);
+        channel.assertCurrent();
+        this.journal.markInboundProcessed(frame.messageId, now);
+        await this.sendAcknowledgement(frame, delivery === 'duplicate' ? 'duplicate' : 'accepted', now);
+        channel.assertCurrent();
+        return;
+      } catch (error) { if (generation === this.connectionGeneration) this.failTransport(); throw error; }
     }
 
     switch (frame.type) {

@@ -14,6 +14,9 @@ import type { ArtifactLineageRecordV1 } from "../node-executor/artifact-evidence
 import { assertNativeSnapshotProgress, nativeTaskSnapshotBodySchema, type NativeTaskSnapshotBody } from "../harness/v1/native-observation";
 import { matchNativeTaskDispatchReceipt, type NativeTaskDispatchReceiptBody } from "../harness/v1/native-delivery";
 import { matchCodexTaskDispatchReceiptV1, type CodexTaskDispatchReceiptBodyV1 } from '../harness/codex-v1/delivery-contract';
+import { matchCodexTaskActivationV1, type CodexActivationFrameV1,
+  type CodexDispatchFrameForActivationV1,
+  type CodexDispatchReceiptFrameForActivationV1 } from '../harness/codex-v1/activation-contract';
 import { localId } from "../harness/v1/native-run-identifiers";
 import { parseWorkspaceIntent, parseWorkspaceCreation, parseWorkspaceRoots, assertSynchronousWorkspaceAuthority } from "./workspace-intent";
 
@@ -327,6 +330,93 @@ export class SqliteBridgeJournal implements ReplayGuard {
       { messageId: frame.messageId, body: frame.body });
     if (sha256Digest(receipt) !== row.receipt_digest) throw new Error('codex_delivery_integrity_invalid');
     return { frame, receipt };
+  }
+
+  /** Server-persisted activation acknowledgement only. This is durable evidence
+   * that the exact dispatch receipt reached Control Room; it is not by itself
+   * workspace, process, retry, resume or read authority. */
+  recordCodexActivation(input: SignedNodeFrame<'harness.codex.dispatch.activation'>,
+    receivedAt: string, expectedAdmissionDigest: string, assertCurrent: () => void) {
+    const parsed = signedNodeFrameSchema.parse(input);
+    if (parsed.type !== 'harness.codex.dispatch.activation' || parsed.direction !== 'server_to_node'
+      || parsed.senderKind !== 'control_room') throw new Error('codex_activation_type_invalid');
+    const activationFrame = parsed as CodexActivationFrameV1;
+    const at = Date.parse(receivedAt);
+    if (!Number.isFinite(at) || at < Date.parse(parsed.sentAt) || at >= Date.parse(parsed.expiresAt))
+      throw new Error('codex_activation_time_invalid');
+    return this.transaction(() => {
+      assertSynchronousWorkspaceAuthority(assertCurrent);
+      const prior = this.db.prepare(`SELECT message_id,frame_digest FROM bridge_codex_activations
+        WHERE queue_id=? OR activation_id=? OR message_id=?`).all(parsed.body.queueId,
+          parsed.body.activationId, parsed.messageId) as Array<{ message_id: string; frame_digest: string }>;
+      if (prior.length) {
+        if (prior.length !== 1 || prior[0].message_id !== parsed.messageId
+          || prior[0].frame_digest !== sha256Digest(activationFrame)) throw new Error('codex_activation_conflict');
+        assertSynchronousWorkspaceAuthority(assertCurrent);
+        return structuredClone(parsed.body);
+      }
+      const delivery = this.acceptedCodexDelivery(parsed.body.queueId);
+      if (!delivery) throw new Error('codex_activation_delivery_missing');
+      if (delivery.frame.direction !== 'server_to_node' || delivery.frame.senderKind !== 'control_room')
+        throw new Error('codex_activation_delivery_invalid');
+      const dispatchFrame = delivery.frame as CodexDispatchFrameForActivationV1;
+      const receiptRow = this.db.prepare(`SELECT frame_json,frame_digest,status FROM bridge_outbox
+        WHERE message_id=?`).get(parsed.body.receiptMessageId) as
+        { frame_json: string; frame_digest: string; status: string } | undefined;
+      if (!receiptRow) throw new Error('codex_activation_receipt_missing');
+      const receipt = signedNodeFrameSchema.parse(JSON.parse(receiptRow.frame_json));
+      if (receipt.type !== 'harness.codex.dispatch.receipt' || sha256Digest(receipt) !== receiptRow.frame_digest
+        || receipt.direction !== 'node_to_server' || receipt.senderKind !== 'node'
+        || receipt.connectionId !== parsed.connectionId || receipt.body.queueId !== parsed.body.queueId)
+        throw new Error('codex_activation_receipt_invalid');
+      const receiptFrame = receipt as CodexDispatchReceiptFrameForActivationV1;
+      const matched = matchCodexTaskActivationV1(activationFrame, { dispatch: dispatchFrame, receipt: receiptFrame,
+        currentAdmissionDigest: expectedAdmissionDigest, receiptReceivedAt: parsed.body.receiptReceivedAt });
+      assertNoSecretMaterial(matched, 'codex activation');
+      const count = (this.db.prepare('SELECT count(*) AS count FROM bridge_codex_activations').get() as { count: number }).count;
+      if (count >= 1024) throw new BridgeBackpressureError();
+      this.recordCommand(parsed, receivedAt);
+      this.db.prepare(`INSERT INTO bridge_codex_activations
+        (queue_id,activation_id,message_id,run_id,receipt_message_id,frame_json,frame_digest,received_at)
+        VALUES(?,?,?,?,?,?,?,?)`).run(matched.queueId, matched.activationId, activationFrame.messageId,
+          matched.runId, matched.receiptMessageId, JSON.stringify(activationFrame), sha256Digest(activationFrame), receivedAt);
+      const acknowledged = this.db.prepare(`UPDATE bridge_outbox SET status='acknowledged',acknowledged_at=?
+        WHERE message_id=? AND status IN ('pending','sent')`).run(matched.receiptReceivedAt, matched.receiptMessageId);
+      if (acknowledged.changes !== 1) throw new Error('codex_activation_receipt_unavailable');
+      assertSynchronousWorkspaceAuthority(assertCurrent);
+      return structuredClone(matched);
+    });
+  }
+
+  /** Protected historical activation evidence. A caller must separately recheck
+   * current local authority before any effect or read operation. */
+  acceptedCodexActivation(queueId: string) {
+    const row = this.db.prepare(`SELECT message_id,frame_json,frame_digest,received_at
+      FROM bridge_codex_activations WHERE queue_id=?`).get(queueId) as
+      { message_id: string; frame_json: string; frame_digest: string; received_at: string } | undefined;
+    if (!row) return undefined;
+    const frame = signedNodeFrameSchema.parse(JSON.parse(row.frame_json));
+    if (frame.type !== 'harness.codex.dispatch.activation' || frame.direction !== 'server_to_node'
+      || frame.senderKind !== 'control_room' || frame.messageId !== row.message_id
+      || sha256Digest(frame) !== row.frame_digest) throw new Error('codex_activation_integrity_invalid');
+    const activationFrame = frame as CodexActivationFrameV1;
+    const delivery = this.acceptedCodexDelivery(queueId);
+    if (!delivery) throw new Error('codex_activation_integrity_invalid');
+    if (delivery.frame.direction !== 'server_to_node' || delivery.frame.senderKind !== 'control_room')
+      throw new Error('codex_activation_integrity_invalid');
+    const dispatchFrame = delivery.frame as CodexDispatchFrameForActivationV1;
+    const receiptRow = this.db.prepare('SELECT frame_json,frame_digest FROM bridge_outbox WHERE message_id=?')
+      .get(activationFrame.body.receiptMessageId) as { frame_json: string; frame_digest: string } | undefined;
+    if (!receiptRow) throw new Error('codex_activation_integrity_invalid');
+    const receipt = signedNodeFrameSchema.parse(JSON.parse(receiptRow.frame_json));
+    if (receipt.type !== 'harness.codex.dispatch.receipt' || receipt.direction !== 'node_to_server'
+      || receipt.senderKind !== 'node' || sha256Digest(receipt) !== receiptRow.frame_digest)
+      throw new Error('codex_activation_integrity_invalid');
+    const receiptFrame = receipt as CodexDispatchReceiptFrameForActivationV1;
+    matchCodexTaskActivationV1(activationFrame, { dispatch: dispatchFrame, receipt: receiptFrame,
+      currentAdmissionDigest: activationFrame.body.currentAdmissionDigest,
+      receiptReceivedAt: activationFrame.body.receiptReceivedAt });
+    return { frame: activationFrame, receivedAt: row.received_at };
   }
 
   /** Bounded historical restart metadata only. Contains no prompts, approvals or
@@ -1099,6 +1189,20 @@ export class SqliteBridgeJournal implements ReplayGuard {
         BEGIN SELECT RAISE(ABORT,'codex delivery is immutable'); END;
       CREATE TRIGGER IF NOT EXISTS bridge_codex_deliveries_no_delete BEFORE DELETE ON bridge_codex_deliveries
         BEGIN SELECT RAISE(ABORT,'codex delivery is immutable'); END;
+      CREATE TABLE IF NOT EXISTS bridge_codex_activations (
+        queue_id TEXT PRIMARY KEY NOT NULL REFERENCES bridge_codex_deliveries(queue_id),
+        activation_id TEXT NOT NULL UNIQUE,
+        message_id TEXT NOT NULL UNIQUE,
+        run_id TEXT NOT NULL UNIQUE,
+        receipt_message_id TEXT NOT NULL UNIQUE,
+        frame_json TEXT NOT NULL,
+        frame_digest TEXT NOT NULL,
+        received_at TEXT NOT NULL
+      );
+      CREATE TRIGGER IF NOT EXISTS bridge_codex_activations_no_update BEFORE UPDATE ON bridge_codex_activations
+        BEGIN SELECT RAISE(ABORT,'codex activation is immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS bridge_codex_activations_no_delete BEFORE DELETE ON bridge_codex_activations
+        BEGIN SELECT RAISE(ABORT,'codex activation is immutable'); END;
       CREATE TABLE IF NOT EXISTS bridge_node_control_state (
         node_id TEXT PRIMARY KEY,
         node_version INTEGER NOT NULL CHECK(node_version>=0),

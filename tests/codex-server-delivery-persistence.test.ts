@@ -6,6 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 import { codexTaskDispatchBodySchemaV1, codexTaskPayloadDigestV1, CODEX_START_OPERATION } from "../src/harness/codex-v1/delivery-contract";
+import { buildCodexTaskActivationV1 } from "../src/harness/codex-v1/activation-contract";
 import { createCodexApprovalIntakeV1 } from "../src/harness/codex-v1/approval-intake";
 import { computeArtifactBodyDigest, signArtifact } from "../src/node-policy/v1/crypto";
 import { computeEffectClaimKey } from "../src/node-policy/v1/effect-claim";
@@ -17,6 +18,8 @@ import { computeAuthorityDigest, sha256Digest } from "../src/security";
 import { persistCodexDeliveryEnvelope, readCodexDeliveryEnvelopeReceipt } from "../src/web/v1/codex-delivery-envelope";
 import { persistCodexDeliveryReceipt, readCodexDeliveryReceipt } from "../src/web/v1/codex-delivery-receipt";
 import { persistCodexTransmissionIntent, readCodexTransmissionIntentReceipt } from "../src/web/v1/codex-transmission-intent";
+import { codexCurrentAdmissionSchemaV1, persistCodexActivationTransmissionIntent,
+  readCodexActivationTransmissionIntentReceipt } from "../src/web/v1/codex-activation-transmission-intent";
 import { codexApprovalPacketDigestV1, codexExecutionBindingDigestV1,
   enqueueCodexTaskInSession, readCodexApprovalPacketInSession } from "../src/web/v1/codex-task-queue";
 import { readNativeTaskQueueIntentInSession } from "../src/web/v1/native-task-queue";
@@ -98,7 +101,42 @@ function nodeReceipt(dispatch: SignedNodeFrame<"harness.codex.dispatch">,
     sentAt: new Date(now + 3).toISOString(), expiresAt: new Date(now + 60_000).toISOString(), type: "harness.codex.dispatch.receipt", body }, nodePrivateKey);
 }
 
-test("Codex durable evidence reopens as exact receipt-only history", async () => {
+async function currentAdmission(f: Awaited<ReturnType<typeof persistedFixture>>,
+  dispatch: SignedNodeFrame<"harness.codex.dispatch">, receipt: SignedNodeFrame<"harness.codex.dispatch.receipt">) {
+  const [job, attempt, lease, node] = await Promise.all([
+    f.canonical.get("tenant:test", "job", "job:test"), f.canonical.get("tenant:test", "attempt", "attempt:test"),
+    f.canonical.get("tenant:test", "lease", "lease:test"), f.canonical.get("tenant:test", "node", "node:test"),
+  ]);
+  assert.ok(job && job.kind === "job"); assert.ok(attempt && attempt.kind === "attempt");
+  assert.ok(lease && lease.kind === "lease"); assert.ok(node && node.kind === "node");
+  const project = (await f.raw.query<{ lifecycle: string; version: number }>(
+    "SELECT lifecycle,version FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2",
+    ["tenant:test", "project:test"])).rows[0]!;
+  const key = (await f.raw.query<{ state: string; valid_from: string | Date; valid_until: string | Date | null }>(
+    "SELECT state,valid_from,valid_until FROM control_node_keys WHERE tenant_id=$1 AND node_id=$2 AND id=$3",
+    ["tenant:test", "node:test", "key:test"])).rows[0]!;
+  return codexCurrentAdmissionSchemaV1.parse({ schema: "control-room.codex-current-admission/v1",
+    tenantId: "tenant:test", projectId: "project:test", projectVersion: Number(project.version), projectLifecycle: project.lifecycle,
+    jobId: job.id, jobVersion: job.version, jobState: job.state, attemptId: attempt.id,
+    attemptVersion: attempt.version, attemptState: attempt.state, leaseId: lease.id, leaseVersion: lease.version,
+    leaseEpoch: lease.epoch, leaseState: lease.state, leaseExpiresAt: lease.expiresAt,
+    nodeId: node.id, nodeVersion: node.version, nodeState: node.state, nodeKeyId: node.identityKeyId,
+    nodeKeyState: key.state, nodeKeyValidFrom: new Date(key.valid_from).toISOString(),
+    nodeKeyValidUntil: key.valid_until ? new Date(key.valid_until).toISOString() : null,
+    authorityDigest: job.authority.digest, authorityExpiresAt: job.authority.expiresAt,
+    approvalKeyId: dispatch.body.permit.body.approvalKeyId, approvalExpiresAt: dispatch.body.permit.body.expiresAt,
+    ownerTrustRevisionDigest: sha256Digest("trust-revision:1"), queueId: dispatch.body.queueId,
+    dispatchMessageId: dispatch.messageId, dispatchFrameDigest: sha256Digest(dispatch),
+    receiptMessageId: receipt.messageId, receiptFrameDigest: sha256Digest(receipt), permitDigest: dispatch.body.permitDigest,
+    inputDigest: dispatch.body.start.inputDigest, operationDigest: dispatch.body.start.operationDigest,
+    effectClaimKey: dispatch.body.start.effectClaimKey, enrollmentDigest: dispatch.body.start.enrollmentDigest,
+    connectorProfileDigest: dispatch.body.start.connectorProfileDigest,
+    workspaceIntentDigest: dispatch.body.start.workspaceIntentDigest, connectionId: dispatch.connectionId,
+    configurationExpiresAt: new Date(dispatch.body.start.deadline).toISOString(), checkedAt: new Date(now + 4).toISOString(),
+    admissionExpiresAt: new Date(dispatch.body.start.deadline).toISOString() });
+}
+
+test("Codex durable evidence reopens with one exact post-receipt activation intent", async () => {
   const dataDir = await mkdtemp(join(tmpdir(), "control-room-codex-delivery-"));
   try {
     const f = await persistedFixture(dataDir), dispatch = f.dispatch();
@@ -111,17 +149,47 @@ test("Codex durable evidence reopens as exact receipt-only history", async () =>
     await f.db.transaction(tx => persistCodexTransmissionIntent(tx, f.key, dispatch, f.channel(), "server:test", now + 2, f.authority));
     const response = nodeReceipt(dispatch, f.keys.privateKey);
     await f.db.transaction(tx => persistCodexDeliveryReceipt(tx, f.key, response, dispatch, () => now + 4, () => {}));
+    await f.raw.query("INSERT INTO workspaces(id,tenant_id,display_name) VALUES('workspace:test','tenant:test','Codex activation')");
+    const adapterId = `adapter:manual:${sha256Digest({ tenantId: "tenant:test", workspaceId: "workspace:test" }).slice(7, 39)}`;
+    await f.raw.query(`INSERT INTO adapter_registry(id,tenant_id,source_system,contract_version,authority_mode,status,redaction_policy_version,cursor_retention_days)
+      VALUES($1,'tenant:test','control-room-manual','1.0.0','control_room_native','disabled','v1',30)`, [adapterId]);
+    await f.raw.query(`INSERT INTO projects(id,tenant_id,workspace_id,adapter_id,source_record_id,source_version,title,description,
+      normalized_state,domain_state,health,authority_mode,observed_at,payload,updated_at)
+      VALUES('project:test','tenant:test','workspace:test',$1,'project:test','1','Codex activation','Synthetic evidence',
+      'planned','manual_project_active','healthy','control_room_native',$2,'{}'::jsonb,$2)`,
+    [adapterId, new Date(now).toISOString()]);
+    await f.raw.query(`INSERT INTO control_manual_project_heads(tenant_id,project_id,lifecycle,version,created_at,updated_at)
+      VALUES($1,$2,'active',1,$3,$3)`, ["tenant:test", "project:test", new Date(now).toISOString()]);
+    const admission = await currentAdmission(f, dispatch, response);
+    const activationBody = buildCodexTaskActivationV1({ dispatch: dispatch as never, receipt: response as never,
+      currentAdmissionDigest: sha256Digest(admission), receiptReceivedAt: new Date(now + 4).toISOString(),
+      activatedAt: new Date(now + 5).toISOString(), activationExpiresAt: new Date(f.body.start.deadline).toISOString() });
+    const activation = signNodeFrame({ protocol: NODE_PROTOCOL_V1, direction: "server_to_node", senderKind: "control_room",
+      tenantId: "tenant:test", actorId: "server:test", keyId: "server-key:test", connectionId: dispatch.connectionId,
+      sequence: 10, messageId: "message:codex-activation", correlationId: "correlation:codex-activation",
+      causationId: response.messageId, nonce: "nonce_codex_activation_012345678901234567",
+      sentAt: activationBody.activatedAt, expiresAt: activationBody.activationExpiresAt,
+      type: "harness.codex.dispatch.activation", body: activationBody }, f.server.privateKey);
+    await f.db.transaction(tx => persistCodexActivationTransmissionIntent(tx, f.key, activation, dispatch, response,
+      admission, { ...f.channel(), activation: true as const }, "server:test", now + 5, f.authority));
+    await assert.rejects(f.db.transaction(tx => persistCodexActivationTransmissionIntent(tx, f.key, activation,
+      dispatch, response, admission, { ...f.channel(), activation: true as const }, "server:test", now + 6, f.authority)),
+    /codex_activation_transmission_intent_unavailable/);
+    assert.equal((await f.raw.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM control_codex_activation_transmission_intents")).rows[0]?.count, "1");
     await f.close();
 
     const reopened = new PGlite(dataDir), db = adaptPglite(reopened);
-    const [envelope, intent, receipt] = await Promise.all([
+    const [envelope, intent, receipt, activationIntent] = await Promise.all([
       db.transaction(tx => readCodexDeliveryEnvelopeReceipt(tx, f.key, scope)),
       db.transaction(tx => readCodexTransmissionIntentReceipt(tx, f.key, scope)),
       db.transaction(tx => readCodexDeliveryReceipt(tx, f.key, scope)),
+      db.transaction(tx => readCodexActivationTransmissionIntentReceipt(tx, f.key, scope)),
     ]);
     assert.equal(envelope?.messageId, dispatch.messageId); assert.equal(intent?.frameDigest, sha256Digest(dispatch));
     assert.equal(receipt?.dispatchMessageId, dispatch.messageId); assert.equal(receipt?.startsWork, false);
-    assert.equal(receipt?.grantsExecutionAuthority, false); await reopened.close();
+    assert.equal(receipt?.grantsExecutionAuthority, false); assert.equal(activationIntent?.activationId, activation.body.activationId);
+    assert.equal(activationIntent?.receiptFrameDigest, sha256Digest(response)); await reopened.close();
   } finally { await rm(dataDir, { recursive: true, force: true }); }
 });
 
