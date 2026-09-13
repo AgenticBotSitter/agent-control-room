@@ -226,7 +226,7 @@ export async function openOwnedPrivateCodexConfigurationV1(input: PrivateCodexCo
         if (closePromise || runController || !(runSignal instanceof AbortSignal) || runSignal.aborted) unavailable();
         runController = new AbortController();
         const selectedSignal = AbortSignal.any([runSignal, runController.signal]);
-        activeRun = Promise.resolve().then(() => host.run(selectedSignal)) as Promise<PrivateCodexRunResultV1>;
+        activeRun = Promise.resolve().then(() => host.run(selectedSignal) as Promise<PrivateCodexRunResultV1>);
         try { return await activeRun; }
         catch {
           try { await close(); } catch { return cleanupUncertain(); }
