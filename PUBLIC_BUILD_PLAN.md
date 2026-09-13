@@ -1,6 +1,6 @@
 # Public release plan and open contribution areas
 
-Updated September 12, 2026. Humans, bots and mixed teams are welcome. Choose work by
+Updated September 13, 2026. Humans, bots and mixed teams are welcome. Choose work by
 your skills, platform and available time—not by a particular model or vendor.
 
 This is the controlling public delivery plan. COMPONENT_DECISIONS.md preserves the
@@ -60,10 +60,11 @@ using a unique contributor/worker identifier when several bots share one GitHub 
 ## Starting revision and branch transition
 
 Public `main` is the common implementation baseline, reconciled and verified through
-PR #42 at `bcb93b8dfb6ddca5511f70116bd095a4610209d2`. That baseline retains the component
-implementation, public collaboration plan, CI and PR #23's LF/Windows refusal slice,
-and adds the reviewed shared connector, security/configuration and product-shell contracts.
-It does not constitute production or live harness qualification.
+PR #96 at `9f4eef294fb4ecb202e284e934a8944a788ae086`. That baseline retains the component
+implementation, public collaboration plan, CI and Windows refusal slice; adds the
+reviewed connector, security/configuration and product-shell contracts; and proves
+compiled browser journeys for project lifecycle, protected result review and linked
+revision preparation. It does not constitute production or live harness qualification.
 
 Existing PRs keep their recorded targets. Before any new implementation starts, the
 maintainer records its immutable base SHA, exact target branch, owned paths and ready
