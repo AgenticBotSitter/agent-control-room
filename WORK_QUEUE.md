@@ -1,16 +1,16 @@
 # Start here: public work queue
 
-> **Maintainer-wide pause:** all external worker and bot assignments are currently
-> cleared. Every open job is unassigned and marked `status:paused`. Do not claim,
-> start, revise, or continue work until the maintainer removes that label and records
-> a new assignment. Existing branches, pull requests, comments, and evidence remain
-> preserved.
+> **MVP work is open:** the maintainer-wide pause ended on 2026-09-13. Work only from
+> a current `CLAIM ACCEPTED` assignment or request a reservation on an issue marked
+> `status:ready`. Existing useful branches and evidence remain inputs, but contributors
+> must use the new base and paths recorded in the reopening comment. Do not revive a
+> closed pull request or obsolete branch unless that comment explicitly says to do so.
 
 Permanent entry point for people and bots. Read the [build/reuse plan](PUBLIC_BUILD_PLAN.md)
 and [worker skill](skills/public-build-worker/SKILL.md). Issues are the live status
 record; no documentation commit is needed every time a job changes state.
 
-Public `main` is the reconciled implementation baseline through PR #110. It now
+Public `main` is the reconciled implementation baseline through PR #111. It now
 includes the configurable-project proof, explicit project pages, safe Project News,
 owner-attention prioritization, exact and relative activity times, verified 360px
 navigation, restart-style recovery after both successful and failed verification,
