@@ -12,10 +12,14 @@ GRANT USAGE ON SCHEMA public TO control_room_native_evidence;
 GRANT SELECT ON workspaces, control_identities, control_role_grants, projects,
   control_jobs, control_attempts, control_leases, control_harness_runs, control_harness_run_events,
   control_native_delivery_envelopes, control_native_transmission_intents, control_native_delivery_receipts,
-  control_artifact_manifests, control_native_artifact_receipts, audit_events, control_audit_chain_heads
+  control_artifact_manifests, control_native_artifact_receipts, control_native_result_write_reservations,
+  audit_events, control_audit_chain_heads
   TO control_room_native_evidence;
 GRANT INSERT ON control_harness_runs, control_harness_run_events, control_artifact_manifests,
-  control_native_artifact_receipts, audit_events, control_audit_chain_heads TO control_room_native_evidence;
+  control_native_artifact_receipts, control_native_result_write_reservations,
+  audit_events, control_audit_chain_heads TO control_room_native_evidence;
+GRANT UPDATE (state,contract_digest,reservation,auth_tag,updated_at)
+  ON control_native_result_write_reservations TO control_room_native_evidence;
 GRANT UPDATE (result_lock) ON control_jobs TO control_room_native_evidence;
 GRANT UPDATE (evidence_lock) ON control_attempts, control_leases TO control_room_native_evidence;
 GRANT UPDATE (coordinator_lock) ON projects TO control_room_native_evidence;
