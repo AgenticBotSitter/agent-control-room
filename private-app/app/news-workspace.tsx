@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { readBrowserJson } from "../../src/web/v1/browser-json";
 import { newsPageSchema, type NewsPage } from "../../src/web/v1/news-wire";
 import { PrivateHeader } from "./private-header";
+import { ProjectNavigation } from "./project-navigation";
 import { BrowserRequestError, browserErrorMessage } from "../../src/web/v1/browser-client";
 import { NewsResearchForm } from "./news-research-form";
 import { newsReadingView, type NewsReadingView } from "../../src/web/v1/news-reading-view";
@@ -91,7 +92,7 @@ export function PrivateNewsWorkspace({ projectId, after, sourceAfter, view = "hi
   }, [projectId, after, sourceAfter, view, order, refresh]);
   return <><PrivateHeader /><main id="private-main" className="private-main">
     <h1>{page ? `${page.project.title} · News` : "Project news"}</h1>
-    <nav aria-label="Project pages"><a href={base}>Overview</a>{" · "}<a href={`${base}/tasks`}>Tasks</a>{" · "}<a href={`${base}/news`} aria-current="page">News</a></nav>
+    <ProjectNavigation projectId={projectId} current="news" />
     <NewsSourceSettings key={projectId} projectId={projectId} />
     <button type="button" disabled={!!selected || archiveHeld} onClick={() => { setPage(undefined); setError(undefined); setRefresh(v => v + 1); }}>Refresh saved news</button>
     {archiveMessage ? <p role="status">{archiveMessage}</p> : null}

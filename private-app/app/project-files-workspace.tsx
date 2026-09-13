@@ -5,6 +5,7 @@ import { BrowserRequestError } from "../../src/web/v1/browser-client";
 import { readTaskProjectFiles } from "../../src/web/v1/task-project-files-browser-client";
 import type { TaskProjectFiles } from "../../src/web/v1/task-project-files-wire";
 import { PrivateHeader } from "./private-header";
+import { ProjectNavigation } from "./project-navigation";
 
 type State = { state: "loading" } | { state: "ready"; value: TaskProjectFiles }
   | { state: "unavailable"; code: BrowserRequestError["code"] };
@@ -49,13 +50,7 @@ export function PrivateProjectFiles({ projectId }: { projectId: string }) {
   return <div className="private-shell"><PrivateHeader /><main id="private-main">
     <a href={`/projects/${encodeURIComponent(projectId)}`} className="private-back">← Project overview</a>
     <div className="private-heading"><h1>Project files</h1><p>Verified result records from this project. Open a file through its exact task to read and review it.</p></div>
-    <nav className="private-tabs" aria-label="Project pages">
-      <a href={`/projects/${encodeURIComponent(projectId)}`}>Overview</a>
-      <a href={`/projects/${encodeURIComponent(projectId)}/tasks`}>Tasks</a>
-      <a href={`/projects/${encodeURIComponent(projectId)}/files`} aria-current="page">Files</a>
-      <a href={`/projects/${encodeURIComponent(projectId)}/news`}>News</a>
-      <a href={`/projects/${encodeURIComponent(projectId)}/settings`}>Settings</a>
-    </nav>
+    <ProjectNavigation projectId={projectId} current="files" />
     <ProjectFilesView projectId={projectId} data={state} />
     <button type="button" onClick={() => setGeneration(value => value + 1)}>Refresh project files</button>
   </main></div>;

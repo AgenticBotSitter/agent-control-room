@@ -13,6 +13,7 @@ import { ProjectOverviewActivityView } from "../private-app/app/project-overview
 import { readTaskProjectOverview } from "../src/web/v1/task-project-overview-browser-client";
 import { ProjectFilesView } from "../private-app/app/project-files-workspace";
 import { readTaskProjectFiles } from "../src/web/v1/task-project-files-browser-client";
+import { ProjectNavigation } from "../private-app/app/project-navigation";
 
 test("home gives honest navigation to existing private workspace surfaces", () => {
   const html = renderToStaticMarkup(createElement(Home));
@@ -158,6 +159,16 @@ test("unavailable project files do not claim an empty result set", () => {
       resultSource: "not_configured", observedAt: "2026-09-04T12:00:00.000Z", startsWork: false } } }));
   assert.match(html, /No zero count or empty file list is inferred/);
   assert.doesNotMatch(html, /No verified result files have been received/);
+});
+
+test("shared project navigation keeps core pages and hides optional news until enabled", () => {
+  const html = renderToStaticMarkup(createElement(ProjectNavigation, { projectId: "project:alpha", current: "work" }));
+  for (const [label, path] of [["Overview", "/projects/project%3Aalpha"], ["Work", "/projects/project%3Aalpha/tasks"],
+    ["Files", "/projects/project%3Aalpha/files"], ["Settings", "/projects/project%3Aalpha/settings"]]) {
+    assert.match(html, new RegExp(`href="${path}"[^>]*>${label}`));
+  }
+  assert.match(html, /href="\/projects\/project%3Aalpha\/tasks" aria-current="page">Work/);
+  assert.doesNotMatch(html, />News</);
 });
 
 test("settings links to the real session surface without credential controls", () => {

@@ -4,6 +4,7 @@ import { BrowserRequestError, browserAuthenticationRecovery } from "../../src/we
 import { createTaskBrowserClient, taskErrorMessage } from "../../src/web/v1/task-browser-client";
 import type { TaskDetail, TaskDraft, TaskPage, TaskReceipt } from "../../src/web/v1/task-wire";
 import { PrivateHeader } from "./private-header";
+import { ProjectNavigation } from "./project-navigation";
 import { TaskCatalogPanel, TaskDetailPanel, TaskProposalForm, TaskStateGuidance, taskUrl } from "./task-panels";
 import { PrivateTaskResults } from "./task-results";
 import { createTaskReviewWorkspace, type TaskReviewWorkspace } from "../../src/web/v1/task-review-workspace";
@@ -121,8 +122,7 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
     {loading && <p role="status">Loading protected tasks…</p>}
     {project && <button type="button" disabled={loading || pending || preparing} onClick={refreshSaved}>Check latest saved status</button>}
     {project && <><div className="private-heading"><span className="private-state">{project.lifecycle}</span><h1>{project.title}</h1></div>
-      <nav className="private-tabs" aria-label="Project pages"><a href={`/projects/${encodeURIComponent(projectId)}`}>Overview</a>
-        <a href={taskUrl(projectId)} aria-current="page">Tasks</a><a href={`/projects/${encodeURIComponent(projectId)}/settings`}>Settings</a></nav></>}
+      <ProjectNavigation projectId={projectId} current="work" /></>}
     {page && <div className="private-columns"><TaskCatalogPanel page={page} after={after} />
       {page.canPropose ? <div>{canPrepareIdeaExperiment(page) && <section className="private-panel" aria-label="First experiment">
         <h2>Start from your Idea Lab experiment</h2><p>Bring the approved discussion into an editable planning task. It will not run the experiment.</p>

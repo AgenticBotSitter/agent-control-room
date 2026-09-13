@@ -8,6 +8,7 @@ import type { IdeaProjectAction, ProjectCatalogPage, ProjectView, WebProject } f
 import { ProjectCatalogNavigation } from "../../app/components/project-catalog-navigation";
 import { PrivateHeader } from "./private-header";
 import { ProjectOverviewActivity } from "./project-overview-activity";
+import { ProjectNavigation } from "./project-navigation";
 
 export function ProjectSaveRecovery({ pending, onRetry }: { pending: boolean; onRetry: () => void }) {
   return <section className="private-notice" aria-label="Unconfirmed project save">
@@ -156,13 +157,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
         {state === "ready" && project && <>
           <div className="private-heading"><span className="private-state">{project.lifecycle} · {project.origin === "idea_lab" ? "From Idea Lab" : "Ordinary project"}</span><h1>{project.title}</h1></div>
           <ProjectIdeaOrigin project={project} />
-          <nav className="private-tabs" aria-label="Project pages">
-            <a href={`/projects/${encodeURIComponent(projectId)}`} aria-current={section === "overview" ? "page" : undefined}>Overview</a>
-            <a href={`/projects/${encodeURIComponent(projectId)}/tasks`}>Tasks</a>
-            <a href={`/projects/${encodeURIComponent(projectId)}/files`}>Files</a>
-            <a href={`/projects/${encodeURIComponent(projectId)}/news`}>News</a>
-            <a href={`/projects/${encodeURIComponent(projectId)}/settings`} aria-current={section === "settings" ? "page" : undefined}>Settings</a>
-          </nav>
+          <ProjectNavigation projectId={projectId} current={section === "settings" ? "settings" : "overview"} />
           <section className="private-panel"><h2>{section === "settings" ? "Project status" : "Purpose"}</h2>
             <p className="private-summary">{project.summary || "No summary added."}</p>
             {section === "settings" ? <>
