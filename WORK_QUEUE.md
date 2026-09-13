@@ -1,11 +1,16 @@
 # Start here: public work queue
 
+> **Maintainer-wide pause:** all external worker and bot assignments are currently
+> cleared. Every open job is unassigned and marked `status:paused`. Do not claim,
+> start, revise, or continue work until the maintainer removes that label and records
+> a new assignment. Existing branches, pull requests, comments, and evidence remain
+> preserved.
+
 Permanent entry point for people and bots. Read the [build/reuse plan](PUBLIC_BUILD_PLAN.md)
 and [worker skill](skills/public-build-worker/SKILL.md). Issues are the live status
 record; no documentation commit is needed every time a job changes state.
 
-Public `main` is the reconciled implementation baseline through PR #77 at
-`af97d5d093a673c87715a77b3baed96881b81712`. Connector, security/configuration and
+Public `main` is the reconciled implementation baseline through PR #90. Connector, security/configuration and
 support decisions are published in [the shared connector contract](docs/SHARED_CONNECTOR_CONTRACT.md),
 [the security/configuration contract](docs/SECURITY_CONFIGURATION_CONTRACT.md) and
 [the support matrix](docs/SUPPORT_MATRIX.md). New work must use the exact base in its
@@ -33,8 +38,9 @@ defines the actual interface; contributors need no private design files or chat 
 
 This is the whole public-core backlog, not a sample of ten jobs. Open the linked issue
 for its live status, immutable starting revision, owned paths, dependencies and checks.
-Several independent rows can proceed at once. Existing contributors keep their active
-branches; new contributors reserve a non-overlapping outcome instead of replacing them.
+Several independent rows can proceed at once after the maintainer-wide pause is lifted.
+Existing contributors retain their preserved branches; new contributors reserve a
+non-overlapping outcome instead of replacing them.
 
 ### Required for the first Hermes-plus-Codex release
 
@@ -107,7 +113,8 @@ not have to forward files or act as courier. Historical evidence remains intact.
 
 ## Standing instruction for an existing worker session
 
-> Read this queue and the public worker skill. Choose ready work matching your actual
+> Read this queue and the public worker skill. If the maintainer-wide pause is active,
+> stop without editing or pushing. Otherwise choose ready work matching your actual
 > platform/capability. Follow a confirmed assignment or request reservation before
 > editing. Report progress, blockers and PRs in its issue, then continue the next
 > confirmed independent assignment. Preserve other checkouts and dependency gates;
