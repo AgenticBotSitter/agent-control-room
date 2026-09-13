@@ -6,6 +6,7 @@ import { readTaskProjectOverview } from "../../src/web/v1/task-project-overview-
 import type { TaskProjectOverview } from "../../src/web/v1/task-project-overview-wire";
 import { PrivateHeader } from "./private-header";
 import { ProjectNavigation } from "./project-navigation";
+import { ConfiguredTimestamp } from "./configured-timestamp";
 
 type ProjectTaskView = "reviews" | "activity";
 type ReadState = { state: "loading" } | { state: "ready"; value: TaskProjectOverview }
@@ -18,7 +19,7 @@ function taskHref(projectId: string, jobId: string) {
 function TaskLinks({ projectId, tasks }: { projectId: string; tasks: TaskProjectOverview["recent"] }) {
   return <ul className="private-dashboard-list">{tasks.map(task => <li key={task.jobId}>
     <a href={taskHref(projectId, task.jobId)}>{task.title}</a>
-    <span>{task.state.replaceAll("_", " ")} · updated {new Date(task.updatedAt).toLocaleString()}</span>
+    <span>{task.state.replaceAll("_", " ")} · <ConfiguredTimestamp value={task.updatedAt} prefix="Updated" /></span>
   </li>)}</ul>;
 }
 

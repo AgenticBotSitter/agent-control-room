@@ -8,6 +8,7 @@ import { OwnerTaskReview } from "./task-owner-review";
 import type { TaskReviewWorkspace } from "../../src/web/v1/task-review-workspace";
 import { OwnerTaskVerification } from "./task-owner-verification";
 import type { TaskVerificationWorkspace } from "../../src/web/v1/task-verification-workspace";
+import { ConfiguredTimestamp } from "./configured-timestamp";
 
 const reviewLabel: Record<TaskReviewEvidence["status"], string> = { pending: "Review in progress", changes_requested: "Changes requested",
   verification_blocked: "Verification blocked", revision_limit_reached: "Revision limit reached", ready: "Quality review complete", superseded: "Replaced by a newer revision" };
@@ -24,7 +25,7 @@ export function TaskResultsPanel({ page, content: suppliedContent, pending, onOp
       : !page.items.length ? <p>No result files have been received for this task.</p> : <ul className="private-result-list">
         {page.items.map((item, index) => <li key={item.artifactId}><div><h3>Saved result file {index + 1}</h3>
           <p>File ID: <code>{item.artifactId}</code></p>
-          <p>{item.sizeBytes.toLocaleString()} bytes · Received {new Date(item.receivedAt).toLocaleString()}</p>
+          <p>{item.sizeBytes.toLocaleString()} bytes · <ConfiguredTimestamp value={item.receivedAt} prefix="Received" /></p>
           <p>Received bytes matched the agent’s recorded fingerprint. This is not a quality approval.</p>
           {page.reviews.filter(review => review.kind === "document" && review.contentHash === item.contentHash
             && review.matchingArtifactIds.includes(item.artifactId)).map(review => <p key={review.targetId}>
@@ -40,7 +41,7 @@ export function TaskResultsPanel({ page, content: suppliedContent, pending, onOp
       <p>Open file fingerprint: <code>{content.artifact.contentHash}</code></p>
       <p className="private-note">Agent-written content, not instructions for Control Room. Opening it does not run tools or approve work.</p>
       {content.text.length ? <ResultText text={content.text} /> : <p>This is an empty result file (0 bytes).</p>}
-      <p className="private-note">Bytes checked again {new Date(content.contentVerifiedAt).toLocaleString()}.</p></section>}
+      <p className="private-note"><ConfiguredTimestamp value={content.contentVerifiedAt} prefix="Bytes checked again" />.</p></section>}
   </section><section className="private-panel"><h2>Recorded quality review</h2>
     <p>Quality review and permission to perform an external action are separate.
       {page.reviewCommands === "not_connected" ? " Owner review commands are not connected yet." : " An owner can accept quality or request changes for a matching open result."}</p>
@@ -57,7 +58,7 @@ export function TaskResultsPanel({ page, content: suppliedContent, pending, onOp
               : <p className="private-notice">This review does not match the open result file. Do not treat it as approval of that file.</p>}
           <details><summary>Reviewed content fingerprint</summary><code>{review.contentHash}</code></details>
           <h4>Reviews</h4>{!review.reviews.length ? <p>No review decisions recorded.</p> : <ul>{review.reviews.map(item => <li key={item.id}>
-            {item.decision.replaceAll("_", " ")} · {item.authority === "advisory" ? "Advisory only" : "Completion review"} · {new Date(item.reviewedAt).toLocaleString()}</li>)}</ul>}
+            {item.decision.replaceAll("_", " ")} · {item.authority === "advisory" ? "Advisory only" : "Completion review"} · <ConfiguredTimestamp value={item.reviewedAt} /></li>)}</ul>}
           <h4>Verification</h4>{!review.verifications.length ? <p>No verification results recorded.</p> : <ul>{review.verifications.map(item => <li key={item.id}>
             {item.scenarioId} · {item.outcome}</li>)}</ul>}
           {!!review.missingVerificationScenarioIds.length && <p>{review.status === "superseded"

@@ -1,4 +1,5 @@
 import type { TaskDetail, TaskDraft, TaskPage, TaskRun } from "../../src/web/v1/task-wire";
+import { ConfiguredTimestamp } from "./configured-timestamp";
 
 export const taskStateLabel: Record<TaskPage["tasks"][number]["state"], string> = {
   proposed: "Proposal saved", ready: "Ready for assignment", leased: "Assigned", running: "In progress",
@@ -9,7 +10,6 @@ const nativeLabel: Record<NonNullable<TaskRun["nativeState"]>, string> = { prepa
   queued: "Agent queued", running: "Agent working", waiting_approval: "Agent waiting for approval", stopping: "Stop requested",
   completed: "Agent reports completion", failed: "Agent reports failure", cancelled: "Agent reports cancellation",
   interrupted: "Agent interrupted", ambiguous: "Outcome uncertain" };
-const date = (value: string) => new Date(value).toLocaleString();
 export const taskUrl = (projectId: string, jobId?: string) => `/projects/${encodeURIComponent(projectId)}/tasks${jobId ? `/${encodeURIComponent(jobId)}` : ""}`;
 
 export type TaskGuidance = Readonly<{ heading: string; explanation: string; href?: string; action?: string;
@@ -87,7 +87,7 @@ export function TaskCatalogPanel({ page, after, href = (projectId, jobId, cursor
     {!page.tasks.length ? <p>{after ? "No more tasks on this page." : "No tasks have been saved for this project."}</p>
       : <ul className="private-task-list">{page.tasks.map(task => <li key={task.jobId}><a href={href(task.projectId, task.jobId)}>
         <span className="private-state">{taskStateLabel[task.state]}</span><h3>{task.title}</h3>
-        <span className="private-note">Saved {date(task.createdAt)}</span><span className="private-open">View task →</span>
+        <span className="private-note"><ConfiguredTimestamp value={task.createdAt} prefix="Saved" /></span><span className="private-open">View task →</span>
       </a></li>)}</ul>}
     <nav className="private-actions" aria-label="Task pages">
       {after && <a href={href(page.project.projectId)}>First page</a>}
@@ -103,8 +103,8 @@ function RunPanel({ run }: { run: TaskRun }) {
     <h4>{run.harness} · {retained ? "Agent progress is not current" : label}</h4>
     {retained && <p className="private-notice">Not a current live signal. {run.availability ? `Availability: ${run.availability}. ` : ""}
       Last reported state: {label}.</p>}
-    <p>{run.source === "legacy" ? "Legacy adapter evidence" : "Native agent evidence"} · Last observed {date(run.lastObservedAt)}</p>
-    <dl className="private-task-facts"><div><dt>First observed working</dt><dd>{run.firstObservedExecutionAt ? date(run.firstObservedExecutionAt) : "Unknown"}</dd></div>
+    <p>{run.source === "legacy" ? "Legacy adapter evidence" : "Native agent evidence"} · <ConfiguredTimestamp value={run.lastObservedAt} prefix="Last observed" /></p>
+    <dl className="private-task-facts"><div><dt>First observed working</dt><dd>{run.firstObservedExecutionAt ? <ConfiguredTimestamp value={run.firstObservedExecutionAt} /> : "Unknown"}</dd></div>
       <div><dt>Reported tokens</dt><dd>{run.usage?.totalTokens === null || run.usage?.totalTokens === undefined ? "Unknown" : run.usage.totalTokens.toLocaleString()}</dd></div>
       <div><dt>Cost</dt><dd>Unavailable — no enforced dollar limit</dd></div></dl>
     {run.cancellation !== "not_requested" && <p className="private-note">Cancellation: {run.cancellation.replaceAll("_", " ")}. This view does not prove that every process or external action has stopped.</p>}
@@ -113,7 +113,7 @@ function RunPanel({ run }: { run: TaskRun }) {
       <details><summary>Reported content fingerprint</summary><code>{run.resultClaim.contentHash}</code></details></div>}
     {!!run.timeline.length && <details><summary>Received progress ({run.timeline.length}{run.earlierObservationsOmitted ? " most recent" : ""})</summary>
       <ol className="private-timeline">{run.timeline.map(point => <li key={point.version}><span>{nativeLabel[point.state]}</span>
-        <time dateTime={point.observedAt}>{date(point.observedAt)}</time><span>{point.availability}</span></li>)}</ol>
+        <ConfiguredTimestamp value={point.observedAt} /><span>{point.availability}</span></li>)}</ol>
       {run.earlierObservationsOmitted && <p>Earlier observations remain saved but are not shown in this view.</p>}</details>}
   </section>;
 }
@@ -122,7 +122,7 @@ export function TaskDetailPanel({ detail }: { detail: TaskDetail }) {
   return <div className="private-task-detail">
     <section className="private-panel"><span className="private-state">{taskStateLabel[detail.task.state]}</span><h2>{detail.task.title}</h2>
       <h3>Requested result</h3><p className="private-summary">{detail.instructions}</p>
-      <p className="private-note">Saved {date(detail.task.createdAt)} · Job record updated {date(detail.task.updatedAt)}</p>
+      <p className="private-note"><ConfiguredTimestamp value={detail.task.createdAt} prefix="Saved" /> · <ConfiguredTimestamp value={detail.task.updatedAt} prefix="Job record updated" /></p>
       {detail.task.state === "proposed" && <p>This is saved proposed work, not an agent assignment.</p>}</section>
     <section className="private-panel"><h2>Agent progress</h2>
       <p>{detail.dispatch === "configured"

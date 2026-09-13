@@ -5,6 +5,7 @@ import { verificationErrorMessage } from "../../src/web/v1/task-verification-bro
 import type { TaskVerificationDraft, TaskVerificationOptions } from "../../src/web/v1/task-verification-wire";
 import { createTaskVerificationWorkspace, type TaskVerificationSession, type TaskVerificationWorkspace,
   type VerificationWorkspaceBinding } from "../../src/web/v1/task-verification-workspace";
+import { ConfiguredTimestamp } from "./configured-timestamp";
 
 type Scenario = TaskVerificationOptions["scenarios"][number];
 const availability: Record<Scenario["availability"], string> = {
@@ -34,7 +35,7 @@ export function OwnerVerificationPanel({ options, scenarioId, result, note, pend
           {options.scenarios.map(scenario => <option key={scenario.scenarioId} value={scenario.scenarioId}>{scenario.label}</option>)}</select></label>
         {selected && <div><h5>{selected.label}</h5><h6>Actual configured instructions</h6>
           <p className="private-prewrap">{selected.instructions}</p><p>{availability[selected.availability]}</p>
-          {selected.ownVerification && <p>Recorded human result: {outcome[selected.ownVerification.outcome]} · {new Date(selected.ownVerification.recordedAt).toLocaleString()}.</p>}
+          {selected.ownVerification && <p>Recorded human result: {outcome[selected.ownVerification.outcome]} · <ConfiguredTimestamp value={selected.ownVerification.recordedAt} />.</p>}
           {selected.availability === "available" && <><label>Observed result<select aria-label="Observed result" value={result ?? ""}
             disabled={pending || held} onChange={event => onResult(event.target.value
               ? event.target.value as TaskVerificationDraft["outcome"] : undefined)}><option value="">Choose a result</option>

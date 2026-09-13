@@ -49,6 +49,15 @@ function check(name, condition, detail = "") {
   assert.ok(condition, name);
 }
 
+async function checkNoPageOverflow(page, label) {
+  const dimensions = await page.evaluate(() => ({
+    scrollWidth: document.documentElement.scrollWidth,
+    clientWidth: document.documentElement.clientWidth,
+  }));
+  check(`${label} at 360px does not scroll sideways`, dimensions.scrollWidth <= dimensions.clientWidth + 1,
+    `${dimensions.scrollWidth}px scroll width; ${dimensions.clientWidth}px viewport width`);
+}
+
 async function saveSanitizedScreenshot(page, filename, maximumWidth, maximumHeight) {
   if (!screenshotDirectory) return;
   const path = resolve(screenshotDirectory, filename);
@@ -75,7 +84,7 @@ try {
     clock: () => now, loadKeys: async () => trust.keys });
 
   browser = await playwright.chromium.launch({ headless: true });
-  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const context = await browser.newContext({ viewport: { width: 360, height: 844 } });
   await context.route("**/*", async route => {
     const browserRequest = route.request();
     const url = new URL(browserRequest.url());
@@ -108,6 +117,7 @@ try {
   const homeHeadings = await page.getByRole("heading", { level: 1 }).allTextContents();
   check("compiled private home rendered", homeHeadings.length === 1 && /Control Room/.test(homeHeadings[0]),
     `heading=${JSON.stringify(homeHeadings)}`);
+  await checkNoPageOverflow(page, "home");
   await page.locator("body").focus();
   await page.keyboard.press("Tab");
   check("skip link is first keyboard target", await page.locator(":focus").evaluate(element =>
@@ -124,6 +134,7 @@ try {
     `url=${new URL(page.url()).pathname}; alerts=${JSON.stringify(await page.getByRole("alert").allTextContents())}`);
   const alphaPath = new URL(page.url()).pathname;
   check("project creation navigated to its protected page", /^\/projects\/project%3A/.test(alphaPath), alphaPath);
+  await checkNoPageOverflow(page, "project overview");
 
   await page.getByRole("link", { name: "Work", exact: true }).click();
   await page.locator("#task-title").waitFor({ state: "visible" });
@@ -132,12 +143,14 @@ try {
   await page.getByRole("button", { name: "Save proposal" }).click();
   await page.getByRole("heading", { name: "Acceptance task" }).waitFor();
   check("task proposal opened its protected detail", /\/tasks\/job%3A/.test(new URL(page.url()).pathname));
+  await checkNoPageOverflow(page, "task detail");
 
   for (const [label, heading] of [["Files", "Project files"], ["Reviews", "Project reviews"],
     ["Activity", "Project activity"], ["Settings", "Project status"]]) {
     await page.getByRole("navigation", { name: "Project pages" }).getByRole("link", { name: label, exact: true }).click();
     await page.getByRole("heading", { name: heading }).waitFor();
     check(`${label.toLowerCase()} page is reachable from shared project navigation`, true);
+    await checkNoPageOverflow(page, `${label.toLowerCase()} page`);
   }
 
   await page.getByRole("button", { name: "Archive project" }).click();
@@ -146,7 +159,9 @@ try {
   await page.getByRole("button", { name: "Reopen project" }).click();
   await page.locator(".private-state").filter({ hasText: "active" }).waitFor();
   check("archived project can be reopened", true);
+  await page.setViewportSize({ width: 1280, height: 900 });
   await saveSanitizedScreenshot(page, "private-browser-wide.png", 1280, 900);
+  await page.setViewportSize({ width: 360, height: 844 });
 
   await page.goto(`${origin}/projects`, { waitUntil: "domcontentloaded" });
   await page.locator("#project-title").fill("Browser acceptance beta");
@@ -159,14 +174,19 @@ try {
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.getByRole("heading", { name: "Browser acceptance beta" }).waitFor();
   check("saved second project survives browser reload", await page.getByRole("heading", { name: "Browser acceptance beta" }).isVisible());
+  await checkNoPageOverflow(page, "reloaded second project");
 
-  await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${origin}/`, { waitUntil: "domcontentloaded" });
   const menu = page.getByRole("button", { name: "Menu" });
   await menu.click();
   check("narrow-screen menu exposes workspace navigation", await menu.getAttribute("aria-expanded") === "true"
     && await page.getByRole("navigation", { name: "Workspace pages" }).getByRole("link", { name: "Projects" }).isVisible());
-  await saveSanitizedScreenshot(page, "private-browser-narrow.png", 390, 844);
+  await checkNoPageOverflow(page, "open workspace menu");
+  await page.getByRole("navigation", { name: "Workspace pages" }).getByRole("link", { name: "Projects" }).click();
+  await page.waitForURL(url => url.pathname === "/projects");
+  check("360px workspace menu link remains operable", true);
+  await checkNoPageOverflow(page, "project catalog reached through the workspace menu");
+  await saveSanitizedScreenshot(page, "private-browser-narrow.png", 360, 844);
 
   const createPosts = posts.filter(entry => entry.path === "/api/v1/projects");
   const taskPosts = posts.filter(entry => /\/tasks$/.test(entry.path));

@@ -33,6 +33,15 @@ function check(name, condition, detail = "") {
   assert.ok(condition, name);
 }
 
+async function checkNoPageOverflow(page, label) {
+  const dimensions = await page.evaluate(() => ({
+    scrollWidth: document.documentElement.scrollWidth,
+    clientWidth: document.documentElement.clientWidth,
+  }));
+  check(`${label} at 360px does not scroll sideways`, dimensions.scrollWidth <= dimensions.clientWidth + 1,
+    `${dimensions.scrollWidth}px scroll width; ${dimensions.clientWidth}px viewport width`);
+}
+
 const fixture = await ownerReviewFixture();
 const assets = await loadPrivateClientAssets(await realpath("dist-vps/client"));
 let application;
@@ -46,7 +55,7 @@ try {
     database: { client: fixture.db, close: fixture.close }, clock: () => instant + 6000 });
 
   browser = await playwright.chromium.launch({ headless: true });
-  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const context = await browser.newContext({ viewport: { width: 360, height: 844 } });
   await context.route("**/*", async route => {
     const browserRequest = route.request(), url = new URL(browserRequest.url());
     if (url.origin !== origin) { await route.abort("blockedbyclient"); return; }
@@ -73,6 +82,7 @@ try {
   const taskPath = `/projects/${encodeURIComponent(binding.projectId)}/tasks/${encodeURIComponent(binding.jobId)}`;
   await page.goto(`${origin}${taskPath}`, { waitUntil: "domcontentloaded" });
   await page.getByRole("heading", { name: "Result files" }).waitFor();
+  await checkNoPageOverflow(page, "result task page");
   check("compiled task page lists the returned result", await page.getByRole("button", { name: "Read result" }).isVisible());
   check("returned text is not displayed before the owner opens it",
     await page.getByText("A useful private result.", { exact: true }).count() === 0);
@@ -80,6 +90,7 @@ try {
   await page.getByRole("button", { name: "Read result" }).click();
   const resultRegion = page.getByRole("region", { name: "Protected result content" });
   await resultRegion.waitFor();
+  await checkNoPageOverflow(page, "opened protected result");
   check("owner can read the exact protected result",
     await resultRegion.locator('textarea[aria-label="Agent result text"]').inputValue() === "A useful private result.");
   check("open result is clearly separated from executable instructions",
@@ -90,6 +101,7 @@ try {
   await page.getByRole("button", { name: "Request changes" }).click();
   await page.getByRole("status").filter({ hasText: "Saved: changes requested" }).waitFor();
   check("owner change request is confirmed without starting new work", true);
+  await checkNoPageOverflow(page, "saved owner review");
 
   const reviewPosts = posts.filter(entry => /\/reviews\/[^/]+$/.test(entry.path));
   check("quality decision crossed the command boundary exactly once", reviewPosts.length === 1,
@@ -103,6 +115,7 @@ try {
   await page.getByRole("heading", { name: "Result files" }).waitFor();
   await page.getByRole("button", { name: "Read result" }).click();
   await page.getByRole("region", { name: "Owner quality decision" }).waitFor();
+  await checkNoPageOverflow(page, "reloaded owner review");
   check("saved change request survives a full browser reload",
     await page.getByText("Saved request for changes", { exact: false }).isVisible()
       && await page.getByText(feedback, { exact: true }).isVisible());

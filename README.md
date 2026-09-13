@@ -149,7 +149,7 @@ components are not yet all integrated.
 
 The public package includes sanitized Idea Lab and news workflows, connector updates
 and generic database/operator templates. At the PR #102 baseline it passes strict
-type checking and all 61 compiled test groups, including 182 browser acceptance
+type checking and all 61 compiled test groups, including 184 browser accessibility
 checks. Templates are not configured services, and these checks are not production
 acceptance.
 

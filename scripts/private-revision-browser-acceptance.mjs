@@ -35,6 +35,15 @@ function check(name, condition, detail = "") {
   assert.ok(condition, name);
 }
 
+async function checkNoPageOverflow(page, label) {
+  const dimensions = await page.evaluate(() => ({
+    scrollWidth: document.documentElement.scrollWidth,
+    clientWidth: document.documentElement.clientWidth,
+  }));
+  check(`${label} at 360px does not scroll sideways`, dimensions.scrollWidth <= dimensions.clientWidth + 1,
+    `${dimensions.scrollWidth}px scroll width; ${dimensions.clientWidth}px viewport width`);
+}
+
 const fixture = await nativeQualityCompletionFixture();
 let startup;
 let runtime;
@@ -50,7 +59,7 @@ try {
   check("compiled application exposes revision preparation", runtime.isReady() && Boolean(runtime.revisions));
 
   browser = await playwright.chromium.launch({ headless: true });
-  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const context = await browser.newContext({ viewport: { width: 360, height: 844 } });
   await context.route("**/*", async route => {
     const browserRequest = route.request(), url = new URL(browserRequest.url());
     if (url.origin !== origin) { await route.abort("blockedbyclient"); return; }
@@ -79,6 +88,7 @@ try {
   await page.getByRole("heading", { name: "Result files" }).waitFor();
   await page.getByRole("button", { name: "Read result" }).click();
   await page.getByRole("region", { name: "Protected result content" }).waitFor();
+  await checkNoPageOverflow(page, "revision source task");
 
   const feedback = "Prepare a clearer explanation of the recorded evidence.";
   await page.getByRole("textbox", { name: "Changes you want" }).fill(feedback);
@@ -86,6 +96,7 @@ try {
   await page.getByRole("status").filter({ hasText: "Saved: changes requested" }).waitFor();
   await page.getByRole("button", { name: "Prepare revised task" }).waitFor();
   check("saved owner feedback enables one explicit follow-up preparation", true);
+  await checkNoPageOverflow(page, "revision-ready owner review");
 
   const nativeCalls = [...fixture.local.calls], nativeEffects = fixture.local.effects.countFull();
   await page.getByRole("button", { name: "Prepare revised task" }).click();
@@ -94,6 +105,7 @@ try {
   const childLink = prepared.getByRole("link", { name: "Open revised task" });
   const childHref = await childLink.getAttribute("href");
   check("browser receives a distinct linked follow-up task", typeof childHref === "string" && childHref !== sourcePath);
+  await checkNoPageOverflow(page, "prepared revision");
 
   const reviewPosts = posts.filter(entry => /\/reviews\/[^/]+$/.test(entry.path));
   const revisionPosts = posts.filter(entry => entry.path.endsWith("/revisions"));
@@ -108,6 +120,7 @@ try {
   await page.waitForURL(url => url.pathname === childHref);
   await page.getByRole("heading", { name: "Agent progress", exact: true }).waitFor();
   check("prepared follow-up has a working direct task page", page.url().endsWith(childHref));
+  await checkNoPageOverflow(page, "revised task");
 
   const attempts = await startup.coordinator.client.query("SELECT id FROM control_attempts WHERE job_id=$1", [childJobId]);
   check("follow-up remains proposed and starts no agent", child.state === "proposed" && attempts.rows.length === 0);
