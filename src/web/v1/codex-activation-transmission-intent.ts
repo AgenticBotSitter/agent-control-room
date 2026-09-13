@@ -45,6 +45,7 @@ const recordSchema = z.object({ schema: z.literal("control-room.codex-activation
   dispatchFrameDigest: digestSchema, receiptFrameDigest: digestSchema,
   reservedAt: instant, reservedBy: localId }).strict();
 type Record = z.infer<typeof recordSchema>;
+type ReadRecord = Omit<Record, "frame"> & { frame: SignedNodeFrame<"harness.codex.dispatch.activation"> };
 type Row = { tenant_id: string; project_id: string; job_id: string; attempt_id: string;
   activation_id: string; message_id: string; receipt_frame_digest: string; record: unknown; auth_tag: string };
 const fail = (): never => { throw new Error("codex_activation_transmission_intent_unavailable"); };
@@ -61,7 +62,7 @@ function activationFrame(record: Record) {
 }
 
 export async function readCodexActivationTransmissionIntentInSession(tx: DatabaseSession, key: Uint8Array,
-  scope: NativeTaskQueueScope) {
+  scope: NativeTaskQueueScope): Promise<ReadRecord | null> {
   const row = (await tx.query<Row>(`SELECT tenant_id,project_id,job_id,attempt_id,activation_id,message_id,
     receipt_frame_digest,record,auth_tag FROM control_codex_activation_transmission_intents
     WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3`, [scope.tenantId, scope.jobId, scope.attemptId])).rows[0];
@@ -76,10 +77,10 @@ export async function readCodexActivationTransmissionIntentInSession(tx: Databas
     || admission.tenantId !== scope.tenantId || admission.projectId !== scope.projectId
     || admission.jobId !== scope.jobId || admission.attemptId !== scope.attemptId
     || admission.inputDigest !== scope.inputDigest || frame.body.currentAdmissionDigest !== sha256Digest(admission)) return fail();
-  return record;
+  return Object.freeze({ ...record, frame });
 }
 
-async function assertCanonicalAdmission(tx: DatabaseSession, admission: CodexCurrentAdmissionV1) {
+export async function assertCanonicalCodexAdmissionInSession(tx: DatabaseSession, admission: CodexCurrentAdmissionV1) {
   const row = (await tx.query<{ project_lifecycle: string; project_version: number; job: unknown; attempt: unknown;
     lease: unknown; node: unknown; key_state: string; key_valid_from: string | Date; key_valid_until: string | Date | null }>(`SELECT
       h.lifecycle AS project_lifecycle,h.version AS project_version,j.payload AS job,a.payload AS attempt,
@@ -126,7 +127,7 @@ export async function persistCodexActivationTransmissionIntent(tx: DatabaseSessi
   const savedReceipt = await readCodexDeliveryReceiptEvidenceInSession(tx, key, scope);
   const queued = await readNativeTaskQueueIntentInSession(tx, key, scope);
   const approval = await readCodexApprovalPacketInSession(tx, key, scope);
-  await assertCanonicalAdmission(tx, admission);
+  await assertCanonicalCodexAdmissionInSession(tx, admission);
   const body = matchCodexTaskActivationV1(frame as unknown as CodexActivationFrameV1, {
     dispatch: dispatch as unknown as CodexDispatchFrameForActivationV1,
     receipt: receipt as unknown as CodexDispatchReceiptFrameForActivationV1,

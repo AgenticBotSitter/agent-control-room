@@ -10,7 +10,7 @@ Permanent entry point for people and bots. Read the [build/reuse plan](PUBLIC_BU
 and [worker skill](skills/public-build-worker/SKILL.md). Issues are the live status
 record; no documentation commit is needed every time a job changes state.
 
-Public `main` is the reconciled implementation baseline through PR #124. It now
+Public `main` is the reconciled implementation baseline through PR #133. It now
 includes the configurable-project proof, explicit project pages, safe Project News,
 owner-attention prioritization, exact and relative activity times, verified 360px
 navigation, restart-style recovery after both successful and failed verification,
@@ -20,9 +20,12 @@ the exact durable thread/turn into one recovery read using only explicit injecte
 ports. A strict owned fake byte-process adapter supplies both JSONL profiles and
 withholds observations unless process retirement is proven. Hermes and Codex terminal
 results now share one strict inert evidence shape; the exact-version Codex qualification
-and result-publication contract is defined and independently reviewed. This is not
-physical native or provider qualification and does not write or publish results,
-artifacts or reviews, or release capacity.
+and result-publication contract is defined and independently reviewed. A Codex-only
+publisher can now verify an externally signed qualification plus the saved plan,
+activation and current admission, then persist exact bytes and one pending review
+target with restart-safe reservations. Its tests use a synthetic signer; this is not
+physical native or provider qualification, does not make the path live, accept a
+review, complete work or release capacity.
 Connector, security/configuration and support decisions are published in
 [the shared connector contract](docs/SHARED_CONNECTOR_CONTRACT.md),
 [the security/configuration contract](docs/SECURITY_CONFIGURATION_CONTRACT.md) and
@@ -54,13 +57,16 @@ where the work is concentrated without requiring chat history.
 
 - **Assigned:** #2 Windows portability, #8 Hermes connector, #11 shipped notices,
   #27 Idea Lab/article research, #62 Claude connector, #63 PostgreSQL/recovery,
-  #64 distributable service, #65/#115 protected persistent result storage and #116
-  schedule planning/status.
-- **Ready for reservation:** #120 schedule admission, #121 signer/checkpoint faults,
-  #122 ingress/bootstrap conformance, #125 Mac/Linux worker rehearsal, #126 server
-  composition failures, #127 first-owner ceremony and #128 retained restic backups.
+  #64 distributable service, #122 ingress/bootstrap conformance and #127 first-owner
+  ceremony. #65 remains the parent integration outcome for persistent result storage.
+- **Ready for reservation now:** #125 Mac/Linux worker rehearsal, #126 server
+  composition failures and #128 retained restic backups. Each is a substantial,
+  self-contained package with owned paths, reuse choices and acceptance checks.
 - **Lead integration active:** #10 configurable frontend and #26 canonical shared
   two-harness execution/results.
+- **Recently completed:** #115 persistent local artifact storage, #116 truthful
+  schedule planning/status, #120 occurrence admission and #121 the security/recovery
+  fault matrix.
 - **Waiting on named inputs, not forgotten:** #1 final real browser acceptance, the
   automatic-dispatch remainder of #29, the integration/backup remainder of #65, #66
   full server composition, #68 worker installation and #61 final release qualification.

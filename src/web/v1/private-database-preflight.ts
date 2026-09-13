@@ -17,7 +17,7 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 
 // Generated from public migrations 0001-0073, including generic external-content
 // migrations 0025/0026. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "d84a8f5f6292b2f3eafa4651ea17ab4227ed6ec66cea74ab20ffebcb075a83b5";
+export const privateWebSchemaDigest = "47275ea7e11ed3c5806e6448837410412bba4e4feb8eb54003f9dd83fdcac811";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "control_schedules", "control_schedule_occurrences",
   "control_abs_story_versions", "control_abs_source_observations", "control_abs_source_settings", "control_abs_story_archives", "control_abs_article_details",
@@ -91,7 +91,7 @@ const coordinatorUpdates: Record<string, readonly string[]> = {
 };
 const resultReads = ["workspaces", "control_identities", "control_role_grants", "projects",
   "control_jobs", "control_workflows", "control_requests", "control_task_execution_plans",
-  "control_harness_runs", "control_harness_run_events", "control_native_review_plans",
+  "control_harness_runs", "control_harness_run_events", "control_codex_result_publications", "control_native_review_plans",
   "control_artifact_manifests", "control_native_artifact_receipts", "control_completion_gate_records",
   "control_completion_gate_integrity", "audit_events", "control_audit_chain_heads"];
 const resultInserts = new Set(["control_native_review_plans", "control_completion_gate_records", "audit_events", "control_audit_chain_heads"]);
@@ -101,15 +101,18 @@ const resultUpdates: Record<string, readonly string[]> = {
   control_completion_gate_integrity: ["web_lock", "revision", "record_count", "state_digest", "state_auth_tag"],
   control_audit_chain_heads: ["head_hash", "event_count", "updated_at"],
 };
-const evidenceReads = ["workspaces", "control_identities", "control_role_grants", "projects",
-  "control_jobs", "control_attempts", "control_leases", "control_harness_runs", "control_harness_run_events",
+const evidenceReads = ["workspaces", "control_identities", "control_role_grants", "projects", "control_manual_project_heads",
+  "control_jobs", "control_attempts", "control_leases", "control_nodes", "control_node_keys", "control_harness_runs", "control_harness_run_events",
   "control_native_delivery_envelopes", "control_native_transmission_intents", "control_native_delivery_receipts",
+  "control_task_execution_plans", "control_codex_activation_transmission_intents", "control_codex_result_publications",
   "control_artifact_manifests", "control_native_artifact_receipts", "control_native_result_write_reservations",
   "audit_events", "control_audit_chain_heads"];
-const evidenceInserts = new Set(["control_harness_runs", "control_harness_run_events", "control_artifact_manifests",
+const evidenceInserts = new Set(["control_harness_runs", "control_harness_run_events", "control_codex_result_publications", "control_artifact_manifests",
   "control_native_artifact_receipts", "control_native_result_write_reservations", "audit_events", "control_audit_chain_heads"]);
 const evidenceUpdates: Record<string, readonly string[]> = {
-  control_jobs: ["result_lock"], control_attempts: ["evidence_lock"], control_leases: ["evidence_lock"], projects: ["coordinator_lock"],
+  control_jobs: ["result_lock"], control_attempts: ["evidence_lock"], control_leases: ["evidence_lock"],
+  projects: ["coordinator_lock"], control_manual_project_heads: ["coordinator_lock"],
+  control_nodes: ["coordinator_lock"], control_node_keys: ["coordinator_lock"],
   control_harness_runs: ["state", "last_sequence", "run_digest", "run_auth_tag", "payload", "updated_at", "last_observed_at"],
   control_native_result_write_reservations: ["state", "contract_digest", "reservation", "auth_tag", "updated_at"],
   control_audit_chain_heads: ["head_hash", "event_count", "updated_at"],

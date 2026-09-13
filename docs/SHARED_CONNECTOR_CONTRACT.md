@@ -138,7 +138,23 @@ the private host into one thread/turn start, then reopens the exact durable pair
 read-only recovery. It also refuses duplicate or missing activation, interrupted
 writes, revoked authority, malformed/summary/secret results and uncertain cleanup.
 This is composition evidence only: it does not spawn or qualify a physical Codex
-process, call a provider, publish a result/artifact/review, or release capacity.
+process, call a provider, or release capacity.
+
+The Codex-only canonical result publisher now consumes an exact completed-turn
+publication contract and terminal evidence only after independently verifying the
+complete signed physical-qualification receipt against operator-injected expected
+identity, digest, signer key ID and public key. It also re-authenticates the saved v3
+task plan and activation intent, locks and rechecks the current canonical admission,
+then reserves exact bytes before storage and readback. After exact readback it writes
+the artifact manifest, result receipt and one pending review target. Restart replays
+only fully committed metadata; ambiguous storage and split writes require explicit
+reconciliation and never cause a second write. Its harness record is a neutral Codex
+evidence anchor: `discovered`, no start/finish/events/native task, not resumable and
+not a lifecycle or completion claim. It does not accept review, complete a task,
+attempt or lease, or release capacity. Tests use an ephemeral synthetic signer and
+are not physical qualification. Live reachability remains disabled until the actual
+spawn/environment/credential port and selected-executable qualification are reviewed
+and composed by the owner.
 
 This correction was made before any qualified v1 native record was deployed. Any
 older pending packet or reservation created with the provisional effect-derived run
