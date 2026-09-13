@@ -8,9 +8,9 @@ import { DOMAIN_CONTRACT_VERSION, requestRecordSchema, workflowRecordSchema, job
 import { appendAuditWith } from "../../audit/audit-store";
 import { assertNoSecretMaterial, computeAuthorityDigest, sha256Digest } from "../../security";
 import { HarnessRunStoreV1 } from "../../harness/v1/store";
-import { NativeResultStore, type NativeResultReadConfiguration, type NativeResultReceipt } from "../../artifacts/v1/native-results";
+import { NativeResultStore, type NativeResultReadConfiguration, type TaskResultReceipt } from "../../artifacts/v1/native-results";
 import { CompletionGateStoreV1 } from "../../completion-gate/v1/store";
-import { readNativeReviewPlan, verifyNativeReviewTarget } from "../../completion-gate/v1/native-review-plan";
+import { readTaskReviewPlanV1, taskReviewRootSubjectIdV1, verifyTaskReviewTargetV1 } from "../../completion-gate/v1/task-review-plan";
 import type { AwaitableRollbackCheckpointStoreV1 } from "../../security/rollback-checkpoint";
 import type { WebTaskReviewConfiguration } from "./task-review-service";
 import type { ManualVerificationScenario } from "./task-verification-service";
@@ -64,7 +64,7 @@ export interface WebTaskKeys {
   ownerReviews?: WebTaskReviewConfiguration;
   manualVerificationScenarios?: readonly ManualVerificationScenario[];
 }
-const resultMetadata = (receipt: NativeResultReceipt) => taskResultMetadataSchema.parse({ artifactId: receipt.artifactId,
+const resultMetadata = (receipt: TaskResultReceipt) => taskResultMetadataSchema.parse({ artifactId: receipt.artifactId,
   attemptId: receipt.attemptId, runId: receipt.runId, contentHash: receipt.contentHash, sizeBytes: receipt.sizeBytes,
   receivedAt: receipt.receivedAt, byteCheck: receipt.byteCheck, qualityAccepted: false });
 
@@ -297,9 +297,9 @@ export class WebTaskService {
       const result = this.resultStore ? await this.resultStore.list(tx, this.scope.tenantId, projectId, jobId)
         : { receipts: [], additionalResultsOmitted: false };
       const items = result.receipts.map(resultMetadata);
-      const lineage = this.reviewConfig ? await readNativeReviewPlan(tx, this.reviewConfig.integrityKey,
+      const lineage = this.reviewConfig ? await readTaskReviewPlanV1(tx, this.reviewConfig.integrityKey,
         this.scope.tenantId, projectId, jobId) : undefined;
-      const subjectId = lineage?.schema === "control-room.native-review-plan/v2" ? lineage.revision.rootSubjectId : jobId;
+      const subjectId = taskReviewRootSubjectIdV1(lineage, jobId);
       const review = this.reviewConfig ? await new CompletionGateStoreV1(joined(tx), this.reviewConfig.integrityKey,
         this.reviewConfig.checkpoints).inspectSubject(this.scope.tenantId, projectId, subjectId) : { targets: [], additionalTargetsOmitted: false };
       const reviews = review.targets.map(({ snapshot, reviews, verifications, findings, additionalEvidenceOmitted }) => taskReviewEvidenceSchema.parse({
@@ -307,7 +307,7 @@ export class WebTaskService {
         contentHash: snapshot.target.subjectDigest, revision: snapshot.revisionNumber, supersedesTargetId: snapshot.target.supersedesTargetId ?? null,
         status: snapshot.status, matchingArtifactIds: snapshot.target.kind === "document" ? result.receipts.filter(receipt => {
           if (receipt.contentHash !== snapshot.target.subjectDigest) return false;
-          try { verifyNativeReviewTarget(lineage, snapshot.target, receipt); return true; } catch { return false; }
+          try { verifyTaskReviewTargetV1(lineage, snapshot.target, receipt); return true; } catch { return false; }
         }).map(receipt => receipt.artifactId) : [], additionalEvidenceOmitted,
         reviews: reviews.map(value => ({ id: value.id, decision: value.decision, authority: value.authority, reviewedAt: value.reviewedAt })),
         verifications: verifications.map(value => ({ id: value.id, scenarioId: value.scenarioId, outcome: value.outcome, verifiedAt: value.verifiedAt })),

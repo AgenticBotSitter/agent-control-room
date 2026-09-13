@@ -4,6 +4,8 @@ import { appendAuditWith } from "../../audit/audit-store";
 import { CompletionGateStoreV1 } from "../../completion-gate/v1/store";
 import { completionAcceptanceProfileSchemaV1, completionReviewTargetSchemaV1 } from "../../completion-gate/v1/schemas";
 import { stageAsyncCompletionCheckpoint } from "../../completion-gate/v1/async-staged-checkpoint";
+import { codexReviewPlanSchemaV1, codexReviewPlanTagV1, codexReviewRevisionV1, codexReviewTargetV1,
+  verifyCodexReviewPlanV1, type CodexReviewPlanV1 } from "../../completion-gate/v1/codex-review-plan";
 import { DOMAIN_CONTRACT_VERSION, artifactManifestRecordSchema, attemptRecordSchema, jobRecordSchema,
   leaseRecordSchema, type ArtifactManifestRecord } from "../../domain/v1";
 import { createCodexCanonicalResultRecordV1, codexCanonicalResultRecordSchemaV1,
@@ -21,8 +23,9 @@ import { assertNoSecretMaterial, computeAuthorityDigest, hmacSha256Tag, sha256Di
 import { assertSynchronousFence } from "../../security/synchronous-fence";
 import { assertCanonicalCodexAdmissionInSession,
   readCodexActivationTransmissionIntentInSession } from "../../web/v1/codex-activation-transmission-intent";
-import { readCodexTaskExecutionPlanV3InSession, type CodexTaskExecutionPlanV3 } from "../../web/v1/task-execution-planner";
+import { readCodexTaskExecutionPlanV3InSession, type CodexTaskExecutionPlan } from "../../web/v1/task-execution-planner";
 import { checkedResultBytes, nativeResultId } from "./native-results";
+import { codexResultReceiptSchemaV1, type CodexResultReceiptV1 } from "./codex-result-receipt";
 import { codexResultReservationSchemaV1, commitCodexResultReservationMetadataV1,
   markCodexResultReservationStorageUncertainV1, reserveCodexResultWriteV1,
   verifyCodexResultReservationBytesV1, type CodexResultReservationV1 } from "./codex-result-reservation";
@@ -30,30 +33,7 @@ import { codexResultReservationSchemaV1, commitCodexResultReservationMetadataV1,
 export const CODEX_CANONICAL_RUN_ADAPTER_ID = "codex-app-server:v1" as const;
 
 const instant = z.string().datetime().refine(value => new Date(value).toISOString() === value);
-export const codexResultReceiptSchemaV1 = z.object({
-  schema: z.literal("control-room.codex-result-receipt/v1"), artifactId: localId,
-  tenantId: localId, projectId: localId, jobId: localId, attemptId: localId, runId: localId, nodeId: localId,
-  publicationId: localId, publicationContractDigest: digestSchema, terminalEvidenceDigest: digestSchema,
-  qualificationReceiptBodyDigest: digestSchema, qualificationSignerKeyId: localId,
-  threadId: localId, turnId: localId, itemId: localId, projectionDigest: digestSchema,
-  rawResultDigest: digestSchema, rawTurnDigest: digestSchema, contentHash: digestSchema,
-  sizeBytes: z.number().int().min(1).max(65_536), manifestDigest: digestSchema, receivedAt: instant,
-  byteCheck: z.literal("matched_recorded_claim"), qualityAccepted: z.literal(false),
-  canonicalPublicationAllowed: z.literal(false), completionVerified: z.literal(false),
-  releasesCapacity: z.literal(false), grantsExecutionAuthority: z.literal(false),
-}).strict();
-export type CodexResultReceiptV1 = z.infer<typeof codexResultReceiptSchemaV1>;
-
-const reviewPlanSchema = z.object({
-  schema: z.literal("control-room.codex-review-plan/v1"), tenantId: localId, projectId: localId,
-  jobId: localId, attemptId: localId, runId: localId, nodeId: localId,
-  publicationId: localId, publicationContractDigest: digestSchema, terminalEvidenceDigest: digestSchema,
-  taskPlanDigest: digestSchema, activationIntentRecordDigest: digestSchema,
-  acceptanceProfileId: localId, acceptanceProfileDigest: digestSchema, plannedAt: instant, targetId: localId,
-  qualityAccepted: z.literal(false), completionVerified: z.literal(false), releasesCapacity: z.literal(false),
-  grantsExecutionAuthority: z.literal(false),
-}).strict();
-type CodexReviewPlan = z.infer<typeof reviewPlanSchema>;
+export { codexResultReceiptSchemaV1, type CodexResultReceiptV1 } from "./codex-result-receipt";
 
 type PublicationRow = { tenant_id: string; project_id: string; job_id: string; attempt_id: string; run_id: string;
   publication_id: string; record_digest: string; record: unknown; auth_tag: string; recorded_at: string | Date };
@@ -156,7 +136,7 @@ export class CodexCanonicalResultPublisherV1 {
   private reservationTag(reservation: CodexResultReservationV1) {
     return hmacSha256Tag(this.key, { purpose: "native-result-write-reservation/v1", reservation });
   }
-  private reviewTag(plan: CodexReviewPlan) { return hmacSha256Tag(this.reviewKey, { purpose: "codex-review-plan/v1", plan }); }
+  private reviewTag(plan: CodexReviewPlanV1) { return codexReviewPlanTagV1(this.reviewKey, plan); }
 
   private verifyPublicationRow(row: PublicationRow) {
     const record = codexCanonicalResultRecordSchemaV1.parse(row.record);
@@ -179,10 +159,7 @@ export class CodexCanonicalResultPublisherV1 {
     return reservation;
   }
   private verifyReviewRow(row: ReviewRow) {
-    const plan = reviewPlanSchema.parse(row.plan), expected = Buffer.from(this.reviewTag(plan)), actual = Buffer.from(row.auth_tag);
-    if (expected.length !== actual.length || !timingSafeEqual(expected, actual) || row.tenant_id !== plan.tenantId
-      || row.project_id !== plan.projectId || row.job_id !== plan.jobId || row.run_id !== plan.runId) unavailable();
-    return plan;
+    try { return verifyCodexReviewPlanV1(this.reviewKey, row); } catch { return unavailable(); }
   }
   private verifyResultRow(row: ResultRow) {
     const receipt = codexResultReceiptSchemaV1.parse(row.receipt), manifest = artifactManifestRecordSchema.parse(row.manifest);
@@ -290,9 +267,11 @@ export class CodexCanonicalResultPublisherV1 {
       cancelState: "unsupported", createdAt: receivedAt, updatedAt: receivedAt, lastObservedAt: receivedAt };
   }
 
-  private reviewPlan(plan: CodexTaskExecutionPlanV3, record: CodexCanonicalResultRecordV1): CodexReviewPlan {
+  private reviewPlan(plan: CodexTaskExecutionPlan, record: CodexCanonicalResultRecordV1): CodexReviewPlanV1 {
     const i = record.publication.identity;
-    return reviewPlanSchema.parse({ schema: "control-room.codex-review-plan/v1",
+    return codexReviewPlanSchemaV1.parse({ schema: plan.schema === "control-room.task-execution-plan/v4"
+      ? "control-room.codex-review-plan/v2" : "control-room.codex-review-plan/v1",
+      ...(plan.schema === "control-room.task-execution-plan/v4" ? { revision: plan.revision } : {}),
       tenantId: i.tenantId, projectId: i.projectId, jobId: i.jobId, attemptId: i.attemptId,
       runId: i.runId, nodeId: i.nodeId,
       publicationId: record.publication.publicationId, publicationContractDigest: record.publication.contractDigest,
@@ -303,7 +282,7 @@ export class CodexCanonicalResultPublisherV1 {
       qualityAccepted: false, completionVerified: false, releasesCapacity: false, grantsExecutionAuthority: false });
   }
 
-  private async requireProfile(tx: DatabaseSession, plan: CodexReviewPlan) {
+  private async requireProfile(tx: DatabaseSession, plan: CodexReviewPlanV1) {
     const gate = new CompletionGateStoreV1(joined(tx), this.reviewKey, this.checkpoints);
     const profile = completionAcceptanceProfileSchemaV1.parse(await gate.getRecord(plan.tenantId, plan.acceptanceProfileId, "profile"));
     if (profile.projectId !== plan.projectId || sha256Digest(profile) !== plan.acceptanceProfileDigest
@@ -497,7 +476,7 @@ export class CodexCanonicalResultPublisherV1 {
       const expectedPlan = this.reviewPlan(taskPlan, record);
       const reviewRow = (await tx.query<ReviewRow>(`SELECT * FROM control_native_review_plans
         WHERE tenant_id=$1 AND run_id=$2`, [tenantId, runId])).rows[0];
-      let plan: CodexReviewPlan;
+      let plan: CodexReviewPlanV1;
       if (reviewRow) {
         plan = this.verifyReviewRow(reviewRow);
         if (sha256Digest(plan) !== sha256Digest(expectedPlan)) unavailable();
@@ -516,13 +495,10 @@ export class CodexCanonicalResultPublisherV1 {
       if (!resultRow) unavailable(); const { receipt } = this.verifyResultRow(resultRow);
       if (receipt.publicationContractDigest !== record.publication.contractDigest
         || receipt.terminalEvidenceDigest !== record.terminalEvidence.evidenceDigest) unavailable();
-      const target = completionReviewTargetSchemaV1.parse({ schemaVersion: "control-room-completion-gate/v1",
-        id: plan.targetId, tenantId, projectId: plan.projectId, kind: "document", subjectId: plan.jobId,
-        subjectDigest: receipt.contentHash, acceptanceProfileId: plan.acceptanceProfileId,
-        acceptanceProfileDigest: plan.acceptanceProfileDigest, producer: { actorId: plan.nodeId, actorType: "agent" },
-        rootTargetId: plan.targetId, revisionNumber: 0, submittedAt: receipt.receivedAt });
+      const target = completionReviewTargetSchemaV1.parse(codexReviewTargetV1(plan, receipt));
       const gate = new CompletionGateStoreV1(joined(tx), this.reviewKey, staged.checkpoints);
-      const registered = await gate.registerTarget(target);
+      const registered = plan.schema === "control-room.codex-review-plan/v2"
+        ? await gate.recordRevision(codexReviewRevisionV1(plan, target), target) : await gate.registerTarget(target);
       if (!registered.replayed) await appendAuditWith(tx, { id: `audit:codex-submission:${sha256Digest({ tenantId, runId }).slice(7)}`,
         tenantId, projectId: plan.projectId, actorId: "service:codex-result-submission", actorType: "service",
         action: "task.result.submitted_for_review", targetType: "artifact", targetId: receipt.artifactId,

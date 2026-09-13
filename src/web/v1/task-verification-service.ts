@@ -4,7 +4,7 @@ import { jobRecordSchema } from "../../domain/v1";
 import { NativeResultStore, type NativeResultReadConfiguration } from "../../artifacts/v1/native-results";
 import { CompletionGateStoreV1, type CompletionAcceptanceProfileV1, type CompletionVerificationV1, type CompletionRiskV1 } from "../../completion-gate/v1";
 import { stageAsyncCompletionCheckpoint } from "../../completion-gate/v1/async-staged-checkpoint";
-import { readNativeReviewPlan, verifyNativeReviewTarget } from "../../completion-gate/v1/native-review-plan";
+import { readTaskReviewPlanV1, verifyTaskReviewTargetV1 } from "../../completion-gate/v1/task-review-plan";
 import { assertNoSecretMaterial, computeAuthorityDigest, sha256Digest, type AwaitableRollbackCheckpointStoreV1 } from "../../security";
 import { appendAuditWith } from "../../audit/audit-store";
 import { WebSessionAuthority, type WebActor } from "./session-authority";
@@ -70,8 +70,8 @@ export class WebTaskVerificationService {
     const result = await this.results.read(tx, this.scope.tenantId, projectId, jobId, artifactId);
     if (!result || result.receipt.contentHash !== target.subjectDigest || result.receipt.nodeId !== target.producer.actorId
       || target.producer.actorType !== "agent") throw new WebAccessError("conflict");
-    const lineage = await readNativeReviewPlan(tx, this.key, this.scope.tenantId, projectId, jobId);
-    verifyNativeReviewTarget(lineage, target, result.receipt);
+    const lineage = await readTaskReviewPlanV1(tx, this.key, this.scope.tenantId, projectId, jobId);
+    verifyTaskReviewTargetV1(lineage, target, result.receipt);
     const descriptors = this.descriptors.filter(value => value.acceptanceProfileId === profile.id
       && value.acceptanceProfileDigest === sha256Digest(profile) && profile.requiredVerificationScenarioIds.includes(value.scenarioId));
     return { project, snapshot, profile, result, descriptors, gate,
