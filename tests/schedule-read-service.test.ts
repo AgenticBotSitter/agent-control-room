@@ -15,6 +15,8 @@ test("authenticated project schedule route reads retained records without dispat
   const identity = createAccessVerifier(trust)(request(), now);
   const created = await f.service.create(identity, { title: "Schedule fixture", summary: "Disposable" }, "schedule-project-create-01");
   const projectId = created.project.projectId;
+  const empty = await f.service.create(identity, { title: "Empty schedule fixture", summary: "Disposable" },
+    "schedule-project-create-empty-01");
   const at = new Date(now).toISOString();
   const schedule = { contractVersion: DOMAIN_CONTRACT_VERSION, kind: "schedule", id: "schedule:web",
     tenantId: "tenant:web", projectId, state: "active", scheduleType: "once", expression: at, timezone: "UTC",
@@ -39,6 +41,12 @@ test("authenticated project schedule route reads retained records without dispat
   const call = (path: string, method = "GET", jwt = token()) => app.handle(request(path, method, undefined,
     "schedule-request-01", jwt), () => new Response("unexpected", { status: 500 }));
   const path = `/api/v1/projects/${encodeURIComponent(projectId)}/schedules`;
+  const emptyPath = `/api/v1/projects/${encodeURIComponent(empty.project.projectId)}/schedules`;
+  const emptyStatus = await call(emptyPath); assert.equal(emptyStatus.status, 200);
+  assert.deepEqual((await emptyStatus.json()).schedules, []);
+  await f.db.exec("RESET ROLE; REVOKE SELECT ON control_schedule_occurrences FROM control_room_private_web; SET ROLE control_room_private_web");
+  assert.notEqual((await call(emptyPath)).status, 200);
+  await f.db.exec("RESET ROLE; GRANT SELECT ON control_schedule_occurrences TO control_room_private_web; SET ROLE control_room_private_web");
   const first = await call(path); assert.equal(first.status, 200);
   const body = await first.json();
   assert.equal(body.schedules[0].nextOccurrenceAt, at);

@@ -9,6 +9,9 @@ const iso = (value: string | Date) => new Date(value).toISOString();
 export async function readProjectScheduleStatus(tx: DatabaseSession,
   scope: { tenantId: string; projectId: string }, now: string) {
   const windowEndsAt = new Date(Date.parse(now) + 7 * 86400_000).toISOString();
+  // Touch the occurrence source even when no schedules exist. Otherwise a missing
+  // table or grant could be misreported as a truthful empty schedule catalog.
+  await tx.query(`SELECT 1 FROM control_schedule_occurrences WHERE tenant_id=$1 LIMIT 1`, [scope.tenantId]);
   const rows = (await tx.query<{ id: string; tenant_id: string; project_id: string; state: string;
     version: number; created_at: string | Date; updated_at: string | Date;
     next_run_at: string | Date | null; payload: unknown }>(
