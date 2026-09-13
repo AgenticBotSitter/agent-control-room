@@ -28,6 +28,7 @@ everyone; no separate private core.
 | What is blocked, and who decides? | [Needs decision](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aneeds-decision) — each names the missing input |
 | What has been accepted? | [Completed outcomes](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aclosed+label%3Astatus%3Adone) · [Merged contributions](https://github.com/AgenticBotSitter/agent-control-room/pulls?q=is%3Apr+is%3Amerged) — partial PRs do not imply a whole feature is finished |
 | What is the full plan and what are we borrowing? | [All outcomes, reuse decisions and next steps](PUBLIC_BUILD_PLAN.md) · [Attribution](THIRD_PARTY.md) |
+| What must finish before the first installable release? | [Required Hermes-plus-Codex release jobs](WORK_QUEUE.md#required-for-the-first-hermes-plus-codex-release) — with parallel additions listed separately on the same board |
 | Exactly what remains, including unanswered questions? | [Complete remaining-work inventory](PUBLIC_BUILD_PLAN.md#complete-remaining-work-and-open-questions) — substantial workstreams, dependencies, decisions and release gates |
 | What should the webpage look like and do? | [Public webpage specification](WEBPAGE_SPEC.md) — layout, every core screen, optional modules, error states and acceptance |
 | Where do I ask or propose a different useful contribution? | [Coordination issue #12](https://github.com/AgenticBotSitter/agent-control-room/issues/12) — describe your expertise and a substantial non-overlapping outcome |
@@ -125,8 +126,8 @@ No live agent-runtime/platform combination is claimed supported by this preview.
 ## Contributor starting points
 
 **Current implementation baseline:** public `main`, reconciled and verified through
-[PR #34](https://github.com/AgenticBotSitter/agent-control-room/pull/34) at
-`37e1baa7618b0f965103e48883b772a52e9a2374`. The
+[PR #42](https://github.com/AgenticBotSitter/agent-control-room/pull/42) at
+`bcb93b8dfb6ddca5511f70116bd095a4610209d2`. The
 [September 9 contributor handoff](CONTRIBUTOR_HANDOFF.md) remains historical evidence;
 new contributions use the base recorded in their issue. This is not production
 acceptance and does not supersede active contributors' branches.

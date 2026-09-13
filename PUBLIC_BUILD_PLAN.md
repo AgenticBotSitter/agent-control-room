@@ -60,7 +60,7 @@ using a unique contributor/worker identifier when several bots share one GitHub 
 ## Starting revision and branch transition
 
 Public `main` is the common implementation baseline, reconciled and verified through
-PR #34 at `37e1baa7618b0f965103e48883b772a52e9a2374`. That baseline retains the component
+PR #42 at `bcb93b8dfb6ddca5511f70116bd095a4610209d2`. That baseline retains the component
 implementation, public collaboration plan, CI and PR #23's LF/Windows refusal slice,
 and adds the reviewed shared connector, security/configuration and product-shell contracts.
 It does not constitute production or live harness qualification.
@@ -209,22 +209,22 @@ not forgotten. Configuration is a cross-cutting release requirement.
 
 | Outcomes | Scope / integration owner area | Completion evidence |
 | --- | --- | --- |
-| A1 website/database; A2 login | Essential: core/#9 | Generic clean setup, durable PostgreSQL, configured owner login and access denial; no personal-account dependency |
+| A1 website/database; A2 login | Essential: #63/#66/#67 | Generic clean setup, durable PostgreSQL, configured owner login and access denial; no personal-account dependency |
 | A3 approval; A4 rollback integrity | Essential for admitted mode: core boundary review | Exact approved work, supported custody/recovery, missing or rolled-back authority refused |
 | A5 task/result/revision; A7 attention | Essential: core/#8/#10 | Two real harnesses, retained results/revision; failures and uncertainty actionable |
 | A6 project pages | Essential: #10 | Separate projects, lifecycle/reload/mobile/keyboard; same artifact with two configurations |
 | B1 continuous fleet; B2 schedules | Queued follow-up essential; expanded schedule UI later | Bounded concurrency, review wait frees capacity, restart/drain; enabled schedules deduplicate occurrences |
 | B3 Codex; B9 capabilities/usage | Essential: core/#8 | Real identities/events/results, explicit unsupported operations and unknown usage |
-| B4 installation; B6 reconnect/cleanup | Essential: #9/#2/core | Documented enroll/version compatibility, no blind redispatch, owned cleanup or explicit uncertainty |
+| B4 installation; B6 reconnect/cleanup | Essential: #64/#68/core; #2 for Windows | Documented enroll/version compatibility, no blind redispatch, owned cleanup or explicit uncertainty |
 | B5 external sessions | Optional Herdr | Scoped stale/offline observations, no implicit terminal control |
 | B7 team/workspaces | Essential: core/platform | Isolated checkouts, confirmed ownership, conflict/dirty preservation |
 | B8 artifacts | Essential bounded result files: core/#8/#10 | Actual bytes/hash/size/type bound to project/run/attempt, protected download, no arbitrary paths |
 | C1 Idea Lab; C2 promotion | Follow core loop: workflow contributors | Real bounded discussion, saved contributions and promoted project with completed first task |
 | C3 news reading; C4 research | Optional generic workflow after core | Configurable sources, attribution, source-to-result/revision; no implicit publishing/setup effects |
 | C5 extensions | Extension contract essential; extra adapters/packs later | Examples/conformance, version/capability limits, removable modules; no private core fork |
-| D1 backup/restore; D3 updates | Essential for persistent use: #9/core | Native PostgreSQL logical tools, restored rows/roles/ACLs and matching artifacts, rollback with preserved journals; no new backup engine |
+| D1 backup/restore; D3 updates | Essential: #60/#63–#65 | Native PostgreSQL logical tools, restored rows/roles/ACLs and matching artifacts, rollback with preserved journals; no new backup engine |
 | D2 monitoring | Basic readiness essential; external tools optional | Useful health separate from job authority; optional alerts independently removable |
-| D4 daily acceptance; D5 contribution | Essential: assembled release/#11/#2/#10 | Sustained bounded workload/resources, clean install, privacy/licenses, public CI and contributor setup |
+| D4 daily acceptance; D5 contribution | Essential: assembled release/#11/#10; #2 for Windows | Sustained bounded workload/resources, clean install, privacy/licenses, public CI and contributor setup |
 
 ## Assignments and changes must follow this ledger
 
@@ -253,7 +253,7 @@ historical PR authorship is preserved, not erased.
 
 - Accepted: PRs #32 through #34 reconciled the public plan, CI, component implementation,
   shared contracts, global product shell and authenticated portable configuration on
-  public main at `37e1baa7618b0f965103e48883b772a52e9a2374`; the baseline includes Linux
+  public main at `bcb93b8dfb6ddca5511f70116bd095a4610209d2`; the baseline includes Linux
   rehearsal/browser tooling, original notice evidence and PR #23's LF/Windows
   platform-refusal slice. These do not establish a complete production release.
 - PR #13: release implementation passed 23 artifact/ignore and 3 selected static
@@ -276,7 +276,12 @@ Direct assignments: [core execution #26](../../issues/26), [webpage #10](../../i
 [Windows #2](../../issues/2), [release/operations #9](../../issues/9),
 [notices #11](../../issues/11), [workflows #27](../../issues/27),
 [configuration/auth #28](../../issues/28), [schedules/context #29](../../issues/29),
-[extensions/visibility #30](../../issues/30), [independent review #21](../../issues/21).
+[extensions/visibility #30](../../issues/30), [independent review #21](../../issues/21),
+[security/recovery #60](../../issues/60), [release acceptance #61](../../issues/61),
+[Claude connector #62](../../issues/62), [PostgreSQL/restore #63](../../issues/63),
+[release service/update #64](../../issues/64), [artifact storage #65](../../issues/65),
+[agent-task composition #66](../../issues/66), [private ingress/owner setup #67](../../issues/67),
+and [Mac/Linux worker setup #68](../../issues/68).
 The live labels distinguish immediately implementable work from decisions that must
 be recorded first. Proposal/source-review help is welcome on those decisions too.
 
@@ -285,7 +290,10 @@ be recorded first. Proposal/source-review help is welcome on those decisions too
 | Core integration — advanced backend and integration lead | Wire real task admission → pg-boss → upstream identity → canonical result → review/revision → capacity release. Connect actual Codex and Hermes, not observations presented as execution. Test replay, transaction failure, expiry, drain, restart and two projects. Includes A3–5, B1/B3/B6/B9 | Shared connector contract is settled; actual-interface gates in Q2/Q3 and authority qualifications in Q4 remain |
 | Product workspace — frontend/accessibility, any OS (#10/#1) | Complete WEBPAGE_SPEC.md: project lifecycle, worker eligibility, task/attempt/result/revision, attention, protected files; two configurations; responsive/keyboard/deep-link behavior. Product-panel/browser acceptance, not only demo screenshots. Includes A5–7, B8 | Portable configuration contract is settled; reserve paths against active PR #25 and integrate only accepted changes |
 | Harness and host interoperability — Mac/Linux/Windows integration (#8/#2) | Real supported upstream mapping, version/capability inventory, independently installed worker setup, reconnect and bounded artifact transfer. Preserve unsupported status. Windows checkout/install/test portability, while Linux-only server custody remains intact. Includes B3–9 | Follow the shared connector contract and support matrix; actual-source API fit can proceed without credentials, live/native gates remain separately authorized |
-| Persistent installation and recovery — Linux/backend operations (#9) | Release artifact plus original notices; fresh generic configuration, restricted database roles/migrations, verified persistence, supervisor, health and private ingress. Restore rows/ACLs/artifacts into disposable storage; stage update separately, drain, cut over and roll back safely. Includes A1/A2/A4, D1–4 | Security/recovery contract is settled; real custody, checkpoint, restore and ingress qualifications remain and an issue never authorizes production effects |
+| Existing release contribution (#9) | Correct and integrate reusable PR #13 scaffolding into the release package | New implementation is split without overlap: database/restore #63, release/service/update #64, storage #65, server composition #66 and ingress/bootstrap #67 |
+| Persistent data and recovery (#60/#63/#65) | Dedicated approval signing and rollback detection consume separately verified database and artifact restore outputs | Each package owns one boundary; #61 assembles their accepted evidence rather than building another backup system |
+| Installable server (#64/#66/#67) | Self-contained release, unprivileged supervised lifecycle, complete agent-task composition and protected first-owner access | Repository work can proceed; credentials, services and live ingress remain separately authorized |
+| Worker operations (#68) | Install, enroll, version-check, reconnect, revoke and remove Hermes/Codex nodes on Mac/Linux | Reuse accepted #8/#26 connectors; native proof is assembled only in #61 |
 | Distribution, provenance and contribution — build/tooling, any OS (#11) | Actual package-instance inventory across platforms, copied-source/assets/bundle coverage, original notices and exceptions; ship them in exact artifact; sanitize public evidence, reconcile branches, publish support matrix, contributor setup and release notes. Includes D5 and one-product guarantee | PR #24 repair, #9 artifact interface and Q1/Q9; no new license census needed |
 | Idea Lab and research workflows — workflow/frontend integration, any OS | Bounded real multi-participant discussion, partial failures, retained contributions, decision/promotion; configurable news sources, attributed reading, research/guide/compare/draft task and review/revision. No implicit publishing or installation. Includes C1–4 | Reuse existing DR-01/02/07 code; fixture/product integration can proceed now, real completion depends on core execution |
 | Schedules, reusable skills and team capacity — backend/product | Eligible recurring dispatch, timezone/missed-run semantics, duplicate prevention, concurrency/review-wait release; procedures and knowledge with versions/provenance; capabilities, skills, limits and model/effort shown before pickup; allocation and bottleneck views. Includes B1/B2/B7/B9 | Initial schedule/capacity semantics are settled; automatic dispatch/recovery remains. Advanced calendar/forecast/optimization follows |
@@ -300,7 +308,7 @@ required to understand these questions.
 
 | ID | Decision/status | Remaining proof gate and responsible role |
 | --- | --- | --- |
-| Q1 | Settled: public `main` at `37e1baa7618b0f965103e48883b772a52e9a2374` is the reconciled baseline | New issues record an immutable main-derived base; active contributor PRs keep ownership until accepted |
+| Q1 | Settled: public `main` at `bcb93b8dfb6ddca5511f70116bd095a4610209d2` is the reconciled baseline | New issues record an immutable main-derived base; active contributor PRs keep ownership until accepted |
 | Q2 | Settled contract: Hermes uses `asimons81/hermes-gpt` pin `89cbfbe232d62dfb8c3cb4f9af04c6c32f956e73` through FastMCP continue/status/result; cancel, replay, events and usage are unsupported | Harness integration: unmodified actual-interface continue/status/result plus busy, truncation, lost-submit and restart/orphaned evidence |
 | Q3 | Settled contract: Codex uses App Server `0.150.0-alpha.8` over parent-owned stdio; exact-package schema evidence is bound to read-only `thread/read(includeTurns: true)` | Core integration: native restart read test, trusted identity/admission and canonical task/result wiring without auto-approval |
 | Q4 | Settled policy: canonical approval, conditional dedicated Ed25519 signer and independent authenticated checkpoint; unsupported execution stays disabled | Security/operations with independent review: real custody/consent, independent placement and both split-commit restore orders |
