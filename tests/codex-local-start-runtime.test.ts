@@ -99,15 +99,19 @@ function runtimeFixture(options: { authority?: 'current' | 'false' | 'stale'; fa
   const written: unknown[] = [];
   const responses = [JSON.stringify({ id: 1, result: {} }), threadResponse(10), turnResponse(20)];
   const ownedStart = createCodexOwnedStartV1({
-    open: async () => {
+    binding: { connectionAttemptId: 'connection-attempt:local-start',
+      initializedConnectionDigest: sha256Digest('initialized-local-start'),
+      threadStartRequestId: 10, turnStartRequestId: 20 }, timeoutMs: 1_000, cleanupMs: 100,
+    open: () => {
       calls.push('open');
-      return {
+      const wire = {
         writeLine: async (line: string) => {
           const parsed = JSON.parse(line); written.push(parsed); calls.push(`write:${parsed.method}`);
         },
         readLine: async () => responses.shift(),
         close: async () => { calls.push('close'); },
       };
+      return { ready: Promise.resolve(wire), async close() {} };
     },
   });
   const runtime = createCodexLocalStartRuntimeV1({
@@ -239,9 +243,12 @@ test('fixed composition binds protected activation, workspace and durable start 
   const startJournal = new SqliteCodexStartJournalV1(':memory:', { testOnlyAllowEphemeral: true });
   let clock = baseTime + 2_000, workspaceEffects = 0;
   const responses = [JSON.stringify({ id: 1, result: {} }), threadResponse(10, intent.checkoutPath), turnResponse(20)];
-  const ownedStart = createCodexOwnedStartV1({ open: async () => ({
-    writeLine: async () => {}, readLine: async () => responses.shift(), close: async () => {},
-  }) });
+  const ownedStart = createCodexOwnedStartV1({ binding: { connectionAttemptId: 'connection-attempt:composed',
+    initializedConnectionDigest: sha256Digest('composed'), threadStartRequestId: 10, turnStartRequestId: 20 },
+  timeoutMs: 1_000, cleanupMs: 100, open: () => {
+    const wire = { writeLine: async () => {}, readLine: async () => responses.shift(), close: async () => {} };
+    return { ready: Promise.resolve(wire), async close() {} };
+  } });
   const workspacePort = {
     inspectRootIdentities: async () => ({
       repository: { realPath: intent.repositoryRoot, device: '1', inode: '2' },
@@ -302,7 +309,9 @@ test('fixed composition refuses mismatched workspace intent before effects or st
         createDetachedWorktree: async () => { effects += 1; throw new Error(); },
         removeWorktree: async () => { effects += 1; } },
       authority: { assertCurrent: () => {}, currentAdmissionDigest: () => saved.currentAdmissionDigest },
-      ownedStart: createCodexOwnedStartV1({ open: async () => { opens += 1; throw new Error(); } }),
+      ownedStart: createCodexOwnedStartV1({ binding: { connectionAttemptId: 'connection-attempt:composed-mismatch',
+        initializedConnectionDigest: sha256Digest('composed-mismatch'), threadStartRequestId: 10, turnStartRequestId: 20 },
+        timeoutMs: 1_000, cleanupMs: 100, open: () => { opens += 1; throw new Error(); } }),
       clock: () => clock++ });
     await assert.rejects(runtime.start(), /unavailable/);
     assert.equal(effects, 0); assert.equal(opens, 0);

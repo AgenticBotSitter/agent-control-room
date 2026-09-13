@@ -17,8 +17,10 @@ navigation, restart-style recovery after both successful and failed verification
 and exact-version Codex start/read fences with a noncanonical bounded result reader.
 The private Codex host now composes a bridge-recorded activation into one start or
 the exact durable thread/turn into one recovery read using only explicit injected
-ports. Its fake-JSONL evidence is not physical native or provider qualification and
-does not publish results/artifacts/reviews or release capacity.
+ports. A strict owned fake byte-process adapter supplies both JSONL profiles and
+withholds observations unless process retirement is proven. This is not physical
+native or provider qualification and does not publish results/artifacts/reviews or
+release capacity.
 Connector, security/configuration and support decisions are published in
 [the shared connector contract](docs/SHARED_CONNECTOR_CONTRACT.md),
 [the security/configuration contract](docs/SECURITY_CONFIGURATION_CONTRACT.md) and

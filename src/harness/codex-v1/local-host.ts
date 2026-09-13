@@ -5,8 +5,9 @@ import { createCodexLocalReadCompositionV1, type CodexLocalReadAuthorityV1,
   type CodexLocalReadIdentityV1 } from './local-read-composition';
 import { createCodexLocalStartCompositionV1 } from './local-start-composition';
 import type { CodexLocalStartAuthorityV1 } from './local-start-runtime';
-import { createCodexOwnedStartV1 } from './owned-start';
-import type { CodexStartJsonlConnectionV1 } from './start-jsonl';
+import { createCodexOwnedStartV1, type OwnedCodexStartConnectionV1 } from './owned-start';
+import { codexInitialProcessBindingV1, createCodexAppServerProcessSessionV1,
+  type AcquireCodexAppServerProcessV1 } from './app-server-process-session';
 import type { OwnedCodexReadConnection } from './owned-read';
 import type { SqliteCodexStartJournalV1 } from './start-journal';
 import type { SqliteBridgeJournal } from '../../node-bridge/journal';
@@ -32,17 +33,21 @@ export interface CodexLocalInitialHostInputV1 extends CommonHostInputV1 {
   bridgeJournal: BridgeJournal;
   authority: CodexLocalStartAuthorityV1;
   workspacePort: ObservableGitWorkspacePort;
-  openStartSession(signal: AbortSignal): Promise<CodexStartJsonlConnectionV1>;
+  acquireProcess: AcquireCodexAppServerProcessV1;
   startTimeoutMs: number;
+  processCleanupTimeoutMs: number;
   clock(): number;
 }
 
 export interface CodexLocalRecoverHostInputV1 extends CommonHostInputV1 {
   mode: 'recover';
+  connectionAttemptId: string;
+  initializedConnectionDigest: string;
   authority: CodexLocalReadAuthorityV1;
-  openReadSession(identity: CodexLocalReadIdentityV1, signal: AbortSignal): OwnedCodexReadConnection;
+  acquireProcess: AcquireCodexAppServerProcessV1;
   readTimeoutMs: number;
   cleanupTimeoutMs: number;
+  processCleanupTimeoutMs: number;
 }
 
 export type CodexLocalHostInputV1 = CodexLocalInitialHostInputV1 | CodexLocalRecoverHostInputV1;
@@ -72,14 +77,21 @@ export function createCodexLocalHostV1(inputValue: CodexLocalHostInputV1) {
 
   if (input.mode === 'initial') {
     const startTimeoutMs = validateTimeout(input.startTimeoutMs, 30_000);
+    const processCleanupTimeoutMs = validateTimeout(input.processCleanupTimeoutMs, 5_000);
     if (input.workspaceIntent.runId !== input.runId) unavailable();
     const authority: CodexLocalStartAuthorityV1 = Object.freeze({
       currentAdmissionDigest: input.authority.currentAdmissionDigest.bind(input.authority),
       assertCurrent: input.authority.assertCurrent.bind(input.authority),
     });
-    const ownedStart = createCodexOwnedStartV1({
-      open: input.openStartSession.bind(input), timeoutMs: startTimeoutMs,
-    });
+    const startBinding = codexInitialProcessBindingV1({ connectionAttemptId: input.connectionAttemptId,
+      initializedConnectionDigest: input.initializedConnectionDigest,
+      threadStartRequestId: input.threadStartRequestId, turnStartRequestId: input.turnStartRequestId });
+    const ownedStart = createCodexOwnedStartV1({ binding: startBinding,
+      open: (binding, signal) => createCodexAppServerProcessSessionV1({
+        binding: codexInitialProcessBindingV1(binding), signal,
+        acquire: input.acquireProcess, cleanupMs: processCleanupTimeoutMs,
+      }) as OwnedCodexStartConnectionV1,
+      timeoutMs: startTimeoutMs, cleanupMs: processCleanupTimeoutMs });
     const composition = createCodexLocalStartCompositionV1({
       queueId: input.queueId, connectionAttemptId: input.connectionAttemptId,
       initializedConnectionDigest: input.initializedConnectionDigest,
@@ -122,9 +134,15 @@ export function createCodexLocalHostV1(inputValue: CodexLocalHostInputV1) {
 
   const readTimeoutMs = validateTimeout(input.readTimeoutMs, 30_000);
   const cleanupTimeoutMs = validateTimeout(input.cleanupTimeoutMs, 5_000);
+  const processCleanupTimeoutMs = validateTimeout(input.processCleanupTimeoutMs, 5_000);
   const read = createCodexLocalReadCompositionV1({ runId: input.runId,
     startEvidence: input.startJournal, authority: input.authority,
-    open: input.openReadSession.bind(input), timeoutMs: readTimeoutMs, cleanupMs: cleanupTimeoutMs });
+    open: (identity, signal) => createCodexAppServerProcessSessionV1({ binding: {
+      mode: 'recover', runId: identity.runId, connectionAttemptId: input.connectionAttemptId,
+      initializedConnectionDigest: input.initializedConnectionDigest,
+      threadId: identity.threadId, turnId: identity.turnId,
+    }, signal, acquire: input.acquireProcess, cleanupMs: processCleanupTimeoutMs }) as OwnedCodexReadConnection,
+    timeoutMs: readTimeoutMs, cleanupMs: cleanupTimeoutMs });
   return Object.freeze({ harness: 'codex-local-v1' as const, mode: 'recover' as const,
     async run(signal: AbortSignal) {
       if (attempted || !(signal instanceof AbortSignal) || signal.aborted) return unavailable();

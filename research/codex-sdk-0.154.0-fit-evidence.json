@@ -1,0 +1,56 @@
+{
+  "schema": "agent-control-room.codex-sdk-fit-evidence/v1",
+  "observedAt": "2026-09-13",
+  "candidate": {
+    "package": "@openai/codex-sdk",
+    "version": "0.154.0",
+    "archiveBytes": 21186,
+    "archiveSha256": "1b64f9731c03838062c6ec4ea8374bffd17fe9b7a79aafe9115263e94b1c1f05",
+    "license": "Apache-2.0",
+    "licenseSha256": "d17f227e4df5da1600391338865ce0f3055211760a36688f816941d58232d8dc",
+    "runtimeDependency": "@openai/codex@0.154.0"
+  },
+  "currentRuntimeCandidate": {
+    "package": "@openai/codex",
+    "version": "0.154.0",
+    "packageArchiveBytes": 4902,
+    "packageArchiveSha256": "870663d4e65042dd358305e96a22af58708a28317cd4e74a85aa867c69f5859b",
+    "darwinArm64ArchiveBytes": 116501639,
+    "darwinArm64ArchiveSha256": "2a98662d79316a59993c7233e3e25a1aa1d42da4b45904585d33a5a7da1cade1",
+    "disposition": "source_candidate_not_qualified",
+    "reason": "The current package is newer than the retained 0.150.0-alpha.8 schema evidence. It must receive a separately authorized exact-schema generation and compatibility review before replacing the existing pin."
+  },
+  "officialGuidance": {
+    "sdk": "https://learn.chatgpt.com/docs/codex-sdk",
+    "appServer": "https://learn.chatgpt.com/docs/app-server",
+    "distinction": "The SDK is recommended for automated coding jobs. App Server is the custom-client interface for authentication, conversation history, approvals and streamed agent events."
+  },
+  "observedSdkSurface": {
+    "startThread": true,
+    "continueSameThread": true,
+    "resumeWithNewTurn": true,
+    "streamedEvents": true,
+    "abortSignal": true,
+    "finalResponse": true,
+    "usage": true,
+    "readStoredThreadWithoutStartingTurn": false,
+    "exactTurnIdInPublicEventTypes": false,
+    "interactiveApprovalResponsePort": false,
+    "defaultEnvironmentInheritance": true,
+    "explicitReplacementEnvironment": true,
+    "invocation": "codex exec --experimental-json",
+    "childCloseAcknowledgementBeforeGeneratorCleanupReturns": false
+  },
+  "decision": {
+    "disposition": "defer_as_optional_batch_adapter",
+    "mvpConnector": "Codex App Server over owned stdio JSONL",
+    "reason": "Control Room requires an exact durable thread and turn pair, passive restart recovery that cannot start more work, bidirectional approval handling, and cleanup evidence. The TypeScript SDK is useful for simpler automated batch work but its current public surface cannot replace those requirements.",
+    "reuse": "Use the SDK event vocabulary and explicit environment option as source guidance only. Do not copy or add the package to the runtime unless a later batch-adapter package has its own acceptance tests and notices.",
+    "reconsiderWhen": [
+      "the SDK exposes read-only stored-turn recovery with exact turn identity",
+      "the SDK exposes a bounded interactive approval-response port",
+      "the SDK proves child-process retirement before cleanup resolves"
+    ]
+  },
+  "scope": "Source and package evaluation only. No package was installed in Control Room, no downloaded executable was run, no code was copied, and no Codex process, credential, provider call, thread, turn, plugin, MCP server, deployment or production effect occurred."
+}

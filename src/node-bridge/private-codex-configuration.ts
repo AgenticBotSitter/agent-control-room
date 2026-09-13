@@ -19,23 +19,27 @@ interface PrivateCodexInitialConfigurationInputV1 {
   turnStartRequestId: number;
   workspaceIntent: unknown;
   startTimeoutMs: number;
+  processCleanupTimeoutMs: number;
 }
 
 interface PrivateCodexRecoverConfigurationInputV1 {
   mode: 'recover';
   paths: PrivateCodexStatePathsV1;
   runId: string;
+  connectionAttemptId: string;
+  initializedConnectionDigest: string;
   readTimeoutMs: number;
   cleanupTimeoutMs: number;
+  processCleanupTimeoutMs: number;
 }
 
 export type PrivateCodexConfigurationInputV1 = PrivateCodexInitialConfigurationInputV1
   | PrivateCodexRecoverConfigurationInputV1;
 
 type PrivateCodexInitialConfigurationPortsV1 = Pick<CodexLocalInitialHostInputV1,
-  'authority' | 'workspacePort' | 'openStartSession' | 'clock'>;
+  'authority' | 'workspacePort' | 'acquireProcess' | 'clock'>;
 type PrivateCodexRecoverConfigurationPortsV1 = Pick<CodexLocalRecoverHostInputV1,
-  'authority' | 'openReadSession'>;
+  'authority' | 'acquireProcess'>;
 export type PrivateCodexConfigurationPortsV1 = PrivateCodexInitialConfigurationPortsV1
   | PrivateCodexRecoverConfigurationPortsV1;
 
@@ -80,13 +84,13 @@ export function validatePrivateCodexStatePathsV1(value: unknown): PrivateCodexSt
 }
 
 function initialPorts(value: PrivateCodexConfigurationPortsV1): PrivateCodexInitialConfigurationPortsV1 {
-  if (!('workspacePort' in value) || !('openStartSession' in value) || !('clock' in value)
+  if (!('workspacePort' in value) || !('acquireProcess' in value) || !('clock' in value)
     || !('currentAdmissionDigest' in value.authority)) unavailable();
   return value as PrivateCodexInitialConfigurationPortsV1;
 }
 
 function recoverPorts(value: PrivateCodexConfigurationPortsV1): PrivateCodexRecoverConfigurationPortsV1 {
-  if (!('openReadSession' in value) || 'currentAdmissionDigest' in value.authority) unavailable();
+  if (!('acquireProcess' in value) || 'currentAdmissionDigest' in value.authority) unavailable();
   return value as PrivateCodexRecoverConfigurationPortsV1;
 }
 
@@ -113,13 +117,17 @@ export function openPrivateCodexConfigurationV1(input: PrivateCodexConfiguration
         initializedConnectionDigest: input.initializedConnectionDigest,
         threadStartRequestId: input.threadStartRequestId, turnStartRequestId: input.turnStartRequestId,
         workspaceIntent, bridgeJournal: bridge!, startJournal: starts!, authority: selected.authority,
-        workspacePort: selected.workspacePort, openStartSession: selected.openStartSession,
-        startTimeoutMs: input.startTimeoutMs, clock: selected.clock });
+        workspacePort: selected.workspacePort, acquireProcess: selected.acquireProcess.bind(selected),
+        startTimeoutMs: input.startTimeoutMs, processCleanupTimeoutMs: input.processCleanupTimeoutMs,
+        clock: selected.clock });
     })() : (() => {
       const selected = recoverPorts(ports);
       return createCodexLocalHostV1({ mode: 'recover', runId: input.runId, startJournal: starts!,
-        authority: selected.authority, openReadSession: selected.openReadSession,
-        readTimeoutMs: input.readTimeoutMs, cleanupTimeoutMs: input.cleanupTimeoutMs });
+        connectionAttemptId: input.connectionAttemptId,
+        initializedConnectionDigest: input.initializedConnectionDigest,
+        authority: selected.authority, acquireProcess: selected.acquireProcess.bind(selected),
+        readTimeoutMs: input.readTimeoutMs, cleanupTimeoutMs: input.cleanupTimeoutMs,
+        processCleanupTimeoutMs: input.processCleanupTimeoutMs });
     })();
     const close = async () => {
       if (closed) return;

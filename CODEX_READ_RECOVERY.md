@@ -209,8 +209,10 @@ activation and complete workspace intent into the fixed initial-start compositio
 or composes the start journal's exact durable thread/turn identity into the fixed
 read-only recovery composition. Its configuration opens only explicitly named,
 owner-only bridge/start journal files and requires every authority, workspace,
-native JSONL session, clock and timeout port to be injected. There are no defaults,
-credential lookup, listener, provider call, retry, resume or new-turn ports.
+process acquisition, clock and timeout port to be injected. The acquired process is
+owned synchronously before readiness is awaited, so readiness timeout and start
+errors cannot abandon a late process. There are no executable, environment or
+credential defaults, listener, provider call, retry, resume or new-turn ports.
 
 The run ID used across owner permit, dispatch and workspace intent is now derived
 only from the exact tenant/node/project/job/attempt identity plus lease ID and epoch,
@@ -233,6 +235,17 @@ The returned value is a noncanonical observation only. It cannot write a canonic
 result, artifact or review, release capacity, retry, resume or start another turn.
 No test in this checkpoint launches Codex, uses credentials, calls a provider or
 qualifies native behavior.
+
+The fake process layer beneath both fixed JSONL profiles now accepts only one
+explicitly injected byte-process acquisition per host attempt. It binds the exact
+connection attempt and initialized-connection digest (plus the fixed start request
+IDs, or the exact recovered thread/turn), rejects carriage returns, malformed UTF-8,
+unterminated or overlong lines and aggregate-buffer overflow, and never returns or
+logs bounded stderr bytes. Write/backpressure, early or malformed exit and reader
+uncertainty are terminal. Close aborts pending I/O, closes stdin, attempts
+termination, awaits readers and a valid terminal-exit record, and then awaits the
+acquisition owner; cleanup uncertainty withholds the observation. These are fake
+byte-port tests, not an executable selection, spawn implementation or native claim.
 
 ### Completed-turn result boundary
 

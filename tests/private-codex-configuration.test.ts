@@ -22,7 +22,7 @@ function initialInput(paths: { bridge: string; starts: string }) {
   const runId = codexTaskRunIdV1(basis);
   return { mode: 'initial' as const, paths, runId, queueId: 'queue:test',
     connectionAttemptId: 'connection-attempt:private-config', initializedConnectionDigest: sha256Digest('initialized'),
-    threadStartRequestId: 10, turnStartRequestId: 20, startTimeoutMs: 1_000,
+    threadStartRequestId: 10, turnStartRequestId: 20, startTimeoutMs: 1_000, processCleanupTimeoutMs: 100,
     workspaceIntent: { schema: 'control-room.workspace-intent/v1', ...basis, runId,
       repositoryRoot: '/synthetic/repository', workspaceRoot: '/synthetic/workspaces',
       checkoutPath: `/synthetic/workspaces/codex-${sha256Digest(runId).slice(7,31)}`, revision: 'a'.repeat(40) } };
@@ -46,7 +46,7 @@ test('private Codex configuration opens one selected mode with no default native
       observeCheckout: async () => { workspaceEffects++; throw new Error(); },
       createDetachedWorktree: async () => { workspaceEffects++; throw new Error(); },
       removeWorktree: async () => { workspaceEffects++; } },
-    async openStartSession() { sessions++; throw new Error(); }, clock: () => Date.now(),
+    acquireProcess() { sessions++; throw new Error(); }, clock: () => Date.now(),
   }, new AbortController().signal);
   assert.equal(owner.harness, 'codex-local-v1'); assert.equal(owner.mode, 'initial');
   await assert.rejects(owner.run(new AbortController().signal), /codex_local_host_unavailable/);
@@ -56,6 +56,6 @@ test('private Codex configuration opens one selected mode with no default native
   const second = await stateFiles(); t.after(() => rm(second.directory, { recursive: true, force: true }));
   assert.throws(() => openPrivateCodexConfigurationV1({ ...initialInput(second.paths), startTimeoutMs: undefined as never }, {
     authority: { currentAdmissionDigest: () => sha256Digest('admission'), assertCurrent() {} },
-    workspacePort: {} as never, openStartSession: async () => { throw new Error(); }, clock: () => Date.now(),
+    workspacePort: {} as never, acquireProcess: () => { throw new Error(); }, clock: () => Date.now(),
   }, new AbortController().signal), /private_codex_configuration_unavailable/);
 });

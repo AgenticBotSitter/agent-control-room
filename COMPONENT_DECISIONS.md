@@ -37,7 +37,7 @@ with a concrete compatibility, security, licensing or measured performance findi
 | DR-14 Monitoring | Selected built-in readiness and Needs attention for MVP; Kuma/Beszel deferred removable options | Existing built-in health is the release baseline; Kuma condition/database tests and Beszel source evidence remain optional evidence | External services are not an MVP blocker. Reopen only for a demonstrated alert/host-metric need, then prove protected health, restart/resource cost and actual signals |
 | DR-15 Integrity checkpoint | Selected existing etcd adapter as independent authenticated CAS rollback detector; OpenBao only a named fallback | Actual CR/service binding exists; etcd does not repair split commits | Qualification pending and required for persistent writes: independent placement/credentials, missing-head refusal, both split-commit orders/lost acknowledgements, backup/WAL binding and full restore acceptance |
 | DR-16 Owner signing | Selected dedicated owner-controlled Ed25519 signer; ssh2 is bounded remote transport only | Owned connection/cancellation, pinned-protocol evaluation and paired canonical issuance tested locally; no real custody proven | Qualification pending for effectful execution: dedicated custody/pins, exact consent, real peer permissions, timeout/cleanup, revocation and platform review; no ambient or forwarded personal key |
-| DR-17 Native connectors/files | Selected Hermes via pinned hermes-gpt FastMCP and Codex App Server 0.150.0-alpha.8 via owned stdio/TS transport; separate attachment admission | Exact-ID Codex projection, owned read lifecycle, owner permit, signed shared-queue delivery, post-receipt activation fence, one-shot local start/read compositions and a private explicit-port host seam are implemented. The fake-JSONL lane carries one recorded bridge activation through start and exact durable recovery, while the selected bounded agent-message remains barred from canonical publication. Stable run identity is derived before the full workspace-intent hash and is separate from the effect claim; the permit/policy target binds the exact contained checkout path. Python SDK is fallback only | MVP blocker is native integration/acceptance: supply reviewed operator ports and credentials, qualify the physical start/restart-read lifecycle, then publish through the harness-neutral result/artifact/review seam and release capacity. Fake/source-tested composition does not claim a physical process or provider qualification. No new connector contest. See CODEX_READ_RECOVERY.md |
+| DR-17 Native connectors/files | Selected Hermes via pinned hermes-gpt FastMCP and Codex App Server 0.150.0-alpha.8 via owned stdio/TS transport; separate attachment admission | Exact-ID Codex projection, owned read lifecycle, owner permit, signed shared-queue delivery, post-receipt activation fence, one-shot local start/read compositions, private explicit-port host and strict fake-tested process-byte/JSONL ownership are implemented. Stable run identity is separate from the effect claim; the permit/policy target binds the exact contained checkout path; the selected bounded agent message remains noncanonical. The [Codex SDK fit evaluation](TOOLING_ACQUISITIONS.md#codex-typescript-sdk-fit-evaluation--2026-09-13) defers that SDK as an optional batch adapter because it lacks the required passive exact-turn recovery, approval-response and proven child-retirement surfaces | MVP blocker is native integration/acceptance: supply a reviewed spawn/executable/environment/credential implementation, qualify the physical start/restart-read lifecycle, then publish through the harness-neutral result/artifact/review seam and release capacity. Fake/source-tested composition does not claim a physical process or provider qualification. No new connector contest. See CODEX_READ_RECOVERY.md |
 
 These are dependency targets, not instructions to install every package immediately.
 Pin direct/transitive dependencies intentionally and preserve their actual license
@@ -94,12 +94,15 @@ a replacement connection cannot use it as a second start.
 
 This is deliberately **not** permission to run arbitrary work. The activation only
 acknowledges the already-recorded delivery path. It grants no execution, retry,
-resume or thread-reading authority. The unwired one-shot runtime on the current
-branch can consume it through injected ports: it durably reserves the exact
+resume or thread-reading authority. The one-shot private host can consume it through
+injected ports: it durably reserves the exact
 admission, prepares the bound workspace, constructs a read-only/user-reviewed
 `thread/start` and exact prompt `turn/start`, records both receipts, and owns cleanup.
-Its disposable transports do not qualify a physical Codex process or provider. The
-next Codex block is real port wiring plus exact result and restart-read integration.
+Its owned fake byte-process adapter rejects unsafe framing and withholds observations
+unless stdin, termination, readers, valid exit and acquisition-owner cleanup settle.
+This still does not qualify a physical Codex process or provider. The next Codex
+block is an explicitly reviewed spawn/environment/credential port plus native
+start/restart-read qualification and canonical result integration.
 
 ## Delivery order and contributor boundaries
 
