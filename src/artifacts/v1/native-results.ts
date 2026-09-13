@@ -7,6 +7,9 @@ import { appendAuditWith } from "../../audit/audit-store";
 import { HarnessRunStoreV1 } from "../../harness/v1/store";
 import { nativeTaskProtocolId, nativeTaskSnapshotBodySchema, type NativeTaskSnapshotBody } from "../../harness/v1/native-observation";
 import type { ArtifactReadPortV1, ArtifactStoragePortV1 } from "../../node-executor/artifact-storage";
+import { commitNativeResultReservationMetadataV1, markNativeResultReservationStorageUncertainV1,
+  nativeResultReservationSchemaV1, reserveNativeResultWriteV1, verifyNativeResultReservationBytesV1,
+  type NativeResultReservationV1 } from "./native-result-reservation";
 
 const id = z.string().min(3).max(180).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
@@ -28,6 +31,9 @@ export interface NativeResultConfiguration extends NativeResultReadConfiguration
 type Row = { tenant_id: string; project_id: string; job_id: string; attempt_id: string; run_id: string; artifact_id: string;
   receipt: unknown; auth_tag: string; manifest: unknown; content_hash: string; state: string; version: number;
   workflow_id: string; created_at: string | Date; updated_at: string | Date };
+type ReservationRow = { tenant_id: string; project_id: string; job_id: string; attempt_id: string; run_id: string;
+  artifact_id: string; identity_digest: string; state: string; contract_digest: string; reservation: unknown;
+  auth_tag: string; created_at: string | Date; updated_at: string | Date };
 const selection = `r.tenant_id,r.project_id,r.job_id,r.attempt_id,r.run_id,r.artifact_id,r.receipt,r.auth_tag,
   m.payload AS manifest,m.content_hash,m.state,m.version,m.workflow_id,m.created_at,m.updated_at
   FROM control_native_artifact_receipts r JOIN control_artifact_manifests m
@@ -100,6 +106,51 @@ export class NativeResultStore {
       || manifest.storageClass !== this.storageClass || manifest.mimeType !== "text/plain; charset=utf-8") throw new Error("result_integrity_failed");
     return { receipt, manifest };
   }
+  private reservationAuthTag(reservation: NativeResultReservationV1): string {
+    return hmacSha256Tag(this.integrityKey, { purpose: "native-result-write-reservation/v1", reservation });
+  }
+  private verifyReservation(row: ReservationRow): NativeResultReservationV1 {
+    const reservation = nativeResultReservationSchemaV1.parse(row.reservation);
+    const expected = Buffer.from(this.reservationAuthTag(reservation)), actual = Buffer.from(row.auth_tag);
+    if (expected.length !== actual.length || !timingSafeEqual(expected, actual)
+      || row.tenant_id !== reservation.identity.tenantId || row.project_id !== reservation.identity.projectId
+      || row.job_id !== reservation.identity.jobId || row.attempt_id !== reservation.identity.attemptId
+      || row.run_id !== reservation.identity.runId || row.artifact_id !== reservation.identity.artifactId
+      || row.identity_digest !== reservation.identityDigest || row.state !== reservation.state
+      || row.contract_digest !== reservation.contractDigest
+      || new Date(row.updated_at).getTime() < new Date(row.created_at).getTime()) throw new Error("result_reservation_integrity_failed");
+    return reservation;
+  }
+  private async reservationRow(tx: DatabaseSession, tenantId: string, runId: string): Promise<ReservationRow | undefined> {
+    return (await tx.query<ReservationRow>(`SELECT tenant_id,project_id,job_id,attempt_id,run_id,artifact_id,
+      identity_digest,state,contract_digest,reservation,auth_tag,created_at,updated_at
+      FROM control_native_result_write_reservations WHERE tenant_id=$1 AND run_id=$2 FOR UPDATE`,
+    [tenantId, runId])).rows[0];
+  }
+  private async updateReservation(tx: DatabaseSession, prior: NativeResultReservationV1,
+    next: NativeResultReservationV1, updatedAt: string): Promise<void> {
+    const rows = (await tx.query<{ state: string }>(`UPDATE control_native_result_write_reservations
+      SET state=$1,contract_digest=$2,reservation=$3::jsonb,auth_tag=$4,updated_at=$5
+      WHERE tenant_id=$6 AND run_id=$7 AND state=$8 AND contract_digest=$9 RETURNING state`,
+    [next.state, next.contractDigest, JSON.stringify(next), this.reservationAuthTag(next), updatedAt,
+      next.identity.tenantId, next.identity.runId, prior.state, prior.contractDigest])).rows;
+    if (rows.length !== 1 || rows[0].state !== next.state) throw new Error("result_reservation_update_failed");
+  }
+  private async markStorageUncertain(tenantId: string, runId: string, stage: string, updatedAt: string): Promise<void> {
+    try {
+      await this.db.transaction(async tx => {
+        await tx.query("SELECT id FROM control_harness_runs WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [tenantId, runId]);
+        const row = await this.reservationRow(tx, tenantId, runId);
+        if (!row) return;
+        const reservation = this.verifyReservation(row);
+        if (reservation.state === "metadata_committed" || reservation.state === "storage_uncertain") return;
+        const uncertain = markNativeResultReservationStorageUncertainV1({ reservation,
+          uncertaintyDigest: sha256Digest({ purpose: "native-result-storage-uncertainty/v1",
+            reservationId: reservation.reservationId, reservationContractDigest: reservation.contractDigest, stage }) });
+        await this.updateReservation(tx, reservation, uncertain, updatedAt);
+      });
+    } catch { /* The original operation still fails closed; a database outage may prevent the durable marker. */ }
+  }
   private async bound(tx: DatabaseSession, tenantId: string, nodeId: string, body: NativeTaskSnapshotBody) {
     const inspected = await new HarnessRunStoreV1(joined(tx), this.harnessKey).inspect(tenantId, body.runId);
     const recorded = inspected?.events.find(event => event.payload.category === "native_snapshot"
@@ -119,31 +170,86 @@ export class NativeResultStore {
   async capture(tenantId: string, nodeId: string, observation: NativeTaskSnapshotBody, input: Uint8Array, receivedAt: string,
     assertCurrent: () => void = () => {}) {
     assertCurrent();
-    if (!this.put || this.storageUncertain) throw new Error("result_write_unavailable");
+    if (!this.put) throw new Error("result_write_unavailable");
     id.parse(tenantId); id.parse(nodeId); instant.parse(receivedAt);
     const body = nativeTaskSnapshotBodySchema.parse(observation);
     if (body.state !== "completed" || !body.result || Date.parse(receivedAt) < Date.parse(body.observedAt)) throw new Error("result_not_completed");
     const { bytes } = checkedResultBytes(input, body.result), artifactId = nativeResultId(tenantId, body.runId);
-    await this.db.transactionWithPreCommitCheck(tx => this.bound(tx, tenantId, nodeId, body), assertCurrent);
-    assertCurrent();
-    const stored = await this.io(signal => this.put!({ artifactId, bytes, signal }));
-    assertCurrent();
-    if (stored.artifactId !== artifactId || stored.contentHash !== body.result.contentHash || stored.sizeBytes !== bytes.byteLength)
-      throw new Error("result_storage_unavailable");
-    const readback = await this.io(signal => this.readBytes(artifactId, signal));
-    assertCurrent();
-    if (!readback) throw new Error("result_storage_unavailable");
-    checkedResultBytes(readback, body.result);
-    const captured = await this.db.transactionWithPreCommitCheck(async tx => {
-      const job = await this.bound(tx, tenantId, nodeId, body);
-      // Serialize on the existing run; duplicate deliveries cannot race a second metadata receipt.
-      await tx.query("SELECT id FROM control_harness_runs WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [tenantId, body.runId]);
-      const prior = (await tx.query<Row>(`SELECT ${selection} WHERE r.tenant_id=$1 AND r.run_id=$2`, [tenantId, body.runId])).rows[0];
-      if (prior) {
+    const acquisition = await this.db.transactionWithPreCommitCheck(async tx => {
+      // The harness run is the single serialization point for reservation, replay and metadata publication.
+      const locked = await tx.query("SELECT id FROM control_harness_runs WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [tenantId, body.runId]);
+      if (locked.rows.length !== 1) throw new Error("result_binding_unavailable");
+      await this.bound(tx, tenantId, nodeId, body);
+      const row = await this.reservationRow(tx, tenantId, body.runId);
+      if (row) {
+        const reservation = this.verifyReservation(row);
+        reserveNativeResultWriteV1({ tenantId, nodeId, snapshot: body, existing: reservation });
+        if (reservation.state !== "metadata_committed") throw new Error("result_manual_reconciliation_required");
+        const prior = (await tx.query<Row>(`SELECT ${selection} WHERE r.tenant_id=$1 AND r.run_id=$2`,
+          [tenantId, body.runId])).rows[0];
+        if (!prior) throw new Error("result_reservation_integrity_failed");
         const { receipt } = this.verify(prior);
-        if (receipt.snapshotDigest !== sha256Digest(body) || receipt.nodeId !== nodeId) throw new Error("result_receipt_conflict");
-        return { receipt, replayed: true };
+        if (receipt.snapshotDigest !== reservation.identity.snapshotDigest || receipt.nodeId !== nodeId
+          || reservation.manifestDigest !== receipt.manifestDigest
+          || reservation.receiptDigest !== sha256Digest(receipt)) throw new Error("result_reservation_integrity_failed");
+        return { kind: "replay" as const, receipt };
       }
+      // A receipt created before this reservation table existed cannot be upgraded in place:
+      // the migration has no integrity key with which to authenticate a reconstructed state.
+      const unreservedReceipt = (await tx.query<Row>(`SELECT ${selection} WHERE r.tenant_id=$1 AND r.run_id=$2`,
+        [tenantId, body.runId])).rows[0];
+      if (unreservedReceipt) {
+        this.verify(unreservedReceipt);
+        throw new Error("result_manual_reconciliation_required");
+      }
+      const reservation = reserveNativeResultWriteV1({ tenantId, nodeId, snapshot: body });
+      await tx.query(`INSERT INTO control_native_result_write_reservations
+        (tenant_id,project_id,job_id,attempt_id,run_id,artifact_id,identity_digest,state,contract_digest,reservation,auth_tag,created_at,updated_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$12)`,
+      [tenantId, body.projectId, body.jobId, body.attemptId, body.runId, artifactId, reservation.identityDigest,
+        reservation.state, reservation.contractDigest, JSON.stringify(reservation), this.reservationAuthTag(reservation), receivedAt]);
+      return { kind: "fresh" as const, reservation };
+    }, assertCurrent);
+    if (acquisition.kind === "replay") { assertCurrent(); return { receipt: acquisition.receipt, replayed: true }; }
+    if (this.storageUncertain) {
+      await this.markStorageUncertain(tenantId, body.runId, "storage_port_previously_uncertain", receivedAt);
+      throw new Error("result_storage_uncertain");
+    }
+
+    let stored: Awaited<ReturnType<ArtifactStoragePortV1["put"]>>;
+    try {
+      assertCurrent();
+      stored = await this.io(signal => this.put!({ artifactId, bytes, signal }));
+      assertCurrent();
+      if (stored.artifactId !== artifactId || stored.contentHash !== body.result.contentHash || stored.sizeBytes !== bytes.byteLength)
+        throw new Error("result_storage_unavailable");
+      const readback = await this.io(signal => this.readBytes(artifactId, signal));
+      assertCurrent();
+      if (!readback) throw new Error("result_storage_unavailable");
+      checkedResultBytes(readback, body.result);
+      await this.db.transactionWithPreCommitCheck(async tx => {
+        await tx.query("SELECT id FROM control_harness_runs WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [tenantId, body.runId]);
+        const row = await this.reservationRow(tx, tenantId, body.runId);
+        if (!row) throw new Error("result_reservation_integrity_failed");
+        const reserved = this.verifyReservation(row);
+        if (reserved.contractDigest !== acquisition.reservation.contractDigest || reserved.state !== "reserved")
+          throw new Error("result_manual_reconciliation_required");
+        const verified = verifyNativeResultReservationBytesV1(reserved, readback);
+        await this.updateReservation(tx, reserved, verified, receivedAt);
+      }, assertCurrent);
+    } catch {
+      await this.markStorageUncertain(tenantId, body.runId, "put_or_exact_readback", receivedAt);
+      throw new Error("result_storage_uncertain");
+    }
+
+    const captured = await this.db.transactionWithPreCommitCheck(async tx => {
+      await tx.query("SELECT id FROM control_harness_runs WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [tenantId, body.runId]);
+      const row = await this.reservationRow(tx, tenantId, body.runId);
+      if (!row) throw new Error("result_reservation_integrity_failed");
+      const verifiedReservation = this.verifyReservation(row);
+      reserveNativeResultWriteV1({ tenantId, nodeId, snapshot: body, existing: verifiedReservation });
+      if (verifiedReservation.state !== "bytes_verified") throw new Error("result_manual_reconciliation_required");
+      const job = await this.bound(tx, tenantId, nodeId, body);
       const manifest: ArtifactManifestRecord = artifactManifestRecordSchema.parse({ contractVersion: DOMAIN_CONTRACT_VERSION,
         id: artifactId, tenantId, projectId: body.projectId, jobId: body.jobId, attemptId: body.attemptId, workflowId: job.workflowId,
         kind: "artifact_manifest", state: "uploaded", version: 0, createdAt: receivedAt, updatedAt: receivedAt,
@@ -155,6 +261,8 @@ export class NativeResultStore {
         projectId: body.projectId, jobId: body.jobId, attemptId: body.attemptId, runId: body.runId, nodeId,
         snapshotDigest: sha256Digest(body), snapshotVersion: body.snapshotVersion, ...body.result,
         manifestDigest: sha256Digest(manifest), receivedAt, byteCheck: "matched_recorded_claim", qualityAccepted: false });
+      const committedReservation = commitNativeResultReservationMetadataV1({ reservation: verifiedReservation,
+        manifestDigest: receipt.manifestDigest, receiptDigest: sha256Digest(receipt) });
       await tx.query(`INSERT INTO control_artifact_manifests(id,tenant_id,project_id,workflow_id,job_id,attempt_id,
         content_hash,state,version,payload,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,'uploaded',0,$8::jsonb,$9,$9)`,
       [artifactId, tenantId, body.projectId, job.workflowId, body.jobId, body.attemptId, receipt.contentHash, JSON.stringify(manifest), receivedAt]);
@@ -165,6 +273,7 @@ export class NativeResultStore {
         actorId: nodeId, actorType: "worker", action: "task.result.received", targetType: "artifact", targetId: artifactId,
         occurredAt: receivedAt, idempotencyKey: receipt.snapshotDigest,
         safeMetadata: { contentHash: receipt.contentHash, sizeBytes: receipt.sizeBytes, byteCheck: receipt.byteCheck } });
+      await this.updateReservation(tx, verifiedReservation, committedReservation, receivedAt);
       return { receipt, replayed: false };
     }, assertCurrent);
     assertCurrent(); return captured;
