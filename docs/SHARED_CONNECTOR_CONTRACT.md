@@ -115,10 +115,22 @@ durable read. A shared fake-tested adapter beneath both fixed JSONL profiles con
 one synchronously owned, explicitly injected process byte port into strict UTF-8
 newline frames. It owns readiness, pending I/O, stdin close, termination, reader
 drain and valid terminal-exit evidence; any cleanup uncertainty withholds the
-observation. Every authority, workspace, process-acquisition, timeout and clock port
-is still supplied explicitly. The seam exposes no executable, environment or
-credential discovery, listener, provider API, canonical writer, retry, resume or
-new-turn port, so this is not live enablement or host qualification.
+observation. A separate Linux-only node acquisition port now consumes the same owned
+process interface after a synchronous fence over one immutable permit. It accepts one
+absolute, exact-version native ELF artifact, hashes an opened non-symlink file, verifies
+root-or-current-owner custody and non-writable group/world modes, and launches the held
+descriptor through `/proc/self/fd/3` with only the fixed `app-server` argument. The
+reviewed workspace root, workspace and operator-supplied `CODEX_HOME` are canonical,
+owned directories with disjoint custody; their opened identities are rechecked around
+launch. `CODEX_HOME` is an explicit non-secret location needed by the operator-installed
+Codex binary; the port does not inspect credentials or inherit the ambient environment.
+It owns standard streams, retains cancellation through process retirement, and escalates
+TERM to KILL unless terminal exit is observed. The production export captures Node's
+launcher inside the module; the injected launcher remains a test-only, non-server export.
+Darwin, Windows and other platforms fail closed pending separate descriptor execution
+qualification. No provider call, retry, resume, approval, canonical writer or capacity
+release is added, so this remains source/test evidence rather than live enablement or
+physical host qualification.
 The matching local read composition now accepts only that journal's exact saved
 thread and turn identity, rechecks current authority around each native read, and
 exposes no resume or new-turn method. A completed recovery read now carries a pinned

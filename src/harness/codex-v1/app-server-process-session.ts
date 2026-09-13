@@ -19,6 +19,9 @@ const recoverBindingSchema = z.object({ mode: z.literal('recover'), runId: local
 const bindingSchema = z.discriminatedUnion('mode', [initialBindingSchema, recoverBindingSchema]);
 
 export type CodexAppServerProcessBindingV1 = z.infer<typeof bindingSchema>;
+export function parseCodexAppServerProcessBindingV1(value: unknown): CodexAppServerProcessBindingV1 {
+  return Object.freeze(bindingSchema.parse(value));
+}
 
 export interface CodexAppServerProcessBytePortV1 {
   /** Resolves only after the bytes are accepted and any backpressure has cleared. */
@@ -84,7 +87,7 @@ export function createCodexAppServerProcessSessionV1(input: {
   acquire: AcquireCodexAppServerProcessV1;
   cleanupMs: number;
 }): OwnedCodexStartConnectionV1 | OwnedCodexReadConnection {
-  const binding = Object.freeze(bindingSchema.parse(input.binding));
+  const binding = parseCodexAppServerProcessBindingV1(input.binding);
   if (!(input.signal instanceof AbortSignal) || input.signal.aborted
     || !Number.isSafeInteger(input.cleanupMs) || input.cleanupMs < 1 || input.cleanupMs > 5_000
     || typeof input.acquire !== 'function') throw unavailable();
