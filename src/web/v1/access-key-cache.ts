@@ -25,6 +25,21 @@ export function createAccessKeyLoader(issuer: string, transport: typeof fetch): 
   };
 }
 
+/** Built-in static key loader for the non-Cloudflare RS256 profile.
+ * Deployment-selected public keys from the operator file — no URL fetch,
+ * no discovery, no transport. Validated once at construction with the same
+ * bounds as the fetched path (1–8 RSA keys); the strict shape refuses
+ * private key material outright. Each call returns fresh copies.
+ */
+export function createStaticAccessKeyLoader(entries: unknown): AccessKeyLoader {
+  let parsed: z.infer<typeof publicKeySchema>[];
+  try {
+    parsed = z.array(publicKeySchema).min(1).max(8).parse(entries);
+  } catch { throw new Error("invalid_access_config"); }
+  const keys = parsed.map(({ kid, ...jwk }) => ({ kid, jwk }));
+  return async () => keys.map(({ kid, jwk }) => ({ kid, jwk: { ...jwk } }));
+}
+
 /** One refresh per process, on demand. No request-triggered unknown-key refresh or stale fallback. */
 export function createAccessKeyCache(options: {
   issuer: string; audience: string; maxSessionSeconds: number; loadKeys: AccessKeyLoader; clock: () => number;

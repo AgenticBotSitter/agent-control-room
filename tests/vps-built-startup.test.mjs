@@ -10,6 +10,8 @@ import { now, request } from "./helpers/web-foundation.ts";
 import { mkdtemp, writeFile, rm, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createConfiguration } from "../deploy/operator-config.mjs";
+import { generateKeyPairSync, sign } from "node:crypto";
+import { createAccessVerifier } from "../src/web/v1/access-verifier.ts";
 
 const gatewayProfile = () => ({ schema: "control-room.gateway-assertion-provider/v1", profileId: "rs256_gateway_assertion",
   algorithm: "RS256", assertionHeader: "x-test-gateway-assertion", claimContract: "standard_gateway_subject",
@@ -147,4 +149,98 @@ test("operator configuration accepts only the restricted single-site settings wi
     await assert.rejects(createConfiguration({ signal }), /operator_settings_invalid/);
   }
   await assert.rejects(createConfiguration({ signal: AbortSignal.abort() }), /canceled/);
+});
+
+test("operator configuration wires the second assertion profile with built-in static keys", async t => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "cr-operator-second-profile-")));
+  const previous = process.env.CONTROL_ROOM_SETTINGS_FILE;
+  t.after(async () => {
+    if (previous === undefined) delete process.env.CONTROL_ROOM_SETTINGS_FILE;
+    else process.env.CONTROL_ROOM_SETTINGS_FILE = previous;
+    await rm(directory, { recursive: true, force: true });
+  });
+  const path = join(directory, "settings.json");
+  const { loadKeys, ideaProjects, connections, ...web } = startupConfig;
+  void loadKeys; void ideaProjects; void connections;
+  process.env.CONTROL_ROOM_SETTINGS_FILE = path;
+  const signal = new AbortController().signal;
+  // Upgrade compatibility: settings without the new fields keep the default
+  // Cloudflare profile with no profile recorded in the captured configuration.
+  await writeFile(path, JSON.stringify({ port: 3210, web }), { mode: 0o600 });
+  const legacy = await createConfiguration({ signal });
+  assert.equal(legacy.configuration.web.gatewayAssertionProfile, undefined);
+  assert.equal(typeof legacy.configuration.web.loadKeys, "function");
+  // Second provider: fixed RS256 profile plus deployment-selected static keys.
+  const keys = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const jwk = keys.publicKey.export({ format: "jwk" });
+  const profile = { ...gatewayProfile(), assertionHeader: "x-operator-gateway-assertion" };
+  const staticKeys = [{ kid: "operator-key-1", kty: "RSA", n: jwk.n, e: jwk.e }];
+  await writeFile(path, JSON.stringify({ port: 3210,
+    web: { ...web, gatewayAssertionProfile: profile, staticKeys } }), { mode: 0o600 });
+  const prepared = await createConfiguration({ signal });
+  assert.equal(prepared.mode, "website-only");
+  const captured = prepared.configuration.web.gatewayAssertionProfile;
+  assert.equal(captured.profileId, "rs256_gateway_assertion");
+  assert.equal(captured.assertionHeader, "x-operator-gateway-assertion");
+  assert.equal(Object.isFrozen(captured), true);
+  profile.assertionHeader = "x-mutated-gateway-assertion";
+  assert.equal(prepared.configuration.web.gatewayAssertionProfile.assertionHeader, "x-operator-gateway-assertion");
+  // The built-in loader serves the configured keys with no transport involved.
+  const loaded = await prepared.configuration.web.loadKeys(new AbortController().signal);
+  assert.equal(loaded.length, 1);
+  assert.equal(loaded[0].kid, "operator-key-1");
+  // End to end: a token signed by the operator key verifies under the wired
+  // profile, and a Cloudflare header beside it is confusion, not fallback.
+  const at = Math.floor(Date.now() / 1000);
+  const header = Buffer.from(JSON.stringify({ alg: "RS256", kid: "operator-key-1" })).toString("base64url");
+  const claims = Buffer.from(JSON.stringify({ iss: web.issuer, aud: [web.audience], sub: "operator-owner",
+    iat: at - 60, exp: at + 300 })).toString("base64url");
+  const jwt = `${header}.${claims}.${sign("RSA-SHA256", Buffer.from(`${header}.${claims}`), keys.privateKey).toString("base64url")}`;
+  const trust = { issuer: web.issuer, audience: web.audience, keys: loaded,
+    validUntilMs: Date.now() + 3600_000, maxSessionSeconds: web.maxSessionSeconds };
+  const verify = createAccessVerifier(trust, captured);
+  const request = new Request("https://private.example.invalid/api/v1/projects",
+    { headers: { "x-operator-gateway-assertion": jwt } });
+  assert.equal(verify(request, Date.now()).subject, "operator-owner");
+  const confused = new Request("https://private.example.invalid/api/v1/projects",
+    { headers: { "x-operator-gateway-assertion": jwt, "cf-access-jwt-assertion": jwt } });
+  assert.throws(() => verify(confused, Date.now()), { message: "authentication_required" });
+});
+
+test("operator configuration refuses second-profile and static-keys confusion", async t => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "cr-operator-profile-refusal-")));
+  const previous = process.env.CONTROL_ROOM_SETTINGS_FILE;
+  t.after(async () => {
+    if (previous === undefined) delete process.env.CONTROL_ROOM_SETTINGS_FILE;
+    else process.env.CONTROL_ROOM_SETTINGS_FILE = previous;
+    await rm(directory, { recursive: true, force: true });
+  });
+  const path = join(directory, "settings.json");
+  const { loadKeys, ideaProjects, connections, ...web } = startupConfig;
+  void loadKeys; void ideaProjects; void connections;
+  process.env.CONTROL_ROOM_SETTINGS_FILE = path;
+  const signal = new AbortController().signal;
+  const keys = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const jwk = keys.publicKey.export({ format: "jwk" });
+  const staticKeys = [{ kid: "operator-key-1", kty: "RSA", n: jwk.n, e: jwk.e }];
+  const cloudflare = { schema: "control-room.gateway-assertion-provider/v1", profileId: "cloudflare_access",
+    algorithm: "RS256", assertionHeader: "cf-access-jwt-assertion", claimContract: "cloudflare_access_app",
+    subjectClaim: "sub", audienceClaim: "aud", issuerClaim: "iss", mfaPolicy: "gateway_policy_external" };
+  const many = Array.from({ length: 9 }, (_, index) => ({ ...staticKeys[0], kid: `operator-key-${index}` }));
+  const privateKey = [{ ...staticKeys[0], d: "private-material-must-not-parse" }];
+  for (const extra of [
+    { staticKeys }, // static keys without a profile
+    { gatewayAssertionProfile: cloudflare, staticKeys }, // static keys beside Cloudflare
+    { gatewayAssertionProfile: gatewayProfile() }, // RS256 profile without static keys
+    { gatewayAssertionProfile: gatewayProfile(), staticKeys: [] }, // empty key set
+    { gatewayAssertionProfile: gatewayProfile(), staticKeys: "not-an-array" },
+    { gatewayAssertionProfile: gatewayProfile(), staticKeys: many }, // over the 8-key bound
+    { gatewayAssertionProfile: gatewayProfile(), staticKeys: privateKey }, // private material
+    { gatewayAssertionProfile: { ...gatewayProfile(), profileId: "oidc" } }, // unimplemented provider
+    { gatewayAssertionProfile: { ...gatewayProfile(), keysUrl: "https://keys.invalid/jwks" } }, // key URL
+    { gatewayAssertionProfile: "not-an-object" },
+  ]) {
+    await writeFile(path, JSON.stringify({ port: 3210, web: { ...web, ...extra } }), { mode: 0o600 });
+    await assert.rejects(createConfiguration({ signal }), /operator_settings_invalid/);
+  }
 });

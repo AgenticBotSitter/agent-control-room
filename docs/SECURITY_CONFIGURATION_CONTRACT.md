@@ -17,8 +17,17 @@ separate connector, custody and recovery gates pass.
 The packaged operator configuration currently deploys the Cloudflare Access assertion
 profile, not generic OIDC. Trusted server composition also accepts one fixed RS256
 gateway-assertion profile with a server-selected custom `x-` header and fixed
-`iss`/`aud`/`sub` mapping. That seam has no discovery, arbitrary key URL, claim remapping
-or operator-file wiring, so it is not yet a second deployable login provider. Preserve
+`iss`/`aud`/`sub` mapping. That profile is a second deployable login provider only
+through operator-file wiring: `deploy/operator-config.mjs` accepts an optional
+`web.gatewayAssertionProfile` plus `web.staticKeys` holding 1–8 deployment-selected
+RSA public keys (strict shape, 2048-bit minimum enforced at verification, private
+key material refused). The RS256 profile uses the built-in static key loader —
+no discovery, no arbitrary key URL, no claim remapping, no network fetch. Static
+keys beside the Cloudflare (or default) profile, a missing `staticKeys` beside the
+RS256 profile, and any other `profileId` fail closed as `operator_settings_invalid`.
+Settings files without the new fields load unchanged under the default Cloudflare
+profile, and the captured profile is frozen into the validated configuration, so
+exported configurations round-trip the selected provider. Preserve
 deployment-selected RS256 keys, RSA 2048-bit minimum, exact
 issuer/audience/subject/session expiry, token digest, same-origin checks, bounded key
 loading, single-flight refresh, backoff and no stale-key fallback. The request cannot

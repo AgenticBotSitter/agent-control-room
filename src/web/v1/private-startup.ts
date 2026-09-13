@@ -5,7 +5,7 @@ import { installPrivateWebProcess, type PrivateWebProcessOptions } from "./priva
 import { captureGatewayAssertionProviderProfileV1, captureWebOrigins } from "./access-verifier";
 import { captureHerdrReaders } from "./herdr-service";
 import { parseProductConfigurationV1 } from "../../config/v1/product-configuration";
-export { createAccessKeyLoader } from "./access-key-cache";
+export { createAccessKeyLoader, createStaticAccessKeyLoader } from "./access-key-cache";
 
 export type PrivateStartupConfiguration = Omit<PrivateWebProcessOptions, "database" | "clock" | "drainMs" | "planning" | "assignment" | "approvals" | "submission" | "queueAttention" | "revisions" | "ideaCreation" | "newsCollections"> & {
   database: PrivatePostgresConfiguration; ownerIdentityId: string;
