@@ -77,14 +77,11 @@ let application;
 let browser;
 const posts = [];
 
-try {
-  application = installPrivateWebProcess({ origin, ...trust,
-    tenantId: "tenant:web", workspaceId: "workspace:web",
-    database: { client: disposable.client, close: () => disposable.db.close() },
-    clock: () => now, loadKeys: async () => trust.keys });
+function isDisconnectCommand(entry) {
+  return /\b(?:archive|archived|complete|completed|cancel|cancelled|retry|start)\b/i.test(`${entry.path} ${entry.body}`);
+}
 
-  browser = await playwright.chromium.launch({ headless: true });
-  const context = await browser.newContext({ viewport: { width: 360, height: 844 } });
+async function installProtectedRequestRouting(context) {
   await context.route("**/*", async route => {
     const browserRequest = route.request();
     const url = new URL(browserRequest.url());
@@ -111,8 +108,19 @@ try {
     const responseBody = browserRequest.method() === "HEAD" ? Buffer.alloc(0) : Buffer.from(await response.arrayBuffer());
     await route.fulfill({ status: response.status, headers: Object.fromEntries(response.headers), body: responseBody });
   });
+}
 
-  const page = await context.newPage();
+try {
+  application = installPrivateWebProcess({ origin, ...trust,
+    tenantId: "tenant:web", workspaceId: "workspace:web",
+    database: { client: disposable.client, close: () => disposable.db.close() },
+    clock: () => now, loadKeys: async () => trust.keys });
+
+  browser = await playwright.chromium.launch({ headless: true });
+  let context = await browser.newContext({ viewport: { width: 360, height: 844 } });
+  await installProtectedRequestRouting(context);
+
+  let page = await context.newPage();
   await page.goto(`${origin}/`, { waitUntil: "domcontentloaded" });
   const homeHeadings = await page.getByRole("heading", { level: 1 }).allTextContents();
   check("compiled private home rendered", homeHeadings.length === 1 && /Control Room/.test(homeHeadings[0]),
@@ -144,6 +152,31 @@ try {
   await page.getByRole("heading", { name: "Acceptance task" }).waitFor();
   check("task proposal opened its protected detail", /\/tasks\/job%3A/.test(new URL(page.url()).pathname));
   await checkNoPageOverflow(page, "task detail");
+  const alphaTaskPath = new URL(page.url()).pathname;
+  check("saved task route remains scoped to its alpha project", alphaTaskPath.startsWith(`${alphaPath}/tasks/`), alphaTaskPath);
+
+  const postCountBeforeReconnect = posts.length;
+  await page.close();
+  await context.close();
+  context = await browser.newContext({ viewport: { width: 360, height: 844 } });
+  await installProtectedRequestRouting(context);
+  const reconnectedPage = await context.newPage();
+  await reconnectedPage.goto(`${origin}${alphaPath}`, { waitUntil: "domcontentloaded" });
+  await reconnectedPage.getByRole("heading", { name: "Browser acceptance alpha" }).waitFor();
+  check("saved alpha project survives closing and reconnecting a browser context",
+    await reconnectedPage.getByRole("heading", { name: "Browser acceptance alpha" }).isVisible());
+  check("reconnected project scope does not show another project's task",
+    await reconnectedPage.getByText("Acceptance task", { exact: true }).count() === 0);
+  await reconnectedPage.goto(`${origin}${alphaTaskPath}`, { waitUntil: "domcontentloaded" });
+  await reconnectedPage.getByRole("heading", { name: "Acceptance task" }).waitFor();
+  check("saved alpha task survives closing and reconnecting a browser context",
+    await reconnectedPage.getByRole("heading", { name: "Acceptance task" }).isVisible());
+  const reconnectPosts = posts.slice(postCountBeforeReconnect);
+  check("closing and reconnecting a browser context emits no protected command", reconnectPosts.length === 0,
+    JSON.stringify(reconnectPosts));
+  check("closing and reconnecting emits no archive, complete, cancel, retry, or start command",
+    reconnectPosts.every(entry => !isDisconnectCommand(entry)), JSON.stringify(reconnectPosts));
+  page = reconnectedPage;
 
   for (const [label, heading] of [["Files", "Project files"], ["Reviews", "Project reviews"],
     ["Activity", "Project activity"], ["Settings", "Project status"]]) {
