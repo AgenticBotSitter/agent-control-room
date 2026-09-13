@@ -26,6 +26,7 @@ import { taskDraftSchema, taskSummarySchema, taskReceiptSchema, taskDetailSchema
 import { taskPlanningOptionsSchema } from "./task-planning-wire";
 import { taskHomeActivitySchema } from "./task-home-wire";
 import { taskProjectOverviewSchema } from "./task-project-overview-wire";
+import { taskProjectFilesSchema } from "./task-project-files-wire";
 
 /** Joins existing stores to the caller-owned session transaction. No nested BEGIN/COMMIT and no
  * new authority: this closure stays inside authenticated(). The outer freshness check owns commit. */
@@ -472,6 +473,38 @@ export class WebTaskService {
       return taskProjectOverviewSchema.parse({ projectId, current: current.tasks, awaitingReview: reviews.tasks,
         recent: recent.tasks, additionalCurrentOmitted: current.omitted, additionalReviewsOmitted: reviews.omitted,
         additionalRecentOmitted: recent.omitted, observedAt: actor.now, startsWork: false });
+    });
+  }
+
+  /** Project-wide index over the existing signed result receipts. Content remains
+   * available only through the exact task result route; no storage locator is exposed. */
+  async projectFiles(identity: VerifiedWebIdentity, projectId: string) {
+    this.id(projectId);
+    return this.authority.authenticated(identity, async (tx, actor) => {
+      actor.require("tasks.read", projectId);
+      await this.projects.getViewInSession(tx, actor, projectId);
+      if (!actor.can("tasks.results.read", projectId)) return taskProjectFilesSchema.parse({ projectId, items: [],
+        additionalItemsOmitted: false, resultSource: "not_authorized", observedAt: actor.now, startsWork: false });
+      actor.require("tasks.results.read", projectId);
+      if (!this.resultStore) return taskProjectFilesSchema.parse({ projectId, items: [], additionalItemsOmitted: false,
+        resultSource: "not_configured", observedAt: actor.now, startsWork: false });
+      const candidates = (await tx.query<{ job_id: string; artifact_id: string }>(`
+        SELECT a.job_id,a.artifact_id FROM control_native_artifact_receipts a
+        JOIN control_artifact_manifests m ON m.tenant_id=a.tenant_id AND m.id=a.artifact_id
+          AND m.project_id=a.project_id AND m.job_id=a.job_id AND m.attempt_id=a.attempt_id
+        WHERE a.tenant_id=$1 AND a.project_id=$2
+        ORDER BY m.created_at DESC,a.artifact_id COLLATE "C" LIMIT 21`, [this.scope.tenantId, projectId])).rows;
+      const items = [];
+      for (const candidate of candidates.slice(0, 20)) {
+        const row = (await tx.query<TaskRow>(`SELECT ${selection} WHERE j.tenant_id=$1 AND j.project_id=$2 AND j.id=$3`,
+          [this.scope.tenantId, projectId, candidate.job_id])).rows[0];
+        if (!row) throw new Error("task_project_file_unavailable");
+        const receipt = await this.resultStore.readReceipt(tx, this.scope.tenantId, projectId, candidate.job_id, candidate.artifact_id);
+        if (!receipt) throw new Error("task_project_file_unavailable");
+        items.push({ task: validated(row, this.scope.tenantId, projectId).summary, artifact: resultMetadata(receipt) });
+      }
+      return taskProjectFilesSchema.parse({ projectId, items, additionalItemsOmitted: candidates.length > 20,
+        resultSource: "configured", observedAt: actor.now, startsWork: false });
     });
   }
 }

@@ -60,6 +60,12 @@ test("compiled private routes use the installed process, real disposable SQL, an
   assert.equal(overview.projectId, project.projectId); assert.equal(overview.startsWork, false);
   assert.deepEqual(overview.current.map(item => item.jobId), [taskReceipt.jobId]);
   assert.deepEqual(overview.awaitingReview, []); assert.deepEqual(overview.recent.map(item => item.jobId), [taskReceipt.jobId]);
+  const filesPath = `/api/v1/projects/${encodeURIComponent(project.projectId)}/files`;
+  const files = await (await handler(request(filesPath))).json();
+  assert.equal(files.projectId, project.projectId); assert.equal(files.resultSource, "not_configured");
+  assert.deepEqual(files.items, []); assert.equal(files.startsWork, false);
+  const filesPage = await handler(request(`${path}/files`)); assert.equal(filesPage.status, 200);
+  assert.match(await filesPage.text(), /Project files/);
   const detail = await handler(request(`${path}/settings`)); assert.equal(detail.status, 200);
   assert.match(await detail.text(), /Loading project/);
   const read = await handler(request(`/api/v1/projects/${encodeURIComponent(project.projectId)}`));
@@ -110,7 +116,7 @@ test("compiled private routes use the installed process, real disposable SQL, an
   assert.match(await session.text(), /Access sessions for other protected applications/);
   assert.equal((await handler(request("/api/v1/session/logout", "POST"))).status, 204);
   for (const protectedPath of ["/projects", "/ideas", "/api/v1/ideas", "/connections", "/api/v1/connections", path, `/projects/${encodeURIComponent(idea.projectId)}`,
-    taskPath, overviewPath, `${path}/tasks`, `${path}/tasks/${encodeURIComponent(taskReceipt.jobId)}`,
+    taskPath, overviewPath, filesPath, `${path}/files`, `${path}/tasks`, `${path}/tasks/${encodeURIComponent(taskReceipt.jobId)}`,
     `/api/v1/projects/${encodeURIComponent(idea.projectId)}/events`, `/api/v1/projects/${encodeURIComponent(project.projectId)}/events`])
     assert.equal((await handler(request(protectedPath))).status, 401, protectedPath);
   await app.close(); assert.equal((await handler(request("/projects"))).status, 503);

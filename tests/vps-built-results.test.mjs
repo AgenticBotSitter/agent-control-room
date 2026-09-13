@@ -29,9 +29,16 @@ test("compiled private result routes read signed native artifacts and checkpoint
   assert.equal(activity.resultSource, "configured");
   assert.equal(activity.recentResults.length, 1); assert.equal(activity.recentResults[0].task.jobId, "job:test");
   assert.equal(activity.recentResults[0].artifact.artifactId, receipt.artifactId); assert.equal(activity.startsWork, false);
+  const projectFilesRoute = "/api/v1/projects/project:test/files";
+  const projectFiles = await handler(req(projectFilesRoute)); assert.equal(projectFiles.status, 200);
+  const files = await projectFiles.json(); assert.equal(files.resultSource, "configured"); assert.equal(files.items.length, 1);
+  assert.equal(files.items[0].task.jobId, "job:test"); assert.equal(files.items[0].artifact.artifactId, receipt.artifactId);
+  assert.equal(files.startsWork, false);
+  const projectFilesPage = await handler(req("/projects/project:test/files")); assert.equal(projectFilesPage.status, 200);
+  assert.match(await projectFilesPage.text(), /Project files/);
   const content = await handler(req(`${route}/${receipt.artifactId}`)); assert.equal(content.status, 200);
   assert.equal(content.headers.get("cache-control"), "no-store"); assert.equal((await content.json()).text, "Synthetic compiled artifact result");
   assert.equal((await handler(req("/api/v1/session/logout", "POST"))).status, 204);
-  for (const path of [route, `${route}/${receipt.artifactId}`, base, "/api/v1/home/tasks"])
+  for (const path of [route, `${route}/${receipt.artifactId}`, base, projectFilesRoute, "/projects/project:test/files", "/api/v1/home/tasks"])
     assert.equal((await handler(req(path))).status, 401);
 });
