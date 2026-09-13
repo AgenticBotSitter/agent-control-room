@@ -15,6 +15,15 @@ import { ProjectFilesView } from "../private-app/app/project-files-workspace";
 import { readTaskProjectFiles } from "../src/web/v1/task-project-files-browser-client";
 import { ProjectNavigation } from "../private-app/app/project-navigation";
 import { ProjectTaskViewPanel } from "../private-app/app/project-task-views";
+import { decodePrivateRouteSegment } from "../private-app/app/route-segment";
+
+test("compiled route parameters decode exactly once before reaching browser clients", () => {
+  assert.equal(decodePrivateRouteSegment("project%3Aalpha"), "project:alpha");
+  assert.equal(decodePrivateRouteSegment("project:alpha"), "project:alpha");
+  assert.equal(decodePrivateRouteSegment("project%253Aalpha"), "project%3Aalpha");
+  for (const value of ["", "%", "project%2Falpha", "project%5Calpha", "project%00alpha"])
+    assert.throws(() => decodePrivateRouteSegment(value), /private_route_segment_invalid/);
+});
 
 test("home gives honest navigation to existing private workspace surfaces", () => {
   const html = renderToStaticMarkup(createElement(Home));

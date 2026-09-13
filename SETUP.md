@@ -154,6 +154,27 @@ directory appeared) is removed. It was verified on Debian 13
 GNU/Linux (x86_64) with Chromium through Playwright 1.59; runs on other operating
 systems and browser builds are not yet acceptance evidence.
 
+### Compiled private application browser check
+
+The contributor demo above intentionally uses a smaller simulated application. To
+exercise the compiled private Control Room interface itself, use:
+
+```sh
+PLAYWRIGHT_MODULE=/absolute/path/to/playwright pnpm test:browser:private
+```
+
+This separate check builds `dist-vps`, creates a disposable in-memory database and
+connects Chromium directly to the compiled request handler. It opens no TCP listener,
+makes no remote request, uses only a generated test identity and starts no agent. It
+creates two disposable projects, saves one task proposal, checks the project pages,
+archives and reopens a project, reloads saved state, checks project isolation, keyboard
+entry and the narrow-screen menu, and verifies that each tested save crossed the command
+boundary once with its request key. Playwright remains an operator-supplied test tool,
+not a shipped dependency.
+
+Passing this check is application/browser evidence only. It does not validate a real
+login provider, PostgreSQL service, network tunnel, agent harness or production host.
+
 ## Still awaiting acceptance
 
 The demo command and its simulated flow pass automated tests and one local desktop
