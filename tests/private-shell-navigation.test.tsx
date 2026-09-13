@@ -18,6 +18,8 @@ import { ProjectTaskViewPanel } from "../private-app/app/project-task-views";
 import { decodePrivateRouteSegment } from "../private-app/app/route-segment";
 import { PrivateConnectionView } from "../private-app/app/connections/workspace";
 import { TaskProposalForm } from "../private-app/app/task-panels";
+import { TaskAttentionPanel } from "../private-app/app/needs-me/task-attention";
+import { taskAttentionPageSchema, taskAttentionPresentation } from "../src/web/v1/task-attention-wire";
 
 test("compiled route parameters decode exactly once before reaching browser clients", () => {
   assert.equal(decodePrivateRouteSegment("project%3Aalpha"), "project:alpha");
@@ -53,6 +55,27 @@ test("task proposal and worker inventory disclose unavailable operational facts"
   for (const text of ["platform details", "eligible capabilities", "available slots", "current work", "usage are unavailable",
     "Cancel and resume are unsupported"])
     assert.match(connections, new RegExp(text));
+});
+
+test("needs-attention items expose owner questions and sort urgent work first", () => {
+  assert.deepEqual(taskAttentionPresentation(["proposal"]), { category: "preparation", urgency: "normal",
+    ownerQuestion: "Is this saved work ready for its next preparation or assignment step?" });
+  const task = (jobId: string, title: string, updatedAt: string) => ({ projectId: "project:alpha", jobId,
+    requestId: `request:${jobId}`, title, state: "proposed" as const, version: 1,
+    createdAt: "2026-09-04T10:00:00.000Z", updatedAt });
+  const page = taskAttentionPageSchema.parse({ items: [
+    { task: task("job:normal", "Prepare later", "2026-09-04T12:00:00.000Z"), inputDigest: `sha256:${"a".repeat(64)}`, reasons: ["proposal"] },
+    { task: task("job:urgent", "Resolve uncertainty", "2026-09-04T11:00:00.000Z"), inputDigest: `sha256:${"b".repeat(64)}`, reasons: ["delivery_uncertain"] },
+    { task: task("job:soon", "Review result", "2026-09-04T13:00:00.000Z"), inputDigest: `sha256:${"c".repeat(64)}`, reasons: ["review"] },
+  ], nextCursor: null, examined: 3, observedAt: "2026-09-04T14:00:00.000Z", startsWork: false,
+  planningSource: "configured", deliverySource: "configured", sources: { ordinary: "included", ideas: "not_configured" } });
+  assert.deepEqual(page.items.map(item => item.task.jobId), ["job:urgent", "job:soon", "job:normal"]);
+  const html = renderToStaticMarkup(createElement(TaskAttentionPanel, { page }));
+  assert.ok(html.indexOf("Resolve uncertainty") < html.indexOf("Review result"));
+  assert.ok(html.indexOf("Review result") < html.indexOf("Prepare later"));
+  assert.match(html, /Urgent · uncertainty/); assert.match(html, /Question for you:/);
+  assert.match(html, /What was already recorded, and is it safe to continue/);
+  assert.doesNotMatch(html, /<button/);
 });
 
 test("home dashboard links exact saved work, results, attention and projects without starting anything", () => {

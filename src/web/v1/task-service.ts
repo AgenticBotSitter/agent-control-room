@@ -18,7 +18,7 @@ import { taskResultMetadataSchema, boundedTaskResultsPage, taskResultContentSche
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 import { WebSessionAuthority, type WebActor } from "./session-authority";
 import { CONTROL_ROOM_IDEA_ADAPTER_V1 } from "../../idea-lab/v1/schemas";
-import { taskAttentionPageSchema, type TaskAttentionPage } from "./task-attention-wire";
+import { taskAttentionPageSchema, taskAttentionPresentation, type TaskAttentionPage } from "./task-attention-wire";
 import { WebProjectService } from "./project-service";
 import { catalogProjectIdSchema } from "./project-wire";
 import { taskDraftSchema, taskSummarySchema, taskReceiptSchema, taskDetailSchema, taskPageSchema,
@@ -386,7 +386,11 @@ export class WebTaskService {
               reasons.push("result_checks_unavailable");
           }
         }
-        if (reasons.length) items.push({ task: summary, inputDigest: job.inputDigest, reasons: [...new Set(reasons)] });
+        if (reasons.length) {
+          const uniqueReasons = [...new Set(reasons)];
+          items.push({ task: summary, inputDigest: job.inputDigest, reasons: uniqueReasons,
+            ...taskAttentionPresentation(uniqueReasons) });
+        }
       }
       return taskAttentionPageSchema.parse({ items, sources, examined: Math.min(rows.length, 25),
         nextCursor: rows.length > 25 ? rows[24].id : null, observedAt: actor.now, startsWork: false });

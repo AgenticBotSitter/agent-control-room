@@ -12,8 +12,7 @@ export async function readTaskAttention(after?: string, transport: typeof fetch 
   if (after !== undefined && !catalogProjectIdSchema.safeParse(after).success) throw new BrowserRequestError("invalid_request");
   try {
     const page = taskAttentionPageSchema.parse(await readAttentionJson(`/api/v1/needs-me/tasks${after ? `?after=${encodeURIComponent(after)}` : ""}`, 65_536, transport));
-    if (page.items.some((item, index) => after !== undefined && item.task.jobId <= after
-      || index > 0 && item.task.jobId <= page.items[index - 1].task.jobId)
+    if (page.items.some(item => after !== undefined && item.task.jobId <= after)
       || page.nextCursor !== null && (page.examined !== 25 || after !== undefined && page.nextCursor <= after
         || page.items.some(item => item.task.jobId > page.nextCursor!))) throw new Error();
     return page;
