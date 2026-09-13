@@ -128,7 +128,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
   }
   return <div className="private-shell">
     <PrivateHeader />
-    <main id="private-main">
+    <main id="private-main" tabIndex={-1}>
       {state === "ready" && client.hasPending() && <ProjectSaveRecovery pending={pending} onRetry={() => { void retryOriginal(); }} />}
       {error && <div className="private-notice" role="alert"><p>{browserErrorMessage[error.code]}</p>
         {error.code === "authentication_required" ? <><p>This also ends Access sessions for other protected applications.</p><a href="/cdn-cgi/access/logout">Sign in again</a></>

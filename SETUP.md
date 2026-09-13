@@ -178,6 +178,14 @@ saved request into one linked proposed follow-up task, opens and reloads its dir
 that no agent or external effect started. Playwright remains an operator-supplied test
 tool, not a shipped dependency.
 
+The final disposable journey audits the compiled home, project catalog, workers,
+attention, settings, every core project section and one saved task page at a narrow
+viewport. It checks the declared language and title, one main landmark and page
+heading, heading order, unique identifiers, names for every visible field and control,
+the skip-link target, horizontal overflow, and keyboard focus transfer into main
+content. This automated audit covers 122 assertions and found the shared main regions
+needed to accept focus; the corrected pages are included in the same command.
+
 Passing this check is application/browser evidence only. It does not validate a real
 login provider, PostgreSQL service, network tunnel, agent harness or production host.
 
@@ -185,9 +193,10 @@ login provider, PostgreSQL service, network tunnel, agent harness or production 
 
 The demo command and its simulated flow pass automated tests and one local desktop
 browser trial on macOS, including revision/history and shutdown cleanup. The
-repeatable browser acceptance command above adds automated keyboard and
-narrow-screen coverage on Linux; physical keyboard/mobile acceptance on other
-operating systems and further browser-build coverage remain incomplete. There is no supported `pnpm dev` or
+repeatable browser acceptance command above adds automated keyboard, core semantic
+accessibility and narrow-screen coverage. A human screen-reader/zoom/contrast review,
+optional-module page audit, physical keyboard/mobile acceptance on other operating
+systems and further browser-build coverage remain incomplete. There is no supported `pnpm dev` or
 `pnpm start` command here. Hermes and Codex live compatibility, PostgreSQL deployment,
 production owner login, approval key custody
 and independent integrity storage require separate configuration and acceptance.

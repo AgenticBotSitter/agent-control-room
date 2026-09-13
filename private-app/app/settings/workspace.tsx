@@ -6,7 +6,7 @@ import { ProductConfigurationSummary } from "../product-configuration-summary";
 
 export function PrivateSettingsWorkspace() {
   const configuration = useProductConfiguration();
-  return <div className="private-shell"><PrivateHeader /><main id="private-main">
+  return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1}>
     <section className="private-heading" aria-labelledby="settings-title">
       <p className="private-eyebrow">Private workspace</p>
       <h1 id="settings-title">Settings</h1>

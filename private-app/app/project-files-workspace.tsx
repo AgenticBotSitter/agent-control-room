@@ -47,7 +47,7 @@ export function PrivateProjectFiles({ projectId }: { projectId: string }) {
     });
     return () => abort.abort();
   }, [projectId, generation]);
-  return <div className="private-shell"><PrivateHeader /><main id="private-main">
+  return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1}>
     <a href={`/projects/${encodeURIComponent(projectId)}`} className="private-back">← Project overview</a>
     <div className="private-heading"><h1>Project files</h1><p>Verified result records from this project. Open a file through its exact task to read and review it.</p></div>
     <ProjectNavigation projectId={projectId} current="files" />

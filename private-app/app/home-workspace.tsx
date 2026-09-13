@@ -103,7 +103,7 @@ export function PrivateHome() {
       settle(readTaskAttention(), "attention"), settle(readPrivateConnections(), "connections")]);
     return () => { live = false; };
   }, [generation, projects]);
-  return <div className="private-shell"><PrivateHeader /><main id="private-main">
+  return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1}>
     <section className="private-home-intro" aria-labelledby="home-title"><p className="private-eyebrow">Private workspace</p>
       <h1 id="home-title">{displayName}</h1><p>Current saved work, results and attention from the protected Control Room services. Each section reports unavailable data instead of replacing it with a zero.</p>
       <button type="button" onClick={() => setGeneration(value => value + 1)}>Refresh dashboard</button></section>

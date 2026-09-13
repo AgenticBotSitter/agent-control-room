@@ -59,7 +59,7 @@ export function PrivateProjectTaskView({ projectId, view }: { projectId: string;
   }, [projectId, generation]);
   const heading = view === "reviews" ? "Project reviews" : "Project activity";
   return <div className="private-shell"><PrivateHeader />
-    <main id="private-main"><a className="private-back" href={`/projects/${encodeURIComponent(projectId)}`}>← Project overview</a>
+    <main id="private-main" tabIndex={-1}><a className="private-back" href={`/projects/${encodeURIComponent(projectId)}`}>← Project overview</a>
       <div className="private-heading"><p className="private-eyebrow">Saved project record</p><h1>{heading}</h1>
         <p>{view === "reviews" ? "Open the exact task before recording any decision."
           : "This is recorded task history. Refreshing it never starts or retries work."}</p></div>

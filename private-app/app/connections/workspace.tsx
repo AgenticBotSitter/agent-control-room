@@ -8,7 +8,7 @@ export type PrivateConnectionViewState = { state: "loading" } | { state: "ready"
   | { state: "unavailable"; code: ConnectionBrowserError["code"] };
 
 export function PrivateConnectionView({ data, onRefresh }: { data: PrivateConnectionViewState; onRefresh: () => void }) {
-  return <div className="private-shell"><PrivateHeader /><main id="private-main">
+  return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1}>
     <div className="private-heading"><h1>Connections</h1><p>Saved enrollments and their last verified signals.</p>
       <p>This inventory covers all workspaces in this Control Room account.</p></div>
     <p className="private-note">This is the existing Hermes 0.21 enrollment inventory, not a live fleet monitor.
