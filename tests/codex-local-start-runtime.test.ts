@@ -122,8 +122,8 @@ function runtimeFixture(options: { authority?: 'current' | 'false' | 'stale'; fa
     } },
     ownedStart,
     receipts: {
-      recordThread: async (_value, assertCurrent) => { calls.push('thread-receipt'); assertCurrent(); return 'recorded'; },
-      recordTurn: async (_thread, _turn, assertCurrent) => { calls.push('turn-receipt'); assertCurrent(); return 'recorded'; },
+      recordThread: async (_value, assertCurrent) => { calls.push('thread-receipt'); assertCurrent(); return 'recorded' as const; },
+      recordTurn: async (_thread, _turn, assertCurrent) => { calls.push('turn-receipt'); assertCurrent(); return 'recorded' as const; },
     },
     admissionFactory: { create: binding => {
       assert.equal(binding.activationMessageId, saved.activation.messageId);

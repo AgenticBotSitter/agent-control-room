@@ -68,7 +68,8 @@ export function createCodexStartJsonlV1(input: {
   const receive = async (id: number, assertCurrent: () => void) => {
     const line = await within(timeoutMs, signal => track(input.connection.readLine(signal)));
     assertSynchronousFence(assertCurrent, fail);
-    if (line === undefined) fail(); return matchingResponse(line, id);
+    if (line === undefined) return fail();
+    return matchingResponse(line, id);
   };
   return Object.freeze({
     async initialize(assertCurrent: () => void) {

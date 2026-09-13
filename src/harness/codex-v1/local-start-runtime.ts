@@ -139,7 +139,7 @@ export function createCodexLocalStartRuntimeV1(input: {
       state = 'starting';
       try {
         const saved = input.activationEvidence.acceptedCodexActivation(queueId);
-        if (!saved) unavailable();
+        if (saved === undefined) return unavailable();
         const frame = saved.frame, activation = parseCodexTaskActivationV1(frame.body);
         if (frame.type !== 'harness.codex.dispatch.activation' || frame.direction !== 'server_to_node'
           || frame.senderKind !== 'control_room' || frame.connectionId !== activation.connectionId
