@@ -4,8 +4,8 @@ Permanent entry point for people and bots. Read the [build/reuse plan](PUBLIC_BU
 and [worker skill](skills/public-build-worker/SKILL.md). Issues are the live status
 record; no documentation commit is needed every time a job changes state.
 
-Public `main` is the reconciled implementation baseline through PR #70 at
-`4d274eb74acd7aca5139655e3cb8c14d67d9d44b`. Connector, security/configuration and
+Public `main` is the reconciled implementation baseline through PR #77 at
+`af97d5d093a673c87715a77b3baed96881b81712`. Connector, security/configuration and
 support decisions are published in [the shared connector contract](docs/SHARED_CONNECTOR_CONTRACT.md),
 [the security/configuration contract](docs/SECURITY_CONFIGURATION_CONTRACT.md) and
 [the support matrix](docs/SUPPORT_MATRIX.md). New work must use the exact base in its
@@ -42,12 +42,10 @@ branches; new contributors reserve a non-overlapping outcome instead of replacin
 | --- | --- | --- |
 | Actual product browser and accessibility | [#1](https://github.com/AgenticBotSitter/agent-control-room/issues/1) | Two isolated projects, real product panels, keyboard/mobile/deep-link and honest lost-request/lost-reply recovery |
 | Hermes connector | [#8](https://github.com/AgenticBotSitter/agent-control-room/issues/8) | Real FastMCP continue/status/result mapping with exact identity and honest unsupported/restart behavior |
-| Existing release-package contribution | [#9](https://github.com/AgenticBotSitter/agent-control-room/issues/9) | Correct and integrate reusable PR #13 scaffolding into #64; new database/storage/ingress work belongs to #63/#65/#67 |
 | Customizable project webpage | [#10](https://github.com/AgenticBotSitter/agent-control-room/issues/10) | Project/task/worker/result/review/files/attention screens using one configurable artifact |
 | Shipped notices and attribution | [#11](https://github.com/AgenticBotSitter/agent-control-room/issues/11) | Every shipped dependency and copied/bundled file is bound to its real upstream identity, license and notice |
 | Independent consequential review | [#21](https://github.com/AgenticBotSitter/agent-control-room/issues/21) | Security, recovery and assembled-release claims receive independent material review |
 | Shared Hermes/Codex execution authority | [#26](https://github.com/AgenticBotSitter/agent-control-room/issues/26) | Canonical admission, queue, real starts and verified result claims, review/revision, capacity release and restart recovery; durable bytes/startup composition belong to #65/#66 |
-| Portable product and login methods | [#28](https://github.com/AgenticBotSitter/agent-control-room/issues/28) | Same artifact serves separate configurations through a supported, verified login gateway |
 | Persistent-work security and recovery | [#60](https://github.com/AgenticBotSitter/agent-control-room/issues/60) | A dedicated approval key and independent rollback record prove restored database and result files still match |
 | Final release assembly and qualification | [#61](https://github.com/AgenticBotSitter/agent-control-room/issues/61) | One frozen artifact passes clean install, two real harnesses, browser, recovery, update and restore acceptance |
 | PostgreSQL provisioning, migrations and restore | [#63](https://github.com/AgenticBotSitter/agent-control-room/issues/63) | Dedicated least-privilege database, checksum-led upgrades and verified disposable restore |
@@ -56,6 +54,12 @@ branches; new contributors reserve a non-overlapping outcome instead of replacin
 | Complete agent-task server composition | [#66](https://github.com/AgenticBotSitter/agent-control-room/issues/66) | Operator configuration starts the real database/queue/connectors/results/review lifecycle fail-closed |
 | Private ingress and first-owner setup | [#67](https://github.com/AgenticBotSitter/agent-control-room/issues/67) | Supported gateway, no direct-origin bypass, one owner bootstrap and externally enforced MFA |
 | Mac/Linux worker setup | [#68](https://github.com/AgenticBotSitter/agent-control-room/issues/68) | Fresh Hermes and Codex worker install, enrollment, version checks, reconnect, revocation and removal |
+
+Accepted foundations no longer shown as open work: [#9](https://github.com/AgenticBotSitter/agent-control-room/issues/9)
+was superseded by #64 after its retired-base PR was preserved as implementation input;
+[#28](https://github.com/AgenticBotSitter/agent-control-room/issues/28) completed the
+portable configuration and login-profile implementation through PRs #34, #36 and #56.
+Real two-installation proof remains part of final release qualification in #61.
 
 ### Parallel additions and additional platform support
 
