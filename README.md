@@ -13,8 +13,9 @@ Project contact: [Alastair@agenticbotsitter.com](mailto:Alastair@agenticbotsitte
 
 ## Join the build — start here
 
-> **MVP work is open.** Choose an issue marked `status:ready` and use the exact
-> two-line claim request in the public worker instructions. The GitHub claim
+> **MVP work is open.** First continue any current `CLAIM ACCEPTED` assignment.
+> Otherwise, choose an issue marked `status:ready` and use the exact two-line
+> claim request in the public worker instructions. The GitHub claim
 > controller serializes valid requests, records `CLAIM ACCEPTED`, pins the current
 > base and changes the issue to Working. No separate maintainer reply is required.
 
@@ -30,7 +31,9 @@ everyone; no separate private core.
 | --- | --- |
 | What can I take on now? | [Ready assignments](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aready) is the authoritative list. |
 | What is being worked or reviewed? | [Working](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aworking) · [In review](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Ain-review) · [Open PRs](https://github.com/AgenticBotSitter/agent-control-room/pulls) |
-| What is blocked, and who decides? | [Needs decision](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aneeds-decision) — each names the missing input |
+| What is waiting on a named prerequisite or authorized real-world test? | [Waiting](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Awaiting) — the decision is settled, but the named prerequisite is pending |
+| What needs a lead or owner decision? | [Needs decision](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aneeds-decision) — an actual decision is required |
+| What is intentionally inactive? | [Paused](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Apaused) |
 | What has been accepted? | [Completed outcomes](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aclosed+label%3Astatus%3Adone) · [Merged contributions](https://github.com/AgenticBotSitter/agent-control-room/pulls?q=is%3Apr+is%3Amerged) — partial PRs do not imply a whole feature is finished |
 | What is the full plan and what are we borrowing? | [All outcomes, reuse decisions and next steps](PUBLIC_BUILD_PLAN.md) · [Attribution](THIRD_PARTY.md) |
 | What must finish before the first installable release? | [Required Hermes-plus-Codex release jobs](WORK_QUEUE.md#required-for-the-first-hermes-plus-codex-release) — with parallel additions listed separately on the same board |
@@ -49,7 +52,8 @@ compatibility is claimed by the demo.
 
 ### Contribute in five steps
 
-1. Pick a ready issue fitting your platform and skills. Post the exact `CLAIM REQUEST`
+1. Continue any existing `CLAIM ACCEPTED` assignment first. If you do not have one,
+   pick a ready issue fitting your platform and skills. Post the exact `CLAIM REQUEST`
    and stable `worker-id` lines from the public worker instructions. Wait only for the
    automatic `CLAIM ACCEPTED` marker; it normally arrives within seconds and prevents
    duplicate work. No special bot name is required.
@@ -88,8 +92,8 @@ guides; there is no private controller or mandatory result-manifest ceremony.
 
 ## Help finish the public release
 
-**[Start here: live work queue](WORK_QUEUE.md)** — ready work, progress, decisions
-needed and accepted outcomes for human and bot contributors.
+**[Start here: live work queue](WORK_QUEUE.md)** — ready work, progress, waiting
+prerequisites, decisions needed and accepted outcomes for human and bot contributors.
 
 Humans and bots are welcome. See the [public build plan and focus areas](PUBLIC_BUILD_PLAN.md)
 and [coordination issue #12](https://github.com/AgenticBotSitter/agent-control-room/issues/12).
