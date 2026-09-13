@@ -979,7 +979,8 @@ export class SqliteBridgeJournal implements ReplayGuard {
       let changed = 0;
       const statement = this.db.prepare(
         `UPDATE bridge_outbox SET status='acknowledged',acknowledged_at=?
-         WHERE message_id=? AND status IN ('pending','sent')`,
+         WHERE message_id=? AND status IN ('pending','sent')
+           AND type<>'harness.codex.result.return'`,
       );
       const acknowledgeEvent = this.db.prepare(
         `UPDATE bridge_job_events SET status='acknowledged',acknowledged_at=?

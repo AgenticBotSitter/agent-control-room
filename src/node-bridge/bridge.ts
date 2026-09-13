@@ -410,7 +410,8 @@ export class PortableNodeBridge {
    * projected result. The sent marker is committed before transport I/O; any
    * failure or crash therefore remains ambiguous and cannot be retried. */
   async sendCodexResultReturn(queueId: string, input: CodexResultReturnBodyV1,
-    now: string, signal: AbortSignal, receiptTimeoutMs = 5_000): Promise<CodexResultReturnReceiptFrameV1> {
+    now: string, signal: AbortSignal, receiptTimeoutMs = 5_000,
+    currentTime: () => string = () => new Date().toISOString()): Promise<CodexResultReturnReceiptFrameV1> {
     const generation = this.connectionGeneration;
     return this.serializeSend(async () => {
       if (generation !== this.connectionGeneration) throw new Error('Codex result connection changed while queued');
@@ -449,7 +450,18 @@ export class PortableNodeBridge {
       };
       const unsignedDigest = sha256Digest(unsigned);
       const signed = await this.signer.sign(unsigned);
-      channel.assertCurrent();
+      const assertSendCurrent = () => {
+        channel.assertCurrent();
+        if (signal.aborted) throw new Error('Codex result return operation unavailable');
+        const fresh = currentTime();
+        const freshMs = Date.parse(fresh);
+        if (!Number.isFinite(freshMs) || new Date(freshMs).toISOString() !== fresh
+          || freshMs < Date.parse(now) || freshMs >= expiresAtMs) {
+          throw new Error('Codex result qualification expired');
+        }
+        return fresh;
+      };
+      const preparedAt = assertSendCurrent();
       const frame = signedNodeFrameSchema.parse(signed);
       if (frame.type !== 'harness.codex.result.return') throw new Error('Codex result signer type changed');
       const { signature, bodyDigest, ...signedMaterial } = frame;
@@ -458,12 +470,11 @@ export class PortableNodeBridge {
         throw new Error('Codex result signer changed the prepared frame');
       }
       const resultFrame = frame as CodexResultReturnFrameV1;
-      this.journal.prepareCodexResultReturn(resultFrame, activation.frame, now, channel.assertCurrent);
-      channel.assertCurrent();
+      this.journal.prepareCodexResultReturn(resultFrame, activation.frame, preparedAt, channel.assertCurrent);
+      const sentAt = assertSendCurrent();
       // This is intentionally before send. A write to the transport is not an
       // observable exactly-once boundary; durable uncertainty must win.
-      this.journal.markCodexResultReturnSent(resultFrame.messageId, now);
-      channel.assertCurrent();
+      this.journal.markCodexResultReturnSent(resultFrame.messageId, sentAt);
       let resolveReceipt!: (receipt: CodexResultReturnReceiptFrameV1) => void;
       let rejectReceipt!: (error: Error) => void;
       const receipt = new Promise<CodexResultReturnReceiptFrameV1>((resolve, reject) => {
@@ -476,7 +487,13 @@ export class PortableNodeBridge {
       signal.addEventListener('abort', abort, { once: true });
       const timer = setTimeout(abort, receiptTimeoutMs);
       try {
-        await transport.send(JSON.stringify(resultFrame));
+        assertSendCurrent();
+        const write = transport.send(JSON.stringify(resultFrame));
+        // A receipt proves that the peer received the frame even if the transport
+        // adapter never settles its write promise. The same timeout/abort promise
+        // bounds both the write and the receipt wait.
+        void write.catch(() => {});
+        await Promise.race([write, receipt.then(() => undefined)]);
         channel.assertCurrent();
         const accepted = await receipt;
         channel.assertCurrent();

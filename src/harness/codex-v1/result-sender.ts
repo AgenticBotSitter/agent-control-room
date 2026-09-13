@@ -122,7 +122,8 @@ export function createCodexResultSenderV1(input: {
         const body = createCodexResultReturnBodyV1({ publication, terminalEvidence,
           qualificationReceipt: receipt, qualificationPublicKeySpki: publicKey,
           qualificationMaximumAgeMs: maximumAge, returnedAt });
-        return await send(recovered.queueId, body, returnedAt, signal, receiptTimeoutMs);
+        return await send(recovered.queueId, body, returnedAt, signal, receiptTimeoutMs,
+          () => new Date(clock()).toISOString());
       } catch { return unavailable(); }
     },
   });

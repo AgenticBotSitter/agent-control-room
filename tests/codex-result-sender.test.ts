@@ -135,7 +135,8 @@ function authenticator(journal: SqliteBridgeJournal) {
   } }, journal, { async consume() {} });
 }
 
-async function connect(journal: SqliteBridgeJournal, sent: string[], connection = 'test') {
+async function connect(journal: SqliteBridgeJournal, sent: string[], connection = 'test',
+  signResult?: (frame: UnsignedNodeFrame<'harness.codex.result.return'>) => Promise<SignedNodeFrame>) {
   const f = resultFixture();
   const database = (journal as unknown as { db: DatabaseSync }).db;
   if (!(database.prepare('SELECT queue_id FROM bridge_codex_deliveries WHERE queue_id=?')
@@ -162,7 +163,9 @@ async function connect(journal: SqliteBridgeJournal, sent: string[], connection 
   let id = 0;
   const bridge = new PortableNodeBridge({ tenantId: 'tenant:test', nodeId: 'node:test',
     keyId: 'node-key:test', features: [CODEX_RESULT_RETURN_FEATURE_V1] }, journal,
-  { async sign(frame) { return signNodeFrame(frame, nodeKeys.privateKey); } }, authenticator(journal),
+  { async sign(frame) { return frame.type === 'harness.codex.result.return' && signResult
+      ? signResult(frame as UnsignedNodeFrame<'harness.codex.result.return'>)
+      : signNodeFrame(frame, nodeKeys.privateKey); } }, authenticator(journal),
   () => id++ === 0 ? connection : `${connection}-result-${id}`);
   const transport = { async send(raw: string) { sent.push(raw); }, async close() {} };
   await bridge.open(transport, { now: returnedAt, transportIdentity: 'transport:test' });
@@ -243,14 +246,14 @@ test('transport uncertainty consumes the send slot and reconnect never replays o
     first.transport.send = async raw => { sent.push(raw); const frame = JSON.parse(raw) as SignedNodeFrame;
       if (frame.type === 'harness.codex.result.return') throw new Error('lost after write'); };
     await assert.rejects(first.bridge.sendCodexResultReturn('queue:test', first.fixture.body, returnedAt,
-      new AbortController().signal, 100), /lost after write/);
+      new AbortController().signal, 100, () => returnedAt), /lost after write/);
     assert.equal(journal.codexResultReturn('run:test')?.status, 'sent');
     await first.bridge.close(); journal.close();
     journal = new SqliteBridgeJournal(path); sent = [];
     const second = await connect(journal, sent, 'reconnect');
     assert.equal(sent.some(raw => (JSON.parse(raw) as SignedNodeFrame).type === 'harness.codex.result.return'), false);
     await assert.rejects(second.bridge.sendCodexResultReturn('queue:test', second.fixture.body, returnedAt,
-      new AbortController().signal, 100));
+      new AbortController().signal, 100, () => returnedAt));
     assert.equal(journal.codexResultReturn('run:test')?.status, 'sent');
     await second.bridge.close(); journal.close();
   } finally { rmSync(directory, { recursive: true, force: true }); }
@@ -272,7 +275,7 @@ test('an authenticated but mutated receipt fails closed and leaves the result du
     queueMicrotask(() => void f.bridge.receive(JSON.stringify(changed), receivedAt).catch(() => {}));
   };
   await assert.rejects(f.bridge.sendCodexResultReturn('queue:test', f.fixture.body, returnedAt,
-    new AbortController().signal, 1_000), /Codex result return transport unavailable/);
+    new AbortController().signal, 1_000, () => returnedAt), /Codex result return transport unavailable/);
   assert.equal(journal.codexResultReturn('run:test')?.status, 'sent');
   assert.equal(sent.filter(raw => (JSON.parse(raw) as SignedNodeFrame).type === 'harness.codex.result.return').length, 1);
   await f.bridge.close(); journal.close();
@@ -300,7 +303,94 @@ test('a crash after durable preparation leaves ambiguity that reconnect cannot r
     assert.equal(sent.some(raw => (JSON.parse(raw) as SignedNodeFrame).type === 'harness.codex.result.return'), false);
     assert.equal(journal.codexResultReturn('run:test')?.status, 'prepared');
     await assert.rejects(second.bridge.sendCodexResultReturn('queue:test', second.fixture.body, returnedAt,
-      new AbortController().signal, 100));
+      new AbortController().signal, 100, () => returnedAt));
     await second.bridge.close(); journal.close();
   } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('abort and expiry discovered after signing prevent preparation and transport I/O', async () => {
+  for (const mode of ['abort', 'expire'] as const) {
+    const journal = new SqliteBridgeJournal(':memory:'), sent: string[] = [];
+    let releaseSign!: () => void, signingStarted!: () => void;
+    const started = new Promise<void>(resolve => { signingStarted = resolve; });
+    const released = new Promise<void>(resolve => { releaseSign = resolve; });
+    const f = await connect(journal, sent, 'test', async frame => {
+      signingStarted(); await released; return signNodeFrame(frame, nodeKeys.privateKey);
+    });
+    const controller = new AbortController();
+    let current = returnedAt;
+    const pending = f.bridge.sendCodexResultReturn('queue:test', f.fixture.body, returnedAt,
+      controller.signal, 1_000, () => current);
+    void pending.catch(() => {});
+    await started;
+    if (mode === 'abort') controller.abort();
+    else current = f.fixture.body.physicalQualification.validUntil;
+    releaseSign();
+    await assert.rejects(pending, /Codex result return operation unavailable|Codex result qualification expired/);
+    assert.equal(journal.codexResultReturn('run:test'), undefined);
+    assert.equal(sent.some(raw => (JSON.parse(raw) as SignedNodeFrame).type === 'harness.codex.result.return'), false);
+    await f.bridge.close(); journal.close();
+  }
+});
+
+test('timeout, cancellation and disconnect bound a hung write and release the send queue', async () => {
+  for (const mode of ['timeout', 'cancel', 'disconnect'] as const) {
+    const journal = new SqliteBridgeJournal(':memory:'), sent: string[] = [];
+    const f = await connect(journal, sent);
+    let writeStarted!: () => void;
+    const started = new Promise<void>(resolve => { writeStarted = resolve; });
+    f.transport.send = async raw => {
+      sent.push(raw);
+      if ((JSON.parse(raw) as SignedNodeFrame).type === 'harness.codex.result.return') {
+        writeStarted(); await new Promise<void>(() => {});
+      }
+    };
+    const controller = new AbortController();
+    const pending = f.bridge.sendCodexResultReturn('queue:test', f.fixture.body, returnedAt,
+      controller.signal, mode === 'timeout' ? 20 : 1_000, () => returnedAt);
+    void pending.catch(() => {});
+    await started;
+    if (mode === 'cancel') controller.abort();
+    if (mode === 'disconnect') await f.bridge.disconnected();
+    await assert.rejects(pending);
+    assert.equal(journal.codexResultReturn('run:test')?.status, 'sent');
+    await assert.rejects(Promise.race([
+      f.bridge.sendCodexResultReturn('queue:test', f.fixture.body, returnedAt,
+        new AbortController().signal, 20, () => returnedAt),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('send_queue_stuck')), 250)),
+    ]), error => error instanceof Error && error.message !== 'send_queue_stuck');
+    await f.bridge.close(); journal.close();
+  }
+});
+
+test('a generic acknowledgement cannot consume the exact result receipt transition', async () => {
+  const journal = new SqliteBridgeJournal(':memory:'), sent: string[] = [];
+  const f = await connect(journal, sent);
+  let inbound: Promise<void> | undefined;
+  f.transport.send = async raw => {
+    sent.push(raw); const frame = JSON.parse(raw) as SignedNodeFrame;
+    if (frame.type !== 'harness.codex.result.return') return;
+    const ack = f.serverFrame(3, 'protocol.ack', { acknowledgedMessageIds: [frame.messageId],
+      highestContiguousSequence: frame.sequence, disposition: 'accepted' });
+    const receiptBody = createCodexResultReturnReceiptBodyV1({ frame: frame as never, recordedAt: receivedAt });
+    const receipt = signNodeFrame({ protocol: NODE_PROTOCOL_V1, direction: 'server_to_node',
+      senderKind: 'control_room', tenantId: 'tenant:test', actorId: 'server:test', keyId: 'server-key:test',
+      connectionId: frame.connectionId, sequence: 4, messageId: 'message:result-after-generic-ack',
+      correlationId: frame.correlationId, causationId: frame.messageId,
+      nonce: 'synthetic_result_after_ack_nonce_123456789', sentAt: receivedAt,
+      expiresAt: frame.expiresAt, type: 'harness.codex.result.return.receipt', body: receiptBody },
+    serverKeys.privateKey);
+    inbound = Promise.resolve().then(async () => {
+      await f.bridge.receive(JSON.stringify(ack), receivedAt);
+      assert.equal(journal.codexResultReturn('run:test')?.status, 'sent');
+      await f.bridge.receive(JSON.stringify(receipt), receivedAt);
+    });
+    void inbound.catch(() => {});
+  };
+  const receipt = await f.bridge.sendCodexResultReturn('queue:test', f.fixture.body, returnedAt,
+    new AbortController().signal, 1_000, () => returnedAt);
+  await inbound;
+  assert.equal(receipt.body.disposition, 'transport_received');
+  assert.equal(journal.codexResultReturn('run:test')?.status, 'receipted');
+  await f.bridge.close(); journal.close();
 });
