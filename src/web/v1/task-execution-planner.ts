@@ -5,6 +5,7 @@ import { DOMAIN_CONTRACT_VERSION, authorityEnvelopeSchema, jobRecordSchema, requ
 import { CanonicalStore } from "../../persistence/canonical-store";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import { appendAuditWith } from "../../audit/audit-store";
+import { scheduledReusableContextSchemaV1, type ScheduledReusableContextV1 } from "../../services/v1/scheduled-task-admission";
 import { assertNoSecretMaterial, computeAuthorityDigest, hmacSha256Tag, sha256Digest, type AwaitableRollbackCheckpointStoreV1 } from "../../security";
 import { CompletionGateStoreV1, completionAcceptanceProfileSchemaV1, completionReviewSchemaV1,
   completionFindingSchemaV1 } from "../../completion-gate/v1";
@@ -61,7 +62,8 @@ export function captureNativeTaskTemplates(config: { template: NativeTaskTemplat
 const initialPlanSchema = z.object({ schema: z.literal("control-room.task-execution-plan/v1"), tenantId: localId,
   projectId: localId, sourceJobId: localId, sourceDigest: digestSchema, sourceInputDigest: digestSchema,
   templateDigest: digestSchema, plannedBy: localId, plannedAt: instant,
-  input: z.object({ prompt: z.string().min(1).max(4000), instructions: z.string().max(8192) }).strict(),
+  input: z.object({ prompt: z.string().min(1).max(4000), instructions: z.string().max(8192),
+    reusableContexts: z.array(scheduledReusableContextSchemaV1).max(16).optional() }).strict(),
   request: requestRecordSchema, workflow: workflowRecordSchema, job: jobRecordSchema,
   acceptanceProfileId: localId, acceptanceProfileDigest: digestSchema,
 }).strict();
@@ -282,8 +284,9 @@ export class TaskExecutionPlanner {
    * transaction around this method. It is intentionally absent from webOperation(). */
   async planScheduledInSession(tx: DatabaseSession, input: Readonly<{ projectId: string; sourceJobId: string;
     expectedInputDigest: string; policyId: string; policyVersion: number; policyDigest: string;
-    ownerIdentityDigest: string }>, assertCurrent: () => void | Promise<void>) {
-    const { projectId, sourceJobId, expectedInputDigest, policyId, policyVersion, policyDigest, ownerIdentityDigest } = input;
+    ownerIdentityDigest: string; reusableContexts: readonly ScheduledReusableContextV1[] }>, assertCurrent: () => void | Promise<void>) {
+    const { projectId, sourceJobId, expectedInputDigest, policyId, policyVersion, policyDigest,
+      ownerIdentityDigest, reusableContexts } = input;
     localId.parse(projectId); localId.parse(sourceJobId); localId.parse(policyId);
     z.number().int().positive().parse(policyVersion); digestSchema.parse(expectedInputDigest);
     digestSchema.parse(policyDigest); digestSchema.parse(ownerIdentityDigest);
@@ -315,7 +318,9 @@ export class TaskExecutionPlanner {
     const suffix = sha256Digest({ tenantId: this.scope.tenantId, sourceJobId }).slice(7);
     const base = { contractVersion: DOMAIN_CONTRACT_VERSION, tenantId: this.scope.tenantId, version: 0,
       createdAt: plannedAt, updatedAt: plannedAt };
-    const planInput = { prompt: source.request.objective, instructions: template.instructions };
+    const planInput = { prompt: source.request.objective, instructions: template.instructions,
+      reusableContexts: reusableContexts.map(context => ({ ...context, reviewIds: [...context.reviewIds],
+        verificationIds: [...context.verificationIds] })) };
     const codex = template.adapter === CODEX_APP_SERVER_ADAPTER;
     const plan = planSchema.parse({ schema: codex ? "control-room.task-execution-plan/v3" : "control-room.task-execution-plan/v1",
       ...(codex ? { adapter: CODEX_APP_SERVER_ADAPTER, connectorProfileDigest: template.connectorProfileDigest,

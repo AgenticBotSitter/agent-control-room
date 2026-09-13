@@ -29,16 +29,27 @@ const sourceSchema = z.object({
 export const scheduledReusableContextSchemaV1 = z.object({
   kind: z.enum(["result", "artifact"]),
   id: safeId,
+  targetId: safeId,
   contentHash: digest,
   sourceJobId: safeId,
   sourceRunId: safeId,
   sourceRevision: z.number().int().nonnegative().max(100),
-  reviewId: safeId,
+  reviewIds: z.array(safeId).min(1).max(5),
   reviewDigest: digest,
+  verificationIds: z.array(safeId).min(1).max(50),
   verificationDigest: digest,
   verifiedAt: z.string().datetime({ offset: true }),
   expiresAt: z.string().datetime({ offset: true }).optional(),
-}).strict();
+}).strict().superRefine((value, context) => {
+  for (const key of ["reviewIds", "verificationIds"] as const) {
+    if (new Set(value[key]).size !== value[key].length || value[key].join("|") !== [...value[key]].sort().join("|")) {
+      context.addIssue({ code: "custom", path: [key], message: `${key} must be unique and sorted` });
+    }
+  }
+  if (value.expiresAt && Date.parse(value.expiresAt) <= Date.parse(value.verifiedAt)) {
+    context.addIssue({ code: "custom", path: ["expiresAt"], message: "context expiry must follow verification" });
+  }
+});
 export type ScheduledReusableContextV1 = z.infer<typeof scheduledReusableContextSchemaV1>;
 
 const contextBindingSchema = z.object({
@@ -181,7 +192,9 @@ function fail(code: ScheduledTaskAdmissionError["safeCode"]): never {
 function frozenReceipt(value: unknown): ScheduledTaskAdmissionReceiptV1 {
   const receipt = receiptSchema.parse(value);
   Object.freeze(receipt.source);
-  for (const context of receipt.contextBinding.reusableContexts) Object.freeze(context);
+  for (const context of receipt.contextBinding.reusableContexts) {
+    Object.freeze(context.reviewIds); Object.freeze(context.verificationIds); Object.freeze(context);
+  }
   Object.freeze(receipt.contextBinding.reusableContexts);
   Object.freeze(receipt.contextBinding);
   Object.freeze(receipt.destination);

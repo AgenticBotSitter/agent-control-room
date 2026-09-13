@@ -8,7 +8,12 @@ import { EMPTY_SCHEDULE_REUSABLE_CONTEXT_BINDING_DIGEST_V1, ScheduledTaskAdmissi
   computeScheduledTaskDefinitionDigestV1, computeScheduledTaskSourceBundleDigestV1,
   type ScheduledReusableContextV1 } from "../src/services/v1/scheduled-task-admission";
 import { ScheduledTaskAssignmentErrorV1, ScheduledTaskAssignmentServiceV1,
-  computeScheduledReusableContextPolicyDigestV1, type ScheduledReusableContextVerifierV1 } from "../src/services/v1/scheduled-task-assignment";
+  CanonicalScheduledReusableContextVerifierV1, computeScheduledContextReviewDigestV1,
+  computeScheduledContextVerificationDigestV1, computeScheduledReusableContextPolicyDigestV1,
+  type ScheduledReusableContextVerifierV1 } from "../src/services/v1/scheduled-task-assignment";
+import type { CompletionAcceptanceProfileV1, CompletionReviewTargetV1, CompletionReviewV1,
+  CompletionVerificationV1 } from "../src/completion-gate/v1";
+import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
 import { taskAssignmentFixture } from "./helpers/task-assignment";
 import { binding, instant } from "./hermes-native-fixture";
 import { at } from "./native-task-fixture";
@@ -16,8 +21,14 @@ import { at } from "./native-task-fixture";
 const scheduleId = "schedule:automatic-assignment";
 const occurrenceKey = `${scheduleId}:2026-09-04T12:00`;
 
-async function scheduledFixture(reusableContexts: ScheduledReusableContextV1[] = [], verifier?: ScheduledReusableContextVerifierV1) {
+type AssignmentFixture = Awaited<ReturnType<typeof taskAssignmentFixture>>;
+type ContextSetup = (fixture: AssignmentFixture) => Promise<{
+  reusableContexts: ScheduledReusableContextV1[]; verifier: ScheduledReusableContextVerifierV1;
+}>;
+async function scheduledFixture(setupContext?: ContextSetup) {
   const f = await taskAssignmentFixture();
+  const configured = setupContext ? await setupContext(f) : { reusableContexts: [], verifier: undefined };
+  const { reusableContexts, verifier } = configured;
   const sourceRow = (await f.db.query<{ request: RequestRecord; workflow: WorkflowRecord; job: JobRecord }>(`SELECT
     r.payload AS request,w.payload AS workflow,j.payload AS job FROM control_jobs j
     JOIN control_workflows w ON w.tenant_id=j.tenant_id AND w.id=j.workflow_id
@@ -44,7 +55,8 @@ async function scheduledFixture(reusableContexts: ScheduledReusableContextV1[] =
       bundleDigest: computeScheduledTaskSourceBundleDigestV1(source) }, contextBinding };
   const admission = await new ScheduledTaskAdmissionServiceV1(f.db, () => instant + 8000).admit(admissionInput);
   let now = instant + 8000;
-  const createService = () => new ScheduledTaskAssignmentServiceV1(f.db, f.scope, f.planner, f.coordinator, () => now, verifier);
+  const createService = (db: DatabaseClient = f.db) =>
+    new ScheduledTaskAssignmentServiceV1(db, f.scope, f.planner, f.coordinator, () => now, verifier);
   const service = createService();
   const policyInput = { id: "policy:automatic-assignment", projectId: binding.projectId, scheduleId,
     scheduleDefinitionDigest, sourceBundleDigest: admissionInput.source.bundleDigest, reusableContexts,
@@ -63,10 +75,73 @@ async function scheduledFixture(reusableContexts: ScheduledReusableContextV1[] =
     baseline, setNow(value: number) { now = value; } };
 }
 
+async function acceptedContext(f: AssignmentFixture, expiresAt?: string) {
+  const recorded = await f.reviews.record(f.identity, binding.projectId, binding.jobId, f.draft, "scheduled-context-review-001");
+  const review = await f.reviewStore.getRecord(f.scope.tenantId, recorded.receipt.reviewId, "review") as CompletionReviewV1;
+  const verification: CompletionVerificationV1 = { schemaVersion: "control-room-completion-gate/v1",
+    id: "verification:scheduled-context", tenantId: f.scope.tenantId, projectId: binding.projectId,
+    targetId: f.target.id, targetDigest: sha256Digest(f.target), acceptanceProfileId: f.profile.id,
+    acceptanceProfileDigest: sha256Digest(f.profile), scenarioId: "scenario:content", outcome: "passed",
+    verifier: { actorId: "service:scheduled-context-verifier", actorType: "service" },
+    evidenceDigests: [f.artifact.contentHash], verifiedAt: at(6500), grantsApproval: false,
+    grantsExecutionAuthority: false };
+  await f.reviewStore.recordVerification(verification);
+  const context: ScheduledReusableContextV1 = { kind: "artifact", id: f.artifact.artifactId, targetId: f.target.id,
+    contentHash: f.artifact.contentHash, sourceJobId: binding.jobId, sourceRunId: f.artifact.runId,
+    sourceRevision: f.target.revisionNumber, reviewIds: [review.id],
+    reviewDigest: computeScheduledContextReviewDigestV1([review]), verificationIds: [verification.id],
+    verificationDigest: computeScheduledContextVerificationDigestV1([verification]), verifiedAt: verification.verifiedAt,
+    ...(expiresAt ? { expiresAt } : {}) };
+  return { reusableContexts: [context],
+    verifier: new CanonicalScheduledReusableContextVerifierV1(f.results, f.reviewStore, f.reviewKey) };
+}
+
+async function crossProjectAcceptedContext(f: AssignmentFixture) {
+  const projectId = "project:cross-context";
+  await f.db.query(`INSERT INTO projects(id,tenant_id,workspace_id,adapter_id,source_record_id,source_version,title,description,
+    normalized_state,domain_state,health,authority_mode,observed_at,payload,updated_at)
+    SELECT $1,tenant_id,workspace_id,adapter_id,$1,'1','Cross context','Synthetic cross-project context',normalized_state,
+      domain_state,health,authority_mode,observed_at,'{}'::jsonb,updated_at FROM projects WHERE tenant_id=$2 AND id=$3`,
+  [projectId, f.scope.tenantId, binding.projectId]);
+  await f.db.query(`INSERT INTO control_manual_project_heads(tenant_id,project_id,lifecycle,version,created_at,updated_at)
+    VALUES($1,$2,'active',1,$3,$3)`, [f.scope.tenantId, projectId, at()]);
+  const profile: CompletionAcceptanceProfileV1 = { ...f.profile, id: "profile:cross-context", projectId,
+    name: "Cross project context" };
+  const target: CompletionReviewTargetV1 = { ...f.target, id: "target:cross-context", projectId,
+    acceptanceProfileId: profile.id, acceptanceProfileDigest: sha256Digest(profile),
+    subjectId: "job:cross-context", rootTargetId: "target:cross-context" };
+  await f.reviewStore.registerProfile(profile); await f.reviewStore.registerTarget(target);
+  const review: CompletionReviewV1 = { schemaVersion: "control-room-completion-gate/v1", id: "review:cross-context",
+    tenantId: f.scope.tenantId, projectId, targetId: target.id, targetDigest: sha256Digest(target),
+    acceptanceProfileId: profile.id, acceptanceProfileDigest: sha256Digest(profile),
+    reviewer: { actorId: "identity:cross-context-reviewer", actorType: "human" }, authority: "completion_gate",
+    decision: "accepted", assessedRisk: "low", effectiveRisk: "low", evidenceDigests: [f.artifact.contentHash],
+    findingIds: [], reviewedAt: at(6000), grantsApproval: false, grantsExecutionAuthority: false };
+  const verification: CompletionVerificationV1 = { schemaVersion: "control-room-completion-gate/v1",
+    id: "verification:cross-context", tenantId: f.scope.tenantId, projectId, targetId: target.id,
+    targetDigest: sha256Digest(target), acceptanceProfileId: profile.id, acceptanceProfileDigest: sha256Digest(profile),
+    scenarioId: "scenario:content", outcome: "passed", verifier: { actorId: "service:cross-context", actorType: "service" },
+    evidenceDigests: [f.artifact.contentHash], verifiedAt: at(6500), grantsApproval: false, grantsExecutionAuthority: false };
+  await f.reviewStore.recordReview(review); await f.reviewStore.recordVerification(verification);
+  const context: ScheduledReusableContextV1 = { kind: "artifact", id: f.artifact.artifactId, targetId: target.id,
+    contentHash: f.artifact.contentHash, sourceJobId: binding.jobId, sourceRunId: f.artifact.runId,
+    sourceRevision: target.revisionNumber, reviewIds: [review.id], reviewDigest: computeScheduledContextReviewDigestV1([review]),
+    verificationIds: [verification.id], verificationDigest: computeScheduledContextVerificationDigestV1([verification]),
+    verifiedAt: verification.verifiedAt };
+  return { reusableContexts: [context],
+    verifier: new CanonicalScheduledReusableContextVerifierV1(f.results, f.reviewStore, f.reviewKey) };
+}
+
 const hasCode = (code: ScheduledTaskAssignmentErrorV1["safeCode"]) => (error: unknown) =>
   error instanceof ScheduledTaskAssignmentErrorV1 && error.safeCode === code;
 const count = async (f: Awaited<ReturnType<typeof scheduledFixture>>, table: string) =>
   Number((await f.db.query<{ n: string }>(`SELECT count(*)::text AS n FROM ${table}`)).rows[0].n);
+const withBeforeCommit = (db: DatabaseClient, before: () => void): DatabaseClient => ({
+  query: db.query.bind(db), transaction: db.transaction.bind(db),
+  transactionWithPreCommitCheck: (work, check) => db.transactionWithPreCommitCheck(work, async () => {
+    before(); await check();
+  }),
+});
 
 test("one admitted occurrence is planned and assigned once across concurrency and restart replay", async t => {
   const f = await scheduledFixture(); t.after(f.close);
@@ -102,6 +177,39 @@ test("one admitted occurrence is planned and assigned once across concurrency an
   assert.equal(await count(f, "control_leases"), f.baseline.leases + 1);
 });
 
+test("stable policy locking precedes absent receipt reads for PostgreSQL replay serialization", async t => {
+  const f = await scheduledFixture(); t.after(f.close); const statements: string[] = [];
+  const session = (tx: DatabaseSession): DatabaseSession => ({ async query<T>(sql: string, params?: unknown[]) {
+    statements.push(sql.replace(/\s+/g, " ").trim()); return tx.query<T>(sql, params);
+  } });
+  const tracked: DatabaseClient = { query: f.db.query.bind(f.db),
+    transaction: work => f.db.transaction(tx => work(session(tx))),
+    transactionWithPreCommitCheck: (work, check) => f.db.transactionWithPreCommitCheck(tx => work(session(tx)), check) };
+  const service = f.createService(tracked); await service.plan(f.operation);
+  const planLock = statements.findIndex(sql => sql.includes("SELECT id FROM control_schedule_assignment_policies"));
+  const planRead = statements.findIndex(sql => sql.includes("SELECT payload,receipt_digest FROM control_scheduled_task_plans"));
+  assert.ok(planLock >= 0 && planLock < planRead, "stable policy row locks before missing plan receipt lookup");
+  statements.length = 0; await service.assign(f.operation);
+  const assignmentLock = statements.findIndex(sql => sql.includes("SELECT id FROM control_schedule_assignment_policies"));
+  const assignmentRead = statements.findIndex(sql => sql.includes("SELECT payload,receipt_digest FROM control_scheduled_task_assignments"));
+  assert.ok(assignmentLock >= 0 && assignmentLock < assignmentRead,
+    "stable policy row locks before missing assignment receipt lookup");
+});
+
+test("final precommit fences reject policy or accepted-context expiry without committing evidence", async t => {
+  const policy = await scheduledFixture(); t.after(policy.close);
+  const policyService = policy.createService(withBeforeCommit(policy.db, () => policy.setNow(instant + 250000)));
+  await assert.rejects(policyService.plan(policy.operation), hasCode("policy_expired"));
+  assert.equal(await count(policy, "control_scheduled_task_plans"), 0);
+
+  const context = await scheduledFixture(fixture => acceptedContext(fixture, at(9000))); t.after(context.close);
+  await context.service.plan(context.operation);
+  const contextService = context.createService(withBeforeCommit(context.db, () => context.setNow(instant + 9000)));
+  await assert.rejects(contextService.assign(context.operation), hasCode("context_unavailable"));
+  assert.equal(await count(context, "control_scheduled_task_assignments"), 0);
+  assert.equal(await count(context, "control_leases"), context.baseline.leases);
+});
+
 test("policy mismatch, pause, revocation and expiry block new plans or leases", async t => {
   const mismatch = await scheduledFixture(); t.after(mismatch.close);
   await assert.rejects(mismatch.service.plan({ ...mismatch.operation, policyDigest: sha256Digest("wrong") }), hasCode("policy_conflict"));
@@ -122,6 +230,18 @@ test("policy mismatch, pause, revocation and expiry block new plans or leases", 
   const expired = await scheduledFixture(); t.after(expired.close); expired.setNow(instant + 250000);
   await assert.rejects(expired.service.plan(expired.operation), hasCode("policy_expired"));
   assert.equal(await count(expired, "control_leases"), expired.baseline.leases);
+
+  const suspended = await scheduledFixture(); t.after(suspended.close);
+  await suspended.db.query("UPDATE control_identities SET state='suspended' WHERE tenant_id=$1 AND id=$2",
+    [suspended.scope.tenantId, suspended.policy.policy.ownerIdentityId]);
+  await assert.rejects(suspended.service.plan(suspended.operation), hasCode("policy_not_active"));
+  assert.equal(await count(suspended, "control_scheduled_task_plans"), 0);
+
+  const grantRemoved = await scheduledFixture(); t.after(grantRemoved.close);
+  await grantRemoved.db.query("DELETE FROM control_role_grants WHERE tenant_id=$1 AND identity_id=$2",
+    [grantRemoved.scope.tenantId, grantRemoved.policy.policy.ownerIdentityId]);
+  await assert.rejects(grantRemoved.service.plan(grantRemoved.operation), hasCode("policy_not_active"));
+  assert.equal(await count(grantRemoved, "control_scheduled_task_plans"), 0);
 });
 
 test("pause after planning preserves the proposal and blocks assignment; assignment replay never releases capacity", async t => {
@@ -145,6 +265,8 @@ test("pause after planning preserves the proposal and blocks assignment; assignm
   const first = await assigned.service.process(assigned.operation);
   await assigned.db.query("UPDATE control_schedules SET state='paused',payload=jsonb_set(payload,'{state}','\"paused\"'::jsonb) WHERE id=$1",
     [scheduleId]);
+  await assigned.db.query("UPDATE control_identities SET state='suspended' WHERE tenant_id=$1 AND id=$2",
+    [assigned.scope.tenantId, assigned.policy.policy.ownerIdentityId]);
   const replay = await assigned.service.assign(assigned.operation);
   assert.deepEqual(replay.receipt, first.assignment.receipt); assert.equal(replay.replayed, true);
   const cancellation = new ScheduledTaskAdmissionServiceV1(assigned.db, () => instant + 9000);
@@ -158,24 +280,31 @@ test("pause after planning preserves the proposal and blocks assignment; assignm
 });
 
 test("non-empty context is exact, revalidated at plan and assignment, and never falls back to empty", async t => {
-  const context: ScheduledReusableContextV1 = { kind: "artifact", id: "artifact:accepted-context",
-    contentHash: sha256Digest("context"), sourceJobId: "job:accepted-context", sourceRunId: "run:accepted-context",
-    sourceRevision: 0, reviewId: "review:accepted-context", reviewDigest: sha256Digest("review"),
-    verificationDigest: sha256Digest("verification"), verifiedAt: at(5000) };
-  let available = true;
-  const verifier: ScheduledReusableContextVerifierV1 = { async verifyInSession(_tx, scope, value, now) {
-    return available && scope.projectId === binding.projectId && value.id === context.id
-      && value.contentHash === context.contentHash && Date.parse(value.verifiedAt) <= Date.parse(now)
-      && (!value.expiresAt || Date.parse(value.expiresAt) > Date.parse(now));
-  } };
-  const f = await scheduledFixture([context], verifier); t.after(f.close);
-  await f.service.plan(f.operation); available = false;
+  const f = await scheduledFixture(fixture => acceptedContext(fixture)); t.after(f.close);
+  const plan = await f.service.plan(f.operation);
+  const planned = (await f.db.query<{ payload: JobRecord }>("SELECT payload FROM control_jobs WHERE id=$1",
+    [plan.receipt.plannedJobId])).rows[0].payload;
+  assert.equal(planned.inputDigest, sha256Digest({ prompt: f.sourceDraft.instructions,
+    instructions: "Use only the supplied information.", reusableContexts: f.operation.admission.contextBinding.reusableContexts }),
+  "accepted context is part of the canonical plan input digest");
+  await f.db.query("ALTER TABLE control_completion_gate_records DISABLE TRIGGER control_completion_gate_records_append_only");
+  await f.db.query("UPDATE control_completion_gate_records SET record_digest=$1 WHERE id=$2",
+    [sha256Digest("altered"), f.operation.admission.contextBinding.reusableContexts[0].targetId]);
+  await f.db.query("ALTER TABLE control_completion_gate_records ENABLE TRIGGER control_completion_gate_records_append_only");
   await assert.rejects(f.service.assign(f.operation), hasCode("context_unavailable"));
   assert.equal(await count(f, "control_scheduled_task_plans"), 1); assert.equal(await count(f, "control_leases"), f.baseline.leases);
 
-  const unavailable = await scheduledFixture([{ ...context, id: "artifact:cross-project" }], verifier); t.after(unavailable.close);
+  const unavailable = await scheduledFixture(async fixture => {
+    const setup = await acceptedContext(fixture);
+    setup.reusableContexts[0] = { ...setup.reusableContexts[0], targetId: "target:unprovable-context" };
+    return setup;
+  }); t.after(unavailable.close);
   await assert.rejects(unavailable.service.plan(unavailable.operation), hasCode("context_unavailable"));
   assert.equal(await count(unavailable, "control_scheduled_task_plans"), 0);
+
+  const crossProject = await scheduledFixture(crossProjectAcceptedContext); t.after(crossProject.close);
+  await assert.rejects(crossProject.service.plan(crossProject.operation), hasCode("context_unavailable"));
+  assert.equal(await count(crossProject, "control_scheduled_task_plans"), 0);
 
   const empty = await scheduledFixture(); t.after(empty.close);
   await assert.rejects(empty.service.plan({ ...empty.operation, admission: {

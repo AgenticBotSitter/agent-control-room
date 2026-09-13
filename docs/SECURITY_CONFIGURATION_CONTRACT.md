@@ -175,6 +175,11 @@ or become an application coordination store.
 - Automatic planning and assignment require a separate owner-created standing
   policy bound to the exact schedule/source/context digests, executor/capability,
   node and validity window. A schedule alone is never that authority.
+- A standing policy survives neither suspension of its owner identity nor loss,
+  revocation or expiry of that owner's current project-scoped `tasks.assign`
+  grant. Identity and grant rows are locked and revalidated before each new plan
+  or lease, and policy/context freshness is checked again immediately before
+  commit. Existing immutable receipts remain non-authorizing historical reads.
 - Scheduled planning and assignment retain separate replay receipts and share the
   ordinary locked node-capacity allocator. Neither receipt starts a process,
   grants execution authority, proves native cancellation or releases capacity.

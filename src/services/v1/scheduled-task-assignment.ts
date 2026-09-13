@@ -7,6 +7,11 @@ import { WebAccessError, type VerifiedWebIdentity } from "../../web/v1/access-ve
 import { WebSessionAuthority } from "../../web/v1/session-authority";
 import { type TaskExecutionPlanner } from "../../web/v1/task-execution-planner";
 import { type TaskAssignmentCoordinator } from "../../web/v1/task-assignment-coordinator";
+import type { NativeResultStore } from "../../artifacts/v1/native-results";
+import type { CompletionGateStoreV1 } from "../../completion-gate/v1/store";
+import type { CompletionReviewV1, CompletionVerificationV1 } from "../../completion-gate/v1/types";
+import { readTaskReviewPlanV1, verifyTaskReviewTargetV1 } from "../../completion-gate/v1/task-review-plan";
+import { evaluatePolicy, type RoleGrant } from "../../security/policy";
 import { computeScheduledTaskDefinitionDigestV1, parseScheduledTaskAdmissionReceiptV1,
   scheduledReusableContextSchemaV1, type ScheduledReusableContextV1,
   type ScheduledTaskAdmissionReceiptV1 } from "./scheduled-task-admission";
@@ -45,8 +50,8 @@ export type ScheduledTaskAssignmentReceiptV1 = Readonly<{
 }>;
 
 export interface ScheduledReusableContextVerifierV1 {
-  verifyInSession(tx: DatabaseSession, scope: Readonly<{ tenantId: string; workspaceId: string; projectId: string }>,
-    context: ScheduledReusableContextV1, now: string): Promise<boolean>;
+  resolveInSession(tx: DatabaseSession, scope: Readonly<{ tenantId: string; workspaceId: string; projectId: string }>,
+    context: ScheduledReusableContextV1, now: string): Promise<ScheduledReusableContextV1>;
 }
 
 export class ScheduledTaskAssignmentErrorV1 extends Error {
@@ -58,12 +63,58 @@ const fail = (code: ScheduledTaskAssignmentErrorV1["safeCode"]): never => { thro
 export const computeScheduledReusableContextPolicyDigestV1 = (value: readonly ScheduledReusableContextV1[]) => sha256Digest({
   contractVersion: "control-room-scheduled-reusable-context-policy/v1", reusableContexts: value,
 });
+export const computeScheduledContextReviewDigestV1 = (reviews: readonly CompletionReviewV1[]) => sha256Digest({
+  contractVersion: "control-room-scheduled-context-reviews/v1", reviews,
+});
+export const computeScheduledContextVerificationDigestV1 = (verifications: readonly CompletionVerificationV1[]) => sha256Digest({
+  contractVersion: "control-room-scheduled-context-verifications/v1", verifications,
+});
 export const computeScheduleAssignmentPolicyDigestV1 = (value: Omit<ScheduleAssignmentPolicyV1, "policyDigest">) => sha256Digest(value);
 const serviceActor = "service:schedule-assignment:v1";
+
+/** Repository-backed accepted-context resolver. It authenticates canonical result metadata,
+ * completion-gate integrity/checkpoint state, exact review and verification records, and
+ * revision lineage inside the caller's plan/assignment transaction. */
+export class CanonicalScheduledReusableContextVerifierV1 implements ScheduledReusableContextVerifierV1 {
+  private readonly reviewKey: Uint8Array;
+  constructor(private readonly results: Pick<NativeResultStore, "readReceipt">,
+    private readonly completion: CompletionGateStoreV1, reviewIntegrityKey: Uint8Array) {
+    if (!(reviewIntegrityKey instanceof Uint8Array) || reviewIntegrityKey.length !== 32) fail("context_unavailable");
+    this.reviewKey = Uint8Array.from(reviewIntegrityKey);
+  }
+  async resolveInSession(tx: DatabaseSession,
+    scope: Readonly<{ tenantId: string; workspaceId: string; projectId: string }>,
+    context: ScheduledReusableContextV1, now: string): Promise<ScheduledReusableContextV1> {
+    if (Date.parse(context.verifiedAt) > Date.parse(now)
+      || context.expiresAt && Date.parse(now) >= Date.parse(context.expiresAt)) fail("context_unavailable");
+    const receipt = await this.results.readReceipt(tx, scope.tenantId, scope.projectId, context.sourceJobId, context.id);
+    if (!receipt || receipt.artifactId !== context.id || receipt.projectId !== scope.projectId
+      || receipt.jobId !== context.sourceJobId || receipt.runId !== context.sourceRunId
+      || receipt.contentHash !== context.contentHash) fail("context_unavailable");
+    const evidence = await this.completion.acceptedContextInSession(tx, scope.tenantId, scope.projectId, context.targetId);
+    const plan = await readTaskReviewPlanV1(tx, this.reviewKey, scope.tenantId, scope.projectId, context.sourceJobId);
+    try { verifyTaskReviewTargetV1(plan, evidence.target, receipt); } catch { return fail("context_unavailable"); }
+    const reviews = evidence.reviews, verifications = evidence.verifications;
+    const latestVerification = verifications.reduce((latest, value) => value.verifiedAt > latest ? value.verifiedAt : latest, "");
+    if (evidence.target.subjectDigest !== context.contentHash || evidence.target.revisionNumber !== context.sourceRevision
+      || evidence.target.id !== context.targetId || evidence.snapshot.status !== "ready"
+      || reviews.map(value => value.id).join("|") !== context.reviewIds.join("|")
+      || verifications.map(value => value.id).join("|") !== context.verificationIds.join("|")
+      || computeScheduledContextReviewDigestV1(reviews) !== context.reviewDigest
+      || computeScheduledContextVerificationDigestV1(verifications) !== context.verificationDigest
+      || latestVerification !== context.verifiedAt) fail("context_unavailable");
+    const resolved = { ...context, reviewIds: [...context.reviewIds], verificationIds: [...context.verificationIds] };
+    Object.freeze(resolved.reviewIds); Object.freeze(resolved.verificationIds); return Object.freeze(resolved);
+  }
+}
 
 type PolicyRow = { tenant_id: string; workspace_id: string; project_id: string; id: string; schedule_id: string;
   state: ScheduleAssignmentPolicyV1["state"]; version: number; policy_digest: string; payload: unknown };
 type ReceiptRow = { payload: unknown; receipt_digest: string };
+type CurrentGrantRow = { id: string; role_key: string; allowed_actions: string[]; project_ids: string[];
+  risk_ceiling: RoleGrant["riskCeiling"]; allow_external_effects: boolean; require_strong_factor: boolean;
+  expires_at: string | Date | null; revoked_at: string | Date | null };
+const iso = (value: string | Date) => new Date(value).toISOString();
 
 function policyFromRow(row: PolicyRow): ScheduleAssignmentPolicyV1 {
   const parsed = z.object({ contractVersion: z.literal("control-room-schedule-assignment-policy/v1"), tenantId: id,
@@ -193,6 +244,11 @@ export class ScheduledTaskAssignmentServiceV1 {
   }
 
   private now(): string { const value = this.clock(); if (!Number.isSafeInteger(value) || value < 0) fail("policy_expired"); return new Date(value).toISOString(); }
+  private async lockReplayScope(tx: DatabaseSession, policyId: string) {
+    const row = (await tx.query<{ id: string }>(`SELECT id FROM control_schedule_assignment_policies
+      WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, [this.scope.tenantId, policyId])).rows[0];
+    if (!row) fail("policy_conflict");
+  }
   private async current(tx: DatabaseSession, input: { policyId: string; policyDigest: string; admission: ScheduledTaskAdmissionReceiptV1 }) {
     const row = (await tx.query<PolicyRow>("SELECT * FROM control_schedule_assignment_policies WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
       [this.scope.tenantId, input.policyId])).rows[0];
@@ -229,18 +285,44 @@ export class ScheduledTaskAssignmentServiceV1 {
       WHERE tenant_id=$1 AND project_id=$2 AND id=$3 FOR UPDATE`,
     [this.scope.tenantId, policy.projectId, admission.destination.jobId])).rows[0];
     if (!proposal || proposal.state !== "proposed") fail("schedule_unavailable");
+    const owner = (await tx.query<{ id: string }>(`SELECT id FROM control_identities
+      WHERE tenant_id=$1 AND id=$2 AND actor_type='human' AND state='active' FOR UPDATE`,
+    [this.scope.tenantId, policy.ownerIdentityId])).rows[0];
+    if (!owner || sha256Digest({ tenantId: this.scope.tenantId, identityId: owner.id, actorType: "human" })
+      !== policy.ownerIdentityDigest) fail("policy_not_active");
+    const grantRows = (await tx.query<CurrentGrantRow>(`SELECT id,role_key,allowed_actions,project_ids,risk_ceiling,
+      allow_external_effects,require_strong_factor,expires_at,revoked_at FROM control_role_grants
+      WHERE tenant_id=$1 AND identity_id=$2 FOR SHARE`, [this.scope.tenantId, owner.id])).rows;
+    const grants = grantRows.filter(row => row.role_key === "owner").map(row => ({ id: row.id, roleKey: row.role_key,
+      allowedActions: row.allowed_actions, projectIds: row.project_ids, riskCeiling: row.risk_ceiling,
+      allowExternalEffects: row.allow_external_effects, requireStrongFactor: row.require_strong_factor,
+      ...(row.expires_at ? { expiresAt: iso(row.expires_at) } : {}),
+      ...(row.revoked_at ? { revokedAt: iso(row.revoked_at) } : {}) }));
+    const authorized = evaluatePolicy({ tenantId: this.scope.tenantId, identityId: owner.id, actorType: "human",
+      authenticatedAt: policy.createdAt, expiresAt: policy.validUntil }, grants, { tenantId: this.scope.tenantId,
+      action: "tasks.assign", resourceType: "task", resourceId: policy.projectId, projectId: policy.projectId,
+      risk: "low", externalEffect: false, occurredAt: now });
+    if (!authorized.allowed) fail("policy_not_active");
+    const resolvedContexts: ScheduledReusableContextV1[] = [];
     for (const context of policy.reusableContexts) {
-      if (!this.contextVerifier || !(await this.contextVerifier.verifyInSession(tx,
-        { ...this.scope, projectId: policy.projectId }, context, now))) fail("context_unavailable");
+      if (!this.contextVerifier) fail("context_unavailable");
+      try {
+        const resolved = await this.contextVerifier.resolveInSession(tx,
+          { ...this.scope, projectId: policy.projectId }, context, now);
+        if (sha256Digest(resolved) !== sha256Digest(context)) fail("context_unavailable");
+        resolvedContexts.push(resolved);
+      } catch { fail("context_unavailable"); }
     }
-    return { policy, now };
+    return { policy, now, resolvedContexts: Object.freeze(resolvedContexts) };
   }
 
   async plan(value: unknown): Promise<{ receipt: ScheduledTaskPlanReceiptV1; replayed: boolean }> {
     const parsed = operationSchema.safeParse(value); if (!parsed.success) fail("admission_conflict");
     let admission: ScheduledTaskAdmissionReceiptV1;
     try { admission = parseScheduledTaskAdmissionReceiptV1(parsed.data.admission); } catch { return fail("admission_conflict"); }
+    let assertFinalCurrent: (() => Promise<unknown>) | undefined;
     return this.db.transactionWithPreCommitCheck(async tx => {
+      await this.lockReplayScope(tx, parsed.data.policyId);
       const prior = (await tx.query<ReceiptRow>(`SELECT payload,receipt_digest FROM control_scheduled_task_plans
         WHERE tenant_id=$1 AND schedule_id=$2 AND occurrence_key=$3 FOR UPDATE`,
       [this.scope.tenantId, admission.scheduleId, admission.occurrenceKey])).rows[0];
@@ -251,14 +333,15 @@ export class ScheduledTaskAssignmentServiceV1 {
         return { receipt, replayed: true };
       }
       const assertCurrent = async () => { await this.current(tx, { ...parsed.data, admission }); };
-      const { policy, now } = await this.current(tx, { ...parsed.data, admission });
+      assertFinalCurrent = assertCurrent;
+      const { policy, now, resolvedContexts } = await this.current(tx, { ...parsed.data, admission });
       const sourceJob = (await tx.query<{ payload: JobRecord }>("SELECT payload FROM control_jobs WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
         [this.scope.tenantId, admission.destination.jobId])).rows[0]?.payload;
       if (!sourceJob || sha256Digest(sourceJob) !== admission.destination.jobDigest) fail("admission_conflict");
       const planned = await this.planner.planScheduledInSession(tx, { projectId: policy.projectId,
         sourceJobId: admission.destination.jobId, expectedInputDigest: sourceJob.inputDigest, policyId: policy.id,
         policyVersion: policy.version, policyDigest: policy.policyDigest,
-        ownerIdentityDigest: policy.ownerIdentityDigest }, assertCurrent);
+        ownerIdentityDigest: policy.ownerIdentityDigest, reusableContexts: resolvedContexts }, assertCurrent);
       const job = (await tx.query<{ payload: JobRecord }>("SELECT payload FROM control_jobs WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
         [this.scope.tenantId, planned.receipt.jobId])).rows[0]?.payload;
       if (!job || job.authority.allowedExecutor !== policy.allowedExecutor || job.requiredCapability !== policy.requiredCapability
@@ -281,15 +364,16 @@ export class ScheduledTaskAssignmentServiceV1 {
         receipt.inputDigest, receipt.receiptDigest,
         JSON.stringify(receipt), receipt.plannedAt]);
       return { receipt, replayed: false };
-    }, () => { this.now(); });
+    }, async () => { if (assertFinalCurrent) await assertFinalCurrent(); });
   }
 
   async assign(value: unknown): Promise<{ receipt: ScheduledTaskAssignmentReceiptV1; replayed: boolean }> {
     const parsed = operationSchema.safeParse(value); if (!parsed.success) fail("admission_conflict");
     let admission: ScheduledTaskAdmissionReceiptV1;
     try { admission = parseScheduledTaskAdmissionReceiptV1(parsed.data.admission); } catch { return fail("admission_conflict"); }
-    let commitDeadline: number | undefined;
+    let commitDeadline: number | undefined, assertFinalCurrent: (() => Promise<unknown>) | undefined;
     return this.db.transactionWithPreCommitCheck(async tx => {
+      await this.lockReplayScope(tx, parsed.data.policyId);
       const prior = (await tx.query<ReceiptRow>(`SELECT payload,receipt_digest FROM control_scheduled_task_assignments
         WHERE tenant_id=$1 AND schedule_id=$2 AND occurrence_key=$3 FOR UPDATE`,
       [this.scope.tenantId, admission.scheduleId, admission.occurrenceKey])).rows[0];
@@ -306,6 +390,7 @@ export class ScheduledTaskAssignmentServiceV1 {
       if (planRow.receipt_digest !== plan.receiptDigest || plan.admissionReceiptDigest !== admission.receiptDigest
         || plan.policyId !== parsed.data.policyId || plan.policyDigest !== parsed.data.policyDigest) fail("planning_conflict");
       const assertCurrent = async () => { await this.current(tx, { ...parsed.data, admission }); };
+      assertFinalCurrent = assertCurrent;
       const { policy, now } = await this.current(tx, { ...parsed.data, admission });
       const assigned = await this.assignment.assignScheduledInSession(tx, { projectId: policy.projectId,
         jobId: plan.plannedJobId, nodeId: policy.nodeId, expectedInputDigest: plan.inputDigest }, {
@@ -342,7 +427,7 @@ export class ScheduledTaskAssignmentServiceV1 {
       return { receipt, replayed: false };
     }, async () => {
       if (commitDeadline !== undefined && this.clock() >= commitDeadline) fail("assignment_conflict");
-      this.now();
+      if (assertFinalCurrent) await assertFinalCurrent();
     });
   }
 
