@@ -3,6 +3,8 @@ import { artifactManifestRecordSchema, authorityEnvelopeSchema } from "../../dom
 import { fleetSignalEnvelopeSchema } from "../../node-fleet/v1/schemas";
 import { nativeTaskSnapshotBodySchema } from "../../harness/v1/native-observation";
 import { nativeTaskDispatchBodySchema, nativeTaskDispatchReceiptBodySchema } from "../../harness/v1/native-delivery";
+import { codexTaskDispatchBodySchemaV1, codexTaskDispatchReceiptBodySchemaV1 } from "../../harness/codex-v1/delivery-contract";
+import { codexTaskActivationBodySchemaV1 } from "../../harness/codex-v1/activation-contract";
 import { canonicalFilesystemPathSchema, canonicalNetworkDestinationSchema } from "../../node-policy/v1/schemas";
 import { computeAuthorityDigest, sha256Digest } from "../../security";
 import { CONNECTION_ENROLLMENT_DELIVERY_ID_MAX_LENGTH, CONNECTION_ENROLLMENT_DELIVERY_ID_MIN_LENGTH,
@@ -360,6 +362,9 @@ export const signedNodeFrameSchema = z.discriminatedUnion("type", [
   frame("harness.native.snapshot", nativeTaskSnapshotBodySchema, { direction: "node_to_server", senderKind: "node" }),
   frame("harness.native.dispatch", nativeTaskDispatchBodySchema, { direction: "server_to_node", senderKind: "control_room" }),
   frame("harness.native.dispatch.receipt", nativeTaskDispatchReceiptBodySchema, { direction: "node_to_server", senderKind: "node" }),
+  frame("harness.codex.dispatch", codexTaskDispatchBodySchemaV1, { direction: "server_to_node", senderKind: "control_room" }),
+  frame("harness.codex.dispatch.receipt", codexTaskDispatchReceiptBodySchemaV1, { direction: "node_to_server", senderKind: "node" }),
+  frame("harness.codex.dispatch.activation", codexTaskActivationBodySchemaV1, { direction: "server_to_node", senderKind: "control_room" }),
   frame("job.cancel", cancelRequest),
   frame("job.cancel.ack", cancelAck),
   frame("node.reconciliation.request", reconciliationRequest),
@@ -382,6 +387,27 @@ export const signedNodeFrameSchema = z.discriminatedUnion("type", [
     if (value.body.tenantId !== value.tenantId || value.body.nodeId !== value.actorId
       || value.causationId !== value.body.dispatchMessageId || Date.parse(value.body.recordedAt) > Date.parse(value.sentAt))
       context.addIssue({ code: "custom", message: "native receipt frame identity mismatch" });
+  }
+  if (value.type === "harness.codex.dispatch") {
+    const start = value.body.start;
+    if (value.tenantId !== start.tenantId || Date.parse(value.expiresAt) > start.deadline
+      || Date.parse(value.sentAt) < Date.parse(value.body.permit.body.issuedAt)) {
+      context.addIssue({ code: "custom", message: "codex dispatch frame scope or deadline mismatch" });
+    }
+  }
+  if (value.type === "harness.codex.dispatch.receipt") {
+    if (value.body.tenantId !== value.tenantId || value.body.nodeId !== value.actorId
+      || value.causationId !== value.body.dispatchMessageId || Date.parse(value.body.recordedAt) > Date.parse(value.sentAt)) {
+      context.addIssue({ code: "custom", message: "codex receipt frame identity mismatch" });
+    }
+  }
+  if (value.type === "harness.codex.dispatch.activation") {
+    const activation = value.body;
+    if (value.tenantId !== activation.tenantId || value.connectionId !== activation.connectionId
+      || value.causationId !== activation.receiptMessageId || value.sentAt !== activation.activatedAt
+      || Date.parse(value.expiresAt) > Date.parse(activation.activationExpiresAt)) {
+      context.addIssue({ code: "custom", message: "codex activation frame identity or timing mismatch" });
+    }
   }
   if (value.type === "connection.enrollment.deliver") {
     const envelope = value.body.envelope;
@@ -408,5 +434,5 @@ export const signedNodeFrameSchema = z.discriminatedUnion("type", [
   }
 });
 
-export const nodeToServerTypes = new Set(["connection.hello", "connection.enrollment.deliver", "node.heartbeat", "node.fleet.signal", "job.offer.decision", "job.event", "harness.native.snapshot", "harness.native.dispatch.receipt", "job.cancel.ack", "node.reconciliation.report", "node.operation.ack", "protocol.ack", "protocol.error"]);
-export const serverToNodeTypes = new Set(["connection.accepted", "job.offer", "job.lease.grant", "job.lease.renewed", "job.cancel", "harness.native.dispatch", "node.reconciliation.request", "node.operation.request", "protocol.ack", "protocol.error"]);
+export const nodeToServerTypes = new Set(["connection.hello", "connection.enrollment.deliver", "node.heartbeat", "node.fleet.signal", "job.offer.decision", "job.event", "harness.native.snapshot", "harness.native.dispatch.receipt", "harness.codex.dispatch.receipt", "job.cancel.ack", "node.reconciliation.report", "node.operation.ack", "protocol.ack", "protocol.error"]);
+export const serverToNodeTypes = new Set(["connection.accepted", "job.offer", "job.lease.grant", "job.lease.renewed", "job.cancel", "harness.native.dispatch", "harness.codex.dispatch", "harness.codex.dispatch.activation", "node.reconciliation.request", "node.operation.request", "protocol.ack", "protocol.error"]);

@@ -1,9 +1,9 @@
 # Exact-ID Codex read recovery
 
 Status: exact selected-package schema is generated, sanitized and bound to the
-bounded response projection. The one-shot JSONL profile, owned connection lifecycle
-and effect-free start-admission contract are implemented; native transport, signed
-delivery intake, durable identity storage, physical restart read, runtime
+bounded response projection. The one-shot JSONL profile, owned connection lifecycle,
+effect-free start-admission contract and signed delivery/owner-permit intake contract
+are implemented; native transport/session wiring, durable identity storage, physical restart read, runtime
 reconciliation and host qualification are not implemented or accepted.
 
 Exact-package schema evidence was generated from `@openai/codex@0.150.0-alpha.8`
@@ -90,10 +90,17 @@ are not retained. Every product-facing capability on these records is deliberate
 receipt proves only that the exact start request received a correlated initial
 response. It is not permission to start, retry, resume or read, and it cannot mark
 canonical work complete. Its ordinary SHA-256 digests detect accidental or
-conflicting changes but are not authentication. The next layer must accept this
-contract only after separately authenticated Codex delivery, permit, pinned
-enrollment and current local admission are verified, then protect the immutable
-journal record with node-owned integrity.
+conflicting changes but are not authentication.
+
+`src/harness/codex-v1/delivery-contract.ts` now carries the authenticated handoff
+through the existing signed node protocol as `harness.codex.dispatch`. It reuses
+the node signature and pinned owner-approval trust while binding the exact prompt,
+workspace intent, connector profile, enrollment, lease, deadline and machine.
+It creates no second queue, signer or transport. `approval-intake.ts` verifies the
+owner signature and current trust revision, but grants no execution, retry or
+resume authority. The start contract may be constructed only after the outer frame,
+recorded delivery, verified permit, pinned enrollment and current local admission
+are all available, then protected by the node-owned journal.
 
 The existing SQLite journal uses full-synchronous WAL and transactions, but its
 ordinary payload digests are integrity consistency checks, not authentication
@@ -103,17 +110,26 @@ Do not advertise this extension as an authenticated restart source merely becaus
 it survives reopen. Production binding acceptance requires an independent review
 of the retained signed evidence and current verification path.
 
-1. Define and verify the separately signed Codex delivery/permit intake that is
-   allowed to construct the effect-free admission contract. Do not expose its
-   constructor or dispatcher to browser input, reuse an initialized-connection
-   identity, or treat the contract digest as a signature.
-2. Extend the existing protected node journal, not a second coordination service,
-   with an immutable observation-only Codex identity record. Bind the exact pair
-   to tenant/project/node/job/attempt/run, accepted delivery and pinned adapter
-   enrollment. Capture it from correlated native responses, never browser input.
-3. Persist thread receipt before turn dispatch and turn receipt immediately after
-   acknowledgement. An interruption before a durable turn receipt remains unknown:
-   do not list/search, select the latest turn, replay dispatch or infer a turn ID.
+1. The signed Codex frame now uses a negotiated one-shot server-session sender and
+   the existing node bridge intake. The server signs once, saves the exact envelope
+   and transmission intent before its only send, and retains only the exact signed
+   receipt. Those append-only records bind a shared queue entry to the complete verified
+   Codex approval packet and exact machine/work settings, so a replacement connection
+   cannot create a second send slot. The queue collaborator checks the locked canonical
+   job, attempt, lease, node and recalculated job-authority digest before insertion.
+   Canonical Codex planning and owner-review composition must still supply that path,
+   and current local policy remains mandatory before start.
+   Do not expose these constructors to browser input, reuse an initialized-connection
+   identity, or treat a contract digest as a signature.
+2. `src/harness/codex-v1/start-journal.ts` now provides the protected,
+   observation-only SQLite record for the exact correlated receipt pair. It binds
+   tenant/project/node/job/attempt/run, accepted delivery, connection attempt and
+   pinned enrollment; refuses altered schemas or records; and exposes no browser,
+   queue, retry, resume or read-permission surface.
+3. The journal requires the thread receipt to be durable before accepting its turn
+   receipt. A reopen after only the thread write returns `turn_not_recorded` with
+   no read identity. It never lists/searches, selects a latest turn, replays a
+   dispatch or infers a turn ID. Runtime composition must preserve this write order.
 4. Keep observation retention distinct from execution/resume authority. Retaining
    identifiers for a separately authorized read must not reactivate a quarantined
    broker grant. Define retention and deletion with the protected journal owner.
@@ -156,3 +172,47 @@ passes 11 tests.
 Run `pnpm test:codex-recovery` for the effect-free
 projection and protocol checks. No credentials, native app-server process or provider call is
 used by those tests. A separate owner-attended qualification stays separate.
+
+### Canonical planning and assignment checkpoint
+
+Codex now enters the existing `TaskExecutionPlanner` and
+`TaskAssignmentCoordinator` instead of a second planner or queue. A server-owned
+Codex template creates a signed `control-room.task-execution-plan/v3` that binds
+the exact connector-profile and workspace-intent digests. The existing assignment
+transaction can then reserve one eligible configured node and one canonical lease.
+
+This checkpoint still starts nothing. The lease receipt grants no execution
+authority, and Codex plans are explicitly refused by the Hermes-native approval
+and result-binding paths. A separate Codex-only permit builder now reconstructs
+the exact assigned lease, connector, workspace and machine binding for owner
+review, signs one bounded approval without a Hermes recovery permission, verifies
+that signature against current pinned trust, and writes the existing shared queue
+intent. Repeated or changed permits fail closed.
+
+The queued Codex intent now reaches the existing operational submission port and
+the trusted coordinator can carry its exact signed packet through the existing
+server session: durable envelope, one committed transmission intent, one transport
+send, and one authenticated node-storage receipt. The combined PGlite/session
+test keeps the canonical job leased and proves no harness run is created. A missing
+receipt remains unconfirmed; neither send nor receipt is execution evidence.
+
+The next integration must route Codex entries through the managed connection and
+shared worker without sending them into the Hermes approval/result path, then bind
+node-local admission and the exact Codex start journal before any App Server start.
+It must not expose permit construction as a browser request, silently select a
+workspace, treat a reported capability as local admission, or retry an uncertain send.
+
+### Completed-turn result boundary
+
+An unwired, source-tested completed-turn projector now fixes the intended
+deterministic result rule and safety bounds. It considers only the exact completed
+turn, never copies reasoning, tool output, file changes or commentary, preserves
+the last eligible agent message byte-for-byte, and rejects empty, malformed,
+secret-like or oversized text.
+
+This projector is deliberately marked `exactPackageQualified: false` and
+`canonicalPublicationAllowed: false`. The retained schema evidence for the pinned
+Codex App Server version proves thread and turn identity/status, but did not retain
+the detailed result-item definition. Until a bounded schema-only check records and
+matches that exact item shape, this remains integration scaffolding—not live result
+evidence—and no runtime or database path may publish its output.

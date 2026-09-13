@@ -24,8 +24,9 @@ export function snapshot(patch: Partial<NativeSnapshot> = {}): NativeSnapshot {
 }
 export const observation = (patch: Partial<NativeSnapshot> = {}) => nativeTaskObservation(snapshot(patch), registration.nativeTask!);
 
-export async function nativeTaskFixture() {
-  const raw = new PGlite();
+export async function nativeTaskFixture(pgliteOptions: { dataDir?: string; inputDigest?: string;
+  authority?: JobRecord["authority"]; jobType?: string; requiredCapability?: string } = {}) {
+  const raw = new PGlite(pgliteOptions.dataDir);
   for (const name of (await readdir(resolve("db/migrations"))).filter(name => name.endsWith(".sql")).sort()) {
     await raw.exec(await readFile(resolve("db/migrations", name), "utf8"));
   }
@@ -37,13 +38,14 @@ export async function nativeTaskFixture() {
     requestedBy: { actorId: "identity:test", actorType: "human" }, idempotencyKey: "native-task-fixture-request" };
   const workflow: WorkflowRecord = { ...common, kind: "workflow", id: "workflow:test", requestId: request.id, projectId: binding.projectId,
     definitionVersion: "1.0.0", definitionDigest: digest(), authorityMode: "control_room_native", state: "proposed", jobIds: [binding.jobId] };
-  const authority: JobRecord["authority"] = { projectId: binding.projectId, allowedExecutor: "executor:fixture",
+  const authority: JobRecord["authority"] = pgliteOptions.authority ?? { projectId: binding.projectId, allowedExecutor: "executor:fixture",
     allowedOperations: ["operation:fixture"], credentialRefs: [], filesystemRoots: [], networkPolicy: "none", allowedNetworkDestinations: [],
     effectPolicy: "none", maxRisk: "low", maxDurationSeconds: 600, maxConcurrentEffects: 0, expiresAt: at(600_000), digest: digest() };
   authority.digest = computeAuthorityDigest(authority);
   const job: JobRecord = { ...common, kind: "job", id: binding.jobId, workflowId: workflow.id, projectId: binding.projectId,
-    jobType: "hermes-native-evidence-fixture", specVersion: "1.0.0", inputDigest, state: "proposed", priority: 50,
-    requiredCapability: "capability:fixture", dependsOnJobIds: [], authority,
+    jobType: pgliteOptions.jobType ?? "hermes-native-evidence-fixture", specVersion: "1.0.0",
+    inputDigest: pgliteOptions.inputDigest ?? inputDigest, state: "proposed", priority: 50,
+    requiredCapability: pgliteOptions.requiredCapability ?? "capability:fixture", dependsOnJobIds: [], authority,
     retryPolicy: { maxAttempts: 1, backoffSeconds: 1, retryableFailureCodes: [], retryAfterOrphan: false, ambiguousEffectPolicy: "attention" } };
   const node: NodeRecord = { ...common, kind: "node", id: binding.nodeId, displayName: "Synthetic node", state: "pending_enrollment",
     platform: "linux", architecture: "x64", identityKeyId: "key:test", hardwareFingerprint: digest(), softwareFingerprint: digest("b"),

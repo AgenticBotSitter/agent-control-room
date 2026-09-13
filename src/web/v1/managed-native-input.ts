@@ -33,7 +33,8 @@ export class ManagedNativeInput {
   private readonly handle: Handle;
   private readonly register: NativeEvidenceReceiver["register"];
   private readonly available: () => void;
-  private state: "new" | "reconciling" | "ready" | "prepared" | "sent" | "reporting" = "new";
+  private state: "new" | "reconciling" | "ready" | "prepared" | "sent" | "reporting" | "codex_receipted" = "new";
+  private queueKind?: "hermes" | "codex";
   private closed = false;
   private count = 0;
   private bytes = 0;
@@ -110,12 +111,23 @@ export class ManagedNativeInput {
         }
         return { kind: "reconciliation" as const };
       }
-      if (frame.type === "harness.native.dispatch.receipt" && this.config.mode === "initial" && this.state === "sent") {
+      if (frame.type === "harness.native.dispatch.receipt" && this.config.mode === "initial" && this.state === "sent"
+        && this.queueKind !== "codex") {
         const receipt = await this.handle.receipt(copy, current), task = this.task;
         if (!task || receipt.nodeReportedDisposition !== "recorded" || receipt.projectId !== task.projectId
           || receipt.jobId !== task.jobId || receipt.attemptId !== task.attemptId) throw unavailable();
         const registration = await this.register(task, current); this.current(); this.state = "reporting";
+        this.handle.completeQueuedDelivery("hermes", task);
         return { kind: "receipt" as const, receipt, registration };
+      }
+      if (frame.type === "harness.codex.dispatch.receipt" && this.config.mode === "initial" && this.state === "sent"
+        && this.queueKind === "codex") {
+        const receipt = await this.handle.codexReceipt(copy, current), task = this.task;
+        if (!task || receipt.nodeReportedDisposition !== "recorded" || receipt.projectId !== task.projectId
+          || receipt.jobId !== task.jobId || receipt.attemptId !== task.attemptId) throw unavailable();
+        this.state = "codex_receipted";
+        this.handle.completeQueuedDelivery("codex", task);
+        return { kind: "codex_receipt" as const, receipt };
       }
       if (frame.type === "harness.native.snapshot" && this.state === "reporting") {
         return { kind: "progress" as const, result: await this.handle.progress(copy, content, current) };
@@ -126,9 +138,10 @@ export class ManagedNativeInput {
   /** Internal canonical-queue composition. Uses the same FIFO and task binding as
    * owner commands so a queued dispatch cannot bypass receipt lifecycle ownership.
    * The supplied work still performs canonical stage/transmit revalidation. */
-  deliverQueued<T>(input: TaskBinding, signal: AbortSignal, work: (signal: AbortSignal) => Promise<T>) {
+  deliverQueued<T>(input: TaskBinding, kind: "hermes" | "codex", signal: AbortSignal, work: (signal: AbortSignal) => Promise<T>) {
     let task: TaskBinding;
-    try { task = nativeEvidenceRegistrationSchema.parse(input); } catch { return this.reject(); }
+    try { task = nativeEvidenceRegistrationSchema.parse(input); if (!["hermes", "codex"].includes(kind)) throw unavailable(); }
+    catch { return this.reject(); }
     return this.enqueue(Buffer.byteLength(JSON.stringify(task)), signal, async current => {
       if (this.config.mode !== "initial" || this.state !== "ready") throw unavailable();
       const expected = this.task;
@@ -140,6 +153,8 @@ export class ManagedNativeInput {
         if (!("assignment" in this.config) || this.config.assignment !== "queue") throw unavailable();
         this.task = Object.freeze(task);
       }
+      if (this.queueKind && this.queueKind !== kind) throw unavailable();
+      this.queueKind = kind;
       const result = await work(current); this.current();
       if (current.aborted) throw unavailable();
       this.state = "sent"; return result;

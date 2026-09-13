@@ -23,7 +23,7 @@ import { response, statusBody } from "../hermes-native-fixture";
 export const currentSignal = () => new AbortController().signal;
 type Login = "managed_auth_test" | "managed_evidence_test" | "managed_result_test";
 type Base = Awaited<ReturnType<typeof canonicalApprovalStorageFixture>>;
-type QueueLookup = Awaited<ReturnType<Base["coordinator"]["locateApprovedQueueDelivery"]>>;
+type QueueLookup = Awaited<ReturnType<Base["coordinator"]["locateQueuedHarnessDelivery"]>>;
 type Local = Pick<Awaited<ReturnType<typeof nativeStartAuthorityFixture>>,
   "policy" | "dependencies" | "journal" | "effects" | "executions" | "transport" | "calls" | "setNow" | "close"> & {
     prepared: { binding: Base["prepared"]["binding"] };
@@ -34,6 +34,7 @@ export type ManagedNativePreparedContext = { f: Base; local: Local; providerRunI
  * Canonical assignment/approval/dispatch and producer policy reads remain labelled privileged setup.
  * Never constructs a server session or supplies f.auth to the managed server. */
 export async function managedNativeSessionFixture(context?: ManagedNativePreparedContext, options: { reporting?: boolean; queue?: boolean; stopHandshakeAtDispatch?: boolean; leaseDelivery?: boolean;
+  receiptTimeoutMs?: number;
   onQueueReady?: import("../../src/web/v1/task-assignment-coordinator").TaskAssignmentCoordinator["recoverForReadyNode"] } = {}) {
   const f = context?.f ?? await canonicalApprovalStorageFixture();
   const cleanup: (() => void | Promise<void>)[] = [f.close];
@@ -116,7 +117,7 @@ export async function managedNativeSessionFixture(context?: ManagedNativePrepare
       queue: options.queue ? {
         ready: options.onQueueReady,
         locate: async (...args) => {
-          const target = await admin(() => queueCoordinator.locateApprovedQueueDelivery(...args));
+          const target = await admin(() => queueCoordinator.locateQueuedHarnessDelivery(...args));
           return hooks.afterQueueLocate ? hooks.afterQueueLocate(target) : target;
         },
         stage: async (...args) => {
@@ -136,7 +137,8 @@ export async function managedNativeSessionFixture(context?: ManagedNativePrepare
       register: (...args) => { inputRegistrations++; return receiver.register(...args); },
     };
     const manager = new ManagedNativeSessions(authDb, settings, f.scope, routes,
-      async work => { admitted++; return work(); }, () => { if (!healthy) throw new Error("synthetic_pool_unavailable"); }, f.clock);
+      async work => { admitted++; return work(); }, () => { if (!healthy) throw new Error("synthetic_pool_unavailable"); }, f.clock,
+      options.receiptTimeoutMs);
     cleanup.push(() => manager.close());
     const timestamp = () => new Date(f.clock()).toISOString();
     function makePeer() {
@@ -170,6 +172,11 @@ export async function managedNativeSessionFixture(context?: ManagedNativePrepare
       const peer = makePeer(), handle = await manager.attach(f.prepared.request.nodeId, peer.transport), hello = await peer.open();
       return { peer, handle, hello };
     };
+    const attachQueue = async () => {
+      const peer = makePeer(), handle = await manager.attachInput(f.prepared.request.nodeId, peer.transport,
+        { mode: "initial", assignment: "queue" });
+      const hello = await peer.open(); return { peer, handle, hello };
+    };
     type Connection = Awaited<ReturnType<typeof attach>>;
     const handshake = async (x: Connection, hello: string | Uint8Array = x.hello) => {
       await x.handle.hello(hello, currentSignal());
@@ -177,6 +184,14 @@ export async function managedNativeSessionFixture(context?: ManagedNativePrepare
         while (x.peer.outgoing.length && !(options.stopHandshakeAtDispatch && JSON.parse(x.peer.outgoing[0]).type === "harness.native.dispatch")) await x.peer.acknowledge();
         while (x.peer.incoming.length) await x.handle.reconcile(x.peer.incoming.shift()!, currentSignal());
         if (options.stopHandshakeAtDispatch && x.peer.outgoing.length && JSON.parse(x.peer.outgoing[0]).type === "harness.native.dispatch") return;
+      }
+      assert.equal(x.peer.outgoing.length + x.peer.incoming.length, 0);
+    };
+    const handshakeQueue = async (x: Awaited<ReturnType<typeof attachQueue>>) => {
+      await x.handle.receive(x.hello, undefined, currentSignal());
+      for (let count = 0; count < 20 && (x.peer.outgoing.length || x.peer.incoming.length); count++) {
+        while (x.peer.outgoing.length) await x.peer.acknowledge();
+        while (x.peer.incoming.length) await x.handle.receive(x.peer.incoming.shift()!, undefined, currentSignal());
       }
       assert.equal(x.peer.outgoing.length + x.peer.incoming.length, 0);
     };
@@ -246,7 +261,7 @@ export async function managedNativeSessionFixture(context?: ManagedNativePrepare
       receipts: (await f.db.query("SELECT * FROM control_native_artifact_receipts WHERE run_id=$1", [registration.id])).rows,
     }));
     return { f, local, admin, authDb, evidenceDb, resultDb, observed, hooks, settings, manager, receiver,
-      verify, verifyAuth, checkedScope, makePeer, attach, handshake, dispatch, prepareNode, task, registration, request, states, protocol, counts,
+      verify, verifyAuth, checkedScope, makePeer, attach, attachQueue, handshake, handshakeQueue, dispatch, prepareNode, task, registration, request, states, protocol, counts,
       inputRegistrations: () => inputRegistrations,
       admitted: () => admitted, setHealthy: (value: boolean) => { healthy = value; },
       close: async () => { let failed = false;

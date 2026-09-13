@@ -44,7 +44,6 @@ branches; new contributors reserve a non-overlapping outcome instead of replacin
 | Hermes connector | [#8](https://github.com/AgenticBotSitter/agent-control-room/issues/8) | Real FastMCP continue/status/result mapping with exact identity and honest unsupported/restart behavior |
 | Customizable project webpage | [#10](https://github.com/AgenticBotSitter/agent-control-room/issues/10) | Project/task/worker/result/review/files/attention screens using one configurable artifact |
 | Shipped notices and attribution | [#11](https://github.com/AgenticBotSitter/agent-control-room/issues/11) | Every shipped dependency and copied/bundled file is bound to its real upstream identity, license and notice |
-| Independent consequential review | [#21](https://github.com/AgenticBotSitter/agent-control-room/issues/21) | Security, recovery and assembled-release claims receive independent material review |
 | Shared Hermes/Codex execution authority | [#26](https://github.com/AgenticBotSitter/agent-control-room/issues/26) | Canonical admission, queue, real starts and verified result claims, review/revision, capacity release and restart recovery; durable bytes/startup composition belong to #65/#66 |
 | Persistent-work security and recovery | [#60](https://github.com/AgenticBotSitter/agent-control-room/issues/60) | A dedicated approval key and independent rollback record prove restored database and result files still match |
 | Final release assembly and qualification | [#61](https://github.com/AgenticBotSitter/agent-control-room/issues/61) | One frozen artifact passes clean install, two real harnesses, browser, recovery, update and restore acceptance |
@@ -60,6 +59,10 @@ was superseded by #64 after its retired-base PR was preserved as implementation 
 [#28](https://github.com/AgenticBotSitter/agent-control-room/issues/28) completed the
 portable configuration and login-profile implementation through PRs #34, #36 and #56.
 Real two-installation proof remains part of final release qualification in #61.
+The bounded mixed-harness source review in
+[#21](https://github.com/AgenticBotSitter/agent-control-room/issues/21) was accepted;
+each consequential implementation and assembled-release claim still receives its own
+proportional independent review before integration.
 
 ### Parallel additions and additional platform support
 
