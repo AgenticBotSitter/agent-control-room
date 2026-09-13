@@ -24,6 +24,14 @@
 .private-home-grid p { margin: 0; color: var(--muted); }
 .private-home-grid span { align-self: end; color: var(--green); font-weight: 750; }
 .private-home-note { max-width: 48rem; margin-bottom: 0; }
+.private-dashboard-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; align-items: start; }
+.private-dashboard-grid h2 { margin-top: 0; }
+.private-dashboard-projects { grid-column: 1 / -1; }
+.private-dashboard-list { list-style: none; padding: 0; margin: 0; display: grid; gap: .7rem; }
+.private-dashboard-list li { display: grid; gap: .15rem; padding-top: .7rem; border-top: 1px solid var(--border); overflow-wrap: anywhere; }
+.private-dashboard-list li:first-child { padding-top: 0; border-top: 0; }
+.private-dashboard-list a { color: var(--green); font-weight: 700; }
+.private-dashboard-list span { color: var(--muted); font-size: .875rem; text-transform: capitalize; }
 .private-settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
 .private-settings-grid h2 { margin-top: 0; }
 .private-configuration-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(13rem, 100%), 1fr)); gap: 1rem; }
@@ -101,7 +109,7 @@
 .private-result-content { margin-top: 1.5rem; border-top: 1px solid var(--border); }
 .private-result-content .private-actions { align-items: center; justify-content: space-between; }
 .private-result-content textarea { display: block; width: 100%; min-height: 20rem; resize: vertical; font: inherit; color: var(--text); padding: 1rem; background: var(--surface-2); border: 1px solid var(--border); border-radius: .5rem; }
-@media (max-width: 800px) { .private-columns, .private-settings-grid { grid-template-columns: 1fr; } .private-create { grid-row: 1; } .private-shell main { padding: 1.25rem; } .private-header { padding: 1rem; flex-wrap: wrap; } }
+@media (max-width: 800px) { .private-columns, .private-settings-grid, .private-dashboard-grid { grid-template-columns: 1fr; } .private-dashboard-projects { grid-column: auto; } .private-create { grid-row: 1; } .private-shell main { padding: 1.25rem; } .private-header { padding: 1rem; flex-wrap: wrap; } }
 @media (max-width: 560px) {
   .private-header { gap: .75rem; }
   .private-context { font-size: .875rem; }

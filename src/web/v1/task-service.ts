@@ -24,6 +24,7 @@ import { catalogProjectIdSchema } from "./project-wire";
 import { taskDraftSchema, taskSummarySchema, taskReceiptSchema, taskDetailSchema, taskPageSchema,
   taskRunSchema, type TaskRun, type TaskReceipt } from "./task-wire";
 import { taskPlanningOptionsSchema } from "./task-planning-wire";
+import { taskHomeActivitySchema } from "./task-home-wire";
 
 /** Joins existing stores to the caller-owned session transaction. No nested BEGIN/COMMIT and no
  * new authority: this closure stays inside authenticated(). The outer freshness check owns commit. */
@@ -387,6 +388,64 @@ export class WebTaskService {
       }
       return taskAttentionPageSchema.parse({ items, sources, examined: Math.min(rows.length, 25),
         nextCursor: rows.length > 25 ? rows[24].id : null, observedAt: actor.now, startsWork: false });
+    });
+  }
+
+  /** Bounded, read-only home activity. The caller must have workspace-wide task and
+   * project visibility; a partial project grant cannot turn this into an enumeration
+   * endpoint. Result candidates are re-read through the signed result store before
+   * any metadata is returned. */
+  async home(identity: VerifiedWebIdentity) {
+    return this.authority.authenticated(identity, async (tx, actor) => {
+      const sources = this.attentionSources(actor);
+      const visibleProject = `((p.adapter_id=$2 AND $4::boolean AND EXISTS(SELECT 1 FROM control_manual_project_heads h
+        WHERE h.tenant_id=p.tenant_id AND h.project_id=p.id)) OR (p.adapter_id=$3 AND $5::boolean))`;
+      const sourceParameters = [`adapter:manual:${sha256Digest(this.scope).slice(7, 39)}`,
+        CONTROL_ROOM_IDEA_ADAPTER_V1, sources.ordinary === "included", sources.ideas === "included"] as const;
+      const activeRows = (await tx.query<TaskRow>(`SELECT ${selection}
+        JOIN projects p ON p.tenant_id=j.tenant_id AND p.id=j.project_id
+        WHERE j.tenant_id=$1 AND p.workspace_id=$6 AND ${visibleProject}
+          AND j.state IN ('leased','running','waiting_approval')
+        ORDER BY j.updated_at DESC,j.id COLLATE "C" LIMIT 11`,
+      [this.scope.tenantId, ...sourceParameters, this.scope.workspaceId])).rows;
+      const active = [];
+      for (const row of activeRows.slice(0, 10)) {
+        await this.projects.getViewInSession(tx, actor, row.project_id);
+        actor.require("tasks.read", row.project_id);
+        active.push(validated(row, this.scope.tenantId, row.project_id).summary);
+      }
+
+      const recentResults: { task: ReturnType<typeof validated>["summary"];
+        artifact: ReturnType<typeof resultMetadata> }[] = [];
+      let additionalResultsOmitted = false;
+      const canReadResults = !!this.resultStore && actor.can("tasks.results.read", undefined, true);
+      if (this.resultStore && canReadResults) {
+        actor.require("tasks.results.read", undefined, true);
+        const candidates = (await tx.query<{ project_id: string; job_id: string; artifact_id: string }>(`
+          SELECT a.project_id,a.job_id,a.artifact_id FROM control_native_artifact_receipts a
+          JOIN control_artifact_manifests m ON m.tenant_id=a.tenant_id AND m.id=a.artifact_id
+          JOIN projects p ON p.tenant_id=a.tenant_id AND p.id=a.project_id
+          WHERE a.tenant_id=$1 AND p.workspace_id=$6 AND ${visibleProject}
+          ORDER BY m.created_at DESC,a.artifact_id COLLATE "C" LIMIT 11`,
+        [this.scope.tenantId, ...sourceParameters, this.scope.workspaceId])).rows;
+        for (const candidate of candidates.slice(0, 10)) {
+          await this.projects.getViewInSession(tx, actor, candidate.project_id);
+          actor.require("tasks.read", candidate.project_id); actor.require("tasks.results.read", candidate.project_id);
+          const row = (await tx.query<TaskRow>(`SELECT ${selection} WHERE j.tenant_id=$1 AND j.project_id=$2 AND j.id=$3`,
+            [this.scope.tenantId, candidate.project_id, candidate.job_id])).rows[0];
+          if (!row) throw new Error("task_home_result_unavailable");
+          const receipt = await this.resultStore.readReceipt(tx, this.scope.tenantId, candidate.project_id,
+            candidate.job_id, candidate.artifact_id);
+          if (!receipt) throw new Error("task_home_result_unavailable");
+          recentResults.push({ task: validated(row, this.scope.tenantId, candidate.project_id).summary,
+            artifact: resultMetadata(receipt) });
+        }
+        additionalResultsOmitted = candidates.length > 10;
+      }
+      return taskHomeActivitySchema.parse({ active, recentResults,
+        additionalActiveOmitted: activeRows.length > 10, additionalResultsOmitted,
+        resultSource: !this.resultStore ? "not_configured" : canReadResults ? "configured" : "not_authorized",
+        observedAt: actor.now, startsWork: false });
     });
   }
 }

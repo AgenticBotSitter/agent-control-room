@@ -174,6 +174,13 @@ export class NativeResultStore {
       ORDER BY r.artifact_id COLLATE "C" LIMIT 51`, [tenantId, projectId, jobId])).rows;
     return { receipts: rows.slice(0, 50).map(row => this.verify(row).receipt), additionalResultsOmitted: rows.length > 50 };
   }
+  /** Exact signed metadata read for bounded summary surfaces. It does not acquire
+   * artifact bytes and cannot be used as a quality or completion decision. */
+  async readReceipt(tx: DatabaseSession, tenantId: string, projectId: string, jobId: string, artifactId: string) {
+    const row = (await tx.query<Row>(`SELECT ${selection} WHERE r.tenant_id=$1 AND r.project_id=$2 AND r.job_id=$3 AND r.artifact_id=$4`,
+      [tenantId, projectId, jobId, artifactId])).rows[0];
+    return row ? this.verify(row).receipt : undefined;
+  }
   async read(tx: DatabaseSession, tenantId: string, projectId: string, jobId: string, artifactId: string) {
     const row = (await tx.query<Row>(`SELECT ${selection} WHERE r.tenant_id=$1 AND r.project_id=$2 AND r.job_id=$3 AND r.artifact_id=$4`,
       [tenantId, projectId, jobId, artifactId])).rows[0];
