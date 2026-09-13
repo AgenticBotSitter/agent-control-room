@@ -7,7 +7,8 @@ import test from "node:test";
 import { createArtifactBackupInventoryV1 } from "../src/artifacts/v1/artifact-backup-inventory";
 import { rollbackCheckpointDigestV1, type RollbackCheckpointV1 } from "../src/security/rollback-checkpoint";
 import { sha256Digest } from "../src/security";
-import { ResticRetainedSnapshotRunnerV1, type VerifiedDatabaseDumpBindingV1,
+import { RETAINED_BACKUP_MANIFEST_MAX_BYTES, ResticRetainedSnapshotRunnerV1, retainedBackupManifestSchemaV1,
+  type VerifiedDatabaseDumpBindingV1,
   type VerifiedDatabaseDumpPortV1 } from "../scripts/backup/restic-retained-snapshot";
 
 const rawDigest = (value: Uint8Array | string) => `sha256:${createHash("sha256").update(value).digest("hex")}`;
@@ -80,6 +81,20 @@ async function fixture() {
 }
 
 async function cleanup(root: string) { await rm(root, { recursive: true, force: true }); }
+
+test("the largest accepted manifest shape remains within the restore read boundary", () => {
+  const hash = sha256Digest("boundary"), artifactFiles = Array.from({ length: 10_000 }, (_, index) => {
+    const artifactId = `artifact:${index.toString().padStart(5, "0")}:${"x".repeat(160)}`;
+    return { artifactId, fileName: `${Buffer.from(artifactId).toString("base64url")}.bin`,
+      contentHash: hash, sizeBytes: 65_536 };
+  });
+  const material = { schema: "control-room.retained-backup-manifest/v1" as const, tenantId: "tenant:test",
+    releaseId: "release:test", databaseIdentityDigest: hash, databaseDumpDigest: hash,
+    databaseDumpSizeBytes: 1, databaseSchemaVersion: "schema:test", databaseSchemaDigest: hash,
+    artifactInventoryDigest: hash, checkpointDigest: hash, artifactFiles, createdAt: "2026-09-13T12:00:00.000Z" };
+  const manifest = retainedBackupManifestSchemaV1.parse({ ...material, manifestDigest: sha256Digest(material) });
+  assert.ok(Buffer.byteLength(JSON.stringify(manifest), "utf8") <= RETAINED_BACKUP_MANIFEST_MAX_BYTES);
+});
 
 test("retains one exact snapshot, reconciles a lost acknowledgement, and restores only to a new target", async () => {
   const f = await fixture(); try {

@@ -14,6 +14,7 @@ const id = z.string().min(3).max(180).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
 const instant = z.string().datetime().refine(value => new Date(value).toISOString() === value);
 const MAX_DUMP_BYTES = 64 * 1024 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 1024 * 1024;
+export const RETAINED_BACKUP_MANIFEST_MAX_BYTES = 16 * 1024 * 1024;
 const RESTIC_VERSION = "0.19.1";
 
 /** #63 supplies this result. This package deliberately does not define how PostgreSQL is
@@ -46,10 +47,15 @@ const manifestMaterial = z.object({ schema: z.literal("control-room.retained-bac
   tenantId: id, releaseId: id, databaseIdentityDigest: digest, databaseDumpDigest: digest,
   databaseDumpSizeBytes: z.number().int().positive().max(MAX_DUMP_BYTES), databaseSchemaVersion: id,
   databaseSchemaDigest: digest, artifactInventoryDigest: digest, checkpointDigest: digest,
-  artifactFiles: z.array(z.object({ artifactId: id, fileName: z.string().regex(/^[A-Za-z0-9_-]+\.bin$/),
+  artifactFiles: z.array(z.object({ artifactId: id, fileName: z.string().max(244).regex(/^[A-Za-z0-9_-]+\.bin$/),
     contentHash: digest, sizeBytes: z.number().int().nonnegative().max(65_536) }).strict()).max(10_000),
   createdAt: instant }).strict();
-const manifestSchema = manifestMaterial.extend({ manifestDigest: digest }).strict();
+export const retainedBackupManifestSchemaV1 = manifestMaterial.extend({ manifestDigest: digest }).strict()
+  .superRefine((value, context) => {
+    if (Buffer.byteLength(JSON.stringify(value), "utf8") > RETAINED_BACKUP_MANIFEST_MAX_BYTES)
+      context.addIssue({ code: "custom", message: "retained backup manifest oversized" });
+  });
+const manifestSchema = retainedBackupManifestSchemaV1;
 type Manifest = z.infer<typeof manifestSchema>;
 const bindingMaterial = z.object({ schema: z.literal("control-room.retained-snapshot-binding/v1"),
   bindingDigest: digest, snapshotId: z.string().regex(/^[a-f0-9]{8,64}$/), repositorySelectionDigest: digest,
@@ -346,7 +352,8 @@ export class ResticRetainedSnapshotRunnerV1 {
     try {
       await run(this.config.resticExecutable, this.args("restore", binding.snapshotId, "--target", input.targetPath),
         input.signal, this.config.timeoutMs, this.config.outputLimitBytes);
-      const manifest = manifestSchema.parse(JSON.parse(Buffer.from(await readBounded(join(input.targetPath, "manifest.json"), 1024 * 1024)).toString("utf8")));
+      const manifest = manifestSchema.parse(JSON.parse(Buffer.from(await readBounded(join(input.targetPath, "manifest.json"),
+        RETAINED_BACKUP_MANIFEST_MAX_BYTES)).toString("utf8")));
       const { manifestDigest, ...manifestWithoutDigest } = manifest;
       if (manifestDigest !== sha256Digest(manifestWithoutDigest) || manifestDigest !== binding.manifestDigest
         || manifest.databaseIdentityDigest !== binding.databaseIdentityDigest
