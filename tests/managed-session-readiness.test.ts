@@ -35,5 +35,11 @@ test('session admission requires a completed synchronous availability check', as
     assert.equal(closes, 1);
     await new Promise<void>(resolve => setImmediate(resolve));
   }
+  assert.throws(() => new ManagedNativeSessions(
+    { query: unexpected, transaction: unexpected, transactionWithPreCommitCheck: unexpected },
+    { ...settings, nodes: [node] }, scope,
+    { queue: { locate: unexpected, stage: unexpected, transmit: unexpected, codexStage: unexpected },
+      stage: unexpected, transmit: unexpected, receipt: unexpected, progress: unexpected },
+    unexpected, () => {}, () => 1), /native_sessions_config_invalid/);
   assert.equal(effects, 0);
 });

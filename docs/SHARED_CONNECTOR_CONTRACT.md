@@ -60,6 +60,32 @@ approval requests remain unsupported, not silently accepted.
 
 The non-experimental schema generated from the exact selected package is now retained
 as sanitized version/digest/`thread/read` evidence and bound to the narrow adapter.
+The shared node protocol also has an effect-free signed `harness.codex.dispatch`
+contract. It reuses the existing node signature and pinned owner-approval trust while
+binding the exact input, workspace intent, connector profile, enrollment and lease.
+Its receipt proves intake only; it grants no permission to launch App Server, retry,
+resume, read or complete work. The server session now owns the matching negotiated,
+one-shot sender: it signs once, requires a durable transmission callback before its
+only send, accepts only the exact authenticated receipt, and does not reopen a send
+slot after uncertainty. Append-only, HMAC-protected server records now retain the
+exact signed envelope, pre-send transmission intent, and authenticated receipt. They
+bind the existing shared queue entry to the complete verified Codex approval packet
+and exact machine/work settings; a replacement connection cannot create a second send
+intent. The trusted Codex queue collaborator now checks the locked canonical job,
+attempt, lease, node and recalculated job-authority digest before recording that shared
+queue entry. Canonical Codex task planning and owner-review composition remain required
+before native use. The node-private Codex start journal now
+stores the exact correlated thread receipt before its turn receipt, survives reopen,
+and returns an explicit unknown state when the turn receipt is absent. It is an
+observation record only: it cannot list or guess sessions and grants no start, retry,
+resume or read authority. Runtime composition still must connect signed delivery,
+current admission, the owned App Server process and these ordered journal writes.
+The portable node bridge now negotiates `harness.codex.dispatch.v1`, verifies the
+owner permit and exact local enrollment/profile/workspace bindings, records one
+immutable private delivery, and returns one signed receipt. It never replays an
+uncertain receipt across reconnect, and this intake path has no process or workspace
+effect port. Canonical Codex planning/owner-review composition and the actual start
+composition remain separately required.
 Actual admission still requires a test that `thread/read(includeTurns: true)` after
 process restart reads the exact thread without resuming or starting work. Production
 WebSocket transport, dynamic tools and automatic approval are outside the initial contract.

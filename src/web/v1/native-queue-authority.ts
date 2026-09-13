@@ -2,7 +2,7 @@ import type { DatabaseClient, DatabaseSession } from "../../persistence/database
 import { nativeTaskSubmissionReferenceSchema, type NativeTaskSubmissionReference } from "../../persistence/native-task-submission";
 import { evaluatePolicy, type RoleGrant } from "../../security/policy";
 import { sha256Digest } from "../../security";
-import type { NativeApprovalPacketStore } from "./native-approval-packet-store";
+import type { NativeTaskQueueIntent, NativeTaskQueueScope } from "./native-task-queue";
 import type { WebActor } from "./session-authority";
 import { WebAccessError } from "./access-verifier";
 
@@ -14,7 +14,8 @@ const deny = (): never => { throw new WebAccessError("access_denied"); };
  * the caller's signed-packet/canonical revalidation. No sessions or credentials created. */
 export class NativeQueueAuthority {
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
-    private readonly store: NativeApprovalPacketStore, private readonly clock: () => number) { this.scope = Object.freeze({ ...scope }); }
+    private readonly store: { readQueueIntentInSession(tx: DatabaseSession, scope: NativeTaskQueueScope): Promise<NativeTaskQueueIntent | null> },
+    private readonly clock: () => number) { this.scope = Object.freeze({ ...scope }); }
   async authenticated<T>(input: NativeTaskSubmissionReference,
     operation: (tx: DatabaseSession, actor: WebActor) => Promise<T>): Promise<T> {
     const ref = nativeTaskSubmissionReferenceSchema.parse(input);
