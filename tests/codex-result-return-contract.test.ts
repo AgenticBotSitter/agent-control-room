@@ -382,3 +382,21 @@ test("wrong outer direction, peer identity, changed signed replay and malformed 
   await assert.rejects(exchange.accept({ authenticated: fresh.result, acknowledgementState: "initial", receivedAt,
     issueReceipt: issueReceipt(frame, { value: 0 }) }), /codex_result_return_unavailable/);
 });
+
+test("schema-invalid receipt timestamps and fields are never cached and permanently close issuance", async () => {
+  const value = prepared(), frame = resultFrame(value.body);
+  for (const mutate of [
+    (receipt: Awaited<ReturnType<ReturnType<typeof issueReceipt>>>) => ({ ...receipt, sentAt: "not-an-instant" }),
+    (receipt: Awaited<ReturnType<ReturnType<typeof issueReceipt>>>) => ({ ...receipt, expiresAt: "not-an-instant" }),
+    (receipt: Awaited<ReturnType<ReturnType<typeof issueReceipt>>>) => ({ ...receipt, unexpected: true }),
+  ]) {
+    const fresh = await authenticated(frame), exchange = new CodexResultReturnExchangeV1(expectation(value));
+    const calls = { value: 0 }, signer = issueReceipt(frame, calls);
+    await assert.rejects(exchange.accept({ authenticated: fresh.result, acknowledgementState: "initial", receivedAt,
+      issueReceipt: async body => mutate(await signer(body)) }), /codex_result_return_unavailable/);
+    assert.equal(calls.value, 1);
+    await assert.rejects(exchange.accept({ authenticated: fresh.result, acknowledgementState: "initial", receivedAt,
+      issueReceipt: signer }), /codex_result_return_unavailable/);
+    assert.equal(calls.value, 1);
+  }
+});

@@ -413,7 +413,7 @@ export class CodexResultReturnExchangeV1 {
     authenticated: AuthenticatedFrameResult;
     acknowledgementState: "initial" | "lost_acknowledgement";
     receivedAt: string;
-    issueReceipt(body: CodexResultReturnReceiptBodyV1): Promise<CodexResultReturnReceiptFrameV1>;
+    issueReceipt(body: CodexResultReturnReceiptBodyV1): Promise<unknown>;
   }): Promise<{ receipt: CodexResultReturnReceiptFrameV1; replayed: boolean }> {
     let consumedReceiptSlot = false;
     try {
@@ -445,8 +445,14 @@ export class CodexResultReturnExchangeV1 {
       this.state = "issuing";
       consumedReceiptSlot = true;
       const receiptBody = createCodexResultReturnReceiptBodyV1({ frame: resultFrame, recordedAt: receivedAt });
-      const receipt = await input.issueReceipt(receiptBody);
-      if (receipt.type !== "harness.codex.result.return.receipt" || receipt.direction !== "server_to_node"
+      const issuedReceipt = await input.issueReceipt(receiptBody);
+      // Runtime import avoids a schema-initialization cycle: the shared node schema
+      // imports this module's body schemas. Callback output remains untrusted until
+      // the complete protocol frame schema (including strict dates) accepts it.
+      const parsedReceipt = (await import("../../node-protocol/v1/schemas")).signedNodeFrameSchema.parse(issuedReceipt);
+      if (parsedReceipt.type !== "harness.codex.result.return.receipt") return unavailable();
+      const receipt = parsedReceipt as CodexResultReturnReceiptFrameV1;
+      if (receipt.direction !== "server_to_node"
         || receipt.senderKind !== "control_room" || receipt.tenantId !== body.identity.tenantId
         || receipt.actorId !== this.expected.serverActorId || receipt.keyId !== this.expected.serverKeyId
         || receipt.connectionId !== this.expected.connectionId || receipt.causationId !== resultFrame.messageId
