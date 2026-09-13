@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 import { test } from 'node:test';
 import { CODEX_DELIVERY_FEATURE, CODEX_START_OPERATION, codexTaskDispatchBodySchemaV1,
-  codexTaskPayloadDigestV1 } from '../src/harness/codex-v1/delivery-contract.ts';
+  codexTaskPayloadDigestV1, codexTaskRunIdV1 } from '../src/harness/codex-v1/delivery-contract.ts';
 import { CODEX_ACTIVATION_FEATURE, buildCodexTaskActivationV1 } from '../src/harness/codex-v1/activation-contract.ts';
 import { CodexDispatchIntakeHandlerV1 } from '../src/node-bridge/codex-dispatch-handler.ts';
 import { PortableNodeBridge } from '../src/node-bridge/bridge.ts';
@@ -38,7 +38,7 @@ function codexBody(now: number, approvalPrivateKey: ReturnType<typeof generateKe
     target: { kind: 'filesystem' as const, canonicalPath: '/synthetic/project' }, risk: 'low' as const,
     externalEffect: true, estimatedDurationSeconds: 60, occurredAt: new Date(now).toISOString() };
   request.operationDigest = computeNormalizedOperationDigest(request); start.operationDigest = request.operationDigest;
-  start.effectClaimKey = computeEffectClaimKey(request); start.runId = `run:codex-task:${start.effectClaimKey.slice(7)}`;
+  start.effectClaimKey = computeEffectClaimKey(request); start.runId = codexTaskRunIdV1(start);
   const permitBody = { schema: 'control-room.owner-approval-attestation/v1' as const,
     tenantId: start.tenantId, nodeId: start.nodeId, projectId: start.projectId, jobId: start.jobId,
     attemptId: start.attemptId, operationDigest: request.operationDigest, risk: 'low' as const,

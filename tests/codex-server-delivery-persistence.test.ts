@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
-import { codexTaskDispatchBodySchemaV1, codexTaskPayloadDigestV1, CODEX_START_OPERATION } from "../src/harness/codex-v1/delivery-contract";
+import { codexTaskDispatchBodySchemaV1, codexTaskPayloadDigestV1,
+  codexTaskRunIdV1, CODEX_START_OPERATION } from "../src/harness/codex-v1/delivery-contract";
 import { buildCodexTaskActivationV1 } from "../src/harness/codex-v1/activation-contract";
 import { createCodexApprovalIntakeV1 } from "../src/harness/codex-v1/approval-intake";
 import { computeArtifactBodyDigest, signArtifact } from "../src/node-policy/v1/crypto";
@@ -43,7 +44,7 @@ function deliveryBody(approvalPrivateKey: ReturnType<typeof generateKeyPairSync>
     authorityDigest, credentialRefs: ["credential:codex"], target: { kind: "filesystem" as const, canonicalPath: "/synthetic/project" },
     risk: "low" as const, externalEffect: true, estimatedDurationSeconds: 60, occurredAt: new Date(now).toISOString() };
   request.operationDigest = computeNormalizedOperationDigest(request); start.operationDigest = request.operationDigest;
-  start.effectClaimKey = computeEffectClaimKey(request); start.runId = `run:codex-task:${start.effectClaimKey.slice(7)}`;
+  start.effectClaimKey = computeEffectClaimKey(request); start.runId = codexTaskRunIdV1(start);
   const approval = { schema: "control-room.owner-approval-attestation/v1" as const, tenantId: start.tenantId, nodeId: start.nodeId,
     projectId: start.projectId, jobId: start.jobId, attemptId: start.attemptId, operationDigest: request.operationDigest, risk: "low" as const,
     decision: "approved" as const, issuedAt: new Date(now).toISOString(), expiresAt: new Date(deadline).toISOString(),

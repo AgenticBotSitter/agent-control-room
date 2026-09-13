@@ -202,6 +202,38 @@ node-local admission and the exact Codex start journal before any App Server sta
 It must not expose permit construction as a browser request, silently select a
 workspace, treat a reported capability as local admission, or retry an uncertain send.
 
+### Private local host checkpoint
+
+The node-private `codex-local-v1` host now composes the already-recorded bridge
+activation and complete workspace intent into the fixed initial-start composition,
+or composes the start journal's exact durable thread/turn identity into the fixed
+read-only recovery composition. Its configuration opens only explicitly named,
+owner-only bridge/start journal files and requires every authority, workspace,
+native JSONL session, clock and timeout port to be injected. There are no defaults,
+credential lookup, listener, provider call, retry, resume or new-turn ports.
+
+The run ID used across owner permit, dispatch and workspace intent is now derived
+only from the exact tenant/node/project/job/attempt identity plus lease ID and epoch,
+so it exists before the full workspace intent digest. The effect-claim key continues
+to bind the completed local-policy request but is not the run ID. The permit binds
+the exact canonical workspace path inside the approved filesystem root, and the
+request target therefore matches the activation checkout path. Same-attempt
+conflicting operations, changed identity or lease, stale digests/permits and run-ID
+tampering fail closed.
+
+This pre-native v1 had no deployed qualified records. Older pending packets or
+reservations using the provisional effect-derived run ID or filesystem-root target
+must be preserved for reconciliation, rejected, and replanned/redelivered. They are
+never rewritten or accepted via two formulas.
+
+Fake JSONL acceptance covers one actual portable-bridge activation flowing into one
+host start and exact durable recovery, plus duplicate/lost activation, interrupted
+writes, revoked authority, malformed/summary/secret results and cleanup uncertainty.
+The returned value is a noncanonical observation only. It cannot write a canonical
+result, artifact or review, release capacity, retry, resume or start another turn.
+No test in this checkpoint launches Codex, uses credentials, calls a provider or
+qualifies native behavior.
+
 ### Completed-turn result boundary
 
 An unwired, pinned-schema completed-turn projector now fixes the intended

@@ -4,8 +4,10 @@ import test from "node:test";
 import type { AttemptRecord, JobRecord, LeaseRecord } from "../src/domain/v1";
 import { computeAuthorityDigest, sha256Digest } from "../src/security";
 import { canonicalJson } from "../src/security/canonical-digest";
+import { computeNormalizedOperationDigest } from "../src/node-policy/v1/policy-evaluator";
 import { CODEX_APP_SERVER_CAPABILITY, CODEX_APP_SERVER_JOB_TYPE, CODEX_START_OPERATION,
-  codexTaskDispatchBodySchemaV1, codexTaskPayloadDigestV1 } from "../src/harness/codex-v1/delivery-contract";
+  codexTaskDispatchBodySchemaV1, codexTaskPayloadDigestV1,
+  codexTaskRunIdV1 } from "../src/harness/codex-v1/delivery-contract";
 import { createCodexOwnerPermitIssuer, describeCodexOwnerPermitReview,
   prepareCodexOwnerPermitMaterial, type CodexOwnerPermitPreparationInputV1 } from "../src/harness/codex-v1/owner-permit";
 
@@ -30,9 +32,17 @@ function fixture(): CodexOwnerPermitPreparationInputV1 {
     nodeId: "node:test", leaseEpoch: 1, offeredAt: at(-1000) };
   const lease: LeaseRecord = { ...common, kind: "lease", id: "lease:test", jobId: job.id, attemptId: attempt.id, nodeId: "node:test",
     epoch: 1, state: "active", acquiredAt: at(-500), expiresAt: at(120_000) };
+  const runId = codexTaskRunIdV1({ tenantId: job.tenantId, nodeId: attempt.nodeId, projectId: job.projectId,
+    jobId: job.id, attemptId: attempt.id, leaseId: lease.id, leaseEpoch: lease.epoch });
+  const workspacePath = `/synthetic/project/workspaces/codex-${sha256Digest(runId).slice(7,31)}`;
+  const workspaceIntent = { schema: "control-room.workspace-intent/v1", tenantId: job.tenantId,
+    projectId: job.projectId, nodeId: attempt.nodeId!, jobId: job.id, attemptId: attempt.id,
+    runId, leaseId: lease.id, leaseEpoch: lease.epoch, repositoryRoot: "/synthetic/project",
+    workspaceRoot: "/synthetic/project/workspaces", checkoutPath: workspacePath, revision: "a".repeat(40) };
   return { job, attempt, lease, input, binding: { tenantId: "tenant:test", nodeId: "node:test", nodeClass: "personal-compute",
-    enrollmentDigest: digest("enrollment"), connectorProfileDigest: digest("connector"), workspaceIntentDigest: digest("workspace"),
-    credentialRef: "credential:codex", filesystemRoot: "/synthetic/project", validUntil: now + 180_000 },
+    enrollmentDigest: digest("enrollment"), connectorProfileDigest: digest("connector"),
+    workspaceIntentDigest: sha256Digest(workspaceIntent), credentialRef: "credential:codex",
+    filesystemRoot: "/synthetic/project", workspacePath, validUntil: now + 180_000 },
     approvalKeyId: "approval-key:test", issuedAt: now, approvalNonce: "Y29kZXgtb3duZXItcGVybWl0LW5vbmNl" };
 }
 
@@ -48,7 +58,9 @@ test("Codex owner permit binds the exact canonical lease, node digests, and disp
   const binding = input.binding as { connectorProfileDigest: string; workspaceIntentDigest: string };
   assert.equal(material.request.operationId, CODEX_START_OPERATION);
   assert.equal(material.request.target.kind, "filesystem");
-  assert.equal(material.request.target.canonicalPath, "/synthetic/project");
+  assert.match(material.request.target.canonicalPath, /^\/synthetic\/project\/workspaces\/codex-/);
+  assert.equal(material.start.runId, codexTaskRunIdV1({ ...material.start }));
+  assert.notEqual(material.start.runId, `run:codex-task:${material.start.effectClaimKey.slice(7)}`);
   assert.equal(material.start.connectorProfileDigest, binding.connectorProfileDigest);
   assert.equal(material.start.workspaceIntentDigest, binding.workspaceIntentDigest);
   assert.equal(material.request.payloadDigest, codexTaskPayloadDigestV1(material.start, material.request.authorityDigest));
@@ -67,12 +79,43 @@ test("Codex owner permit binds the exact canonical lease, node digests, and disp
 test("Codex owner permit refuses altered canonical bindings before signing", () => {
   for (const mutate of [
     (input: CodexOwnerPermitPreparationInputV1) => { (input.binding as { filesystemRoot: string }).filesystemRoot = "/synthetic/other"; },
+    (input: CodexOwnerPermitPreparationInputV1) => { (input.binding as { workspacePath: string }).workspacePath = "/synthetic/other/workspace"; },
     (input: CodexOwnerPermitPreparationInputV1) => { (input.binding as { nodeId: string }).nodeId = "node:other"; },
     (input: CodexOwnerPermitPreparationInputV1) => { (input.lease as LeaseRecord).epoch = 2; },
   ]) {
     const input = fixture(); mutate(input);
     assert.throws(() => prepareCodexOwnerPermitMaterial(input), /codex_owner_permit_material_invalid/);
   }
+});
+
+test("Codex workspace target containment requires a separator boundary for POSIX and Windows paths", () => {
+  for (const [root, accepted, rejected] of [
+    ["/synthetic/project", "/synthetic/project/workspaces/codex-test", "/synthetic/project-other/codex-test"],
+    ["C:\\Synthetic\\Project", "C:\\Synthetic\\Project\\workspaces\\codex-test", "C:\\Synthetic\\ProjectOther\\codex-test"],
+  ] as const) {
+    const valid = fixture(), authority = (valid.job as JobRecord).authority;
+    authority.filesystemRoots = [root]; authority.digest = computeAuthorityDigest(authority);
+    Object.assign(valid.binding as object, { filesystemRoot: root, workspacePath: accepted });
+    assert.equal(prepareCodexOwnerPermitMaterial(valid).request.target.canonicalPath, accepted);
+    const invalid = fixture(), invalidAuthority = (invalid.job as JobRecord).authority;
+    invalidAuthority.filesystemRoots = [root]; invalidAuthority.digest = computeAuthorityDigest(invalidAuthority);
+    Object.assign(invalid.binding as object, { filesystemRoot: root, workspacePath: rejected });
+    assert.throws(() => prepareCodexOwnerPermitMaterial(invalid), /codex_owner_permit_material_invalid/);
+  }
+});
+
+test("Codex run identity changes with canonical identity or lease but not operation material", () => {
+  const material = prepareCodexOwnerPermitMaterial(fixture());
+  const basis = { tenantId: material.start.tenantId, nodeId: material.start.nodeId,
+    projectId: material.start.projectId, jobId: material.start.jobId, attemptId: material.start.attemptId,
+    leaseId: material.start.leaseId, leaseEpoch: material.start.leaseEpoch };
+  assert.equal(codexTaskRunIdV1(basis), material.start.runId);
+  for (const changed of [{ ...basis, attemptId: "attempt:other" }, { ...basis, leaseId: "lease:other" },
+    { ...basis, leaseEpoch: 2 }]) assert.notEqual(codexTaskRunIdV1(changed), material.start.runId);
+  const changedOperation = { ...material.request, estimatedDurationSeconds: material.request.estimatedDurationSeconds - 1 };
+  changedOperation.operationDigest = computeNormalizedOperationDigest(changedOperation);
+  assert.equal(codexTaskRunIdV1(basis), material.start.runId);
+  assert.notEqual(changedOperation.operationDigest, material.start.operationDigest);
 });
 
 test("Codex owner permit signs once and never creates recovery material", async () => {

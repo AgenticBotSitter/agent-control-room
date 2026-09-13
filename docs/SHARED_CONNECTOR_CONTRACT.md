@@ -84,6 +84,12 @@ durable evidence or a recovered observation.
 The shared node protocol also has an effect-free signed `harness.codex.dispatch`
 contract. It reuses the existing node signature and pinned owner-approval trust while
 binding the exact input, workspace intent, connector profile, enrollment and lease.
+The v1 run ID is the hash of the exact tenant, node, project, job, attempt, lease ID
+and lease epoch, all of which exist before the complete workspace intent is hashed.
+It is deliberately independent of the later effect-claim digest. The owner permit
+also binds the exact canonical workspace path, which must be equal to or below the
+single approved filesystem root with a separator boundary; the policy target and
+activation therefore identify the same checkout path.
 Its receipt proves intake only; it grants no permission to launch App Server, retry,
 resume, read or complete work. The server session now owns the matching negotiated,
 one-shot sender: it signs once, requires a durable transmission callback before its
@@ -103,8 +109,12 @@ resume or read authority. The fixed local start composition now connects signed
 activation evidence, current admission, the exact protected workspace intent, the
 owned App Server process and ordered no-replay journal writes. It is inert on import
 and requires an explicit one-shot start call with every native port supplied by a
-trusted host. The public launcher still does not supply those ports, so this is not
-live enablement or host qualification.
+trusted host. A private `codex-local-v1` configuration and launcher seam can now
+open the two protected journals and compose either that initial
+start or the exact durable read, but every authority, workspace, native-session,
+timeout and clock port is still supplied explicitly. The seam exposes no credential
+discovery, listener, provider API, canonical writer, retry, resume or new-turn port,
+so this is not live enablement or host qualification.
 The matching local read composition now accepts only that journal's exact saved
 thread and turn identity, rechecks current authority around each native read, and
 exposes no resume or new-turn method. A completed recovery read now carries a pinned
@@ -119,6 +129,18 @@ immutable private delivery, and returns one signed receipt. It never replays an
 uncertain receipt across reconnect, and this intake path has no process or workspace
 effect port. Canonical Codex planning/owner-review composition and the actual start
 composition remain separately required.
+The fake-JSONL acceptance lane now passes one recorded bridge activation through
+the private host into one thread/turn start, then reopens the exact durable pair for
+read-only recovery. It also refuses duplicate or missing activation, interrupted
+writes, revoked authority, malformed/summary/secret results and uncertain cleanup.
+This is composition evidence only: it does not spawn or qualify a physical Codex
+process, call a provider, publish a result/artifact/review, or release capacity.
+
+This correction was made before any qualified v1 native record was deployed. Any
+older pending packet or reservation created with the provisional effect-derived run
+ID or filesystem-root target must remain preserved as reconciliation evidence and
+be rejected and replanned/redelivered. It must never be rewritten in place or
+accepted through a dual-formula compatibility path.
 Actual admission still requires a test that `thread/read(includeTurns: true)` after
 process restart reads the exact thread without resuming or starting work. Production
 WebSocket transport, dynamic tools and automatic approval are outside the initial contract.

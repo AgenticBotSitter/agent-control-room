@@ -12,6 +12,17 @@ export const CODEX_APP_SERVER_CAPABILITY = 'harness.codex.app-server.v1' as cons
 export const CODEX_APP_SERVER_JOB_TYPE = 'harness.codex.app-server.task' as const;
 const instant = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const text = (bytes: number) => z.string().refine(value => Buffer.byteLength(value, 'utf8') <= bytes);
+const taskRunIdentitySchemaV1 = z.object({
+  tenantId: localId, nodeId: localId, projectId: localId, jobId: localId,
+  attemptId: localId, leaseId: localId, leaseEpoch: z.number().int().positive(),
+});
+
+/** Stable execution identity available before the workspace intent is hashed.
+ * Effect-claim identity remains separate and still binds the final operation. */
+export function codexTaskRunIdV1(value: unknown): string {
+  const identity = taskRunIdentitySchemaV1.parse(value);
+  return `run:codex-task:${sha256Digest(identity).slice(7)}`;
+}
 
 export const codexTaskStartSchemaV1 = z.object({
   schema: z.literal('control-room.codex-task-start/v1'),
@@ -60,7 +71,7 @@ export const codexTaskDispatchBodySchemaV1 = z.object({
     || request.payloadDigest !== taskPayloadDigest(start, request.authorityDigest)
     || request.operationDigest !== computeNormalizedOperationDigest(request) || start.operationDigest !== request.operationDigest
     || start.effectClaimKey !== computeEffectClaimKey(request)
-    || start.runId !== `run:codex-task:${start.effectClaimKey.slice(7)}`
+    || start.runId !== codexTaskRunIdV1(start)
     || approval.operationDigest !== request.operationDigest || approval.risk !== request.risk || approval.decision !== 'approved'
     || !Number.isFinite(approvalTime) || approvalTime < requestTime || Date.parse(approval.expiresAt) < start.deadline
     || value.permitDigest !== sha256Digest(permit) || Buffer.byteLength(JSON.stringify(value), 'utf8') > 65_536) {

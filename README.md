@@ -138,7 +138,7 @@ project proof, explicit project pages, safe Project News, browser lifecycle cove
 and owner-attention prioritization, plus exact and relative activity times, verified
 360px navigation, restart-style failed-verification recovery, and exact-version Codex
 start/read fences with a noncanonical bounded result reader through
-[PR #109](https://github.com/AgenticBotSitter/agent-control-room/pull/109). The
+[PR #110](https://github.com/AgenticBotSitter/agent-control-room/pull/110). The
 [September 9 contributor handoff](CONTRIBUTOR_HANDOFF.md) remains historical evidence;
 new contributions use the base recorded in their issue. This is not production
 acceptance and does not supersede active contributors' branches.
@@ -150,7 +150,7 @@ before assignment. All 17 implementation directions are recorded; selected
 components are not yet all integrated.
 
 The public package includes sanitized Idea Lab and news workflows, connector updates
-and generic database/operator templates. At the PR #109 baseline it passes strict
+and generic database/operator templates. At the PR #110 baseline it passes strict
 type checking and the full compiled test suite, including 184 browser accessibility
 checks. Templates are not configured services, and these checks are not production
 acceptance.

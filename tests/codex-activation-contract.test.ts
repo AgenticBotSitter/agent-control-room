@@ -4,7 +4,8 @@ import test from 'node:test';
 import { buildCodexTaskActivationV1, CODEX_ACTIVATION_FEATURE,
   codexTaskActivationBodySchemaV1, matchCodexTaskActivationV1, parseCodexTaskActivationV1 } from '../src/harness/codex-v1/activation-contract';
 import { CODEX_START_OPERATION, codexTaskDispatchBodySchemaV1,
-  codexTaskDispatchReceiptBodySchemaV1, codexTaskPayloadDigestV1 } from '../src/harness/codex-v1/delivery-contract';
+  codexTaskDispatchReceiptBodySchemaV1, codexTaskPayloadDigestV1,
+  codexTaskRunIdV1 } from '../src/harness/codex-v1/delivery-contract';
 import { computeEffectClaimKey } from '../src/node-policy/v1/effect-claim';
 import { computeNormalizedOperationDigest } from '../src/node-policy/v1/policy-evaluator';
 import { computeArtifactBodyDigest, signArtifact } from '../src/node-policy/v1/crypto';
@@ -34,7 +35,7 @@ function fixture() {
   request.operationDigest = computeNormalizedOperationDigest(request);
   start.operationDigest = request.operationDigest;
   start.effectClaimKey = computeEffectClaimKey(request);
-  start.runId = `run:codex-task:${start.effectClaimKey.slice(7)}`;
+  start.runId = codexTaskRunIdV1(start);
   const approvalBody = { schema: 'control-room.owner-approval-attestation/v1' as const,
     tenantId: start.tenantId, nodeId: start.nodeId, projectId: start.projectId, jobId: start.jobId,
     attemptId: start.attemptId, operationDigest: request.operationDigest, risk: 'low' as const,

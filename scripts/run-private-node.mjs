@@ -32,7 +32,7 @@ export async function runPrivateNode(args, runtime = installed) {
   const parsed = parsePrivateNodeArguments(args);
   if (parsed.help) {
     runtime.report('Usage: node scripts/run-private-node.mjs --configuration /absolute/node-config.mjs --mode initial|recover');
-    runtime.report('One explicit Hermes task only. Requires approved operator setup. Never auto-restart after uncertainty.');
+    runtime.report('One explicit Hermes task or bounded Codex observation only. Requires approved operator setup. Never auto-restart after uncertainty.');
     return 0;
   }
   await validatePrivateVpsConfigurationPath(parsed.configurationPath);
@@ -43,27 +43,39 @@ export async function runPrivateNode(args, runtime = installed) {
   // not contained by AbortSignal; the supervising operator owns final termination.
   const timer = setTimeout(stop, 300_000);
   const current = () => { if (lifetime.signal.aborted) throw new Error('private_node_stopped'); };
-  let resources, node, connector, result, failed = false, cleanupUncertain = false;
+  let resources, node, connector, result, failed = false, cleanupUncertain = false, codex = false;
   let releaseResources;
   try {
-    current(); const release = await runtime.loadRelease(); current();
-    const operator = await runtime.loadOperator(parsed.configurationPath); current();
+    current(); const operator = await runtime.loadOperator(parsed.configurationPath); current();
     if (operator.schema !== 'control-room.private-node-configuration/v1'
       || typeof operator.createConfiguration !== 'function') throw new Error('private_node_configuration_invalid');
     resources = await operator.createConfiguration({ signal: lifetime.signal, mode: parsed.mode });
     if (typeof resources?.close !== 'function') throw new Error('private_node_resource_owner_missing');
     releaseResources = resources.close.bind(resources);
     current();
-    if (resources.harness !== 'hermes-native-v1') throw new Error('private_node_harness_unsupported');
-    node = release.createNativeNodeRuntime(resources.node, resources.dependencies);
-    current();
-    connector = release.createNativeHttpsConnector(node, resources.https, resources.settings, resources.sources);
-    current();
-    result = await connector.run(parsed.mode, lifetime.signal);
-    current();
-    // Do not log states/identities from an operator-supplied object. Only a fixed
-    // completion category is emitted; terminal failure is not successful work.
-    if (result?.disposition !== 'terminal' || result.state !== 'completed') failed = true;
+    if (resources.harness === 'hermes-native-v1') {
+      const release = await runtime.loadRelease(); current();
+      node = release.createNativeNodeRuntime(resources.node, resources.dependencies);
+      current();
+      connector = release.createNativeHttpsConnector(node, resources.https, resources.settings, resources.sources);
+      current();
+      result = await connector.run(parsed.mode, lifetime.signal);
+      current();
+      // Do not log states/identities from an operator-supplied object. Only a fixed
+      // completion category is emitted; terminal failure is not successful work.
+      if (result?.disposition !== 'terminal' || result.state !== 'completed') failed = true;
+    } else if (resources.harness === 'codex-local-v1') {
+      codex = true;
+      if (resources.mode !== parsed.mode || typeof resources.run !== 'function')
+        throw new Error('private_node_codex_configuration_invalid');
+      result = await resources.run(lifetime.signal); current();
+      if (result?.disposition !== 'observed' || result.mode !== parsed.mode
+        || result.canonicalPublicationAllowed !== false || result.completionVerified !== false
+        || result.grantsExecutionAuthority !== false || result.permitsRetry !== false
+        || result.permitsResume !== false || result.permitsNewTurn !== false
+        || result.writesResult !== false || result.writesArtifact !== false
+        || result.writesReview !== false || result.releasesCapacity !== false) failed = true;
+    } else throw new Error('private_node_harness_unsupported');
   } catch { failed = true; }
   finally {
     lifetime.abort();
@@ -84,10 +96,14 @@ export async function runPrivateNode(args, runtime = installed) {
     return 1;
   }
   if (failed) {
-    runtime.reportError('Control Room node attempt did not confirm completed work. Preserve journals and review before explicit recovery.');
+    runtime.reportError(codex
+      ? 'Control Room Codex host did not return a bounded observation. Preserve journals; no automatic retry.'
+      : 'Control Room node attempt did not confirm completed work. Preserve journals and review before explicit recovery.');
     return 1;
   }
-  runtime.report('Control Room node reported completed work and closed. Server receipt and owner review remain authoritative.');
+  runtime.report(codex
+    ? 'Control Room Codex host returned a noncanonical observation and closed. No result, artifact or review was published.'
+    : 'Control Room node reported completed work and closed. Server receipt and owner review remain authoritative.');
   return 0;
 }
 
