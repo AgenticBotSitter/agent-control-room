@@ -1,0 +1,12 @@
+{
+  "component": "restic",
+  "version": "0.19.1",
+  "upstream": "https://github.com/restic/restic",
+  "release": "https://github.com/restic/restic/releases/tag/v0.19.1",
+  "tagObject": "6099d4b5c4376368d42b9982c7d3e93ba13d83b1",
+  "sourceCommit": "6aa3a516ce654808a1f28f9fa21e9b7c8e6e90bf",
+  "license": "BSD-2-Clause",
+  "licenseText": "https://github.com/restic/restic/blob/6aa3a516ce654808a1f28f9fa21e9b7c8e6e90bf/LICENSE",
+  "distribution": "operator-installed; no restic binary or source is bundled by this package",
+  "qualifiedBehavior": "fake-executable contract tests only; no native or remote repository qualification"
+}
