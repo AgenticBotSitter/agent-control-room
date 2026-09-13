@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { signedNodeFrameSchema } from "../../node-protocol/v1";
+import { NATIVE_WIRE_MAX_FRAME_BYTES } from "../../harness/v1/native-wire";
 import { nativeEvidenceRegistrationSchema, type NativeEvidenceReceiver } from "./native-evidence-receiver";
 import type { ManagedNativeSessions } from "./managed-native-sessions";
 import { localId, digestSchema } from "../../harness/v1/native-run-identifiers";
@@ -33,7 +34,8 @@ export class ManagedNativeInput {
   private readonly handle: Handle;
   private readonly register: NativeEvidenceReceiver["register"];
   private readonly available: () => void;
-  private state: "new" | "reconciling" | "ready" | "prepared" | "sent" | "reporting" | "codex_receipted" = "new";
+  private state: "new" | "reconciling" | "ready" | "prepared" | "sent" | "reporting" | "codex_receipted"
+    | "codex_result_returned" = "new";
   private queueKind?: "hermes" | "codex";
   private closed = false;
   private count = 0;
@@ -88,7 +90,8 @@ export class ManagedNativeInput {
       this.current();
       if (typeof raw !== "string" && !(raw instanceof Uint8Array)) throw unavailable();
       const size = typeof raw === "string" ? Buffer.byteLength(raw) : raw.byteLength;
-      if (size > 131_072 || bytes !== undefined && (!(bytes instanceof Uint8Array) || bytes.byteLength > 65_536)) throw unavailable();
+      if (size > NATIVE_WIRE_MAX_FRAME_BYTES
+        || bytes !== undefined && (!(bytes instanceof Uint8Array) || bytes.byteLength > 65_536)) throw unavailable();
       copy = typeof raw === "string" ? raw : Uint8Array.from(raw);
       content = bytes === undefined ? undefined : Uint8Array.from(bytes);
       frame = signedNodeFrameSchema.parse(JSON.parse(typeof copy === "string" ? copy : Buffer.from(copy).toString("utf8")));
@@ -128,6 +131,12 @@ export class ManagedNativeInput {
         this.state = "codex_receipted";
         this.handle.completeQueuedDelivery("codex", task);
         return { kind: "codex_receipt" as const, receipt };
+      }
+      if (frame.type === "harness.codex.result.return" && this.config.mode === "initial"
+        && ["codex_receipted", "codex_result_returned"].includes(this.state) && this.queueKind === "codex") {
+        const result = await this.handle.codexResult(copy, current);
+        this.state = "codex_result_returned";
+        return { kind: "codex_result" as const, result };
       }
       if (frame.type === "harness.native.snapshot" && this.state === "reporting") {
         return { kind: "progress" as const, result: await this.handle.progress(copy, content, current) };

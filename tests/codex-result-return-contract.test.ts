@@ -362,6 +362,13 @@ test("fatal UTF-8 and malformed Unicode are refused, and result bytes stop at 65
   assert.throws(() => prepared("x".repeat(65_537)), /codex_completed_turn_projection_unavailable/);
 });
 
+test("escape-heavy maximum content fails closed before publication when its encoded contract exceeds the inner limit", () => {
+  const text = '"'.repeat(65_536);
+  assert.equal(Buffer.byteLength(text), 65_536);
+  assert.ok(Buffer.byteLength(JSON.stringify(text)) > 131_072);
+  assert.throws(() => prepared(text), /codex_result_publication_contract_unavailable/);
+});
+
 test("wrong outer direction, peer identity, changed signed replay and malformed receipt all fail closed", async () => {
   const value = prepared(), frame = resultFrame(value.body);
   const replay = new ExactReplay(), auth = authenticator("node_to_server", replay);

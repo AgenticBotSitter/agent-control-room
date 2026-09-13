@@ -6,6 +6,9 @@ import { CODEX_DELIVERY_FEATURE, codexTaskDispatchBodySchemaV1, matchCodexTaskDi
 import { CODEX_ACTIVATION_FEATURE, codexTaskActivationBodySchemaV1, matchCodexTaskActivationV1,
   type CodexActivationFrameV1, type CodexDispatchFrameForActivationV1,
   type CodexDispatchReceiptFrameForActivationV1, type CodexTaskActivationBodyV1 } from "../harness/codex-v1/activation-contract";
+import { CODEX_RESULT_RETURN_FEATURE_V1, CodexResultReturnExchangeV1,
+  type CodexResultReturnExpectationV1, type CodexResultReturnReceiptBodyV1 } from "../harness/codex-v1/result-return";
+import type { AuthenticatedFrameResult } from "../node-protocol/v1/authentication";
 import { sha256Digest } from "../security";
 import { assertSynchronousFence } from "../security/synchronous-fence";
 import { NodeProtocolAuthenticator, NODE_PROTOCOL_V1, NODE_PROTOCOL_MAX_FRAME_BYTES,
@@ -52,13 +55,25 @@ export interface CodexEnvelopeChannel extends NativeEnvelopeChannel {}
 export interface CodexActivationChannel extends CodexEnvelopeChannel {
   readonly activation: true;
 }
+export interface CodexResultReturnChannelV1 extends CodexEnvelopeChannel {
+  readonly identity: Readonly<{ tenantId: string; projectId: string; jobId: string; attemptId: string;
+    runId: string; nodeId: string; leaseId: string; leaseEpoch: number }>;
+  readonly activation: Readonly<{ activationId: string; activationDigest: string }>;
+  readonly connectorProfileDigest: string;
+}
+export interface CodexResultReturnIntakeV1 {
+  expectation(authenticated: AuthenticatedFrameResult,
+    channel: CodexResultReturnChannelV1): CodexResultReturnExpectationV1;
+  publish(authenticated: AuthenticatedFrameResult, assertCurrent: () => unknown): Promise<void>;
+}
 
 /** One explicitly owned supplied transport session. No listener or key loading. */
 export class ServerNodeSession {
   private readonly config: z.output<typeof configSchema>;
   private state: "new" | "negotiating" | "reconciling" | "ready" | "prepared" | "transmitting" | "sent" | "receipted" | "recovered"
     | "codex_prepared" | "codex_transmitting" | "codex_sent" | "codex_receipt_persisting" | "codex_receipted"
-    | "codex_activation_prepared" | "codex_activating" | "codex_activation_sent_unconfirmed" | "closed" = "new";
+    | "codex_activation_prepared" | "codex_activating" | "codex_activation_sent_unconfirmed"
+    | "codex_result_returned" | "closed" = "new";
   private preparedFrame?: SignedNodeFrame<"harness.native.dispatch">;
   private preparedLease?: SignedNodeFrame<"job.lease.grant">;
   private recoveredFrame?: SignedNodeFrame<"harness.native.dispatch">;
@@ -66,6 +81,7 @@ export class ServerNodeSession {
   private acceptedCodexReceiptFrame?: SignedNodeFrame<"harness.codex.dispatch.receipt">;
   private preparedCodexActivationFrame?: SignedNodeFrame<"harness.codex.dispatch.activation">;
   private preparedCodexActivationFresh?: () => void;
+  private codexResultReturnExchange?: CodexResultReturnExchangeV1;
   private nativeDeliveryRecorded = false;
   private busy = false;
   private highWater = -Infinity;
@@ -154,7 +170,8 @@ export class ServerNodeSession {
     // reconciliation; accepting one never changes delivery or execution state.
     if (!["reconciling", "ready", "prepared", "sent", "receipted", "recovered",
       "codex_prepared", "codex_transmitting", "codex_sent", "codex_receipted",
-      "codex_activation_prepared", "codex_activating", "codex_activation_sent_unconfirmed"].includes(this.state))
+      "codex_activation_prepared", "codex_activating", "codex_activation_sent_unconfirmed",
+      "codex_result_returned"].includes(this.state))
       throw new Error("Server node session is not accepting reconciliation");
     await this.bounded(async () => {
       const frame = await this.authenticate(raw);
@@ -168,6 +185,91 @@ export class ServerNodeSession {
       if (frame.body.lastAcknowledgedServerSequence !== this.outboundSequence) throw new Error("Server reconciliation does not cover this handshake");
       this.state = "ready";
       await this.send("protocol.ack", { acknowledgedMessageIds: [frame.messageId], highestContiguousSequence: frame.sequence, disposition: "accepted" });
+    });
+  }
+
+  private async authenticateCodexResult(raw: string | Uint8Array): Promise<AuthenticatedFrameResult> {
+    const result = await this.ports.authentication.verify(raw, {
+      expectedDirection: "node_to_server", receivedAt: new Date(this.now()).toISOString(),
+      transportIdentity: this.config.transportIdentity, maxFrameBytes: this.maxFrameBytes,
+      ...(this.connectionId ? { expectedConnectionId: this.connectionId } : {}),
+    });
+    this.now();
+    if (result.frame.tenantId !== this.config.tenantId || result.frame.actorId !== this.config.nodeId
+      || result.frame.keyId !== this.config.nodeKeyId || !["accepted", "duplicate"].includes(result.delivery)) {
+      throw new Error("Server node session identity or replay mismatch");
+    }
+    return result;
+  }
+
+  /** Authenticates and publishes one completed Codex return, then signs and sends only
+   * its transport receipt. Exact authenticator duplicates reuse the cached receipt. */
+  async acceptCodexResultReturn(raw: string | Uint8Array, intake: CodexResultReturnIntakeV1) {
+    if (!["codex_activation_sent_unconfirmed", "codex_result_returned"].includes(this.state)
+      || !this.connectionId || !this.preparedCodexActivationFrame
+      || !this.features.includes(CODEX_RESULT_RETURN_FEATURE_V1)
+      || !intake || typeof intake.expectation !== "function" || typeof intake.publish !== "function") {
+      throw new Error("Codex result return channel unavailable");
+    }
+    return this.bounded(async () => {
+      const authenticated = await this.authenticateCodexResult(raw);
+      if (authenticated.frame.type !== "harness.codex.result.return") {
+        throw new Error("Expected Codex result return");
+      }
+      const assertCurrent = () => {
+        const now = this.now();
+        if (!["codex_activation_sent_unconfirmed", "codex_result_returned"].includes(this.state)
+          || now >= Date.parse(authenticated.frame.expiresAt)) {
+          throw new Error("Codex result return channel unavailable");
+        }
+      };
+      const channel: CodexResultReturnChannelV1 = Object.freeze({
+        tenantId: this.config.tenantId, nodeId: this.config.nodeId, nodeKeyId: this.config.nodeKeyId,
+        connectionId: this.connectionId!, maxFrameBytes: this.maxFrameBytes,
+        expiresAt: new Date(this.deadline).toISOString(), grantsExecutionAuthority: false,
+        serverId: this.config.serverId, serverKeyId: this.config.serverKeyId,
+        serverPublicKeySpki: this.config.serverPublicKeySpki, assertCurrent,
+        identity: Object.freeze({
+          tenantId: this.preparedCodexActivationFrame!.body.tenantId,
+          projectId: this.preparedCodexActivationFrame!.body.projectId,
+          jobId: this.preparedCodexActivationFrame!.body.jobId,
+          attemptId: this.preparedCodexActivationFrame!.body.attemptId,
+          runId: this.preparedCodexActivationFrame!.body.runId,
+          nodeId: this.preparedCodexActivationFrame!.body.nodeId,
+          leaseId: this.preparedCodexActivationFrame!.body.leaseId,
+          leaseEpoch: this.preparedCodexActivationFrame!.body.leaseEpoch,
+        }),
+        activation: Object.freeze({
+          activationId: this.preparedCodexActivationFrame!.body.activationId,
+          activationDigest: this.preparedCodexActivationFrame!.body.activationDigest,
+        }),
+        connectorProfileDigest: this.preparedCodexActivationFrame!.body.connectorProfileDigest,
+      });
+      if (!this.codexResultReturnExchange) {
+        if (authenticated.delivery !== "accepted") throw new Error("Codex result return has no fresh exchange");
+        this.codexResultReturnExchange = new CodexResultReturnExchangeV1(
+          intake.expectation(authenticated, channel),
+        );
+      }
+      const result = await this.codexResultReturnExchange.accept({
+        authenticated,
+        acknowledgementState: authenticated.delivery === "duplicate" ? "lost_acknowledgement" : "initial",
+        receivedAt: new Date(this.now()).toISOString(),
+        issueReceipt: async (body: CodexResultReturnReceiptBodyV1) => {
+          assertCurrent();
+          await intake.publish(authenticated, assertCurrent);
+          assertCurrent();
+          return this.signFrame("harness.codex.result.return.receipt", body,
+            authenticated.frame.messageId,
+            Math.min(Date.parse(authenticated.frame.expiresAt), Date.parse(body.physicalQualification.validUntil)));
+        },
+      });
+      assertCurrent();
+      await this.ports.send(JSON.stringify(result.receipt));
+      this.now(); this.outboundIds.add(result.receipt.messageId); this.state = "codex_result_returned";
+      return Object.freeze({ receipt: structuredClone(result.receipt), replayed: result.replayed,
+        acknowledgesTransportOnly: true as const, completionRecorded: false as const,
+        releasesCapacity: false as const, grantsExecutionAuthority: false as const });
     });
   }
 
@@ -503,7 +605,7 @@ export class ServerNodeSession {
     this.outboundIds.add(signed.messageId);
   }
 
-  private async signFrame<T extends "connection.accepted" | "node.reconciliation.request" | "protocol.ack" | "harness.native.dispatch" | "harness.codex.dispatch" | "harness.codex.dispatch.activation" | "job.lease.grant">(
+  private async signFrame<T extends "connection.accepted" | "node.reconciliation.request" | "protocol.ack" | "harness.native.dispatch" | "harness.codex.dispatch" | "harness.codex.dispatch.activation" | "harness.codex.result.return.receipt" | "job.lease.grant">(
     type: T, body: NodeMessageBodyMap[T], causationId?: string, deadline = this.deadline, sentAt = this.now()): Promise<SignedNodeFrame<T>> {
     const frame = { protocol: NODE_PROTOCOL_V1, direction: "server_to_node", senderKind: "control_room",
       tenantId: this.config.tenantId, actorId: this.config.serverId, keyId: this.config.serverKeyId,

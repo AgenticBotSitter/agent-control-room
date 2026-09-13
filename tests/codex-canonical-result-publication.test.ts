@@ -19,6 +19,10 @@ import { resultBytesHash } from "../src/artifacts/v1/native-results";
 import { InMemoryRollbackCheckpointStoreV1, computeAuthorityDigest, hmacSha256Tag, sha256Digest } from "../src/security";
 import { SecurityStore } from "../src/security";
 import { codexCurrentAdmissionSchemaV1 } from "../src/web/v1/codex-activation-transmission-intent";
+import { createCodexResultReturnBodyV1, CODEX_RESULT_RETURN_FEATURE_V1 } from "../src/harness/codex-v1/result-return";
+import { ServerNodeSession } from "../src/node-control/server-node-session";
+import { CodexResultIntakeV1 } from "../src/web/v1/codex-result-intake";
+import { ManagedNativeSessions } from "../src/web/v1/managed-native-sessions";
 import { codexTaskExecutionPlanSchemaV3, TaskExecutionPlanner } from "../src/web/v1/task-execution-planner";
 import { WebTaskReviewService } from "../src/web/v1/task-review-service";
 import { WebTaskService } from "../src/web/v1/task-service";
@@ -74,7 +78,7 @@ const exactPackage = () => ({ adapterId: CODEX_APP_SERVER_ADAPTER,
   agentMessageSourceSha256: CODEX_APP_SERVER_RESULT_CONTRACT.agentMessageSourceSha256 });
 const evidence = <T extends Record<string, unknown>>(material: T) => ({ ...material, evidenceDigest: sha256Digest(material) });
 
-async function prepared(storage = new ControlledStorage()) {
+async function prepared(storage = new ControlledStorage(), resultText = "Exact synthetic Codex result.") {
   const prompt = "Return the exact bounded result", instructions = "Use the saved task only";
   const inputDigest = sha256Digest({ prompt, instructions });
   const authority = { projectId: "project:test", allowedExecutor: "executor:codex", allowedOperations: [CODEX_START_OPERATION],
@@ -205,7 +209,7 @@ async function prepared(storage = new ControlledStorage()) {
     canonicalPublicationAllowed: false, completionVerified: false, grantsExecutionAuthority: false,
     permitsRetry: false, permitsResume: false, permitsThreadRead: false });
   const qualificationReceipt = signArtifact(qualificationBody, qualificationKeys.privateKey);
-  const text = "Exact synthetic Codex result.";
+  const text = resultText;
   const rawResult = JSON.stringify({ thread: { id: "thread:durable", cliVersion: CODEX_APP_SERVER_READ_CONTRACT.version,
     turns: [{ id: "turn:durable", status: "completed", itemsView: "full",
       items: [{ type: "agentMessage", id: "item:final", phase: "final_answer", text }] }] } });
@@ -236,19 +240,63 @@ async function prepared(storage = new ControlledStorage()) {
     expectedBodyDigest: qualificationBody.bodyDigest, expectedSignerKeyId: qualificationBody.qualificationSignerKeyId, publicKeySpki };
   let clockNow = Date.parse(at(2000)), authorityCurrent = true;
   const assertCurrent = () => { if (!authorityCurrent) throw new Error("synthetic_authority_revoked"); };
-  const publisher = (db: DatabaseClient = f.db, reviewDatabase: DatabaseClient = f.db,
-    options: { now?: () => number; storageIoMs?: number } = {}) => {
-    const service = new CodexCanonicalResultPublisherV1(db, { integrityKey: resultKey,
+  const publisherInstance = (db: DatabaseClient = f.db, reviewDatabase: DatabaseClient = f.db,
+    options: { now?: () => number; storageIoMs?: number } = {}) => new CodexCanonicalResultPublisherV1(db, { integrityKey: resultKey,
       harnessIntegrityKey: harnessKey, taskPlanIntegrityKey: taskPlanKey, activationIntegrityKey: activationKey,
       reviewIntegrityKey: reviewKey, reviewDatabase, checkpoints, qualificationTrust, storageClass: "local", storage,
       now: options.now ?? (() => clockNow), ...(options.storageIoMs === undefined ? {} : { storageIoMs: options.storageIoMs }) });
+  const publisher = (db: DatabaseClient = f.db, reviewDatabase: DatabaseClient = f.db,
+    options: { now?: () => number; storageIoMs?: number } = {}) => {
+    const service = publisherInstance(db, reviewDatabase, options);
     return { capture(input: Omit<Parameters<typeof service.capture>[0], "assertCurrent">) {
       return service.capture({ ...input, assertCurrent });
     } };
   };
-  return { f, storage, publisher, publication, terminalEvidence, qualificationReceipt, checkpoints,
+  return { f, storage, publisher, publisherInstance, publication, terminalEvidence, qualificationReceipt, checkpoints, inputDigest,
     bytes: new TextEncoder().encode(text), qualificationTrust,
     setNow(value: number) { clockNow = value; }, revokeAuthority() { authorityCurrent = false; } };
+}
+
+function composedReturnFrame(x: Awaited<ReturnType<typeof prepared>>, connectionId = "connection:result",
+  messageId = "message:result:return", sequence = 20) {
+  const body = createCodexResultReturnBodyV1({ publication: x.publication,
+    terminalEvidence: x.terminalEvidence, qualificationReceipt: x.qualificationReceipt,
+    qualificationPublicKeySpki: x.qualificationTrust.publicKeySpki,
+    qualificationMaximumAgeMs: 300_000, returnedAt: at(1500) });
+  return signNodeFrame({ protocol: NODE_PROTOCOL_V1, direction: "node_to_server", senderKind: "node",
+    tenantId: body.identity.tenantId, actorId: body.identity.nodeId, keyId: "key:test",
+    connectionId, sequence, messageId, correlationId: "correlation:result:return",
+    causationId: body.activation.activationId, sentAt: body.returnedAt, expiresAt: at(30_000),
+    nonce: "c3ludGhldGljLWNvZGV4LXJlc3VsdC1yZXR1cm4", type: "harness.codex.result.return", body },
+  x.f.keys.privateKey);
+}
+
+function armedResultSession(x: Awaited<ReturnType<typeof prepared>>, frame: ReturnType<typeof composedReturnFrame>,
+  intake: CodexResultIntakeV1) {
+  const serverKeys = generateKeyPairSync("ed25519");
+  const serverSpki = serverKeys.publicKey.export({ type: "spki", format: "der" }).toString("base64url");
+  let deliveries = 0;
+  const sent: string[] = [];
+  const session = new ServerNodeSession({ tenantId: frame.tenantId, nodeId: frame.actorId,
+    nodeKeyId: frame.keyId, serverId: "server:test", serverKeyId: "server-key:test",
+    serverPublicKeySpki: serverSpki, transportIdentity: "transport:test",
+    features: [CODEX_RESULT_RETURN_FEATURE_V1], maxFrameBytes: 262_144, heartbeatIntervalSeconds: 30 }, {
+      clock: () => Date.parse(at(2000)),
+      authentication: { async verify() { return { frame, delivery: deliveries++ === 0 ? "accepted" as const : "duplicate" as const }; } } as never,
+      async sign(value) { return signNodeFrame(value, serverKeys.privateKey); },
+      async send(raw) { sent.push(raw); },
+    });
+  Object.assign(session as unknown as Record<string, unknown>, {
+    state: "codex_activation_sent_unconfirmed", connectionId: frame.connectionId,
+    deadline: Date.parse(at(60_000)), features: [CODEX_RESULT_RETURN_FEATURE_V1],
+    preparedCodexActivationFrame: { body: {
+      ...frame.body.identity,
+      activationId: frame.body.activation.activationId,
+      activationDigest: frame.body.activation.activationDigest,
+      connectorProfileDigest: frame.body.connector.profileDigest,
+    } },
+  });
+  return { session, intake, sent };
 }
 
 function failOnce(base: DatabaseClient, fragment: string): DatabaseClient {
@@ -797,4 +845,157 @@ test("test qualification evidence is explicitly synthetic and grants no physical
   assert.equal(x.qualificationReceipt.body.canonicalPublicationAllowed, false);
   assert.equal(x.qualificationReceipt.body.completionVerified, false);
   assert.equal(x.terminalEvidence.canonicalPublicationAllowed, false);
+});
+
+test("composed Codex result intake publishes once and replays the exact transport receipt in one session", async t => {
+  const x = await prepared(); t.after(x.f.close);
+  const frame = composedReturnFrame(x);
+  const intake = new CodexResultIntakeV1(x.publisherInstance(), {
+    qualificationReceipt: x.qualificationReceipt,
+    qualificationPublicKeySpki: x.qualificationTrust.publicKeySpki,
+    qualificationMaximumAgeMs: 300_000,
+  });
+  const composed = armedResultSession(x, frame, intake);
+  const first = await composed.session.acceptCodexResultReturn(JSON.stringify(frame), intake);
+  const replay = await composed.session.acceptCodexResultReturn(JSON.stringify(frame), intake);
+  assert.equal(first.replayed, false); assert.equal(replay.replayed, true);
+  assert.equal(first.receipt.body.acknowledgesTransportOnly, true);
+  assert.equal(first.receipt.body.completionRecorded, false);
+  assert.equal(first.receipt.body.releasesCapacity, false);
+  assert.deepEqual(replay.receipt, first.receipt);
+  assert.deepEqual(composed.sent.map(raw => JSON.parse(raw)), [first.receipt, first.receipt]);
+  assert.equal(x.storage.putCalls, 1);
+  const counts = await x.f.db.query<{ publications: string; results: string; reviews: string; targets: string }>(`SELECT
+    (SELECT count(*) FROM control_codex_result_publications)::text AS publications,
+    (SELECT count(*) FROM control_native_artifact_receipts)::text AS results,
+    (SELECT count(*) FROM control_native_review_plans)::text AS reviews,
+    (SELECT count(*) FROM control_completion_gate_records WHERE kind='target')::text AS targets`);
+  assert.deepEqual(counts.rows[0], { publications: "1", results: "1", reviews: "1", targets: "1" });
+});
+
+test("managed native input authenticates and serializes a boundary Codex result through the composed intake", async t => {
+  const boundaryText = `${"x".repeat(65_532)}"\\\n\t`;
+  const x = await prepared(new ControlledStorage(), boundaryText); t.after(x.f.close);
+  assert.equal(x.bytes.byteLength, 65_536);
+  const resultFrame = composedReturnFrame(x, "connection:result:managed", "message:result:return:managed", 3);
+  const resultRaw = JSON.stringify(resultFrame);
+  assert.ok(Buffer.byteLength(resultRaw) > x.bytes.byteLength);
+  assert.ok(Buffer.byteLength(resultRaw) <= 131_072);
+
+  const actualPublisher = x.publisherInstance();
+  let sessionFenceCalls = 0;
+  const recordingPublisher = { capture(input: Parameters<CodexCanonicalResultPublisherV1["capture"]>[0]) {
+    const suppliedFence = input.assertCurrent;
+    return actualPublisher.capture({ ...input, assertCurrent() { sessionFenceCalls++; suppliedFence(); } });
+  } } as CodexCanonicalResultPublisherV1;
+  const intake = new CodexResultIntakeV1(recordingPublisher, {
+    qualificationReceipt: x.qualificationReceipt,
+    qualificationPublicKeySpki: x.qualificationTrust.publicKeySpki,
+    qualificationMaximumAgeMs: 300_000,
+  });
+  const serverKeys = generateKeyPairSync("ed25519");
+  const serverSpki = serverKeys.publicKey.export({ type: "spki", format: "der" }).toString("base64url");
+  const sent: string[] = [];
+  let transportAvailable = true;
+  const sessions = new ManagedNativeSessions(x.f.db, { nodes: [{
+    tenantId: "tenant:test", nodeId: "node:test", nodeKeyId: "key:test", serverId: "server:test",
+    serverKeyId: "server-key:test", serverPublicKeySpki: serverSpki, transportIdentity: "transport:test",
+    features: [CODEX_RESULT_RETURN_FEATURE_V1], maxFrameBytes: 131_072, heartbeatIntervalSeconds: 30,
+  }], async sign(value) { return signNodeFrame(value, serverKeys.privateKey); } }, {
+    tenantId: "tenant:test", workspaceId: "workspace:test",
+  }, {
+    queue: { async locate() { throw new Error("unused"); }, async stage() {}, async transmit() {},
+      async codexStage() {}, async codexTransmit() { return { activationSent: true as const }; } },
+    async stage() {}, async transmit() {}, async receipt() { throw new Error("unused"); },
+    async codexReceipt() { throw new Error("unused"); }, codexResult: intake,
+    async progress() { throw new Error("unused"); }, async recover() { throw new Error("unused"); },
+    async register() { throw new Error("unused"); },
+  } as never, async work => work(), () => {}, () => Date.parse(at(2000)));
+  t.after(() => sessions.close());
+  const signal = new AbortController().signal;
+  const input = await sessions.attachInput("node:test", {
+    async send(raw) { sent.push(raw); }, async close() { transportAvailable = false; },
+    isAvailable() { return transportAvailable; },
+  }, { mode: "initial", task: { projectId: "project:test", jobId: "job:test", attemptId: "attempt:test",
+    inputDigest: x.inputDigest } });
+  const hello = signNodeFrame({ protocol: NODE_PROTOCOL_V1, direction: "node_to_server", senderKind: "node",
+    tenantId: "tenant:test", actorId: "node:test", keyId: "key:test", connectionId: resultFrame.connectionId,
+    sequence: 1, messageId: "message:result:managed:hello", correlationId: "correlation:result:managed",
+    nonce: "codex_result_managed_hello_nonce_123456789", sentAt: at(1500), expiresAt: at(60_000),
+    type: "connection.hello", body: { supportedProtocols: [NODE_PROTOCOL_V1],
+      features: [CODEX_RESULT_RETURN_FEATURE_V1], requestedMaxFrameBytes: 131_072,
+      lastAcknowledgedServerSequence: 0, unresolvedAttemptIds: [] } }, x.f.keys.privateKey);
+  assert.deepEqual(await input.receive(JSON.stringify(hello), undefined, signal).catch(error => {
+    throw new Error("managed hello failed", { cause: error });
+  }), { kind: "hello" });
+  const report = signNodeFrame({ protocol: NODE_PROTOCOL_V1, direction: "node_to_server", senderKind: "node",
+    tenantId: "tenant:test", actorId: "node:test", keyId: "key:test", connectionId: resultFrame.connectionId,
+    sequence: 2, messageId: "message:result:managed:reconcile", correlationId: "correlation:result:managed",
+    nonce: "codex_result_managed_reconcile_nonce_123456", sentAt: at(1500), expiresAt: at(60_000),
+    type: "node.reconciliation.report", body: { lastAcknowledgedServerSequence: 2, attempts: [] } }, x.f.keys.privateKey);
+  assert.deepEqual(await input.receive(JSON.stringify(report), undefined, signal).catch(error => {
+    throw new Error("managed reconciliation failed", { cause: error });
+  }), { kind: "reconciliation" });
+
+  // Unit-only state arming establishes the already-tested dispatch prerequisite;
+  // input FIFO, authentication, replay discrimination and publication remain real.
+  type TestRecord = { harnessKind?: "codex"; inputOwner?: object; session?: ServerNodeSession };
+  const record = (sessions as unknown as { records: Map<string, TestRecord> }).records.get("node:test");
+  assert.ok(record?.inputOwner && record.session);
+  record.harnessKind = "codex";
+  Object.assign(record.inputOwner, { state: "codex_receipted", queueKind: "codex" });
+  Object.assign(record.session as unknown as Record<string, unknown>, {
+    state: "codex_activation_sent_unconfirmed", preparedCodexActivationFrame: { body: {
+      ...resultFrame.body.identity, activationId: resultFrame.body.activation.activationId,
+      activationDigest: resultFrame.body.activation.activationDigest,
+      connectorProfileDigest: resultFrame.body.connector.profileDigest,
+    } },
+  });
+  sent.length = 0;
+  const first = await input.receive(resultRaw, undefined, signal).catch(error => {
+    throw new Error("managed result failed", { cause: error });
+  });
+  const replay = await input.receive(resultRaw, undefined, signal).catch(error => {
+    throw new Error("managed result replay failed", { cause: error });
+  });
+  assert.equal(first.kind, "codex_result"); assert.equal(replay.kind, "codex_result");
+  assert.equal(first.result.replayed, false); assert.equal(replay.result.replayed, true);
+  assert.equal(sessionFenceCalls > 0, true);
+  assert.deepEqual(sent.map(raw => JSON.parse(raw)), [first.result.receipt, first.result.receipt]);
+  assert.equal(x.storage.putCalls, 1);
+  const counts = await x.f.db.query<{ publications: string; reviews: string; targets: string }>(`SELECT
+    (SELECT count(*) FROM control_codex_result_publications)::text AS publications,
+    (SELECT count(*) FROM control_native_review_plans)::text AS reviews,
+    (SELECT count(*) FROM control_completion_gate_records WHERE kind='target')::text AS targets`);
+  assert.deepEqual(counts.rows[0], { publications: "1", reviews: "1", targets: "1" });
+  const oversizedRaw = resultRaw.padEnd(131_073, " ");
+  assert.equal(Buffer.byteLength(oversizedRaw), 131_073);
+  await assert.rejects(() => input.receive(oversizedRaw, undefined, signal), /native_input_uncertain/);
+  assert.equal(x.storage.putCalls, 1);
+});
+
+test("a fresh composed intake after committed restart reuses durable publication metadata", async t => {
+  const x = await prepared(); t.after(x.f.close);
+  const firstFrame = composedReturnFrame(x);
+  const settings = { qualificationReceipt: x.qualificationReceipt,
+    qualificationPublicKeySpki: x.qualificationTrust.publicKeySpki, qualificationMaximumAgeMs: 300_000 };
+  const firstIntake = new CodexResultIntakeV1(x.publisherInstance(), settings);
+  const first = armedResultSession(x, firstFrame, firstIntake);
+  await first.session.acceptCodexResultReturn(JSON.stringify(firstFrame), firstIntake);
+  first.session.disconnect();
+
+  const restartedFrame = composedReturnFrame(x, "connection:result:restart", "message:result:return:restart");
+  const restartedIntake = new CodexResultIntakeV1(x.publisherInstance(), settings);
+  const restarted = armedResultSession(x, restartedFrame, restartedIntake);
+  const result = await restarted.session.acceptCodexResultReturn(JSON.stringify(restartedFrame), restartedIntake);
+  assert.equal(result.replayed, false);
+  assert.equal(result.receipt.body.acknowledgesTransportOnly, true);
+  assert.equal(x.storage.putCalls, 1);
+  const counts = await x.f.db.query<{ publications: string; results: string; reviews: string; targets: string }>(`SELECT
+    (SELECT count(*) FROM control_codex_result_publications)::text AS publications,
+    (SELECT count(*) FROM control_native_artifact_receipts)::text AS results,
+    (SELECT count(*) FROM control_native_review_plans)::text AS reviews,
+    (SELECT count(*) FROM control_completion_gate_records WHERE kind='target')::text AS targets`);
+  assert.deepEqual(counts.rows[0], { publications: "1", results: "1", reviews: "1", targets: "1" });
+  assert.notDeepEqual(result.receipt, JSON.parse(first.sent[0]!));
 });
