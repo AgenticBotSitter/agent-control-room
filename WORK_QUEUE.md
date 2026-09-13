@@ -10,7 +10,7 @@ Permanent entry point for people and bots. Read the [build/reuse plan](PUBLIC_BU
 and [worker skill](skills/public-build-worker/SKILL.md). Issues are the live status
 record; no documentation commit is needed every time a job changes state.
 
-Public `main` is the reconciled implementation baseline through PR #111. It now
+Public `main` is the reconciled implementation baseline through PR #114. It now
 includes the configurable-project proof, explicit project pages, safe Project News,
 owner-attention prioritization, exact and relative activity times, verified 360px
 navigation, restart-style recovery after both successful and failed verification,
@@ -18,9 +18,11 @@ and exact-version Codex start/read fences with a noncanonical bounded result rea
 The private Codex host now composes a bridge-recorded activation into one start or
 the exact durable thread/turn into one recovery read using only explicit injected
 ports. A strict owned fake byte-process adapter supplies both JSONL profiles and
-withholds observations unless process retirement is proven. This is not physical
-native or provider qualification and does not publish results/artifacts/reviews or
-release capacity.
+withholds observations unless process retirement is proven. Hermes and Codex terminal
+results now share one strict inert evidence shape; the exact-version Codex qualification
+and result-publication contract is defined and independently reviewed. This is not
+physical native or provider qualification and does not write or publish results,
+artifacts or reviews, or release capacity.
 Connector, security/configuration and support decisions are published in
 [the shared connector contract](docs/SHARED_CONNECTOR_CONTRACT.md),
 [the security/configuration contract](docs/SECURITY_CONFIGURATION_CONTRACT.md) and
@@ -45,6 +47,26 @@ The [complete remaining-work inventory](PUBLIC_BUILD_PLAN.md#complete-remaining-
 includes release blockers and later features. The [webpage specification](WEBPAGE_SPEC.md)
 defines the actual interface; contributors need no private design files or chat history.
 
+## Current MVP work wave
+
+The issue labels are the live source of truth; this summary tells a new contributor
+where the work is concentrated without requiring chat history.
+
+- **Assigned:** #2 Windows portability, #8 Hermes connector, #11 shipped notices,
+  #62 Claude connector, #63 PostgreSQL/recovery and #64 distributable service.
+- **Ready for reservation:** #27 Idea Lab plus article-to-research, #60 persistent-work
+  security/recovery, #67 private ingress/owner bootstrap, #115 persistent local artifact
+  bytes and #116 schedule planning/status.
+- **Lead integration active:** #10 configurable frontend, #26 shared two-harness
+  execution/results, and the authority/inventory contracts needed to reopen #65.
+- **Waiting on named inputs, not forgotten:** #1 final real browser acceptance, the
+  automatic-dispatch remainder of #29, the integration/backup remainder of #65, #66
+  full server composition, #68 worker installation and #61 final release qualification.
+
+Choose only a `status:ready` issue. Post the reservation requested by the worker skill
+and wait for the maintainer's `CLAIM ACCEPTED` comment before editing. A label by itself
+is not permission to edit.
+
 ## Complete installable-release work board
 
 This is the whole public-core backlog, not a sample of ten jobs. Open the linked issue
@@ -67,6 +89,7 @@ non-overlapping outcome instead of replacing them.
 | PostgreSQL provisioning, migrations and restore | [#63](https://github.com/AgenticBotSitter/agent-control-room/issues/63) | Dedicated least-privilege database, checksum-led upgrades and verified disposable restore |
 | Distributable service and safe updates | [#64](https://github.com/AgenticBotSitter/agent-control-room/issues/64) | Self-contained artifact, unprivileged supervised service, staged update and safe rollback/refusal |
 | Durable protected result storage | [#65](https://github.com/AgenticBotSitter/agent-control-room/issues/65) | Exact result bytes survive restart/backup and cannot escape project/run authorization or owned storage |
+| Persistent local artifact-byte adapter | [#115](https://github.com/AgenticBotSitter/agent-control-room/issues/115) | Production-shaped local byte storage survives restart and refuses conflicts, corruption and path attacks |
 | Complete agent-task server composition | [#66](https://github.com/AgenticBotSitter/agent-control-room/issues/66) | Operator configuration starts the real database/queue/connectors/results/review lifecycle fail-closed |
 | Private ingress and first-owner setup | [#67](https://github.com/AgenticBotSitter/agent-control-room/issues/67) | Supported gateway, no direct-origin bypass, one owner bootstrap and externally enforced MFA |
 | Mac/Linux worker setup | [#68](https://github.com/AgenticBotSitter/agent-control-room/issues/68) | Fresh Hermes and Codex worker install, enrollment, version checks, reconnect, revocation and removal |
@@ -99,6 +122,7 @@ Mac/Linux-worker Hermes-plus-Codex release.
 | Windows contributor and remote-worker readiness | [#2](https://github.com/AgenticBotSitter/agent-control-room/issues/2) | Reproducible PowerShell setup, portable tests/cleanup and truthful supported/refused worker modes |
 | Idea Lab and article-to-research | [#27](https://github.com/AgenticBotSitter/agent-control-room/issues/27) | Real bounded participants, promotion to projects and attributed article tasks returning reviewed results |
 | Schedules, pickup and reusable work context | [#29](https://github.com/AgenticBotSitter/agent-control-room/issues/29) | Eligible work continues while review waits; recurring work deduplicates across restart/timezone changes |
+| Schedule planning and truthful status | [#116](https://github.com/AgenticBotSitter/agent-control-room/issues/116) | Existing schedule records render next-run and occurrence status without inventing dispatch evidence |
 | Extension conformance and optional visibility | [#30](https://github.com/AgenticBotSitter/agent-control-room/issues/30) | Additional adapters use the same authority; optional observation never becomes completion evidence |
 | Claude Code connector | [#62](https://github.com/AgenticBotSitter/agent-control-room/issues/62) | Operator-installed bounded JSONL connector returns reviewed text without special authority or a second scheduler |
 
