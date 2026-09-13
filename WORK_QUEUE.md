@@ -4,8 +4,8 @@ Permanent entry point for people and bots. Read the [build/reuse plan](PUBLIC_BU
 and [worker skill](skills/public-build-worker/SKILL.md). Issues are the live status
 record; no documentation commit is needed every time a job changes state.
 
-Public `main` is the reconciled implementation baseline through PR #42 at
-`bcb93b8dfb6ddca5511f70116bd095a4610209d2`. Connector, security/configuration and
+Public `main` is the reconciled implementation baseline through PR #70 at
+`4d274eb74acd7aca5139655e3cb8c14d67d9d44b`. Connector, security/configuration and
 support decisions are published in [the shared connector contract](docs/SHARED_CONNECTOR_CONTRACT.md),
 [the security/configuration contract](docs/SECURITY_CONFIGURATION_CONTRACT.md) and
 [the support matrix](docs/SUPPORT_MATRIX.md). New work must use the exact base in its
@@ -91,6 +91,9 @@ completion. Transfer ownership only after an explicit stop/handoff, not a timer.
 
 Workers update milestones, blockers and submissions in the issue; no unchanged timer
 spam. They may continue other confirmed independent work while review is pending.
+Automated workers obtain one risk-proportionate independent subagent check against the
+exact local commit before submission and include its concise verdict in the handoff.
+That check supports, but never replaces, the lead's final review and merge decision.
 At integration, maintainers update status and identify the next ready assignments.
 Plan changes update affected rows/issues with one concise reason. The owner should
 not have to forward files or act as courier. Historical evidence remains intact.

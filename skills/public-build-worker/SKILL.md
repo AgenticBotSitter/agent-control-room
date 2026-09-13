@@ -37,6 +37,30 @@ If two attempts produce no new diagnostic evidence, stop repeating the approach:
 send a concise blocker with the reproduction, hypothesis and useful saved branch.
 That is a handoff, not a failure penalty. Continue an independent assigned task.
 
+## Independent check before an automated worker submits
+
+An automated worker must commit locally, then ask a separate read-only subagent that
+authored none of the changed files to review that exact local commit before its first
+remote push. If the worker changes material code after that review, repeat the check
+for the changed portion. Human contributors may submit normally and receive the
+repository's maintainer review.
+
+Match the check to the risk:
+
+- For ordinary UI, documentation or isolated refactoring, inspect the actual diff,
+  affected user behavior and relevant tests. Do not require a production-code revert
+  or a repository-wide test run unless a concrete uncertainty justifies it.
+- For shared execution, authorization, persistence, recovery, release integrity or
+  provider boundaries, verify the relevant refusal/failure paths and run focused
+  evidence that could expose duplicate work, data loss or excess authority. Use a
+  mutation or revert check when a safety claim depends on a new test and its ability
+  to catch the broken behavior is genuinely uncertain.
+
+The reviewer returns `accept`, `changes required` or `blocked`, with only material
+findings and checks actually performed. It cannot edit the branch, approve a merge or
+replace the lead's final review. Record the concise verdict in the PR handoff. A style
+preference or wording suggestion does not block submission.
+
 ## Submit and move on
 
 One PR per coherent outcome, targeting the named branch. Include:
@@ -47,6 +71,7 @@ Base SHA / submitted SHA:
 Relevant checks and results:
 Not tested / remaining limitation:
 Upstream additions and licenses, if any:
+Independent subagent verdict and focused checks:
 ```
 
 Use synthetic UI evidence when relevant. Never publish credentials, private records

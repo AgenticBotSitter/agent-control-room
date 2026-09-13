@@ -11,11 +11,14 @@ keep their explicit limits; this skill does not grant native or deployment autho
 
 ## Match review to risk
 
-- Ordinary UI/docs/refactoring: one maintainer review plus relevant local checks.
-  No mandatory second independent reviewer.
+- Ordinary UI/docs/refactoring from an automated worker: a focused independent
+  pre-submission check plus one maintainer review and relevant local checks. Human
+  contributors may rely on the maintainer review. Do not manufacture a deep security
+  exercise for an isolated presentation change.
 - Shared execution, authorization, persistence, recovery or release-integrity changes:
-  lead review and a focused independent review where a silent error could materially
-  harm data or authority. Review the boundary, not the whole repository again.
+  independent pre-submission review plus lead review of the affected boundary, with
+  focused failure-path evidence where a silent error could materially harm data or
+  authority. Review the boundary, not the whole repository again.
 - Provider/production operations: verify scoped authorization and actual evidence;
   fixture tests do not prove live behavior or allow another attempt.
 
@@ -39,6 +42,9 @@ Re-review the changed portions and their affected tests. One consolidated review
 the goal, not permission to ignore a newly discovered serious defect. Do not impose
 arbitrary limits on ordinary repairs. Offer trivial corrections as suggestions or
 make them only when authorized; do not send a worker through a new job for wording.
+An empirical revert or mutation check is required only when the issue asks for it or
+when a material claim depends on a new test whose sensitivity is genuinely uncertain.
+It is not a ritual for every test-file edit.
 
 End with: accept, accept with nonblocking follow-ups, or changes required. List only
 material remaining blockers, verification performed and genuinely untested behavior.
