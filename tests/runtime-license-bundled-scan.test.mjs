@@ -88,6 +88,31 @@ test('bundled-scan reports vendor files that match inventory evidence', () => {
   }
 });
 
+test('bundled-scan accepts only an exact reviewed exclusion and rejects attempted waivers', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'bnd-exclusion-'));
+  try {
+    writeFixture(repo, { vendorFiles: [{ package: 'sample-pkg', file: 'local.ts', content: 'local adaptation\n' }] });
+    const file = path.join(repo, 'src/vendor/sample-pkg/local.ts'), bytes = fs.readFileSync(file), sha = hash(bytes);
+    const config = exclusion => fs.writeFileSync(path.join(repo, 'research/runtime-license-retained-provenance.json'), JSON.stringify({ roots: {
+      'src/vendor/sample-pkg': { sourceCommit: '1'.repeat(40), qualification: 'fixture', files: [], reviewedExclusions: [exclusion] },
+    } }));
+    const report = () => { const input = JSON.parse(fs.readFileSync(path.join(repo, 'research/runtime-license-input.json'))); fs.writeFileSync(path.join(repo, 'research/runtime-license-report.json'), JSON.stringify(runtimeLicenseReport(input, repo))); };
+    const valid = { path: 'local.ts', sha256: sha, classification: 'documented_local_adaptation', reason: 'fixture adaptation' };
+    config(valid); report(); assert.equal(scanBundledUndisclosed(repo).summary.reviewedExclusions, 1);
+    for (const invalid of [
+      { ...valid, path: 'other.ts' }, { ...valid, sha256: '0'.repeat(64) },
+      { ...valid, classification: 'unsupported' }, { ...valid, reason: '' },
+    ]) {
+      config(invalid); report();
+      assert.equal(scanBundledUndisclosed(repo).summary.undisclosed, 1);
+    }
+    fs.writeFileSync(file, 'changed bytes\n'); config(valid); report();
+    assert.equal(scanBundledUndisclosed(repo).summary.undisclosed, 1);
+    fs.writeFileSync(file, bytes); config(valid); report(); // mutation/revert
+    assert.equal(scanBundledUndisclosed(repo).summary.reviewedExclusions, 1);
+  } finally { fs.rmSync(repo, { recursive: true, force: true }); }
+});
+
 test('bundled-scan flags vendor files with no matching inventory evidence', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'bnd-scan-'));
   try {
