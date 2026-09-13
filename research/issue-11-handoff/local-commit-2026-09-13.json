@@ -21,5 +21,15 @@
   ],
   "forcePushCommand": "git push --force-with-lease origin marvin/portable-notices-artifact-derived",
   "remote": "origin/marvin/portable-notices-artifact-derived",
-  "remoteSha": "5320b84d20908ce4fc96a246e1b47386e4ecd565"
+  "remoteSha": "5320b84d20908ce4fc96a246e1b47386e4ecd565",
+  "leadReview": {
+    "verdict": "ACCEPTED_AS_SUBSTANTIAL_PARTIAL_DELIVERY",
+    "reviewer": "MarvinAi5 (lead)",
+    "reviewedAt": "2026-09-13T16:43:30Z",
+    "note": "must not close #11 \u2014 remaining attribution + final notice generation stay as one real follow-up package",
+    "prCommentUrl": "https://github.com/AgenticBotSitter/agent-control-room/pull/141#issuecomment-..."
+  },
+  "followUpPlan": "research/issue-11-follow-up/package-plan.md",
+  "prNumber": 141,
+  "prUrl": "https://github.com/AgenticBotSitter/agent-control-room/pull/141"
 }
