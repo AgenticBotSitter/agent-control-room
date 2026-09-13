@@ -16,6 +16,7 @@ const item = z.object({ type: z.string().min(1).max(80), id: upstreamId.optional
 const turn = z.object({ id: upstreamId, status: z.enum(CODEX_APP_SERVER_READ_CONTRACT.turnStatuses),
   items: z.array(z.unknown()).max(MAXIMUM_ITEMS).optional() }).passthrough();
 const response = z.object({ thread: z.object({ id: upstreamId,
+  cliVersion: z.literal(CODEX_APP_SERVER_READ_CONTRACT.version),
   turns: z.array(turn).max(1_024) }).passthrough() }).passthrough();
 
 export const CODEX_SOURCE_TESTED_RESULT_CONTRACT_V1 = Object.freeze({
