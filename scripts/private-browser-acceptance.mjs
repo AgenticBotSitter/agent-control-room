@@ -77,14 +77,7 @@ let application;
 let browser;
 const posts = [];
 
-try {
-  application = installPrivateWebProcess({ origin, ...trust,
-    tenantId: "tenant:web", workspaceId: "workspace:web",
-    database: { client: disposable.client, close: () => disposable.db.close() },
-    clock: () => now, loadKeys: async () => trust.keys });
-
-  browser = await playwright.chromium.launch({ headless: true });
-  const context = await browser.newContext({ viewport: { width: 360, height: 844 } });
+async function installProtectedRequestRouting(context) {
   await context.route("**/*", async route => {
     const browserRequest = route.request();
     const url = new URL(browserRequest.url());
@@ -111,8 +104,19 @@ try {
     const responseBody = browserRequest.method() === "HEAD" ? Buffer.alloc(0) : Buffer.from(await response.arrayBuffer());
     await route.fulfill({ status: response.status, headers: Object.fromEntries(response.headers), body: responseBody });
   });
+}
 
-  const page = await context.newPage();
+try {
+  application = installPrivateWebProcess({ origin, ...trust,
+    tenantId: "tenant:web", workspaceId: "workspace:web",
+    database: { client: disposable.client, close: () => disposable.db.close() },
+    clock: () => now, loadKeys: async () => trust.keys });
+
+  browser = await playwright.chromium.launch({ headless: true });
+  let context = await browser.newContext({ viewport: { width: 360, height: 844 } });
+  await installProtectedRequestRouting(context);
+
+  let page = await context.newPage();
   await page.goto(`${origin}/`, { waitUntil: "domcontentloaded" });
   const homeHeadings = await page.getByRole("heading", { level: 1 }).allTextContents();
   check("compiled private home rendered", homeHeadings.length === 1 && /Control Room/.test(homeHeadings[0]),
@@ -144,6 +148,53 @@ try {
   await page.getByRole("heading", { name: "Acceptance task" }).waitFor();
   check("task proposal opened its protected detail", /\/tasks\/job%3A/.test(new URL(page.url()).pathname));
   await checkNoPageOverflow(page, "task detail");
+  const alphaTaskPath = new URL(page.url()).pathname;
+  check("saved task route remains scoped to its alpha project", alphaTaskPath.startsWith(`${alphaPath}/tasks/`), alphaTaskPath);
+
+  await page.goto(`${origin}/projects`, { waitUntil: "domcontentloaded" });
+  await page.locator("#project-title").fill("Browser acceptance beta");
+  await page.locator("#project-summary").fill("Second disposable project for isolation checks.");
+  await page.getByRole("button", { name: "Create project" }).click();
+  await page.getByRole("heading", { name: "Browser acceptance beta" }).waitFor();
+  const betaPath = new URL(page.url()).pathname;
+  await page.getByRole("link", { name: "Work", exact: true }).click();
+  await page.locator("#task-title").waitFor({ state: "visible" });
+  await page.locator("#task-title").fill("Beta acceptance task");
+  await page.locator("#task-instructions").fill("Keep this disposable task isolated from Alpha.");
+  await page.getByRole("button", { name: "Save proposal" }).click();
+  await page.getByRole("heading", { name: "Beta acceptance task" }).waitFor();
+  const betaTaskPath = new URL(page.url()).pathname;
+  check("saved beta task route remains scoped to its beta project", betaTaskPath.startsWith(`${betaPath}/tasks/`), betaTaskPath);
+  await page.goto(`${origin}${alphaPath}`, { waitUntil: "domcontentloaded" });
+  await page.getByRole("heading", { name: "Browser acceptance alpha" }).waitFor();
+
+  const postCountBeforeReconnect = posts.length;
+  await page.close();
+  await context.close();
+  context = await browser.newContext({ viewport: { width: 360, height: 844 } });
+  await installProtectedRequestRouting(context);
+  const reconnectedPage = await context.newPage();
+  await reconnectedPage.goto(`${origin}${alphaPath}`, { waitUntil: "domcontentloaded" });
+  await reconnectedPage.getByRole("heading", { name: "Browser acceptance alpha" }).waitFor();
+  check("saved alpha project survives closing and reconnecting a browser context",
+    await reconnectedPage.getByRole("heading", { name: "Browser acceptance alpha" }).isVisible());
+  check("reconnected project route remains exactly scoped to alpha", new URL(reconnectedPage.url()).pathname === alphaPath,
+    new URL(reconnectedPage.url()).pathname);
+  const alphaTaskLinks = reconnectedPage.locator(`a[href="${alphaTaskPath}"]`);
+  check("reconnected alpha project retains its saved task", await alphaTaskLinks.count() >= 1,
+    `links=${await alphaTaskLinks.count()}`);
+  check("reconnected alpha project does not show beta project data",
+    await reconnectedPage.getByText("Browser acceptance beta", { exact: true }).count() === 0);
+  check("reconnected alpha project does not show beta task data",
+    await reconnectedPage.getByText("Beta acceptance task", { exact: true }).count() === 0);
+  await reconnectedPage.goto(`${origin}${alphaTaskPath}`, { waitUntil: "domcontentloaded" });
+  await reconnectedPage.getByRole("heading", { name: "Acceptance task" }).waitFor();
+  check("saved alpha task survives closing and reconnecting a browser context",
+    await reconnectedPage.getByRole("heading", { name: "Acceptance task" }).isVisible());
+  const reconnectPosts = posts.slice(postCountBeforeReconnect);
+  check("closing and reconnecting a browser context emits no protected command", reconnectPosts.length === 0,
+    JSON.stringify(reconnectPosts));
+  page = reconnectedPage;
 
   for (const [label, heading] of [["Files", "Project files"], ["Reviews", "Project reviews"],
     ["Activity", "Project activity"], ["Settings", "Project status"]]) {
@@ -163,10 +214,7 @@ try {
   await saveSanitizedScreenshot(page, "private-browser-wide.png", 1280, 900);
   await page.setViewportSize({ width: 360, height: 844 });
 
-  await page.goto(`${origin}/projects`, { waitUntil: "domcontentloaded" });
-  await page.locator("#project-title").fill("Browser acceptance beta");
-  await page.locator("#project-summary").fill("Second disposable project for isolation checks.");
-  await page.getByRole("button", { name: "Create project" }).click();
+  await page.goto(`${origin}${betaPath}`, { waitUntil: "domcontentloaded" });
   await page.getByRole("heading", { name: "Browser acceptance beta" }).waitFor();
   await page.getByRole("link", { name: "Work", exact: true }).click();
   await page.getByRole("heading", { name: "Browser acceptance beta" }).waitFor();
@@ -191,7 +239,7 @@ try {
   const createPosts = posts.filter(entry => entry.path === "/api/v1/projects");
   const taskPosts = posts.filter(entry => /\/tasks$/.test(entry.path));
   check("each project save crossed the command boundary once", createPosts.length === 2);
-  check("task save crossed the command boundary once", taskPosts.length === 1);
+  check("each task save crossed the command boundary once", taskPosts.length === 2);
   check("all saved commands carried an idempotency key", [...createPosts, ...taskPosts]
     .every(entry => typeof entry.idempotencyKey === "string" && entry.idempotencyKey.length >= 8));
 
