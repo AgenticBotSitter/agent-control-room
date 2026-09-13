@@ -2,7 +2,7 @@
 
 import { useProductModule } from "./product-configuration";
 
-type ProjectPage = "overview" | "work" | "files" | "news" | "settings";
+type ProjectPage = "overview" | "work" | "files" | "reviews" | "activity" | "news" | "settings";
 
 export function ProjectNavigation({ projectId, current }: { projectId: string; current: ProjectPage }) {
   const news = useProductModule("news");
@@ -13,6 +13,8 @@ export function ProjectNavigation({ projectId, current }: { projectId: string; c
     {link(base, "Overview", "overview")}
     {link(`${base}/tasks`, "Work", "work")}
     {link(`${base}/files`, "Files", "files")}
+    {link(`${base}/reviews`, "Reviews", "reviews")}
+    {link(`${base}/activity`, "Activity", "activity")}
     {news && link(`${base}/news`, "News", "news")}
     {link(`${base}/settings`, "Settings", "settings")}
   </nav>;
