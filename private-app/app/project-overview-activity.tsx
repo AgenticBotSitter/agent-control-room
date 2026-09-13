@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { BrowserRequestError } from "../../src/web/v1/browser-client";
 import { readTaskProjectOverview } from "../../src/web/v1/task-project-overview-browser-client";
 import type { TaskProjectOverview } from "../../src/web/v1/task-project-overview-wire";
+import { ConfiguredTimestamp } from "./configured-timestamp";
 
 type OverviewState = { state: "loading" } | { state: "ready"; value: TaskProjectOverview }
   | { state: "unavailable"; code: BrowserRequestError["code"] };
@@ -13,7 +14,7 @@ const href = (projectId: string, jobId: string) =>
 function TaskList({ projectId, tasks }: { projectId: string; tasks: TaskProjectOverview["recent"] }) {
   return <ul className="private-dashboard-list">{tasks.map(task => <li key={task.jobId}>
     <a href={href(projectId, task.jobId)}>{task.title}</a>
-    <span>{task.state.replaceAll("_", " ")} · updated {new Date(task.updatedAt).toLocaleString()}</span>
+    <span>{task.state.replaceAll("_", " ")} · <ConfiguredTimestamp value={task.updatedAt} prefix="Updated" /></span>
   </li>)}</ul>;
 }
 

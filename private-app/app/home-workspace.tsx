@@ -10,6 +10,7 @@ import type { TaskHomeActivity } from "../../src/web/v1/task-home-wire";
 import type { ProjectCatalogPage } from "../../src/web/v1/project-wire";
 import { PrivateHeader } from "./private-header";
 import { useProductDisplayName, useProductModule } from "./product-configuration";
+import { ConfiguredTimestamp } from "./configured-timestamp";
 
 type ReadState<T> = { state: "loading" } | { state: "ready"; value: T } | { state: "unavailable" };
 export type HomeDashboardState = Readonly<{
@@ -59,7 +60,7 @@ export function HomeDashboard({ data }: { data: HomeDashboardState }) {
           ? <Unavailable>Verified result records are unavailable.</Unavailable>
           : data.activity.value.recentResults.length ? <ul className="private-dashboard-list">{data.activity.value.recentResults.slice(0, 5).map(({ task, artifact }) =>
             <li key={artifact.artifactId}><a href={`${taskHref(task.projectId, task.jobId)}#task-results`}>{task.title}</a>
-              <span>{artifact.sizeBytes.toLocaleString()} bytes · received {new Date(artifact.receivedAt).toLocaleString()}</span></li>)}</ul>
+              <span>{artifact.sizeBytes.toLocaleString()} bytes · <ConfiguredTimestamp value={artifact.receivedAt} prefix="Received" /></span></li>)}</ul>
             : <p>No verified result records are available yet.</p>}
       {data.activity.state === "ready" && data.activity.value.additionalResultsOmitted
         ? <p className="private-note">More recent results exist. Open the affected projects to inspect them.</p> : null}

@@ -1,3 +1,5 @@
+import { ConfiguredTimestamp } from "../../private-app/app/configured-timestamp";
+
 export interface ProjectCatalogProps {
   state: "loading" | "ready" | "unavailable";
   projects: readonly { projectId: string; title: string; summary: string; lifecycle: "active" | "paused" | "completed" | "archived";
@@ -20,7 +22,7 @@ export function ProjectCatalog({ state, projects, selectedProjectId, paginated,
         <a href={projectHref(project.projectId)} aria-current={selectedProjectId === project.projectId ? "page" : undefined}>
           <span className="private-state">{project.lifecycle}</span><h3>{project.title}</h3><p>{project.summary || "No summary added."}</p>
           {project.origin && <span className="private-note">{project.origin === "idea_lab" ? "From Idea Lab" : "Ordinary project"}</span>}
-          <time className="private-note" dateTime={project.updatedAt}>Updated {new Date(project.updatedAt).toLocaleString()}</time>
+          <span className="private-note"><ConfiguredTimestamp value={project.updatedAt} prefix="Updated" /></span>
           <span className="private-open">Open project →</span>
         </a>
         <a className="private-project-new-tab" href={projectHref(project.projectId)}

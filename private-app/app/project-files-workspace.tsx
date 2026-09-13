@@ -6,6 +6,7 @@ import { readTaskProjectFiles } from "../../src/web/v1/task-project-files-browse
 import type { TaskProjectFiles } from "../../src/web/v1/task-project-files-wire";
 import { PrivateHeader } from "./private-header";
 import { ProjectNavigation } from "./project-navigation";
+import { ConfiguredTimestamp } from "./configured-timestamp";
 
 type State = { state: "loading" } | { state: "ready"; value: TaskProjectFiles }
   | { state: "unavailable"; code: BrowserRequestError["code"] };
@@ -25,7 +26,7 @@ export function ProjectFilesView({ projectId, data }: { projectId: string; data:
     {!value.items.length ? <p>No verified result files have been received for this project.</p>
       : <ul className="private-result-list">{value.items.map(({ task, artifact }) => <li key={artifact.artifactId}><div>
         <h3>{task.title}</h3><p>File ID: <code>{artifact.artifactId}</code></p>
-        <p>{artifact.sizeBytes.toLocaleString()} bytes · Received {new Date(artifact.receivedAt).toLocaleString()}</p>
+        <p>{artifact.sizeBytes.toLocaleString()} bytes · <ConfiguredTimestamp value={artifact.receivedAt} prefix="Received" /></p>
         <p>Received bytes matched the worker’s recorded fingerprint. This is not a quality approval.</p>
         <details><summary>File fingerprint</summary><code>{artifact.contentHash}</code></details></div>
         <a className="private-action-link" href={`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(task.jobId)}#task-results`}>Open protected result</a>

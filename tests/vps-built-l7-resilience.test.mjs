@@ -256,3 +256,84 @@ test("compiled mounted lifecycle survives lost replies and restart at the real t
   assert.ok(runtime2.opened.every(value => value.pool.closes() === 1 && !value.pool.isAvailable()));
   assert.equal(mounts.length, 2);
 });
+
+test("compiled mounted lifecycle retains a blocked result across remount without retrying execution", async t => {
+  const failedText = "# Result\nThis synthetic result intentionally omits the required evidence heading.\n";
+  const source = await nativeQualityCompletionFixture(failedText);
+  t.after(source.close);
+
+  const projects = new WebProjectService(source.f.db, source.f.scope, source.f.clock);
+  const unrelated = (await projects.create(source.f.identity, {
+    title: "L7 failure isolation control",
+    summary: "Unrelated project that must not change while a result is blocked.",
+  }, "l7-failure-project-create-001")).project;
+  const startup = await taskStartupFixture(source.f.assignmentFixture);
+  const config = { ...startup.config, coordinator: { ...startup.config.coordinator,
+    quality: { ...source.f.ownerConfig, scenarios: [source.scenario] } } };
+
+  async function mount() {
+    let application;
+    const opened = [];
+    const runtime = await createPrivateTaskBootstrap({ clock: source.f.clock,
+      openDatabase(database) {
+        const pool = startup.pool(database.username);
+        opened.push(pool);
+        return pool;
+      },
+      install(value) { application = value; },
+    }).start(config);
+    assert.ok(application);
+    assert.equal(runtime.isReady(), true);
+    return { application, opened, runtime };
+  }
+
+  const input = { ...source.request, projectId: source.registration.projectId, jobId: source.registration.jobId };
+  const unrelatedBefore = await projects.get(source.f.identity, unrelated.projectId);
+  const before = await source.states();
+  const calls = [...source.local.calls], effects = source.local.effects.countFull();
+  const runtime1 = await mount();
+  const first = await runtime1.runtime.quality.reconcile(input, new AbortController().signal);
+  assert.equal(first.disposition, "verification_blocked");
+  assert.equal(first.verification, "recorded");
+  assert.equal(first.capacity.replayed, false);
+  assert.equal(first.grantsApproval, false);
+  assert.equal(first.grantsExecutionAuthority, false);
+  assert.equal("completion" in first, false);
+  const blocked = await source.states();
+  assert.deepEqual(blocked.job, before.job);
+  assert.deepEqual(blocked.attempt, before.attempt);
+  assert.equal(blocked.lease.state, "released");
+  assert.equal(blocked.lease.version, before.lease.version + 1);
+  assert.deepEqual(await projects.get(source.f.identity, unrelated.projectId), unrelatedBefore);
+  assert.deepEqual(source.local.calls, calls);
+  assert.equal(source.local.effects.countFull(), effects);
+
+  const crossProject = await runtime1.application.handle(request(
+    `/api/v1/projects/${unrelated.projectId}/tasks/${source.registration.jobId}/results`,
+    "GET", undefined, undefined, source.f.jwt), () => new Response("shell"));
+  assert.equal(crossProject.status, 404);
+  await runtime1.runtime.close();
+  assert.ok(runtime1.opened.every(pool => pool.closes() === 1 && !pool.isAvailable()));
+
+  const runtime2 = await mount();
+  const replay = await runtime2.runtime.quality.reconcile(input, new AbortController().signal);
+  assert.equal(replay.disposition, "verification_blocked");
+  // The retained failed check is read, not executed again after remount.
+  assert.equal(replay.verification, "not_run");
+  assert.equal(replay.capacity.replayed, true);
+  assert.deepEqual(replay.capacity.receipt, first.capacity.receipt);
+  assert.deepEqual(await source.states(), blocked);
+  assert.deepEqual(await projects.get(source.f.identity, unrelated.projectId), unrelatedBefore);
+  assert.deepEqual(source.local.calls, calls);
+  assert.equal(source.local.effects.countFull(), effects);
+  const snapshot = await source.f.reviewStore.snapshot(source.request.tenantId, source.target.id);
+  assert.equal(snapshot.status, "verification_blocked");
+  const verifications = await source.f.db.query(
+    "SELECT payload FROM control_completion_gate_records WHERE tenant_id=$1 AND kind='verification' AND parent_id=$2",
+    [source.request.tenantId, source.target.id]);
+  assert.equal(verifications.rows.length, 1);
+  assert.equal(verifications.rows[0].payload.outcome, "failed");
+
+  await runtime2.runtime.close();
+  assert.ok(runtime2.opened.every(pool => pool.closes() === 1 && !pool.isAvailable()));
+});

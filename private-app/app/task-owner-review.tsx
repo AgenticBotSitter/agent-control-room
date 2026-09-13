@@ -6,6 +6,7 @@ import type { TaskReviewDraft, TaskReviewOptions } from "../../src/web/v1/task-r
 import { createTaskReviewWorkspace, type TaskReviewWorkspace, type TaskReviewSession, type ReviewWorkspaceBinding } from "../../src/web/v1/task-review-workspace";
 import { revisionErrorMessage, revisionRequestFromReview } from "../../src/web/v1/task-revision-browser-client";
 import { OwnerRevisionPanel } from "./task-owner-revision";
+import { ConfiguredTimestamp } from "./configured-timestamp";
 
 const availability: Record<TaskReviewOptions["availability"], string> = {
   available: "Review this exact result", not_configured: "Owner review is not configured.",
@@ -19,7 +20,7 @@ export function OwnerReviewPanel({ options, feedback, pending, held, onFeedback,
 }) {
   return <section className="private-owner-review" aria-label="Owner quality decision"><h4>{availability[options.availability]}</h4>
     {options.ownReview && <div><p>Saved {options.ownReview.decision === "accepted" ? "quality acceptance" : "request for changes"}
-      {" · "}{new Date(options.ownReview.recordedAt).toLocaleString()}</p>
+      {" · "}<ConfiguredTimestamp value={options.ownReview.recordedAt} /></p>
       <p>Saved against file <code>{options.ownReview.artifactId}</code> with the matching fingerprint.</p>
       {options.ownReview.feedback && <p className="private-summary">{options.ownReview.feedback}</p>}</div>}
     <p>Review applies to file <code>{options.artifactId}</code> and fingerprint <code>{options.contentHash}</code>.</p>

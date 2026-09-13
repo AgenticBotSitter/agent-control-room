@@ -81,7 +81,7 @@ try {
     database: { client: disposable.client, close: () => disposable.db.close() },
     clock: () => now, loadKeys: async () => trust.keys });
   browser = await playwright.chromium.launch({ headless: true });
-  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const context = await browser.newContext({ viewport: { width: 360, height: 844 } });
   await context.route("**/*", async route => {
     const request = route.request();
     const url = new URL(request.url());
@@ -100,6 +100,14 @@ try {
   });
 
   const page = await context.newPage();
+  await page.goto(`${origin}/`, { waitUntil: "domcontentloaded" });
+  const menu = page.getByRole("button", { name: "Menu" });
+  await menu.click();
+  check("360px workspace menu opens", await menu.getAttribute("aria-expanded") === "true");
+  const projectsLink = page.getByRole("navigation", { name: "Workspace pages" }).getByRole("link", { name: "Projects" });
+  await projectsLink.click();
+  await page.waitForURL(url => url.pathname === "/projects");
+  check("360px workspace menu navigation is operable", true);
   for (const [path, label] of [["/", "Home"], ["/projects", "Project catalog"], ["/workers", "Workers"],
     ["/needs-me", "Needs attention"], ["/settings", "Settings"], ["/ideas", "Idea Lab"]]) {
     await page.goto(`${origin}${path}`, { waitUntil: "domcontentloaded" });

@@ -9,6 +9,7 @@ import { ProjectCatalogNavigation } from "../../app/components/project-catalog-n
 import { PrivateHeader } from "./private-header";
 import { ProjectOverviewActivity } from "./project-overview-activity";
 import { ProjectNavigation } from "./project-navigation";
+import { ConfiguredTimestamp } from "./configured-timestamp";
 
 export type ProjectSection = "overview" | "inbox" | "agents" | "automations" | "settings";
 
@@ -163,7 +164,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
           {section === "overview" && <section className="private-panel"><h2>Purpose</h2>
             <p className="private-summary">{project.summary || "No summary added."}</p>
             <p className="private-note"><a href={`/projects/${encodeURIComponent(projectId)}/tasks`}>Open project tasks</a> to prepare work, check assignment and approval, and inspect recorded progress and results. Task controls report unavailable services rather than assuming a live agent is connected.</p>
-            <p className="private-note">Saved revision {project.version} · Updated {new Date(project.updatedAt).toLocaleString()}</p>
+            <p className="private-note">Saved revision {project.version} · <ConfiguredTimestamp value={project.updatedAt} prefix="Updated" /></p>
           </section>}
           {section === "inbox" && <section className="private-panel"><h2>Project inbox</h2>
             <p>Open the saved attention list and choose an item from this project. The list reports missing checks and uncertain work instead of claiming an all-clear.</p>
@@ -191,7 +192,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
               : <p className="private-note">{project.origin === "idea_lab" ? "No Idea Lab status changes are available with the current access and configuration. Its history is preserved."
                 : "Your current access allows viewing this project, not changing its status."}</p>}
             <p className="private-note">Status changes preserve history. They do not stop running work. Closing this tab does not change the project.</p>
-            <p className="private-note">Saved revision {project.version} · Updated {new Date(project.updatedAt).toLocaleString()}</p>
+            <p className="private-note">Saved revision {project.version} · <ConfiguredTimestamp value={project.updatedAt} prefix="Updated" /></p>
           </section>}
           {section === "overview" && <><ProjectOverviewActivity key={projectId} projectId={projectId} />
             <section className="private-panel"><h2>Worker availability</h2>
