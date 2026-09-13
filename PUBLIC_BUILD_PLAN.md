@@ -60,13 +60,14 @@ using a unique contributor/worker identifier when several bots share one GitHub 
 ## Starting revision and branch transition
 
 Public `main` is the common implementation baseline, reconciled and verified through
-PR #102. That baseline retains the component implementation, public collaboration
+PR #105. That baseline retains the component implementation, public collaboration
 plan, CI and Windows refusal slice; adds the reviewed connector,
 security/configuration and product-shell contracts; proves that one build supports
 two isolated configurations; and includes explicit project pages, safe Project News,
-owner-attention prioritization and a restart-style lifecycle journey over disposable
-data. It does not constitute production, physical process/database restart, or live
-harness qualification.
+owner-attention prioritization, exact and relative activity times, verified 360px
+navigation, and restart-style recovery after both successful and failed verification
+over disposable data. It does not constitute production, physical process/database
+restart, or live harness qualification.
 
 Existing PRs keep their recorded targets. Before any new implementation starts, the
 maintainer records its immutable base SHA, exact target branch, owned paths and ready
@@ -311,7 +312,7 @@ required to understand these questions.
 
 | ID | Decision/status | Remaining proof gate and responsible role |
 | --- | --- | --- |
-| Q1 | Settled: current public `main`, reconciled through PR #103, is the baseline | New issues record an immutable main-derived base when the maintainer-wide pause is lifted; preserved contributor branches keep ownership until accepted or explicitly handed off |
+| Q1 | Settled: current public `main`, reconciled through PR #105, is the baseline | New issues record an immutable main-derived base when the maintainer-wide pause is lifted; preserved contributor branches keep ownership until accepted or explicitly handed off |
 | Q2 | Settled contract: Hermes uses `asimons81/hermes-gpt` pin `89cbfbe232d62dfb8c3cb4f9af04c6c32f956e73` through FastMCP continue/status/result; cancel, replay, events and usage are unsupported | Harness integration: unmodified actual-interface continue/status/result plus busy, truncation, lost-submit and restart/orphaned evidence |
 | Q3 | Settled contract: Codex uses App Server `0.150.0-alpha.8` over parent-owned stdio; exact-package schema evidence is bound to read-only `thread/read(includeTurns: true)`. The durable post-receipt activation fence and unwired one-shot start runtime are implemented. The runtime binds the approved prompt and workspace to internally constructed read-only/user-reviewed requests, persists a no-replay reservation and closes late I/O before reporting cleanup | Core integration: wire the reviewed local ports, exact result schema/projection, native start/restart read test, and canonical task/result wiring. Fake transport tests do not claim a provider call or physical process qualification |
 | Q4 | Settled policy: canonical approval, conditional dedicated Ed25519 signer and independent authenticated checkpoint; unsupported execution stays disabled | Security/operations with independent review: real custody/consent, independent placement and both split-commit restore orders |

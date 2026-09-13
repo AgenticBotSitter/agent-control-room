@@ -135,8 +135,9 @@ No live agent-runtime/platform combination is claimed supported by this preview.
 **Current implementation baseline:** the current public `main`, including the
 lead-integrated application navigation and protected route corrections, configurable
 project proof, explicit project pages, safe Project News, browser lifecycle coverage
-and owner-attention prioritization through
-[PR #102](https://github.com/AgenticBotSitter/agent-control-room/pull/102). The
+and owner-attention prioritization, plus exact and relative activity times, verified
+360px navigation, and restart-style failed-verification recovery through
+[PR #105](https://github.com/AgenticBotSitter/agent-control-room/pull/105). The
 [September 9 contributor handoff](CONTRIBUTOR_HANDOFF.md) remains historical evidence;
 new contributions use the base recorded in their issue. This is not production
 acceptance and does not supersede active contributors' branches.
@@ -148,8 +149,8 @@ before assignment. All 17 implementation directions are recorded; selected
 components are not yet all integrated.
 
 The public package includes sanitized Idea Lab and news workflows, connector updates
-and generic database/operator templates. At the PR #102 baseline it passes strict
-type checking and all 61 compiled test groups, including 184 browser accessibility
+and generic database/operator templates. At the PR #105 baseline it passes strict
+type checking and the full compiled test suite, including 184 browser accessibility
 checks. Templates are not configured services, and these checks are not production
 acceptance.
 
