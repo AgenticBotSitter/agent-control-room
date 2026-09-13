@@ -13,6 +13,21 @@ import { openPrivateCodexConfigurationV1 } from '../../src/node-bridge/private-c
 import { sha256Digest } from '../../src/security/canonical-digest';
 import { runPrivateNode } from '../../scripts/run-private-node.mjs';
 
+type OptionalNodeConnectorModule = {
+  createNativeNodeRuntime(): { close(): Promise<void> };
+  createNativeHttpsConnector(): {
+    run(): Promise<{ disposition: string; state: string }>;
+    close(): Promise<void>;
+  };
+};
+type InstalledNodeRuntime = NonNullable<Parameters<typeof runPrivateNode>[1]>;
+type FixtureNodeRuntime = Omit<InstalledNodeRuntime, 'loadRelease'> & {
+  loadRelease(): Promise<OptionalNodeConnectorModule>;
+};
+// The launcher consumes only these two exports. Keep the synthetic optional
+// provider fixture independent of unrelated additions to the release module.
+const runPrivateNodeFixture = runPrivateNode as (args: string[], runtime: FixtureNodeRuntime) => Promise<number>;
+
 const at = (offset = 0) => new Date(Date.parse('2026-09-13T12:00:00.000Z') + offset).toISOString();
 const digest = (value: string) => sha256Digest(value);
 const pairs = new Map<string, ReturnType<typeof buildSyntheticStartPair>>();
@@ -134,7 +149,7 @@ export async function runSyntheticLauncherScenario(scenario: 'completed' | 'revo
   const signals = new EventEmitter(); const reports: string[] = [], errors: string[] = [];
   let runs = 0, closes = 0, acquisitions = 0, releaseAcquire: (() => void) | undefined;
   const acquisitionStarted = new Promise<void>(resolve => { releaseAcquire = resolve; });
-  const codePromise = runPrivateNode(['--configuration', operatorPath, '--mode', 'recover'], {
+  const codePromise = runPrivateNodeFixture(['--configuration', operatorPath, '--mode', 'recover'], {
     signals: signals as unknown as NodeJS.Process,
     report: (value: string) => reports.push(value), reportError: (value: string) => errors.push(value),
     async loadRelease() {

@@ -12,6 +12,7 @@ import { nativeNodeRuntimeFixture } from './helpers/native-node-runtime.ts';
 test('compiled one-task entry composes actual components and closes denied synthetic setup', async t => {
   const release = await import('../dist-vps/server/nodeConnector.js');
   assert.equal(typeof release.openOwnedPrivateCodexConfigurationV1, 'function');
+  assert.equal(typeof release.createCodexResultSenderV1, 'function');
   const f = await nativeNodeRuntimeFixture();
   t.after(() => f.close());
   const directory = await realpath(await mkdtemp(join(tmpdir(), 'cr-built-node-')));

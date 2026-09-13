@@ -202,6 +202,46 @@ export type CodexResultReturnReceiptBodyV1 = z.infer<typeof codexResultReturnRec
 export type CodexResultReturnFrameV1 = SignedNodeFrame<"harness.codex.result.return">;
 export type CodexResultReturnReceiptFrameV1 = SignedNodeFrame<"harness.codex.result.return.receipt">;
 
+/** Exact node-side receipt match. Authentication remains the bridge's job; this
+ * matcher binds the authenticated server frame to the one signed return that was
+ * already durably prepared. It grants no replay or lifecycle authority. */
+export function matchCodexResultReturnReceiptV1(input: {
+  resultFrame: unknown;
+  receiptFrame: unknown;
+  serverActorId: string;
+  serverKeyId: string;
+  receivedAt: string;
+}): CodexResultReturnReceiptFrameV1 {
+  try {
+    // Runtime import is unnecessary here: the body-level schemas do not depend on
+    // the complete frame schema and the bridge authenticates that outer frame first.
+    const resultFrame = input.resultFrame as CodexResultReturnFrameV1;
+    const receiptFrame = input.receiptFrame as CodexResultReturnReceiptFrameV1;
+    const body = codexResultReturnBodySchemaV1.parse(resultFrame.body);
+    const receipt = codexResultReturnReceiptBodySchemaV1.parse(receiptFrame.body);
+    const receivedAt = instant.parse(input.receivedAt);
+    const expected = createCodexResultReturnReceiptBodyV1({ frame: resultFrame,
+      recordedAt: receipt.recordedAt });
+    if (resultFrame.type !== "harness.codex.result.return"
+      || resultFrame.direction !== "node_to_server" || resultFrame.senderKind !== "node"
+      || receiptFrame.type !== "harness.codex.result.return.receipt"
+      || receiptFrame.direction !== "server_to_node" || receiptFrame.senderKind !== "control_room"
+      || receiptFrame.tenantId !== resultFrame.tenantId
+      || receiptFrame.actorId !== localId.parse(input.serverActorId)
+      || receiptFrame.keyId !== localId.parse(input.serverKeyId)
+      || receiptFrame.connectionId !== resultFrame.connectionId
+      || receiptFrame.correlationId !== resultFrame.correlationId
+      || receiptFrame.causationId !== resultFrame.messageId
+      || receiptFrame.bodyDigest !== sha256Digest(receipt)
+      || sha256Digest(receipt) !== sha256Digest(expected)
+      || Date.parse(receivedAt) < Date.parse(receiptFrame.sentAt)
+      || Date.parse(receivedAt) > Date.parse(receiptFrame.expiresAt)
+      || Date.parse(receiptFrame.sentAt) < Date.parse(receipt.recordedAt)
+      || Date.parse(receiptFrame.expiresAt) > Date.parse(body.physicalQualification.validUntil)) unavailable();
+    return deepFreeze(structuredClone(receiptFrame));
+  } catch { return unavailable(); }
+}
+
 function unavailable(): never { throw new Error("codex_result_return_unavailable"); }
 
 function deepFreeze<T>(value: T): T {
