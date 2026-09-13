@@ -91,12 +91,30 @@ be distinguished, because they have different effect-claim consequences:
 
 1. **Never spawned** — `child.on("error")` fires (ENOENT, EACCES, EPERM) with no pid. This
    is a *pre-effect* failure: nothing ran, nothing was spent. Safe to fail the claim
-   without non-execution evidence.
+   without non-execution evidence **only in-process, within the same run of Control Room
+   that saw the error.** The marker was already committed (state `executing`) before spawn
+   (§3.2); if Control Room itself dies between the `error` event and durably recording
+   `failed`, a restart sees a claim in state `executing` with no way to distinguish "spawn
+   never happened" from outcome 2. `classifyEffectClaimRecovery` will correctly return
+   `mark_ambiguous` in that case — this is not a gap in the store, it is this design
+   needing to say so: **outcome 1 degrades to outcome 2 across a Control Room restart.**
+   Only a same-process, same-run observation of `child.on("error")` may fail the claim
+   directly; a recovered claim in `executing` state must always take the ambiguous path.
 2. **Spawned but never confirmed** — a pid exists but no `system`/`init` frame arrives
    within a bounded window, or the process exits before one. This is **ambiguous**, not
    failed: a process existed and may have done something. It raises `ambiguity_raised` on
-   the claim (`classifyEffectClaimRecovery` → `mark_ambiguous`) and must never be collapsed
-   into "it failed, retry."
+   the claim and must never be collapsed into "it failed, retry." **Ambiguous is not a
+   resting state: the §2.5 kill escalation (`SIGTERM` the group, bounded grace, `SIGKILL`,
+   confirm reaping) must be invoked immediately and unconditionally on this outcome** —
+   otherwise a live, spending, file-writing process group is left owned by nobody. Only
+   after reaping is confirmed does the claim settle as `ambiguous`; a workspace produced by
+   an ambiguous run must not be reaped until that confirmation lands (§4/§7.6).
+   Because `EffectClaimEventV1`'s `ambiguity_raised` reason is one of
+   `restart | lost_ack | unknown_result`, and `SqliteEffectClaimStore.recover()` hard-codes
+   `reason: "restart"`, this live-process path (no restart has happened; Control Room is
+   still running and just hasn't heard back) cannot use `recover()` — it must call
+   `apply()` directly with `unknown_result`. That is a second small, named change to
+   existing code, not a new concept (added to §7).
 3. **Confirmed running** — `system`/`init` read, `session_id` matching the pin. Only this
    outcome is a start.
 
@@ -104,11 +122,17 @@ be distinguished, because they have different effect-claim consequences:
 
 Control Room derives the session UUID from its own run identity (a deterministic function
 of tenant/project/job/attempt/run, recorded in the marker before spawn) and passes it in.
-The first frame, `system`/`init`, carries `session_id`; if it does not equal the pin the run
-fails immediately and the process is killed — that is the wrong binary, the wrong process,
-or a session we do not own. Correlation is thus established on frame one from a value
-Control Room chose, rather than by trusting a `session_id` the process later asserts. Every
-later frame is checked against the same pin; a mid-stream mismatch ends the run.
+The first frame, `system`/`init`, carries `session_id`; if it does not equal the pin, the
+process is killed via the §2.5 escalation — that is the wrong binary, the wrong process, or
+a session we do not own. **This is §2.3 outcome 2, not a separate "failed" outcome: a
+process spawned and may have already read files, written to the worktree, or spent tokens
+before its first frame was checked.** Marking it `failed` outright (as an earlier draft of
+this section did) would apply a non-execution classification to a case that is, by this
+document's own outcome-2 rule, ambiguous until kill and reaping are confirmed. The claim
+settles `ambiguous`, never `failed`, on any identity mismatch. Correlation is thus
+established on frame one from a value Control Room chose, rather than by trusting a
+`session_id` the process later asserts. Every later frame is checked against the same pin;
+a mid-stream mismatch ends the run the same way — ambiguous, kill, confirm reaping.
 
 ### 2.5 Cancel
 
@@ -155,11 +179,12 @@ marker is safe to re-evaluate (nothing spawned); a claim with a marker is `mark_
 (a process may exist and may have spent tokens and edited files) and needs evidence, never
 a blind respawn. That is the lost-job-vs-duplicate-spawn property, already built.
 
-**One extension is needed, and only one.** `createPreEffectMarker` hard-codes its
-payload-commitment requirement to `operationId === "harness.hermes.native.start"`. A second
-id — proposed `harness.claude-code.cli.start` — must be added to that requirement so a
-Claude Code start cannot be marked without committing its prompt digest. Add the id; do not
-generalize the rule into a registry.
+**Two extensions are needed, both narrow.** `createPreEffectMarker` **and**
+`validatePreEffectMarkerBinding` both hard-code their payload-commitment requirement to
+`operationId === "harness.hermes.native.start"` — this is two call sites, not one. A second
+id — proposed `harness.claude-code.cli.start` — must be added to both so a Claude Code
+start cannot be marked, or have its marker validated, without committing its prompt digest.
+Patch both sites; do not generalize the rule into a registry.
 
 Open for review: whether `destinationIdempotencyKey` (currently the claim key) means
 anything for a local process, where there is no remote destination to deduplicate against.
@@ -180,7 +205,23 @@ Git worktree per run under a workspace root proven disjoint from the repository 
 canonical `realpath`/device/inode identity checks, a derived child name
 (`codex-<24 hex of the run id digest>`), refusal of non-canonical or symlinked paths, and an
 `uncertainCreates` set so a half-happened create is reconciled rather than retried. A Claude
-Code run gets the same treatment under a `claude-<24 hex>` name.
+Code run gets the same treatment under a `claude-<24 hex>` name — **including the disposal
+half, which this section previously omitted.** `workspace.ts` already has `cleanup(lease)`
+with an identity recheck before `removeWorktree`; carry that over, not just creation. The
+disposal rule per terminal state:
+
+- `succeeded` / `cancelled` (reaping confirmed) — clean up immediately once the result (or
+  cancel confirmation) is durably recorded; nothing left to inspect.
+- `failed` (a genuine pre-effect or in-process failure, §2.3 outcome 1 within the same
+  run) — retain for a bounded debugging window, then clean up; a human may want the
+  worktree to see what went wrong.
+- `ambiguous` — **must not be reaped while a process may still hold the worktree.** Disposal
+  is gated on the same kill-and-reap confirmation as the claim itself (§2.3); an ambiguous
+  claim and its worktree resolve together, never separately.
+- A bound on accumulated worktrees is required regardless of the above — repeated runs
+  without one will exhaust disk. A count or age ceiling per node, refusing new spawns past
+  it rather than silently evicting, is the minimum; a policy decision for §7, not this
+  document to invent unprompted.
 
 Honest statement of the achievable initial level:
 
@@ -272,14 +313,28 @@ Concrete and unsoftened. Each item is a named file or a named decision.
    `claude/claude-code-harness-a0`, `claude/claude-code-approval-authority-design`); this
    design cites both as load-bearing, and **`src/harness/claude-code-v1/connector-profile.ts`
    must be on `main`** (PR #72) before anything is built against it.
-4. **`createPreEffectMarker` in `src/node-policy/v1/effect-claim.ts` must accept
-   `harness.claude-code.cli.start` under the same payload-commitment requirement as
-   `harness.hermes.native.start`**, with tests, before any spawner exists.
-5. **A start-authority equivalent to `src/harness/hermes-native-v1/start-authority.ts` must
-   exist for this path**, or an explicit owner decision that the existing one generalizes.
-   No spawner may call `SqliteEffectClaimStore` directly.
+4. **`createPreEffectMarker` and `validatePreEffectMarkerBinding` in
+   `src/node-policy/v1/effect-claim.ts` must both accept `harness.claude-code.cli.start`**
+   under the same payload-commitment requirement as `harness.hermes.native.start` — two call
+   sites, not one — with tests, before any spawner exists. **A second, separate change to
+   existing code is also required**: the live-process ambiguous path (§2.3 outcome 2) must
+   call `apply()` with reason `unknown_result`, since `recover()`'s hard-coded `"restart"`
+   reason does not fit a claim that is ambiguous without Control Room having restarted.
+5. **A start-authority for this path does not yet exist and the existing one does not
+   generalize — this is settled, not open.**
+   `src/harness/hermes-native-v1/start-authority.ts`'s `createNativeStartAuthority` allows
+   only `capabilities | start | status | events` and states outright that "stop and
+   post-deadline observation need separate typed recovery authority and are denied here."
+   Claude Code's `cancel` is a first-class operation in this design (§2.5), so the existing
+   authority cannot be reused as-is — a new one is required. It must also account for
+   `request.approval`, which `createNativeStartAuthority` mandates via
+   `verifyNativeTaskApprovalBinding` and which this document has not yet named as an input;
+   the equivalent verified approval binding for a Claude Code start needs its own design
+   note before the start-authority itself is written. No spawner may call
+   `SqliteEffectClaimStore` directly.
 6. **A workspace port modelled on `src/harness/codex-v1/workspace.ts` must exist**, with the
-   same disjoint-root, canonical-identity and uncertain-create reconciliation properties.
+   same disjoint-root, canonical-identity, uncertain-create reconciliation, **and disposal**
+   properties (§4) — creation without the `cleanup(lease)` half is not sufficient.
 7. **An owner ruling on isolation posture** — whether same-user-same-host with
    `--restricted` is acceptable for the first runs given §4's limits, and what prompt
    provenance is permitted under it.
@@ -287,8 +342,13 @@ Concrete and unsoftened. Each item is a named file or a named decision.
    `manual` or `plan`, with `bypassPermissions` / `dontAsk` / `auto` /
    `--dangerously-skip-permissions` refused by construction — ideally by a type that cannot
    express them.
-9. **A named reviewer sign-off on this document.** It proposes the codebase's first real
-   agent-process spawn; per the owner's rule that does not proceed on one agent's judgement.
+9. **A workspace retention/disposal policy decided**, not just a mechanism built: the
+   per-terminal-state rule in §4, plus a concrete accumulated-worktree bound per node.
+10. **A named reviewer sign-off on this document.** It proposes the codebase's first real
+    agent-process spawn; per the owner's rule that does not proceed on one agent's judgement.
+    (An independent review pass has since checked this document's factual claims against
+    `origin/main` and found the four gaps and the missing item above — now folded in. That
+    review is one input to sign-off, not a substitute for it.)
 
 Until every item is true, `submit`, `events`, `result` and `cancel` stay `unsupported` in
 the connector profile, and `connectorOperationAdmissibleV1` keeps refusing them regardless
