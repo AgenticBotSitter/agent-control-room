@@ -14,6 +14,7 @@ import { readTaskProjectOverview } from "../src/web/v1/task-project-overview-bro
 import { ProjectFilesView } from "../private-app/app/project-files-workspace";
 import { readTaskProjectFiles } from "../src/web/v1/task-project-files-browser-client";
 import { ProjectNavigation } from "../private-app/app/project-navigation";
+import { ProjectTaskViewPanel } from "../private-app/app/project-task-views";
 
 test("home gives honest navigation to existing private workspace surfaces", () => {
   const html = renderToStaticMarkup(createElement(Home));
@@ -164,11 +165,39 @@ test("unavailable project files do not claim an empty result set", () => {
 test("shared project navigation keeps core pages and hides optional news until enabled", () => {
   const html = renderToStaticMarkup(createElement(ProjectNavigation, { projectId: "project:alpha", current: "work" }));
   for (const [label, path] of [["Overview", "/projects/project%3Aalpha"], ["Work", "/projects/project%3Aalpha/tasks"],
-    ["Files", "/projects/project%3Aalpha/files"], ["Settings", "/projects/project%3Aalpha/settings"]]) {
+    ["Files", "/projects/project%3Aalpha/files"], ["Reviews", "/projects/project%3Aalpha/reviews"],
+    ["Activity", "/projects/project%3Aalpha/activity"], ["Settings", "/projects/project%3Aalpha/settings"]]) {
     assert.match(html, new RegExp(`href="${path}"[^>]*>${label}`));
   }
   assert.match(html, /href="\/projects\/project%3Aalpha\/tasks" aria-current="page">Work/);
   assert.doesNotMatch(html, />News</);
+});
+
+test("project review and activity pages reuse exact saved task links without commands", () => {
+  const base = { projectId: "project:alpha", requestId: "request:alpha", version: 2,
+    createdAt: "2026-09-04T10:00:00.000Z", updatedAt: "2026-09-04T12:00:00.000Z" };
+  const review = { ...base, jobId: "job:review", title: "Review report", state: "waiting_approval" as const };
+  const done = { ...base, jobId: "job:done", title: "Completed research", state: "succeeded" as const };
+  const value = { projectId: base.projectId, current: [review], awaitingReview: [review], recent: [done, review],
+    additionalCurrentOmitted: false, additionalReviewsOmitted: false, additionalRecentOmitted: false,
+    observedAt: "2026-09-04T12:00:00.000Z", startsWork: false as const };
+  const reviews = renderToStaticMarkup(createElement(ProjectTaskViewPanel,
+    { projectId: base.projectId, view: "reviews", state: { state: "ready", value } }));
+  assert.match(reviews, /Review report/);
+  assert.doesNotMatch(reviews, /Completed research/);
+  assert.match(reviews, /projects\/project%3Aalpha\/tasks\/job%3Areview/);
+  const activity = renderToStaticMarkup(createElement(ProjectTaskViewPanel,
+    { projectId: base.projectId, view: "activity", state: { state: "ready", value } }));
+  assert.match(activity, /Completed research/);
+  assert.match(activity, /Review report/);
+  assert.doesNotMatch(activity, /approve|retry|submit|start agent/i);
+});
+
+test("project review page distinguishes unavailable data from an empty list", () => {
+  const html = renderToStaticMarkup(createElement(ProjectTaskViewPanel,
+    { projectId: "project:alpha", view: "reviews", state: { state: "unavailable", code: "unavailable" } }));
+  assert.match(html, /No empty list or all-clear is inferred/);
+  assert.doesNotMatch(html, /No task is currently recorded/);
 });
 
 test("settings links to the real session surface without credential controls", () => {
