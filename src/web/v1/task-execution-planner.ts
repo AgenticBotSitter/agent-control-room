@@ -65,9 +65,10 @@ const initialPlanSchema = z.object({ schema: z.literal("control-room.task-execut
   acceptanceProfileId: localId, acceptanceProfileDigest: digestSchema,
 }).strict();
 const revisionPlanSchema = initialPlanSchema.extend({ schema: z.literal("control-room.task-execution-plan/v2"), revision: taskRevisionContextSchema });
-const codexPlanSchema = initialPlanSchema.extend({ schema: z.literal("control-room.task-execution-plan/v3"),
+export const codexTaskExecutionPlanSchemaV3 = initialPlanSchema.extend({ schema: z.literal("control-room.task-execution-plan/v3"),
   adapter: z.literal(CODEX_APP_SERVER_ADAPTER), connectorProfileDigest: digestSchema, workspaceIntentDigest: digestSchema });
-const planSchema = z.discriminatedUnion("schema", [initialPlanSchema, revisionPlanSchema, codexPlanSchema]);
+export type CodexTaskExecutionPlanV3 = z.infer<typeof codexTaskExecutionPlanSchemaV3>;
+const planSchema = z.discriminatedUnion("schema", [initialPlanSchema, revisionPlanSchema, codexTaskExecutionPlanSchemaV3]);
 type Plan = z.infer<typeof planSchema>;
 export type TaskPlanningOperation = Readonly<{ tenantId: string; workspaceId: string; plan: TaskExecutionPlanner["plan"];
   supportsProject?: (projectId: string) => boolean;
@@ -77,6 +78,25 @@ const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(
   transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); await check(); return result; } });
 const fail = (): never => { throw new Error("task_execution_plan_unavailable"); };
 const immutableJob = (job: JobRecord) => ({ ...job, state: "proposed", version: 0, updatedAt: job.createdAt });
+
+/** Authenticated historical v3 plan read for trusted Codex result persistence. It grants no
+ * execution, result-write, review, completion or capacity-release authority. */
+export async function readCodexTaskExecutionPlanV3InSession(tx: DatabaseSession, integrityKey: Uint8Array,
+  tenantId: string, jobId: string): Promise<CodexTaskExecutionPlanV3 | undefined> {
+  try {
+    localId.parse(tenantId); localId.parse(jobId);
+    const row = (await tx.query<Row>(`SELECT tenant_id,project_id,source_job_id,job_id,plan,auth_tag
+      FROM control_task_execution_plans WHERE tenant_id=$1 AND job_id=$2`, [tenantId, jobId])).rows[0];
+    if (!row) return undefined;
+    const plan = codexTaskExecutionPlanSchemaV3.parse(row.plan);
+    const expected = Buffer.from(hmacSha256Tag(integrityKey, { purpose: "task-execution-plan/v3", plan }));
+    const actual = Buffer.from(row.auth_tag);
+    if (expected.length !== actual.length || !timingSafeEqual(expected, actual)
+      || row.tenant_id !== plan.tenantId || row.project_id !== plan.projectId
+      || row.source_job_id !== plan.sourceJobId || row.job_id !== plan.job.id) fail();
+    return plan;
+  } catch { return fail(); }
+}
 
 /** Privileged control-plane composition only; the existing private-web SQL role cannot use this
  * writer. Current owner permission is still mandatory. The optional web operation exposes only
