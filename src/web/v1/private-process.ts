@@ -460,6 +460,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
         const taskPage = /^\/projects\/([^/]+)\/tasks(?:\/([^/]+))?$/.exec(url.pathname);
         const newsPage = /^\/projects\/([^/]+)\/news$/.exec(url.pathname);
         const filesPage = /^\/projects\/([^/]+)\/files$/.exec(url.pathname);
+        const taskSummaryPage = /^\/projects\/([^/]+)\/(reviews|activity)$/.exec(url.pathname);
         const ideaPage = /^\/ideas(?:\/([^/]+))?$/.exec(url.pathname);
         const detail = /^\/projects\/([^/]+)(?:\/(overview|settings))?$/.exec(url.pathname);
         if (ideaPage) {
@@ -474,6 +475,11 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           if (url.search) throw new WebAccessError("invalid_request");
           let id: string;
           try { id = decodeURIComponent(filesPage[1]); } catch { throw new WebAccessError("invalid_request"); }
+          await tasks.authorize(identity, id);
+        } else if (taskSummaryPage) {
+          if (url.search) throw new WebAccessError("invalid_request");
+          let id: string;
+          try { id = decodeURIComponent(taskSummaryPage[1]); } catch { throw new WebAccessError("invalid_request"); }
           await tasks.authorize(identity, id);
         } else if (taskPage) {
           let id: string, jobId: string | undefined;
@@ -508,9 +514,14 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
         } else if (url.pathname === "/needs-me") {
           if (url.search) throw new WebAccessError("invalid_request");
           await tasks.authorizeAttentionPage(identity);
-        } else if (url.pathname === "/connections") {
+        } else if (url.pathname === "/connections" || url.pathname === "/workers") {
           if (url.search) throw new WebAccessError("invalid_request");
           await connections.authorize(identity);
+        } else if (url.pathname === "/settings") {
+          if (url.search) throw new WebAccessError("invalid_request");
+          await productConfigurationAuthority.authenticated(identity, async (_, actor) => {
+            actor.require("projects.read", undefined, true);
+          });
         } else if (url.pathname !== "/session") throw new WebAccessError("not_found");
         const response = await render();
         // The rendered shell carries no project records; every data read rechecks current session/project authority.
