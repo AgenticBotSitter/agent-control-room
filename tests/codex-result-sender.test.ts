@@ -136,7 +136,8 @@ function authenticator(journal: SqliteBridgeJournal) {
 }
 
 async function connect(journal: SqliteBridgeJournal, sent: string[], connection = 'test',
-  signResult?: (frame: UnsignedNodeFrame<'harness.codex.result.return'>) => Promise<SignedNodeFrame>) {
+  signResult?: (frame: UnsignedNodeFrame<'harness.codex.result.return'>) => Promise<SignedNodeFrame>,
+  features: string[] = [CODEX_RESULT_RETURN_FEATURE_V1]) {
   const f = resultFixture();
   const database = (journal as unknown as { db: DatabaseSync }).db;
   if (!(database.prepare('SELECT queue_id FROM bridge_codex_deliveries WHERE queue_id=?')
@@ -162,7 +163,7 @@ async function connect(journal: SqliteBridgeJournal, sent: string[], connection 
     ? { frame: f.activationFrame, receivedAt: f.activationFrame.sentAt } : undefined;
   let id = 0;
   const bridge = new PortableNodeBridge({ tenantId: 'tenant:test', nodeId: 'node:test',
-    keyId: 'node-key:test', features: [CODEX_RESULT_RETURN_FEATURE_V1] }, journal,
+    keyId: 'node-key:test', features }, journal,
   { async sign(frame) { return frame.type === 'harness.codex.result.return' && signResult
       ? signResult(frame as UnsignedNodeFrame<'harness.codex.result.return'>)
       : signNodeFrame(frame, nodeKeys.privateKey); } }, authenticator(journal),
@@ -178,7 +179,7 @@ async function connect(journal: SqliteBridgeJournal, sent: string[], connection 
       nonce: `synthetic_server_nonce_${connection}_${sequence}_123456`, sentAt: returnedAt,
       expiresAt: '2026-09-13T12:05:00.000Z', type, body } as UnsignedNodeFrame, serverKeys.privateKey);
   await bridge.receive(JSON.stringify(serverFrame(1, 'connection.accepted', { selectedProtocol: NODE_PROTOCOL_V1,
-    enabledFeatures: [CODEX_RESULT_RETURN_FEATURE_V1], maxFrameBytes: 262_144,
+    enabledFeatures: features, maxFrameBytes: 262_144,
     heartbeatIntervalSeconds: 30, serverTime: returnedAt })), returnedAt);
   await bridge.receive(JSON.stringify(serverFrame(2, 'node.reconciliation.request', {
     lastAcknowledgedNodeSequence: 1, requestedAttemptIds: [] })), returnedAt);
@@ -363,9 +364,10 @@ test('timeout, cancellation and disconnect bound a hung write and release the se
   }
 });
 
-test('a generic acknowledgement cannot consume the exact result receipt transition', async () => {
+test('native snapshot ACK flushing cannot block the following exact result receipt', async () => {
   const journal = new SqliteBridgeJournal(':memory:'), sent: string[] = [];
-  const f = await connect(journal, sent);
+  const f = await connect(journal, sent, 'test', undefined,
+    [CODEX_RESULT_RETURN_FEATURE_V1, 'harness.native.snapshot.v1']);
   let inbound: Promise<void> | undefined;
   f.transport.send = async raw => {
     sent.push(raw); const frame = JSON.parse(raw) as SignedNodeFrame;

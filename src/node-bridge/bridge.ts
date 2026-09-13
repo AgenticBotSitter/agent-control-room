@@ -413,7 +413,7 @@ export class PortableNodeBridge {
     now: string, signal: AbortSignal, receiptTimeoutMs = 5_000,
     currentTime: () => string = () => new Date().toISOString()): Promise<CodexResultReturnReceiptFrameV1> {
     const generation = this.connectionGeneration;
-    return this.serializeSend(async () => {
+    const pending = await this.serializeSend(async () => {
       if (generation !== this.connectionGeneration) throw new Error('Codex result connection changed while queued');
       if (!(signal instanceof AbortSignal) || signal.aborted || !Number.isSafeInteger(receiptTimeoutMs)
         || receiptTimeoutMs < 1 || receiptTimeoutMs > 30_000 || this.codexResultWaiter) {
@@ -486,6 +486,10 @@ export class PortableNodeBridge {
       const abort = () => rejectReceipt(new Error('Codex result return receipt unavailable'));
       signal.addEventListener('abort', abort, { once: true });
       const timer = setTimeout(abort, receiptTimeoutMs);
+      const cleanup = () => {
+        clearTimeout(timer); signal.removeEventListener('abort', abort);
+        if (this.codexResultWaiter?.messageId === resultFrame.messageId) this.codexResultWaiter = undefined;
+      };
       try {
         assertSendCurrent();
         const write = transport.send(JSON.stringify(resultFrame));
@@ -495,17 +499,24 @@ export class PortableNodeBridge {
         void write.catch(() => {});
         await Promise.race([write, receipt.then(() => undefined)]);
         channel.assertCurrent();
-        const accepted = await receipt;
-        channel.assertCurrent();
-        return Object.freeze(structuredClone(accepted));
+        return { receipt, channel, cleanup };
       } catch (error) {
+        cleanup();
         if (generation === this.connectionGeneration) this.failTransport();
         throw error;
-      } finally {
-        clearTimeout(timer); signal.removeEventListener('abort', abort);
-        if (this.codexResultWaiter?.messageId === resultFrame.messageId) this.codexResultWaiter = undefined;
       }
     });
+    // Receipt intake may itself need the send queue (for example, an earlier
+    // protocol acknowledgement can flush a native snapshot). Keep the single
+    // waiter and current-connection fence, but do not hold that queue here.
+    try {
+      const accepted = await pending.receipt;
+      pending.channel.assertCurrent();
+      return Object.freeze(structuredClone(accepted));
+    } catch (error) {
+      if (generation === this.connectionGeneration) this.failTransport();
+      throw error;
+    } finally { pending.cleanup(); }
   }
 
   async flushNativeSnapshots(now: string): Promise<number> {
