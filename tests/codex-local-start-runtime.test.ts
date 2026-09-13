@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 import test from 'node:test';
-import { buildCodexTaskActivationV1 } from '../src/harness/codex-v1/activation-contract.ts';
+import { buildCodexTaskActivationV1, computeCodexTaskActivationDigestV1 } from '../src/harness/codex-v1/activation-contract.ts';
 import { createCodexLocalStartRuntimeV1 } from '../src/harness/codex-v1/local-start-runtime.ts';
+import { createCodexLocalStartCompositionV1 } from '../src/harness/codex-v1/local-start-composition.ts';
 import { createCodexStartAdmissionV1 } from '../src/harness/codex-v1/admission-contract.ts';
 import { createCodexOwnedStartV1 } from '../src/harness/codex-v1/owned-start.ts';
+import { SqliteCodexStartJournalV1 } from '../src/harness/codex-v1/start-journal.ts';
+import { SqliteBridgeJournal } from '../src/node-bridge/journal.ts';
 import { CODEX_START_OPERATION, codexTaskDispatchBodySchemaV1,
   codexTaskDispatchReceiptBodySchemaV1, codexTaskPayloadDigestV1 } from '../src/harness/codex-v1/delivery-contract.ts';
 import { computeEffectClaimKey } from '../src/node-policy/v1/effect-claim.ts';
@@ -75,11 +78,11 @@ function activationFixture() {
     currentAdmissionDigest: activationBody.currentAdmissionDigest };
 }
 
-const threadResponse = (id: number) => JSON.stringify({ id, result: {
-  approvalPolicy: 'on-request', approvalsReviewer: 'user', cwd: '/synthetic/project', model: 'model:test',
+const threadResponse = (id: number, cwd = '/synthetic/project') => JSON.stringify({ id, result: {
+  approvalPolicy: 'on-request', approvalsReviewer: 'user', cwd, model: 'model:test',
   modelProvider: 'provider:test', sandbox: { type: 'readOnly' }, instructionSources: [],
   thread: { id: 'thr_synthetic', sessionId: 'thr_synthetic', ephemeral: false, cliVersion: 'test',
-    createdAt: 1, cwd: '/synthetic/project', modelProvider: 'provider:test', preview: '', projectId: null,
+    createdAt: 1, cwd, modelProvider: 'provider:test', preview: '', projectId: null,
     source: 'appServer', status: { type: 'idle' }, turns: [], updatedAt: 1 } } });
 const turnResponse = (id: number) => JSON.stringify({ id, result: {
   turn: { id: 'turn_synthetic', status: 'inProgress', items: [] } } });
@@ -209,4 +212,97 @@ test('refuses a valid but differently bound admission before reservation or effe
   const { runtime, calls } = runtimeFixture({ differentAdmission: true });
   await assert.rejects(runtime.start(), /unavailable/);
   assert.deepEqual(calls, []);
+});
+
+test('fixed composition binds protected activation, workspace and durable start records', async () => {
+  let saved = activationFixture();
+  const intent = { schema: 'control-room.workspace-intent/v1' as const,
+    tenantId: saved.activation.body.tenantId, nodeId: saved.activation.body.nodeId,
+    projectId: saved.activation.body.projectId, jobId: saved.activation.body.jobId,
+    attemptId: saved.activation.body.attemptId, runId: saved.activation.body.runId,
+    leaseId: saved.activation.body.leaseId, leaseEpoch: saved.activation.body.leaseEpoch,
+    repositoryRoot: '/synthetic/repository', workspaceRoot: '/synthetic/workspaces',
+    checkoutPath: `/synthetic/workspaces/codex-${sha256Digest(saved.activation.body.runId).slice(7, 31)}`,
+    revision: 'a'.repeat(40) };
+  const { activationId: _activationId, activationDigest: _activationDigest, ...priorMaterial } = saved.activation.body;
+  void _activationId; void _activationDigest;
+  const material = { ...priorMaterial, workspacePath: intent.checkoutPath,
+    workspaceIntentDigest: sha256Digest(intent) };
+  const activationDigest = computeCodexTaskActivationDigestV1(material);
+  const activation = { ...saved.activation, body: { ...material,
+    activationId: `codex-activation:${activationDigest.slice(7)}`, activationDigest } };
+  saved = { ...saved, activation } as typeof saved;
+  const bridgeJournal = new SqliteBridgeJournal(':memory:');
+  const startJournal = new SqliteCodexStartJournalV1(':memory:', { testOnlyAllowEphemeral: true });
+  let clock = baseTime + 2_000, workspaceEffects = 0;
+  const responses = [JSON.stringify({ id: 1, result: {} }), threadResponse(10, intent.checkoutPath), turnResponse(20)];
+  const ownedStart = createCodexOwnedStartV1({ open: async () => ({
+    writeLine: async () => {}, readLine: async () => responses.shift(), close: async () => {},
+  }) });
+  const workspacePort = {
+    inspectRootIdentities: async () => ({
+      repository: { realPath: intent.repositoryRoot, device: '1', inode: '2' },
+      workspace: { realPath: intent.workspaceRoot, device: '1', inode: '3' },
+      commonGit: { realPath: `${intent.repositoryRoot}/.git`, device: '1', inode: '4' },
+    }),
+    inspectExisting: async (path: string) => ({ realPath: path, device: '1', inode: path === intent.repositoryRoot ? '2' : '3' }),
+    observeCheckout: async () => ({ state: 'absent' as const }),
+    createDetachedWorktree: async () => { workspaceEffects += 1; return {
+      realPath: intent.checkoutPath, repositoryRealPath: intent.repositoryRoot,
+      headRevision: intent.revision, device: '1', inode: '5',
+    }; },
+    removeWorktree: async () => { throw new Error('unexpected removal'); },
+  };
+  try {
+    const runtime = createCodexLocalStartCompositionV1({ queueId: saved.activation.body.queueId,
+      connectionAttemptId: 'connection-attempt:composed', initializedConnectionDigest: sha256Digest('composed'),
+      threadStartRequestId: 10, turnStartRequestId: 20, workspaceIntent: intent,
+      bridgeJournal: Object.assign(bridgeJournal, {
+        acceptedCodexActivation: () => ({ frame: saved.activation, receivedAt: saved.activationReceivedAt }),
+      }), startJournal, workspacePort,
+      authority: { assertCurrent: () => {}, currentAdmissionDigest: () => saved.currentAdmissionDigest },
+      ownedStart, clock: () => clock++ });
+    const result = await runtime.start();
+    assert.equal(result.thread.threadId, 'thr_synthetic');
+    assert.equal(result.turn.turnId, 'turn_synthetic');
+    assert.equal(workspaceEffects, 1);
+    assert.equal(bridgeJournal.workspaceIntentInventory()[0]?.creation?.realPath, intent.checkoutPath);
+    const recorded = startJournal.load(intent.runId);
+    assert.equal(recorded.status, 'recorded');
+    assert.equal(recorded.threadId, result.thread.threadId);
+    assert.equal(recorded.turnId, result.turn.turnId);
+  } finally { startJournal.close(); bridgeJournal.close(); }
+});
+
+test('fixed composition refuses mismatched workspace intent before effects or start reservation', async () => {
+  const saved = activationFixture();
+  const bridgeJournal = new SqliteBridgeJournal(':memory:');
+  const startJournal = new SqliteCodexStartJournalV1(':memory:', { testOnlyAllowEphemeral: true });
+  let effects = 0, opens = 0, clock = baseTime + 2_000;
+  const runId = saved.activation.body.runId;
+  const intent = { schema: 'control-room.workspace-intent/v1' as const,
+    tenantId: saved.activation.body.tenantId, nodeId: saved.activation.body.nodeId,
+    projectId: saved.activation.body.projectId, jobId: 'job:different', attemptId: saved.activation.body.attemptId,
+    runId, leaseId: saved.activation.body.leaseId, leaseEpoch: saved.activation.body.leaseEpoch,
+    repositoryRoot: '/synthetic/repository', workspaceRoot: '/synthetic/workspaces',
+    checkoutPath: `/synthetic/workspaces/codex-${sha256Digest(runId).slice(7, 31)}`, revision: 'a'.repeat(40) };
+  try {
+    const runtime = createCodexLocalStartCompositionV1({ queueId: saved.activation.body.queueId,
+      connectionAttemptId: 'connection-attempt:composed-mismatch', initializedConnectionDigest: sha256Digest('composed-mismatch'),
+      threadStartRequestId: 10, turnStartRequestId: 20, workspaceIntent: intent,
+      bridgeJournal: Object.assign(bridgeJournal, {
+        acceptedCodexActivation: () => ({ frame: saved.activation, receivedAt: saved.activationReceivedAt }),
+      }), startJournal,
+      workspacePort: { inspectRootIdentities: async () => { effects += 1; throw new Error(); },
+        observeCheckout: async () => { effects += 1; throw new Error(); },
+        inspectExisting: async () => { effects += 1; throw new Error(); },
+        createDetachedWorktree: async () => { effects += 1; throw new Error(); },
+        removeWorktree: async () => { effects += 1; } },
+      authority: { assertCurrent: () => {}, currentAdmissionDigest: () => saved.currentAdmissionDigest },
+      ownedStart: createCodexOwnedStartV1({ open: async () => { opens += 1; throw new Error(); } }),
+      clock: () => clock++ });
+    await assert.rejects(runtime.start(), /unavailable/);
+    assert.equal(effects, 0); assert.equal(opens, 0);
+    assert.equal(startJournal.load(runId).status, 'not_reserved');
+  } finally { startJournal.close(); bridgeJournal.close(); }
 });
