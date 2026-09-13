@@ -10,9 +10,22 @@ does not authorize a deployment, credential use, database change or native attem
 The initial mode is one operator-selected HTTPS application origin, a private backend
 and PostgreSQL database, one configured owner identity, and an external identity layer
 that enforces MFA. A verified login permits only the actions in current tenant/project
-grants. Login is not task approval, signing consent or permission to retry uncertain
-work. Native execution and checkpoint-dependent completion remain disabled until their
-separate connector, custody and recovery gates pass.
+grants. Login is not critical-effect approval, signing consent or permission to retry
+uncertain work. Native execution remains disabled until its connector and host gates
+pass. Critical effects and checkpoint-dependent completion remain disabled until their
+separate signer, custody and recovery gates pass.
+
+The first public MVP deliberately excludes critical or consequential external
+effects. Its only executable class is an owner-submitted low-risk harness run whose
+canonical policy sets `allowExternalEffects=false`: provider inference and reversible
+writes inside the task's isolated workspace are allowed, while deployment, publishing,
+messaging, purchasing, destructive cleanup, credential changes and production/native
+administration are not. Project, task, attempt, result, review and artifact records for
+that class may persist before checkpoint qualification, but they cannot become
+critical-effect approval evidence. Enabling a broader class is a later mode change
+gated by the dedicated owner signer and independent checkpoint qualification below.
+This narrower mode is an explicit safety boundary, not evidence that signing or
+rollback protection has passed.
 
 The packaged operator configuration currently deploys the Cloudflare Access assertion
 profile, not generic OIDC. Trusted server composition also accepts one fixed RS256
@@ -43,6 +56,32 @@ configured method/freshness and reject missing, malformed, future or stale evide
 Required negative acceptance: provider/header confusion, direct-origin bypass, wrong
 issuer/audience/owner, missing or expired assertion, revoked grant, key outage and
 cross-origin write. A hidden hostname is not a security control.
+
+## First-owner ceremony
+
+A fresh installation starts in bootstrap-only mode: it binds only to the private
+loopback origin and normal application routes remain unavailable until an owner
+exists. An OS-operator-only Unix-domain control socket in the private runtime directory
+can arm one short-lived, one-use code. The socket must use restrictive service/operator
+ownership and mode checks plus operating-system peer identity; it is never TCP or a
+browser endpoint. The code is returned only to the attached operator terminal,
+retained only as a digest in process memory and never accepted from command-line
+arguments, environment variables, configuration files, ordinary standard input or
+logs.
+
+The operator signs in through the configured gateway and submits that code in one
+same-origin protected browser request. Owner identity comes only from the already
+verified signed assertion; the request cannot select a subject, provider, tenant,
+role or grant. One database transaction consumes the code and creates the sole owner.
+Replay, concurrency, expiry, restart, uncertain commit, uncertain cleanup or any
+existing identity refuse without replacement or automatic retry. This reuses the
+existing owner-bootstrap, access-verification and one-time-code primitives; it is not
+a local password, TOTP system, generic OIDC flow or second identity store.
+
+Real acceptance must still prove the gateway policy permits exactly the intended
+owner, enforces MFA and cannot bypass the private origin. The ceremony does not turn
+an unverified first request into an owner and does not make the hostname a security
+boundary.
 
 ## Portable product configuration
 
@@ -102,11 +141,28 @@ and matching restore evidence pass. Restore must verify the exact ledger, artifa
 ownership and ACLs against the independently retained checkpoint. If a matching pair
 does not exist, startup stays blocked; never reset the anchor to restored database data.
 
+The independently retained recovery source uses operator-installed restic 0.19.1,
+not a new Control Room backup engine. PostgreSQL logical tooling and the artifact
+inventory produce the inputs; restic encrypts and snapshots their canonical manifest
+in an operator-selected repository outside the primary data. The web application and
+agent workers receive no backup credentials. Backup-write, restore and
+maintenance/delete authority are separate. An S3-compatible backend, including
+Cloudflare R2, is supported only after exact endpoint, credential and restore
+qualification and is not called append-only unless its real permission set proves it.
+The current etcd checkpoint detects canonical-state rollback but does not yet bind a
+backup snapshot identity. #128 must define and test a versioned authenticated
+snapshot-binding record outside the primary before any restore can claim that the
+database, artifacts and checkpoint match. Neither system silently repairs a mismatch,
+and a same-domain rollback that leaves matching old values remains refused rather than
+misreported as detected.
+
 Updates drain admission and workers, preserve uncertain attempts, stage the new release
 separately and reconcile identities before resuming. Software rollback is allowed only
 when schema compatibility is demonstrated; reverting a binary is not authority to
 rewind canonical records. Use PostgreSQL logical tools and the existing lifecycle,
 queue and restricted role ports. No second backup engine is selected.
+Restic packages the outputs of those existing backup tools; it does not replace them
+or become an application coordination store.
 
 ## Initial schedule and capacity semantics
 

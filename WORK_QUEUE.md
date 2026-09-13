@@ -10,7 +10,7 @@ Permanent entry point for people and bots. Read the [build/reuse plan](PUBLIC_BU
 and [worker skill](skills/public-build-worker/SKILL.md). Issues are the live status
 record; no documentation commit is needed every time a job changes state.
 
-Public `main` is the reconciled implementation baseline through PR #114. It now
+Public `main` is the reconciled implementation baseline through PR #124. It now
 includes the configurable-project proof, explicit project pages, safe Project News,
 owner-attention prioritization, exact and relative activity times, verified 360px
 navigation, restart-style recovery after both successful and failed verification,
@@ -53,12 +53,14 @@ The issue labels are the live source of truth; this summary tells a new contribu
 where the work is concentrated without requiring chat history.
 
 - **Assigned:** #2 Windows portability, #8 Hermes connector, #11 shipped notices,
-  #62 Claude connector, #63 PostgreSQL/recovery and #64 distributable service.
-- **Ready for reservation:** #27 Idea Lab plus article-to-research, #60 persistent-work
-  security/recovery, #67 private ingress/owner bootstrap, #115 persistent local artifact
-  bytes and #116 schedule planning/status.
-- **Lead integration active:** #10 configurable frontend, #26 shared two-harness
-  execution/results, and the authority/inventory contracts needed to reopen #65.
+  #27 Idea Lab/article research, #62 Claude connector, #63 PostgreSQL/recovery,
+  #64 distributable service, #65/#115 protected persistent result storage and #116
+  schedule planning/status.
+- **Ready for reservation:** #120 schedule admission, #121 signer/checkpoint faults,
+  #122 ingress/bootstrap conformance, #125 Mac/Linux worker rehearsal, #126 server
+  composition failures, #127 first-owner ceremony and #128 retained restic backups.
+- **Lead integration active:** #10 configurable frontend and #26 canonical shared
+  two-harness execution/results.
 - **Waiting on named inputs, not forgotten:** #1 final real browser acceptance, the
   automatic-dispatch remainder of #29, the integration/backup remainder of #65, #66
   full server composition, #68 worker installation and #61 final release qualification.
@@ -84,12 +86,14 @@ non-overlapping outcome instead of replacing them.
 | Customizable project webpage | [#10](https://github.com/AgenticBotSitter/agent-control-room/issues/10) | Project/task/worker/result/review/files/attention screens using one configurable artifact |
 | Shipped notices and attribution | [#11](https://github.com/AgenticBotSitter/agent-control-room/issues/11) | Every shipped dependency and copied/bundled file is bound to its real upstream identity, license and notice |
 | Shared Hermes/Codex execution authority | [#26](https://github.com/AgenticBotSitter/agent-control-room/issues/26) | Canonical admission, queue, real starts and verified result claims, review/revision, capacity release and restart recovery; durable bytes/startup composition belong to #65/#66 |
-| Persistent-work security and recovery | [#60](https://github.com/AgenticBotSitter/agent-control-room/issues/60) | A dedicated approval key and independent rollback record prove restored database and result files still match |
+| Persistent-work security and recovery | [#60](https://github.com/AgenticBotSitter/agent-control-room/issues/60) | Before critical effects are enabled, a dedicated approval key and independent rollback record prove restored database and result files still match |
 | Final release assembly and qualification | [#61](https://github.com/AgenticBotSitter/agent-control-room/issues/61) | One frozen artifact passes clean install, two real harnesses, browser, recovery, update and restore acceptance |
 | PostgreSQL provisioning, migrations and restore | [#63](https://github.com/AgenticBotSitter/agent-control-room/issues/63) | Dedicated least-privilege database, checksum-led upgrades and verified disposable restore |
 | Distributable service and safe updates | [#64](https://github.com/AgenticBotSitter/agent-control-room/issues/64) | Self-contained artifact, unprivileged supervised service, staged update and safe rollback/refusal |
 | Durable protected result storage | [#65](https://github.com/AgenticBotSitter/agent-control-room/issues/65) | Exact result bytes survive restart/backup and cannot escape project/run authorization or owned storage |
 | Persistent local artifact-byte adapter | [#115](https://github.com/AgenticBotSitter/agent-control-room/issues/115) | Production-shaped local byte storage survives restart and refuses conflicts, corruption and path attacks |
+| One-time first-owner ceremony | [#127](https://github.com/AgenticBotSitter/agent-control-room/issues/127) | A protected one-use browser ceremony creates exactly one owner without exposing raw identity or persistent local login secrets |
+| Independently retained backup set | [#128](https://github.com/AgenticBotSitter/agent-control-room/issues/128) | Pinned restic packages the verified database and artifacts outside the primary and proves an exact restore/checkpoint match |
 | Complete agent-task server composition | [#66](https://github.com/AgenticBotSitter/agent-control-room/issues/66) | Operator configuration starts the real database/queue/connectors/results/review lifecycle fail-closed |
 | Private ingress and first-owner setup | [#67](https://github.com/AgenticBotSitter/agent-control-room/issues/67) | Supported gateway, no direct-origin bypass, one owner bootstrap and externally enforced MFA |
 | Mac/Linux worker setup | [#68](https://github.com/AgenticBotSitter/agent-control-room/issues/68) | Fresh Hermes and Codex worker install, enrollment, version checks, reconnect, revocation and removal |
