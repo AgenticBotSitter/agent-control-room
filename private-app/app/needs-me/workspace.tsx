@@ -33,7 +33,7 @@ export function PrivateNeedsMe() {
     }).finally(() => { if (live) setLoading(false); });
     return () => { live = false; };
   }, [refresh]);
-  return <div className="private-shell"><PrivateHeader /><main id="private-main">
+  return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1}>
     <h1>Needs Me</h1><p>Owner-only task attention and recovery observations.</p>
     <PrivateTaskAttention />
     <button type="button" disabled={loading} onClick={() => {

@@ -83,7 +83,7 @@ export function PrivateIdeaWorkspace({ sessionId, after }: { sessionId?: string;
     })();
     return () => { active = false; abort.abort(); };
   }, [client, sessionId, after, refresh]);
-  return <><PrivateHeader /><main id="private-main" className="private-main">
+  return <><PrivateHeader /><main id="private-main" className="private-main" tabIndex={-1}>
     <nav aria-label="Idea pages"><a href="/ideas">All saved ideas</a></nav>
     <button type="button" disabled={creating || decisionPending} onClick={() => { if (observer.current) void observer.current.read(); else { setPage(undefined); setError(undefined); setRefresh(v => v + 1); } }}>Refresh saved discussion</button>
     {creating ? <IdeaCreateForm close={() => { setCreating(false); setPage(undefined); setRefresh(v => v + 1); }} /> : null}

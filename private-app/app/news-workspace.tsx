@@ -90,7 +90,7 @@ export function PrivateNewsWorkspace({ projectId, after, sourceAfter, view = "hi
     void load();
     return () => { active = false; abort.abort(); };
   }, [projectId, after, sourceAfter, view, order, refresh]);
-  return <><PrivateHeader /><main id="private-main" className="private-main">
+  return <><PrivateHeader /><main id="private-main" className="private-main" tabIndex={-1}>
     <h1>{page ? `${page.project.title} · News` : "Project news"}</h1>
     <ProjectNavigation projectId={projectId} current="news" />
     <NewsSourceSettings key={projectId} projectId={projectId} />

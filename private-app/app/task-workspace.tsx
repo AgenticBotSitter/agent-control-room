@@ -108,7 +108,7 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
   const project = detail?.project ?? page?.project;
   const refreshSaved = () => { if (preparingRef.current) return; setLoading(true); setRefresh(value => value + 1); };
   const uncertain = client.hasPending();
-  return <div className="private-shell"><PrivateHeader /><main id="private-main">
+  return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1}>
     <a className="private-back" href={jobId ? taskUrl(projectId) : "/projects"}>{jobId ? "← Project tasks" : "← All projects"}</a>
     {navigationNotice && <p className="private-notice" role="alert">A save was still unconfirmed when you tried to leave.
       Keep this tab open and check that exact save again. If sign-in has expired, sign in from another tab, then return here.</p>}
