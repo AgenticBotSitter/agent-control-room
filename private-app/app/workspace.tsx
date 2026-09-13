@@ -172,6 +172,8 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
           </section>}
           {section === "agents" && <><section className="private-panel"><h2>Project agents</h2>
             <p>Saved connection records and optional session observations show what can be verified. They do not grant a worker permission to take work.</p>
+            <p className="private-note">Project-specific eligibility, capabilities, available slots, current work and usage are unavailable here.
+              Cancel and resume are not supported from this page.</p>
             <a className="private-action-link" href="/workers">Open all worker connections</a>
           </section><SessionObservations projectId={projectId} /></>}
           {section === "automations" && <section className="private-panel"><h2>Project automations</h2>
@@ -192,6 +194,10 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
             <p className="private-note">Saved revision {project.version} · Updated {new Date(project.updatedAt).toLocaleString()}</p>
           </section>}
           {section === "overview" && <><ProjectOverviewActivity key={projectId} projectId={projectId} />
+            <section className="private-panel"><h2>Worker availability</h2>
+              <p>Project-specific eligibility, capabilities, available slots and current work are unavailable in this view.</p>
+              <a className="private-action-link" href={`/projects/${encodeURIComponent(projectId)}/agents`}>Open project agents</a>
+            </section>
             <SessionObservations projectId={projectId} /></>}
         </>}
       </>}

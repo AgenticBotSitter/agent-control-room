@@ -16,6 +16,8 @@ import { readTaskProjectFiles } from "../src/web/v1/task-project-files-browser-c
 import { ProjectNavigation } from "../private-app/app/project-navigation";
 import { ProjectTaskViewPanel } from "../private-app/app/project-task-views";
 import { decodePrivateRouteSegment } from "../private-app/app/route-segment";
+import { PrivateConnectionView } from "../private-app/app/connections/workspace";
+import { TaskProposalForm } from "../private-app/app/task-panels";
 
 test("compiled route parameters decode exactly once before reaching browser clients", () => {
   assert.equal(decodePrivateRouteSegment("project%3Aalpha"), "project:alpha");
@@ -37,6 +39,20 @@ test("home gives honest navigation to existing private workspace surfaces", () =
   assert.doesNotMatch(html, /live workers|running now|0 tasks/i);
   for (const label of ["Loading saved work", "Loading saved attention items", "Loading verified result records",
     "Loading saved worker signals", "Loading saved projects"]) assert.match(html, new RegExp(label));
+});
+
+test("task proposal and worker inventory disclose unavailable operational facts", () => {
+  const proposal = renderToStaticMarkup(createElement(TaskProposalForm, {
+    draft: { title: "", instructions: "" }, setDraft: () => {}, pending: false, uncertain: false, onSave: () => {},
+  }));
+  for (const text of ["reporting completion is not acceptance", "Eligible capabilities", "available slots",
+    "cancel or resume support", "does not claim that any worker is currently available"])
+    assert.match(proposal, new RegExp(text));
+  const connections = renderToStaticMarkup(createElement(PrivateConnectionView,
+    { data: { state: "loading" }, onRefresh: () => {} }));
+  for (const text of ["platform details", "eligible capabilities", "available slots", "current work", "usage are unavailable",
+    "Cancel and resume are unsupported"])
+    assert.match(connections, new RegExp(text));
 });
 
 test("home dashboard links exact saved work, results, attention and projects without starting anything", () => {
