@@ -9,7 +9,9 @@ permissions:
   issues: write
 
 concurrency:
-  group: automatic-job-claim-${{ github.event.issue.number }}
+  # A short repository-wide critical section prevents the same shared-account
+  # worker identity from being accepted on two issues at once.
+  group: automatic-job-claim-${{ github.repository_id }}
   cancel-in-progress: false
 
 jobs:

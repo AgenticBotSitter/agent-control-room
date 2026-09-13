@@ -154,9 +154,10 @@ state, dependencies, immutable base/target, owned paths, reuse choice and checks
 Ready means it can begin without guessing a shared contract. Needs decision names
 the missing prerequisite and responsible role, not just "blocked."
 
-The automatic claim controller confirms ready reservations using a unique
-worker/contributor identifier and one per-issue serialized workflow. A request comment,
-pending marker or shared GitHub login alone is not an atomic claim. Mark In review when its PR/evidence is submitted, and
+The automatic claim controller confirms ready reservations using a GitHub-login plus
+unique-worker identifier in one short repository-wide serialized workflow. Each exact
+pair may hold one active implementation; a request comment, pending marker or shared
+GitHub login alone is not an atomic claim. Mark In review when its PR/evidence is submitted, and
 Done/closed after the whole assigned outcome is accepted. Partial merges are not
 completion. Transfer ownership only after an explicit stop/handoff, not a timer.
 
