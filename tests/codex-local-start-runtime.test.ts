@@ -6,6 +6,7 @@ import { createCodexLocalStartRuntimeV1 } from '../src/harness/codex-v1/local-st
 import { createCodexLocalStartCompositionV1 } from '../src/harness/codex-v1/local-start-composition.ts';
 import { createCodexStartAdmissionV1 } from '../src/harness/codex-v1/admission-contract.ts';
 import { createCodexOwnedStartV1 } from '../src/harness/codex-v1/owned-start.ts';
+import { CODEX_APP_SERVER_START_CONTRACT } from '../src/harness/codex-v1/schema-contract.ts';
 import { SqliteCodexStartJournalV1 } from '../src/harness/codex-v1/start-journal.ts';
 import { SqliteBridgeJournal } from '../src/node-bridge/journal.ts';
 import { CODEX_START_OPERATION, codexTaskDispatchBodySchemaV1,
@@ -81,7 +82,8 @@ function activationFixture() {
 const threadResponse = (id: number, cwd = '/synthetic/project') => JSON.stringify({ id, result: {
   approvalPolicy: 'on-request', approvalsReviewer: 'user', cwd, model: 'model:test',
   modelProvider: 'provider:test', sandbox: { type: 'readOnly' }, instructionSources: [],
-  thread: { id: 'thr_synthetic', sessionId: 'thr_synthetic', ephemeral: false, cliVersion: 'test',
+  thread: { id: 'thr_synthetic', sessionId: 'thr_synthetic', ephemeral: false,
+    cliVersion: CODEX_APP_SERVER_START_CONTRACT.version,
     createdAt: 1, cwd, modelProvider: 'provider:test', preview: '', projectId: null,
     source: 'appServer', status: { type: 'idle' }, turns: [], updatedAt: 1 } } });
 const turnResponse = (id: number) => JSON.stringify({ id, result: {
