@@ -199,6 +199,15 @@ credentials, hostnames or database provisioning.
 Passing this check is application/browser evidence only. It does not validate a real
 login provider, PostgreSQL service, network tunnel, agent harness or production host.
 
+The standard `pnpm test` suite also mounts the compiled protected application around
+one disposable database and exercises a complete synthetic result-and-revision path
+across two isolated projects. It loses one planning reply and one review reply, closes
+the first application, mounts a fresh application over the retained database, and
+proves the saved work completes once without repeating provider calls or rewriting
+released capacity. The real two-slot fixture limit is preserved. This is application
+remount evidence with an in-memory transport; it is not a physical process, database,
+network, or native-agent restart qualification.
+
 ## Still awaiting acceptance
 
 The demo command and its simulated flow pass automated tests and one local desktop

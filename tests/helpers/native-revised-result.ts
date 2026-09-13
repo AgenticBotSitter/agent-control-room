@@ -30,9 +30,13 @@ export const revisionFeedback = "Please improve the evidence.";
  * Child local admission stores are fresh disposable fixtures, not a live node recovery claim.
  * This preparation stops before native review registration and before the fake child start.
  */
-export async function nativeRevisedExecutionFixture() {
-  const original = await nativeQualityCompletionFixture(), { f } = original;
-  const cleanup: (() => void | Promise<void>)[] = [original.close];
+type NativeQualityCompletion = Awaited<ReturnType<typeof nativeQualityCompletionFixture>>;
+
+async function prepareNativeRevisedExecution(original: NativeQualityCompletion,
+  planned: { receipt: { jobId: string } }, changeReview: { reviewId: string } | undefined,
+  preparation: { sourceCapacityReleased: boolean; ownsOriginal: boolean }) {
+  const { f } = original;
+  const cleanup: (() => void | Promise<void>)[] = preparation.ownsOriginal ? [original.close] : [];
   const close = async () => { for (const fn of cleanup.reverse()) await fn(); };
   try {
     const seededStates = async () => ({ job: await f.canonical.get(f.scope.tenantId, "job", "job:test"),
@@ -41,21 +45,30 @@ export async function nativeRevisedExecutionFixture() {
     assert.notEqual(original.registration.jobId, "job:test"); assert.notEqual(original.registration.attemptId, "attempt:test");
     assert.notEqual(original.registration.nativeTask!.leaseId, "lease:test");
     const sourceBefore = await original.states(), seededBefore = await seededStates();
-    await original.verify();
-    const changeReview = (await original.review("changes_requested")).receipt;
     const planner = new TaskExecutionPlanner(f.db, f.scope, f.plannerConfig, f.clock, f.ownerConfig);
-    const planned = await planner.revise(f.identity, original.registration.projectId, original.registration.jobId,
-      { runId: original.registration.id, targetId: original.target.id, targetDigest: original.request.targetDigest,
-        contentHash: original.artifact.contentHash, reviewId: changeReview.reviewId, feedback: revisionFeedback }, new AbortController().signal);
     const plan = await planner.read(planned.receipt.jobId);
     assert.ok(plan?.schema === "control-room.task-execution-plan/v2");
-    // Test precondition only: one unrelated seeded reservation + original execution +
-    // this child require three slots. No reservation is removed and no turnover is implemented.
-    assert.equal((await f.db.query("SELECT id FROM control_leases WHERE state='active' AND node_id=$1", [f.route.nodeId])).rows.length, 2);
-    const childRoute = { ...f.route, maxConcurrentTasks: 3 };
+    assert.equal(plan.sourceJobId, original.registration.jobId);
+    assert.equal(plan.revision.fromRunId, original.registration.id);
+    assert.equal(plan.revision.fromTargetId, original.target.id);
+    assert.equal(plan.revision.fromTargetDigest, original.request.targetDigest);
+    assert.equal(plan.revision.fromContentHash, original.artifact.contentHash);
+    const activeBefore = (await f.db.query("SELECT id FROM control_leases WHERE state='active' AND node_id=$1", [f.route.nodeId])).rows.length;
+    if (preparation.sourceCapacityReleased) {
+      assert.equal(f.route.maxConcurrentTasks, 2);
+      assert.equal(sourceBefore.lease.state, "released");
+      assert.equal(activeBefore, 1);
+    } else {
+      // Legacy fixture precondition only: one unrelated seeded reservation + original execution +
+      // this child require three slots. Existing focused tests do not claim capacity turnover.
+      assert.equal(activeBefore, 2);
+    }
+    const childRoute = preparation.sourceCapacityReleased ? f.route : { ...f.route, maxConcurrentTasks: 3 };
     const coordinator = new TaskAssignmentCoordinator(f.db, f.scope, planner, [childRoute], f.clock,
       [{ enrollment: f.prepared.enrollment, nodeClass: "personal-compute" }], f.store);
     const assigned = await coordinator.assign(f.identity, plan.projectId, plan.job.id, f.route.nodeId, plan.job.inputDigest);
+    if (preparation.sourceCapacityReleased) assert.equal((await f.db.query(
+      "SELECT id FROM control_leases WHERE state='active' AND node_id=$1", [f.route.nodeId])).rows.length, f.route.maxConcurrentTasks);
     const args = [f.identity, plan.projectId, plan.job.id, plan.job.inputDigest] as const;
     const prepared = await coordinator.prepareNativeApproval(...args), abort = new AbortController();
     const timestamp = () => new Date(f.clock()).toISOString();
@@ -82,6 +95,15 @@ export async function nativeRevisedExecutionFixture() {
       // Same explicit synthetic qualification seam as nativeStartAuthorityFixture.
       assertProfileCurrent: async () => {} };
 
+    // The restricted-pool fixture multiplexes real SQL roles over one PGlite backend. Reset its
+    // test-only session after the mounted request so this separate synthetic node can use the
+    // fixture's node-protocol tables, then give its signed frames a strictly newer time.
+    if (preparation.sourceCapacityReleased) {
+      await f.raw.exec("SET SESSION AUTHORIZATION postgres");
+      const role = (await f.raw.query("SELECT current_user,session_user,rolsuper FROM pg_roles WHERE rolname=current_user")).rows[0];
+      assert.deepEqual(role, { current_user: "postgres", session_user: "postgres", rolsuper: true });
+      f.setNow(f.clock() + 1);
+    }
     const journal = new SqliteBridgeJournal(":memory:"), serverKeys = generateKeyPairSync("ed25519");
     cleanup.push(() => journal.close());
     const spki = serverKeys.publicKey.export({ format: "der", type: "spki" }).toString("base64url");
@@ -157,6 +179,35 @@ export async function nativeRevisedExecutionFixture() {
       counters: () => ({ sourceCalls: [...original.local.calls], childCalls: [...calls],
         sourceEffects: original.local.effects.countFull(), childEffects: effects.countFull() }), close };
   } catch (error) { await close(); throw error; }
+}
+
+export async function nativeRevisedExecutionFixture() {
+  const original = await nativeQualityCompletionFixture();
+  let changeReview: Awaited<ReturnType<typeof original.review>>["receipt"];
+  let planned: Awaited<ReturnType<TaskExecutionPlanner["revise"]>>;
+  try {
+    await original.verify();
+    changeReview = (await original.review("changes_requested")).receipt;
+    const planner = new TaskExecutionPlanner(original.f.db, original.f.scope, original.f.plannerConfig,
+      original.f.clock, original.f.ownerConfig);
+    planned = await planner.revise(original.f.identity, original.registration.projectId, original.registration.jobId,
+      { runId: original.registration.id, targetId: original.target.id, targetDigest: original.request.targetDigest,
+        contentHash: original.artifact.contentHash, reviewId: changeReview.reviewId, feedback: revisionFeedback }, new AbortController().signal);
+  } catch (error) { await original.close(); throw error; }
+  // Ownership transfers here. Preparation closes the original fixture on its own failure,
+  // so this wrapper must not catch and close it a second time.
+  return prepareNativeRevisedExecution(original, planned, changeReview,
+    { sourceCapacityReleased: false, ownsOriginal: true });
+}
+
+/** Prepare a revised synthetic child only after a mounted runtime has durably reviewed and
+ * planned its source and released that source's lease. The real two-slot route is preserved.
+ * The caller retains ownership of the supplied source fixture.
+ */
+export function nativeRevisedExecutionAfterCapacityReleaseFixture(original: NativeQualityCompletion,
+  plannedReceipt: { jobId: string }) {
+  return prepareNativeRevisedExecution(original, { receipt: plannedReceipt }, undefined,
+    { sourceCapacityReleased: true, ownsOriginal: false });
 }
 
 export async function nativeRevisedResultFixture(text = revisedText) {
