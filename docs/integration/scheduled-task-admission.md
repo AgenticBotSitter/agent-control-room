@@ -1,0 +1,11 @@
+# Scheduled task admission
+
+The scheduled-task admission service maps one already-materialized, exact schedule occurrence to one canonical request, workflow, and job in their non-runnable proposal states. The durable receipt is keyed by tenant, schedule, and occurrence. Its destination identifiers are derived only from that occurrence's tenant, schedule identifier, occurrence key, current schedule-definition digest, and exact source-bundle digest.
+
+Admission binds the canonical tenant/workspace/project/schedule, the current active schedule definition, the occurrence, and the exact source request/workflow/job bundle. Version one accepts only a job target and an explicitly empty reusable-context binding. A changed definition, source bundle, context binding, or locator refuses rather than creating another proposal. An expired recovery window also refuses before any write.
+
+The destination job remains `proposed`. It has an unassigned executor, no credentials, filesystem roots, network destinations, effects, cost, assignment, or retry permission. The receipt's `startsWork`, `grantsExecutionAuthority`, `permitsAssignment`, `permitsRetry`, and `permitsCancellation` fields are all permanently false. The receipt does not prove a task ran, succeeded, or was reviewed.
+
+Exact concurrent or restarted admission returns the same immutable receipt. The canonical proposal and receipt commit in one transaction. Occurrence delivery acknowledgement happens afterwards through `ScheduleOccurrenceStore.acknowledgeDelivery`; therefore a process loss between commit and acknowledgement is recovered by replaying the receipt and acknowledging the existing occurrence. `dispatched` continues to mean only that occurrence delivery was recorded.
+
+Pause blocks new admission but does not cancel a receipt that already exists. Resuming within the original recovery window permits admission. Pending occurrence cancellation and admission serialize on the same occurrence lock: cancellation first marks only the occurrence cancelled; admission first makes later occurrence cancellation refuse. Cancelling the resulting canonical task, starting it, assignment, retries, native workers, providers, and production scheduling remain outside this service.
