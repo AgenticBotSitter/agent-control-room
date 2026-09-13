@@ -78,8 +78,12 @@ before native use. The node-private Codex start journal now
 stores the exact correlated thread receipt before its turn receipt, survives reopen,
 and returns an explicit unknown state when the turn receipt is absent. It is an
 observation record only: it cannot list or guess sessions and grants no start, retry,
-resume or read authority. Runtime composition still must connect signed delivery,
-current admission, the owned App Server process and these ordered journal writes.
+resume or read authority. The fixed local start composition now connects signed
+activation evidence, current admission, the exact protected workspace intent, the
+owned App Server process and ordered no-replay journal writes. It is inert on import
+and requires an explicit one-shot start call with every native port supplied by a
+trusted host. The public launcher still does not supply those ports, so this is not
+live enablement or host qualification.
 The portable node bridge now negotiates `harness.codex.dispatch.v1`, verifies the
 owner permit and exact local enrollment/profile/workspace bindings, records one
 immutable private delivery, and returns one signed receipt. It never replays an
