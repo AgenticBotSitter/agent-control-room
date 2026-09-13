@@ -84,7 +84,7 @@ export function scanBundledUndisclosed(repository = process.cwd()) {
       // Find the inventory row for this package (any root under this vendorRoot).
       const inventoryRow = inventory.bundled.rows.find(r => r.package === entry && r.root.startsWith(vendorRoot));
       const evidenceFiles = inventoryRow?.evidenceFiles ?? [];
-      const reviewedExclusions = new Set(inventoryRow?.provenance?.reviewedExclusions ?? []);
+      const reviewedExclusions = inventoryRow?.provenance?.reviewedExclusions ?? [];
       const observationsForEntry = walkRegularFiles(childAbs)
         .filter(({ relativePath }) => !/^PROVENANCE\.(?:json|md)$/i.test(relativePath)
           && !/\/PROVENANCE\.(?:json|md)$/i.test(relativePath))
@@ -97,9 +97,12 @@ export function scanBundledUndisclosed(repository = process.cwd()) {
         // artifact without PROVENANCE-pinned evidence.
         let status = 'bundled_undisclosed', evidenceRow = null;
         const evidenceMatch = evidenceFiles.find(f => f.file === pathUnderRoot && f.sha256 === sha);
-        if (reviewedExclusions.has(pathUnderRoot)) {
+        const exclusion = reviewedExclusions.find(value => value.path === pathUnderRoot
+          && value.sha256 === sha && value.classification === 'documented_local_adaptation'
+          && typeof value.reason === 'string' && value.reason.length > 0);
+        if (exclusion) {
           status = 'bundled_reviewed_exclusion';
-          evidenceRow = { root: inventoryRow.root, reason: 'documented_local_adaptation', sha256: sha, bytes };
+          evidenceRow = { root: inventoryRow.root, reason: exclusion.reason, classification: exclusion.classification, sha256: sha, bytes };
         } else if (evidenceMatch) {
           status = 'bundled_evidence_match';
           evidenceRow = { root: inventoryRow.root, sha256: evidenceMatch.sha256, bytes: evidenceMatch.bytes };

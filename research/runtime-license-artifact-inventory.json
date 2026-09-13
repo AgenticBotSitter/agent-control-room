@@ -2,7 +2,7 @@
   "schema": "control-room.runtime-license-artifact-inventory/v1",
   "manifestSha256": "7c018840b9afe24c76cc23bf1b28ce2b35c14417b045278b65e92f892f56be08",
   "lockSha256": "6fdb15b4d7cea20edc11feeadaea07aabb7a6ccbcf7a40d0c75c130b535299f9",
-  "inventoryDigest": "c5ae1cc822ee18019393f6f3158b39b04ea0efce12533a944a7b965f8e8d9287",
+  "inventoryDigest": "c88e0a6b6af8a4bec756e837043dd876889a27641136be3ddcb10f3487e27045",
   "completeDistributionClearance": true,
   "scope": "complete for the declared artifact inputs only; #64 independently verifies the assembled release tree",
   "repository": "cr-license-closure",
@@ -130,8 +130,8 @@
         "manifestSha256": "548526ce0e1cad9ffe904fba19067013c9fea336eafd3cd52a337ec44406c9ed",
         "attachments": [],
         "status": "missing_root_text",
-        "provenance": "pinned_upstream_matching_code",
-        "qualification": "source manifest 2.2.0 differs from installed 3.0.0; not resolved"
+        "provenance": "pinned_npm_release_integrity",
+        "qualification": "installed 3.0.0 release is bound by pnpm lock integrity; prior 2.2.0 source comparison remains historical and is not used for clearance"
       },
       {
         "name": "@types/debug",
@@ -3214,12 +3214,42 @@
           "distributionIntegrity": null,
           "reviewedExclusion": null,
           "reviewedExclusions": [
-            "freshness.ts",
-            "industry.ts",
-            "pinned-fetch.ts",
-            "safe-fetch.ts",
-            "sitemap.ts",
-            "source-reader.ts"
+            {
+              "path": "freshness.ts",
+              "sha256": "dc691c41b2b0707626d2589866aa2fa1d106e4c8a1190e376379ac4582e410ca",
+              "classification": "documented_local_adaptation",
+              "reason": "Control Room adaptation documented in third_party/control-center/NOTICE.md"
+            },
+            {
+              "path": "industry.ts",
+              "sha256": "9ca39a9ad88f16262a2551a99de016a5ed951c7a53ba6a7a36362e061779db8b",
+              "classification": "documented_local_adaptation",
+              "reason": "Control Room adaptation documented in third_party/control-center/NOTICE.md"
+            },
+            {
+              "path": "pinned-fetch.ts",
+              "sha256": "1fafc239bb2a06038c2c7f54d0026f736e64f938ff37976e075b2021e20112ca",
+              "classification": "documented_local_adaptation",
+              "reason": "Control Room adaptation documented in third_party/control-center/NOTICE.md"
+            },
+            {
+              "path": "safe-fetch.ts",
+              "sha256": "a1357f764be50e705d79da4d261fbba38a72e392e7818480560b9d445287f733",
+              "classification": "documented_local_adaptation",
+              "reason": "Control Room adaptation documented in third_party/control-center/NOTICE.md"
+            },
+            {
+              "path": "sitemap.ts",
+              "sha256": "732d0a11901eb340925ac0aa8d636e43d31b7296aa79306a81147048eeda4f7e",
+              "classification": "documented_local_adaptation",
+              "reason": "Control Room adaptation documented in third_party/control-center/NOTICE.md"
+            },
+            {
+              "path": "source-reader.ts",
+              "sha256": "81e03fc3f97b3d5729bc96044e27cbd19c27536c9bb82a906fba5f500ccff9ab",
+              "classification": "documented_local_adaptation",
+              "reason": "Control Room adaptation documented in third_party/control-center/NOTICE.md"
+            }
           ],
           "installedVersion": null,
           "sourceManifestVersion": null,

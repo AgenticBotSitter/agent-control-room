@@ -27,7 +27,6 @@ const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const VENDOR_ROOTS = ['src/vendor'];
 const THIRD_PARTY_ROOT = 'third_party';
 const REVIEW_PATH = 'research/runtime-license-retained-provenance.json';
-const BASELINE_PATH = 'research/runtime-license-artifact-inventory.json';
 
 function lockIntegrity(lockText, name, version) {
   const escaped = `${name}@${version}`.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -71,9 +70,9 @@ function readProvenance(absDir) {
  *  the pinned sha256 + bytes. Returns the verified evidence file list.
  *  Never invents missing evidence — files that fail the check are reported
  *  as `mismatch` and excluded from `evidenceFiles`. */
-function evidenceFilesFromProvenance(absDir, walked, reviewed, baselineFiles) {
+function evidenceFilesFromProvenance(absDir, walked, reviewed) {
   if (reviewed) {
-    const pins = baselineFiles ?? [];
+    const pins = Array.isArray(reviewed.files) ? reviewed.files : [];
     const mismatches = [];
     const files = [];
     for (const pinned of pins) {
@@ -106,12 +105,11 @@ function evidenceFilesFromProvenance(absDir, walked, reviewed, baselineFiles) {
   return { files: matched, mismatches, provenance: prov };
 }
 
-function buildThirdPartyRow(repository, name, absDir, reviews, baseline) {
+function buildThirdPartyRow(repository, name, absDir, reviews) {
   const relDir = normalizeRelative(repository, absDir);
   const walked = walkRegularFiles(absDir);
   const review = reviews[relDir] ?? null;
-  const old = baseline.get(relDir) ?? [];
-  const evidence = evidenceFilesFromProvenance(absDir, walked, review, old);
+  const evidence = evidenceFilesFromProvenance(absDir, walked, review);
   let provenanceRow;
   if (evidence.provenance) {
     provenanceRow = {
@@ -154,12 +152,11 @@ function buildThirdPartyRow(repository, name, absDir, reviews, baseline) {
   };
 }
 
-function buildVendorRow(repository, vendorRoot, name, absDir, reviews, baseline) {
+function buildVendorRow(repository, vendorRoot, name, absDir, reviews) {
   const relDir = normalizeRelative(repository, absDir);
   const walked = walkRegularFiles(absDir);
   const review = reviews[relDir] ?? null;
-  const old = baseline.get(relDir) ?? [];
-  const evidence = evidenceFilesFromProvenance(absDir, walked, review, old);
+  const evidence = evidenceFilesFromProvenance(absDir, walked, review);
   let provenanceRow;
   if (evidence.provenance) {
     provenanceRow = {
@@ -195,7 +192,7 @@ function buildVendorRow(repository, vendorRoot, name, absDir, reviews, baseline)
 /** Walk all bundled roots and return rows sorted deterministically.
  *  Refuses any `repository` path that does not resolve inside a real repo. */
 export function collectBundledRows(repository = process.cwd()) {
-  assertInsideRepository(repository, THIRD_PARTY_ROOT, ...VENDOR_ROOTS, REVIEW_PATH, BASELINE_PATH);
+  assertInsideRepository(repository, THIRD_PARTY_ROOT, ...VENDOR_ROOTS, REVIEW_PATH);
   const reviewPath = path.join(repository, REVIEW_PATH);
   const reviews = fs.existsSync(reviewPath)
     ? (JSON.parse(fs.readFileSync(reviewPath, 'utf8')).roots ?? {}) : {};
@@ -207,18 +204,13 @@ export function collectBundledRows(repository = process.cwd()) {
       }
     }
   }
-  const baselinePath = path.join(repository, BASELINE_PATH);
-  const baselineJson = fs.existsSync(baselinePath)
-    ? JSON.parse(fs.readFileSync(baselinePath, 'utf8')) : {};
-  const baseline = new Map((baselineJson.bundled?.rows ?? []).map(row => [row.root,
-    (row.discoveredFiles ?? []).filter(f => !f.file.startsWith('PROVENANCE')).map(f => ({ file: f.file, bytes: f.bytes, sha256: f.sha256 }))]));
   const rows = [];
   const thirdPartyAbs = path.join(repository, THIRD_PARTY_ROOT);
   if (fs.existsSync(thirdPartyAbs) && fs.lstatSync(thirdPartyAbs).isDirectory()) {
     for (const entry of fs.readdirSync(thirdPartyAbs).sort()) {
       const childAbs = path.join(thirdPartyAbs, entry);
       if (!fs.lstatSync(childAbs).isDirectory()) continue;
-      rows.push(buildThirdPartyRow(repository, entry, childAbs, reviews, baseline));
+      rows.push(buildThirdPartyRow(repository, entry, childAbs, reviews));
     }
   }
   for (const vendorRoot of VENDOR_ROOTS) {
@@ -227,7 +219,7 @@ export function collectBundledRows(repository = process.cwd()) {
     for (const entry of fs.readdirSync(vendorAbs).sort()) {
       const childAbs = path.join(vendorAbs, entry);
       if (!fs.lstatSync(childAbs).isDirectory()) continue;
-      rows.push(buildVendorRow(repository, vendorRoot, entry, childAbs, reviews, baseline));
+      rows.push(buildVendorRow(repository, vendorRoot, entry, childAbs, reviews));
     }
   }
   return rows.sort((a, b) => {

@@ -1,6 +1,6 @@
 # Third-party notices and distribution manifest
 
-Inventory digest: `c5ae1cc822ee18019393f6f3158b39b04ea0efce12533a944a7b965f8e8d9287`
+Inventory digest: `c88e0a6b6af8a4bec756e837043dd876889a27641136be3ddcb10f3487e27045`
 
 This notice index is generated from the exact declared artifact inputs. It binds retained notice files and their SHA-256 hashes; the release assembler independently verifies the final archive against this digest.
 
@@ -13,7 +13,7 @@ This notice index is generated from the exact declared artifact inputs. It binds
 - `@csstools/css-parser-algorithms@3.0.5` — installed_root_text; `LICENSE.md` (d00d032f517721b45c56c70c46bf904ebb71ad313df4d4db7722266b38069665)
 - `@csstools/css-tokenizer@3.0.4` — installed_root_text; `LICENSE.md` (d00d032f517721b45c56c70c46bf904ebb71ad313df4d4db7722266b38069665)
 - `@mozilla/readability@0.6.0` — installed_root_text; `LICENSE.md` (a5b1e8181751ce05b85b7bfaa832b785e87086250a5148e679d17ca9bdcfa958)
-- `@nodable/entities@3.0.0` — pinned_upstream_matching_code; retained upstream binding recorded in the manifest
+- `@nodable/entities@3.0.0` — pinned_npm_release_integrity; retained upstream binding recorded in the manifest
 - `@types/debug@4.1.13` — installed_root_text; `LICENSE` (c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383)
 - `@types/estree@1.0.9` — installed_root_text; `LICENSE` (c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383)
 - `@types/estree-jsx@1.0.5` — installed_root_text; `LICENSE` (c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383)
@@ -227,9 +227,9 @@ This notice index is generated from the exact declared artifact inputs. It binds
 
 ## Reviewed local adaptations
 
-- `src/vendor/control-center/freshness.ts` — documented_local_adaptation; dc691c41b2b0707626d2589866aa2fa1d106e4c8a1190e376379ac4582e410ca
-- `src/vendor/control-center/industry.ts` — documented_local_adaptation; 9ca39a9ad88f16262a2551a99de016a5ed951c7a53ba6a7a36362e061779db8b
-- `src/vendor/control-center/pinned-fetch.ts` — documented_local_adaptation; 1fafc239bb2a06038c2c7f54d0026f736e64f938ff37976e075b2021e20112ca
-- `src/vendor/control-center/safe-fetch.ts` — documented_local_adaptation; a1357f764be50e705d79da4d261fbba38a72e392e7818480560b9d445287f733
-- `src/vendor/control-center/sitemap.ts` — documented_local_adaptation; 732d0a11901eb340925ac0aa8d636e43d31b7296aa79306a81147048eeda4f7e
-- `src/vendor/control-center/source-reader.ts` — documented_local_adaptation; 81e03fc3f97b3d5729bc96044e27cbd19c27536c9bb82a906fba5f500ccff9ab
+- `src/vendor/control-center/freshness.ts` — Control Room adaptation documented in third_party/control-center/NOTICE.md; dc691c41b2b0707626d2589866aa2fa1d106e4c8a1190e376379ac4582e410ca
+- `src/vendor/control-center/industry.ts` — Control Room adaptation documented in third_party/control-center/NOTICE.md; 9ca39a9ad88f16262a2551a99de016a5ed951c7a53ba6a7a36362e061779db8b
+- `src/vendor/control-center/pinned-fetch.ts` — Control Room adaptation documented in third_party/control-center/NOTICE.md; 1fafc239bb2a06038c2c7f54d0026f736e64f938ff37976e075b2021e20112ca
+- `src/vendor/control-center/safe-fetch.ts` — Control Room adaptation documented in third_party/control-center/NOTICE.md; a1357f764be50e705d79da4d261fbba38a72e392e7818480560b9d445287f733
+- `src/vendor/control-center/sitemap.ts` — Control Room adaptation documented in third_party/control-center/NOTICE.md; 732d0a11901eb340925ac0aa8d636e43d31b7296aa79306a81147048eeda4f7e
+- `src/vendor/control-center/source-reader.ts` — Control Room adaptation documented in third_party/control-center/NOTICE.md; 81e03fc3f97b3d5729bc96044e27cbd19c27536c9bb82a906fba5f500ccff9ab

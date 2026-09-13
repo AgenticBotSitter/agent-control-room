@@ -111,8 +111,8 @@ function bindInstalledRows(report, exceptions) {
         row.provenance = 'pinned_upstream_release';
         row.qualification = 'manifest correspondence; whole-source correspondence not proven';
       } else if (record.name === '@nodable/entities' && record.version === '3.0.0') {
-        row.provenance = 'pinned_upstream_matching_code';
-        row.qualification = 'source manifest 2.2.0 differs from installed 3.0.0; not resolved';
+        row.provenance = 'pinned_npm_release_integrity';
+        row.qualification = 'installed 3.0.0 release is bound by pnpm lock integrity; prior 2.2.0 source comparison remains historical and is not used for clearance';
       } else {
         row.provenance = 'retained_third_party_evidence';
         row.qualification = 'missing_root_text with separately evidenced third_party binding';
@@ -184,6 +184,7 @@ export function buildArtifactInventory(repository = process.cwd()) {
   const installedClear = installedRows.every(row => row.status === 'root_text_collected'
     || row.provenance === 'installed_README_section'
     || row.provenance === 'pinned_upstream_release'
+    || row.provenance === 'pinned_npm_release_integrity'
     || row.provenance === 'pinned_upstream_matching_code'
     || row.provenance === 'retained_third_party_evidence');
   return {
