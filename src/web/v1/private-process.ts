@@ -32,6 +32,7 @@ import { newsCollectionStatusSchema, newsCollectionHistorySchema } from "./news-
 import { ideaCreationOptionsSchema } from "./idea-wire";
 import { parseProductConfigurationV1, type ProductConfigurationV1 } from "../../config/v1/product-configuration";
 import { WebSessionAuthority } from "./session-authority";
+import { readProjectScheduleStatus } from "../../schedules/read-service";
 
 export interface PrivateWebProcessOptions {
   origin: string; issuer: string; audience: string; tenantId: string; workspaceId: string;
@@ -168,6 +169,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     options.ideaProjects?.integrityKey, clock, !!ideaCreation, !!ideaCreation?.stop, !!ideaCreation?.decide, !!ideaCreation?.start, !!ideaCreation?.synthesize);
   const productConfigurationAuthority = new WebSessionAuthority(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock, "workspace_configuration");
+  const scheduleAuthority = new WebSessionAuthority(options.database.client,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock);
   const ownerReviews = options.tasks?.ownerReviews ? new WebTaskReviewService(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, { ...options.tasks.ownerReviews,
       harnessIntegrityKey: options.tasks.harnessIntegrityKey, results: options.tasks.results!, ideaIntegrityKey: options.ideaProjects?.integrityKey }, clock) : undefined;
@@ -422,6 +425,17 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           if (url.pathname === "/api/v1/home/tasks") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
             return Response.json(await tasks.home(identity), { headers: privateResponseHeaders });
+          }
+          const projectSchedules = /^\/api\/v1\/projects\/([^/]+)\/schedules$/.exec(url.pathname);
+          if (projectSchedules) {
+            if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+            let projectId: string;
+            try { projectId = decodeURIComponent(projectSchedules[1]); } catch { throw new WebAccessError("invalid_request"); }
+            const status = await scheduleAuthority.authenticated(identity, async (tx, actor) => {
+              await service.getViewInSession(tx, actor, projectId);
+              return readProjectScheduleStatus(tx, { tenantId: options.tenantId, projectId }, new Date(clock()).toISOString());
+            });
+            return Response.json(status, { headers: privateResponseHeaders });
           }
           const projectOverview = /^\/api\/v1\/projects\/([^/]+)\/overview$/.exec(url.pathname);
           if (projectOverview) {

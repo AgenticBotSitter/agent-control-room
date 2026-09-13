@@ -11,6 +11,7 @@ import { ProjectOverviewActivity } from "./project-overview-activity";
 import { ProjectNavigation } from "./project-navigation";
 import { ConfiguredTimestamp } from "./configured-timestamp";
 import { useProductModule } from "./product-configuration";
+import { ProjectScheduleStatusPanel } from "./schedule-status";
 
 export type ProjectSection = "overview" | "inbox" | "agents" | "automations" | "settings";
 
@@ -179,10 +180,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
               Cancel and resume are not supported from this page.</p>
             <a className="private-action-link" href="/workers">Open all worker connections</a>
           </section>{sessionObservations && <SessionObservations projectId={projectId} />}</>}
-          {section === "automations" && <section className="private-panel"><h2>Project automations</h2>
-            <p>Project schedules and recurring procedures are not connected to this release. No automated work or background schedule is implied.</p>
-            <p className="private-note">Use Work for saved task proposals. Starting or repeating work requires a configured service and its separate authority checks.</p>
-          </section>}
+          {section === "automations" && <ProjectScheduleStatusPanel projectId={projectId} />}
           {section === "settings" && <section className="private-panel"><h2>Project status</h2>
             <p className="private-summary">{project.summary || "No summary added."}</p>
             {project.lifecycleEditable && project.origin === "ordinary" ? <div className="private-actions">{(["active", "paused", "completed", "archived"] as const)
