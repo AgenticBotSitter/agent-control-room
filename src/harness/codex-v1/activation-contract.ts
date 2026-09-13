@@ -47,17 +47,17 @@ export function parseCodexTaskActivationV1(value: unknown): CodexTaskActivationB
 }
 
 export type CodexDispatchFrameForActivationV1 = Readonly<{
-  type: 'harness.codex.dispatch'; direction: 'server_to_node'; senderKind: 'control_room';
+  type: 'harness.codex.dispatch'; direction: 'node_to_server' | 'server_to_node'; senderKind: 'node' | 'control_room';
   messageId: string; tenantId: string; actorId: string; keyId: string; connectionId: string;
   sentAt: string; expiresAt: string; body: CodexTaskDispatchBodyV1;
 }>;
 export type CodexDispatchReceiptFrameForActivationV1 = Readonly<{
-  type: 'harness.codex.dispatch.receipt'; direction: 'node_to_server'; senderKind: 'node';
+  type: 'harness.codex.dispatch.receipt'; direction: 'node_to_server' | 'server_to_node'; senderKind: 'node' | 'control_room';
   messageId: string; causationId?: string; tenantId: string; actorId: string; keyId: string;
   connectionId: string; sentAt: string; expiresAt: string; body: CodexTaskDispatchReceiptBodyV1;
 }>;
 export type CodexActivationFrameV1 = Readonly<{
-  type: 'harness.codex.dispatch.activation'; direction: 'server_to_node'; senderKind: 'control_room';
+  type: 'harness.codex.dispatch.activation'; direction: 'node_to_server' | 'server_to_node'; senderKind: 'node' | 'control_room';
   messageId: string; causationId?: string; tenantId: string; actorId: string; keyId: string;
   connectionId: string; sentAt: string; expiresAt: string; body: CodexTaskActivationBodyV1;
 }>;
