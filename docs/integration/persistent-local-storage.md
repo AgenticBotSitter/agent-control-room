@@ -1,0 +1,32 @@
+# Persistent local artifact storage
+
+`PersistentLocalArtifactStorageV1` is an inert local byte adapter for canonical native-result artifacts. It implements both `ArtifactStoragePortV1` and `ArtifactReadPortV1`; it does not publish a result, complete a job, update metadata, start a provider, choose credentials, or create a storage directory.
+
+## Ownership and configuration
+
+The caller must create one empty private directory and pass its canonical absolute path to `createPersistentLocalArtifactStorageV1`. The adapter captures that directory's canonical path, device, and inode. Every later operation rechecks the same identity and, on POSIX systems, requires that neither group nor other users have permissions.
+
+All limits are explicit:
+
+- `maximumArtifacts` bounds directory inventory work and object count.
+- `maximumFileBytes` is the per-result logical-byte limit and cannot exceed the native-result contract limit of 65,536 bytes.
+- `maximumTotalBytes` bounds the sum of logical result bytes.
+- `operationTimeoutMs` bounds a complete adapter operation, including durability synchronization. A timeout makes the adapter uncertain and it returns no bytes or receipt.
+
+No production root, default path, URL, environment variable, or credential is selected here. Deployment configuration and backup/restore integration remain separate work.
+
+## Stored form and replay
+
+Only canonical `artifact:native:<64 lowercase hex characters>` identities are accepted. This is the shape produced by `nativeResultId`. Caller-supplied paths, URLs, traversal components, absolute paths, and either path separator are therefore invalid. The physical filename is a SHA-256 mapping of the artifact identity; the caller never supplies or receives it.
+
+Each file is a create-once envelope containing the exact artifact identity, content hash, logical size, and result bytes. Reads validate the envelope, recompute the hash and size with `checkedResultBytes`, and compare the opened file with the directory entry before returning a copy. The returned locator is opaque and contains no root or physical path.
+
+An exact replay returns the same descriptor. Different bytes for the same identity return `storage_conflict`. A new adapter over the unchanged root can read and exactly replay the durable object. The adapter never replaces an existing artifact.
+
+## Failure and custody rules
+
+Writes use a create-exclusive lock, a private pending file, file synchronization, create-once linking, directory synchronization, and exact readback. Only a lock acquired by the current operation is removed, and only after bounded successful cleanup. A stale lock, pending file, foreign entry, symlink, hardlink, changed root, changed file identity, mutation, truncation, malformed envelope, cancellation after mutation starts, or timed-out operation fails closed as `storage_ambiguous`.
+
+The adapter does not repair or delete uncertain files. Operators must preserve the root and reconcile uncertain storage outside this adapter. Restarting the adapter is not permission to recover a lock or retry a write.
+
+The tests use actual filesystem operations in disposable private directories. They cover restart replay, concurrent conflict, quotas, cancellation/deadline refusal, mutation and truncation, traversal forms, symlink and hardlink custody, root substitution, and preservation of stale or foreign evidence. These tests are adapter evidence only; they do not qualify a production filesystem, backup process, or complete result-publication path.
