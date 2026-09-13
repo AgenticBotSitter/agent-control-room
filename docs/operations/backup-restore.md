@@ -60,4 +60,3 @@ The temporary test suite uses only a fake executable and local disposable reposi
 Restic supports S3-compatible repositories, but this package has not qualified any provider, endpoint, transport, retention policy, or credential set. In particular, Cloudflare R2 is not claimed append-only. Before using it, independently test upload, interrupted upload, listing, exact restore, integrity checking, credential separation, denial of delete to the backup identity, and recovery using the restore identity.
 
 The project does not bundle restic. Upstream revision and license evidence are recorded in `examples/backup/restic-provenance.json`. If a future distribution bundles a binary, its platform checksum and BSD-2-Clause notice must be added to the release license inventory.
-
