@@ -53,8 +53,9 @@ need not ship. Source names/version metadata are not blanket security clearance.
   session state merely to display a project. Closing a view must not stop work.
 - [Hermes WebUI](https://github.com/nesquena/hermes-webui): session/action and stale
   indicator behavior; full shell/global state is not a drop-in React component.
-- [Herdr](https://github.com/herdrdev/herdr): observation/terminal candidate, not
-  task approval or completion authority. Authenticated adapter comparison remains open.
+- [Herdr](https://github.com/herdrdev/herdr): selected only for optional read-only
+  observation, not task approval or completion authority. Component comparison is
+  closed; live host/socket/lifecycle qualification remains only if it is enabled.
 - [Hermes Studio](https://github.com/EKKOLearnAI/hermes-studio): source-specific
   licensing review required before copying; not treated as permissive UI source.
 - Agent Orchestrator and AI Maestro: retain selective workspace/notification ideas;
