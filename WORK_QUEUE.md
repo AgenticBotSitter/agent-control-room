@@ -10,7 +10,7 @@ Permanent entry point for people and bots. Read the [build/reuse plan](PUBLIC_BU
 and [worker skill](skills/public-build-worker/SKILL.md). Issues are the live status
 record; no documentation commit is needed every time a job changes state.
 
-Public `main` is the reconciled implementation baseline through PR #133. It now
+Public `main` is the reconciled implementation baseline through PR #134. It now
 includes the configurable-project proof, explicit project pages, safe Project News,
 owner-attention prioritization, exact and relative activity times, verified 360px
 navigation, restart-style recovery after both successful and failed verification,
@@ -57,16 +57,17 @@ where the work is concentrated without requiring chat history.
 
 - **Assigned:** #2 Windows portability, #8 Hermes connector, #11 shipped notices,
   #27 Idea Lab/article research, #62 Claude connector, #63 PostgreSQL/recovery,
-  #64 distributable service, #122 ingress/bootstrap conformance and #127 first-owner
-  ceremony. #65 remains the parent integration outcome for persistent result storage.
+  #64 distributable service and #127 first-owner ceremony. #65 remains the parent
+  integration outcome for persistent result storage.
 - **Ready for reservation now:** #125 Mac/Linux worker rehearsal, #126 server
-  composition failures and #128 retained restic backups. Each is a substantial,
-  self-contained package with owned paths, reuse choices and acceptance checks.
+  composition failures, #128 retained restic backups and #135 persistent-storage
+  composition. Each is a substantial, self-contained package with owned paths,
+  reuse choices and acceptance checks.
 - **Lead integration active:** #10 configurable frontend and #26 canonical shared
   two-harness execution/results.
 - **Recently completed:** #115 persistent local artifact storage, #116 truthful
-  schedule planning/status, #120 occurrence admission and #121 the security/recovery
-  fault matrix.
+  schedule planning/status, #120 occurrence admission, #121 the security/recovery
+  fault matrix and #122 offline authentication/ingress conformance.
 - **Waiting on named inputs, not forgotten:** #1 final real browser acceptance, the
   automatic-dispatch remainder of #29, the integration/backup remainder of #65, #66
   full server composition, #68 worker installation and #61 final release qualification.
