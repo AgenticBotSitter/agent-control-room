@@ -113,4 +113,16 @@ test("missing, duplicated and wrong database bindings fail before readiness", as
   await assert.rejects(opened.captureInventory(database([{ ...row,
     receipt_auth_tag: hmacSha256Tag(integrityKey, { purpose: "native-result-receipt/v1", receipt: { ...row.receipt,
       contentHash: sha256Digest("tampered") } }) }]), tenantId, integrityKey), /private_artifact_storage_unavailable/);
+
+  const { nodeId: _nodeId, ...incompleteNative } = row.receipt;
+  await assert.rejects(opened.captureInventory(database([{ ...row, receipt: incompleteNative,
+    receipt_auth_tag: hmacSha256Tag(integrityKey,
+      { purpose: "native-result-receipt/v1", receipt: incompleteNative }) }]), tenantId, integrityKey),
+  /private_artifact_storage_unavailable/);
+
+  const incompleteCodex = { ...row.receipt, schema: "control-room.codex-result-receipt/v1" };
+  await assert.rejects(opened.captureInventory(database([{ ...row, receipt: incompleteCodex,
+    receipt_auth_tag: hmacSha256Tag(integrityKey,
+      { purpose: "codex-result-receipt/v1", receipt: incompleteCodex }) }]), tenantId, integrityKey),
+  /private_artifact_storage_unavailable/);
 });

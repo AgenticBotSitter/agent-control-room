@@ -2,8 +2,9 @@ import { z } from "zod";
 import { timingSafeEqual } from "node:crypto";
 import type { DatabaseClient } from "../../persistence/database";
 import { artifactManifestRecordSchema } from "../../domain/v1";
-import { checkedResultBytes, type NativeResultConfiguration,
+import { checkedResultBytes, nativeResultReceiptSchema, type NativeResultConfiguration,
   type NativeResultReadConfiguration } from "../../artifacts/v1/native-results";
+import { codexResultReceiptSchemaV1 } from "../../artifacts/v1/codex-result-receipt";
 import { nativeResultReservationSchemaV1 } from "../../artifacts/v1/native-result-reservation";
 import { codexResultReservationSchemaV1 } from "../../artifacts/v1/codex-result-reservation";
 import {
@@ -27,18 +28,7 @@ const inventoryHeaderSchema = z.object({
   storageNamespaceDigest: digestSchema,
 }).strict();
 
-const receiptSchema = z.object({
-  schema: z.enum(["control-room.native-result-receipt/v1", "control-room.codex-result-receipt/v1"]),
-  artifactId: localId,
-  tenantId: localId,
-  projectId: localId,
-  jobId: localId,
-  attemptId: localId,
-  runId: localId,
-  contentHash: digestSchema,
-  sizeBytes: z.number().int().nonnegative().max(65_536),
-  manifestDigest: digestSchema,
-}).passthrough();
+const receiptSchema = z.discriminatedUnion("schema", [nativeResultReceiptSchema, codexResultReceiptSchemaV1]);
 
 type InventoryRow = {
   tenant_id: string | null;
@@ -169,7 +159,9 @@ export async function openPrivateArtifactStorageV1(
     for (const row of rows) {
       if (signal?.aborted || !row.receipt || !row.receipt_auth_tag || !row.manifest
         || !row.reservation || !row.reservation_auth_tag) return unavailable();
-      const receipt = receiptSchema.parse(row.receipt);
+      const parsedReceipt = receiptSchema.safeParse(row.receipt);
+      if (!parsedReceipt.success) return unavailable();
+      const receipt = parsedReceipt.data;
       const manifest = artifactManifestRecordSchema.parse(row.manifest);
       const reserved = reservation(row.reservation);
       const identity = reserved.identity;
