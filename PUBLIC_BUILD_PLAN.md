@@ -60,11 +60,13 @@ using a unique contributor/worker identifier when several bots share one GitHub 
 ## Starting revision and branch transition
 
 Public `main` is the common implementation baseline, reconciled and verified through
-PR #96 at `9f4eef294fb4ecb202e284e934a8944a788ae086`. That baseline retains the component
-implementation, public collaboration plan, CI and Windows refusal slice; adds the
-reviewed connector, security/configuration and product-shell contracts; and proves
-compiled browser journeys for project lifecycle, protected result review and linked
-revision preparation. It does not constitute production or live harness qualification.
+PR #102. That baseline retains the component implementation, public collaboration
+plan, CI and Windows refusal slice; adds the reviewed connector,
+security/configuration and product-shell contracts; proves that one build supports
+two isolated configurations; and includes explicit project pages, safe Project News,
+owner-attention prioritization and a restart-style lifecycle journey over disposable
+data. It does not constitute production, physical process/database restart, or live
+harness qualification.
 
 Existing PRs keep their recorded targets. Before any new implementation starts, the
 maintainer records its immutable base SHA, exact target branch, owned paths and ready
