@@ -13,10 +13,10 @@ Project contact: [Alastair@agenticbotsitter.com](mailto:Alastair@agenticbotsitte
 
 ## Join the build — start here
 
-> **Maintainer pause:** external worker and bot assignments are temporarily cleared
-> while the lead integrates the common application. Do not claim or start an issue
-> until its `status:paused` label is removed and a maintainer confirms the assignment.
-> Existing branches, submissions, and credit are preserved.
+> **MVP work is open.** Choose an issue marked `status:ready` and use the exact
+> two-line claim request in the public worker instructions. The GitHub claim
+> controller serializes valid requests, records `CLAIM ACCEPTED`, pins the current
+> base and changes the issue to Working. No separate maintainer reply is required.
 
 Everything needed to contribute is public. No invitation, private repository, paid
 agent subscription or access to our machines is needed. Humans and bots are welcome.
@@ -28,7 +28,7 @@ everyone; no separate private core.
 
 | What you want to know | Direct link / answer |
 | --- | --- |
-| What can I take on now? | No assignment while the maintainer pause above is active. When work reopens, [Ready assignments](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aready) is the authoritative list. |
+| What can I take on now? | [Ready assignments](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aready) is the authoritative list. |
 | What is being worked or reviewed? | [Working](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aworking) · [In review](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Ain-review) · [Open PRs](https://github.com/AgenticBotSitter/agent-control-room/pulls) |
 | What is blocked, and who decides? | [Needs decision](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aneeds-decision) — each names the missing input |
 | What has been accepted? | [Completed outcomes](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aclosed+label%3Astatus%3Adone) · [Merged contributions](https://github.com/AgenticBotSitter/agent-control-room/pulls?q=is%3Apr+is%3Amerged) — partial PRs do not imply a whole feature is finished |
@@ -49,9 +49,10 @@ compatibility is claimed by the demo.
 
 ### Contribute in five steps
 
-1. After the maintainer pause is lifted, pick a ready issue fitting your platform and skills. Comment with the slice you
-   want; the maintainer confirms ownership to prevent duplicate work. No special bot
-   name is required. Small non-overlapping typo fixes can be proposed directly.
+1. Pick a ready issue fitting your platform and skills. Post the exact `CLAIM REQUEST`
+   and stable `worker-id` lines from the public worker instructions. Wait only for the
+   automatic `CLAIM ACCEPTED` marker; it normally arrives within seconds and prevents
+   duplicate work. No special bot name is required.
 2. Fork this repository using GitHub's **Fork** button, then clone **your fork**:
 
    ```sh
@@ -79,9 +80,9 @@ compatibility is claimed by the demo.
    review/merge; public CI checks the contribution. Continue other reserved independent
    work while review is pending. [Full contribution guide](CONTRIBUTING.md).
 
-No eligible work in the ready view? During a maintainer-wide pause, wait rather than
-request or invent work. At other times, offer a concrete capability in #12; maintainers
-must supply a safe independent slice or identify the decision blocking it. Our [worker instructions](skills/public-build-worker/SKILL.md)
+No eligible work in the ready view? Offer a concrete capability in #12 rather than
+inventing or duplicating work. Maintainers will publish a safe independent slice or
+identify the dependency blocking it. Our [worker instructions](skills/public-build-worker/SKILL.md)
 and [review instructions](skills/public-build-review/SKILL.md) are optional reusable
 guides; there is no private controller or mandatory result-manifest ceremony.
 

@@ -10,7 +10,7 @@ Permanent entry point for people and bots. Read the [build/reuse plan](PUBLIC_BU
 and [worker skill](skills/public-build-worker/SKILL.md). Issues are the live status
 record; no documentation commit is needed every time a job changes state.
 
-Public `main` is the reconciled implementation baseline through PR #139. It now
+Public `main` is the reconciled implementation baseline through PR #147. It now
 includes the configurable-project proof, explicit project pages, safe Project News,
 owner-attention prioritization, exact and relative activity times, verified 360px
 navigation, restart-style recovery after both successful and failed verification,
@@ -56,22 +56,24 @@ defines the actual interface; contributors need no private design files or chat 
 The issue labels are the live source of truth; this summary tells a new contributor
 where the work is concentrated without requiring chat history.
 
-- **Assigned:** #2 Windows portability, #8 Hermes connector, #11 shipped notices,
-  #27 Idea Lab/article research, #62 Claude connector, #63 PostgreSQL/recovery and
-  #64 distributable service. #65 remains the parent integration outcome for
-  persistent result storage.
-- **Ready for reservation now:** #125 Mac/Linux worker rehearsal and #128 retained
-  restic backups. Each is a substantial,
-  self-contained package with owned paths, reuse choices and acceptance checks.
-- **Lead integration active:** #10 configurable frontend and #26 canonical shared
-  two-harness execution/results. #135 persistent-storage composition is in review.
-- **Recently completed:** #115 persistent local artifact storage, #116 truthful
-  schedule planning/status, #120 occurrence admission, #121 the security/recovery
-  fault matrix, #122 offline authentication/ingress conformance, #126 whole-server
-  failure proof and #127 the inert, restart-safe first-owner ceremony.
-- **Waiting on named inputs, not forgotten:** #1 final real browser acceptance, the
-  automatic-dispatch remainder of #29, the integration/backup remainder of #65, #66
-  full server composition, #68 worker installation and #61 final release qualification.
+- **Assigned:** #2 Windows portability, #8 Hermes connector, #27 Idea Lab/article
+  research, #62 Claude connector, #63 PostgreSQL/recovery and #64 distributable
+  service.
+- **Ready for automatic reservation now:** #148 safely connects saved schedule
+  occurrences to canonical planning and assignment without starting an agent.
+- **Lead integration active:** shared server composition, security boundaries and
+  final review of the assigned packages. PR #147 merged the common private
+  assignment core used by owner and future scheduled assignment.
+- **Recently completed:** #11 portable release notices, #115/#135 persistent local
+  artifact storage and composition, #116 truthful schedule planning/status, #120
+  occurrence admission, #121 the security/recovery fault matrix, #122 offline
+  authentication/ingress conformance, #125 worker lifecycle rehearsal, #126
+  whole-server failure proof, #127 the inert restart-safe first-owner ceremony and
+  #128 independently retained backups.
+- **Waiting on named inputs, not forgotten:** #1/#10 final real browser acceptance,
+  the remaining server wiring in #29, the integration/backup remainder of #65, #66
+  full server composition, #67 private ingress acceptance, #68 worker installation,
+  #60 physical recovery proof and #61 final release qualification.
 
 Choose only a `status:ready` issue. Post the exact two-line reservation request in the
 worker skill. The serialized GitHub controller rechecks the issue, records the current
@@ -84,7 +86,7 @@ not permission to edit.
 
 This is the whole public-core backlog, not a sample of ten jobs. Open the linked issue
 for its live status, immutable starting revision, owned paths, dependencies and checks.
-Several independent rows can proceed at once after the maintainer-wide pause is lifted.
+Several independent rows can proceed at once when their live issue is Ready or Working.
 Existing contributors retain their preserved branches; new contributors reserve a
 non-overlapping outcome instead of replacing them.
 
@@ -172,9 +174,8 @@ not have to forward files or act as courier. Historical evidence remains intact.
 
 ## Standing instruction for an existing worker session
 
-> Read this queue and the public worker skill. If the maintainer-wide pause is active,
-> stop without editing or pushing. Otherwise choose ready work matching your actual
-> platform/capability. Follow a confirmed assignment or request the automatic reservation before
+> Read this queue and the public worker skill. Choose ready work matching your actual
+> platform/capability. Follow an accepted assignment or request the automatic reservation before
 > editing. Report progress, blockers and PRs in its issue, then continue the next
 > confirmed independent assignment. Preserve other checkouts and dependency gates;
 > do not self-merge or infer native-effect authority. If nothing is eligible, report
