@@ -143,3 +143,42 @@ test("persisted reservation validation rejects recomputed identifier and state-e
     { ...reserved, identity: { ...reserved.identity, artifactId: "artifact:native:other" } },
   ]) assert.equal(nativeResultReservationSchemaV1.safeParse(rehash(changed)).success, false);
 });
+
+test("persisted later states reject forged byte verification despite a recomputed contract digest", () => {
+  const reserved = reserve();
+  const verified = verifyNativeResultReservationBytesV1(reserved, bytes);
+  const committed = commitNativeResultReservationMetadataV1({
+    reservation: verified,
+    manifestDigest: sha256Digest("manifest"),
+    receiptDigest: sha256Digest("receipt"),
+  });
+  const uncertain = markNativeResultReservationStorageUncertainV1({
+    reservation: verified,
+    uncertaintyDigest: sha256Digest("uncertain-after-verification"),
+  });
+
+  const forgedVerified = rehash({
+    ...verified,
+    bytesVerificationDigest: sha256Digest("forged-verified-byte-evidence"),
+  });
+  assert.equal(nativeResultReservationSchemaV1.safeParse(forgedVerified).success, false);
+  assert.throws(() => commitNativeResultReservationMetadataV1({
+    reservation: forgedVerified,
+    manifestDigest: sha256Digest("manifest"),
+    receiptDigest: sha256Digest("receipt"),
+  }), /reservation_unavailable/);
+
+  const forgedCommitted = rehash({
+    ...committed,
+    bytesVerificationDigest: sha256Digest("forged-committed-byte-evidence"),
+  });
+  assert.equal(nativeResultReservationSchemaV1.safeParse(forgedCommitted).success, false);
+  assert.throws(() => reconcileNativeResultReservationCrashV1(forgedCommitted), /reservation_unavailable/);
+
+  const forgedUncertain = rehash({
+    ...uncertain,
+    bytesVerificationDigest: sha256Digest("forged-uncertain-byte-evidence"),
+  });
+  assert.equal(nativeResultReservationSchemaV1.safeParse(forgedUncertain).success, false);
+  assert.throws(() => reconcileNativeResultReservationCrashV1(forgedUncertain), /reservation_unavailable/);
+});

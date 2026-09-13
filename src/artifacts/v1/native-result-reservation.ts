@@ -50,6 +50,16 @@ const reservationMaterialSchemaV1 = z.object({
   deletesArtifact: z.literal(false),
 }).strict();
 
+function bytesVerificationDigestV1(identity: z.infer<typeof reservationIdentitySchemaV1>): string {
+  return sha256Digest({
+    artifactId: identity.artifactId,
+    contentHash: identity.contentHash,
+    sizeBytes: identity.sizeBytes,
+    verifiedBytesHash: identity.contentHash,
+    verifiedSizeBytes: identity.sizeBytes,
+  });
+}
+
 export const nativeResultReservationSchemaV1 = reservationMaterialSchemaV1.extend({
   contractDigest: digestSchema,
 }).strict().superRefine((value, context) => {
@@ -58,6 +68,8 @@ export const nativeResultReservationSchemaV1 = reservationMaterialSchemaV1.exten
   if (value.identity.artifactId !== nativeResultId(value.identity.tenantId, value.identity.runId)
     || value.identityDigest !== identityDigest
     || value.reservationId !== `reservation:native:${identityDigest.slice(7)}`
+    || (value.bytesVerificationDigest !== null
+      && value.bytesVerificationDigest !== bytesVerificationDigestV1(value.identity))
     || value.contractDigest !== sha256Digest(material)) {
     context.addIssue({ code: "custom", message: "native result reservation identity mismatch" });
   }
@@ -173,10 +185,8 @@ export function verifyNativeResultReservationBytesV1(
 ): NativeResultReservationV1 {
   try {
     const reservation = nativeResultReservationSchemaV1.parse(reservationValue);
-    const { bytes } = checkedResultBytes(bytesValue, reservation.identity);
-    const bytesVerificationDigest = sha256Digest({ artifactId: reservation.identity.artifactId,
-      contentHash: reservation.identity.contentHash, sizeBytes: reservation.identity.sizeBytes,
-      verifiedBytesHash: reservation.identity.contentHash, verifiedSizeBytes: bytes.byteLength });
+    checkedResultBytes(bytesValue, reservation.identity);
+    const bytesVerificationDigest = bytesVerificationDigestV1(reservation.identity);
     if (reservation.state === "storage_uncertain") return unavailable();
     if (reservation.bytesVerificationDigest !== null) {
       if (reservation.bytesVerificationDigest !== bytesVerificationDigest) conflict();
