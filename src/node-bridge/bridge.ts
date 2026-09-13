@@ -22,6 +22,9 @@ import type { NativeDispatchIntakeHandler } from "./native-dispatch-handler";
 import type { CodexDispatchIntakeHandlerV1 } from './codex-dispatch-handler';
 import type { CodexActivationIntakeHandlerV1 } from './codex-activation-handler';
 import { CODEX_ACTIVATION_FEATURE } from '../harness/codex-v1/activation-contract';
+import { CODEX_RESULT_RETURN_FEATURE_V1, codexResultReturnBodySchemaV1,
+  type CodexResultReturnBodyV1, type CodexResultReturnFrameV1,
+  type CodexResultReturnReceiptFrameV1 } from '../harness/codex-v1/result-return';
 import { nativeTaskSnapshotBodySchema, type NativeTaskSnapshotBody } from "../harness/v1/native-observation";
 
 export type BridgeState = "stopped" | "connecting" | "authenticating" | "reconciling" | "online" | "backing_off" | "draining";
@@ -69,6 +72,7 @@ export interface NativeDeliveryChannel {
 
 export interface CodexDeliveryChannel extends NativeDeliveryChannel {}
 export interface CodexActivationChannel extends NativeDeliveryChannel {}
+export interface CodexResultReturnChannel extends NativeDeliveryChannel {}
 
 export interface OpenBridgeOptions {
   now: string;
@@ -86,6 +90,12 @@ export class PortableNodeBridge {
   private sendQueue: Promise<void> = Promise.resolve();
   private connectionGeneration = 0;
   private connectionReconciled = false;
+  private codexResultWaiter?: {
+    messageId: string;
+    generation: number;
+    resolve(receipt: CodexResultReturnReceiptFrameV1): void;
+    reject(error: Error): void;
+  };
 
   constructor(
     private readonly identity: BridgeIdentity,
@@ -160,6 +170,27 @@ export class PortableNodeBridge {
           || this.statusValue.connectionId !== status.connectionId
           || !this.statusValue.enabledFeatures?.includes(CODEX_ACTIVATION_FEATURE)) {
           throw new Error('Codex activation channel is no longer current');
+        }
+      },
+    });
+  }
+
+  codexResultReturnChannel(): CodexResultReturnChannel | undefined {
+    const status = this.statusValue;
+    if (!this.connectionReconciled || status.state !== 'online' || status.lastSafeErrorCode || !this.transport
+      || !status.connectionId || !status.maxFrameBytes
+      || !this.identity.features.includes(CODEX_RESULT_RETURN_FEATURE_V1)
+      || !status.enabledFeatures?.includes(CODEX_RESULT_RETURN_FEATURE_V1)) return undefined;
+    const generation = this.connectionGeneration, transport = this.transport;
+    return Object.freeze({ tenantId: this.identity.tenantId, nodeId: this.identity.nodeId,
+      connectionId: status.connectionId, maxFrameBytes: status.maxFrameBytes,
+      grantsExecutionAuthority: false as const,
+      assertCurrent: () => {
+        if (!this.connectionReconciled || generation !== this.connectionGeneration || transport !== this.transport
+          || this.statusValue.state !== 'online' || this.statusValue.lastSafeErrorCode
+          || this.statusValue.connectionId !== status.connectionId
+          || !this.statusValue.enabledFeatures?.includes(CODEX_RESULT_RETURN_FEATURE_V1)) {
+          throw new Error('Codex result return channel is no longer current');
         }
       },
     });
@@ -287,6 +318,22 @@ export class PortableNodeBridge {
       } catch (error) { if (generation === this.connectionGeneration) this.failTransport(); throw error; }
     }
 
+    if (frame.type === 'harness.codex.result.return.receipt') {
+      try {
+        const channel = this.codexResultReturnChannel();
+        if (delivery !== 'accepted' || !channel) throw new Error('Codex result return receipt unavailable');
+        channel.assertCurrent();
+        const receipt = this.journal.recordCodexResultReturnReceipt(
+          frame as CodexResultReturnReceiptFrameV1, now);
+        channel.assertCurrent();
+        this.journal.markInboundProcessed(frame.messageId, now);
+        const waiter = this.codexResultWaiter;
+        if (waiter && waiter.generation === generation
+          && waiter.messageId === receipt.body.returnMessageId) waiter.resolve(receipt);
+        return;
+      } catch (error) { if (generation === this.connectionGeneration) this.failTransport(); throw error; }
+    }
+
     switch (frame.type) {
       case "connection.accepted":
         this.acceptConnection(frame.body, frame.causationId, now);
@@ -359,6 +406,91 @@ export class PortableNodeBridge {
     return disposition;
   }
 
+  /** Consumes exactly one durable current-connection send slot for an already
+   * projected result. The sent marker is committed before transport I/O; any
+   * failure or crash therefore remains ambiguous and cannot be retried. */
+  async sendCodexResultReturn(queueId: string, input: CodexResultReturnBodyV1,
+    now: string, signal: AbortSignal, receiptTimeoutMs = 5_000): Promise<CodexResultReturnReceiptFrameV1> {
+    const generation = this.connectionGeneration;
+    return this.serializeSend(async () => {
+      if (generation !== this.connectionGeneration) throw new Error('Codex result connection changed while queued');
+      if (!(signal instanceof AbortSignal) || signal.aborted || !Number.isSafeInteger(receiptTimeoutMs)
+        || receiptTimeoutMs < 1 || receiptTimeoutMs > 30_000 || this.codexResultWaiter) {
+        throw new Error('Codex result return operation unavailable');
+      }
+      const channel = this.codexResultReturnChannel();
+      if (!channel) throw new Error('Codex result return channel unavailable');
+      channel.assertCurrent();
+      const activation = this.journal.acceptedCodexActivation(queueId);
+      const body = codexResultReturnBodySchemaV1.parse(input);
+      if (!activation || activation.frame.connectionId !== channel.connectionId
+        || activation.frame.body.queueId !== queueId
+        || activation.frame.body.runId !== body.identity.runId
+        || activation.frame.body.activationId !== body.activation.activationId
+        || activation.frame.body.activationDigest !== body.activation.activationDigest
+        || activation.frame.body.connectorProfileDigest !== body.connector.profileDigest
+        || body.publication.connection.connectionId !== channel.connectionId
+        || body.identity.tenantId !== channel.tenantId || body.identity.nodeId !== channel.nodeId
+        || body.returnedAt !== now) throw new Error('Codex result return binding unavailable');
+      const validUntil = Date.parse(body.physicalQualification.validUntil);
+      const expiresAtMs = Math.min(Date.parse(addSeconds(now, 300)), validUntil);
+      if (!Number.isSafeInteger(expiresAtMs) || expiresAtMs <= Date.parse(now)) {
+        throw new Error('Codex result qualification expired');
+      }
+      const connectionId = channel.connectionId, transport = this.requireTransport();
+      const sequence = this.journal.nextOutboundSequence(connectionId);
+      const unsigned: UnsignedNodeFrame<'harness.codex.result.return'> = {
+        protocol: NODE_PROTOCOL_V1, direction: 'node_to_server', senderKind: 'node',
+        tenantId: this.identity.tenantId, actorId: this.identity.nodeId, keyId: this.identity.keyId,
+        connectionId, sequence, messageId: `message:${this.idFactory()}`,
+        correlationId: `correlation:${body.returnId}`, causationId: body.activation.activationId,
+        nonce: randomBytes(24).toString('base64url'), sentAt: now,
+        expiresAt: new Date(expiresAtMs).toISOString(), type: 'harness.codex.result.return', body,
+      };
+      const unsignedDigest = sha256Digest(unsigned);
+      const signed = await this.signer.sign(unsigned);
+      channel.assertCurrent();
+      const frame = signedNodeFrameSchema.parse(signed);
+      if (frame.type !== 'harness.codex.result.return') throw new Error('Codex result signer type changed');
+      const { signature, bodyDigest, ...signedMaterial } = frame;
+      if (!signature || bodyDigest !== sha256Digest(body) || sha256Digest(signedMaterial) !== unsignedDigest
+        || Buffer.byteLength(JSON.stringify(frame), 'utf8') > channel.maxFrameBytes) {
+        throw new Error('Codex result signer changed the prepared frame');
+      }
+      const resultFrame = frame as CodexResultReturnFrameV1;
+      this.journal.prepareCodexResultReturn(resultFrame, activation.frame, now, channel.assertCurrent);
+      channel.assertCurrent();
+      // This is intentionally before send. A write to the transport is not an
+      // observable exactly-once boundary; durable uncertainty must win.
+      this.journal.markCodexResultReturnSent(resultFrame.messageId, now);
+      channel.assertCurrent();
+      let resolveReceipt!: (receipt: CodexResultReturnReceiptFrameV1) => void;
+      let rejectReceipt!: (error: Error) => void;
+      const receipt = new Promise<CodexResultReturnReceiptFrameV1>((resolve, reject) => {
+        resolveReceipt = resolve; rejectReceipt = reject;
+      });
+      void receipt.catch(() => {});
+      this.codexResultWaiter = { messageId: resultFrame.messageId, generation,
+        resolve: resolveReceipt, reject: rejectReceipt };
+      const abort = () => rejectReceipt(new Error('Codex result return receipt unavailable'));
+      signal.addEventListener('abort', abort, { once: true });
+      const timer = setTimeout(abort, receiptTimeoutMs);
+      try {
+        await transport.send(JSON.stringify(resultFrame));
+        channel.assertCurrent();
+        const accepted = await receipt;
+        channel.assertCurrent();
+        return Object.freeze(structuredClone(accepted));
+      } catch (error) {
+        if (generation === this.connectionGeneration) this.failTransport();
+        throw error;
+      } finally {
+        clearTimeout(timer); signal.removeEventListener('abort', abort);
+        if (this.codexResultWaiter?.messageId === resultFrame.messageId) this.codexResultWaiter = undefined;
+      }
+    });
+  }
+
   async flushNativeSnapshots(now: string): Promise<number> {
     if (!["online", "draining"].includes(this.statusValue.state)
       || !this.statusValue.enabledFeatures?.includes("harness.native.snapshot.v1")) return 0;
@@ -401,6 +533,8 @@ export class PortableNodeBridge {
   }
 
   async close(): Promise<void> {
+    this.codexResultWaiter?.reject(new Error('Codex result return connection closed'));
+    this.codexResultWaiter = undefined;
     this.connectionGeneration += 1;
     this.connectionReconciled = false;
     const transport = this.transport;
@@ -411,6 +545,8 @@ export class PortableNodeBridge {
   }
 
   async disconnected(): Promise<number> {
+    this.codexResultWaiter?.reject(new Error('Codex result return connection disconnected'));
+    this.codexResultWaiter = undefined;
     this.connectionGeneration += 1;
     this.connectionReconciled = false;
     const transport = this.transport;
@@ -462,7 +598,8 @@ export class PortableNodeBridge {
     for (const pending of this.journal.pendingOutbound(current)) {
       // Delivery-receipt uncertainty is reconciled explicitly; never replay it over a replacement connection.
       if (pending.frame.type === "harness.native.dispatch.receipt"
-        || pending.frame.type === 'harness.codex.dispatch.receipt') continue;
+        || pending.frame.type === 'harness.codex.dispatch.receipt'
+        || pending.frame.type === 'harness.codex.result.return') continue;
       try {
         await this.requireTransport().send(JSON.stringify(pending.frame));
         this.journal.markSent(pending.frame.messageId, now);
@@ -592,6 +729,8 @@ export class PortableNodeBridge {
   }
 
   private failTransport(): void {
+    this.codexResultWaiter?.reject(new Error('Codex result return transport unavailable'));
+    this.codexResultWaiter = undefined;
     this.connectionGeneration += 1;
     this.connectionReconciled = false;
     const reconnectAttempt = this.statusValue.reconnectAttempt + 1;

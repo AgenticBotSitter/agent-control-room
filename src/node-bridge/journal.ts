@@ -17,6 +17,8 @@ import { matchCodexTaskDispatchReceiptV1, type CodexTaskDispatchReceiptBodyV1 } 
 import { matchCodexTaskActivationV1, type CodexActivationFrameV1,
   type CodexDispatchFrameForActivationV1,
   type CodexDispatchReceiptFrameForActivationV1 } from '../harness/codex-v1/activation-contract';
+import { codexResultReturnBodySchemaV1, matchCodexResultReturnReceiptV1,
+  type CodexResultReturnFrameV1, type CodexResultReturnReceiptFrameV1 } from '../harness/codex-v1/result-return';
 import { localId } from "../harness/v1/native-run-identifiers";
 import { parseWorkspaceIntent, parseWorkspaceCreation, parseWorkspaceRoots, assertSynchronousWorkspaceAuthority } from "./workspace-intent";
 
@@ -64,6 +66,15 @@ export interface JournalNodeOperationResult {
   acknowledgement: NodeOperationAcknowledgementBody;
   cancellationRequired: boolean;
   replayed: boolean;
+}
+
+export interface JournalCodexResultReturn {
+  frame: CodexResultReturnFrameV1;
+  status: "prepared" | "sent" | "receipted";
+  preparedAt: string;
+  sentAt?: string;
+  receipt?: CodexResultReturnReceiptFrameV1;
+  receiptedAt?: string;
 }
 
 const terminalEvents = new Set<JobEventBody["event"]>(["completed", "failed", "cancelled"]);
@@ -417,6 +428,155 @@ export class SqliteBridgeJournal implements ReplayGuard {
       currentAdmissionDigest: activationFrame.body.currentAdmissionDigest,
       receiptReceivedAt: activationFrame.body.receiptReceivedAt });
     return { frame: activationFrame, receivedAt: row.received_at };
+  }
+
+  /** One exact result-return intent. Preparing consumes the send slot before I/O;
+   * neither a prepared nor sent record may be re-enveloped on another connection. */
+  prepareCodexResultReturn(frameValue: CodexResultReturnFrameV1,
+    activationValue: CodexActivationFrameV1, preparedAt: string,
+    assertCurrent: () => void): "prepared" {
+    const frame = signedNodeFrameSchema.parse(frameValue);
+    if (frame.type !== "harness.codex.result.return") throw new Error("codex_result_return_type_invalid");
+    const resultFrame = frame as CodexResultReturnFrameV1;
+    const body = codexResultReturnBodySchemaV1.parse(resultFrame.body);
+    const activation = signedNodeFrameSchema.parse(activationValue);
+    if (activation.type !== "harness.codex.dispatch.activation") throw new Error("codex_result_return_activation_invalid");
+    const activationFrame = activation as CodexActivationFrameV1;
+    const at = Date.parse(preparedAt);
+    if (!Number.isFinite(at) || new Date(at).toISOString() !== preparedAt
+      || at < Date.parse(resultFrame.sentAt) || at >= Date.parse(resultFrame.expiresAt)
+      || resultFrame.direction !== "node_to_server" || resultFrame.senderKind !== "node"
+      || resultFrame.tenantId !== activationFrame.body.tenantId
+      || resultFrame.actorId !== activationFrame.body.nodeId
+      || resultFrame.connectionId !== activationFrame.connectionId
+      || resultFrame.causationId !== activationFrame.body.activationId
+      || body.identity.runId !== activationFrame.body.runId
+      || body.activation.activationId !== activationFrame.body.activationId
+      || body.activation.activationDigest !== activationFrame.body.activationDigest) {
+      throw new Error("codex_result_return_binding_invalid");
+    }
+    return this.transaction(() => {
+      assertSynchronousWorkspaceAuthority(assertCurrent);
+      const retained = this.acceptedCodexActivation(activationFrame.body.queueId);
+      if (!retained || retained.frame.messageId !== activationFrame.messageId
+        || sha256Digest(retained.frame) !== sha256Digest(activationFrame)) {
+        throw new Error("codex_result_return_activation_missing");
+      }
+      const prior = this.db.prepare(`SELECT return_id FROM bridge_codex_result_returns
+        WHERE return_id=? OR run_id=? OR message_id=?`).all(body.returnId, body.identity.runId,
+          resultFrame.messageId) as Array<{ return_id: string }>;
+      if (prior.length) throw new Error("codex_result_return_send_already_consumed");
+      const disposition = this.stageOutboundWithinTransaction(resultFrame, true, preparedAt);
+      if (disposition !== "staged") throw new Error("codex_result_return_prepare_invalid");
+      this.db.prepare(`INSERT INTO bridge_codex_result_returns
+        (return_id,run_id,activation_id,activation_message_id,message_id,connection_id,frame_json,frame_digest,
+         status,prepared_at) VALUES(?,?,?,?,?,?,?,?, 'prepared',?)`).run(body.returnId,
+          body.identity.runId, body.activation.activationId, activationFrame.messageId,
+          resultFrame.messageId, resultFrame.connectionId, JSON.stringify(resultFrame),
+          sha256Digest(resultFrame), preparedAt);
+      assertSynchronousWorkspaceAuthority(assertCurrent);
+      return "prepared" as const;
+    });
+  }
+
+  markCodexResultReturnSent(messageId: string, sentAt: string): void {
+    this.transaction(() => {
+      const row = this.db.prepare(`SELECT status,prepared_at FROM bridge_codex_result_returns WHERE message_id=?`)
+        .get(messageId) as { status: string; prepared_at: string } | undefined;
+      const at = Date.parse(sentAt);
+      if (!row || row.status !== "prepared" || !Number.isFinite(at)
+        || new Date(at).toISOString() !== sentAt || at < Date.parse(row.prepared_at)) {
+        throw new Error("codex_result_return_not_prepared");
+      }
+      const outbound = this.db.prepare(`UPDATE bridge_outbox
+        SET status='sent',send_attempts=1,last_sent_at=?
+        WHERE message_id=? AND status='pending' AND send_attempts=0`).run(sentAt, messageId);
+      const result = this.db.prepare(`UPDATE bridge_codex_result_returns SET status='sent',sent_at=?
+        WHERE message_id=? AND status='prepared' AND sent_at IS NULL`).run(sentAt, messageId);
+      if (outbound.changes !== 1 || result.changes !== 1) throw new Error("codex_result_return_sent_ambiguous");
+    });
+  }
+
+  /** Persists the exact authenticated server receipt. A receipt can close either
+   * prepared or sent uncertainty, but it never authorizes another transmission. */
+  recordCodexResultReturnReceipt(receiptValue: CodexResultReturnReceiptFrameV1,
+    receivedAt: string): CodexResultReturnReceiptFrameV1 {
+    const receipt = signedNodeFrameSchema.parse(receiptValue);
+    if (receipt.type !== "harness.codex.result.return.receipt") {
+      throw new Error("codex_result_return_receipt_type_invalid");
+    }
+    return this.transaction(() => {
+      const row = this.db.prepare(`SELECT activation_message_id,frame_json,frame_digest,status,
+        receipt_json,receipt_digest FROM bridge_codex_result_returns WHERE message_id=?`)
+        .get(receipt.body.returnMessageId) as { activation_message_id: string; frame_json: string;
+          frame_digest: string; status: JournalCodexResultReturn["status"];
+          receipt_json: string | null; receipt_digest: string | null } | undefined;
+      if (!row) throw new Error("codex_result_return_receipt_unexpected");
+      const frame = signedNodeFrameSchema.parse(JSON.parse(row.frame_json));
+      if (frame.type !== "harness.codex.result.return" || sha256Digest(frame) !== row.frame_digest) {
+        throw new Error("codex_result_return_integrity_invalid");
+      }
+      const activation = this.acceptedCommandWithinTransaction(row.activation_message_id);
+      if (!activation || activation.frame.type !== "harness.codex.dispatch.activation") {
+        throw new Error("codex_result_return_activation_missing");
+      }
+      const matched = matchCodexResultReturnReceiptV1({ resultFrame: frame, receiptFrame: receipt,
+        serverActorId: activation.frame.actorId, serverKeyId: activation.frame.keyId, receivedAt });
+      const receiptDigest = sha256Digest(matched);
+      if (row.status === "receipted") {
+        if (row.receipt_digest !== receiptDigest || row.receipt_json !== JSON.stringify(matched)) {
+          throw new Error("codex_result_return_receipt_conflict");
+        }
+        return structuredClone(matched);
+      }
+      const changed = this.db.prepare(`UPDATE bridge_codex_result_returns
+        SET status='receipted',receipt_message_id=?,receipt_json=?,receipt_digest=?,receipted_at=?
+        WHERE message_id=? AND status IN ('prepared','sent') AND receipt_json IS NULL`).run(
+          matched.messageId, JSON.stringify(matched), receiptDigest, receivedAt, frame.messageId);
+      const acknowledged = this.db.prepare(`UPDATE bridge_outbox SET status='acknowledged',acknowledged_at=?
+        WHERE message_id=? AND status IN ('pending','sent')`).run(receivedAt, frame.messageId);
+      if (changed.changes !== 1 || acknowledged.changes !== 1) {
+        throw new Error("codex_result_return_receipt_ambiguous");
+      }
+      return structuredClone(matched);
+    });
+  }
+
+  codexResultReturn(runIdValue: string): JournalCodexResultReturn | undefined {
+    const runId = localId.parse(runIdValue);
+    const row = this.db.prepare(`SELECT activation_message_id,frame_json,frame_digest,status,prepared_at,
+      sent_at,receipt_json,receipt_digest,receipted_at FROM bridge_codex_result_returns WHERE run_id=?`).get(runId) as {
+        activation_message_id: string;
+        frame_json: string; frame_digest: string; status: JournalCodexResultReturn["status"];
+        prepared_at: string; sent_at: string | null; receipt_json: string | null;
+        receipt_digest: string | null; receipted_at: string | null;
+      } | undefined;
+    if (!row) return undefined;
+    const frame = signedNodeFrameSchema.parse(JSON.parse(row.frame_json));
+    if (frame.type !== "harness.codex.result.return" || frame.body.identity.runId !== runId
+      || sha256Digest(frame) !== row.frame_digest
+      || (row.status === "prepared" && (row.sent_at || row.receipt_json || row.receipted_at))
+      || (row.status === "sent" && (!row.sent_at || row.receipt_json || row.receipted_at))
+      || (row.status === "receipted" && (!row.receipt_json || !row.receipt_digest || !row.receipted_at))) {
+      throw new Error("codex_result_return_integrity_invalid");
+    }
+    let receipt: CodexResultReturnReceiptFrameV1 | undefined;
+    if (row.receipt_json) {
+      const parsed = signedNodeFrameSchema.parse(JSON.parse(row.receipt_json));
+      if (parsed.type !== "harness.codex.result.return.receipt" || sha256Digest(parsed) !== row.receipt_digest) {
+        throw new Error("codex_result_return_integrity_invalid");
+      }
+      const activation = this.acceptedCommand(row.activation_message_id);
+      if (!activation || activation.frame.type !== "harness.codex.dispatch.activation") {
+        throw new Error("codex_result_return_integrity_invalid");
+      }
+      receipt = matchCodexResultReturnReceiptV1({ resultFrame: frame, receiptFrame: parsed,
+        serverActorId: activation.frame.actorId, serverKeyId: activation.frame.keyId,
+        receivedAt: row.receipted_at! });
+    }
+    return Object.freeze({ frame: structuredClone(frame as CodexResultReturnFrameV1), status: row.status,
+      preparedAt: row.prepared_at, ...(row.sent_at ? { sentAt: row.sent_at } : {}),
+      ...(receipt ? { receipt: structuredClone(receipt), receiptedAt: row.receipted_at! } : {}) });
   }
 
   /** Bounded historical restart metadata only. Contains no prompts, approvals or
@@ -1203,6 +1363,29 @@ export class SqliteBridgeJournal implements ReplayGuard {
         BEGIN SELECT RAISE(ABORT,'codex activation is immutable'); END;
       CREATE TRIGGER IF NOT EXISTS bridge_codex_activations_no_delete BEFORE DELETE ON bridge_codex_activations
         BEGIN SELECT RAISE(ABORT,'codex activation is immutable'); END;
+      CREATE TABLE IF NOT EXISTS bridge_codex_result_returns (
+        return_id TEXT PRIMARY KEY NOT NULL,
+        run_id TEXT NOT NULL UNIQUE,
+        activation_id TEXT NOT NULL UNIQUE,
+        activation_message_id TEXT NOT NULL REFERENCES bridge_codex_activations(message_id),
+        message_id TEXT NOT NULL UNIQUE REFERENCES bridge_outbox(message_id),
+        connection_id TEXT NOT NULL,
+        frame_json TEXT NOT NULL,
+        frame_digest TEXT NOT NULL UNIQUE,
+        status TEXT NOT NULL CHECK(status IN ('prepared','sent','receipted')),
+        prepared_at TEXT NOT NULL,
+        sent_at TEXT,
+        receipt_message_id TEXT UNIQUE,
+        receipt_json TEXT,
+        receipt_digest TEXT UNIQUE,
+        receipted_at TEXT,
+        CHECK((status='prepared' AND sent_at IS NULL AND receipt_json IS NULL AND receipted_at IS NULL)
+          OR (status='sent' AND sent_at IS NOT NULL AND receipt_json IS NULL AND receipted_at IS NULL)
+          OR (status='receipted' AND receipt_message_id IS NOT NULL AND receipt_json IS NOT NULL
+            AND receipt_digest IS NOT NULL AND receipted_at IS NOT NULL))
+      );
+      CREATE TRIGGER IF NOT EXISTS bridge_codex_result_returns_no_delete BEFORE DELETE ON bridge_codex_result_returns
+        BEGIN SELECT RAISE(ABORT,'codex result return is immutable history'); END;
       CREATE TABLE IF NOT EXISTS bridge_node_control_state (
         node_id TEXT PRIMARY KEY,
         node_version INTEGER NOT NULL CHECK(node_version>=0),
@@ -1267,6 +1450,6 @@ export class SqliteBridgeJournal implements ReplayGuard {
     const eventColumns = new Set((this.db.prepare(`PRAGMA table_info(bridge_job_events)`).all() as Array<{ name: string }>).map((row) => row.name));
     if (!eventColumns.has("artifact_id")) this.db.exec(`ALTER TABLE bridge_job_events ADD COLUMN artifact_id TEXT REFERENCES bridge_artifact_lineage(artifact_id)`);
     if (!eventColumns.has("artifact_lineage_digest")) this.db.exec(`ALTER TABLE bridge_job_events ADD COLUMN artifact_lineage_digest TEXT`);
-    this.db.exec("PRAGMA user_version=9;");
+    this.db.exec("PRAGMA user_version=10;");
   }
 }
