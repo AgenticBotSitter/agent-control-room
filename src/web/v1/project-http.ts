@@ -20,9 +20,11 @@ export function createProjectHttpHandler(options: {
       const identity = verifyIdentity(request, clock());
       const url = new URL(request.url), path = url.pathname;
       if (path === "/api/v1/projects" && request.method === "GET") {
-        if ([...url.searchParams.keys()].some(key => key !== "after") || url.searchParams.getAll("after").length > 1)
+        if ([...url.searchParams.keys()].some(key => !["after", "lifecycle"].includes(key))
+          || ["after", "lifecycle"].some(key => url.searchParams.getAll(key).length > 1))
           throw new WebAccessError("invalid_request");
-        return Response.json(await options.service.listPage(identity, url.searchParams.get("after") ?? undefined), { headers: responseHeaders });
+        return Response.json(await options.service.listPage(identity, url.searchParams.get("after") ?? undefined,
+          url.searchParams.get("lifecycle") as Parameters<WebProjectService["listPage"]>[2] ?? undefined), { headers: responseHeaders });
       }
       if (url.search) throw new WebAccessError("invalid_request");
       if (path === "/api/v1/projects") {

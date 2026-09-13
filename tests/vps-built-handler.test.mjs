@@ -73,6 +73,17 @@ test("compiled private routes use the installed process, real disposable SQL, an
   const archive = await handler(request(`/api/v1/projects/${encodeURIComponent(project.projectId)}/lifecycle`, "POST",
     { lifecycle: "archived", expectedVersion: 1 }, "compiled-archive-0001"));
   assert.equal(archive.status, 200);
+  const archived = await (await handler(request("/api/v1/projects?lifecycle=archived"))).json();
+  assert.deepEqual(archived.projects.map(item => item.projectId), [project.projectId]);
+  const archivedPage = await handler(request("/projects?lifecycle=archived")); assert.equal(archivedPage.status, 200);
+  assert.match(await archivedPage.text(), /href="\/projects\?lifecycle=archived" aria-current="page"/);
+  assert.equal((await handler(request("/api/v1/projects?lifecycle=unknown"))).status, 400);
+  assert.equal((await handler(request("/projects?lifecycle=unknown"))).status, 400);
+  const active = await (await handler(request("/api/v1/projects?lifecycle=active"))).json();
+  assert.equal(active.projects.some(item => item.projectId === project.projectId), false);
+  assert.equal(active.projects.some(item => item.projectId === idea.projectId), true);
+  assert.equal((await handler(request("/api/v1/projects?lifecycle=unknown"))).status, 400);
+  assert.equal((await handler(request("/projects?lifecycle=archived"))).status, 200);
   const connectionsPage = await handler(request("/connections")); assert.equal(connectionsPage.status, 200);
   const connectionsHtml = await connectionsPage.text(); assert.match(connectionsHtml, /Loading protected connection inventory/);
   assert.match(connectionsHtml, /<title>Connections · Control Room<\/title>/);

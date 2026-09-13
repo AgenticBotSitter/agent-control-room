@@ -30,7 +30,9 @@ export function ProjectIdeaOrigin({ project }: { project: ProjectView }) {
     ? <p><a href={`/ideas/${encodeURIComponent(project.sourceIdeaSessionId)}`}>View original Idea Lab discussion and decision</a></p> : null;
 }
 
-export function PrivateProjectWorkspace({ projectId, section = "overview", after }: { projectId?: string; section?: string; after?: string }) {
+export function PrivateProjectWorkspace({ projectId, section = "overview", after, lifecycleFilter }: {
+  projectId?: string; section?: string; after?: string; lifecycleFilter?: WebProject["lifecycle"];
+}) {
   const [client] = useState(() => createProjectBrowserClient());
   const [projects, setProjects] = useState<ProjectView[]>([]);
   const [catalog, setCatalog] = useState<ProjectCatalogPage>();
@@ -68,7 +70,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
           const value = await client.get(projectId);
           if (live && generation.current === current) setProject(value);
         } else {
-          const page = await client.list(after);
+          const page = await client.list(after, lifecycleFilter);
           if (live && generation.current === current) { setProjects(page.projects); setCatalog(page); }
         }
         if (live && generation.current === current) { setState("ready"); setError(previous => previous?.code === "uncertain" ? previous : undefined); }
@@ -85,7 +87,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
     const focus = () => { void load(); };
     window.addEventListener("focus", focus);
     return () => { live = false; clearInterval(interval); window.removeEventListener("focus", focus); };
-  }, [client, projectId, refresh, after]);
+  }, [client, projectId, refresh, after, lifecycleFilter]);
 
   async function create(draft: { title: string; summary: string }) {
     if (writeBusy.current || client.hasPending()) return;
@@ -131,9 +133,15 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
           : <button type="button" disabled={pending} onClick={() => setRefresh(value => value + 1)}>Refresh saved state</button>}</div>}
       {!projectId ? <>
         <div className="private-heading"><h1>Projects</h1><p>Open a project here or use “Open in new tab” to monitor several projects side by side. Closing a tab does not stop work, complete or archive its project.</p></div>
+        <nav className="private-filter-tabs" aria-label="Filter projects by status">
+          <a href="/projects" aria-current={lifecycleFilter === undefined ? "page" : undefined}>All</a>
+          {(["active", "paused", "completed", "archived"] as const).map(value => <a key={value}
+            href={`/projects?lifecycle=${value}`} aria-current={lifecycleFilter === value ? "page" : undefined}>
+            {value[0].toUpperCase() + value.slice(1)}</a>)}
+        </nav>
         <div className="private-columns"><div><ProjectCatalog state={state} projects={projects} paginated />
           {state === "ready" && catalog && <>
-            <ProjectCatalogNavigation after={after} nextCursor={catalog.nextCursor} count={projects.length} />
+            <ProjectCatalogNavigation after={after} nextCursor={catalog.nextCursor} count={projects.length} lifecycle={lifecycleFilter} />
             {catalog.sources.ideas === "not_configured" && <p className="private-note">Idea Lab projects are not connected to this private app yet. Ordinary projects are shown.</p>}
             {catalog.sources.ideas === "not_authorized" && <p className="private-note">Idea Lab projects require owner access and are not included.</p>}
             {catalog.sources.ordinary === "not_authorized" && <p className="private-note">Ordinary projects are not included with your current access.</p>}

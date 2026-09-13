@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { readBrowserJson } from "./browser-json";
-import { catalogProjectIdSchema, projectCatalogPageSchema, projectCreateSchema, projectTransitionSchema,
+import { catalogProjectIdSchema, lifecycleSchema, projectCatalogPageSchema, projectCreateSchema, projectTransitionSchema,
   projectViewSchema, webProjectSchema, ideaLifecycleProjectSchema, ideaProjectTransitionSchema, ideaProjectActionTarget,
   type IdeaProjectAction, type ProjectCatalogPage, type ProjectView, type WebProject } from "./project-wire";
 
@@ -79,14 +79,19 @@ export function createProjectBrowserClient(transport: typeof fetch = fetch, make
       const original = pending;
       return command(original.path, JSON.parse(original.body), original.matches);
     },
-    async list(after?: string): Promise<ProjectCatalogPage> {
+    async list(after?: string, lifecycle?: WebProject["lifecycle"]): Promise<ProjectCatalogPage> {
       try {
         if (after !== undefined && !catalogProjectIdSchema.safeParse(after).success) throw new BrowserRequestError("invalid_request");
-        const page = projectCatalogPageSchema.parse(await read(await call(`/api/v1/projects${after ? `?after=${encodeURIComponent(after)}` : ""}`)));
+        if (lifecycle !== undefined && !lifecycleSchema.safeParse(lifecycle).success) throw new BrowserRequestError("invalid_request");
+        const query = new URLSearchParams();
+        if (after) query.set("after", after);
+        if (lifecycle) query.set("lifecycle", lifecycle);
+        const page = projectCatalogPageSchema.parse(await read(await call(`/api/v1/projects${query.size ? `?${query}` : ""}`)));
         const ids = page.projects.map(project => project.projectId);
         if (ids.some((id, index) => (index > 0 && id <= ids[index - 1]) || (after !== undefined && id <= after))
           || page.nextCursor !== null && (ids.length !== 50 || page.nextCursor !== ids.at(-1))
-          || page.projects.some(project => (project.origin === "ordinary" ? page.sources.ordinary : page.sources.ideas) !== "included")) throw new Error();
+          || page.projects.some(project => (project.origin === "ordinary" ? page.sources.ordinary : page.sources.ideas) !== "included"
+            || lifecycle !== undefined && project.lifecycle !== lifecycle)) throw new Error();
         return page;
       }
       catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable"); }
