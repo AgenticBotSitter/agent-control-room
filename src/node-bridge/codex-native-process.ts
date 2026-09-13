@@ -24,6 +24,7 @@ export const CODEX_APP_SERVER_ARGUMENTS_V1 = Object.freeze(['app-server'] as con
 export const CODEX_EXECUTABLE_DESCRIPTOR_PATH_V1 = '/proc/self/fd/3' as const;
 export const CODEX_FILE_DESCRIPTOR_PREFIX_V1 = '/proc/self/fd/' as const;
 const MAX_EXECUTABLE_BYTES = 512 * 1_024 * 1_024;
+const MAX_INHERITED_FILE_DESCRIPTOR = 255;
 const MAX_TRACKED_BINDINGS = 65_536;
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const instant = z.string().datetime({ offset: true }).refine(value => new Date(value).toISOString() === value);
@@ -157,13 +158,17 @@ function sameIdentity(left: FileIdentity, right: FileIdentity): boolean {
 }
 
 function descriptorPath(handle: FileHandle): string {
-  if (!Number.isSafeInteger(handle.fd) || handle.fd < 3 || handle.fd > 65_535) throw unavailable();
+  if (!Number.isSafeInteger(handle.fd) || handle.fd < 3 || handle.fd > MAX_INHERITED_FILE_DESCRIPTOR) {
+    throw unavailable();
+  }
   return `${CODEX_FILE_DESCRIPTOR_PREFIX_V1}${handle.fd}`;
 }
 
 function inheritedStdio(executable: FileHandle, workspace: FileHandle,
   codexHome: FileHandle): Array<'pipe' | 'ignore' | number> {
-  if ([executable.fd, workspace.fd, codexHome.fd].some(fd => !Number.isSafeInteger(fd) || fd < 3 || fd > 65_535)) {
+  const descriptors = [executable.fd, workspace.fd, codexHome.fd];
+  if (descriptors.some(fd => !Number.isSafeInteger(fd) || fd < 3 || fd > MAX_INHERITED_FILE_DESCRIPTOR)
+    || new Set(descriptors).size !== descriptors.length || workspace.fd === 3 || codexHome.fd === 3) {
     throw unavailable();
   }
   const highest = Math.max(workspace.fd, codexHome.fd, 3);

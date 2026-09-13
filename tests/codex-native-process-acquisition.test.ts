@@ -203,13 +203,18 @@ test('native acquisition is inert and launches the reviewed command once with on
   assert.equal(launched[0]?.options.shell, false);
   assert.equal(launched[0]?.options.windowsHide, true);
   assert.deepEqual(launched[0]?.options.stdio.slice(0, 3), ['pipe', 'pipe', 'pipe']);
-  assert.ok(Number.isSafeInteger(launched[0]?.options.stdio[3]));
+  const executableParentFd = Number(launched[0]?.options.stdio[3]);
+  assert.ok(Number.isSafeInteger(executableParentFd));
+  assert.ok(executableParentFd >= 3 && executableParentFd <= 255);
   const workspaceFd = Number(String(launched[0]?.options.cwd).slice(CODEX_FILE_DESCRIPTOR_PREFIX_V1.length));
   const codexHomeFd = Number((launched[0]?.options.env?.CODEX_HOME ?? '')
     .slice(CODEX_FILE_DESCRIPTOR_PREFIX_V1.length));
   assert.ok(Number.isSafeInteger(workspaceFd));
   assert.ok(Number.isSafeInteger(codexHomeFd));
-  assert.notEqual(workspaceFd, codexHomeFd);
+  assert.ok(workspaceFd > 3 && workspaceFd <= 255);
+  assert.ok(codexHomeFd > 3 && codexHomeFd <= 255);
+  assert.equal(new Set([executableParentFd, workspaceFd, codexHomeFd]).size, 3);
+  assert.ok((launched[0]?.options.stdio.length ?? 0) <= 256);
   assert.equal(launched[0]?.options.stdio[workspaceFd], workspaceFd);
   assert.equal(launched[0]?.options.stdio[codexHomeFd], codexHomeFd);
   assert.equal(Object.hasOwn(launched[0]?.options.env ?? {}, 'PATH'), false);
