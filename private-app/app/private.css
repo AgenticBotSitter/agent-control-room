@@ -32,6 +32,9 @@
 .private-dashboard-list li:first-child { padding-top: 0; border-top: 0; }
 .private-dashboard-list a { color: var(--green); font-weight: 700; }
 .private-dashboard-list span { color: var(--muted); font-size: .875rem; text-transform: capitalize; }
+.private-filter-tabs { display: flex; flex-wrap: wrap; gap: .5rem; margin: 0 0 1rem; }
+.private-filter-tabs a { padding: .45rem .7rem; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); text-decoration: none; }
+.private-filter-tabs a[aria-current="page"] { color: var(--text); border-color: var(--green); background: var(--surface-2); }
 .private-settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
 .private-settings-grid h2 { margin-top: 0; }
 .private-configuration-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(13rem, 100%), 1fr)); gap: 1rem; }

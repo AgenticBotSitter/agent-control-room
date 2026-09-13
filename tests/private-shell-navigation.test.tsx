@@ -5,6 +5,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import Home from "../private-app/app/page";
 import { HomeDashboard, type HomeDashboardState } from "../private-app/app/home-workspace";
 import SettingsPage from "../private-app/app/settings/page";
+import { PrivateProjectWorkspace } from "../private-app/app/workspace";
+import { ProjectCatalogNavigation } from "../app/components/project-catalog-navigation";
+import { createProjectBrowserClient } from "../src/web/v1/browser-client";
 import { readTaskHomeActivity } from "../src/web/v1/task-home-browser-client";
 
 test("home gives honest navigation to existing private workspace surfaces", () => {
@@ -67,6 +70,29 @@ test("home task reader accepts only the bounded read-only activity contract", as
   await assert.rejects(readTaskHomeActivity((async () => Response.json({ ...result, startsWork: true })) as typeof fetch), /unavailable/);
   await assert.rejects(readTaskHomeActivity((async () => Response.json({ ...result, resultSource: "not_authorized",
     recentResults: [{ unexpected: true }] })) as typeof fetch), /unavailable/);
+});
+
+test("project catalog filter is sent to the protected read and rejects mixed lifecycle results", async () => {
+  let requested = "";
+  const project = { projectId: "project:active", title: "Active project", summary: "Saved", lifecycle: "active" as const,
+    version: 1, createdAt: "2026-09-04T10:00:00.000Z", updatedAt: "2026-09-04T10:00:00.000Z",
+    origin: "ordinary" as const, lifecycleEditable: true };
+  const transport = (async (input: RequestInfo | URL) => { requested = String(input); return Response.json({ projects: [project],
+    nextCursor: null, canCreate: true, sources: { ordinary: "included", ideas: "not_configured" } }); }) as typeof fetch;
+  const client = createProjectBrowserClient(transport);
+  assert.equal((await client.list(undefined, "active")).projects[0]?.projectId, project.projectId);
+  assert.equal(requested, "/api/v1/projects?lifecycle=active");
+  await assert.rejects(client.list(undefined, "archived"), /unavailable/);
+});
+
+test("project status filters are direct links and remain selected across catalog pages", () => {
+  const workspace = renderToStaticMarkup(createElement(PrivateProjectWorkspace, { lifecycleFilter: "archived" }));
+  assert.match(workspace, /aria-label="Filter projects by status"/);
+  assert.match(workspace, /href="\/projects\?lifecycle=archived" aria-current="page"/);
+  const pages = renderToStaticMarkup(createElement(ProjectCatalogNavigation,
+    { lifecycle: "archived", after: "project:one", nextCursor: "project:two", count: 50 }));
+  assert.match(pages, /href="\/projects\?lifecycle=archived">First page/);
+  assert.match(pages, /href="\/projects\?lifecycle=archived&amp;after=project%3Atwo">Next page/);
 });
 
 test("settings links to the real session surface without credential controls", () => {

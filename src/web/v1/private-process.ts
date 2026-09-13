@@ -6,7 +6,7 @@ import { privateResponseHeaders, webFailure, readBoundedJson } from "./http-comm
 import { createProjectHttpHandler } from "./project-http";
 import { WebProjectService } from "./project-service";
 import { WebIdeaProjectLifecycleOperation } from "./idea-project-lifecycle-operation";
-import { catalogProjectIdSchema } from "./project-wire";
+import { catalogProjectIdSchema, lifecycleSchema } from "./project-wire";
 import { WebConnectionService, type WebConnectionKeys } from "./connection-service";
 import { WebTaskService, type WebTaskKeys } from "./task-service";
 import { WebNewsService } from "./news-service";
@@ -479,8 +479,10 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           try { id = decodeURIComponent(detail[1]); } catch { throw new WebAccessError("invalid_request"); }
           await service.getView(identity, id);
         } else if (["/", "/projects"].includes(url.pathname)) {
-          if ([...url.searchParams.keys()].some(key => key !== "after") || url.searchParams.getAll("after").length > 1
-            || url.searchParams.has("after") && !catalogProjectIdSchema.safeParse(url.searchParams.get("after")).success)
+          if ([...url.searchParams.keys()].some(key => !["after", "lifecycle"].includes(key))
+            || ["after", "lifecycle"].some(key => url.searchParams.getAll(key).length > 1)
+            || url.searchParams.has("after") && !catalogProjectIdSchema.safeParse(url.searchParams.get("after")).success
+            || url.searchParams.has("lifecycle") && !lifecycleSchema.safeParse(url.searchParams.get("lifecycle")).success)
             throw new WebAccessError("invalid_request");
           await service.authorizeCatalog(identity);
         } else if (url.pathname === "/needs-me") {

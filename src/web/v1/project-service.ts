@@ -11,7 +11,7 @@ import { ideaLabProjectLifecycleActionsV1 } from "../../idea-lab/v1/lifecycle-se
 import type { WebIdeaProjectLifecycleOperation } from "./idea-project-lifecycle-operation";
 import { ideaProjectActionTarget } from "./project-wire";
 
-import { catalogProjectIdSchema, projectCreateSchema, projectTransitionSchema, projectViewSchema,
+import { catalogProjectIdSchema, lifecycleSchema, projectCreateSchema, projectTransitionSchema, projectViewSchema,
   type ProjectCatalogPage, type ProjectView, type WebProject } from "./project-wire";
 export { projectCreateSchema, projectTransitionSchema, lifecycleSchema, type WebProject } from "./project-wire";
 const iso = (value: string | Date) => new Date(value).toISOString();
@@ -65,16 +65,19 @@ export class WebProjectService {
       ideas: !ideas ? "not_authorized" : this.ideas ? "included" : "not_configured" };
   }
 
-  async listPage(identity: VerifiedWebIdentity, after?: string): Promise<ProjectCatalogPage> {
+  async listPage(identity: VerifiedWebIdentity, after?: string, lifecycle?: WebProject["lifecycle"]): Promise<ProjectCatalogPage> {
     if (after !== undefined && !catalogProjectIdSchema.safeParse(after).success) throw new WebAccessError("invalid_request");
+    if (lifecycle !== undefined && !lifecycleSchema.safeParse(lifecycle).success) throw new WebAccessError("invalid_request");
     return this.authenticated(identity, async (tx, actor) => {
       const sources = this.catalogAccess(actor);
       const rows = await tx.query<{ id: string; adapter_id: string }>(`SELECT p.id,p.adapter_id FROM projects p
         WHERE p.tenant_id=$1 AND p.workspace_id=$2 AND ($3::text IS NULL OR p.id COLLATE "C" > $3 COLLATE "C")
         AND ((p.adapter_id=$4 AND $6::boolean AND EXISTS(SELECT 1 FROM control_manual_project_heads h
           WHERE h.tenant_id=p.tenant_id AND h.project_id=p.id)) OR (p.adapter_id=$5 AND $7::boolean))
+        AND ($8::text IS NULL OR p.domain_state IN ('manual_project_' || $8,'idea_project_' || $8))
         ORDER BY p.id COLLATE "C" LIMIT 51 FOR SHARE OF p`, [this.scope.tenantId, this.scope.workspaceId, after ?? null,
-        this.manualAdapterId(), CONTROL_ROOM_IDEA_ADAPTER_V1, sources.ordinary === "included", sources.ideas === "included"]);
+        this.manualAdapterId(), CONTROL_ROOM_IDEA_ADAPTER_V1, sources.ordinary === "included", sources.ideas === "included",
+        lifecycle ?? null]);
       const projects: ProjectView[] = [];
       for (const row of rows.rows.slice(0, 50)) projects.push(await this.readView(tx, actor, row.id, row.adapter_id));
       return { projects, nextCursor: rows.rows.length > 50 ? projects.at(-1)!.projectId : null,
