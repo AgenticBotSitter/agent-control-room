@@ -58,6 +58,11 @@ class FakeClaudeProcess {
     this.stdout.push(bytes);
   }
 
+  /** The process finishes on its own: stdout reaches EOF and the process exits. */
+  endNaturally(): void {
+    this.end();
+  }
+
   private end(): void {
     if (this.ended) return;
     this.ended = true;
@@ -125,6 +130,65 @@ test("stdout is framed into lines and a clean close reports a certain dispositio
   assert.equal(disposition.grantsExecutionAuthority, false);
   assert.equal(process.closeStdinCalls, 1);
   assert.equal(process.terminateCalls, 1);
+});
+
+test("a natural stdout EOF leaves an already emitted result readable", async () => {
+  const process = new FakeClaudeProcess();
+  const session = createClaudeCodeOwnedProcessSessionV1({
+    binding: freshBinding(), signal: new AbortController().signal,
+    acquire: () => process.acquire(), cleanupMs: 500,
+  });
+  const wire = await session.ready;
+  // init and the final result arrive, then the process ends on its own before the
+  // consumer has read anything at all.
+  process.push('{"type":"system","subtype":"init"}\n{"type":"result","subtype":"success"}\n');
+  process.endNaturally();
+  await process.port().exited;
+
+  assert.equal(await wire.readLine(new AbortController().signal), '{"type":"system","subtype":"init"}');
+  assert.equal(await wire.readLine(new AbortController().signal), '{"type":"result","subtype":"success"}',
+    "a result emitted just before a natural EOF must still be readable");
+  assert.equal(await wire.readLine(new AbortController().signal), undefined,
+    "a drained natural EOF is end-of-stream, not a failure");
+
+  session.recordTerminalResultObserved();
+  await session.close();
+  const disposition = session.disposition();
+  assert.equal(disposition.closed, true);
+  assert.equal(disposition.cleanupUncertain, false);
+  assert.equal(disposition.exitObserved, true);
+  assert.equal(disposition.reasonCode, "closed_with_decoded_terminal_result");
+  assert.equal(disposition.resubmissionSafe, false);
+});
+
+test("a natural EOF resolves a consumer that was already waiting for a line", async () => {
+  const process = new FakeClaudeProcess();
+  const session = createClaudeCodeOwnedProcessSessionV1({
+    binding: freshBinding(), signal: new AbortController().signal,
+    acquire: () => process.acquire(), cleanupMs: 500,
+  });
+  const wire = await session.ready;
+  const pending = wire.readLine(new AbortController().signal);
+  process.push('{"type":"result","subtype":"success"}\n');
+  process.endNaturally();
+  assert.equal(await pending, '{"type":"result","subtype":"success"}');
+  assert.equal(await wire.readLine(new AbortController().signal), undefined);
+  await session.close();
+  assert.equal(session.disposition().cleanupUncertain, false);
+});
+
+test("a truncated trailing line at stdout EOF is still fatal", async () => {
+  const process = new FakeClaudeProcess();
+  const session = createClaudeCodeOwnedProcessSessionV1({
+    binding: freshBinding(), signal: new AbortController().signal,
+    acquire: () => process.acquire(), cleanupMs: 200,
+  });
+  const wire = await session.ready;
+  process.push('{"type":"result","subtype":"suc');
+  process.endNaturally();
+  await assert.rejects(wire.readLine(new AbortController().signal), /unavailable/,
+    "a partial final line is truncated output, not a clean stream end");
+  await session.close().catch(() => {});
 });
 
 test("the same binding cannot be started twice", async () => {
@@ -246,7 +310,6 @@ test("the connector modules read no environment, file, process or network source
   const modules = [
     "stream-json-decode.ts",
     "owned-process-session.ts",
-    "result-identity.ts",
     "unsupported-operations.ts",
     "connector-profile.ts",
     "index.ts",

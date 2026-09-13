@@ -168,12 +168,16 @@ export function createClaudeCodeOwnedProcessSessionV1(input: {
     while (waiters.length && (closing || closed || fatal || lines.length || stdoutEnded)) {
       const waiter = waiters.shift()!;
       waiter.signal.removeEventListener("abort", waiter.abort);
-      if (closing || closed || fatal) waiter.reject(unavailable());
-      else if (lines.length) {
+      // Already-decoded lines are drained first: a result frame that arrived just
+      // before a natural stdout EOF stays readable even while the session closes.
+      if (lines.length && !closed && !fatal) {
         const line = lines.shift()!;
         queuedBytes -= line.bytes;
         waiter.resolve(line.value);
-      } else waiter.resolve(undefined);
+      } else if (stdoutEnded && !closed && !fatal) {
+        // A drained, naturally ended stream is end-of-stream, not a failure.
+        waiter.resolve(undefined);
+      } else waiter.reject(unavailable());
     }
   };
   const fail = () => {
@@ -214,7 +218,9 @@ export function createClaudeCodeOwnedProcessSessionV1(input: {
       for (;;) {
         const chunk = await selected.readStdout(readers.signal);
         if (chunk === undefined) {
-          if (!closing || buffered.byteLength) throw unavailable();
+          // A trailing partial line means truncated output and stays fatal; an EOF on a
+          // clean line boundary ends the stream so queued frames remain consumable.
+          if (buffered.byteLength) throw unavailable();
           stdoutEnded = true;
           wake();
           return;
@@ -239,13 +245,14 @@ export function createClaudeCodeOwnedProcessSessionV1(input: {
   };
 
   const readLine = async (signal: AbortSignal): Promise<string | undefined> => {
-    if (closing || closed || fatal || !(signal instanceof AbortSignal) || signal.aborted) throw unavailable();
+    if (!(signal instanceof AbortSignal) || signal.aborted || closed || fatal) throw unavailable();
     if (lines.length) {
       const line = lines.shift()!;
       queuedBytes -= line.bytes;
       return line.value;
     }
     if (stdoutEnded) return undefined;
+    if (closing) throw unavailable();
     return new Promise<string | undefined>((resolve, reject) => {
       const waiter: LineWaiter = {
         resolve, reject, signal,
@@ -327,7 +334,10 @@ export function createClaudeCodeOwnedProcessSessionV1(input: {
     exit = Promise.resolve(port.exited).then(observed => {
       if (!validExit(observed)) { exitMalformed = true; throw unavailable(); }
       exitEvidence = true;
-      if (!closing) fail();
+      // A well formed natural exit is ordinary completion. The stdout pump reports the
+      // stream end once stdout drains; discarding queued frames here would lose an
+      // already-emitted final result.
+      wake();
       return observed;
     });
     void exit.catch(() => { if (!closing) fail(); });

@@ -56,15 +56,66 @@ export interface ClaudeCodeAssistantTurnFrameV1 {
   readonly frameDigest: string;
 }
 
+/**
+ * The CLI's `subtype` is untrusted upstream text, so it is never retained or
+ * exported. It is mapped to one of these fixed values and otherwise discarded.
+ */
+export type ClaudeCodeResultSubtypeCodeV1 =
+  | "success"
+  | "error_max_turns"
+  | "error_during_execution"
+  | "unrecognized";
+
+/** Same discipline for `terminal_reason`: mapped to a fixed value, never retained. */
+export type ClaudeCodeTerminalReasonCodeV1 =
+  | "none"
+  | "max_turns"
+  | "max_tokens"
+  | "timeout"
+  | "cancelled"
+  | "refusal"
+  | "error"
+  | "unrecognized";
+
+/** Exactly the `subtype` values this decoder recognises; anything else is discarded. */
+const KNOWN_RESULT_SUBTYPES: ReadonlySet<string> = new Set([
+  "success",
+  "error_max_turns",
+  "error_during_execution",
+]);
+
+/** Exactly the `terminal_reason` values this decoder recognises. */
+const KNOWN_TERMINAL_REASONS: ReadonlySet<string> = new Set([
+  "max_turns",
+  "max_tokens",
+  "timeout",
+  "cancelled",
+  "refusal",
+  "error",
+]);
+
+function mapSubtypeCode(raw: string): ClaudeCodeResultSubtypeCodeV1 {
+  return KNOWN_RESULT_SUBTYPES.has(raw) ? (raw as ClaudeCodeResultSubtypeCodeV1) : "unrecognized";
+}
+
+function mapTerminalReasonCode(raw: string | undefined): ClaudeCodeTerminalReasonCodeV1 {
+  if (raw === undefined) return "none";
+  return KNOWN_TERMINAL_REASONS.has(raw) ? (raw as ClaudeCodeTerminalReasonCodeV1) : "unrecognized";
+}
+
 export interface ClaudeCodeResultFrameV1 {
   readonly schema: typeof CLAUDE_CODE_STREAM_FRAME_SCHEMA_V1;
   readonly kind: "result";
   readonly sessionId: string;
-  /** Derived from is_error/terminal_reason only. subtype is retained but never classifies. */
+  /** Derived from is_error and terminal-reason presence only; the subtype never classifies. */
   readonly outcome: "succeeded" | "failed";
   readonly isError: boolean;
-  readonly subtype: string;
-  readonly terminalReason: string | undefined;
+  /** Fixed safe value. The raw upstream `subtype` text is discarded, never exported. */
+  readonly subtypeCode: ClaudeCodeResultSubtypeCodeV1;
+  /** Fixed safe value. The raw upstream `terminal_reason` text is discarded, never exported. */
+  readonly terminalReasonCode: ClaudeCodeTerminalReasonCodeV1;
+  /** Whether the frame carried a `terminal_reason` field at all; no content is retained. */
+  readonly terminalReasonPresent: boolean;
   readonly resultText: string | undefined;
   readonly resultBytes: number;
   readonly resultTextDigest: string | undefined;
@@ -215,11 +266,14 @@ export function createClaudeCodeStreamDecoderV1(): ClaudeCodeStreamDecoderV1 {
     if (typeof subtype !== "string" || subtype.length === 0 || subtype.length > 120) {
       return fail("result_subtype_missing");
     }
-    let terminalReason: string | undefined;
+    let terminalReasonPresent = false;
+    let terminalReasonCode: ClaudeCodeTerminalReasonCodeV1 = "none";
     if (parsed.terminal_reason !== undefined) {
       if (typeof parsed.terminal_reason !== "string" || parsed.terminal_reason.length === 0
         || parsed.terminal_reason.length > 200) return fail("malformed_terminal_reason");
-      terminalReason = parsed.terminal_reason;
+      terminalReasonPresent = true;
+      // The raw string is read for mapping only and is deliberately not captured.
+      terminalReasonCode = mapTerminalReasonCode(parsed.terminal_reason);
     }
     let totalCostUsd: number | undefined;
     if (parsed.total_cost_usd !== undefined) {
@@ -246,10 +300,11 @@ export function createClaudeCodeStreamDecoderV1(): ClaudeCodeStreamDecoderV1 {
       kind: "result" as const,
       sessionId: frameSessionId,
       // Deliberately independent of subtype: a "success" subtype can carry is_error true.
-      outcome: (isError || terminalReason !== undefined ? "failed" : "succeeded") as "succeeded" | "failed",
+      outcome: (isError || terminalReasonPresent ? "failed" : "succeeded") as "succeeded" | "failed",
       isError,
-      subtype,
-      terminalReason,
+      subtypeCode: mapSubtypeCode(subtype),
+      terminalReasonCode,
+      terminalReasonPresent,
       resultText,
       resultBytes,
       resultTextDigest,

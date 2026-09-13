@@ -43,7 +43,7 @@ test("a success subtype carrying is_error true is classified as failed", () => {
   const terminal = frames[1];
   assert.equal(terminal.kind, "result");
   if (terminal.kind !== "result") return;
-  assert.equal(terminal.subtype, "success");
+  assert.equal(terminal.subtypeCode, "success");
   assert.equal(terminal.isError, true);
   assert.equal(terminal.outcome, "failed", "classification must not follow subtype");
 });
@@ -55,7 +55,11 @@ test("terminal_reason alone also fails a nominally successful subtype", () => {
   ]);
   const terminal = frames[1];
   assert.equal(terminal.kind === "result" && terminal.outcome, "failed");
-  assert.equal(terminal.kind === "result" && terminal.terminalReason, "budget_exhausted");
+  // "budget_exhausted" is not a recognised terminal reason, so it maps to the fixed
+  // unrecognized code and the raw word never reaches the decoded frame.
+  assert.equal(terminal.kind === "result" && terminal.terminalReasonCode, "unrecognized");
+  assert.equal(terminal.kind === "result" && terminal.terminalReasonPresent, true);
+  assert.equal(JSON.stringify(terminal).includes("budget_exhausted"), false);
 });
 
 test("an assistant frame reports an inline error rather than a separate error frame type", () => {
@@ -141,4 +145,83 @@ test("decoded frames are frozen and carry a frame digest", () => {
     frames[0].kind === "init" ? frames[0].frameDigest : "a",
     frames[1].kind === "result" ? frames[1].frameDigest : "b",
   );
+});
+
+test("subtype and terminal_reason are mapped to fixed codes, never exported as text", () => {
+  const subtypes: ReadonlyArray<readonly [string, string]> = [
+    ["success", "success"],
+    ["error_max_turns", "error_max_turns"],
+    ["error_during_execution", "error_during_execution"],
+    ["definitely_not_a_known_subtype", "unrecognized"],
+  ];
+  for (const [raw, expected] of subtypes) {
+    const frames = decodeClaudeCodeStreamJsonLinesV1([initLine(), resultLine({ subtype: raw, is_error: true })]);
+    const terminal = frames[1];
+    assert.equal(terminal.kind, "result");
+    if (terminal.kind !== "result") return;
+    assert.equal(terminal.subtypeCode, expected);
+    assert.equal(Object.hasOwn(terminal, "subtype"), false, "raw subtype must not be exported");
+    assert.equal(Object.hasOwn(terminal, "terminalReason"), false, "raw terminal_reason must not be exported");
+  }
+  const reasons: ReadonlyArray<readonly [string, string]> = [
+    ["max_turns", "max_turns"],
+    ["timeout", "timeout"],
+    ["something_upstream_invented", "unrecognized"],
+  ];
+  for (const [raw, expected] of reasons) {
+    const frames = decodeClaudeCodeStreamJsonLinesV1([initLine(), resultLine({ terminal_reason: raw })]);
+    assert.equal(frames[1].kind === "result" && frames[1].terminalReasonCode, expected);
+  }
+  const absent = decodeClaudeCodeStreamJsonLinesV1([initLine(), resultLine()])[1];
+  assert.equal(absent.kind === "result" && absent.terminalReasonCode, "none");
+  assert.equal(absent.kind === "result" && absent.terminalReasonPresent, false);
+});
+
+test("secret-like and control-bearing subtype or terminal_reason text never survives decoding", () => {
+  // Synthetic, freshly authored marker values. None of these is a real credential.
+  const markers = [
+    "sk-ant-api03-PLACEHOLDERSECRETVALUE0000000000",
+    "Bearer PLACEHOLDERBEARERTOKEN00000",
+    "AKIAPLACEHOLDERACCESSKEY",
+    "passphrase=hunter2-placeholder",
+    "success\u0000\u0007drop",
+    "erro\u001br_max_turns",
+    "\u202Eerror_during_execution",
+  ];
+  for (const marker of markers) {
+    for (const field of ["subtype", "terminal_reason"] as const) {
+      const frames = decodeClaudeCodeStreamJsonLinesV1([
+        initLine(),
+        resultLine({ [field]: marker, is_error: true, result: "placeholder result text" }),
+      ]);
+      const terminal = frames[1];
+      assert.equal(terminal.kind, "result", `${field} ${marker} must still decode as a result frame`);
+      if (terminal.kind !== "result") continue;
+      const exported = JSON.stringify(terminal);
+      assert.equal(exported.includes(marker), false, `${field} marker text leaked into the frame`);
+      assert.equal(exported.includes(marker.slice(0, 12)), false, `${field} marker prefix leaked`);
+      assert.equal(/[\u0000-\u001f\u007f\u202a-\u202e]/.test(
+        `${terminal.subtypeCode}${terminal.terminalReasonCode}`), false, "no control character may be carried");
+      assert.equal(["success", "error_max_turns", "error_during_execution", "unrecognized"]
+        .includes(terminal.subtypeCode), true);
+      assert.equal(["none", "max_turns", "max_tokens", "timeout", "cancelled", "refusal", "error",
+        "unrecognized"].includes(terminal.terminalReasonCode), true);
+    }
+  }
+});
+
+test("the decoded result frame exposes no unbounded free-text field", () => {
+  const frames = decodeClaudeCodeStreamJsonLinesV1([
+    initLine(),
+    resultLine({ subtype: "error_max_turns", is_error: true, terminal_reason: "max_turns" }),
+  ]);
+  const terminal = frames[1];
+  assert.equal(terminal.kind, "result");
+  if (terminal.kind !== "result") return;
+  const known = ["schema", "kind", "sessionId", "outcome", "subtypeCode", "terminalReasonCode",
+    "frameDigest", "resultTextDigest", "resultText"];
+  const unexpected = Object.entries(terminal)
+    .filter(([key, value]) => typeof value === "string" && !known.includes(key))
+    .map(([key]) => key);
+  assert.deepEqual(unexpected, [], "every exported string must be a mapped code, a digest or the bounded result text");
 });
