@@ -186,6 +186,15 @@ the skip-link target, horizontal overflow, and keyboard focus transfer into main
 content. This automated audit covers 122 assertions and found the shared main regions
 needed to accept focus; the corrected pages are included in the same command.
 
+The same command also starts the compiled artifact twice in separate disposable
+processes with different non-secret product configurations. One shows a research
+workspace with Idea Lab enabled; the other shows an operations workspace without it.
+The check creates a different project in each database and proves that the displayed
+name, module navigation, settings, templates and saved project data do not cross
+between installations. Separate processes are intentional: production permits only
+one private application installation per process. This does not test production
+credentials, hostnames or database provisioning.
+
 Passing this check is application/browser evidence only. It does not validate a real
 login provider, PostgreSQL service, network tunnel, agent harness or production host.
 
@@ -194,8 +203,8 @@ login provider, PostgreSQL service, network tunnel, agent harness or production 
 The demo command and its simulated flow pass automated tests and one local desktop
 browser trial on macOS, including revision/history and shutdown cleanup. The
 repeatable browser acceptance command above adds automated keyboard, core semantic
-accessibility and narrow-screen coverage. A human screen-reader/zoom/contrast review,
-optional-module page audit, physical keyboard/mobile acceptance on other operating
+accessibility, narrow-screen and two-configuration isolation coverage. A human
+screen-reader/zoom/contrast review, optional-module page audit, physical keyboard/mobile acceptance on other operating
 systems and further browser-build coverage remain incomplete. There is no supported `pnpm dev` or
 `pnpm start` command here. Hermes and Codex live compatibility, PostgreSQL deployment,
 production owner login, approval key custody
