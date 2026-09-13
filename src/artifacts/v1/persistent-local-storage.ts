@@ -45,6 +45,18 @@ interface StoredRecord {
   readonly bytes: Uint8Array;
 }
 
+export type PersistentLocalArtifactStorageIoBoundaryV1 =
+  | "root_realpath" | "root_stat" | "inventory_read" | "artifact_lstat" | "artifact_open"
+  | "artifact_stat" | "artifact_read" | "artifact_recheck" | "artifact_close"
+  | "lock_open" | "lock_write" | "lock_sync" | "pending_open" | "pending_write" | "pending_sync"
+  | "pending_close" | "target_link" | "pending_unlink" | "lock_close" | "lock_unlink"
+  | "root_sync_open" | "root_sync" | "root_sync_close";
+
+/** Test-only fault gate. The production factory never accepts an injected filesystem implementation. */
+export interface PersistentLocalArtifactStorageTestIoV1 {
+  run<T>(boundary: PersistentLocalArtifactStorageIoBoundaryV1, operation: () => Promise<T>): Promise<T>;
+}
+
 const artifactIdPattern = /^artifact:native:[a-f0-9]{64}$/u;
 const artifactNamePattern = /^[a-f0-9]{64}\.artifact$/u;
 const digestPattern = /^sha256:[a-f0-9]{64}$/u;
@@ -154,10 +166,26 @@ export class PersistentLocalArtifactStorageV1 implements ArtifactStoragePortV1, 
     private readonly maximumFileBytes: number,
     private readonly maximumTotalBytes: number,
     private readonly operationTimeoutMs: number,
+    private readonly testIo?: PersistentLocalArtifactStorageTestIoV1,
   ) {}
 
   static async create(
     configuration: PersistentLocalArtifactStorageConfigurationV1,
+  ): Promise<PersistentLocalArtifactStorageV1> {
+    return this.createInternal(configuration);
+  }
+
+  static async createForTest(
+    configuration: PersistentLocalArtifactStorageConfigurationV1,
+    testIo: PersistentLocalArtifactStorageTestIoV1,
+  ): Promise<PersistentLocalArtifactStorageV1> {
+    if (!testIo || typeof testIo.run !== "function") throw new ArtifactStorageError("storage_invalid");
+    return this.createInternal(configuration, testIo);
+  }
+
+  private static async createInternal(
+    configuration: PersistentLocalArtifactStorageConfigurationV1,
+    testIo?: PersistentLocalArtifactStorageTestIoV1,
   ): Promise<PersistentLocalArtifactStorageV1> {
     validateConfiguration(configuration);
     const context: OperationContext = {
@@ -181,7 +209,7 @@ export class PersistentLocalArtifactStorageV1 implements ArtifactStoragePortV1, 
       || !validPrivateMode(stats.mode)) throw new ArtifactStorageError("storage_invalid");
     const adapter = new PersistentLocalArtifactStorageV1(canonical, { device: stats.dev, inode: stats.ino },
       configuration.maximumArtifacts, configuration.maximumFileBytes, configuration.maximumTotalBytes,
-      configuration.operationTimeoutMs);
+      configuration.operationTimeoutMs, testIo);
     try {
       await adapter.assertRootIdentity(context);
       const inventory = await adapter.inventory(context);
@@ -253,10 +281,12 @@ export class PersistentLocalArtifactStorageV1 implements ArtifactStoragePortV1, 
     let operationError: unknown;
     let cleanupError: unknown;
     try {
-      lock = await this.io(() => open(lockPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | noFollow, 0o600), context, true);
+      lock = await this.io("lock_open",
+        () => open(lockPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | noFollow, 0o600), context, true);
       ownedLock = true;
-      await this.io(() => lock!.writeFile("control-room-persistent-artifact-write\n", "utf8"), context);
-      await this.io(() => lock!.sync(), context);
+      context.mutationStarted = true;
+      await this.io("lock_write", () => lock!.writeFile("control-room-persistent-artifact-write\n", "utf8"), context);
+      await this.io("lock_sync", () => lock!.sync(), context);
       const inventory = await this.inventory(context, true);
       const targetPath = join(this.root, storageName(input.artifactId));
       if (inventory.names.has(storageName(input.artifactId))) {
@@ -267,40 +297,41 @@ export class PersistentLocalArtifactStorageV1 implements ArtifactStoragePortV1, 
           throw new ArtifactStorageError("storage_capacity");
         }
         pendingPath = join(this.root, `${pendingPrefix}${randomUUID()}`);
-        pending = await this.io(() => open(pendingPath!,
+        pending = await this.io("pending_open", () => open(pendingPath!,
           constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | noFollow, 0o600), context);
         const envelope = encodeEnvelope(input.artifactId, input.bytes);
-        await this.io(() => pending!.writeFile(envelope), context);
-        await this.io(() => pending!.sync(), context);
-        await this.io(() => pending!.close(), context); pending = undefined;
+        await this.io("pending_write", () => pending!.writeFile(envelope), context);
+        await this.io("pending_sync", () => pending!.sync(), context);
+        await this.io("pending_close", () => pending!.close(), context); pending = undefined;
         this.checkpoint(context);
-        try {
-          await this.io(() => link(pendingPath!, targetPath), context);
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-          result = await this.replay(input.artifactId, targetPath, input.bytes, context);
-        }
+        await this.io("target_link", () => link(pendingPath!, targetPath), context);
         await this.syncRoot(context);
-        await this.io(() => unlink(pendingPath!), context); pendingPath = undefined;
+        await this.io("pending_unlink", () => unlink(pendingPath!), context); pendingPath = undefined;
         await this.syncRoot(context);
         await this.assertRootIdentity(context);
         result ??= await this.replay(input.artifactId, targetPath, input.bytes, context);
       }
     } catch (error) {
       operationError = error;
+      const definiteLogicalRefusal = error instanceof ArtifactStorageError
+        && (error.safeFailureCode === "storage_conflict" || error.safeFailureCode === "storage_capacity");
+      if (context.mutationStarted && !definiteLogicalRefusal) {
+        context.uncertain = true;
+        this.poisoned = true;
+      }
     } finally {
       if (!context.uncertain) {
         try {
-          if (pending) { await this.io(() => pending!.close(), context); pending = undefined; }
+          if (pending) { await this.io("pending_close", () => pending!.close(), context); pending = undefined; }
           if (pendingPath) {
-            await this.io(() => unlink(pendingPath!).catch((error: NodeJS.ErrnoException) => {
+            await this.io("pending_unlink", () => unlink(pendingPath!).catch((error: NodeJS.ErrnoException) => {
               if (error.code !== "ENOENT") throw error;
             }), context);
             pendingPath = undefined;
           }
-          if (lock) { await this.io(() => lock!.close(), context); lock = undefined; }
+          if (lock) { await this.io("lock_close", () => lock!.close(), context); lock = undefined; }
           if (ownedLock) {
-            await this.io(() => unlink(lockPath), context);
+            await this.io("lock_unlink", () => unlink(lockPath), context);
             ownedLock = false;
             await this.syncRoot(context);
           }
@@ -353,7 +384,7 @@ export class PersistentLocalArtifactStorageV1 implements ArtifactStoragePortV1, 
     await this.assertRootIdentity(context);
     const names = new Set<string>();
     let totalBytes = 0;
-    const entries = await this.io(() => readdir(this.root), context);
+    const entries = await this.io("inventory_read", () => readdir(this.root), context);
     for (const entry of entries) {
       if (entry === lockName && ownLock) continue;
       if (!artifactNamePattern.test(entry)) throw new ArtifactStorageError("storage_ambiguous");
@@ -376,7 +407,7 @@ export class PersistentLocalArtifactStorageV1 implements ArtifactStoragePortV1, 
   ): Promise<StoredRecord | undefined> {
     let before;
     try {
-      before = await this.io(() => lstat(path, { bigint: true }), context);
+      before = await this.io("artifact_lstat", () => lstat(path, { bigint: true }), context);
     } catch (error) {
       if (missingAllowed && (error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
       throw error;
@@ -386,20 +417,21 @@ export class PersistentLocalArtifactStorageV1 implements ArtifactStoragePortV1, 
       || before.size < BigInt(2) || before.size > maximumPhysicalBytes || !validPrivateMode(before.mode)) {
       throw new ArtifactStorageError("storage_ambiguous");
     }
-    const handle = await this.io(() => open(path, constants.O_RDONLY | noFollow | nonBlock), context);
+    const handle = await this.io("artifact_open", () => open(path, constants.O_RDONLY | noFollow | nonBlock), context);
     try {
-      const opened = await this.io(() => handle.stat({ bigint: true }), context);
+      const opened = await this.io("artifact_stat", () => handle.stat({ bigint: true }), context);
       if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino || opened.nlink !== BigInt(1)
         || opened.size !== before.size || !validPrivateMode(opened.mode)) throw new ArtifactStorageError("storage_ambiguous");
       const allocation = new Uint8Array(Number(before.size) + 1);
       let length = 0;
       while (length < allocation.byteLength) {
-        const next = await this.io(() => handle.read(allocation, length, allocation.byteLength - length, length), context);
+        const next = await this.io("artifact_read",
+          () => handle.read(allocation, length, allocation.byteLength - length, length), context);
         if (next.bytesRead === 0) break;
         length += next.bytesRead;
       }
-      const after = await this.io(() => handle.stat({ bigint: true }), context);
-      const current = await this.io(() => lstat(path, { bigint: true }), context);
+      const after = await this.io("artifact_stat", () => handle.stat({ bigint: true }), context);
+      const current = await this.io("artifact_recheck", () => lstat(path, { bigint: true }), context);
       if (length !== Number(before.size) || length > Number(before.size)
         || after.size !== before.size || after.mtimeNs !== before.mtimeNs || after.ctimeNs !== before.ctimeNs
         || after.dev !== before.dev || after.ino !== before.ino || after.nlink !== BigInt(1)
@@ -410,7 +442,7 @@ export class PersistentLocalArtifactStorageV1 implements ArtifactStoragePortV1, 
       return decodeEnvelope(allocation.slice(0, length), expectedArtifactId);
     } finally {
       if (context.uncertain) void handle.close().catch(() => {});
-      else await this.io(() => handle.close(), context);
+      else await this.io("artifact_close", () => handle.close(), context);
     }
   }
 
@@ -431,10 +463,10 @@ export class PersistentLocalArtifactStorageV1 implements ArtifactStoragePortV1, 
     if (this.poisoned) throw new ArtifactStorageError("storage_ambiguous");
   }
 
-  private async io<T>(begin: () => Promise<T>, context: OperationContext, beginsMutation = false): Promise<T> {
+  private async io<T>(boundary: PersistentLocalArtifactStorageIoBoundaryV1,
+    begin: () => Promise<T>, context: OperationContext, uncertainAcquisition = false): Promise<T> {
     this.checkpoint(context);
-    if (beginsMutation) context.mutationStarted = true;
-    const operation = begin();
+    const operation = this.testIo ? Promise.resolve().then(() => this.testIo!.run(boundary, begin)) : begin();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let onAbort: (() => void) | undefined;
     const stopped = new Promise<never>((_resolve, reject) => {
@@ -450,6 +482,13 @@ export class PersistentLocalArtifactStorageV1 implements ArtifactStoragePortV1, 
     });
     try {
       return await Promise.race([operation, stopped]);
+    } catch (error) {
+      if (context.mutationStarted || uncertainAcquisition &&
+        (error instanceof DeadlineError || error instanceof Error && error.name === "AbortError")) {
+        context.uncertain = true;
+        this.poisoned = true;
+      }
+      throw error;
     } finally {
       if (timer) clearTimeout(timer);
       if (context.signal && onAbort) context.signal.removeEventListener("abort", onAbort);
@@ -474,8 +513,8 @@ export class PersistentLocalArtifactStorageV1 implements ArtifactStoragePortV1, 
   private async assertRootIdentity(context: OperationContext): Promise<void> {
     try {
       const [canonical, stats] = await Promise.all([
-        this.io(() => realpath(this.root), context),
-        this.io(() => lstat(this.root, { bigint: true }), context),
+        this.io("root_realpath", () => realpath(this.root), context),
+        this.io("root_stat", () => lstat(this.root, { bigint: true }), context),
       ]);
       if (canonical !== this.root || !stats.isDirectory() || stats.isSymbolicLink()
         || stats.dev !== this.rootIdentity.device || stats.ino !== this.rootIdentity.inode
@@ -486,12 +525,12 @@ export class PersistentLocalArtifactStorageV1 implements ArtifactStoragePortV1, 
   }
 
   private async syncRoot(context: OperationContext): Promise<void> {
-    const directory = await this.io(() => open(this.root, constants.O_RDONLY | noFollow), context);
+    const directory = await this.io("root_sync_open", () => open(this.root, constants.O_RDONLY | noFollow), context);
     try {
-      await this.io(() => directory.sync(), context);
+      await this.io("root_sync", () => directory.sync(), context);
     } finally {
       if (context.uncertain) void directory.close().catch(() => {});
-      else await this.io(() => directory.close(), context);
+      else await this.io("root_sync_close", () => directory.close(), context);
     }
   }
 
@@ -504,4 +543,12 @@ export async function createPersistentLocalArtifactStorageV1(
   configuration: PersistentLocalArtifactStorageConfigurationV1,
 ): Promise<PersistentLocalArtifactStorageV1> {
   return PersistentLocalArtifactStorageV1.create(configuration);
+}
+
+/** Deterministic fault injection for disposable tests only; never select this factory in production. */
+export async function createPersistentLocalArtifactStorageForTestV1(
+  configuration: PersistentLocalArtifactStorageConfigurationV1,
+  testIo: PersistentLocalArtifactStorageTestIoV1,
+): Promise<PersistentLocalArtifactStorageV1> {
+  return PersistentLocalArtifactStorageV1.createForTest(configuration, testIo);
 }

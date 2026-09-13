@@ -6,7 +6,10 @@ import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import {
   createPersistentLocalArtifactStorageV1,
+  createPersistentLocalArtifactStorageForTestV1,
   type PersistentLocalArtifactStorageConfigurationV1,
+  type PersistentLocalArtifactStorageIoBoundaryV1,
+  type PersistentLocalArtifactStorageTestIoV1,
 } from "../src/artifacts/v1/persistent-local-storage";
 import { nativeResultId, resultBytesHash } from "../src/artifacts/v1/native-results";
 import { ArtifactStorageError } from "../src/node-executor/artifact-storage";
@@ -45,6 +48,42 @@ async function artifactFile(root: string): Promise<string> {
   const artifact = entries.find(entry => entry.endsWith(".artifact"));
   assert.ok(artifact, "one artifact file exists");
   return join(root, artifact);
+}
+
+class ControlledIo implements PersistentLocalArtifactStorageTestIoV1 {
+  hits = 0;
+  private enteredResolve!: () => void;
+  readonly entered = new Promise<void>(resolve => { this.enteredResolve = resolve; });
+
+  constructor(
+    private readonly selected: PersistentLocalArtifactStorageIoBoundaryV1,
+    private readonly mode: "fail_before" | "fail_after" | "wait",
+  ) {}
+
+  async run<T>(boundary: PersistentLocalArtifactStorageIoBoundaryV1, operation: () => Promise<T>): Promise<T> {
+    if (boundary !== this.selected) return operation();
+    this.hits++;
+    this.enteredResolve();
+    if (this.mode === "fail_before") throw new Error("injected_filesystem_failure");
+    if (this.mode === "wait") return new Promise<T>(() => {});
+    const value = await operation();
+    throw new Error("injected_uncertain_filesystem_reply");
+  }
+}
+
+async function assertRetainedUncertainty(root: string, storage: Awaited<ReturnType<
+  typeof createPersistentLocalArtifactStorageForTestV1>>, gate: ControlledIo): Promise<string[]> {
+  const entries = await readdir(root);
+  assert.ok(entries.includes(".control-room-persistent-artifact.lock"));
+  assert.ok(entries.some(entry => entry.startsWith(".control-room-persistent-artifact-pending-")));
+  const hits = gate.hits;
+  await assert.rejects(storage.put({ artifactId: id("subsequent-refused"), bytes: text("Never retried.") }),
+    storageError("storage_ambiguous"));
+  assert.equal(gate.hits, hits);
+  await assert.rejects(createPersistentLocalArtifactStorageV1(configuration(root)),
+    storageError("storage_ambiguous"));
+  assert.deepEqual(await readdir(root), entries);
+  return entries;
 }
 
 test("create-once bytes replay exactly after a new adapter opens the same private root", async t => {
@@ -264,6 +303,51 @@ test("stale lock and pending evidence are never recovered or deleted", async t =
   await assert.rejects(createPersistentLocalArtifactStorageV1(configuration(pendingRoot)),
     storageError("storage_ambiguous"));
   assert.equal(await readFile(pendingPath, "utf8"), "uncertain partial bytes");
+});
+
+test("filesystem failures after mutation starts poison the adapter and retain reconciliation evidence", async t => {
+  for (const [boundary, mode, targetExpected] of [
+    ["pending_write", "fail_after", false],
+    ["target_link", "fail_after", true],
+    ["pending_unlink", "fail_before", true],
+  ] as const) {
+    await t.test(boundary, async t => {
+      const root = await privateRoot(t);
+      const gate = new ControlledIo(boundary, mode);
+      const storage = await createPersistentLocalArtifactStorageForTestV1(configuration(root), gate);
+      await assert.rejects(storage.put({ artifactId: id(`failure-${boundary}`), bytes: text("Uncertain boundary bytes.") }),
+        storageError("storage_ambiguous"));
+      assert.equal(gate.hits, 1);
+      const entries = await assertRetainedUncertainty(root, storage, gate);
+      assert.equal(entries.some(entry => entry.endsWith(".artifact")), targetExpected);
+    });
+  }
+});
+
+test("in-flight cancellation after pending bytes exist withholds output and forbids reuse", async t => {
+  const root = await privateRoot(t);
+  const gate = new ControlledIo("pending_sync", "wait");
+  const storage = await createPersistentLocalArtifactStorageForTestV1(configuration(root), gate);
+  const controller = new AbortController();
+  const pending = storage.put({ artifactId: id("in-flight-cancel"), bytes: text("Cancel after mutation."),
+    signal: controller.signal });
+  await gate.entered;
+  controller.abort();
+  await assert.rejects(pending, storageError("storage_ambiguous"));
+  assert.equal(gate.hits, 1);
+  await assertRetainedUncertainty(root, storage, gate);
+});
+
+test("in-flight durability timeout preserves linked and pending evidence and forbids reuse", async t => {
+  const root = await privateRoot(t);
+  const gate = new ControlledIo("root_sync", "wait");
+  const storage = await createPersistentLocalArtifactStorageForTestV1(
+    configuration(root, { operationTimeoutMs: 200 }), gate);
+  await assert.rejects(storage.put({ artifactId: id("in-flight-timeout"), bytes: text("Timeout after target link.") }),
+    storageError("storage_ambiguous"));
+  assert.equal(gate.hits, 1);
+  const entries = await assertRetainedUncertainty(root, storage, gate);
+  assert.equal(entries.filter(entry => entry.endsWith(".artifact")).length, 1);
 });
 
 test("pre-cancelled calls and zero-deadline startup perform no storage mutation", async t => {
