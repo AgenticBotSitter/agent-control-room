@@ -172,6 +172,17 @@ or become an application coordination store.
   skipping history.
 - Durable occurrence/outbox identity prevents duplicate dispatch. A delivered
   acknowledgement is reconciled; it is not recreated as a fresh occurrence.
+- Automatic planning and assignment require a separate owner-created standing
+  policy bound to the exact schedule/source/context digests, executor/capability,
+  node and validity window. A schedule alone is never that authority.
+- A standing policy survives neither suspension of its owner identity nor loss,
+  revocation or expiry of that owner's current project-scoped `tasks.assign`
+  grant. Identity and grant rows are locked and revalidated before each new plan
+  or lease, and policy/context freshness is checked again immediately before
+  commit. Existing immutable receipts remain non-authorizing historical reads.
+- Scheduled planning and assignment retain separate replay receipts and share the
+  ordinary locked node-capacity allocator. Neither receipt starts a process,
+  grants execution authority, proves native cancellation or releases capacity.
 - Native queue entries use `retryLimit: 0`. A recovered library delivery is accepted
   only after the canonical recovery verifier succeeds; uncertain execution is held.
 - Worker concurrency is explicit and bounded from 1 through 8. Awaiting owner review

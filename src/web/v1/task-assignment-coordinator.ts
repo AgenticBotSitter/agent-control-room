@@ -13,6 +13,7 @@ import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 import { WebSessionAuthority, type WebActor } from "./session-authority";
 import { NativeQueueAuthority } from "./native-queue-authority";
 import { WebProjectService } from "./project-service";
+import type { ProjectView } from "./project-wire";
 import type { TaskExecutionPlanner } from "./task-execution-planner";
 import { enrollmentSchema, type NativeEnrollment } from "../../harness/v1/native-run-contracts";
 import { prepareNativeTaskApprovalWithLease } from "../../harness/v1/native-task-lease-grant";
@@ -70,7 +71,7 @@ export type TaskAssignmentOperation = Readonly<{ tenantId: string; workspaceId: 
   assign: TaskAssignmentCoordinator["assign"]; expire: TaskAssignmentCoordinator["expire"]; options: TaskAssignmentCoordinator["options"] }>;
 type LockedAssignmentAuthority = Readonly<{
   actor: Readonly<{ actorId: string; actorType: "human" | "service" }>;
-  project: () => ReturnType<WebProjectService["getViewInSession"]>;
+  project: () => Promise<Pick<ProjectView, "lifecycle" | "origin">>;
   commitDeadline: (value: number) => void;
 }>;
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: async work => work(tx),
@@ -870,6 +871,28 @@ export class TaskAssignmentCoordinator {
         commitDeadline: value => { commitDeadline = value; },
       });
     });
+  }
+
+  /** Server-only standing-policy wrapper. The schedule service owns the surrounding transaction,
+   * current-policy checks, and fixed node selection. This is absent from webOperation(). */
+  async assignScheduledInSession(tx: DatabaseSession, input: Readonly<{ projectId: string; jobId: string;
+    nodeId: string; expectedInputDigest: string }>, authority: Readonly<{
+      assertCurrent: () => void | Promise<void>; commitDeadline: (value: number) => void }>) {
+    for (const id of [input.projectId, input.jobId, input.nodeId]) localId.parse(id);
+    digestSchema.parse(input.expectedInputDigest); await authority.assertCurrent();
+    const result = await this.#assignLocked(tx, input, {
+      actor: { actorId: "service:schedule-assignment:v1", actorType: "service" },
+      project: async () => {
+        const row = (await tx.query<{ lifecycle: ProjectView["lifecycle"] }>(`SELECT h.lifecycle FROM projects p
+          JOIN control_manual_project_heads h ON h.tenant_id=p.tenant_id AND h.project_id=p.id
+          WHERE p.tenant_id=$1 AND p.workspace_id=$2 AND p.id=$3 FOR SHARE OF p,h`,
+        [this.scope.tenantId, this.scope.workspaceId, input.projectId])).rows[0];
+        if (!row) conflict();
+        return { lifecycle: row.lifecycle, origin: "ordinary" as const };
+      },
+      commitDeadline: authority.commitDeadline,
+    });
+    await authority.assertCurrent(); return result;
   }
 
   /** Authority-bearing wrappers must validate their caller before entering this transaction core.

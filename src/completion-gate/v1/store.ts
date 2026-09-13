@@ -244,6 +244,25 @@ export class CompletionGateStoreV1 {
     });
   }
 
+  /** Checkpoint-authenticated, writer-serialized evidence for a server-side context consumer.
+   * Holding the tenant integrity row prevents a concurrent review, verification or revision
+   * from changing the decision before the caller's surrounding transaction commits. */
+  async acceptedContextInSession(source:DatabaseSession,tenantId:string,projectId:string,targetId:string){
+    await this.lockAndVerifyTenantState(source,tenantId);
+    const target=await this.requireTarget(source,tenantId,targetId,true);
+    if(target.projectId!==projectId)throw new CompletionGateErrorV1("scope_mismatch");
+    const snapshot=await this.snapshotWith(source,tenantId,target);
+    if(snapshot.status!=="ready")throw new CompletionGateErrorV1("record_not_found");
+    const accepted=(await this.listByParent(source,tenantId,projectId,"review",target.id) as CompletionReviewV1[])
+      .filter(value=>value.authority==="completion_gate"&&value.decision==="accepted")
+      .sort((left,right)=>left.id.localeCompare(right.id));
+    const passed=(await this.listByParent(source,tenantId,projectId,"verification",target.id) as CompletionVerificationV1[])
+      .filter(value=>value.outcome==="passed").sort((left,right)=>left.id.localeCompare(right.id));
+    if(accepted.map(value=>value.id).join("|")!==snapshot.acceptedReviewIds.join("|")
+      ||passed.length<1)throw new CompletionGateErrorV1("record_not_found");
+    return Object.freeze({target,snapshot,reviews:Object.freeze(accepted),verifications:Object.freeze(passed)});
+  }
+
   private async snapshotWith(tx:DatabaseSession,tenantId:string,target:CompletionReviewTargetV1):Promise<CompletionGateSnapshotV1>{
     const profile=await this.requireProfile(tx,tenantId,target.acceptanceProfileId);
     const reviews=(await this.listByParent(tx,tenantId,target.projectId,"review",target.id)) as CompletionReviewV1[];

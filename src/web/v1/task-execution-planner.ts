@@ -5,6 +5,7 @@ import { DOMAIN_CONTRACT_VERSION, authorityEnvelopeSchema, jobRecordSchema, requ
 import { CanonicalStore } from "../../persistence/canonical-store";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import { appendAuditWith } from "../../audit/audit-store";
+import type { ScheduledReusableContextV1 } from "../../services/v1/scheduled-task-admission";
 import { assertNoSecretMaterial, computeAuthorityDigest, hmacSha256Tag, sha256Digest, type AwaitableRollbackCheckpointStoreV1 } from "../../security";
 import { CompletionGateStoreV1, completionAcceptanceProfileSchemaV1, completionReviewSchemaV1,
   completionFindingSchemaV1 } from "../../completion-gate/v1";
@@ -61,7 +62,8 @@ export function captureNativeTaskTemplates(config: { template: NativeTaskTemplat
 const initialPlanSchema = z.object({ schema: z.literal("control-room.task-execution-plan/v1"), tenantId: localId,
   projectId: localId, sourceJobId: localId, sourceDigest: digestSchema, sourceInputDigest: digestSchema,
   templateDigest: digestSchema, plannedBy: localId, plannedAt: instant,
-  input: z.object({ prompt: z.string().min(1).max(4000), instructions: z.string().max(8192) }).strict(),
+  input: z.object({ prompt: z.string().min(1).max(4000), instructions: z.string().max(8192)
+    .refine(value => Buffer.byteLength(value, "utf8") <= 8192) }).strict(),
   request: requestRecordSchema, workflow: workflowRecordSchema, job: jobRecordSchema,
   acceptanceProfileId: localId, acceptanceProfileDigest: digestSchema,
 }).strict();
@@ -84,6 +86,29 @@ const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(
   transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); await check(); return result; } });
 const fail = (): never => { throw new Error("task_execution_plan_unavailable"); };
 const immutableJob = (job: JobRecord) => ({ ...job, state: "proposed", version: 0, updatedAt: job.createdAt });
+export const SCHEDULE_ASSIGNMENT_SERVICE_ACTOR_V1 = "service:schedule-assignment:v1";
+export const SCHEDULED_CONTEXT_REFERENCE_BLOCK_V1 = "control-room-scheduled-context-references/v1";
+/** Execution-compatible context binding. Empty context preserves the legacy instruction bytes;
+ * non-empty context adds only canonical IDs, digests and timestamps in a deterministic block. */
+export function bindScheduledContextReferencesV1(instructions: string, contexts: readonly ScheduledReusableContextV1[]) {
+  if (contexts.length === 0) return instructions;
+  const entries = contexts.map((context, index) => [
+    `context.${index}.kind=${context.kind}`, `context.${index}.id=${context.id}`,
+    `context.${index}.targetId=${context.targetId}`, `context.${index}.contentHash=${context.contentHash}`,
+    `context.${index}.sourceJobId=${context.sourceJobId}`, `context.${index}.sourceRunId=${context.sourceRunId}`,
+    `context.${index}.sourceRevision=${context.sourceRevision}`,
+    `context.${index}.reviewIds=${context.reviewIds.join(",")}`, `context.${index}.reviewDigest=${context.reviewDigest}`,
+    `context.${index}.verificationIds=${context.verificationIds.join(",")}`,
+    `context.${index}.verificationDigest=${context.verificationDigest}`, `context.${index}.verifiedAt=${context.verifiedAt}`,
+    `context.${index}.expiresAt=${context.expiresAt ?? "none"}`,
+  ]).flat();
+  const bindingDigest = sha256Digest({ contractVersion: SCHEDULED_CONTEXT_REFERENCE_BLOCK_V1, reusableContexts: contexts });
+  const block = [`[${SCHEDULED_CONTEXT_REFERENCE_BLOCK_V1}]`, `bindingDigest=${bindingDigest}`,
+    ...entries, `[/${SCHEDULED_CONTEXT_REFERENCE_BLOCK_V1}]`].join("\n");
+  const bound = `${instructions}\n\n${block}`;
+  if (bound.length > 8192 || Buffer.byteLength(bound, "utf8") > 8192) throw new WebAccessError("conflict");
+  return bound;
+}
 
 /** Authenticated historical v3 plan read for trusted Codex result persistence. It grants no
  * execution, result-write, review, completion or capacity-release authority. */
@@ -275,6 +300,83 @@ export class TaskExecutionPlanner {
         safeMetadata: { sourceJobId, sourceDigest, templateDigest, inputDigest: plan.job.inputDigest, startsWork: false } });
       return { receipt: this.receipt(plan), replayed: false };
     });
+  }
+
+  /** Server-only scheduled planning. The caller must hold and revalidate one standing-policy
+   * transaction around this method. It is intentionally absent from webOperation(). */
+  async planScheduledInSession(tx: DatabaseSession, input: Readonly<{ projectId: string; sourceJobId: string;
+    expectedInputDigest: string; policyId: string; policyVersion: number; policyDigest: string;
+    ownerIdentityDigest: string; reusableContexts: readonly ScheduledReusableContextV1[] }>, assertCurrent: () => void | Promise<void>) {
+    const { projectId, sourceJobId, expectedInputDigest, policyId, policyVersion, policyDigest,
+      ownerIdentityDigest, reusableContexts } = input;
+    localId.parse(projectId); localId.parse(sourceJobId); localId.parse(policyId);
+    z.number().int().positive().parse(policyVersion); digestSchema.parse(expectedInputDigest);
+    digestSchema.parse(policyDigest); digestSchema.parse(ownerIdentityDigest);
+    await assertCurrent();
+    const project = (await tx.query<{ lifecycle: string }>(`SELECT h.lifecycle FROM projects p
+      JOIN control_manual_project_heads h ON h.tenant_id=p.tenant_id AND h.project_id=p.id
+      WHERE p.tenant_id=$1 AND p.workspace_id=$2 AND p.id=$3 FOR SHARE OF p,h`,
+    [this.scope.tenantId, this.scope.workspaceId, projectId])).rows[0];
+    if (!project || project.lifecycle !== "active") throw new WebAccessError("conflict");
+    const source = await this.source(tx, projectId, sourceJobId);
+    if (source.job.inputDigest !== expectedInputDigest) throw new WebAccessError("conflict");
+    const template = this.templates.get(projectId);
+    if (!template || template.authority.projectId !== projectId) throw new WebAccessError("conflict");
+    const nowMs = this.clock();
+    if (!Number.isSafeInteger(nowMs)
+      || Date.parse(template.authority.expiresAt) < nowMs + template.authority.maxDurationSeconds * 1000) {
+      throw new WebAccessError("conflict");
+    }
+    const plannedAt = new Date(nowMs).toISOString(), templateDigest = sha256Digest(template), sourceDigest = sha256Digest(source);
+    const prior = (await tx.query<Row>("SELECT * FROM control_task_execution_plans WHERE tenant_id=$1 AND source_job_id=$2",
+      [this.scope.tenantId, sourceJobId])).rows[0];
+    if (prior) {
+      const plan = this.verify(prior);
+      if (plan.templateDigest !== templateDigest || plan.sourceDigest !== sourceDigest
+        || plan.plannedBy !== SCHEDULE_ASSIGNMENT_SERVICE_ACTOR_V1) throw new WebAccessError("conflict");
+      await this.checkedJob(tx, plan); await assertCurrent();
+      return { receipt: this.receipt(plan), replayed: true };
+    }
+    const suffix = sha256Digest({ tenantId: this.scope.tenantId, sourceJobId }).slice(7);
+    const base = { contractVersion: DOMAIN_CONTRACT_VERSION, tenantId: this.scope.tenantId, version: 0,
+      createdAt: plannedAt, updatedAt: plannedAt };
+    const planInput = { prompt: source.request.objective,
+      instructions: bindScheduledContextReferencesV1(template.instructions, reusableContexts) };
+    const codex = template.adapter === CODEX_APP_SERVER_ADAPTER;
+    const plan = planSchema.parse({ schema: codex ? "control-room.task-execution-plan/v3" : "control-room.task-execution-plan/v1",
+      ...(codex ? { adapter: CODEX_APP_SERVER_ADAPTER, connectorProfileDigest: template.connectorProfileDigest,
+        workspaceIntentDigest: template.workspaceIntentDigest } : {}), tenantId: this.scope.tenantId,
+      projectId, sourceJobId, sourceDigest, sourceInputDigest: expectedInputDigest, templateDigest,
+      plannedBy: SCHEDULE_ASSIGNMENT_SERVICE_ACTOR_V1, plannedAt, input: planInput,
+      acceptanceProfileId: template.acceptanceProfileId, acceptanceProfileDigest: template.acceptanceProfileDigest,
+      request: { ...base, kind: "request", id: `request:execution:${suffix}`, projectId, title: source.request.title,
+        objective: source.request.objective, state: "draft", priority: source.request.priority,
+        requestedBy: { actorId: SCHEDULE_ASSIGNMENT_SERVICE_ACTOR_V1, actorType: "service" }, idempotencyKey: `execution:${suffix}` },
+      workflow: { ...base, kind: "workflow", id: `workflow:execution:${suffix}`, projectId,
+        requestId: `request:execution:${suffix}`, definitionVersion: codex ? "codex-task-plan/v1" : "native-task-plan/v1",
+        definitionDigest: sha256Digest({ sourceDigest, templateDigest }), authorityMode: "control_room_native",
+        state: "proposed", jobIds: [`job:execution:${suffix}`] },
+      job: { ...base, kind: "job", id: `job:execution:${suffix}`, projectId,
+        workflowId: `workflow:execution:${suffix}`, jobType: template.adapter === HERMES_NATIVE_ADAPTER
+          ? "harness.hermes.native.task" : CODEX_APP_SERVER_JOB_TYPE, specVersion: "1.0.0",
+        inputDigest: sha256Digest(planInput), state: "proposed", priority: source.job.priority,
+        requiredCapability: template.adapter === HERMES_NATIVE_ADAPTER ? "harness.hermes.native.runs.v1" : CODEX_APP_SERVER_CAPABILITY,
+        dependsOnJobIds: [], authority: template.authority,
+        retryPolicy: { maxAttempts: 1, backoffSeconds: 0, retryableFailureCodes: [], retryAfterOrphan: false,
+          ambiguousEffectPolicy: "attention" } } });
+    await this.profile(tx, plan, plannedAt); assertNoSecretMaterial(plan); await assertCurrent();
+    const canonical = new CanonicalStore(joined(tx));
+    for (const record of [plan.request, plan.workflow, plan.job]) await canonical.create(record);
+    await tx.query(`INSERT INTO control_task_execution_plans(tenant_id,project_id,source_job_id,job_id,plan,auth_tag)
+      VALUES($1,$2,$3,$4,$5::jsonb,$6)`, [plan.tenantId, projectId, sourceJobId, plan.job.id,
+      JSON.stringify(plan), this.tag(plan)]);
+    await appendAuditWith(tx, { id: `audit:scheduled-plan:${suffix}`, tenantId: plan.tenantId, projectId,
+      actorId: SCHEDULE_ASSIGNMENT_SERVICE_ACTOR_V1, actorType: "service", action: "scheduled.tasks.plan",
+      targetType: "job", targetId: plan.job.id, idempotencyKey: `scheduled-plan:${suffix}`, occurredAt: plannedAt,
+      safeMetadata: { sourceJobId, sourceDigest, templateDigest, policyId, policyVersion, policyDigest,
+        ownerIdentityDigest, inputDigest: plan.job.inputDigest, startsWork: false, grantsExecutionAuthority: false } });
+    await assertCurrent();
+    return { receipt: this.receipt(plan), replayed: false };
   }
   /** Owner-requested durable planning only. This never consumes an old native approval
    * or converts a saved change request into execution permission. */

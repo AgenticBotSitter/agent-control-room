@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFile } from "node:fs/promises";
 import handler from "../dist-vps/server/index.js";
 import { installPrivateWebProcess } from "../dist-vps/server/runtime.js";
 import { taskAssignmentFixture } from "./helpers/task-assignment.ts";
@@ -7,6 +8,13 @@ import { sha256Digest } from "../src/security/index.ts";
 import { binding, instant } from "./hermes-native-fixture.ts";
 import { at } from "./native-task-fixture.ts";
 import { request, origin } from "./helpers/web-foundation.ts";
+
+test("compiled assignment keeps scheduled planning and allocation server-only", async () => {
+  const compiled = await readFile(new URL("../dist-vps/server/taskApplication.js", import.meta.url), "utf8");
+  assert.match(compiled, /service:schedule-assignment:v1/);
+  assert.match(compiled, /scheduled\.tasks\.plan/);
+  assert.doesNotMatch(compiled, /api\/v1\/scheduled-assignment/);
+});
 
 test("compiled private assignment API records, reads and expires a real lease under shared logout", async t => {
   const f = await taskAssignmentFixture(); let now = instant + 8000;
