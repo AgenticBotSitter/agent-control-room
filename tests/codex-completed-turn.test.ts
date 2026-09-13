@@ -3,10 +3,12 @@ import test from 'node:test';
 import { createHash } from 'node:crypto';
 import { CODEX_SOURCE_TESTED_RESULT_CONTRACT_V1,
   projectSourceTestedCodexCompletedTurnV1 } from '../src/harness/codex-v1/completed-turn';
+import { CODEX_APP_SERVER_READ_CONTRACT } from '../src/harness/codex-v1/schema-contract';
 
 const binding = { threadId: 'thread:fixture', turnId: 'turn:fixture' };
 const raw = (items: unknown[], status = 'completed') => JSON.stringify({ thread: {
-  id: binding.threadId, turns: [{ id: binding.turnId, status, items }],
+  id: binding.threadId, cliVersion: CODEX_APP_SERVER_READ_CONTRACT.version,
+  turns: [{ id: binding.turnId, status, items }],
 } });
 const project = (items: unknown[]) => projectSourceTestedCodexCompletedTurnV1({ ...binding, rawResult: raw(items) });
 
@@ -56,16 +58,23 @@ test('refuses non-completed, missing and foreign turns', () => {
     projectSourceTestedCodexCompletedTurnV1({ ...binding, rawResult: raw([
       { type: 'agentMessage', id: 'item:final', text: 'not eligible' }], status) }), /projection_unavailable/);
   assert.throws(() => projectSourceTestedCodexCompletedTurnV1({ ...binding,
-    rawResult: JSON.stringify({ thread: { id: binding.threadId, turns: [] } }) }), /projection_unavailable/);
+    rawResult: JSON.stringify({ thread: { id: binding.threadId,
+      cliVersion: CODEX_APP_SERVER_READ_CONTRACT.version, turns: [] } }) }), /projection_unavailable/);
   assert.throws(() => projectSourceTestedCodexCompletedTurnV1({ ...binding,
     rawResult: JSON.stringify({ thread: { id: 'thread:foreign', turns: [{ id: binding.turnId,
-      status: 'completed', items: [{ type: 'agentMessage', id: 'item:final', text: 'foreign' }] }] } }) }), /projection_unavailable/);
+      status: 'completed', items: [{ type: 'agentMessage', id: 'item:final', text: 'foreign' }] }],
+      cliVersion: CODEX_APP_SERVER_READ_CONTRACT.version } }) }), /projection_unavailable/);
+  assert.throws(() => projectSourceTestedCodexCompletedTurnV1({ ...binding,
+    rawResult: JSON.stringify({ thread: { id: binding.threadId, cliVersion: '0.153.4',
+      turns: [{ id: binding.turnId, status: 'completed',
+        items: [{ type: 'agentMessage', id: 'item:final', text: 'wrong version' }] }] } }) }), /projection_unavailable/);
 });
 
 test('refuses duplicate identities and malformed agent messages', () => {
   const turn = { id: binding.turnId, status: 'completed', items: [{ type: 'agentMessage', id: 'item:final', text: 'x' }] };
   assert.throws(() => projectSourceTestedCodexCompletedTurnV1({ ...binding,
-    rawResult: JSON.stringify({ thread: { id: binding.threadId, turns: [turn, turn] } }) }), /projection_unavailable/);
+    rawResult: JSON.stringify({ thread: { id: binding.threadId,
+      cliVersion: CODEX_APP_SERVER_READ_CONTRACT.version, turns: [turn, turn] } }) }), /projection_unavailable/);
   for (const items of [
     [{ type: 'agentMessage', id: 'item:same', text: 'one' }, { type: 'reasoning', id: 'item:same', text: 'two' }],
     [{ type: 'agentMessage', id: 'item:final', text: 4 }],
@@ -93,7 +102,8 @@ test('accepts exactly 65,536 UTF-8 bytes and refuses one more', () => {
 test('refuses oversized reads, item floods and selected secrets', () => {
   assert.throws(() => projectSourceTestedCodexCompletedTurnV1({ ...binding,
     rawResult: JSON.stringify({ thread: { id: binding.threadId, turns: [{ id: binding.turnId,
-      status: 'completed', items: [{ type: 'agentMessage', id: 'item:final', text: 'x' }], padding: 'x'.repeat(262_144) }] } })
+      status: 'completed', items: [{ type: 'agentMessage', id: 'item:final', text: 'x' }], padding: 'x'.repeat(262_144) }],
+      cliVersion: CODEX_APP_SERVER_READ_CONTRACT.version } })
   }), /projection_unavailable/);
   assert.throws(() => project(Array.from({ length: 1_025 }, (_, index) => ({ type: 'reasoning', id: `item:${index}` }))), /projection_unavailable/);
   assert.throws(() => project([{ type: 'agentMessage', id: 'item:final',

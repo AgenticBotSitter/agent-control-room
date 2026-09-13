@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { CODEX_APP_SERVER_READ_CONTRACT } from './schema-contract';
+import { projectSourceTestedCodexCompletedTurnV1 } from './completed-turn';
 
 const id = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]{2,179}$/);
 const bindingSchema = z.object({ threadId: id, turnId: id }).strict();
@@ -24,9 +25,15 @@ export function createCodexReadRecovery(input: z.infer<typeof bindingSchema>) {
         if (response.thread.id !== binding.threadId
           || new Set(response.thread.turns.map(turn => turn.id)).size !== response.thread.turns.length) throw new Error();
         const turn = response.thread.turns.find(turn => turn.id === binding.turnId);
+        let sourceTestedResult: ReturnType<typeof projectSourceTestedCodexCompletedTurnV1> | undefined;
+        if (turn?.status === 'completed') {
+          try { sourceTestedResult = projectSourceTestedCodexCompletedTurnV1({ ...binding, rawResult }); }
+          catch { sourceTestedResult = undefined; }
+        }
         return Object.freeze({ ...binding, status: turn?.status ?? 'not_observed',
           source: 'stored_thread_read' as const, usage: 'unknown' as const,
-          completionVerified: false as const, cleanupVerified: false as const, grantsExecutionAuthority: false as const });
+          completionVerified: false as const, cleanupVerified: false as const, grantsExecutionAuthority: false as const,
+          ...(sourceTestedResult ? { sourceTestedResult } : {}) });
       } catch { throw new Error('codex_read_recovery_unavailable'); }
     },
   });
