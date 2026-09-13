@@ -10,7 +10,7 @@ Permanent entry point for people and bots. Read the [build/reuse plan](PUBLIC_BU
 and [worker skill](skills/public-build-worker/SKILL.md). Issues are the live status
 record; no documentation commit is needed every time a job changes state.
 
-Public `main` is the reconciled implementation baseline through PR #136. It now
+Public `main` is the reconciled implementation baseline through PR #137. It now
 includes the configurable-project proof, explicit project pages, safe Project News,
 owner-attention prioritization, exact and relative activity times, verified 360px
 navigation, restart-style recovery after both successful and failed verification,
@@ -23,9 +23,10 @@ results now share one strict inert evidence shape; the exact-version Codex quali
 and result-publication contract is defined and independently reviewed. A Codex-only
 publisher can now verify an externally signed qualification plus the saved plan,
 activation and current admission, then persist exact bytes and one pending review
-target with restart-safe reservations. Its tests use a synthetic signer; this is not
-physical native or provider qualification, does not make the path live, accept a
-review, complete work or release capacity.
+target with restart-safe reservations. The same existing owner-review, verification,
+revision and completion services now handle that canonical Codex result, including
+safe capacity release and exact replay after restart. These tests use synthetic
+signers and injected ports; they do not make a provider or production service live.
 Connector, security/configuration and support decisions are published in
 [the shared connector contract](docs/SHARED_CONNECTOR_CONTRACT.md),
 [the security/configuration contract](docs/SECURITY_CONFIGURATION_CONTRACT.md) and
@@ -57,10 +58,11 @@ where the work is concentrated without requiring chat history.
 
 - **Assigned:** #2 Windows portability, #8 Hermes connector, #11 shipped notices,
   #27 Idea Lab/article research, #62 Claude connector, #63 PostgreSQL/recovery,
-  #64 distributable service and #126 server-composition failure proof. #65 remains the parent
-  integration outcome for persistent result storage.
-- **Ready for reservation now:** #125 Mac/Linux worker rehearsal, #128 retained
-  restic backups and #135 persistent-storage composition. Each is a substantial,
+  #64 distributable service, #126 server-composition failure proof and #135
+  persistent-storage composition. #65 remains the parent integration outcome for
+  persistent result storage.
+- **Ready for reservation now:** #125 Mac/Linux worker rehearsal and #128 retained
+  restic backups. Each is a substantial,
   self-contained package with owned paths, reuse choices and acceptance checks.
 - **Lead integration active:** #10 configurable frontend and #26 canonical shared
   two-harness execution/results.
