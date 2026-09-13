@@ -15,9 +15,14 @@ export function runtimeLicenseReport(input, repository = process.cwd()) {
     if (typeof record.name !== 'string' || !Array.isArray(record.versions) || !record.versions.length
       || !Array.isArray(record.paths) || !record.paths.length || record.paths.length > 128) throw new Error('license_record_invalid');
     const observed = new Set();
-    for (const relative of record.paths) {
-      if (typeof relative !== 'string' || !relative.startsWith('node_modules/') || path.posix.normalize(relative) !== relative
-        || relative.includes('\\') || seen.has(relative)) throw new Error('license_package_path_invalid');
+    for (const rawRelative of record.paths) {
+      if (typeof rawRelative !== 'string') throw new Error('license_package_path_invalid');
+      // Windows-prepared pnpm inventories may emit backslash-separated
+      // paths (e.g. `node_modules\.pnpm\foo@1.0.0\node_modules\foo`).
+      // Normalize to forward slash before the rest of the checks run.
+      const relative = rawRelative.includes('\\') ? rawRelative.split('\\').join('/') : rawRelative;
+      if (!relative.startsWith('node_modules/') || path.posix.normalize(relative) !== relative
+        || seen.has(relative)) throw new Error('license_package_path_invalid');
       seen.add(relative);
       const directory = fs.realpathSync(path.join(repository, relative));
       if (!directory.startsWith(fs.realpathSync(modules) + path.sep)) throw new Error('license_package_outside_modules');

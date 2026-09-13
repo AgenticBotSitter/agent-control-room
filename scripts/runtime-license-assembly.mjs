@@ -4,10 +4,28 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { runtimeLicenseReport } from './runtime-license-report.mjs';
 import { collectLicenseEvidence } from './license-evidence.mjs';
+import { scanBundledCode, DEFAULT_VENDOR_ROOTS } from './runtime-license-bundled-scan.mjs';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 
+/**
+ * Fail-closed bundled-code disclosure gate for the release path.
+ * Scans the full vendor root set and throws `license_bundled_undisclosed`
+ * listing every subtree without LICENSE/NOTICE evidence — an omitted
+ * root or an unattributed copy must break the release, not just appear
+ * in a standalone report nothing reads. Returns the scan for inclusion
+ * in the assembly payload (provenance: which roots were enforced).
+ */
+export function checkBundledDisclosure({ repoRoot = process.cwd(), vendorRoots = DEFAULT_VENDOR_ROOTS } = {}) {
+  const rows = scanBundledCode({ repoRoot, vendorRoots });
+  const undisclosed = rows.filter(row => row.bundledUndisclosed);
+  if (undisclosed.length) {
+    throw new Error(`license_bundled_undisclosed: ${undisclosed.map(row => row.subtree).join(', ')}`);
+  }
+  return { vendorRoots, rows };
+}
+
 /** Current-platform root-text assembly. Not a bundle/vendor/asset clearance. */
-export function assembleRuntimeLicenses(repository = process.cwd()) {
+export function assembleRuntimeLicenses(repository = process.cwd(), { vendorRoots = DEFAULT_VENDOR_ROOTS } = {}) {
   const read = relative => fs.readFileSync(path.join(repository, relative));
   const json = relative => JSON.parse(read(relative));
   const report = runtimeLicenseReport(json('research/runtime-license-input.json'), repository);
@@ -54,5 +72,6 @@ export function assembleRuntimeLicenses(repository = process.cwd()) {
   });
   return { schema: 'control-room.runtime-license-assembly/v1', scope: report.scope,
     completeDistributionClearance: false, rawMissingRootTexts: report.missing,
-    manifestSha256: report.manifestSha256, lockSha256: report.lockSha256, entries };
+    manifestSha256: report.manifestSha256, lockSha256: report.lockSha256,
+    bundledScan: checkBundledDisclosure({ repoRoot: repository, vendorRoots }), entries };
 }

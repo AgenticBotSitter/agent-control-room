@@ -1,8 +1,8 @@
 {
   "schema": "control-room.runtime-license-report/v1",
-  "manifestSha256": "f586abb9ce729783d9bd923e5fab6d68de1e613383fff1fc5b9417490af3eada",
+  "manifestSha256": "fd9b174f1088726b7dbda651c6f5ebd492d406fa2e5a4f37e75a6ef07763e0a8",
   "lockSha256": "6fdb15b4d7cea20edc11feeadaea07aabb7a6ccbcf7a40d0c75c130b535299f9",
-  "inventorySha256": "a364dfbda410c587757275276874b09f49560aee26d1f7c910203f9b66e46ef7",
+  "inventorySha256": "3b7fe1b122fa6796d8827efc3f106fbecd86340f7bb8e085e36c68f0cce75ce5",
   "scope": "prepared runtime root texts only; not complete distribution clearance",
   "packages": 193,
   "missing": [
