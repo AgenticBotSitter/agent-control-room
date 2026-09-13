@@ -7,7 +7,7 @@ import { WebAccessError, type VerifiedWebIdentity } from "../../web/v1/access-ve
 import { WebSessionAuthority } from "../../web/v1/session-authority";
 import { type TaskExecutionPlanner } from "../../web/v1/task-execution-planner";
 import { type TaskAssignmentCoordinator } from "../../web/v1/task-assignment-coordinator";
-import type { NativeResultStore } from "../../artifacts/v1/native-results";
+import type { NativeResultStore, TaskResultReceipt } from "../../artifacts/v1/native-results";
 import type { CompletionGateStoreV1 } from "../../completion-gate/v1/store";
 import type { CompletionReviewV1, CompletionVerificationV1 } from "../../completion-gate/v1/types";
 import { readTaskReviewPlanV1, verifyTaskReviewTargetV1 } from "../../completion-gate/v1/task-review-plan";
@@ -88,12 +88,14 @@ export class CanonicalScheduledReusableContextVerifierV1 implements ScheduledReu
     if (Date.parse(context.verifiedAt) > Date.parse(now)
       || context.expiresAt && Date.parse(now) >= Date.parse(context.expiresAt)) fail("context_unavailable");
     const receipt = await this.results.readReceipt(tx, scope.tenantId, scope.projectId, context.sourceJobId, context.id);
-    if (!receipt || receipt.artifactId !== context.id || receipt.projectId !== scope.projectId
-      || receipt.jobId !== context.sourceJobId || receipt.runId !== context.sourceRunId
-      || receipt.contentHash !== context.contentHash) fail("context_unavailable");
+    if (!receipt) return fail("context_unavailable");
+    const currentReceipt: TaskResultReceipt = receipt;
+    if (currentReceipt.artifactId !== context.id || currentReceipt.projectId !== scope.projectId
+      || currentReceipt.jobId !== context.sourceJobId || currentReceipt.runId !== context.sourceRunId
+      || currentReceipt.contentHash !== context.contentHash) fail("context_unavailable");
     const evidence = await this.completion.acceptedContextInSession(tx, scope.tenantId, scope.projectId, context.targetId);
     const plan = await readTaskReviewPlanV1(tx, this.reviewKey, scope.tenantId, scope.projectId, context.sourceJobId);
-    try { verifyTaskReviewTargetV1(plan, evidence.target, receipt); } catch { return fail("context_unavailable"); }
+    try { verifyTaskReviewTargetV1(plan, evidence.target, currentReceipt); } catch { return fail("context_unavailable"); }
     const reviews = evidence.reviews, verifications = evidence.verifications;
     const latestVerification = verifications.reduce((latest, value) => value.verifiedAt > latest ? value.verifiedAt : latest, "");
     if (evidence.target.subjectDigest !== context.contentHash || evidence.target.revisionNumber !== context.sourceRevision
@@ -171,8 +173,9 @@ export class ScheduledTaskAssignmentServiceV1 {
   }
 
   async createPolicy(identity: VerifiedWebIdentity, value: unknown) {
-    const parsed = policyCreateSchema.safeParse(value); if (!parsed.success) fail("invalid_policy");
+    const parsed = policyCreateSchema.safeParse(value); if (!parsed.success) return fail("invalid_policy");
     const input = parsed.data;
+    if (!input) return fail("invalid_policy");
     if (input.reusableContextPolicyDigest !== computeScheduledReusableContextPolicyDigestV1(input.reusableContexts)
       || Date.parse(input.validUntil) <= Date.parse(input.validFrom)) fail("invalid_policy");
     assertNoSecretMaterial(input);
@@ -221,17 +224,19 @@ export class ScheduledTaskAssignmentServiceV1 {
   }
 
   async setPolicyState(identity: VerifiedWebIdentity, policyId: string, value: unknown) {
-    id.parse(policyId); const parsed = policyStateSchema.safeParse(value); if (!parsed.success) fail("invalid_policy");
+    id.parse(policyId); const parsed = policyStateSchema.safeParse(value); if (!parsed.success) return fail("invalid_policy");
+    const change = parsed.data;
+    if (!change) return fail("invalid_policy");
     return this.authority.authenticated(identity, async (tx, actor) => {
       const row = (await tx.query<PolicyRow>("SELECT * FROM control_schedule_assignment_policies WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
         [this.scope.tenantId, policyId])).rows[0];
       if (!row) fail("policy_conflict"); const current = policyFromRow(row);
       actor.require("tasks.plan", current.projectId, true); actor.require("tasks.assign", current.projectId, true);
-      if (current.version !== parsed.data.expectedVersion) fail("policy_conflict");
-      if (current.state === parsed.data.state) return { policy: current, replayed: true };
+      if (current.version !== change.expectedVersion) fail("policy_conflict");
+      if (current.state === change.state) return { policy: current, replayed: true };
       if (current.state === "revoked") fail("policy_conflict");
       const { policyDigest: _old, ...base } = current;
-      const unsigned = { ...base, state: parsed.data.state, version: current.version + 1, updatedAt: actor.now };
+      const unsigned = { ...base, state: change.state, version: current.version + 1, updatedAt: actor.now };
       const policy = Object.freeze({ ...unsigned, policyDigest: computeScheduleAssignmentPolicyDigestV1(unsigned) });
       await tx.query(`UPDATE control_schedule_assignment_policies SET state=$1,version=$2,policy_digest=$3,payload=$4::jsonb,updated_at=$5
         WHERE tenant_id=$6 AND id=$7`, [policy.state, policy.version, policy.policyDigest, JSON.stringify(policy), actor.now,
@@ -333,8 +338,8 @@ export class ScheduledTaskAssignmentServiceV1 {
     this.authorized(authority, now);
     const resolvedContexts: ScheduledReusableContextV1[] = [];
     const verifier = this.contextVerifier;
-    for (const context of policy.reusableContexts) {
-      if (!verifier) fail("context_unavailable");
+    if (policy.reusableContexts.length > 0 && verifier === undefined) fail("context_unavailable");
+    if (verifier !== undefined) for (const context of policy.reusableContexts) {
       try {
         const resolved = await verifier.resolveInSession(tx,
           { ...this.scope, projectId: policy.projectId }, context, now);
@@ -346,24 +351,26 @@ export class ScheduledTaskAssignmentServiceV1 {
   }
 
   async plan(value: unknown): Promise<{ receipt: ScheduledTaskPlanReceiptV1; replayed: boolean }> {
-    const parsed = operationSchema.safeParse(value); if (!parsed.success) fail("admission_conflict");
+    const parsed = operationSchema.safeParse(value); if (!parsed.success) return fail("admission_conflict");
+    const operation = parsed.data;
+    if (!operation) return fail("admission_conflict");
     let admission: ScheduledTaskAdmissionReceiptV1;
-    try { admission = parseScheduledTaskAdmissionReceiptV1(parsed.data.admission); } catch { return fail("admission_conflict"); }
+    try { admission = parseScheduledTaskAdmissionReceiptV1(operation.admission); } catch { return fail("admission_conflict"); }
     let assertFinalCurrent: (() => Promise<unknown>) | undefined, terminal: (() => void) | undefined;
     return this.db.transactionWithPreCommitCheck(async tx => {
-      const authority = await this.lockAuthority(tx, parsed.data.policyId);
+      const authority = await this.lockAuthority(tx, operation.policyId);
       const prior = (await tx.query<ReceiptRow>(`SELECT payload,receipt_digest FROM control_scheduled_task_plans
         WHERE tenant_id=$1 AND schedule_id=$2 AND occurrence_key=$3 FOR UPDATE`,
       [this.scope.tenantId, admission.scheduleId, admission.occurrenceKey])).rows[0];
       if (prior) {
         const receipt = parsePlanReceipt(prior.payload);
         if (prior.receipt_digest !== receipt.receiptDigest || receipt.admissionReceiptDigest !== admission.receiptDigest
-          || receipt.policyId !== parsed.data.policyId || receipt.policyDigest !== parsed.data.policyDigest) fail("planning_conflict");
+          || receipt.policyId !== operation.policyId || receipt.policyDigest !== operation.policyDigest) fail("planning_conflict");
         return { receipt, replayed: true };
       }
-      const assertCurrent = async () => { await this.current(tx, authority, { ...parsed.data, admission }); };
+      const assertCurrent = async () => { await this.current(tx, authority, { ...operation, admission }); };
       assertFinalCurrent = assertCurrent;
-      const { policy, now, resolvedContexts } = await this.current(tx, authority, { ...parsed.data, admission });
+      const { policy, now, resolvedContexts } = await this.current(tx, authority, { ...operation, admission });
       terminal = () => this.terminalFence(authority, resolvedContexts);
       const sourceJob = (await tx.query<{ payload: JobRecord }>("SELECT payload FROM control_jobs WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
         [this.scope.tenantId, admission.destination.jobId])).rows[0]?.payload;
@@ -398,20 +405,22 @@ export class ScheduledTaskAssignmentServiceV1 {
   }
 
   async assign(value: unknown): Promise<{ receipt: ScheduledTaskAssignmentReceiptV1; replayed: boolean }> {
-    const parsed = operationSchema.safeParse(value); if (!parsed.success) fail("admission_conflict");
+    const parsed = operationSchema.safeParse(value); if (!parsed.success) return fail("admission_conflict");
+    const operation = parsed.data;
+    if (!operation) return fail("admission_conflict");
     let admission: ScheduledTaskAdmissionReceiptV1;
-    try { admission = parseScheduledTaskAdmissionReceiptV1(parsed.data.admission); } catch { return fail("admission_conflict"); }
+    try { admission = parseScheduledTaskAdmissionReceiptV1(operation.admission); } catch { return fail("admission_conflict"); }
     let commitDeadline: number | undefined, assertFinalCurrent: (() => Promise<unknown>) | undefined;
     let terminal: (() => void) | undefined;
     return this.db.transactionWithPreCommitCheck(async tx => {
-      const authority = await this.lockAuthority(tx, parsed.data.policyId);
+      const authority = await this.lockAuthority(tx, operation.policyId);
       const prior = (await tx.query<ReceiptRow>(`SELECT payload,receipt_digest FROM control_scheduled_task_assignments
         WHERE tenant_id=$1 AND schedule_id=$2 AND occurrence_key=$3 FOR UPDATE`,
       [this.scope.tenantId, admission.scheduleId, admission.occurrenceKey])).rows[0];
       if (prior) {
         const receipt = parseAssignmentReceipt(prior.payload);
         if (prior.receipt_digest !== receipt.receiptDigest || receipt.admissionReceiptDigest !== admission.receiptDigest
-          || receipt.policyId !== parsed.data.policyId || receipt.policyDigest !== parsed.data.policyDigest) fail("assignment_conflict");
+          || receipt.policyId !== operation.policyId || receipt.policyDigest !== operation.policyDigest) fail("assignment_conflict");
         return { receipt, replayed: true };
       }
       const planRow = (await tx.query<ReceiptRow>(`SELECT payload,receipt_digest FROM control_scheduled_task_plans
@@ -419,10 +428,10 @@ export class ScheduledTaskAssignmentServiceV1 {
       [this.scope.tenantId, admission.scheduleId, admission.occurrenceKey])).rows[0];
       if (!planRow) fail("planning_conflict"); const plan = parsePlanReceipt(planRow.payload);
       if (planRow.receipt_digest !== plan.receiptDigest || plan.admissionReceiptDigest !== admission.receiptDigest
-        || plan.policyId !== parsed.data.policyId || plan.policyDigest !== parsed.data.policyDigest) fail("planning_conflict");
-      const assertCurrent = async () => { await this.current(tx, authority, { ...parsed.data, admission }); };
+        || plan.policyId !== operation.policyId || plan.policyDigest !== operation.policyDigest) fail("planning_conflict");
+      const assertCurrent = async () => { await this.current(tx, authority, { ...operation, admission }); };
       assertFinalCurrent = assertCurrent;
-      const { policy, now, resolvedContexts } = await this.current(tx, authority, { ...parsed.data, admission });
+      const { policy, now, resolvedContexts } = await this.current(tx, authority, { ...operation, admission });
       terminal = () => this.terminalFence(authority, resolvedContexts, commitDeadline);
       const assigned = await this.assignment.assignScheduledInSession(tx, { projectId: policy.projectId,
         jobId: plan.plannedJobId, nodeId: policy.nodeId, expectedInputDigest: plan.inputDigest }, {
