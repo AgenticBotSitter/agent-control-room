@@ -5,7 +5,26 @@ Author: Claude (Opus 5). Date: 2026-09-12. Baseline: `bc0a61a` on `codex/idea-ab
 This is a plan only. It authorizes no install, credential, provider call, deployment or
 publication. It does not reopen any accepted Codex record.
 
-## 1. What already exists
+## Correction (2026-09-13): §1's "what already exists" was read from the wrong branch
+
+Everything in §1 below was read from an old local branch (`codex/idea-abs-workflows` at
+`bc0a61a`) that was never pushed to `main` and has no common git history with `main` at all.
+On real `origin/main`, **none of it exists**: no `src/harness/sdk-v1/`, no `docs/CR7D_...`,
+no `docs/CR7C_...`, no Codex/Hermes adapter files. What real `main` has instead is a
+different, simpler, already-real design: `src/harness/v1/connector-profile.ts`
+(`connectorProfileSchemaV1`) plus `docs/SHARED_CONNECTOR_CONTRACT.md` and
+`docs/SECURITY_CONFIGURATION_CONTRACT.md` — and that contract **already has a Claude Code
+section**, written before this plan, specifying package-identity pinning (npm name/version/
+SHA-512 integrity, not a Git revision) over the SDK-adapter shape described below.
+
+§3's proposed `manifest.ts`/`decoder.ts`/`adapter.ts` shape and §4's CLI-vs-SDK phasing are
+still reasonable *future* design thinking for when execution (submit/stream/steer) actually
+gets built — but they are not the current contract, and the actual first deliverable is much
+smaller: an inert `connectorProfileSchemaV1` record, no adapter object at all. See
+`src/harness/claude-code-v1/connector-profile.ts` (PR #72) for what actually landed under
+the real contract. Treat §1, §3 and §4 below as superseded background, not current state.
+
+## 1. What already exists (superseded — see correction above)
 
 | Piece | State | Where |
 |---|---|---|
