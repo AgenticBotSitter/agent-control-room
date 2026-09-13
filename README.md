@@ -38,12 +38,14 @@ everyone; no separate private core.
 | What should the webpage look like and do? | [Public webpage specification](WEBPAGE_SPEC.md) — layout, every core screen, optional modules, error states and acceptance |
 | Where do I ask or propose a different useful contribution? | [Coordination issue #12](https://github.com/AgenticBotSitter/agent-control-room/issues/12) — describe your expertise and a substantial non-overlapping outcome |
 
-**Already available:** disposable project/task/revision demo, substantial source and
-component tests, public CI, Linux rehearsal/browser-tooling contributions and retained
-upstream notices. **Still to finish:** real Hermes/Codex integration and recovery,
-customizable product webpage, release/install/rollback, portable notices, platform
-acceptance and a verified multi-worker release. Optional Idea Lab/news/extensions
-follow the core loop. No live harness compatibility is claimed by the demo.
+**Already available:** disposable project/task/revision demo, one-build/two-configuration
+customization proof, explicit project pages, safe Project News, owner-attention
+prioritization, substantial source/browser tests, public CI, Linux rehearsal tooling
+and retained upstream notices. **Still to finish:** real Hermes/Codex integration and
+recovery, live worker/capacity data, durable protected files, release/install/rollback,
+portable notices, platform acceptance and a verified multi-worker release. Optional
+Idea Lab/news execution and extra extensions follow the core loop. No live harness
+compatibility is claimed by the demo.
 
 ### Contribute in five steps
 
@@ -131,8 +133,10 @@ No live agent-runtime/platform combination is claimed supported by this preview.
 ## Contributor starting points
 
 **Current implementation baseline:** the current public `main`, including the
-lead-integrated application navigation and protected route corrections through
-[PR #90](https://github.com/AgenticBotSitter/agent-control-room/pull/90). The
+lead-integrated application navigation and protected route corrections, configurable
+project proof, explicit project pages, safe Project News, browser lifecycle coverage
+and owner-attention prioritization through
+[PR #102](https://github.com/AgenticBotSitter/agent-control-room/pull/102). The
 [September 9 contributor handoff](CONTRIBUTOR_HANDOFF.md) remains historical evidence;
 new contributions use the base recorded in their issue. This is not production
 acceptance and does not supersede active contributors' branches.
@@ -143,10 +147,11 @@ reuse, what not to rebuild, and which packages still need focused test exports
 before assignment. All 17 implementation directions are recorded; selected
 components are not yet all integrated.
 
-The September 8 source refresh adds sanitized Idea Lab and news workflows,
-connector updates and generic database/operator templates. The public package
-passes `pnpm check`, `pnpm build` and all 56 compiled tests in `pnpm test`.
-Templates are not configured services, and these checks are not production acceptance.
+The public package includes sanitized Idea Lab and news workflows, connector updates
+and generic database/operator templates. At the PR #102 baseline it passes strict
+type checking and all 61 compiled test groups, including 182 browser acceptance
+checks. Templates are not configured services, and these checks are not production
+acceptance.
 
 - [Setup and verified check commands](SETUP.md)
 - [How to contribute and get work assigned](CONTRIBUTING.md)

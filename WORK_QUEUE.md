@@ -10,8 +10,11 @@ Permanent entry point for people and bots. Read the [build/reuse plan](PUBLIC_BU
 and [worker skill](skills/public-build-worker/SKILL.md). Issues are the live status
 record; no documentation commit is needed every time a job changes state.
 
-Public `main` is the reconciled implementation baseline through PR #96. Connector, security/configuration and
-support decisions are published in [the shared connector contract](docs/SHARED_CONNECTOR_CONTRACT.md),
+Public `main` is the reconciled implementation baseline through PR #102. It now
+includes the configurable-project proof, explicit project pages, safe Project News,
+restart-style application lifecycle coverage, and owner-attention prioritization.
+Connector, security/configuration and support decisions are published in
+[the shared connector contract](docs/SHARED_CONNECTOR_CONTRACT.md),
 [the security/configuration contract](docs/SECURITY_CONFIGURATION_CONTRACT.md) and
 [the support matrix](docs/SUPPORT_MATRIX.md). New work must use the exact base in its
 issue; active contributor branches retain ownership until accepted or handed off.
@@ -69,6 +72,14 @@ The bounded mixed-harness source review in
 [#21](https://github.com/AgenticBotSitter/agent-control-room/issues/21) was accepted;
 each consequential implementation and assembled-release claim still receives its own
 proportional independent review before integration.
+
+Lead-integrated PRs #100–#102 completed important portions of #1 and #10: one build
+now supports two isolated configurations; project Inbox, Agents, Automations and News
+routes are explicit; unknown project routes fail safely; keyboard/mobile browser
+coverage and restart-style recovery use disposable data; and owner attention is
+categorized and ranked. Those issues remain open because protected file delivery,
+live worker/capacity data and final real-harness acceptance depend on #65, #66, #68
+and the assembled-release gate in #61.
 
 ### Parallel additions and additional platform support
 
