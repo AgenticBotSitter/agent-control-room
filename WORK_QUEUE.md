@@ -58,14 +58,13 @@ where the work is concentrated without requiring chat history.
 
 - **Assigned:** #2 Windows portability, #8 Hermes connector, #11 shipped notices,
   #27 Idea Lab/article research, #62 Claude connector, #63 PostgreSQL/recovery,
-  #64 distributable service, #126 server-composition failure proof and #135
-  persistent-storage composition. #65 remains the parent integration outcome for
+  #64 distributable service and #135 persistent-storage composition. #65 remains the parent integration outcome for
   persistent result storage.
 - **Ready for reservation now:** #125 Mac/Linux worker rehearsal and #128 retained
   restic backups. Each is a substantial,
   self-contained package with owned paths, reuse choices and acceptance checks.
 - **Lead integration active:** #10 configurable frontend and #26 canonical shared
-  two-harness execution/results.
+  two-harness execution/results. #126 whole-server failure proof is in review.
 - **Recently completed:** #115 persistent local artifact storage, #116 truthful
   schedule planning/status, #120 occurrence admission, #121 the security/recovery
   fault matrix, #122 offline authentication/ingress conformance and #127 the inert,

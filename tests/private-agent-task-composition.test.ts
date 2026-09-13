@@ -1,0 +1,248 @@
+import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
+import test from "node:test";
+import { createPrivateTaskHost } from "../src/web/v1/private-task-host";
+import { startPrivateHostLifecycle } from "../src/web/v1/private-host-lifecycle";
+import type { PrivateTaskStartupConfiguration } from "../src/web/v1/private-task-startup";
+import { privateAgentTaskCompositionFixture } from "./helpers/private-agent-task-composition";
+
+const handler = async () => new Response("synthetic");
+const assets = { count: 0, digest: "synthetic", respond: () => undefined };
+
+test("agent-tasks composition acquires, becomes ready, drains and closes every owned resource exactly once", async t => {
+  const fixture = await privateAgentTaskCompositionFixture(); t.after(fixture.close);
+  const f = fixture.scenario();
+  let installed = 0, submissionCloses = 0;
+  let installedApplication: { handle(request: Request, render: () => Response | Promise<Response>): Promise<Response> } | undefined;
+  const host = createPrivateTaskHost({
+    clock: f.lifecycle.f.clock,
+    openDatabase: f.openDatabase,
+    install(application) { installed++; installedApplication = application as unknown as typeof installedApplication; f.trace.push("install"); },
+    prepareNativeSubmission: async () => {
+      f.trace.push("submission-open");
+      return { async enqueueInSession() { throw new Error("synthetic_inert_submission"); },
+        async recoverUnsentInSession() { return false; },
+        async close() { submissionCloses++; f.trace.push("submission-close"); } };
+    },
+    startNativeWorker: f.startNativeWorker,
+    createNativeServer: (() => f.makeServer("native")) as never,
+    createServer: (() => f.makeServer("web")) as never,
+  });
+  const runtime = await host.start({ configuration: f.configuration, port: 3210, nativeHttps: f.tls, handler, assets });
+  assert.equal(runtime.isReady(), true); assert.equal(installed, 1);
+  assert.equal(f.configuration.coordinator.codex, undefined);
+  const hermesCalls = f.lifecycle.local.calls.length;
+  assert.deepEqual(f.trace.slice(0, 16), [
+    "pool-open:web_test", "pool-open:coordinator_test", "pool-open:result_test", "pool-open:evidence_test",
+    "pool-open:session_test", "submission-open", "worker-pool-open", "queue-constructor", "queue-error-listener",
+    "queue-start", "queue-poller-start", "install", "native-listen", "web-listen",
+  ]);
+  assert.deepEqual(f.servers.map(server => [server.boundHost, server.boundPort]), [["127.0.0.1", 443], ["127.0.0.1", 3210]]);
+  assert.deepEqual(f.workerStatus(), { state: "running", faulted: false, accepting: true });
+  const firstClose = runtime.close();
+  assert.equal(runtime.isReady(), false);
+  while (!f.trace.includes("queue-poller-stop")) await new Promise(resolve => setImmediate(resolve));
+  const unavailable = await installedApplication!.handle(new Request(`${f.configuration.web.origin}/`), () => new Response("unused"));
+  assert.equal(unavailable.status, 503);
+  assert.equal(runtime.close(), firstClose);
+  await firstClose;
+  assert.equal(submissionCloses, 1); assert.deepEqual(f.workerStatus(), { state: "closed", faulted: false, accepting: false });
+  await assert.rejects(f.poll(), /native_task_delivery_unresolved/);
+  assert.equal(f.lifecycle.local.calls.length, hermesCalls, "synthetic queue polling must not invoke Hermes");
+  assert.equal(f.servers.length, 2); assert.ok(f.servers.every(server => server.bindCount === 1 && server.closeCount === 1));
+  assert.ok(f.trace.indexOf("queue-poller-stop") < f.trace.indexOf("submission-close"));
+  assert.ok(f.trace.indexOf("worker-pool-close") < f.trace.indexOf("submission-close"));
+  assert.equal(f.workerPool.closes(), 1);
+  for (const name of ["web_test", "coordinator_test", "result_test", "evidence_test", "session_test"])
+    assert.equal(f.pools.get(name)?.closes(), 1, name);
+});
+
+test("configuration and host mismatches refuse before any resource or listener opens", async t => {
+  const fixture = await privateAgentTaskCompositionFixture(); t.after(fixture.close);
+  for (const mode of ["invalid-port", "database-host", "native-port", "worker-profile"] as const) await t.test(mode, async () => {
+    const f = fixture.scenario();
+    const host = createPrivateTaskHost({ clock: f.lifecycle.f.clock, openDatabase: f.openDatabase, install() { throw new Error("must_not_install"); },
+      prepareNativeSubmission: async () => { throw new Error("must_not_prepare"); },
+      startNativeWorker: async () => { throw new Error("must_not_start_worker"); },
+      createServer: (() => f.makeServer("web")) as never, createNativeServer: (() => f.makeServer("native")) as never });
+    let configuration: PrivateTaskStartupConfiguration = f.configuration;
+    if (mode === "database-host") configuration = { ...f.configuration, coordinator: { ...f.configuration.coordinator,
+      database: { ...f.configuration.coordinator.database, host: "127.0.0.2" } } } as unknown as PrivateTaskStartupConfiguration;
+    if (mode === "worker-profile") configuration = { ...f.configuration, coordinator: { ...f.configuration.coordinator,
+      queueWorker: { database: f.configuration.coordinator.database, concurrency: 2 } } };
+    const tls = mode === "native-port" ? { ...f.tls, port: 444 } : f.tls;
+    await assert.rejects(host.start({ configuration, port: mode === "invalid-port" ? 0 : 3210, nativeHttps: tls, handler, assets }),
+      { message: mode === "invalid-port" || mode === "native-port" ? "private_task_host_config_invalid" : "private_task_startup_config_invalid" });
+    assert.deepEqual(f.trace, []); assert.equal(f.servers.length, 0);
+  });
+});
+
+test("each database acquisition failure closes only resources already returned", async t => {
+  const fixture = await privateAgentTaskCompositionFixture(); t.after(fixture.close);
+  for (let failure = 1; failure <= 5; failure++) await t.test(`pool-${failure}`, async () => {
+    const f = fixture.scenario(); let opens = 0;
+    const host = createPrivateTaskHost({ clock: f.lifecycle.f.clock, openDatabase(database) {
+      opens++; if (opens === failure) throw new Error("synthetic_open_failure"); return f.openDatabase(database);
+    }, install() {}, prepareNativeSubmission: async () => { throw new Error("must_not_prepare"); },
+    startNativeWorker: async () => { throw new Error("must_not_start_worker"); },
+    createServer: (() => f.makeServer("web")) as never, createNativeServer: (() => f.makeServer("native")) as never });
+    await assert.rejects(host.start({ configuration: f.configuration, port: 3210, nativeHttps: f.tls, handler, assets }),
+      { message: "private_task_startup_prerequisites_failed" });
+    assert.equal(opens, failure); assert.equal(f.servers.length, 0);
+    const opened = [...f.pools.keys()].slice(0, failure - 1);
+    for (const [name, pool] of f.pools) assert.equal(pool.closes(), opened.includes(name) ? 1 : 0, name);
+  });
+});
+
+test("submission failures, timeout and an aborted late return leave no producer, worker or listener alive", async t => {
+  const fixture = await privateAgentTaskCompositionFixture(); t.after(fixture.close);
+  for (const mode of ["throw", "malformed", "late-abort", "timeout"] as const) await t.test(mode, async t => {
+    const f = fixture.scenario(); let producerCloses = 0, workerStarts = 0;
+    let release: ((value: { enqueueInSession(): Promise<never>; recoverUnsentInSession(): Promise<boolean>; close(): Promise<void> }) => void) | undefined;
+    const deferred = new Promise<{ enqueueInSession(): Promise<never>; recoverUnsentInSession(): Promise<boolean>; close(): Promise<void> }>(resolve => { release = resolve; });
+    const controller = new AbortController();
+    if (mode === "timeout") {
+      const schedule = globalThis.setTimeout;
+      t.mock.method(globalThis, "setTimeout", ((callback: (...args: unknown[]) => void, delay?: number, ...args: unknown[]) =>
+        schedule(callback, delay === 5000 ? 1 : delay, ...args)) as never);
+    }
+    const host = createPrivateTaskHost({ clock: f.lifecycle.f.clock, openDatabase: f.openDatabase, install() {},
+      prepareNativeSubmission: async () => {
+        f.trace.push("submission-open");
+        if (mode === "throw") throw new Error("synthetic_submission_failure");
+        if (mode === "malformed") return { enqueueInSession: undefined, async close() { producerCloses++; } } as never;
+        return deferred;
+      },
+      startNativeWorker: async () => { workerStarts++; throw new Error("must_not_start_worker"); },
+      createServer: (() => f.makeServer("web")) as never, createNativeServer: (() => f.makeServer("native")) as never });
+    const starting = host.start({ configuration: f.configuration, port: 3210, nativeHttps: f.tls, handler, assets, signal: controller.signal });
+    if (mode === "late-abort") {
+      while (!f.trace.includes("submission-open")) await new Promise(resolve => setImmediate(resolve));
+      controller.abort();
+      release!({ async enqueueInSession() { throw new Error("inert"); }, async recoverUnsentInSession() { return false; },
+        async close() { producerCloses++; f.trace.push("late-submission-close"); } });
+    }
+    await assert.rejects(starting, { message: mode === "throw" || mode === "timeout"
+      ? "private_task_startup_cleanup_uncertain" : "private_task_startup_prerequisites_failed" });
+    if (mode === "timeout") {
+      release!({ async enqueueInSession() { throw new Error("inert"); }, async recoverUnsentInSession() { return false; },
+        async close() { producerCloses++; f.trace.push("late-submission-close"); } });
+      while (producerCloses === 0) await new Promise(resolve => setImmediate(resolve));
+    }
+    assert.equal(workerStarts, 0); assert.equal(f.servers.length, 0);
+    assert.equal(producerCloses, mode === "throw" ? 0 : 1);
+    for (const pool of f.pools.values()) assert.equal(pool.closes(), 1);
+  });
+});
+
+test("worker and listener failures, timeouts and abort drain every acquired component", async t => {
+  const fixture = await privateAgentTaskCompositionFixture(); t.after(fixture.close);
+  for (const mode of ["worker-throw", "worker-malformed", "worker-late-abort", "worker-timeout", "install-throw",
+    "native-factory-throw", "native-factory-malformed", "native-bind", "native-abort", "native-timeout",
+    "web-factory-throw", "web-factory-malformed", "web-bind", "web-abort", "web-timeout"] as const)
+    await t.test(mode, async t => {
+      const f = fixture.scenario(); let producerCloses = 0, workerCloses = 0;
+      let release: ((value: { status(): { accepting: boolean }; close(): Promise<void> }) => void) | undefined;
+      const deferred = new Promise<{ status(): { accepting: boolean }; close(): Promise<void> }>(resolve => { release = resolve; });
+      const controller = new AbortController();
+      if (mode.endsWith("timeout")) {
+        const schedule = globalThis.setTimeout;
+        t.mock.method(globalThis, "setTimeout", ((callback: (...args: unknown[]) => void, delay?: number, ...args: unknown[]) =>
+          schedule(callback, delay === 5000 || delay === 30_000 ? 1 : delay, ...args)) as never);
+      }
+      const host = createPrivateTaskHost({ clock: f.lifecycle.f.clock, openDatabase: f.openDatabase, install() {
+        f.trace.push("install"); if (mode === "install-throw") throw new Error("synthetic_install_failure");
+      },
+        prepareNativeSubmission: async () => ({ async enqueueInSession() { throw new Error("inert"); },
+          async recoverUnsentInSession() { return false; }, async close() { producerCloses++; f.trace.push("submission-close"); } }),
+        startNativeWorker: async () => {
+          f.trace.push("worker-open");
+          if (mode === "worker-throw") throw new Error("synthetic_worker_failure");
+          if (mode === "worker-malformed") return { status: undefined, async close() { workerCloses++; } } as never;
+          if (mode === "worker-late-abort" || mode === "worker-timeout") return deferred;
+          return { status: () => ({ accepting: true }), async close() { workerCloses++; f.trace.push("worker-close"); } };
+        },
+        createNativeServer: (() => {
+          if (mode === "native-factory-throw") throw new Error("synthetic_native_factory_failure");
+          if (mode === "native-factory-malformed") return {};
+          const server = f.makeServer("native", mode === "native-bind" ? "bind-failure"
+            : mode === "native-timeout" ? "bind-timeout" : "success");
+          if (mode === "native-abort") {
+            const listen = server.listen.bind(server);
+            server.listen = (options, callback) => { controller.abort(); return listen(options, callback); };
+          }
+          return server;
+        }) as never,
+        createServer: (() => {
+          if (mode === "web-factory-throw") throw new Error("synthetic_web_factory_failure");
+          if (mode === "web-factory-malformed") return {};
+          const server = f.makeServer("web", mode === "web-bind" ? "bind-failure"
+            : mode === "web-timeout" ? "bind-timeout" : "success");
+          if (mode === "web-abort") {
+            const listen = server.listen.bind(server);
+            server.listen = (options, callback) => { controller.abort(); return listen(options, callback); };
+          }
+          return server;
+        }) as never });
+      const starting = host.start({ configuration: f.configuration, port: 3210, nativeHttps: f.tls, handler, assets, signal: controller.signal });
+      if (mode === "worker-late-abort") {
+        while (!f.trace.includes("worker-open")) await new Promise(resolve => setImmediate(resolve));
+        controller.abort(); release!({ status: () => ({ accepting: true }), async close() { workerCloses++; f.trace.push("late-worker-close"); } });
+      }
+      const expected = mode.endsWith("factory-malformed") ? "private_task_host_cleanup_uncertain"
+        : mode === "worker-throw" || mode === "worker-timeout" ? "private_task_startup_cleanup_uncertain"
+        : mode.startsWith("worker") || mode === "install-throw" ? "private_task_startup_prerequisites_failed"
+        : "private_task_host_start_failed";
+      await assert.rejects(starting, { message: expected });
+      if (mode === "worker-timeout") {
+        release!({ status: () => ({ accepting: true }), async close() { workerCloses++; f.trace.push("late-worker-close"); } });
+        while (workerCloses === 0) await new Promise(resolve => setImmediate(resolve));
+      }
+      assert.equal(producerCloses, 1); assert.equal(workerCloses,
+        mode === "worker-throw" ? 0 : 1);
+      for (const pool of f.pools.values()) assert.equal(pool.closes(), 1);
+      const expectedServers = mode.startsWith("worker") || mode === "install-throw" || mode.startsWith("native-factory") ? 0
+        : mode.startsWith("native-") || mode.startsWith("web-factory") ? 1 : 2;
+      assert.equal(f.servers.length, expectedServers);
+      assert.ok(expectedServers === 0 || f.servers.every(server => server.closeCount === 1));
+    });
+});
+
+test("cleanup failures remain explicit while every other owned component is still drained", async t => {
+  const fixture = await privateAgentTaskCompositionFixture(); t.after(fixture.close);
+  const f = fixture.scenario(); let producerCloses = 0, workerCloses = 0;
+  const host = createPrivateTaskHost({ clock: f.lifecycle.f.clock, openDatabase: f.openDatabase, install() {},
+    prepareNativeSubmission: async () => ({ async enqueueInSession() { throw new Error("inert"); },
+      async recoverUnsentInSession() { return false; }, async close() { producerCloses++; } }),
+    startNativeWorker: async () => ({ status: () => ({ accepting: true }), async close() {
+      workerCloses++; throw new Error("synthetic_worker_close_failure");
+    } }),
+    createNativeServer: (() => f.makeServer("native")) as never,
+    createServer: (() => f.makeServer("web", "bind-failure")) as never });
+  await assert.rejects(host.start({ configuration: f.configuration, port: 3210, nativeHttps: f.tls, handler, assets }),
+    { message: "private_task_host_cleanup_uncertain" });
+  assert.equal(workerCloses, 1); assert.equal(producerCloses, 1); assert.equal(f.servers.length, 2);
+  assert.ok(f.servers.every(server => server.closeCount === 1));
+  for (const pool of f.pools.values()) assert.equal(pool.closes(), 1);
+});
+
+test("host lifecycle aborts one start, drains it once and removes signal handlers", async t => {
+  const fixture = await privateAgentTaskCompositionFixture(); t.after(fixture.close);
+  const f = fixture.scenario(); let workerCloses = 0;
+  const signals = new EventEmitter();
+  const host = createPrivateTaskHost({ clock: f.lifecycle.f.clock, openDatabase: f.openDatabase, install() {},
+    prepareNativeSubmission: async () => ({ async enqueueInSession() { throw new Error("inert"); },
+      async recoverUnsentInSession() { return false; }, async close() {} }),
+    startNativeWorker: async () => ({ status: () => ({ accepting: true }), async close() { workerCloses++; } }),
+    createNativeServer: (() => f.makeServer("native")) as never, createServer: (() => f.makeServer("web")) as never });
+  const lifecycle = startPrivateHostLifecycle({ signals, start: signal => host.start({
+    configuration: f.configuration, port: 3210, nativeHttps: f.tls, handler, assets, signal,
+  }) });
+  const runtime = await lifecycle.ready;
+  assert.equal(runtime.isReady(), true); assert.equal(signals.listenerCount("SIGTERM"), 1);
+  signals.emit("SIGTERM"); signals.emit("SIGINT");
+  assert.deepEqual(await lifecycle.completed, { status: "closed" });
+  assert.equal(workerCloses, 1); assert.equal(runtime.isReady(), false);
+  assert.equal(signals.listenerCount("SIGTERM"), 0); assert.equal(signals.listenerCount("SIGINT"), 0);
+  assert.deepEqual(await lifecycle.stop(), { status: "closed" });
+});
