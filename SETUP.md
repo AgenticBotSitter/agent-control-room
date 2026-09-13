@@ -202,9 +202,11 @@ login provider, PostgreSQL service, network tunnel, agent harness or production 
 
 The demo command and its simulated flow pass automated tests and one local desktop
 browser trial on macOS, including revision/history and shutdown cleanup. The
-repeatable browser acceptance command above adds automated keyboard, core semantic
-accessibility, narrow-screen and two-configuration isolation coverage. A human
-screen-reader/zoom/contrast review, optional-module page audit, physical keyboard/mobile acceptance on other operating
+repeatable browser acceptance command above adds automated keyboard, semantic
+accessibility and narrow-screen coverage across the core pages, Idea Lab and Project
+News, plus two-configuration isolation coverage. It also prevents those optional
+browser pages from silently importing server-only security modules. A human
+screen-reader/zoom/contrast review and physical keyboard/mobile acceptance on other operating
 systems and further browser-build coverage remain incomplete. There is no supported `pnpm dev` or
 `pnpm start` command here. Hermes and Codex live compatibility, PostgreSQL deployment,
 production owner login, approval key custody
