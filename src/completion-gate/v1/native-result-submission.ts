@@ -68,7 +68,8 @@ export class NativeResultSubmissionService {
     const gate = new CompletionGateStoreV1(joined(tx), this.key, this.checkpoints);
     const profile = await this.profile(gate, plan, run.projectId);
     const result = await this.results.read(tx, tenantId, run.projectId, job.id, nativeResultId(tenantId, runId));
-    if (!result || result.receipt.runId !== runId || result.receipt.attemptId !== run.attemptId
+    if (!result || result.receipt.schema !== "control-room.native-result-receipt/v1"
+      || result.receipt.runId !== runId || result.receipt.attemptId !== run.attemptId
       || result.receipt.nodeId !== run.nodeId || Date.parse(result.receipt.receivedAt) < Date.parse(plan.plannedAt)) return reject();
     const snapshot = await gate.snapshot(tenantId, plan.targetId), target = snapshot.target;
     const expected = nativeReviewTarget(plan, result.receipt);
@@ -174,7 +175,8 @@ export class NativeResultSubmissionService {
         const gate = new CompletionGateStoreV1(joined(tx), this.key, staged.checkpoints);
         await this.profile(gate, plan, run.projectId);
         const result = await this.results.read(tx, tenantId, run.projectId, job.id, nativeResultId(tenantId, runId));
-        if (!result || result.receipt.runId !== runId || result.receipt.attemptId !== run.attemptId
+        if (!result || result.receipt.schema !== "control-room.native-result-receipt/v1"
+          || result.receipt.runId !== runId || result.receipt.attemptId !== run.attemptId
           || result.receipt.nodeId !== run.nodeId || Date.parse(result.receipt.receivedAt) < Date.parse(plan.plannedAt)) return reject();
         const target = nativeReviewTarget(plan, result.receipt);
         const registered = plan.schema === "control-room.native-review-plan/v2"

@@ -10,16 +10,18 @@ import type { ArtifactReadPortV1, ArtifactStoragePortV1 } from "../../node-execu
 import { commitNativeResultReservationMetadataV1, markNativeResultReservationStorageUncertainV1,
   nativeResultReservationSchemaV1, reserveNativeResultWriteV1, verifyNativeResultReservationBytesV1,
   type NativeResultReservationV1 } from "./native-result-reservation";
+import { codexResultReceiptSchemaV1, type CodexResultReceiptV1 } from "./codex-result-receipt";
 
 const id = z.string().min(3).max(180).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const instant = z.string().datetime().refine(value => new Date(value).toISOString() === value);
-const receiptSchema = z.object({ schema: z.literal("control-room.native-result-receipt/v1"), artifactId: id,
+export const nativeResultReceiptSchema = z.object({ schema: z.literal("control-room.native-result-receipt/v1"), artifactId: id,
   tenantId: id, projectId: id, jobId: id, attemptId: id, runId: nativeTaskProtocolId, nodeId: id,
   snapshotDigest: digest, snapshotVersion: z.number().int().positive(), contentHash: digest,
   sizeBytes: z.number().int().min(0).max(65_536), manifestDigest: digest, receivedAt: instant,
   byteCheck: z.literal("matched_recorded_claim"), qualityAccepted: z.literal(false) }).strict();
-export type NativeResultReceipt = z.infer<typeof receiptSchema>;
+export type NativeResultReceipt = z.infer<typeof nativeResultReceiptSchema>;
+export type TaskResultReceipt = NativeResultReceipt | CodexResultReceiptV1;
 export interface NativeResultReadConfiguration {
   integrityKey: Uint8Array;
   storageClass: "local" | "r2";
@@ -90,9 +92,13 @@ export class NativeResultStore {
       return result;
     } finally { clearTimeout(timer); }
   }
-  private verify(row: Row): { receipt: NativeResultReceipt; manifest: ArtifactManifestRecord } {
-    const receipt = receiptSchema.parse(row.receipt), manifest = artifactManifestRecordSchema.parse(row.manifest);
-    const expected = Buffer.from(hmacSha256Tag(this.integrityKey, { purpose: "native-result-receipt/v1", receipt }));
+  private verify(row: Row): { receipt: TaskResultReceipt; manifest: ArtifactManifestRecord } {
+    const parsed = nativeResultReceiptSchema.safeParse(row.receipt);
+    const receipt = parsed.success ? parsed.data : codexResultReceiptSchemaV1.parse(row.receipt);
+    const manifest = artifactManifestRecordSchema.parse(row.manifest);
+    const purpose = receipt.schema === "control-room.native-result-receipt/v1"
+      ? "native-result-receipt/v1" : "codex-result-receipt/v1";
+    const expected = Buffer.from(hmacSha256Tag(this.integrityKey, { purpose, receipt }));
     const actual = Buffer.from(row.auth_tag);
     if (expected.length !== actual.length || !timingSafeEqual(expected, actual) || sha256Digest(manifest) !== receipt.manifestDigest
       || receipt.artifactId !== row.artifact_id || receipt.tenantId !== row.tenant_id || receipt.projectId !== row.project_id
@@ -189,7 +195,8 @@ export class NativeResultStore {
           [tenantId, body.runId])).rows[0];
         if (!prior) throw new Error("result_reservation_integrity_failed");
         const { receipt } = this.verify(prior);
-        if (receipt.snapshotDigest !== reservation.identity.snapshotDigest || receipt.nodeId !== nodeId
+        if (receipt.schema !== "control-room.native-result-receipt/v1"
+          || receipt.snapshotDigest !== reservation.identity.snapshotDigest || receipt.nodeId !== nodeId
           || reservation.manifestDigest !== receipt.manifestDigest
           || reservation.receiptDigest !== sha256Digest(receipt)) throw new Error("result_reservation_integrity_failed");
         return { kind: "replay" as const, receipt };
@@ -257,7 +264,7 @@ export class NativeResultStore {
         logicalRole: "task_result", schemaVersion: "1.0.0", producerId: nodeId, storageClass: this.storageClass,
         opaqueLocator: stored.opaqueLocator, retentionClass: "private_task_result" });
       assertNoSecretMaterial(manifest);
-      const receipt = receiptSchema.parse({ schema: "control-room.native-result-receipt/v1", artifactId, tenantId,
+      const receipt = nativeResultReceiptSchema.parse({ schema: "control-room.native-result-receipt/v1", artifactId, tenantId,
         projectId: body.projectId, jobId: body.jobId, attemptId: body.attemptId, runId: body.runId, nodeId,
         snapshotDigest: sha256Digest(body), snapshotVersion: body.snapshotVersion, ...body.result,
         manifestDigest: sha256Digest(manifest), receivedAt, byteCheck: "matched_recorded_claim", qualityAccepted: false });

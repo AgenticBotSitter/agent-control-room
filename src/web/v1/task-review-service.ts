@@ -6,7 +6,7 @@ import { NativeResultStore, type NativeResultReadConfiguration } from "../../art
 import { CompletionGateStoreV1, CompletionGateErrorV1, type CompletionAcceptanceProfileV1, type CompletionReviewV1,
   type CompletionFindingV1, type CompletionRiskV1 } from "../../completion-gate/v1";
 import { stageAsyncCompletionCheckpoint } from "../../completion-gate/v1/async-staged-checkpoint";
-import { readNativeReviewPlan, verifyNativeReviewTarget } from "../../completion-gate/v1/native-review-plan";
+import { readTaskReviewPlanV1, verifyTaskReviewTargetV1 } from "../../completion-gate/v1/task-review-plan";
 import { assertNoSecretMaterial, computeAuthorityDigest, hmacSha256Tag, sha256Digest } from "../../security";
 import type { AwaitableRollbackCheckpointStoreV1 } from "../../security/rollback-checkpoint";
 import { appendAuditWith } from "../../audit/audit-store";
@@ -103,8 +103,8 @@ export class WebTaskReviewService {
     if (!result || result.receipt.contentHash !== snapshot.target.subjectDigest
       || result.receipt.nodeId !== snapshot.target.producer.actorId || snapshot.target.producer.actorType !== "agent")
       throw new WebAccessError("conflict");
-    const lineage = await readNativeReviewPlan(tx, this.integrityKey, this.scope.tenantId, projectId, jobId);
-    verifyNativeReviewTarget(lineage, snapshot.target, result.receipt);
+    const lineage = await readTaskReviewPlanV1(tx, this.integrityKey, this.scope.tenantId, projectId, jobId);
+    verifyTaskReviewTargetV1(lineage, snapshot.target, result.receipt);
     const risk = risks[Math.max(risks.indexOf(profile.minimumRisk), risks.indexOf(job.authority.maxRisk))];
     const ownRecordedReview = (await tx.query(`SELECT id FROM control_completion_gate_records WHERE tenant_id=$1 AND project_id=$2
       AND kind='review' AND parent_id=$3 AND payload->'reviewer'->>'actorId'=$4 AND payload->>'authority'='completion_gate'`,

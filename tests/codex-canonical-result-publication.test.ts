@@ -17,9 +17,16 @@ import { NODE_PROTOCOL_V1, signNodeFrame } from "../src/node-protocol/v1";
 import { CodexCanonicalResultPublisherV1 } from "../src/artifacts/v1/codex-results";
 import { resultBytesHash } from "../src/artifacts/v1/native-results";
 import { InMemoryRollbackCheckpointStoreV1, computeAuthorityDigest, hmacSha256Tag, sha256Digest } from "../src/security";
+import { SecurityStore } from "../src/security";
 import { codexCurrentAdmissionSchemaV1 } from "../src/web/v1/codex-activation-transmission-intent";
-import { codexTaskExecutionPlanSchemaV3 } from "../src/web/v1/task-execution-planner";
+import { codexTaskExecutionPlanSchemaV3, TaskExecutionPlanner } from "../src/web/v1/task-execution-planner";
+import { WebTaskReviewService } from "../src/web/v1/task-review-service";
+import { WebTaskService } from "../src/web/v1/task-service";
+import { createAccessVerifier } from "../src/web/v1/access-verifier";
+import { CodexResultInspectionServiceV1 } from "../src/completion-gate/v1/codex-result-inspection";
+import { NativeTaskCompletionService } from "../src/persistence/native-task-completion";
 import { at, nativeTaskFixture } from "./native-task-fixture";
+import { token, request as webRequest, trust } from "./helpers/web-foundation";
 
 const resultKey = new Uint8Array(32).fill(51), harnessKey = new Uint8Array(32).fill(17);
 const taskPlanKey = new Uint8Array(32).fill(53), activationKey = new Uint8Array(32).fill(54);
@@ -78,12 +85,13 @@ async function prepared(storage = new ControlledStorage()) {
   const f = await nativeTaskFixture({ inputDigest, authority, jobType: CODEX_APP_SERVER_JOB_TYPE,
     requiredCapability: CODEX_APP_SERVER_CAPABILITY });
   await f.db.query("INSERT INTO workspaces(id,tenant_id,display_name) VALUES('workspace:test','tenant:test','Synthetic Codex result')");
+  const adapterId = `adapter:manual:${sha256Digest({ tenantId: "tenant:test", workspaceId: "workspace:test" }).slice(7, 39)}`;
   await f.db.query(`INSERT INTO adapter_registry(id,tenant_id,source_system,contract_version,authority_mode,status,redaction_policy_version,cursor_retention_days)
-    VALUES('adapter:codex-test','tenant:test','control-room-manual','1.0.0','control_room_native','disabled','v1',30)`);
+    VALUES($1,'tenant:test','control-room-manual','1.0.0','control_room_native','disabled','v1',30)`, [adapterId]);
   await f.db.query(`INSERT INTO projects(id,tenant_id,workspace_id,adapter_id,source_record_id,source_version,title,description,
     normalized_state,domain_state,health,authority_mode,observed_at,payload,updated_at)
-    VALUES('project:test','tenant:test','workspace:test','adapter:codex-test','project:test','1','Codex result','Synthetic only',
-    'planned','manual_project_active','healthy','control_room_native',$1,'{}'::jsonb,$1)`, [at()]);
+    VALUES('project:test','tenant:test','workspace:test',$2,'project:test','1','Codex result','Synthetic only',
+    'planned','manual_project_active','healthy','control_room_native',$1,'{}'::jsonb,$1)`, [at(), adapterId]);
   await f.db.query(`INSERT INTO control_manual_project_heads(tenant_id,project_id,lifecycle,version,created_at,updated_at)
     VALUES('tenant:test','project:test','active',1,$1,$1)`, [at()]);
   const checkpoints = new InMemoryRollbackCheckpointStoreV1({ testOnly: true });
@@ -104,10 +112,13 @@ async function prepared(storage = new ControlledStorage()) {
   const node = await f.canonical.get("tenant:test", "node", "node:test");
   assert.ok(request?.kind === "request" && workflow?.kind === "workflow" && currentJob?.kind === "job"
     && attempt?.kind === "attempt" && lease?.kind === "lease" && node?.kind === "node");
+  await f.canonical.create({ ...currentJob, id: "job:proposal", jobType: "task.proposal",
+    requiredCapability: "control-room.task.proposal.v1", state: "proposed", version: 0,
+    updatedAt: currentJob.createdAt });
   const plannedJob = { ...currentJob, state: "proposed" as const, version: 0, updatedAt: currentJob.createdAt };
   const connectorProfileDigest = sha256Digest("profile:codex"), workspaceIntentDigest = sha256Digest("workspace:intent");
   const plan = codexTaskExecutionPlanSchemaV3.parse({ schema: "control-room.task-execution-plan/v3",
-    tenantId: "tenant:test", projectId: "project:test", sourceJobId: "job:test",
+    tenantId: "tenant:test", projectId: "project:test", sourceJobId: "job:proposal",
     sourceDigest: sha256Digest("source"), sourceInputDigest: inputDigest, templateDigest: sha256Digest("template"),
     plannedBy: "identity:test", plannedAt: at(-60_000), input: { prompt, instructions }, request, workflow, job: plannedJob,
     acceptanceProfileId: profile.id, acceptanceProfileDigest: sha256Digest(profile), adapter: CODEX_APP_SERVER_ADAPTER,
@@ -334,6 +345,181 @@ test("persists one exact synthetic Codex result and review target without claimi
   assert.equal(x.storage.putCalls, 1);
   assert.equal((await x.f.db.query<{ count: string }>("SELECT count(*)::text AS count FROM control_codex_result_publications")).rows[0]?.count, "1");
   assert.equal((await x.f.db.query<{ count: string }>("SELECT count(*)::text AS count FROM control_completion_gate_records WHERE kind='target'")).rows[0]?.count, "1");
+});
+
+async function ownerReview(x: Awaited<ReturnType<typeof prepared>>, clockOffset = 6000) {
+  await new SecurityStore(x.f.db).bootstrapOwner({ tenantId: "tenant:test", provider: trust.issuer, subject: "test-owner",
+    identityId: "identity:test", grantId: "grant:test", displayName: "Synthetic owner",
+    verifiedAt: at(-60_000), expiresAt: at(600_000), now: at() });
+  const jwt = token({ iat: Date.parse(at()) / 1000 - 60, exp: Date.parse(at()) / 1000 + 600 });
+  const identity = createAccessVerifier({ ...trust, validUntilMs: Date.parse(at()) + 3_600_000 })(
+    webRequest(undefined, undefined, undefined, undefined, jwt), Date.parse(at(clockOffset)));
+  const resultConfig = { integrityKey: resultKey, storageClass: "local" as const, storage: x.storage };
+  const reviewConfig = { integrityKey: reviewKey, checkpoints: x.checkpoints,
+    harnessIntegrityKey: harnessKey, results: resultConfig };
+  return { identity, resultConfig, reviewConfig,
+    tasks: new WebTaskService(x.f.db, { tenantId: "tenant:test", workspaceId: "workspace:test" },
+      () => Date.parse(at(clockOffset)), { harnessIntegrityKey: harnessKey, results: resultConfig,
+        reviews: { integrityKey: reviewKey, checkpoints: x.checkpoints },
+        ownerReviews: { integrityKey: reviewKey, checkpoints: x.checkpoints } }),
+    reviews: new WebTaskReviewService(x.f.db, { tenantId: "tenant:test", workspaceId: "workspace:test" },
+      reviewConfig, () => Date.parse(at(clockOffset))) };
+}
+
+test("the existing owner review and result page accept an authenticated Codex target across restart", async t => {
+  const x = await prepared(); t.after(x.f.close);
+  const saved = await x.publisher().capture({ publication: x.publication, terminalEvidence: x.terminalEvidence,
+    qualificationReceipt: x.qualificationReceipt, bytes: x.bytes });
+  const first = await ownerReview(x);
+  const page = await first.tasks.results(first.identity, "project:test", "job:test");
+  if (!("items" in page)) assert.fail("expected result page");
+  assert.equal(page.items.length, 1); assert.equal(page.items[0]?.artifactId, saved.receipt.artifactId);
+  assert.equal(page.reviews.length, 1); assert.equal(page.reviews[0]?.targetId, saved.target.id);
+  assert.deepEqual(page.reviews[0]?.matchingArtifactIds, [saved.receipt.artifactId]);
+  const content = await first.tasks.results(first.identity, "project:test", "job:test", saved.receipt.artifactId);
+  if (!("text" in content)) assert.fail("expected result content");
+  assert.equal(content.text, "Exact synthetic Codex result.");
+
+  // Reconstruct the services to model an application restart; no in-memory receipt is reused.
+  const restartedTasks = new WebTaskService(x.f.db, { tenantId: "tenant:test", workspaceId: "workspace:test" },
+    () => Date.parse(at(7000)), { harnessIntegrityKey: harnessKey, results: first.resultConfig,
+      reviews: { integrityKey: reviewKey, checkpoints: x.checkpoints },
+      ownerReviews: { integrityKey: reviewKey, checkpoints: x.checkpoints } });
+  const restartedPage = await restartedTasks.results(first.identity, "project:test", "job:test");
+  if (!("reviews" in restartedPage)) assert.fail("expected restarted result page");
+  assert.equal(restartedPage.reviews[0]?.targetId, saved.target.id);
+
+  const draft = { artifactId: saved.receipt.artifactId, targetId: saved.target.id, targetDigest: sha256Digest(saved.target),
+    contentHash: saved.receipt.contentHash, decision: "accepted" as const, feedback: "" };
+  const recorded = await first.reviews.record(first.identity, "project:test", "job:test", draft, "codex-owner-review-accepted");
+  assert.equal(recorded.replayed, false);
+  const snapshot = await new CompletionGateStoreV1(x.f.db, reviewKey, x.checkpoints).snapshot("tenant:test", saved.target.id);
+  assert.equal(snapshot.status, "pending");
+  assert.deepEqual(snapshot.missingVerificationScenarioIds, ["scenario:content"]);
+});
+
+test("Codex owner review preserves changes requested, lost acknowledgement, and tamper refusal", async t => {
+  const x = await prepared(); t.after(x.f.close);
+  const saved = await x.publisher().capture({ publication: x.publication, terminalEvidence: x.terminalEvidence,
+    qualificationReceipt: x.qualificationReceipt, bytes: x.bytes });
+  const owner = await ownerReview(x);
+  const draft = { artifactId: saved.receipt.artifactId, targetId: saved.target.id, targetDigest: sha256Digest(saved.target),
+    contentHash: saved.receipt.contentHash, decision: "changes_requested" as const, feedback: "Add the missing acceptance detail." };
+  const uncertain = new WebTaskReviewService(loseCommitAcknowledgementOnce(x.f.db,
+    sql => sql.includes("INSERT INTO control_web_task_review_commands")),
+    { tenantId: "tenant:test", workspaceId: "workspace:test" }, owner.reviewConfig, () => Date.parse(at(6000)));
+  await assert.rejects(() => uncertain.record(owner.identity, "project:test", "job:test", draft,
+    "codex-owner-review-changes"), /synthetic_commit_ack_lost/);
+  const replay = await owner.reviews.record(owner.identity, "project:test", "job:test", draft, "codex-owner-review-changes");
+  assert.equal(replay.replayed, true); assert.equal(replay.receipt.decision, "changes_requested");
+  assert.equal((await new CompletionGateStoreV1(x.f.db, reviewKey, x.checkpoints)
+    .snapshot("tenant:test", saved.target.id)).status, "changes_requested");
+
+  await x.f.raw.exec(`ALTER TABLE control_native_review_plans DISABLE TRIGGER control_native_review_plans_immutable;
+    UPDATE control_native_review_plans SET auth_tag='hmac-sha256:${"0".repeat(64)}';
+    ALTER TABLE control_native_review_plans ENABLE TRIGGER control_native_review_plans_immutable;`);
+  await assert.rejects(() => owner.reviews.options(owner.identity, "project:test", "job:test",
+    saved.receipt.artifactId, saved.target.id), /codex_review_plan_unavailable/);
+});
+
+test("a Codex change request produces one inert authenticated Codex revision plan", async t => {
+  const x = await prepared(); t.after(x.f.close);
+  const saved = await x.publisher().capture({ publication: x.publication, terminalEvidence: x.terminalEvidence,
+    qualificationReceipt: x.qualificationReceipt, bytes: x.bytes });
+  const owner = await ownerReview(x);
+  const feedback = "Add the missing acceptance detail.";
+  const reviewed = await owner.reviews.record(owner.identity, "project:test", "job:test", {
+    artifactId: saved.receipt.artifactId, targetId: saved.target.id, targetDigest: sha256Digest(saved.target),
+    contentHash: saved.receipt.contentHash, decision: "changes_requested", feedback }, "codex-revision-plan");
+  const currentJob = await x.f.canonical.get("tenant:test", "job", "job:test");
+  assert.ok(currentJob?.kind === "job");
+  const revisionAuthority = { ...currentJob.authority, expiresAt: at(600_000), digest: sha256Digest("pending") };
+  revisionAuthority.digest = computeAuthorityDigest(revisionAuthority);
+  const template = { id: "template:codex-revision", adapter: CODEX_APP_SERVER_ADAPTER,
+    instructions: "Use the saved task only", authority: revisionAuthority,
+    acceptanceProfileId: saved.target.acceptanceProfileId, acceptanceProfileDigest: saved.target.acceptanceProfileDigest,
+    connectorProfileDigest: x.publication.connection.connectorProfileDigest,
+    workspaceIntentDigest: sha256Digest("workspace:intent") } as const;
+  const inspection = codexInspection(x);
+  const planner = new TaskExecutionPlanner(x.f.db, { tenantId: "tenant:test", workspaceId: "workspace:test" },
+    { template, integrityKey: taskPlanKey, reviewIntegrityKey: reviewKey, checkpoints: x.checkpoints },
+    () => Date.parse(at(8000)), undefined, inspection.source);
+  const request = { runId: saved.receipt.runId, targetId: saved.target.id, targetDigest: sha256Digest(saved.target),
+    contentHash: saved.receipt.contentHash, reviewId: reviewed.receipt.reviewId, feedback };
+  const first = await planner.revise(owner.identity, "project:test", "job:test", request, new AbortController().signal);
+  assert.equal(first.replayed, false); assert.equal(first.receipt.startsWork, false);
+  const plan = await planner.read(first.receipt.jobId);
+  assert.equal(plan?.schema, "control-room.task-execution-plan/v4");
+  if (plan?.schema !== "control-room.task-execution-plan/v4") assert.fail("missing Codex revision plan");
+  assert.equal(plan.revision.fromRunId, saved.receipt.runId);
+  assert.equal(plan.revision.reviewId, reviewed.receipt.reviewId);
+  assert.equal(plan.job.jobType, CODEX_APP_SERVER_JOB_TYPE);
+  assert.equal(plan.job.state, "proposed");
+  const replay = await planner.revise(owner.identity, "project:test", "job:test", request, new AbortController().signal);
+  assert.equal(replay.replayed, true); assert.deepEqual(replay.receipt, first.receipt);
+});
+
+function codexInspection(x: Awaited<ReturnType<typeof prepared>>) {
+  const results = { integrityKey: resultKey, storageClass: "local" as const, storage: x.storage };
+  const configuration = { integrityKey: reviewKey, harnessIntegrityKey: harnessKey, checkpoints: x.checkpoints, results };
+  const source = new CodexResultInspectionServiceV1(x.f.db, { ...configuration, integrityKey: resultKey,
+    taskPlanIntegrityKey: taskPlanKey, activationIntegrityKey: activationKey, reviewIntegrityKey: reviewKey });
+  return { configuration, source };
+}
+
+test("Codex changes requested releases only capacity and accepted verified work completes exactly once", async t => {
+  const changed = await prepared(); t.after(changed.f.close);
+  const changedSaved = await changed.publisher().capture({ publication: changed.publication,
+    terminalEvidence: changed.terminalEvidence, qualificationReceipt: changed.qualificationReceipt, bytes: changed.bytes });
+  const changedOwner = await ownerReview(changed);
+  await changedOwner.reviews.record(changedOwner.identity, "project:test", "job:test", {
+    artifactId: changedSaved.receipt.artifactId, targetId: changedSaved.target.id,
+    targetDigest: sha256Digest(changedSaved.target), contentHash: changedSaved.receipt.contentHash,
+    decision: "changes_requested", feedback: "Add the missing acceptance detail." }, "codex-capacity-changes");
+  const changedInspection = codexInspection(changed);
+  const request = { tenantId: "tenant:test", runId: changedSaved.receipt.runId,
+    targetDigest: sha256Digest(changedSaved.target), contentHash: changedSaved.receipt.contentHash };
+  const changedLifecycle = new NativeTaskCompletionService(changed.f.db, changedInspection.configuration,
+    () => Date.parse(at(8000)), changedInspection.source);
+  const released = await changedLifecycle.releaseCapacity(request, () => {});
+  assert.equal(released.replayed, false); assert.equal(released.receipt.qualityAccepted, false);
+  const [changedJob, changedAttempt, changedLease] = await Promise.all([
+    changed.f.canonical.get("tenant:test", "job", "job:test"), changed.f.canonical.get("tenant:test", "attempt", "attempt:test"),
+    changed.f.canonical.get("tenant:test", "lease", "lease:test")]);
+  assert.equal(changedJob?.state, "leased"); assert.equal(changedAttempt?.state, "leased"); assert.equal(changedLease?.state, "released");
+  assert.equal((await new NativeTaskCompletionService(changed.f.db, changedInspection.configuration,
+    () => Date.parse(at(9000)), new CodexResultInspectionServiceV1(changed.f.db, {
+      integrityKey: resultKey, harnessIntegrityKey: harnessKey, taskPlanIntegrityKey: taskPlanKey,
+      activationIntegrityKey: activationKey, reviewIntegrityKey: reviewKey, checkpoints: changed.checkpoints,
+      results: changedInspection.configuration.results })).releaseCapacity(request, () => {})).replayed, true);
+
+  const accepted = await prepared(); t.after(accepted.f.close);
+  const acceptedSaved = await accepted.publisher().capture({ publication: accepted.publication,
+    terminalEvidence: accepted.terminalEvidence, qualificationReceipt: accepted.qualificationReceipt, bytes: accepted.bytes });
+  const acceptedOwner = await ownerReview(accepted);
+  await acceptedOwner.reviews.record(acceptedOwner.identity, "project:test", "job:test", {
+    artifactId: acceptedSaved.receipt.artifactId, targetId: acceptedSaved.target.id,
+    targetDigest: sha256Digest(acceptedSaved.target), contentHash: acceptedSaved.receipt.contentHash,
+    decision: "accepted", feedback: "" }, "codex-completion-accepted");
+  const gate = new CompletionGateStoreV1(accepted.f.db, reviewKey, accepted.checkpoints, () => at(7000));
+  await gate.recordVerification({ schemaVersion: "control-room-completion-gate/v1", id: "verification:codex-content",
+    tenantId: "tenant:test", projectId: "project:test", targetId: acceptedSaved.target.id,
+    targetDigest: sha256Digest(acceptedSaved.target), acceptanceProfileId: "profile:codex-result",
+    acceptanceProfileDigest: acceptedSaved.target.acceptanceProfileDigest, scenarioId: "scenario:content", outcome: "passed",
+    verifier: { actorId: "service:codex-content-verifier", actorType: "service" }, evidenceDigests: [acceptedSaved.receipt.contentHash],
+    verifiedAt: at(7000), grantsApproval: false, grantsExecutionAuthority: false });
+  assert.equal((await gate.snapshot("tenant:test", acceptedSaved.target.id)).status, "ready");
+  const acceptedInspection = codexInspection(accepted), acceptedRequest = { tenantId: "tenant:test",
+    runId: acceptedSaved.receipt.runId, targetDigest: sha256Digest(acceptedSaved.target), contentHash: acceptedSaved.receipt.contentHash };
+  const completed = await new NativeTaskCompletionService(accepted.f.db, acceptedInspection.configuration,
+    () => Date.parse(at(8000)), acceptedInspection.source).complete(acceptedRequest, () => {});
+  assert.equal(completed.replayed, false);
+  const [job, attempt, lease] = await Promise.all([accepted.f.canonical.get("tenant:test", "job", "job:test"),
+    accepted.f.canonical.get("tenant:test", "attempt", "attempt:test"), accepted.f.canonical.get("tenant:test", "lease", "lease:test")]);
+  assert.equal(job?.state, "succeeded"); assert.equal(attempt?.state, "succeeded"); assert.equal(lease?.state, "released");
+  const replay = await new NativeTaskCompletionService(accepted.f.db, acceptedInspection.configuration,
+    () => Date.parse(at(9000)), acceptedInspection.source).complete(acceptedRequest, () => {});
+  assert.equal(replay.replayed, true); assert.deepEqual(replay.receipt, completed.receipt);
 });
 
 test("persists through separate least-privilege evidence and review database roles", async t => {
