@@ -169,8 +169,10 @@ makes no remote request, uses only a generated test identity and starts no agent
 creates two disposable projects, saves one task proposal, checks the project pages,
 archives and reopens a project, reloads saved state, checks project isolation, keyboard
 entry and the narrow-screen menu, and verifies that each tested save crossed the command
-boundary once with its request key. Playwright remains an operator-supplied test tool,
-not a shipped dependency.
+boundary once with its request key. A second disposable journey opens an exact returned
+result, records an owner request for changes, reloads the page, and proves the decision
+remains saved without repeating the command. Playwright remains an operator-supplied
+test tool, not a shipped dependency.
 
 Passing this check is application/browser evidence only. It does not validate a real
 login provider, PostgreSQL service, network tunnel, agent harness or production host.
