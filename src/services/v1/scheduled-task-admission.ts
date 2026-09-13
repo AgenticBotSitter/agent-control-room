@@ -26,8 +26,23 @@ const sourceSchema = z.object({
   bundleDigest: digest,
 }).strict();
 
-const emptyContextBindingSchema = z.object({
-  reusableContexts: z.tuple([]),
+export const scheduledReusableContextSchemaV1 = z.object({
+  kind: z.enum(["result", "artifact"]),
+  id: safeId,
+  contentHash: digest,
+  sourceJobId: safeId,
+  sourceRunId: safeId,
+  sourceRevision: z.number().int().nonnegative().max(100),
+  reviewId: safeId,
+  reviewDigest: digest,
+  verificationDigest: digest,
+  verifiedAt: z.string().datetime({ offset: true }),
+  expiresAt: z.string().datetime({ offset: true }).optional(),
+}).strict();
+export type ScheduledReusableContextV1 = z.infer<typeof scheduledReusableContextSchemaV1>;
+
+const contextBindingSchema = z.object({
+  reusableContexts: z.array(scheduledReusableContextSchemaV1).max(16),
   bindingDigest: digest,
 }).strict();
 
@@ -39,7 +54,7 @@ const admissionInputSchema = z.object({
   occurrenceKey: safeId,
   scheduleDefinitionDigest: digest,
   source: sourceSchema,
-  contextBinding: emptyContextBindingSchema,
+  contextBinding: contextBindingSchema,
 }).strict();
 
 const cancellationInputSchema = z.object({
@@ -70,7 +85,7 @@ const receiptSchema = z.object({
     jobDigest: digest,
     bundleDigest: digest,
   }).strict(),
-  contextBinding: emptyContextBindingSchema,
+  contextBinding: contextBindingSchema,
   destination: z.object({
     requestId: safeId,
     requestDigest: digest,
@@ -92,6 +107,9 @@ const receiptSchema = z.object({
 export type ScheduledTaskAdmissionInputV1 = z.infer<typeof admissionInputSchema>;
 export type ScheduledTaskAdmissionReceiptV1 = z.infer<typeof receiptSchema>;
 export type ScheduledTaskCancellationInputV1 = z.infer<typeof cancellationInputSchema>;
+export function parseScheduledTaskAdmissionReceiptV1(value: unknown): ScheduledTaskAdmissionReceiptV1 {
+  return frozenReceipt(value);
+}
 
 export const EMPTY_SCHEDULE_REUSABLE_CONTEXT_BINDING_DIGEST_V1 = sha256Digest({
   contractVersion: "control-room-scheduled-context-binding/v1",
@@ -163,6 +181,7 @@ function fail(code: ScheduledTaskAdmissionError["safeCode"]): never {
 function frozenReceipt(value: unknown): ScheduledTaskAdmissionReceiptV1 {
   const receipt = receiptSchema.parse(value);
   Object.freeze(receipt.source);
+  for (const context of receipt.contextBinding.reusableContexts) Object.freeze(context);
   Object.freeze(receipt.contextBinding.reusableContexts);
   Object.freeze(receipt.contextBinding);
   Object.freeze(receipt.destination);
@@ -311,7 +330,8 @@ function validateStoredReceipt(row: AdmissionRow, input: ScheduledTaskAdmissionI
     || receipt.scheduleDefinitionDigest !== input.scheduleDefinitionDigest
     || receipt.source.requestId !== input.source.requestId || receipt.source.workflowId !== input.source.workflowId
     || receipt.source.jobId !== input.source.jobId || receipt.source.bundleDigest !== input.source.bundleDigest
-    || receipt.contextBinding.bindingDigest !== input.contextBinding.bindingDigest) fail("admission_conflict");
+    || receipt.contextBinding.bindingDigest !== input.contextBinding.bindingDigest
+    || sha256Digest(receipt.contextBinding.reusableContexts) !== sha256Digest(input.contextBinding.reusableContexts)) fail("admission_conflict");
   return receipt;
 }
 
@@ -354,7 +374,10 @@ export class ScheduledTaskAdmissionServiceV1 {
     const parsed = admissionInputSchema.safeParse(value);
     if (!parsed.success) fail("invalid_admission");
     const input = parsed.data;
-    if (input.contextBinding.bindingDigest !== EMPTY_SCHEDULE_REUSABLE_CONTEXT_BINDING_DIGEST_V1) {
+    if (new Set(input.contextBinding.reusableContexts.map(item => `${item.kind}:${item.id}`)).size
+      !== input.contextBinding.reusableContexts.length
+      || sha256Digest({ contractVersion: "control-room-scheduled-context-binding/v1",
+        reusableContexts: input.contextBinding.reusableContexts }) !== input.contextBinding.bindingDigest) {
       fail("context_binding_conflict");
     }
     const admittedAt = requireClockInstant(this.now);
