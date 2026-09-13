@@ -113,12 +113,15 @@ try {
   await page.getByRole("heading", { name: "Accessibility acceptance project" }).waitFor();
   const projectPath = new URL(page.url()).pathname;
   await audit(page, "Project overview");
-  for (const [section, label] of [["tasks", "Project work"], ["files", "Project files"], ["reviews", "Project reviews"],
+  for (const [section, label] of [["inbox", "Project inbox"], ["tasks", "Project work"], ["agents", "Project agents"],
+    ["automations", "Project automations"], ["files", "Project files"], ["reviews", "Project reviews"],
     ["activity", "Project activity"], ["settings", "Project settings"], ["news", "Project news"]]) {
     const response = await page.goto(`${origin}${projectPath}/${section}`, { waitUntil: "domcontentloaded" });
     check(`${label}: protected page route responds`, response?.status() === 200, `status=${response?.status() ?? "none"}`);
     await audit(page, label);
   }
+  const unknown = await page.goto(`${origin}${projectPath}/unknown-section`, { waitUntil: "domcontentloaded" });
+  check("Unknown project section is not rendered as the overview", unknown?.status() === 404, `status=${unknown?.status() ?? "none"}`);
 
   await page.goto(`${origin}${projectPath}/tasks`, { waitUntil: "domcontentloaded" });
   await page.locator("#task-title").fill("Accessible task detail");

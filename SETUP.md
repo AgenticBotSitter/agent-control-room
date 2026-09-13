@@ -179,12 +179,13 @@ that no agent or external effect started. Playwright remains an operator-supplie
 tool, not a shipped dependency.
 
 The final disposable journey audits the compiled home, project catalog, workers,
-attention, settings, every core project section and one saved task page at a narrow
+attention, settings, every core project section—including the honestly unavailable
+Automation view—and one saved task page at a narrow
 viewport. It checks the declared language and title, one main landmark and page
 heading, heading order, unique identifiers, names for every visible field and control,
 the skip-link target, horizontal overflow, and keyboard focus transfer into main
-content. This automated audit covers 122 assertions and found the shared main regions
-needed to accept focus; the corrected pages are included in the same command.
+content. It also proves an unknown project section returns “not found” instead of
+silently showing the overview. The corrected pages are included in the same command.
 
 The same command also starts the compiled artifact twice in separate disposable
 processes with different non-secret product configurations. One shows a research

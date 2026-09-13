@@ -10,6 +10,8 @@ import { PrivateHeader } from "./private-header";
 import { ProjectOverviewActivity } from "./project-overview-activity";
 import { ProjectNavigation } from "./project-navigation";
 
+export type ProjectSection = "overview" | "inbox" | "agents" | "automations" | "settings";
+
 export function ProjectSaveRecovery({ pending, onRetry }: { pending: boolean; onRetry: () => void }) {
   return <section className="private-notice" aria-label="Unconfirmed project save">
     <p>A previous project save is still unconfirmed. Other changes are paused until it is resolved.</p>
@@ -33,7 +35,7 @@ export function ProjectIdeaOrigin({ project }: { project: ProjectView }) {
 }
 
 export function PrivateProjectWorkspace({ projectId, section = "overview", after, lifecycleFilter }: {
-  projectId?: string; section?: string; after?: string; lifecycleFilter?: WebProject["lifecycle"];
+  projectId?: string; section?: ProjectSection; after?: string; lifecycleFilter?: WebProject["lifecycle"];
 }) {
   const [client] = useState(() => createProjectBrowserClient());
   const [projects, setProjects] = useState<ProjectView[]>([]);
@@ -157,22 +159,38 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
         {state === "ready" && project && <>
           <div className="private-heading"><span className="private-state">{project.lifecycle} · {project.origin === "idea_lab" ? "From Idea Lab" : "Ordinary project"}</span><h1>{project.title}</h1></div>
           <ProjectIdeaOrigin project={project} />
-          <ProjectNavigation projectId={projectId} current={section === "settings" ? "settings" : "overview"} />
-          <section className="private-panel"><h2>{section === "settings" ? "Project status" : "Purpose"}</h2>
+          <ProjectNavigation projectId={projectId} current={section} />
+          {section === "overview" && <section className="private-panel"><h2>Purpose</h2>
             <p className="private-summary">{project.summary || "No summary added."}</p>
-            {section === "settings" ? <>
-              {project.lifecycleEditable && project.origin === "ordinary" ? <div className="private-actions">{(["active", "paused", "completed", "archived"] as const)
-                .filter(value => value !== project.lifecycle && (project.lifecycle !== "archived" || value === "active"))
-                .map(value => <button type="button" key={value} disabled={pending || client.hasPending()} onClick={() => { void transition(value); }}>
-                  {{ active: "Reopen project", paused: "Pause project", completed: "Mark complete", archived: "Archive project" }[value]}</button>)}</div>
-                : project.lifecycleEditable && project.origin === "idea_lab" ? <IdeaProjectStatusActions project={project}
-                  pending={pending || client.hasPending()} onAction={action => { void transitionIdea(action); }} />
-                : <p className="private-note">{project.origin === "idea_lab" ? "No Idea Lab status changes are available with the current access and configuration. Its history is preserved."
-                  : "Your current access allows viewing this project, not changing its status."}</p>}
-              <p className="private-note">Status changes preserve history. They do not stop running work. Closing this tab does not change the project.</p>
-            </> : <p className="private-note"><a href={`/projects/${encodeURIComponent(projectId)}/tasks`}>Open project tasks</a> to prepare work, check assignment and approval, and inspect recorded progress and results. Task controls report unavailable services rather than assuming a live agent is connected.</p>}
+            <p className="private-note"><a href={`/projects/${encodeURIComponent(projectId)}/tasks`}>Open project tasks</a> to prepare work, check assignment and approval, and inspect recorded progress and results. Task controls report unavailable services rather than assuming a live agent is connected.</p>
             <p className="private-note">Saved revision {project.version} · Updated {new Date(project.updatedAt).toLocaleString()}</p>
-          </section>
+          </section>}
+          {section === "inbox" && <section className="private-panel"><h2>Project inbox</h2>
+            <p>Open the saved attention list and choose an item from this project. The list reports missing checks and uncertain work instead of claiming an all-clear.</p>
+            <a className="private-action-link" href="/needs-me">Open needs attention</a>
+            <p className="private-note">Project-specific decisions remain on each task page. Opening the inbox does not approve, retry or start work.</p>
+          </section>}
+          {section === "agents" && <><section className="private-panel"><h2>Project agents</h2>
+            <p>Saved connection records and optional session observations show what can be verified. They do not grant a worker permission to take work.</p>
+            <a className="private-action-link" href="/workers">Open all worker connections</a>
+          </section><SessionObservations projectId={projectId} /></>}
+          {section === "automations" && <section className="private-panel"><h2>Project automations</h2>
+            <p>Project schedules and recurring procedures are not connected to this release. No automated work or background schedule is implied.</p>
+            <p className="private-note">Use Work for saved task proposals. Starting or repeating work requires a configured service and its separate authority checks.</p>
+          </section>}
+          {section === "settings" && <section className="private-panel"><h2>Project status</h2>
+            <p className="private-summary">{project.summary || "No summary added."}</p>
+            {project.lifecycleEditable && project.origin === "ordinary" ? <div className="private-actions">{(["active", "paused", "completed", "archived"] as const)
+              .filter(value => value !== project.lifecycle && (project.lifecycle !== "archived" || value === "active"))
+              .map(value => <button type="button" key={value} disabled={pending || client.hasPending()} onClick={() => { void transition(value); }}>
+                {{ active: "Reopen project", paused: "Pause project", completed: "Mark complete", archived: "Archive project" }[value]}</button>)}</div>
+              : project.lifecycleEditable && project.origin === "idea_lab" ? <IdeaProjectStatusActions project={project}
+                pending={pending || client.hasPending()} onAction={action => { void transitionIdea(action); }} />
+              : <p className="private-note">{project.origin === "idea_lab" ? "No Idea Lab status changes are available with the current access and configuration. Its history is preserved."
+                : "Your current access allows viewing this project, not changing its status."}</p>}
+            <p className="private-note">Status changes preserve history. They do not stop running work. Closing this tab does not change the project.</p>
+            <p className="private-note">Saved revision {project.version} · Updated {new Date(project.updatedAt).toLocaleString()}</p>
+          </section>}
           {section === "overview" && <><ProjectOverviewActivity key={projectId} projectId={projectId} />
             <SessionObservations projectId={projectId} /></>}
         </>}
