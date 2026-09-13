@@ -169,12 +169,26 @@ may receive the exact original receipt; it does not invoke the receipt signer ag
 Another terminal frame, a changed replay, stale or forged qualification, or any identity,
 profile, activation or peer substitution fails closed.
 
-Both envelope and receipt explicitly grant no approval, canonical publication,
-completion, capacity release, retry, resume, new turn or execution authority. The receipt
-acknowledges transport only. This is an in-memory exchange-validation seam: it does not
-persist the exchange, call the publisher, start or read Codex, select credentials, release
-capacity, add a listener, or change deployment. A later trusted composition must durably
-reserve the single terminal return and receipt before claiming restart-safe replay.
+Both envelope and receipt explicitly grant no approval, completion, capacity release,
+retry, resume, new turn or execution authority. The receipt acknowledges transport only.
+The private server composition may now enable one result intake only with the existing
+Codex delivery, quality, result database, artifact store and managed-session owners. It
+derives expected identity, activation and connector lineage from the exact retained server
+activation rather than from the return, then invokes the existing canonical publisher.
+Within that live session, a byte-identical authenticator duplicate reuses the exact signed
+receipt without a second publication or signature. After a committed restart, a freshly
+authenticated current-connection return reuses the durable publication, result and pending
+review metadata without another artifact write. Ambiguous persistence still fails closed.
+
+The existing private HTTP session owner does not restore an expired or prior connection
+generation. Automatic replay of that old connection's exact receipt after process restart
+therefore remains a separate connection-recovery requirement; this composition does not
+weaken connection binding or expiry to approximate it. The 65,536-byte result boundary,
+including signed-envelope encoding overhead, fits the negotiated 131,072-byte inner frame
+used by current sessions. The outer native-wire packet cap does not authorize a larger inner
+frame: anything above the negotiated inner limit fails closed. This path starts or reads no
+Codex process, selects no credentials, releases no capacity, adds no listener and changes no
+deployment.
 
 The Codex-only canonical result publisher now consumes an exact completed-turn
 publication contract and terminal evidence only after independently verifying the

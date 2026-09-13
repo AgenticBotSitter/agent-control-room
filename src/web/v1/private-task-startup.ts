@@ -28,6 +28,8 @@ import { bindPrivateArtifactStorageV1, capturePrivateArtifactStorageConfiguratio
   type OpenPrivateArtifactStorageV1, type PrivateArtifactStorageConfigurationV1,
   type PrivateArtifactStorageV1 } from "./private-artifact-storage";
 import { PersistentLocalArtifactStorageV1 } from "../../artifacts/v1/persistent-local-storage";
+import { CODEX_RESULT_RETURN_FEATURE_V1 } from "../../harness/codex-v1/result-return";
+import { captureCodexResultIntakeSettingsV1, type CodexResultIntakeSettingsV1 } from "./codex-result-intake";
 
 type OwnedQueueWorker = { close(): Promise<void>; status(): { accepting: boolean } };
 
@@ -47,8 +49,16 @@ export type PrivateTaskStartupConfiguration = {
     /** Already prepared inert ports; ownership transfers after configuration validation. No runtime factory is invoked here. */
     ideaRuntime?: Omit<NonNullable<TaskCoordinatorConfiguration["ideaRuntime"]>, "database"> & { database: PrivatePostgresConfiguration };
     evidence?: NativeEvidenceSettings & { database: PrivatePostgresConfiguration };
-    sessions?: ManagedNativeSessionSettings & { database: PrivatePostgresConfiguration } };
+    sessions?: ManagedNativeSessionSettings & { database: PrivatePostgresConfiguration };
+    codexResultReturn?: CodexResultIntakeSettingsV1 };
 };
+export function bindPrivateCodexResultReturnV1(settings: CodexResultIntakeSettingsV1,
+  storage: Parameters<typeof bindPrivateArtifactStorageV1>[1]) {
+  const captured = captureCodexResultIntakeSettingsV1(settings);
+  if (!storage || typeof storage.put !== "function" || typeof storage.read !== "function")
+    throw new Error("private_task_startup_config_invalid");
+  return Object.freeze({ ...captured, storage });
+}
 export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartupConfiguration) {
   try {
     const artifactStorage = input.artifactStorage
@@ -106,6 +116,14 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
       value.tenantId !== web.tenantId
       || !routes.some(route => route.nodeId === value.nodeId && route.capabilityProbeId === CODEX_APP_SERVER_CAPABILITY)
       || !sessions.nodes.some(node => node.nodeId === value.nodeId && node.features.includes(CODEX_DELIVERY_FEATURE))))) throw new Error();
+    const codexResultReturn = input.coordinator.codexResultReturn
+      ? captureCodexResultIntakeSettingsV1(input.coordinator.codexResultReturn) : undefined;
+    if (codexResultReturn && (!codex || !quality || !resultDatabase || !artifactStorage || !sessions
+      || !codex.enrollments.some(value => value.nodeId === codexResultReturn.qualificationReceipt.body.nodeId
+        && value.connectorProfileDigest === codexResultReturn.qualificationReceipt.body.connectorProfileDigest)
+      || !sessions.nodes.some(node => node.nodeId === codexResultReturn.qualificationReceipt.body.nodeId
+        && node.features.includes(CODEX_RESULT_RETURN_FEATURE_V1))
+      || codexResultReturn.qualificationReceipt.body.tenantId !== web.tenantId)) throw new Error();
     const nativeHttp = input.coordinator.nativeHttp ? captureNativeHttpSettings(input.coordinator.nativeHttp) : undefined;
     if (nativeHttp && (!sessions || nativeHttp.peers.some(peer => !sessions.nodes.some(node => node.nodeId === peer.nodeId)))) throw new Error();
     const w = input.coordinator.queueWorker;
@@ -137,7 +155,8 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
     const news = input.news ? captureNewsStartupConfiguration(input.news, web,
       [web.database, database, resultDatabase, evidence?.database, sessions?.database, queueWorker?.database,
         ideaCreation?.database, ideaRuntime?.database].filter((value): value is PrivatePostgresConfiguration => !!value)) : undefined;
-    return { web, database, planning, routes, approvals, codex, quality, revisionPlanning, resultDatabase, evidence, sessions, nativeHttp, nativeQueue, nativeQueueRecovery, queueWorker, ideaCreation, ideaRuntime, news, artifactStorage };
+    return { web, database, planning, routes, approvals, codex, quality, revisionPlanning, resultDatabase, evidence, sessions,
+      codexResultReturn, nativeHttp, nativeQueue, nativeQueueRecovery, queueWorker, ideaCreation, ideaRuntime, news, artifactStorage };
   } catch { throw new Error("private_task_startup_config_invalid"); }
 }
 
@@ -362,6 +381,8 @@ export function createPrivateTaskBootstrap(dependencies: {
         ideaRuntime: ideaRuntimeDatabase ? { ...config.ideaRuntime!, database: ideaRuntimeDatabase, close: closeIdeaRuntime! } : undefined,
         evidence: evidenceDatabase ? { ...config.evidence!, database: evidenceDatabase } : undefined,
         sessions: sessionDatabase ? { ...config.sessions!, database: sessionDatabase } : undefined,
+        codexResultReturn: config.codexResultReturn && artifactStorage
+          ? bindPrivateCodexResultReturnV1(config.codexResultReturn, artifactStorage.storage) : undefined,
         nativeHttp: config.nativeHttp,
         nativeSubmission: submission,
       });

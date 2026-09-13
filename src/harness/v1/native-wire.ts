@@ -4,12 +4,13 @@ import { signedNodeFrameSchema } from "../../node-protocol/v1";
 import type { NativeTaskSnapshotBody } from "./native-observation";
 
 export const NATIVE_WIRE_MAX_BYTES = 262_144;
+export const NATIVE_WIRE_MAX_FRAME_BYTES = 131_072;
 type Direction = "node_to_server" | "server_to_node";
 const schema = z.object({ schema: z.literal("control-room.native-wire/v1"), raw: z.string(),
   result: z.string().max(87_384).nullable() }).strict();
 const fail = (): never => { throw new Error("native_wire_unavailable"); };
 function frame(raw: string, direction: Direction) {
-  if (typeof raw !== "string" || Buffer.byteLength(raw) > 131_072) return fail();
+  if (typeof raw !== "string" || Buffer.byteLength(raw) > NATIVE_WIRE_MAX_FRAME_BYTES) return fail();
   const value = signedNodeFrameSchema.parse(JSON.parse(raw));
   if (value.direction !== direction || value.type === "harness.native.snapshot" && Buffer.byteLength(raw) > 16_384) return fail();
   return value;

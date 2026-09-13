@@ -1,13 +1,61 @@
 import assert from "node:assert/strict";
+import { generateKeyPairSync } from "node:crypto";
 import { EventEmitter } from "node:events";
 import test from "node:test";
+import { CODEX_APP_SERVER_CAPABILITY, CODEX_APP_SERVER_ADAPTER,
+  CODEX_DELIVERY_FEATURE } from "../src/harness/codex-v1/delivery-contract";
+import { CODEX_RESULT_RETURN_FEATURE_V1 } from "../src/harness/codex-v1/result-return";
+import { createCodexPhysicalQualificationReceiptBodyV1 } from "../src/harness/codex-v1/result-publication-contract";
+import { CODEX_APP_SERVER_READ_CONTRACT, CODEX_APP_SERVER_RESULT_CONTRACT,
+  CODEX_APP_SERVER_START_CONTRACT } from "../src/harness/codex-v1/schema-contract";
+import { signArtifact } from "../src/node-policy/v1/crypto";
+import { sha256Digest } from "../src/security";
 import { createPrivateTaskHost } from "../src/web/v1/private-task-host";
 import { startPrivateHostLifecycle } from "../src/web/v1/private-host-lifecycle";
-import type { PrivateTaskStartupConfiguration } from "../src/web/v1/private-task-startup";
+import { bindPrivateCodexResultReturnV1, validatePrivateTaskStartupConfiguration,
+  type PrivateTaskStartupConfiguration } from "../src/web/v1/private-task-startup";
+import { privateArtifactStorageNamespaceDigestV1 } from "../src/web/v1/private-artifact-storage";
+import { instant } from "./hermes-native-fixture";
 import { privateAgentTaskCompositionFixture } from "./helpers/private-agent-task-composition";
 
 const handler = async () => new Response("synthetic");
 const assets = { count: 0, digest: "synthetic", respond: () => undefined };
+
+function resultReturnQualification(tenantId = "tenant:test", nodeId = "node:test") {
+  const keys = generateKeyPairSync("ed25519");
+  const publicKeySpki = keys.publicKey.export({ type: "spki", format: "der" }).toString("base64url");
+  const connectorProfileDigest = sha256Digest("private-result-return-profile");
+  const withDigest = <T extends object>(value: T) => ({ ...value, evidenceDigest: sha256Digest(value) });
+  const body = createCodexPhysicalQualificationReceiptBodyV1({
+    schema: "control-room.codex-physical-qualification-receipt/v1", qualificationId: "qualification:private-result",
+    qualificationSignerKeyId: "qualification-key:private-result", tenantId, nodeId,
+    connectorProfileId: "profile:private-result", connectorProfileDigest,
+    exactPackage: { adapterId: CODEX_APP_SERVER_ADAPTER, packageName: CODEX_APP_SERVER_READ_CONTRACT.package,
+      packageVersion: CODEX_APP_SERVER_READ_CONTRACT.version,
+      generatedSchemaBundleSha256: CODEX_APP_SERVER_READ_CONTRACT.generatedBundleSha256,
+      threadStartParamsSchemaSha256: CODEX_APP_SERVER_START_CONTRACT.threadStart.paramsSchemaSha256,
+      threadStartResponseSchemaSha256: CODEX_APP_SERVER_START_CONTRACT.threadStart.responseSchemaSha256,
+      turnStartParamsSchemaSha256: CODEX_APP_SERVER_START_CONTRACT.turnStart.paramsSchemaSha256,
+      turnStartResponseSchemaSha256: CODEX_APP_SERVER_START_CONTRACT.turnStart.responseSchemaSha256,
+      threadReadResponseSchemaSha256: CODEX_APP_SERVER_RESULT_CONTRACT.threadReadResponseSchemaSha256,
+      agentMessageSourceSha256: CODEX_APP_SERVER_RESULT_CONTRACT.agentMessageSourceSha256 },
+    qualifiedAt: new Date(instant - 1_000).toISOString(),
+    start: withDigest({ evidenceId: "evidence:private-result:start", processAttemptId: "process:private-result:start",
+      connectionAttemptId: "connection:private-result:start", initializedConnectionDigest: sha256Digest("start"),
+      threadId: "thread:private-result", turnId: "turn:private-result", startObserved: true as const,
+      cleanupVerified: true as const }),
+    restartRead: withDigest({ evidenceId: "evidence:private-result:restart", processAttemptId: "process:private-result:restart",
+      connectionAttemptId: "connection:private-result:restart", initializedConnectionDigest: sha256Digest("restart"),
+      threadId: "thread:private-result", turnId: "turn:private-result", itemId: "item:private-result",
+      restartObserved: true as const, exactReadObserved: true as const, cleanupVerified: true as const }),
+    oneFreshProcessPerAttempt: true, sameDurableThreadObserved: true, sameDurableTurnObserved: true,
+    terminalCleanupVerified: true, processReuseObserved: false, retryObserved: false,
+    canonicalPublicationAllowed: false, completionVerified: false, grantsExecutionAuthority: false,
+    permitsRetry: false, permitsResume: false, permitsThreadRead: false,
+  });
+  return { connectorProfileDigest, settings: { qualificationReceipt: signArtifact(body, keys.privateKey),
+    qualificationPublicKeySpki: publicKeySpki, qualificationMaximumAgeMs: 300_000 } };
+}
 
 test("agent-tasks composition acquires, becomes ready, drains and closes every owned resource exactly once", async t => {
   const fixture = await privateAgentTaskCompositionFixture(); t.after(fixture.close);
@@ -75,6 +123,73 @@ test("configuration and host mismatches refuse before any resource or listener o
       { message: mode === "invalid-port" || mode === "native-port" ? "private_task_host_config_invalid" : "private_task_startup_config_invalid" });
     assert.deepEqual(f.trace, []); assert.equal(f.servers.length, 0);
   });
+});
+
+test("Codex result-return startup requires the complete trusted composition and binds its one storage port", async t => {
+  const fixture = await privateAgentTaskCompositionFixture(); t.after(fixture.close);
+  const f = fixture.scenario(), qualification = resultReturnQualification();
+  const storage = { async put() { throw new Error("inert"); }, async read() { return undefined; } };
+  const rootPath = "/synthetic/private-result-storage", storageNamespace = "private-result-storage";
+  const base = f.configuration;
+  const valid: PrivateTaskStartupConfiguration = {
+    ...base,
+    artifactStorage: { local: { rootPath, maximumArtifacts: 100, maximumFileBytes: 65_536,
+      maximumTotalBytes: 6_553_600, operationTimeoutMs: 1_000 }, inventory: {
+      releaseId: "release:private-result", releaseDigest: sha256Digest("release:private-result"),
+      databaseSchemaVersion: "schema:private-result", databaseSchemaDigest: sha256Digest("schema:private-result"),
+      storageNamespace, storageNamespaceDigest: privateArtifactStorageNamespaceDigestV1(storageNamespace, rootPath),
+    } },
+    web: { ...base.web, tasks: { ...base.web.tasks, results: {
+      ...base.web.tasks.results!, storageClass: "local", storage,
+    } } },
+    coordinator: {
+      ...base.coordinator,
+      routes: base.coordinator.routes.map(route => ({ ...route, capabilityProbeId: CODEX_APP_SERVER_CAPABILITY })),
+      quality: { ...base.coordinator.quality!, results: { ...base.coordinator.quality!.results,
+        storageClass: "local", storage } },
+      evidence: { ...base.coordinator.evidence!, storage: { ...base.coordinator.evidence!.storage,
+        storageClass: "local", storage } },
+      sessions: { ...base.coordinator.sessions!, nodes: base.coordinator.sessions!.nodes.map(node => ({ ...node,
+        features: [...node.features, CODEX_DELIVERY_FEATURE, CODEX_RESULT_RETURN_FEATURE_V1] })) },
+      codex: { integrityKey: new Uint8Array(32).fill(94), enrollments: [{
+        tenantId: "tenant:test", nodeId: "node:test", nodeClass: "personal-compute",
+        enrollmentDigest: sha256Digest("private-result-enrollment"),
+        connectorProfileDigest: qualification.connectorProfileDigest,
+        workspaceIntentDigest: sha256Digest("private-result-workspace"), credentialRef: "credential:private-result",
+        filesystemRoot: "/synthetic", workspacePath: "/synthetic/workspace", validUntil: instant + 300_000,
+        approvalKeyId: "approval-key:private-result", approvals: { binding: () => ({
+          tenantId: "tenant:test", nodeId: "node:test", nodeClass: "personal-compute" }), assertAvailable() {},
+        async resolveApprovalKey() { return new Uint8Array(32); } },
+        security: { currentServerTrustRevision: () => "trust-revision:private-result" },
+      }] },
+      codexResultReturn: qualification.settings,
+    },
+  };
+  const captured = validatePrivateTaskStartupConfiguration(valid);
+  assert.equal(captured.codexResultReturn?.qualificationReceipt.body.nodeId, "node:test");
+  const bound = bindPrivateCodexResultReturnV1(captured.codexResultReturn!, storage);
+  assert.equal(bound.storage, storage);
+  assert.deepEqual(bound.qualificationReceipt, captured.codexResultReturn!.qualificationReceipt);
+
+  const invalid = [
+    { name: "codex", value: { ...valid, coordinator: { ...valid.coordinator, codex: undefined } } },
+    { name: "quality", value: { ...valid, coordinator: { ...valid.coordinator, quality: undefined } } },
+    { name: "result database", value: { ...valid, coordinator: { ...valid.coordinator, resultDatabase: undefined } } },
+    { name: "sessions", value: { ...valid, coordinator: { ...valid.coordinator, sessions: undefined } } },
+    { name: "artifact storage", value: { ...valid, artifactStorage: undefined } },
+    { name: "negotiated feature", value: { ...valid, coordinator: { ...valid.coordinator, sessions: {
+      ...valid.coordinator.sessions!, nodes: valid.coordinator.sessions!.nodes.map(node => ({ ...node,
+        features: node.features.filter(feature => feature !== CODEX_RESULT_RETURN_FEATURE_V1) })) } } } },
+    { name: "qualification profile", value: { ...valid, coordinator: { ...valid.coordinator, codex: {
+      ...valid.coordinator.codex!, enrollments: valid.coordinator.codex!.enrollments.map(value => ({ ...value,
+        connectorProfileDigest: sha256Digest("wrong-private-result-profile") })) } } } },
+    { name: "qualification tenant", value: { ...valid, coordinator: { ...valid.coordinator,
+      codexResultReturn: resultReturnQualification("tenant:other").settings } } },
+    { name: "qualification node", value: { ...valid, coordinator: { ...valid.coordinator,
+      codexResultReturn: resultReturnQualification("tenant:test", "node:other").settings } } },
+  ];
+  for (const entry of invalid) assert.throws(() => validatePrivateTaskStartupConfiguration(
+    entry.value as PrivateTaskStartupConfiguration), /private_task_startup_config_invalid/, entry.name);
 });
 
 test("each database acquisition failure closes only resources already returned", async t => {

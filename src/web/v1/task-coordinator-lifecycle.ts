@@ -19,6 +19,10 @@ import { WebIdeaDecisionOperation, ideaDecisionInputSchema } from "./idea-decisi
 import { WebIdeaSynthesisOperation, ideaSynthesisInputSchema } from "./idea-synthesis-operation";
 import { WebIdeaStartOperation, ideaStartInputSchema, type IdeaStartRuntime } from "./idea-start-operation";
 import { WebAccessError } from "./access-verifier";
+import { CodexCanonicalResultPublisherV1 } from "../../artifacts/v1/codex-results";
+import type { ArtifactReadPortV1, ArtifactStoragePortV1 } from "../../node-executor/artifact-storage";
+import { captureCodexResultIntakeSettingsV1, CodexResultIntakeV1,
+  type CodexResultIntakeSettingsV1 } from "./codex-result-intake";
 
 export type TaskApprovalOperation = Readonly<{ tenantId: string; workspaceId: string;
   prepare: TaskAssignmentCoordinator["prepareNativeApproval"]; store: TaskAssignmentCoordinator["storeNativeApproval"];
@@ -50,6 +54,7 @@ export type TaskCoordinatorConfiguration = {
   resultDatabase?: TaskCoordinatorDatabase;
   evidence?: NativeEvidenceSettings & { database: TaskCoordinatorDatabase };
   sessions?: ManagedNativeSessionSettings & { database: TaskCoordinatorDatabase };
+  codexResultReturn?: CodexResultIntakeSettingsV1 & { storage: ArtifactStoragePortV1 & ArtifactReadPortV1 };
   nativeHttp?: NativeHttpSettings;
   clock?: () => number; maxActive?: number; drainMs?: number; closeMs?: number;
 };
@@ -101,12 +106,17 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     throw new Error("task_coordinator_config_invalid");
   const evidencePool = input.evidence ? capture(input.evidence.database) : undefined;
   const sessionSettings = input.sessions ? captureManagedNativeSessionSettings(input.sessions) : undefined;
+  const codexResultSettings = input.codexResultReturn
+    ? captureCodexResultIntakeSettingsV1(input.codexResultReturn) : undefined;
   const httpSettings = input.nativeHttp ? captureNativeHttpSettings(input.nativeHttp) : undefined;
   if (httpSettings && (!sessionSettings || httpSettings.peers.some(peer => !sessionSettings.nodes.some(node => node.nodeId === peer.nodeId))))
     throw new Error("task_coordinator_config_invalid");
   if (input.sessions && (!input.approvals || !evidencePool || !receiverDependenciesValid()
     || [input.database, input.resultDatabase, input.evidence?.database].some(pool => pool === input.sessions!.database || pool?.client === input.sessions!.database.client)))
     throw new Error("task_coordinator_config_invalid");
+  if (input.codexResultReturn && (!input.codex || !input.quality || !input.resultDatabase || !input.sessions
+    || !input.codexResultReturn.storage || typeof input.codexResultReturn.storage.put !== "function"
+    || typeof input.codexResultReturn.storage.read !== "function")) throw new Error("task_coordinator_config_invalid");
   function receiverDependenciesValid() {
     return typeof input.approvals?.store.receiveDeliveryReceipt === "function"
       && sessionSettings!.nodes.every(node => node.tenantId === scope.tenantId
@@ -180,6 +190,25 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     results: { ...scope, register: resultCoordinator!.register.bind(resultCoordinator), submit: resultCoordinator!.submit.bind(resultCoordinator) },
     clock: input.clock, assertAvailable: check,
   }) : undefined;
+  const codexResultIntake = codexResultSettings ? new CodexResultIntakeV1(
+    new CodexCanonicalResultPublisherV1(guardedDatabase(resultPool!), {
+      integrityKey: input.quality!.results.integrityKey,
+      harnessIntegrityKey: input.quality!.harnessIntegrityKey,
+      taskPlanIntegrityKey: input.planning.integrityKey,
+      activationIntegrityKey: input.codex!.integrityKey,
+      reviewIntegrityKey: input.planning.reviewIntegrityKey,
+      reviewDatabase: db,
+      checkpoints: input.quality!.checkpoints,
+      qualificationTrust: {
+        expectedQualificationId: codexResultSettings.qualificationReceipt.body.qualificationId,
+        expectedBodyDigest: codexResultSettings.qualificationReceipt.body.bodyDigest,
+        expectedSignerKeyId: codexResultSettings.qualificationReceipt.body.qualificationSignerKeyId,
+        publicKeySpki: codexResultSettings.qualificationPublicKeySpki,
+      },
+      storageClass: input.quality!.results.storageClass,
+      storage: input.codexResultReturn!.storage,
+      now: input.clock ?? Date.now,
+    }), codexResultSettings) : undefined;
   async function run<T>(work: () => Promise<T>): Promise<T> {
     if (closing || active >= maxActive) throw new Error("task_coordinator_unavailable");
     check(); active++;
@@ -236,6 +265,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     stage: assignment.stageQueuedNativeDelivery.bind(assignment), transmit: assignment.transmitQueuedNativeDelivery.bind(assignment),
     receipt: (session, raw, signal) => receipt!(db, session, raw, signal), progress: receiver!.receive.bind(receiver),
     ...(input.codex ? { codexReceipt: assignment.receiveCodexDeliveryReceipt.bind(assignment) } : {}),
+    ...(codexResultIntake ? { codexResult: codexResultIntake } : {}),
     recover: receiver!.recover.bind(receiver),
     register: receiver!.register.bind(receiver),
   }, run, check, input.clock) : undefined;

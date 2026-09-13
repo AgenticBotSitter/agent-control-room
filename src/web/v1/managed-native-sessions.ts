@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { ServerNodeSession, captureServerNodeSessionConfig, type ServerNodeSessionConfig, type ServerNodeSessionPorts } from "../../node-control/server-node-session";
+import { ServerNodeSession, captureServerNodeSessionConfig, type CodexResultReturnIntakeV1,
+  type ServerNodeSessionConfig, type ServerNodeSessionPorts } from "../../node-control/server-node-session";
 import { DatabaseNodeKeyResolver, DatabaseReplayGuard, FixedWindowProtocolRateLimiter, NodeProtocolAuthenticator } from "../../node-protocol/v1";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import type { VerifiedWebIdentity } from "./access-verifier";
@@ -38,6 +39,7 @@ type Routes = {
   transmit: TaskAssignmentCoordinator["transmitQueuedNativeDelivery"];
   receipt: (session: ServerNodeSession, raw: string | Uint8Array, signal: AbortSignal) => ReturnType<NativeApprovalPacketStore["receiveDeliveryReceipt"]>;
   codexReceipt?: TaskAssignmentCoordinator["receiveCodexDeliveryReceipt"];
+  codexResult?: CodexResultReturnIntakeV1;
   progress: NativeEvidenceReceiver["receive"];
   recover?: NativeEvidenceReceiver["recover"];
   register?: NativeEvidenceReceiver["register"];
@@ -77,14 +79,17 @@ export class ManagedNativeSessions {
     if (!Number.isSafeInteger(receiptTimeoutMs) || receiptTimeoutMs < 1 || receiptTimeoutMs > 20_000)
       throw new Error("native_sessions_config_invalid");
     if (this.settings.nodes.some(node => node.tenantId !== scope.tenantId)) throw new Error("native_sessions_config_invalid");
-    const codexRoutes = [routes.queue?.codexStage, routes.queue?.codexTransmit, routes.codexReceipt].filter(Boolean).length;
-    if (codexRoutes !== 0 && codexRoutes !== 3) throw new Error("native_sessions_config_invalid");
+    const codexRoutes = [routes.queue?.codexStage, routes.queue?.codexTransmit, routes.codexReceipt, routes.codexResult].filter(Boolean).length;
+    if (![0, 3, 4].includes(codexRoutes) || routes.codexResult && codexRoutes !== 4)
+      throw new Error("native_sessions_config_invalid");
     this.routes = Object.freeze({ stage: routes.stage.bind(routes), transmit: routes.transmit.bind(routes),
       queue: routes.queue ? Object.freeze({ locate: routes.queue.locate.bind(routes.queue), stage: routes.queue.stage.bind(routes.queue),
         transmit: routes.queue.transmit.bind(routes.queue), codexStage: routes.queue.codexStage?.bind(routes.queue),
         codexTransmit: routes.queue.codexTransmit?.bind(routes.queue), ready: routes.queue.ready?.bind(routes.queue) }) : undefined,
       receipt: routes.receipt.bind(routes), progress: routes.progress.bind(routes), recover: routes.recover?.bind(routes),
-      register: routes.register?.bind(routes), codexReceipt: routes.codexReceipt?.bind(routes) });
+      register: routes.register?.bind(routes), codexReceipt: routes.codexReceipt?.bind(routes),
+      codexResult: routes.codexResult ? Object.freeze({ expectation: routes.codexResult.expectation.bind(routes.codexResult),
+        publish: routes.codexResult.publish.bind(routes.codexResult) }) : undefined });
   }
   private current(record?: Record) {
     assertSynchronousFence(() => this.available(), fail);
@@ -332,6 +337,12 @@ export class ManagedNativeSessions {
             if (record.harnessKind !== "codex" || !this.routes.codexReceipt)
               return Promise.reject(new Error("native_session_unavailable"));
             return this.operation(record, signal, session => this.routes.codexReceipt!(session, copy, signal));
+          },
+          codexResult: (raw: string | Uint8Array, signal: AbortSignal) => {
+            const copy = frame(raw);
+            if (record.harnessKind !== "codex" || !this.routes.codexResult)
+              return Promise.reject(new Error("native_session_unavailable"));
+            return this.operation(record, signal, session => session.acceptCodexResultReturn(copy, this.routes.codexResult!));
           },
           completeQueuedDelivery: (kind: "hermes" | "codex", value: z.infer<typeof nativeEvidenceRegistrationSchema>) => {
             const task = nativeEvidenceRegistrationSchema.parse(value), pending = record.pendingDelivery;
