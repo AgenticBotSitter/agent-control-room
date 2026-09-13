@@ -76,6 +76,18 @@ qualification. Ambient or forwarded personal SSH agents and blanket session cons
 are unsupported. A timeout or closed connection is uncertain, never permission to
 sign again automatically.
 
+## Node agent identity
+
+Exactly one node agent process, holding exactly one local recovery journal file, may
+run per enrolled machine. That journal is the machine's own record of which starts it
+has already reserved; it is defence in depth behind the canonical PostgreSQL intent
+and activation records, not a second source of truth. Restoring a machine's local
+database from a backup independently of its activation records is unsupported and
+must not be treated as a safe recovery path: a stale journal beside a still-valid
+activation can reopen a window for a duplicate start. Running two agent processes
+against the same enrolled machine, or against journals with different paths, is
+likewise unsupported.
+
 ## Checkpoint, restore and update
 
 The rollback checkpoint must be authenticated and stored outside the PostgreSQL data
