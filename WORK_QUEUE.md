@@ -10,7 +10,7 @@ Permanent entry point for people and bots. Read the [build/reuse plan](PUBLIC_BU
 and [worker skill](skills/public-build-worker/SKILL.md). Issues are the live status
 record; no documentation commit is needed every time a job changes state.
 
-Public `main` is the reconciled implementation baseline through PR #147. It now
+Public `main` is the reconciled implementation baseline through PR #152. It now
 includes the configurable-project proof, explicit project pages, safe Project News,
 owner-attention prioritization, exact and relative activity times, verified 360px
 navigation, restart-style recovery after both successful and failed verification,
@@ -27,6 +27,10 @@ target with restart-safe reservations. The same existing owner-review, verificat
 revision and completion services now handle that canonical Codex result, including
 safe capacity release and exact replay after restart. These tests use synthetic
 signers and injected ports; they do not make a provider or production service live.
+The bounded Claude Code connector foundation is merged, but real native qualification
+and canonical shared-result publication remain open. Saved schedule occurrences can
+now produce replay-safe plans and assignments through the shared allocator; actual
+queue transmission and agent start remain in the open scheduling and server work.
 Connector, security/configuration and support decisions are published in
 [the shared connector contract](docs/SHARED_CONNECTOR_CONTRACT.md),
 [the security/configuration contract](docs/SECURITY_CONFIGURATION_CONTRACT.md) and
@@ -57,19 +61,20 @@ The issue labels are the live source of truth; this summary tells a new contribu
 where the work is concentrated without requiring chat history.
 
 - **Assigned:** #2 Windows portability, #8 Hermes connector, #27 Idea Lab/article
-  research, #62 Claude connector, #63 PostgreSQL/recovery and #64 distributable
-  service.
-- **Ready for automatic reservation now:** #148 safely connects saved schedule
-  occurrences to canonical planning and assignment without starting an agent.
+  research, #62 Claude connector, #63 PostgreSQL/recovery, #64 distributable
+  service and #125 Mac/Linux worker-lifecycle corrections.
+- **Ready for automatic reservation now:** use the live Ready link above. No issue is
+  advertised here as ready after it has been claimed or completed.
 - **Lead integration active:** shared server composition, security boundaries and
   final review of the assigned packages. PR #147 merged the common private
   assignment core used by owner and future scheduled assignment.
 - **Recently completed:** #11 portable release notices, #115/#135 persistent local
   artifact storage and composition, #116 truthful schedule planning/status, #120
   occurrence admission, #121 the security/recovery fault matrix, #122 offline
-  authentication/ingress conformance, #125 worker lifecycle rehearsal, #126
-  whole-server failure proof, #127 the inert restart-safe first-owner ceremony and
-  #128 independently retained backups.
+  authentication/ingress conformance, #126 whole-server failure proof, #127 the
+  inert restart-safe first-owner ceremony, #128 independently retained backups and
+  #148 replay-safe schedule planning/assignment. #125 is not complete: its submitted
+  lifecycle proof is back with the contributor for material corrections.
 - **Waiting on named inputs, not forgotten:** #1/#10 final real browser acceptance,
   the remaining server wiring in #29, the integration/backup remainder of #65, #66
   full server composition, #67 private ingress acceptance, #68 worker installation,

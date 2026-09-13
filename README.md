@@ -133,13 +133,17 @@ No live agent-runtime/platform combination is claimed supported by this preview.
 
 ## Contributor starting points
 
-**Current implementation baseline:** the current public `main`, including the
+**Current implementation baseline:** the current public `main` through
+[PR #152](https://github.com/AgenticBotSitter/agent-control-room/pull/152), including the
 lead-integrated application navigation and protected route corrections, configurable
 project proof, explicit project pages, safe Project News, browser lifecycle coverage
 and owner-attention prioritization, plus exact and relative activity times, verified
 360px navigation, restart-style failed-verification recovery, and exact-version Codex
 start/read fences with a noncanonical bounded result reader through
-[PR #110](https://github.com/AgenticBotSitter/agent-control-room/pull/110). The
+[PR #110](https://github.com/AgenticBotSitter/agent-control-room/pull/110). It also
+contains the bounded Claude Code connector foundation and replay-safe schedule
+planning/assignment; neither is a claim that a live Claude process or scheduled agent
+start is enabled. The
 [September 9 contributor handoff](CONTRIBUTOR_HANDOFF.md) remains historical evidence;
 new contributions use the base recorded in their issue. This is not production
 acceptance and does not supersede active contributors' branches.
@@ -151,10 +155,9 @@ before assignment. All 17 implementation directions are recorded; selected
 components are not yet all integrated.
 
 The public package includes sanitized Idea Lab and news workflows, connector updates
-and generic database/operator templates. At the PR #110 baseline it passes strict
-type checking and the full compiled test suite, including 184 browser accessibility
-checks. Templates are not configured services, and these checks are not production
-acceptance.
+and generic database/operator templates. The PR #152 candidate passed strict type
+checking and every public validation lane. Templates are not configured services, and
+these checks are not production acceptance.
 
 - [Setup and verified check commands](SETUP.md)
 - [How to contribute and get work assigned](CONTRIBUTING.md)
