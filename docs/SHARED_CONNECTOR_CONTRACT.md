@@ -74,8 +74,10 @@ present in the codebase. `thread/read` is the required read-only recovery primit
 resume and a new turn are never substitutes for status inspection. Inbound App Server
 approval requests remain unsupported, not silently accepted.
 
-The non-experimental schema generated from the exact selected package is now retained
-as sanitized version/digest/`thread/read` evidence and bound to the narrow adapter.
+The non-experimental schema generated from the exact selected package is retained
+as sanitized version/digest/`thread/read` evidence. The matching official release tag
+produces the same complete generated-bundle byte count and SHA-256, so the exact
+agent-message result shape is also retained and bound to the narrow adapter.
 The start and recovery responses must report the exact selected `cliVersion`; a
 different installed Codex version is rejected before its thread or turn can become
 durable evidence or a recovered observation.
@@ -105,10 +107,12 @@ trusted host. The public launcher still does not supply those ports, so this is 
 live enablement or host qualification.
 The matching local read composition now accepts only that journal's exact saved
 thread and turn identity, rechecks current authority around each native read, and
-exposes no resume or new-turn method. A completed recovery read now carries the
-already-bounded, secret-screened source-tested text candidate when available. That
-candidate remains explicitly barred from canonical result publication until the exact
-selected package's result-item schema and native restart/read behavior are qualified.
+exposes no resume or new-turn method. A completed recovery read now carries a pinned
+agent-message-schema, bounded and secret-screened text candidate when available. The
+qualification applies to the selected result item, not every ignored item in the
+response. Matching the generated schema does not prove native behavior: the candidate remains explicitly
+barred from canonical result publication until restart/read is qualified on the
+selected executable.
 The portable node bridge now negotiates `harness.codex.dispatch.v1`, verifies the
 owner permit and exact local enrollment/profile/workspace bindings, records one
 immutable private delivery, and returns one signed receipt. It never replays an

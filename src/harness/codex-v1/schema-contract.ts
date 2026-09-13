@@ -15,6 +15,28 @@ export const CODEX_APP_SERVER_READ_CONTRACT = Object.freeze({
   turnStatuses: Object.freeze(['completed', 'interrupted', 'failed', 'inProgress'] as const),
 });
 
+/** Exact result-item facts from the selected package's generated schema. The
+ * matching official release tag produces the same complete schema-bundle hash,
+ * so these facts are tied to the package artifact rather than a moving branch. */
+export const CODEX_APP_SERVER_RESULT_CONTRACT = Object.freeze({
+  package: '@openai/codex' as const,
+  version: '0.150.0-alpha.8' as const,
+  generatedBundleSha256: 'fef60935ec72c842ed361ce064693691e415b0f45a2c1351bda13c6013b0a7bf' as const,
+  sourceTag: 'rust-v0.150.0-alpha.8' as const,
+  sourceTagObject: '4111e744b09ceed970f5d88e7775ca583f963ec4' as const,
+  sourceCommit: 'fcbdb57851be70192fd0c21faa9e529146e93ff1' as const,
+  threadReadResponseSchemaSha256: 'f71533cf90ece89dd594501ac2ab771a28aeeec55395fdb6b28f1a46cf45a65c' as const,
+  agentMessageSourceSha256: '52051c9a063d3194e739759c9a572937bbd5bda511dcda1522e643c99a5bf84d' as const,
+  messagePhaseSourceSha256: '9b9cac40f1eb1d9c9c387b90fd9f87873727e010f46e478230aff17fd3ec460c' as const,
+  deliverySourceSha256: '2fa497987aab791b697c9dee5cdd634ec566bf0b82cd56b5a796f26241a95957' as const,
+  memoryCitationSourceSha256: '1321da58b2371042e969191c90a7cb57d413c44908a82122184b787473860c75' as const,
+  memoryCitationEntrySourceSha256: 'b0a7a2a637e64c04df5da35880065941f0a3d033ebb220d67b1766e72cb4b18c' as const,
+  agentMessageType: 'agentMessage' as const,
+  agentMessageRequired: Object.freeze(['id', 'text', 'type'] as const),
+  messagePhases: Object.freeze(['commentary', 'final_answer'] as const),
+  completeItemsView: 'full' as const,
+});
+
 /** Sanitized binding to the generated non-experimental start schemas from the
  * same exact package. Full generated schemas are intentionally not vendored. */
 export const CODEX_APP_SERVER_START_CONTRACT = Object.freeze({

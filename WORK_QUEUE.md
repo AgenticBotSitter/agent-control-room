@@ -10,10 +10,11 @@ Permanent entry point for people and bots. Read the [build/reuse plan](PUBLIC_BU
 and [worker skill](skills/public-build-worker/SKILL.md). Issues are the live status
 record; no documentation commit is needed every time a job changes state.
 
-Public `main` is the reconciled implementation baseline through PR #105. It now
+Public `main` is the reconciled implementation baseline through PR #109. It now
 includes the configurable-project proof, explicit project pages, safe Project News,
 owner-attention prioritization, exact and relative activity times, verified 360px
-navigation, and restart-style recovery after both successful and failed verification.
+navigation, restart-style recovery after both successful and failed verification,
+and exact-version Codex start/read fences with a noncanonical bounded result reader.
 Connector, security/configuration and support decisions are published in
 [the shared connector contract](docs/SHARED_CONNECTOR_CONTRACT.md),
 [the security/configuration contract](docs/SECURITY_CONFIGURATION_CONTRACT.md) and
