@@ -15,6 +15,8 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;
 -- Function defaults are global; a per-schema revoke cannot undo the global PUBLIC default.
 ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO control_room_private_web;
+-- Lead-approved read-only schedule presentation; no occurrence or schedule mutation.
+GRANT SELECT ON control_schedules, control_schedule_occurrences TO control_room_private_web;
 GRANT SELECT ON control_identities, control_role_grants, workspaces, control_web_sessions,
   adapter_registry, projects, control_manual_project_heads, control_web_project_commands,
   audit_events, control_audit_chain_heads, control_project_lifecycle_events,

@@ -19,6 +19,7 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 // migrations 0025/0026. Catalog query below; not a mutable database marker.
 export const privateWebSchemaDigest = "8220574d3ce8c4f18b4568375088c5c1f7137c3ff1cd10331afe4449285b5271";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
+  "control_schedules", "control_schedule_occurrences",
   "control_abs_story_versions", "control_abs_source_observations", "control_abs_source_settings", "control_abs_story_archives", "control_abs_article_details",
   "control_idea_sessions", "control_idea_contributions", "control_idea_syntheses", "control_idea_decisions", "control_idea_bot_run_events",
   "adapter_registry", "projects", "control_manual_project_heads", "control_web_project_commands", "audit_events",
