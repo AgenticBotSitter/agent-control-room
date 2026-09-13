@@ -1,4 +1,4 @@
-import type { NativeRunTransport, NativeWireResponse } from "./contracts";
+import type { NativeRunTransport, NativeWireResponse } from "../../src/harness/hermes-native-v1/contracts";
 
 const nativeRunId = `run_${"1".repeat(32)}`;
 const instant = 1_800_000_000_000;
@@ -19,14 +19,15 @@ function statusBody(status: string, sessionId: string, extra: Record<string, unk
 
 /** Recorded hermes-gpt session-job response shapes, mapped to the native contract.
  *
- * Upstream pin: `asimons81/hermes-gpt@11db8ac` (v0.10.0, MIT). Source module:
- * `operator_session.py` — `hermes_session_continue` (submit → `{success, job_id,
- * session_id, status:"running"}`), `hermes_session_job_status` (→
- * `{success, job}` with meta `{job_id, session_id, status, created_at,
- * started_at, ended_at, pid, return_code, timeout}`), `hermes_session_job_result`
- * (→ bounded stdout text, `MAX_RESULT_CHARS`). Upstream job statuses:
- * `starting | running | completed | failed | timed_out | orphaned`
- * (reconciled when the server restarts without process ownership).
+ * Upstream pin: `asimons81/hermes-gpt@89cbfbe232d62dfb8c3cb4f9af04c6c32f956e73`
+ * (selected by issue #8). Source module: `operator_session.py` —
+ * `hermes_session_continue` (submit → `{success, job_id, session_id,
+ * status:"running"}`), `hermes_session_job_status` (→ `{success, job}` with
+ * meta `{job_id, session_id, status, created_at, started_at, ended_at, pid,
+ * return_code, timeout}`), `hermes_session_job_result` (→ bounded stdout text,
+ * `MAX_RESULT_CHARS`). Upstream job statuses: `starting | running | completed
+ * | failed | timed_out | orphaned` (reconciled when the server restarts
+ * without process ownership).
  *
  * Mapping rule used here (partial, documented in
  * `docs/integration/hermes/upstream-inspection.md`): upstream
@@ -43,7 +44,7 @@ function statusBody(status: string, sessionId: string, extra: Record<string, unk
  * network. The fake transport consumes them to drive the already-hardened
  * `HermesNativeRunAdapter` offline (Path A of issue #8).
  */
-export const HERMES_GPT_PIN = "asimons81/hermes-gpt@11db8ac" as const;
+export const HERMES_GPT_PIN = "asimons81/hermes-gpt@89cbfbe232d62dfb8c3cb4f9af04c6c32f956e73" as const;
 
 export function recordedCapabilities(): NativeWireResponse {
   return response(capabilityBody);

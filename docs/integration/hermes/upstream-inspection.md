@@ -1,5 +1,14 @@
 # Hermes GPT upstream inspection — step 1 of #8
 
+**Scope: PR #14 is offline Path-A compatibility research, not a connector
+implementation. It does not connect to a live hermes-gpt, does not
+implement a FastMCP adapter, and does not qualify any real Hermes run.
+See `live-qualification.md` for the gating procedure and
+`tests/hermes/hermes-gpt-recorded-responses.ts` for the recorded
+fixtures. The real FastMCP adapter around
+`hermes_session_continue`, `hermes_session_job_status`, and
+`hermes_session_job_result` is a separate reservation per #8.**
+
 Base: `codex/component-batch-4` @ `cf9197d2feeab5696c50f76121a37480255d462d`
 Reviewer: Marvin (Hermes, M4 Mac mini)
 Branch: `marvin/mvp-hermes-integration`
@@ -7,8 +16,7 @@ Branch: `marvin/mvp-hermes-integration`
 ## Upstream pin
 
 - **Repo:** `https://github.com/asimons81/hermes-gpt`
-- **Head at inspection:** `11db8ac` (v0.10.0)
-- **Repo version:** 0.10.0 (`pyproject.toml` vNext slice-1 release)
+- **Selected pin:** `89cbfbe232d62dfb8c3cb4f9af04c6c32f956e73` (per issue #8; previously inspected at `11db8ac`)
 - **License:** MIT (upstream LICENSE file, 1080 B)
 - **Language/stack:** Python 3.10+ (mainline); exposed as a local MCP sidecar
 - **Distribution:** PyPI package `hermes-gpt` (independent of GitHub Releases; verify badge)
@@ -60,7 +68,7 @@ agnostic (uses `NativeWireRequest`, `NativeRunTransport`, `NativeAuthority`,
 5. Provide offline integration scenarios (fake transport) and a live
    qualification procedure for maintainer approval.
 
-## Reuse / rejection decisions (final — exact upstream surface names @ `11db8ac`)
+## Reuse / rejection decisions (final — exact upstream surface names @ `89cbfbe`)
 
 Verified by read of `operator_session.py` (submit/status/result/reconcile),
 `server.py` tool registrations, and `operator_runners.py` (termination).
@@ -152,16 +160,19 @@ Two paths — this is the decision to bring to the maintainer/Codex:
   exact surface names recorded in the table above.
 - Read `node-runtime.ts`, `protocol.ts`, `run-journal.ts`, `restart-inventory.ts`,
   `https-transport.ts`: transport/journal shapes locked into
-  `src/harness/hermes-native-v1/hermes-gpt-recorded-responses.ts`.
-- No `tests/mvp/hermes*` dir exists; new offline scenarios live in
-  `tests/hermes-gpt-mapping.test.ts` alongside the other native tests.
-- Path A deliverables: recorded-transport module + mapping test (7 scenarios) +
-  `docs/integration/hermes/live-qualification.md`.
+  `tests/hermes/hermes-gpt-recorded-responses.ts` (moved from
+  `src/harness/hermes-native-v1/` to test scope in the 2026-09-13 revision
+  per reviewer feedback).
+- Recorded fixtures live in `tests/hermes/hermes-gpt-recorded-responses.ts`;
+  offline scenarios live in `tests/hermes-gpt-mapping.test.ts` (7 scenarios).
+- Path A deliverables: recorded-transport module + mapping test +
+  `docs/integration/hermes/live-qualification.md`. **No FastMCP adapter is
+  shipped in PR #14**; that work belongs to a separate reservation per #8.
 
 ## Open questions for maintainer
 
-- Is the upstream pin `asimons81/hermes-gpt@11db8ac` acceptable, or do you want
+- Is the upstream pin `asimons81/hermes-gpt@89cbfbe` acceptable, or do you want
   a specific tag/version?
 - Which of the above REUSE/REJECT/DEFER decisions are pre-approved?
 - Should the offline scenarios live in `tests/harness/hermes-native-v1/` or
-  in a new `tests/mvp/hermes/` dir?
+  in the new `tests/hermes/` dir? (Current location: `tests/hermes/`.)

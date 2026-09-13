@@ -7,14 +7,21 @@ import { createNativeRecoveryAuthority, type NativeRecoveryDependencies,
   type NativeRecoveryPermissionBody } from "../src/harness/hermes-native-v1/recovery-authority";
 import { HermesNativeRunAdapter } from "../src/harness/hermes-native-v1/adapter";
 import { nativeStartAuthorityFixture } from "./helpers/native-start-authority";
-import { recordedHermesGptTransport } from "../src/harness/hermes-native-v1/hermes-gpt-recorded-responses";
+import { recordedHermesGptTransport } from "./hermes/hermes-gpt-recorded-responses";
 
 /** Offline Path-A scenarios for issue #8: the already-hardened
  * `HermesNativeRunAdapter` driven by recorded hermes-gpt-shaped transports
- * (`asimons81/hermes-gpt@11db8ac`). No subprocess, no network, no live upstream.
- * Each scenario asserts the uncertainty/interruption behavior #8 requires:
- * failed start, lost reply, disconnect/reconnect, restart, stop handshake,
- * and never auto-accepting an upstream success string.
+ * (upstream pin `asimons81/hermes-gpt@89cbfbe...`). No subprocess, no
+ * network, no live upstream. Each scenario asserts the
+ * uncertainty/interruption behavior #8 requires: failed start, lost reply,
+ * disconnect/reconnect, restart, stop handshake, and never auto-accepting
+ * an upstream success string.
+ *
+ * The recorded fixture lives at `tests/hermes/hermes-gpt-recorded-responses.ts`.
+ * PR #14 is offline Path-A compatibility research, not a connector
+ * implementation. A real FastMCP adapter around `hermes_session_continue`,
+ * `hermes_session_job_status`, and `hermes_session_job_result` is a
+ * separate reservation per issue #8.
  */
 test("hermes-gpt mapping: failed capabilities preflight never dispatches", async t => {
   const f = await nativeStartAuthorityFixture(); t.after(f.close);
