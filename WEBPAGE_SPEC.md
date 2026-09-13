@@ -116,3 +116,22 @@ Frontend contributors own presentation, accessibility and tests on reserved path
 Shared API, authorization, schema and configuration serialization changes require
 the core maintainer's contract. Visual choices within this brief do not need owner
 approval; unsupported backend behavior must not be invented to finish the screen.
+
+## Synthetic browser scenario record
+
+The compiled private application is exercised with disposable records, generated
+test access, and Playwright route interception. These checks create no listener,
+remote request, production configuration, credential, or native-agent effect.
+They are split deliberately: together they cover the page journey, but no one
+script is a claim of end-to-end live-harness acceptance.
+
+| Evidence script | Covered synthetic scenario |
+| --- | --- |
+| `scripts/private-browser-acceptance.mjs` | Creates two isolated projects; follows protected project/task and section routes; archives and reopens history; verifies the first keyboard target and narrow menu; and reloads the second project. Set `PRIVATE_BROWSER_SCREENSHOT_DIR` to an explicit absolute directory to retain bounded, synthetic wide and narrow viewport PNGs; otherwise it writes no screenshots. |
+| `scripts/private-uncertain-save-browser-acceptance.mjs` | Separately injects a lost request and a lost reply, then proves the visible re-check/retry keeps one original command and does not duplicate a project. |
+| `scripts/private-result-review-browser-acceptance.mjs` and `scripts/private-revision-browser-acceptance.mjs` | Cover saved owner review feedback, reload, and one explicit proposed revision task without starting an agent. |
+| `scripts/private-accessibility-browser-acceptance.mjs` | Audits protected routes, labels, landmarks, focus/skip-link behavior, and narrow-screen horizontal overflow. |
+| `scripts/private-two-configuration-browser-acceptance.mjs` | Runs the same compiled artifact under two separately isolated, non-secret product configurations. |
+
+This is UI and route evidence only. It does not establish a live-harness,
+production-login, credential, native-agent, or external-provider acceptance.

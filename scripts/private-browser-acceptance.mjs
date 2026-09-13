@@ -11,9 +11,9 @@
 //     node --import tsx scripts/private-browser-acceptance.mjs
 
 import assert from "node:assert/strict";
-import { realpath } from "node:fs/promises";
+import { mkdir, readFile, realpath } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { resolve } from "node:path";
+import { isAbsolute, resolve, sep } from "node:path";
 
 const requireFromRepo = createRequire(resolve("package.json"));
 let playwright;
@@ -26,6 +26,17 @@ if (!playwright) {
   process.exit(2);
 }
 
+// Screenshots are opt-in: the operator supplies an absolute destination, so a
+// normal acceptance run never writes evidence into this checkout.
+const requestedScreenshotDirectory = process.env.PRIVATE_BROWSER_SCREENSHOT_DIR;
+let screenshotDirectory;
+if (requestedScreenshotDirectory) {
+  assert.ok(isAbsolute(requestedScreenshotDirectory), "PRIVATE_BROWSER_SCREENSHOT_DIR must be an absolute path");
+  await mkdir(requestedScreenshotDirectory, { recursive: true });
+  screenshotDirectory = await realpath(requestedScreenshotDirectory);
+  console.log("# saving synthetic screenshots to the operator-supplied directory");
+}
+
 const { default: handler } = await import("../dist-vps/server/index.js");
 const { installPrivateWebProcess } = await import("../dist-vps/server/runtime.js");
 const { loadPrivateClientAssets } = await import("../dist-vps/server/serving.js");
@@ -36,6 +47,19 @@ function check(name, condition, detail = "") {
   checks.push({ name, passed: Boolean(condition) });
   console.log(`${condition ? "ok" : "not ok"} - ${name}${detail ? ` # ${detail}` : ""}`);
   assert.ok(condition, name);
+}
+
+async function saveSanitizedScreenshot(page, filename, maximumWidth, maximumHeight) {
+  if (!screenshotDirectory) return;
+  const path = resolve(screenshotDirectory, filename);
+  assert.ok(path.startsWith(`${screenshotDirectory}${sep}`), "screenshot path must remain inside the supplied directory");
+  await page.screenshot({ path, fullPage: false, animations: "disabled" });
+  const image = await readFile(path);
+  const isPng = image.length >= 24 && image.subarray(0, 8).equals(Buffer.from("89504e470d0a1a0a", "hex"));
+  const width = isPng ? image.readUInt32BE(16) : 0;
+  const height = isPng ? image.readUInt32BE(20) : 0;
+  check(`sanitized ${filename} was written as a bounded PNG`, isPng && image.length <= 5 * 1024 * 1024
+    && width <= maximumWidth && height <= maximumHeight, `${width}x${height}; bytes=${image.length}`);
 }
 
 const disposable = await fixture();
@@ -122,6 +146,7 @@ try {
   await page.getByRole("button", { name: "Reopen project" }).click();
   await page.locator(".private-state").filter({ hasText: "active" }).waitFor();
   check("archived project can be reopened", true);
+  await saveSanitizedScreenshot(page, "private-browser-wide.png", 1280, 900);
 
   await page.goto(`${origin}/projects`, { waitUntil: "domcontentloaded" });
   await page.locator("#project-title").fill("Browser acceptance beta");
@@ -141,6 +166,7 @@ try {
   await menu.click();
   check("narrow-screen menu exposes workspace navigation", await menu.getAttribute("aria-expanded") === "true"
     && await page.getByRole("navigation", { name: "Workspace pages" }).getByRole("link", { name: "Projects" }).isVisible());
+  await saveSanitizedScreenshot(page, "private-browser-narrow.png", 390, 844);
 
   const createPosts = posts.filter(entry => entry.path === "/api/v1/projects");
   const taskPosts = posts.filter(entry => /\/tasks$/.test(entry.path));
