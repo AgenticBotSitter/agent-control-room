@@ -24,12 +24,18 @@ import { createNewsDiscoveryIntegration } from "./news-discovery-integration";
 import type { NewsQueueWorkerStartupConfiguration } from "./news-queue-worker-startup";
 import type { preparePgBossAbsFeedSubmission } from "../../persistence/pg-boss-abs-feed-submission";
 import { CODEX_APP_SERVER_CAPABILITY, CODEX_DELIVERY_FEATURE } from "../../harness/codex-v1/delivery-contract";
+import { bindPrivateArtifactStorageV1, capturePrivateArtifactStorageConfigurationV1, openPrivateArtifactStorageV1,
+  type OpenPrivateArtifactStorageV1, type PrivateArtifactStorageConfigurationV1,
+  type PrivateArtifactStorageV1 } from "./private-artifact-storage";
+import { PersistentLocalArtifactStorageV1 } from "../../artifacts/v1/persistent-local-storage";
 
 type OwnedQueueWorker = { close(): Promise<void>; status(): { accepting: boolean } };
 
 export type PrivateTaskStartupConfiguration = {
   web: PrivateStartupConfiguration;
   news?: NewsStartupConfiguration;
+  /** Explicit, existing local artifact directory for the agent-task composition. */
+  artifactStorage?: PrivateArtifactStorageConfigurationV1;
   coordinator: Pick<TaskCoordinatorConfiguration, "planning" | "routes" | "approvals" | "quality" | "revisionPlanning" | "nativeHttp"> & {
     codex?: CodexPermitConfiguration;
     nativeQueue?: true;
@@ -45,6 +51,8 @@ export type PrivateTaskStartupConfiguration = {
 };
 export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartupConfiguration) {
   try {
+    const artifactStorage = input.artifactStorage
+      ? capturePrivateArtifactStorageConfigurationV1(input.artifactStorage) : undefined;
     const web = validatePrivateStartupConfiguration(input.web);
     localId.parse(web.tenantId); localId.parse(web.workspaceId);
     const database = validatePrivatePostgresConfiguration(input.coordinator.database);
@@ -76,6 +84,9 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
       || evidence.storage.storageClass !== quality.results.storageClass || !timingSafeEqual(evidence.storage.integrityKey, quality.results.integrityKey)
       || evidence.enrollments.some(value => value.tenantId !== web.tenantId)
       || new Set(evidence.enrollments.map(value => value.nodeId)).size !== evidence.enrollments.length)) throw new Error();
+    if (artifactStorage && (!quality || !resultDatabase || !evidence || !web.tasks?.results
+      || quality.results.storageClass !== "local" || evidence.storage.storageClass !== "local"
+      || web.tasks.results.storageClass !== "local")) throw new Error();
     const revisionPlanning = input.coordinator.revisionPlanning;
     if (revisionPlanning !== undefined && (revisionPlanning !== true || !quality)) throw new Error();
     const s = input.coordinator.sessions;
@@ -126,7 +137,7 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
     const news = input.news ? captureNewsStartupConfiguration(input.news, web,
       [web.database, database, resultDatabase, evidence?.database, sessions?.database, queueWorker?.database,
         ideaCreation?.database, ideaRuntime?.database].filter((value): value is PrivatePostgresConfiguration => !!value)) : undefined;
-    return { web, database, planning, routes, approvals, codex, quality, revisionPlanning, resultDatabase, evidence, sessions, nativeHttp, nativeQueue, nativeQueueRecovery, queueWorker, ideaCreation, ideaRuntime, news };
+    return { web, database, planning, routes, approvals, codex, quality, revisionPlanning, resultDatabase, evidence, sessions, nativeHttp, nativeQueue, nativeQueueRecovery, queueWorker, ideaCreation, ideaRuntime, news, artifactStorage };
   } catch { throw new Error("private_task_startup_config_invalid"); }
 }
 
@@ -144,6 +155,8 @@ export function createPrivateTaskBootstrap(dependencies: {
   startNativeWorker?: (config: NativeQueueWorkerStartupConfiguration) => Promise<OwnedQueueWorker>;
   prepareNewsSubmission?: (db: DatabaseSession) => ReturnType<typeof preparePgBossAbsFeedSubmission>;
   startNewsWorker?: (config: NewsQueueWorkerStartupConfiguration) => Promise<OwnedQueueWorker>;
+  /** Explicitly injected so tests can prove zero website-only I/O and one shared instance. */
+  openArtifactStorage?: OpenPrivateArtifactStorageV1;
 }) {
   const prepareSubmission = dependencies.prepareNativeSubmission?.bind(dependencies);
   const startWorker = dependencies.startNativeWorker?.bind(dependencies);
@@ -154,24 +167,28 @@ export function createPrivateTaskBootstrap(dependencies: {
     if (started) throw new Error("private_task_startup_already_attempted");
     started = true;
     if (signal?.aborted) throw new Error("private_task_startup_canceled");
-    const config = validatePrivateTaskStartupConfiguration(input);
-    if (config.nativeQueue && !prepareSubmission) throw new Error("private_task_startup_config_invalid");
-    if (config.queueWorker && !startWorker) throw new Error("private_task_startup_config_invalid");
-    if (config.news && (!prepareNews || !startNews)) throw new Error("private_task_startup_config_invalid");
+    const capturedConfig = validatePrivateTaskStartupConfiguration(input);
+    if (capturedConfig.artifactStorage && !dependencies.openArtifactStorage)
+      throw new Error("private_task_startup_config_invalid");
+    if (capturedConfig.nativeQueue && !prepareSubmission) throw new Error("private_task_startup_config_invalid");
+    if (capturedConfig.queueWorker && !startWorker) throw new Error("private_task_startup_config_invalid");
+    if (capturedConfig.news && (!prepareNews || !startNews)) throw new Error("private_task_startup_config_invalid");
     // Validated prepared ports are now owned, even if a later database preflight fails.
     // Memoization prevents duplicate cleanup when application construction also closes them.
     let runtimeClose: Promise<void> | undefined;
-    const closeIdeaRuntime = config.ideaRuntime ? () => {
+    let artifactStorage: PrivateArtifactStorageV1 | undefined;
+    let artifactInventory: Awaited<ReturnType<PrivateArtifactStorageV1["captureInventory"]>> | undefined;
+    const closeIdeaRuntime = capturedConfig.ideaRuntime ? () => {
       runtimeClose ??= (async () => {
         let timer: ReturnType<typeof setTimeout> | undefined;
-        try { await Promise.race([Promise.resolve().then(config.ideaRuntime!.close), new Promise<never>((_, reject) => {
+        try { await Promise.race([Promise.resolve().then(capturedConfig.ideaRuntime!.close), new Promise<never>((_, reject) => {
           timer = setTimeout(() => reject(new Error("idea_runtime_cleanup_uncertain")), 5000);
         })]); } finally { clearTimeout(timer); }
       })(); return runtimeClose;
     } : undefined;
-    const queue = config.nativeQueue || config.news ? { nativeQueue: true as const,
-      ...(!config.nativeQueue ? { nativeQueueProducer: false as const } : {}),
-      ...(config.nativeQueueRecovery ? { nativeQueueRecovery: true as const } : {}) } : undefined;
+    const queue = capturedConfig.nativeQueue || capturedConfig.news ? { nativeQueue: true as const,
+      ...(!capturedConfig.nativeQueue ? { nativeQueueProducer: false as const } : {}),
+      ...(capturedConfig.nativeQueueRecovery ? { nativeQueueRecovery: true as const } : {}) } : undefined;
     let submission: (NativeTaskSubmission & { close(): Promise<void> }) | undefined;
     let abandoned = false, preparationUncertain = false;
     const acquired: TaskCoordinatorDatabase[] = [];
@@ -229,6 +246,11 @@ export function createPrivateTaskBootstrap(dependencies: {
       acquired.push(owned); requireActive(); return owned;
     }
     try {
+      artifactStorage = capturedConfig.artifactStorage
+        ? await openPrivateArtifactStorageV1(capturedConfig.artifactStorage, dependencies.openArtifactStorage!) : undefined;
+      requireActive();
+      const config = artifactStorage
+        ? bindPrivateArtifactStorageV1(capturedConfig, artifactStorage.storage) : capturedConfig;
       const clock = dependencies.clock ?? Date.now;
       const now = clock(); if (!Number.isSafeInteger(now) || now < 0) throw new Error();
       const web = open(config.web.database);
@@ -249,6 +271,11 @@ export function createPrivateTaskBootstrap(dependencies: {
         if ([web.client, coordinator.client, resultDatabase!.client].includes(evidenceDatabase.client)) throw new Error();
         await verifyNativeEvidenceDatabase(evidenceDatabase.client, config.evidence!.database, config.web, now, queue);
         requireActive();
+        if (artifactStorage) {
+          artifactInventory = await artifactStorage.captureInventory(evidenceDatabase.client, config.web.tenantId,
+            config.quality!.results.integrityKey, signal);
+          requireActive();
+        }
       }
       if (!web.isAvailable() || !coordinator.isAvailable() || resultDatabase && !resultDatabase.isAvailable()
         || evidenceDatabase && !evidenceDatabase.isAvailable()) throw new Error();
@@ -413,6 +440,14 @@ export function createPrivateTaskBootstrap(dependencies: {
       requireActive();
       // Optional narrow commands reach only trusted server composition, never raw SQL/keys.
       return Object.freeze({ isReady: installed.isReady, close: installed.close,
+        ...(artifactStorage && artifactInventory ? { artifactStorage: Object.freeze({
+          storage: artifactStorage.storage, startupInventory: artifactInventory,
+          captureInventory: async (inventorySignal?: AbortSignal) => {
+            if (!installed.isReady() || !evidenceDatabase?.isAvailable())
+              throw new Error("private_artifact_storage_unavailable");
+            return artifactStorage!.captureInventory(evidenceDatabase.client, config.web.tenantId,
+              config.quality!.results.integrityKey, inventorySignal);
+          } }) } : {}),
         ...(application.queueDelivery ? { queueDelivery: application.queueDelivery } : {}),
         ...(application.submission ? { submission: application.submission } : {}),
         ...(application.queueRecovery ? { queueRecovery: application.queueRecovery } : {}),
@@ -436,5 +471,7 @@ export function createPrivateTaskBootstrap(dependencies: {
     } finally { signal?.removeEventListener("abort", cancelStartup); }
   } });
 }
-const production = createPrivateTaskBootstrap({ openDatabase: createPrivatePostgresDatabase, install: installPrivateApplication });
+const production = createPrivateTaskBootstrap({ openDatabase: createPrivatePostgresDatabase,
+  openArtifactStorage: configuration => PersistentLocalArtifactStorageV1.create(configuration),
+  install: installPrivateApplication });
 export const startPrivateTaskApplication = production.start;
