@@ -28,8 +28,19 @@ test('retained npm provenance requires exact identity, integrity, and pinned byt
     assert.equal(collectBundledRows(repo).find(value => value.root === 'third_party/pg').mismatches.length, 0);
     write({ packageName: 'pg', packageVersion: '2.2.0', files: [] });
     assert.throws(() => collectBundledRows(repo), /retained_provenance_lock_integrity_missing:pg@2.2.0/);
-    write({ packageName: '@nodable/entities', packageVersion: '3.0.0', sourceCommit: null, files: [] });
-    assert.throws(() => collectBundledRows(repo), /retained_provenance_lock_integrity_missing:@nodable\/entities@3.0.0/);
+    fs.mkdirSync(path.join(repo, 'third_party/nodable-entities'), { recursive: true });
+    fs.writeFileSync(path.join(repo, 'third_party/nodable-entities/LICENSE'), 'entities license');
+    fs.writeFileSync(path.join(repo, 'pnpm-lock.yaml'), "packages:\n\n  'pg@1.0.0':\n    resolution: {integrity: sha512-exact}\n\n  '@nodable/entities@3.0.0':\n    resolution: {integrity: sha512-entities-3}\n");
+    const entities = 'entities license';
+    fs.writeFileSync(path.join(repo, 'research/runtime-license-retained-provenance.json'), JSON.stringify({ roots: {
+      'third_party/nodable-entities': { packageName: '@nodable/entities', packageVersion: '3.0.0', sourceCommit: null, files: [{ file: 'LICENSE', bytes: entities.length, sha256: hash(entities) }] },
+    } }));
+    let entityRow = collectBundledRows(repo).find(value => value.root === 'third_party/nodable-entities');
+    assert.equal(entityRow.provenance.distributionIntegrity, 'sha512-entities-3');
+    fs.writeFileSync(path.join(repo, 'research/runtime-license-retained-provenance.json'), JSON.stringify({ roots: {
+      'third_party/nodable-entities': { packageName: '@nodable/entities', packageVersion: '2.2.0', sourceCommit: null, files: [{ file: 'LICENSE', bytes: entities.length, sha256: hash(entities) }] },
+    } }));
+    assert.throws(() => collectBundledRows(repo), /retained_provenance_lock_integrity_missing:@nodable\/entities@2.2.0/);
   } finally { fs.rmSync(repo, { recursive: true, force: true }); }
 });
 
