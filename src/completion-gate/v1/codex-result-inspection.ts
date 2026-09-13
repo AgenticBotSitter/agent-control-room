@@ -4,7 +4,7 @@ import { HarnessRunStoreV1 } from "../../harness/v1/store";
 import { jobRecordSchema } from "../../domain/v1";
 import { NativeResultStore, nativeResultId, type NativeResultReadConfiguration } from "../../artifacts/v1/native-results";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
-import { hmacSha256Tag, sha256Digest, type AwaitableRollbackCheckpointStoreV1 } from "../../security";
+import { computeAuthorityDigest, hmacSha256Tag, sha256Digest, type AwaitableRollbackCheckpointStoreV1 } from "../../security";
 import { readCodexTaskExecutionPlanV3InSession } from "../../web/v1/task-execution-planner";
 import { readCodexActivationTransmissionIntentInSession } from "../../web/v1/codex-activation-transmission-intent";
 import { CompletionGateStoreV1 } from "./store";
@@ -68,8 +68,10 @@ export class CodexResultInspectionServiceV1 implements TaskResultInspectionSourc
     const jobRow = (await tx.query<{ payload: unknown }>("SELECT payload FROM control_jobs WHERE tenant_id=$1 AND project_id=$2 AND id=$3 FOR UPDATE",
       [tenantId, identity.projectId, identity.jobId])).rows[0];
     const job = jobRecordSchema.parse(jobRow?.payload);
+    const immutableJob = { ...job, state: "proposed" as const, version: 0, updatedAt: job.createdAt };
     if (job.tenantId !== tenantId || job.projectId !== identity.projectId || job.id !== identity.jobId
-      || job.inputDigest !== taskPlan.job.inputDigest) return unavailable();
+      || job.inputDigest !== taskPlan.job.inputDigest || computeAuthorityDigest(job.authority) !== job.authority.digest
+      || sha256Digest(immutableJob) !== sha256Digest(taskPlan.job)) return unavailable();
     const plan = await readCodexReviewPlanV1(tx, this.reviewKey, tenantId, identity.projectId, identity.jobId);
     if (!plan || plan.runId !== runId || plan.taskPlanDigest !== record.taskPlanDigest
       || plan.activationIntentRecordDigest !== record.activationIntentRecordDigest) return unavailable();

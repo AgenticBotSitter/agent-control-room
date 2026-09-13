@@ -522,6 +522,25 @@ test("Codex changes requested releases only capacity and accepted verified work 
   assert.equal(replay.replayed, true); assert.deepEqual(replay.receipt, completed.receipt);
 });
 
+test("Codex completion refuses a current job whose authority no longer matches its authenticated plan", async t => {
+  const x = await prepared(); t.after(x.f.close);
+  const saved = await x.publisher().capture({ publication: x.publication, terminalEvidence: x.terminalEvidence,
+    qualificationReceipt: x.qualificationReceipt, bytes: x.bytes });
+  const current = await x.f.canonical.get("tenant:test", "job", "job:test");
+  assert.ok(current?.kind === "job");
+  const authority = { ...current.authority, expiresAt: at(600_000), digest: sha256Digest("pending") };
+  authority.digest = computeAuthorityDigest(authority);
+  const tampered = { ...current, authority };
+  await x.f.db.query("UPDATE control_jobs SET payload=$1::jsonb,authority_digest=$2 WHERE tenant_id=$3 AND id=$4",
+    [JSON.stringify(tampered), authority.digest, "tenant:test", "job:test"]);
+  const inspection = codexInspection(x), request = { tenantId: "tenant:test", runId: saved.receipt.runId,
+    targetDigest: sha256Digest(saved.target), contentHash: saved.receipt.contentHash };
+  await assert.rejects(() => new NativeTaskCompletionService(x.f.db, inspection.configuration,
+    () => Date.parse(at(8000)), inspection.source).releaseCapacity(request, () => {}),
+  /codex_result_inspection_unavailable/);
+  assert.equal((await x.f.canonical.get("tenant:test", "lease", "lease:test"))?.state, "active");
+});
+
 test("persists through separate least-privilege evidence and review database roles", async t => {
   const x = await prepared(); t.after(x.f.close);
   const db = await restrictedPublisherDatabases(x);
