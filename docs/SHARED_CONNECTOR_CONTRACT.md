@@ -64,6 +64,13 @@ Actual admission still requires a test that `thread/read(includeTurns: true)` af
 process restart reads the exact thread without resuming or starting work. Production
 WebSocket transport, dynamic tools and automatic approval are outside the initial contract.
 
+**Landing order is a gate, not a preference.** `submit` may not move from `unknown`/
+`source_inspected` to a status that lets a real process start until both the
+`thread/read` restart-recovery qualification above and the result-schema evidence
+in the paragraph above it are independently passing. A connector that can start work
+but cannot yet honestly read a result back after a restart must stay unreachable from
+the admission path, however complete its start-side code looks.
+
 ### Claude Code
 
 Treat Claude Code as an operator-installed, invocation-only npm package speaking bounded
