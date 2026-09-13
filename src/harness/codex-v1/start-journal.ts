@@ -208,8 +208,11 @@ export class SqliteCodexStartJournalV1 {
             codex_turn_start_receipts: expectedColumns.codex_turn_start_receipts,
           }, { codex_start_reservations: reservationTableV2,
             codex_thread_start_receipts: threadTable, codex_turn_start_receipts: turnTable });
-        const rows = this.db.prepare('SELECT * FROM codex_start_reservations').all() as ReservationRowV2[];
         schemaTransaction(this.db, () => {
+          // Read only after BEGIN IMMEDIATE owns the migration lock. Otherwise a
+          // still-running v2 writer could commit between this snapshot and the
+          // table rename, and its no-replay reservation would be discarded.
+          const rows = this.db.prepare('SELECT * FROM codex_start_reservations').all() as ReservationRowV2[];
           this.db.exec('ALTER TABLE codex_start_reservations RENAME TO codex_start_reservations_v2');
           this.db.exec(reservationTable);
           const insert = this.db.prepare(`INSERT INTO codex_start_reservations

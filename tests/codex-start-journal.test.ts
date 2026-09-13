@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
+import { Worker } from 'node:worker_threads';
 import { createCodexStartAdmissionV1, createCodexStartResponseDispatcherV1,
   createCodexTurnStartIntentV1 } from '../src/harness/codex-v1/admission-contract.ts';
 import { CODEX_APP_SERVER_START_CONTRACT } from '../src/harness/codex-v1/schema-contract.ts';
@@ -223,6 +224,82 @@ test('upgrades an existing reservation schema and preserves its attempt fence', 
   assert.equal(journal.load(second.admission.scope.runId).status, 'not_reserved');
   journal.close();
 }));
+
+test('migration waits for an active v2 writer and retains its committed reservation', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'codex-start-journal-concurrent-'));
+  chmodSync(directory, 0o700);
+  const path = join(directory, 'journal.sqlite');
+  const first = makePair({ name: 'schema-v2-existing' });
+  const late = makePair({ name: 'schema-v2-late' });
+  try {
+    let journal = new SqliteCodexStartJournalV1(path);
+    assert.equal(reserve(journal, first), 'recorded');
+    journal.close();
+    const writer = new DatabaseSync(path);
+    writer.exec(`BEGIN IMMEDIATE;
+      ALTER TABLE codex_start_reservations RENAME TO codex_start_reservations_v3;
+      CREATE TABLE codex_start_reservations (
+        run_id TEXT PRIMARY KEY NOT NULL, queue_id TEXT NOT NULL UNIQUE,
+        activation_id TEXT NOT NULL UNIQUE, activation_message_id TEXT NOT NULL UNIQUE,
+        activation_digest TEXT NOT NULL UNIQUE, activation_frame_digest TEXT NOT NULL UNIQUE,
+        dispatch_frame_digest TEXT NOT NULL, receipt_frame_digest TEXT NOT NULL,
+        admission_id TEXT NOT NULL UNIQUE, connection_attempt_id TEXT NOT NULL UNIQUE,
+        reserved_at TEXT NOT NULL, deadline TEXT NOT NULL, admission_json TEXT NOT NULL,
+        admission_digest TEXT NOT NULL UNIQUE
+      );
+      INSERT INTO codex_start_reservations
+        (run_id,queue_id,activation_id,activation_message_id,activation_digest,activation_frame_digest,
+         dispatch_frame_digest,receipt_frame_digest,admission_id,connection_attempt_id,reserved_at,deadline,
+         admission_json,admission_digest)
+        SELECT run_id,queue_id,activation_id,activation_message_id,activation_digest,activation_frame_digest,
+         dispatch_frame_digest,receipt_frame_digest,admission_id,connection_attempt_id,reserved_at,deadline,
+         admission_json,admission_digest FROM codex_start_reservations_v3;
+      DROP TABLE codex_start_reservations_v3;
+      PRAGMA user_version=2;
+      COMMIT;`);
+    writer.exec('BEGIN IMMEDIATE');
+    writer.prepare(`INSERT INTO codex_start_reservations
+      (run_id,queue_id,activation_id,activation_message_id,activation_digest,activation_frame_digest,
+       dispatch_frame_digest,receipt_frame_digest,admission_id,connection_attempt_id,reserved_at,deadline,
+       admission_json,admission_digest) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(late.admission.scope.runId, late.admission.queueId, late.admission.activationId,
+        late.admission.activationMessageId, late.admission.activationDigest, late.admission.activationFrameDigest,
+        late.admission.dispatchFrameDigest, late.admission.receiptFrameDigest, late.admission.admissionId,
+        late.admission.connectionAttemptId, late.admission.requestedAt, late.admission.deadline,
+        JSON.stringify(late.admission), sha256Digest(late.admission));
+
+    const gate = new SharedArrayBuffer(4);
+    const worker = new Worker(new URL('./helpers/codex-journal-upgrade-worker.mjs', import.meta.url), {
+      workerData: { gate, path, runIds: [first.admission.scope.runId, late.admission.scope.runId] },
+    });
+    const messages: unknown[] = [];
+    worker.on('message', message => messages.push(message));
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('upgrade_worker_not_ready')), 2_000);
+      worker.once('message', message => {
+        clearTimeout(timeout);
+        if (message !== 'ready') reject(new Error('upgrade_worker_protocol_invalid'));
+        else resolve();
+      });
+    });
+    Atomics.store(new Int32Array(gate), 0, 1);
+    Atomics.notify(new Int32Array(gate), 0);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    writer.exec('COMMIT');
+    writer.close();
+    const exitCode = await new Promise<number>((resolve, reject) => {
+      worker.once('error', reject);
+      worker.once('exit', resolve);
+    });
+    assert.equal(exitCode, 0);
+    assert.deepEqual(messages.at(-1), { status: 'migrated', loads: ['start_reserved', 'start_reserved'] });
+    journal = new SqliteCodexStartJournalV1(path);
+    assert.equal(journal.load(late.admission.scope.runId).status, 'start_reserved');
+    journal.close();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test('a populated receipt-only journal cannot reserve or send the historical start again', () => withJournalFile(path => {
   const pair = makePair({ name: 'historical' });
