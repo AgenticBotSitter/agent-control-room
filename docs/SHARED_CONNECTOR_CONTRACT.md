@@ -122,8 +122,10 @@ root-or-current-owner custody and non-writable group/world modes, and launches t
 descriptor through `/proc/self/fd/3` with only the fixed `app-server` argument. The
 reviewed workspace root, workspace and operator-supplied `CODEX_HOME` are canonical,
 owned directories with disjoint custody; their opened identities are rechecked around
-launch. `CODEX_HOME` is an explicit non-secret location needed by the operator-installed
-Codex binary; the port does not inspect credentials or inherit the ambient environment.
+launch, and the child receives the held workspace and `CODEX_HOME` directories through
+Linux descriptor paths rather than reopening their configured paths. `CODEX_HOME` is
+an explicit non-secret location needed by the operator-installed Codex binary; the port
+does not inspect credentials or inherit the ambient environment.
 It owns standard streams, retains cancellation through process retirement, and escalates
 TERM to KILL unless terminal exit is observed. The production export captures Node's
 launcher inside the module; the injected launcher remains a test-only, non-server export.

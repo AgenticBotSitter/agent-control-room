@@ -22,6 +22,7 @@ import { assertSynchronousFence } from '../security/synchronous-fence';
 
 export const CODEX_APP_SERVER_ARGUMENTS_V1 = Object.freeze(['app-server'] as const);
 export const CODEX_EXECUTABLE_DESCRIPTOR_PATH_V1 = '/proc/self/fd/3' as const;
+export const CODEX_FILE_DESCRIPTOR_PREFIX_V1 = '/proc/self/fd/' as const;
 const MAX_EXECUTABLE_BYTES = 512 * 1_024 * 1_024;
 const MAX_TRACKED_BINDINGS = 65_536;
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
@@ -81,7 +82,7 @@ export interface CodexNativeProcessPermitV1 {
 type LaunchOptions = Omit<SpawnOptionsWithoutStdio, 'stdio'> & {
   shell: false;
   windowsHide: true;
-  stdio: ['pipe', 'pipe', 'pipe', number];
+  stdio: Array<'pipe' | 'ignore' | number>;
 };
 export type LaunchCodexNativeProcessV1 = (
   executable: string,
@@ -153,6 +154,28 @@ function identityOf(value: { dev: number; ino: number; mode: number; size: numbe
 function sameIdentity(left: FileIdentity, right: FileIdentity): boolean {
   return left.dev === right.dev && left.ino === right.ino && left.mode === right.mode
     && left.size === right.size && left.mtimeMs === right.mtimeMs && left.ctimeMs === right.ctimeMs;
+}
+
+function descriptorPath(handle: FileHandle): string {
+  if (!Number.isSafeInteger(handle.fd) || handle.fd < 3 || handle.fd > 65_535) throw unavailable();
+  return `${CODEX_FILE_DESCRIPTOR_PREFIX_V1}${handle.fd}`;
+}
+
+function inheritedStdio(executable: FileHandle, workspace: FileHandle,
+  codexHome: FileHandle): Array<'pipe' | 'ignore' | number> {
+  if ([executable.fd, workspace.fd, codexHome.fd].some(fd => !Number.isSafeInteger(fd) || fd < 3 || fd > 65_535)) {
+    throw unavailable();
+  }
+  const highest = Math.max(workspace.fd, codexHome.fd, 3);
+  if (!Number.isSafeInteger(highest) || highest > 65_535) throw unavailable();
+  const stdio: Array<'pipe' | 'ignore' | number> = Array.from({ length: highest + 1 }, () => 'ignore');
+  stdio[0] = 'pipe';
+  stdio[1] = 'pipe';
+  stdio[2] = 'pipe';
+  stdio[3] = executable.fd;
+  stdio[workspace.fd] = workspace.fd;
+  stdio[codexHome.fd] = codexHome.fd;
+  return stdio;
 }
 
 async function hashHandle(handle: FileHandle, size: number): Promise<string> {
@@ -329,7 +352,7 @@ function buildCodexNativeProcessAcquisitionV1(
     const binding = parseCodexAppServerProcessBindingV1(bindingValue);
     if (sha256Digest(binding) !== expectedBindingDigest) throw unavailable();
     check();
-    const bindingKey = sha256Digest(permit);
+    const bindingKey = expectedBindingDigest;
     if (startedBindings.has(bindingKey) || startedBindings.size >= MAX_TRACKED_BINDINGS) throw unavailable();
     startedBindings.add(bindingKey);
     used = true;
@@ -445,13 +468,24 @@ function buildCodexNativeProcessAcquisitionV1(
         let selected: ChildProcessWithoutNullStreams;
         try {
           selected = launch(CODEX_EXECUTABLE_DESCRIPTOR_PATH_V1, CODEX_APP_SERVER_ARGUMENTS_V1, {
-            cwd: workspacePath,
-            env: { ...environment },
+            cwd: descriptorPath(verifiedWorkspace.handle),
+            env: { ...environment, CODEX_HOME: descriptorPath(verifiedCodexHome.handle) },
             shell: false,
             windowsHide: true,
-            stdio: ['pipe', 'pipe', 'pipe', verified.handle.fd],
+            stdio: inheritedStdio(verified.handle, verifiedWorkspace.handle, verifiedCodexHome.handle),
           });
           child = selected;
+          const streamFailure = (): void => {
+            if (terminal) return;
+            operation.abort();
+            void close().catch(() => {});
+          };
+          if (!selected.stdin || typeof selected.stdin.on !== 'function') throw unavailable();
+          selected.stdin.on('error', streamFailure);
+          if (!selected.stdout || !selected.stderr || typeof selected.stdout.on !== 'function'
+            || typeof selected.stderr.on !== 'function') throw unavailable();
+          selected.stdout.on('error', streamFailure);
+          selected.stderr.on('error', streamFailure);
           validateStreams(selected);
         } catch { throw unavailable(); }
 

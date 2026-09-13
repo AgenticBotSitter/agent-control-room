@@ -28,6 +28,7 @@ import { CODEX_APP_SERVER_START_CONTRACT } from '../src/harness/codex-v1/schema-
 import {
   CODEX_APP_SERVER_ARGUMENTS_V1,
   CODEX_EXECUTABLE_DESCRIPTOR_PATH_V1,
+  CODEX_FILE_DESCRIPTOR_PREFIX_V1,
   createCodexNativeProcessAcquisitionForTestV1,
   createCodexNativeProcessAcquisitionV1,
   type CodexNativeProcessConfigurationV1,
@@ -191,17 +192,26 @@ test('native acquisition is inert and launches the reviewed command once with on
   assert.equal(launched.length, 1);
   assert.equal(launched[0]?.executable, CODEX_EXECUTABLE_DESCRIPTOR_PATH_V1);
   assert.deepEqual(launched[0]?.args, CODEX_APP_SERVER_ARGUMENTS_V1);
-  assert.equal(launched[0]?.options.cwd, fixture.workspace);
+  assert.match(String(launched[0]?.options.cwd), /^\/proc\/self\/fd\/\d+$/);
   assert.deepEqual(launched[0]?.options.env, {
     NODE_ENV: 'production',
-    CODEX_HOME: fixture.codexHome,
+    CODEX_HOME: launched[0]?.options.env?.CODEX_HOME,
     LANG: 'C.UTF-8',
     NO_COLOR: '1',
   });
+  assert.match(launched[0]?.options.env?.CODEX_HOME ?? '', /^\/proc\/self\/fd\/\d+$/);
   assert.equal(launched[0]?.options.shell, false);
   assert.equal(launched[0]?.options.windowsHide, true);
   assert.deepEqual(launched[0]?.options.stdio.slice(0, 3), ['pipe', 'pipe', 'pipe']);
   assert.ok(Number.isSafeInteger(launched[0]?.options.stdio[3]));
+  const workspaceFd = Number(String(launched[0]?.options.cwd).slice(CODEX_FILE_DESCRIPTOR_PREFIX_V1.length));
+  const codexHomeFd = Number((launched[0]?.options.env?.CODEX_HOME ?? '')
+    .slice(CODEX_FILE_DESCRIPTOR_PREFIX_V1.length));
+  assert.ok(Number.isSafeInteger(workspaceFd));
+  assert.ok(Number.isSafeInteger(codexHomeFd));
+  assert.notEqual(workspaceFd, codexHomeFd);
+  assert.equal(launched[0]?.options.stdio[workspaceFd], workspaceFd);
+  assert.equal(launched[0]?.options.stdio[codexHomeFd], codexHomeFd);
   assert.equal(Object.hasOwn(launched[0]?.options.env ?? {}, 'PATH'), false);
   await session.close();
   assert.equal(child.kills(), 1);
@@ -256,6 +266,69 @@ test('digest mismatch and symlink executable refuse before launch', async t => {
   assert.equal(launches, 0);
 });
 
+test('wrapper, wrong ELF architecture, writable custody, and overlapping CODEX_HOME refuse', async t => {
+  const wrapper = await nativeFixture(t);
+  const wrapperBytes = Buffer.from('#!/bin/sh\nexit 0\n');
+  await writeFileAsync(wrapper.executable, wrapperBytes);
+  await chmodAsync(wrapper.executable, 0o755);
+  let launches = 0;
+  const wrapperPort = createCodexNativeProcessAcquisitionForTestV1({
+    ...wrapper.config,
+    executableSha256: 'sha256:' + createHash('sha256').update(wrapperBytes).digest('hex'),
+    assertCurrent() {},
+  }, () => {
+    launches += 1;
+    return fakeChild().child;
+  });
+  await assert.rejects(
+    wrapperPort.acquire(wrapper.selectedBinding, new AbortController().signal).ready,
+    /native_process_unavailable/,
+  );
+
+  const wrongArchitecture = await nativeFixture(t);
+  const wrongBytes = await readFileAsync(wrongArchitecture.executable);
+  wrongBytes.writeUInt16LE(process.arch === 'arm64' ? 0x3e : 0xb7, 18);
+  await writeFileAsync(wrongArchitecture.executable, wrongBytes);
+  await chmodAsync(wrongArchitecture.executable, 0o755);
+  const wrongArchitecturePort = createCodexNativeProcessAcquisitionForTestV1({
+    ...wrongArchitecture.config,
+    executableSha256: 'sha256:' + createHash('sha256').update(wrongBytes).digest('hex'),
+    assertCurrent() {},
+  }, () => {
+    launches += 1;
+    return fakeChild().child;
+  });
+  await assert.rejects(
+    wrongArchitecturePort.acquire(wrongArchitecture.selectedBinding, new AbortController().signal).ready,
+    /native_process_unavailable/,
+  );
+
+  const writable = await nativeFixture(t);
+  await chmodAsync(writable.workspace, 0o777);
+  const writablePort = createCodexNativeProcessAcquisitionForTestV1({
+    ...writable.config,
+    assertCurrent() {},
+  }, () => {
+    launches += 1;
+    return fakeChild().child;
+  });
+  await assert.rejects(
+    writablePort.acquire(writable.selectedBinding, new AbortController().signal).ready,
+    /native_process_unavailable/,
+  );
+
+  const overlapping = await nativeFixture(t);
+  assert.throws(() => createCodexNativeProcessAcquisitionForTestV1({
+    ...overlapping.config,
+    environment: { ...overlapping.config.environment, CODEX_HOME: overlapping.workspace },
+    assertCurrent() {},
+  }, () => {
+    launches += 1;
+    return fakeChild().child;
+  }), /native_process_unavailable/);
+  assert.equal(launches, 0);
+});
+
 test('replacement between verification and spawn is detected and the one launched child is retired', async t => {
   const fixture = await nativeFixture(t);
   const child = fakeChild();
@@ -304,6 +377,34 @@ test('mismatch, expiry, pre-abort, duplicate, and post-close paths launch zero a
   await expiredPort.close();
   assert.throws(() => expiredPort.acquire(expired.selectedBinding, new AbortController().signal), /native_process_unavailable/);
   assert.equal(expiredLaunches, 0);
+});
+
+test('the same binding cannot be reserved by a second factory after configuration changes', async t => {
+  const fixture = await nativeFixture(t);
+  const firstChild = fakeChild();
+  let firstLaunches = 0;
+  const first = createCodexNativeProcessAcquisitionForTestV1(fixture.config, () => {
+    firstLaunches += 1;
+    firstChild.scheduleSpawn();
+    return firstChild.child;
+  });
+  const changedConfig: CodexNativeProcessConfigurationV1 = {
+    ...fixture.config,
+    startupTimeoutMs: fixture.config.startupTimeoutMs + 1,
+    environment: Object.freeze({ ...fixture.config.environment, TERM: 'dumb' }),
+  };
+  let secondLaunches = 0;
+  const second = createCodexNativeProcessAcquisitionForTestV1(changedConfig, () => {
+    secondLaunches += 1;
+    return fakeChild().child;
+  });
+  const owner = first.acquire(fixture.selectedBinding, new AbortController().signal);
+  assert.throws(() => second.acquire(fixture.selectedBinding, new AbortController().signal),
+    /native_process_unavailable/);
+  await owner.ready;
+  await owner.close();
+  assert.equal(firstLaunches, 1);
+  assert.equal(secondLaunches, 0);
 });
 
 test('close before asynchronous verification settles guarantees zero launch', async t => {
@@ -397,6 +498,8 @@ test('caller cancellation remains attached after ready and retires the live chil
   const owner = acquisition.acquire(fixture.selectedBinding, operation.signal);
   await owner.ready;
   operation.abort();
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(child.kills(), 1);
   await owner.close();
   assert.equal(child.kills(), 1);
 });
@@ -418,6 +521,26 @@ test('write failure is withheld and malformed streams or uncertain retirement fa
     },
   );
   await writeOwner.close();
+
+  const emittedFixture = await nativeFixture(t);
+  const emittedChild = fakeChild();
+  const emitted = createCodexNativeProcessAcquisitionForTestV1(emittedFixture.config, () => {
+    emittedChild.scheduleSpawn();
+    return emittedChild.child;
+  });
+  const emittedOwner = emitted.acquire(emittedFixture.selectedBinding, new AbortController().signal);
+  const emittedPort = await emittedOwner.ready;
+  emittedChild.stdin.emit('error', new Error('synthetic credential-shaped stdin failure'));
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(emittedChild.kills(), 1);
+  await assert.rejects(
+    emittedPort.writeStdin(new Uint8Array([1]), new AbortController().signal),
+    error => {
+      assert.doesNotMatch(String(error), /credential-shaped/);
+      return /native_process_unavailable/.test(String(error));
+    },
+  );
+  await emittedOwner.close();
 
   const malformedFixture = await nativeFixture(t);
   const malformedChild = fakeChild({ malformedStreams: true });
