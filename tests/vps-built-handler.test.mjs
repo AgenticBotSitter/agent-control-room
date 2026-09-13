@@ -9,7 +9,7 @@ import { seedWebConnection, seedWebSignal, webConnectionKeys } from "./helpers/w
 
 test("compiled Node entry protects pages, APIs and streams before application composition", async () => {
   assert.equal(typeof handler, "function");
-  for (const path of ["/", "/ideas", "/connections", "/api/v1/connections", "/api/v1/projects", "/api/v1/operator-surface", "/api/v1/projects/project:test/events"]) {
+  for (const path of ["/", "/ideas", "/workers", "/settings", "/connections", "/api/v1/connections", "/api/v1/projects", "/api/v1/operator-surface", "/api/v1/projects/project:test/events"]) {
     const response = await handler(new Request(`https://private.example.invalid${path}`));
     assert.equal(response.status, 503, path);
     assert.deepEqual(await response.json(), { error: "private_app_not_configured" });
@@ -66,6 +66,10 @@ test("compiled private routes use the installed process, real disposable SQL, an
   assert.deepEqual(files.items, []); assert.equal(files.startsWork, false);
   const filesPage = await handler(request(`${path}/files`)); assert.equal(filesPage.status, 200);
   assert.match(await filesPage.text(), /Project files/);
+  const reviewsPage = await handler(request(`${path}/reviews`)); assert.equal(reviewsPage.status, 200);
+  assert.match(await reviewsPage.text(), /Project reviews/);
+  const activityPage = await handler(request(`${path}/activity`)); assert.equal(activityPage.status, 200);
+  assert.match(await activityPage.text(), /Project activity/);
   const detail = await handler(request(`${path}/settings`)); assert.equal(detail.status, 200);
   assert.match(await detail.text(), /Loading project/);
   const read = await handler(request(`/api/v1/projects/${encodeURIComponent(project.projectId)}`));
@@ -101,6 +105,10 @@ test("compiled private routes use the installed process, real disposable SQL, an
   assert.match(connectionsHtml, /Private connection inventory across all workspaces/);
   assert.match(connectionsHtml, /covers all workspaces in this Control Room account/);
   assert.match(connectionsHtml, /not a live fleet monitor/); assert.doesNotMatch(connectionsHtml, /node:private-test|connection:private-test/);
+  const workersPage = await handler(request("/workers")); assert.equal(workersPage.status, 200);
+  assert.match(await workersPage.text(), /Saved worker connection inventory/);
+  const settingsPage = await handler(request("/settings")); assert.equal(settingsPage.status, 200);
+  assert.match(await settingsPage.text(), /Settings · Control Room/);
   const inventory = await (await handler(request("/api/v1/connections"))).json();
   assert.equal(inventory.projection.summary.connectionCount, 1); assert.equal(inventory.projection.summary.currentSignalCount, 1);
   assert.equal(inventory.projection.summary.livePanelEligibleCount, 0); assert.equal(inventory.telemetry, "configured");
@@ -115,8 +123,8 @@ test("compiled private routes use the installed process, real disposable SQL, an
   const session = await handler(request("/session")); assert.equal(session.status, 200);
   assert.match(await session.text(), /Access sessions for other protected applications/);
   assert.equal((await handler(request("/api/v1/session/logout", "POST"))).status, 204);
-  for (const protectedPath of ["/projects", "/ideas", "/api/v1/ideas", "/connections", "/api/v1/connections", path, `/projects/${encodeURIComponent(idea.projectId)}`,
-    taskPath, overviewPath, filesPath, `${path}/files`, `${path}/tasks`, `${path}/tasks/${encodeURIComponent(taskReceipt.jobId)}`,
+  for (const protectedPath of ["/projects", "/ideas", "/api/v1/ideas", "/connections", "/workers", "/settings", "/api/v1/connections", path, `/projects/${encodeURIComponent(idea.projectId)}`,
+    taskPath, overviewPath, filesPath, `${path}/files`, `${path}/reviews`, `${path}/activity`, `${path}/tasks`, `${path}/tasks/${encodeURIComponent(taskReceipt.jobId)}`,
     `/api/v1/projects/${encodeURIComponent(idea.projectId)}/events`, `/api/v1/projects/${encodeURIComponent(project.projectId)}/events`])
     assert.equal((await handler(request(protectedPath))).status, 401, protectedPath);
   await app.close(); assert.equal((await handler(request("/projects"))).status, 503);
