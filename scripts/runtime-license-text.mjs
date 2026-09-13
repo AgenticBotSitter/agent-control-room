@@ -6,9 +6,13 @@ export function renderRuntimeLicenseText(assembly) {
   assert.equal(assembly.schema, 'control-room.runtime-license-assembly/v1');
   assert.equal(assembly.completeDistributionClearance, false);
   assert.ok(Array.isArray(assembly.entries) && assembly.entries.length > 0);
+  const digestLine = typeof assembly.inventoryDigest === 'string' && /^[0-9a-f]{64}$/.test(assembly.inventoryDigest)
+    ? `Inventory digest: ${assembly.inventoryDigest}\n`
+    : '';
   const chunks = [Buffer.from('Control Room runtime third-party notices\n\n'
     + 'Scope: installed runtime package root texts and reviewed exceptions only.\n'
-    + 'This is NOT complete distribution clearance; bundled code and assets require separate review.\n\n')];
+    + 'This is NOT complete distribution clearance; bundled code and assets require separate review.\n'
+    + digestLine + '\n')];
   for (const entry of assembly.entries) {
     assert.ok(Array.isArray(entry.attachments) && entry.attachments.length > 0);
     chunks.push(Buffer.from(`Package: ${entry.name}@${entry.version}\nProvenance: ${entry.provenance}\n`
