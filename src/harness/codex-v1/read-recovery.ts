@@ -4,6 +4,7 @@ import { CODEX_APP_SERVER_READ_CONTRACT } from './schema-contract';
 const id = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]{2,179}$/);
 const bindingSchema = z.object({ threadId: id, turnId: id }).strict();
 const responseSchema = z.object({ thread: z.object({ id,
+  cliVersion: z.literal(CODEX_APP_SERVER_READ_CONTRACT.version),
   turns: z.array(z.object({ id, status: z.enum(CODEX_APP_SERVER_READ_CONTRACT.turnStatuses) })).max(1024),
 }) });
 

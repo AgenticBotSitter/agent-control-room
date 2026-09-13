@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createCodexReadJsonl } from '../src/harness/codex-v1/read-jsonl';
+import { CODEX_APP_SERVER_READ_CONTRACT } from '../src/harness/codex-v1/schema-contract';
 
 const make = () => createCodexReadJsonl({ threadId: 'thread:fixture', turnId: 'turn:fixture' });
 const ready = () => {
@@ -15,6 +16,7 @@ test('one-shot JSONL profile correlates an exact read and exposes no execution m
   assert.deepEqual(Object.keys(session).sort(), ['disconnect', 'initialize', 'initialized', 'read', 'receive']);
   assert.deepEqual(session.receive('{"method":"unrelated","params":{"text":"private"}}'), { kind: 'ignored_notification' });
   const response = session.receive(JSON.stringify({ id: 2, result: { thread: { id: 'thread:fixture',
+    cliVersion: CODEX_APP_SERVER_READ_CONTRACT.version,
     turns: [{ id: 'turn:fixture', status: 'completed' }] } } }));
   assert.equal(response.kind, 'observation');
   if (response.kind === 'observation') assert.equal(response.observation.completionVerified, false);
