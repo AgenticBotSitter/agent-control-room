@@ -52,16 +52,20 @@ async function artifactFile(root: string): Promise<string> {
 
 class ControlledIo implements PersistentLocalArtifactStorageTestIoV1 {
   hits = 0;
+  private selectedSeen = 0;
   private enteredResolve!: () => void;
   readonly entered = new Promise<void>(resolve => { this.enteredResolve = resolve; });
 
   constructor(
     private readonly selected: PersistentLocalArtifactStorageIoBoundaryV1,
     private readonly mode: "fail_before" | "fail_after" | "wait",
+    private readonly selectedHit = 1,
   ) {}
 
   async run<T>(boundary: PersistentLocalArtifactStorageIoBoundaryV1, operation: () => Promise<T>): Promise<T> {
     if (boundary !== this.selected) return operation();
+    this.selectedSeen++;
+    if (this.selectedSeen !== this.selectedHit) return operation();
     this.hits++;
     this.enteredResolve();
     if (this.mode === "fail_before") throw new Error("injected_filesystem_failure");
@@ -76,6 +80,7 @@ async function assertRetainedUncertainty(root: string, storage: Awaited<ReturnTy
   const entries = await readdir(root);
   assert.ok(entries.includes(".control-room-persistent-artifact.lock"));
   assert.ok(entries.some(entry => entry.startsWith(".control-room-persistent-artifact-pending-")));
+  assert.ok(entries.includes(".control-room-persistent-artifact.uncertain"));
   const hits = gate.hits;
   await assert.rejects(storage.put({ artifactId: id("subsequent-refused"), bytes: text("Never retried.") }),
     storageError("storage_ambiguous"));
@@ -84,6 +89,25 @@ async function assertRetainedUncertainty(root: string, storage: Awaited<ReturnTy
     storageError("storage_ambiguous"));
   assert.deepEqual(await readdir(root), entries);
   return entries;
+}
+
+async function assertLateCleanupUncertainty(root: string, storage: Awaited<ReturnType<
+  typeof createPersistentLocalArtifactStorageForTestV1>>, gate: ControlledIo): Promise<void> {
+  const entries = (await readdir(root)).sort();
+  assert.equal(entries.filter(entry => entry.endsWith(".artifact")).length, 1);
+  assert.equal(entries.includes(".control-room-persistent-artifact.lock"), false);
+  assert.equal(entries.some(entry => entry.startsWith(".control-room-persistent-artifact-pending-")), false);
+  assert.ok(entries.includes(".control-room-persistent-artifact.uncertain"));
+  assert.equal(await readFile(join(root, ".control-room-persistent-artifact.uncertain"), "utf8"),
+    "control-room-persistent-artifact-storage-uncertain-v1\n");
+
+  const hits = gate.hits;
+  await assert.rejects(storage.put({ artifactId: id("late-subsequent-refused"), bytes: text("Never retried.") }),
+    storageError("storage_ambiguous"));
+  assert.equal(gate.hits, hits);
+  await assert.rejects(createPersistentLocalArtifactStorageV1(configuration(root)),
+    storageError("storage_ambiguous"));
+  assert.deepEqual((await readdir(root)).sort(), entries);
 }
 
 test("create-once bytes replay exactly after a new adapter opens the same private root", async t => {
@@ -106,7 +130,9 @@ test("create-once bytes replay exactly after a new adapter opens the same privat
   const restarted = await createPersistentLocalArtifactStorageV1(configuration(root));
   assert.deepEqual(await restarted.read(artifactId), bytes);
   assert.deepEqual(await restarted.put({ artifactId, bytes }), stored);
-  assert.deepEqual((await readdir(root)).filter(entry => entry.endsWith(".artifact")).length, 1);
+  const entries = await readdir(root);
+  assert.deepEqual(entries.filter(entry => entry.endsWith(".artifact")).length, 1);
+  assert.equal(entries.includes(".control-room-persistent-artifact.uncertain"), false);
 });
 
 test("submitted buffers are captured synchronously and returned reads are copies", async t => {
@@ -348,6 +374,26 @@ test("in-flight durability timeout preserves linked and pending evidence and for
   assert.equal(gate.hits, 1);
   const entries = await assertRetainedUncertainty(root, storage, gate);
   assert.equal(entries.filter(entry => entry.endsWith(".artifact")).length, 1);
+});
+
+test("lock unlink fail-after leaves durable restart-blocking uncertainty evidence", async t => {
+  const root = await privateRoot(t);
+  const gate = new ControlledIo("lock_unlink", "fail_after");
+  const storage = await createPersistentLocalArtifactStorageForTestV1(configuration(root), gate);
+  await assert.rejects(storage.put({ artifactId: id("lock-unlink-fail-after"),
+    bytes: text("Durable bytes with uncertain lock retirement.") }), storageError("storage_ambiguous"));
+  assert.equal(gate.hits, 1);
+  await assertLateCleanupUncertainty(root, storage, gate);
+});
+
+test("final root sync failure leaves durable restart-blocking uncertainty evidence", async t => {
+  const root = await privateRoot(t);
+  const gate = new ControlledIo("root_sync", "fail_after", 3);
+  const storage = await createPersistentLocalArtifactStorageForTestV1(configuration(root), gate);
+  await assert.rejects(storage.put({ artifactId: id("final-root-sync-failure"),
+    bytes: text("Durable bytes with uncertain final directory sync.") }), storageError("storage_ambiguous"));
+  assert.equal(gate.hits, 1);
+  await assertLateCleanupUncertainty(root, storage, gate);
 });
 
 test("pre-cancelled calls and zero-deadline startup perform no storage mutation", async t => {
