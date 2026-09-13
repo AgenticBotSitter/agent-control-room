@@ -84,11 +84,6 @@ const cleanupUncertainError = () => new Error("claude_code_process_session_clean
 const startedBindings = new Set<string>();
 const MAX_TRACKED_BINDINGS = 65_536;
 
-/** Test-only reset for the bounded duplicate-start registry. Never called by connector code. */
-export function resetClaudeCodeProcessBindingRegistryV1(): void {
-  startedBindings.clear();
-}
-
 function validatePort(value: ClaudeCodeProcessBytePortV1): ClaudeCodeProcessBytePortV1 {
   if (!value || typeof value !== "object" || typeof value.readStdout !== "function"
     || typeof value.readStderr !== "function" || typeof value.closeStdin !== "function"

@@ -5,11 +5,11 @@ import test from "node:test";
 import { createHash } from "node:crypto";
 import {
   createClaudeCodeOwnedProcessSessionV1,
-  resetClaudeCodeProcessBindingRegistryV1,
   type ClaudeCodeProcessBindingV1,
   type ClaudeCodeProcessBytePortV1,
   type OwnedClaudeCodeProcessV1,
 } from "../src/harness/claude-code-v1/owned-process-session";
+import * as claudeCodeConnectorPackage from "../src/harness/claude-code-v1/index";
 
 // Synthetic placeholder identities only; nothing here is captured from a real host.
 const digestOf = (value: string) => `sha256:${createHash("sha256").update(value).digest("hex")}`;
@@ -106,8 +106,6 @@ class FakeClaudeProcess {
     return { ready: Promise.resolve(this.port()), close: async () => { this.end(); } };
   }
 }
-
-test.beforeEach(() => resetClaudeCodeProcessBindingRegistryV1());
 
 test("stdout is framed into lines and a clean close reports a certain disposition", async () => {
   const process = new FakeClaudeProcess();
@@ -304,6 +302,32 @@ test("an aborted caller signal is refused before any acquisition", () => {
     acquire: () => { acquired = true; return new FakeClaudeProcess().acquire(); }, cleanupMs: 200,
   }), /claude_code_process_session_unavailable/);
   assert.equal(acquired, false);
+});
+
+test("the public package exposes no way to reset or reacquire an already-started binding", async () => {
+  assert.equal(
+    "resetClaudeCodeProcessBindingRegistryV1" in claudeCodeConnectorPackage,
+    false,
+    "the public barrel must not export a duplicate-start bypass",
+  );
+
+  const binding = freshBinding();
+  const first = new FakeClaudeProcess();
+  const session = await claudeCodeConnectorPackage.createClaudeCodeOwnedProcessSessionV1({
+    binding, signal: new AbortController().signal, acquire: () => first.acquire(), cleanupMs: 200,
+  });
+  await session.ready;
+
+  // Nothing in the public package can clear the registry, so the identical binding
+  // is still refused as a duplicate even after the first session's own lifecycle.
+  let acquiredAgain = false;
+  assert.throws(() => claudeCodeConnectorPackage.createClaudeCodeOwnedProcessSessionV1({
+    binding: { ...binding }, signal: new AbortController().signal,
+    acquire: () => { acquiredAgain = true; return new FakeClaudeProcess().acquire(); }, cleanupMs: 200,
+  }), /claude_code_process_session_duplicate_binding/);
+  assert.equal(acquiredAgain, false, "a refused duplicate must never reach acquire, with or without a reset path");
+
+  await session.close().catch(() => {});
 });
 
 test("the connector modules read no environment, file, process or network source", () => {
