@@ -130,7 +130,7 @@ test("Codex result-return startup requires the complete trusted composition and 
   const f = fixture.scenario(), qualification = resultReturnQualification();
   const storage = { async put() { throw new Error("inert"); }, async read() { return undefined; } };
   const rootPath = "/synthetic/private-result-storage", storageNamespace = "private-result-storage";
-  const base = f.configuration;
+  const base = f.configuration, baseTasks = base.web.tasks!;
   const valid: PrivateTaskStartupConfiguration = {
     ...base,
     artifactStorage: { local: { rootPath, maximumArtifacts: 100, maximumFileBytes: 65_536,
@@ -139,8 +139,8 @@ test("Codex result-return startup requires the complete trusted composition and 
       databaseSchemaVersion: "schema:private-result", databaseSchemaDigest: sha256Digest("schema:private-result"),
       storageNamespace, storageNamespaceDigest: privateArtifactStorageNamespaceDigestV1(storageNamespace, rootPath),
     } },
-    web: { ...base.web, tasks: { ...base.web.tasks, results: {
-      ...base.web.tasks.results!, storageClass: "local", storage,
+    web: { ...base.web, tasks: { ...baseTasks, results: {
+      ...baseTasks.results!, storageClass: "local", storage,
     } } },
     coordinator: {
       ...base.coordinator,
