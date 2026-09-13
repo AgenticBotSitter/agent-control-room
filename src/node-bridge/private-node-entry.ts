@@ -8,4 +8,4 @@ export { createCodexAppServerProcessSessionV1 } from "../harness/codex-v1/app-se
 export { createCodexNativeProcessAcquisitionV1 } from "./codex-native-process";
 export { createNativeHttpsConnector } from "./native-connector";
 export { openPrivateNativeConfiguration } from "./private-native-configuration";
-export { openPrivateCodexConfigurationV1 } from "./private-codex-configuration";
+export { openOwnedPrivateCodexConfigurationV1, openPrivateCodexConfigurationV1 } from "./private-codex-configuration";
