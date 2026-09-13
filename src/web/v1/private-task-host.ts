@@ -6,6 +6,7 @@ import { createInstalledNativeQueueFactories } from "./installed-native-queue";
 import { createPrivatePostgresDatabase } from "./private-postgres";
 import { installPrivateApplication } from "./private-process";
 import { captureNativeHttpsConfiguration, createNativeHttpsService, type NativeHttpsConfiguration } from "./native-https-service";
+import { PersistentLocalArtifactStorageV1 } from "../../artifacts/v1/persistent-local-storage";
 
 type Serving = Parameters<typeof createPrivateNodeService>[0];
 /** Trusted in-process composition. Construction is inert; start may open databases,
@@ -78,5 +79,6 @@ export function createPrivateTaskHost(dependencies: Parameters<typeof createPriv
  */
 export function createInstalledPrivateTaskHost() {
   return createPrivateTaskHost({ openDatabase: createPrivatePostgresDatabase, install: installPrivateApplication,
+    openArtifactStorage: configuration => PersistentLocalArtifactStorageV1.create(configuration),
     ...createInstalledNativeQueueFactories({ openWorkerDatabase: createPrivatePostgresDatabase }) });
 }
