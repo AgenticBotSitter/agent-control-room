@@ -1,127 +1,235 @@
-# Third-party code and distribution scope
+# Third-party notices and distribution manifest
 
-Agent Control Room's Apache-2.0 license covers its original project code. It does
-not replace the licenses of third-party software.
+Inventory digest: `c88e0a6b6af8a4bec756e837043dd876889a27641136be3ddcb10f3487e27045`
 
-## What this source preview contains
+This notice index is generated from the exact declared artifact inputs. It binds retained notice files and their SHA-256 hashes; the release assembler independently verifies the final archive against this digest.
 
-This preview distributes source code and contributor documentation. Its source
-file set excludes installed dependencies, compiled browser/server output, native
-modules, WASM payloads, fonts and container images. Those local build products are
-not public release assets merely because they exist in a developer's checkout.
+## Installed packages
 
-`package.json` and `pnpm-lock.yaml` declare the separately installed dependencies.
-Preparing the project downloads or reuses those packages under their own licenses.
-Keep their accompanying notices intact. A package being a development dependency
-does not mean its code cannot appear in a later compiled build.
+- `@asamuzakjp/css-color@3.2.0` — installed_root_text; `LICENSE` (1156c4bf9aa3982ff6157a4a8615906f225e4f46126dc41bf14df9aa7d74601b)
+- `@csstools/color-helpers@5.1.0` — installed_root_text; `LICENSE.md` (947e32047a166cd05f04e45938d172b412c07cbee0b9735afd14bae30e02c2f6)
+- `@csstools/css-calc@2.1.4` — installed_root_text; `LICENSE.md` (d00d032f517721b45c56c70c46bf904ebb71ad313df4d4db7722266b38069665)
+- `@csstools/css-color-parser@3.1.0` — installed_root_text; `LICENSE.md` (d00d032f517721b45c56c70c46bf904ebb71ad313df4d4db7722266b38069665)
+- `@csstools/css-parser-algorithms@3.0.5` — installed_root_text; `LICENSE.md` (d00d032f517721b45c56c70c46bf904ebb71ad313df4d4db7722266b38069665)
+- `@csstools/css-tokenizer@3.0.4` — installed_root_text; `LICENSE.md` (d00d032f517721b45c56c70c46bf904ebb71ad313df4d4db7722266b38069665)
+- `@mozilla/readability@0.6.0` — installed_root_text; `LICENSE.md` (a5b1e8181751ce05b85b7bfaa832b785e87086250a5148e679d17ca9bdcfa958)
+- `@nodable/entities@3.0.0` — pinned_npm_release_integrity; retained upstream binding recorded in the manifest
+- `@types/debug@4.1.13` — installed_root_text; `LICENSE` (c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383)
+- `@types/estree@1.0.9` — installed_root_text; `LICENSE` (c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383)
+- `@types/estree-jsx@1.0.5` — installed_root_text; `LICENSE` (c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383)
+- `@types/hast@3.0.5` — installed_root_text; `LICENSE` (c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383)
+- `@types/mdast@4.0.4` — installed_root_text; `LICENSE` (c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383)
+- `@types/ms@2.1.0` — installed_root_text; `LICENSE` (c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383)
+- `@types/react@19.2.14` — installed_root_text; `LICENSE` (c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383)
+- `@types/unist@2.0.11` — installed_root_text; `LICENSE` (c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383)
+- `@types/unist@3.0.3` — installed_root_text; `LICENSE` (c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383)
+- `@ungap/structured-clone@1.4.0` — installed_root_text; `LICENSE` (dc6d4961d8b6ee747231582ae9c53ce1d66bf76bc9f5a28f554c0e97210953bf)
+- `agent-base@7.1.4` — installed_root_text; `LICENSE` (8d8c55319c7729d57be811c747452636688d54f19701ee0752b6b15ad3771d9a)
+- `anynum@1.0.1` — installed_root_text; `LICENSE` (8e75fc0e776c62ccadb8178ece8d3daa9ba7601fb0a49b2dfb0ea9a7a5c0aa07)
+- `bail@2.0.2` — installed_root_text; `license` (63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf)
+- `buffer-equal-constant-time@1.0.1` — installed_root_text; `LICENSE.txt` (751d0e80fb5c828f8c3de198cc760e1e05377e47c8263ab6ee2f10cdc19ba658)
+- `ccount@2.0.1` — installed_root_text; `license` (63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf)
+- `character-entities@2.0.2` — installed_root_text; `license` (63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf)
+- `character-entities-html4@2.1.0` — installed_root_text; `license` (63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf)
+- `character-entities-legacy@3.0.0` — installed_root_text; `license` (63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf)
+- `character-reference-invalid@2.0.1` — installed_root_text; `license` (63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf)
+- `comma-separated-tokens@2.0.3` — installed_root_text; `license` (ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d)
+- `cron-parser@5.10.0` — installed_root_text; `LICENSE` (7eba1c8774e8bcb77356bafc70ac9de8383e7592bb79ab979130ab757d40f53d)
+- `cssstyle@4.6.0` — installed_root_text; `LICENSE` (768faff9f6908c78d848b18770b2a93e3361d6e2ee35edf45c6a5ddf1f7cb185)
+- `csstype@3.2.3` — installed_root_text; `LICENSE` (11d55bd4541c75ee7879547ac49089c489163dae49551389713c3d026cab383e)
+- `data-urls@5.0.0` — installed_root_text; `LICENSE.txt` (528eec83cb836a0adda9f8fc3d6a2a70a710d6cc0be9a155f92212c8df28acfa)
+- `debug@4.4.3` — installed_root_text; `LICENSE` (3a61c6c96caf5c1d9b623fb9b04c822b783dfcb78aa7e49c76a3f643e6ed7f95)
+- `decimal.js@10.6.0` — installed_root_text; `LICENCE.md` (3108b546bcff5d346923a82f48b2d252ca722f9088076db6d145f6b67757ad6c)
+- `decode-named-character-reference@1.3.0` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
+- `dequal@2.0.3` — installed_root_text; `license` (306fa513e39b23a6e8747520de761809d206b99800ef41907b530226574c59ae)
+- `devlop@1.1.0` — installed_root_text; `license` (6f296a5eccc1dc96714bb94ebaa9cac25b0a1467d74cc5263ac4d0646ab01f62)
+- `ecdsa-sig-formatter@1.0.11` — installed_root_text; `LICENSE` (50a6b24f8defc31a078aa9799a91d776f83948071574854f12473362aee74d0d)
+- `entities@2.2.0` — installed_root_text; `LICENSE` (cb992345949ccd6e8394b2cd6c465f7b897c864f845937dbf64e8997f389e164)
+- `entities@6.0.1` — installed_root_text; `LICENSE` (cb992345949ccd6e8394b2cd6c465f7b897c864f845937dbf64e8997f389e164)
+- `escape-string-regexp@5.0.0` — installed_root_text; `license` (5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3)
+- `estree-util-is-identifier-name@3.0.0` — installed_root_text; `license` (536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61)
+- `extend@3.0.2` — installed_root_text; `LICENSE` (97af7428f93afbab9bf79cd09254da1357161794f4255eb1b4599f04dd2d2e7c)
+- `fast-xml-builder@1.3.1` — installed_root_text; `LICENSE` (8e75fc0e776c62ccadb8178ece8d3daa9ba7601fb0a49b2dfb0ea9a7a5c0aa07)
+- `fast-xml-parser@5.11.0` — installed_root_text; `LICENSE` (7883225d5e84a6bbb9b170c3d891b4bf6d6259cee869c86bd86381a927071745)
+- `hast-util-to-jsx-runtime@2.3.6` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
+- `hast-util-whitespace@3.0.0` — installed_root_text; `license` (ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d)
+- `html-encoding-sniffer@4.0.0` — installed_root_text; `LICENSE.txt` (528eec83cb836a0adda9f8fc3d6a2a70a710d6cc0be9a155f92212c8df28acfa)
+- `html-url-attributes@3.0.1` — installed_root_text; `license` (e18cf5173e928f808f0cd208097fee8fbec9d28fc0255213938e4c559e29ff58)
+- `http-proxy-agent@7.0.2` — installed_root_text; `LICENSE` (71368fd0f5b4129191e9afcd1e1ef2dc89a9090d3e4d80bbab92dafd032b3bef)
+- `https-proxy-agent@7.0.6` — installed_root_text; `LICENSE` (8d8c55319c7729d57be811c747452636688d54f19701ee0752b6b15ad3771d9a)
+- `iconv-lite@0.6.3` — installed_root_text; `LICENSE` (ac779f7314c74f232ef847ea86e714abe25cf6eeb5cc97b69451b74e2af6492d)
+- `inline-style-parser@0.2.7` — installed_root_text; `LICENSE` (395c95f20598da653ff1eb1cb9d74947c7fac689697147f1d192fd0242a0e635)
+- `is-alphabetical@2.0.1` — installed_root_text; `license` (ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d)
+- `is-alphanumerical@2.0.1` — installed_root_text; `license` (ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d)
+- `is-decimal@2.0.1` — installed_root_text; `license` (ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d)
+- `is-hexadecimal@2.0.1` — installed_root_text; `license` (ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d)
+- `is-plain-obj@4.1.0` — installed_root_text; `license` (5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3)
+- `is-potential-custom-element-name@1.0.1` — installed_root_text; `LICENSE-MIT.txt` (483acb265f182907d1caf6cff9c16c96f31325ed23792832cc5d8b12d5f88c8a)
+- `is-unsafe@2.0.2` — installed_root_text; `LICENSE` (8e75fc0e776c62ccadb8178ece8d3daa9ba7601fb0a49b2dfb0ea9a7a5c0aa07)
+- `jsdom@26.1.0` — installed_root_text; `LICENSE.txt` (242d37e7cab25cbafc36cc973ee88f9345fddf066afe4f72b7ac3d9ad4e24cce)
+- `jsonwebtoken@9.0.3` — installed_root_text; `LICENSE` (2144eb6894cb440fde6b2b3aaae3b617c8f1dc9bb19813079dcf62ec6c517042)
+- `jwa@2.0.1` — installed_root_text; `LICENSE` (3320319f8a5f42bc4254e65471eca7a5ea4dc8c883c4c24b4868e36b14890bcf)
+- `jws@4.0.1` — installed_root_text; `LICENSE` (3320319f8a5f42bc4254e65471eca7a5ea4dc8c883c4c24b4868e36b14890bcf)
+- `lodash.includes@4.3.0` — installed_root_text; `LICENSE` (ffd8b33b354585f4ce119f19c53728281e48a97b074491eb6bf6d5c5ff305272)
+- `lodash.isboolean@3.0.3` — installed_root_text; `LICENSE` (25a399d4a42f419445101092a1fc3f9b4bfe06d614f84128222d79e3a2105fe7)
+- `lodash.isinteger@4.0.4` — installed_root_text; `LICENSE` (ffd8b33b354585f4ce119f19c53728281e48a97b074491eb6bf6d5c5ff305272)
+- `lodash.isnumber@3.0.3` — installed_root_text; `LICENSE` (25a399d4a42f419445101092a1fc3f9b4bfe06d614f84128222d79e3a2105fe7)
+- `lodash.isplainobject@4.0.6` — installed_root_text; `LICENSE` (ffd8b33b354585f4ce119f19c53728281e48a97b074491eb6bf6d5c5ff305272)
+- `lodash.isstring@4.0.1` — installed_root_text; `LICENSE` (25a399d4a42f419445101092a1fc3f9b4bfe06d614f84128222d79e3a2105fe7)
+- `lodash.once@4.1.1` — installed_root_text; `LICENSE` (ffd8b33b354585f4ce119f19c53728281e48a97b074491eb6bf6d5c5ff305272)
+- `longest-streak@3.1.0` — installed_root_text; `license` (9f084fac69d8cf1e6ce983ba5a3499c7695ed74a26ec625c38f0fd19fddd5e10)
+- `lru-cache@10.4.3` — installed_root_text; `LICENSE` (451ec07eeb9c4e1b86de9abdaa426462a8be48f887ec7421cf0bbb9c769555ab)
+- `luxon@3.7.2` — installed_root_text; `LICENSE.md` (6cb2f2bf697ee9c6fa9eb8f227c63ee6e7a3cba42d4717f14c745ef9b6cbc006)
+- `markdown-table@3.0.4` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
+- `mdast-util-find-and-replace@3.0.2` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
+- `mdast-util-from-markdown@2.0.3` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
+- `mdast-util-gfm@3.1.0` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
+- `mdast-util-gfm-autolink-literal@2.0.1` — installed_root_text; `license` (536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61)
+- `mdast-util-gfm-footnote@2.1.0` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
+- `mdast-util-gfm-strikethrough@2.0.0` — installed_root_text; `license` (536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61)
+- `mdast-util-gfm-table@2.0.0` — installed_root_text; `license` (536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61)
+- `mdast-util-gfm-task-list-item@2.0.0` — installed_root_text; `license` (536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61)
+- `mdast-util-mdx-expression@2.0.1` — installed_root_text; `license` (536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61)
+- `mdast-util-mdx-jsx@3.2.0` — installed_root_text; `license` (536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61)
+- `mdast-util-mdxjs-esm@2.0.1` — installed_root_text; `license` (536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61)
+- `mdast-util-phrasing@4.1.0` — installed_root_text; `license` (b6d1a4e1831b177acc96f22a817d4f0f4c18419355badc3125754445fc69e3a7)
+- `mdast-util-to-hast@13.2.1` — installed_root_text; `license` (ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d)
+- `mdast-util-to-markdown@2.1.2` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
+- `mdast-util-to-string@4.0.0` — installed_root_text; `license` (63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf)
+- `micromark@4.0.2` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
+- `micromark-core-commonmark@2.0.3` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
+- `micromark-extension-gfm@3.0.0` — installed_root_text; `license` (536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61)
+- `micromark-extension-gfm-autolink-literal@2.1.0` — installed_root_text; `license` (536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61)
+- `micromark-extension-gfm-footnote@2.1.0` — installed_root_text; `license` (807a88522a850092aece49486207c17c313c4d5708ac276524840fe1caa0b0fa)
+- `micromark-extension-gfm-strikethrough@2.1.0` — installed_root_text; `license` (536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61)
+- `micromark-extension-gfm-table@2.1.1` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
+- `micromark-extension-gfm-tagfilter@2.0.0` — installed_root_text; `license` (536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61)
+- `micromark-extension-gfm-task-list-item@2.1.0` — installed_root_text; `license` (536804b3adbff17dbbb9ed0d2bf9655b78f07640278581e37e3d7475282d5e61)
+- `micromark-factory-destination@2.0.1` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
+- `micromark-factory-label@2.0.1` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
+- `micromark-factory-space@2.0.1` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
+- `micromark-factory-title@2.0.1` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
+- `micromark-factory-whitespace@2.0.1` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
+- `micromark-util-character@2.1.1` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
+- `micromark-util-chunked@2.0.1` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
+- `micromark-util-classify-character@2.0.1` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
+- `micromark-util-combine-extensions@2.0.1` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
+- `micromark-util-decode-numeric-character-reference@2.0.2` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
+- `micromark-util-decode-string@2.0.1` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
+- `micromark-util-encode@2.0.1` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
+- `micromark-util-html-tag-name@2.0.1` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
+- `micromark-util-normalize-identifier@2.0.1` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
+- `micromark-util-resolve-all@2.0.1` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
+- `micromark-util-sanitize-uri@2.0.1` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
+- `micromark-util-subtokenize@2.1.0` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
+- `micromark-util-symbol@2.0.1` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
+- `micromark-util-types@2.0.2` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
+- `ms@2.1.3` — installed_root_text; `license.md` (1662fae9b5314d11cf51284e2dcd1f006a354f7343f08712a730fcff9a359801)
+- `non-error@0.1.0` — installed_root_text; `license` (5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3)
+- `nwsapi@2.2.27` — installed_root_text; `LICENSE` (2aebdf8ae67777ccb2fa66b32066c1a16bd71085011bb4085dc7408e2947d2c2)
+- `parse-entities@4.0.2` — installed_root_text; `license` (5d0698266086f217bb11ea0499d33453e401fe479fb9126ad04e625e63d3557b)
+- `parse5@7.3.0` — installed_root_text; `LICENSE` (8c535800331e1e4439835555b3f9edc7fe9dee2fab0d8bbbd5a982e8b8343d4d)
+- `path-expression-matcher@1.6.2` — installed_root_text; `LICENSE` (75486ea0af9309140ca6e2c401d7e67bea8f4892344e5707f6394dc5e83dfc44)
+- `pg@8.23.0` — installed_root_text; `LICENSE` (192b8f5c96900f04a1271dec39688655d7416c1c6ea84a508e18b50d2b6751f3)
+- `pg-boss@12.30.0` — installed_root_text; `LICENSE` (51ad77d655782ec9ea2a624529a37f25cb82bd41ae38d85d15cdb0d4dd9c5689)
+- `pg-cloudflare@1.4.0` — installed_root_text; `LICENSE` (192b8f5c96900f04a1271dec39688655d7416c1c6ea84a508e18b50d2b6751f3)
+- `pg-connection-string@2.14.0` — installed_root_text; `LICENSE` (2244b5486c4427001b6756a87b9a297d427c111dcc3ba64a097492a8979c23d0)
+- `pg-int8@1.0.1` — installed_root_text; `LICENSE` (4e8e87ccdfc7e4b47fd89015f78468aa53b6bf43ab6e6e12d43e8f55294911de)
+- `pg-pool@3.14.0` — installed_root_text; `LICENSE` (4f15ee7fc2a72082859d7e0d12dfa4bcdd70b1c744ad3850d07780730ac08557)
+- `pg-protocol@1.16.0` — installed_root_text; `LICENSE` (192b8f5c96900f04a1271dec39688655d7416c1c6ea84a508e18b50d2b6751f3)
+- `pg-types@2.2.0` — installed_README_section; retained upstream binding recorded in the manifest
+- `pgpass@1.0.5` — installed_README_section; retained upstream binding recorded in the manifest
+- `postgres-array@2.0.0` — installed_root_text; `license` (f057f36739d53d228a746de4440c1e0c644ecde06d6beab45337d39c9d12a393)
+- `postgres-bytea@1.0.1` — installed_root_text; `license` (f057f36739d53d228a746de4440c1e0c644ecde06d6beab45337d39c9d12a393)
+- `postgres-date@1.0.7` — installed_root_text; `license` (f057f36739d53d228a746de4440c1e0c644ecde06d6beab45337d39c9d12a393)
+- `postgres-interval@1.2.0` — installed_root_text; `license` (f057f36739d53d228a746de4440c1e0c644ecde06d6beab45337d39c9d12a393)
+- `property-information@7.2.0` — installed_root_text; `license` (5d0698266086f217bb11ea0499d33453e401fe479fb9126ad04e625e63d3557b)
+- `punycode@2.3.1` — installed_root_text; `LICENSE-MIT.txt` (483acb265f182907d1caf6cff9c16c96f31325ed23792832cc5d8b12d5f88c8a)
+- `react@19.2.6` — installed_root_text; `LICENSE` (da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93)
+- `react-dom@19.2.6` — installed_root_text; `LICENSE` (da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93)
+- `react-markdown@10.1.0` — installed_root_text; `license` (f6196c64e144f9a6fa9154c3a80bc8b89615a9567934b83a8951879f06ba2aef)
+- `remark-gfm@4.0.1` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
+- `remark-parse@11.0.0` — installed_root_text; `license` (413654b0a78b98661dce96d2aff2e4d075603d220b8483e28b1aa010ccc138b4)
+- `remark-rehype@11.1.2` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
+- `remark-stringify@11.0.0` — installed_root_text; `license` (413654b0a78b98661dce96d2aff2e4d075603d220b8483e28b1aa010ccc138b4)
+- `rrweb-cssom@0.8.0` — installed_root_text; `LICENSE.txt` (e539937c489c4928ad7461669ec017f4d916fb3565fc26f5b8a0ce816d2ed23c)
+- `rss-parser@3.13.0` — installed_root_text; `LICENSE` (66fa72d1e76ca487fde9f153ac1183b906733f314d556645cb614e90961da634)
+- `safe-buffer@5.2.1` — installed_root_text; `LICENSE` (c7cc929b57080f4b9d0c6cf57669f0463fc5b39906344dfc8d3bc43426b30eac)
+- `safer-buffer@2.1.2` — installed_root_text; `LICENSE` (4bc935e71be198c67ddf3c2b5fddb195f6edc182bfc155a96a6db61b44b494b9)
+- `sax@1.6.1` — installed_root_text; `LICENSE.md` (8a1af140fdfbf5afd3df27f7e662f989c5b963a300020dfafce42033cae9e004)
+- `saxes@6.0.0` — pinned_upstream_release; retained upstream binding recorded in the manifest
+- `scheduler@0.27.0` — installed_root_text; `LICENSE` (da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93)
+- `semver@7.8.5` — installed_root_text; `LICENSE` (4ec3d4c66cd87f5c8d8ad911b10f99bf27cb00cdfcff82621956e379186b016b)
+- `serialize-error@13.0.1` — installed_root_text; `license` (5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3)
+- `space-separated-tokens@2.0.2` — installed_root_text; `license` (ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d)
+- `split2@4.2.0` — installed_root_text; `LICENSE` (c372ef2fa1dfcb124ed807609751e75e3a009f108c5724916b489288fcb88a0c)
+- `stringify-entities@4.0.4` — installed_root_text; `license` (9f084fac69d8cf1e6ce983ba5a3499c7695ed74a26ec625c38f0fd19fddd5e10)
+- `strnum@2.4.2` — installed_root_text; `LICENSE` (2aa16be0f4fad003a352a955a43314e9d1d8deef7034060a82ac9c49f32b81e2)
+- `style-to-js@1.1.21` — installed_root_text; `LICENSE` (bbb380e5c1a717079378d6ea4d33c8a5a81655d4612b749f882e34e46712aab5)
+- `style-to-object@1.0.14` — installed_root_text; `LICENSE` (896c9fd6b5fc48ac31800b9d29a6e3ffcb0c2d534ed077ebfa5c2fa388cc38b7)
+- `supports-color@10.2.2` — installed_root_text; `license` (5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3)
+- `symbol-tree@3.2.4` — installed_root_text; `LICENSE` (9ea1eccdabe469767a9edb9249a840b2461cf91b2434bf8a3e2fc1f414311cb1)
+- `tagged-tag@1.0.0` — installed_root_text; `license` (5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3)
+- `tldts@6.1.86` — installed_root_text; `LICENSE` (c64182d48160db948b6aa97a984f1a32974ce4d2053900361264cd33853796cb)
+- `tldts-core@6.1.86` — installed_root_text; `LICENSE` (c64182d48160db948b6aa97a984f1a32974ce4d2053900361264cd33853796cb)
+- `tough-cookie@5.1.2` — installed_root_text; `LICENSE` (22ec6791c91ba42c0516a05f4cbdde019aae4687f8a38c5ca7e8a69ee68f851d)
+- `tr46@5.1.1` — installed_root_text; `LICENSE.md` (499d6d466d064e0460427967a344e2a32fcb86ea8c6cd1a285ec4f1fa03fba67)
+- `trim-lines@3.0.1` — installed_root_text; `license` (9f084fac69d8cf1e6ce983ba5a3499c7695ed74a26ec625c38f0fd19fddd5e10)
+- `trough@2.2.0` — installed_root_text; `license` (6c03fd41cfd7c92d8aa8a2fa521b94b2683f059123281dcf921ddea9216b6254)
+- `type-fest@5.9.0` — installed_root_text; `license-cc0` (a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499), `license-mit` (5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3)
+- `unified@11.0.5` — installed_root_text; `license` (05811400116ed61f1a7693b78fe8ca6598c155a12f3978e609db4df648a4cb3d)
+- `unist-util-is@6.0.1` — installed_root_text; `license` (82974dbf2639d13edab95c32ed9cb6c0867ede272cd2e07ce47ce8548fe55c05)
+- `unist-util-position@5.0.0` — installed_root_text; `license` (63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf)
+- `unist-util-stringify-position@4.0.0` — installed_root_text; `license` (ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d)
+- `unist-util-visit@5.1.0` — installed_root_text; `license` (63cb98b3f6abfb3c3592c16f88253c1bdc834087bf52671e8ce5609e4eb693cf)
+- `unist-util-visit-parents@6.0.2` — installed_root_text; `license` (ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d)
+- `vfile@6.0.3` — installed_root_text; `license` (05811400116ed61f1a7693b78fe8ca6598c155a12f3978e609db4df648a4cb3d)
+- `vfile-message@4.0.3` — installed_root_text; `license` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
+- `w3c-xmlserializer@5.0.0` — installed_root_text; `LICENSE.md` (ab654de803cdaa9e2819ab2e934bdf7f757e308649ec231d78e80e92425cdc34)
+- `webidl-conversions@7.0.0` — installed_root_text; `LICENSE.md` (a889cc4dbee2ae172c179856b25d75b0b7a5a136e1b97109b9b590b2ff1a879c)
+- `whatwg-encoding@3.1.1` — installed_root_text; `LICENSE.txt` (528eec83cb836a0adda9f8fc3d6a2a70a710d6cc0be9a155f92212c8df28acfa)
+- `whatwg-mimetype@4.0.0` — installed_root_text; `LICENSE.txt` (528eec83cb836a0adda9f8fc3d6a2a70a710d6cc0be9a155f92212c8df28acfa)
+- `whatwg-url@14.2.0` — installed_root_text; `LICENSE.txt` (db480f236292a093e77a83c35431a8496624e1e664a3547768a9ce2bdde39877)
+- `ws@8.18.0` — installed_root_text; `LICENSE` (2b29dcfe0d6471f7e8c92c5fb38c9f93edee10330937055440192f1832b1ecef)
+- `xml-name-validator@5.0.0` — installed_root_text; `LICENSE.txt` (a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9)
+- `xml-naming@0.3.0` — installed_root_text; `LICENSE` (8e75fc0e776c62ccadb8178ece8d3daa9ba7601fb0a49b2dfb0ea9a7a5c0aa07)
+- `xml2js@0.5.0` — installed_root_text; `LICENSE` (c51452ef1dfd5606c9fe266930fa6bf7e8a534d52973b6475df5bf212cad5b0a)
+- `xmlbuilder@11.0.1` — installed_root_text; `LICENSE` (e368bc4263b466cf98c225af15e300549e00da8859416a4536109e9654d434a8)
+- `xmlchars@2.2.0` — installed_root_text; `LICENSE` (45d196313c2647d313cc65ca9b093d2d6974b64d35ee7346f2c60c9d518dff2c)
+- `xtend@4.0.2` — installed_root_text; `LICENSE` (82e67379203d5794e7c44549847d8d64ae6904591381682360470898bd306821)
+- `zod@4.1.12` — installed_root_text; `LICENSE` (3f1189b28e3866e0d979968d466b78f813f76827cfdca1fbb124cc0a5c8841f8)
+- `zwitch@2.0.4` — installed_root_text; `license` (ca4662cb5d1b738fbe5350c0d5485ba11773b4b7208974082ae6e129a52d631d)
 
-The retained [Control Center attribution](third_party/control-center/NOTICE.md)
-and [MIT license](third_party/control-center/LICENSE) document the project's upstream
-curation, discovery, article-reading presentation and bounded HTTP-reader
-adaptations included under `src/vendor/control-center` and the news snapshot UI.
-The notice maps upstream revision, original files and local changes. Including
-this source does not qualify live collection or agent execution.
+## Retained and vendored material
 
-The [RSS parser notice](third_party/rss-parser/NOTICE.md) and
-[original MIT license](third_party/rss-parser/LICENSE) cover the selected
-rss-parser dependency. The lockfile also pins fast-xml-parser and their respective
-transitive dependencies. Preserve each installed package's own notices; neither
-this document nor our Apache license replaces those terms. Full-article content
-is not vendored, and feed metadata does not grant republication rights.
+- `src/vendor/control-center` — d13e79e866cc33a1fddfe84f563ce2fb9a2113e0; pinned_upstream_with_reviewed_local_adaptations; `feed-discovery.ts` (d94449d6b86ff873096c36d4ce7943f9afd473ba19183217b865bf6f5dbc8974), `freshness.ts` (dc691c41b2b0707626d2589866aa2fa1d106e4c8a1190e376379ac4582e410ca), `industry-curation.ts` (ad668fe4bf08e7b48913b43ef7edb05edbe4d874db1a16c451ff006e0b70d962), `industry.ts` (9ca39a9ad88f16262a2551a99de016a5ed951c7a53ba6a7a36362e061779db8b), `pinned-fetch.ts` (1fafc239bb2a06038c2c7f54d0026f736e64f938ff37976e075b2021e20112ca), `public-address.ts` (291fc245b943c48feaeb5807ef5f60b1ec8b31f0f8f6cdd7782c998be0c6cb48), `safe-fetch.ts` (a1357f764be50e705d79da4d261fbba38a72e392e7818480560b9d445287f733), `sitemap.ts` (732d0a11901eb340925ac0aa8d636e43d31b7296aa79306a81147048eeda4f7e), `source-reader.ts` (81e03fc3f97b3d5729bc96044e27cbd19c27536c9bb82a906fba5f500ccff9ab), `types.ts` (25d5046f5e6c1ce2897144cba5e39797b77a2143628d82cceb3ebea014ad195f)
+- `third_party/control-center` — d13e79e866cc33a1fddfe84f563ce2fb9a2113e0; pinned_upstream_notice; `LICENSE` (a149b592d1e38b71a4ff4987ee9020b5f35a5fe7c2f09ebdc78ae9ec7a87349b), `NOTICE.md` (280cb8a87cc3ab2d04c90af8a30de423b657976fc38aef2638687e5cffd248e1)
+- `third_party/cron-parser` — npm:cron-parser@5.10.0; pinned_npm_release_integrity; `LICENSE` (7eba1c8774e8bcb77356bafc70ac9de8383e7592bb79ab979130ab757d40f53d)
+- `third_party/cyclonedx-library` — npm:@cyclonedx/cyclonedx-library@10.2.0; pinned_npm_release_integrity; `LICENSE` (c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4), `NOTICE` (ceb63b4381f322f3bdb580be2b7e6b8d0679eb9f2b4b5190fb0b26306b26d32f)
+- `third_party/fast-xml-parser` — npm:fast-xml-parser@5.11.0; pinned_npm_release_integrity; `LICENSE` (7883225d5e84a6bbb9b170c3d891b4bf6d6259cee869c86bd86381a927071745)
+- `third_party/jsdom` — npm:jsdom@26.1.0; pinned_npm_release_integrity; `LICENSE` (242d37e7cab25cbafc36cc973ee88f9345fddf066afe4f72b7ac3d9ad4e24cce)
+- `third_party/jsonwebtoken` — npm:jsonwebtoken@9.0.3; pinned_npm_release_integrity; `LICENSE` (2144eb6894cb440fde6b2b3aaae3b617c8f1dc9bb19813079dcf62ec6c517042), `NOTICE.md` (d7081f1a0675b244fa713fe6a64f31d28283fa3a94a05d52748b5c8236ae8aaf)
+- `third_party/luxon` — npm:luxon@3.7.2; pinned_npm_release_integrity; `LICENSE.md` (6cb2f2bf697ee9c6fa9eb8f227c63ee6e7a3cba42d4717f14c745ef9b6cbc006)
+- `third_party/nodable-entities` — npm:@nodable/entities@3.0.0; pinned_npm_release_integrity; replaces stale 2.2.0 source-version pin; mismatch history retained in prior PROVENANCE.json; `LICENSE` (750cb3fb6362804957ef52caaf9b5c824015be44d494637330d7cd8834d31d40), `NOTICE.md` (db2d5b47427baaf5e53494afe7227ff7def0ecf9a65d839030326646059a3a83)
+- `third_party/pg` — npm:pg@8.23.0; pinned_npm_release_integrity; `LICENSE` (192b8f5c96900f04a1271dec39688655d7416c1c6ea84a508e18b50d2b6751f3), `NOTICE.md` (d528779972112a0fa405d7de0f00d228dc2efb0869dfc66ba23dffd7bad9b41f)
+- `third_party/pg-boss` — npm:pg-boss@12.30.0; pinned_npm_release_integrity; `LICENSE` (51ad77d655782ec9ea2a624529a37f25cb82bd41ae38d85d15cdb0d4dd9c5689)
+- `third_party/pg-types` — npm:pg-types@2.2.0; pinned_npm_release_integrity; `LICENSE.from-README.md` (c565667e0560bba6502cda29fd9d461fd3acaf9dac24dda4d2758ce0f8b720cd)
+- `third_party/pgpass` — npm:pgpass@1.0.5; pinned_npm_release_integrity; `LICENSE.from-README.md` (f660a02f22de943c8c28a93791e8571c67f9088be93226fd526842b586cb4db4)
+- `third_party/postgres` — reviewed retained exclusion; reviewed exclusion; `NOTICE.md` (3d149888548e267da55a49eb7982417fbd8b420833c276ea8ce45ef8a10cd8e8), `UNLICENSE` (b5065838cbac452dfc855ba6e6e031481ad2c68406f70d21ead9321374653e6c)
+- `third_party/react` — npm:react@19.2.6; pinned_npm_release_integrity; `LICENSE` (da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93)
+- `third_party/react-dom` — npm:react-dom@19.2.6; pinned_npm_release_integrity; `LICENSE` (da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93)
+- `third_party/react-markdown` — npm:react-markdown@10.1.0; pinned_npm_release_integrity; `LICENSE` (f6196c64e144f9a6fa9154c3a80bc8b89615a9567934b83a8951879f06ba2aef)
+- `third_party/readability` — npm:@mozilla/readability@0.6.0; pinned_npm_release_integrity; `LICENSE` (a5b1e8181751ce05b85b7bfaa832b785e87086250a5148e679d17ca9bdcfa958)
+- `third_party/remark-gfm` — npm:remark-gfm@4.0.1; pinned_npm_release_integrity; `LICENSE` (dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb)
+- `third_party/rss-parser` — npm:rss-parser@3.13.0; pinned_npm_release_integrity; `LICENSE` (66fa72d1e76ca487fde9f153ac1183b906733f314d556645cb614e90961da634), `NOTICE.md` (26732d0ddccf781ec7464f329405ce28a15d9c32d388e79a253efd8ef4a7e08c)
+- `third_party/saxes` — 211fa0ebec9b628affc09219199639887174bfc3; pinned_upstream_release; `LICENSE` (0fac2374380621b22e6b50451057721a9c52935b02d16d106a9f04897f061d0e), `upstream-package.json` (b2206ba4678ba63836ddc85c6425ac4207f0d92b23fd96e059814742f97fdf3a)
+- `third_party/zod` — npm:zod@4.1.12; pinned_npm_release_integrity; `LICENSE` (3f1189b28e3866e0d979968d466b78f813f76827cfdca1fbb124cc0a5c8841f8)
 
-## Notices retained from upstream rather than from the package
+## Reviewed local adaptations
 
-Two installed packages state a license but do not ship its text, so an install
-alone produces no notice to preserve. Both texts are retained here from the
-packages' own upstream repositories:
-
-- [`@nodable/entities`](third_party/nodable-entities/NOTICE.md) and its
-  [MIT license](third_party/nodable-entities/LICENSE). Reached transitively through
-  `fast-xml-parser`. Its npm tarball ships only `src` and `README.md`, and the
-  README names MIT without reproducing it, so the required copyright notice is
-  absent from the installed tree. The notice also records why that package and the
-  rest of the version-5 dependency expansion were checked against the npm registry
-  rather than taken at face value.
-- [`postgres`](third_party/postgres/NOTICE.md) and its
-  [Unlicense](third_party/postgres/UNLICENSE). A public-domain dedication requiring
-  no attribution, retained only so the tree does not state a license it lacks.
-
-Finding these took walking the resolved dependency closure, not the top level of
-`node_modules`; pnpm links transitive packages beneath their dependents, so a
-top-level scan reports most of the closure as absent.
-
-## Before distributing additional artifacts
-
-All 14 direct runtime dependencies now retain their original installed license
-text. `pnpm test:notices` checks the exact version and license bytes and fails if
-a new direct dependency lacks a mapping. This does not enumerate transitive or
-build-tool dependencies, nor inspect bundled artifacts.
-
-Additional unchanged dependencies: pg-boss 12.30.0 (MIT, Tim Jones),
-fast-xml-parser 5.11.0 (MIT, Amit Kumar Gupta), React and React DOM 19.2.6
-(MIT, Meta Platforms, Inc. and affiliates), and Zod 4.1.12 (MIT, Colin McDonnell).
-Their license files are retained under the matching `third_party` directories.
-No upstream dependency code was modified or copied into application source.
-
-Article extraction uses unchanged @mozilla/readability 0.6.0 and jsdom 26.1.0.
-Original [Readability license](third_party/readability/LICENSE) and
-[jsdom license](third_party/jsdom/LICENSE) are retained from the installed packages.
-Upstreams: https://github.com/mozilla/readability and https://github.com/jsdom/jsdom.
-Control Room adds bounded execution and source-binding wrappers, not modifications
-to either dependency. Preserve transitive package notices in any bundled release.
-Permission to use the extraction libraries does not grant rights to redistribute
-the articles they process.
-
-Formatted results use unchanged react-markdown 10.1.0 and remark-gfm 4.0.1.
-Their original [react-markdown license](third_party/react-markdown/LICENSE) and
-[remark-gfm license](third_party/remark-gfm/LICENSE) are retained byte-for-byte.
-Upstreams: https://github.com/remarkjs/react-markdown and
-https://github.com/remarkjs/remark-gfm. Control Room's local rendering restrictions
-are wrapper behavior, not upstream modifications. Transitive notices remain part
-of release-artifact reconciliation.
-
-The selected JWT verifier retains its [notice](third_party/jsonwebtoken/NOTICE.md)
-and [original MIT license](third_party/jsonwebtoken/LICENSE). Its Apache-licensed
-consumer wrapper does not relicense the dependency or its transitive packages.
-
-The [node-postgres notice](third_party/pg/NOTICE.md) and
-[original MIT license](third_party/pg/LICENSE) cover the selected pg runtime
-dependency. Its transitive packages and development-only declarations retain
-their own licenses; preserve these when preparing a bundled release.
-
-If a release adds bundled JavaScript, a container, native libraries, WASM, fonts,
-images or vendored source, review that exact artifact's contents and applicable
-notices/source obligations first. The source-preview inventory is not clearance
-for those different distributions. Do not copy an installed dependency tree into
-a release or assume the project LICENSE covers it.
-
-That warning has a concrete case behind it. The full installed closure, including
-development dependencies, is 417 packages, of which 20 state a license and ship no
-text for it. They are not distributed today, because this preview excludes
-installed dependencies, so no notice is retained for them here. Two are worth
-naming before any bundle is built:
-
-- `@resvg/resvg-wasm` is MPL-2.0 and ships a compiled `.wasm` payload. MPL is not
-  a notice-only license: it attaches source-availability obligations to the files
-  it covers. Bundling it is a different decision from installing it.
-- `workerd` and `@humanfs/types` are Apache-2.0, whose section 4(d) governs NOTICE
-  retention, and neither ships one.
-
-Whoever prepares the first compiled release should re-run that inventory against
-the artifact's actual contents rather than against this repository's source list.
-
-This file explains the source-preview scope. It is not legal certification, a
-complete software bill of materials or clearance for additional distribution formats.
-
-## Calendar calculation dependency
-
-cron-parser 5.10.0 (https://github.com/harrisiirak/cron-parser), MIT, is used for
-field expansion and date matching without upstream modifications. Its original
-license is retained at `third_party/cron-parser/LICENSE`. Control Room retains
-its numeric compatibility grammar, occurrence policy and execution authority.
-Transitive dependency notices remain part of the complete release-notice gate.
-
-Luxon3.7.2 (https://github.com/moment/luxon), MIT, supplies ambiguity resolution
-through getPossibleOffsets without upstream modification. Its original notice is
-retained at `third_party/luxon/LICENSE.md`. This prevents later fallback instants
-from creating conflicting occurrence proposals across calculation windows.
+- `src/vendor/control-center/freshness.ts` — Control Room adaptation documented in third_party/control-center/NOTICE.md; dc691c41b2b0707626d2589866aa2fa1d106e4c8a1190e376379ac4582e410ca
+- `src/vendor/control-center/industry.ts` — Control Room adaptation documented in third_party/control-center/NOTICE.md; 9ca39a9ad88f16262a2551a99de016a5ed951c7a53ba6a7a36362e061779db8b
+- `src/vendor/control-center/pinned-fetch.ts` — Control Room adaptation documented in third_party/control-center/NOTICE.md; 1fafc239bb2a06038c2c7f54d0026f736e64f938ff37976e075b2021e20112ca
+- `src/vendor/control-center/safe-fetch.ts` — Control Room adaptation documented in third_party/control-center/NOTICE.md; a1357f764be50e705d79da4d261fbba38a72e392e7818480560b9d445287f733
+- `src/vendor/control-center/sitemap.ts` — Control Room adaptation documented in third_party/control-center/NOTICE.md; 732d0a11901eb340925ac0aa8d636e43d31b7296aa79306a81147048eeda4f7e
+- `src/vendor/control-center/source-reader.ts` — Control Room adaptation documented in third_party/control-center/NOTICE.md; 81e03fc3f97b3d5729bc96044e27cbd19c27536c9bb82a906fba5f500ccff9ab

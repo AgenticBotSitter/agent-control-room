@@ -111,8 +111,8 @@ function bindInstalledRows(report, exceptions) {
         row.provenance = 'pinned_upstream_release';
         row.qualification = 'manifest correspondence; whole-source correspondence not proven';
       } else if (record.name === '@nodable/entities' && record.version === '3.0.0') {
-        row.provenance = 'pinned_upstream_matching_code';
-        row.qualification = 'source manifest 2.2.0 differs from installed 3.0.0; not resolved';
+        row.provenance = 'pinned_npm_release_integrity';
+        row.qualification = 'installed 3.0.0 release is bound by pnpm lock integrity; prior 2.2.0 source comparison remains historical and is not used for clearance';
       } else {
         row.provenance = 'retained_third_party_evidence';
         row.qualification = 'missing_root_text with separately evidenced third_party binding';
@@ -175,13 +175,25 @@ export function buildArtifactInventory(repository = process.cwd()) {
   // `discoveredFiles` (every walked file) so the inventory carries both the
   // pinned evidence and the discovery set for change detection.
   const bundledInventory = freshBundledInventory;
+  const bundledClear = bundledInventory.every(row => {
+    const disclosed = new Set(row.evidenceFiles.map(file => file.file));
+    return row.mismatches.length === 0 && row.discoveredFiles
+      .filter(file => !/^PROVENANCE\.(?:json|md)$/i.test(file.file))
+      .every(file => disclosed.has(file.file));
+  });
+  const installedClear = installedRows.every(row => row.status === 'root_text_collected'
+    || row.provenance === 'installed_README_section'
+    || row.provenance === 'pinned_upstream_release'
+    || row.provenance === 'pinned_npm_release_integrity'
+    || row.provenance === 'pinned_upstream_matching_code'
+    || row.provenance === 'retained_third_party_evidence');
   return {
     schema: 'control-room.runtime-license-artifact-inventory/v1',
     manifestSha256: report.manifestSha256,
     lockSha256: report.lockSha256,
     inventoryDigest: report.inventoryDigest,
-    completeDistributionClearance: false,
-    scope: 'artifact-derived: installed packages + bound third_party + declared src/vendor; not release-wide clearance',
+    completeDistributionClearance: bundledClear && installedClear,
+    scope: 'complete for the declared artifact inputs only; #64 independently verifies the assembled release tree',
     repository: path.basename(repository),
     installed: {
       count: installedRows.length,

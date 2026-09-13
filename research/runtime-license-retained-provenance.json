@@ -1,0 +1,407 @@
+{
+  "schema": "control-room.runtime-license-retained-provenance/v1",
+  "roots": {
+    "third_party/cron-parser": {
+      "packageName": "cron-parser",
+      "packageVersion": "5.10.0",
+      "sourceCommit": null,
+      "qualification": "pinned_npm_release_integrity",
+      "files": [
+        {
+          "file": "LICENSE",
+          "bytes": 1084,
+          "sha256": "7eba1c8774e8bcb77356bafc70ac9de8383e7592bb79ab979130ab757d40f53d"
+        }
+      ]
+    },
+    "third_party/cyclonedx-library": {
+      "packageName": "@cyclonedx/cyclonedx-library",
+      "packageVersion": "10.2.0",
+      "sourceCommit": null,
+      "qualification": "pinned_npm_release_integrity",
+      "files": [
+        {
+          "file": "LICENSE",
+          "bytes": 11357,
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        },
+        {
+          "file": "NOTICE",
+          "bytes": 177,
+          "sha256": "ceb63b4381f322f3bdb580be2b7e6b8d0679eb9f2b4b5190fb0b26306b26d32f"
+        }
+      ]
+    },
+    "third_party/fast-xml-parser": {
+      "packageName": "fast-xml-parser",
+      "packageVersion": "5.11.0",
+      "sourceCommit": null,
+      "qualification": "pinned_npm_release_integrity",
+      "files": [
+        {
+          "file": "LICENSE",
+          "bytes": 1073,
+          "sha256": "7883225d5e84a6bbb9b170c3d891b4bf6d6259cee869c86bd86381a927071745"
+        }
+      ]
+    },
+    "third_party/jsdom": {
+      "packageName": "jsdom",
+      "packageVersion": "26.1.0",
+      "sourceCommit": null,
+      "qualification": "pinned_npm_release_integrity",
+      "files": [
+        {
+          "file": "LICENSE",
+          "bytes": 1056,
+          "sha256": "242d37e7cab25cbafc36cc973ee88f9345fddf066afe4f72b7ac3d9ad4e24cce"
+        }
+      ]
+    },
+    "third_party/jsonwebtoken": {
+      "packageName": "jsonwebtoken",
+      "packageVersion": "9.0.3",
+      "sourceCommit": null,
+      "qualification": "pinned_npm_release_integrity",
+      "files": [
+        {
+          "file": "LICENSE",
+          "bytes": 1121,
+          "sha256": "2144eb6894cb440fde6b2b3aaae3b617c8f1dc9bb19813079dcf62ec6c517042"
+        },
+        {
+          "file": "NOTICE.md",
+          "bytes": 487,
+          "sha256": "d7081f1a0675b244fa713fe6a64f31d28283fa3a94a05d52748b5c8236ae8aaf"
+        }
+      ]
+    },
+    "third_party/luxon": {
+      "packageName": "luxon",
+      "packageVersion": "3.7.2",
+      "sourceCommit": null,
+      "qualification": "pinned_npm_release_integrity",
+      "files": [
+        {
+          "file": "LICENSE.md",
+          "bytes": 1076,
+          "sha256": "6cb2f2bf697ee9c6fa9eb8f227c63ee6e7a3cba42d4717f14c745ef9b6cbc006"
+        }
+      ]
+    },
+    "third_party/nodable-entities": {
+      "packageName": "@nodable/entities",
+      "packageVersion": "3.0.0",
+      "sourceCommit": null,
+      "qualification": "pinned_npm_release_integrity; replaces stale 2.2.0 source-version pin; mismatch history retained in prior PROVENANCE.json",
+      "files": [
+        {
+          "file": "LICENSE",
+          "bytes": 1064,
+          "sha256": "750cb3fb6362804957ef52caaf9b5c824015be44d494637330d7cd8834d31d40"
+        },
+        {
+          "file": "NOTICE.md",
+          "bytes": 1974,
+          "sha256": "db2d5b47427baaf5e53494afe7227ff7def0ecf9a65d839030326646059a3a83"
+        }
+      ]
+    },
+    "third_party/pg": {
+      "packageName": "pg",
+      "packageVersion": "8.23.0",
+      "sourceCommit": null,
+      "qualification": "pinned_npm_release_integrity",
+      "files": [
+        {
+          "file": "LICENSE",
+          "bytes": 1077,
+          "sha256": "192b8f5c96900f04a1271dec39688655d7416c1c6ea84a508e18b50d2b6751f3"
+        },
+        {
+          "file": "NOTICE.md",
+          "bytes": 442,
+          "sha256": "d528779972112a0fa405d7de0f00d228dc2efb0869dfc66ba23dffd7bad9b41f"
+        }
+      ]
+    },
+    "third_party/pg-boss": {
+      "packageName": "pg-boss",
+      "packageVersion": "12.30.0",
+      "sourceCommit": null,
+      "qualification": "pinned_npm_release_integrity",
+      "files": [
+        {
+          "file": "LICENSE",
+          "bytes": 1076,
+          "sha256": "51ad77d655782ec9ea2a624529a37f25cb82bd41ae38d85d15cdb0d4dd9c5689"
+        }
+      ]
+    },
+    "third_party/pg-types": {
+      "packageName": "pg-types",
+      "packageVersion": "2.2.0",
+      "sourceCommit": null,
+      "qualification": "pinned_npm_release_integrity",
+      "files": [
+        {
+          "file": "LICENSE.from-README.md",
+          "bytes": 1095,
+          "sha256": "c565667e0560bba6502cda29fd9d461fd3acaf9dac24dda4d2758ce0f8b720cd"
+        }
+      ]
+    },
+    "third_party/pgpass": {
+      "packageName": "pgpass",
+      "packageVersion": "1.0.5",
+      "sourceCommit": null,
+      "qualification": "pinned_npm_release_integrity",
+      "files": [
+        {
+          "file": "LICENSE.from-README.md",
+          "bytes": 1073,
+          "sha256": "f660a02f22de943c8c28a93791e8571c67f9088be93226fd526842b586cb4db4"
+        }
+      ]
+    },
+    "third_party/react": {
+      "packageName": "react",
+      "packageVersion": "19.2.6",
+      "sourceCommit": null,
+      "qualification": "pinned_npm_release_integrity",
+      "files": [
+        {
+          "file": "LICENSE",
+          "bytes": 1088,
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
+        }
+      ]
+    },
+    "third_party/react-dom": {
+      "packageName": "react-dom",
+      "packageVersion": "19.2.6",
+      "sourceCommit": null,
+      "qualification": "pinned_npm_release_integrity",
+      "files": [
+        {
+          "file": "LICENSE",
+          "bytes": 1088,
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
+        }
+      ]
+    },
+    "third_party/react-markdown": {
+      "packageName": "react-markdown",
+      "packageVersion": "10.1.0",
+      "sourceCommit": null,
+      "qualification": "pinned_npm_release_integrity",
+      "files": [
+        {
+          "file": "LICENSE",
+          "bytes": 1079,
+          "sha256": "f6196c64e144f9a6fa9154c3a80bc8b89615a9567934b83a8951879f06ba2aef"
+        }
+      ]
+    },
+    "third_party/readability": {
+      "packageName": "@mozilla/readability",
+      "packageVersion": "0.6.0",
+      "sourceCommit": null,
+      "qualification": "pinned_npm_release_integrity",
+      "files": [
+        {
+          "file": "LICENSE",
+          "bytes": 553,
+          "sha256": "a5b1e8181751ce05b85b7bfaa832b785e87086250a5148e679d17ca9bdcfa958"
+        }
+      ]
+    },
+    "third_party/remark-gfm": {
+      "packageName": "remark-gfm",
+      "packageVersion": "4.0.1",
+      "sourceCommit": null,
+      "qualification": "pinned_npm_release_integrity",
+      "files": [
+        {
+          "file": "LICENSE",
+          "bytes": 1094,
+          "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+        }
+      ]
+    },
+    "third_party/rss-parser": {
+      "packageName": "rss-parser",
+      "packageVersion": "3.13.0",
+      "sourceCommit": null,
+      "qualification": "pinned_npm_release_integrity",
+      "files": [
+        {
+          "file": "LICENSE",
+          "bytes": 1070,
+          "sha256": "66fa72d1e76ca487fde9f153ac1183b906733f314d556645cb614e90961da634"
+        },
+        {
+          "file": "NOTICE.md",
+          "bytes": 1008,
+          "sha256": "26732d0ddccf781ec7464f329405ce28a15d9c32d388e79a253efd8ef4a7e08c"
+        }
+      ]
+    },
+    "third_party/saxes": {
+      "packageName": "saxes",
+      "packageVersion": "6.0.0",
+      "sourceCommit": "211fa0ebec9b628affc09219199639887174bfc3",
+      "qualification": "pinned_upstream_release",
+      "files": [
+        {
+          "file": "LICENSE",
+          "bytes": 3011,
+          "sha256": "0fac2374380621b22e6b50451057721a9c52935b02d16d106a9f04897f061d0e"
+        },
+        {
+          "file": "upstream-package.json",
+          "bytes": 2864,
+          "sha256": "b2206ba4678ba63836ddc85c6425ac4207f0d92b23fd96e059814742f97fdf3a"
+        }
+      ]
+    },
+    "third_party/zod": {
+      "packageName": "zod",
+      "packageVersion": "4.1.12",
+      "sourceCommit": null,
+      "qualification": "pinned_npm_release_integrity",
+      "files": [
+        {
+          "file": "LICENSE",
+          "bytes": 1072,
+          "sha256": "3f1189b28e3866e0d979968d466b78f813f76827cfdca1fbb124cc0a5c8841f8"
+        }
+      ]
+    },
+    "third_party/postgres": {
+      "reviewedExclusion": "retained historical public-domain notice only; no package bytes are assembled",
+      "files": [
+        {
+          "file": "NOTICE.md",
+          "bytes": 770,
+          "sha256": "3d149888548e267da55a49eb7982417fbd8b420833c276ea8ce45ef8a10cd8e8"
+        },
+        {
+          "file": "UNLICENSE",
+          "bytes": 1212,
+          "sha256": "b5065838cbac452dfc855ba6e6e031481ad2c68406f70d21ead9321374653e6c"
+        }
+      ]
+    },
+    "third_party/control-center": {
+      "sourceCommit": "d13e79e866cc33a1fddfe84f563ce2fb9a2113e0",
+      "qualification": "pinned_upstream_notice",
+      "files": [
+        {
+          "file": "LICENSE",
+          "bytes": 1067,
+          "sha256": "a149b592d1e38b71a4ff4987ee9020b5f35a5fe7c2f09ebdc78ae9ec7a87349b"
+        },
+        {
+          "file": "NOTICE.md",
+          "bytes": 6382,
+          "sha256": "280cb8a87cc3ab2d04c90af8a30de423b657976fc38aef2638687e5cffd248e1"
+        }
+      ]
+    },
+    "src/vendor/control-center": {
+      "sourceCommit": "d13e79e866cc33a1fddfe84f563ce2fb9a2113e0",
+      "qualification": "pinned_upstream_with_reviewed_local_adaptations",
+      "reviewedExclusions": [
+        {
+          "path": "freshness.ts",
+          "sha256": "dc691c41b2b0707626d2589866aa2fa1d106e4c8a1190e376379ac4582e410ca",
+          "classification": "documented_local_adaptation",
+          "reason": "Control Room adaptation documented in third_party/control-center/NOTICE.md"
+        },
+        {
+          "path": "industry.ts",
+          "sha256": "9ca39a9ad88f16262a2551a99de016a5ed951c7a53ba6a7a36362e061779db8b",
+          "classification": "documented_local_adaptation",
+          "reason": "Control Room adaptation documented in third_party/control-center/NOTICE.md"
+        },
+        {
+          "path": "pinned-fetch.ts",
+          "sha256": "1fafc239bb2a06038c2c7f54d0026f736e64f938ff37976e075b2021e20112ca",
+          "classification": "documented_local_adaptation",
+          "reason": "Control Room adaptation documented in third_party/control-center/NOTICE.md"
+        },
+        {
+          "path": "safe-fetch.ts",
+          "sha256": "a1357f764be50e705d79da4d261fbba38a72e392e7818480560b9d445287f733",
+          "classification": "documented_local_adaptation",
+          "reason": "Control Room adaptation documented in third_party/control-center/NOTICE.md"
+        },
+        {
+          "path": "sitemap.ts",
+          "sha256": "732d0a11901eb340925ac0aa8d636e43d31b7296aa79306a81147048eeda4f7e",
+          "classification": "documented_local_adaptation",
+          "reason": "Control Room adaptation documented in third_party/control-center/NOTICE.md"
+        },
+        {
+          "path": "source-reader.ts",
+          "sha256": "81e03fc3f97b3d5729bc96044e27cbd19c27536c9bb82a906fba5f500ccff9ab",
+          "classification": "documented_local_adaptation",
+          "reason": "Control Room adaptation documented in third_party/control-center/NOTICE.md"
+        }
+      ],
+      "files": [
+        {
+          "file": "feed-discovery.ts",
+          "bytes": 893,
+          "sha256": "d94449d6b86ff873096c36d4ce7943f9afd473ba19183217b865bf6f5dbc8974"
+        },
+        {
+          "file": "freshness.ts",
+          "bytes": 1140,
+          "sha256": "dc691c41b2b0707626d2589866aa2fa1d106e4c8a1190e376379ac4582e410ca"
+        },
+        {
+          "file": "industry-curation.ts",
+          "bytes": 19888,
+          "sha256": "ad668fe4bf08e7b48913b43ef7edb05edbe4d874db1a16c451ff006e0b70d962"
+        },
+        {
+          "file": "industry.ts",
+          "bytes": 2511,
+          "sha256": "9ca39a9ad88f16262a2551a99de016a5ed951c7a53ba6a7a36362e061779db8b"
+        },
+        {
+          "file": "pinned-fetch.ts",
+          "bytes": 8071,
+          "sha256": "1fafc239bb2a06038c2c7f54d0026f736e64f938ff37976e075b2021e20112ca"
+        },
+        {
+          "file": "public-address.ts",
+          "bytes": 3590,
+          "sha256": "291fc245b943c48feaeb5807ef5f60b1ec8b31f0f8f6cdd7782c998be0c6cb48"
+        },
+        {
+          "file": "safe-fetch.ts",
+          "bytes": 3777,
+          "sha256": "a1357f764be50e705d79da4d261fbba38a72e392e7818480560b9d445287f733"
+        },
+        {
+          "file": "sitemap.ts",
+          "bytes": 15984,
+          "sha256": "732d0a11901eb340925ac0aa8d636e43d31b7296aa79306a81147048eeda4f7e"
+        },
+        {
+          "file": "source-reader.ts",
+          "bytes": 12458,
+          "sha256": "81e03fc3f97b3d5729bc96044e27cbd19c27536c9bb82a906fba5f500ccff9ab"
+        },
+        {
+          "file": "types.ts",
+          "bytes": 7780,
+          "sha256": "25d5046f5e6c1ce2897144cba5e39797b77a2143628d82cceb3ebea014ad195f"
+        }
+      ]
+    }
+  }
+}

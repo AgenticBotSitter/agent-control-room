@@ -42,7 +42,7 @@
     "test:workspaces": "node --import tsx --test --test-concurrency=1 tests/workspace-manager.test.ts tests/workspace-journal.test.ts tests/workspace-journal-port.test.ts tests/workspace-journal-crash.test.ts tests/workspace-journal-process.test.ts tests/workspace-restart-inventory.test.ts",
     "test:worker-lifecycle": "node --import tsx --test --test-concurrency=1 tests/private-worker-preparation.test.mjs tests/private-worker-lifecycle.test.ts",
     "test:native-fences": "node --import tsx --test tests/native-start-fence.test.ts tests/native-recovery-fence.test.ts",
-    "test:release-licenses": "node --test tests/runtime-license-report.test.mjs tests/runtime-license-assembly.test.mjs tests/runtime-license-text.test.mjs tests/license-exceptions.test.mjs tests/runtime-license-digest.test.mjs tests/runtime-license-repository-guard.test.mjs tests/runtime-license-bundled-collector.test.mjs tests/runtime-license-artifact-inventory.test.mjs tests/runtime-license-bundled-scan.test.mjs tests/runtime-license-inventory-prep.test.mjs",
+    "test:release-licenses": "node --test tests/runtime-license-report.test.mjs tests/runtime-license-assembly.test.mjs tests/runtime-license-text.test.mjs tests/license-exceptions.test.mjs tests/runtime-license-digest.test.mjs tests/runtime-license-repository-guard.test.mjs tests/runtime-license-bundled-collector.test.mjs tests/runtime-license-artifact-inventory.test.mjs tests/runtime-license-bundled-scan.test.mjs tests/runtime-license-inventory-prep.test.mjs tests/runtime-license-finalize.test.mjs",
     "test:build-profile": "node --import tsx --test tests/vps-build-profile.test.ts tests/private-vps-launcher.test.mjs"
   },
   "dependencies": {
