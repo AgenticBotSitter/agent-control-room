@@ -16,7 +16,17 @@ export const codexStartAdmissionSchemaV1 = z.object({
   schema: z.literal('control-room.codex-start-admission/v1'),
   admissionId: localId,
   scope: scopeSchema,
+  queueId: localId,
   requestMessageId: localId,
+  activationMessageId: localId,
+  activationId: localId,
+  activationDigest: digestSchema,
+  activationFrameDigest: digestSchema,
+  dispatchMessageId: localId,
+  dispatchFrameDigest: digestSchema,
+  receiptMessageId: localId,
+  receiptFrameDigest: digestSchema,
+  workspacePath: z.string().min(1).max(4096),
   deliveryDigest: digestSchema,
   enrollmentDigest: digestSchema,
   permitDigest: digestSchema,
@@ -74,7 +84,13 @@ export function createCodexStartAdmissionV1(value: Omit<CodexStartAdmissionV1,
     turnStartResponseSchemaSha256: CODEX_APP_SERVER_START_CONTRACT.turnStart.responseSchemaSha256,
     transport: 'json_rpc_stdio' as const,
   };
-  const identity = { scope: value.scope, requestMessageId: value.requestMessageId,
+  const identity = { scope: value.scope, queueId: value.queueId, requestMessageId: value.requestMessageId,
+    activationMessageId: value.activationMessageId,
+    activationId: value.activationId, activationDigest: value.activationDigest,
+    activationFrameDigest: value.activationFrameDigest,
+    dispatchMessageId: value.dispatchMessageId, dispatchFrameDigest: value.dispatchFrameDigest,
+    receiptMessageId: value.receiptMessageId, receiptFrameDigest: value.receiptFrameDigest,
+    workspacePath: value.workspacePath,
     deliveryDigest: value.deliveryDigest, enrollmentDigest: value.enrollmentDigest,
     permitDigest: value.permitDigest, currentAdmissionDigest: value.currentAdmissionDigest,
     inputDigest: value.inputDigest, method: value.method,
@@ -145,8 +161,15 @@ function verifyAdmission(value: unknown) {
   void _resume; void _retry; void _read;
   if (admission.admissionId !== `codex-admission:${sha256Digest(identity).slice(7)}`
     || admission.contractDigest !== sha256Digest(withoutContractDigest(admission))
+    || admission.requestMessageId !== admission.activationMessageId
+    || admission.deliveryDigest !== admission.dispatchFrameDigest
     || Date.parse(admission.deadline) <= Date.parse(admission.requestedAt)) return fail();
   return admission;
+}
+
+/** Validates the complete activation-bound start admission without granting a capability. */
+export function verifyCodexStartAdmissionV1(value: unknown): CodexStartAdmissionV1 {
+  return verifyAdmission(value);
 }
 
 /** Accept only the response correlated to this exact thread/start request. */
@@ -155,6 +178,9 @@ function acceptCodexThreadStartV1(admissionValue: unknown, rawResponse: string,
   const admission = verifyAdmission(admissionValue);
   const response = threadResponseSchema.parse(parseBoundedResponse(rawResponse));
   if (response.id !== admission.threadStartRequestId || response.result.thread.id !== response.result.thread.sessionId
+    || response.result.cwd !== admission.workspacePath || response.result.approvalPolicy !== 'on-request'
+    || response.result.approvalsReviewer !== 'user'
+    || JSON.stringify(response.result.sandbox) !== JSON.stringify({ type: 'readOnly' })
     || Date.parse(recordedAt) < Date.parse(admission.requestedAt)
     || Date.parse(recordedAt) > Date.parse(admission.deadline)) return fail();
   const unsigned = { schema: 'control-room.codex-thread-start-receipt/v1' as const,
@@ -356,6 +382,15 @@ export function codexReadIdentityFromStartV1(threadReceiptValue: unknown, turnRe
     || Date.parse(turn.recordedAt) < Date.parse(intent.requestedAt)
     || Date.parse(turn.recordedAt) > Date.parse(intent.deadline)) return fail();
   return Object.freeze({ ...thread.admission.scope, enrollmentDigest: thread.admission.enrollmentDigest,
+    queueId: thread.admission.queueId, activationId: thread.admission.activationId,
+    activationMessageId: thread.admission.activationMessageId,
+    activationDigest: thread.admission.activationDigest,
+    activationFrameDigest: thread.admission.activationFrameDigest,
+    dispatchMessageId: thread.admission.dispatchMessageId,
+    dispatchFrameDigest: thread.admission.dispatchFrameDigest,
+    receiptMessageId: thread.admission.receiptMessageId,
+    receiptFrameDigest: thread.admission.receiptFrameDigest,
+    workspacePath: thread.admission.workspacePath,
     deliveryDigest: thread.admission.deliveryDigest, permitDigest: thread.admission.permitDigest,
     currentAdmissionDigest: thread.admission.currentAdmissionDigest,
     connectionAttemptId: thread.admission.connectionAttemptId,

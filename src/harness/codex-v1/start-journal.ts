@@ -5,7 +5,8 @@ import { sha256Digest } from '../../security/canonical-digest';
 import { assertSynchronousFence } from '../../security/synchronous-fence';
 import { localId } from '../v1/native-run-identifiers';
 import { codexReadIdentityFromStartV1, codexTurnStartReceiptSchemaV1,
-  verifyCodexThreadStartReceiptV1, type CodexThreadStartReceiptV1,
+  verifyCodexStartAdmissionV1, verifyCodexThreadStartReceiptV1, type CodexStartAdmissionV1,
+  type CodexThreadStartReceiptV1,
   type CodexTurnStartReceiptV1 } from './admission-contract';
 import { assertPrivateSqliteSchemaV1 } from './private-sqlite-schema';
 
@@ -29,7 +30,39 @@ const turnTable = `CREATE TABLE codex_turn_start_receipts (
   receipt_json TEXT NOT NULL,
   FOREIGN KEY(run_id) REFERENCES codex_thread_start_receipts(run_id) ON DELETE RESTRICT
 )`;
+const reservationTable = `CREATE TABLE codex_start_reservations (
+  run_id TEXT PRIMARY KEY NOT NULL,
+  queue_id TEXT NOT NULL UNIQUE,
+  activation_id TEXT NOT NULL UNIQUE,
+  activation_message_id TEXT NOT NULL UNIQUE,
+  activation_digest TEXT NOT NULL UNIQUE,
+  activation_frame_digest TEXT NOT NULL UNIQUE,
+  dispatch_frame_digest TEXT NOT NULL,
+  receipt_frame_digest TEXT NOT NULL,
+  admission_id TEXT NOT NULL UNIQUE,
+  connection_attempt_id TEXT NOT NULL UNIQUE,
+  reserved_at TEXT NOT NULL,
+  deadline TEXT NOT NULL,
+  admission_json TEXT NOT NULL,
+  admission_digest TEXT NOT NULL UNIQUE
+)`;
 const expectedColumns = {
+  codex_start_reservations: [
+    { name: 'run_id', type: 'TEXT', notnull: 1, pk: 1 },
+    { name: 'queue_id', type: 'TEXT', notnull: 1, pk: 0 },
+    { name: 'activation_id', type: 'TEXT', notnull: 1, pk: 0 },
+    { name: 'activation_message_id', type: 'TEXT', notnull: 1, pk: 0 },
+    { name: 'activation_digest', type: 'TEXT', notnull: 1, pk: 0 },
+    { name: 'activation_frame_digest', type: 'TEXT', notnull: 1, pk: 0 },
+    { name: 'dispatch_frame_digest', type: 'TEXT', notnull: 1, pk: 0 },
+    { name: 'receipt_frame_digest', type: 'TEXT', notnull: 1, pk: 0 },
+    { name: 'admission_id', type: 'TEXT', notnull: 1, pk: 0 },
+    { name: 'connection_attempt_id', type: 'TEXT', notnull: 1, pk: 0 },
+    { name: 'reserved_at', type: 'TEXT', notnull: 1, pk: 0 },
+    { name: 'deadline', type: 'TEXT', notnull: 1, pk: 0 },
+    { name: 'admission_json', type: 'TEXT', notnull: 1, pk: 0 },
+    { name: 'admission_digest', type: 'TEXT', notnull: 1, pk: 0 },
+  ],
   codex_thread_start_receipts: [
     { name: 'run_id', type: 'TEXT', notnull: 1, pk: 1 },
     { name: 'job_id', type: 'TEXT', notnull: 1, pk: 0 },
@@ -77,6 +110,27 @@ type ThreadRow = { run_id: string; job_id: string; attempt_id: string; admission
   receipt_digest: string; receipt_json: string };
 type TurnRow = { run_id: string; thread_receipt_digest: string; thread_id: string; turn_id: string;
   receipt_digest: string; receipt_json: string };
+type ReservationRow = { run_id: string; queue_id: string; activation_id: string; activation_message_id: string;
+  activation_digest: string; activation_frame_digest: string; dispatch_frame_digest: string;
+  receipt_frame_digest: string; admission_id: string; connection_attempt_id: string;
+  reserved_at: string; deadline: string; admission_json: string; admission_digest: string };
+
+function reservationMatches(row: ReservationRow, admission: CodexStartAdmissionV1): boolean {
+  const reservedAtMs = Date.parse(row.reserved_at);
+  return row.run_id === admission.scope.runId && row.queue_id === admission.queueId
+    && row.activation_id === admission.activationId
+    && row.activation_message_id === admission.activationMessageId
+    && row.activation_digest === admission.activationDigest
+    && row.activation_frame_digest === admission.activationFrameDigest
+    && row.dispatch_frame_digest === admission.dispatchFrameDigest
+    && row.receipt_frame_digest === admission.receiptFrameDigest
+    && row.admission_id === admission.admissionId
+    && row.connection_attempt_id === admission.connectionAttemptId
+    && !Number.isNaN(reservedAtMs) && new Date(reservedAtMs).toISOString() === row.reserved_at
+    && reservedAtMs >= Date.parse(admission.requestedAt) && reservedAtMs < Date.parse(admission.deadline)
+    && row.deadline === admission.deadline && row.admission_json === JSON.stringify(admission)
+    && row.admission_digest === sha256Digest(admission);
+}
 
 /**
  * Node-private observation journal for exact Codex start receipts. It is not a
@@ -100,11 +154,19 @@ export class SqliteCodexStartJournalV1 {
       const version = (this.db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
       const objects = this.db.prepare("SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'").all();
       if (version === 0 && objects.length === 0) {
-        this.db.exec(`${threadTable}; ${turnTable}; PRAGMA user_version=1;`);
-      } else if (version !== 1) throw new Error('codex_start_journal_schema_invalid');
+        this.db.exec(`${reservationTable}; ${threadTable}; ${turnTable}; PRAGMA user_version=2;`);
+      } else if (version === 1) {
+        assertPrivateSqliteSchemaV1(this.db,
+          ['table:codex_thread_start_receipts', 'table:codex_turn_start_receipts'], {
+            codex_thread_start_receipts: expectedColumns.codex_thread_start_receipts,
+            codex_turn_start_receipts: expectedColumns.codex_turn_start_receipts,
+          }, { codex_thread_start_receipts: threadTable, codex_turn_start_receipts: turnTable });
+        this.db.exec(`${reservationTable}; PRAGMA user_version=2;`);
+      } else if (version !== 2) throw new Error('codex_start_journal_schema_invalid');
       assertPrivateSqliteSchemaV1(this.db,
-        ['table:codex_thread_start_receipts', 'table:codex_turn_start_receipts'], expectedColumns,
-        { codex_thread_start_receipts: threadTable, codex_turn_start_receipts: turnTable });
+        ['table:codex_start_reservations', 'table:codex_thread_start_receipts', 'table:codex_turn_start_receipts'],
+        expectedColumns, { codex_start_reservations: reservationTable,
+          codex_thread_start_receipts: threadTable, codex_turn_start_receipts: turnTable });
     } catch {
       this.usable = false; this.db.close(); throw new Error('codex_start_journal_unavailable');
     }
@@ -127,10 +189,50 @@ export class SqliteCodexStartJournalV1 {
     return this.db.prepare('SELECT * FROM codex_thread_start_receipts WHERE run_id=?').get(runId) as ThreadRow | undefined;
   }
 
+  private reservationRow(runId: string): ReservationRow | undefined {
+    return this.db.prepare('SELECT * FROM codex_start_reservations WHERE run_id=?').get(runId) as ReservationRow | undefined;
+  }
+
+  reserveStart(value: unknown, reservedAtValue: string, assertCurrent: () => void): 'recorded' | 'duplicate' {
+    const admission = verifyCodexStartAdmissionV1(value);
+    const reservedAt = new Date(reservedAtValue).toISOString();
+    if (reservedAt !== reservedAtValue || Date.parse(reservedAt) < Date.parse(admission.requestedAt)
+      || Date.parse(reservedAt) >= Date.parse(admission.deadline)) throw new Error('codex_start_journal_reservation_invalid');
+    const admissionJson = JSON.stringify(admission), admissionDigest = sha256Digest(admission);
+    return this.transaction(() => {
+      requireCurrent(assertCurrent);
+      const existing = this.reservationRow(admission.scope.runId);
+      if (existing) {
+        if (!reservationMatches(existing, admission) || existing.reserved_at !== reservedAt) {
+          throw new Error('codex_start_journal_binding_conflict');
+        }
+        requireCurrent(assertCurrent); return 'duplicate';
+      }
+      const historical = this.db.prepare(`SELECT run_id FROM codex_thread_start_receipts
+        WHERE run_id=? OR attempt_id=? LIMIT 1`).get(admission.scope.runId, admission.scope.attemptId);
+      if (historical) throw new Error('codex_start_journal_historical_start_exists');
+      const count = (this.db.prepare('SELECT COUNT(*) AS count FROM codex_start_reservations').get() as { count: number }).count;
+      if (count >= this.maximumEntries) throw new Error('codex_start_journal_capacity_exhausted');
+      this.db.prepare(`INSERT INTO codex_start_reservations
+        (run_id,queue_id,activation_id,activation_message_id,activation_digest,activation_frame_digest,
+         dispatch_frame_digest,receipt_frame_digest,admission_id,connection_attempt_id,reserved_at,deadline,
+         admission_json,admission_digest) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+        .run(admission.scope.runId, admission.queueId, admission.activationId, admission.activationMessageId,
+          admission.activationDigest, admission.activationFrameDigest, admission.dispatchFrameDigest,
+          admission.receiptFrameDigest, admission.admissionId, admission.connectionAttemptId, reservedAt,
+          admission.deadline, admissionJson, admissionDigest);
+      requireCurrent(assertCurrent); return 'recorded';
+    });
+  }
+
   recordThread(value: unknown, assertCurrent: () => void): 'recorded' | 'duplicate' {
     const receipt = verifyCodexThreadStartReceiptV1(value), { scope } = receipt.admission;
     return this.transaction(() => {
       requireCurrent(assertCurrent);
+      const reservation = this.reservationRow(scope.runId);
+      if (!reservation || !reservationMatches(reservation, receipt.admission)) {
+        throw new Error('codex_start_journal_reservation_missing');
+      }
       const existing = this.threadRow(scope.runId);
       if (existing) {
         if (existing.receipt_digest !== receipt.receiptDigest
@@ -154,6 +256,10 @@ export class SqliteCodexStartJournalV1 {
     const identity = codexReadIdentityFromStartV1(thread, turn);
     return this.transaction(() => {
       requireCurrent(assertCurrent);
+      const reservation = this.reservationRow(identity.runId);
+      if (!reservation || !reservationMatches(reservation, thread.admission)) {
+        throw new Error('codex_start_journal_reservation_missing');
+      }
       const parent = this.threadRow(identity.runId);
       if (!parent || parent.receipt_digest !== thread.receiptDigest
         || parent.receipt_json !== JSON.stringify(thread)) throw new Error('codex_start_journal_thread_missing');
@@ -173,8 +279,17 @@ export class SqliteCodexStartJournalV1 {
   }
 
   load(runIdValue: string) {
-    this.assertUsable(); const runId = localId.parse(runIdValue), row = this.threadRow(runId);
-    if (!row) return Object.freeze({ status: 'not_recorded' as const, runId,
+    this.assertUsable(); const runId = localId.parse(runIdValue), reservationRow = this.reservationRow(runId);
+    if (!reservationRow) return Object.freeze({ status: 'not_reserved' as const, runId,
+      readIdentity: null, grantsExecutionAuthority: false as const, permitsResume: false as const,
+      permitsRetry: false as const, permitsThreadRead: false as const });
+    let admission: CodexStartAdmissionV1;
+    try { admission = verifyCodexStartAdmissionV1(JSON.parse(reservationRow.admission_json)); }
+    catch { return this.integrityFailure(); }
+    if (!reservationMatches(reservationRow, admission)) return this.integrityFailure();
+    const row = this.threadRow(runId);
+    if (!row) return Object.freeze({ status: 'start_reserved' as const, ...admission.scope,
+      admissionId: admission.admissionId, reservedAt: reservationRow.reserved_at,
       readIdentity: null, grantsExecutionAuthority: false as const, permitsResume: false as const,
       permitsRetry: false as const, permitsThreadRead: false as const });
     let thread: CodexThreadStartReceiptV1;
@@ -187,7 +302,7 @@ export class SqliteCodexStartJournalV1 {
       || row.enrollment_digest !== thread.admission.enrollmentDigest || row.thread_id !== thread.threadId
       || row.receipt_digest !== thread.receiptDigest) return this.integrityFailure();
     const turnRow = this.db.prepare('SELECT * FROM codex_turn_start_receipts WHERE run_id=?').get(runId) as TurnRow | undefined;
-    if (!turnRow) return Object.freeze({ status: 'turn_not_recorded' as const, ...scope,
+    if (!turnRow) return Object.freeze({ status: 'thread_recorded_turn_unknown' as const, ...scope,
       threadId: thread.threadId, threadReceiptDigest: thread.receiptDigest, turnId: null,
       readIdentity: null, grantsExecutionAuthority: false as const, permitsResume: false as const,
       permitsRetry: false as const, permitsThreadRead: false as const });

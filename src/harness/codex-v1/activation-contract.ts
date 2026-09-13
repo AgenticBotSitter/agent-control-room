@@ -8,6 +8,7 @@ import { codexTaskDispatchBodySchemaV1, codexTaskDispatchReceiptBodySchemaV1,
 export const CODEX_ACTIVATION_FEATURE = 'harness.codex.activation.v1' as const;
 
 const instant = z.string().datetime();
+const boundedText = (bytes: number) => z.string().refine(value => Buffer.byteLength(value, 'utf8') <= bytes);
 const activationMaterialSchemaV1 = z.object({
   schema: z.literal('control-room.codex-task-activation/v1'),
   tenantId: localId, projectId: localId, nodeId: localId, jobId: localId,
@@ -18,6 +19,7 @@ const activationMaterialSchemaV1 = z.object({
   permitDigest: digestSchema, inputDigest: digestSchema, operationDigest: digestSchema,
   effectClaimKey: digestSchema, enrollmentDigest: digestSchema, connectorProfileDigest: digestSchema,
   workspaceIntentDigest: digestSchema, currentAdmissionDigest: digestSchema,
+  workspacePath: boundedText(4096).min(1), prompt: boundedText(32_768).min(1), instructions: boundedText(8192),
   receiptRecordedAt: instant, receiptReceivedAt: instant, activatedAt: instant, activationExpiresAt: instant,
   startsWork: z.literal(false), authorizesExactStart: z.literal(true), grantsExecutionAuthority: z.literal(false),
   permitsRetry: z.literal(false), permitsResume: z.literal(false), permitsThreadRead: z.literal(false),
@@ -35,7 +37,9 @@ export const codexTaskActivationBodySchemaV1 = activationMaterialSchemaV1.extend
   if (Date.parse(value.activationExpiresAt) <= Date.parse(value.activatedAt)
     || Date.parse(value.receiptReceivedAt) < Date.parse(value.receiptRecordedAt)
     || Date.parse(value.activatedAt) < Date.parse(value.receiptReceivedAt)
-    || Buffer.byteLength(JSON.stringify(value), 'utf8') > 16_384) {
+    || value.inputDigest !== sha256Digest({ prompt: value.prompt, instructions: value.instructions })
+    || (!value.workspacePath.startsWith('/') && !/^[A-Za-z]:[\\/]/.test(value.workspacePath))
+    || Buffer.byteLength(JSON.stringify(value), 'utf8') > 65_536) {
     context.addIssue({ code: 'custom', message: 'codex activation timing or size mismatch' });
   }
 });
@@ -96,6 +100,8 @@ function matchActivationSources(value: CodexTaskActivationBodyV1, expected: {
     || value.effectClaimKey !== start.effectClaimKey || value.enrollmentDigest !== start.enrollmentDigest
     || value.connectorProfileDigest !== start.connectorProfileDigest
     || value.workspaceIntentDigest !== start.workspaceIntentDigest
+    || value.workspacePath !== (body.request.target.kind === 'filesystem' ? body.request.target.canonicalPath : '')
+    || value.prompt !== start.prompt || value.instructions !== start.instructions
     || value.currentAdmissionDigest !== digestSchema.parse(expected.currentAdmissionDigest)
     || value.receiptRecordedAt !== receiptBody.recordedAt || value.receiptReceivedAt !== expected.receiptReceivedAt) return fail();
   return { dispatch, receipt, body, receiptBody };
@@ -122,6 +128,8 @@ export function buildCodexTaskActivationV1(input: {
     permitDigest: dispatch.body.permitDigest, inputDigest: start.inputDigest, operationDigest: start.operationDigest,
     effectClaimKey: start.effectClaimKey, enrollmentDigest: start.enrollmentDigest,
     connectorProfileDigest: start.connectorProfileDigest, workspaceIntentDigest: start.workspaceIntentDigest,
+    workspacePath: dispatch.body.request.target.kind === 'filesystem' ? dispatch.body.request.target.canonicalPath : '',
+    prompt: start.prompt, instructions: start.instructions,
     currentAdmissionDigest: input.currentAdmissionDigest, receiptRecordedAt: receipt.body.recordedAt,
     receiptReceivedAt: input.receiptReceivedAt, activatedAt: input.activatedAt,
     activationExpiresAt: input.activationExpiresAt, startsWork: false, authorizesExactStart: true,
