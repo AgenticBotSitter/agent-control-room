@@ -26,6 +26,15 @@ const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 
 const VENDOR_ROOTS = ['src/vendor'];
 const THIRD_PARTY_ROOT = 'third_party';
+const REVIEW_PATH = 'research/runtime-license-retained-provenance.json';
+const BASELINE_PATH = 'research/runtime-license-artifact-inventory.json';
+
+function lockIntegrity(lockText, name, version) {
+  const escaped = `${name}@${version}`.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = lockText.match(new RegExp(`^  ['"]?${escaped}['"]?:\\n(?:.*\\n){0,8}?    resolution: \\{integrity: ([^}]+)\\}`, 'm'));
+  if (!match) throw new Error(`retained_provenance_lock_integrity_missing:${name}@${version}`);
+  return match[1].trim();
+}
 
 /** Walk a directory and return its non-empty regular files (skipping symlinks). */
 function walkRegularFiles(rootAbsolute) {
@@ -62,7 +71,19 @@ function readProvenance(absDir) {
  *  the pinned sha256 + bytes. Returns the verified evidence file list.
  *  Never invents missing evidence — files that fail the check are reported
  *  as `mismatch` and excluded from `evidenceFiles`. */
-function evidenceFilesFromProvenance(absDir, walked) {
+function evidenceFilesFromProvenance(absDir, walked, reviewed, baselineFiles) {
+  if (reviewed) {
+    const pins = baselineFiles ?? [];
+    const mismatches = [];
+    const files = [];
+    for (const pinned of pins) {
+      const onDisk = walked.find(w => w.relativePath === pinned.file);
+      if (!onDisk || hash(fs.readFileSync(onDisk.absolutePath)) !== pinned.sha256 || onDisk.bytes !== pinned.bytes) {
+        mismatches.push({ path: pinned.file, reason: 'reviewed_retained_file_mismatch', pinnedSha256: pinned.sha256 });
+      } else files.push({ file: pinned.file, bytes: onDisk.bytes, sha256: pinned.sha256 });
+    }
+    return { files, mismatches, provenance: reviewed };
+  }
   const prov = readProvenance(absDir);
   if (!prov || !Array.isArray(prov.files)) return { files: [], mismatches: [], provenance: prov };
   const mismatches = [];
@@ -85,16 +106,21 @@ function evidenceFilesFromProvenance(absDir, walked) {
   return { files: matched, mismatches, provenance: prov };
 }
 
-function buildThirdPartyRow(repository, name, absDir) {
+function buildThirdPartyRow(repository, name, absDir, reviews, baseline) {
   const relDir = normalizeRelative(repository, absDir);
   const walked = walkRegularFiles(absDir);
-  const evidence = evidenceFilesFromProvenance(absDir, walked);
+  const review = reviews[relDir] ?? null;
+  const old = baseline.get(relDir) ?? [];
+  const evidence = evidenceFilesFromProvenance(absDir, walked, review, old);
   let provenanceRow;
   if (evidence.provenance) {
     provenanceRow = {
-      source: evidence.provenance.source ?? null,
+      source: evidence.provenance.packageName ? `npm:${evidence.provenance.packageName}@${evidence.provenance.packageVersion}` : evidence.provenance.source ?? null,
       sourceCommit: evidence.provenance.sourceCommit ?? null,
-      installedVersion: evidence.provenance.installedVersion ?? null,
+      distributionIntegrity: evidence.provenance.distributionIntegrity ?? null,
+      reviewedExclusion: evidence.provenance.reviewedExclusion ?? null,
+      reviewedExclusions: evidence.provenance.reviewedExclusions ?? [],
+      installedVersion: evidence.provenance.packageVersion ?? evidence.provenance.installedVersion ?? null,
       sourceManifestVersion: evidence.provenance.sourceManifestVersion ?? null,
       qualification: evidence.provenance.qualification ?? null,
     };
@@ -128,15 +154,20 @@ function buildThirdPartyRow(repository, name, absDir) {
   };
 }
 
-function buildVendorRow(repository, vendorRoot, name, absDir) {
+function buildVendorRow(repository, vendorRoot, name, absDir, reviews, baseline) {
   const relDir = normalizeRelative(repository, absDir);
   const walked = walkRegularFiles(absDir);
-  const evidence = evidenceFilesFromProvenance(absDir, walked);
+  const review = reviews[relDir] ?? null;
+  const old = baseline.get(relDir) ?? [];
+  const evidence = evidenceFilesFromProvenance(absDir, walked, review, old);
   let provenanceRow;
   if (evidence.provenance) {
     provenanceRow = {
       source: evidence.provenance.source ?? null,
       sourceCommit: evidence.provenance.sourceCommit ?? null,
+      distributionIntegrity: evidence.provenance.distributionIntegrity ?? null,
+      reviewedExclusion: evidence.provenance.reviewedExclusion ?? null,
+      reviewedExclusions: evidence.provenance.reviewedExclusions ?? [],
       installedVersion: evidence.provenance.installedVersion ?? null,
       sourceManifestVersion: evidence.provenance.sourceManifestVersion ?? null,
       qualification: evidence.provenance.qualification ?? null,
@@ -164,14 +195,30 @@ function buildVendorRow(repository, vendorRoot, name, absDir) {
 /** Walk all bundled roots and return rows sorted deterministically.
  *  Refuses any `repository` path that does not resolve inside a real repo. */
 export function collectBundledRows(repository = process.cwd()) {
-  assertInsideRepository(repository, THIRD_PARTY_ROOT, ...VENDOR_ROOTS);
+  assertInsideRepository(repository, THIRD_PARTY_ROOT, ...VENDOR_ROOTS, REVIEW_PATH, BASELINE_PATH);
+  const reviewPath = path.join(repository, REVIEW_PATH);
+  const reviews = fs.existsSync(reviewPath)
+    ? (JSON.parse(fs.readFileSync(reviewPath, 'utf8')).roots ?? {}) : {};
+  if (Object.keys(reviews).length) {
+    const lockText = fs.readFileSync(path.join(repository, 'pnpm-lock.yaml'), 'utf8');
+    for (const review of Object.values(reviews)) {
+      if (review.packageName && review.packageVersion) {
+        review.distributionIntegrity = lockIntegrity(lockText, review.packageName, review.packageVersion);
+      }
+    }
+  }
+  const baselinePath = path.join(repository, BASELINE_PATH);
+  const baselineJson = fs.existsSync(baselinePath)
+    ? JSON.parse(fs.readFileSync(baselinePath, 'utf8')) : {};
+  const baseline = new Map((baselineJson.bundled?.rows ?? []).map(row => [row.root,
+    (row.discoveredFiles ?? []).filter(f => !f.file.startsWith('PROVENANCE')).map(f => ({ file: f.file, bytes: f.bytes, sha256: f.sha256 }))]));
   const rows = [];
   const thirdPartyAbs = path.join(repository, THIRD_PARTY_ROOT);
   if (fs.existsSync(thirdPartyAbs) && fs.lstatSync(thirdPartyAbs).isDirectory()) {
     for (const entry of fs.readdirSync(thirdPartyAbs).sort()) {
       const childAbs = path.join(thirdPartyAbs, entry);
       if (!fs.lstatSync(childAbs).isDirectory()) continue;
-      rows.push(buildThirdPartyRow(repository, entry, childAbs));
+      rows.push(buildThirdPartyRow(repository, entry, childAbs, reviews, baseline));
     }
   }
   for (const vendorRoot of VENDOR_ROOTS) {
@@ -180,7 +227,7 @@ export function collectBundledRows(repository = process.cwd()) {
     for (const entry of fs.readdirSync(vendorAbs).sort()) {
       const childAbs = path.join(vendorAbs, entry);
       if (!fs.lstatSync(childAbs).isDirectory()) continue;
-      rows.push(buildVendorRow(repository, vendorRoot, entry, childAbs));
+      rows.push(buildVendorRow(repository, vendorRoot, entry, childAbs, reviews, baseline));
     }
   }
   return rows.sort((a, b) => {

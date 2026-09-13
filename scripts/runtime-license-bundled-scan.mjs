@@ -84,8 +84,10 @@ export function scanBundledUndisclosed(repository = process.cwd()) {
       // Find the inventory row for this package (any root under this vendorRoot).
       const inventoryRow = inventory.bundled.rows.find(r => r.package === entry && r.root.startsWith(vendorRoot));
       const evidenceFiles = inventoryRow?.evidenceFiles ?? [];
+      const reviewedExclusions = new Set(inventoryRow?.provenance?.reviewedExclusions ?? []);
       const observationsForEntry = walkRegularFiles(childAbs)
-        .filter(({ relativePath }) => relativePath !== 'PROVENANCE.json' && !relativePath.endsWith('/PROVENANCE.json'))
+        .filter(({ relativePath }) => !/^PROVENANCE\.(?:json|md)$/i.test(relativePath)
+          && !/\/PROVENANCE\.(?:json|md)$/i.test(relativePath))
         .map(({ absolutePath, bytes, relativePath: pathUnderRoot }) => {
         const sha = hash(fs.readFileSync(absolutePath));
         // Repo-relative path for the observation record. Windows-safe.
@@ -95,7 +97,10 @@ export function scanBundledUndisclosed(repository = process.cwd()) {
         // artifact without PROVENANCE-pinned evidence.
         let status = 'bundled_undisclosed', evidenceRow = null;
         const evidenceMatch = evidenceFiles.find(f => f.file === pathUnderRoot && f.sha256 === sha);
-        if (evidenceMatch) {
+        if (reviewedExclusions.has(pathUnderRoot)) {
+          status = 'bundled_reviewed_exclusion';
+          evidenceRow = { root: inventoryRow.root, reason: 'documented_local_adaptation', sha256: sha, bytes };
+        } else if (evidenceMatch) {
           status = 'bundled_evidence_match';
           evidenceRow = { root: inventoryRow.root, sha256: evidenceMatch.sha256, bytes: evidenceMatch.bytes };
         }
@@ -121,12 +126,14 @@ export function scanBundledUndisclosed(repository = process.cwd()) {
 
   const undisclosed = observations.filter(o => o.status === 'bundled_undisclosed');
   const matched = observations.filter(o => o.status === 'bundled_evidence_match');
+  const reviewedExclusions = observations.filter(o => o.status === 'bundled_reviewed_exclusion');
 
   return {
     schema: 'control-room.runtime-license-bundled-scan/v1',
     inventoryDigest: inventory.inventoryDigest,
-    summary: { observed: observations.length, matched: matched.length, undisclosed: undisclosed.length },
+    summary: { observed: observations.length, matched: matched.length, reviewedExclusions: reviewedExclusions.length, undisclosed: undisclosed.length },
     observations,
+    reviewedExclusions,
     undisclosed,
     scope: 'artifact-derived vendor roots only; bundled-undisclosed rows require separate evidence',
   };

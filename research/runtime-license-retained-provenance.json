@@ -1,0 +1,27 @@
+{
+  "schema": "control-room.runtime-license-retained-provenance/v1",
+  "roots": {
+    "third_party/cron-parser": {"packageName":"cron-parser","packageVersion":"5.10.0","sourceCommit":null,"qualification":"pinned_npm_release_integrity"},
+    "third_party/cyclonedx-library": {"packageName":"@cyclonedx/cyclonedx-library","packageVersion":"10.2.0","sourceCommit":null,"qualification":"pinned_npm_release_integrity"},
+    "third_party/fast-xml-parser": {"packageName":"fast-xml-parser","packageVersion":"5.11.0","sourceCommit":null,"qualification":"pinned_npm_release_integrity"},
+    "third_party/jsdom": {"packageName":"jsdom","packageVersion":"26.1.0","sourceCommit":null,"qualification":"pinned_npm_release_integrity"},
+    "third_party/jsonwebtoken": {"packageName":"jsonwebtoken","packageVersion":"9.0.3","sourceCommit":null,"qualification":"pinned_npm_release_integrity"},
+    "third_party/luxon": {"packageName":"luxon","packageVersion":"3.7.2","sourceCommit":null,"qualification":"pinned_npm_release_integrity"},
+    "third_party/nodable-entities": {"packageName":"@nodable/entities","packageVersion":"3.0.0","sourceCommit":null,"qualification":"pinned_npm_release_integrity; replaces stale 2.2.0 source-version pin; mismatch history retained in prior PROVENANCE.json"},
+    "third_party/pg": {"packageName":"pg","packageVersion":"8.23.0","sourceCommit":null,"qualification":"pinned_npm_release_integrity"},
+    "third_party/pg-boss": {"packageName":"pg-boss","packageVersion":"12.30.0","sourceCommit":null,"qualification":"pinned_npm_release_integrity"},
+    "third_party/pg-types": {"packageName":"pg-types","packageVersion":"2.2.0","sourceCommit":null,"qualification":"pinned_npm_release_integrity"},
+    "third_party/pgpass": {"packageName":"pgpass","packageVersion":"1.0.5","sourceCommit":null,"qualification":"pinned_npm_release_integrity"},
+    "third_party/react": {"packageName":"react","packageVersion":"19.2.6","sourceCommit":null,"qualification":"pinned_npm_release_integrity"},
+    "third_party/react-dom": {"packageName":"react-dom","packageVersion":"19.2.6","sourceCommit":null,"qualification":"pinned_npm_release_integrity"},
+    "third_party/react-markdown": {"packageName":"react-markdown","packageVersion":"10.1.0","sourceCommit":null,"qualification":"pinned_npm_release_integrity"},
+    "third_party/readability": {"packageName":"@mozilla/readability","packageVersion":"0.6.0","sourceCommit":null,"qualification":"pinned_npm_release_integrity"},
+    "third_party/remark-gfm": {"packageName":"remark-gfm","packageVersion":"4.0.1","sourceCommit":null,"qualification":"pinned_npm_release_integrity"},
+    "third_party/rss-parser": {"packageName":"rss-parser","packageVersion":"3.13.0","sourceCommit":null,"qualification":"pinned_npm_release_integrity"},
+    "third_party/saxes": {"packageName":"saxes","packageVersion":"6.0.0","sourceCommit":"211fa0ebec9b628affc09219199639887174bfc3","qualification":"pinned_upstream_release"},
+    "third_party/zod": {"packageName":"zod","packageVersion":"4.1.12","sourceCommit":null,"qualification":"pinned_npm_release_integrity"},
+    "third_party/postgres": {"reviewedExclusion":"retained historical public-domain notice only; no package bytes are assembled"},
+    "third_party/control-center": {"sourceCommit":"d13e79e866cc33a1fddfe84f563ce2fb9a2113e0","qualification":"pinned_upstream_notice"},
+    "src/vendor/control-center": {"sourceCommit":"d13e79e866cc33a1fddfe84f563ce2fb9a2113e0","qualification":"pinned_upstream_with_reviewed_local_adaptations","reviewedExclusions":["freshness.ts","industry.ts","pinned-fetch.ts","safe-fetch.ts","sitemap.ts","source-reader.ts"]}
+  }
+}

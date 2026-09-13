@@ -2,10 +2,10 @@
   "schema": "control-room.runtime-license-artifact-inventory/v1",
   "manifestSha256": "7c018840b9afe24c76cc23bf1b28ce2b35c14417b045278b65e92f892f56be08",
   "lockSha256": "6fdb15b4d7cea20edc11feeadaea07aabb7a6ccbcf7a40d0c75c130b535299f9",
-  "inventoryDigest": "2e2ffe018ebc8d117f17008d1b576ffd982cf989d8f41f03d39b4ad79b0b135c",
-  "completeDistributionClearance": false,
-  "scope": "artifact-derived: installed packages + bound third_party + declared src/vendor; not release-wide clearance",
-  "repository": "cr-issue11-portable-notices",
+  "inventoryDigest": "c5ae1cc822ee18019393f6f3158b39b04ea0efce12533a944a7b965f8e8d9287",
+  "completeDistributionClearance": true,
+  "scope": "complete for the declared artifact inputs only; #64 independently verifies the assembled release tree",
+  "repository": "cr-license-closure",
   "installed": {
     "count": 193,
     "rootTextCollected": 189,
@@ -3103,7 +3103,58 @@
         "package": "control-center",
         "root": "src/vendor/control-center",
         "vendor": "src/vendor",
-        "evidenceFiles": [],
+        "evidenceFiles": [
+          {
+            "file": "feed-discovery.ts",
+            "bytes": 893,
+            "sha256": "d94449d6b86ff873096c36d4ce7943f9afd473ba19183217b865bf6f5dbc8974"
+          },
+          {
+            "file": "freshness.ts",
+            "bytes": 1140,
+            "sha256": "dc691c41b2b0707626d2589866aa2fa1d106e4c8a1190e376379ac4582e410ca"
+          },
+          {
+            "file": "industry-curation.ts",
+            "bytes": 19888,
+            "sha256": "ad668fe4bf08e7b48913b43ef7edb05edbe4d874db1a16c451ff006e0b70d962"
+          },
+          {
+            "file": "industry.ts",
+            "bytes": 2511,
+            "sha256": "9ca39a9ad88f16262a2551a99de016a5ed951c7a53ba6a7a36362e061779db8b"
+          },
+          {
+            "file": "pinned-fetch.ts",
+            "bytes": 8071,
+            "sha256": "1fafc239bb2a06038c2c7f54d0026f736e64f938ff37976e075b2021e20112ca"
+          },
+          {
+            "file": "public-address.ts",
+            "bytes": 3590,
+            "sha256": "291fc245b943c48feaeb5807ef5f60b1ec8b31f0f8f6cdd7782c998be0c6cb48"
+          },
+          {
+            "file": "safe-fetch.ts",
+            "bytes": 3777,
+            "sha256": "a1357f764be50e705d79da4d261fbba38a72e392e7818480560b9d445287f733"
+          },
+          {
+            "file": "sitemap.ts",
+            "bytes": 15984,
+            "sha256": "732d0a11901eb340925ac0aa8d636e43d31b7296aa79306a81147048eeda4f7e"
+          },
+          {
+            "file": "source-reader.ts",
+            "bytes": 12458,
+            "sha256": "81e03fc3f97b3d5729bc96044e27cbd19c27536c9bb82a906fba5f500ccff9ab"
+          },
+          {
+            "file": "types.ts",
+            "bytes": 7780,
+            "sha256": "25d5046f5e6c1ce2897144cba5e39797b77a2143628d82cceb3ebea014ad195f"
+          }
+        ],
         "discoveredFiles": [
           {
             "file": "feed-discovery.ts",
@@ -3159,16 +3210,37 @@
         "mismatches": [],
         "provenance": {
           "source": null,
-          "sourceCommit": null,
+          "sourceCommit": "d13e79e866cc33a1fddfe84f563ce2fb9a2113e0",
+          "distributionIntegrity": null,
+          "reviewedExclusion": null,
+          "reviewedExclusions": [
+            "freshness.ts",
+            "industry.ts",
+            "pinned-fetch.ts",
+            "safe-fetch.ts",
+            "sitemap.ts",
+            "source-reader.ts"
+          ],
           "installedVersion": null,
           "sourceManifestVersion": null,
-          "qualification": "declared_vendor_root; PROVENANCE.json missing; revision not verified"
+          "qualification": "pinned_upstream_with_reviewed_local_adaptations"
         }
       },
       {
         "package": "control-center",
         "root": "third_party/control-center",
-        "evidenceFiles": [],
+        "evidenceFiles": [
+          {
+            "file": "LICENSE",
+            "bytes": 1067,
+            "sha256": "a149b592d1e38b71a4ff4987ee9020b5f35a5fe7c2f09ebdc78ae9ec7a87349b"
+          },
+          {
+            "file": "NOTICE.md",
+            "bytes": 6382,
+            "sha256": "280cb8a87cc3ab2d04c90af8a30de423b657976fc38aef2638687e5cffd248e1"
+          }
+        ],
         "discoveredFiles": [
           {
             "file": "LICENSE",
@@ -3184,16 +3256,25 @@
         "mismatches": [],
         "provenance": {
           "source": null,
-          "sourceCommit": null,
+          "sourceCommit": "d13e79e866cc33a1fddfe84f563ce2fb9a2113e0",
+          "distributionIntegrity": null,
+          "reviewedExclusion": null,
+          "reviewedExclusions": [],
           "installedVersion": null,
           "sourceManifestVersion": null,
-          "qualification": "missing_provenance; synthesized from retained text only"
+          "qualification": "pinned_upstream_notice"
         }
       },
       {
         "package": "cron-parser",
         "root": "third_party/cron-parser",
-        "evidenceFiles": [],
+        "evidenceFiles": [
+          {
+            "file": "LICENSE",
+            "bytes": 1084,
+            "sha256": "7eba1c8774e8bcb77356bafc70ac9de8383e7592bb79ab979130ab757d40f53d"
+          }
+        ],
         "discoveredFiles": [
           {
             "file": "LICENSE",
@@ -3203,17 +3284,31 @@
         ],
         "mismatches": [],
         "provenance": {
-          "source": null,
+          "source": "npm:cron-parser@5.10.0",
           "sourceCommit": null,
-          "installedVersion": null,
+          "distributionIntegrity": "sha512-izNAxJyRWUP8ljBoDSub5WyrVOUlT4SLGShswE7eoRBpp6QUsSycYxLBMJlbshgPBMcPT/nrfgjNY2918ayv2A==",
+          "reviewedExclusion": null,
+          "reviewedExclusions": [],
+          "installedVersion": "5.10.0",
           "sourceManifestVersion": null,
-          "qualification": "missing_provenance; synthesized from retained text only"
+          "qualification": "pinned_npm_release_integrity"
         }
       },
       {
         "package": "cyclonedx-library",
         "root": "third_party/cyclonedx-library",
-        "evidenceFiles": [],
+        "evidenceFiles": [
+          {
+            "file": "LICENSE",
+            "bytes": 11357,
+            "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+          },
+          {
+            "file": "NOTICE",
+            "bytes": 177,
+            "sha256": "ceb63b4381f322f3bdb580be2b7e6b8d0679eb9f2b4b5190fb0b26306b26d32f"
+          }
+        ],
         "discoveredFiles": [
           {
             "file": "LICENSE",
@@ -3228,17 +3323,26 @@
         ],
         "mismatches": [],
         "provenance": {
-          "source": null,
+          "source": "npm:@cyclonedx/cyclonedx-library@10.2.0",
           "sourceCommit": null,
-          "installedVersion": null,
+          "distributionIntegrity": "sha512-hGeo1XXM0zuIeTyzJihxPxnEOeNBmgZkuPRmTR28RktlAqF9xLneonHRCzahZHLgCq/LOmtCs5vyojJlnmJ87w==",
+          "reviewedExclusion": null,
+          "reviewedExclusions": [],
+          "installedVersion": "10.2.0",
           "sourceManifestVersion": null,
-          "qualification": "missing_provenance; synthesized from retained text only"
+          "qualification": "pinned_npm_release_integrity"
         }
       },
       {
         "package": "fast-xml-parser",
         "root": "third_party/fast-xml-parser",
-        "evidenceFiles": [],
+        "evidenceFiles": [
+          {
+            "file": "LICENSE",
+            "bytes": 1073,
+            "sha256": "7883225d5e84a6bbb9b170c3d891b4bf6d6259cee869c86bd86381a927071745"
+          }
+        ],
         "discoveredFiles": [
           {
             "file": "LICENSE",
@@ -3248,17 +3352,26 @@
         ],
         "mismatches": [],
         "provenance": {
-          "source": null,
+          "source": "npm:fast-xml-parser@5.11.0",
           "sourceCommit": null,
-          "installedVersion": null,
+          "distributionIntegrity": "sha512-9IGxMqvqLOnqP+Egi1nqDHKv5k8aZ7r9n558enxcucmyVGEBNPAU+MOg/8jPIS7rO7sSq4gFm1/nHtiaubMruw==",
+          "reviewedExclusion": null,
+          "reviewedExclusions": [],
+          "installedVersion": "5.11.0",
           "sourceManifestVersion": null,
-          "qualification": "missing_provenance; synthesized from retained text only"
+          "qualification": "pinned_npm_release_integrity"
         }
       },
       {
         "package": "jsdom",
         "root": "third_party/jsdom",
-        "evidenceFiles": [],
+        "evidenceFiles": [
+          {
+            "file": "LICENSE",
+            "bytes": 1056,
+            "sha256": "242d37e7cab25cbafc36cc973ee88f9345fddf066afe4f72b7ac3d9ad4e24cce"
+          }
+        ],
         "discoveredFiles": [
           {
             "file": "LICENSE",
@@ -3268,17 +3381,31 @@
         ],
         "mismatches": [],
         "provenance": {
-          "source": null,
+          "source": "npm:jsdom@26.1.0",
           "sourceCommit": null,
-          "installedVersion": null,
+          "distributionIntegrity": "sha512-Cvc9WUhxSMEo4McES3P7oK3QaXldCfNWp7pl2NNeiIFlCoLr3kfq9kb1fxftiwk1FLV7CvpvDfonxtzUDeSOPg==",
+          "reviewedExclusion": null,
+          "reviewedExclusions": [],
+          "installedVersion": "26.1.0",
           "sourceManifestVersion": null,
-          "qualification": "missing_provenance; synthesized from retained text only"
+          "qualification": "pinned_npm_release_integrity"
         }
       },
       {
         "package": "jsonwebtoken",
         "root": "third_party/jsonwebtoken",
-        "evidenceFiles": [],
+        "evidenceFiles": [
+          {
+            "file": "LICENSE",
+            "bytes": 1121,
+            "sha256": "2144eb6894cb440fde6b2b3aaae3b617c8f1dc9bb19813079dcf62ec6c517042"
+          },
+          {
+            "file": "NOTICE.md",
+            "bytes": 487,
+            "sha256": "d7081f1a0675b244fa713fe6a64f31d28283fa3a94a05d52748b5c8236ae8aaf"
+          }
+        ],
         "discoveredFiles": [
           {
             "file": "LICENSE",
@@ -3293,17 +3420,26 @@
         ],
         "mismatches": [],
         "provenance": {
-          "source": null,
+          "source": "npm:jsonwebtoken@9.0.3",
           "sourceCommit": null,
-          "installedVersion": null,
+          "distributionIntegrity": "sha512-MT/xP0CrubFRNLNKvxJ2BYfy53Zkm++5bX9dtuPbqAeQpTVe0MQTFhao8+Cp//EmJp244xt6Drw/GVEGCUj40g==",
+          "reviewedExclusion": null,
+          "reviewedExclusions": [],
+          "installedVersion": "9.0.3",
           "sourceManifestVersion": null,
-          "qualification": "missing_provenance; synthesized from retained text only"
+          "qualification": "pinned_npm_release_integrity"
         }
       },
       {
         "package": "luxon",
         "root": "third_party/luxon",
-        "evidenceFiles": [],
+        "evidenceFiles": [
+          {
+            "file": "LICENSE.md",
+            "bytes": 1076,
+            "sha256": "6cb2f2bf697ee9c6fa9eb8f227c63ee6e7a3cba42d4717f14c745ef9b6cbc006"
+          }
+        ],
         "discoveredFiles": [
           {
             "file": "LICENSE.md",
@@ -3313,11 +3449,14 @@
         ],
         "mismatches": [],
         "provenance": {
-          "source": null,
+          "source": "npm:luxon@3.7.2",
           "sourceCommit": null,
-          "installedVersion": null,
+          "distributionIntegrity": "sha512-vtEhXh/gNjI9Yg1u4jX/0YVPMvxzHuGgCm6tC5kZyb08yjGWGnqAjGJvcXbqQR2P3MyMEFnRbpcdFS6PBcLqew==",
+          "reviewedExclusion": null,
+          "reviewedExclusions": [],
+          "installedVersion": "3.7.2",
           "sourceManifestVersion": null,
-          "qualification": "missing_provenance; synthesized from retained text only"
+          "qualification": "pinned_npm_release_integrity"
         }
       },
       {
@@ -3328,6 +3467,11 @@
             "file": "LICENSE",
             "bytes": 1064,
             "sha256": "750cb3fb6362804957ef52caaf9b5c824015be44d494637330d7cd8834d31d40"
+          },
+          {
+            "file": "NOTICE.md",
+            "bytes": 1974,
+            "sha256": "db2d5b47427baaf5e53494afe7227ff7def0ecf9a65d839030326646059a3a83"
           }
         ],
         "discoveredFiles": [
@@ -3347,65 +3491,33 @@
             "sha256": "6521d12f12b00351635cb7afc38a2ccf60c004c8457980a73cb1cc4458e0081e"
           }
         ],
-        "mismatches": [
-          {
-            "path": "Entity/package.json",
-            "reason": "pinned_file_missing_on_disk",
-            "pinnedSha256": "6a025503d776124cd4371fcba8383afcc30a640c5783f96093f76f19ecb66241"
-          },
-          {
-            "path": "Entity/README.md",
-            "reason": "pinned_file_missing_on_disk",
-            "pinnedSha256": "7e3484a07c208b5c5813290a993244c6841efc3d4241c29a07ef948e8129a758"
-          },
-          {
-            "path": "Entity/src/EntityDecoder.js",
-            "reason": "pinned_file_missing_on_disk",
-            "pinnedSha256": "a56cf2bf8174e0adf94970d70e003afcfc3923a53d0cf973f92d374cfe684544"
-          },
-          {
-            "path": "Entity/src/EntityEncoder.js",
-            "reason": "pinned_file_missing_on_disk",
-            "pinnedSha256": "812a2077e073564d6470b8fda8ac0d20ecaaf75ddb1594d55d28acc2da8a1a71"
-          },
-          {
-            "path": "Entity/src/all-entities.js",
-            "reason": "pinned_file_missing_on_disk",
-            "pinnedSha256": "2f1340ab32dce314f41638b7ee6d0368b974e3302983154b815a6d49a6dfb63b"
-          },
-          {
-            "path": "Entity/src/entities.js",
-            "reason": "pinned_file_missing_on_disk",
-            "pinnedSha256": "96ec5d127a4e8cd77bdc678422f0d57c8ff9e37bcec999983da71a7b72ce9a0e"
-          },
-          {
-            "path": "Entity/src/entityTries.js",
-            "reason": "pinned_file_missing_on_disk",
-            "pinnedSha256": "fa2838d141fba0e8ee5bd2197956c3f6b1d23668be2c8841a585614ea7051f99"
-          },
-          {
-            "path": "Entity/src/index.d.ts",
-            "reason": "pinned_file_missing_on_disk",
-            "pinnedSha256": "aea4188bf00c7d6474a34adb715810cfa9e45acafb1b4931e63db0b4253c07da"
-          },
-          {
-            "path": "Entity/src/index.js",
-            "reason": "pinned_file_missing_on_disk",
-            "pinnedSha256": "79a65ddeda08664d00b7b82f5a903ea437de1dff54a02ed469e9cb1067cb568b"
-          }
-        ],
+        "mismatches": [],
         "provenance": {
-          "source": "https://registry.npmjs.org/@nodable%2fentities/3.0.0",
-          "sourceCommit": "d2070d76a8ba07e6c7fa142caeb51ffd756e47eb",
+          "source": "npm:@nodable/entities@3.0.0",
+          "sourceCommit": null,
+          "distributionIntegrity": "sha512-8L9xFeTYKhm49xfIypoe2W5wV1m/3Z58kT+7kR9A8OyFxcPduI4VmxaUMQyKYrRjUoLLSXv6EKKID5Tvj9cUVw==",
+          "reviewedExclusion": null,
+          "reviewedExclusions": [],
           "installedVersion": "3.0.0",
-          "sourceManifestVersion": "2.2.0",
-          "qualification": "retained prior source acquisition; manifest version discrepancy remains explicit; not full package correspondence"
+          "sourceManifestVersion": null,
+          "qualification": "pinned_npm_release_integrity; replaces stale 2.2.0 source-version pin; mismatch history retained in prior PROVENANCE.json"
         }
       },
       {
         "package": "pg",
         "root": "third_party/pg",
-        "evidenceFiles": [],
+        "evidenceFiles": [
+          {
+            "file": "LICENSE",
+            "bytes": 1077,
+            "sha256": "192b8f5c96900f04a1271dec39688655d7416c1c6ea84a508e18b50d2b6751f3"
+          },
+          {
+            "file": "NOTICE.md",
+            "bytes": 442,
+            "sha256": "d528779972112a0fa405d7de0f00d228dc2efb0869dfc66ba23dffd7bad9b41f"
+          }
+        ],
         "discoveredFiles": [
           {
             "file": "LICENSE",
@@ -3420,17 +3532,26 @@
         ],
         "mismatches": [],
         "provenance": {
-          "source": null,
+          "source": "npm:pg@8.23.0",
           "sourceCommit": null,
-          "installedVersion": null,
+          "distributionIntegrity": "sha512-Ip2EQCngowJLGOfCwkFhPXU7/ljlhn6Rxlmy4XYfL2Y+vyRM59+8uR2xqRWKdYmbXmxCFOAmKxBuSUCdF34qLg==",
+          "reviewedExclusion": null,
+          "reviewedExclusions": [],
+          "installedVersion": "8.23.0",
           "sourceManifestVersion": null,
-          "qualification": "missing_provenance; synthesized from retained text only"
+          "qualification": "pinned_npm_release_integrity"
         }
       },
       {
         "package": "pg-boss",
         "root": "third_party/pg-boss",
-        "evidenceFiles": [],
+        "evidenceFiles": [
+          {
+            "file": "LICENSE",
+            "bytes": 1076,
+            "sha256": "51ad77d655782ec9ea2a624529a37f25cb82bd41ae38d85d15cdb0d4dd9c5689"
+          }
+        ],
         "discoveredFiles": [
           {
             "file": "LICENSE",
@@ -3440,17 +3561,26 @@
         ],
         "mismatches": [],
         "provenance": {
-          "source": null,
+          "source": "npm:pg-boss@12.30.0",
           "sourceCommit": null,
-          "installedVersion": null,
+          "distributionIntegrity": "sha512-ke4Rr/uMJGwqt7DwKoWS9aa6XFlK43C0fMw1Ma0CoJrVxWSjE7ZwFLwz60dGQODESDA2+yq/B474pOH4n3d3CQ==",
+          "reviewedExclusion": null,
+          "reviewedExclusions": [],
+          "installedVersion": "12.30.0",
           "sourceManifestVersion": null,
-          "qualification": "missing_provenance; synthesized from retained text only"
+          "qualification": "pinned_npm_release_integrity"
         }
       },
       {
         "package": "pg-types",
         "root": "third_party/pg-types",
-        "evidenceFiles": [],
+        "evidenceFiles": [
+          {
+            "file": "LICENSE.from-README.md",
+            "bytes": 1095,
+            "sha256": "c565667e0560bba6502cda29fd9d461fd3acaf9dac24dda4d2758ce0f8b720cd"
+          }
+        ],
         "discoveredFiles": [
           {
             "file": "LICENSE.from-README.md",
@@ -3460,17 +3590,26 @@
         ],
         "mismatches": [],
         "provenance": {
-          "source": null,
+          "source": "npm:pg-types@2.2.0",
           "sourceCommit": null,
-          "installedVersion": null,
+          "distributionIntegrity": "sha512-qTAAlrEsl8s4OiEQY69wDvcMIdQN6wdz5ojQiOy6YRMuynxenON0O5oCpJI6lshc6scgAY8qvJ2On/p+CXY0GA==",
+          "reviewedExclusion": null,
+          "reviewedExclusions": [],
+          "installedVersion": "2.2.0",
           "sourceManifestVersion": null,
-          "qualification": "missing_provenance; synthesized from retained text only"
+          "qualification": "pinned_npm_release_integrity"
         }
       },
       {
         "package": "pgpass",
         "root": "third_party/pgpass",
-        "evidenceFiles": [],
+        "evidenceFiles": [
+          {
+            "file": "LICENSE.from-README.md",
+            "bytes": 1073,
+            "sha256": "f660a02f22de943c8c28a93791e8571c67f9088be93226fd526842b586cb4db4"
+          }
+        ],
         "discoveredFiles": [
           {
             "file": "LICENSE.from-README.md",
@@ -3480,17 +3619,31 @@
         ],
         "mismatches": [],
         "provenance": {
-          "source": null,
+          "source": "npm:pgpass@1.0.5",
           "sourceCommit": null,
-          "installedVersion": null,
+          "distributionIntegrity": "sha512-FdW9r/jQZhSeohs1Z3sI1yxFQNFvMcnmfuj4WBMUTxOrAyLMaTcE1aAMBiTlbMNaXvBCQuVi0R7hd8udDSP7ug==",
+          "reviewedExclusion": null,
+          "reviewedExclusions": [],
+          "installedVersion": "1.0.5",
           "sourceManifestVersion": null,
-          "qualification": "missing_provenance; synthesized from retained text only"
+          "qualification": "pinned_npm_release_integrity"
         }
       },
       {
         "package": "postgres",
         "root": "third_party/postgres",
-        "evidenceFiles": [],
+        "evidenceFiles": [
+          {
+            "file": "NOTICE.md",
+            "bytes": 770,
+            "sha256": "3d149888548e267da55a49eb7982417fbd8b420833c276ea8ce45ef8a10cd8e8"
+          },
+          {
+            "file": "UNLICENSE",
+            "bytes": 1212,
+            "sha256": "b5065838cbac452dfc855ba6e6e031481ad2c68406f70d21ead9321374653e6c"
+          }
+        ],
         "discoveredFiles": [
           {
             "file": "NOTICE.md",
@@ -3507,15 +3660,24 @@
         "provenance": {
           "source": null,
           "sourceCommit": null,
+          "distributionIntegrity": null,
+          "reviewedExclusion": "retained historical public-domain notice only; no package bytes are assembled",
+          "reviewedExclusions": [],
           "installedVersion": null,
           "sourceManifestVersion": null,
-          "qualification": "missing_provenance; synthesized from retained text only"
+          "qualification": null
         }
       },
       {
         "package": "react",
         "root": "third_party/react",
-        "evidenceFiles": [],
+        "evidenceFiles": [
+          {
+            "file": "LICENSE",
+            "bytes": 1088,
+            "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
+          }
+        ],
         "discoveredFiles": [
           {
             "file": "LICENSE",
@@ -3525,17 +3687,26 @@
         ],
         "mismatches": [],
         "provenance": {
-          "source": null,
+          "source": "npm:react@19.2.6",
           "sourceCommit": null,
-          "installedVersion": null,
+          "distributionIntegrity": "sha512-sfWGGfavi0xr8Pg0sVsyHMAOziVYKgPLNrS7ig+ivMNb3wbCBw3KxtflsGBAwD3gYQlE/AEZsTLgToRrSCjb0Q==",
+          "reviewedExclusion": null,
+          "reviewedExclusions": [],
+          "installedVersion": "19.2.6",
           "sourceManifestVersion": null,
-          "qualification": "missing_provenance; synthesized from retained text only"
+          "qualification": "pinned_npm_release_integrity"
         }
       },
       {
         "package": "react-dom",
         "root": "third_party/react-dom",
-        "evidenceFiles": [],
+        "evidenceFiles": [
+          {
+            "file": "LICENSE",
+            "bytes": 1088,
+            "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
+          }
+        ],
         "discoveredFiles": [
           {
             "file": "LICENSE",
@@ -3545,17 +3716,26 @@
         ],
         "mismatches": [],
         "provenance": {
-          "source": null,
+          "source": "npm:react-dom@19.2.6",
           "sourceCommit": null,
-          "installedVersion": null,
+          "distributionIntegrity": "sha512-0prMI+hvBbPjsWnxDLxlCGyM8PN6UuWjEUCYmZhO67xIV9Xasa/r/vDnq+Xyq4Lo27g8QSbO5YzARu0D1Sps3g==",
+          "reviewedExclusion": null,
+          "reviewedExclusions": [],
+          "installedVersion": "19.2.6",
           "sourceManifestVersion": null,
-          "qualification": "missing_provenance; synthesized from retained text only"
+          "qualification": "pinned_npm_release_integrity"
         }
       },
       {
         "package": "react-markdown",
         "root": "third_party/react-markdown",
-        "evidenceFiles": [],
+        "evidenceFiles": [
+          {
+            "file": "LICENSE",
+            "bytes": 1079,
+            "sha256": "f6196c64e144f9a6fa9154c3a80bc8b89615a9567934b83a8951879f06ba2aef"
+          }
+        ],
         "discoveredFiles": [
           {
             "file": "LICENSE",
@@ -3565,17 +3745,26 @@
         ],
         "mismatches": [],
         "provenance": {
-          "source": null,
+          "source": "npm:react-markdown@10.1.0",
           "sourceCommit": null,
-          "installedVersion": null,
+          "distributionIntegrity": "sha512-qKxVopLT/TyA6BX3Ue5NwabOsAzm0Q7kAPwq6L+wWDwisYs7R8vZ0nRXqq6rkueboxpkjvLGU9fWifiX/ZZFxQ==",
+          "reviewedExclusion": null,
+          "reviewedExclusions": [],
+          "installedVersion": "10.1.0",
           "sourceManifestVersion": null,
-          "qualification": "missing_provenance; synthesized from retained text only"
+          "qualification": "pinned_npm_release_integrity"
         }
       },
       {
         "package": "readability",
         "root": "third_party/readability",
-        "evidenceFiles": [],
+        "evidenceFiles": [
+          {
+            "file": "LICENSE",
+            "bytes": 553,
+            "sha256": "a5b1e8181751ce05b85b7bfaa832b785e87086250a5148e679d17ca9bdcfa958"
+          }
+        ],
         "discoveredFiles": [
           {
             "file": "LICENSE",
@@ -3585,17 +3774,26 @@
         ],
         "mismatches": [],
         "provenance": {
-          "source": null,
+          "source": "npm:@mozilla/readability@0.6.0",
           "sourceCommit": null,
-          "installedVersion": null,
+          "distributionIntegrity": "sha512-juG5VWh4qAivzTAeMzvY9xs9HY5rAcr2E4I7tiSSCokRFi7XIZCAu92ZkSTsIj1OPceCifL3cpfteP3pDT9/QQ==",
+          "reviewedExclusion": null,
+          "reviewedExclusions": [],
+          "installedVersion": "0.6.0",
           "sourceManifestVersion": null,
-          "qualification": "missing_provenance; synthesized from retained text only"
+          "qualification": "pinned_npm_release_integrity"
         }
       },
       {
         "package": "remark-gfm",
         "root": "third_party/remark-gfm",
-        "evidenceFiles": [],
+        "evidenceFiles": [
+          {
+            "file": "LICENSE",
+            "bytes": 1094,
+            "sha256": "dd1081884a92952802f4803110a6bb543acea9a814c786d58605b4c1219b5ebb"
+          }
+        ],
         "discoveredFiles": [
           {
             "file": "LICENSE",
@@ -3605,17 +3803,31 @@
         ],
         "mismatches": [],
         "provenance": {
-          "source": null,
+          "source": "npm:remark-gfm@4.0.1",
           "sourceCommit": null,
-          "installedVersion": null,
+          "distributionIntegrity": "sha512-1quofZ2RQ9EWdeN34S79+KExV1764+wCUGop5CPL1WGdD0ocPpu91lzPGbwWMECpEpd42kJGQwzRfyov9j4yNg==",
+          "reviewedExclusion": null,
+          "reviewedExclusions": [],
+          "installedVersion": "4.0.1",
           "sourceManifestVersion": null,
-          "qualification": "missing_provenance; synthesized from retained text only"
+          "qualification": "pinned_npm_release_integrity"
         }
       },
       {
         "package": "rss-parser",
         "root": "third_party/rss-parser",
-        "evidenceFiles": [],
+        "evidenceFiles": [
+          {
+            "file": "LICENSE",
+            "bytes": 1070,
+            "sha256": "66fa72d1e76ca487fde9f153ac1183b906733f314d556645cb614e90961da634"
+          },
+          {
+            "file": "NOTICE.md",
+            "bytes": 1008,
+            "sha256": "26732d0ddccf781ec7464f329405ce28a15d9c32d388e79a253efd8ef4a7e08c"
+          }
+        ],
         "discoveredFiles": [
           {
             "file": "LICENSE",
@@ -3630,17 +3842,31 @@
         ],
         "mismatches": [],
         "provenance": {
-          "source": null,
+          "source": "npm:rss-parser@3.13.0",
           "sourceCommit": null,
-          "installedVersion": null,
+          "distributionIntegrity": "sha512-7jWUBV5yGN3rqMMj7CZufl/291QAhvrrGpDNE4k/02ZchL0npisiYYqULF71jCEKoIiHvK/Q2e6IkDwPziT7+w==",
+          "reviewedExclusion": null,
+          "reviewedExclusions": [],
+          "installedVersion": "3.13.0",
           "sourceManifestVersion": null,
-          "qualification": "missing_provenance; synthesized from retained text only"
+          "qualification": "pinned_npm_release_integrity"
         }
       },
       {
         "package": "saxes",
         "root": "third_party/saxes",
-        "evidenceFiles": [],
+        "evidenceFiles": [
+          {
+            "file": "LICENSE",
+            "bytes": 3011,
+            "sha256": "0fac2374380621b22e6b50451057721a9c52935b02d16d106a9f04897f061d0e"
+          },
+          {
+            "file": "upstream-package.json",
+            "bytes": 2864,
+            "sha256": "b2206ba4678ba63836ddc85c6425ac4207f0d92b23fd96e059814742f97fdf3a"
+          }
+        ],
         "discoveredFiles": [
           {
             "file": "LICENSE",
@@ -3660,17 +3886,26 @@
         ],
         "mismatches": [],
         "provenance": {
-          "source": null,
-          "sourceCommit": null,
+          "source": "npm:saxes@6.0.0",
+          "sourceCommit": "211fa0ebec9b628affc09219199639887174bfc3",
+          "distributionIntegrity": "sha512-xAg7SOnEhrm5zI3puOOKyy1OMcMlIJZYNJY7xLBwSze0UjhPLnWfj2GF2EpT0jmzaJKIWKHLsaSSajf35bcYnA==",
+          "reviewedExclusion": null,
+          "reviewedExclusions": [],
           "installedVersion": "6.0.0",
           "sourceManifestVersion": null,
-          "qualification": "missing_provenance; synthesized from retained text only"
+          "qualification": "pinned_upstream_release"
         }
       },
       {
         "package": "zod",
         "root": "third_party/zod",
-        "evidenceFiles": [],
+        "evidenceFiles": [
+          {
+            "file": "LICENSE",
+            "bytes": 1072,
+            "sha256": "3f1189b28e3866e0d979968d466b78f813f76827cfdca1fbb124cc0a5c8841f8"
+          }
+        ],
         "discoveredFiles": [
           {
             "file": "LICENSE",
@@ -3680,11 +3915,14 @@
         ],
         "mismatches": [],
         "provenance": {
-          "source": null,
+          "source": "npm:zod@4.1.12",
           "sourceCommit": null,
-          "installedVersion": null,
+          "distributionIntegrity": "sha512-JInaHOamG8pt5+Ey8kGmdcAcg3OL9reK8ltczgHTAwNhMys/6ThXHityHxVV2p3fkw/c+MAvBHFVYHFZDmjMCQ==",
+          "reviewedExclusion": null,
+          "reviewedExclusions": [],
+          "installedVersion": "4.1.12",
           "sourceManifestVersion": null,
-          "qualification": "missing_provenance; synthesized from retained text only"
+          "qualification": "pinned_npm_release_integrity"
         }
       }
     ]
