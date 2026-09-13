@@ -154,6 +154,28 @@ writes, revoked authority, malformed/summary/secret results and uncertain cleanu
 This is composition evidence only: it does not spawn or qualify a physical Codex
 process, call a provider, or release capacity.
 
+One portable authenticated result-return contract now carries that already-observed
+terminal result toward the existing canonical publisher. The node-signed envelope and
+server-signed receipt reuse the shared node protocol and native HTTP packet bounds; no
+new signing or credential mechanism is introduced. The envelope binds the exact tenant,
+project, job, attempt, run, node, lease, activation, connector profile, thread, turn,
+item, result bytes, content hash and size, completed-turn projection, terminal evidence,
+and independently signed physical-qualification reference. The receiver independently
+checks its expected node peer, key and connection plus a trusted maximum qualification
+age; this age is caller policy and cannot be extended by the incoming envelope. Result
+text remains fatal-UTF-8 and is capped at 65,536 bytes. Exactly one terminal frame may be
+accepted. After a lost acknowledgement, only the authenticator's byte-identical duplicate
+may receive the exact original receipt; it does not invoke the receipt signer again.
+Another terminal frame, a changed replay, stale or forged qualification, or any identity,
+profile, activation or peer substitution fails closed.
+
+Both envelope and receipt explicitly grant no approval, canonical publication,
+completion, capacity release, retry, resume, new turn or execution authority. The receipt
+acknowledges transport only. This is an in-memory exchange-validation seam: it does not
+persist the exchange, call the publisher, start or read Codex, select credentials, release
+capacity, add a listener, or change deployment. A later trusted composition must durably
+reserve the single terminal return and receipt before claiming restart-safe replay.
+
 The Codex-only canonical result publisher now consumes an exact completed-turn
 publication contract and terminal evidence only after independently verifying the
 complete signed physical-qualification receipt against operator-injected expected
