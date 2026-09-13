@@ -6,7 +6,7 @@ import {
   projectWorkspaceSafeIdSchemaV1,
   projectWorkspaceSummarySchemaV1,
   projectWorkspaceTimeSchemaV1,
-} from "../../../project-workspace/v1";
+} from "../../../project-workspace/v1/schemas";
 import { ABS_NEWS_ACTION_IDS_V1, ABS_NEWS_CONTRACT_V1 } from "./types";
 
 function isCanonicalPublicHttpsUrl(value: string): boolean {

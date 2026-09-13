@@ -68,6 +68,8 @@ test("reused project catalog keeps pilot links separate and preserves default na
   assert.match(pilot, /href="\/local-preview\?project=project%3Aexample"/);
   assert.match(pilot, /target="_blank" rel="noopener noreferrer"/);
   assert.match(pilot, /Example &lt;project&gt;/);
+  assert.match(pilot, /dateTime="2026-09-06T00:00:00.000Z"/);
+  assert.match(pilot, /Updated/);
   assert.doesNotMatch(pilot, /href="\/projects\//);
   const original = renderToStaticMarkup(createElement(ProjectCatalog, { state: "ready", projects: [project] }));
   assert.match(original, /href="\/projects\/project%3Aexample"/);

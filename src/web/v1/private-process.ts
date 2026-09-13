@@ -461,6 +461,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
         const newsPage = /^\/projects\/([^/]+)\/news$/.exec(url.pathname);
         const filesPage = /^\/projects\/([^/]+)\/files$/.exec(url.pathname);
         const taskSummaryPage = /^\/projects\/([^/]+)\/(reviews|activity)$/.exec(url.pathname);
+        const projectUtilityPage = /^\/projects\/([^/]+)\/(inbox|agents|automations)$/.exec(url.pathname);
         const ideaPage = /^\/ideas(?:\/([^/]+))?$/.exec(url.pathname);
         const detail = /^\/projects\/([^/]+)(?:\/(overview|settings))?$/.exec(url.pathname);
         if (ideaPage) {
@@ -481,6 +482,11 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           let id: string;
           try { id = decodeURIComponent(taskSummaryPage[1]); } catch { throw new WebAccessError("invalid_request"); }
           await tasks.authorize(identity, id);
+        } else if (projectUtilityPage) {
+          if (url.search) throw new WebAccessError("invalid_request");
+          let id: string;
+          try { id = decodeURIComponent(projectUtilityPage[1]); } catch { throw new WebAccessError("invalid_request"); }
+          await service.getView(identity, id);
         } else if (taskPage) {
           let id: string, jobId: string | undefined;
           try { id = decodeURIComponent(taskPage[1]); jobId = taskPage[2] ? decodeURIComponent(taskPage[2]) : undefined; }
