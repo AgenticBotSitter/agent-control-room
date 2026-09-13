@@ -28,6 +28,14 @@ not an executable plugin and not proof that advertised operations work.
   verifies exact bytes, hash, size and run lineage before storing it. No connector may
   turn agent text, a path or an arbitrary URL into a download capability. Additional
   and binary attachments remain disabled for this contract version.
+- `src/harness/v1/canonical-text-result.ts` is the single harness-neutral projection
+  boundary for that text result. It accepts only a connector whose `result` or read-only
+  `read` operation already passed actual-interface or native qualification. Its envelope
+  binds the complete Control Room lineage, exact connector profile, upstream identities,
+  completion evidence, exact bytes and observation time. The envelope is still pending
+  owner review: creating it stores nothing, completes no task and grants no retry, resume
+  or execution authority. Existing harness-specific durable storage must be adapted to
+  this boundary in a separately reviewed migration; it is not silently relabelled here.
 - Public extensions may observe through bounded read interfaces. Execution bindings,
   credential lookup, approval, signing, schema writes and task completion stay in the
   reviewed core. Removing an extension cannot remove canonical history.
