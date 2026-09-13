@@ -4,7 +4,7 @@ import { BrowserRequestError, browserAuthenticationRecovery } from "../../src/we
 import { createTaskBrowserClient, taskErrorMessage } from "../../src/web/v1/task-browser-client";
 import type { TaskDetail, TaskDraft, TaskPage, TaskReceipt } from "../../src/web/v1/task-wire";
 import { PrivateHeader } from "./private-header";
-import { TaskCatalogPanel, TaskDetailPanel, TaskProposalForm, taskUrl } from "./task-panels";
+import { TaskCatalogPanel, TaskDetailPanel, TaskProposalForm, TaskStateGuidance, taskUrl } from "./task-panels";
 import { PrivateTaskResults } from "./task-results";
 import { createTaskReviewWorkspace, type TaskReviewWorkspace } from "../../src/web/v1/task-review-workspace";
 import { createTaskVerificationWorkspace, type TaskVerificationWorkspace } from "../../src/web/v1/task-verification-workspace";
@@ -133,6 +133,7 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
         <TaskProposalForm draft={draft} setDraft={setDraft} pending={pending} preparing={preparing} uncertain={uncertain} onSave={() => { void save(); }} /></div>
         : <p className="private-note">{page.project.lifecycle !== "active" ? "Reopen this project before proposing more work." : "Your current access allows reading tasks, not proposing new work."}</p>}</div>}
     {detail && <TaskDetailPanel detail={detail} />}
+    {detail && <TaskStateGuidance detail={detail} refreshing={loading} onRefresh={refreshSaved} />}
     {detail && <TaskWorkflowGuide />}
     {jobId && <PrivateTaskPlanning detail={detail} client={executionWorkspace.planning} />}
     {jobId && <PrivateTaskAssignment detail={detail} client={executionWorkspace.assignment} onRecorded={refreshSaved} />}

@@ -12,6 +12,55 @@ const nativeLabel: Record<NonNullable<TaskRun["nativeState"]>, string> = { prepa
 const date = (value: string) => new Date(value).toLocaleString();
 export const taskUrl = (projectId: string, jobId?: string) => `/projects/${encodeURIComponent(projectId)}/tasks${jobId ? `/${encodeURIComponent(jobId)}` : ""}`;
 
+export type TaskGuidance = Readonly<{ heading: string; explanation: string; href?: string; action?: string;
+  uncertain: boolean }>;
+
+/** Derives navigation only. It never infers permission or grants execution authority. */
+export function taskStateGuidance(detail: TaskDetail): TaskGuidance {
+  const latestRun = detail.attempts[0]?.runs[0];
+  const runningContradiction = detail.task.state === "running" && (detail.progressSource !== "configured" || !latestRun
+    || latestRun.nativeState !== null && ["completed", "failed", "cancelled", "interrupted"].includes(latestRun.nativeState)
+    || ["succeeded", "failed", "cancelled"].includes(latestRun.state));
+  const uncertain = detail.task.state === "orphaned" || runningContradiction || !!latestRun && (latestRun.stale
+    || latestRun.state === "disconnected" || latestRun.nativeState === "ambiguous"
+    || latestRun.availability !== null && latestRun.availability !== "current");
+  if (uncertain) return { heading: "Check what was already recorded", uncertain: true,
+    explanation: "The latest agent information is missing, old, disconnected or uncertain. Checking reads the saved status only. It does not retry this task or send replacement work." };
+  switch (detail.task.state) {
+    case "proposed": return { heading: "Prepare the saved proposal", uncertain: false, href: "#task-planning",
+      action: "Go to preparation", explanation: "Review the requested result and prepare a separate runnable task. This does not assign or start an agent." };
+    case "ready": return { heading: "Choose an eligible machine", uncertain: false, href: "#task-assignment",
+      action: "Go to assignment", explanation: "The task is prepared. Assignment reserves a machine; it does not by itself start the work." };
+    case "leased": return { heading: "Review the recorded assignment", uncertain: false, href: "#task-assignment",
+      action: "Go to assignment", explanation: "A machine reservation is recorded. Check its current state before approving any execution." };
+    case "waiting_approval": return { heading: "Owner approval is required", uncertain: false, href: "#task-approval",
+      action: "Go to approval", explanation: "Review the exact prepared request and its limits. Approval and queuing remain separate recorded steps." };
+    case "succeeded": return { heading: "Review the returned result", uncertain: false, href: "#task-results",
+      action: "Go to results", explanation: "The job record says the work finished. Inspect the protected result and its review evidence before accepting it." };
+    case "running": return { heading: "Work is in progress", uncertain: false,
+      explanation: "Control Room has current progress for this task. Checking status only reads newer saved evidence and never starts another run." };
+    case "failed": return { heading: "The recorded run failed", uncertain: false,
+      explanation: "Control Room will not create replacement work automatically. Check the saved evidence before deciding whether to prepare a new task." };
+    case "cancelled": return { heading: "The task was cancelled", uncertain: false,
+      explanation: "Cancellation is recorded. This page will not restart the task; check saved status if an outside process may still be finishing." };
+    case "orphaned": return { heading: "Check what was already recorded", uncertain: true,
+      explanation: "The assignment was lost. Checking reads the saved status only. It does not retry this task or send replacement work." };
+    case "rejected": return { heading: "The proposal was rejected", uncertain: false,
+      explanation: "No work should start from this proposal. Create a new proposal only after deciding what should change." };
+    default: return detail.task.state satisfies never;
+  }
+}
+
+export function TaskStateGuidance({ detail, refreshing, onRefresh }: { detail: TaskDetail; refreshing: boolean;
+  onRefresh: () => void }) {
+  const guidance = taskStateGuidance(detail);
+  return <section className={guidance.uncertain ? "private-panel private-notice" : "private-panel"}
+    aria-label="What happens next"><h2>{guidance.heading}</h2><p>{guidance.explanation}</p>
+    <div className="private-actions">{guidance.href && <a href={guidance.href}>{guidance.action}</a>}
+      <button type="button" disabled={refreshing} onClick={onRefresh}>{refreshing ? "Checking saved status…" : "Check latest saved status"}</button>
+    </div></section>;
+}
+
 export function TaskProposalForm({ draft, setDraft, pending, preparing = false, uncertain, onSave }: { draft: TaskDraft;
   setDraft: (value: TaskDraft) => void; pending: boolean; preparing?: boolean; uncertain: boolean; onSave: () => void }) {
   return <form className="private-create" onSubmit={event => { event.preventDefault(); onSave(); }}>
