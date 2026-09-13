@@ -43,7 +43,8 @@ function makePair(options: { name?: string; jobId?: string; attemptId?: string; 
   const thread = dispatcher.receiveThread(admission, JSON.stringify({ id: 10, result: {
     approvalPolicy: 'on-request', approvalsReviewer: 'user', cwd: '/synthetic/project', model: 'model:test',
     modelProvider: 'provider:test', sandbox: { type: 'readOnly' }, instructionSources: [],
-    thread: { id: threadId, sessionId: threadId, ephemeral: false, cliVersion: 'test', createdAt: 1,
+    thread: { id: threadId, sessionId: threadId, ephemeral: false,
+      cliVersion: CODEX_APP_SERVER_START_CONTRACT.version, createdAt: 1,
       cwd: '/synthetic/project', modelProvider: 'provider:test', preview: '', projectId: null, source: 'appServer',
       status: { type: 'idle' }, turns: [], updatedAt: 1 } } }), '2026-09-12T12:00:01.000Z');
   const intent = createCodexTurnStartIntentV1(thread, { turnStartRequestId: 20,

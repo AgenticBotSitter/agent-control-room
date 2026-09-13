@@ -31,7 +31,8 @@ const base = (name = 'test', scope: { jobId?: string; runId?: string } = {}) => 
 const threadResponse = (id = 10, threadId = 'thr_123') => JSON.stringify({ id,
   result: { approvalPolicy: 'on-request', approvalsReviewer: 'user', cwd: '/synthetic/project', model: 'model:test',
     modelProvider: 'provider:test', sandbox: { type: 'readOnly' }, instructionSources: [],
-    thread: { id: threadId, sessionId: threadId, ephemeral: false, cliVersion: '0.150.0-alpha.8',
+    thread: { id: threadId, sessionId: threadId, ephemeral: false,
+      cliVersion: CODEX_APP_SERVER_START_CONTRACT.version,
       createdAt: 1, cwd: '/synthetic/project', modelProvider: 'provider:test', preview: '', projectId: null,
       source: 'appServer', status: { type: 'idle' }, turns: [], updatedAt: 1 } } });
 const turnResponse = (id = 30, turnId = 'turn_456', status = 'inProgress') => JSON.stringify({ id,
@@ -89,7 +90,9 @@ test('binds one owned connection, persistent thread and in-progress turn to one 
 });
 
 test('dispatcher consumes bad thread responses once and refuses connection or request reuse', () => {
-  const invalid = [threadResponse(11),
+  const wrongVersion = JSON.parse(threadResponse());
+  wrongVersion.result.thread.cliVersion = '0.153.4';
+  const invalid = [threadResponse(11), JSON.stringify(wrongVersion),
     JSON.stringify({ id: 10, result: { thread: { id: 'thr_123', sessionId: 'thr_other', ephemeral: false } } }),
     JSON.stringify({ id: 10, result: { thread: { id: 'thr_123', sessionId: 'thr_123', ephemeral: true } } }),
     '{not-json}', `${threadResponse()}\n`];

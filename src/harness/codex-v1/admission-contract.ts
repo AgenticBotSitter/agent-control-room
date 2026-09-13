@@ -116,6 +116,7 @@ const threadProjectionSchema = z.object({
   id: upstreamId,
   sessionId: upstreamId,
   ephemeral: z.literal(false),
+  cliVersion: z.literal(CODEX_APP_SERVER_START_CONTRACT.version),
 }).passthrough().superRefine(requiredOwn([
   'cliVersion', 'createdAt', 'cwd', 'ephemeral', 'id', 'modelProvider', 'preview',
   'projectId', 'sessionId', 'source', 'status', 'turns', 'updatedAt',
