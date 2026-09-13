@@ -68,6 +68,11 @@ export function validateTaskAssignmentRoutes(routes: readonly TaskAssignmentRout
 }
 export type TaskAssignmentOperation = Readonly<{ tenantId: string; workspaceId: string;
   assign: TaskAssignmentCoordinator["assign"]; expire: TaskAssignmentCoordinator["expire"]; options: TaskAssignmentCoordinator["options"] }>;
+type LockedAssignmentAuthority = Readonly<{
+  actor: Readonly<{ actorId: string; actorType: "human" | "service" }>;
+  project: () => ReturnType<WebProjectService["getViewInSession"]>;
+  commitDeadline: (value: number) => void;
+}>;
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: async work => work(tx),
   transactionWithPreCommitCheck: async (work, check) => { const value = await work(tx); await check(); return value; } });
 function conflict(): never { throw new WebAccessError("conflict"); }
@@ -859,11 +864,25 @@ export class TaskAssignmentCoordinator {
       }) };
     return new WebSessionAuthority(db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.assign", projectId, true);
+      return this.#assignLocked(tx, { projectId, jobId, nodeId, expectedInputDigest }, {
+        actor: { actorId: actor.id, actorType: "human" },
+        project: () => this.projects.getViewInSession(tx, actor, projectId),
+        commitDeadline: value => { commitDeadline = value; },
+      });
+    });
+  }
+
+  /** Authority-bearing wrappers must validate their caller before entering this transaction core.
+   * ECMAScript privacy keeps the core unavailable to module consumers and browser composition. */
+  async #assignLocked(tx: DatabaseSession,
+    input: Readonly<{ projectId: string; jobId: string; nodeId: string; expectedInputDigest: string }>,
+    authority: LockedAssignmentAuthority) {
+      const { projectId, jobId, nodeId, expectedInputDigest } = input;
       // Match canonical ready-transition lock order and serialize capacity selection across owners.
       await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
       await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
         [this.scope.tenantId, projectId]);
-      const project = await this.projects.getViewInSession(tx, actor, projectId);
+      const project = await authority.project();
       const job = await this.job(tx, projectId, jobId);
       const plan = await this.planner.readInSession(tx, jobId);
       if (!plan || plan.projectId !== projectId || plan.tenantId !== this.scope.tenantId || job.inputDigest !== expectedInputDigest) conflict();
@@ -904,11 +923,12 @@ export class TaskAssignmentCoordinator {
       const active = (await tx.query<{ count: string }>(`SELECT count(*)::text AS count FROM control_leases
         WHERE tenant_id=$1 AND node_id=$2 AND state='active'`, [this.scope.tenantId, nodeId])).rows[0];
       if (Number(active?.count) >= route.maxConcurrentTasks) conflict();
-      commitDeadline = Math.min(now + Math.min(route.leaseSeconds, job.authority.maxDurationSeconds) * 1000,
+      const commitDeadline = Math.min(now + Math.min(route.leaseSeconds, job.authority.maxDurationSeconds) * 1000,
         Date.parse(job.authority.expiresAt), Date.parse(telemetry.expiresAt), Date.parse(capability.expiresAt),
         key.valid_until ? new Date(key.valid_until).getTime() : Infinity);
       if (commitDeadline <= now) conflict();
-      const occurredAt = new Date(now).toISOString(), actorRef = { actorId: actor.id, actorType: "human" as const };
+      authority.commitDeadline(commitDeadline);
+      const occurredAt = new Date(now).toISOString(), actorRef = authority.actor;
       for (const [kind, entityId, expectedVersion, toState, suffix] of [
         ["request", request.id, 0, "submitted", "submit"], ["request", request.id, 1, "accepted", "accept"],
         ["workflow", workflow.id, 0, "active", "activate"],
@@ -918,12 +938,12 @@ export class TaskAssignmentCoordinator {
         transitionId: `${ids.transitionId}:ready`, idempotencyKey: `${ids.idempotencyKey}:ready`, actor: actorRef, occurredAt });
       const claimed = await canonical.claimReadyJob({ ...ids, tenantId: this.scope.tenantId, jobId, expectedJobVersion: 1,
         nodeId, actor: actorRef, acquiredAt: occurredAt, expiresAt: new Date(commitDeadline).toISOString() });
-      await appendAuditWith(tx, { id: ids.auditId, tenantId: this.scope.tenantId, projectId, actorId: actor.id, actorType: "human",
+      await appendAuditWith(tx, { id: ids.auditId, tenantId: this.scope.tenantId, projectId,
+        actorId: actorRef.actorId, actorType: actorRef.actorType,
         action: "tasks.assign", targetType: "job", targetId: jobId, idempotencyKey: ids.idempotencyKey, occurredAt,
         safeMetadata: { nodeId, attemptId: claimed.attempt.id, leaseId: claimed.lease.id, inputDigest: job.inputDigest,
           routeDigest: sha256Digest(route), startsWork: false, localAdmissionRequired: true } });
       return { receipt: this.receipt(claimed.job, claimed.attempt, claimed.lease), replayed: false };
-    });
   }
 
   /** Reconcile an elapsed reservation only. This does not confirm a process stopped or make the
