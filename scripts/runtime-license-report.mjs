@@ -3,6 +3,9 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { collectLicenseEvidence } from './license-evidence.mjs';
+import { collectBundledRows, readExceptions } from './runtime-license-bundled-collector.mjs';
+import { buildInventoryDigestPayload, computeInventoryDigest } from './runtime-license-digest.mjs';
+import { assertInsideRepository, normalizeRelative } from './runtime-license-repository-guard.mjs';
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 /** Narrow `package.json` to the fields that actually determine the license inventory,
@@ -10,6 +13,7 @@ const hash = bytes => createHash('sha256').update(bytes).digest('hex');
  *  `name`, formatting, or key order do not move this hash, so unrelated `main`
  *  churn stops invalidating every open PR's license pin. See issue #38. */
 export function manifestSubsetHash(repository = process.cwd()) {
+  assertInsideRepository(repository, 'package.json', 'pnpm-lock.yaml');
   const manifest = JSON.parse(fs.readFileSync(path.join(repository, 'package.json'), 'utf8'));
   const subset = {};
   for (const key of ['dependencies', 'devDependencies', 'optionalDependencies']) {
@@ -22,6 +26,7 @@ export function manifestSubsetHash(repository = process.cwd()) {
 }
 /** Uses a captured pnpm inventory, never discovers its own dependency graph. */
 export function runtimeLicenseReport(input, repository = process.cwd()) {
+  assertInsideRepository(repository, 'package.json', 'pnpm-lock.yaml', 'node_modules');
   if (input.manifestSha256 !== manifestSubsetHash(repository)
     || input.lockSha256 !== hash(fs.readFileSync(path.join(repository, 'pnpm-lock.yaml')))) throw new Error('license_inventory_stale');
   if (!Array.isArray(input.records) || !input.records.length || input.records.length > 4096) throw new Error('license_inventory_invalid');
@@ -47,8 +52,18 @@ export function runtimeLicenseReport(input, repository = process.cwd()) {
     }
     if (record.versions.some(version => !observed.has(version))) throw new Error('license_inventory_version_missing');
   }
+  const bundledRows = collectBundledRows(repository);
+  const exceptions = readExceptions(repository);
   return { schema: 'control-room.runtime-license-report/v1', manifestSha256: input.manifestSha256,
     lockSha256: input.lockSha256, inventorySha256: hash(JSON.stringify(input)),
+    inventoryDigest: computeInventoryDigest(buildInventoryDigestPayload({
+      report: { manifestSha256: input.manifestSha256, lockSha256: input.lockSha256,
+        inventorySha256: hash(JSON.stringify(input)),
+        results: results.map(r => ({ name: r.name, version: r.version, manifestSha256: r.manifestSha256,
+          status: r.status, attachments: r.attachments })) },
+      exceptions,
+      bundledRows,
+    })),
     scope: 'prepared runtime root texts only; not complete distribution clearance',
     packages: results.length, missing: results.filter(value => value.status === 'missing_root_text').map(({ name, version }) => ({ name, version })), results };
 }

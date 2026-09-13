@@ -4,10 +4,13 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { runtimeLicenseReport } from './runtime-license-report.mjs';
 import { collectLicenseEvidence } from './license-evidence.mjs';
+import { assertInsideRepository } from './runtime-license-repository-guard.mjs';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 
 /** Current-platform root-text assembly. Not a bundle/vendor/asset clearance. */
 export function assembleRuntimeLicenses(repository = process.cwd()) {
+  assertInsideRepository(repository, 'research/runtime-license-input.json', 'research/runtime-license-report.json',
+    'research/runtime-license-exceptions.json', 'third_party', 'src/vendor', 'node_modules');
   const read = relative => fs.readFileSync(path.join(repository, relative));
   const json = relative => JSON.parse(read(relative));
   const report = runtimeLicenseReport(json('research/runtime-license-input.json'), repository);
@@ -53,6 +56,7 @@ export function assembleRuntimeLicenses(repository = process.cwd()) {
     return { name: record.name, version: record.version, path: record.path, provenance, qualification, attachments };
   });
   return { schema: 'control-room.runtime-license-assembly/v1', scope: report.scope,
+    inventoryDigest: report.inventoryDigest,
     completeDistributionClearance: false, rawMissingRootTexts: report.missing,
     manifestSha256: report.manifestSha256, lockSha256: report.lockSha256, entries };
 }
