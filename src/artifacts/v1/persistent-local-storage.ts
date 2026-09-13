@@ -62,8 +62,6 @@ const artifactNamePattern = /^[a-f0-9]{64}\.artifact$/u;
 const digestPattern = /^sha256:[a-f0-9]{64}$/u;
 const lockName = ".control-room-persistent-artifact.lock";
 const pendingPrefix = ".control-room-persistent-artifact-pending-";
-const uncertaintyName = ".control-room-persistent-artifact.uncertain";
-const uncertaintyEvidence = "control-room-persistent-artifact-storage-uncertain-v1\n";
 const headerLimitBytes = 512;
 const resultLimitBytes = 65_536;
 const noFollow = constants.O_NOFOLLOW ?? 0;
@@ -348,9 +346,11 @@ export class PersistentLocalArtifactStorageV1 implements ArtifactStoragePortV1, 
     }
     if (context.uncertain || cleanupError) {
       this.poisoned = true;
-      if (context.mutationStarted) {
-        await this.persistUncertaintyEvidence().catch(() => {});
-      }
+      // The artifact result is set only after its link and pending-file retirement have both been
+      // directory-synchronized and its exact envelope has been read back. A later failure can make
+      // lock retirement uncertain, but it cannot make that already-proven artifact ambiguous. The
+      // current adapter still retires; a surviving lock makes every new adapter fail closed.
+      if (result) return result;
       throw new ArtifactStorageError("storage_ambiguous");
     }
     if (operationError) {
@@ -537,60 +537,6 @@ export class PersistentLocalArtifactStorageV1 implements ArtifactStoragePortV1, 
       if (context.uncertain) void directory.close().catch(() => {});
       else await this.io("root_sync_close", () => directory.close(), context);
     }
-  }
-
-  /**
-   * Records terminal ambiguity independently of the expired/cancelled operation context. The
-   * fixed marker is create-once and is never removed or accepted by inventory, so even an empty
-   * lock/pending cleanup outcome remains fail-closed across adapter construction and restart.
-   */
-  private async persistUncertaintyEvidence(): Promise<void> {
-    const operation = this.persistUncertaintyEvidenceUnbounded();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      await Promise.race([operation, new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new DeadlineError()), this.operationTimeoutMs);
-      })]);
-    } finally {
-      if (timer) clearTimeout(timer);
-      void operation.catch(() => {});
-    }
-  }
-
-  private async persistUncertaintyEvidenceUnbounded(): Promise<void> {
-    const [canonical, stats] = await Promise.all([
-      realpath(this.root),
-      lstat(this.root, { bigint: true }),
-    ]);
-    if (canonical !== this.root || !stats.isDirectory() || stats.isSymbolicLink()
-      || stats.dev !== this.rootIdentity.device || stats.ino !== this.rootIdentity.inode
-      || !validPrivateMode(stats.mode)) return;
-
-    const markerPath = join(this.root, uncertaintyName);
-    let marker: FileHandle;
-    try {
-      marker = await open(markerPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | noFollow, 0o600);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EEXIST") return;
-      throw error;
-    }
-    let markerError: unknown;
-    try {
-      await marker.writeFile(uncertaintyEvidence, "utf8");
-      await marker.sync();
-    } catch (error) {
-      markerError = error;
-    } finally {
-      await marker.close().catch(() => {});
-    }
-
-    const directory = await open(this.root, constants.O_RDONLY | noFollow);
-    try {
-      await directory.sync();
-    } finally {
-      await directory.close().catch(() => {});
-    }
-    if (markerError) throw markerError;
   }
 
   private assertUsable(): void {
