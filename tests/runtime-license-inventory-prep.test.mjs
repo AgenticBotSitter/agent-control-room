@@ -147,9 +147,22 @@ test('inventory prep CLI entry guard matches when the script lives at a path con
     const scriptSource = resolve(repoRoot, 'scripts', 'runtime-license-inventory-prep.mjs');
     const scriptCopy = join(spaced, 'runtime-license-inventory-prep.mjs');
     writeFileSync(scriptCopy, readFileSync(scriptSource));
-    // Mirror the host repo's manifest + lockfile for the script to read.
+    // Mirror the host repo's manifest + lockfile for the script to read,
+    // then run a REAL `pnpm install` so the fixture is a prepared package
+    // index (node_modules + virtual store), not a bare manifest copy.
+    // The real `pnpm licenses list` below must run against an installed
+    // tree: older pnpm versions fail on a bare manifest copy with
+    // ERR_PNPM_MISSING_PACKAGE_INDEX_FILE (the failure this fixture
+    // previously tripped over). The pinned pnpm 11.19 falls back to
+    // lockfile-only reads, so on this host the install is defensive —
+    // it keeps the fixture honest on CI hosts running other pnpm
+    // versions rather than depending on one version's fallback.
+    // (~14s via the warm pnpm store; --prefer-offline keeps it working
+    // without network when the store is populated.)
     writeFileSync(join(spaced, '..', 'package.json'), readFileSync(join(repoRoot, 'package.json')));
     writeFileSync(join(spaced, '..', 'pnpm-lock.yaml'), readFileSync(join(repoRoot, 'pnpm-lock.yaml')));
+    const install = pnpmInvocation(pnpmCommand(), ['install', '--ignore-scripts', '--prefer-offline']);
+    execFileSync(install.file, install.args, { cwd: join(spaced, '..'), stdio: ['ignore', 'pipe', 'pipe'], timeout: 300_000 });
     const stdout = execFileSync(process.execPath,
       [scriptCopy, '--repo', join(spaced, '..')],  // argv[1] CONTAINS SPACES
       { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });

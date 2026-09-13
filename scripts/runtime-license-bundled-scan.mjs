@@ -43,7 +43,7 @@ import { fileURLToPath } from 'node:url';
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 
-const DEFAULT_VENDOR_ROOTS = ['src/vendor', 'vendor', 'assets/vendor'];
+export const DEFAULT_VENDOR_ROOTS = ['src/vendor', 'vendor', 'assets/vendor'];
 
 // Hard bound on the number of vendor roots per invocation. The scanner
 // walks every root synchronously, so an unbounded `--roots` list is a
