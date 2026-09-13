@@ -77,10 +77,6 @@ let application;
 let browser;
 const posts = [];
 
-function isDisconnectCommand(entry) {
-  return /\b(?:archive|archived|complete|completed|cancel|cancelled|retry|start)\b/i.test(`${entry.path} ${entry.body}`);
-}
-
 async function installProtectedRequestRouting(context) {
   await context.route("**/*", async route => {
     const browserRequest = route.request();
@@ -165,8 +161,11 @@ try {
   await reconnectedPage.getByRole("heading", { name: "Browser acceptance alpha" }).waitFor();
   check("saved alpha project survives closing and reconnecting a browser context",
     await reconnectedPage.getByRole("heading", { name: "Browser acceptance alpha" }).isVisible());
-  check("reconnected project scope does not show another project's task",
-    await reconnectedPage.getByText("Acceptance task", { exact: true }).count() === 0);
+  check("reconnected project route remains exactly scoped to alpha", new URL(reconnectedPage.url()).pathname === alphaPath,
+    new URL(reconnectedPage.url()).pathname);
+  const alphaTaskLinks = reconnectedPage.locator(`a[href="${alphaTaskPath}"]`);
+  check("reconnected alpha project retains its saved task", await alphaTaskLinks.count() >= 1,
+    `links=${await alphaTaskLinks.count()}`);
   await reconnectedPage.goto(`${origin}${alphaTaskPath}`, { waitUntil: "domcontentloaded" });
   await reconnectedPage.getByRole("heading", { name: "Acceptance task" }).waitFor();
   check("saved alpha task survives closing and reconnecting a browser context",
@@ -174,8 +173,6 @@ try {
   const reconnectPosts = posts.slice(postCountBeforeReconnect);
   check("closing and reconnecting a browser context emits no protected command", reconnectPosts.length === 0,
     JSON.stringify(reconnectPosts));
-  check("closing and reconnecting emits no archive, complete, cancel, retry, or start command",
-    reconnectPosts.every(entry => !isDisconnectCommand(entry)), JSON.stringify(reconnectPosts));
   page = reconnectedPage;
 
   for (const [label, heading] of [["Files", "Project files"], ["Reviews", "Project reviews"],
