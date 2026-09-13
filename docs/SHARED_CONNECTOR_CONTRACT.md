@@ -81,6 +81,22 @@ agents, worktrees and usage remain unavailable until each operation has the evid
 required by the shared admission rule. Authentication remains owned by Claude Code; no
 credential value, executable path or private endpoint belongs in the public profile.
 
+An unauthenticated run of the pinned package (`-p`/`--print --output-format stream-json`)
+already gives real, zero-cost `fixture_tested` evidence for the `system`/`init`,
+`assistant` and `result` frame shapes, including that `result.subtype` can read
+`"success"` while `result.is_error` is `true` — classification must key off `is_error`/
+`terminal_reason`, never `subtype`. It does not, and cannot, evidence a real turn: no
+operation here may move past `fixture_tested` until an authenticated run exists. Actual
+admission requires, once a credential path is authorized (owner/billing decision, not a
+connector concern): (1) one full authenticated turn's real frame sequence, including at
+least one `tool_use`/`tool_result` pair, not just the auth-failure sequence Stage A0
+captured; (2) `--max-budget-usd` actually halting a run at its ceiling rather than only
+being accepted as a flag; (3) a `--session-id`-pinned run correctly resumed by
+`--resume` with its native identity intact; (4) `--resume` against an already-exited
+session reporting a clean, non-silent failure. Until all four pass, `submit`, `status`,
+`result`, `resume` and `usage` remain `unsupported` regardless of evidence level, per the
+shared admission rule above.
+
 ## Optional components
 
 - Herdr v0.9 (`b99002ac99b09e00b4ca692436cb15a6b0d676f1`) stays an
