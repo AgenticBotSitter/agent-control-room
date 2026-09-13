@@ -23,11 +23,15 @@ anything found since: it needs Stage C to exist first, for real, not just design
 Concretely, a steering design would have to answer questions that only have real answers
 once Stage C code exists and has run:
 
-- Whether the CLI-subprocess integration path (Stage C) and an in-process Agent SDK host
-  are two connectors or one connector with two transports — that changes the connector
-  profile shape (`src/harness/v1/connector-profile.ts`'s `transport` enum currently has no
-  value for "long-lived in-process session"; adding one is a schema change, not something
-  to do speculatively).
+- **This one is not actually open, on reflection — it's answered by the schema as it stands
+  today.** `src/harness/v1/connector-profile.ts`'s `connectorProfileSchemaV1` has exactly one
+  `transport` field per profile, not a set. A profile cannot declare two transports, so the
+  CLI-subprocess path and a future in-process Agent SDK host are necessarily **two separate
+  connector profiles**, not one connector with a transport choice, unless someone
+  deliberately widens the schema to allow multiple transports per connector first. That
+  widening is itself a schema change requiring its own review — not something to assume
+  silently — but the "one or two" question itself is closed: two, under the schema as it
+  exists on `main` right now.
 - What "cancel" and "interrupt" actually mean differently once a run can be steered mid-way
   rather than only killed — Stage C's design proposes killing a process group as the whole
   of `cancel`. Steering needs a softer, resumable stop that Stage C's model doesn't have a
@@ -55,9 +59,11 @@ design document instead of a manifest.
 1. Stage C (`docs/claude/CLAUDE_CODE_EXECUTION_DESIGN.md`) reviewed and, at minimum,
    prototyped enough to know its actual `cancel` and identity-binding behavior in practice,
    not just on paper.
-2. A decision on whether the Agent SDK host is a second connector or a second transport on
-   the same one — an architectural call for whoever owns `connector-profile.ts`'s schema,
-   not this document.
+2. ~~A decision on whether the Agent SDK host is a second connector or a second transport~~
+   **Resolved above: it is a second connector profile, under the schema as it exists on
+   `main` today.** No further decision needed unless someone later proposes widening
+   `connectorProfileSchemaV1` to allow multiple transports per connector, which would be its
+   own reviewed change.
 3. The credential-path decision already pending for Stage C (Stage D has no separate
    credential question — it inherits Stage C's).
 
