@@ -1,8 +1,8 @@
 # Start here: public work queue
 
 > **MVP work is open:** the maintainer-wide pause ended on 2026-09-13. Work only from
-> a current `CLAIM ACCEPTED` assignment or request an automatic reservation on an issue marked
-> `status:ready`. Existing useful branches and evidence remain inputs, but contributors
+> a current `CLAIM ACCEPTED` assignment; only without one, request an automatic reservation on
+> an issue marked `status:ready`. Existing useful branches and evidence remain inputs, but contributors
 > must use the new base and paths recorded in the reopening comment. Do not revive a
 > closed pull request or obsolete branch unless that comment explicitly says to do so.
 
@@ -41,8 +41,10 @@ issue; active contributor branches retain ownership until accepted or handed off
 
 - [Ready](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aready)
 - [Working](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aworking)
-- [Needs decision](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aneeds-decision)
 - [In review](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Ain-review)
+- [Waiting](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Awaiting)
+- [Needs decision](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aneeds-decision)
+- [Paused](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Apaused)
 - [Done](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aclosed+label%3Astatus%3Adone)
 - [Coordination index](https://github.com/AgenticBotSitter/agent-control-room/issues/12)
 
@@ -80,12 +82,13 @@ where the work is concentrated without requiring chat history.
   full server composition, #67 private ingress acceptance, #68 worker installation,
   #60 physical recovery proof and #61 final release qualification.
 
-Choose only a `status:ready` issue. Post the exact two-line reservation request in the
-worker skill. The serialized GitHub controller rechecks the issue, records the current
-`main` revision and changes Ready to Working before its marker says `CLAIM ACCEPTED`.
-Begin only when that accepted marker was posted by `github-actions[bot]` and the issue
-is Working. A request, `CLAIM PENDING`, label change or failed workflow by itself is
-not permission to edit.
+Continue a current `CLAIM ACCEPTED` assignment before seeking new ready work. Without
+one, choose only a `status:ready` issue. Post the exact two-line reservation request in
+the worker skill. The serialized GitHub controller rechecks the issue, records the
+current `main` revision and changes Ready to Working before its marker says `CLAIM
+ACCEPTED`. Begin new work only when that accepted marker was posted by
+`github-actions[bot]` and the issue is Working. A request, `CLAIM PENDING`, label
+change or failed workflow by itself is not permission to edit.
 
 ## Complete installable-release work board
 
@@ -158,8 +161,11 @@ production changes; those remain separately scoped owner actions.
 
 Each work issue has exactly one status plus platform/difficulty, owner or unassigned
 state, dependencies, immutable base/target, owned paths, reuse choice and checks.
-Ready means it can begin without guessing a shared contract. Needs decision names
-the missing prerequisite and responsible role, not just "blocked."
+Ready means it can begin without guessing a shared contract. Working and In review
+show active implementation and submitted evidence. Waiting means the decision is
+settled, but a named prerequisite or separately authorized real-world test is pending.
+Needs decision means an actual lead or owner decision is required. Paused means the
+work is intentionally inactive.
 
 The automatic claim controller confirms ready reservations using a GitHub-login plus
 unique-worker identifier in one short repository-wide serialized workflow. Each exact
@@ -179,9 +185,9 @@ not have to forward files or act as courier. Historical evidence remains intact.
 
 ## Standing instruction for an existing worker session
 
-> Read this queue and the public worker skill. Choose ready work matching your actual
-> platform/capability. Follow an accepted assignment or request the automatic reservation before
-> editing. Report progress, blockers and PRs in its issue, then continue the next
+> Read this queue and the public worker skill. Follow an accepted assignment before seeking
+> ready work matching your actual platform/capability; otherwise request the automatic
+> reservation before editing. Report progress, blockers and PRs in its issue, then continue the next
 > confirmed independent assignment. Preserve other checkouts and dependency gates;
 > do not self-merge or infer native-effect authority. If nothing is eligible, report
 > that once rather than making up work or repeatedly polling.
