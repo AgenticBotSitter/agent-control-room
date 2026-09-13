@@ -55,10 +55,12 @@ Missing prerequisites are a reason to clarify the issue, not to experiment with 
 person's credentials or machine. A platform label is a work requirement, not proof that
 the entire application supports that platform.
 
-Ask for assignment in the issue before starting. Maintainers confirm one responsible
-contributor to avoid duplicate work. Do not assume a comment alone is an atomic claim.
-If you propose unlisted work, explain the user benefit and discuss overlapping changes
-before investing in a large patch.
+For a Ready issue, post the exact two-line claim request from the public worker skill.
+The serialized GitHub controller rechecks the issue, records the accepted worker and
+current base revision, and changes it to Working. Start only after its
+`CLAIM ACCEPTED` marker; no separate maintainer reply is required. If you propose
+unlisted work, explain the user benefit and discuss overlapping changes before
+investing in a large patch.
 
 ## Make the change
 
