@@ -135,6 +135,6 @@ export function openPrivateCodexConfigurationV1(input: PrivateCodexConfiguration
   } catch {
     try { starts?.close(); } catch { /* setup is unavailable */ }
     try { bridge?.close(); } catch { /* setup is unavailable */ }
-    unavailable();
+    return unavailable();
   }
 }

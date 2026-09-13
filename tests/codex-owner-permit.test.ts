@@ -96,7 +96,10 @@ test("Codex workspace target containment requires a separator boundary for POSIX
     const valid = fixture(), authority = (valid.job as JobRecord).authority;
     authority.filesystemRoots = [root]; authority.digest = computeAuthorityDigest(authority);
     Object.assign(valid.binding as object, { filesystemRoot: root, workspacePath: accepted });
-    assert.equal(prepareCodexOwnerPermitMaterial(valid).request.target.canonicalPath, accepted);
+    const target = prepareCodexOwnerPermitMaterial(valid).request.target;
+    assert.equal(target.kind, 'filesystem');
+    if (target.kind !== 'filesystem') assert.fail('Codex permit must retain a filesystem target');
+    assert.equal(target.canonicalPath, accepted);
     const invalid = fixture(), invalidAuthority = (invalid.job as JobRecord).authority;
     invalidAuthority.filesystemRoots = [root]; invalidAuthority.digest = computeAuthorityDigest(invalidAuthority);
     Object.assign(invalid.binding as object, { filesystemRoot: root, workspacePath: rejected });
