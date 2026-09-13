@@ -10,8 +10,11 @@ not an executable plugin and not proof that advertised operations work.
 
 ## Common rules
 
-- Every connector pins its exact upstream revision, version, transport, isolation,
-  credential-resolution and distribution mode.
+- Every connector pins exactly one upstream source identity: either an immutable Git
+  revision or an exact npm package version plus its SHA-512 package digest. It also
+  records transport, isolation, credential-resolution and distribution mode. Package
+  identity is evidence of what was inspected; it grants no operation and does not
+  authorize Control Room to redistribute an operator-installed package.
 - Every operation is explicitly `supported`, `unsupported` or `unknown`, with its
   evidence level. Source and fixture evidence can select work but cannot enable an
   operation. Runtime admission requires actual-interface or native qualification.
@@ -60,6 +63,16 @@ as sanitized version/digest/`thread/read` evidence and bound to the narrow adapt
 Actual admission still requires a test that `thread/read(includeTurns: true)` after
 process restart reads the exact thread without resuming or starting work. Production
 WebSocket transport, dynamic tools and automatic approval are outside the initial contract.
+
+### Claude Code
+
+Treat Claude Code as an operator-installed, invocation-only npm package speaking bounded
+JSON-lines over standard input and output. Its connector profile uses the exact package
+name, version and package digest instead of inventing a Git revision. This only makes the
+source identity truthful. Submit, status, result, cancel, resume, approvals, background
+agents, worktrees and usage remain unavailable until each operation has the evidence level
+required by the shared admission rule. Authentication remains owned by Claude Code; no
+credential value, executable path or private endpoint belongs in the public profile.
 
 ## Optional components
 

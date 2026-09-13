@@ -12,6 +12,22 @@ export type ConnectorEvidenceLevelV1 = (typeof connectorEvidenceLevelsV1)[number
 
 const id = z.string().min(3).max(180).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
 const version = z.string().min(1).max(80).regex(/^[a-zA-Z0-9][a-zA-Z0-9._+-]*$/);
+const npmPackageName = z.string().min(1).max(214)
+  .regex(/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/);
+const npmExactVersion = z.string().min(5).max(80).regex(
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/,
+);
+const npmSha512Integrity = z.string().regex(/^sha512-[A-Za-z0-9+/]{86}==$/).refine(value => {
+  const encoded = value.slice("sha512-".length);
+  const decoded = Buffer.from(encoded, "base64");
+  return decoded.length === 64 && decoded.toString("base64") === encoded;
+}, "integrity must be the canonical Base64 encoding of exactly 64 bytes");
+const sourcePackage = z.object({
+  ecosystem: z.literal("npm"),
+  name: npmPackageName,
+  version: npmExactVersion,
+  integrity: npmSha512Integrity,
+}).strict();
 const operation = z.object({
   status: z.enum(["supported", "unsupported", "unknown"]),
   evidence: z.enum(connectorEvidenceLevelsV1),
@@ -32,8 +48,9 @@ export const connectorProfileSchemaV1 = z.object({
   connectorVersion: version,
   harness: z.enum(["hermes", "codex", "claude", "other"]),
   harnessVersion: version,
-  sourceRevision: z.string().regex(/^[a-f0-9]{40}$/),
-  transport: z.enum(["fastmcp_tools", "json_rpc_stdio", "rest", "observation_only"]),
+  sourceRevision: z.string().regex(/^[a-f0-9]{40}$/).optional(),
+  sourcePackage: sourcePackage.optional(),
+  transport: z.enum(["fastmcp_tools", "json_rpc_stdio", "jsonl_stdio", "rest", "observation_only"]),
   isolation: z.enum(["adapter_process", "worktree", "container", "harness_owned"]),
   credentialResolution: z.enum(["harness_native", "node_reference_only", "unsupported"]),
   distribution: z.enum(["invocation_only", "redistributable"]),
@@ -44,6 +61,20 @@ export const connectorProfileSchemaV1 = z.object({
     additionalAttachments: z.literal(false),
   }).strict(),
 }).strict().superRefine((profile, context) => {
+  if ((profile.sourceRevision !== undefined) === (profile.sourcePackage !== undefined)) {
+    context.addIssue({
+      code: "custom",
+      message: "exactly one upstream source identity is required",
+      path: ["sourceRevision"],
+    });
+  }
+  if (profile.sourcePackage && profile.sourcePackage.version !== profile.harnessVersion) {
+    context.addIssue({
+      code: "custom",
+      message: "package version must match harness version",
+      path: ["sourcePackage", "version"],
+    });
+  }
   if (profile.transport === "observation_only"
     && ["submit", "cancel", "resume"].some(name => profile.operations[name as ConnectorOperationNameV1].status === "supported")) {
     context.addIssue({ code: "custom", message: "observation-only connectors cannot advertise execution operations", path: ["operations"] });
