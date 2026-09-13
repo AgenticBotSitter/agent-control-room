@@ -10,6 +10,7 @@ import { PrivateHeader } from "./private-header";
 import { ProjectOverviewActivity } from "./project-overview-activity";
 import { ProjectNavigation } from "./project-navigation";
 import { ConfiguredTimestamp } from "./configured-timestamp";
+import { useProductModule } from "./product-configuration";
 
 export type ProjectSection = "overview" | "inbox" | "agents" | "automations" | "settings";
 
@@ -38,6 +39,7 @@ export function ProjectIdeaOrigin({ project }: { project: ProjectView }) {
 export function PrivateProjectWorkspace({ projectId, section = "overview", after, lifecycleFilter }: {
   projectId?: string; section?: ProjectSection; after?: string; lifecycleFilter?: WebProject["lifecycle"];
 }) {
+  const sessionObservations = useProductModule("sessionObservations");
   const [client] = useState(() => createProjectBrowserClient());
   const [projects, setProjects] = useState<ProjectView[]>([]);
   const [catalog, setCatalog] = useState<ProjectCatalogPage>();
@@ -176,7 +178,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
             <p className="private-note">Project-specific eligibility, capabilities, available slots, current work and usage are unavailable here.
               Cancel and resume are not supported from this page.</p>
             <a className="private-action-link" href="/workers">Open all worker connections</a>
-          </section><SessionObservations projectId={projectId} /></>}
+          </section>{sessionObservations && <SessionObservations projectId={projectId} />}</>}
           {section === "automations" && <section className="private-panel"><h2>Project automations</h2>
             <p>Project schedules and recurring procedures are not connected to this release. No automated work or background schedule is implied.</p>
             <p className="private-note">Use Work for saved task proposals. Starting or repeating work requires a configured service and its separate authority checks.</p>
@@ -199,7 +201,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
               <p>Project-specific eligibility, capabilities, available slots and current work are unavailable in this view.</p>
               <a className="private-action-link" href={`/projects/${encodeURIComponent(projectId)}/agents`}>Open project agents</a>
             </section>
-            <SessionObservations projectId={projectId} /></>}
+            {sessionObservations && <SessionObservations projectId={projectId} />}</>}
         </>}
       </>}
     </main>
