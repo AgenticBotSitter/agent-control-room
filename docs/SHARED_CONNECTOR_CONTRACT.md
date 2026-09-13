@@ -76,8 +76,9 @@ approval requests remain unsupported, not silently accepted.
 
 The non-experimental schema generated from the exact selected package is now retained
 as sanitized version/digest/`thread/read` evidence and bound to the narrow adapter.
-The start response must report the exact selected `cliVersion`; a different installed
-Codex version is rejected before its thread or turn can become durable evidence.
+The start and recovery responses must report the exact selected `cliVersion`; a
+different installed Codex version is rejected before its thread or turn can become
+durable evidence or a recovered observation.
 The shared node protocol also has an effect-free signed `harness.codex.dispatch`
 contract. It reuses the existing node signature and pinned owner-approval trust while
 binding the exact input, workspace intent, connector profile, enrollment and lease.

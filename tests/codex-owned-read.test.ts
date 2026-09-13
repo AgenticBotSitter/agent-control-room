@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createOwnedCodexRead, type CodexReadWire } from '../src/harness/codex-v1/owned-read';
 import { createCodexLocalReadCompositionV1, type CodexLocalReadIdentityV1 } from '../src/harness/codex-v1/local-read-composition';
+import { CODEX_APP_SERVER_READ_CONTRACT } from '../src/harness/codex-v1/schema-contract';
 
 const binding = { threadId: 'thread:fixture', turnId: 'turn:fixture' };
 const responses = ['{"id":1,"result":{}}', JSON.stringify({ id: 2, result: { thread: { id: binding.threadId,
+  cliVersion: CODEX_APP_SERVER_READ_CONTRACT.version,
   turns: [{ id: binding.turnId, status: 'completed' }] } } })];
 test('disconnect, restarted protocol and duplicate acknowledgement retire without retry or observation', async () => {
   for (const fault of ['disconnect', 'restart', 'duplicate'] as const) {

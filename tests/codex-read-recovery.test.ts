@@ -35,23 +35,28 @@ test('read recovery projects only the exact saved turn and never promotes snapsh
   assert.deepEqual(read.request, { method: 'thread/read', params: { threadId: 'thread:fixture', includeTurns: true } });
   assert.equal(Object.isFrozen(read.request.params), true);
   for (const status of ['inProgress', 'completed', 'failed', 'interrupted']) {
-    const result = read.project(JSON.stringify({ thread: { id: 'thread:fixture', cwd: '/private/synthetic',
+    const result = read.project(JSON.stringify({ thread: { id: 'thread:fixture',
+      cliVersion: CODEX_APP_SERVER_READ_CONTRACT.version, cwd: '/private/synthetic',
       turns: [{ id: 'turn:other', status: 'completed' }, { id: 'turn:fixture', status,
         items: [{ text: 'PRIVATE TRANSCRIPT' }], tokenUsage: { totalTokens: 100 } }] } }));
     assert.deepEqual(result, { threadId: 'thread:fixture', turnId: 'turn:fixture', status,
       source: 'stored_thread_read', usage: 'unknown', completionVerified: false, cleanupVerified: false, grantsExecutionAuthority: false });
     assert.doesNotMatch(JSON.stringify(result), /PRIVATE|synthetic|totalTokens/);
   }
-  assert.equal(read.project(JSON.stringify({ thread: { id: 'thread:fixture', turns: [] } })).status, 'not_observed');
+  assert.equal(read.project(JSON.stringify({ thread: { id: 'thread:fixture',
+    cliVersion: CODEX_APP_SERVER_READ_CONTRACT.version, turns: [] } })).status, 'not_observed');
 });
 
 test('read recovery refuses foreign, duplicate, missing and oversized evidence without fallback', () => {
   const read = createCodexReadRecovery({ threadId: 'thread:fixture', turnId: 'turn:fixture' });
   const turn = { id: 'turn:fixture', status: 'completed' };
-  for (const value of [{ thread: { id: 'thread:other', turns: [turn] } },
-    { thread: { id: 'thread:fixture', turns: [turn, turn] } }, { thread: { id: 'thread:fixture' } },
-    { thread: { id: 'thread:fixture', turns: [{ ...turn, status: 'unknown' }] } },
-    { thread: { id: 'thread:fixture', turns: [], extra: 'x'.repeat(262_144) } }])
+  const version = CODEX_APP_SERVER_READ_CONTRACT.version;
+  for (const value of [{ thread: { id: 'thread:other', cliVersion: version, turns: [turn] } },
+    { thread: { id: 'thread:fixture', cliVersion: version, turns: [turn, turn] } },
+    { thread: { id: 'thread:fixture' } },
+    { thread: { id: 'thread:fixture', cliVersion: '0.153.4', turns: [turn] } },
+    { thread: { id: 'thread:fixture', cliVersion: version, turns: [{ ...turn, status: 'unknown' }] } },
+    { thread: { id: 'thread:fixture', cliVersion: version, turns: [], extra: 'x'.repeat(262_144) } }])
     assert.throws(() => read.project(JSON.stringify(value)), /codex_read_recovery_unavailable/);
   assert.throws(() => createCodexReadRecovery({ threadId: 'thread:fixture', turnId: '' }));
   assert.throws(() => read.project('{'), /codex_read_recovery_unavailable/);
