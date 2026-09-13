@@ -4,6 +4,7 @@ import { createPrivateNodeHandler, privateHttpLimits } from "./private-node-hand
 import { privateResponseHeaders } from "./http-common";
 export { loadPrivateClientAssets } from "./private-assets";
 export { createPrivateNodeHandler } from "./private-node-handler";
+export { createOwnerBootstrapCeremonyV1 } from "./owner-bootstrap-ceremony";
 
 export const privateServerOptions: Readonly<ServerOptions> = Object.freeze({
   maxHeaderSize: privateHttpLimits.headersBytes, headersTimeout: 5000, requestTimeout: 5000,

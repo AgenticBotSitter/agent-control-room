@@ -6,6 +6,7 @@ import { captureGatewayAssertionProviderProfileV1, captureWebOrigins } from "./a
 import { captureHerdrReaders } from "./herdr-service";
 import { parseProductConfigurationV1 } from "../../config/v1/product-configuration";
 export { createAccessKeyLoader, createStaticAccessKeyLoader } from "./access-key-cache";
+export { createOwnerBootstrapCeremonyV1 } from "./owner-bootstrap-ceremony";
 
 export type PrivateStartupConfiguration = Omit<PrivateWebProcessOptions, "database" | "clock" | "drainMs" | "planning" | "assignment" | "approvals" | "submission" | "queueAttention" | "revisions" | "ideaCreation" | "newsCollections"> & {
   database: PrivatePostgresConfiguration; ownerIdentityId: string;

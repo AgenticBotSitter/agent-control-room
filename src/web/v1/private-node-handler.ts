@@ -121,6 +121,8 @@ async function deliver(output: ServerResponse, response: Response, method: strin
 interface NodeHandlerOptions {
   origin: string; application: PrivateServingApplication; handler: PrivateBuiltHandler; assets: PrivateClientAssets;
   secondaryOrigin?: string;
+  /** Optional first-owner gate. It is constructed only by trusted bootstrap composition. */
+  ownerBootstrapCeremony?: { isBootstrapOnly(): boolean; route(request: Request): Promise<Response | undefined> };
   /** Test-only shortening, never a production extension. */
   timing?: { bodyMs?: number; requestMs?: number; drainMs?: number };
 }
@@ -172,24 +174,25 @@ function createNodeHandler(options: NodeHandlerOptions, localDemo: boolean) {
         if (signal.aborted) return;
         if (head.method !== "POST" && body.length) throw new RequestFailure(400);
         if (head.headers.get("sec-fetch-site") === "cross-site") throw new RequestFailure(403);
-        const staticPath = head.url.pathname.startsWith("/_next/") || head.url.pathname === "/favicon.svg";
-        let response: Response;
-        if (staticPath) {
+        const bootstrap = options.ownerBootstrapCeremony;
+        const request = new Request(head.url, { method: head.method, headers: head.headers, signal,
+          ...(head.method === "POST" && body.length ? { body: new Uint8Array(body) } : {}) });
+        const work = Promise.resolve().then(async () => {
+          const gated = await bootstrap?.route(request);
+          if (gated) return gated;
+          const staticPath = head.url.pathname.startsWith("/_next/") || head.url.pathname === "/favicon.svg";
+          if (!staticPath) return options.handler(request);
           if (head.url.search || head.method === "POST") throw new RequestFailure(404);
-          response = options.assets.respond(head.url.pathname, head.method) ?? new Response(null, { status: 404 });
-        } else {
-          const request = new Request(head.url, { method: head.method, headers: head.headers, signal,
-            ...(head.method === "POST" && body.length ? { body: new Uint8Array(body) } : {}) });
-          const work = Promise.resolve().then(() => options.handler(request));
+          return options.assets.respond(head.url.pathname, head.method) ?? new Response(null, { status: 404 });
+        });
           // An interrupted connection never retries its command. Dispose late response bytes, not the command receipt.
           void work.then(late => { if (signal.aborted) void late.body?.cancel().catch(() => {}); }, () => {});
-          response = await new Promise<Response>((resolve, reject) => {
+        const response = await new Promise<Response>((resolve, reject) => {
             const abort = () => reject(new Error("private_request_interrupted"));
             signal.addEventListener("abort", abort, { once: true });
             void work.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
             if (signal.aborted) abort();
-          });
-        }
+        });
         await deliver(output, response, head.method, signal, localDemo);
       } catch (error) {
         if (!signal.aborted && !output.headersSent && !output.destroyed) {
