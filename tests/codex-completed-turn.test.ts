@@ -1,21 +1,48 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createHash } from 'node:crypto';
-import { CODEX_SOURCE_TESTED_RESULT_CONTRACT_V1,
-  projectSourceTestedCodexCompletedTurnV1 } from '../src/harness/codex-v1/completed-turn';
-import { CODEX_APP_SERVER_READ_CONTRACT } from '../src/harness/codex-v1/schema-contract';
+import { readFileSync } from 'node:fs';
+import { CODEX_EXACT_PACKAGE_RESULT_CONTRACT_V1,
+  projectExactPackageCodexCompletedTurnV1 } from '../src/harness/codex-v1/completed-turn';
+import { CODEX_APP_SERVER_READ_CONTRACT,
+  CODEX_APP_SERVER_RESULT_CONTRACT } from '../src/harness/codex-v1/schema-contract';
 
 const binding = { threadId: 'thread:fixture', turnId: 'turn:fixture' };
 const raw = (items: unknown[], status = 'completed') => JSON.stringify({ thread: {
   id: binding.threadId, cliVersion: CODEX_APP_SERVER_READ_CONTRACT.version,
   turns: [{ id: binding.turnId, status, items }],
 } });
-const project = (items: unknown[]) => projectSourceTestedCodexCompletedTurnV1({ ...binding, rawResult: raw(items) });
+const project = (items: unknown[]) => projectExactPackageCodexCompletedTurnV1({ ...binding, rawResult: raw(items) });
 
-test('source-tested contract cannot be mistaken for canonical evidence', () => {
-  assert.equal(CODEX_SOURCE_TESTED_RESULT_CONTRACT_V1.exactPackageQualified, false);
-  assert.equal(CODEX_SOURCE_TESTED_RESULT_CONTRACT_V1.canonicalPublicationAllowed, false);
-  assert.equal(CODEX_SOURCE_TESTED_RESULT_CONTRACT_V1.maximumResultBytes, 65_536);
+test('pinned result-item contract still cannot be mistaken for canonical native evidence', () => {
+  assert.equal(CODEX_EXACT_PACKAGE_RESULT_CONTRACT_V1.selectedResultItemSchemaQualified, true);
+  assert.equal(CODEX_EXACT_PACKAGE_RESULT_CONTRACT_V1.canonicalPublicationAllowed, false);
+  assert.equal(CODEX_EXACT_PACKAGE_RESULT_CONTRACT_V1.maximumResultBytes, 65_536);
+});
+
+test('exact-package result contract is bound to retained package-matching schema evidence', () => {
+  const evidence = JSON.parse(readFileSync(new URL(
+    '../research/codex-app-server-0.150.0-alpha.8-result-schema-evidence.json', import.meta.url), 'utf8'));
+  assert.equal(evidence.officialSource.matchesPackageGeneratedBundle, true);
+  assert.equal(evidence.officialSource.generatedBundleSha256, evidence.generatedBundleSha256);
+  assert.deepEqual({ package: evidence.package, version: evidence.version,
+    generatedBundleSha256: evidence.generatedBundleSha256,
+    sourceTag: evidence.officialSource.tag,
+    sourceTagObject: evidence.officialSource.tagObjectSha,
+    sourceCommit: evidence.officialSource.commitSha,
+    threadReadResponseSchemaSha256: evidence.threadReadResponse.sha256,
+    agentMessageSourceSha256: evidence.agentMessage.sourceSha256,
+    messagePhaseSourceSha256: evidence.agentMessage.messagePhaseSource.sha256,
+    deliverySourceSha256: evidence.agentMessage.deliverySource.sha256,
+    memoryCitationSourceSha256: evidence.agentMessage.memoryCitationSource.sha256,
+    memoryCitationEntrySourceSha256: evidence.agentMessage.memoryCitationSource.entrySha256,
+    agentMessageType: evidence.agentMessage.type,
+    agentMessageRequired: evidence.agentMessage.required,
+    messagePhases: evidence.agentMessage.messagePhases,
+    completeItemsView: evidence.threadReadResponse.completeItemsView,
+  }, CODEX_APP_SERVER_RESULT_CONTRACT);
+  assert.match(evidence.scope, /No provider call/);
+  assert.match(evidence.scope, /canonical result publication/);
 });
 
 test('projects the last eligible agent message without normalizing exact bytes', () => {
@@ -32,7 +59,7 @@ test('projects the last eligible agent message without normalizing exact bytes',
   assert.equal(result.phase, 'final_answer');
   assert.equal(result.contentHash, `sha256:${createHash('sha256').update(Buffer.from(result.text)).digest('hex')}`);
   assert.equal(result.sizeBytes, Buffer.byteLength(result.text));
-  assert.equal(result.exactPackageQualified, false);
+  assert.equal(result.selectedResultItemSchemaQualified, true);
   assert.equal(result.canonicalPublicationAllowed, false);
   assert.equal(result.completionVerified, false);
 });
@@ -42,6 +69,25 @@ test('last result wins while trailing commentary never wins', () => {
     { type: 'agentMessage', id: 'item:last', text: 'last' }]).text, 'last');
   assert.equal(project([{ type: 'agentMessage', id: 'item:final', phase: 'final_answer', text: 'final' },
     { type: 'agentMessage', id: 'item:comment', phase: 'commentary', text: 'after' }]).text, 'final');
+  assert.equal(project([{ type: 'agentMessage', id: 'item:null', phase: null, text: 'legacy' }]).phase, 'unphased');
+});
+
+test('requires full turn items and exact optional agent-message fields', () => {
+  const withView = (itemsView: string) => JSON.stringify({ thread: { id: binding.threadId,
+    cliVersion: CODEX_APP_SERVER_READ_CONTRACT.version,
+    turns: [{ id: binding.turnId, status: 'completed', itemsView, items: [
+      { type: 'agentMessage', id: 'item:final', text: 'answer' }] }] } });
+  assert.equal(projectExactPackageCodexCompletedTurnV1({ ...binding, rawResult: withView('full') }).text, 'answer');
+  for (const itemsView of ['summary', 'notLoaded']) assert.throws(() =>
+    projectExactPackageCodexCompletedTurnV1({ ...binding, rawResult: withView(itemsView) }), /projection_unavailable/);
+  for (const item of [
+    { type: 'agentMessage', id: 'item:final', text: 'x', delivery: 'other' },
+    { type: 'agentMessage', id: 'item:final', text: 'x', memoryCitation: { entries: [], threadIds: 'bad' } },
+    { type: 'agentMessage', id: 'item:final', text: 'x', memoryCitation: {
+      entries: [{ path: 'a.ts', lineStart: -1, lineEnd: 2, note: 'bad' }], threadIds: [] } },
+    { type: 'agentMessage', id: 'item:final', text: 'x', memoryCitation: {
+      entries: [{ path: 'a.ts', lineStart: 1, lineEnd: 2.5, note: 'bad' }], threadIds: [] } },
+  ]) assert.throws(() => project([item]), /projection_unavailable/);
 });
 
 test('repeat projection is deterministic and changed bytes change identity', () => {
@@ -55,16 +101,16 @@ test('repeat projection is deterministic and changed bytes change identity', () 
 
 test('refuses non-completed, missing and foreign turns', () => {
   for (const status of ['inProgress', 'failed', 'interrupted']) assert.throws(() =>
-    projectSourceTestedCodexCompletedTurnV1({ ...binding, rawResult: raw([
+    projectExactPackageCodexCompletedTurnV1({ ...binding, rawResult: raw([
       { type: 'agentMessage', id: 'item:final', text: 'not eligible' }], status) }), /projection_unavailable/);
-  assert.throws(() => projectSourceTestedCodexCompletedTurnV1({ ...binding,
+  assert.throws(() => projectExactPackageCodexCompletedTurnV1({ ...binding,
     rawResult: JSON.stringify({ thread: { id: binding.threadId,
       cliVersion: CODEX_APP_SERVER_READ_CONTRACT.version, turns: [] } }) }), /projection_unavailable/);
-  assert.throws(() => projectSourceTestedCodexCompletedTurnV1({ ...binding,
+  assert.throws(() => projectExactPackageCodexCompletedTurnV1({ ...binding,
     rawResult: JSON.stringify({ thread: { id: 'thread:foreign', turns: [{ id: binding.turnId,
       status: 'completed', items: [{ type: 'agentMessage', id: 'item:final', text: 'foreign' }] }],
       cliVersion: CODEX_APP_SERVER_READ_CONTRACT.version } }) }), /projection_unavailable/);
-  assert.throws(() => projectSourceTestedCodexCompletedTurnV1({ ...binding,
+  assert.throws(() => projectExactPackageCodexCompletedTurnV1({ ...binding,
     rawResult: JSON.stringify({ thread: { id: binding.threadId, cliVersion: '0.153.4',
       turns: [{ id: binding.turnId, status: 'completed',
         items: [{ type: 'agentMessage', id: 'item:final', text: 'wrong version' }] }] } }) }), /projection_unavailable/);
@@ -72,7 +118,7 @@ test('refuses non-completed, missing and foreign turns', () => {
 
 test('refuses duplicate identities and malformed agent messages', () => {
   const turn = { id: binding.turnId, status: 'completed', items: [{ type: 'agentMessage', id: 'item:final', text: 'x' }] };
-  assert.throws(() => projectSourceTestedCodexCompletedTurnV1({ ...binding,
+  assert.throws(() => projectExactPackageCodexCompletedTurnV1({ ...binding,
     rawResult: JSON.stringify({ thread: { id: binding.threadId,
       cliVersion: CODEX_APP_SERVER_READ_CONTRACT.version, turns: [turn, turn] } }) }), /projection_unavailable/);
   for (const items of [
@@ -100,7 +146,7 @@ test('accepts exactly 65,536 UTF-8 bytes and refuses one more', () => {
 });
 
 test('refuses oversized reads, item floods and selected secrets', () => {
-  assert.throws(() => projectSourceTestedCodexCompletedTurnV1({ ...binding,
+  assert.throws(() => projectExactPackageCodexCompletedTurnV1({ ...binding,
     rawResult: JSON.stringify({ thread: { id: binding.threadId, turns: [{ id: binding.turnId,
       status: 'completed', items: [{ type: 'agentMessage', id: 'item:final', text: 'x' }], padding: 'x'.repeat(262_144) }],
       cliVersion: CODEX_APP_SERVER_READ_CONTRACT.version } })

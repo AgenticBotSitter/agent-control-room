@@ -47,7 +47,7 @@ test('read recovery projects only the exact saved turn and never promotes snapsh
     cliVersion: CODEX_APP_SERVER_READ_CONTRACT.version, turns: [] } })).status, 'not_observed');
 });
 
-test('read recovery returns a bounded source-tested result candidate without promoting it', () => {
+test('read recovery returns a pinned result-item candidate without promoting it', () => {
   const read = createCodexReadRecovery({ threadId: 'thread:fixture', turnId: 'turn:fixture' });
   const result = read.project(JSON.stringify({ thread: { id: 'thread:fixture',
     cliVersion: CODEX_APP_SERVER_READ_CONTRACT.version,
@@ -56,9 +56,9 @@ test('read recovery returns a bounded source-tested result candidate without pro
       { type: 'agentMessage', id: 'item:final', phase: 'final_answer', text: 'safe result' },
     ] }] } }));
   assert.equal(result.status, 'completed');
-  assert.equal(result.sourceTestedResult?.text, 'safe result');
-  assert.equal(result.sourceTestedResult?.exactPackageQualified, false);
-  assert.equal(result.sourceTestedResult?.canonicalPublicationAllowed, false);
+  assert.equal(result.exactPackageResult?.text, 'safe result');
+  assert.equal(result.exactPackageResult?.selectedResultItemSchemaQualified, true);
+  assert.equal(result.exactPackageResult?.canonicalPublicationAllowed, false);
   assert.equal(result.completionVerified, false);
 });
 

@@ -1,0 +1,56 @@
+{
+  "schema": "agent-control-room.codex-app-server-result-schema-evidence/v1",
+  "package": "@openai/codex",
+  "version": "0.150.0-alpha.8",
+  "platformArtifactVersion": "0.150.0-alpha.8-darwin-arm64",
+  "generatedBundle": "codex_app_server_protocol.v2.schemas.json",
+  "generatedBundleBytes": 545742,
+  "generatedBundleSha256": "fef60935ec72c842ed361ce064693691e415b0f45a2c1351bda13c6013b0a7bf",
+  "officialSource": {
+    "repository": "https://github.com/openai/codex",
+    "tag": "rust-v0.150.0-alpha.8",
+    "tagObjectSha": "4111e744b09ceed970f5d88e7775ca583f963ec4",
+    "commitSha": "fcbdb57851be70192fd0c21faa9e529146e93ff1",
+    "generatedBundleBytes": 545742,
+    "generatedBundleSha256": "fef60935ec72c842ed361ce064693691e415b0f45a2c1351bda13c6013b0a7bf",
+    "matchesPackageGeneratedBundle": true
+  },
+  "threadReadResponse": {
+    "path": "codex-rs/app-server-protocol/schema/json/v2/ThreadReadResponse.json",
+    "bytes": 60951,
+    "sha256": "f71533cf90ece89dd594501ac2ab771a28aeeec55395fdb6b28f1a46cf45a65c",
+    "responseRequired": ["thread"],
+    "turnRequired": ["id", "items", "status"],
+    "completeItemsView": "full"
+  },
+  "agentMessage": {
+    "sourcePath": "codex-rs/app-server-protocol/schema/typescript/v2/ThreadItem.ts",
+    "sourceBytes": 5678,
+    "sourceSha256": "52051c9a063d3194e739759c9a572937bbd5bda511dcda1522e643c99a5bf84d",
+    "type": "agentMessage",
+    "required": ["id", "text", "type"],
+    "optionalDefaultNull": ["delivery", "memoryCitation", "phase"],
+    "messagePhases": ["commentary", "final_answer"],
+    "deliveryValues": ["async"],
+    "messagePhaseSource": {
+      "path": "codex-rs/app-server-protocol/schema/typescript/MessagePhase.ts",
+      "bytes": 447,
+      "sha256": "9b9cac40f1eb1d9c9c387b90fd9f87873727e010f46e478230aff17fd3ec460c"
+    },
+    "deliverySource": {
+      "path": "codex-rs/app-server-protocol/schema/typescript/v2/AgentMessageDelivery.ts",
+      "bytes": 197,
+      "sha256": "2fa497987aab791b697c9dee5cdd634ec566bf0b82cd56b5a796f26241a95957"
+    },
+    "memoryCitationSource": {
+      "path": "codex-rs/app-server-protocol/schema/typescript/v2/MemoryCitation.ts",
+      "bytes": 316,
+      "sha256": "1321da58b2371042e969191c90a7cb57d413c44908a82122184b787473860c75",
+      "entryPath": "codex-rs/app-server-protocol/schema/typescript/v2/MemoryCitationEntry.ts",
+      "entryBytes": 256,
+      "entrySha256": "b0a7a2a637e64c04df5da35880065941f0a3d033ebb220d67b1766e72cb4b18c"
+    }
+  },
+  "experimentalSchemaIncluded": false,
+  "scope": "Sanitized exact-package result-schema evidence. Official tagged source is accepted only because its complete generated schema bundle exactly matches the previously retained package-generated bundle byte count and SHA-256. No provider call, thread read, process start, restart, credential inspection, canonical result publication or production qualification is claimed."
+}
