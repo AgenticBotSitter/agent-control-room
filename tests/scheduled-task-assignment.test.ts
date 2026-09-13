@@ -17,6 +17,9 @@ import type { DatabaseClient, DatabaseSession } from "../src/persistence/databas
 import { taskAssignmentFixture } from "./helpers/task-assignment";
 import { binding, instant } from "./hermes-native-fixture";
 import { at } from "./native-task-fixture";
+import { bindScheduledContextReferencesV1 } from "../src/web/v1/task-execution-planner";
+import { prepareNativeTaskApproval } from "../src/harness/v1/native-task-approval-binding";
+import { enrollment } from "./hermes-native-fixture";
 
 const scheduleId = "schedule:automatic-assignment";
 const occurrenceKey = `${scheduleId}:2026-09-04T12:00`;
@@ -55,8 +58,8 @@ async function scheduledFixture(setupContext?: ContextSetup) {
       bundleDigest: computeScheduledTaskSourceBundleDigestV1(source) }, contextBinding };
   const admission = await new ScheduledTaskAdmissionServiceV1(f.db, () => instant + 8000).admit(admissionInput);
   let now = instant + 8000;
-  const createService = (db: DatabaseClient = f.db) =>
-    new ScheduledTaskAssignmentServiceV1(db, f.scope, f.planner, f.coordinator, () => now, verifier);
+  const createService = (db: DatabaseClient = f.db, clock: () => number = () => now) =>
+    new ScheduledTaskAssignmentServiceV1(db, f.scope, f.planner, f.coordinator, clock, verifier);
   const service = createService();
   const policyInput = { id: "policy:automatic-assignment", projectId: binding.projectId, scheduleId,
     scheduleDefinitionDigest, sourceBundleDigest: admissionInput.source.bundleDigest, reusableContexts,
@@ -151,6 +154,8 @@ test("one admitted occurrence is planned and assigned once across concurrency an
   assert.equal(results.filter(value => !value.plan.replayed).length, 1);
   assert.equal(results.filter(value => !value.assignment.replayed).length, 1);
   for (const value of results) assert.deepEqual(value.assignment.receipt, results[0].assignment.receipt);
+  const legacyPlan = await f.planner.read(results[0].plan.receipt.plannedJobId);
+  assert.deepEqual(legacyPlan?.input, { prompt: f.sourceDraft.instructions, instructions: "Use only the supplied information." });
   const replay = await f.createService().process(f.operation);
   assert.equal(replay.plan.replayed, true); assert.equal(replay.assignment.replayed, true);
   assert.equal(await count(f, "control_scheduled_task_admissions"), 1);
@@ -186,14 +191,43 @@ test("stable policy locking precedes absent receipt reads for PostgreSQL replay 
     transaction: work => f.db.transaction(tx => work(session(tx))),
     transactionWithPreCommitCheck: (work, check) => f.db.transactionWithPreCommitCheck(tx => work(session(tx)), check) };
   const service = f.createService(tracked); await service.plan(f.operation);
-  const planLock = statements.findIndex(sql => sql.includes("SELECT id FROM control_schedule_assignment_policies"));
+  const ownerLock = statements.findIndex(sql => sql.includes("SELECT id,state FROM control_identities"));
+  const grantLock = statements.findIndex(sql => sql.includes("FROM control_role_grants") && sql.includes("FOR SHARE"));
+  const planLock = statements.findIndex(sql => sql.includes("SELECT * FROM control_schedule_assignment_policies"));
   const planRead = statements.findIndex(sql => sql.includes("SELECT payload,receipt_digest FROM control_scheduled_task_plans"));
-  assert.ok(planLock >= 0 && planLock < planRead, "stable policy row locks before missing plan receipt lookup");
+  assert.ok(ownerLock >= 0 && ownerLock < grantLock && grantLock < planLock && planLock < planRead,
+    "owner and grants lock before stable policy, which locks before missing plan receipt lookup");
   statements.length = 0; await service.assign(f.operation);
-  const assignmentLock = statements.findIndex(sql => sql.includes("SELECT id FROM control_schedule_assignment_policies"));
+  const assignmentOwnerLock = statements.findIndex(sql => sql.includes("SELECT id,state FROM control_identities"));
+  const assignmentGrantLock = statements.findIndex(sql => sql.includes("FROM control_role_grants") && sql.includes("FOR SHARE"));
+  const assignmentLock = statements.findIndex(sql => sql.includes("SELECT * FROM control_schedule_assignment_policies"));
   const assignmentRead = statements.findIndex(sql => sql.includes("SELECT payload,receipt_digest FROM control_scheduled_task_assignments"));
-  assert.ok(assignmentLock >= 0 && assignmentLock < assignmentRead,
-    "stable policy row locks before missing assignment receipt lookup");
+  assert.ok(assignmentOwnerLock >= 0 && assignmentOwnerLock < assignmentGrantLock
+    && assignmentGrantLock < assignmentLock && assignmentLock < assignmentRead,
+  "owner and grants lock before stable policy, which locks before missing assignment receipt lookup");
+});
+
+test("owner-first plan lock and concurrent policy pause complete without lock inversion", async t => {
+  const f = await scheduledFixture(); t.after(f.close);
+  let release!: () => void, observed!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const ownerLocked = new Promise<void>(resolve => { observed = resolve; });
+  let held = false;
+  const session = (tx: DatabaseSession): DatabaseSession => ({ async query<T>(sql: string, params?: unknown[]) {
+    const result = await tx.query<T>(sql, params);
+    if (!held && sql.includes("SELECT id,state FROM control_identities") && sql.includes("FOR UPDATE")) {
+      held = true; observed(); await gate;
+    }
+    return result;
+  } });
+  const tracked: DatabaseClient = { query: f.db.query.bind(f.db), transaction: work => f.db.transaction(tx => work(session(tx))),
+    transactionWithPreCommitCheck: (work, check) => f.db.transactionWithPreCommitCheck(tx => work(session(tx)), check) };
+  const plan = f.createService(tracked).plan(f.operation);
+  await ownerLocked;
+  const pause = f.service.setPolicyState(f.identity, f.policy.policy.id, { state: "paused", expectedVersion: 1 });
+  release();
+  const [planned, paused] = await Promise.all([plan, pause]);
+  assert.equal(planned.replayed, false); assert.equal(paused.policy.state, "paused");
 });
 
 test("final precommit fences reject policy or accepted-context expiry without committing evidence", async t => {
@@ -208,6 +242,40 @@ test("final precommit fences reject policy or accepted-context expiry without co
   await assert.rejects(contextService.assign(context.operation), hasCode("context_unavailable"));
   assert.equal(await count(context, "control_scheduled_task_assignments"), 0);
   assert.equal(await count(context, "control_leases"), context.baseline.leases);
+});
+
+test("terminal synchronous fence catches time crossing after the last awaited validation", async t => {
+  const policy = await scheduledFixture(); t.after(policy.close);
+  let armed = false, samples = 0;
+  const crossingClock = () => !armed ? instant + 8000 : ++samples === 1 ? instant + 8000 : instant + 250000;
+  const service = policy.createService(withBeforeCommit(policy.db, () => { armed = true; }), crossingClock);
+  await assert.rejects(service.plan(policy.operation), hasCode("policy_expired"));
+  assert.equal(samples, 2); assert.equal(await count(policy, "control_scheduled_task_plans"), 0);
+
+  const context = await scheduledFixture(fixture => acceptedContext(fixture, at(9000))); t.after(context.close);
+  armed = false; samples = 0;
+  const contextClock = () => !armed ? instant + 8000 : ++samples === 1 ? instant + 8000 : instant + 9000;
+  await context.service.plan(context.operation);
+  const assign = context.createService(withBeforeCommit(context.db, () => { armed = true; }), contextClock);
+  await assert.rejects(assign.assign(context.operation), hasCode("context_unavailable"));
+  assert.equal(samples, 2); assert.equal(await count(context, "control_scheduled_task_assignments"), 0);
+
+  const grant = await scheduledFixture(); t.after(grant.close);
+  await grant.db.query("UPDATE control_role_grants SET expires_at=$1 WHERE tenant_id=$2 AND identity_id=$3",
+    [at(9000), grant.scope.tenantId, grant.policy.policy.ownerIdentityId]);
+  armed = false; samples = 0;
+  const grantClock = () => !armed ? instant + 8000 : ++samples === 1 ? instant + 8000 : instant + 9000;
+  const grantService = grant.createService(withBeforeCommit(grant.db, () => { armed = true; }), grantClock);
+  await assert.rejects(grantService.plan(grant.operation), hasCode("policy_not_active"));
+  assert.equal(samples, 2); assert.equal(await count(grant, "control_scheduled_task_plans"), 0);
+
+  const allocator = await scheduledFixture(); t.after(allocator.close); await allocator.service.plan(allocator.operation);
+  armed = false; samples = 0;
+  const deadlineClock = () => !armed ? instant + 8000 : ++samples === 1 ? instant + 8000 : instant + 68000;
+  const allocatorService = allocator.createService(withBeforeCommit(allocator.db, () => { armed = true; }), deadlineClock);
+  await assert.rejects(allocatorService.assign(allocator.operation), hasCode("assignment_conflict"));
+  assert.equal(samples, 2); assert.equal(await count(allocator, "control_scheduled_task_assignments"), 0);
+  assert.equal(await count(allocator, "control_leases"), allocator.baseline.leases);
 });
 
 test("policy mismatch, pause, revocation and expiry block new plans or leases", async t => {
@@ -284,9 +352,12 @@ test("non-empty context is exact, revalidated at plan and assignment, and never 
   const plan = await f.service.plan(f.operation);
   const planned = (await f.db.query<{ payload: JobRecord }>("SELECT payload FROM control_jobs WHERE id=$1",
     [plan.receipt.plannedJobId])).rows[0].payload;
-  assert.equal(planned.inputDigest, sha256Digest({ prompt: f.sourceDraft.instructions,
-    instructions: "Use only the supplied information.", reusableContexts: f.operation.admission.contextBinding.reusableContexts }),
+  const expectedInstructions = bindScheduledContextReferencesV1("Use only the supplied information.",
+    f.operation.admission.contextBinding.reusableContexts);
+  assert.equal(planned.inputDigest, sha256Digest({ prompt: f.sourceDraft.instructions, instructions: expectedInstructions }),
   "accepted context is part of the canonical plan input digest");
+  const saved = await f.planner.read(plan.receipt.plannedJobId);
+  assert.ok(saved && saved.input.instructions.includes(f.operation.admission.contextBinding.reusableContexts[0].contentHash));
   await f.db.query("ALTER TABLE control_completion_gate_records DISABLE TRIGGER control_completion_gate_records_append_only");
   await f.db.query("UPDATE control_completion_gate_records SET record_digest=$1 WHERE id=$2",
     [sha256Digest("altered"), f.operation.admission.contextBinding.reusableContexts[0].targetId]);
@@ -310,6 +381,19 @@ test("non-empty context is exact, revalidated at plan and assignment, and never 
   await assert.rejects(empty.service.plan({ ...empty.operation, admission: {
     ...empty.admission.receipt, contextBinding: undefined } }), hasCode("admission_conflict"));
   assert.equal(await count(empty, "control_scheduled_task_plans"), 0);
+});
+
+test("scheduled context-bound input remains compatible with native approval binding", async t => {
+  const f = await scheduledFixture(fixture => acceptedContext(fixture)); t.after(f.close);
+  const result = await f.service.process(f.operation), saved = await f.planner.read(result.plan.receipt.plannedJobId);
+  assert.ok(saved);
+  const canonical = new CanonicalStore(f.db);
+  const job = await canonical.get(f.scope.tenantId, "job", result.assignment.receipt.plannedJobId);
+  const attempt = await canonical.get(f.scope.tenantId, "attempt", result.assignment.receipt.attemptId);
+  const lease = await canonical.get(f.scope.tenantId, "lease", result.assignment.receipt.leaseId);
+  assert.doesNotThrow(() => prepareNativeTaskApproval({ enrollment, nodeClass: "personal-compute", now: instant + 9000,
+    input: saved.input, job, attempt, lease }));
+  assert.deepEqual(Object.keys(saved.input).sort(), ["instructions", "prompt"]);
 });
 
 test("schedule pause after admission and before planning refuses without erasing admission", async t => {

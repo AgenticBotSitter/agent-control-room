@@ -115,6 +115,8 @@ type CurrentGrantRow = { id: string; role_key: string; allowed_actions: string[]
   risk_ceiling: RoleGrant["riskCeiling"]; allow_external_effects: boolean; require_strong_factor: boolean;
   expires_at: string | Date | null; revoked_at: string | Date | null };
 const iso = (value: string | Date) => new Date(value).toISOString();
+type LockedAuthority = Readonly<{ policy: ScheduleAssignmentPolicyV1; ownerActive: boolean; ownerId: string;
+  grants: readonly RoleGrant[] }>;
 
 function policyFromRow(row: PolicyRow): ScheduleAssignmentPolicyV1 {
   const parsed = z.object({ contractVersion: z.literal("control-room-schedule-assignment-policy/v1"), tenantId: id,
@@ -244,15 +246,58 @@ export class ScheduledTaskAssignmentServiceV1 {
   }
 
   private now(): string { const value = this.clock(); if (!Number.isSafeInteger(value) || value < 0) fail("policy_expired"); return new Date(value).toISOString(); }
-  private async lockReplayScope(tx: DatabaseSession, policyId: string) {
-    const row = (await tx.query<{ id: string }>(`SELECT id FROM control_schedule_assignment_policies
+  /** Match WebSessionAuthority's owner/grant -> operation-row order. The unlocked locator is
+   * rechecked against the locked policy, so it cannot redirect authority while locks are acquired. */
+  private async lockAuthority(tx: DatabaseSession, policyId: string): Promise<LockedAuthority> {
+    const locator = (await tx.query<{ owner_identity_id: string }>(`SELECT owner_identity_id
+      FROM control_schedule_assignment_policies WHERE tenant_id=$1 AND id=$2`,
+    [this.scope.tenantId, policyId])).rows[0];
+    if (!locator) fail("policy_conflict");
+    const owner = (await tx.query<{ id: string; state: string }>(`SELECT id,state FROM control_identities
+      WHERE tenant_id=$1 AND id=$2 AND actor_type='human' FOR UPDATE`,
+    [this.scope.tenantId, locator.owner_identity_id])).rows[0];
+    if (!owner) fail("policy_not_active");
+    const grantRows = (await tx.query<CurrentGrantRow>(`SELECT id,role_key,allowed_actions,project_ids,risk_ceiling,
+      allow_external_effects,require_strong_factor,expires_at,revoked_at FROM control_role_grants
+      WHERE tenant_id=$1 AND identity_id=$2 FOR SHARE`, [this.scope.tenantId, owner.id])).rows;
+    const row = (await tx.query<PolicyRow>(`SELECT * FROM control_schedule_assignment_policies
       WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, [this.scope.tenantId, policyId])).rows[0];
     if (!row) fail("policy_conflict");
+    const policy = policyFromRow(row);
+    if (policy.ownerIdentityId !== locator.owner_identity_id || owner.id !== policy.ownerIdentityId
+      || sha256Digest({ tenantId: this.scope.tenantId, identityId: owner.id, actorType: "human" })
+        !== policy.ownerIdentityDigest) fail("policy_conflict");
+    const grants = grantRows.filter(value => value.role_key === "owner").map(value => ({ id: value.id,
+      roleKey: value.role_key, allowedActions: value.allowed_actions, projectIds: value.project_ids,
+      riskCeiling: value.risk_ceiling, allowExternalEffects: value.allow_external_effects,
+      requireStrongFactor: value.require_strong_factor, ...(value.expires_at ? { expiresAt: iso(value.expires_at) } : {}),
+      ...(value.revoked_at ? { revokedAt: iso(value.revoked_at) } : {}) }));
+    return Object.freeze({ policy, ownerActive: owner.state === "active", ownerId: owner.id,
+      grants: Object.freeze(grants) });
   }
-  private async current(tx: DatabaseSession, input: { policyId: string; policyDigest: string; admission: ScheduledTaskAdmissionReceiptV1 }) {
-    const row = (await tx.query<PolicyRow>("SELECT * FROM control_schedule_assignment_policies WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
-      [this.scope.tenantId, input.policyId])).rows[0];
-    if (!row) fail("policy_conflict"); const policy = policyFromRow(row), now = this.now();
+  private authorized(authority: LockedAuthority, now: string) {
+    const policy = authority.policy;
+    if (!authority.ownerActive) fail("policy_not_active");
+    const result = evaluatePolicy({ tenantId: this.scope.tenantId, identityId: authority.ownerId, actorType: "human",
+      authenticatedAt: policy.createdAt, expiresAt: policy.validUntil }, [...authority.grants], { tenantId: this.scope.tenantId,
+      action: "tasks.assign", resourceType: "task", resourceId: policy.projectId, projectId: policy.projectId,
+      risk: "low", externalEffect: false, occurredAt: now });
+    if (!result.allowed) fail("policy_not_active");
+  }
+  private terminalFence(authority: LockedAuthority, resolvedContexts: readonly ScheduledReusableContextV1[], deadline?: number) {
+    const nowMs = this.clock();
+    if (!Number.isSafeInteger(nowMs) || nowMs < 0) fail("policy_expired");
+    const now = new Date(nowMs).toISOString(), policy = authority.policy;
+    if (nowMs < Date.parse(policy.validFrom) || nowMs >= Date.parse(policy.validUntil)) fail("policy_expired");
+    for (const context of resolvedContexts) {
+      if (context.expiresAt && nowMs >= Date.parse(context.expiresAt)) fail("context_unavailable");
+    }
+    this.authorized(authority, now);
+    if (deadline !== undefined && nowMs >= deadline) fail("assignment_conflict");
+  }
+  private async current(tx: DatabaseSession, authority: LockedAuthority,
+    input: { policyId: string; policyDigest: string; admission: ScheduledTaskAdmissionReceiptV1 }) {
+    const policy = authority.policy, now = this.now();
     if (policy.state !== "active") fail("policy_not_active");
     if (policy.policyDigest !== input.policyDigest) fail("policy_conflict");
     if (Date.parse(now) < Date.parse(policy.validFrom) || Date.parse(now) >= Date.parse(policy.validUntil)) fail("policy_expired");
@@ -285,29 +330,13 @@ export class ScheduledTaskAssignmentServiceV1 {
       WHERE tenant_id=$1 AND project_id=$2 AND id=$3 FOR UPDATE`,
     [this.scope.tenantId, policy.projectId, admission.destination.jobId])).rows[0];
     if (!proposal || proposal.state !== "proposed") fail("schedule_unavailable");
-    const owner = (await tx.query<{ id: string }>(`SELECT id FROM control_identities
-      WHERE tenant_id=$1 AND id=$2 AND actor_type='human' AND state='active' FOR UPDATE`,
-    [this.scope.tenantId, policy.ownerIdentityId])).rows[0];
-    if (!owner || sha256Digest({ tenantId: this.scope.tenantId, identityId: owner.id, actorType: "human" })
-      !== policy.ownerIdentityDigest) fail("policy_not_active");
-    const grantRows = (await tx.query<CurrentGrantRow>(`SELECT id,role_key,allowed_actions,project_ids,risk_ceiling,
-      allow_external_effects,require_strong_factor,expires_at,revoked_at FROM control_role_grants
-      WHERE tenant_id=$1 AND identity_id=$2 FOR SHARE`, [this.scope.tenantId, owner.id])).rows;
-    const grants = grantRows.filter(row => row.role_key === "owner").map(row => ({ id: row.id, roleKey: row.role_key,
-      allowedActions: row.allowed_actions, projectIds: row.project_ids, riskCeiling: row.risk_ceiling,
-      allowExternalEffects: row.allow_external_effects, requireStrongFactor: row.require_strong_factor,
-      ...(row.expires_at ? { expiresAt: iso(row.expires_at) } : {}),
-      ...(row.revoked_at ? { revokedAt: iso(row.revoked_at) } : {}) }));
-    const authorized = evaluatePolicy({ tenantId: this.scope.tenantId, identityId: owner.id, actorType: "human",
-      authenticatedAt: policy.createdAt, expiresAt: policy.validUntil }, grants, { tenantId: this.scope.tenantId,
-      action: "tasks.assign", resourceType: "task", resourceId: policy.projectId, projectId: policy.projectId,
-      risk: "low", externalEffect: false, occurredAt: now });
-    if (!authorized.allowed) fail("policy_not_active");
+    this.authorized(authority, now);
     const resolvedContexts: ScheduledReusableContextV1[] = [];
+    const verifier = this.contextVerifier;
     for (const context of policy.reusableContexts) {
-      if (!this.contextVerifier) fail("context_unavailable");
+      if (!verifier) fail("context_unavailable");
       try {
-        const resolved = await this.contextVerifier.resolveInSession(tx,
+        const resolved = await verifier.resolveInSession(tx,
           { ...this.scope, projectId: policy.projectId }, context, now);
         if (sha256Digest(resolved) !== sha256Digest(context)) fail("context_unavailable");
         resolvedContexts.push(resolved);
@@ -320,9 +349,9 @@ export class ScheduledTaskAssignmentServiceV1 {
     const parsed = operationSchema.safeParse(value); if (!parsed.success) fail("admission_conflict");
     let admission: ScheduledTaskAdmissionReceiptV1;
     try { admission = parseScheduledTaskAdmissionReceiptV1(parsed.data.admission); } catch { return fail("admission_conflict"); }
-    let assertFinalCurrent: (() => Promise<unknown>) | undefined;
+    let assertFinalCurrent: (() => Promise<unknown>) | undefined, terminal: (() => void) | undefined;
     return this.db.transactionWithPreCommitCheck(async tx => {
-      await this.lockReplayScope(tx, parsed.data.policyId);
+      const authority = await this.lockAuthority(tx, parsed.data.policyId);
       const prior = (await tx.query<ReceiptRow>(`SELECT payload,receipt_digest FROM control_scheduled_task_plans
         WHERE tenant_id=$1 AND schedule_id=$2 AND occurrence_key=$3 FOR UPDATE`,
       [this.scope.tenantId, admission.scheduleId, admission.occurrenceKey])).rows[0];
@@ -332,9 +361,10 @@ export class ScheduledTaskAssignmentServiceV1 {
           || receipt.policyId !== parsed.data.policyId || receipt.policyDigest !== parsed.data.policyDigest) fail("planning_conflict");
         return { receipt, replayed: true };
       }
-      const assertCurrent = async () => { await this.current(tx, { ...parsed.data, admission }); };
+      const assertCurrent = async () => { await this.current(tx, authority, { ...parsed.data, admission }); };
       assertFinalCurrent = assertCurrent;
-      const { policy, now, resolvedContexts } = await this.current(tx, { ...parsed.data, admission });
+      const { policy, now, resolvedContexts } = await this.current(tx, authority, { ...parsed.data, admission });
+      terminal = () => this.terminalFence(authority, resolvedContexts);
       const sourceJob = (await tx.query<{ payload: JobRecord }>("SELECT payload FROM control_jobs WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
         [this.scope.tenantId, admission.destination.jobId])).rows[0]?.payload;
       if (!sourceJob || sha256Digest(sourceJob) !== admission.destination.jobDigest) fail("admission_conflict");
@@ -364,7 +394,7 @@ export class ScheduledTaskAssignmentServiceV1 {
         receipt.inputDigest, receipt.receiptDigest,
         JSON.stringify(receipt), receipt.plannedAt]);
       return { receipt, replayed: false };
-    }, async () => { if (assertFinalCurrent) await assertFinalCurrent(); });
+    }, async () => { if (assertFinalCurrent) await assertFinalCurrent(); terminal?.(); });
   }
 
   async assign(value: unknown): Promise<{ receipt: ScheduledTaskAssignmentReceiptV1; replayed: boolean }> {
@@ -372,8 +402,9 @@ export class ScheduledTaskAssignmentServiceV1 {
     let admission: ScheduledTaskAdmissionReceiptV1;
     try { admission = parseScheduledTaskAdmissionReceiptV1(parsed.data.admission); } catch { return fail("admission_conflict"); }
     let commitDeadline: number | undefined, assertFinalCurrent: (() => Promise<unknown>) | undefined;
+    let terminal: (() => void) | undefined;
     return this.db.transactionWithPreCommitCheck(async tx => {
-      await this.lockReplayScope(tx, parsed.data.policyId);
+      const authority = await this.lockAuthority(tx, parsed.data.policyId);
       const prior = (await tx.query<ReceiptRow>(`SELECT payload,receipt_digest FROM control_scheduled_task_assignments
         WHERE tenant_id=$1 AND schedule_id=$2 AND occurrence_key=$3 FOR UPDATE`,
       [this.scope.tenantId, admission.scheduleId, admission.occurrenceKey])).rows[0];
@@ -389,9 +420,10 @@ export class ScheduledTaskAssignmentServiceV1 {
       if (!planRow) fail("planning_conflict"); const plan = parsePlanReceipt(planRow.payload);
       if (planRow.receipt_digest !== plan.receiptDigest || plan.admissionReceiptDigest !== admission.receiptDigest
         || plan.policyId !== parsed.data.policyId || plan.policyDigest !== parsed.data.policyDigest) fail("planning_conflict");
-      const assertCurrent = async () => { await this.current(tx, { ...parsed.data, admission }); };
+      const assertCurrent = async () => { await this.current(tx, authority, { ...parsed.data, admission }); };
       assertFinalCurrent = assertCurrent;
-      const { policy, now } = await this.current(tx, { ...parsed.data, admission });
+      const { policy, now, resolvedContexts } = await this.current(tx, authority, { ...parsed.data, admission });
+      terminal = () => this.terminalFence(authority, resolvedContexts, commitDeadline);
       const assigned = await this.assignment.assignScheduledInSession(tx, { projectId: policy.projectId,
         jobId: plan.plannedJobId, nodeId: policy.nodeId, expectedInputDigest: plan.inputDigest }, {
         assertCurrent, commitDeadline: value => { commitDeadline = value; },
@@ -425,10 +457,7 @@ export class ScheduledTaskAssignmentServiceV1 {
           attemptId: receipt.attemptId, leaseId: receipt.leaseId, startsWork: false, grantsExecutionAuthority: false,
           claimsNativeCancellation: false, releasesCapacity: false } });
       return { receipt, replayed: false };
-    }, async () => {
-      if (commitDeadline !== undefined && this.clock() >= commitDeadline) fail("assignment_conflict");
-      if (assertFinalCurrent) await assertFinalCurrent();
-    });
+    }, async () => { if (assertFinalCurrent) await assertFinalCurrent(); terminal?.(); });
   }
 
   async process(value: unknown) { const plan = await this.plan(value); const assignment = await this.assign(value); return { plan, assignment }; }

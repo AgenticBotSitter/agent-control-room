@@ -5,7 +5,7 @@ import { DOMAIN_CONTRACT_VERSION, authorityEnvelopeSchema, jobRecordSchema, requ
 import { CanonicalStore } from "../../persistence/canonical-store";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import { appendAuditWith } from "../../audit/audit-store";
-import { scheduledReusableContextSchemaV1, type ScheduledReusableContextV1 } from "../../services/v1/scheduled-task-admission";
+import type { ScheduledReusableContextV1 } from "../../services/v1/scheduled-task-admission";
 import { assertNoSecretMaterial, computeAuthorityDigest, hmacSha256Tag, sha256Digest, type AwaitableRollbackCheckpointStoreV1 } from "../../security";
 import { CompletionGateStoreV1, completionAcceptanceProfileSchemaV1, completionReviewSchemaV1,
   completionFindingSchemaV1 } from "../../completion-gate/v1";
@@ -62,8 +62,8 @@ export function captureNativeTaskTemplates(config: { template: NativeTaskTemplat
 const initialPlanSchema = z.object({ schema: z.literal("control-room.task-execution-plan/v1"), tenantId: localId,
   projectId: localId, sourceJobId: localId, sourceDigest: digestSchema, sourceInputDigest: digestSchema,
   templateDigest: digestSchema, plannedBy: localId, plannedAt: instant,
-  input: z.object({ prompt: z.string().min(1).max(4000), instructions: z.string().max(8192),
-    reusableContexts: z.array(scheduledReusableContextSchemaV1).max(16).optional() }).strict(),
+  input: z.object({ prompt: z.string().min(1).max(4000), instructions: z.string().max(8192)
+    .refine(value => Buffer.byteLength(value, "utf8") <= 8192) }).strict(),
   request: requestRecordSchema, workflow: workflowRecordSchema, job: jobRecordSchema,
   acceptanceProfileId: localId, acceptanceProfileDigest: digestSchema,
 }).strict();
@@ -87,6 +87,28 @@ const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(
 const fail = (): never => { throw new Error("task_execution_plan_unavailable"); };
 const immutableJob = (job: JobRecord) => ({ ...job, state: "proposed", version: 0, updatedAt: job.createdAt });
 export const SCHEDULE_ASSIGNMENT_SERVICE_ACTOR_V1 = "service:schedule-assignment:v1";
+export const SCHEDULED_CONTEXT_REFERENCE_BLOCK_V1 = "control-room-scheduled-context-references/v1";
+/** Execution-compatible context binding. Empty context preserves the legacy instruction bytes;
+ * non-empty context adds only canonical IDs, digests and timestamps in a deterministic block. */
+export function bindScheduledContextReferencesV1(instructions: string, contexts: readonly ScheduledReusableContextV1[]) {
+  if (contexts.length === 0) return instructions;
+  const entries = contexts.map((context, index) => [
+    `context.${index}.kind=${context.kind}`, `context.${index}.id=${context.id}`,
+    `context.${index}.targetId=${context.targetId}`, `context.${index}.contentHash=${context.contentHash}`,
+    `context.${index}.sourceJobId=${context.sourceJobId}`, `context.${index}.sourceRunId=${context.sourceRunId}`,
+    `context.${index}.sourceRevision=${context.sourceRevision}`,
+    `context.${index}.reviewIds=${context.reviewIds.join(",")}`, `context.${index}.reviewDigest=${context.reviewDigest}`,
+    `context.${index}.verificationIds=${context.verificationIds.join(",")}`,
+    `context.${index}.verificationDigest=${context.verificationDigest}`, `context.${index}.verifiedAt=${context.verifiedAt}`,
+    `context.${index}.expiresAt=${context.expiresAt ?? "none"}`,
+  ]).flat();
+  const bindingDigest = sha256Digest({ contractVersion: SCHEDULED_CONTEXT_REFERENCE_BLOCK_V1, reusableContexts: contexts });
+  const block = [`[${SCHEDULED_CONTEXT_REFERENCE_BLOCK_V1}]`, `bindingDigest=${bindingDigest}`,
+    ...entries, `[/${SCHEDULED_CONTEXT_REFERENCE_BLOCK_V1}]`].join("\n");
+  const bound = `${instructions}\n\n${block}`;
+  if (bound.length > 8192 || Buffer.byteLength(bound, "utf8") > 8192) throw new WebAccessError("conflict");
+  return bound;
+}
 
 /** Authenticated historical v3 plan read for trusted Codex result persistence. It grants no
  * execution, result-write, review, completion or capacity-release authority. */
@@ -318,9 +340,8 @@ export class TaskExecutionPlanner {
     const suffix = sha256Digest({ tenantId: this.scope.tenantId, sourceJobId }).slice(7);
     const base = { contractVersion: DOMAIN_CONTRACT_VERSION, tenantId: this.scope.tenantId, version: 0,
       createdAt: plannedAt, updatedAt: plannedAt };
-    const planInput = { prompt: source.request.objective, instructions: template.instructions,
-      reusableContexts: reusableContexts.map(context => ({ ...context, reviewIds: [...context.reviewIds],
-        verificationIds: [...context.verificationIds] })) };
+    const planInput = { prompt: source.request.objective,
+      instructions: bindScheduledContextReferencesV1(template.instructions, reusableContexts) };
     const codex = template.adapter === CODEX_APP_SERVER_ADAPTER;
     const plan = planSchema.parse({ schema: codex ? "control-room.task-execution-plan/v3" : "control-room.task-execution-plan/v1",
       ...(codex ? { adapter: CODEX_APP_SERVER_ADAPTER, connectorProfileDigest: template.connectorProfileDigest,
