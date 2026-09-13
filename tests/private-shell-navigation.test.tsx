@@ -9,6 +9,8 @@ import { PrivateProjectWorkspace } from "../private-app/app/workspace";
 import { ProjectCatalogNavigation } from "../app/components/project-catalog-navigation";
 import { createProjectBrowserClient } from "../src/web/v1/browser-client";
 import { readTaskHomeActivity } from "../src/web/v1/task-home-browser-client";
+import { ProjectOverviewActivityView } from "../private-app/app/project-overview-activity";
+import { readTaskProjectOverview } from "../src/web/v1/task-project-overview-browser-client";
 
 test("home gives honest navigation to existing private workspace surfaces", () => {
   const html = renderToStaticMarkup(createElement(Home));
@@ -93,6 +95,37 @@ test("project status filters are direct links and remain selected across catalog
     { lifecycle: "archived", after: "project:one", nextCursor: "project:two", count: 50 }));
   assert.match(pages, /href="\/projects\?lifecycle=archived">First page/);
   assert.match(pages, /href="\/projects\?lifecycle=archived&amp;after=project%3Atwo">Next page/);
+});
+
+test("project overview shows scoped current, review and recent work without commands", async () => {
+  const base = { projectId: "project:alpha", requestId: "request:alpha", version: 2,
+    createdAt: "2026-09-04T10:00:00.000Z", updatedAt: "2026-09-04T12:00:00.000Z" };
+  const running = { ...base, jobId: "job:running", title: "Prepare report", state: "running" as const };
+  const review = { ...base, jobId: "job:review", title: "Review report", state: "waiting_approval" as const };
+  const done = { ...base, jobId: "job:done", title: "Earlier research", state: "succeeded" as const };
+  const value = { projectId: base.projectId, current: [running, review], awaitingReview: [review], recent: [done, review, running],
+    additionalCurrentOmitted: false, additionalReviewsOmitted: false, additionalRecentOmitted: false,
+    observedAt: "2026-09-04T12:00:00.000Z", startsWork: false as const };
+  const html = renderToStaticMarkup(createElement(ProjectOverviewActivityView,
+    { projectId: base.projectId, state: { state: "ready", value } }));
+  for (const label of ["Current work", "Waiting for approval", "Recent task activity", "Prepare report", "Earlier research"])
+    assert.match(html, new RegExp(label));
+  assert.match(html, /projects\/project%3Aalpha\/tasks\/job%3Areview/);
+  assert.doesNotMatch(html, /submit|retry|resume|approve/i);
+  let requested = "", method = "";
+  const transport = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requested = String(input); method = init?.method ?? ""; return Response.json(value);
+  }) as typeof fetch;
+  assert.equal((await readTaskProjectOverview(base.projectId, transport)).recent.length, 3);
+  assert.equal(requested, "/api/v1/projects/project%3Aalpha/overview"); assert.equal(method, "GET");
+  await assert.rejects(readTaskProjectOverview("project:other", transport), /unavailable/);
+});
+
+test("unavailable project overview does not claim an empty project", () => {
+  const html = renderToStaticMarkup(createElement(ProjectOverviewActivityView,
+    { projectId: "project:alpha", state: { state: "unavailable", code: "unavailable" } }));
+  assert.match(html, /No empty project or all-clear is inferred/);
+  assert.doesNotMatch(html, /No saved tasks exist/);
 });
 
 test("settings links to the real session surface without credential controls", () => {

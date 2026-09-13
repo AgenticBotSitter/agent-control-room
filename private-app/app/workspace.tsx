@@ -7,6 +7,7 @@ import { BrowserRequestError, browserErrorMessage, createProjectBrowserClient } 
 import type { IdeaProjectAction, ProjectCatalogPage, ProjectView, WebProject } from "../../src/web/v1/project-wire";
 import { ProjectCatalogNavigation } from "../../app/components/project-catalog-navigation";
 import { PrivateHeader } from "./private-header";
+import { ProjectOverviewActivity } from "./project-overview-activity";
 
 export function ProjectSaveRecovery({ pending, onRetry }: { pending: boolean; onRetry: () => void }) {
   return <section className="private-notice" aria-label="Unconfirmed project save">
@@ -176,7 +177,8 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
             </> : <p className="private-note"><a href={`/projects/${encodeURIComponent(projectId)}/tasks`}>Open project tasks</a> to prepare work, check assignment and approval, and inspect recorded progress and results. Task controls report unavailable services rather than assuming a live agent is connected.</p>}
             <p className="private-note">Saved revision {project.version} · Updated {new Date(project.updatedAt).toLocaleString()}</p>
           </section>
-          {section === "overview" && <SessionObservations projectId={projectId} />}
+          {section === "overview" && <><ProjectOverviewActivity key={projectId} projectId={projectId} />
+            <SessionObservations projectId={projectId} /></>}
         </>}
       </>}
     </main>

@@ -25,6 +25,7 @@ import { taskDraftSchema, taskSummarySchema, taskReceiptSchema, taskDetailSchema
   taskRunSchema, type TaskRun, type TaskReceipt } from "./task-wire";
 import { taskPlanningOptionsSchema } from "./task-planning-wire";
 import { taskHomeActivitySchema } from "./task-home-wire";
+import { taskProjectOverviewSchema } from "./task-project-overview-wire";
 
 /** Joins existing stores to the caller-owned session transaction. No nested BEGIN/COMMIT and no
  * new authority: this closure stays inside authenticated(). The outer freshness check owns commit. */
@@ -446,6 +447,31 @@ export class WebTaskService {
         additionalActiveOmitted: activeRows.length > 10, additionalResultsOmitted,
         resultSource: !this.resultStore ? "not_configured" : canReadResults ? "configured" : "not_authorized",
         observedAt: actor.now, startsWork: false });
+    });
+  }
+
+  /** Read-only project summary for the Overview page. Separate bounded queries keep
+   * current, review-waiting and recent task sets complete within their stated limits. */
+  async projectOverview(identity: VerifiedWebIdentity, projectId: string) {
+    this.id(projectId);
+    return this.authority.authenticated(identity, async (tx, actor) => {
+      actor.require("tasks.read", projectId);
+      await this.projects.getViewInSession(tx, actor, projectId);
+      const read = async (states: readonly string[] | undefined, limit: number) => {
+        const parameters: unknown[] = [this.scope.tenantId, projectId];
+        const stateClause = states ? ` AND j.state=ANY($3::text[])` : "";
+        if (states) parameters.push(states);
+        const rows = (await tx.query<TaskRow>(`SELECT ${selection} WHERE j.tenant_id=$1 AND j.project_id=$2${stateClause}
+          ORDER BY j.updated_at DESC,j.id COLLATE "C" LIMIT ${limit + 1}`, parameters)).rows;
+        return { tasks: rows.slice(0, limit).map(row => validated(row, this.scope.tenantId, projectId).summary),
+          omitted: rows.length > limit };
+      };
+      const current = await read(["proposed", "ready", "leased", "running", "waiting_approval", "orphaned"], 10);
+      const reviews = await read(["waiting_approval"], 5);
+      const recent = await read(undefined, 10);
+      return taskProjectOverviewSchema.parse({ projectId, current: current.tasks, awaitingReview: reviews.tasks,
+        recent: recent.tasks, additionalCurrentOmitted: current.omitted, additionalReviewsOmitted: reviews.omitted,
+        additionalRecentOmitted: recent.omitted, observedAt: actor.now, startsWork: false });
     });
   }
 }
