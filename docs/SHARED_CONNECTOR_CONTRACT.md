@@ -49,6 +49,10 @@ Use `asimons81/hermes-gpt` revision
 binding. Source inspection confirms `hermes_session_continue`,
 `hermes_session_job_status` and `hermes_session_job_result`. The result is capped by
 upstream at 24,000 characters and must still pass Control Room's UTF-8 byte bound.
+The inert source-inspected profile is retained in
+`src/harness/hermes-gpt-v1/connector-profile.ts`; the common admission check refuses
+all three advertised operations until their evidence is upgraded by the required
+actual-interface or native qualification.
 
 The source does not provide the durable idempotency, SSE, stop or replay interface
 assumed by the existing experimental `/v1/runs` adapter. PR #14 remains useful fixture
@@ -56,6 +60,10 @@ and uncertainty evidence only. Cancel, event replay and per-job usage are unsupp
 restart may report a running job as `orphaned`, which is uncertainty, not resumability.
 Before submit is admitted, run the unmodified FastMCP implementation through
 continue → status → result and cover busy, truncation, lost-submit and restart/orphaned.
+Once a completed native observation is independently qualified, the pure
+`projectNativeObservationTextResultV1` seam checks its current/completed state and
+exact byte claim before producing the shared pending-review envelope. It performs no
+native call, storage or completion itself.
 
 ### Codex
 
