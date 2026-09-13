@@ -14,7 +14,7 @@ import { sha256Digest } from '../src/security/canonical-digest.ts';
 const digest = (value: string) => sha256Digest(value);
 let sequence = 0;
 function makePair(options: { name?: string; jobId?: string; attemptId?: string; runId?: string;
-  threadId?: string; turnId?: string } = {}) {
+  leaseId?: string; operationDigest?: string; threadId?: string; turnId?: string } = {}) {
   const name = options.name ?? `journal-${++sequence}`;
   const connection = { connectionAttemptId: `connection-attempt:${name}`,
     initializedConnectionDigest: digest(`connection:${name}`) };
@@ -22,8 +22,8 @@ function makePair(options: { name?: string; jobId?: string; attemptId?: string; 
     schema: 'control-room.codex-start-admission/v1',
     scope: { tenantId: 'tenant:test', nodeId: 'node:test', projectId: 'project:test',
       jobId: options.jobId ?? `job:${name}`, attemptId: options.attemptId ?? `attempt:${name}`,
-      runId: options.runId ?? `run:${name}`, leaseId: `lease:${name}`, leaseEpoch: 1,
-      operationDigest: digest(`operation:${name}`) },
+      runId: options.runId ?? `run:${name}`, leaseId: options.leaseId ?? `lease:${name}`, leaseEpoch: 1,
+      operationDigest: options.operationDigest ?? digest(`operation:${name}`) },
     queueId: `queue:${name}`, requestMessageId: `message:activation:${name}`,
     activationMessageId: `message:activation:${name}`, activationId: `activation:${name}`,
     activationDigest: digest(`activation:${name}`), activationFrameDigest: digest(`activation-frame:${name}`),
@@ -118,10 +118,22 @@ test('rejects a turn without its durable thread and conflicting cross-job bindin
   journal.close();
 });
 
-test('one local journal independently refuses two run reservations for the same attempt', () => {
+test('one local journal refuses a conflicting operation for the same attempt and run identity', () => {
   const journal = new SqliteCodexStartJournalV1(':memory:', { testOnlyAllowEphemeral: true });
-  const first = makePair({ name: 'attempt-first', attemptId: 'attempt:shared' });
-  const second = makePair({ name: 'attempt-second', attemptId: 'attempt:shared' });
+  const shared = { jobId: 'job:shared', attemptId: 'attempt:shared', runId: 'run:shared-attempt',
+    leaseId: 'lease:shared' };
+  const first = makePair({ name: 'attempt-first', ...shared, operationDigest: digest('operation:first') });
+  const second = makePair({ name: 'attempt-second', ...shared, operationDigest: digest('operation:conflict') });
+  assert.equal(reserve(journal, first), 'recorded');
+  assert.throws(() => reserve(journal, second), /write_rejected/);
+  assert.equal(journal.load(first.admission.scope.runId).status, 'start_reserved');
+  journal.close();
+});
+
+test('one local journal also refuses a distinct run reservation for the same attempt', () => {
+  const journal = new SqliteCodexStartJournalV1(':memory:', { testOnlyAllowEphemeral: true });
+  const first = makePair({ name: 'attempt-run-first', attemptId: 'attempt:shared-run' });
+  const second = makePair({ name: 'attempt-run-second', attemptId: 'attempt:shared-run' });
   assert.equal(reserve(journal, first), 'recorded');
   assert.throws(() => reserve(journal, second), /write_rejected/);
   assert.equal(journal.load(second.admission.scope.runId).status, 'not_reserved');

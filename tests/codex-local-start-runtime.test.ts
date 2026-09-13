@@ -10,7 +10,8 @@ import { CODEX_APP_SERVER_START_CONTRACT } from '../src/harness/codex-v1/schema-
 import { SqliteCodexStartJournalV1 } from '../src/harness/codex-v1/start-journal.ts';
 import { SqliteBridgeJournal } from '../src/node-bridge/journal.ts';
 import { CODEX_START_OPERATION, codexTaskDispatchBodySchemaV1,
-  codexTaskDispatchReceiptBodySchemaV1, codexTaskPayloadDigestV1 } from '../src/harness/codex-v1/delivery-contract.ts';
+  codexTaskDispatchReceiptBodySchemaV1, codexTaskPayloadDigestV1,
+  codexTaskRunIdV1 } from '../src/harness/codex-v1/delivery-contract.ts';
 import { computeEffectClaimKey } from '../src/node-policy/v1/effect-claim.ts';
 import { computeNormalizedOperationDigest } from '../src/node-policy/v1/policy-evaluator.ts';
 import { computeArtifactBodyDigest, signArtifact } from '../src/node-policy/v1/crypto.ts';
@@ -40,7 +41,7 @@ function activationFixture() {
   request.operationDigest = computeNormalizedOperationDigest(request);
   start.operationDigest = request.operationDigest;
   start.effectClaimKey = computeEffectClaimKey(request);
-  start.runId = `run:codex-task:${start.effectClaimKey.slice(7)}`;
+  start.runId = codexTaskRunIdV1(start);
   const approvalBody = { schema: 'control-room.owner-approval-attestation/v1' as const,
     tenantId: start.tenantId, nodeId: start.nodeId, projectId: start.projectId, jobId: start.jobId,
     attemptId: start.attemptId, operationDigest: request.operationDigest, risk: 'low' as const,

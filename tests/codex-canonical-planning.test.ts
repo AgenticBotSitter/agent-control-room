@@ -65,7 +65,8 @@ async function setup() {
   const codexConfig = { integrityKey: codexIntegrityKey, enrollments: [{ tenantId: binding.tenantId, nodeId: binding.nodeId, nodeClass: "personal-compute",
       enrollmentDigest: sha256Digest("codex-enrollment"), connectorProfileDigest: template.connectorProfileDigest!,
       workspaceIntentDigest: template.workspaceIntentDigest!, credentialRef: authority.credentialRefs[0],
-      filesystemRoot: authority.filesystemRoots[0], validUntil: instant + 180_000, approvalKeyId, approvals,
+      filesystemRoot: authority.filesystemRoots[0], workspacePath: "/synthetic/project/workspaces/codex-canonical",
+      validUntil: instant + 180_000, approvalKeyId, approvals,
       security: { currentServerTrustRevision: () => "trust-revision:codex-test" } }] };
   const submissions: NativeTaskSubmissionReference[] = [];
   const submission = { async enqueueInSession(_tx: unknown, reference: NativeTaskSubmissionReference) {

@@ -40,3 +40,28 @@ test('compiled one-task entry composes actual components and closes denied synth
   assert.doesNotMatch(JSON.stringify(errors), /revoked authority|native.example|credential:synthetic/);
   assert.equal(signals.listenerCount('SIGTERM'), 0); assert.equal(signals.listenerCount('SIGINT'), 0);
 });
+
+test('private node launcher accepts one bounded Codex observation without loading a provider connector', async t => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'cr-built-codex-host-')));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, 'operator.mjs'); await writeFile(path, '// synthetic fixture', { mode: 0o600 });
+  const reports = [], errors = [], signals = new EventEmitter(); let runs = 0, closes = 0;
+  const code = await runPrivateNode(['--configuration', path, '--mode', 'recover'], {
+    signals, report: value => reports.push(value), reportError: value => errors.push(value),
+    async loadRelease() { assert.fail('Codex local host must not load the Hermes/provider connector'); },
+    async loadOperator() { return { schema: 'control-room.private-node-configuration/v1', async createConfiguration({ mode }) {
+      assert.equal(mode, 'recover');
+      return { harness: 'codex-local-v1', mode, async run() { runs++; return {
+        disposition: 'observed', mode: 'recover', status: 'completed',
+        identity: { runId: 'private:must-not-log', threadId: 'private:must-not-log', turnId: 'private:must-not-log' },
+        canonicalPublicationAllowed: false, completionVerified: false, grantsExecutionAuthority: false,
+        permitsRetry: false, permitsResume: false, permitsNewTurn: false,
+        writesResult: false, writesArtifact: false, writesReview: false, releasesCapacity: false,
+      }; }, async close() { closes++; } };
+    } }; },
+  });
+  assert.equal(code, 0); assert.equal(runs, 1); assert.equal(closes, 1); assert.deepEqual(errors, []);
+  assert.deepEqual(reports, ['Control Room Codex host returned a noncanonical observation and closed. No result, artifact or review was published.']);
+  assert.doesNotMatch(JSON.stringify(reports), /private:must-not-log/);
+  assert.equal(signals.listenerCount('SIGTERM'), 0); assert.equal(signals.listenerCount('SIGINT'), 0);
+});

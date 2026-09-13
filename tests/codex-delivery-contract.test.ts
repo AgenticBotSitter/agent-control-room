@@ -4,7 +4,7 @@ import test from 'node:test';
 import { createCodexApprovalIntakeV1 } from '../src/harness/codex-v1/approval-intake';
 import { CODEX_START_OPERATION, codexTaskDispatchBodySchemaV1,
   codexTaskDispatchReceiptBodySchemaV1, codexTaskPayloadDigestV1,
-  matchCodexTaskDispatchReceiptV1 } from '../src/harness/codex-v1/delivery-contract';
+  codexTaskRunIdV1, matchCodexTaskDispatchReceiptV1 } from '../src/harness/codex-v1/delivery-contract';
 import { computeNormalizedOperationDigest } from '../src/node-policy/v1/policy-evaluator';
 import { computeEffectClaimKey } from '../src/node-policy/v1/effect-claim';
 import { computeArtifactBodyDigest, signArtifact } from '../src/node-policy/v1/crypto';
@@ -37,7 +37,7 @@ function fixture(overrides: { jobId?: string; permitKey?: typeof keys.privateKey
   request.operationDigest = computeNormalizedOperationDigest(request);
   start.operationDigest = request.operationDigest;
   start.effectClaimKey = computeEffectClaimKey(request);
-  start.runId = `run:codex-task:${start.effectClaimKey.slice(7)}`;
+  start.runId = codexTaskRunIdV1(start);
   const approvalBody = { schema: 'control-room.owner-approval-attestation/v1' as const,
     tenantId: start.tenantId, nodeId: start.nodeId, projectId: start.projectId, jobId: start.jobId,
     attemptId: start.attemptId, operationDigest: request.operationDigest, risk: 'low' as const,
@@ -69,6 +69,7 @@ test('Codex delivery is a signed, exact-job, effect-free node-protocol message',
     { ...body, queueId: 'native-queue:wrong' },
     { ...body, permitDigest: sha256Digest('wrong') },
     { ...body, start: { ...body.start, inputDigest: sha256Digest('wrong') } },
+    { ...body, start: { ...body.start, workspaceIntentDigest: sha256Digest('stale-workspace') } },
     { ...body, start: { ...body.start, runId: 'run:other' } },
     { ...body, start: { ...body.start, effectClaimKey: sha256Digest('other-effect') } },
     { ...body, request: { ...body.request, leaseEpoch: 4 } },
