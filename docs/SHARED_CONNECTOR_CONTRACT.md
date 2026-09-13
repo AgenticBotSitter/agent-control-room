@@ -84,6 +84,11 @@ owned App Server process and ordered no-replay journal writes. It is inert on im
 and requires an explicit one-shot start call with every native port supplied by a
 trusted host. The public launcher still does not supply those ports, so this is not
 live enablement or host qualification.
+The matching local read composition now accepts only that journal's exact saved
+thread and turn identity, rechecks current authority around each native read, and
+exposes no resume or new-turn method. Its observation remains barred from canonical
+result publication until the exact selected package's result-item schema and native
+restart/read behavior are qualified.
 The portable node bridge now negotiates `harness.codex.dispatch.v1`, verifies the
 owner permit and exact local enrollment/profile/workspace bindings, records one
 immutable private delivery, and returns one signed receipt. It never replays an
