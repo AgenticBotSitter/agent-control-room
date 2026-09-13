@@ -24,8 +24,14 @@ test("compiled private result routes read signed native artifacts and checkpoint
   const metadata = await handler(req(route)); assert.equal(metadata.status, 200);
   const page = await metadata.json(); assert.equal(page.items.length, 1); assert.equal(page.reviews[0].status, "pending");
   assert.deepEqual(page.reviews[0].matchingArtifactIds, [receipt.artifactId]);
+  const home = await handler(req("/api/v1/home/tasks")); assert.equal(home.status, 200);
+  const activity = await home.json(); assert.equal(activity.active.some(task => task.jobId === "job:test" && task.state === "leased"), true);
+  assert.equal(activity.resultSource, "configured");
+  assert.equal(activity.recentResults.length, 1); assert.equal(activity.recentResults[0].task.jobId, "job:test");
+  assert.equal(activity.recentResults[0].artifact.artifactId, receipt.artifactId); assert.equal(activity.startsWork, false);
   const content = await handler(req(`${route}/${receipt.artifactId}`)); assert.equal(content.status, 200);
   assert.equal(content.headers.get("cache-control"), "no-store"); assert.equal((await content.json()).text, "Synthetic compiled artifact result");
   assert.equal((await handler(req("/api/v1/session/logout", "POST"))).status, 204);
-  for (const path of [route, `${route}/${receipt.artifactId}`, base]) assert.equal((await handler(req(path))).status, 401);
+  for (const path of [route, `${route}/${receipt.artifactId}`, base, "/api/v1/home/tasks"])
+    assert.equal((await handler(req(path))).status, 401);
 });

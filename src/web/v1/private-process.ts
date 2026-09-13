@@ -419,6 +419,10 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
             return Response.json(await connections.readQueueAttention(identity, queueAttention), { headers: privateResponseHeaders });
           }
+          if (url.pathname === "/api/v1/home/tasks") {
+            if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+            return Response.json(await tasks.home(identity), { headers: privateResponseHeaders });
+          }
           if (/^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/.test(url.pathname))
             return await createTaskHttpHandler({ origin: site.origin, trust, service: tasks, ownerReviews, ownerVerifications, planning, assignment, approvals, submission, revisions, clock })(request);
           if (url.pathname === "/api/v1/connections") {
@@ -486,8 +490,6 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           if (url.search) throw new WebAccessError("invalid_request");
           await connections.authorize(identity);
         } else if (url.pathname !== "/session") throw new WebAccessError("not_found");
-        if (url.pathname === "/") return new Response(null, { status: 303,
-          headers: { ...privateResponseHeaders, location: "/projects" } });
         const response = await render();
         // The rendered shell carries no project records; every data read rechecks current session/project authority.
         for (const [name, value] of Object.entries(privateResponseHeaders)) response.headers.set(name, value);

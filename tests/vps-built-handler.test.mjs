@@ -32,6 +32,11 @@ test("compiled private routes use the installed process, real disposable SQL, an
     database: { client: f.client, close: () => f.db.close() }, clock: () => now, loadKeys: async () => trust.keys });
   t.after(() => app.close());
   assert.throws(() => installPrivateWebProcess({}), /already_configured/);
+  const home = await handler(request("/")); assert.equal(home.status, 200);
+  assert.equal(home.headers.get("location"), null); assert.match(await home.text(), /Loading saved work/);
+  const homeTasks = await (await handler(request("/api/v1/home/tasks"))).json();
+  assert.deepEqual(homeTasks.active, []); assert.deepEqual(homeTasks.recentResults, []);
+  assert.equal(homeTasks.resultSource, "not_configured"); assert.equal(homeTasks.startsWork, false);
   const created = await handler(request(undefined, "POST", { title: "Compiled project", summary: "From the actual built API" }));
   assert.equal(created.status, 201); const { project } = await created.json();
   const catalog = await handler(request("/projects")); assert.equal(catalog.status, 200);

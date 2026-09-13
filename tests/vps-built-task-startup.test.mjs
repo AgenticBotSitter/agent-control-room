@@ -85,6 +85,9 @@ test("compiled two-pool bootstrap mounts protected planning, assignment and page
   assert.equal((await handler(req(path))).status, 200);
   const saved = await handler(req(path, "POST", { action: "assign", nodeId: f.route.nodeId, expectedInputDigest: plan.inputDigest }));
   assert.equal(saved.status, 201, await saved.clone().text()); assert.equal((await saved.json()).receipt.startsWork, false);
+  const homeActivity = await (await handler(req("/api/v1/home/tasks"))).json();
+  assert.equal(homeActivity.active.some(task => task.jobId === plan.jobId && task.state === "leased"), true);
+  assert.equal(homeActivity.startsWork, false);
   const page = await handler(req(`/projects/${f.profile.projectId}/tasks/${plan.jobId}`));
   assert.equal(page.status, 200); assert.match(await page.text(), /<html/);
   async function throughHost(webRequest) {
