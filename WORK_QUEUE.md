@@ -1,7 +1,7 @@
 # Start here: public work queue
 
 > **MVP work is open:** the maintainer-wide pause ended on 2026-09-13. Work only from
-> a current `CLAIM ACCEPTED` assignment or request a reservation on an issue marked
+> a current `CLAIM ACCEPTED` assignment or request an automatic reservation on an issue marked
 > `status:ready`. Existing useful branches and evidence remain inputs, but contributors
 > must use the new base and paths recorded in the reopening comment. Do not revive a
 > closed pull request or obsolete branch unless that comment explicitly says to do so.
@@ -73,9 +73,12 @@ where the work is concentrated without requiring chat history.
   automatic-dispatch remainder of #29, the integration/backup remainder of #65, #66
   full server composition, #68 worker installation and #61 final release qualification.
 
-Choose only a `status:ready` issue. Post the reservation requested by the worker skill
-and wait for the maintainer's `CLAIM ACCEPTED` comment before editing. A label by itself
-is not permission to edit.
+Choose only a `status:ready` issue. Post the exact two-line reservation request in the
+worker skill. The serialized GitHub controller rechecks the issue, records the current
+`main` revision and changes Ready to Working before its marker says `CLAIM ACCEPTED`.
+Begin only when that accepted marker was posted by `github-actions[bot]` and the issue
+is Working. A request, `CLAIM PENDING`, label change or failed workflow by itself is
+not permission to edit.
 
 ## Complete installable-release work board
 
@@ -151,9 +154,10 @@ state, dependencies, immutable base/target, owned paths, reuse choice and checks
 Ready means it can begin without guessing a shared contract. Needs decision names
 the missing prerequisite and responsible role, not just "blocked."
 
-Maintainers confirm reservations using a unique worker/contributor identifier. A
-comment or shared GitHub login alone is not an atomic claim. Mark Working only when
-the contributor confirms starting, In review when its PR/evidence is submitted, and
+The automatic claim controller confirms ready reservations using a GitHub-login plus
+unique-worker identifier in one short repository-wide serialized workflow. Each exact
+pair may hold one active implementation; a request comment, pending marker or shared
+GitHub login alone is not an atomic claim. Mark In review when its PR/evidence is submitted, and
 Done/closed after the whole assigned outcome is accepted. Partial merges are not
 completion. Transfer ownership only after an explicit stop/handoff, not a timer.
 
@@ -170,7 +174,7 @@ not have to forward files or act as courier. Historical evidence remains intact.
 
 > Read this queue and the public worker skill. If the maintainer-wide pause is active,
 > stop without editing or pushing. Otherwise choose ready work matching your actual
-> platform/capability. Follow a confirmed assignment or request reservation before
+> platform/capability. Follow a confirmed assignment or request the automatic reservation before
 > editing. Report progress, blockers and PRs in its issue, then continue the next
 > confirmed independent assignment. Preserve other checkouts and dependency gates;
 > do not self-merge or infer native-effect authority. If nothing is eligible, report

@@ -1,0 +1,30 @@
+name: Automatic job claim
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  # A short repository-wide critical section prevents the same shared-account
+  # worker identity from being accepted on two issues at once.
+  group: automatic-job-claim-${{ github.repository_id }}
+  cancel-in-progress: false
+
+jobs:
+  claim:
+    if: ${{ !github.event.issue.pull_request && startsWith(github.event.comment.body, 'CLAIM REQUEST') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Validate and reserve one ready issue
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/automatic-claim-controller.mjs

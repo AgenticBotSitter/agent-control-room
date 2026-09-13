@@ -13,8 +13,28 @@ capsules retain their controller and attempt rules until the maintainer migrates
 Read the assignment's outcome, platform, pinned base, owned paths, dependencies,
 acceptance checks and effect permissions. An assignment naming your unique worker ID
 is sufficient confirmation; shared GitHub account names do not identify a worker.
-For unassigned work, obtain a maintainer reservation before editing. A claim comment
-alone is not an atomic lock. Do not wait for a nonexistent V2 controller on public work.
+For unassigned work, choose an open issue with exactly one `status:ready` label and post
+this exact two-line request using a unique worker identity (not a shared account name):
+
+```text
+CLAIM REQUEST
+worker-id: your-unique-worker-id
+```
+
+The repository-wide serialized controller checks the issue again, pins the current public
+`main` revision, changes it from Ready to Working, and edits its one machine marker to
+`CLAIM ACCEPTED`. Begin only when the issue is Working and that accepted comment was
+posted by `github-actions[bot]`; public users can copy text but cannot grant a claim.
+`CLAIM PENDING`, your request, a label change by itself, or an Actions failure is not permission.
+If that comment later says `CLAIM REVOKED — STOP`, stop; the accepted permission no longer exists.
+Malformed, duplicate, non-ready and needs-decision requests are refused. Do not wait
+for the legacy V2 controller on public work.
+
+The accepted marker binds the reservation to both the requester's GitHub login and
+unique worker ID. Each exact login-and-worker pair may hold one active implementation;
+separate bots sharing one GitHub account remain distinct through their worker IDs. A
+claim grants no repository authority, and maintainers may release abusive or abandoned
+reservations.
 
 Use your own branch/checkout and the published setup instructions. If blocked by a
 missing prerequisite, report it once and take another assigned independent item.
@@ -79,7 +99,8 @@ or raw host diagnostics. Do not self-approve or merge. Correct ordinary review f
 on the same PR; do not create a replacement job for each repair.
 
 While review is pending, take the next explicitly reserved independent assignment.
-Default: one active implementation and up to two submitted PRs per worker. A third
+Default: one active implementation per exact GitHub-login and worker-ID pair, and up
+to two submitted PRs per worker. A third
 submitted PR triggers a lead review-capacity check, not silent loss of ownership.
 Maintain one short status when a milestone, handoff or blocker changes; no timer spam.
 
