@@ -430,6 +430,13 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             try { projectId = decodeURIComponent(projectOverview[1]); } catch { throw new WebAccessError("invalid_request"); }
             return Response.json(await tasks.projectOverview(identity, projectId), { headers: privateResponseHeaders });
           }
+          const projectFiles = /^\/api\/v1\/projects\/([^/]+)\/files$/.exec(url.pathname);
+          if (projectFiles) {
+            if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+            let projectId: string;
+            try { projectId = decodeURIComponent(projectFiles[1]); } catch { throw new WebAccessError("invalid_request"); }
+            return Response.json(await tasks.projectFiles(identity, projectId), { headers: privateResponseHeaders });
+          }
           if (/^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/.test(url.pathname))
             return await createTaskHttpHandler({ origin: site.origin, trust, service: tasks, ownerReviews, ownerVerifications, planning, assignment, approvals, submission, revisions, clock })(request);
           if (url.pathname === "/api/v1/connections") {
@@ -452,6 +459,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
         if (request.method !== "GET" && request.method !== "HEAD") throw new WebAccessError("invalid_request");
         const taskPage = /^\/projects\/([^/]+)\/tasks(?:\/([^/]+))?$/.exec(url.pathname);
         const newsPage = /^\/projects\/([^/]+)\/news$/.exec(url.pathname);
+        const filesPage = /^\/projects\/([^/]+)\/files$/.exec(url.pathname);
         const ideaPage = /^\/ideas(?:\/([^/]+))?$/.exec(url.pathname);
         const detail = /^\/projects\/([^/]+)(?:\/(overview|settings))?$/.exec(url.pathname);
         if (ideaPage) {
@@ -462,6 +470,11 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           try { sessionId = ideaPage[1] === undefined ? undefined : decodeURIComponent(ideaPage[1]); }
           catch { throw new WebAccessError("invalid_request"); }
           if (sessionId) await ideas.detail(identity, sessionId); else await ideas.list(identity, url.searchParams.get("after") ?? undefined);
+        } else if (filesPage) {
+          if (url.search) throw new WebAccessError("invalid_request");
+          let id: string;
+          try { id = decodeURIComponent(filesPage[1]); } catch { throw new WebAccessError("invalid_request"); }
+          await tasks.authorize(identity, id);
         } else if (taskPage) {
           let id: string, jobId: string | undefined;
           try { id = decodeURIComponent(taskPage[1]); jobId = taskPage[2] ? decodeURIComponent(taskPage[2]) : undefined; }

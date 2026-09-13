@@ -11,6 +11,8 @@ import { createProjectBrowserClient } from "../src/web/v1/browser-client";
 import { readTaskHomeActivity } from "../src/web/v1/task-home-browser-client";
 import { ProjectOverviewActivityView } from "../private-app/app/project-overview-activity";
 import { readTaskProjectOverview } from "../src/web/v1/task-project-overview-browser-client";
+import { ProjectFilesView } from "../private-app/app/project-files-workspace";
+import { readTaskProjectFiles } from "../src/web/v1/task-project-files-browser-client";
 
 test("home gives honest navigation to existing private workspace surfaces", () => {
   const html = renderToStaticMarkup(createElement(Home));
@@ -126,6 +128,36 @@ test("unavailable project overview does not claim an empty project", () => {
     { projectId: "project:alpha", state: { state: "unavailable", code: "unavailable" } }));
   assert.match(html, /No empty project or all-clear is inferred/);
   assert.doesNotMatch(html, /No saved tasks exist/);
+});
+
+test("project files link verified metadata to the exact protected task result", async () => {
+  const task = { projectId: "project:alpha", requestId: "request:alpha", jobId: "job:done", title: "Research result",
+    state: "succeeded" as const, version: 3, createdAt: "2026-09-04T10:00:00.000Z", updatedAt: "2026-09-04T12:00:00.000Z" };
+  const artifact = { artifactId: "artifact:one", attemptId: "attempt:one", runId: "run:one",
+    contentHash: `sha256:${"a".repeat(64)}`, sizeBytes: 42, receivedAt: "2026-09-04T12:00:00.000Z",
+    byteCheck: "matched_recorded_claim" as const, qualityAccepted: false as const };
+  const value = { projectId: task.projectId, items: [{ task, artifact }], additionalItemsOmitted: false,
+    resultSource: "configured" as const, observedAt: "2026-09-04T12:00:00.000Z", startsWork: false as const };
+  const html = renderToStaticMarkup(createElement(ProjectFilesView, { projectId: task.projectId,
+    data: { state: "ready", value } }));
+  assert.match(html, /Research result/); assert.match(html, /42 bytes/);
+  assert.match(html, /projects\/project%3Aalpha\/tasks\/job%3Adone#task-results/);
+  assert.doesNotMatch(html, /filesystem|storage locator|download/i);
+  let requested = "", method = "";
+  const transport = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requested = String(input); method = init?.method ?? ""; return Response.json(value);
+  }) as typeof fetch;
+  assert.equal((await readTaskProjectFiles(task.projectId, transport)).items.length, 1);
+  assert.equal(requested, "/api/v1/projects/project%3Aalpha/files"); assert.equal(method, "GET");
+  await assert.rejects(readTaskProjectFiles("project:other", transport), /unavailable/);
+});
+
+test("unavailable project files do not claim an empty result set", () => {
+  const html = renderToStaticMarkup(createElement(ProjectFilesView, { projectId: "project:alpha",
+    data: { state: "ready", value: { projectId: "project:alpha", items: [], additionalItemsOmitted: false,
+      resultSource: "not_configured", observedAt: "2026-09-04T12:00:00.000Z", startsWork: false } } }));
+  assert.match(html, /No zero count or empty file list is inferred/);
+  assert.doesNotMatch(html, /No verified result files have been received/);
 });
 
 test("settings links to the real session surface without credential controls", () => {

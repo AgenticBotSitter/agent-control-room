@@ -159,6 +159,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
           <nav className="private-tabs" aria-label="Project pages">
             <a href={`/projects/${encodeURIComponent(projectId)}`} aria-current={section === "overview" ? "page" : undefined}>Overview</a>
             <a href={`/projects/${encodeURIComponent(projectId)}/tasks`}>Tasks</a>
+            <a href={`/projects/${encodeURIComponent(projectId)}/files`}>Files</a>
             <a href={`/projects/${encodeURIComponent(projectId)}/news`}>News</a>
             <a href={`/projects/${encodeURIComponent(projectId)}/settings`} aria-current={section === "settings" ? "page" : undefined}>Settings</a>
           </nav>
