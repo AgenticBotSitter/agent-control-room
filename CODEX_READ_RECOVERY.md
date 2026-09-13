@@ -201,3 +201,18 @@ shared worker without sending them into the Hermes approval/result path, then bi
 node-local admission and the exact Codex start journal before any App Server start.
 It must not expose permit construction as a browser request, silently select a
 workspace, treat a reported capability as local admission, or retry an uncertain send.
+
+### Completed-turn result boundary
+
+An unwired, source-tested completed-turn projector now fixes the intended
+deterministic result rule and safety bounds. It considers only the exact completed
+turn, never copies reasoning, tool output, file changes or commentary, preserves
+the last eligible agent message byte-for-byte, and rejects empty, malformed,
+secret-like or oversized text.
+
+This projector is deliberately marked `exactPackageQualified: false` and
+`canonicalPublicationAllowed: false`. The retained schema evidence for the pinned
+Codex App Server version proves thread and turn identity/status, but did not retain
+the detailed result-item definition. Until a bounded schema-only check records and
+matches that exact item shape, this remains integration scaffolding—not live result
+evidence—and no runtime or database path may publish its output.
