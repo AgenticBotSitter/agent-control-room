@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 import { EventEmitter } from "node:events";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { CODEX_APP_SERVER_CAPABILITY, CODEX_APP_SERVER_ADAPTER,
   CODEX_DELIVERY_FEATURE } from "../src/harness/codex-v1/delivery-contract";
@@ -17,6 +18,8 @@ import { bindPrivateCodexResultReturnV1, validatePrivateTaskStartupConfiguration
 import { privateArtifactStorageNamespaceDigestV1 } from "../src/web/v1/private-artifact-storage";
 import { instant } from "./hermes-native-fixture";
 import { privateAgentTaskCompositionFixture } from "./helpers/private-agent-task-composition";
+import { assemblePrivateAgentTaskOperatorConfiguration } from "../src/web/v1/private-agent-task-operator-configuration";
+import { operatorConfigurationScenario } from "./helpers/private-agent-task-operator-configuration";
 
 const handler = async () => new Response("synthetic");
 const assets = { count: 0, digest: "synthetic", respond: () => undefined };
@@ -360,4 +363,114 @@ test("host lifecycle aborts one start, drains it once and removes signal handler
   assert.equal(workerCloses, 1); assert.equal(runtime.isReady(), false);
   assert.equal(signals.listenerCount("SIGTERM"), 0); assert.equal(signals.listenerCount("SIGINT"), 0);
   assert.deepEqual(await lifecycle.stop(), { status: "closed" });
+});
+
+test("operator assembly builds the minimal queue/session/native composition through the production gate", async () => {
+  const { settings, trusted } = operatorConfigurationScenario("minimal");
+  const composed = assemblePrivateAgentTaskOperatorConfiguration(settings, trusted);
+  assert.equal(composed.web.tenantId, "tenant:operator-synthetic");
+  assert.equal(composed.database.username, "coordinator_test");
+  assert.equal(composed.nativeQueue, true);
+  assert.equal(composed.sessions!.nodes.length, 1);
+  assert.equal(composed.codex, undefined);
+  assert.equal(composed.codexResultReturn, undefined);
+  assert.equal(composed.artifactStorage, undefined);
+  assert.equal(composed.news, undefined);
+  assert.ok(Object.isFrozen(composed));
+});
+
+test("operator assembly builds the full artifact/result/review/Codex composition", async () => {
+  const { settings, trusted } = operatorConfigurationScenario("full");
+  const composed = assemblePrivateAgentTaskOperatorConfiguration(settings, trusted);
+  assert.equal(composed.nativeQueueRecovery, true);
+  assert.equal(composed.revisionPlanning, true);
+  assert.equal(composed.queueWorker!.concurrency, 2);
+  assert.equal(composed.codex!.enrollments.length, 1);
+  assert.equal(composed.codexResultReturn?.qualificationReceipt.body.nodeId, "node:operator-codex");
+  assert.equal(composed.nativeHttp!.origin, "https://machine.example.test");
+  assert.ok(composed.artifactStorage !== undefined);
+  assert.equal(composed.sessions!.nodes.length, 2);
+});
+
+test("website-only settings cannot enter the operator assembler", async () => {
+  const { settings, trusted } = operatorConfigurationScenario("minimal");
+  assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(
+    { ...settings, handler: async () => new Response("browser") }, trusted),
+  /agent_task_operator_config_invalid:settings_invalid/);
+  assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(settings,
+    { ...trusted, web: { ...(trusted.web as object), planning: {} } }),
+  /agent_task_operator_config_invalid:website_setting_rejected:planning/);
+});
+
+test("operator port accepts only integers, never strings, paths or urls", async () => {
+  const { settings, trusted } = operatorConfigurationScenario("minimal");
+  for (const port of ["3210", "/socket/agent-tasks.sock", "https://machine.example.test:3210", 0, 70_000, Number.NaN]) {
+    assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration({ ...settings, port }, trusted),
+      /agent_task_operator_config_invalid:settings_invalid/, `port=${String(port)}`);
+  }
+});
+
+test("every operator missing dependency and mismatch class refuses before return", async () => {
+  const cases: Array<{ name: string; mutate: (s: ReturnType<typeof operatorConfigurationScenario>) => void; match: RegExp }> = [
+    { name: "tenant", mutate: s => { s.settings.tenantId = "tenant:other"; }, match: /tenant_mismatch/ },
+    { name: "missing sessions input", mutate: s => { s.trusted.sessions = undefined; }, match: /missing_trusted_input:sessions/ },
+    { name: "unexpected codex input", mutate: s => { (s.trusted as Record<string, unknown>).codex = {}; }, match: /unexpected_trusted_input:codex/ },
+    { name: "recovery without queue", mutate: s => { s.settings.features.nativeQueue = false; s.settings.features.nativeQueueRecovery = true; }, match: /feature_chain/ },
+    { name: "sessions without evidence", mutate: s => { s.settings.features.evidence = false; s.trusted.evidence = undefined; }, match: /feature_chain/ },
+    { name: "role reuse", mutate: s => { s.settings.databaseRoles.sessions = { ...s.settings.databaseRoles.sessions!, username: "coordinator_test" }; }, match: /database_role_reuse/ },
+    { name: "role host drift", mutate: s => { s.settings.databaseRoles.sessions = { ...s.settings.databaseRoles.sessions!, host: "127.0.0.2" }; }, match: /database_role_mismatch/ },
+    { name: "missing evidence role", mutate: s => { s.settings.databaseRoles.evidence = undefined; }, match: /missing_database_role:evidence/ },
+    { name: "approval store", mutate: s => { (s.trusted.approvalStore as Record<string, unknown>).readInSession = undefined; }, match: /approval_store_invalid/ },
+    { name: "downstream gate", mutate: s => { (s.trusted.web as Record<string, unknown>).origin = "http://control.example.test"; }, match: /production_gate_refused/ },
+  ];
+  for (const entry of cases) {
+    const scenario = operatorConfigurationScenario("minimal");
+    let calls = 0;
+    const store = scenario.trusted.approvalStore as Record<string, unknown>;
+    for (const name of ["acceptInSession", "readInSession", "receiveDeliveryReceipt"]) {
+      const fn = store[name] as () => Promise<unknown>;
+      store[name] = async () => { calls++; return fn(); };
+    }
+    entry.mutate(scenario);
+    assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(scenario.settings, scenario.trusted), entry.match, entry.name);
+    assert.equal(calls, 0, `${entry.name} must not invoke trusted callbacks before refusing`);
+  }
+});
+
+test("disabled operator components are never constructed from supplied inputs", async () => {
+  const { settings, trusted } = operatorConfigurationScenario("minimal");
+  const composed = assemblePrivateAgentTaskOperatorConfiguration(settings, trusted);
+  assert.equal(composed.nativeQueueRecovery, undefined);
+  assert.equal(composed.queueWorker, undefined);
+  assert.equal(composed.nativeHttp, undefined);
+  assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(settings,
+    { ...trusted, nativeHttp: { origin: "https://machine.example.test", peers: [], isPeerCurrent: () => true } }),
+  /agent_task_operator_config_invalid:unexpected_trusted_input:nativeHttp/);
+});
+
+test("repeated operator construction is independent and post-assembly mutation cannot leak in", async () => {
+  const first = operatorConfigurationScenario("minimal");
+  const a = assemblePrivateAgentTaskOperatorConfiguration(first.settings, first.trusted);
+  const second = operatorConfigurationScenario("minimal");
+  const b = assemblePrivateAgentTaskOperatorConfiguration(second.settings, second.trusted);
+  const norm = (c: typeof a) => ({ db: c.database.username, queue: c.nativeQueue,
+    sessions: c.sessions!.nodes.map(node => node.nodeId), qkey: [...c.quality!.integrityKey], frozen: Object.isFrozen(c) });
+  assert.deepEqual(norm(a), norm(b));
+  second.trusted.quality!.integrityKey.fill(9);
+  second.settings.port = 9999;
+  assert.notEqual(a.quality!.integrityKey[0], 9);
+  assert.deepEqual([...a.quality!.integrityKey], [...first.trusted.quality!.integrityKey]);
+});
+
+test("the operator assembler performs no environment, filesystem or network access", async () => {
+  const source = await readFile(new URL("../src/web/v1/private-agent-task-operator-configuration.ts", import.meta.url), "utf8");
+  for (const token of ["node:", "process.", "globalThis", "fetch(", "XMLHttpRequest", "child_process", "require("])
+    assert.ok(!source.includes(token), `forbidden direct platform access: ${token}`);
+  const { settings, trusted } = operatorConfigurationScenario("minimal");
+  const before = assemblePrivateAgentTaskOperatorConfiguration(settings, trusted);
+  process.env.CONTROL_ROOM_OPERATOR_SYNTHETIC = "mutated";
+  const after = assemblePrivateAgentTaskOperatorConfiguration(settings, trusted);
+  delete process.env.CONTROL_ROOM_OPERATOR_SYNTHETIC;
+  assert.deepEqual(after.database, before.database);
+  assert.deepEqual([...after.quality!.integrityKey], [...before.quality!.integrityKey]);
 });
