@@ -1,19 +1,19 @@
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
-import { PostgresAbsNewsStoreV1 } from "../../project-adapters/abs-news/v1/postgres-store";
+import { PostgresNewsStoreV1 } from "../../project-adapters/news/v1/postgres-store";
 import { WebSessionAuthority } from "./session-authority";
 import { WebProjectService } from "./project-service";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 import { catalogProjectIdSchema } from "./project-wire";
 import { newsPageSchema, newsResearchInputSchema, newsResearchPreviewSchema } from "./news-wire";
-import { buildAbsNewsWorkOrderProposalV1 } from "../../project-adapters/abs-news/v1/proposal";
+import { buildNewsWorkOrderProposalV1 } from "../../project-adapters/news/v1/proposal";
 import { sha256Digest } from "../../security/digest";
-import { absResearchTaskDraft } from "./abs-research-draft";
+import { newsResearchTaskDraft } from "./news-research-draft";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { PostgresNewsSourceSettings, newsSourceSettingSchema } from "../../project-adapters/abs-news/v1/source-settings";
+import { PostgresNewsSourceSettings, newsSourceSettingSchema } from "../../project-adapters/news/v1/source-settings";
 import { appendAuditWith } from "../../audit/audit-store";
-import { PostgresNewsStoryArchives } from "../../project-adapters/abs-news/v1/story-archives";
-import { PostgresArticleDetails } from "../../project-adapters/abs-news/v1/article-store";
+import { PostgresNewsStoryArchives } from "../../project-adapters/news/v1/story-archives";
+import { PostgresArticleDetails } from "../../project-adapters/news/v1/article-store";
 
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx),
   transaction: async work => work(tx), transactionWithPreCommitCheck: async (work, check) => {
@@ -95,7 +95,7 @@ export class WebNewsService {
       const project = await this.projects.getViewInSession(tx, actor, projectId);
       if (!this.key) return { project, availability: "not_configured" as const, stories: [], nextCursor: null,
         observedAt: actor.now, canPrepare: false, canArchive: false, sources: [], sourcesNextCursor: null };
-      const store = new PostgresAbsNewsStoreV1(joined(tx), { ...this.scope, projectId }, this.key);
+      const store = new PostgresNewsStoreV1(joined(tx), { ...this.scope, projectId }, this.key);
       const page = await store.listStories(after, { view: view as "all" | "history" | "archive" | "fresh",
         order: order as "id" | "important" | "newest" | "oldest", observedAt: actor.now });
       const sourcePage = await store.listSourceStatuses(sourceAfter);
@@ -119,7 +119,7 @@ export class WebNewsService {
       actor.require("news.archive.manage", projectId, true);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
       if (!this.key || project.lifecycle !== "active") throw new WebAccessError("conflict");
-      const store = new PostgresAbsNewsStoreV1(joined(tx), { ...this.scope, projectId }, this.key);
+      const store = new PostgresNewsStoreV1(joined(tx), { ...this.scope, projectId }, this.key);
       if (!await store.getStory(input.data.storyId)) throw new WebAccessError("not_found");
       let saved;
       try { saved = await new PostgresNewsStoryArchives(joined(tx), { ...this.scope, projectId }, this.key)
@@ -144,15 +144,15 @@ export class WebNewsService {
       if (project.lifecycle !== "active") throw new WebAccessError("conflict");
       if (!this.key) throw new Error("news_not_configured");
       const input = parsed.data;
-      const store = new PostgresAbsNewsStoreV1(joined(tx), { ...this.scope, projectId }, this.key);
+      const store = new PostgresNewsStoreV1(joined(tx), { ...this.scope, projectId }, this.key);
       const story = await store.getStory(input.storyId, input.storyDigest);
       if (!story) throw new WebAccessError("not_found");
       if (story.verificationState !== "verified" && input.action !== "research_brief") throw new WebAccessError("conflict");
-      const proposal = buildAbsNewsWorkOrderProposalV1({ ...this.scope, projectId, story,
+      const proposal = buildNewsWorkOrderProposalV1({ ...this.scope, projectId, story,
         proposalId: `proposal:${randomUUID()}`, actionId: input.action, requestedTitle: story.title,
         goal: input.goal, requestedPlatform: "any", requestedByActorDigest: sha256Digest({ actorId: actor.id }), requestedAt: actor.now });
       let draft;
-      try { draft = absResearchTaskDraft(proposal); } catch { throw new WebAccessError("invalid_request"); }
+      try { draft = newsResearchTaskDraft(proposal); } catch { throw new WebAccessError("invalid_request"); }
       return newsResearchPreviewSchema.parse({ projectId, storyId: story.storyId, storyDigest: story.storyDigest,
         draft, saved: false, dispatch: "not_requested" });
     });

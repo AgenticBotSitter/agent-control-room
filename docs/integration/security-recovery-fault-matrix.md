@@ -13,9 +13,10 @@ This package is repeatable, synthetic, and effect-free. It exercises the product
 | Current owner authority | consent becomes revoked after the first member of the paired approval signatures | The actual paired issuer refuses the whole packet, emits no second signature, and cannot retry. |
 | Artifact metadata | missing, extra, content/header, manifest, or receipt mismatch | Exact supplied inventories refuse. An exact match says only that synthetic metadata matched; it does not verify restored bytes. |
 
-Run `node --import tsx scripts/test-security-recovery-fault-matrix.ts` from an already prepared checkout. The adjacent repository lanes remain `pnpm test:owner-signing`, `pnpm test:checkpoints`, and `pnpm check:demo`.
-
-The issue deliberately reserves no package or workflow file and says the lead registers tests. Until that integration change, `node scripts/check-test-lane-coverage.mjs` reports these two new test files as unreachable. That failure is preserved as the exact handoff requirement; this worker package does not widen its owned paths to repair it.
+Run `pnpm test:security-recovery` from an already prepared checkout. The registered
+lane covers both focused fault-matrix files and is included by `pnpm test:components`.
+The adjacent repository lanes remain `pnpm test:owner-signing`,
+`pnpm test:checkpoints`, and `pnpm check:demo`.
 
 ## Scope and interpretation
 

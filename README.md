@@ -23,6 +23,10 @@ Everything needed to contribute is public. No invitation, private repository, pa
 agent subscription or access to our machines is needed. Humans and bots are welcome.
 This README is the front door; detailed documents are optional depth, not a hunt.
 
+**[Read the complete contributor handbook](CONTRIBUTOR_HANDBOOK.md)** — one public page
+covering the entire choose → claim → build → check → review → correct → merge or handoff
+process for people, bots, reviewers, and maintainers.
+
 **Current priority:** finish a real mixed-harness project → task → result → review
 workflow, using existing proven components. One configurable public product serves
 everyone; no separate private core.
@@ -30,6 +34,9 @@ everyone; no separate private core.
 | What you want to know | Direct link / answer |
 | --- | --- |
 | What can I take on now? | [Ready assignments](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aready) is the authoritative list. |
+| How does the complete contribution process work? | [Contributor handbook](CONTRIBUTOR_HANDBOOK.md) — the single authoritative process from choosing work through merge or handoff. |
+| What prompt should I give a worker or reviewer? | [Reusable session prompt](docs/WORKER_AND_REVIEWER_SESSION_PROMPT.md) — points every session back to the live inbox, issue, pull request and handbook. |
+| How do maintainers activate trusted handoffs and worker watchers? | [Home setup checklist](docs/MAINTAINER_AND_WATCHER_HOME_SETUP.md) — separate identity, repository setting, disposable test, watcher startup and rollback. |
 | What is being worked or reviewed? | [Working](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aworking) · [In review](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Ain-review) · [Open PRs](https://github.com/AgenticBotSitter/agent-control-room/pulls) |
 | What is waiting on a named prerequisite or authorized real-world test? | [Waiting](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Awaiting) — the decision is settled, but the named prerequisite is pending |
 | What needs a lead or owner decision? | [Needs decision](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aneeds-decision) — an actual decision is required |
@@ -39,6 +46,8 @@ everyone; no separate private core.
 | What must finish before the first installable release? | [Required Hermes-plus-Codex release jobs](WORK_QUEUE.md#required-for-the-first-hermes-plus-codex-release) — with parallel additions listed separately on the same board |
 | Exactly what remains, including unanswered questions? | [Complete remaining-work inventory](PUBLIC_BUILD_PLAN.md#complete-remaining-work-and-open-questions) — substantial workstreams, dependencies, decisions and release gates |
 | What should the webpage look like and do? | [Public webpage specification](WEBPAGE_SPEC.md) — layout, every core screen, optional modules, error states and acceptance |
+| What is the complete product vision? | [Consolidated owner vision](docs/OWNER_PRODUCT_VISION.md) — the intended experience, priorities and explicit non-goals |
+| What are the testable product requirements? | [Product requirements](docs/PRODUCT_REQUIREMENTS.md) — numbered requirements and first-release acceptance |
 | Where do I ask or propose a different useful contribution? | [Coordination issue #12](https://github.com/AgenticBotSitter/agent-control-room/issues/12) — describe your expertise and a substantial non-overlapping outcome |
 
 **Already available:** disposable project/task/revision demo, one-build/two-configuration
@@ -89,6 +98,14 @@ inventing or duplicating work. Maintainers will publish a safe independent slice
 identify the dependency blocking it. Our [worker instructions](skills/public-build-worker/SKILL.md)
 and [review instructions](skills/public-build-review/SKILL.md) are optional reusable
 guides; there is no private controller or mandatory result-manifest ceremony.
+
+When a review requests corrections, both the issue and pull request say
+`status:changes-required` plus `action:worker`; they do not remain ambiguously pending.
+Workers can run `node scripts/public-worker-inbox.mjs --worker-id YOUR-STABLE-WORKER-ID` to see a
+trusted correction or other action-marker handoff. They must also retain links to their
+accepted Working issues until claim comments are connected to that inbox. Tiny fixes are
+bundled into substantial feature, integration, platform, or release packages rather than
+advertised as separate jobs.
 
 ### How the group build is organized
 
@@ -159,17 +176,13 @@ No live agent-runtime/platform combination is claimed supported by this preview.
 
 ## Contributor starting points
 
-**Current implementation baseline:** the current public `main` through
-[PR #152](https://github.com/AgenticBotSitter/agent-control-room/pull/152), including the
+**Current implementation baseline:** current public `main`. It includes the
 lead-integrated application navigation and protected route corrections, configurable
-project proof, explicit project pages, safe Project News, browser lifecycle coverage
-and owner-attention prioritization, plus exact and relative activity times, verified
-360px navigation, restart-style failed-verification recovery, and exact-version Codex
-start/read fences with a noncanonical bounded result reader through
-[PR #110](https://github.com/AgenticBotSitter/agent-control-room/pull/110). It also
-contains the bounded Claude Code connector foundation and replay-safe schedule
-planning/assignment; neither is a claim that a live Claude process or scheduled agent
-start is enabled. The
+project proof, explicit project pages, safe Project News, browser lifecycle coverage,
+owner-attention prioritization, resource-bound wire contracts, the bounded Claude Code
+connector foundation and replay-safe schedule planning/assignment. None of those source
+components claims that a live Claude process, native agent or scheduled agent start is
+enabled. The
 [September 9 contributor handoff](CONTRIBUTOR_HANDOFF.md) remains historical evidence;
 new contributions use the base recorded in their issue. This is not production
 acceptance and does not supersede active contributors' branches.
@@ -181,9 +194,9 @@ before assignment. All 17 implementation directions are recorded; selected
 components are not yet all integrated.
 
 The public package includes sanitized Idea Lab and news workflows, connector updates
-and generic database/operator templates. The PR #152 candidate passed strict type
-checking and every public validation lane. Templates are not configured services, and
-these checks are not production acceptance.
+and generic database/operator templates. Merged changes are checked by the public
+validation lanes. Templates are not configured services, and source checks are not
+production acceptance.
 
 - [Setup and verified check commands](SETUP.md)
 - [How to contribute and get work assigned](CONTRIBUTING.md)

@@ -11,9 +11,9 @@ ALTER TABLE control_connection_enrollment_protocol_deliveries
 
 -- The article-size check introduced in 0065 uses the same conjunction shape.
 -- Flatten its inclusive bounds too, retaining the explicit NULL refusal.
-ALTER TABLE control_abs_article_details
-  DROP CONSTRAINT control_abs_article_details_payload_check,
-  ADD CONSTRAINT control_abs_article_details_payload_check CHECK (COALESCE(
+ALTER TABLE control_news_article_details
+  DROP CONSTRAINT control_news_article_details_payload_check,
+  ADD CONSTRAINT control_news_article_details_payload_check CHECK (COALESCE(
     jsonb_typeof(payload) = 'object' AND payload->>'status' = 'extracted'
     AND jsonb_typeof(payload->'text') = 'string'
     AND octet_length(payload->>'text') >= 1

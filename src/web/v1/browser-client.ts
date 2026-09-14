@@ -104,10 +104,10 @@ export function createProjectBrowserClient(transport: typeof fetch = fetch, make
         return result.project;
       } catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable"); }
     },
-    create(draft: unknown) {
+    create(draft: { title: string; summary: string; templateSelection?: { templateId: string; configurationDigest: string } }) {
       const parsed = projectCreateSchema.safeParse(draft);
       if (!parsed.success) return Promise.reject(new BrowserRequestError("invalid_request"));
-      const { title, summary } = parsed.data;
+      const { title, summary, templateSelection } = parsed.data;
       return command("/api/v1/projects", parsed.data, result => result.title === title && result.summary === summary
         && result.lifecycle === "active" && result.version === 1 && result.createdAt === result.updatedAt);
     },

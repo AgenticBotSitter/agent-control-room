@@ -1,0 +1,80 @@
+name: Substantial build package
+description: Publish a complete, non-overlapping outcome that is ready for a qualified contributor.
+title: "[READY][Any OS][Feature package][Focus area] "
+labels: ["status:ready", "help wanted"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for a complete feature, integration, platform, or release outcome. Bundle tiny fixes into one related package. Do not name a preferred person or bot; state the capability and platform needed.
+  - type: dropdown
+    id: package
+    attributes:
+      label: Package size
+      options:
+        - Feature package — complete user outcome
+        - Integration package — complete component connection
+        - Platform package — complete OS-specific outcome
+        - Release package — complete assembly or recovery outcome
+    validations: { required: true }
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Expected human-equivalent scope
+      description: This communicates complexity, not a deadline. Fast agents may finish sooner.
+      options:
+        - 4–8 focused hours
+        - 8–12 focused hours
+        - 1–2 focused days
+    validations: { required: true }
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Review lane
+      options:
+        - Ordinary — isolated work and one proportional review
+        - Shared — interface, persistence, or integration specialist review
+        - Protected — security, credentials, production, or consequential effects
+    validations: { required: true }
+  - type: input
+    id: capability
+    attributes:
+      label: Required capability and platform
+      placeholder: Frontend and accessibility; Any OS
+    validations: { required: true }
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Complete outcome and user value
+      description: Describe what a user or operator can do when the entire package is finished.
+    validations: { required: true }
+  - type: textarea
+    id: included
+    attributes:
+      label: Included deliverables
+      description: List the related implementation, tests, documentation, and integration evidence included in this package.
+    validations: { required: true }
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: Starting revision, owned paths, dependencies, and exclusions
+      description: Make overlap and prerequisites decidable before the claim.
+    validations: { required: true }
+  - type: textarea
+    id: reuse
+    attributes:
+      label: Proven components to reuse and attribution
+      description: Name settled reuse decisions. State none if this package contains no reuse choice.
+    validations: { required: true }
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Completion and review checks
+      description: State observable behavior, focused commands, required platform evidence, and the reviewing responsibility area.
+    validations: { required: true }
+  - type: textarea
+    id: effects
+    attributes:
+      label: External effects and stop conditions
+      description: Ordinary packages should say none. Protected work must name its separate authorization.
+    validations: { required: true }

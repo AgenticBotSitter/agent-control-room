@@ -6,7 +6,7 @@ The historical decision evidence below does not imply current main contains ever
 component-branch implementation. Public CI is now enabled; older disabled-CI wording
 below is superseded by docs/ci-budget-security-review.md.
 
-Updated 2026-09-09. **Selected for implementation does not mean implemented.**
+Updated 2026-09-13. **Selected for implementation does not mean implemented.**
 This is the public, sanitized summary of the reuse assessment. The published
 application remains a pre-alpha contributor preview; no live fleet is certified.
 Some later implementation source/tests are still being prepared for public export.
@@ -35,9 +35,9 @@ with a concrete compatibility, security, licensing or measured performance findi
 | DR-12 Optional session observations | Selected operator-managed Herdr v0.9.0 pane-list read-only adapter; retain CR project/result authority; do not redistribute | Multi-source project projection, retained-state revocation, protected API/UI and bounded collector implemented and reviewed; 15 synthetic tests. Earlier disposable binary evaluation remains separate | Optional, not an MVP blocker. If enabled, bind exact executable/endpoint identity and qualify permissions, host isolation, cleanup, restart/disconnect and physical browser collection; no further terminal-system comparison |
 | DR-13 Work engine | Selected pg-boss 12.30.0 with the existing CR adapters; DBOS remains parked | Both pg-boss and DBOS pass the short review-phase comparison; no required replacement benefit demonstrated. Restored submission/worker/runtime plus readiness/cancellation regression suite: 55 tests pass with fake I/O and disposable PGlite | Integrated canonical admission/replay, uncertain native start, process crash, real drain, occurrence and PG17-role gates; these tests do not close live recovery acceptance |
 | DR-14 Monitoring | Selected built-in readiness and Needs attention for MVP; Kuma/Beszel deferred removable options | Existing built-in health is the release baseline; Kuma condition/database tests and Beszel source evidence remain optional evidence | External services are not an MVP blocker. Reopen only for a demonstrated alert/host-metric need, then prove protected health, restart/resource cost and actual signals |
-| DR-15 Integrity checkpoint | Selected existing etcd adapter as independent authenticated CAS rollback detector; OpenBao only a named fallback. Restic 0.19.1 is the selected independently retained recovery packager | Actual CR/service binding exists; etcd does not repair split commits and its current record does not bind a backup snapshot | Qualification is required before critical-effect evidence: independent placement/credentials, missing-head refusal, both split-commit orders/lost acknowledgements, #128 versioned snapshot binding and full #63/#65 restore acceptance. Narrow `allowExternalEffects=false` task/result/review/artifact records may persist but are not critical approval evidence |
+| DR-15 Integrity checkpoint | Selected existing etcd adapter as independent authenticated CAS rollback detector; OpenBao only a named fallback. Restic 0.19.1 is the selected independently retained recovery packager | Actual CR/service binding exists; etcd does not repair split commits. The versioned, authenticated restic snapshot binding now covers the database identity/dump, artifact inventory and checkpoint digests with exact restored comparison | Qualification is required before critical-effect evidence: independent placement/credentials, missing-head refusal, both split-commit orders/lost acknowledgements, a real #63 database dump, physical restic restore and full #65 assembled readback. Narrow `allowExternalEffects=false` task/result/review/artifact records may persist but are not critical approval evidence |
 | DR-16 Owner signing | Selected dedicated owner-controlled Ed25519 signer; ssh2 is bounded remote transport only | Owned connection/cancellation, pinned-protocol evaluation and paired canonical issuance tested locally; no real custody proven | Qualification is required before critical or consequential external effects: dedicated custody/pins, exact consent, real peer permissions, timeout/cleanup, revocation and platform review. The narrow MVP permits only owner-submitted `allowExternalEffects=false` harness runs; no ambient or forwarded personal key |
-| DR-17 Native connectors/files | Selected Hermes via pinned hermes-gpt FastMCP and Codex App Server 0.150.0-alpha.8 via owned stdio/TS transport; separate attachment admission | Exact-ID Codex projection, owned read lifecycle, owner permit, signed shared-queue delivery, post-receipt activation fence, one-shot local start/read compositions, private explicit-port host and strict fake-tested process-byte/JSONL ownership are implemented. Stable run identity is separate from the effect claim; the permit/policy target binds the exact contained checkout path; the selected bounded agent message remains noncanonical. The [Codex SDK fit evaluation](TOOLING_ACQUISITIONS.md#codex-typescript-sdk-fit-evaluation--2026-09-13) defers that SDK as an optional batch adapter because it lacks the required passive exact-turn recovery, approval-response and proven child-retirement surfaces | MVP blocker is native integration/acceptance: supply a reviewed spawn/executable/environment/credential implementation, qualify the physical start/restart-read lifecycle, then publish through the harness-neutral result/artifact/review seam and release capacity. Fake/source-tested composition does not claim a physical process or provider qualification. No new connector contest. See CODEX_READ_RECOVERY.md |
+| DR-17 Native connectors/files | Selected Hermes via pinned hermes-gpt FastMCP and Codex App Server 0.150.0-alpha.8 via owned stdio/TS transport; separate attachment admission | Exact-ID Codex projection, owned read lifecycle, owner permit, signed shared-queue delivery, post-receipt activation fence, one-shot local start/read compositions, private explicit-port host and strict fake-tested process-byte/JSONL ownership are implemented. Stable run identity is separate from the effect claim; the permit/policy target binds the exact contained checkout path; the selected bounded agent message remains noncanonical. The [Codex SDK fit evaluation](TOOLING_ACQUISITIONS.md#codex-typescript-sdk-fit-evaluation--2026-09-13) defers that SDK as an optional batch adapter because it lacks the required passive exact-turn recovery, approval-response and proven child-retirement surfaces. First-release Codex execution is Linux-only: the evaluated Darwin mechanisms do not bind pathname-based `CODEX_HOME` to the already-open directory | MVP blocker is native integration/acceptance on Linux: qualify the physical start/restart-read lifecycle, then publish through the harness-neutral result/artifact/review seam and release capacity. Local macOS Codex execution stays fail-closed until both #191 reopening conditions are proven; it is not a first-release blocker. Fake/source-tested composition does not claim a physical process or provider qualification. No new connector contest. See CODEX_READ_RECOVERY.md |
 
 These are dependency targets, not instructions to install every package immediately.
 Pin direct/transitive dependencies intentionally and preserve their actual license
@@ -50,12 +50,17 @@ need not ship. Source names/version metadata are not blanket security clearance.
   modules already inform the news workflow; retain attribution, not a second app.
 - [Hermes Desktop](https://github.com/fathah/hermes-desktop): selected controlled
   tab/code/diff/media presentation. Do not copy Electron dependencies or shared raw
-  session state merely to display a project. Closing a view must not stop work.
+  session state merely to display a project. Closing a view must not stop work. This
+  remains a behavior reference: no source is copied into the current release and no
+  distribution attribution is required unless that changes.
 - [Hermes WebUI](https://github.com/nesquena/hermes-webui): session/action and stale
-  indicator behavior; full shell/global state is not a drop-in React component.
+  indicator behavior; full shell/global state is not a drop-in React component. This
+  remains a behavior reference: no source is copied into the current release and no
+  distribution attribution is required unless that changes.
 - [Herdr](https://github.com/herdrdev/herdr): selected only for optional read-only
   observation, not task approval or completion authority. Component comparison is
-  closed; live host/socket/lifecycle qualification remains only if it is enabled.
+  closed; the operator-installed program is not redistributed. Live host/socket/
+  lifecycle qualification and its distribution review reopen only if it is enabled.
 - [Hermes Studio](https://github.com/EKKOLearnAI/hermes-studio): source-specific
   licensing review required before copying; not treated as permissive UI source.
 - Agent Orchestrator and AI Maestro: retain selective workspace/notification ideas;
@@ -63,6 +68,9 @@ need not ship. Source names/version metadata are not blanket security clearance.
 
 Not every donor is accepted. Some experiments deliberately retained negative
 findings. A passing synthetic comparison is not native-host compatibility.
+Built-in readiness and Needs attention remain the complete MVP monitoring choice;
+do not open an external monitoring package without a demonstrated missing alert or
+host metric.
 
 ## Selected choices and unfinished validation
 

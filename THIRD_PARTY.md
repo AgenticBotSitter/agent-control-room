@@ -1,6 +1,6 @@
 # Third-party notices and distribution manifest
 
-Inventory digest: `c88e0a6b6af8a4bec756e837043dd876889a27641136be3ddcb10f3487e27045`
+Inventory digest: `8d3731e9837c7ae309a948327fa08c18027d607503cc701eb4973367c8a9491e`
 
 This notice index is generated from the exact declared artifact inputs. It binds retained notice files and their SHA-256 hashes; the release assembler independently verifies the final archive against this digest.
 
@@ -203,7 +203,7 @@ This notice index is generated from the exact declared artifact inputs. It binds
 ## Retained and vendored material
 
 - `src/vendor/control-center` — d13e79e866cc33a1fddfe84f563ce2fb9a2113e0; pinned_upstream_with_reviewed_local_adaptations; `feed-discovery.ts` (d94449d6b86ff873096c36d4ce7943f9afd473ba19183217b865bf6f5dbc8974), `freshness.ts` (dc691c41b2b0707626d2589866aa2fa1d106e4c8a1190e376379ac4582e410ca), `industry-curation.ts` (ad668fe4bf08e7b48913b43ef7edb05edbe4d874db1a16c451ff006e0b70d962), `industry.ts` (9ca39a9ad88f16262a2551a99de016a5ed951c7a53ba6a7a36362e061779db8b), `pinned-fetch.ts` (1fafc239bb2a06038c2c7f54d0026f736e64f938ff37976e075b2021e20112ca), `public-address.ts` (291fc245b943c48feaeb5807ef5f60b1ec8b31f0f8f6cdd7782c998be0c6cb48), `safe-fetch.ts` (a1357f764be50e705d79da4d261fbba38a72e392e7818480560b9d445287f733), `sitemap.ts` (732d0a11901eb340925ac0aa8d636e43d31b7296aa79306a81147048eeda4f7e), `source-reader.ts` (81e03fc3f97b3d5729bc96044e27cbd19c27536c9bb82a906fba5f500ccff9ab), `types.ts` (25d5046f5e6c1ce2897144cba5e39797b77a2143628d82cceb3ebea014ad195f)
-- `third_party/control-center` — d13e79e866cc33a1fddfe84f563ce2fb9a2113e0; pinned_upstream_notice; `LICENSE` (a149b592d1e38b71a4ff4987ee9020b5f35a5fe7c2f09ebdc78ae9ec7a87349b), `NOTICE.md` (280cb8a87cc3ab2d04c90af8a30de423b657976fc38aef2638687e5cffd248e1)
+- `third_party/control-center` — d13e79e866cc33a1fddfe84f563ce2fb9a2113e0; pinned_upstream_notice; `LICENSE` (a149b592d1e38b71a4ff4987ee9020b5f35a5fe7c2f09ebdc78ae9ec7a87349b), `NOTICE.md` (f003a8d37aaf47fc52a24974c68678b8f83ad11444f7c1358fb1fe8ff3338faf)
 - `third_party/cron-parser` — npm:cron-parser@5.10.0; pinned_npm_release_integrity; `LICENSE` (7eba1c8774e8bcb77356bafc70ac9de8383e7592bb79ab979130ab757d40f53d)
 - `third_party/cyclonedx-library` — npm:@cyclonedx/cyclonedx-library@10.2.0; pinned_npm_release_integrity; `LICENSE` (c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4), `NOTICE` (ceb63b4381f322f3bdb580be2b7e6b8d0679eb9f2b4b5190fb0b26306b26d32f)
 - `third_party/fast-xml-parser` — npm:fast-xml-parser@5.11.0; pinned_npm_release_integrity; `LICENSE` (7883225d5e84a6bbb9b170c3d891b4bf6d6259cee869c86bd86381a927071745)

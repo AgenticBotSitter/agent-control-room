@@ -3,9 +3,9 @@ import { test } from "node:test";
 import { fixture, now, token, trust, origin, request } from "./helpers/web-foundation";
 import { articleStory } from "./helpers/article-fixture";
 import { createAccessVerifier } from "../src/web/v1/access-verifier";
-import { PostgresAbsNewsStoreV1 } from "../src/project-adapters/abs-news/v1/postgres-store";
-import { PostgresArticleDetails } from "../src/project-adapters/abs-news/v1/article-store";
-import { readNewsArticleDetail } from "../src/project-adapters/abs-news/v1/article-detail";
+import { PostgresNewsStoreV1 } from "../src/project-adapters/news/v1/postgres-store";
+import { PostgresArticleDetails } from "../src/project-adapters/news/v1/article-store";
+import { readNewsArticleDetail } from "../src/project-adapters/news/v1/article-detail";
 import { WebNewsService } from "../src/web/v1/news-service";
 import { createPrivateWebProcess } from "../src/web/v1/private-process";
 
@@ -15,7 +15,7 @@ test("saved article versions replay, retain lineage, enforce scope and expire wi
   const first = await f.service.create(identity, { title: "Article project", summary: "Fixture" }, "article-project-one");
   const second = await f.service.create(identity, { title: "Other project", summary: "Fixture" }, "article-project-two");
   const scope = { tenantId: "tenant:web", workspaceId: "workspace:web", projectId: first.project.projectId }, key = new Uint8Array(32).fill(7);
-  const story = articleStory(scope), stories = new PostgresAbsNewsStoreV1(f.client, scope, key);
+  const story = articleStory(scope), stories = new PostgresNewsStoreV1(f.client, scope, key);
   await stories.saveStory(story);
   const text = `<article><p>${"Synthetic useful article for reading and research. ".repeat(80)}</p></article>`;
   const record = await readNewsArticleDetail({ ...scope, storyId: story.storyId, storyDigest: story.storyDigest }, {
@@ -43,16 +43,16 @@ test("saved article versions replay, retain lineage, enforce scope and expire wi
   assert.equal((await call(request(path, "GET", undefined, undefined, token({ exp: now / 1000 - 1 })))).status, 401);
   await assert.rejects(news.article(identity, second.project.projectId, input));
   await assert.rejects(new WebNewsService(f.client, webScope, { integrityKey: key }, () => now + 600000).article(identity, scope.projectId, input));
-  await assert.rejects(f.client.query("UPDATE control_abs_article_details SET auth_tag=auth_tag"));
-  await assert.rejects(f.client.query("DELETE FROM control_abs_article_details"));
-  await assert.rejects(f.client.query("TRUNCATE control_abs_article_details"));
+  await assert.rejects(f.client.query("UPDATE control_news_article_details SET auth_tag=auth_tag"));
+  await assert.rejects(f.client.query("DELETE FROM control_news_article_details"));
+  await assert.rejects(f.client.query("TRUNCATE control_news_article_details"));
   assert.deepEqual(await stories.getStory(story.storyId, story.storyDigest), story);
   // Reusing a valid signed payload under a different indexed digest must not
   // allow an INSERT-only writer to replace the newest visible article.
-  await f.client.query(`INSERT INTO control_abs_article_details
+  await f.client.query(`INSERT INTO control_news_article_details
     (tenant_id,workspace_id,project_id,story_id,story_digest,detail_digest,payload,auth_tag,recorded_at)
     SELECT tenant_id,workspace_id,project_id,story_id,story_digest,$1,payload,auth_tag,recorded_at + interval '1 day'
-    FROM control_abs_article_details`, [`sha256:${"e".repeat(64)}`]);
+    FROM control_news_article_details`, [`sha256:${"e".repeat(64)}`]);
   await assert.rejects(store.get(story.storyId, story.storyDigest), { message: "news_article_integrity_failed" });
   assert.deepEqual(await store.get(story.storyId, story.storyDigest, record.detailDigest), record);
 });

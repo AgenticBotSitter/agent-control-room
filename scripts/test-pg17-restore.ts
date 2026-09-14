@@ -121,9 +121,9 @@ try {
   await altered.query(`ALTER TABLE ${table} DROP CONSTRAINT ${constraint}`);
   await assert.rejects(verify("fixture_restore_two"));
   await altered.query(`ALTER TABLE ${table} ADD CONSTRAINT ${constraint} ${check}`);
-  await altered.query("GRANT INSERT ON control_abs_article_details TO fixture_web");
+  await altered.query("GRANT INSERT ON control_news_article_details TO fixture_web");
   await assert.rejects(verify("fixture_restore_two"));
-  await altered.query("REVOKE INSERT ON control_abs_article_details FROM fixture_web");
+  await altered.query("REVOKE INSERT ON control_news_article_details FROM fixture_web");
   await assert.rejects(verify("fixture_restore_two", false, { ...owner, ownerIdentityId: "identity:missing" }));
   await verify("fixture_restore_two");
   console.log(JSON.stringify({ boundsEquivalent: true, articleBoundaryCases: 11, repeatedRestores: 2, changedBoundRejected: true, droppedConstraintRejected: true, excessGrantRejected: true, missingOwnerRejected: true }));

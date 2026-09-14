@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { generateKeyPairSync } from 'node:crypto';
 import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,10 +8,17 @@ import { createCodexStartAdmissionV1, createCodexStartResponseDispatcherV1,
 import { createCodexReadRecovery } from '../../src/harness/codex-v1/read-recovery';
 import { CODEX_APP_SERVER_READ_CONTRACT, CODEX_APP_SERVER_START_CONTRACT } from
   '../../src/harness/codex-v1/schema-contract';
+import { codexTaskDispatchBodySchemaV1, codexTaskDispatchReceiptBodySchemaV1,
+  codexTaskPayloadDigestV1, codexTaskRunIdV1, type CodexTaskDispatchBodyV1,
+  type CodexTaskDispatchReceiptBodyV1 } from '../../src/harness/codex-v1/delivery-contract';
 import { SqliteCodexStartJournalV1 } from '../../src/harness/codex-v1/start-journal';
 import { SqliteBridgeJournal } from '../../src/node-bridge/journal';
 import { openPrivateCodexConfigurationV1 } from '../../src/node-bridge/private-codex-configuration';
 import { sha256Digest } from '../../src/security/canonical-digest';
+import { computeArtifactBodyDigest, signArtifact } from '../../src/node-policy/v1/crypto';
+import { computeEffectClaimKey } from '../../src/node-policy/v1/effect-claim';
+import { computeNormalizedOperationDigest } from '../../src/node-policy/v1/policy-evaluator';
+import { NODE_PROTOCOL_V1, signNodeFrame } from '../../src/node-protocol/v1';
 import { runPrivateNode } from '../../scripts/run-private-node.mjs';
 
 type OptionalNodeConnectorModule = {
@@ -39,7 +47,8 @@ function buildSyntheticStartPair(name: string) {
     scope: { tenantId: 'tenant:synthetic', nodeId: 'node:synthetic', projectId: 'project:synthetic',
       jobId: `job:${name}`, attemptId: `attempt:${name}`, runId: `run:${name}`,
       leaseId: `lease:${name}`, leaseEpoch: 1, operationDigest: digest(`operation:${name}`) },
-    queueId: `queue:${name}`, requestMessageId: `message:activation:${name}`,
+    queueId: `native-queue:${sha256Digest({ tenantId: 'tenant:synthetic', jobId: `job:${name}`,
+      attemptId: `attempt:${name}` }).slice(7)}`, requestMessageId: `message:activation:${name}`,
     activationMessageId: `message:activation:${name}`, activationId: `activation:${name}`,
     activationDigest: digest(`activation:${name}`), activationFrameDigest: digest(`activation-frame:${name}`),
     dispatchMessageId: `message:dispatch:${name}`, dispatchFrameDigest: digest(`delivery:${name}`),
@@ -70,6 +79,97 @@ function buildSyntheticStartPair(name: string) {
 export function syntheticStartPair(name = 'lifecycle') {
   const existing = pairs.get(name); if (existing) return existing;
   const created = buildSyntheticStartPair(name); pairs.set(name, created); return created;
+}
+
+/** Build a fully-signed Codex dispatch frame + matching receipt body that
+ * share the synthetic admission's identity (queue/tenant/project/node/job/
+ * attempt/run/permit/enrollment digests). The fixture is deterministic and
+ * routes through the bridge journal's `recordCodexDelivery` seam, so the same
+ * integrity gates the production intake handler uses (digest match, scope
+ * check, time window, no-update trigger) all apply to this call. */
+export function buildSyntheticCodexDelivery(name = 'lifecycle') {
+  const pair = syntheticStartPair(name);
+  const admission = pair.admission;
+  const now = Date.parse(admission.requestedAt);
+  const expiry = now + 300_000;
+  const server = generateKeyPairSync('ed25519');
+  const approval = generateKeyPairSync('ed25519');
+  const approvalSpki = approval.publicKey.export({ type: 'spki', format: 'der' }).toString('base64url');
+  const start: {
+    schema: 'control-room.codex-task-start/v1'; tenantId: string; nodeId: string; projectId: string;
+    jobId: string; attemptId: string; runId: string; leaseId: string; leaseEpoch: number;
+    effectClaimKey: string; operationDigest: string; inputDigest: string;
+    enrollmentDigest: string; connectorProfileDigest: string; workspaceIntentDigest: string;
+    prompt: string; instructions: string; deadline: number;
+  } = { schema: 'control-room.codex-task-start/v1',
+    tenantId: admission.scope.tenantId, nodeId: admission.scope.nodeId,
+    projectId: admission.scope.projectId, jobId: admission.scope.jobId,
+    attemptId: admission.scope.attemptId, runId: `run:codex:${name}`,
+    leaseId: admission.scope.leaseId, leaseEpoch: admission.scope.leaseEpoch,
+    effectClaimKey: sha256Digest('effect:pending'), operationDigest: sha256Digest('operation:pending'),
+    inputDigest: sha256Digest({ prompt: 'Inspect the synthetic project', instructions: '' }),
+    enrollmentDigest: admission.enrollmentDigest,
+    connectorProfileDigest: sha256Digest('connector-profile'),
+    workspaceIntentDigest: sha256Digest(`workspace:${name}`), prompt: 'Inspect the synthetic project',
+    instructions: '', deadline: expiry };
+  const request = { contractVersion: 'control-room-node-policy/v1' as const,
+    requestId: `request:codex:${name}`, tenantId: start.tenantId, nodeId: start.nodeId,
+    nodeClass: 'personal-compute', projectId: start.projectId, jobId: start.jobId,
+    attemptId: start.attemptId, leaseId: start.leaseId, leaseEpoch: start.leaseEpoch,
+    executorId: 'executor:codex', operationId: 'harness.codex.app-server.start',
+    operationDigest: '', payloadDigest: '',
+    authorityDigest: sha256Digest('authority'), credentialRefs: ['credential:codex'],
+    target: { kind: 'filesystem' as const, canonicalPath: admission.workspacePath },
+    risk: 'low' as const, externalEffect: true, estimatedDurationSeconds: 60,
+    occurredAt: new Date(now).toISOString() };
+  request.payloadDigest = codexTaskPayloadDigestV1(start, request.authorityDigest);
+  request.operationDigest = computeNormalizedOperationDigest(request);
+  start.operationDigest = request.operationDigest;
+  start.effectClaimKey = computeEffectClaimKey(request);
+  start.runId = codexTaskRunIdV1(start);
+  const permitBody = { schema: 'control-room.owner-approval-attestation/v1' as const,
+    tenantId: start.tenantId, nodeId: start.nodeId, projectId: start.projectId,
+    jobId: start.jobId, attemptId: start.attemptId, operationDigest: start.operationDigest,
+    risk: 'low' as const, decision: 'approved' as const,
+    issuedAt: new Date(now).toISOString(), expiresAt: new Date(expiry).toISOString(),
+    nonce: `c3ludGhldGljLWNvZGV4-${name}`, approvalKeyId: `approval-key:${name}` };
+  const permit = signArtifact({ ...permitBody, bodyDigest: computeArtifactBodyDigest(permitBody) },
+    approval.privateKey);
+  // Authorise the synthetic public key as a "pinned" approval by hand — the
+  // journal does not consult trust, only the intake handler does. Direct calls
+  // to recordCodexDelivery only need a schema-valid permit + frame.
+  void approvalSpki;
+  const body: CodexTaskDispatchBodyV1 = codexTaskDispatchBodySchemaV1.parse({
+    schema: 'control-room.codex-task-dispatch/v1', queueId: admission.queueId, start, request,
+    permit, permitDigest: sha256Digest(permit) });
+  const frame = signNodeFrame({ protocol: NODE_PROTOCOL_V1, direction: 'server_to_node',
+    messageId: `message:dispatch:${name}`, correlationId: `correlation:dispatch:${name}`,
+    tenantId: body.start.tenantId, actorId: 'control-room:test', senderKind: 'control_room',
+    keyId: 'server-key:test', connectionId: `connection:${name}`, sequence: 1,
+    sentAt: new Date(now).toISOString(), expiresAt: new Date(expiry).toISOString(),
+    nonce: `c3ludGhldGljLWZyYW1l-${name}`, type: 'harness.codex.dispatch', body },
+    server.privateKey);
+  // The recordedAt must satisfy schema: sent <= recorded < expires.
+  const recordedAt = new Date(now + 1_000).toISOString();
+  const receipt: CodexTaskDispatchReceiptBodyV1 = codexTaskDispatchReceiptBodySchemaV1.parse({
+    schema: 'control-room.codex-task-dispatch-receipt/v1', queueId: body.queueId,
+    dispatchMessageId: frame.messageId, dispatchBodyDigest: sha256Digest(body),
+    tenantId: start.tenantId, projectId: start.projectId, nodeId: start.nodeId,
+    jobId: start.jobId, attemptId: start.attemptId, permitDigest: body.permitDigest,
+    enrollmentDigest: start.enrollmentDigest, recordedAt, disposition: 'recorded',
+    safeReason: 'none', startsWork: false, grantsExecutionAuthority: false });
+  return { body, frame, receipt };
+}
+
+/** Record a fully-signed Codex delivery into the bridge journal via the
+ * production seam. Returns the receipt body that was persisted. */
+export function recordSyntheticCodexDelivery(bridgePath: string, name = 'lifecycle') {
+  const { frame, receipt } = buildSyntheticCodexDelivery(name);
+  const journal = new SqliteBridgeJournal(bridgePath);
+  try {
+    const recorded = journal.recordCodexDelivery(frame, receipt, () => {});
+    return Object.freeze({ receipt: recorded });
+  } finally { journal.close(); }
 }
 
 export async function createWorkerLifecycleFixture(root: string) {

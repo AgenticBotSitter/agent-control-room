@@ -22,7 +22,7 @@ import { captureNewsStartupConfiguration, type NewsStartupConfiguration } from "
 import { verifyNewsCoordinatorDatabase, verifyNewsIngestionDatabase } from "./private-database-preflight";
 import { createNewsDiscoveryIntegration } from "./news-discovery-integration";
 import type { NewsQueueWorkerStartupConfiguration } from "./news-queue-worker-startup";
-import type { preparePgBossAbsFeedSubmission } from "../../persistence/pg-boss-abs-feed-submission";
+import type { preparePgBossNewsFeedSubmission } from "../../persistence/pg-boss-news-feed-submission";
 import { CODEX_APP_SERVER_CAPABILITY, CODEX_DELIVERY_FEATURE } from "../../harness/codex-v1/delivery-contract";
 import { bindPrivateArtifactStorageV1, capturePrivateArtifactStorageConfigurationV1, openPrivateArtifactStorageV1,
   type OpenPrivateArtifactStorageV1, type PrivateArtifactStorageConfigurationV1,
@@ -172,7 +172,7 @@ export function createPrivateTaskBootstrap(dependencies: {
   prepareNativeSubmission?: (db: DatabaseSession) => Promise<NativeTaskSubmission & { close(): Promise<void> }>;
   /** Normally bound to the verified worker bootstrap; never supplied by a request. */
   startNativeWorker?: (config: NativeQueueWorkerStartupConfiguration) => Promise<OwnedQueueWorker>;
-  prepareNewsSubmission?: (db: DatabaseSession) => ReturnType<typeof preparePgBossAbsFeedSubmission>;
+  prepareNewsSubmission?: (db: DatabaseSession) => ReturnType<typeof preparePgBossNewsFeedSubmission>;
   startNewsWorker?: (config: NewsQueueWorkerStartupConfiguration) => Promise<OwnedQueueWorker>;
   /** Explicitly injected so tests can prove zero website-only I/O and one shared instance. */
   openArtifactStorage?: OpenPrivateArtifactStorageV1;
@@ -215,7 +215,7 @@ export function createPrivateTaskBootstrap(dependencies: {
     let application: Awaited<ReturnType<typeof createPrivateTaskApplication>> | undefined;
     let worker: OwnedQueueWorker | undefined;
     let newsWorker: OwnedQueueWorker | undefined;
-    let newsSubmission: Awaited<ReturnType<typeof preparePgBossAbsFeedSubmission>> | undefined;
+    let newsSubmission: Awaited<ReturnType<typeof preparePgBossNewsFeedSubmission>> | undefined;
     let newsIntegration: ReturnType<typeof createNewsDiscoveryIntegration> | undefined;
     const newsCloses: (() => Promise<void>)[] = [];
     let workerUncertain = false;

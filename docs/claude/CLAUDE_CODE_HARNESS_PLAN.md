@@ -1,13 +1,13 @@
 # Claude Code harness — plan
 
-Author: Claude (Opus 5). Date: 2026-09-12. Baseline: `bc0a61a` on `codex/idea-abs-workflows`.
+Author: Claude (Opus 5). Date: 2026-09-12. Baseline: `bc0a61a` on `codex/idea-news-workflows`.
 
 This is a plan only. It authorizes no install, credential, provider call, deployment or
 publication. It does not reopen any accepted Codex record.
 
 ## Correction (2026-09-13): §1's "what already exists" was read from the wrong branch
 
-Everything in §1 below was read from an old local branch (`codex/idea-abs-workflows` at
+Everything in §1 below was read from an old local branch (`codex/idea-news-workflows` at
 `bc0a61a`) that was never pushed to `main` and has no common git history with `main` at all.
 On real `origin/main`, **none of it exists**: no `src/harness/sdk-v1/`, no `docs/CR7D_...`,
 no `docs/CR7C_...`, no Codex/Hermes adapter files. What real `main` has instead is a

@@ -5,6 +5,10 @@ description: Review public Agent Control Room contributions for material correct
 
 # Public build review
 
+Read [the contributor handbook](../../CONTRIBUTOR_HANDBOOK.md) for the authoritative
+lifecycle, identity limits, controller commands and legacy fallback. This skill adds
+review judgment; it does not define another state machine.
+
 Review the assigned outcome and actual diff at a pinned head. Identify the affected
 user journey and risk before choosing checks. Existing controlled-operation records
 keep their explicit limits; this skill does not grant native or deployment authority.
@@ -51,3 +55,12 @@ material remaining blockers, verification performed and genuinely untested behav
 The lead owns final acceptance and merging; independent reviewers do not approve their
 own implementation. Merge accepted work in dependency order and verify the combined
 candidate before calling it a release.
+
+## Return the action explicitly
+
+Return one consolidated correction or acceptance record for the exact submitted commit.
+Follow the handbook's controller requests when configured, or its explicit legacy
+manual fallback. Verify the next actor is visible in the inbox; a conflicting record
+is unfinished coordination, not an idle worker. A shared-login review comment records
+the independent checker's evidence but does not prove a separate GitHub identity or
+bypass required approval protections. Do not repeat obsolete action-marker rules here.

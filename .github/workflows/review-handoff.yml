@@ -1,0 +1,27 @@
+name: Review handoff
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+concurrency:
+  group: automatic-job-claim-${{ github.repository_id }}
+  cancel-in-progress: false
+  queue: max
+jobs:
+  handoff:
+    if: ${{ !github.event.issue.pull_request && startsWith(github.event.comment.body, 'HANDOFF ') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Record the next action
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          HANDOFF_MAINTAINERS: ${{ vars.HANDOFF_MAINTAINERS }}
+        run: node scripts/review-handoff-controller.mjs

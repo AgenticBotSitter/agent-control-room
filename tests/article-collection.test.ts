@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { fixture, now, trust, request, origin } from "./helpers/web-foundation";
 import { createAccessVerifier } from "../src/web/v1/access-verifier";
-import { PostgresNewsSourceSettings } from "../src/project-adapters/abs-news/v1/source-settings";
-import { createControlCenterCollection } from "../src/project-adapters/abs-news/v1/control-center-collection";
-import { PostgresArticleDetails } from "../src/project-adapters/abs-news/v1/article-store";
+import { PostgresNewsSourceSettings } from "../src/project-adapters/news/v1/source-settings";
+import { createControlCenterCollection } from "../src/project-adapters/news/v1/control-center-collection";
+import { PostgresArticleDetails } from "../src/project-adapters/news/v1/article-store";
 import { WebNewsService } from "../src/web/v1/news-service";
 import { WebTaskService } from "../src/web/v1/task-service";
 import { createTaskHttpHandler } from "../src/web/v1/task-http";
@@ -81,5 +81,5 @@ test("approved collection reuses bounded reader and saves articles only when opt
   const revoked = make(1);
   try { await assert.rejects(revoked.collect(new AbortController().signal), /news_configured_source_changed/); }
   finally { await revoked.close(); }
-  assert.equal((await f.client.query<{ count: string }>("SELECT count(*)::text AS count FROM control_abs_article_details")).rows[0].count, "1");
+  assert.equal((await f.client.query<{ count: string }>("SELECT count(*)::text AS count FROM control_news_article_details")).rows[0].count, "1");
 });

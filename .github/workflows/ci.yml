@@ -22,9 +22,17 @@ name: CI
 # Leave it off.
 #
 # Every test must be reachable from a command a job below actually runs. The
-# lane-drift job follows package-script chains from those workflow commands and
+# `quick` job follows package-script chains from those workflow commands and
 # fails on any unregistered top-level or nested test. An unused package script
 # cannot satisfy it.
+#
+# Feedback versus the merge gate: `quick` runs on every pull request and reports
+# in about a minute, and the path-aware lanes below run just the lanes the
+# changed paths can affect. That fast path never removes coverage. `full-gate`
+# runs every lane the fast path skipped, so the union of what runs is always the
+# complete suite, and `merge-gate` is the single check that attests to it. The
+# merge gate deliberately does not read the routing decision, so nothing a pull
+# request controls can skip it. See docs/ci-budget-security-review.md.
 on:
   push:
     branches: [main]
@@ -39,8 +47,74 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check:
-    name: Type check
+  route:
+    name: Route changed paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      quick: ${{ steps.route.outputs.quick }}
+      demo: ${{ steps.route.outputs.demo }}
+      server: ${{ steps.route.outputs.server }}
+      components: ${{ steps.route.outputs.components }}
+      articles: ${{ steps.route.outputs.articles }}
+      full: ${{ steps.route.outputs.full }}
+      classes: ${{ steps.route.outputs.classes }}
+      reason: ${{ steps.route.outputs.reason }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          # The merge base has to be present for a three-dot diff against the base
+          # branch, and a shallow clone does not contain it.
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      # Diagnostics go to the log, never to disk, and no credential is written.
+      - name: Map this pull request to a lane set
+        id: route
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BASE_REF}" ]; then
+            # A push to main or a manual dispatch has no pull-request base. An
+            # unreadable diff routes to the complete suite by design.
+            echo "No pull-request base revision; the complete suite is required." >&2
+            : > /tmp/changed-paths.txt
+          else
+            git fetch --no-tags --quiet origin "${BASE_REF}"
+            git diff --name-status "origin/${BASE_REF}...HEAD" > /tmp/changed-paths.txt
+            echo "Changed paths:" >&2
+            cat /tmp/changed-paths.txt >&2
+          fi
+          node scripts/ci-path-routing.mjs /tmp/changed-paths.txt
+      - name: Summarise the routing decision
+        # Every value reaches the shell as an environment variable. The outputs are
+        # derived from the changed-path list, so a crafted file name must never be
+        # interpolated into a command line: `${{ }}` inside `run:` would execute it.
+        env:
+          CLASSES: ${{ steps.route.outputs.classes }}
+          FULL: ${{ steps.route.outputs.full }}
+          DEMO: ${{ steps.route.outputs.demo }}
+          SERVER: ${{ steps.route.outputs.server }}
+          COMPONENTS: ${{ steps.route.outputs.components }}
+          ARTICLES: ${{ steps.route.outputs.articles }}
+          REASON: ${{ steps.route.outputs.reason }}
+        run: |
+          echo "routing reason: ${REASON}"
+          {
+            echo "### Changed-path routing"
+            echo ""
+            echo "- Classes: \`${CLASSES}\`"
+            echo "- Complete suite required: \`${FULL}\`"
+            echo "- Lanes run early: \`demo=${DEMO} server=${SERVER} components=${COMPONENTS} articles=${ARTICLES}\`"
+            echo ""
+            echo "Every lane not run early is run by \`full-gate\`, so the complete suite still runs before merge."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  quick:
+    name: Quick checks
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -52,6 +126,12 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      # These two need no dependencies, so they report in seconds, before the
+      # install that the type checks require.
+      - name: Test the lane coverage checker and the path routing
+        run: node --test tests/check-test-lane-coverage.test.mjs tests/ci-path-routing.test.mjs
+      - name: Fail if any test file is unreachable from GitHub Actions
+        run: node scripts/check-test-lane-coverage.mjs
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Type check contributor demo
         run: pnpm run check:demo
@@ -60,6 +140,13 @@ jobs:
 
   test-demo:
     name: Contributor demo tests
+    needs: route
+    # Routing may narrow work, never drop it: whatever is skipped here is run by
+    # full-gate. The status function matters: without it a job-level if: inherits an
+    # implicit success() of its dependencies, so a failed or cancelled route job would
+    # skip this lane. !cancelled() keeps the lane running after a routing failure while
+    # still respecting cancellation of a superseded run.
+    if: ${{ !cancelled() && (needs.route.result != 'success' || needs.route.outputs.demo != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -79,6 +166,8 @@ jobs:
 
   test-server:
     name: Server build tests
+    needs: route
+    if: ${{ !cancelled() && (needs.route.result != 'success' || needs.route.outputs.server != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -98,6 +187,8 @@ jobs:
 
   test-components:
     name: Component lanes
+    needs: route
+    if: ${{ !cancelled() && (needs.route.result != 'success' || needs.route.outputs.components != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -122,6 +213,8 @@ jobs:
 
   test-articles:
     name: Article build lane
+    needs: route
+    if: ${{ !cancelled() && (needs.route.result != 'success' || needs.route.outputs.articles != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -137,18 +230,84 @@ jobs:
       - name: Article build lane
         run: pnpm run test:build:articles
 
-  lane-drift:
-    name: Every test file is in a lane
+  # Runs exactly the lanes the fast path skipped, so the union of everything that
+  # ran is the complete suite. One matrix entry per lane, so a skipped lane is
+  # caught up in parallel rather than serialised behind the others.
+  full-gate:
+    name: Merge gate catch-up
+    needs: route
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [demo, server, components, articles]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
-      - name: Test the lane coverage checker
-        run: node --test tests/check-test-lane-coverage.test.mjs
-      - name: Fail if any test file is unreachable from GitHub Actions
-        run: node scripts/check-test-lane-coverage.mjs
+          cache: pnpm
+      - name: Note which lane this entry covers
+        run: |
+          echo "Merge-gate entry for lane: ${{ matrix.lane }}" >> "$GITHUB_STEP_SUMMARY"
+      - name: Demo tests (merge gate)
+        if: ${{ !cancelled() && matrix.lane == 'demo' && needs.route.result == 'success' && needs.route.outputs.demo == 'false' }}
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm run test:demo
+          pnpm run test:build:demo
+      - name: Server build tests (merge gate)
+        if: ${{ !cancelled() && matrix.lane == 'server' && needs.route.result == 'success' && needs.route.outputs.server == 'false' }}
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm run test
+      - name: Component lanes (merge gate)
+        if: ${{ !cancelled() && matrix.lane == 'components' && needs.route.result == 'success' && needs.route.outputs.components == 'false' }}
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm run test:components
+          node --import tsx --test tests/resource-bound-native-contract-v2.test.ts tests/resource-bound-codex-contract-v2.test.ts tests/resource-bound-local-start-contract-v2.test.ts
+      - name: Article build lane (merge gate)
+        if: ${{ !cancelled() && matrix.lane == 'articles' && needs.route.result == 'success' && needs.route.outputs.articles == 'false' }}
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm run test:build:articles
+
+  # The single check that attests to the complete suite having run. It reads no
+  # routing decision, so a pull request cannot skip it: the lanes it aggregates
+  # either passed or were run here by full-gate.
+  merge-gate:
+    name: Full suite (merge gate)
+    if: ${{ always() }}
+    needs: [route, quick, test-demo, test-server, test-components, test-articles, full-gate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Fail unless every lane passed or was caught up by the gate
+        run: |
+          set -euo pipefail
+          status=0
+          check() {
+            case "$2" in
+              success|skipped) echo "  $1: $2" ;;
+              *) echo "  $1: $2"; status=1 ;;
+            esac
+          }
+          echo "Lane results:"
+          check route "${{ needs.route.result }}"
+          check quick "${{ needs.quick.result }}"
+          check demo "${{ needs.test-demo.result }}"
+          check server "${{ needs.test-server.result }}"
+          check components "${{ needs.test-components.result }}"
+          check articles "${{ needs.test-articles.result }}"
+          check full-gate "${{ needs.full-gate.result }}"
+          if [ "${status}" -ne 0 ]; then
+            echo "::error::the complete suite did not pass, so this pull request is not merge-ready"
+            exit 1
+          fi
+          echo "Complete suite satisfied for this revision."

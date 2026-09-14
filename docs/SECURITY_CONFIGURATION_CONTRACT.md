@@ -149,11 +149,16 @@ agent workers receive no backup credentials. Backup-write, restore and
 maintenance/delete authority are separate. An S3-compatible backend, including
 Cloudflare R2, is supported only after exact endpoint, credential and restore
 qualification and is not called append-only unless its real permission set proves it.
-The current etcd checkpoint detects canonical-state rollback but does not yet bind a
-backup snapshot identity. #128 must define and test a versioned authenticated
-snapshot-binding record outside the primary before any restore can claim that the
-database, artifacts and checkpoint match. Neither system silently repairs a mismatch,
-and a same-domain rollback that leaves matching old values remains refused rather than
+The current etcd checkpoint detects canonical-state rollback. The retained-backup
+package now defines and tests a versioned authenticated snapshot binding designed to
+be retained outside the primary, covering the exact database identity and dump,
+artifact inventory and checkpoint digests. It also verifies those values after a
+disposable restore. The code accepts a separately configured state location; it does
+not prove or enforce physically independent placement. This source-level binding is
+not production qualification: #63 must still supply the real verified PostgreSQL dump,
+and physical independent placement, credentials and restore must pass before
+deployment. Neither system silently repairs a mismatch, and a
+same-domain rollback that leaves matching old values remains refused rather than
 misreported as detected.
 
 Updates drain admission and workers, preserve uncertain attempts, stage the new release
@@ -190,6 +195,7 @@ or become an application coordination store.
 - Missing usage and cost remain unknown. A budget UI cannot infer zero or grant more
   effects because upstream usage is absent.
 
-These rules settle Q4, Q5, Q7, Q8 and Q10 at the contract level. A deployable non-Cloudflare
-provider profile, real deployment,
-native connector and restore qualifications remain explicit release gates.
+These rules settle Q4, Q5, Q7, Q8 and Q10 at the contract level. Both the packaged
+Cloudflare profile and the fixed operator-configured RS256 gateway profile are present
+in source. Real gateway-policy/direct-origin acceptance, deployment, native connector
+and physical database/artifact restore qualifications remain explicit release gates.

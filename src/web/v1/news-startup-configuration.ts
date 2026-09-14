@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { captureNewsDiscoveryConfiguration } from "./news-discovery-integration";
 import { validatePrivatePostgresConfiguration, type PrivatePostgresConfiguration } from "./private-postgres";
-import type { AbsCurrentSourceAuthority } from "../../project-adapters/abs-news/v1/current-source-authority";
+import type { AbsCurrentSourceAuthority } from "../../project-adapters/news/v1/current-source-authority";
 import type { PinnedFetchDependencies } from "../../vendor/control-center/pinned-fetch";
 
 export interface NewsStartupConfiguration {

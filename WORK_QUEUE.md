@@ -40,6 +40,11 @@ issue; active contributor branches retain ownership until accepted or handed off
 
 ## Live views
 
+Contributor handoff improvements and their activation requirements are tracked in
+[workflow implementation status](docs/WORKFLOW_IMPLEMENTATION_STATUS.md).
+Existing assignments retain their ownership. The handbook explains both the current
+manual fallback and the separately configured automated handoffs.
+
 - [Ready](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aready)
 - [Working](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aworking)
 - [In review](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Ain-review)
@@ -140,7 +145,7 @@ non-overlapping outcome instead of replacing them.
 | Independently retained backup set | [#128](https://github.com/AgenticBotSitter/agent-control-room/issues/128) | Pinned restic packages the verified database and artifacts outside the primary and proves an exact restore/checkpoint match |
 | Complete agent-task server composition | [#66](https://github.com/AgenticBotSitter/agent-control-room/issues/66) | Operator configuration starts the real database/queue/connectors/results/review lifecycle fail-closed |
 | Private ingress and first-owner setup | [#67](https://github.com/AgenticBotSitter/agent-control-room/issues/67) | Supported gateway, no direct-origin bypass, one owner bootstrap and externally enforced MFA |
-| Mac/Linux worker setup | [#68](https://github.com/AgenticBotSitter/agent-control-room/issues/68) | Fresh Hermes and Codex worker install, enrollment, version checks, reconnect, revocation and removal |
+| Worker setup on first-release hosts | [#68](https://github.com/AgenticBotSitter/agent-control-room/issues/68) | Fresh Hermes worker setup on each claimed host and Codex worker setup on Linux, including enrollment, version checks, reconnect, revocation and removal. Local macOS Codex execution is deferred under #191 |
 
 Accepted foundations no longer shown as open work: [#9](https://github.com/AgenticBotSitter/agent-control-room/issues/9)
 was superseded by #64 after its retired-base PR was preserved as implementation input;
@@ -163,7 +168,7 @@ and the assembled-release gate in #61.
 ### Parallel additions and additional platform support
 
 These jobs are real product work, but they do not block the first Linux-server,
-Mac/Linux-worker Hermes-plus-Codex release.
+qualified-host Hermes plus Linux-Codex release.
 
 | Responsibility | Public job | Finished outcome |
 | --- | --- | --- |
@@ -184,11 +189,18 @@ production changes; those remain separately scoped owner actions.
 
 Each work issue has exactly one status plus platform/difficulty, owner or unassigned
 state, dependencies, immutable base/target, owned paths, reuse choice and checks.
-Ready means it can begin without guessing a shared contract. Working and In review
-show active implementation and submitted evidence. Waiting means the decision is
+Ready means it can begin without guessing a shared contract. Working means the accepted
+worker acts. In review and Re-review mean the assigned reviewer acts. Changes required
+means the original worker corrects the same pull request. The accompanying `action:*`
+label always names the next responsibility; “pending” is not a workflow state. Waiting means the decision is
 settled, but a named prerequisite or separately authorized real-world test is pending.
 Needs decision means an actual lead or owner decision is required. Paused means the
 work is intentionally inactive.
+
+Package size is visible before claim: feature, integration, platform, or release package,
+normally representing 4–12 human-equivalent focused hours. Tiny related changes are
+batched instead of advertised as separate work. The full handoff and local worker-inbox
+rules are in [PUBLIC_CONTRIBUTION_FLOW.md](docs/PUBLIC_CONTRIBUTION_FLOW.md).
 
 The automatic claim controller confirms ready reservations using a GitHub-login plus
 unique-worker identifier in one short repository-wide serialized workflow. Each exact

@@ -18,11 +18,11 @@ import { boundPrivateDatabase } from "../src/web/v1/bounded-database";
 import { bindPrivatePgPool } from "../src/web/v1/private-pg-database";
 import { articleStory } from "../tests/helpers/article-fixture";
 import { exerciseScheduleStore } from "../tests/helpers/schedule-store-scenario";
-import { PostgresAbsNewsStoreV1 } from "../src/project-adapters/abs-news/v1/postgres-store";
-import { PostgresArticleDetails } from "../src/project-adapters/abs-news/v1/article-store";
-import { readNewsArticleDetail } from "../src/project-adapters/abs-news/v1/article-detail";
-import { PostgresNewsSourceSettings } from "../src/project-adapters/abs-news/v1/source-settings";
-import { createControlCenterCollection } from "../src/project-adapters/abs-news/v1/control-center-collection";
+import { PostgresNewsStoreV1 } from "../src/project-adapters/news/v1/postgres-store";
+import { PostgresArticleDetails } from "../src/project-adapters/news/v1/article-store";
+import { readNewsArticleDetail } from "../src/project-adapters/news/v1/article-detail";
+import { PostgresNewsSourceSettings } from "../src/project-adapters/news/v1/source-settings";
+import { createControlCenterCollection } from "../src/project-adapters/news/v1/control-center-collection";
 
 const bin = resolve(process.argv[2] ?? "");
 assert.ok(process.argv[2], "supply the reviewed PostgreSQL 17 bin directory");
@@ -122,7 +122,7 @@ try {
   await assert.rejects(projects.create(identity, { ...input, title: "Changed" }, "synthetic-project-key"), { message: "conflict" });
   const scope = { tenantId: "tenant:pg", workspaceId: "workspace:pg" };
   const articleScope = { ...scope, projectId: created.project.projectId }, articleKey = new Uint8Array(32).fill(9);
-  const article = articleStory(articleScope), articleStories = new PostgresAbsNewsStoreV1(db.client, articleScope, articleKey);
+  const article = articleStory(articleScope), articleStories = new PostgresNewsStoreV1(db.client, articleScope, articleKey);
   await articleStories.saveStory(article);
   const html = `<article><p>${"Synthetic PG17 article content for reading. ".repeat(80)}</p></article>`;
   const detail = await readNewsArticleDetail({ ...articleScope, storyId: article.storyId, storyDigest: article.storyDigest }, {
@@ -137,13 +137,13 @@ try {
   // A dedicated fixture login can read retained articles but cannot write them.
   await pool.query("CREATE ROLE fixture_article_reader LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS");
   await pool.query("GRANT USAGE ON SCHEMA public TO fixture_article_reader");
-  await pool.query("GRANT SELECT ON control_abs_article_details TO fixture_article_reader");
+  await pool.query("GRANT SELECT ON control_news_article_details TO fixture_article_reader");
   const articleReader = new Client({ ...options, host: socket, user: "fixture_article_reader" });
   try {
     await articleReader.connect();
-    assert.equal((await articleReader.query("SELECT count(*)::int AS n FROM control_abs_article_details")).rows[0].n, 1);
-    for (const sql of ["DELETE FROM control_abs_article_details", "UPDATE control_abs_article_details SET auth_tag=auth_tag", "TRUNCATE control_abs_article_details",
-      "INSERT INTO control_abs_article_details SELECT * FROM control_abs_article_details"])
+    assert.equal((await articleReader.query("SELECT count(*)::int AS n FROM control_news_article_details")).rows[0].n, 1);
+    for (const sql of ["DELETE FROM control_news_article_details", "UPDATE control_news_article_details SET auth_tag=auth_tag", "TRUNCATE control_news_article_details",
+      "INSERT INTO control_news_article_details SELECT * FROM control_news_article_details"])
       await assert.rejects(articleReader.query(sql), { code: "42501" });
   } finally { await articleReader.end(); }
   console.log(JSON.stringify({ articleStorage: "passed", articleReaderPermissions: "passed" }));
