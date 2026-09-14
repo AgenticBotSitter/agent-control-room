@@ -39,6 +39,8 @@ import {
   acquireProcessRetirementAuthorizationV1,
   coordinationOperationRequestSchemaV1,
   coordinatorAppointmentSchemaV1,
+  coordinatorLifecycleRequestDigestV1,
+  coordinatorLifecycleReceiptSchemaV1,
   failProjectCoordinationV1,
   findResourceConflictsV1,
   narrowWriteResourcesV1,
@@ -54,6 +56,7 @@ import {
   type CoordinationOperationRequestV1,
   type CoordinationProposalValidationV1,
   type CoordinatorAppointmentV1,
+  type CoordinatorLifecycleReceiptV1,
   type HeldScopeV1,
   type ProjectCoordinationProposalV1,
   type ProjectWorkAdmissionResultV1,
@@ -1373,16 +1376,54 @@ export class CanonicalStore {
    * or an execution authorization.
    */
   async assignProjectCoordinatorV1(input: {
-    operation: "assign" | "revoke";
+    operation: "appoint" | "replace" | "revoke";
     appointment: CoordinatorAppointmentV1;
+    idempotencyKey: string;
+    requestDigest: string;
+    expectedVersion: number;
     executionBindingDigest?: string;
-  }): Promise<{ version: number; state: "active" | "revoked"; executionBindingDigest?: string }> {
+  }): Promise<CoordinatorLifecycleReceiptV1 & { replayed: boolean }> {
     const appointment = coordinatorAppointmentSchemaV1.parse(input.appointment);
-    if (input.operation === "assign"
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{11,179}$/.test(input.idempotencyKey)
+      || !/^sha256:[a-f0-9]{64}$/.test(input.requestDigest)) failProjectCoordinationV1("invalid_input");
+    if (input.operation !== "revoke"
       && (appointment.coordinatorActorType === "agent") !== (input.executionBindingDigest !== undefined)) {
       failProjectCoordinationV1("invalid_input");
     }
+    if (input.requestDigest !== coordinatorLifecycleRequestDigestV1({ operation: input.operation, appointment,
+      expectedVersion: input.expectedVersion,
+      ...(input.operation !== "revoke" && input.executionBindingDigest
+        ? { executionBindingDigest: input.executionBindingDigest } : {}) })) {
+      failProjectCoordinationV1("invalid_input");
+    }
     return this.#transaction(async (tx) => {
+      const inserted = await tx.query<{ idempotency_key: string }>(`INSERT INTO control_idempotency
+        (tenant_id,operation_scope,idempotency_key,request_digest,status)
+        VALUES($1,'project-coordinator-lifecycle',$2,$3,'processing')
+        ON CONFLICT(tenant_id,operation_scope,idempotency_key) DO NOTHING
+        RETURNING idempotency_key`, [appointment.tenantId, input.idempotencyKey, input.requestDigest]);
+      const replay = inserted.rows.length === 0;
+      const durable = (await tx.query<{ request_digest: string; status: string; result: unknown }>(
+        `SELECT request_digest,status,result FROM control_idempotency
+         WHERE tenant_id=$1 AND operation_scope='project-coordinator-lifecycle' AND idempotency_key=$2 FOR UPDATE`,
+        [appointment.tenantId, input.idempotencyKey])).rows[0];
+      if (!durable || durable.request_digest !== input.requestDigest) {
+        failProjectCoordinationV1("coordinator_replay_conflict");
+      }
+      if (replay) {
+        if (durable.status !== "completed") failProjectCoordinationV1("coordinator_replay_conflict");
+        const receipt = coordinatorLifecycleReceiptSchemaV1.safeParse(durable.result);
+        if (!receipt.success) failProjectCoordinationV1("coordinator_replay_conflict");
+        const { receiptDigest, ...receiptBody } = receipt.data;
+        if (receipt.data.operation !== input.operation
+          || receipt.data.tenantId !== appointment.tenantId || receipt.data.projectId !== appointment.projectId
+          || receipt.data.idempotencyKey !== input.idempotencyKey
+          || receipt.data.requestDigest !== input.requestDigest
+          || sha256Digest(receiptBody) !== receiptDigest) {
+          failProjectCoordinationV1("coordinator_replay_conflict");
+        }
+        return { ...receipt.data, replayed: true };
+      }
       await this.#lockOwnerAuthorityV1(tx, { tenantId: appointment.tenantId, identityId: appointment.ownerIdentityId,
         projectId: appointment.projectId, occurredAt: appointment.occurredAt,
         action: input.operation === "revoke" ? "coordinator.revoke" : "coordinator.assign" });
@@ -1395,6 +1436,10 @@ export class CanonicalStore {
         failProjectCoordinationV1("invalid_input");
       }
       const head = await this.#lockCoordinatorHeadV1(tx, appointment.tenantId, appointment.projectId);
+      if (Number(head?.version ?? 0) !== input.expectedVersion) {
+        failProjectCoordinationV1("coordinator_version_stale");
+      }
+      let outcome: { version: number; state: "active" | "revoked"; executionBindingDigest?: string };
       if (input.operation === "revoke") {
         if (!head) failProjectCoordinationV1("coordinator_absent");
         if (head.state !== "active") failProjectCoordinationV1("coordinator_revoked");
@@ -1403,11 +1448,11 @@ export class CanonicalStore {
           SET state='revoked',version=$1,revoked_at=$2,updated_at=$2
           WHERE tenant_id=$3 AND project_id=$4`,
         [version, appointment.occurredAt, appointment.tenantId, appointment.projectId]);
-        return { version, state: "revoked" as const };
-      }
-      const payload = json({ appointedBy: appointment.ownerIdentityId, grantsHumanLogin: false,
-        grantsExecutionAuthority: false, permitsSelfApproval: false });
-      if (!head) {
+        outcome = { version, state: "revoked" as const };
+      } else {
+        const payload = json({ appointedBy: appointment.ownerIdentityId, grantsHumanLogin: false,
+          grantsExecutionAuthority: false, permitsSelfApproval: false });
+        if (!head) {
         await tx.query(`INSERT INTO control_project_coordinator_heads
           (tenant_id,project_id,state,coordinator_identity_id,coordinator_actor_type,executor_id,adapter_id,
            connector_profile_digest,execution_binding_digest,assigned_by_owner_identity_id,version,
@@ -1417,11 +1462,11 @@ export class CanonicalStore {
           appointment.coordinatorActorType, appointment.executorId ?? null, appointment.adapterId ?? null,
           appointment.connectorProfileDigest ?? null, input.executionBindingDigest ?? null,
           appointment.ownerIdentityId, appointment.occurredAt, payload]);
-        return { version: 1, state: "active" as const, ...(input.executionBindingDigest
+          outcome = { version: 1, state: "active" as const, ...(input.executionBindingDigest
           ? { executionBindingDigest: input.executionBindingDigest } : {}) };
-      }
-      const version = Number(head.version) + 1;
-      await tx.query(`UPDATE control_project_coordinator_heads
+        } else {
+          const version = Number(head.version) + 1;
+          await tx.query(`UPDATE control_project_coordinator_heads
         SET state='active',coordinator_identity_id=$1,coordinator_actor_type=$2,executor_id=$3,adapter_id=$4,
           connector_profile_digest=$5,execution_binding_digest=$6,assigned_by_owner_identity_id=$7,
           version=$8,revoked_at=NULL,updated_at=$9,payload=$10::jsonb
@@ -1430,8 +1475,23 @@ export class CanonicalStore {
         appointment.adapterId ?? null, appointment.connectorProfileDigest ?? null,
         input.executionBindingDigest ?? null, appointment.ownerIdentityId, version, appointment.occurredAt,
         payload, appointment.tenantId, appointment.projectId]);
-      return { version, state: "active" as const, ...(input.executionBindingDigest
-        ? { executionBindingDigest: input.executionBindingDigest } : {}) };
+          outcome = { version, state: "active" as const, ...(input.executionBindingDigest
+            ? { executionBindingDigest: input.executionBindingDigest } : {}) };
+        }
+      }
+      const receiptWithoutDigest = {
+        schema: "control-room.project-coordinator-lifecycle-receipt/v1" as const,
+        operation: input.operation, tenantId: appointment.tenantId, projectId: appointment.projectId,
+        idempotencyKey: input.idempotencyKey, requestDigest: input.requestDigest,
+        expectedVersion: input.expectedVersion, ...outcome,
+      };
+      const receipt = coordinatorLifecycleReceiptSchemaV1.parse({ ...receiptWithoutDigest,
+        receiptDigest: sha256Digest(receiptWithoutDigest) });
+      await tx.query(`UPDATE control_idempotency SET status='completed',result=$1::jsonb,completed_at=now()
+        WHERE tenant_id=$2 AND operation_scope='project-coordinator-lifecycle' AND idempotency_key=$3
+          AND request_digest=$4 AND status='processing'`,
+      [json(receipt), appointment.tenantId, input.idempotencyKey, input.requestDigest]);
+      return { ...receipt, replayed: false };
     });
   }
 

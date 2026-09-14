@@ -9,6 +9,7 @@ export type ProjectCoordinationSafeCodeV1 =
   | "coordinator_revoked"
   | "coordinator_version_stale"
   | "coordinator_human_only_operation"
+  | "coordinator_replay_conflict"
   | "owner_authority_missing"
   | "proposal_content_invalid"
   | "proposal_content_too_large"

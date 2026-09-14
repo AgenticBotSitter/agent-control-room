@@ -4,6 +4,7 @@ import {
   projectCoordinatorPlanningMarkerSchemaV1,
 } from "../../contracts/v1/project-coordination-boundaries";
 import { sha256Digest } from "../../security";
+import { failProjectCoordinationV1 } from "./errors";
 
 export const PROJECT_COORDINATION_PROPOSAL_V1 = "control-room.project-coordination-proposal/v1" as const;
 export const VERIFIED_COORDINATION_RESULT_EVIDENCE_V1 =
@@ -150,6 +151,42 @@ export const coordinatorAppointmentSchemaV1 = z.object({
   }
 });
 export type CoordinatorAppointmentV1 = z.infer<typeof coordinatorAppointmentSchemaV1>;
+
+export function coordinatorLifecycleRequestDigestV1(input: {
+  operation: "appoint" | "replace" | "revoke";
+  appointment: CoordinatorAppointmentV1;
+  expectedVersion: number;
+  executionBindingDigest?: string;
+}): string {
+  if (!Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 0) {
+    failProjectCoordinationV1("invalid_input");
+  }
+  const appointment = coordinatorAppointmentSchemaV1.parse(input.appointment);
+  const identity = JSON.parse(JSON.stringify({
+    schema: "control-room.project-coordinator-lifecycle-request/v1",
+    operation: input.operation,
+    expectedVersion: input.expectedVersion,
+    appointment,
+    ...(input.operation !== "revoke" && input.executionBindingDigest
+      ? { executionBindingDigest: input.executionBindingDigest } : {}),
+  })) as Record<string, unknown>;
+  return sha256Digest(identity);
+}
+
+export const coordinatorLifecycleReceiptSchemaV1 = z.object({
+  schema: z.literal("control-room.project-coordinator-lifecycle-receipt/v1"),
+  operation: z.enum(["appoint", "replace", "revoke"]),
+  tenantId: id,
+  projectId: id,
+  idempotencyKey: z.string().min(12).max(180).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
+  requestDigest: digest,
+  expectedVersion: z.number().int().min(0),
+  version: z.number().int().min(1),
+  state: z.enum(["active", "revoked"]),
+  executionBindingDigest: digest.optional(),
+  receiptDigest: digest,
+}).strict();
+export type CoordinatorLifecycleReceiptV1 = z.infer<typeof coordinatorLifecycleReceiptSchemaV1>;
 
 export const coordinationOperationRequestSchemaV1 = z.object({
   tenantId: id,

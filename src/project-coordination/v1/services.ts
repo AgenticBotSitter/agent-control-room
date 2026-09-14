@@ -3,6 +3,8 @@ import { sha256Digest } from "../../security";
 import { failProjectCoordinationV1 } from "./errors";
 import {
   coordinatorAppointmentSchemaV1,
+  coordinatorLifecycleRequestDigestV1,
+  coordinatorLifecycleReceiptSchemaV1,
   coordinationOperationRequestSchemaV1,
   projectCoordinationProposalDigestV1,
   type CoordinationCostEvidencePortV1,
@@ -10,6 +12,7 @@ import {
   type CoordinationOperationRequestV1,
   type CoordinationRouteResolverPortV1,
   type CoordinatorAppointmentV1,
+  type CoordinatorLifecycleReceiptV1,
   type ProjectCoordinationProposalV1,
 } from "./schemas";
 import {
@@ -33,10 +36,13 @@ import {
  */
 export interface ProjectCoordinationCanonicalPortV1 {
   assignProjectCoordinatorV1(input: {
-    operation: "assign" | "revoke";
+    operation: "appoint" | "replace" | "revoke";
     appointment: CoordinatorAppointmentV1;
+    idempotencyKey: string;
+    requestDigest: string;
+    expectedVersion: number;
     executionBindingDigest?: string;
-  }): Promise<{ version: number; state: "active" | "revoked"; executionBindingDigest?: string }>;
+  }): Promise<CoordinatorLifecycleReceiptV1 & { replayed: boolean }>;
   setProjectDelegationPolicyStateV1(input: {
     tenantId: string; projectId: string; policyId: string; ownerIdentityId: string;
     toState: "paused" | "active" | "revoked"; occurredAt: string;
@@ -97,15 +103,33 @@ export class ProjectCoordinatorServiceV1 {
   }
 
   /** First appointment for a project. */
-  async appoint(appointment: CoordinatorAppointmentV1) {
+  #request(operation: "appoint" | "replace" | "revoke", appointment: CoordinatorAppointmentV1, idempotencyKey: string,
+    expectedVersion: number) {
     const { appointment: parsed, executionBindingDigest } = this.#withBinding(appointment);
-    return this.canonical.assignProjectCoordinatorV1({ operation: "assign", appointment: parsed,
-      ...(executionBindingDigest ? { executionBindingDigest } : {}) });
+    const requestDigest = coordinatorLifecycleRequestDigestV1({ operation, appointment: parsed, expectedVersion,
+      ...(operation !== "revoke" && executionBindingDigest ? { executionBindingDigest } : {}) });
+    return { parsed, executionBindingDigest, idempotencyKey, requestDigest, expectedVersion };
+  }
+
+  async appoint(appointment: CoordinatorAppointmentV1, idempotencyKey: string, expectedVersion: number) {
+    const request = this.#request("appoint", appointment, idempotencyKey, expectedVersion);
+    const receipt = await this.canonical.assignProjectCoordinatorV1({ operation: "appoint",
+      appointment: request.parsed, idempotencyKey: request.idempotencyKey, requestDigest: request.requestDigest,
+      expectedVersion: request.expectedVersion,
+      ...(request.executionBindingDigest ? { executionBindingDigest: request.executionBindingDigest } : {}) });
+    const { replayed, ...durable } = receipt;
+    return { ...coordinatorLifecycleReceiptSchemaV1.parse(durable), replayed };
   }
 
   /** Replaces the current coordinator; the same head version line continues. */
-  async replace(appointment: CoordinatorAppointmentV1) {
-    return this.appoint(appointment);
+  async replace(appointment: CoordinatorAppointmentV1, idempotencyKey: string, expectedVersion: number) {
+    const request = this.#request("replace", appointment, idempotencyKey, expectedVersion);
+    const receipt = await this.canonical.assignProjectCoordinatorV1({ operation: "replace",
+      appointment: request.parsed, idempotencyKey: request.idempotencyKey, requestDigest: request.requestDigest,
+      expectedVersion: request.expectedVersion,
+      ...(request.executionBindingDigest ? { executionBindingDigest: request.executionBindingDigest } : {}) });
+    const { replayed, ...durable } = receipt;
+    return { ...coordinatorLifecycleReceiptSchemaV1.parse(durable), replayed };
   }
 
   /**
@@ -129,9 +153,13 @@ export class ProjectCoordinatorServiceV1 {
     return this.canonical.setProjectDelegationPolicyStateV1({ ...input, toState: "revoked" });
   }
 
-  async revoke(appointment: CoordinatorAppointmentV1) {
-    const { appointment: parsed } = this.#withBinding(appointment);
-    return this.canonical.assignProjectCoordinatorV1({ operation: "revoke", appointment: parsed });
+  async revoke(appointment: CoordinatorAppointmentV1, idempotencyKey: string, expectedVersion: number) {
+    const request = this.#request("revoke", appointment, idempotencyKey, expectedVersion);
+    const receipt = await this.canonical.assignProjectCoordinatorV1({ operation: "revoke",
+      appointment: request.parsed, idempotencyKey: request.idempotencyKey, requestDigest: request.requestDigest,
+      expectedVersion: request.expectedVersion });
+    const { replayed, ...durable } = receipt;
+    return { ...coordinatorLifecycleReceiptSchemaV1.parse(durable), replayed };
   }
 }
 
