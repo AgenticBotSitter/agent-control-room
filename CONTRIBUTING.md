@@ -1,18 +1,17 @@
 # Contributing to Agent Control Room
 
-**Start with the [complete contributor handbook](CONTRIBUTOR_HANDBOOK.md).** It is the
-single authoritative choose-to-merge process. This file provides additional project
-background and policy detail; if duplicated workflow wording drifts, the handbook wins.
+Start with the [Contributor Handbook](CONTRIBUTOR_HANDBOOK.md), the sole authoritative
+contribution lifecycle. It covers choosing and claiming work, isolated checkouts,
+implementation, evidence, review, corrections, ownership, and integration. This file
+contains project background and additional project policies.
 
 This guide covers contributions to the pre-alpha source preview under Apache-2.0.
-Alastair Fraser is the maintaining owner. Work in your own checkout with disposable
-data; contributing does not grant access to a maintainer's machines or agents.
+Alastair Fraser is the maintaining owner. Contributing does not grant access to a
+maintainer's machines or agents.
 
 General project questions: [Alastair@agenticbotsitter.com](mailto:Alastair@agenticbotsitter.com).
-Do not send credentials or private installation records. If the repository offers
-private vulnerability reporting, use its Security tab. Until that route is enabled,
-email the project contact to arrange private reporting without including exploit
-details or sensitive data in the initial message. Never use a public issue for secrets.
+For private security reporting, follow the handbook's
+[security guidance](CONTRIBUTOR_HANDBOOK.md#security-licensing-and-public-evidence).
 
 ## What we are building
 
@@ -21,141 +20,43 @@ approvals and results. Each project has its own page. The core coordinates work 
 different agent runtimes; optional workflows add ideas, research, news and content tools.
 We prefer proven libraries and thin integrations over new custom infrastructure.
 
-A passing test is useful evidence, not proof of a live deployment. The developer preview
-uses clearly labeled synthetic work; production and native-runtime readiness are
-tracked separately. Do not claim a real agent worked just because a fixture completed.
+The developer preview uses clearly labeled synthetic work. Production and native-runtime
+readiness are tracked separately; this is not a production release. A platform label on
+an assignment describes its requirements, not support for the entire application.
 
-## Choose work you can complete
+See the [public build plan](PUBLIC_BUILD_PLAN.md), [setup](SETUP.md),
+[work packages](WORK_PACKAGES.md), and [roadmap](ROADMAP.md). The plan records reuse
+decisions and the current main/component-branch distinction. Reuse evidence should name
+the decision IDs, donor and revision, existing evidence, remaining fit test, and final
+attribution. Follow the handbook's [assignment requirements](CONTRIBUTOR_HANDBOOK.md#read-the-assignment-before-claiming)
+and [implementation guidance](CONTRIBUTOR_HANDBOOK.md#build-the-complete-outcome).
 
-Start with the current [public-first plan and role-based openings](PUBLIC_BUILD_PLAN.md).
-All focus areas welcome humans and bots; active PRs retain their ownership. Use the
-[public worker skill](skills/public-build-worker/SKILL.md) for ordinary assignments
-and the [review skill](skills/public-build-review/SKILL.md) for proportionate review.
-These public assignments do not require a private V2 controller or result manifest.
-The plan explains the current main/component-branch distinction; each assignment
-must pin its actual starting SHA and target before implementation begins.
+The [public worker skill](skills/public-build-worker/SKILL.md) and
+[review skill](skills/public-build-review/SKILL.md) are role-specific entry points to the
+handbook. Public assignments do not require a private V2 controller or result manifest.
+For unlisted work, explain its user benefit and discuss overlap before investing in a
+large patch.
 
-Read [setup](SETUP.md), [work packages](WORK_PACKAGES.md) and the [roadmap](ROADMAP.md).
-The candidate includes check/build/tests and the explicit `pnpm demo` command.
-One local macOS desktop browser trial passed; wider platform/accessibility acceptance
-and live operation remain unfinished. This is not a production release.
+## Dependencies and CI policy
 
-Start with an issue marked ready and read its acceptance criteria before claiming it.
-Reuse is part of each assignment. Follow the reuse ledger and bounded-evaluation rules
-in [PUBLIC_BUILD_PLAN.md](PUBLIC_BUILD_PLAN.md). Name the decision IDs, donor/pin,
-existing evidence, remaining fit test and final attribution. Integrate settled choices;
-do not restart comparisons or build parallel infrastructure. Missing shared contracts
-are maintainer work, not a reason to invent them.
+Discuss new dependencies and licensing before adding them. Do not upgrade packages,
+install tools, or add network fallback merely to get a green test. Report missing setup
+prerequisites so they can receive the appropriate decision. AI-assisted contributions
+have the same requirements as human-written work; contributors remain responsible for
+understanding and checking the result.
 
-Every ready issue should identify:
+Public CI runs on pull requests and main using standard GitHub-hosted runners. External
+contributors' runs require maintainer approval; tokens are read-only and cannot approve
+PRs. Only reviewed, pinned external actions are allowed. Do not add workflows, scheduled
+jobs, automatic deployments, or self-hosted public-PR runners without explicit maintainer
+approval. Do not use skip-ci on code changes. Public standard-runner jobs do not consume
+private-repository minute quotas; storage/cache and larger runners have separate limits
+and billing.
 
-- The outcome and exact public base revision.
-- Platform/runtime requirements, such as `[Any OS][UI]` or `[Windows][Validation]`.
-- Dependencies, allowed files and work that is explicitly outside scope.
-- Preparation and verification commands, including any separately authorized downloads.
-- The reviewing maintainer and required handoff evidence.
-
-Missing prerequisites are a reason to clarify the issue, not to experiment with another
-person's credentials or machine. A platform label is a work requirement, not proof that
-the entire application supports that platform.
-
-For a Ready issue, post the exact two-line claim request from the public worker skill.
-The serialized GitHub controller rechecks the issue, records the accepted worker and
-current base revision, and changes it to Working. Start only after its
-`CLAIM ACCEPTED` marker; no separate maintainer reply is required. If you propose
-unlisted work, explain the user benefit and discuss overlapping changes before
-investing in a large patch.
-
-## Make the change
-
-Use your own fork/checkout and a dedicated branch based on the specified revision.
-Keep one independently reviewable outcome per PR. Preserve unrelated changes and do not
-share a live checkout, credentials, local databases or dependency directories with other
-contributors or agents.
-
-Follow the published setup guide with the pinned package manager and frozen lockfile.
-Keep dependency preparation separate from tests and live platform validation. Do not
-upgrade packages, install tools or add network fallback merely to get a green test.
-Record a missing prerequisite and ask for the appropriate setup decision.
-
-Fix ordinary implementation mistakes within the agreed scope and rerun relevant tests.
-A failed test is not a permanent disqualification. A native/provider attempt, however,
-must follow its explicit limits; never retry an uncertain external action as if it were
-an ordinary unit test. Stop before expanding permissions, data scope or cleanup targets.
-
-When adopting code, name its upstream repository and exact revision/version, preserve
-its notices, and explain what changed. Discuss dependencies and licensing before adding
-them. AI-assisted contributions have the same requirements as human-written changes;
-the contributor remains responsible for understanding and checking the result.
-
-## Submit useful evidence
-
-Run checks locally and batch meaningful pushes and review requests. Public CI is
-enabled for pull requests and main using free standard GitHub-hosted runners.
-External contributors' runs require maintainer approval; tokens are read-only and
-cannot approve PRs. The repository allows only the reviewed pinned external actions.
-Do not add workflows, scheduled jobs, automatic deployments or self-hosted public-PR
-runners without explicit maintainer approval. Do not use skip-ci on code changes.
-Private-repository minute quotas do not apply to these public standard-runner jobs;
-storage/cache and larger runners have separate limits and billing.
-
-Use this short PR summary:
-
-```text
-Issue and outcome:
-Base revision / submitted revision:
-Files changed and why:
-Platform and tool versions:
-Commands run and actual results:
-What was not tested:
-Upstream code/dependencies and attribution:
-Known limitations or follow-up:
-```
-
-For UI changes, include synthetic screenshots and keyboard/narrow-screen checks where
-relevant. Never include private project records, credential values, host identities or
-raw native diagnostics. Reports should distinguish observed behavior from assumptions.
-If a check fails, show a sanitized reproduction rather than relabeling it as a pass.
-
-## Keep moving while reviews happen
-
-You may take another assigned, independent issue while a PR awaits review. You can have
-several independent PRs open; you do not need to wait after every completed task.
-Do not stack unrelated work on an unmerged branch. If a change genuinely depends on
-another PR, state that dependency and its exact base; maintainers integrate in order.
-
-If blocked, leave a draft PR or a concise issue update with the current revision,
-reproduction, completed work and precise missing decision. Ask the maintainer to release
-your assignment if you cannot continue. Preserve useful evidence; never erase a failed
-attempt or rewrite another contributor's branch to make the handoff look complete.
-
-## How review works
-
-Maintainers compare scope, implementation and test evidence, then request focused fixes
-or accept the change. Contributors do not approve or merge their own PRs. Automated
-checks and assistant reviews support an accountable maintainer; multiple agent messages
-are not multiple independent GitHub approvals.
-
-Architecture, permissions, secret handling, database migrations and live execution stay
-maintainer-led. These areas need explicit scope and risk-appropriate independent review,
-not an ordinary UI issue that quietly grows into an authority change. Small UI/docs
-changes should receive proportionate review rather than a production release ceremony.
-
-Review state must always identify the next actor. `status:in-review` plus
-`action:reviewer` means the reviewer acts. If material corrections are requested, the
-issue and pull request move together to `status:changes-required` plus `action:worker`,
-and the reviewer posts one consolidated correction list with the assigned worker marker.
-After corrections, `status:re-review` plus `action:reviewer` returns the changed portion
-to review. See the [complete contributor handbook](CONTRIBUTOR_HANDBOOK.md). Workers
-can read correction and other action-marker handoffs with
-`node scripts/public-worker-inbox.mjs --worker-id WORKER_ID`; it is a read-only public
-GitHub check and consumes no GitHub Actions minutes. Retain accepted Working issue links
-until claim comments are connected to that inbox.
-
-Merge and deployment are separate decisions. Untrusted PRs must not run with maintainer
-credentials or on private agent hosts. Contributor tests use disposable resources.
-Report vulnerabilities through the project's designated private reporting route once
-published; never post exploits containing private data or credentials in normal issues.
+For required checks, submission evidence, reviewer independence, and protected changes,
+follow the handbook's [verification](CONTRIBUTOR_HANDBOOK.md#check-the-work-proportionately),
+[submission](CONTRIBUTOR_HANDBOOK.md#commit-and-submit), and
+[review](CONTRIBUTOR_HANDBOOK.md#review-and-corrections) sections.
 
 ## License and contribution terms
 
@@ -164,5 +65,7 @@ Submit only work you have the right to contribute. Contributions intentionally s
 for inclusion follow the project's license terms. This preview does not add a separate
 CLA or DCO sign-off requirement. Discuss license exceptions before submitting code.
 
-Ready assignments name their reviewing maintainer. Assistant reviews support that
-maintainer; they do not create additional human maintainers or merge permissions.
+Assistant reviews support the accountable maintainer; they do not create additional
+human maintainers or merge permissions. See the handbook for
+[shared-account authority](CONTRIBUTOR_HANDBOOK.md#shared-accounts-and-trusted-transitions)
+and [integration requirements](CONTRIBUTOR_HANDBOOK.md#lead-integration-and-completion).
