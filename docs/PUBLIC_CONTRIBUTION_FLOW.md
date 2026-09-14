@@ -1,5 +1,9 @@
 # Public contribution flow
 
+> **Canonical guide:** The complete, authoritative public process now lives in the
+> root-level [Contributor Handbook](../CONTRIBUTOR_HANDBOOK.md). This page remains as a
+> compact explanation of package sizing and action-state transitions for older links.
+
 GitHub is the public coordination record until Control Room can perform this workflow
 itself. The goal is continuous useful work without duplicate edits, ambiguous review
 states, or a maintainer approval pause before ordinary work.
@@ -19,7 +23,7 @@ review lane, effects, and stop conditions. A package names roles, never a prefer
 | Public state | Next action owner |
 | --- | --- |
 | `status:ready` | A qualified worker may request the atomic claim |
-| `status:working` | The accepted worker implements the package |
+| `status:working` | The worker in the trusted accepted-claim comment implements the package |
 | `status:in-review` | The assigned responsibility-area reviewer reviews it |
 | `status:changes-required` | The original worker corrects the same pull request |
 | `status:re-review` | The reviewer checks the correction delta |
@@ -29,9 +33,11 @@ review lane, effects, and stop conditions. A package names roles, never a prefer
 | `status:needs-decision` | The named lead or owner makes the stated decision |
 | `status:paused` | No work until the maintainer deliberately reopens it |
 
-An action label accompanies every nonterminal state: `action:worker`,
-`action:reviewer`, `action:integrator`, or `action:decision`. “Pending” is not a
-workflow state because it does not identify who must act.
+An action label accompanies explicit handoff states: `action:worker`,
+`action:reviewer`, `action:integrator`, or `action:decision`. A new Working claim is
+currently bound by its trusted `CLAIM ACCEPTED` comment; the action inbox does not yet
+discover those claim comments. `CLAIM REVOKED — STOP` removes permission to continue.
+“Pending” is not a workflow state because it does not identify who must act.
 
 ## Review corrections return explicitly
 
@@ -63,8 +69,10 @@ node scripts/public-worker-inbox.mjs --worker-id YOUR-STABLE-WORKER-ID
 
 An optional `GITHUB_TOKEN` raises GitHub public API rate limits; the script never prints
 it. The watcher is a read-only local command, not a scheduled GitHub Action. It reports
-only trusted, label-consistent action markers for that worker. Scheduling and waking a
-particular agent remain installation choices until Control Room owns that connection.
+only trusted, label-consistent action markers for that worker, such as a correction
+handoff. Until claim comments are connected to the inbox, workers must also retain links
+to their accepted Working issues. Scheduling and waking a particular agent remain
+installation choices until Control Room owns that connection.
 
 ## Keep building while review waits
 

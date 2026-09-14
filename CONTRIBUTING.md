@@ -1,5 +1,9 @@
 # Contributing to Agent Control Room
 
+**Start with the [complete contributor handbook](CONTRIBUTOR_HANDBOOK.md).** It is the
+single authoritative choose-to-merge process. This file provides additional project
+background and policy detail; if duplicated workflow wording drifts, the handbook wins.
+
 This guide covers contributions to the pre-alpha source preview under Apache-2.0.
 Alastair Fraser is the maintaining owner. Work in your own checkout with disposable
 data; contributing does not grant access to a maintainer's machines or agents.
@@ -142,9 +146,11 @@ Review state must always identify the next actor. `status:in-review` plus
 issue and pull request move together to `status:changes-required` plus `action:worker`,
 and the reviewer posts one consolidated correction list with the assigned worker marker.
 After corrections, `status:re-review` plus `action:reviewer` returns the changed portion
-to review. See the [public contribution flow](docs/PUBLIC_CONTRIBUTION_FLOW.md). Workers
-can read their explicit inbox with `node scripts/public-worker-inbox.mjs --worker-id WORKER_ID`; it is a
-read-only public GitHub check and consumes no GitHub Actions minutes.
+to review. See the [complete contributor handbook](CONTRIBUTOR_HANDBOOK.md). Workers
+can read correction and other action-marker handoffs with
+`node scripts/public-worker-inbox.mjs --worker-id WORKER_ID`; it is a read-only public
+GitHub check and consumes no GitHub Actions minutes. Retain accepted Working issue links
+until claim comments are connected to that inbox.
 
 Merge and deployment are separate decisions. Untrusted PRs must not run with maintainer
 credentials or on private agent hosts. Contributor tests use disposable resources.
