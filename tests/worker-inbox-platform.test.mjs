@@ -31,6 +31,7 @@ import {
 const REPOSITORY_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const WATCH_SCRIPT = join(REPOSITORY_ROOT, "scripts/worker-inbox-platform/worker-inbox-watch.mjs");
 const UNINSTALL_SCRIPT = join(REPOSITORY_ROOT, "scripts/worker-inbox-platform/worker-inbox-uninstall.mjs");
+const GENERATE_SCRIPT = join(REPOSITORY_ROOT, "scripts/worker-inbox-platform/worker-inbox-generate.mjs");
 const REPOSITORY_NAME = "AgenticBotSitter/agent-control-room";
 const WORKER_ID = "worker-inbox-test-01";
 const CLOCK = () => new Date("2026-09-14T12:00:00Z");
@@ -459,7 +460,10 @@ test("every platform renders a well-formed definition that names the worker and 
     const generated = generate({
       options: {
         workerId: WORKER_ID, repository: REPOSITORY_NAME, runtimeRoot: root,
-        platform, signalDirectory: join(root, "signals"), out: join(root, "generated", platform),
+        platform, signalDirectory: join(root, "signals"),
+        // Artifacts must live in the directory uninstall owns; an --out outside it would be
+        // written and then orphaned, because uninstall only cleans inside the runtime directory.
+        out: join(workerDirectory({ workerId: WORKER_ID, runtimeRoot: root }), "generated", platform),
       },
       scriptPath,
       nodePath,
@@ -624,11 +628,73 @@ test("the generated instructions warn that a scheduler PATH can break --token-fr
       `${platform} instructions must say the failure is not a silent fallback`);
   }
 
+  // The remedy differs by platform, and advice that cannot be followed on the platform it is
+  // printed for is worse than no advice: launchd reads no environment file, so telling a macOS
+  // operator to use one sends them looking for a file that does not exist.
+  const launchd = forPlatform("launchd");
+  assert.match(launchd, /EnvironmentVariables/u, "the macOS remedy is a PATH in the property list");
+  assert.doesNotMatch(launchd, /environment file the unit reads/u, "launchd reads no environment file");
+
+  const systemd = forPlatform("systemd");
+  assert.match(systemd, /EnvironmentFile=/u, "the systemd remedy is the unit's environment file");
+
   // Task Scheduler runs with the user environment, so it must NOT carry a caveat that does not
   // apply to it - a warning that cannot be acted on is its own kind of untrue.
   const windows = forPlatform("windows");
   assert.doesNotMatch(windows, /Scheduler PATH/u);
   assert.match(windows, /--token-from-gh/u, "windows still documents the flag it can use");
+});
+
+test("an output directory outside the owned one is refused, not written and orphaned", (t) => {
+  const root = scratch(t);
+  const runtimeDirectory = workerDirectory({ workerId: WORKER_ID, runtimeRoot: root });
+  const owned = join(runtimeDirectory, "generated");
+
+  // Uninstall removes only entries it recognises inside the runtime directory, so artifacts written
+  // anywhere else could never be cleaned up. The last case is a sibling that merely shares a
+  // prefix with the owned directory: a string test would wrongly accept it.
+  for (const stray of [join(root, "elsewhere"), join(root, "generated"), `${owned}-backup`]) {
+    assert.throws(
+      () => generate({
+        options: {
+          workerId: WORKER_ID, repository: REPOSITORY_NAME, runtimeRoot: root,
+          platform: "launchd", out: stray,
+        },
+        scriptPath: "script.mjs", nodePath: "node",
+      }),
+      /worker_inbox_platform_out_directory_not_owned/u,
+      `${stray} is outside the owned directory and must be refused`,
+    );
+    assert.equal(existsSync(stray), false, `${stray} must not have been created`);
+  }
+
+  // A path inside the owned directory is accepted, and uninstall really does clean it up.
+  const inside = join(owned, "launchd");
+  const generated = generate({
+    options: {
+      workerId: WORKER_ID, repository: REPOSITORY_NAME, runtimeRoot: root,
+      platform: "launchd", out: inside,
+    },
+    scriptPath: "script.mjs", nodePath: "node",
+  });
+  assert.ok(generated.written.length >= 1);
+  for (const artifact of generated.written) {
+    assert.ok(artifact.path.startsWith(inside), `${artifact.path} must be inside the owned directory`);
+  }
+
+  const removed = uninstall({ options: { workerId: WORKER_ID, runtimeRoot: root } });
+  assert.equal(removed.refused, false);
+  assert.ok(removed.removed.includes("generated"), "artifacts must be owned and removed");
+  assert.equal(existsSync(owned), false, "nothing may survive uninstall");
+
+  // The operator gets a refusal and a non-zero status, not a silent success.
+  const cli = spawnSync(process.execPath, [
+    GENERATE_SCRIPT, "--worker-id", WORKER_ID, "--platform", "launchd",
+    "--runtime-root", root, "--out", join(root, "nope"),
+  ], { encoding: "utf8" });
+  assert.equal(cli.status, 1, "the generator maps any refusal to exit 1");
+  assert.match(cli.stderr, /worker_inbox_platform_out_directory_not_owned/u);
+  assert.equal(existsSync(join(root, "nope")), false);
 });
 
 test("a nested field whose key order differs between reads is not a change", () => {

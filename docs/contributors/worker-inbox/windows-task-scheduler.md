@@ -74,7 +74,9 @@ No credential appears anywhere in the file.
   one.
 - The watcher cannot wake an idle agent; see the
   [README](README.md#honest-limitation-this-cannot-wake-an-agent).
-- Task Scheduler runs the task with your user environment, so a normal `gh` install is found on
-  `PATH` and `--token-from-gh` works. If `gh` is somehow not on `PATH`, the tick fails loudly
+- Task Scheduler runs the task under your user account and normally receives the user's persistent
+  environment, so a normal `gh` installation is on `PATH` and `--token-from-gh` works. That is the
+  usual case rather than a guarantee: a `PATH` change made only for one shell session or in a shell
+  profile the task does not read is not inherited. If `gh` cannot be found, the tick fails loudly
   with `worker_inbox_platform_gh_token_unavailable` and exit code 1 instead of quietly making
   anonymous requests.

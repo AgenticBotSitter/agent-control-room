@@ -5,7 +5,7 @@
 // native scheduler installation is separately authorized and is not performed or claimed
 // here.
 import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { PLATFORMS, artifactsFor } from "./lib/artifacts.mjs";
@@ -59,7 +59,9 @@ export function usage() {
     "  --all                     Generate every supported platform.",
     "  --worker-id ID            Stable worker ID (required).",
     "  --repository OWNER/NAME   Default AgenticBotSitter/agent-control-room.",
-    "  --out DIR                 Output directory (default: the worker runtime directory).",
+    "  --out DIR                 Where to write artifacts. Must be the worker runtime directory's",
+    "                            generated/ subdirectory, or a path inside it, because that is the",
+    "                            only location uninstall can clean up.",
     "  --runtime-root DIR        Where state, logs and signals live.",
     "  --signal-directory DIR    Optional extra directory for the signal file.",
     "  --interval SECONDS        Poll interval written into the definition (default 300).",
@@ -72,6 +74,13 @@ export function usage() {
     "",
     "No credentials are embedded in any generated file.",
   ].join("\n");
+}
+
+// True when `child` is `parent` itself or lives underneath it. Path-aware rather than a string
+// prefix test, so `/rt/generated-backup` is not treated as living inside `/rt/generated`.
+function isWithin(child, parent) {
+  const relativePath = relative(parent, child);
+  return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
 }
 
 // `options` is merged over the same defaults `argumentsFor` applies, so the exported function
@@ -89,7 +98,16 @@ export function generate({ options: provided = {}, scriptPath, nodePath, now = (
   }
   const runtimeDirectory = workerDirectory({ workerId, runtimeRoot: options.runtimeRoot });
   ensureWorkerDirectory(runtimeDirectory, { workerId });
-  const artifactDirectory = options.out ? options.out : generatedDirectory(runtimeDirectory);
+  // Ownership boundary. Uninstall deletes only entries it recognises inside the worker runtime
+  // directory, and `generated/` is the one directory it owns and removes recursively. An --out
+  // anywhere else would leave artifacts that nothing owns and nothing can clean up - the same leak
+  // that the launchd logs caused before they were made owned entries - so a stray output directory
+  // is refused instead of being written and orphaned.
+  const ownedArtifactDirectory = generatedDirectory(runtimeDirectory);
+  const artifactDirectory = options.out ? resolve(options.out) : ownedArtifactDirectory;
+  if (!isWithin(artifactDirectory, ownedArtifactDirectory)) {
+    throw new Error("worker_inbox_platform_out_directory_not_owned");
+  }
   mkdirSync(artifactDirectory, { recursive: true });
 
   const shared = {

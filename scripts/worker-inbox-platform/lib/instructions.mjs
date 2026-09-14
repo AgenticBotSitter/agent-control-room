@@ -6,6 +6,28 @@
 // written.
 import { launchdLabel, systemdUnitBase, windowsTaskName } from "./artifacts.mjs";
 
+// The scheduler-PATH caveat, per platform. The failure is the same everywhere, but the fix is not:
+// launchd reads no environment file, so on macOS the remedy is a PATH inside the property list,
+// while the systemd unit already points EnvironmentFile= at the runtime env file. Windows Task
+// Scheduler is omitted deliberately - it runs with the user's persistent environment.
+const schedulerRemedies = {
+  launchd: [
+    "  Scheduler PATH: launchd does not inherit your shell environment, so --token-from-gh only",
+    "  works if `gh` is on the PATH the tick runs with. If it is not, the tick fails loudly with",
+    "  worker_inbox_platform_gh_token_unavailable and exit 1 - it does not fall back to anonymous",
+    "  requests. Fix it by adding the directory holding `gh` (often /opt/homebrew/bin) to an",
+    "  EnvironmentVariables PATH in the generated property list before bootstrapping it; launchd",
+    "  reads no environment file. See the macOS page.",
+  ],
+  systemd: [
+    "  Scheduler PATH: the service does not inherit your shell environment, so --token-from-gh only",
+    "  works if `gh` is on the PATH the tick runs with. If it is not, the tick fails loudly with",
+    "  worker_inbox_platform_gh_token_unavailable and exit 1 - it does not fall back to anonymous",
+    "  requests. Fix it by putting GITHUB_TOKEN in the runtime env file the unit's EnvironmentFile=",
+    "  reads, or by adding the directory holding `gh` to the unit's PATH. See the systemd page.",
+  ],
+};
+
 export function instructionsFor({ platform, workerId, artifactDirectory, runtimeDirectory, repository }) {
   const uninstall = `node scripts/worker-inbox-platform/worker-inbox-uninstall.mjs --worker-id ${workerId}`;
   const common = [
@@ -22,16 +44,11 @@ export function instructionsFor({ platform, workerId, artifactDirectory, runtime
     "  No token is generated, copied, printed, or stored by this tool. Set GITHUB_TOKEN in the",
     "  environment you control, or pass --token-from-gh to use `gh auth token` in memory.",
     // A scheduler does not inherit the interactive shell environment, so `gh` may not be on the
-    // PATH a tick runs with - the flag then fails even though it works in a terminal. Windows Task
-    // Scheduler runs with the user environment and does not have this problem; launchd and systemd
-    // user services do.
-    ...(platform === "windows" ? [] : [
-      "  Scheduler PATH: this scheduler does not inherit your shell environment, so",
-      "  --token-from-gh only works if `gh` is on the PATH the tick runs with. If it is not, the",
-      "  tick fails loudly with worker_inbox_platform_gh_token_unavailable and exit 1 - it does not",
-      "  fall back to anonymous requests. Fix it by supplying the token through the environment file",
-      "  the unit reads, or by adding the directory holding `gh` to PATH. See the platform page.",
-    ]),
+    // PATH a tick runs with, and the flag then fails even though it works in a terminal. The
+    // REMEDY differs by platform and the wording must too: launchd has no environment file to
+    // read, so its fix is a PATH in the property list. Windows Task Scheduler runs with the
+    // user's persistent environment and needs no caveat here.
+    ...(schedulerRemedies[platform] ?? []),
     `  Runtime files: "${runtimeDirectory}"`,
     `  Repository: ${repository}`,
   ];
