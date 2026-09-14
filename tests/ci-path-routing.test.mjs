@@ -342,6 +342,40 @@ test("no job output is interpolated into a shell command", () => {
   const legitimate = lines.filter((line) => /^\s*if: \$\{\{[^}]*\boutputs\./u.test(line));
   assert.ok(legitimate.length >= LANES.length, "the lane conditions should still read routing outputs");
 });
+
+test("the early and gate conditions partition every lane, so no case leaves a lane unrun", () => {
+  // The two conditions are the exact complement of each other:
+  //   early runs unless routing succeeded AND explicitly said false
+  //   gate runs only when routing succeeded AND explicitly said false
+  // That makes them mutually exclusive and exhaustive, so an empty output (a routing
+  // script that emits nothing and still exits 0) runs the lane early instead of
+  // letting both sides skip it, which would leave the lane unrun entirely.
+  const lines = workflow.split("\n");
+  for (const lane of LANES) {
+    const early = lines.filter((line) => line.includes(`needs.route.outputs.${lane} != 'false'`));
+    const gate = lines.filter((line) => line.includes(`needs.route.outputs.${lane} == 'false'`));
+    assert.equal(early.length, 1, `expected one early condition for ${lane}`);
+    assert.equal(gate.length, 1, `expected one gate condition for ${lane}`);
+    assert.match(early[0], /needs\.route\.result != 'success' \|\|/u, "early must run when routing failed");
+    assert.match(gate[0], /needs\.route\.result == 'success' &&/u, "gate must not double-run after a failure");
+  }
+
+  // Evaluate the two rules over every possible routing outcome and require that the
+  // lane is run exactly once, whatever the outcome is.
+  const earlyRuns = (result, output) => result !== "success" || output !== "false";
+  const gateRuns = (result, output) => result === "success" && output === "false";
+  for (const result of ["success", "failure", "cancelled"]) {
+    for (const output of ["true", "false", ""]) {
+      const runs = [earlyRuns(result, output), gateRuns(result, output)].filter(Boolean).length;
+      assert.equal(
+        runs,
+        1,
+        `route=${result} output='${output}' ran the lane ${runs} times, expected exactly once`,
+      );
+    }
+  }
+});
+
 test("the routing helper is exercised by the workflow, not only by its test", () => {
   assert.match(workflow, /node scripts\/ci-path-routing\.mjs/u);
 });

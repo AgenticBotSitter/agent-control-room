@@ -100,6 +100,14 @@ cannot touch the check that decides merge-readiness. Its condition is `always()`
 fails unless every lane passed or was caught up, and a routing failure runs the lanes
 rather than skipping them.
 
+The early and gate conditions are also exact complements of each other: a lane runs early
+*unless* routing succeeded and explicitly reported `false` for it, and the gate runs it
+*only* in that same case. The two are therefore mutually exclusive and exhaustive, which
+closes the case that would otherwise leave a lane unrun - a routing script that emits no
+outputs at all while still exiting 0. An empty output runs the lane early rather than
+letting both sides skip it, and a test evaluates both rules over every combination of
+routing result and output value, including the empty one.
+
 ### The path-to-lane mapping, and its evidence
 
 Each mapping was derived by looking up which test files actually read the area, with
