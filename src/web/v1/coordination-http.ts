@@ -47,12 +47,9 @@ export interface CoordinationHttpHandlerOptions {
    * In-flight request coalescing, shared across handler invocations within one
    * process. Two simultaneous POSTs carrying the same Idempotency-Key run the
    * engine once; both callers receive the same recorded outcome. This is a
-   * performance optimization only — it is NOT durable replay. A sequential
-   * retry after the first response, a reconstructed handler, or a process
-   * restart re-runs the engine. Durable replay for appoint/replace/revoke is
-   * blocked on the missing shared seam (see the module docstring in
-   * project-coordination-http.ts); the canonical receipt path covers proposal
-   * adoption only.
+   * performance optimization only — durability comes from the coordinator
+   * service's PostgreSQL receipt (control_idempotency): sequential retries
+   * and reconstructed handlers are answered from the saved receipt.
    */
   inflight?: Map<string, Promise<unknown>>;
 }

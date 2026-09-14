@@ -14,9 +14,9 @@
 //   * missing JWT -> 401 authentication_required, no service call;
 //   * bad JWT signature -> 401 authentication_required;
 //   * simultaneous same-key POSTs -> engine runs once, both callers get the
-//     same outcome (in-flight coalescing, perf-only, not durable replay);
-//   * sequential same-key retry -> re-runs the engine (documents the missing
-//     durable receipt seam for appoint/replace/revoke);
+//     same outcome (in-flight coalescing, perf-only; PG receipt is durable);
+//   * sequential same-key retry -> saved PG receipt, no second write;
+//   * reconstructed handler -> saved PG receipt, restart-safe;
 //   * valid JWT, GET page -> 200 with the wire-shaped page payload;
 //   * valid JWT, POST appoint without Idempotency-Key -> 400 invalid_request;
 //   * valid JWT, POST appoint with bad revision -> 200 refused (revision envelope)
