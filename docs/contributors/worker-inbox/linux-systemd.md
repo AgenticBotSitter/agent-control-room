@@ -69,6 +69,11 @@ node scripts/worker-inbox-platform/worker-inbox-uninstall.mjs --worker-id YOUR-S
 - A systemd **user** service does not inherit your interactive shell environment, which is
   why token use is expressed as an owner-controlled `EnvironmentFile` rather than baked into
   the unit. Create `<runtime>/env` yourself if you want one; this tool never writes it.
+- The same restriction applies to `--token-from-gh`: the unit sets no `PATH`, so the flag only
+  works if `gh` is on the service's default `PATH`. If it is not, the tick fails loudly with
+  `worker_inbox_platform_gh_token_unavailable` and exit status 1 rather than silently falling
+  back to anonymous requests (`EnvironmentFile` with `GITHUB_TOKEN`, or adding a `PATH` to the
+  unit, both fix it). The launchd page shows the equivalent macOS failure in more detail.
 - The generated units are validated for the quoting and escaping rules above by the focused
   tests, and `systemd-analyze --user verify` on a Linux host is the authoritative check.
   Enabling the timer is not performed or verified by this package.

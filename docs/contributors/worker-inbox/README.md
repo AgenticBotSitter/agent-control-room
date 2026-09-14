@@ -24,7 +24,9 @@ Direct agent-wake integration is deliberately not claimed here.
 - Optional: a GitHub token, to avoid the anonymous rate limit. Set `GITHUB_TOKEN` in your
   environment, or pass `--token-from-gh` to use `gh auth token` in memory. An authenticated `gh`
   by itself is **not** enough: the flag is opt-in, so without one of these the watcher makes
-  anonymous requests and will hit the rate limit on a busy repository.
+  anonymous requests and will hit the rate limit on a busy repository. Note that under a scheduler
+  `--token-from-gh` also needs `gh` on that scheduler's `PATH` — see the platform page for your
+  system.
 
 ## Quick start
 
@@ -97,8 +99,11 @@ as `63:changes-required` rather than the uninformative `63:attention`. This pack
 decide authority: trust, dispositions, and whether a record is advisory or a controller record
 are the accepted client's, and are surfaced as it reports them.
 
-It stays quiet when the inbox is unchanged, and it never asks GitHub for anything it has
-already seen.
+It rereads the inbox on every tick — that is how it notices a change at all — and it stays quiet
+when nothing has changed. What it deduplicates is **notifications**, not requests: an unchanged
+inbox still costs the same GitHub reads as a changed one, so the fingerprint saves you console
+noise, not rate limit. Budget for the reads accordingly, and use a token (see Requirements) if
+the anonymous limit is a concern.
 
 In loop mode the console is for you, not a transcript. It prints when there is something to
 act on, when a change has been confirmed, and once for a failure — a repeated identical

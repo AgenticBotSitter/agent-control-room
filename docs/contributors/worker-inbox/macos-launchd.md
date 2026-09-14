@@ -65,9 +65,33 @@ node scripts/worker-inbox-platform/worker-inbox-uninstall.mjs --worker-id YOUR-S
 | `ProcessType` | `Background`, so macOS treats the poll as low priority. |
 | `StandardOutPath` / `StandardErrorPath` | `launchd.out.log` and `launchd.err.log`, deliberately separate from `watch.log`: launchd appends to these itself, and sharing the file the watcher bounds would break that bound. |
 
-No `EnvironmentVariables` containing a credential is written. launchd does not inherit your
-interactive shell environment, so if you want to avoid the anonymous rate limit either use
-`--token-from-gh` when generating, or add an `EnvironmentVariables` dictionary yourself.
+No `EnvironmentVariables` dictionary is written at all, so the agent inherits only launchd's
+minimal `PATH` (`/usr/bin:/bin:/usr/sbin:/sbin`). That matters specifically for
+`--token-from-gh`, which shells out to `gh`: a Homebrew install lives in `/opt/homebrew/bin`,
+which launchd does not put on `PATH`, so the flag fails even though it works in your interactive
+shell.
+
+It fails **loudly**, which is the good news — you will not quietly lose rate-limit headroom:
+
+```text
+worker-inbox-watch: worker_inbox_platform_gh_token_unavailable
+```
+
+with exit status 1. The tick does not fall back to anonymous requests.
+
+To make `--token-from-gh` work under launchd, add a `PATH` to an `EnvironmentVariables`
+dictionary in the generated property list before bootstrapping it:
+
+```xml
+<key>EnvironmentVariables</key>
+<dict>
+  <key>PATH</key>
+  <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+</dict>
+```
+
+Extending `PATH` is preferred to putting `GITHUB_TOKEN` here, because it keeps the credential out
+of the property list entirely.
 
 ## Honest notes
 

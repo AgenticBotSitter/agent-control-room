@@ -832,3 +832,49 @@ test("an authoritative controller record is reported at its declared state", asy
   assert.equal(result.change, "baseline-action");
   assert.deepEqual(result.observed.states, ["199:changes-required"]);
 });
+
+// The README says deduplication is about notifications rather than requests. Pin it: an unchanged
+// tick must cost exactly the same GitHub reads as a changed one, so no page can claim otherwise.
+test("an unchanged tick costs the same GitHub reads as a changed tick", async (t) => {
+  const root = scratch(t);
+  const github = fakeGithub(assignment());
+  const options = tickOptions(root, { fetchImpl: github.fetchImpl });
+
+  const before = github.calls.length;
+  const first = await runTick({ options, now: CLOCK });
+  const changedReads = github.calls.length - before;
+
+  const midway = github.calls.length;
+  const second = await runTick({ options, now: CLOCK });
+  const unchangedReads = github.calls.length - midway;
+
+  assert.equal(first.change, "baseline-action");
+  assert.equal(second.change, "unchanged");
+  assert.ok(changedReads > 0, "a changed tick reads GitHub");
+  assert.equal(
+    unchangedReads, changedReads,
+    "an unchanged tick must cost the same reads: the fingerprint dedupes notifications, not requests",
+  );
+});
+
+// The docs tell operators that a `--token-from-gh` failure is loud rather than a silent fallback to
+// anonymous requests. Pin both halves: the exit status, and that no request is made at all.
+test("a token gh cannot supply fails loudly instead of going anonymous", async (t) => {
+  const root = scratch(t);
+  let reads = 0;
+  const reader = async () => { reads += 1; return []; };
+  const runCommand = () => ({ status: 127, stdout: "", stderr: "", error: new Error("spawnSync gh ENOENT") });
+
+  assert.throws(
+    () => resolveToken({ environment: {}, tokenFromGh: true, runCommand }),
+    error => error.message === "worker_inbox_platform_gh_token_unavailable",
+  );
+
+  const code = await watchMain(
+    ["--once", "--worker-id", WORKER_ID, "--runtime-root", root, "--token-from-gh"],
+    { reader, environment: {}, runCommand, now: CLOCK },
+  );
+
+  assert.equal(code, EXIT_CONFIG, "an unusable gh is a configuration failure, not a transient one");
+  assert.equal(reads, 0, "it must not fall back to anonymous requests after failing to resolve a token");
+});
