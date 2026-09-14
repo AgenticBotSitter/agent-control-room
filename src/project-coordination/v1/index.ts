@@ -5,4 +5,5 @@ export * from "./proposal-ingestion";
 export * from "./resource-conflict";
 export * from "./admission";
 export * from "./retirement";
+export * from "./parallel-write";
 export * from "./services";

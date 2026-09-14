@@ -4,6 +4,7 @@ import { failProjectCoordinationV1 } from "./errors";
 import {
   coordinatorAppointmentSchemaV1,
   coordinationOperationRequestSchemaV1,
+  projectCoordinationProposalDigestV1,
   type CoordinationCostEvidencePortV1,
   type CoordinationCostEvidenceV1,
   type CoordinationOperationRequestV1,
@@ -15,11 +16,15 @@ import {
   validateCoordinationProposalV1,
   type CoordinationProposalValidationV1,
 } from "./proposal-ingestion";
-import type { ProjectWorkAdmissionResultV1 } from "./admission";
+import { projectWorkAdmissionRequestSchemaV1, type ProjectWorkAdmissionResultV1 } from "./admission";
 import {
   authorizeProcessRetirementV1,
   type ProcessRetirementVerifierPortV1,
 } from "./retirement";
+import {
+  authorizeParallelNarrowWriteV1,
+  type EnforcedWorkspacePortV1,
+} from "./parallel-write";
 
 /**
  * The persistence operations this engine uses. It is a structural port so the
@@ -40,12 +45,21 @@ export interface ProjectCoordinationCanonicalPortV1 {
     proposalId: string; validation: CoordinationProposalValidationV1; ingestedAt: string;
   }): Promise<{ proposalId: string; validationState: "accepted" | "rejected"; safeReasonCode?: string;
     proposalDigest?: string; replayed: boolean }>;
+  /**
+   * Reads the exact accepted proposal row and re-derives its digest. Adoption
+   * routes and prices this value; a caller-supplied copy is never the pricing
+   * input.
+   */
+  loadAcceptedProjectCoordinationProposalV1(input: {
+    tenantId: string; projectId: string; proposalId: string;
+  }): Promise<{ proposalId: string; proposalDigest: string; proposal: ProjectCoordinationProposalV1 }>;
   adoptProjectCoordinationProposalV1(input: {
-    request: CoordinationOperationRequestV1; requestDigest: string;
+    request: CoordinationOperationRequestV1; requestDigest: string; proposalDigest: string;
     routes: Record<string, string>; cost: CoordinationCostEvidenceV1;
   }): Promise<{ receiptId: string; receiptDigest: string; jobIds: string[]; taskUnits: number;
     concurrencyUnits: number; replayed: boolean }>;
-  admitProjectWorkResourcesV1(value: unknown): Promise<ProjectWorkAdmissionResultV1>;
+  admitProjectWorkResourcesV1(value: unknown, parallelWriteAuthorization?: unknown):
+  Promise<ProjectWorkAdmissionResultV1>;
   recheckProjectWorkResourceAdmissionV1(value: unknown): Promise<{
     admissionId: string; admissionDigest: string; declarationDigest: string; version: number; state: "held" }>;
   retireProjectWorkResourceAdmissionV1(operationAuthorization: unknown): Promise<{
@@ -153,9 +167,24 @@ export class ProjectCoordinationAdoptionServiceV1 {
     private readonly costs: CoordinationCostEvidencePortV1,
   ) {}
 
-  async adopt(input: { request: CoordinationOperationRequestV1; proposal: ProjectCoordinationProposalV1 }) {
+  /**
+   * `proposal` is optional and is never the source of a route or a price. The
+   * canonical accepted row is loaded first and everything - selection, required
+   * capability, route resolution and cost - is resolved from it. A supplied copy
+   * is accepted only as a cross-check: it must hash to the exact stored proposal
+   * digest, so a caller cannot present a cheaper or differently-capable object
+   * than the one persistence will later adopt.
+   */
+  async adopt(input: { request: CoordinationOperationRequestV1; proposal?: ProjectCoordinationProposalV1 }) {
     const request = coordinationOperationRequestSchemaV1.parse(input.request);
-    const selected = input.proposal.tasks.filter((task) => request.selectedLocalIds.includes(task.localId));
+    const canonicalProposal = await this.canonical.loadAcceptedProjectCoordinationProposalV1({
+      tenantId: request.tenantId, projectId: request.projectId, proposalId: request.proposalId });
+    if (input.proposal !== undefined
+      && projectCoordinationProposalDigestV1(input.proposal) !== canonicalProposal.proposalDigest) {
+      failProjectCoordinationV1("proposal_evidence_mismatch");
+    }
+    const proposal = canonicalProposal.proposal;
+    const selected = proposal.tasks.filter((task) => request.selectedLocalIds.includes(task.localId));
     if (selected.length !== request.selectedLocalIds.length) failProjectCoordinationV1("invalid_input");
 
     const routes: Record<string, string> = {};
@@ -198,10 +227,15 @@ export class ProjectCoordinationAdoptionServiceV1 {
       }
     }
 
+    // The digest of the exact proposal that was routed and priced is part of the
+    // request identity, so persistence can refuse to adopt any other content and
+    // a replay under the same key cannot silently change proposals.
     const requestDigest = sha256Digest({ request, routes,
+      proposalDigest: canonicalProposal.proposalDigest,
       cost: cost.kind === "known" ? { admittedCostMicroUsd: cost.admittedCostMicroUsd,
         evidenceDigest: cost.evidenceDigest } : { kind: "unknown" } });
-    return this.canonical.adoptProjectCoordinationProposalV1({ request, requestDigest, routes, cost });
+    return this.canonical.adoptProjectCoordinationProposalV1({ request, requestDigest, routes, cost,
+      proposalDigest: canonicalProposal.proposalDigest });
   }
 }
 
@@ -213,10 +247,26 @@ export class ProjectWorkAdmissionServiceV1 {
   constructor(
     private readonly canonical: ProjectCoordinationCanonicalPortV1,
     private readonly retirementVerifier?: ProcessRetirementVerifierPortV1,
+    private readonly enforcedWorkspaces?: EnforcedWorkspacePortV1,
   ) {}
 
+  /**
+   * A request that asks for parallel narrow repository writing gets no say in
+   * whether it is allowed. The enforced workspace is resolved here through the
+   * captured trusted boundary, and the named owner policy is verified against
+   * the stored row inside the canonical transaction. An admission service
+   * composed without that boundary can never admit a narrow writer.
+   */
   async admit(request: unknown): Promise<ProjectWorkAdmissionResultV1> {
-    return this.canonical.admitProjectWorkResourcesV1(request);
+    const parsed = projectWorkAdmissionRequestSchemaV1.safeParse(request);
+    if (!parsed.success || !parsed.data.disjointWriters.requested) {
+      return this.canonical.admitProjectWorkResourcesV1(request);
+    }
+    const { tenantId, projectId, jobId, attemptId, leaseId, nodeId, admissionId } = parsed.data;
+    const authorization = await authorizeParallelNarrowWriteV1(this.enforcedWorkspaces, {
+      lineage: { tenantId, projectId, jobId, attemptId, leaseId, nodeId, admissionId },
+      policyId: parsed.data.disjointWriters.policyId });
+    return this.canonical.admitProjectWorkResourcesV1(request, authorization);
   }
 
   async recheck(request: unknown) {

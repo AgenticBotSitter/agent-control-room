@@ -640,3 +640,108 @@ test("hostile cost evidence is never summed into an admissible ceiling value", a
     assert.deepEqual(receipts.rows[0], { count: "1", cost: "800" });
   } finally { await f.close(); }
 });
+
+test("adoption routes and prices the canonical proposal, never a caller-supplied copy", async () => {
+  const f = await fixture();
+  try {
+    const persisted = await acceptedProposals(f, ["one", "two", "three"]);
+    // The persisted tasks require `capability.build`, which routes to the
+    // expensive executor. A caller presents an object with the same task ids but a
+    // cheaper capability and a cheaper recommended route.
+    const substituted = { ...persisted, tasks: persisted.tasks.map((task) => ({ ...task,
+      requiredCapability: "capability.cheap", recommendedRouteId: "executor:cheap" })) };
+
+    const asked: string[] = [];
+    const recordingRoutes = { resolveRoute: (request: { requiredCapability: string }) => {
+      asked.push(request.requiredCapability);
+      return request.requiredCapability === "capability.build" ? "executor:agent" : "executor:cheap";
+    } };
+    const pricedByCapability = { currentCost: (request: { requiredCapability: string }):
+    CoordinationCostEvidenceV1 => ({ kind: "known",
+      admittedCostMicroUsd: request.requiredCapability === "capability.build" ? 1_000 : 1,
+      evidenceDigest: hex("b") }) };
+    const adoption = new ProjectCoordinationAdoptionServiceV1(f.canonical, recordingRoutes,
+      pricedByCapability);
+
+    // Supplying content that is not the stored proposal is refused outright: the
+    // supplied value is bound to the exact stored digest before it is used at all.
+    await assert.rejects(adoption.adopt({ request: operationRequest(),
+      proposal: substituted as ProjectCoordinationProposalV1 }), /proposal_evidence_mismatch/);
+    assert.deepEqual(asked, []);
+    const untouched = await f.raw.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM control_project_coordination_operation_receipts");
+    assert.equal(untouched.rows[0]?.count, "0");
+
+    // With no caller copy at all, routing and pricing still happen - from the
+    // canonical row - so the cheap substitution has no path into the decision.
+    const adopted = await adoption.adopt({ request: operationRequest() });
+    assert.deepEqual(asked, ["capability.build", "capability.build"]);
+    const receipt = await f.raw.query<{ cost: string | null }>(
+      `SELECT admitted_cost_microusd::text AS cost
+       FROM control_project_coordination_operation_receipts WHERE id='operation:one'`);
+    assert.equal(receipt.rows[0]?.cost, "2000", "the persisted capability's price, not the cheap one");
+    const created = await f.raw.query<{ capability: string; executor: string }>(
+      `SELECT required_capability AS capability, payload->'authority'->>'allowedExecutor' AS executor
+       FROM control_jobs WHERE id = ANY($1::text[]) ORDER BY id`, [adopted.jobIds]);
+    assert.deepEqual(created.rows, [
+      { capability: "capability.build", executor: "executor:agent" },
+      { capability: "capability.build", executor: "executor:agent" }]);
+
+    // The exact stored proposal is still accepted as a cross-check.
+    assert.equal((await adoption.adopt({ proposal: persisted, request: operationRequest({
+      proposalId: "proposal:two", idempotencyKey: "coordination-adopt-0002",
+      operationId: "operation:two", requestId: "request:adopt:two",
+      workflowId: "workflow:adopt:two" }) })).replayed, false);
+
+    // Persistence refuses the pairing directly too: a route/price set resolved
+    // from one proposal cannot commit against a different canonical proposal.
+    await assert.rejects(f.canonical.adoptProjectCoordinationProposalV1({
+      request: operationRequest({ proposalId: "proposal:three",
+        idempotencyKey: "coordination-adopt-0003", operationId: "operation:three",
+        requestId: "request:adopt:three", workflowId: "workflow:adopt:three" }),
+      requestDigest: hex("a"), proposalDigest: hex("d"),
+      routes: { "task-1": "executor:agent", "task-2": "executor:agent" },
+      cost: { kind: "known", admittedCostMicroUsd: 1, evidenceDigest: hex("b") } }),
+    /proposal_evidence_mismatch/);
+  } finally { await f.close(); }
+});
+
+test("exact replay returns the original receipt even after the coordinator is revoked", async () => {
+  const f = await fixture();
+  try {
+    const proposal = await acceptedProposals(f, ["one", "two"]);
+    const coordinators = new ProjectCoordinatorServiceV1(f.canonical);
+    const adoption = new ProjectCoordinationAdoptionServiceV1(f.canonical, routes, knownCost(1_000));
+    const adopted = await adoption.adopt({ request: operationRequest(), proposal });
+    assert.equal(adopted.replayed, false);
+
+    // The owner revokes the coordinator after the work was legitimately adopted.
+    await coordinators.revoke(appointment());
+
+    // Exact replay is verified before any current-authority check, so it still
+    // returns the original receipt and consumes nothing again.
+    const replayed = await adoption.adopt({ request: operationRequest(), proposal });
+    assert.deepEqual({ receiptId: replayed.receiptId, receiptDigest: replayed.receiptDigest,
+      jobIds: replayed.jobIds, taskUnits: replayed.taskUnits, replayed: replayed.replayed },
+    { receiptId: adopted.receiptId, receiptDigest: adopted.receiptDigest, jobIds: adopted.jobIds,
+      taskUnits: adopted.taskUnits, replayed: true });
+    // Replay without the caller's proposal copy returns the same receipt.
+    assert.equal((await adoption.adopt({ request: operationRequest() })).receiptId, adopted.receiptId);
+    const receipts = await f.raw.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM control_project_coordination_operation_receipts");
+    assert.equal(receipts.rows[0]?.count, "1");
+
+    // Changed content under the same idempotency key still conflicts, and it
+    // conflicts as a replay conflict rather than being mistaken for new work.
+    await assert.rejects(adoption.adopt({ request: operationRequest({ selectedLocalIds: ["task-1"] }),
+      proposal }), /adoption_replay_conflict/);
+    await assert.rejects(adoption.adopt({ request: operationRequest({ approvedRouteIds: ["executor:other"] }),
+      proposal }), /adoption_replay_conflict/);
+
+    // A genuinely new operation after revocation still fails closed.
+    await assert.rejects(adoption.adopt({ proposal, request: operationRequest({
+      proposalId: "proposal:two", idempotencyKey: "coordination-adopt-0002",
+      operationId: "operation:two", requestId: "request:adopt:two",
+      workflowId: "workflow:adopt:two" }) }), /coordinator_revoked/);
+  } finally { await f.close(); }
+});

@@ -42,7 +42,10 @@ import {
   failProjectCoordinationV1,
   findResourceConflictsV1,
   narrowWriteResourcesV1,
+  PARALLEL_NARROW_WRITE_POLICY_ACTION_V1,
+  acquireParallelNarrowWriteAuthorizationV1,
   projectCoordinationProposalDigestV1,
+  projectCoordinationProposalSchemaV1,
   projectWorkAdmissionRecheckSchemaV1,
   projectWorkAdmissionRequestSchemaV1,
   type CoordinationCostEvidenceV1,
@@ -1531,6 +1534,33 @@ export class CanonicalStore {
   }
 
   /**
+   * The exact accepted proposal row, with its digest re-derived from the stored
+   * content. Adoption resolves routes and prices tasks from this value alone, so
+   * a caller cannot substitute a cheaper or differently-capable proposal object
+   * for the one persistence will adopt.
+   */
+  async loadAcceptedProjectCoordinationProposalV1(input: {
+    tenantId: string; projectId: string; proposalId: string;
+  }): Promise<{ proposalId: string; proposalDigest: string; proposal: ProjectCoordinationProposalV1 }> {
+    return this.#transaction(async (tx) => {
+      const row = (await tx.query<{ project_id: string; validation_state: string;
+        proposal_digest: string | null; proposal: unknown }>(
+        `SELECT project_id,validation_state,proposal_digest,proposal
+         FROM control_project_coordination_proposals WHERE tenant_id=$1 AND id=$2 FOR SHARE`,
+        [input.tenantId, input.proposalId])).rows[0];
+      if (!row || row.validation_state !== "accepted" || !row.proposal || !row.proposal_digest) {
+        failProjectCoordinationV1("proposal_not_accepted");
+      }
+      if (row!.project_id !== input.projectId) failProjectCoordinationV1("proposal_project_mismatch");
+      const proposal = projectCoordinationProposalSchemaV1.parse(row!.proposal);
+      if (projectCoordinationProposalDigestV1(proposal) !== row!.proposal_digest) {
+        failProjectCoordinationV1("proposal_evidence_mismatch");
+      }
+      return { proposalId: input.proposalId, proposalDigest: row!.proposal_digest!, proposal };
+    });
+  }
+
+  /**
    * Turns an accepted proposal into ordinary canonical work. Owner-reviewed and
    * bounded-policy adoption enter here through the same operation, create the same
    * non-runnable request/workflow/job records, the same dependency edges and the
@@ -1543,13 +1573,54 @@ export class CanonicalStore {
   async adoptProjectCoordinationProposalV1(input: {
     request: CoordinationOperationRequestV1;
     requestDigest: string;
+    proposalDigest: string;
     routes: Record<string, string>;
     cost: CoordinationCostEvidenceV1;
   }): Promise<{ receiptId: string; receiptDigest: string; jobIds: string[]; taskUnits: number;
     concurrencyUnits: number; replayed: boolean }> {
     const request = coordinationOperationRequestSchemaV1.parse(input.request);
     const authorization = request.authorization;
+
+    /**
+     * Exact replay of an already-committed operation. This runs before any
+     * mutable-current-state check, because a request that already committed was
+     * fully verified when it committed: a later coordinator revocation, policy
+     * revocation or exhaustion must not retroactively break the receipt for work
+     * that legitimately exists. The stored receipt is verified on its own terms -
+     * request digest, operation identity, recomputed receipt digest and the
+     * canonical job rows it names - and returned without new accounting. Changed
+     * content under the same key still conflicts.
+     */
+    const replay = async (tx: DatabaseSession) => {
+      const priorReceipt = (await tx.query<{ id: string; request_digest: string; receipt_digest: string;
+        task_units: number; concurrency_units: number; payload: unknown }>(
+        `SELECT id,request_digest,receipt_digest,task_units,concurrency_units,payload
+         FROM control_project_coordination_operation_receipts
+         WHERE tenant_id=$1 AND authorization_kind=$2 AND initiating_identity_id=$3 AND idempotency_key=$4
+         FOR UPDATE`,
+        [request.tenantId, authorization.kind, authorization.ownerIdentityId, request.idempotencyKey])).rows[0];
+      if (!priorReceipt) return undefined;
+      if (priorReceipt.request_digest !== input.requestDigest || priorReceipt.id !== request.operationId) {
+        failProjectCoordinationV1("adoption_replay_conflict");
+      }
+      if (sha256Digest(priorReceipt.payload) !== priorReceipt.receipt_digest) {
+        failProjectCoordinationV1("adoption_replay_conflict");
+      }
+      const jobs = (await tx.query<{ canonical_job_id: string }>(
+        `SELECT j.canonical_job_id FROM control_project_coordination_operation_jobs j
+         JOIN control_jobs c ON c.tenant_id=j.tenant_id AND c.id=j.canonical_job_id
+         WHERE j.tenant_id=$1 AND j.operation_receipt_id=$2 ORDER BY j.canonical_job_id`,
+        [request.tenantId, priorReceipt.id])).rows.map((row) => row.canonical_job_id);
+      if (jobs.length !== request.selectedLocalIds.length) failProjectCoordinationV1("adoption_replay_conflict");
+      return { receiptId: priorReceipt.id, receiptDigest: priorReceipt.receipt_digest, jobIds: jobs,
+        taskUnits: Number(priorReceipt.task_units), concurrencyUnits: Number(priorReceipt.concurrency_units),
+        replayed: true as const };
+    };
+
     return this.#transaction(async (tx) => {
+      const committed = await replay(tx);
+      if (committed) return committed;
+
       await this.#lockOwnerAuthorityV1(tx, { tenantId: request.tenantId, identityId: authorization.ownerIdentityId,
         projectId: request.projectId, occurredAt: request.occurredAt, action: "proposal.adopt" });
       await this.#lockTenantProjectV1(tx, request.tenantId, request.projectId);
@@ -1572,28 +1643,11 @@ export class CanonicalStore {
         if (!policy) failProjectCoordinationV1("invalid_input");
       }
 
-      // The policy row serializes quota accounting, so the replay lookup happens
-      // with that lock held and a waiter reads the committed receipt.
-      const priorReceipt = (await tx.query<{ id: string; request_digest: string; receipt_digest: string;
-        task_units: number; concurrency_units: number }>(
-        `SELECT id,request_digest,receipt_digest,task_units,concurrency_units
-         FROM control_project_coordination_operation_receipts
-         WHERE tenant_id=$1 AND authorization_kind=$2 AND initiating_identity_id=$3 AND idempotency_key=$4
-         FOR UPDATE`,
-        [request.tenantId, authorization.kind, authorization.ownerIdentityId, request.idempotencyKey])).rows[0];
-      if (priorReceipt) {
-        if (priorReceipt.request_digest !== input.requestDigest || priorReceipt.id !== request.operationId) {
-          failProjectCoordinationV1("adoption_replay_conflict");
-        }
-        const jobs = (await tx.query<{ canonical_job_id: string }>(
-          `SELECT canonical_job_id FROM control_project_coordination_operation_jobs
-           WHERE tenant_id=$1 AND operation_receipt_id=$2 ORDER BY proposal_local_id`,
-          [request.tenantId, priorReceipt.id])).rows.map((row) => row.canonical_job_id);
-        if (jobs.length !== request.selectedLocalIds.length) failProjectCoordinationV1("adoption_replay_conflict");
-        return { receiptId: priorReceipt.id, receiptDigest: priorReceipt.receipt_digest, jobIds: jobs,
-          taskUnits: Number(priorReceipt.task_units), concurrencyUnits: Number(priorReceipt.concurrency_units),
-          replayed: true };
-      }
+      // The policy row serializes quota accounting, so the replay lookup is
+      // repeated with that lock held: a waiter that queued behind a concurrent
+      // first commit reads the committed receipt here instead of adopting twice.
+      const serialized = await replay(tx);
+      if (serialized) return serialized;
 
       const proposalRow = (await tx.query<{ project_id: string; coordinator_identity_id: string;
         coordinator_version: string; validation_state: string; proposal_digest: string | null;
@@ -1606,8 +1660,15 @@ export class CanonicalStore {
         failProjectCoordinationV1("proposal_not_accepted");
       }
       if (proposalRow!.project_id !== request.projectId) failProjectCoordinationV1("proposal_project_mismatch");
-      const proposal = proposalRow!.proposal as ProjectCoordinationProposalV1;
+      const proposal = projectCoordinationProposalSchemaV1.parse(proposalRow!.proposal);
       if (projectCoordinationProposalDigestV1(proposal) !== proposalRow!.proposal_digest) {
+        failProjectCoordinationV1("proposal_evidence_mismatch");
+      }
+      // The routes and prices in this request were resolved from one exact
+      // proposal. Adoption commits only if that is the proposal this transaction
+      // is holding, so a routed/priced value can never be paired with different
+      // canonical content.
+      if (input.proposalDigest !== proposalRow!.proposal_digest) {
         failProjectCoordinationV1("proposal_evidence_mismatch");
       }
       const alreadyAdopted = (await tx.query<{ id: string }>(
@@ -1816,7 +1877,8 @@ export class CanonicalStore {
    * news-collection callers all enter here, so none of them can acquire a holder
    * on a private path or in a different lock order.
    */
-  async admitProjectWorkResourcesV1(value: unknown): Promise<ProjectWorkAdmissionResultV1> {
+  async admitProjectWorkResourcesV1(value: unknown, parallelWriteAuthorization?: unknown):
+  Promise<ProjectWorkAdmissionResultV1> {
     const input = projectWorkAdmissionRequestSchemaV1.parse(value);
     if (input.declaration === undefined || input.declaration === null) {
       failProjectCoordinationV1("resource_declaration_missing");
@@ -1838,7 +1900,30 @@ export class CanonicalStore {
       ? NO_WORKSPACE_ANCHOR_RESOURCE_ID_V1 : declaration.workspace.resourceId;
     const baseRevision = declaration.workspace.baseRevision;
     const workspaceIntentDigest = declaration.workspace.workspaceIntentDigest;
-    const enforcedWorkspaceId = input.disjointWriters.enforcedWorkspaceId;
+
+    /**
+     * Workspace identity is never a request string. It exists only when the
+     * trusted workspace/lease boundary minted an authorization for this exact
+     * lineage, and the workspace it named must be the one this declaration was
+     * actually built from.
+     */
+    const parallel = acquireParallelNarrowWriteAuthorizationV1(parallelWriteAuthorization);
+    let enforcedWorkspaceId: string | undefined;
+    if (parallel) {
+      const lineage = parallel.lineage;
+      if (lineage.tenantId !== input.tenantId || lineage.projectId !== input.projectId
+        || lineage.jobId !== input.jobId || lineage.attemptId !== input.attemptId
+        || lineage.leaseId !== input.leaseId || lineage.nodeId !== input.nodeId
+        || lineage.admissionId !== input.admissionId
+        || parallel.policyId !== input.disjointWriters.policyId
+        || !input.disjointWriters.requested) {
+        failProjectCoordinationV1("resource_disjoint_write_not_permitted");
+      }
+      if (parallel.workspace.workspaceIntentDigest !== workspaceIntentDigest) {
+        failProjectCoordinationV1("resource_workspace_not_distinct");
+      }
+      enforcedWorkspaceId = parallel.workspace.enforcedWorkspaceId;
+    }
 
     return this.#transaction(async (tx) => {
       // 1. authority
@@ -1858,6 +1943,44 @@ export class CanonicalStore {
         if (at < Date.parse(policy!.valid_from) || at >= Date.parse(policy!.valid_until)) {
           failProjectCoordinationV1("policy_expired");
         }
+      }
+
+      /**
+       * Standing-policy authority is step 1 of the lock order, so the owner
+       * policy that would permit parallel narrow writing is read and verified
+       * here, against the stored row. A request that names a policy which does
+       * not exist, belongs to another project or owner, is paused, revoked or
+       * out of its validity window, does not allow this action, or does not
+       * cover the exact resources this declaration writes narrowly, establishes
+       * nothing at all.
+       */
+      let parallelWriteResourceIds: string[] | undefined;
+      if (input.disjointWriters.requested) {
+        const permitting = (await tx.query<{ state: string; valid_from: string; valid_until: string;
+          project_id: string; owner_identity_id: string; allowed_actions: unknown; payload: unknown }>(
+          `SELECT state,valid_from,valid_until,project_id,owner_identity_id,allowed_actions,payload
+           FROM control_project_delegation_policies WHERE tenant_id=$1 AND id=$2 FOR SHARE`,
+          [input.tenantId, input.disjointWriters.policyId])).rows[0];
+        const at = Date.parse(input.acquiredAt);
+        if (!permitting || permitting.project_id !== input.projectId
+          || permitting.owner_identity_id !== input.authority.ownerIdentityId) {
+          failProjectCoordinationV1("resource_disjoint_write_not_permitted");
+        }
+        if (permitting!.state === "revoked") failProjectCoordinationV1("policy_revoked");
+        if (permitting!.state !== "active") failProjectCoordinationV1("policy_inactive");
+        if (at < Date.parse(permitting!.valid_from) || at >= Date.parse(permitting!.valid_until)) {
+          failProjectCoordinationV1("policy_expired");
+        }
+        const actions = permitting!.allowed_actions;
+        if (!Array.isArray(actions) || !actions.includes(PARALLEL_NARROW_WRITE_POLICY_ACTION_V1)) {
+          failProjectCoordinationV1("resource_disjoint_write_not_permitted");
+        }
+        const permitted = (permitting!.payload as { parallelNarrowWriteResourceIds?: unknown } | null)
+          ?.parallelNarrowWriteResourceIds;
+        if (!Array.isArray(permitted) || permitted.some((entry) => typeof entry !== "string")) {
+          failProjectCoordinationV1("resource_disjoint_write_not_permitted");
+        }
+        parallelWriteResourceIds = permitted as string[];
       }
       // 2-3. tenant, then project/schedule head. Scheduled callers acquire the
       // tenant before their project read for exactly this reason.
@@ -1940,7 +2063,13 @@ export class CanonicalStore {
       const conflicts = findResourceConflictsV1(declaration.scopes, heldScopes);
       const narrow = narrowWriteResourcesV1(declaration.scopes);
       if (narrow.length > 0) {
-        if (!input.disjointWriters.permitted || !enforcedWorkspaceId) {
+        // Both facts must be established, neither by the request: the stored
+        // owner policy must actually cover every narrowly-written resource, and
+        // the trusted boundary must have named the workspace this declaration
+        // was built from.
+        if (!input.disjointWriters.requested || !parallel || !enforcedWorkspaceId
+          || !parallelWriteResourceIds
+          || narrow.some((resourceId) => !parallelWriteResourceIds!.includes(resourceId))) {
           failProjectCoordinationV1("resource_disjoint_write_not_permitted");
         }
         // Distinctness is required against every holder that already touches one
@@ -1962,11 +2091,41 @@ export class CanonicalStore {
         "SELECT state FROM control_nodes WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [input.tenantId, input.nodeId]))
         .rows[0];
       if (node?.state !== "active") failProjectCoordinationV1("invalid_input");
-      const lease = (await tx.query<{ job_id: string; attempt_id: string; node_id: string; state: string }>(
-        `SELECT job_id,attempt_id,node_id,state FROM control_leases WHERE tenant_id=$1 AND id=$2 FOR UPDATE`,
+
+      /**
+       * The exact current lease/attempt/job lineage, verified against canonical
+       * state rather than accepted from the request. A holder created behind an
+       * expired, released or revoked lease, a stale or terminal attempt, or a
+       * lineage that belongs to a different job could never produce the
+       * authenticated process-retirement proof that is the only way to release
+       * it, so it would hold the resource forever. Replay of an existing holder
+       * returned above and is deliberately unaffected: a restarted server still
+       * sees its own held admission.
+       */
+      if (["succeeded", "failed", "cancelled", "rejected", "orphaned", "proposed"].includes(job!.state)) {
+        failProjectCoordinationV1("resource_job_not_current");
+      }
+      const lease =(await tx.query<{ job_id: string; attempt_id: string; node_id: string; state: string;
+        expires_at: string }>(
+        `SELECT job_id,attempt_id,node_id,state,expires_at FROM control_leases
+         WHERE tenant_id=$1 AND id=$2 FOR UPDATE`,
         [input.tenantId, input.leaseId])).rows[0];
       if (!lease || lease.job_id !== input.jobId || lease.attempt_id !== input.attemptId
-        || lease.node_id !== input.nodeId) failProjectCoordinationV1("invalid_input");
+        || lease.node_id !== input.nodeId) failProjectCoordinationV1("resource_lease_not_current");
+      if (lease!.state !== "active") failProjectCoordinationV1("resource_lease_not_current");
+      if (Date.parse(lease!.expires_at) <= Date.parse(input.acquiredAt)) {
+        failProjectCoordinationV1("resource_lease_expired");
+      }
+      const attempt = (await tx.query<{ job_id: string; node_id: string | null; state: string }>(
+        `SELECT job_id,node_id,state FROM control_attempts WHERE tenant_id=$1 AND id=$2 FOR UPDATE`,
+        [input.tenantId, input.attemptId])).rows[0];
+      if (!attempt || attempt.job_id !== input.jobId
+        || (attempt.node_id !== null && attempt.node_id !== input.nodeId)) {
+        failProjectCoordinationV1("resource_attempt_not_current");
+      }
+      if (!["leased", "running", "waiting"].includes(attempt!.state)) {
+        failProjectCoordinationV1("resource_attempt_not_current");
+      }
 
       // 8. the new holder and its immutable scopes
       await tx.query(`INSERT INTO control_attempt_resource_admissions
@@ -1978,7 +2137,8 @@ export class CanonicalStore {
         input.acquiredAt, json({ routeKind: input.routeKind, admissionDigest,
           workspaceKind: declaration.workspace.kind,
           ...(enforcedWorkspaceId ? { enforcedWorkspaceId } : {}),
-          disjointWritersPermitted: input.disjointWriters.permitted })]);
+          ...(parallel ? { parallelWritePolicyId: parallel.policyId } : {}),
+          disjointWritersPermitted: narrow.length > 0 })]);
       for (const scope of declaration.scopes) {
         await tx.query(`INSERT INTO control_attempt_resource_scopes
           (tenant_id,admission_id,resource_id,access_mode,scope_kind,path,path_fold)

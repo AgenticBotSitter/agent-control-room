@@ -124,7 +124,7 @@ const admissionRequest = (worker: Worker, value: unknown) => ({
   tenantId: "tenant:test", projectId: "project:test", jobId: worker.jobId, attemptId: worker.attemptId,
   leaseId: worker.leaseId, nodeId: "node:test", admissionId: worker.admissionId,
   authority: { kind: "owner" as const, ownerIdentityId: "identity:owner" }, declaration: value,
-  disjointWriters: { permitted: false }, acquiredAt: at(1_000) });
+  disjointWriters: { requested: false }, acquiredAt: at(1_000) });
 
 function retirementProof(worker: Worker, declarationDigest: string,
   overrides: Partial<ProcessRetirementProofV1> = {}): ProcessRetirementProofV1 {

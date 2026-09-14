@@ -33,21 +33,22 @@ export const projectWorkAdmissionRequestSchemaV1 = z.object({
   ]),
   declaration: z.unknown(),
   /**
-   * Owner policy permitting exact disjoint repository writers, plus the workspace
-   * the selected harness actually enforces. Both are required before two writers
-   * may share a repository; otherwise the declaration must take a root-tree write
-   * scope and serialize.
+   * A request may only *ask* for exact disjoint repository writers and name the
+   * owner policy it believes permits them. It cannot assert that the permission
+   * exists and it cannot state its own workspace: the policy is verified against
+   * the stored owner policy row inside the canonical transaction, and the
+   * enforced workspace is resolved by the trusted workspace/lease boundary.
+   * Without both facts the declaration must take a root-tree write scope and
+   * serialize.
    */
   disjointWriters: z.object({
-    permitted: z.boolean(),
+    requested: z.boolean(),
     policyId: id.optional(),
-    enforcedWorkspaceId: id.optional(),
   }).strict(),
   acquiredAt: instant,
 }).strict().superRefine((value, context) => {
-  if (value.disjointWriters.permitted
-    && (!value.disjointWriters.policyId || !value.disjointWriters.enforcedWorkspaceId)) {
-    context.addIssue({ code: "custom", message: "permitted disjoint writers require a policy and an enforced workspace" });
+  if (value.disjointWriters.requested && !value.disjointWriters.policyId) {
+    context.addIssue({ code: "custom", message: "requested disjoint writers must name the owner policy" });
   }
 });
 export type ProjectWorkAdmissionRequestV1 = z.infer<typeof projectWorkAdmissionRequestSchemaV1>;
