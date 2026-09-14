@@ -39,6 +39,8 @@ everyone; no separate private core.
 | What must finish before the first installable release? | [Required Hermes-plus-Codex release jobs](WORK_QUEUE.md#required-for-the-first-hermes-plus-codex-release) — with parallel additions listed separately on the same board |
 | Exactly what remains, including unanswered questions? | [Complete remaining-work inventory](PUBLIC_BUILD_PLAN.md#complete-remaining-work-and-open-questions) — substantial workstreams, dependencies, decisions and release gates |
 | What should the webpage look like and do? | [Public webpage specification](WEBPAGE_SPEC.md) — layout, every core screen, optional modules, error states and acceptance |
+| What is the complete product vision? | [Consolidated owner vision](docs/OWNER_PRODUCT_VISION.md) — the intended experience, priorities and explicit non-goals |
+| What are the testable product requirements? | [Product requirements](docs/PRODUCT_REQUIREMENTS.md) — numbered requirements and first-release acceptance |
 | Where do I ask or propose a different useful contribution? | [Coordination issue #12](https://github.com/AgenticBotSitter/agent-control-room/issues/12) — describe your expertise and a substantial non-overlapping outcome |
 
 **Already available:** disposable project/task/revision demo, one-build/two-configuration
