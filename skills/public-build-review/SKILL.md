@@ -51,3 +51,13 @@ material remaining blockers, verification performed and genuinely untested behav
 The lead owns final acceptance and merging; independent reviewers do not approve their
 own implementation. Merge accepted work in dependency order and verify the combined
 candidate before calling it a release.
+
+## Return the action explicitly
+
+Review status must identify one next actor. For changes required, post one consolidated
+correction list, move both the issue and pull request to `status:changes-required` plus
+`action:worker`, and add the exact assigned worker marker defined in
+`docs/PUBLIC_CONTRIBUTION_FLOW.md`. Do not leave the records at In review. When the
+worker submits an exact corrected head, move both to `status:re-review` plus
+`action:reviewer`. For acceptance, use `action:integrator` until merged, then close the
+complete issue as `status:done`. Never use an ambiguous pending label.
