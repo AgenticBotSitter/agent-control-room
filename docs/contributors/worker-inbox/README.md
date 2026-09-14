@@ -181,7 +181,7 @@ create is preserved and reported rather than deleted. Use `--dry-run` to see the
 | --- | --- |
 | `worker_inbox_api_403` | Anonymous GitHub rate limit. Set `GITHUB_TOKEN`, or pass `--token-from-gh`. |
 | `worker_inbox_worker_id_invalid` | The worker ID must match the shape the inbox enforces: `[A-Za-z0-9][A-Za-z0-9._:-]{2,79}`. |
-| Never signals anything | Confirm the inbox itself sees work: `node scripts/public-worker-inbox.mjs --worker-id YOUR-ID`. An issue needs a matching `action:worker` label, a matching status label, and a record the accepted client treats as authoritative — a controller handoff or claim record, or a legacy action marker, which the client reports as advisory. |
+| Never signals anything | Confirm the inbox itself sees work: `node scripts/public-worker-inbox.mjs --worker-id YOUR-ID`. An issue is actionable when it is open, holds a record for your worker — a controller claim or handoff, or a legacy action marker the client reports as advisory — and carries exactly one `status:<state>` label matching that record. A controller **claim** needs no `action:` label; a controller **handoff** additionally needs exactly one matching `action:<action>` label. Two labels of the same kind make the issue ambiguous and it is reported as needing attention. |
 | Signals stopped | Check `watch.log` for failures. Repeated failures mean the action is *unknown*, not cleared. |
 | `Cannot wake an agent` | Expected. See the limitation above. |
 

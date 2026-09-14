@@ -21,6 +21,10 @@ function displayState(action) {
 // produce the same fingerprint even if a value nests an object whose key order is not
 // guaranteed; otherwise such a field would notify the operator on every single tick. A real
 // value change still produces a different string.
+//
+// This is defined for JSON-domain values only, which is what the accepted inbox client returns
+// (it reads parsed GitHub JSON). Values outside that domain - NaN, BigInt, Symbol, or undefined
+// inside an array - are not representable and are not defended against.
 function stableStringify(value) {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(element => stableStringify(element)).join(",")}]`;

@@ -117,6 +117,15 @@ function controllerAssignment({ state = "changes-required", number = 199, worker
   };
 }
 
+// A controller claim, in the exact shape the accepted client recognises. Note there is no
+// action label anywhere: an accepted claim is actionable on the status label alone.
+function claimComment({ workerId = WORKER_ID, number = 199, outcome = "ACCEPTED", request = 2 } = {}) {
+  return controllerComment(
+    `CLAIM ${outcome} — record\n`
+    + `<!-- agent-control-room-claim:v2 issue=${number} request=${request} actor=MarvinAi5 worker=${workerId} -->`,
+  );
+}
+
 function tickOptions(runtimeRoot, overrides = {}) {
   return {
     workerId: WORKER_ID,
@@ -611,6 +620,27 @@ test("a nested field whose key order differs between reads is not a change", () 
   const changed = [{ issue: 199, state: "attention", detail: { alpha: 9, beta: { x: 1, y: 2 } } }];
   assert.notEqual(actionsFingerprint(ordered).fingerprint, actionsFingerprint(changed).fingerprint,
     "a real value change must still be detected");
+});
+
+test("a controller claim needs no action label, as the troubleshooting table states", async (t) => {
+  // The README tells operators what makes an issue actionable, so pin that claim rather than
+  // leaving it as prose. An accepted controller claim is actionable with only a status label,
+  // and the client fetches every open issue instead of filtering by an action label. If either
+  // changes, the documented troubleshooting advice silently becomes wrong again - which is
+  // exactly what happened once, and cost a review round to catch.
+  const number = 199;
+  const github = fakeGithub({
+    issues: [githubIssue(number, ["status:working"])],
+    comments: { [number]: [claimComment({ number })] },
+  });
+  const actions = await readWorkerInbox({
+    workerId: WORKER_ID, repository: REPOSITORY_NAME, fetchImpl: github.fetchImpl,
+  });
+  assert.equal(actions.length, 1, "an accepted claim without an action label must be actionable");
+  assert.equal(actions[0].trust, "controller-record");
+  assert.equal(actions[0].state, "working");
+  assert.ok(!github.calls[0].url.includes("labels="),
+    "the client must fetch all open issues, not only action-labelled ones");
 });
 
 test("the accepted inbox client is reused rather than reimplemented", async (t) => {
