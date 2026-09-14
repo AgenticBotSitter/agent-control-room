@@ -12,19 +12,38 @@ import type { WebIdeaProjectLifecycleOperation } from "./idea-project-lifecycle-
 import { ideaProjectActionTarget } from "./project-wire";
 
 import { catalogProjectIdSchema, lifecycleSchema, projectCreateSchema, projectTransitionSchema, projectViewSchema,
-  type ProjectCatalogPage, type ProjectView, type WebProject } from "./project-wire";
+  type EffectiveProjectPresentation, type ProjectCatalogPage, type ProjectView, type WebProject } from "./project-wire";
 export { projectCreateSchema, projectTransitionSchema, lifecycleSchema, type WebProject } from "./project-wire";
+import { PRODUCT_CONFIGURATION_SCHEMA_V1, parseProductConfigurationV1, type ProductConfigurationV1 } from "../../config/v1/product-configuration";
+import { buildProjectPresentationV1, computeEffectiveProjectPresentationV1, parseStoredProjectPresentationV1,
+  ProjectPresentationError, verifyProjectTemplateSelectionV1,
+  type EffectiveProjectPresentationV1, type ProjectPresentationV1 } from "../../config/v1/project-presentation";
 const iso = (value: string | Date) => new Date(value).toISOString();
 
-/** Server composition supplies deployment scope. No request can choose a tenant or workspace. */
+function configurationDigestFor(productConfiguration: Readonly<ProductConfigurationV1>): string {
+  return sha256Digest(productConfiguration);
+}
+
+/**
+ * Server composition supplies deployment scope. No request can choose a tenant or workspace.
+ * The optional `productConfiguration` is trusted operator-supplied startup input; the service
+ * never re-reads or discovers configuration at request time.
+ */
 export class WebProjectService {
   private readonly authority: WebSessionAuthority;
   private readonly ideas?: IdeaLabProjectRegistryStoreV1;
+  private readonly productConfiguration?: Readonly<ProductConfigurationV1>;
+  private readonly configurationDigest?: string;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     clock: () => number = Date.now, ideaIntegrityKey?: Uint8Array,
-    private readonly ideaLifecycle?: WebIdeaProjectLifecycleOperation) {
+    private readonly ideaLifecycle?: WebIdeaProjectLifecycleOperation,
+    productConfiguration?: Readonly<ProductConfigurationV1>) {
     this.authority = new WebSessionAuthority(db, scope, clock);
     if (ideaIntegrityKey !== undefined) this.ideas = new IdeaLabProjectRegistryStoreV1(db, ideaIntegrityKey);
+    if (productConfiguration !== undefined) {
+      this.productConfiguration = productConfiguration;
+      this.configurationDigest = configurationDigestFor(productConfiguration);
+    }
   }
 
   private async authorized<T>(identity: VerifiedWebIdentity, action: string, projectId: string | undefined,
@@ -70,7 +89,7 @@ export class WebProjectService {
     if (lifecycle !== undefined && !lifecycleSchema.safeParse(lifecycle).success) throw new WebAccessError("invalid_request");
     return this.authenticated(identity, async (tx, actor) => {
       const sources = this.catalogAccess(actor);
-      const rows = await tx.query<{ id: string; adapter_id: string }>(`SELECT p.id,p.adapter_id FROM projects p
+      const rows = await tx.query<{ id: string; adapter_id: string; payload: unknown }>(`SELECT p.id,p.adapter_id,p.payload FROM projects p
         WHERE p.tenant_id=$1 AND p.workspace_id=$2 AND ($3::text IS NULL OR p.id COLLATE "C" > $3 COLLATE "C")
         AND ((p.adapter_id=$4 AND $6::boolean AND EXISTS(SELECT 1 FROM control_manual_project_heads h
           WHERE h.tenant_id=p.tenant_id AND h.project_id=p.id)) OR (p.adapter_id=$5 AND $7::boolean))
@@ -79,7 +98,8 @@ export class WebProjectService {
         this.manualAdapterId(), CONTROL_ROOM_IDEA_ADAPTER_V1, sources.ordinary === "included", sources.ideas === "included",
         lifecycle ?? null]);
       const projects: ProjectView[] = [];
-      for (const row of rows.rows.slice(0, 50)) projects.push(await this.readView(tx, actor, row.id, row.adapter_id));
+      for (const row of rows.rows.slice(0, 50))
+        projects.push(await this.readViewWithPayload(tx, actor, row.id, row.adapter_id, row.payload));
       return { projects, nextCursor: rows.rows.length > 50 ? projects.at(-1)!.projectId : null,
         canCreate: actor.can("projects.create"), sources };
     });
@@ -95,15 +115,16 @@ export class WebProjectService {
       const ordinary = actor.can("projects.read", projectId), ideas = actor.can("idea_lab.project_read", projectId, true);
       // Decide eligible sources before resolving an ID. A hidden source and an absent row must look identical.
       if (!ordinary && !ideas) throw new WebAccessError("access_denied");
-      const row = (await tx.query<{ adapter_id: string }>(`SELECT adapter_id FROM projects
+      const row = (await tx.query<{ adapter_id: string; payload: unknown }>(`SELECT adapter_id, payload FROM projects
         WHERE tenant_id=$1 AND workspace_id=$2 AND id=$3
         AND ((adapter_id=$4 AND $6::boolean) OR (adapter_id=$5 AND $7::boolean)) FOR SHARE`,
       [this.scope.tenantId, this.scope.workspaceId, projectId, this.manualAdapterId(), CONTROL_ROOM_IDEA_ADAPTER_V1, ordinary, ideas])).rows[0];
       if (!row) throw new WebAccessError("not_found");
-      return this.readView(tx, actor, projectId, row.adapter_id);
+      return this.readViewWithPayload(tx, actor, projectId, row.adapter_id, row.payload);
   }
 
-  private async readView(tx: DatabaseSession, actor: Actor, projectId: string, adapterId: string): Promise<ProjectView> {
+  private async readViewWithPayload(tx: DatabaseSession, actor: Actor, projectId: string, adapterId: string,
+    storedPayload: unknown): Promise<ProjectView> {
     if (adapterId === CONTROL_ROOM_IDEA_ADAPTER_V1) {
       actor.require("idea_lab.project_read", projectId, true);
       if (!this.ideas) throw new Error("idea_catalog_not_configured");
@@ -119,6 +140,7 @@ export class WebProjectService {
         catch { return false; }
         return actor.can(`idea_lab.project_${action}`, projectId, true);
       }) : [];
+      // Idea projects do not carry presentation. Templates and module selection are ordinary-project only.
       return projectViewSchema.parse({ projectId: idea.projectId, title: idea.title, summary: idea.summary,
         lifecycle: idea.lifecycleState, version: idea.version, createdAt: iso(idea.createdAt), updatedAt: iso(idea.updatedAt),
         origin: "idea_lab", lifecycleEditable: actions.length > 0,
@@ -133,8 +155,15 @@ export class WebProjectService {
       WHERE p.tenant_id=$1 AND p.workspace_id=$2 AND p.id=$3 AND p.adapter_id=$4 FOR SHARE OF p,h`,
     [this.scope.tenantId, this.scope.workspaceId, projectId, this.manualAdapterId()])).rows[0];
     if (!row) throw new WebAccessError("not_found");
+    const presentation = this.derivePresentation(storedPayload);
     return projectViewSchema.parse({ ...row, version: Number(row.version), createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt),
-      origin: "ordinary", lifecycleEditable: actor.can("projects.lifecycle", projectId) });
+      origin: "ordinary", lifecycleEditable: actor.can("projects.lifecycle", projectId),
+      ...(presentation ? { presentation } : {}) });
+  }
+
+  private derivePresentation(storedPayload: unknown): EffectiveProjectPresentationV1 | undefined {
+    const stored = parseStoredProjectPresentationV1(storedPayload);
+    return computeEffectiveProjectPresentationV1(stored, this.productConfiguration);
   }
 
   private manualAdapterId() { return `adapter:manual:${sha256Digest(this.scope).slice(7, 39)}`; }
@@ -142,18 +171,45 @@ export class WebProjectService {
   async create(identity: VerifiedWebIdentity, value: unknown, key: string) {
     const parsed = projectCreateSchema.safeParse(value);
     if (!parsed.success) throw new WebAccessError("invalid_request");
-    return this.command(identity, "projects.create", undefined, parsed.data, key, async (tx, actor) => {
+    // Idempotency digest shape MUST match the legacy request shape exactly when no template is
+    // supplied, so historical no-template replays continue to return their original receipts
+    // across the deploy boundary. The digest key is only added when a template is actually
+    // selected; omitting it via spread-strip preserves the pre-deploy canonical encoding.
+    const idempotencyValue = parsed.data.templateSelection
+      ? { ...parsed.data }
+      : (() => { const { templateSelection: _omit, ...rest } = parsed.data; return rest; })();
+    return this.command(identity, "projects.create", undefined, idempotencyValue, key, async (tx, actor) => {
+      let presentation: Readonly<ProjectPresentationV1> | undefined;
+      if (parsed.data.templateSelection) {
+        if (!this.productConfiguration || !this.configurationDigest) throw new WebAccessError("invalid_request");
+        let candidate;
+        try {
+          candidate = verifyProjectTemplateSelectionV1(this.productConfiguration, parsed.data.templateSelection,
+            this.configurationDigest);
+        } catch (error) {
+          if (error instanceof ProjectPresentationError) throw new WebAccessError("invalid_request");
+          throw error;
+        }
+        presentation = buildProjectPresentationV1(candidate, this.configurationDigest);
+      }
+      // Compute the effective presentation now so the create receipt returns it directly —
+      // it is the same value the next getView would derive, just computed at insert time.
+      // The wire shape uses the schema-inferred type (mutable arrays), not the readonly interface.
+      const effectivePresentation = computeEffectiveProjectPresentationV1(presentation, this.productConfiguration);
       const adapterId = this.manualAdapterId();
       const workspace = await tx.query(`SELECT id FROM workspaces WHERE tenant_id=$1 AND id=$2 FOR SHARE`, [this.scope.tenantId, this.scope.workspaceId]);
       if (!workspace.rows.length) throw new WebAccessError("access_denied");
       await tx.query(`INSERT INTO adapter_registry(id,tenant_id,source_system,contract_version,authority_mode,status,redaction_policy_version,cursor_retention_days)
         VALUES($1,$2,'control-room-manual','1.0.0','control_room_native','disabled','v1',30) ON CONFLICT DO NOTHING`, [adapterId, this.scope.tenantId]);
-      const project: WebProject = { projectId: `project:${randomUUID()}`, ...parsed.data, lifecycle: "active", version: 1, createdAt: actor.now, updatedAt: actor.now };
+      const project: WebProject = { projectId: `project:${randomUUID()}`, title: parsed.data.title, summary: parsed.data.summary,
+        lifecycle: "active", version: 1, createdAt: actor.now, updatedAt: actor.now,
+        ...(effectivePresentation ? { presentation: effectivePresentation as EffectiveProjectPresentation } : {}) };
+      const payload = JSON.stringify({ projectKind: "general", origin: "manual", createdAt: actor.now,
+        ...(presentation ? { presentation } : {}) });
       await tx.query(`INSERT INTO projects(id,tenant_id,workspace_id,adapter_id,source_record_id,source_version,title,description,
         normalized_state,domain_state,health,authority_mode,observed_at,payload,updated_at)
         VALUES($1,$2,$3,$4,$1,'1',$5,$6,'planned','manual_project_active','healthy','control_room_native',$7,$8::jsonb,$7)`,
-      [project.projectId, this.scope.tenantId, this.scope.workspaceId, adapterId, project.title, project.summary, actor.now,
-        JSON.stringify({ projectKind: "general", origin: "manual", createdAt: actor.now })]);
+      [project.projectId, this.scope.tenantId, this.scope.workspaceId, adapterId, project.title, project.summary, actor.now, payload]);
       await tx.query(`INSERT INTO control_manual_project_heads(tenant_id,project_id,lifecycle,version,created_at,updated_at)
         VALUES($1,$2,'active',1,$3,$3)`, [this.scope.tenantId, project.projectId, actor.now]);
       return project;
@@ -163,13 +219,21 @@ export class WebProjectService {
   async get(identity: VerifiedWebIdentity, projectId: string): Promise<WebProject> {
     if (!/^project:[A-Za-z0-9:_-]{1,160}$/.test(projectId)) throw new WebAccessError("invalid_request");
     return this.authorized(identity, "projects.read", projectId, async tx => {
-      const row = (await tx.query<WebProject>(`SELECT p.id AS "projectId",p.title,coalesce(p.description,'') AS summary,
-        h.lifecycle,h.version,h.created_at AS "createdAt",h.updated_at AS "updatedAt" FROM projects p
+      const row = (await tx.query<WebProject & { payload: unknown }>(`SELECT p.id AS "projectId",p.title,coalesce(p.description,'') AS summary,
+        h.lifecycle,h.version,h.created_at AS "createdAt",h.updated_at AS "updatedAt",p.payload
+        FROM projects p
         JOIN control_manual_project_heads h ON h.tenant_id=p.tenant_id AND h.project_id=p.id
         WHERE p.tenant_id=$1 AND p.workspace_id=$2 AND p.id=$3 AND p.adapter_id=$4`,
-      [this.scope.tenantId, this.scope.workspaceId, projectId, this.manualAdapterId()])).rows[0];
+        [this.scope.tenantId, this.scope.workspaceId, projectId, this.manualAdapterId()])).rows[0];
       if (!row) throw new WebAccessError("not_found");
-      return { ...row, version: Number(row.version), createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt) };
+      // Read the stored payload so the receipt can echo the same effective presentation
+      // create() returned. Malformed stored data fails visibly rather than silently dropped.
+      const stored = parseStoredProjectPresentationV1(row.payload);
+      const presentation = computeEffectiveProjectPresentationV1(stored, this.productConfiguration);
+      const { payload: _payload, ...rest } = row;
+      return { ...rest, version: Number(rest.version), createdAt: iso(rest.createdAt),
+        updatedAt: iso(rest.updatedAt),
+        ...(presentation ? { presentation: presentation as EffectiveProjectPresentation } : {}) };
     });
   }
 
@@ -228,3 +292,11 @@ export class WebProjectService {
 
   async logout(identity: VerifiedWebIdentity): Promise<void> { return this.authority.logout(identity); }
 }
+
+/** Public helper for tests and helpers that want to compute the digest the service uses. */
+export function projectConfigurationDigestFor(productConfiguration: Readonly<ProductConfigurationV1>): string {
+  return configurationDigestFor(productConfiguration);
+}
+
+/** Re-export to keep call sites in private-process.ts terse. */
+export const PRODUCT_CONFIGURATION_SCHEMA_NAME_V1 = PRODUCT_CONFIGURATION_SCHEMA_V1;
