@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { realpath } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { resolve } from "node:path";
+import { resolve, dirname } from "node:path";
 
 const requireFromRepo = createRequire(resolve("package.json"));
 let playwright;
@@ -180,27 +180,28 @@ const assets = await loadPrivateClientAssets(await realpath("dist-vps/client"));
 let application;
 let browser;
 try {
+  const serveRouteFor = (siteOrigin, jwt, handle) => async route => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.origin !== siteOrigin) { await route.abort("blockedbyclient"); return; }
+    const headers = new Headers(request.headers());
+    headers.set("cf-access-jwt-assertion", jwt);
+    headers.set("accept", headers.get("accept") ?? "text/html");
+    if (!["GET", "HEAD"].includes(request.method())) headers.set("origin", siteOrigin);
+    const body = request.postDataBuffer();
+    const staticResponse = (url.pathname.startsWith("/_next/") || url.pathname === "/favicon.svg") && !url.search
+      ? assets.respond(url.pathname, request.method()) : undefined;
+    const response = staticResponse ?? await handle(new Request(request.url(), { method: request.method(), headers,
+      ...(!["GET", "HEAD"].includes(request.method()) && body ? { body } : {}) }));
+    await route.fulfill({ status: response.status, headers: Object.fromEntries(response.headers),
+      body: request.method() === "HEAD" ? Buffer.alloc(0) : Buffer.from(await response.arrayBuffer()) });
+  };
   application = installPrivateWebProcess({ origin, ...trust,
     tenantId: "tenant:web", workspaceId: "workspace:web",
     database: { client: disposable.client, close: () => disposable.db.close() },
     clock: () => now, loadKeys: async () => trust.keys });
   browser = await playwright.chromium.launch({ headless: true });
-  const serveRoute = async route => {
-    const request = route.request();
-    const url = new URL(request.url());
-    if (url.origin !== origin) { await route.abort("blockedbyclient"); return; }
-    const headers = new Headers(request.headers());
-    headers.set("cf-access-jwt-assertion", token());
-    headers.set("accept", headers.get("accept") ?? "text/html");
-    if (!["GET", "HEAD"].includes(request.method())) headers.set("origin", origin);
-    const body = request.postDataBuffer();
-    const staticResponse = (url.pathname.startsWith("/_next/") || url.pathname === "/favicon.svg") && !url.search
-      ? assets.respond(url.pathname, request.method()) : undefined;
-    const response = staticResponse ?? await handler(new Request(request.url(), { method: request.method(), headers,
-      ...(!["GET", "HEAD"].includes(request.method()) && body ? { body } : {}) }));
-    await route.fulfill({ status: response.status, headers: Object.fromEntries(response.headers),
-      body: request.method() === "HEAD" ? Buffer.alloc(0) : Buffer.from(await response.arrayBuffer()) });
-  };
+  const serveRoute = serveRouteFor(origin, token(), handler);
   const context = await browser.newContext({ viewport: { width: 360, height: 844 } });
   await context.route("**/*", serveRoute);
 
@@ -246,7 +247,8 @@ try {
     JSON.stringify(ringOnButton));
   await page.keyboard.press("Enter");
   await page.getByRole("heading", { name: "Accessibility acceptance project" }).waitFor();
-  check("keyboard submission creates the project", true);
+  check("keyboard submission creates the project",
+    (await page.getByRole("heading", { name: "Accessibility acceptance project" }).count()) === 1);
   const projectPath = new URL(page.url()).pathname;
 
   await stableMatrix(page, "360px", projectPath);
@@ -270,7 +272,8 @@ try {
   })());
   await page.keyboard.press("Enter");
   await page.getByRole("heading", { name: "Accessible task detail" }).waitFor();
-  check("keyboard submission saves the task proposal", true);
+  check("keyboard submission saves the task proposal",
+    (await page.getByRole("heading", { name: "Accessible task detail" }).count()) === 1);
   const taskPath = new URL(page.url()).pathname;
   await audit(page, "360px Task detail");
   // The pathname from the URL is already percent-encoded: use the segment
@@ -323,7 +326,8 @@ try {
   check("recovered save still offers its recheck", await tabUntil(page, page.getByRole("button", { name: /check this exact save again/i })));
   await page.keyboard.press("Enter");
   await page.getByRole("heading", { name: "Unconfirmed second task" }).waitFor({ timeout: 15000 });
-  check("recovered retry writes the task successfully", true);
+  check("recovered retry writes the task successfully",
+    (await page.getByRole("heading", { name: "Unconfirmed second task" }).count()) === 1);
   // Client-side navigation to the new task leaves focus on the body instead
   // of moving it to the new heading: reported (navigation focus management
   // lives outside the #181 paths), not edited. The tab order must restart.
@@ -341,34 +345,11 @@ try {
   check("tab order restarts at the skip link after return",
     await page.locator(":focus").evaluate(element => element.matches("a.skip-link")));
 
-  // Owner review and revision request by keyboard, when a recorded result exists.
-  const acceptButton = page.getByRole("button", { name: "Accept quality" });
-  if (await acceptButton.count() > 0) {
-    const feedback = page.getByLabel("Changes you want");
-    await feedback.focus();
-    await page.keyboard.type("Keyboard review note: reword the summary.");
-    const requestChanges = page.getByRole("button", { name: "Request changes" });
-    check("keyboard focus order reaches the request-changes action", await tabUntil(page, requestChanges));
-    await page.keyboard.press("Enter");
-    const savedStatus = page.getByRole("status");
-    await savedStatus.filter({ hasText: /changes requested/i }).first().waitFor();
-    check("keyboard review records the changes request", true);
-    check("review save announces inside the review workspace",
-      await page.locator("section[aria-label='Owner quality decision'] :focus, section[aria-label='Owner quality decision']").count() >= 1);
-    const prepareRevision = page.getByRole("button", { name: "Prepare revised task" });
-    if (await prepareRevision.count() > 0) {
-      await keyActivate(prepareRevision);
-      const prepared = page.getByRole("status");
-      await prepared.filter({ hasText: /prepared/i }).first().waitFor({ timeout: 15000 });
-      check("keyboard revision request prepares the revision", true);
-      const openRevised = page.getByRole("link", { name: /open revised task/i });
-      if (await openRevised.count() > 0) {
-        await keyActivate(openRevised);
-        await page.waitForURL(url => url.pathname !== taskPath || url.hash !== "");
-        check("keyboard return from the revision reaches the revised task", true);
-      } else report("360px revision: no open-revised-task link rendered, return leg not exercised");
-    } else report("360px revision: prepare action unavailable for this review state");
-  } else report("360px owner review: no recorded result in the disposable fixture, review journey not exercised");
+  // The narrow-flow task has no recorded harness result (recording one needs a
+  // live execution), so its review panel cannot mount here. The full owner
+  // review journey runs below against a second disposable process whose
+  // database holds a genuinely ingested pipeline result.
+  report("360px owner review: no recorded result on the created task; journey runs on the seeded review process");
 
   // Project tabs by keyboard: links reached with Tab, opened with Enter.
   await page.goto(`${origin}${projectPath}`, { waitUntil: "domcontentloaded" });
@@ -396,10 +377,12 @@ try {
   await page.goto(`${origin}${projectPath}/files`, { waitUntil: "domcontentloaded" });
   const loadingStatus = page.getByRole("status");
   await loadingStatus.filter({ hasText: /loading protected project files/i }).first().waitFor();
-  check("loading state is announced while files load", true);
+  check("loading state is announced while files load",
+    (((await loadingStatus.filter({ hasText: /loading protected project files/i }).first().textContent()) ?? "").length > 0));
   releaseFiles();
   await page.getByRole("heading", { name: "Project files" }).waitFor({ timeout: 15000 });
-  check("held files request resolves to the ready view", true);
+  check("held files request resolves to the ready view",
+    (await page.getByRole("heading", { name: "Project files" }).count()) >= 1);
   await page.unroute("**/*");
   await page.route("**/*", serveRoute);
 
@@ -414,7 +397,8 @@ try {
   });
   await page.goto(`${origin}${projectPath}/files`, { waitUntil: "domcontentloaded" });
   await page.getByRole("alert").filter({ hasText: /does not include this project.s files/i }).first().waitFor();
-  check("denied files announce the denial, not an empty list", true);
+  check("denied files announce the denial, not an empty list",
+    (/does not include this project.s files/i.test((await page.getByRole("alert").first().textContent()) ?? "")));
   const filesRefresh = page.getByRole("button", { name: /refresh project files/i });
   check("denied files keep the refresh action keyboard reachable", await tabUntil(page, filesRefresh));
   await page.unroute("**/*");
@@ -431,14 +415,16 @@ try {
   });
   await page.goto(`${origin}${projectPath}/files`, { waitUntil: "domcontentloaded" });
   await page.getByRole("alert").filter({ hasText: /unavailable|no empty file list/i }).first().waitFor();
-  check("failed files announce unavailability without invented content", true);
+  check("failed files announce unavailability without invented content",
+    (/unavailable|no empty file list/i.test((await page.getByRole("alert").first().textContent()) ?? "")));
   await page.unroute("**/*");
   await page.route("**/*", serveRoute);
 
   // Connections: authenticated inventory plus signed-out and failed variants.
   await page.goto(`${origin}/connections`, { waitUntil: "domcontentloaded" });
   await page.getByRole("heading", { name: "Connections" }).waitFor();
-  check("connections inventory renders for the signed-in owner", true);
+  check("connections inventory renders for the signed-in owner",
+    (await page.getByRole("heading", { name: "Connections" }).count()) === 1);
   await page.route("**/*", async route => {
     const url = new URL(route.request().url());
     if (url.origin === origin && url.pathname === "/api/v1/connections") {
@@ -449,7 +435,8 @@ try {
   });
   await page.goto(`${origin}/connections`, { waitUntil: "domcontentloaded" });
   await page.getByRole("alert").filter({ hasText: /session has ended/i }).first().waitFor();
-  check("signed-out connections announce the ended session", true);
+  check("signed-out connections announce the ended session",
+    (/session has ended/i.test((await page.getByRole("alert").first().textContent()) ?? "")));
   const signInAgain = page.getByRole("link", { name: /sign in again/i });
   check("signed-out connections offer a keyboard-reachable sign-in", await tabUntil(page, signInAgain));
   check("sign-in recovery starts focused on its link", await focusedIs(page, signInAgain));
@@ -465,7 +452,8 @@ try {
   });
   await page.goto(`${origin}/connections`, { waitUntil: "domcontentloaded" });
   await page.getByRole("alert").filter({ hasText: /inventory unavailable|not configured/i }).first().waitFor();
-  check("failed connections announce unavailability without sample data", true);
+  check("failed connections announce unavailability without sample data",
+    (/inventory unavailable|not configured/i.test((await page.getByRole("alert").first().textContent()) ?? "")));
   await page.unroute("**/*");
   await page.route("**/*", serveRoute);
 
@@ -480,7 +468,8 @@ try {
   });
   await page.goto(`${origin}/needs-me`, { waitUntil: "domcontentloaded" });
   await page.getByRole("alert").filter({ hasText: /task inbox unavailable/i }).first().waitFor();
-  check("failed task inbox announces unavailability, never an all-clear", true);
+  check("failed task inbox announces unavailability, never an all-clear",
+    (/task inbox unavailable/i.test((await page.getByRole("alert").first().textContent()) ?? "")));
   await page.unroute("**/*");
   await page.route("**/*", serveRoute);
 
@@ -525,6 +514,148 @@ try {
     await wide.locator(":focus").evaluate(element => element.matches("a.skip-link")));
   await desktop.close();
 
+  // Owner review by keyboard: the runtime installs a single private app per node
+  // process, so the seeded review journey (a second disposable database holding
+  // a genuinely ingested pipeline result) runs in a child process. The child
+  // source is embedded here so the acceptance run stays one scoped file.
+  const { spawnSync } = await import("node:child_process");
+  const { writeFileSync, unlinkSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { fileURLToPath } = await import("node:url");
+  const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+  const reviewJourneySource = [
+    "import { pathToFileURL } from 'node:url';",
+    "import { createRequire } from 'node:module';",
+    "const ROOT = process.env.ACR_REPO_ROOT;",
+    "const file = (p) => pathToFileURL(ROOT + '/' + p).href;",
+    "const requireFromRepo = createRequire(ROOT + '/package.json');",
+    "const playwright = requireFromRepo(process.env.PLAYWRIGHT_MODULE || 'playwright');",
+    "const { default: handler } = await import(file('dist-vps/server/index.js'));",
+    "const { installPrivateWebProcess } = await import(file('dist-vps/server/runtime.js'));",
+    "const { loadPrivateClientAssets } = await import(file('dist-vps/server/serving.js'));",
+    "const { trust } = await import(file('tests/helpers/web-foundation.ts'));",
+    "const { ownerReviewFixture } = await import(file('tests/helpers/web-owner-review.ts'));",
+    "const { instant } = await import(file('tests/hermes-native-fixture.ts'));",
+    "const { realpath } = await import('node:fs/promises');",
+    "let failed = false;",
+    "function check(name, cond, detail) {",
+    "  console.log((cond ? 'ok - review: ' : 'not ok - review: ') + name + (detail ? ' # ' + detail : ''));",
+    "  if (!cond) failed = true;",
+    "}",
+    "async function tabUntil(page, locator, max) {",
+    "  for (let i = 0; i < (max || 60); i++) {",
+    "    if ((await locator.count()) && (await locator.evaluate((e) => e === document.activeElement))) return true;",
+    "    await page.keyboard.press('Tab');",
+    "  }",
+    "  return false;",
+    "}",
+    "const PRED = '(element, visible, getComputedStyle) => { if (!visible(element) || element.disabled) return false; const box = element.getBoundingClientRect(); return box.width < 24 || box.height < 24; }';",
+    "const siteOrigin = 'https://review.example.invalid';",
+    "const seeded = await ownerReviewFixture();",
+    "const assets = await loadPrivateClientAssets(await realpath(ROOT + '/dist-vps/client'));",
+    "const app = installPrivateWebProcess({ origin: siteOrigin, ...trust, tenantId: 'tenant:test', workspaceId: 'workspace:test',",
+    "  database: { client: seeded.db, close: () => seeded.close() },",
+    "  clock: () => instant + 6000, loadKeys: async () => trust.keys,",
+    "  tasks: { harnessIntegrityKey: seeded.harnessKey, results: seeded.config,",
+    "    reviews: { integrityKey: seeded.reviewKey, checkpoints: seeded.checkpoints },",
+    "    ownerReviews: { integrityKey: seeded.reviewKey, checkpoints: seeded.checkpoints } } });",
+    "const browser = await playwright.chromium.launch({ headless: true });",
+    "try {",
+    "  const context = await browser.newContext({ viewport: { width: 360, height: 844 } });",
+    "  await context.route('**/*', async (route) => {",
+    "    const request = route.request();",
+    "    const url = new URL(request.url());",
+    "    if (url.origin !== siteOrigin) { await route.abort('blockedbyclient'); return; }",
+    "    const headers = new Headers(request.headers());",
+    "    headers.set('cf-access-jwt-assertion', seeded.jwt);",
+    "    headers.set('accept', headers.get('accept') || 'text/html');",
+    "    if (request.method() !== 'GET' && request.method() !== 'HEAD') headers.set('origin', siteOrigin);",
+    "    const body = request.postDataBuffer();",
+    "    const stat = (url.pathname.indexOf('/_next/') === 0 || url.pathname === '/favicon.svg') && !url.search",
+    "      ? assets.respond(url.pathname, request.method()) : undefined;",
+    "    const response = stat || await handler(new Request(request.url(), { method: request.method(), headers,",
+    "      ...(request.method() !== 'GET' && request.method() !== 'HEAD' && body ? { body } : {}) }));",
+    "    await route.fulfill({ status: response.status, headers: Object.fromEntries(response.headers),",
+    "      body: request.method() === 'HEAD' ? Buffer.alloc(0) : Buffer.from(await response.arrayBuffer()) });",
+    "  });",
+    "  const page = await context.newPage();",
+    "  const taskPath = '/projects/' + encodeURIComponent('project:test') + '/tasks/' + encodeURIComponent('job:test');",
+    "  await page.goto(siteOrigin + taskPath, { waitUntil: 'domcontentloaded' });",
+    "  await page.locator('main').waitFor({ state: 'visible' });",
+    "  await page.getByRole('heading', { level: 1 }).waitFor({ timeout: 15000 });",
+    "  const dom = await page.evaluate((src) => {",
+    "    const isSmall = eval(src);",
+    "    const visible = (e) => { const s = getComputedStyle(e); return s.visibility !== 'hidden' && s.display !== 'none' && e.getClientRects().length > 0; };",
+    "    const h1 = Array.from(document.querySelectorAll('h1')).filter(visible).map((e) => e.textContent.trim());",
+    "    const current = Array.from(document.querySelectorAll('.private-header nav [aria-current=\"page\"]')).map((e) => e.textContent.trim());",
+    "    const small = Array.from(document.querySelectorAll('button, a[href]')).filter((e) => isSmall(e, visible, getComputedStyle)).map((e) => e.textContent.trim().slice(0, 30));",
+    "    return { lang: document.documentElement.lang, main: document.querySelectorAll('main#private-main').length,",
+    "      h1, skip: !!document.querySelector('a.skip-link[href=\"#private-main\"]'), current, small,",
+    "      overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1 };",
+    "  }, PRED);",
+    "  check('seeded task page declares language', dom.lang === 'en');",
+    "  check('seeded task page has one main landmark', dom.main === 1, 'count=' + dom.main);",
+    "  check('seeded task page has one heading', dom.h1.length === 1, JSON.stringify(dom.h1));",
+    "  check('seeded task page offers a skip link', dom.skip);",
+    "  check('seeded task page marks Projects current', dom.current.length === 1 && dom.current[0] === 'Projects', dom.current.join('|'));",
+    "  check('seeded task page controls meet 24px', dom.small.length === 0, dom.small.join(' | '));",
+    "  check('seeded task page does not scroll sideways', !dom.overflow);",
+    "  const readResult = page.getByRole('button', { name: 'Read result' });",
+    "  await readResult.waitFor({ timeout: 15000 });",
+    "  check('read-result action is keyboard reachable', await tabUntil(page, readResult));",
+    "  await page.keyboard.press('Enter');",
+    "  await page.getByRole('heading', { name: 'Received result' }).waitFor();",
+    "  check('keyboard opens the recorded result file', (await page.getByText('A useful private result.').count()) >= 1);",
+    "  const accept = page.getByRole('button', { name: 'Accept quality' });",
+    "  await accept.waitFor({ timeout: 15000 });",
+    "  check('owner review loads for the recorded result', (await accept.count()) === 1);",
+    "  await page.getByLabel('Changes you want').focus();",
+    "  await page.keyboard.type('Keyboard review note: clarify the summary.');",
+    "  const requestChanges = page.getByRole('button', { name: 'Request changes' });",
+    "  check('request-changes action is keyboard reachable', await tabUntil(page, requestChanges));",
+    "  await page.keyboard.press('Enter');",
+    "  const saved = page.getByRole('status').filter({ hasText: /changes requested/i }).first();",
+    "  await saved.waitFor();",
+    "  check('keyboard review records the changes request', /changes requested/i.test((await saved.textContent()) || ''));",
+    "  console.log('# report - review: save disables the decision buttons while recording, focus falls back to the body # task-owner-review.tsx OwnerReviewPanel disables on pending or held');",
+    "  await page.keyboard.press('Tab');",
+    "  check('tab order continues after the review save',",
+    "    await page.locator(':focus').evaluate((e) => e !== document.body));",
+    "  const prepText = (await page.locator(\"section[aria-label='Prepare revised task']\").first().textContent().catch(() => '')) || '';",
+    "  check('revision preparation reports its unconnected state', prepText.indexOf('Revision preparation is not connected for this app.') !== -1);",
+    "  const back = page.getByRole('link', { name: /project tasks/i }).first();",
+    "  await back.focus();",
+    "  await page.keyboard.press('Enter');",
+    "  await page.waitForURL((u) => u.pathname.endsWith('/tasks'));",
+    "  check('keyboard return leaves the reviewed task', new URL(page.url()).pathname.endsWith('/tasks'));",
+    "  await page.keyboard.press('Tab');",
+    "  check('tab order restarts at the skip link after return',",
+    "    await page.locator(':focus').evaluate((e) => e.matches('a.skip-link')));",
+    "  await context.close();",
+    "} finally {",
+    "  await browser.close().catch(() => {});",
+    "  await app.close().catch(() => {});",
+    "}",
+    "if (failed) process.exit(1);",
+    "console.log('ok - review: seeded review journey completes');",
+  ].join("\n");
+  const { join } = await import("node:path");
+  const childPath = join(tmpdir(), "acr-review-journey-" + Date.now() + ".mjs");
+  writeFileSync(childPath, reviewJourneySource);
+  let childFailed = "";
+  try {
+    const child = spawnSync(process.execPath, ["--import", "tsx", childPath],
+      { cwd: repoRoot, env: { ...process.env, ACR_REPO_ROOT: repoRoot }, timeout: 420000, encoding: "utf8" });
+    process.stdout.write(child.stdout || "");
+    process.stderr.write(child.stderr || "");
+    if (child.status !== 0) childFailed = "exit=" + child.status;
+    else if (/^not ok/m.test(child.stdout || "")) childFailed = "not-ok lines present";
+  } finally {
+    try { unlinkSync(childPath); } catch { /* temp cleanup best effort */ }
+  }
+  check("seeded owner-review journey completes on genuine pipeline data", childFailed === "", childFailed);
+  report("revision preparation needs the execution planner", "OwnerRevisionPanel honestly reports not-connected; revise wiring is outside the #181 paths");
+
   // 200% zoom as real reflow: CSS zoom halves the effective layout viewport on
   // a 1280px window, exercising the same reflow a browser zoom would.
   const zoomed = await browser.newContext({ viewport: { width: 1280, height: 900 } });
@@ -546,7 +677,8 @@ try {
   const calmPage = await calm.newPage();
   await calmPage.goto(`${origin}/`, { waitUntil: "domcontentloaded" });
   await calmPage.locator("main").waitFor({ state: "visible" });
-  check("reduced-motion preference still renders the product", true);
+  check("reduced-motion preference still renders the product",
+    (await calmPage.locator("main").count()) === 1);
   await calm.close();
 
   await context.close();
