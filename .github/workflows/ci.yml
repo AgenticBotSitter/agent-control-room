@@ -142,8 +142,11 @@ jobs:
     name: Contributor demo tests
     needs: route
     # Routing may narrow work, never drop it: whatever is skipped here is run by
-    # full-gate. A routing failure runs the lane rather than skipping it.
-    if: ${{ needs.route.result != 'success' || needs.route.outputs.demo != 'false' }}
+    # full-gate. The status function matters: without it a job-level if: inherits an
+    # implicit success() of its dependencies, so a failed or cancelled route job would
+    # skip this lane. !cancelled() keeps the lane running after a routing failure while
+    # still respecting cancellation of a superseded run.
+    if: ${{ !cancelled() && (needs.route.result != 'success' || needs.route.outputs.demo != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -164,7 +167,7 @@ jobs:
   test-server:
     name: Server build tests
     needs: route
-    if: ${{ needs.route.result != 'success' || needs.route.outputs.server != 'false' }}
+    if: ${{ !cancelled() && (needs.route.result != 'success' || needs.route.outputs.server != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -185,7 +188,7 @@ jobs:
   test-components:
     name: Component lanes
     needs: route
-    if: ${{ needs.route.result != 'success' || needs.route.outputs.components != 'false' }}
+    if: ${{ !cancelled() && (needs.route.result != 'success' || needs.route.outputs.components != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -211,7 +214,7 @@ jobs:
   test-articles:
     name: Article build lane
     needs: route
-    if: ${{ needs.route.result != 'success' || needs.route.outputs.articles != 'false' }}
+    if: ${{ !cancelled() && (needs.route.result != 'success' || needs.route.outputs.articles != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -233,6 +236,7 @@ jobs:
   full-gate:
     name: Merge gate catch-up
     needs: route
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -252,24 +256,24 @@ jobs:
         run: |
           echo "Merge-gate entry for lane: ${{ matrix.lane }}" >> "$GITHUB_STEP_SUMMARY"
       - name: Demo tests (merge gate)
-        if: ${{ matrix.lane == 'demo' && (needs.route.result == 'success' && needs.route.outputs.demo == 'false') }}
+        if: ${{ !cancelled() && matrix.lane == 'demo' && needs.route.result == 'success' && needs.route.outputs.demo == 'false' }}
         run: |
           pnpm install --frozen-lockfile --ignore-scripts
           pnpm run test:demo
           pnpm run test:build:demo
       - name: Server build tests (merge gate)
-        if: ${{ matrix.lane == 'server' && (needs.route.result == 'success' && needs.route.outputs.server == 'false') }}
+        if: ${{ !cancelled() && matrix.lane == 'server' && needs.route.result == 'success' && needs.route.outputs.server == 'false' }}
         run: |
           pnpm install --frozen-lockfile --ignore-scripts
           pnpm run test
       - name: Component lanes (merge gate)
-        if: ${{ matrix.lane == 'components' && (needs.route.result == 'success' && needs.route.outputs.components == 'false') }}
+        if: ${{ !cancelled() && matrix.lane == 'components' && needs.route.result == 'success' && needs.route.outputs.components == 'false' }}
         run: |
           pnpm install --frozen-lockfile --ignore-scripts
           pnpm run test:components
           node --import tsx --test tests/resource-bound-native-contract-v2.test.ts tests/resource-bound-codex-contract-v2.test.ts tests/resource-bound-local-start-contract-v2.test.ts
       - name: Article build lane (merge gate)
-        if: ${{ matrix.lane == 'articles' && (needs.route.result == 'success' && needs.route.outputs.articles == 'false') }}
+        if: ${{ !cancelled() && matrix.lane == 'articles' && needs.route.result == 'success' && needs.route.outputs.articles == 'false' }}
         run: |
           pnpm install --frozen-lockfile --ignore-scripts
           pnpm run test:build:articles

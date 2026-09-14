@@ -29,11 +29,27 @@ export const LANES = ["demo", "server", "components", "articles"];
 export const CHANGE_CLASSES = [
   {
     name: "docs",
-    patterns: ["docs/**", "**/*.md"],
+    patterns: ["docs/**"],
     lanes: [],
     evidence:
-      "No test file reads docs/, and scripts/license-inventory.mjs only writes " +
-      "docs/license-inventory.json. Documentation cannot change what a lane observes.",
+      "No test file, build config or script reads anything under docs/. The only reference in the " +
+      "whole repository is scripts/license-inventory.mjs writing docs/license-inventory.json, which " +
+      "is an output. docs/ is therefore provably inert and skips every heavy lane.",
+  },
+  {
+    name: "markdown",
+    patterns: ["*.md"],
+    lanes: ["components"],
+    evidence:
+      "Root-level markdown is read, but only from the components lane. THIRD_PARTY.md is read by " +
+      "scripts/license-inventory.mjs, scripts/runtime-license-finalize.mjs and " +
+      "tests/runtime-license-finalize.test.mjs; README.md is read by " +
+      "tests/runtime-license-bundled-collector.test.mjs and tests/runtime-license-digest.test.mjs. " +
+      "Those run inside test:components. No server-lane input (any tests/vps-built-*.test.mjs), no " +
+      "article-lane input (tests/vps-built-article-extraction.test.mjs, vite.vps.config.ts, " +
+      "scripts/build-vps.mjs) and no demo-lane input reads a markdown file, so those three are " +
+      "skipped. This class is why the docs class is 'docs/**' and not '**/*.md': a markdown file " +
+      "outside docs/ is not inert, and one inside another area falls through to that area's class.",
   },
   {
     name: "release",
@@ -41,19 +57,28 @@ export const CHANGE_CLASSES = [
     lanes: ["server", "components"],
     evidence:
       "Third-party notices, bundled-license scans and runtime-license fixtures live in " +
-      "test:release-licenses (part of test:components) and research/ fixtures are read by " +
-      "the codex and license lanes; deploy/operator-config.mjs is read by " +
-      "tests/vps-built-startup.test.mjs in the server lane. The demo and article lanes do " +
-      "not read any of these, so they are skipped.",
+      "test:release-licenses (part of test:components), research/ fixtures are read by the codex and " +
+      "license lanes (also test:components), and deploy/operator-config.mjs is read by " +
+      "tests/vps-built-startup.test.mjs in the server lane. Every file in the demo lane " +
+      "(test:demo and test:build:demo, including vite.contributor.config.ts and " +
+      "scripts/contributor-demo.mjs) and every input to the article lane " +
+      "(tests/vps-built-article-extraction.test.mjs, vite.vps.config.ts, scripts/build-vps.mjs) was " +
+      "checked for reads of these three areas and none reads any of them, so those two lanes are " +
+      "skipped. Check the same set again before adding a path here.",
   },
   {
     name: "frontend",
     patterns: ["app/**", "public/**", "styles/**", "private-app/**", "contributor-demo/**"],
-    lanes: ["demo", "components"],
+    lanes: null,
     evidence:
-      "Tests reading app/, private-app/ and contributor-demo/ live in test:demo and in the " +
-      "product-shell and article lanes inside test:components. The server and article lanes " +
-      "do not read them, so they are skipped.",
+      "A frontend path is observed by every lane, so this class takes the complete suite. " +
+      "vite.vps.config.ts sets appDir: private-app and reads public/favicon.svg, so both " +
+      "build-driven lanes see these paths: the compiled server lane (pnpm test builds with it) and " +
+      "the article lane (test:build:articles runs pnpm build). tests/vps-built-serving.test.mjs also " +
+      "compares the built favicon against public/favicon.svg in the server lane, and " +
+      "vite.contributor.config.ts reads the same file for the demo build. An earlier revision of " +
+      "this table let this class skip the server and article lanes, which was wrong: an import-only " +
+      "grep does not see a root-relative file read like that favicon comparison.",
   },
   {
     name: "connector",

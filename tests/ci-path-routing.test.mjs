@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
@@ -22,7 +23,7 @@ function decisionFor(...paths) {
 // --- class mapping -------------------------------------------------------
 
 test("a docs-only change runs only the quick check and skips every heavy lane", () => {
-  const decision = decisionFor("docs/contributors/worker-inbox/README.md", "CONTRIBUTOR_HANDBOOK.md");
+  const decision = decisionFor("docs/contributors/worker-inbox/README.md", "docs/notes/deep/plan.md");
   assert.deepEqual(decision.classes, ["docs"]);
   assert.equal(decision.full, false);
   assert.deepEqual(gateLanes(decision), LANES, "every heavy lane must be left to the merge gate");
@@ -37,14 +38,39 @@ test("a generated docs artifact is inert too, because it is written rather than 
   assert.equal(decisionFor("docs/license-inventory.json").full, false);
 });
 
-test("a frontend change runs the demo and component lanes but not the server or article lanes", () => {
-  const decision = decisionFor("private-app/routes/article-reader.tsx", "contributor-demo/panels.ts");
+test("a frontend change runs the complete suite, because every lane observes frontend paths", () => {
+  // vite.vps.config.ts reads public/favicon.svg and sets appDir: private-app, so the
+  // compiled server lane and the article lane both observe frontend paths, and
+  // tests/vps-built-serving.test.mjs compares the built favicon against the source one.
+  // An earlier revision let this class skip the server and article lanes; that was wrong.
+  const decision = decisionFor("private-app/routes/article-reader.tsx", "public/favicon.svg");
   assert.deepEqual(decision.classes, ["frontend"]);
-  assert.equal(decision.lanes.demo, true);
-  assert.equal(decision.lanes.components, true);
-  assert.equal(decision.lanes.server, false, "the compiled server lane does not read the frontend");
-  assert.equal(decision.lanes.articles, false);
-  assert.deepEqual(gateLanes(decision).sort(), ["articles", "server"]);
+  assert.equal(decision.full, true);
+  for (const lane of LANES) assert.equal(decision.lanes[lane], true, `${lane} must run`);
+  assert.deepEqual(gateLanes(decision), [], "nothing is left to the gate");
+});
+
+test("root markdown runs the component lanes only, because that is what reads it", () => {
+  for (const path of ["README.md", "THIRD_PARTY.md"]) {
+    const decision = decisionFor(path);
+    assert.deepEqual(decision.classes, ["markdown"], `${path} should be the markdown class`);
+    assert.equal(decision.lanes.components, true, `${path} is read by the component lanes`);
+    assert.equal(decision.lanes.server, false, "no server-lane input reads markdown");
+    assert.equal(decision.lanes.articles, false, "no article-lane input reads markdown");
+    assert.equal(decision.lanes.demo, false, "no demo-lane input reads markdown");
+    assert.deepEqual(gateLanes(decision).sort(), ["articles", "demo", "server"]);
+  }
+});
+
+test("markdown outside docs/ and the repository root belongs to its own area, not to docs", () => {
+  // A markdown file inside an area can be read by that area's build, so it inherits the
+  // area's class instead of getting the docs class's free skip.
+  assert.deepEqual(decisionFor("src/server/notes.md").classes, ["server"]);
+  assert.equal(decisionFor("src/server/notes.md").full, true);
+  assert.deepEqual(decisionFor("private-app/guide.md").classes, ["frontend"]);
+  assert.equal(decisionFor("private-app/guide.md").full, true);
+  assert.deepEqual(decisionFor("skills/x/SKILL.md").classes, ["unknown"]);
+  assert.equal(decisionFor("skills/x/SKILL.md").full, true);
 });
 
 test("a release change runs the server and component lanes", () => {
@@ -100,6 +126,8 @@ test("one unclassified path in an otherwise light change still forces the comple
 test("a rename is classified on both sides, so a move between classes cannot slip through", () => {
   const light = routeDiff("R100\tdocs/old.md\tdocs/new.md\n");
   assert.equal(light.full, false, "a docs-to-docs move stays light");
+  const toRoot = routeDiff("R100\tdocs/old.md\tRENAMED.md\n");
+  assert.deepEqual(toRoot.classes, ["docs", "markdown"], "both sides are classified");
   const heavy = routeDiff("R100\tdocs/old.md\tsrc/server/old.ts\n");
   assert.equal(heavy.full, true, "a move into src/ must run the complete suite");
   assert.deepEqual(heavy.renames, ["docs/old.md -> src/server/old.ts"]);
@@ -107,14 +135,16 @@ test("a rename is classified on both sides, so a move between classes cannot sli
   assert.equal(outOfDocs.full, true, "a move into an unknown area must run the complete suite");
 });
 
-test("markdown is documentation wherever it lives, which is why a .md rename stays light", () => {
-  // The docs class owns `**/*.md` deliberately: no lane reads markdown, so a
-  // markdown file at any path is inert. This case records that intent, because it
-  // is the difference between a safe skip and a guessed one.
-  for (const path of ["README.md", "docs/deep/nested/guide.md", "src/server/notes.md"]) {
+test("markdown under docs/ is inert, and that is the only markdown the docs class owns", () => {
+  for (const path of ["docs/README.md", "docs/deep/nested/guide.md", "docs/license-inventory.json"]) {
     assert.deepEqual(decisionFor(path).classes, ["docs"], `${path} should be inert`);
     assert.equal(decisionFor(path).full, false, `${path} should not force the complete suite`);
   }
+  // The class is docs/** and not **/*.md on purpose: root markdown is read by the
+  // component lanes, so widening this pattern would be a wrong skip, not a tidy-up.
+  assert.equal(decisionFor("README.md").full, false);
+  assert.deepEqual(decisionFor("README.md").classes, ["markdown"]);
+  assert.notDeepEqual(decisionFor("README.md").classes, ["docs"]);
 });
 
 test("deletions are classified, and deleting a heavy path still runs the complete suite", () => {
@@ -374,6 +404,50 @@ test("the early and gate conditions partition every lane, so no case leaves a la
       );
     }
   }
+});
+
+test("every condition that reads a dependency carries a status function", () => {
+  // GitHub applies an implicit success() to a job-level if: that contains no status
+  // function, so a bare needs.route.result != 'success' never ran the lanes: a failed or
+  // cancelled route job skipped them, and full-gate inherited the same skip. This is the
+  // regression guard for that.
+  const lines = workflow.split("\n");
+  const conditions = lines.filter((line) => /^\s*if: \$\{\{/.test(line));
+  const dependencyConditions = conditions.filter((line) => line.includes("needs."));
+  assert.ok(dependencyConditions.length >= 8, "the lane and gate conditions should read needs");
+  for (const line of dependencyConditions) {
+    assert.match(line, /cancelled\(\)|always\(\)/u, `missing a status function: ${line.trim()}`);
+  }
+  const fullGate = workflow.slice(workflow.indexOf("  full-gate:"), workflow.indexOf("  merge-gate:"));
+  const header = fullGate.slice(0, fullGate.indexOf("    steps:"));
+  assert.match(header, /if: \$\{\{ !cancelled\(\) \}\}/u, "full-gate needs its own job guard");
+});
+
+test("a CRLF-authored diff routes exactly like an LF diff", () => {
+  const lf = routeDiff("M\tdocs/a.md\nM\tREADME.md\n");
+  const crlf = routeDiff("M\tdocs/a.md\r\nM\tREADME.md\r\n");
+  assert.deepEqual(crlf, lf);
+  assert.deepEqual(crlf.classes, ["docs", "markdown"]);
+});
+
+test("a shell-shaped file name stays data, and nothing is executed", () => {
+  const probe = join(tmpdir(), "ci-path-routing-injection-probe");
+  const parsed = parseNameStatus("M\tdocs/$(touch " + probe + ").md\nM\tunknown/;$(id).bin\n");
+  assert.deepEqual(parsed.uncertain, [], "a hostile name is still a well-formed diff line");
+  assert.ok(parsed.paths.includes("docs/$(touch " + probe + ").md"), "the name is carried as a string");
+  assert.equal(routeChanges(parsed).full, true, "the unclassified hostile path forces the suite");
+  assert.equal(existsSync(probe), false, "nothing executed the name");
+});
+
+test("an unparsable line is reported verbatim, which is why the workflow never shells it", () => {
+  const raw = "$(touch /tmp/cr201-should-not-exist)";
+  const decision = routeDiff("M\tdocs/a.md\n" + raw + "\n");
+  assert.equal(decision.full, true);
+  assert.ok(
+    decision.reasons.some((reason) => reason.includes(raw)),
+    "a maintainer has to be able to see the line that could not be read",
+  );
+  assert.equal(existsSync("/tmp/cr201-should-not-exist"), false);
 });
 
 test("the routing helper is exercised by the workflow, not only by its test", () => {

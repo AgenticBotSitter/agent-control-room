@@ -97,8 +97,18 @@ workflow, unknown, empty-diff and uncertainty inputs.
 
 `merge-gate` deliberately reads no routing output. Routing can narrow what runs early; it
 cannot touch the check that decides merge-readiness. Its condition is `always()` and it
-fails unless every lane passed or was caught up, and a routing failure runs the lanes
-rather than skipping them.
+fails unless every lane passed or was caught up.
+
+The lane and catch-up conditions each carry a status function, and that is load-bearing
+rather than decorative: a job-level `if:` that contains no status function inherits an
+implicit `success()` over its dependencies, so a condition of the form
+`needs.route.result != 'success'` would **not** have run the lane after a failed or
+cancelled routing job - the route job's own failure would have skipped it, and
+`full-gate`, having no job-level condition at all, inherited the same skip. `!cancelled()`
+restores the intent (run after a routing failure, still respect cancellation of a superseded
+run) and a test asserts that every condition reading `needs.` carries a status function and
+that `full-gate` has a job guard of its own. A routing failure still fails the gate, because
+the routing job's own result is aggregated with the rest.
 
 The early and gate conditions are also exact complements of each other: a lane runs early
 *unless* routing succeeded and explicitly reported `false` for it, and the gate runs it
@@ -115,14 +125,25 @@ Each mapping was derived by looking up which test files actually read the area, 
 
 | Class | Paths | Lanes | Evidence |
 | --- | --- | --- | --- |
-| docs | `docs/**`, `**/*.md` | none beyond `quick` | No test file reads `docs/`, and `scripts/license-inventory.mjs` only writes `docs/license-inventory.json`. Markdown is documentation wherever it lives, including under `src/`. |
-| release | `deploy/**`, `third_party/**`, `research/**` | server, components | `deploy/operator-config.mjs` is read by `tests/vps-built-startup.test.mjs` (server lane). `third_party/` and `research/` fixtures feed the release-license and codex lanes inside `test:components`. |
-| frontend | `app/**`, `public/**`, `styles/**`, `private-app/**`, `contributor-demo/**` | demo, components | The tests reading `app/`, `private-app/` and `contributor-demo/` live in `test:demo` and the product-shell and article lanes inside `test:components`. |
+| docs | `docs/**` | none beyond `quick` | The only reference to `docs/` anywhere in `tests/`, `scripts/`, the build configs or the JSON fixtures is `scripts/license-inventory.mjs` **writing** `docs/license-inventory.json`. It is an output, so the tree is inert and skips every heavy lane. |
+| markdown | `*.md` (repository root) | components | Root markdown is read, but only from the component lanes: `THIRD_PARTY.md` by `scripts/license-inventory.mjs`, `scripts/runtime-license-finalize.mjs` and `tests/runtime-license-finalize.test.mjs`; `README.md` by `tests/runtime-license-bundled-collector.test.mjs` and `tests/runtime-license-digest.test.mjs`. No server-lane input (`tests/vps-built-*.test.mjs`), no article-lane input and no demo-lane input reads a markdown file. |
+| release | `deploy/**`, `third_party/**`, `research/**` | server, components | `deploy/operator-config.mjs` is read by `tests/vps-built-startup.test.mjs` (server lane). `third_party/` and `research/` fixtures feed the release-license and codex lanes inside `test:components`. Every demo-lane file (including `vite.contributor.config.ts` and `scripts/contributor-demo.mjs`) and every article-lane input (`tests/vps-built-article-extraction.test.mjs`, `vite.vps.config.ts`, `scripts/build-vps.mjs`) was checked and none reads these three areas. |
+| frontend | `app/**`, `public/**`, `styles/**`, `private-app/**`, `contributor-demo/**` | complete suite | `vite.vps.config.ts` sets `appDir: private-app` and reads `public/favicon.svg`, so both build-driven lanes observe these paths: the compiled server lane builds with that config and `test:build:articles` runs that build. `tests/vps-built-serving.test.mjs` compares the built favicon against `public/favicon.svg`, and `vite.contributor.config.ts` reads the same file for the demo build. Every lane sees a frontend path, so this class runs everything. |
 | connector | `src/**/*connector*`, `src/**/connectors/**` | complete suite | Connector contracts are exercised from `src/` by `test:contracts` and by the compiled server lane. |
 | database | `db/**` | complete suite | `db/` is read by shared `tests/helpers/` fixtures, so a schema change can be observed from any lane. |
 | workflow | `.github/**`, `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `tsconfig*.json`, `vite*.config.*`, `scripts/**`, `tests/**` | complete suite | Shared configuration and the lanes' own tooling. |
 | server | `src/**`, `**/dist-vps/**` | complete suite | `src/` accounts for 350 test imports, the largest share in the repository. |
 | unknown | anything else | complete suite | Refusing to guess a skip. |
+
+A correction worth recording, because it is the exact failure this mapping was written to
+avoid: the first version of this table gave the docs class `**/*.md` **and** let the frontend
+class skip the server and article lanes. Both were wrong. Root markdown is read by the
+component lanes, and the frontend paths are read by the two build-driven lanes through
+`vite.vps.config.ts`. The first came from checking the areas by import rather than by
+consumption, and the second from doing the same thing one level up: an import-only grep does
+not see a root-relative file read such as `public/favicon.svg`. The classes above were
+re-derived by checking what each lane's tests and build inputs actually read, and only `docs/`
+and root markdown are allowed to skip anything.
 
 Two failure modes are handled explicitly rather than optimistically:
 
@@ -134,19 +155,43 @@ Two failure modes are handled explicitly rather than optimistically:
   as the deleted path. A push to main or a manual dispatch has no pull-request base and
   therefore takes the complete suite.
 
-### Before and after, and what is measured
+### Before and after, measured
 
-- **Measured before:** the table above, from the hosted run for `29847cb`.
-- **Derived after:** the first useful result for a markdown-only pull request moves from
-  448s to roughly the duration of the two type checks, about 50s, because the path-aware
-  lanes are skipped and `quick` needs no dependency install for its first two steps. The
-  complete suite is still satisfied before merge by `full-gate`, whose critical path is
-  the component-lane entry at about 445s, so merge latency for that class is unchanged.
-- **Not measured:** no hosted run of this workflow revision exists yet, so the figures
-  after the change are derived from the job durations above rather than observed. Locally
-  (macOS, this workstation) the routing tests and the lane-coverage check each complete in
-  under a second; hosted runners are slower than that and the CI figures above are the
-  ones to trust.
+**Before**, from the hosted run for `29847cb` (PR #206): Component lanes 445s, Server build
+tests 186s, Type check 50s, Contributor demo tests 39s, Article build lane 32s, lane drift
+6s, run total **448s**.
+
+**After**, from the hosted run for this revision `69ca445` (run
+[34878865721](https://github.com/AgenticBotSitter/agent-control-room/actions/runs/34878865721)),
+which completed successfully:
+
+| Job | Duration |
+| --- | --- |
+| Route changed paths | 11s |
+| Quick checks | 50s |
+| Component lanes | 345s |
+| Server build tests | 192s |
+| Contributor demo tests | 34s |
+| Article build lane | 32s |
+| Merge gate catch-up (each of four lanes) | 13-16s |
+| Full suite (merge gate) | 2s |
+| **Run total** | **426s** |
+
+Two readings of that, kept separate:
+
+- **The claim being made:** the first useful result now arrives in about a minute. `Quick
+  checks` reported a pass at 50s on this revision, against 448s before, and it is 50s whether
+  or not the heavy lanes are still running.
+- **The claim NOT being made:** that this shortened the merge path in general. This revision
+  touches `scripts/` and `.github/`, so routing demanded the complete suite and every lane
+  ran: the run total fell from 448s to 426s, and the component lane from 445s to 345s, but
+  that difference is run-to-run variance, not an effect of the change. The catch-up entries
+  took 13-16s each precisely because they had nothing to do. For a class that skips lanes -
+  docs or root markdown - the catch-up does the work instead, in parallel, so merge latency
+  for those classes is the catch-up's critical path rather than the sum of the lanes.
+
+Local measurements (macOS, this workstation) put the routing tests and the lane-coverage
+check at under a second each; the hosted figures above are the ones to trust.
 
 ### Intentionally unchanged
 
@@ -178,6 +223,11 @@ Two failure modes are handled explicitly rather than optimistically:
   setting and not something a workflow can assert. What this change does guarantee is
   narrower and checkable: no pull-request-controlled value gates the merge check, so
   routing cannot be used to skip it.
+- It does not claim the repository lints clean. `actionlint` passes on `ci.yml` with no
+  findings, but it fails repository-wide on two workflows this change does not own:
+  `.github/workflows/automatic-job-claim.yml` and `.github/workflows/review-handoff.yml`
+  use a `concurrency.queue` key that the linter does not recognise. That is pre-existing,
+  outside this issue's owned paths, and left alone deliberately rather than silently fixed.
 - It does not claim merge-readiness is enforced. Nothing was added to branch protection.
   To make the gate binding, the repository has to require `Full suite (merge gate)` as a
   status check; that decision stays with the maintainer.
