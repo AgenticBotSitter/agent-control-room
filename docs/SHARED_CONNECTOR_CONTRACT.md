@@ -143,7 +143,14 @@ It owns standard streams, retains cancellation through process retirement, and e
 TERM to KILL unless terminal exit is observed. The production export captures Node's
 launcher inside the module; the injected launcher remains a test-only, non-server export.
 Darwin, Windows and other platforms fail closed pending separate descriptor execution
-qualification. No provider call, retry, resume, approval, canonical writer or capacity
+qualification. The first release therefore qualifies Codex execution only on the reviewed
+Linux acquisition path. macOS remains supported for contributor and browser use, but
+local macOS Codex execution is deferred. Issue #191 records the two conditions for
+reopening it: a harmless owner-authorized proof that the exact running code can be
+verified while still suspended before user code, and a supported inherited protected
+home-directory handle that removes the pathname race for `CODEX_HOME`. No wrapper,
+configured-path fallback or `/dev/fd` imitation may weaken this refusal.
+No provider call, retry, resume, approval, canonical writer or capacity
 release is added, so this remains source/test evidence rather than live enablement or
 physical host qualification.
 The matching local read composition now accepts only that journal's exact saved
