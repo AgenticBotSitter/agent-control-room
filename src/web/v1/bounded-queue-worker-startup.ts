@@ -22,7 +22,7 @@ export function createBoundedQueueWorkerBootstrap<Reference>(dependencies: {
   openDatabase: (config: PrivatePostgresConfiguration) => TaskCoordinatorDatabase;
   /** Test backend is a construction-time dependency, never deployment configuration. */
   backend?: "postgres" | "pglite";
-}, profile: { errorPrefix: "native_queue_worker" | "abs_feed_worker"; runtimeErrorPrefix: "native_task" | "abs_feed";
+}, profile: { errorPrefix: "native_queue_worker" | "news_feed_worker"; runtimeErrorPrefix: "native_task" | "news_feed";
   startRuntime(PgBoss: PgBossBoundedRuntimeConstructor, database: PgBossBoundedRuntimeDatabase,
     input: { deliver: BoundedDeliveryHandler<Reference>; verifyRecovery?: BoundedRecoveryVerifier<Reference>;
       concurrency?: number; backend?: "postgres" | "pglite" }): ReturnType<typeof startPgBossBoundedRuntime>;

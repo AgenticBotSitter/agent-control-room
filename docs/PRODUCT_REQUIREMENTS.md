@@ -47,7 +47,7 @@ tested version and limitations.
 | PROJ-006 | MVP | Closing a browser tab must not cancel work, complete a project or archive it. | Browser close/reconnect produces no task command and work continues according to server state. |
 | PROJ-007 | MVP | Configure display name, template, enabled modules, limits, timezone, review policy and eligible capabilities without source edits. | Two-config acceptance demonstrates different settings and isolated data with one artifact. |
 | PROJ-008 | Next | Allow reviewed extensions and project packs to add specialized views and workflows without changing core authority. | Versioned extension conformance rejects hidden permissions and incompatible versions. |
-| PROJ-009 | Always | Keep public examples generic; personal project names and private installation data stay in private configuration. | Public-source scan and fixture review contain no personal or private deployment values. |
+| PROJ-009 | Always | Keep public documents, examples, fixtures and handoffs generic; private project names, personal bot display names, machine labels and installation data stay in private configuration. | Public-source scan and fixture review contain none of the owner's private project, bot, machine or deployment names. |
 
 ## 3. Tasks, assignments and orchestration
 
@@ -186,7 +186,7 @@ tested version and limitations.
 | PUB-007 | Always | Require proportional independent review for significant work and final maintainer integration. | Pull request records review scope, corrections, checks and final disposition; authors cannot self-merge. |
 | PUB-008 | Always | Let contributors continue other independent assigned work while review waits. | Workflow rules and capacity enforcement allow non-conflicting concurrent assignments. |
 | PUB-009 | Always | Prefer coherent batches over tiny procedural jobs, commits or scheduled CI runs. | Work packets name a user outcome; CI runs on meaningful contribution events. |
-| PUB-010 | Always | Keep credentials, private installation evidence and personal business data out of public collaboration. | Public history and release scans pass; private reporting uses a separate protected route. |
+| PUB-010 | Always | Keep credentials, private installation evidence, private project names, personal bot display names and personal business data out of public product content. | Current public source and release scans pass; private reporting uses a separate protected route. Historical GitHub authorship remains truthful contribution provenance. |
 
 ## 11. First-release end-to-end acceptance
 

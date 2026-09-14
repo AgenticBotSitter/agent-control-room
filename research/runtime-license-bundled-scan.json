@@ -1,6 +1,6 @@
 {
   "schema": "control-room.runtime-license-bundled-scan/v1",
-  "inventoryDigest": "c88e0a6b6af8a4bec756e837043dd876889a27641136be3ddcb10f3487e27045",
+  "inventoryDigest": "8d3731e9837c7ae309a948327fa08c18027d607503cc701eb4973367c8a9491e",
   "summary": {
     "observed": 39,
     "matched": 33,
@@ -167,13 +167,13 @@
       "package": "control-center",
       "vendorRoot": "third_party",
       "path": "third_party/control-center/NOTICE.md",
-      "bytes": 6382,
-      "sha256": "280cb8a87cc3ab2d04c90af8a30de423b657976fc38aef2638687e5cffd248e1",
+      "bytes": 6380,
+      "sha256": "f003a8d37aaf47fc52a24974c68678b8f83ad11444f7c1358fb1fe8ff3338faf",
       "status": "bundled_evidence_match",
       "evidenceRow": {
         "root": "third_party/control-center",
-        "sha256": "280cb8a87cc3ab2d04c90af8a30de423b657976fc38aef2638687e5cffd248e1",
-        "bytes": 6382
+        "sha256": "f003a8d37aaf47fc52a24974c68678b8f83ad11444f7c1358fb1fe8ff3338faf",
+        "bytes": 6380
       }
     },
     {

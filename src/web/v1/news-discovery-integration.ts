@@ -1,10 +1,10 @@
 import { z } from "zod";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
-import { absFeedJobReferenceSchema, type AbsFeedJobReference } from "../../persistence/pg-boss-abs-feed-worker";
-import { absDiscoveryJobConfigurationSchema } from "../../project-adapters/abs-news/v1/discovery-job-configuration";
-import { AbsFeedPlanStore } from "../../project-adapters/abs-news/v1/feed-plan-store";
-import { createAbsFeedJobExecution } from "../../project-adapters/abs-news/v1/feed-job-execution";
-import type { AbsCurrentSourceAuthority } from "../../project-adapters/abs-news/v1/current-source-authority";
+import { newsFeedJobReferenceSchema, type NewsFeedJobReference } from "../../persistence/pg-boss-news-feed-worker";
+import { newsDiscoveryJobConfigurationSchema } from "../../project-adapters/news/v1/discovery-job-configuration";
+import { NewsFeedPlanStore } from "../../project-adapters/news/v1/feed-plan-store";
+import { createNewsFeedJobExecution } from "../../project-adapters/news/v1/feed-job-execution";
+import type { AbsCurrentSourceAuthority } from "../../project-adapters/news/v1/current-source-authority";
 import type { PinnedFetchDependencies } from "../../vendor/control-center/pinned-fetch";
 import { localId } from "../../harness/v1/native-run-identifiers";
 import { sha256Digest } from "../../security";
@@ -12,7 +12,7 @@ import { WebNewsCollectionPlanning } from "./news-collection-planning";
 import { WebNewsCollectionAdmission } from "./news-collection-admission";
 
 const schema = z.object({ tenantId: localId, workspaceId: localId,
-  assignments: z.array(z.object({ configuration: absDiscoveryJobConfigurationSchema,
+  assignments: z.array(z.object({ configuration: newsDiscoveryJobConfigurationSchema,
     nodeId: localId, executorId: localId.refine(value => value !== "executor:unassigned"),
     windowSeconds: z.number().int().min(60).max(3600) }).strict()).min(1).max(100),
 }).strict();
@@ -36,14 +36,14 @@ export function captureNewsDiscoveryConfiguration(value: unknown) {
  * Pass web operations into the private process and collect into the existing news
  * worker; drain that worker before closing these supplied resources. */
 export function createNewsDiscoveryIntegration(value: unknown, databases: { coordinator: DatabaseClient; ingestion: DatabaseClient },
-  keyValue: Uint8Array, submission: { enqueueInSession(tx: DatabaseSession, reference: AbsFeedJobReference): Promise<void> },
+  keyValue: Uint8Array, submission: { enqueueInSession(tx: DatabaseSession, reference: NewsFeedJobReference): Promise<void> },
   source: AbsCurrentSourceAuthority, ports: Required<Pick<PinnedFetchDependencies, "lookup" | "fetch">>, clock: () => number = Date.now) {
   const input = captureNewsDiscoveryConfiguration(value);
   if (!(keyValue instanceof Uint8Array) || keyValue.length !== 32 || databases.coordinator === databases.ingestion)
     throw new Error("news_integration_config_invalid");
   const key = Uint8Array.from(keyValue), keys = new Set<string>();
   const projects = new Map<string, { nodeId: string; executorId: string; configurations: Set<string>;
-    plans: AbsFeedPlanStore; executor: ReturnType<typeof createAbsFeedJobExecution> }>();
+    plans: NewsFeedPlanStore; executor: ReturnType<typeof createNewsFeedJobExecution> }>();
   const web = input.assignments.map(assignment => {
     const { configuration, nodeId, executorId } = assignment, { tenantId, workspaceId, projectId } = configuration;
     const sourceId = configuration.source.sourceId, routeKey = JSON.stringify([projectId, sourceId]);
@@ -53,8 +53,8 @@ export function createNewsDiscoveryIntegration(value: unknown, databases: { coor
     const existing = projects.get(projectId);
     if (existing && (existing.nodeId !== nodeId || existing.executorId !== executorId)) throw new Error("news_integration_assignment_conflict");
     const project = existing ?? { nodeId, executorId, configurations: new Set<string>(),
-      plans: new AbsFeedPlanStore(databases.coordinator, { tenantId, workspaceId, projectId }, key),
-      executor: createAbsFeedJobExecution(databases, scope, key, source, clock, undefined, ports) };
+      plans: new NewsFeedPlanStore(databases.coordinator, { tenantId, workspaceId, projectId }, key),
+      executor: createNewsFeedJobExecution(databases, scope, key, source, clock, undefined, ports) };
     project.configurations.add(sha256Digest(configuration)); projects.set(projectId, project);
     const planning = new WebNewsCollectionPlanning(databases.coordinator,
       { configuration, executorId, windowSeconds: assignment.windowSeconds }, key, clock);
@@ -69,10 +69,10 @@ export function createNewsDiscoveryIntegration(value: unknown, databases: { coor
   return Object.freeze({ web: Object.freeze(web),
     async collect(value: unknown, signal: AbortSignal) {
       signal.throwIfAborted();
-      const reference = absFeedJobReferenceSchema.parse(value), project = projects.get(reference.projectId);
+      const reference = newsFeedJobReferenceSchema.parse(value), project = projects.get(reference.projectId);
       if (reference.tenantId !== input.tenantId || !project) throw new Error("news_integration_route_unavailable");
       const work = await project.plans.get(reference.jobId); signal.throwIfAborted();
-      if (!work || work.plan.schema !== "control-room.abs-discovery-plan/v1"
+      if (!work || work.plan.schema !== "control-room.news-discovery-plan/v1"
         || !project.configurations.has(sha256Digest(work.plan.configuration))) throw new Error("news_integration_plan_unavailable");
       return project.executor.collect(reference, signal);
     },

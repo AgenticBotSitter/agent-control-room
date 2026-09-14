@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { extractArticleText, articleExtractionLimits } from "../src/project-adapters/abs-news/v1/article-extraction.mjs";
-import { extractArticleBounded } from "../src/project-adapters/abs-news/v1/article-extraction-runtime.mjs";
+import { extractArticleText, articleExtractionLimits } from "../src/project-adapters/news/v1/article-extraction.mjs";
+import { extractArticleBounded } from "../src/project-adapters/news/v1/article-extraction-runtime.mjs";
 
 test("selected extractor returns source-bound text, not HTML", () => {
   const paragraph = "This synthetic article describes how a reader can compare several useful tools and save the research findings. ".repeat(12);

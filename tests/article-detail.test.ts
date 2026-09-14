@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildAbsNewsStoryV1 } from "../src/project-adapters/abs-news/v1/story";
-import { readNewsArticleDetail } from "../src/project-adapters/abs-news/v1/article-detail";
+import { buildNewsStoryV1 } from "../src/project-adapters/news/v1/story";
+import { readNewsArticleDetail } from "../src/project-adapters/news/v1/article-detail";
 
 const digest = `sha256:${"a".repeat(64)}`;
 function fixture(projectId = "project:article") {
-  return buildAbsNewsStoryV1({ tenantId: "tenant:fixture", workspaceId: "workspace:fixture", projectId,
+  return buildNewsStoryV1({ tenantId: "tenant:fixture", workspaceId: "workspace:fixture", projectId,
     storyId: "story:fixture", clusterId: "cluster:fixture", queue: "important_now", title: "Synthetic article",
     summary: "Synthetic fixture summary", canonicalUrl: "https://example.invalid/article", sourceLabel: "Fixture",
     discoveredAt: "2026-09-08T00:00:00.000Z", lastVerifiedAt: "2026-09-08T00:00:00.000Z", verificationState: "verified",

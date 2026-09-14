@@ -17,10 +17,10 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 
 // Generated from public migrations 0001-0076, including generic external-content
 // migrations 0025/0026. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "2058d4ae10e2d7c62d5e6f2ae7b1d5a7de99f7721dc34163d5ec32de31fa2cfe";
+export const privateWebSchemaDigest = "bae881d90c8081cdc3e56062b8228bf623258a8057e902b5cb74e739dabce682";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "control_schedules", "control_schedule_occurrences",
-  "control_abs_story_versions", "control_abs_source_observations", "control_abs_source_settings", "control_abs_story_archives", "control_abs_article_details",
+  "control_news_story_versions", "control_news_source_observations", "control_news_source_settings", "control_news_story_archives", "control_news_article_details",
   "control_idea_sessions", "control_idea_contributions", "control_idea_syntheses", "control_idea_decisions", "control_idea_bot_run_events",
   "adapter_registry", "projects", "control_manual_project_heads", "control_web_project_commands", "audit_events",
   "control_audit_chain_heads", "control_project_lifecycle_events", "control_policy_decisions", "control_connection_registry_heads",
@@ -32,7 +32,7 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_work_resources", "control_attempt_resource_admissions", "control_attempt_resource_scopes"] as const;
 const inserts = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
-  "control_jobs", "control_web_task_commands", "control_completion_gate_records", "control_web_task_review_commands", "control_abs_source_settings", "control_abs_story_archives",
+  "control_jobs", "control_web_task_commands", "control_completion_gate_records", "control_web_task_review_commands", "control_news_source_settings", "control_news_story_archives",
   "control_policy_decisions", "control_project_lifecycle_events", "control_project_coordinator_heads",
   "control_project_delegation_policies"]);
 const updates: Record<string, readonly string[]> = {
@@ -61,16 +61,16 @@ const ideaRuntimeReads = ["workspaces", "control_identities", "control_role_gran
   "control_idea_contributions", "control_idea_bot_run_events", "control_idea_decisions"];
 const ideaRuntimeInserts = new Set(["control_idea_contributions", "control_idea_bot_run_events"]);
 const ideaRuntimeUpdates: Record<string, readonly string[]> = { workspaces: ["web_lock"] };
-const newsIngestionReads = ["workspaces", "projects", "control_identities", "control_role_grants", "control_abs_story_versions", "control_abs_source_observations", "control_abs_discovery_baselines", "control_abs_source_settings", "control_abs_story_archives", "control_abs_article_details"];
-const newsIngestionInserts = new Set(["control_abs_story_versions", "control_abs_source_observations", "control_abs_discovery_baselines", "control_abs_article_details"]);
+const newsIngestionReads = ["workspaces", "projects", "control_identities", "control_role_grants", "control_news_story_versions", "control_news_source_observations", "control_news_discovery_baselines", "control_news_source_settings", "control_news_story_archives", "control_news_article_details"];
+const newsIngestionInserts = new Set(["control_news_story_versions", "control_news_source_observations", "control_news_discovery_baselines", "control_news_article_details"]);
 const newsIngestionUpdates: Record<string, readonly string[]> = { workspaces: ["web_lock"], projects: ["coordinator_lock"] };
 const newsCoordinatorReads = ["tenants", "workspaces", "projects", "control_manual_project_heads", "control_identities", "control_role_grants",
   "control_web_sessions", "control_requests", "control_workflows", "control_jobs", "control_attempts", "control_leases", "control_nodes",
   "control_job_dependencies", "control_transition_events", "control_outbox", "control_approvals", "control_effect_intents",
-  "control_approval_consumptions", "control_policy_decisions", "control_abs_feed_plans", "control_abs_source_settings", "audit_events", "control_audit_chain_heads"];
+  "control_approval_consumptions", "control_policy_decisions", "control_news_feed_plans", "control_news_source_settings", "audit_events", "control_audit_chain_heads"];
 const newsCoordinatorInserts = new Set(["control_web_sessions", "control_requests", "control_workflows", "control_jobs", "control_attempts",
   "control_leases", "control_transition_events", "control_outbox", "control_approvals", "control_effect_intents", "control_approval_consumptions",
-  "control_policy_decisions", "control_abs_feed_plans", "audit_events", "control_audit_chain_heads"]);
+  "control_policy_decisions", "control_news_feed_plans", "audit_events", "control_audit_chain_heads"]);
 const newsCoordinatorUpdates: Record<string, readonly string[]> = {
   ...Object.fromEntries(["control_jobs", "control_attempts", "control_leases", "control_approvals", "control_effect_intents"].map(table => [table, ["state", "version", "payload", "updated_at"]])),
   ...Object.fromEntries(["tenants", "projects", "control_manual_project_heads", "control_nodes"].map(table => [table, ["coordinator_lock"]])),

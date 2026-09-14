@@ -2,10 +2,10 @@
   "schema": "control-room.runtime-license-artifact-inventory/v1",
   "manifestSha256": "7c018840b9afe24c76cc23bf1b28ce2b35c14417b045278b65e92f892f56be08",
   "lockSha256": "6fdb15b4d7cea20edc11feeadaea07aabb7a6ccbcf7a40d0c75c130b535299f9",
-  "inventoryDigest": "c88e0a6b6af8a4bec756e837043dd876889a27641136be3ddcb10f3487e27045",
+  "inventoryDigest": "8d3731e9837c7ae309a948327fa08c18027d607503cc701eb4973367c8a9491e",
   "completeDistributionClearance": true,
   "scope": "complete for the declared artifact inputs only; #64 independently verifies the assembled release tree",
-  "repository": "cr-license-closure",
+  "repository": "cr-issue-163",
   "installed": {
     "count": 193,
     "rootTextCollected": 189,
@@ -3267,8 +3267,8 @@
           },
           {
             "file": "NOTICE.md",
-            "bytes": 6382,
-            "sha256": "280cb8a87cc3ab2d04c90af8a30de423b657976fc38aef2638687e5cffd248e1"
+            "bytes": 6380,
+            "sha256": "f003a8d37aaf47fc52a24974c68678b8f83ad11444f7c1358fb1fe8ff3338faf"
           }
         ],
         "discoveredFiles": [
@@ -3279,8 +3279,8 @@
           },
           {
             "file": "NOTICE.md",
-            "bytes": 6382,
-            "sha256": "280cb8a87cc3ab2d04c90af8a30de423b657976fc38aef2638687e5cffd248e1"
+            "bytes": 6380,
+            "sha256": "f003a8d37aaf47fc52a24974c68678b8f83ad11444f7c1358fb1fe8ff3338faf"
           }
         ],
         "mismatches": [],

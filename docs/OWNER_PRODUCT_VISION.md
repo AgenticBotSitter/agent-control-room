@@ -265,6 +265,9 @@ status, evidence and decisions.
 - GitHub is the shared build desk until Control Room can run this workflow itself.
   Claims, progress, blockers, reviews and handoffs stay with the issue or pull request
   so the owner is not a message courier.
+- Public product documents, examples, fixtures and saved handoffs use generic project
+  and worker roles. They do not publish the owner's private project names, bot display
+  names, machine names or private installation labels.
 - Prefer a few substantial, coherent submissions over dozens of tiny jobs or commits.
   Automated checks run on meaningful pushes and pull requests, not wasteful schedules.
 - The lead maintainer settles architecture, security and final integration. Other
@@ -325,6 +328,8 @@ restarting broad comparisons. Important directions include:
 - Do not create a separate private codebase for the owner.
 - Do not use the public project domain as the private application login.
 - Do not publish the private hostname or link to it from the public site.
+- Do not publish private project names or personal bot display names in product
+  documentation, examples, fixtures or handoff artifacts.
 - Do not build a custom username/password or MFA system when Cloudflare Access meets
   the requirement.
 - Do not use AWS RDS for the selected deployment.

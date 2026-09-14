@@ -6,17 +6,17 @@ import { CanonicalStore } from "../../persistence/canonical-store";
 import { effectIntentRecordSchema, jobRecordSchema } from "../../domain/v1";
 import { newsCollectionState, newsCollectionStatusSchema, newsCollectionHistorySchema } from "./news-collection-status-wire";
 import { appendAuditWith } from "../../audit/audit-store";
-import { absFeedCollectionConfigurationSchema } from "../../project-adapters/abs-news/v1/feed-collection";
-import { absDiscoveryJobConfigurationSchema } from "../../project-adapters/abs-news/v1/discovery-job-configuration";
-import { PostgresNewsSourceSettings } from "../../project-adapters/abs-news/v1/source-settings";
-import { AbsFeedPlanStore } from "../../project-adapters/abs-news/v1/feed-plan-store";
-import { buildAbsFeedProposedWork } from "../../project-adapters/abs-news/v1/feed-job-plan";
+import { newsFeedCollectionConfigurationSchema } from "../../project-adapters/news/v1/feed-collection";
+import { newsDiscoveryJobConfigurationSchema } from "../../project-adapters/news/v1/discovery-job-configuration";
+import { PostgresNewsSourceSettings } from "../../project-adapters/news/v1/source-settings";
+import { NewsFeedPlanStore } from "../../project-adapters/news/v1/feed-plan-store";
+import { buildNewsFeedProposedWork } from "../../project-adapters/news/v1/feed-job-plan";
 import { WebSessionAuthority } from "./session-authority";
 import { WebProjectService } from "./project-service";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 
 const inputSchema = z.object({ sourceDigest: digestSchema, idempotencyKey: localId.refine(value => value.length >= 12) }).strict();
-const templateSchema = z.object({ configuration: z.union([absFeedCollectionConfigurationSchema, absDiscoveryJobConfigurationSchema]),
+const templateSchema = z.object({ configuration: z.union([newsFeedCollectionConfigurationSchema, newsDiscoveryJobConfigurationSchema]),
   executorId: localId.refine(value => value !== "executor:unassigned"), windowSeconds: z.number().int().min(60).max(3600) }).strict();
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: work => work(tx),
   transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); await check(); return result; } });
@@ -67,14 +67,14 @@ export class WebNewsCollectionPlanning {
       actor.require("tasks.read", projectId);
       await this.projects.getViewInSession(tx, actor, projectId);
       const result = { projectId, sourceId: source.sourceId, configured: true, observedAt: actor.now };
-      const db = joined(tx), plans = new AbsFeedPlanStore(db, { tenantId, workspaceId, projectId }, this.key);
+      const db = joined(tx), plans = new NewsFeedPlanStore(db, { tenantId, workspaceId, projectId }, this.key);
       let selected = jobId;
       if (selected === undefined) {
         // Source identity and ordering live in signed plans. Filtering unsigned
         // JSON first could hide corrupted work. Refuse an incomplete inventory;
         // exact-job reads remain available for larger histories.
         const candidates = (await tx.query<{ job_id: string }>(
-          "SELECT job_id FROM control_abs_feed_plans WHERE tenant_id=$1 AND workspace_id=$2 AND project_id=$3 LIMIT 101",
+          "SELECT job_id FROM control_news_feed_plans WHERE tenant_id=$1 AND workspace_id=$2 AND project_id=$3 LIMIT 101",
           [tenantId, workspaceId, projectId])).rows;
         if (candidates.length > 100) throw new Error("news_collection_history_requires_exact_job");
         let latest: { id: string; createdAt: string } | undefined;
@@ -96,10 +96,10 @@ export class WebNewsCollectionPlanning {
       if (!work || work.plan.configuration.source.sourceId !== source.sourceId) throw new WebAccessError("not_found");
       const canonical = new CanonicalStore(db), job = jobRecordSchema.parse(await canonical.get(tenantId, "job", selected));
       const suffix = sha256Digest({ tenantId, projectId, jobId: selected, inputDigest: work.job.inputDigest }).slice(7, 47);
-      const rawEffect = await canonical.get(tenantId, "effect_intent", `effect:abs-feed:${suffix}`);
+      const rawEffect = await canonical.get(tenantId, "effect_intent", `effect:news-feed:${suffix}`);
       const effect = rawEffect ? effectIntentRecordSchema.parse(rawEffect) : null;
-      if (effect && (effect.tenantId !== tenantId || effect.jobId !== selected || effect.attemptId !== `attempt:abs-feed:${suffix}`
-        || effect.approvalId !== `approval:abs-feed:${suffix}` || effect.idempotencyKey !== `abs-feed-effect:${suffix}`
+      if (effect && (effect.tenantId !== tenantId || effect.jobId !== selected || effect.attemptId !== `attempt:news-feed:${suffix}`
+        || effect.approvalId !== `approval:news-feed:${suffix}` || effect.idempotencyKey !== `news-feed-effect:${suffix}`
         || effect.operation !== work.job.authority.allowedOperations[0] || effect.destination !== work.job.authority.allowedNetworkDestinations[0]
         || effect.operationDigest !== computeEffectOperationDigest(effect, projectId)
         || effect.state === "confirmed" && !digestSchema.safeParse(effect.destinationReceipt).success))
@@ -116,11 +116,11 @@ export class WebNewsCollectionPlanning {
       actor.require("tasks.read", projectId);
       await this.projects.getViewInSession(tx, actor, projectId);
       const candidates = (await tx.query<{ job_id: string }>(
-        `SELECT job_id FROM control_abs_feed_plans WHERE tenant_id=$1 AND workspace_id=$2 AND project_id=$3
+        `SELECT job_id FROM control_news_feed_plans WHERE tenant_id=$1 AND workspace_id=$2 AND project_id=$3
          AND ($4::text IS NULL OR job_id COLLATE "C">$4::text COLLATE "C")
          ORDER BY job_id COLLATE "C" ASC LIMIT 26`,
         [tenantId, workspaceId, projectId, after ?? null])).rows;
-      const page = candidates.slice(0, 25), plans = new AbsFeedPlanStore(joined(tx), { tenantId, workspaceId, projectId }, this.key);
+      const page = candidates.slice(0, 25), plans = new NewsFeedPlanStore(joined(tx), { tenantId, workspaceId, projectId }, this.key);
       const entries: { jobId: string; createdAt: string }[] = [];
       for (const row of page) {
         const work = await plans.get(row.job_id);
@@ -151,7 +151,7 @@ export class WebNewsCollectionPlanning {
           throw new WebAccessError("conflict");
       }
       const suffix = sha256Digest({ tenantId, workspaceId, projectId, ownerId: actor.id, requestKey: input.idempotencyKey }).slice(7, 47);
-      const jobId = `job:abs-feed:${suffix}`, store = new AbsFeedPlanStore(joined(tx), { tenantId, workspaceId, projectId }, this.key);
+      const jobId = `job:news-feed:${suffix}`, store = new NewsFeedPlanStore(joined(tx), { tenantId, workspaceId, projectId }, this.key);
       const prior = await store.get(jobId);
       if (prior) {
         if (sha256Digest(prior.plan.configuration) !== sha256Digest(configuration) || prior.request.requestedBy.actorId !== actor.id
@@ -160,12 +160,12 @@ export class WebNewsCollectionPlanning {
           throw new WebAccessError("conflict");
         return { jobId, inputDigest: prior.job.inputDigest, sourceDigest: input.sourceDigest, replayed: true, startsWork: false as const };
       }
-      const work = buildAbsFeedProposedWork({ plan: { schema: "limits" in configuration ? "control-room.abs-discovery-plan/v1" : "control-room.abs-feed-plan/v1", jobId, configuration, plannedAt: actor.now },
-        requestId: `request:abs-feed:${suffix}`, workflowId: `workflow:abs-feed:${suffix}`, ownerId: actor.id, executorId,
+      const work = buildNewsFeedProposedWork({ plan: { schema: "limits" in configuration ? "control-room.news-discovery-plan/v1" : "control-room.news-feed-plan/v1", jobId, configuration, plannedAt: actor.now },
+        requestId: `request:news-feed:${suffix}`, workflowId: `workflow:news-feed:${suffix}`, ownerId: actor.id, executorId,
         expiresAt: new Date(Date.parse(actor.now) + windowSeconds * 1000).toISOString() });
       await store.saveProposed(work);
-      await appendAuditWith(tx, { id: `audit:abs-feed-plan:${suffix}`, tenantId, workspaceId, actorId: actor.id, actorType: "human",
-        action: "tasks.propose", targetType: "job", targetId: jobId, idempotencyKey: `abs-feed-plan:${suffix}`, occurredAt: actor.now,
+      await appendAuditWith(tx, { id: `audit:news-feed-plan:${suffix}`, tenantId, workspaceId, actorId: actor.id, actorType: "human",
+        action: "tasks.propose", targetType: "job", targetId: jobId, idempotencyKey: `news-feed-plan:${suffix}`, occurredAt: actor.now,
         safeMetadata: { inputDigest: work.job.inputDigest, sourceDigest: input.sourceDigest, startsWork: false } });
       return { jobId, inputDigest: work.job.inputDigest, sourceDigest: input.sourceDigest, replayed: false, startsWork: false as const };
     });
