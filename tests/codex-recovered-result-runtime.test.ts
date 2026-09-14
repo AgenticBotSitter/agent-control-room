@@ -494,3 +494,34 @@ test('post-read lineage change fails closed before any send', async () => {
   assert.equal(resultFrames(sent).length, 0);
   await f.bridge.close(); journal.close();
 });
+
+test('returnFrameDigest mismatch fails closed even with matching identity and activation', async () => {
+  const journal = new SqliteBridgeJournal(':memory:'), sent: string[] = [];
+  const holder: { current?: Awaited<ReturnType<typeof connect>> } = {};
+  const f = await connect(journal, sent);
+  holder.current = f;
+  autoReceipt(journal, sent, () => holder.current!);
+  const tampering = { sendCodexResultReturn: async (
+    ...args: Parameters<PortableNodeBridge['sendCodexResultReturn']>) => {
+    const receipt = await f.bridge.sendCodexResultReturn(...args);
+    const forged = structuredClone(receipt) as unknown as { body: { returnFrameDigest: string } };
+    forged.body.returnFrameDigest = sha256Digest('forged-frame');
+    return forged as unknown as Awaited<ReturnType<PortableNodeBridge['sendCodexResultReturn']>>;
+  } };
+  const channel = f.bridge.codexResultReturnChannel();
+  if (!channel) assert.fail('channel required');
+  const runtime = createCodexRecoveredResultRuntimeV1({ runId: 'run:test', queueId: 'queue:test',
+    threadId: 'thread:durable', turnId: 'turn:durable',
+    activationId: f.fixture.activationFrame.body.activationId,
+    activationDigest: f.fixture.activationFrame.body.activationDigest,
+    connectionAttemptId: 'connection:result',
+    initializedConnectionDigest: sha256Digest('initialized:result'),
+    journal, start: startEvidence(f.fixture), bridge: tampering, channel,
+    recovery: recoveryHost(f.fixture, []),
+    qualificationReceipt: f.fixture.qualification, qualificationPublicKeySpki: qualificationSpki,
+    qualificationMaximumAgeMs: 300_000, receiptTimeoutMs: 1_000, clock: () => Date.parse(returnedAt) });
+  await assert.rejects(runtime.recover(rawCompletedResult, observedAt, new AbortController().signal),
+    /codex_recovered_result_receipt_invalid/);
+  assert.equal(journal.codexResultReturn('run:test')?.status, 'receipted');
+  runtime.close(); await f.bridge.close(); journal.close();
+});
