@@ -9,7 +9,7 @@ import {
   existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 // Same shapes the accepted inbox client enforces, so a watcher and the inbox agree on what
 // a valid worker ID and repository are.
@@ -92,41 +92,34 @@ function readMarker(directory) {
   }
 }
 
-// Paths this tool wrote OUTSIDE its own directory. The marker is a plain file that anyone who can
-// write the runtime directory can edit, so it is NOT trusted input: an entry is honoured only if it
-// is an absolute path whose basename is exactly the signal name for the marker's own worker. That
-// keeps a hand-edited marker from turning uninstall into a delete-anything tool. Entries that fail
-// this are reported rather than silently dropped.
-function externalSignalEntries(marker) {
-  // Everything listed is kept for reporting, including entries of the wrong type: a marker with
-  // junk in it is exactly what an operator needs to be told about.
-  const listed = Array.isArray(marker?.externalSignals) ? marker.externalSignals : [];
-  const expected = typeof marker?.workerId === "string" && WORKER_ID_PATTERN.test(marker.workerId)
-    ? `${workerSlug(marker.workerId)}.signal`
-    : undefined;
-  const accepted = listed.filter(entry =>
-    typeof entry === "string" && entry.length > 0
-    && expected !== undefined && isAbsolute(entry) && basename(entry) === expected);
-  return { accepted, rejected: listed.filter(entry => !accepted.includes(entry)) };
+// Where the optional extra signal was written. This is a HINT for messages only, NEVER an
+// authorisation: anything able to write the marker could otherwise point a path of its choosing at
+// cleanup and have uninstall delete it. Removal is driven by the operator naming the directory on
+// the uninstall command, so the target comes from the caller rather than from state on disk.
+export function recordedExternalSignals(directory) {
+  const marker = readMarker(directory);
+  return Array.isArray(marker?.externalSignals) ? marker.externalSignals : [];
 }
+
+// The atomic writer's temporary files. A process killed between the write and the rename leaves one
+// behind, and because it is not a named entry uninstall would preserve it - which makes the runtime
+// directory permanently unremovable. These exact name shapes are therefore owned too.
+const TEMPORARY_NAME_PATTERN = /^(?:state\.json|signal\.json|worker-inbox-platform\.marker)\.\d+\.tmp$/;
 
 export function isOwnedDirectory(directory) {
   return readMarker(directory)?.version === RUNTIME_VERSION;
 }
 
-// Records a signal file written outside the runtime directory, so uninstall can remove it. Without
-// this the optional extra signal - which exists precisely so another process can watch a known path
-// - would be orphaned by every uninstall. Idempotent: recording the same path twice is a no-op.
+// Records where the extra signal was written, so the uninstall message can tell the operator which
+// directory to name. It authorises nothing: see recordedExternalSignals above.
 export function recordExternalSignal(directory, signalPath) {
   const marker = readMarker(directory);
   if (marker?.version !== RUNTIME_VERSION) {
     throw new Error("worker_inbox_runtime_directory_not_owned");
   }
-  const recorded = externalSignalEntries(marker);
-  if (recorded.accepted.includes(signalPath)) return false;
-  writeJsonAtomic(markerFile(directory), {
-    ...marker, externalSignals: [...recorded.accepted, signalPath],
-  });
+  const recorded = Array.isArray(marker.externalSignals) ? marker.externalSignals : [];
+  if (recorded.includes(signalPath)) return false;
+  writeJsonAtomic(markerFile(directory), { ...marker, externalSignals: [...recorded, signalPath] });
   return true;
 }
 
@@ -208,15 +201,32 @@ export function readSignal(file) {
 // Removes only what this tool created. A directory without the ownership marker is refused
 // outright, and unrecognised files inside an owned directory are preserved and reported
 // rather than deleted.
-export function removeOwnedFiles(directory, { dryRun = false } = {}) {
+export function removeOwnedFiles(directory, { dryRun = false, externalFiles = [] } = {}) {
+  // Caller-named external files are handled even when the runtime directory is already gone. The
+  // normal sequence is to run uninstall once - which reports which directory to name - and then
+  // again with the flag, by which point the runtime directory has been removed. Returning early
+  // without honouring the flag would make the printed hint impossible to act on.
+  //
+  // Nothing recorded on disk authorises this: the list comes from the operator's own command, and
+  // that is the whole point. A file anything with write access can edit must never be able to make
+  // cleanup delete a path of its choosing.
+  const removeExternal = () => {
+    const done = [];
+    for (const target of externalFiles) {
+      if (!existsSync(target)) continue;
+      if (!dryRun) rmSync(target, { force: true });
+      done.push(target);
+    }
+    return done;
+  };
   if (!existsSync(directory)) {
-    return { refused: false, missing: true, removed: [], preserved: [], rejectedExternalSignals: [] };
+    return { refused: false, missing: true, removed: removeExternal(), preserved: [] };
   }
   const marker = readMarker(directory);
   if (marker?.version !== RUNTIME_VERSION) {
+    // Refused means nothing was touched, so the caller-named files are left alone too.
     return {
-      refused: true, reason: "worker_inbox_runtime_directory_not_owned",
-      removed: [], preserved: [], rejectedExternalSignals: [],
+      refused: true, reason: "worker_inbox_runtime_directory_not_owned", removed: [], preserved: [],
     };
   }
   const removed = [];
@@ -226,22 +236,20 @@ export function removeOwnedFiles(directory, { dryRun = false } = {}) {
     if (!dryRun) rmSync(target, { recursive: true, force: true });
     removed.push(name);
   }
-  // Files written outside this directory - the optional extra signal - are recorded in the marker
-  // when they are written. Only the exact recorded file paths are removed; the containing directory
-  // is never touched, because this tool did not create it. A recorded path that has since been
-  // deleted by the operator is skipped rather than reported as removed.
-  const external = externalSignalEntries(marker);
-  for (const target of external.accepted) {
-    if (!existsSync(target)) continue;
-    if (!dryRun) rmSync(target, { force: true });
-    removed.push(target);
+  // A temporary file left behind by a process killed mid-write is owned too, so a crash cannot leave
+  // the runtime directory permanently unremovable.
+  for (const name of readdirSync(directory).filter(entry => TEMPORARY_NAME_PATTERN.test(entry))) {
+    if (!dryRun) rmSync(join(directory, name), { force: true });
+    removed.push(name);
   }
+  // Files this tool wrote outside its own directory, named by the operator on this command.
+  removed.push(...removeExternal());
   // Compare bare directory entry names, not paths: markerFile() returns a full path, so
   // comparing it to readdirSync() output would classify our own marker as a foreign file
-  // and the directory could never be cleaned up. Owned entries are excluded too, so a dry
-  // run does not report something as both removable and preserved.
+  // and the directory could never be cleaned up. Owned entries and owned temporaries are
+  // excluded too, so a dry run does not report something as both removable and preserved.
   const preserved = readdirSync(directory).filter(name =>
-    name !== MARKER_FILE && !OWNED_ENTRIES.includes(name));
+    name !== MARKER_FILE && !OWNED_ENTRIES.includes(name) && !TEMPORARY_NAME_PATTERN.test(name));
   let directoryRemoved = false;
   if (!dryRun && preserved.length === 0) {
     try {
@@ -255,5 +263,5 @@ export function removeOwnedFiles(directory, { dryRun = false } = {}) {
       preserved.push(directory);
     }
   }
-  return { refused: false, missing: false, removed, preserved, directoryRemoved, rejectedExternalSignals: external.rejected };
+  return { refused: false, missing: false, removed, preserved, directoryRemoved };
 }

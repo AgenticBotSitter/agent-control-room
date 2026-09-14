@@ -79,6 +79,20 @@ launchd agent, enables a systemd timer, or registers a Windows task.
 
 Run any command with `--help` for the full flag list.
 
+Cleanup removes only what this tool created. One file is deliberately excluded: if the watcher
+was given `--signal-directory DIR`, the extra signal file lives outside the runtime directory,
+and it is removed **only** when you name that directory on the uninstall command:
+
+```bash
+node scripts/worker-inbox-platform/worker-inbox-uninstall.mjs \
+  --worker-id YOUR-STABLE-WORKER-ID --signal-directory DIR
+```
+
+Run uninstall without the flag and it prints the directory to pass. This is on purpose: the
+ownership marker records where the file went, but recorded state never authorises a deletion.
+Anything able to write that marker could otherwise aim cleanup at a file of its own choosing.
+Naming the directory yourself is what makes the removal your decision.
+
 ## When does it signal?
 
 It fingerprints the whole assignment as the accepted inbox client reports it — every field of
@@ -178,6 +192,10 @@ node scripts/worker-inbox-platform/worker-inbox-uninstall.mjs --worker-id YOUR-S
 Cleanup removes only what this tool created. A directory without the ownership marker is
 refused outright (exit `3`), and any file inside an owned directory that this tool did not
 create is preserved and reported rather than deleted. Use `--dry-run` to see the list first.
+
+If a `--signal-directory` was configured, add `--signal-directory DIR` here to remove the extra
+signal file as well. Without it the file is left alone and the command prints the directory to
+name — see the note above.
 
 ## Platforms
 

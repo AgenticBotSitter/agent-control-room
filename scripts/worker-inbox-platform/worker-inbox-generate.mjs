@@ -4,7 +4,7 @@
 // text files into an output directory and prints the instructions for the operator. Actual
 // native scheduler installation is separately authorized and is not performed or claimed
 // here.
-import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -61,7 +61,9 @@ export function usage() {
     "  --repository OWNER/NAME   Default AgenticBotSitter/agent-control-room.",
     "  --out DIR                 Where to write artifacts. Must be the worker runtime directory's",
     "                            generated/ subdirectory, or a path inside it, because that is the",
-    "                            only location uninstall can clean up.",
+    "                            only location uninstall can clean up. It must be a real directory:",
+    "                            a symlink there is refused, since cleanup would remove the link and",
+    "                            leave the artifacts behind.",
     "  --runtime-root DIR        Where state, logs and signals live.",
     "  --signal-directory DIR    Optional extra directory for the signal file.",
     "  --interval SECONDS        Poll interval written into the definition (default 300).",
@@ -116,6 +118,16 @@ export function generate({ options: provided = {}, scriptPath, nodePath, now = (
   mkdirSync(ownedArtifactDirectory, { recursive: true });
   const createdHere = !existsSync(artifactDirectory);
   mkdirSync(artifactDirectory, { recursive: true });
+  // The output directory must be a real directory, not a symlink. A symlink at generated/ passes
+  // every lexical test and, when it points inside the runtime directory, even the realpath test -
+  // while uninstall would remove only the LINK and leave the artifacts it points at behind, so the
+  // writes would be owned by nothing. Refusing symlinks outright is simpler to reason about than
+  // trying to resolve one safely. The runtime directory itself may still be reached through a
+  // symlink: this checks the final component only.
+  if (lstatSync(artifactDirectory).isSymbolicLink()) {
+    if (createdHere) rmSync(artifactDirectory, { recursive: true, force: true });
+    throw new Error("worker_inbox_platform_out_directory_symlinked");
+  }
   if (!isWithin(realpathSync(artifactDirectory), realpathSync(runtimeDirectory))) {
     if (createdHere) rmSync(artifactDirectory, { recursive: true, force: true });
     throw new Error("worker_inbox_platform_out_directory_not_owned");
@@ -157,7 +169,15 @@ export function generate({ options: provided = {}, scriptPath, nodePath, now = (
     }
     instructions.push({ platform, artifactDirectory, text: instructionsFor({
       platform, workerId, artifactDirectory, runtimeDirectory, repository,
+      signalDirectory: options.signalDirectory,
     }) });
+  }
+  // Re-check containment after writing. Checking a path and then writing to it are separate
+  // operations, so a concurrent process could replace the directory with a symlink in between; this
+  // cannot be made race-free in plain Node, but a run that has been redirected must fail loudly
+  // rather than report success. The honest boundary is documented in the README.
+  if (!isWithin(realpathSync(artifactDirectory), realpathSync(runtimeDirectory))) {
+    throw new Error("worker_inbox_platform_out_directory_not_owned");
   }
   return { workerId, repository, runtimeDirectory, artifactDirectory, written, instructions };
 }

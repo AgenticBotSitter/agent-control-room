@@ -3,9 +3,10 @@
 // The runtime directory must carry this tool's ownership marker, or nothing is removed.
 // Unrecognised files inside an owned directory are preserved and reported, so a stray file
 // an operator put there by hand is never destroyed by cleanup.
+import { basename, dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { assertWorkerId, removeOwnedFiles, workerDirectory } from "./lib/runtime.mjs";
+import { assertWorkerId, recordedExternalSignals, removeOwnedFiles, workerDirectory, workerSlug } from "./lib/runtime.mjs";
 
 export const EXIT_OK = 0;
 export const EXIT_CONFIG = 1;
@@ -17,6 +18,7 @@ export function argumentsFor(argv) {
     const flag = argv[index];
     if (flag === "--worker-id") options.workerId = argv[++index];
     else if (flag === "--runtime-root") options.runtimeRoot = argv[++index];
+    else if (flag === "--signal-directory") options.signalDirectory = argv[++index];
     else if (flag === "--dry-run") options.dryRun = true;
     else if (flag === "--json") options.json = true;
     else if (flag === "--help") options.help = true;
@@ -34,23 +36,44 @@ export function usage() {
     "Options:",
     "  --worker-id ID       Stable worker ID (required).",
     "  --runtime-root DIR   Runtime directory to clean.",
+    "  --signal-directory DIR",
+    "                       Remove the extra signal file in this directory too. Required for that",
+    "                       file to be removed: the tool will not delete outside its runtime",
+    "                       directory on the strength of recorded state alone.",
     "  --dry-run            Report what would be removed without removing it.",
     "  --json               Print the result as JSON.",
     "  --help               Show this message.",
     "",
     "This does not remove a scheduler entry. Unload it first with the platform command in",
     "the setup instructions, then run this. Files not created by this tool are left alone.",
-    "",
-    "The optional extra signal file is removed only if the ownership marker records its exact",
-    "path and that path is one this tool could have written. Anything else in the marker is",
-    "reported as ignored and left untouched.",
   ].join("\n");
 }
 
 export function uninstall({ options }) {
   const workerId = assertWorkerId(options.workerId);
   const directory = workerDirectory({ workerId, runtimeRoot: options.runtimeRoot });
-  return { workerId, directory, ...removeOwnedFiles(directory, { dryRun: options.dryRun }) };
+  // The extra signal lives outside the runtime directory, and it is removed only when the operator
+  // names that directory on THIS command. The marker records where it was last written, but a file
+  // that anything with write access can edit must never authorise a deletion - so the recorded path
+  // is used only to tell the operator which directory to pass.
+  const named = typeof options.signalDirectory === "string" && options.signalDirectory.trim()
+    ? join(resolve(options.signalDirectory), `${workerSlug(workerId)}.signal`)
+    : undefined;
+  const hinted = named ? [] : recordedExternalSignals(directory)
+    // Filtered to the shape this tool writes, so a tampered marker cannot make the tool advise the
+    // operator to point --signal-directory at an unrelated directory. This is a display filter only:
+    // it decides what to print, never what to delete.
+    .filter(entry => typeof entry === "string" && basename(entry) === `${workerSlug(workerId)}.signal`)
+    .map(entry => dirname(entry));
+  return {
+    workerId,
+    directory,
+    ...removeOwnedFiles(directory, {
+      dryRun: options.dryRun,
+      externalFiles: named ? [named] : [],
+    }),
+    externalSignalDirectories: [...new Set(hinted)],
+  };
 }
 
 function main(argv) {
@@ -75,8 +98,8 @@ function main(argv) {
     // A recorded path that cannot be trusted means the marker has been edited or corrupted. It is
     // reported rather than ignored: silently declining to remove something is exactly the kind of
     // quiet behaviour that leaves an operator unable to explain what their runtime directory holds.
-    for (const name of result.rejectedExternalSignals ?? []) {
-      console.error(`  ignored (not a path this tool could have written): ${JSON.stringify(name)}`);
+    for (const target of result.externalSignalDirectories ?? []) {
+      console.log(`  note: an extra signal was written under "${target}"; re-run with --signal-directory "${target}" to remove it`);
     }
   }
   return result.refused ? EXIT_REFUSED : EXIT_OK;

@@ -726,35 +726,46 @@ test("the extra signal is written whole, recorded, and cleaned up without touchi
   assert.deepEqual(marker.externalSignals, [external],
     "the exact file path must be recorded, not the directory that contains it");
 
-  const removed = uninstall({ options: { workerId: WORKER_ID, runtimeRoot: root } });
-  assert.ok(removed.removed.includes(external), "uninstall must remove the file it recorded");
+  // Nothing on disk authorises the deletion: the operator names the directory on the command. Run
+  // once without it and the file survives, while the operator is told what to pass.
+  const withoutFlag = uninstall({ options: { workerId: WORKER_ID, runtimeRoot: root } });
+  assert.equal(existsSync(external), true, "without --signal-directory the external file must survive");
+  assert.deepEqual(withoutFlag.externalSignalDirectories, [foreign],
+    "and the operator must be told which directory to name");
+
+  // The follow-up run must still work even though the runtime directory has now been removed -
+  // otherwise the hint just printed would be impossible to act on.
+  const withFlag = uninstall({
+    options: { workerId: WORKER_ID, runtimeRoot: root, signalDirectory: foreign },
+  });
+  assert.ok(withFlag.removed.includes(external), "naming the directory must remove the file");
   assert.equal(existsSync(external), false);
   assert.equal(existsSync(foreign), true, "the foreign directory must survive");
   assert.equal(existsSync(operatorFile), true, "another process's file must survive");
 });
 
-test("a hand-edited marker cannot make uninstall delete an unrelated file", (t) => {
+test("a hand-edited marker cannot authorise the deletion of any file", (t) => {
   const root = scratch(t);
   const directory = workerDirectory({ workerId: WORKER_ID, runtimeRoot: root });
   ensureWorkerDirectory(directory, { workerId: WORKER_ID });
 
-  // A file belonging to the operator, with a name this tool never writes.
-  const precious = join(root, "precious.txt");
-  writeFileSync(precious, "do not delete\n", "utf8");
+  // This file matches the tool's own naming exactly, so a basename check alone would call it ours.
+  // Nothing readable off disk may authorise its removal - only the operator's own command can.
+  const elsewhere = join(root, "not-ours");
+  mkdirSync(elsewhere, { recursive: true });
+  const lookalike = join(elsewhere, `${workerSlug(WORKER_ID)}.signal`);
+  writeFileSync(lookalike, "someone else's file\n", "utf8");
 
-  // The marker is a plain file that anything with write access to the runtime directory can edit, so
-  // it is not trustworthy input. Pointing it at files this tool could not have created must not turn
-  // uninstall into a delete-anything tool.
   const marker = JSON.parse(readFileSync(markerFile(directory), "utf8"));
-  marker.externalSignals = [precious, "/etc/hosts", "relative/path.signal", 42];
+  marker.externalSignals = [lookalike, "/etc/hosts", 42];
   writeFileSync(markerFile(directory), `${JSON.stringify(marker, null, 2)}\n`, "utf8");
 
-  const removed = uninstall({ options: { workerId: WORKER_ID, runtimeRoot: root } });
-  assert.equal(existsSync(precious), true, "an unrelated file must survive a tampered marker");
+  const result = uninstall({ options: { workerId: WORKER_ID, runtimeRoot: root } });
+  assert.equal(existsSync(lookalike), true, "recorded state must not authorise a deletion");
   assert.equal(existsSync("/etc/hosts"), true);
-  assert.ok(!removed.removed.includes(precious), "it must not even be reported as removed");
-  assert.deepEqual(removed.rejectedExternalSignals, [precious, "/etc/hosts", "relative/path.signal", 42],
-    "entries that cannot be trusted must be reported rather than silently accepted");
+  assert.ok(!result.removed.includes(lookalike), "and it must not be reported as removed either");
+  assert.deepEqual(result.externalSignalDirectories, [elsewhere],
+    "the marker may only point the operator at a directory they decide to name");
 });
 
 test("a symlinked artifact directory cannot smuggle writes outside the owned directory", (t) => {
@@ -774,10 +785,32 @@ test("a symlinked artifact directory cannot smuggle writes outside the owned dir
       },
       scriptPath: "script.mjs", nodePath: "node",
     }),
-    /worker_inbox_platform_out_directory_not_owned/u,
+    /worker_inbox_platform_out_directory_symlinked/u,
     "a symlinked generated directory must be refused, not written through",
   );
   assert.deepEqual(readdirSync(outside), [], "nothing may be written outside the owned directory");
+});
+
+test("a symlink that stays inside the runtime directory is refused too", (t) => {
+  const root = scratch(t);
+  const directory = workerDirectory({ workerId: WORKER_ID, runtimeRoot: root });
+  const staging = join(directory, "staging");
+  mkdirSync(staging, { recursive: true });
+  // This one resolves INSIDE the runtime directory, so a realpath containment check accepts it - but
+  // uninstall removes the generated/ link itself and would leave these artifacts behind, owned by
+  // nothing. Refusing the link is what keeps the ownership model true.
+  symlinkSync(staging, join(directory, "generated"));
+
+  assert.throws(
+    () => generate({
+      options: {
+        workerId: WORKER_ID, repository: REPOSITORY_NAME, runtimeRoot: root, platform: "launchd",
+      },
+      scriptPath: "script.mjs", nodePath: "node",
+    }),
+    /worker_inbox_platform_out_directory_symlinked/u,
+  );
+  assert.deepEqual(readdirSync(staging), [], "no artifacts may be written through the link");
 });
 
 test("a failed atomic write cleans up its temporary file instead of leaving it unowned", (t) => {
@@ -1080,4 +1113,37 @@ test("a token gh cannot supply fails loudly instead of going anonymous", async (
 
   assert.equal(code, EXIT_CONFIG, "an unusable gh is a configuration failure, not a transient one");
   assert.equal(reads, 0, "it must not fall back to anonymous requests after failing to resolve a token");
+});
+
+// A process killed between the atomic write and its rename leaves a temporary file behind. It is not
+// a named entry, so before this was handled uninstall preserved it and the runtime directory could
+// never be removed at all.
+test("a temporary file left by a killed process does not make the runtime directory unremovable", (t) => {
+  const root = scratch(t);
+  const directory = workerDirectory({ workerId: WORKER_ID, runtimeRoot: root });
+  ensureWorkerDirectory(directory, { workerId: WORKER_ID });
+  const stale = `state.json.${process.pid}.tmp`;
+  writeFileSync(join(directory, stale), "{", "utf8");
+
+  const result = uninstall({ options: { workerId: WORKER_ID, runtimeRoot: root } });
+  assert.ok(result.removed.includes(stale), "the tool's own temporary file must be treated as owned");
+  assert.deepEqual(result.preserved, [], "and must not be reported as a preserved foreign file");
+  assert.equal(existsSync(directory), false, "so the runtime directory can still be cleaned up");
+});
+
+// Uninstall only removes the extra signal when the operator names its directory, so the command the
+// generated instructions print has to carry the flag - otherwise an operator following them to the
+// letter leaves the file behind and is never told why.
+test("the generated uninstall command names the signal directory when one was configured", () => {
+  const base = {
+    platform: "launchd", workerId: WORKER_ID, artifactDirectory: "/tmp/artifacts",
+    runtimeDirectory: "/tmp/runtime", repository: REPOSITORY_NAME,
+  };
+  const configured = instructionsFor({ ...base, signalDirectory: "/tmp/signals" });
+  assert.match(configured,
+    /worker-inbox-uninstall\.mjs --worker-id \S+ --signal-directory "\/tmp\/signals"/u,
+    "the printed uninstall command must carry the flag that makes the removal happen");
+  const plain = instructionsFor(base);
+  assert.doesNotMatch(plain, /--signal-directory/u,
+    "and must not invent a flag for an install that has no extra signal");
 });

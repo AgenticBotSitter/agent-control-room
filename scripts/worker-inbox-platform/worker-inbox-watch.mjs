@@ -12,6 +12,7 @@
 // scheduler artifact. A token is only ever taken from the operator's environment or from
 // `gh auth token`, held in memory for the request, and redacted from any message.
 import { spawnSync } from "node:child_process";
+import { readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -167,6 +168,18 @@ export async function runTick({ options, reader = readWorkerInbox, token, now = 
       // exact path is recorded in the ownership marker, because uninstall removes only what it can
       // prove it created, and would otherwise leave this file behind.
       const externalSignal = join(options.signalDirectory, `${workerSlug(options.workerId)}.signal`);
+      // A process killed mid-write leaves its own temporary file here. This directory is not ours to
+      // sweep at uninstall time (the operator names it explicitly), so the tool tidies its own litter
+      // as it goes instead of accumulating it.
+      try {
+        for (const stale of readdirSync(options.signalDirectory)) {
+          if (stale.startsWith(`${workerSlug(options.workerId)}.signal.`) && stale.endsWith(".tmp")) {
+            rmSync(join(options.signalDirectory, stale), { force: true });
+          }
+        }
+      } catch {
+        // The directory may not exist yet; writeJsonAtomic creates it below.
+      }
       // Record BEFORE writing. If the process dies between the two, a recorded path that does not
       // exist is harmless - uninstall skips missing files - whereas a written file that was never
       // recorded is an orphan nothing can prove it created. So the ordering is deliberate.

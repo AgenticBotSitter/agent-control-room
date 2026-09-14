@@ -28,8 +28,13 @@ const schedulerRemedies = {
   ],
 };
 
-export function instructionsFor({ platform, workerId, artifactDirectory, runtimeDirectory, repository }) {
-  const uninstall = `node scripts/worker-inbox-platform/worker-inbox-uninstall.mjs --worker-id ${workerId}`;
+export function instructionsFor({ platform, workerId, artifactDirectory, runtimeDirectory, repository, signalDirectory }) {
+  // Uninstall removes the extra signal file only when the operator names its directory, so the
+  // command printed here has to carry that flag when one was configured - otherwise an operator
+  // following these instructions leaves the file behind and is never told why.
+  const signalFlag = typeof signalDirectory === "string" && signalDirectory.trim()
+    ? ` --signal-directory "${signalDirectory}"` : "";
+  const uninstall = `node scripts/worker-inbox-platform/worker-inbox-uninstall.mjs --worker-id ${workerId}${signalFlag}`;
   const common = [
     "",
     "Read-only operation:",
