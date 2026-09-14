@@ -26,14 +26,27 @@ GRANT SELECT ON control_identities, control_role_grants, workspaces, control_web
   control_artifact_manifests, control_native_artifact_receipts, control_completion_gate_records,
   control_completion_gate_integrity, control_web_task_review_commands, control_native_review_plans,
   control_abs_story_versions, control_abs_source_observations, control_abs_source_settings, control_abs_story_archives, control_abs_article_details, control_idea_sessions, control_idea_contributions,
-  control_idea_syntheses, control_idea_decisions, control_idea_bot_run_events, control_policy_decisions TO control_room_private_web;
+  control_idea_syntheses, control_idea_decisions, control_idea_bot_run_events, control_policy_decisions,
+  control_project_coordinator_heads, control_project_coordination_proposals,
+  control_project_delegation_policies, control_project_coordination_operation_receipts,
+  control_project_coordination_operation_jobs, control_work_resources,
+  control_attempt_resource_admissions, control_attempt_resource_scopes TO control_room_private_web;
 GRANT UPDATE (web_lock) ON control_identities, control_role_grants, workspaces,
   control_connection_registry_heads, control_completion_gate_integrity, control_completion_gate_records TO control_room_private_web;
 GRANT INSERT ON control_web_sessions, adapter_registry, projects, control_manual_project_heads,
   control_web_project_commands, audit_events, control_audit_chain_heads,
   control_requests, control_workflows, control_jobs, control_web_task_commands,
   control_completion_gate_records, control_web_task_review_commands, control_abs_source_settings, control_abs_story_archives,
-  control_policy_decisions, control_project_lifecycle_events TO control_room_private_web;
+  control_policy_decisions, control_project_lifecycle_events,
+  control_project_coordinator_heads, control_project_delegation_policies TO control_room_private_web;
+GRANT INSERT ON control_project_coordinator_heads, control_project_delegation_policies
+  TO control_room_private_web;
+GRANT UPDATE (state, coordinator_identity_id, coordinator_actor_type, executor_id, adapter_id,
+  connector_profile_digest, execution_binding_digest, assigned_by_owner_identity_id, version,
+  assigned_at, updated_at, revoked_at, payload) ON control_project_coordinator_heads
+  TO control_room_private_web;
+GRANT UPDATE (state, version, updated_at) ON control_project_delegation_policies
+  TO control_room_private_web;
 GRANT UPDATE (revision, record_count, state_digest, state_auth_tag) ON control_completion_gate_integrity TO control_room_private_web;
 GRANT UPDATE (revoked_at) ON control_web_sessions TO control_room_private_web;
 GRANT UPDATE (domain_state, source_version, normalized_state, updated_at, payload, observed_at) ON projects TO control_room_private_web;
