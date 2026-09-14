@@ -28,9 +28,30 @@ export interface DurableStorageIoState {
   storageIoMs: number;
 }
 
-/** Bounded storage I/O with a terminal uncertain state. Both publishers delegate their `io()` here. */
+/**
+ * Optional storage-side poisoning contract. The publisher treats any storage
+ * port that exposes `isStorageUncertain: true` as terminally poisoned and
+ * short-circuits every subsequent operation with the uncertain error. Once
+ * poisoned, only a fresh port (after restart) can clear it. The local per-call
+ * `DurableStorageIoState` only guards timeouts and concurrent fences inside a
+ * single publish; it never overrides the shared port-level state.
+ */
+export interface StoragePoisoningPortV1 {
+  isStorageUncertain?: boolean;
+}
+
+/**
+ * Bounded storage I/O with a terminal uncertain state. Both publishers
+ * delegate their `io()` here. The shared port-level poisoning flag, when
+ * present, is checked first so a prior call's failure cannot be reset by a
+ * later concurrent success on the same storage adapter.
+ */
 export async function durableStorageIo<T>(state: DurableStorageIoState,
-  operation: (signal: AbortSignal) => Promise<T>, uncertainError: string): Promise<T> {
+  port: StoragePoisoningPortV1 | undefined, operation: (signal: AbortSignal) => Promise<T>,
+  uncertainError: string): Promise<T> {
+  if (port?.isStorageUncertain === true) {
+    state.storageUncertain = true; throw new Error(uncertainError);
+  }
   if (state.storageUncertain) throw new Error(uncertainError);
   const abort = new AbortController(), started = performance.now();
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -38,7 +59,10 @@ export async function durableStorageIo<T>(state: DurableStorageIoState,
     const result = await Promise.race([Promise.resolve().then(() => operation(abort.signal)), new Promise<never>((_, reject) => {
       timer = setTimeout(() => { state.storageUncertain = true; abort.abort(); reject(new Error(uncertainError)); }, state.storageIoMs);
     })]);
-    if (state.storageUncertain || performance.now() - started >= state.storageIoMs) {
+    // Re-check the shared port-level poisoning AFTER the await: TS narrowed
+    // it at the top of the function, but the underlying flag can change.
+    const sharedUncertain = (port as StoragePoisoningPortV1 | undefined)?.isStorageUncertain === true;
+    if (state.storageUncertain || performance.now() - started >= state.storageIoMs || sharedUncertain) {
       state.storageUncertain = true; abort.abort(); throw new Error(uncertainError);
     }
     return result;
@@ -390,8 +414,17 @@ export async function publishDurableResultV1(config: DurableResultPublicationCon
   const storageIoMs = config.storageIoMs ?? 2000;
   if (!Number.isSafeInteger(storageIoMs) || storageIoMs < 1 || storageIoMs > 2000) unavailable();
   const ioState: DurableStorageIoState = { storageUncertain: false, storageIoMs };
+  const poisoningPort: StoragePoisoningPortV1 = { isStorageUncertain: (config.storage as Partial<StoragePoisoningPortV1>).isStorageUncertain };
+  // Poisoned storage fails closed before any reservation lookup, write
+  // attempt, or authority fence. Once the port reports itself uncertain,
+  // every subsequent publish on this process must refuse; only restart
+  // with a fresh storage port can clear it.
+  if (poisoningPort.isStorageUncertain === true) {
+    ioState.storageUncertain = true;
+    throw new Error("durable_result_storage_uncertain");
+  }
   const io = <T>(operation: (signal: AbortSignal) => Promise<T>) =>
-    durableStorageIo(ioState, operation, "durable_result_storage_uncertain");
+    durableStorageIo(ioState, poisoningPort, operation, "durable_result_storage_uncertain");
 
   const receivedAt = instant.parse(input.receivedAt);
   const bytes = input.bytes instanceof Uint8Array ? Uint8Array.from(input.bytes) : unavailable();

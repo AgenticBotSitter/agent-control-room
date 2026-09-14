@@ -11,7 +11,7 @@ import { commitNativeResultReservationMetadataV1, markNativeResultReservationSto
   nativeResultReservationSchemaV1, reserveNativeResultWriteV1, verifyNativeResultReservationBytesV1,
   type NativeResultReservationV1 } from "./native-result-reservation";
 import { buildTaskResultManifestV1, durableStorageIo, putAndReadbackResultBytesV1,
-  type DurableStorageIoState } from "./durable-result-publication";
+  type DurableStorageIoState, type StoragePoisoningPortV1 } from "./durable-result-publication";
 import { codexResultReceiptSchemaV1, type CodexResultReceiptV1 } from "./codex-result-receipt";
 
 const id = z.string().min(3).max(180).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
@@ -83,8 +83,10 @@ export class NativeResultStore {
   }
   private async io<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
     const state: DurableStorageIoState = { storageUncertain: this.storageUncertain, storageIoMs: this.storageIoMs };
+    const poisoningPort: StoragePoisoningPortV1 = {
+      isStorageUncertain: (this as unknown as { storage?: StoragePoisoningPortV1 }).storage?.isStorageUncertain };
     try {
-      return await durableStorageIo(state, operation, "result_storage_uncertain");
+      return await durableStorageIo(state, poisoningPort, operation, "result_storage_uncertain");
     } finally {
       this.storageUncertain = state.storageUncertain;
     }

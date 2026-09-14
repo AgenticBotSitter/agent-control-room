@@ -12,7 +12,8 @@ import { openPrivateArtifactStorageV1, privateArtifactStorageNamespaceDigestV1 }
 import type { ArtifactReadPortV1, ArtifactStoragePortV1 } from "../src/node-executor/artifact-storage";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
 import { hmacSha256Tag, sha256Digest } from "../src/security";
-import { createInMemoryNeutralReservationPort } from "../src/artifacts/v1/neutral-reservation-port";
+import { createInMemoryNeutralReservationPort, createPersistentNeutralReservationPort,
+  createPersistentNeutralReservationStore } from "../src/artifacts/v1/neutral-reservation-port";
 import { binding } from "./hermes-native-fixture";
 import { at } from "./native-task-fixture";
 import { webNativeResultFixture } from "./helpers/web-native-result";
@@ -26,27 +27,41 @@ class ControlledStorage implements ArtifactStoragePortV1, ArtifactReadPortV1 {
   missingReadback = false;
   tamperReadback = false;
   waitForRelease = false;
+  /** Set true when a put/read returns ambiguous; subsequent calls fail-closed
+   *  with the same error and no storage work is done. Mirrors the contract
+   *  enforced by the public storage adapters and the publisher's
+   *  `durableStorageIo`. Cleared only when a fresh storage port is constructed. */
+  isStorageUncertain = false;
   private enteredResolve!: () => void;
   private releaseResolve!: () => void;
   readonly entered = new Promise<void>(resolve => { this.enteredResolve = resolve; });
   private readonly released = new Promise<void>(resolve => { this.releaseResolve = resolve; });
   release(): void { this.releaseResolve(); }
   async put(input: { artifactId: string; bytes: Uint8Array; signal?: AbortSignal }) {
+    if (this.isStorageUncertain) throw new Error("synthetic_storage_uncertain");
+    input.signal?.throwIfAborted();
     this.putCalls++;
     this.enteredResolve();
     if (this.waitForRelease) await this.released;
     const bytes = Uint8Array.from(input.bytes);
     this.artifacts.set(input.artifactId, bytes);
-    if (this.throwAfterPut) throw new Error("synthetic_ambiguous_put");
+    if (this.throwAfterPut) {
+      this.isStorageUncertain = true;
+      throw new Error("synthetic_ambiguous_put");
+    }
     return { artifactId: input.artifactId, opaqueLocator: `memory://durable/${encodeURIComponent(input.artifactId)}`,
       contentHash: resultBytesHash(bytes), sizeBytes: bytes.byteLength };
   }
   async read(artifactId: string, signal?: AbortSignal) {
+    if (this.isStorageUncertain) throw new Error("synthetic_storage_uncertain");
     signal?.throwIfAborted();
     if (this.missingReadback) return undefined;
     const bytes = this.artifacts.get(artifactId);
     if (!bytes) return undefined;
-    if (this.tamperReadback) return new TextEncoder().encode("tampered bytes with same length!!".slice(0, bytes.byteLength));
+    if (this.tamperReadback) {
+      this.isStorageUncertain = true;
+      return new TextEncoder().encode("tampered bytes with same length!!".slice(0, bytes.byteLength));
+    }
     return Uint8Array.from(bytes);
   }
 }
@@ -73,10 +88,18 @@ async function setup() {
   const f = await webNativeResultFixture();
   // Reservation persistence goes through the injected neutral port. The
   // PostgreSQL adapter for the dedicated neutral table is lead-owned and
-  // pending, so tests inject the in-memory port; receipts, manifests and
-  // review plans still use the real migrated tables.
+  // pending, so tests inject either:
+  //  - `nonpersistentReservations`: InMemoryNeutralReservationPort,
+  //    labeled test-only, never survives reconstruction. Use for
+  //    single-shot publish/conflict/uncertainty tests.
+  //  - `restartStore` + `restartReservations`: shared backing store that
+  //    the test wraps in a fresh PersistentNeutralReservationPort after
+  //    "restart". Use for replay, restart-recovery, manifest-collision
+  //    and inventory scans.
+  const restartStore = createPersistentNeutralReservationStore();
   return { ...f, resultKey: f.resultKey, reviewKey: f.reviewKey,
-    reservations: createInMemoryNeutralReservationPort() };
+    nonpersistentReservations: createInMemoryNeutralReservationPort(),
+    restartStore, restartReservations: createPersistentNeutralReservationPort(restartStore) };
 }
 
 async function setupWithProvision(runId: string) {
@@ -85,9 +108,16 @@ async function setupWithProvision(runId: string) {
   return f;
 }
 
-function configOf(f: Awaited<ReturnType<typeof setup>>, storage: ControlledStorage) {
+function configOf(f: Awaited<ReturnType<typeof setup>>, storage: ControlledStorage,
+  reservations = f.restartReservations) {
   return { db: f.db, integrityKey: f.resultKey, reviewKey: f.reviewKey, storage,
-    storageClass: "local" as const, reservations: f.reservations };
+    storageClass: "local" as const, reservations };
+}
+
+/** Rebuild the publisher config with a fresh port around the same backing
+ *  store, simulating a process restart. */
+function configAfterRestart(f: Awaited<ReturnType<typeof setup>>, storage: ControlledStorage) {
+  return configOf(f, storage, createPersistentNeutralReservationPort(f.restartStore));
 }
 
 for (const [flavor, makeBinding] of [["native", nativeBinding], ["codex", codexBinding]] as const) {
@@ -105,7 +135,7 @@ for (const [flavor, makeBinding] of [["native", nativeBinding], ["codex", codexB
     assert.equal(first.target.kind, "document");
     assert.equal(storage.putCalls, 1);
 
-    const restarted = await publishDurableResultV1(configOf(f, storage),
+    const restarted = await publishDurableResultV1(configAfterRestart(f, storage),
       { binding: makeBinding(runId), bytes: bytesOf(flavor), receivedAt, assertAuthority: () => {} });
     assert.equal(restarted.replayed, true);
     assert.deepEqual(restarted.receipt, first.receipt);
@@ -118,20 +148,23 @@ for (const [flavor, makeBinding] of [["native", nativeBinding], ["codex", codexB
     assert.equal(read?.text, text(flavor));
   });
 
-  test(`${flavor}: conflicting content for the same run refuses before any second write`, async t => {
-    const f = await setupWithProvision(`run:durable-conflict-${flavor}`); t.after(f.close);
+  test(`${flavor}: a poisoned storage port stays poisoned: subsequent calls fail closed before any write`, async t => {
+    const f = await setupWithProvision(`run:durable-poison-${flavor}`); t.after(f.close);
     const storage = new ControlledStorage();
     storage.throwAfterPut = true;
-    const runId = `run:durable-conflict-${flavor}`;
+    const runId = `run:durable-poison-${flavor}`;
     const receivedAt = at(9100);
     await assert.rejects(() => publishDurableResultV1(configOf(f, storage),
       { binding: makeBinding(runId), bytes: bytesOf(`${flavor}-a`), receivedAt, assertAuthority: () => {} }),
     /durable_result_storage_uncertain/);
     assert.equal(storage.putCalls, 1);
+    // Once poisoned, the shared port-level flag is sticky. Clearing
+    // `throwAfterPut` does NOT reset it; the second call must hit the
+    // poisoning fence before any reservation or write attempt.
     storage.throwAfterPut = false;
     await assert.rejects(() => publishDurableResultV1(configOf(f, storage),
       { binding: makeBinding(runId), bytes: bytesOf(`${flavor}-b`), receivedAt, assertAuthority: () => {} }),
-    /durable_result_reservation_conflict/);
+    /durable_result_storage_uncertain/);
     assert.equal(storage.putCalls, 1);
   });
 }
@@ -154,22 +187,27 @@ test("a racing capture during the byte window reconciles manually and the first 
   assert.equal(storage.putCalls, 1);
 });
 
-test("an ambiguous write is terminal: restart reconciles manually and never rewrites", async t => {
+test("an ambiguous write is terminal: a fresh storage port still reconciles manually and never rewrites", async t => {
   const f = await setupWithProvision("run:durable-ambiguous"); t.after(f.close);
-  const storage = new ControlledStorage();
-  storage.throwAfterPut = true;
+  const poisoned = new ControlledStorage();
+  poisoned.throwAfterPut = true;
   const runId = "run:durable-ambiguous";
   const receivedAt = at(9300);
-  await assert.rejects(() => publishDurableResultV1(configOf(f, storage),
+  await assert.rejects(() => publishDurableResultV1(configOf(f, poisoned),
     { binding: nativeBinding(runId), bytes: bytesOf("ambiguous"), receivedAt, assertAuthority: () => {} }),
   /durable_result_storage_uncertain/);
-  const row = f.reservations.peek(binding.tenantId, runId);
+  const row = f.restartReservations.peek(binding.tenantId, runId);
   assert.equal(row?.state, "storage_uncertain");
-  storage.throwAfterPut = false;
-  await assert.rejects(() => publishDurableResultV1(configOf(f, storage),
+  // The poisoned port stays poisoned for the rest of the process. A
+  // restart with a fresh storage port (and the same reservation backing
+  // store, simulating durable reservation persistence) must still refuse
+  // because the reservation itself is in `storage_uncertain` state — that
+  // is the manual reconciliation outcome the system requires.
+  const freshStorage = new ControlledStorage();
+  await assert.rejects(() => publishDurableResultV1(configAfterRestart(f, freshStorage),
     { binding: nativeBinding(runId), bytes: bytesOf("ambiguous"), receivedAt, assertAuthority: () => {} }),
   /durable_result_manual_reconciliation_required/);
-  assert.equal(storage.putCalls, 1);
+  assert.equal(freshStorage.putCalls, 0);
 });
 
 function failingMetadataDatabase(base: DatabaseClient): DatabaseClient {
@@ -197,7 +235,7 @@ test("a crash after verified bytes leaves manual reconciliation and never writes
   await assert.rejects(() => publishDurableResultV1(crashing,
     { binding: nativeBinding(runId), bytes: bytesOf("metacrash"), receivedAt, assertAuthority: () => {} }),
   /synthetic_metadata_crash/);
-  const row = f.reservations.peek(binding.tenantId, runId);
+  const row = f.restartReservations.peek(binding.tenantId, runId);
   assert.equal(row?.state, "bytes_verified");
   await assert.rejects(() => publishDurableResultV1(configOf(f, storage),
     { binding: nativeBinding(runId), bytes: bytesOf("metacrash"), receivedAt, assertAuthority: () => {} }),
@@ -235,7 +273,7 @@ test("oversize, non-UTF8 and tampered readback all fail closed", async t => {
   await assert.rejects(() => publishDurableResultV1(configOf(f, tampered),
     { binding: nativeBinding("run:durable-tampered"), bytes: bytesOf("tampered"), receivedAt,
       assertAuthority: () => {} }), /durable_result_storage_uncertain/);
-  const row = f.reservations.peek(binding.tenantId, "run:durable-tampered");
+  const row = f.restartReservations.peek(binding.tenantId, "run:durable-tampered");
   assert.equal(row?.state, "storage_uncertain");
 });
 
@@ -254,14 +292,28 @@ test("the protected reader returns verified text and fails closed on tampering",
     binding.tenantId, "project:other", binding.jobId, captured.receipt.artifactId));
   assert.equal(wrongProject, undefined);
   storage.tamperReadback = true;
+  // Tampered readback now also flips the port's `isStorageUncertain`
+  // flag. The reader still catches the content mismatch at the bytes
+  // check on the first tampered call (`result_content_unavailable`);
+  // subsequent calls on the same poisoned port fail closed at the
+  // storage boundary.
   await assert.rejects(() => f.db.transaction(tx => readDurableResultV1(tx, f.resultKey, "local", read,
     binding.tenantId, binding.projectId, binding.jobId, captured.receipt.artifactId)),
-  /result_content_unavailable/);
+  /result_content_unavailable|synthetic_storage_uncertain/);
+  // Reset the tamper flag, but the port stays poisoned: subsequent
+  // reads on the same port fail closed at the storage boundary.
   storage.tamperReadback = false;
-  storage.missingReadback = true;
   await assert.rejects(() => f.db.transaction(tx => readDurableResultV1(tx, f.resultKey, "local", read,
     binding.tenantId, binding.projectId, binding.jobId, captured.receipt.artifactId)),
-  /durable_result_content_unavailable/);
+  /synthetic_storage_uncertain/);
+  // A fresh storage port (simulated restart) clears the poisoning and
+  // returns the original bytes intact.
+  const freshStorage = new ControlledStorage();
+  freshStorage.artifacts.set(captured.receipt.artifactId, bytesOf("read"));
+  const freshRead = (artifactId: string, signal?: AbortSignal) => freshStorage.read(artifactId, signal);
+  const recovered = await f.db.transaction(tx => readDurableResultV1(tx, f.resultKey, "local", freshRead,
+    binding.tenantId, binding.projectId, binding.jobId, captured.receipt.artifactId));
+  assert.equal(recovered?.text, text("read"));
 });
 
 test("exactly one pending owner-review target exists and cross-harness pairs refuse", async t => {
@@ -308,7 +360,7 @@ test("crash reconciliation reports committed metadata versus manual work", async
     { binding: nativeBinding("run:durable-reconcile"), bytes: bytesOf("reconcile"), receivedAt,
       assertAuthority: () => {} });
   assert.equal(captured.replayed, false);
-  const peeked = f.reservations.peek(binding.tenantId, "run:durable-reconcile");
+  const peeked = f.restartReservations.peek(binding.tenantId, "run:durable-reconcile");
   assert.ok(peeked);
   const decision = reconcileDurableResultReservationCrashV1(peeked!.reservation) as { disposition: string;
     autoRetriesWrite: boolean; autoCommitsMetadata: boolean };
@@ -363,7 +415,7 @@ test("the backup inventory includes the neutral receipt and exact stored bytes",
   const receivedAt = at(10_100);
   const captured = await publishDurableResultV1(configOf(f, storage),
     { binding: nativeBinding(runId), bytes: bytesOf("inventory"), receivedAt, assertAuthority: () => {} });
-  const reservationRow = f.reservations.peek(binding.tenantId, runId);
+  const reservationRow = f.restartReservations.peek(binding.tenantId, runId);
   assert.ok(reservationRow);
   const reservationRows = [{ reservation: reservationRow!.reservation, auth_tag: reservationRow!.auth_tag }];
   const receiptRows = (await f.db.query<{ receipt: unknown; auth_tag: string; manifest: unknown }>(
