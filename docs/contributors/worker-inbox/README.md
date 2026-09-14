@@ -70,13 +70,23 @@ Run any command with `--help` for the full flag list.
 
 ## When does it signal?
 
-It fingerprints the assigned action — each issue's number, state, and instruction link — and
-compares that to the last value it stored. It signals on:
+It fingerprints the whole assignment as the accepted inbox client reports it — every field of
+each action, not a hand-picked subset — and compares that to the last value it stored. Any
+field changing counts, including the requested state, the trust level, the head, and the pull
+request. That matters because the client reports several different situations through the same
+broad `state: attention` while carrying what actually changed in other fields; a narrower
+fingerprint would call that "unchanged" and the operator would never be told. It signals on:
 
 - **first action seen** (`baseline-action`) — there is now something for you to do;
-- **a change** (`action-changed`) — for example a correction, a reassignment, or a move from
-  `working` to `changes-required`;
+- **a change** (`action-changed`) — for example a correction, a reassignment, a new head on a
+  pull request you are already watching, or a move from `working` to `changes-required`;
 - **action cleared** (`action-cleared`) — the work you had is gone.
+
+Notifications name the state the controller requested. Where the client reports only a broad
+disposition such as `attention`, the requested state is the one shown, so a correction reads
+as `63:changes-required` rather than the uninformative `63:attention`. This package does not
+decide authority: trust, dispositions, and whether a record is advisory or a controller record
+are the accepted client's, and are surfaced as it reports them.
 
 It stays quiet when the inbox is unchanged, and it never asks GitHub for anything it has
 already seen.

@@ -5,20 +5,40 @@
 // GitHub returns fields in a different order, so the operator is not notified about noise.
 import { createHash } from "node:crypto";
 
+// The state an operator should read, preferring the specific state the controller requested.
+// The accepted client reports a broad disposition in `state` for anything needing attention
+// (for example an advisory record reports state "attention") while carrying the requested
+// state in `markerState`; without this the notification says "attention" and loses the fact
+// that a correction was requested.
+function displayState(action) {
+  for (const candidate of [action.markerState, action.state]) {
+    if (typeof candidate === "string" && candidate.length > 0) return candidate;
+  }
+  return "unknown";
+}
+
 export function normalizeActions(actions) {
   return (Array.isArray(actions) ? actions : [])
     .filter(action => action && Number.isSafeInteger(Number(action.issue)))
-    .map(action => ({
-      issue: Number(action.issue),
-      state: typeof action.state === "string" ? action.state : "",
-      instruction: String(action.instructionUrl ?? action.issueUrl ?? ""),
-    }))
+    .map(action => {
+      // Fingerprint every field the accepted client reports instead of a hand-picked subset.
+      // The client's contract already changed once: it now reports attention dispositions in
+      // `state` and carries the requested state, trust, disposition, head, and pull request in
+      // other fields. A fixed subset silently stopped detecting real changes, which is the one
+      // failure a watcher must not have. Any field added later participates automatically.
+      // workerId is constant for a run, so it is excluded rather than contributing noise.
+      const fields = Object.keys(action)
+        .filter(key => key !== "workerId" && action[key] !== undefined)
+        .sort()
+        .map(key => [key, typeof action[key] === "string" ? action[key] : JSON.stringify(action[key])]);
+      return { issue: Number(action.issue), state: displayState(action), fields };
+    })
     .sort((left, right) => left.issue - right.issue || left.state.localeCompare(right.state));
 }
 
 export function actionsFingerprint(actions) {
   const normalized = normalizeActions(actions);
-  const canonical = JSON.stringify(normalized.map(action => [action.issue, action.state, action.instruction]));
+  const canonical = JSON.stringify(normalized.map(action => [action.issue, action.state, action.fields]));
   return Object.freeze({
     fingerprint: createHash("sha256").update(canonical).digest("hex"),
     canonical,

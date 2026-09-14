@@ -91,6 +91,31 @@ function emptyAssignment() {
   return { issues: [], comments: {} };
 }
 
+// A controller record in the shape the accepted client treats as authoritative. Trust comes
+// from the controller bot identity, never from repository membership.
+function controllerComment(body) {
+  return {
+    id: 9_000,
+    body,
+    user: { login: "github-actions[bot]", type: "Bot" },
+    author_association: "NONE",
+    html_url: `https://github.com/${REPOSITORY_NAME}/issues/0#issuecomment-9000`,
+  };
+}
+
+function handoffMarker({ workerId = WORKER_ID, state = "changes-required", number = 199, action = "worker", phase = "complete", acknowledged = false, head } = {}) {
+  const record = { issue: number, workerId, state, action, phase, acknowledged };
+  if (head !== undefined) record.head = head;
+  return `<!-- agent-control-room-handoff:v1 ${JSON.stringify(record)} -->`;
+}
+
+function controllerAssignment({ state = "changes-required", number = 199, workerId = WORKER_ID, head, acknowledged = false } = {}) {
+  return {
+    issues: [githubIssue(number, [`status:${state}`, "action:worker"])],
+    comments: { [number]: [controllerComment(handoffMarker({ workerId, state, number, head, acknowledged }))] },
+  };
+}
+
 function tickOptions(runtimeRoot, overrides = {}) {
   return {
     workerId: WORKER_ID,
@@ -578,12 +603,87 @@ test("the accepted inbox client is reused rather than reimplemented", async (t) 
     workerId: WORKER_ID, repository: REPOSITORY_NAME, fetchImpl: github.fetchImpl,
   });
   assert.equal(actions.length, 1);
-  assert.equal(actions[0].state, "changes-required");
+  // The accepted client's contract decides every field; the watcher neither recreates nor
+  // reinterprets it. A legacy action marker is advisory under the current contract, so the
+  // broad disposition sits in `state` and the requested state is carried separately.
+  assert.equal(actions[0].state, "attention");
+  assert.equal(actions[0].markerState, "changes-required");
+  assert.equal(actions[0].trust, "advisory");
 
   // The watcher passes every read through that same client: breaking its contract surfaces
   // here rather than being silently absorbed.
   const options = tickOptions(root, { fetchImpl: github.fetchImpl });
   const result = await runTick({ options, now: CLOCK });
-  assert.deepEqual(result.observed.states, [`${actions[0].issue}:${actions[0].state}`]);
+  // Notifications report the requested state rather than the bare disposition, so the operator
+  // is told a correction was requested instead of the uninformative word "attention".
+  assert.deepEqual(result.observed.states, [`${actions[0].issue}:changes-required`]);
   assert.deepEqual(result.observed.issues, [actions[0].issue]);
+});
+
+test("a change hidden behind an unchanged disposition is still detected", async (t) => {
+  // The accepted client collapses several genuinely different situations into state
+  // "attention" and carries what actually changed - the requested state, trust, disposition,
+  // head, and pull request - in other fields. An earlier version of this package fingerprinted
+  // only {issue, state, instruction}, so it reported "unchanged" while the assignment had in
+  // fact changed. Failing to notice a change is the single failure this watcher must not have,
+  // so this test asserts the disposition really is identical on both sides.
+  const root = scratch(t);
+  const github = fakeGithub(assignment({ state: "changes-required" }));
+  const options = tickOptions(root, { fetchImpl: github.fetchImpl });
+
+  assert.equal((await runTick({ options, now: CLOCK })).change, "baseline-action");
+
+  const before = await readWorkerInbox({ workerId: WORKER_ID, repository: REPOSITORY_NAME, fetchImpl: github.fetchImpl });
+  Object.assign(github.holder, assignment({ state: "working" }));
+  const after = await readWorkerInbox({ workerId: WORKER_ID, repository: REPOSITORY_NAME, fetchImpl: github.fetchImpl });
+
+  assert.equal(before[0].state, "attention");
+  assert.equal(after[0].state, "attention",
+    "both sides must share the disposition, otherwise this test would prove nothing");
+  assert.notEqual(before[0].markerState, after[0].markerState, "the requested state is what differs");
+
+  const second = await runTick({ options, now: CLOCK });
+  assert.equal(second.change, "action-changed",
+    "a change the client reports only through non-disposition fields must still be detected");
+  assert.deepEqual(second.observed.states, ["199:working"]);
+});
+
+test("a new head on an unchanged request is still reported", async (t) => {
+  // The requested state can stay identical while the thing that changed is the revision the
+  // controller points at. Fingerprinting state alone would call this "unchanged", and the
+  // operator would never learn that a new revision is waiting for them.
+  const root = scratch(t);
+  const github = fakeGithub(controllerAssignment({ state: "re-review", head: "aaaa1111" }));
+  const options = tickOptions(root, { fetchImpl: github.fetchImpl });
+
+  assert.equal((await runTick({ options, now: CLOCK })).change, "baseline-action");
+
+  const before = await readWorkerInbox({ workerId: WORKER_ID, repository: REPOSITORY_NAME, fetchImpl: github.fetchImpl });
+  Object.assign(github.holder, controllerAssignment({ state: "re-review", head: "bbbb2222" }));
+  const after = await readWorkerInbox({ workerId: WORKER_ID, repository: REPOSITORY_NAME, fetchImpl: github.fetchImpl });
+  assert.equal(before[0].state, after[0].state, "the state must be unchanged for this test to mean anything");
+  assert.notEqual(before[0].head, after[0].head, "the head is what changed");
+
+  const changed = await runTick({ options, now: CLOCK });
+  assert.equal(changed.change, "action-changed",
+    "a change carried only in a non-state field must still be detected");
+  assert.deepEqual(changed.observed.states, ["199:re-review"]);
+});
+
+test("an authoritative controller record is reported at its declared state", async (t) => {
+  // Controller records own authority under the current contract; a legacy advisory marker does
+  // not. The package must work against the authoritative path, not only the advisory one.
+  const root = scratch(t);
+  const github = fakeGithub(controllerAssignment({ state: "changes-required" }));
+  const actions = await readWorkerInbox({
+    workerId: WORKER_ID, repository: REPOSITORY_NAME, fetchImpl: github.fetchImpl,
+  });
+  assert.equal(actions.length, 1);
+  assert.equal(actions[0].trust, "controller-record");
+  assert.equal(actions[0].state, "changes-required");
+
+  const options = tickOptions(root, { fetchImpl: github.fetchImpl });
+  const result = await runTick({ options, now: CLOCK });
+  assert.equal(result.change, "baseline-action");
+  assert.deepEqual(result.observed.states, ["199:changes-required"]);
 });
