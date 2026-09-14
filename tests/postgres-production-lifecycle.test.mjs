@@ -401,3 +401,99 @@ test("operator provision script creates logins via psql without exposing passwor
     assert.ok(memberships.some(entry => entry.member === member && entry.role === role), `${member} in ${role}`);
   }
 });
+
+test("documented clean install completes on a genuinely empty cluster", needsPg, async (t) => {
+  // A second disposable cluster: cluster-global roles from earlier tests must
+  // not mask a provision script that assumes groups already exist. Every step
+  // below is the documented operator flow, executed literally.
+  const CLEAN_PORT = 65435;
+  const cleanSocket = join(run, "clean-socket"), cleanData = join(run, "clean-data");
+  await mkdir(cleanSocket, { mode: 0o700 });
+  if (process.getuid?.() === ROOT_UID) {
+    await exec("chown", ["-R", `${POSTGRES_UID}:${POSTGRES_GID}`, cleanSocket, run]);
+    await exec("mkdir", ["-p", cleanData]);
+    await exec("chown", ["-R", `${POSTGRES_UID}:${POSTGRES_GID}`, cleanData]);
+  } else {
+    await mkdir(cleanData, { recursive: true });
+  }
+  await native("initdb", ["-D", cleanData, "-U", "fixture_admin", "--auth-local=trust",
+    "--auth-host=reject", "--no-locale", "--encoding=UTF8"]);
+  await native("pg_ctl", ["-D", cleanData, "-l", join(run, "clean-server.log"), "-w", "-t", "30", "-o",
+    `-k ${cleanSocket} -p ${CLEAN_PORT} -h '' -c unix_socket_permissions=0700 -c shared_buffers=32MB -c max_connections=20`, "start"]);
+  t.after(async () => {
+    try {
+      await native("pg_ctl", ["-D", cleanData, "-m", "fast", "-w", "-t", "30", "stop"]);
+    } finally {
+      await rm(cleanSocket, { recursive: true, force: true });
+      await rm(cleanData, { recursive: true, force: true });
+    }
+  });
+  const cleanQuery = async (sql, params = []) => {
+    const client = new Client({ host: cleanSocket, port: CLEAN_PORT, database: "postgres",
+      user: "fixture_admin", password: "fixture_only" });
+    await client.connect();
+    try {
+      return await client.query(sql, params);
+    } finally {
+      await client.end();
+    }
+  };
+  await cleanQuery(`CREATE DATABASE "cr_clean_install" OWNER fixture_admin`);
+  const pw = { migrator: "clean-install-migrator-0001", app: "clean-install-app-000001", scheduler: "clean-install-scheduler-0001" };
+  const psqlEnv = {
+    PATH: "/usr/bin:/bin", LC_ALL: "C", TMPDIR: run,
+    PGHOST: cleanSocket, PGPORT: String(CLEAN_PORT), PGUSER: "fixture_admin",
+    PGPASSWORD: "fixture_only", PGDATABASE: "cr_clean_install",
+  };
+  // Step 1 of the documented fresh install: standalone role provisioning.
+  await exec(join(BIN, "psql"),
+    ["-v", `migrator_password=${pw.migrator}`, "-v", `app_password=${pw.app}`,
+     "-v", `scheduler_password=${pw.scheduler}`,
+     "-f", join(ROOT, "db/roles/production_provision.sql"), "-X", "-q"],
+    { env: psqlEnv, timeout: 60000, maxBuffer: 1 << 26 });
+  // Step 2: the documented two-connection migration command, via the real CLI.
+  const adminConn = `host=${cleanSocket} port=${CLEAN_PORT} dbname=cr_clean_install user=fixture_admin`;
+  const migratorConn = `host=${cleanSocket} port=${CLEAN_PORT} dbname=cr_clean_install user=control_room_migrator password=${pw.migrator}`;
+  const migrated = await exec(process.execPath,
+    [join(ROOT, "deploy/postgres/apply-migrations.mjs"),
+     "--bootstrap-target", adminConn, "--migrate-target", migratorConn],
+    { cwd: ROOT, timeout: 300000, maxBuffer: 1 << 26,
+      env: { ...process.env, PATH: "/usr/bin:/bin", LC_ALL: "C",
+        CONTROL_ROOM_MIGRATOR_PASSWORD: pw.migrator, CONTROL_ROOM_APP_PASSWORD: pw.app,
+        CONTROL_ROOM_SCHEDULER_PASSWORD: pw.scheduler } });
+  const result = JSON.parse(migrated.stdout);
+  assert.ok((result.applied?.length ?? 0) > 0, "migrations applied through the documented CLI");
+  // The install is complete and least-privilege: logins, groups, memberships,
+  // ledger rows and schema-owner object ownership, all on the clean cluster.
+  const db = { host: cleanSocket, port: CLEAN_PORT, database: "cr_clean_install", user: "fixture_admin", password: "fixture_only" };
+  const cleanTargetQuery = async (sql, params = []) => {
+    const client = new Client(db);
+    await client.connect();
+    try {
+      return await client.query(sql, params);
+    } finally {
+      await client.end();
+    }
+  };
+  const roles = (await cleanTargetQuery(
+    "SELECT rolname, rolcanlogin FROM pg_roles WHERE rolname LIKE 'control@_room@_%' ESCAPE '@' ORDER BY 1")).rows;
+  const byName = new Map(roles.map(role => [role.rolname, role]));
+  for (const login of ["control_room_migrator", "control_room_app", "control_room_scheduler"]) {
+    assert.equal(byName.get(login)?.rolcanlogin, true, `${login} can login`);
+  }
+  for (const group of ["control_room_schema_owner", "control_room_application", "control_room_schedule_admissions"]) {
+    assert.ok(byName.has(group), `${group} exists`);
+  }
+  const memberships = await roleMemberships(db);
+  for (const [member, role] of [["control_room_migrator", "control_room_schema_owner"],
+      ["control_room_app", "control_room_application"],
+      ["control_room_scheduler", "control_room_schedule_admissions"]]) {
+    assert.ok(memberships.some(entry => entry.member === member && entry.role === role), `${member} in ${role}`);
+  }
+  const owners = (await cleanTargetQuery(
+    "SELECT DISTINCT pg_get_userbyid(c.relowner) AS owner FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public'")).rows;
+  assert.deepEqual(owners.map(row => row.owner), ["control_room_schema_owner"]);
+  const ledgerRows = (await cleanTargetQuery("SELECT count(*)::int AS count FROM control_room_schema_migrations")).rows;
+  const executable = (await collectLedgerEntries()).filter(entry => (entry.kind ?? "migrate") === "migrate");
+  assert.equal(ledgerRows[0].count, executable.length, "every executable ledger entry applied");
+});

@@ -1,6 +1,9 @@
-// Production migration applier. Effect-free unless --target is supplied: without an
-// explicit target it prints the planned file order and exits 0 without connecting.
-//   node deploy/postgres/apply-migrations.mjs --target "host=/sock dbname=control_room user=postgres"
+// Production migration applier. Effect-free unless both connection flags are
+// supplied: without them it prints the planned file order and exits 0 without
+// connecting. A real run needs the two-phase connections:
+//   node deploy/postgres/apply-migrations.mjs \
+//     --bootstrap-target "host=/sock dbname=control_room user=postgres" \
+//     --migrate-target "host=/sock dbname=control_room user=control_room_migrator password=..."
 // Corresponding ledger: deploy/postgres/migration-ledger.json (immutable order/checksum).
 // Each migration file applies inside one transaction together with its ledger row.
 // Refuses: altered digest of an applied file, missing file, reordered files,
@@ -29,7 +32,9 @@ export { readSchemaDigest } from "./evidence.mjs";
 
 export async function applyMigrations({ target, rootDir = root, ledgerPath, env = process.env,
     bootstrapTarget, migrateTarget }) {
-  if (!target) {
+  // `target` is a legacy plan-mode flag only; the run gate is the two phase
+  // connections (the CLI refuses a partial pair outright).
+  if (!bootstrapTarget && !migrateTarget) {
     const ledger = JSON.parse(await readFile(ledgerPath ?? join(rootDir, "deploy/postgres/migration-ledger.json"), "utf8"));
     return { planned: true, files: ledger.entries.length, digest: ledger.digest };
   }
@@ -292,7 +297,18 @@ const invoked = resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url
 if (invoked) {
   const args = process.argv.slice(2);
   try {
-    const result = await applyMigrations({ target: flag(args, "--target", undefined), rootDir: resolve(flag(args, "--root", root)) });
+    // The single --target form never worked: the applier refuses without both
+    // phase connections, so fail loudly instead of pretending to migrate.
+    if (flag(args, "--target", undefined) !== undefined) {
+      throw new Error("migration_removed_flag:--target (use --bootstrap-target and --migrate-target)");
+    }
+    const bootstrap = flag(args, "--bootstrap-target", undefined);
+    const migrate = flag(args, "--migrate-target", undefined);
+    if ((bootstrap === undefined) !== (migrate === undefined)) {
+      throw new Error("migration_refused_partial_targets (supply both --bootstrap-target and --migrate-target, or neither for a plan)");
+    }
+    const result = await applyMigrations({ bootstrapTarget: bootstrap, migrateTarget: migrate,
+      rootDir: resolve(flag(args, "--root", root)) });
     console.log(JSON.stringify(result, null, 2));
   } catch (error) {
     console.error(`migration_apply_failed: ${error.message}`);

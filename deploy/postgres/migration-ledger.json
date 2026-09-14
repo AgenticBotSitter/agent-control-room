@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "955020c25e884b25491a28c45314df3e9e312083cbd8cee556a2e661b3c0e41c",
+  "digest": "c1807d26c4d4bf40da7491c07e318dfcd1b1407070db29bd9202a903f75711af",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -473,7 +473,7 @@
     {
       "file": "db/roles/production_provision.sql",
       "order": 79,
-      "sha256": "c33e83e2185d52d12115a3f39bc3dfa6a2732d1a7ed84bddda5b1ce6930a194d",
+      "sha256": "c099f10a7fc6931bc027908d812612e5ee57198ce12bd0695d0a2d4365022920",
       "kind": "provision"
     }
   ]

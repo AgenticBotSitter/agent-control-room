@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { verifyMigrationLedger } from "../scripts/verify-migration-ledger.mjs";
 import { collectLedgerEntries, ledgerDigest } from "../scripts/generate-migration-ledger.mjs";
 import { applyMigrations } from "../deploy/postgres/apply-migrations.mjs";
+import { parseKeywordValueTarget } from "../deploy/postgres/evidence.mjs";
 import { backupDatabase } from "../deploy/postgres/backup-database.mjs";
 import { restoreDatabase } from "../deploy/postgres/restore-database.mjs";
 import { computeDatabaseRestoreIdentity, parseArtifactSetDigest, verifyRestoredIdentity } from "../deploy/postgres/restore-identity.mjs";
@@ -101,4 +102,31 @@ test("#65 artifact-set digest placeholder validates shape only", () => {
   assert.deepEqual(withArtifact.artifactSetDigest, digest);
   assert.throws(() => verifyRestoredIdentity(withArtifact, computeDatabaseRestoreIdentity({ ...base, artifactSetDigest: undefined })),
     /restore_identity_mismatch:identityDigest/);
+});
+
+test("keyword/value connection strings parse like libpq, garbage is refused", () => {
+  assert.deepEqual(parseKeywordValueTarget("host=/tmp/sock port=65435 dbname=cr user=migrator password=s3cret"),
+    { host: "/tmp/sock", port: 65435, database: "cr", user: "migrator", password: "s3cret" });
+  assert.deepEqual(parseKeywordValueTarget("host='/tmp/my dir/sock' dbname=x"),
+    { host: "/tmp/my dir/sock", database: "x" });
+  for (const bad of ["host=x BOGUS dbname=y", "not-a-conn", "", "port=99999 dbname=x", "port=nine dbname=x"]) {
+    assert.throws(() => parseKeywordValueTarget(bad), /target_connection_string_invalid/, bad);
+  }
+});
+
+test("migration CLI refuses the removed single-target form and partial pairs", async () => {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const exec = promisify(execFile);
+  const cli = (args) => exec(process.execPath, [join(ROOT, "deploy/postgres/apply-migrations.mjs"), ...args],
+    { cwd: ROOT, timeout: 120000 });
+  // No flags: effect-free plan, exit 0, no connection attempted.
+  const plan = JSON.parse((await cli([])).stdout);
+  assert.equal(plan.planned, true);
+  assert.equal(plan.files, 79);
+  // The documented single --target form never worked: loud refusal, non-zero exit.
+  await assert.rejects(cli(["--target", "host=/none dbname=x user=y"]), /migration_removed_flag/);
+  // Partial pairs are refused before any connection.
+  await assert.rejects(cli(["--bootstrap-target", "host=/none dbname=x user=y"]), /migration_refused_partial_targets/);
+  await assert.rejects(cli(["--migrate-target", "host=/none dbname=x user=y"]), /migration_refused_partial_targets/);
 });

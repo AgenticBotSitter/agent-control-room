@@ -4,9 +4,12 @@
 --   psql -v migrator_password="$MIGRATOR_PASSWORD" -v app_password="$APP_PASSWORD" \
 --     -v scheduler_password="$SCHEDULER_PASSWORD" \
 --     -f db/roles/production_provision.sql "dbname=control_room user=postgres"
--- Complements db/roles/production_roles.sql (NOLOGIN groups + grants). The schema
--- owner group owns objects; the migrator login performs upgrades; the application
--- login serves traffic with no DDL. Fails closed when a password variable is
+-- Complements db/roles/production_roles.sql (remaining NOLOGIN groups + table
+-- grants, re-applied after every migration batch). This script is self-sufficient
+-- on a genuinely empty cluster: it creates the three groups the logins depend on
+-- (schema owner, application, schedule admissions) transactionally before the logins.
+-- The schema owner group owns objects; the migrator login performs upgrades; the
+-- application login serves traffic with no DDL. Fails closed when a password variable is
 -- missing or shorter than 24 characters.
 --
 -- Secret handling: psql substitutes :'variables' only OUTSIDE dollar-quoted
@@ -24,6 +27,12 @@ DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'control_room_schema_owner') THEN
     CREATE ROLE control_room_schema_owner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'control_room_application') THEN
+    CREATE ROLE control_room_application NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'control_room_schedule_admissions') THEN
+    CREATE ROLE control_room_schedule_admissions NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
   END IF;
 END;
 $$;

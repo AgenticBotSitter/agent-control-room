@@ -89,8 +89,47 @@ export function targetCli(target) {
     env: password === undefined ? {} : { PGPASSWORD: String(password) } };
 }
 
+/**
+ * Parse a libpq keyword/value connection string ("host=... port=... dbname=...
+ * user=... password=...") into a pg config object. Single quotes group values
+ * with spaces; a backslash escapes the next character. URIs are not handled
+ * here (pass those through as connectionString).
+ */
+export function parseKeywordValueTarget(text) {
+  const config = {};
+  const tokenPattern = /([A-Za-z_][A-Za-z0-9_]*)=('(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|[^\s]*)/g;
+  let match, consumed = 0;
+  const unquote = (value) => {
+    if (value.length >= 2 && (value.startsWith("'") || value.startsWith('"'))) {
+      const quote = value[0];
+      if (!value.endsWith(quote)) throw new Error("target_connection_string_invalid");
+      return value.slice(1, -1).replace(/\\(.)/g, "$1");
+    }
+    return value;
+  };
+  while ((match = tokenPattern.exec(text)) !== null) {
+    if (text.slice(consumed, match.index).trim() !== "") throw new Error("target_connection_string_invalid");
+    consumed = tokenPattern.lastIndex;
+    const [, key, raw] = match;
+    const value = unquote(raw);
+    if (key === "dbname") config.database = value;
+    else if (key === "port") {
+      const port = Number(value);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("target_connection_string_invalid");
+      config.port = port;
+    } else config[key] = value;
+  }
+  if (Object.keys(config).length === 0 || text.slice(consumed).trim() !== "") {
+    throw new Error("target_connection_string_invalid");
+  }
+  return config;
+}
+
 export function connectTarget(target) {
   // eslint-disable-next-line import/no-extraneous-dependencies
+  if (typeof target === "string" && !/^\w+:\/\//.test(target.trim())) {
+    return new Client(parseKeywordValueTarget(target));
+  }
   return new Client(typeof target === "string" ? { connectionString: target } : { ...target });
 }
 
