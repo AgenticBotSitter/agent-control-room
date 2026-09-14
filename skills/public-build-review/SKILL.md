@@ -5,6 +5,10 @@ description: Review public Agent Control Room contributions for material correct
 
 # Public build review
 
+Read [the contributor handbook](../../CONTRIBUTOR_HANDBOOK.md) for the authoritative
+lifecycle, identity limits, controller commands and legacy fallback. This skill adds
+review judgment; it does not define another state machine.
+
 Review the assigned outcome and actual diff at a pinned head. Identify the affected
 user journey and risk before choosing checks. Existing controlled-operation records
 keep their explicit limits; this skill does not grant native or deployment authority.
@@ -54,10 +58,9 @@ candidate before calling it a release.
 
 ## Return the action explicitly
 
-Review status must identify one next actor. For changes required, post one consolidated
-correction list, move both the issue and pull request to `status:changes-required` plus
-`action:worker`, and add the exact assigned worker marker defined in
-`docs/PUBLIC_CONTRIBUTION_FLOW.md`. Do not leave the records at In review. When the
-worker submits an exact corrected head, move both to `status:re-review` plus
-`action:reviewer`. For acceptance, use `action:integrator` until merged, then close the
-complete issue as `status:done`. Never use an ambiguous pending label.
+Return one consolidated correction or acceptance record for the exact submitted commit.
+Follow the handbook's controller requests when configured, or its explicit legacy
+manual fallback. Verify the next actor is visible in the inbox; a conflicting record
+is unfinished coordination, not an idle worker. A shared-login review comment records
+the independent checker's evidence but does not prove a separate GitHub identity or
+bypass required approval protections. Do not repeat obsolete action-marker rules here.

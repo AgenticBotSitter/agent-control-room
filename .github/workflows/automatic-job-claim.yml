@@ -13,6 +13,7 @@ concurrency:
   # worker identity from being accepted on two issues at once.
   group: automatic-job-claim-${{ github.repository_id }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   claim:
