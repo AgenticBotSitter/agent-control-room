@@ -18,6 +18,7 @@ import {
 } from "../src/contracts/v1";
 import {
   PARALLEL_NARROW_WRITE_POLICY_ACTION_V1,
+  PROJECT_WORK_ADMISSION_POLICY_ACTION_V1,
   ProjectWorkAdmissionServiceV1,
   findResourceConflictsV1,
   narrowWriteResourcesV1,
@@ -668,6 +669,102 @@ test("the admission digest is immutable and a changed declaration fails the cano
     await assert.rejects(f.admissions.admit(admissionRequest(worker, repositoryDeclaration(worker,
       [{ accessMode: "write", scopeKind: "tree", path: "src" }], "workspace:shared"))),
     /resource_admission_replay_conflict/);
+  } finally { await f.close(); }
+});
+
+test("a cited standing policy is authority only when it delegates work admission", async () => {
+  const f = await fixture();
+  try {
+    const worker = await f.worker("policy-authority");
+    // A real, live, current policy of this exact owner and project, which
+    // delegates proposal adoption and nothing else.
+    await f.insertParallelWritePolicy({ id: "policy:adopt-only", actions: ["proposal.adopt"] });
+    const citedPolicy = { kind: "policy" as const, policyId: "policy:adopt-only",
+      ownerIdentityId: "identity:owner" };
+
+    // The widest holder this operation can create is a whole-repository writer;
+    // a policy that never delegated admission may not produce one.
+    const whole = repositoryDeclaration(worker, [{ accessMode: "write", scopeKind: "tree", path: "" }]);
+    await assert.rejects(f.admissions.admit({ ...admissionRequest(worker, whole), authority: citedPolicy }),
+      /policy_action_not_permitted/);
+    // Nor the narrowest: a single logical reader is refused on the same ground.
+    await assert.rejects(f.admissions.admit({ ...admissionRequest(worker,
+      logicalDeclaration(worker, "resource:logical:calendar", secondLogicalDigest, "read")),
+    authority: citedPolicy }), /policy_action_not_permitted/);
+    // A policy that permits parallel narrow writing still does not permit
+    // admission itself, so it cannot be the authority for one either.
+    f.enforceWorkspace(worker.attemptId, "workspace:policy", "workspace:policy");
+    await assert.rejects(f.admissions.admit({ ...admissionRequest(worker,
+      repositoryDeclaration(worker, [{ accessMode: "write", scopeKind: "tree", path: "src/alpha" }],
+        "workspace:policy"), { parallel: true, policyId: "policy:adopt-only" }),
+    authority: citedPolicy }), /policy_action_not_permitted/);
+
+    // A wildcard is not this action either: a delegation policy grants the exact
+    // actions it lists and nothing broader.
+    await f.insertParallelWritePolicy({ id: "policy:wildcard", actions: ["*"], coordinatorVersion: 8 });
+    await assert.rejects(f.admissions.admit({ ...admissionRequest(worker, whole),
+      authority: { ...citedPolicy, policyId: "policy:wildcard" } }), /policy_action_not_permitted/);
+
+    // None of that created a holder.
+    const none = await f.raw.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM control_attempt_resource_admissions");
+    assert.equal(none.rows[0]?.count, "0");
+
+    // Owner authority is unaffected, and a policy that does delegate this exact
+    // action admits through the same operation.
+    await f.insertParallelWritePolicy({ id: "policy:admits", coordinatorVersion: 2,
+      actions: [PROJECT_WORK_ADMISSION_POLICY_ACTION_V1] });
+    assert.equal((await f.admissions.admit({ ...admissionRequest(worker, whole),
+      authority: { ...citedPolicy, policyId: "policy:admits" } })).replayed, false);
+  } finally { await f.close(); }
+});
+
+test("an admission replay cannot switch node or any other stored lineage", async () => {
+  const f = await fixture();
+  try {
+    const worker = await f.worker("lineage");
+    const declaration = repositoryDeclaration(worker,
+      [{ accessMode: "write", scopeKind: "tree", path: "" }]);
+    const admitted = await f.admissions.admit(admissionRequest(worker, declaration));
+    assert.equal(admitted.replayed, false);
+
+    // The same admission, attempt, lease and declaration, presented for a
+    // different node. The node is part of the immutable admission digest, so
+    // answering this as a replay would hand back a digest that is not the one
+    // persistence holds.
+    const foreignDigest = projectWorkResourceAdmissionDigestV1({
+      schema: "control-room.project-work-resource-admission/v1", tenantId: "tenant:test",
+      projectId: "project:test", jobId: worker.jobId, attemptId: worker.attemptId,
+      leaseId: worker.leaseId, nodeId: "node:absent", admissionId: worker.admissionId,
+      declarationDigest: admitted.declarationDigest });
+    assert.notEqual(foreignDigest, admitted.admissionDigest);
+    for (const nodeId of ["node:absent", "node:second"]) {
+      await assert.rejects(f.admissions.admit({ ...admissionRequest(worker, declaration), nodeId }),
+        /resource_admission_replay_conflict/, nodeId);
+    }
+    // A replay that changes only the route kind is a changed request too.
+    await assert.rejects(f.admissions.admit(admissionRequest(worker, declaration,
+      { routeKind: "scheduled" })), /resource_admission_replay_conflict/);
+
+    // The stored holder never moved and its version never advanced.
+    const stored = await f.raw.query<{ node_id: string; digest: string; version: string;
+      route_kind: string }>(
+      `SELECT node_id,payload->>'admissionDigest' AS digest,version::text AS version,
+         payload->>'routeKind' AS route_kind
+       FROM control_attempt_resource_admissions WHERE tenant_id='tenant:test' AND id=$1`,
+      [worker.admissionId]);
+    assert.deepEqual(stored.rows, [{ node_id: "node:test", digest: admitted.admissionDigest,
+      version: "1", route_kind: "manual" }]);
+
+    // The exact stored lineage still replays, and the answer is the stored
+    // record rather than anything re-derived from the request.
+    const replayed = await f.admissions.admit(admissionRequest(worker, declaration));
+    assert.deepEqual({ replayed: replayed.replayed, admissionDigest: replayed.admissionDigest,
+      declarationDigest: replayed.declarationDigest,
+      workspaceIntentDigest: replayed.workspaceIntentDigest, version: replayed.version },
+    { replayed: true, admissionDigest: admitted.admissionDigest,
+      declarationDigest: admitted.declarationDigest,
+      workspaceIntentDigest: admitted.workspaceIntentDigest, version: 1 });
   } finally { await f.close(); }
 });
 

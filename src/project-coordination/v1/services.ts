@@ -53,6 +53,15 @@ export interface ProjectCoordinationCanonicalPortV1 {
   loadAcceptedProjectCoordinationProposalV1(input: {
     tenantId: string; projectId: string; proposalId: string;
   }): Promise<{ proposalId: string; proposalDigest: string; proposal: ProjectCoordinationProposalV1 }>;
+  /**
+   * Looks up an already-committed adoption by its request identity alone and
+   * returns the original verified receipt, or nothing when this request has
+   * never committed. It consults no route and no price, so an exact retry can be
+   * answered before any mutable port is touched.
+   */
+  findCommittedProjectCoordinationAdoptionV1(input: { request: CoordinationOperationRequestV1 }):
+  Promise<{ receiptId: string; receiptDigest: string; jobIds: string[]; taskUnits: number;
+    concurrencyUnits: number; proposalDigest: string; replayed: true } | undefined>;
   adoptProjectCoordinationProposalV1(input: {
     request: CoordinationOperationRequestV1; requestDigest: string; proposalDigest: string;
     routes: Record<string, string>; cost: CoordinationCostEvidenceV1;
@@ -174,9 +183,28 @@ export class ProjectCoordinationAdoptionServiceV1 {
    * is accepted only as a cross-check: it must hash to the exact stored proposal
    * digest, so a caller cannot present a cheaper or differently-capable object
    * than the one persistence will later adopt.
+   *
+   * An exact retry of an already-committed request is answered from the canonical
+   * record before any mutable port is consulted. Route resolution and cost
+   * evidence are current-state services: a route can be retired and trusted cost
+   * can move, and neither event may retroactively break the receipt for work that
+   * legitimately committed under the old answer. So the committed operation is
+   * found and verified first, and the resolver and the pricing port are called
+   * only for a request that has genuinely never committed.
    */
   async adopt(input: { request: CoordinationOperationRequestV1; proposal?: ProjectCoordinationProposalV1 }) {
     const request = coordinationOperationRequestSchemaV1.parse(input.request);
+    const committed = await this.canonical.findCommittedProjectCoordinationAdoptionV1({ request });
+    if (committed) {
+      // The cross-check still applies on a retry: a caller copy is compared
+      // against the proposal digest the original operation actually committed.
+      if (input.proposal !== undefined
+        && projectCoordinationProposalDigestV1(input.proposal) !== committed.proposalDigest) {
+        failProjectCoordinationV1("proposal_evidence_mismatch");
+      }
+      const { proposalDigest: _committedProposalDigest, ...receipt } = committed;
+      return receipt;
+    }
     const canonicalProposal = await this.canonical.loadAcceptedProjectCoordinationProposalV1({
       tenantId: request.tenantId, projectId: request.projectId, proposalId: request.proposalId });
     if (input.proposal !== undefined

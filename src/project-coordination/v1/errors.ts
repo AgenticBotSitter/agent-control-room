@@ -24,6 +24,7 @@ export type ProjectCoordinationSafeCodeV1 =
   | "policy_expired"
   | "policy_revoked"
   | "policy_route_mismatch"
+  | "policy_action_not_permitted"
   | "policy_task_allowance_exhausted"
   | "policy_cost_allowance_exhausted"
   | "policy_cost_unknown"

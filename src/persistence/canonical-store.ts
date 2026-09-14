@@ -43,7 +43,9 @@ import {
   findResourceConflictsV1,
   narrowWriteResourcesV1,
   PARALLEL_NARROW_WRITE_POLICY_ACTION_V1,
+  PROJECT_WORK_ADMISSION_POLICY_ACTION_V1,
   acquireParallelNarrowWriteAuthorizationV1,
+  coordinationOperationRequestIdentityDigestV1,
   projectCoordinationProposalDigestV1,
   projectCoordinationProposalSchemaV1,
   projectWorkAdmissionRecheckSchemaV1,
@@ -1561,6 +1563,61 @@ export class CanonicalStore {
   }
 
   /**
+   * Exact replay of an already-committed adoption, verified on its own terms.
+   *
+   * Identity is the request identity digest recomputed here from the request
+   * itself, never the request digest: the request digest also binds the routes
+   * and the price the server resolved when the operation committed, so comparing
+   * it would make a committed receipt unreachable as soon as a route was retired
+   * or trusted cost moved. The stored receipt still has to prove itself -
+   * operation identity, a payload that rehashes to its recorded receipt digest,
+   * a recorded proposal digest and the canonical job rows it names - and changed
+   * request content under the same idempotency key still conflicts.
+   */
+  async #replayProjectCoordinationAdoptionV1(tx: DatabaseSession, request: CoordinationOperationRequestV1) {
+    const authorization = request.authorization;
+    const priorReceipt = (await tx.query<{ id: string; receipt_digest: string; task_units: number;
+      concurrency_units: number; payload: unknown }>(
+      `SELECT id,receipt_digest,task_units,concurrency_units,payload
+       FROM control_project_coordination_operation_receipts
+       WHERE tenant_id=$1 AND authorization_kind=$2 AND initiating_identity_id=$3 AND idempotency_key=$4
+       FOR UPDATE`,
+      [request.tenantId, authorization.kind, authorization.ownerIdentityId, request.idempotencyKey])).rows[0];
+    if (!priorReceipt) return undefined;
+    const payload = priorReceipt.payload as
+      { requestIdentityDigest?: unknown; proposalDigest?: unknown } | null;
+    if (priorReceipt.id !== request.operationId
+      || typeof payload?.requestIdentityDigest !== "string"
+      || payload.requestIdentityDigest !== coordinationOperationRequestIdentityDigestV1(request)
+      || typeof payload.proposalDigest !== "string") {
+      failProjectCoordinationV1("adoption_replay_conflict");
+    }
+    if (sha256Digest(priorReceipt.payload) !== priorReceipt.receipt_digest) {
+      failProjectCoordinationV1("adoption_replay_conflict");
+    }
+    const jobs = (await tx.query<{ canonical_job_id: string }>(
+      `SELECT j.canonical_job_id FROM control_project_coordination_operation_jobs j
+       JOIN control_jobs c ON c.tenant_id=j.tenant_id AND c.id=j.canonical_job_id
+       WHERE j.tenant_id=$1 AND j.operation_receipt_id=$2 ORDER BY j.canonical_job_id`,
+      [request.tenantId, priorReceipt.id])).rows.map((row) => row.canonical_job_id);
+    if (jobs.length !== request.selectedLocalIds.length) failProjectCoordinationV1("adoption_replay_conflict");
+    return { receiptId: priorReceipt.id, receiptDigest: priorReceipt.receipt_digest, jobIds: jobs,
+      taskUnits: Number(priorReceipt.task_units), concurrencyUnits: Number(priorReceipt.concurrency_units),
+      proposalDigest: payload!.proposalDigest as string, replayed: true as const };
+  }
+
+  /**
+   * The committed answer for one exact adoption request, or nothing. This reads
+   * canonical history only - no route resolution, no pricing, no current
+   * coordinator or policy state - so a caller can settle an exact retry before it
+   * consults any mutable port.
+   */
+  async findCommittedProjectCoordinationAdoptionV1(input: { request: CoordinationOperationRequestV1 }) {
+    const request = coordinationOperationRequestSchemaV1.parse(input.request);
+    return this.#transaction((tx) => this.#replayProjectCoordinationAdoptionV1(tx, request));
+  }
+
+  /**
    * Turns an accepted proposal into ordinary canonical work. Owner-reviewed and
    * bounded-policy adoption enter here through the same operation, create the same
    * non-runnable request/workflow/job records, the same dependency edges and the
@@ -1586,40 +1643,18 @@ export class CanonicalStore {
      * mutable-current-state check, because a request that already committed was
      * fully verified when it committed: a later coordinator revocation, policy
      * revocation or exhaustion must not retroactively break the receipt for work
-     * that legitimately exists. The stored receipt is verified on its own terms -
-     * request digest, operation identity, recomputed receipt digest and the
-     * canonical job rows it names - and returned without new accounting. Changed
-     * content under the same key still conflicts.
+     * that legitimately exists. Changed content under the same key still
+     * conflicts.
      */
-    const replay = async (tx: DatabaseSession) => {
-      const priorReceipt = (await tx.query<{ id: string; request_digest: string; receipt_digest: string;
-        task_units: number; concurrency_units: number; payload: unknown }>(
-        `SELECT id,request_digest,receipt_digest,task_units,concurrency_units,payload
-         FROM control_project_coordination_operation_receipts
-         WHERE tenant_id=$1 AND authorization_kind=$2 AND initiating_identity_id=$3 AND idempotency_key=$4
-         FOR UPDATE`,
-        [request.tenantId, authorization.kind, authorization.ownerIdentityId, request.idempotencyKey])).rows[0];
-      if (!priorReceipt) return undefined;
-      if (priorReceipt.request_digest !== input.requestDigest || priorReceipt.id !== request.operationId) {
-        failProjectCoordinationV1("adoption_replay_conflict");
-      }
-      if (sha256Digest(priorReceipt.payload) !== priorReceipt.receipt_digest) {
-        failProjectCoordinationV1("adoption_replay_conflict");
-      }
-      const jobs = (await tx.query<{ canonical_job_id: string }>(
-        `SELECT j.canonical_job_id FROM control_project_coordination_operation_jobs j
-         JOIN control_jobs c ON c.tenant_id=j.tenant_id AND c.id=j.canonical_job_id
-         WHERE j.tenant_id=$1 AND j.operation_receipt_id=$2 ORDER BY j.canonical_job_id`,
-        [request.tenantId, priorReceipt.id])).rows.map((row) => row.canonical_job_id);
-      if (jobs.length !== request.selectedLocalIds.length) failProjectCoordinationV1("adoption_replay_conflict");
-      return { receiptId: priorReceipt.id, receiptDigest: priorReceipt.receipt_digest, jobIds: jobs,
-        taskUnits: Number(priorReceipt.task_units), concurrencyUnits: Number(priorReceipt.concurrency_units),
-        replayed: true as const };
-    };
+    const replay = (tx: DatabaseSession) => this.#replayProjectCoordinationAdoptionV1(tx, request);
+    const requestIdentityDigest = coordinationOperationRequestIdentityDigestV1(request);
 
     return this.#transaction(async (tx) => {
       const committed = await replay(tx);
-      if (committed) return committed;
+      if (committed) {
+        const { proposalDigest: _replayedProposalDigest, ...receipt } = committed;
+        return receipt;
+      }
 
       await this.#lockOwnerAuthorityV1(tx, { tenantId: request.tenantId, identityId: authorization.ownerIdentityId,
         projectId: request.projectId, occurredAt: request.occurredAt, action: "proposal.adopt" });
@@ -1647,7 +1682,10 @@ export class CanonicalStore {
       // repeated with that lock held: a waiter that queued behind a concurrent
       // first commit reads the committed receipt here instead of adopting twice.
       const serialized = await replay(tx);
-      if (serialized) return serialized;
+      if (serialized) {
+        const { proposalDigest: _serializedProposalDigest, ...receipt } = serialized;
+        return receipt;
+      }
 
       const proposalRow = (await tx.query<{ project_id: string; coordinator_identity_id: string;
         coordinator_version: string; validation_state: string; proposal_digest: string | null;
@@ -1846,6 +1884,11 @@ export class CanonicalStore {
         proposalId: request.proposalId, proposalDigest: proposalRow!.proposal_digest!,
         authorizationKind: authorization.kind, initiatingIdentityId: authorization.ownerIdentityId,
         coordinatorVersion: Number(head!.version), jobIds, requestDigest: input.requestDigest,
+        // The identity of the request that committed here, free of the routes and
+        // the price this server resolved for it. An exact retry is recognised by
+        // this value alone, so a retired route or moved cost evidence cannot make
+        // a committed receipt unreachable.
+        requestIdentityDigest,
         startsWork: false, grantsExecutionAuthority: false, permitsAssignment: false,
       };
       const receiptDigest = sha256Digest(receiptPayload);
@@ -1929,10 +1972,22 @@ export class CanonicalStore {
       // 1. authority
       await this.#lockOwnerAuthorityV1(tx, { tenantId: input.tenantId, identityId: input.authority.ownerIdentityId,
         projectId: input.projectId, occurredAt: input.acquiredAt, action: "work.admit" });
+      /**
+       * A request that cites a standing delegation policy as its authority must
+       * cite a policy that actually delegates *this* operation. Existence,
+       * currency, project and owner say only that the row is a live policy of
+       * this owner; they say nothing about what the owner delegated. A policy
+       * that lists, for example, only `proposal.adopt` is authority to adopt a
+       * proposal and authority for nothing else, so it may not stand behind a
+       * resource holder - least of all a whole-repository writer, which is the
+       * widest holder this operation can create. The delegated action is
+       * therefore checked here, before any holder is created and before any
+       * other state is even read.
+       */
       if (input.authority.kind === "policy") {
         const policy = (await tx.query<{ state: string; valid_from: string; valid_until: string;
-          project_id: string; owner_identity_id: string }>(
-          `SELECT state,valid_from,valid_until,project_id,owner_identity_id
+          project_id: string; owner_identity_id: string; allowed_actions: unknown }>(
+          `SELECT state,valid_from,valid_until,project_id,owner_identity_id,allowed_actions
            FROM control_project_delegation_policies WHERE tenant_id=$1 AND id=$2 FOR SHARE`,
           [input.tenantId, input.authority.policyId])).rows[0];
         const at = Date.parse(input.acquiredAt);
@@ -1942,6 +1997,10 @@ export class CanonicalStore {
         if (policy!.state !== "active") failProjectCoordinationV1("policy_inactive");
         if (at < Date.parse(policy!.valid_from) || at >= Date.parse(policy!.valid_until)) {
           failProjectCoordinationV1("policy_expired");
+        }
+        const actions = policy!.allowed_actions;
+        if (!Array.isArray(actions) || !actions.includes(PROJECT_WORK_ADMISSION_POLICY_ACTION_V1)) {
+          failProjectCoordinationV1("policy_action_not_permitted");
         }
       }
 
@@ -2025,23 +2084,52 @@ export class CanonicalStore {
         resourceId: row.resource_id, accessMode: row.access_mode, scopeKind: row.scope_kind,
         path: row.path_fold }));
 
-      const existing = (await tx.query<{ id: string; attempt_id: string; lease_id: string; state: string;
-        declaration_digest: string; version: string }>(
-        `SELECT id,attempt_id,lease_id,state,declaration_digest,version::text AS version
+      const existing = (await tx.query<{ id: string; project_id: string; job_id: string; attempt_id: string;
+        lease_id: string; node_id: string; state: string; declaration_digest: string;
+        workspace_intent_digest: string; version: string;
+        payload: { admissionDigest?: unknown; routeKind?: unknown; enforcedWorkspaceId?: unknown;
+          parallelWritePolicyId?: unknown } | null }>(
+        `SELECT id,project_id,job_id,attempt_id,lease_id,node_id,state,declaration_digest,
+           workspace_intent_digest,version::text AS version,payload
          FROM control_attempt_resource_admissions
          WHERE tenant_id=$1 AND (id=$2 OR attempt_id=$3 OR lease_id=$4) ORDER BY id FOR UPDATE`,
         [input.tenantId, input.admissionId, input.attemptId, input.leaseId])).rows;
       if (existing.length > 1) failProjectCoordinationV1("resource_admission_replay_conflict");
       if (existing.length === 1) {
         const prior = existing[0]!;
-        if (prior.id !== input.admissionId || prior.attempt_id !== input.attemptId
-          || prior.lease_id !== input.leaseId || prior.declaration_digest !== declarationDigest) {
+        const priorPayload = prior.payload ?? {};
+        /**
+         * Replay is identity, not resemblance. Every piece of lineage this
+         * holder was stored with has to be the lineage now being presented -
+         * including the node, which the admission digest itself commits to.
+         * Omitting any of it would let a request that differs from the stored
+         * record be answered `replayed: true` with a digest that is not the one
+         * persistence actually holds: an immutable record could then appear to
+         * name a different, even nonexistent, node while the real holder was
+         * untouched. Anything that does not match is a changed request and
+         * conflicts.
+         */
+        const storedAdmissionDigest = typeof priorPayload.admissionDigest === "string"
+          ? priorPayload.admissionDigest : undefined;
+        if (prior.id !== input.admissionId || prior.project_id !== input.projectId
+          || prior.job_id !== input.jobId || prior.attempt_id !== input.attemptId
+          || prior.lease_id !== input.leaseId || prior.node_id !== input.nodeId
+          || prior.declaration_digest !== declarationDigest
+          || prior.workspace_intent_digest !== workspaceIntentDigest
+          || priorPayload.routeKind !== input.routeKind
+          || (priorPayload.enforcedWorkspaceId ?? undefined) !== enforcedWorkspaceId
+          || (priorPayload.parallelWritePolicyId ?? undefined) !== parallel?.policyId
+          || storedAdmissionDigest === undefined || storedAdmissionDigest !== admissionDigest) {
           failProjectCoordinationV1("resource_admission_replay_conflict");
         }
         // A retired holder is not re-acquired by replaying its admission.
         if (prior.state !== "held") failProjectCoordinationV1("resource_admission_retired");
         if (!priorAdmission) failProjectCoordinationV1("resource_admission_retired");
-        return { admissionId: input.admissionId, admissionDigest, declarationDigest, workspaceIntentDigest,
+        // The answer is the stored record, never a value re-derived from the
+        // request that asked for it.
+        return { admissionId: prior.id, admissionDigest: storedAdmissionDigest!,
+          declarationDigest: prior.declaration_digest,
+          workspaceIntentDigest: prior.workspace_intent_digest,
           version: Number(prior.version), replayed: true };
       }
 

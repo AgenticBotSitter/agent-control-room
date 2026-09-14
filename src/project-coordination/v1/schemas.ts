@@ -179,3 +179,24 @@ export const coordinationOperationRequestSchemaV1 = z.object({
   }
 });
 export type CoordinationOperationRequestV1 = z.infer<typeof coordinationOperationRequestSchemaV1>;
+
+export const PROJECT_COORDINATION_OPERATION_REQUEST_IDENTITY_V1 =
+  "control-room.project-coordination-operation-request-identity/v1" as const;
+
+/**
+ * The immutable identity of one adoption request: exactly what the caller asked
+ * for, and nothing the server later derived for it.
+ *
+ * Routes and prices are resolved from mutable ports at adoption time and are
+ * deliberately absent here. They are recorded in the receipt and bound into the
+ * separate request digest, but they are not part of *which request this is*: the
+ * same committed operation must still be recognisable as itself after a route
+ * has been retired or trusted cost evidence has moved. Everything the caller
+ * controls - proposal, selection, approved routes, authorization, operation and
+ * idempotency keys, timing - is included, so changed content under one key is a
+ * different identity and conflicts.
+ */
+export function coordinationOperationRequestIdentityDigestV1(value: unknown): string {
+  return sha256Digest({ schema: PROJECT_COORDINATION_OPERATION_REQUEST_IDENTITY_V1,
+    request: coordinationOperationRequestSchemaV1.parse(value) });
+}

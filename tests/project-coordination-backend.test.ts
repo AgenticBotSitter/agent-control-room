@@ -706,6 +706,87 @@ test("adoption routes and prices the canonical proposal, never a caller-supplied
   } finally { await f.close(); }
 });
 
+test("an exact adoption retry is answered before any route or price is consulted", async () => {
+  const f = await fixture();
+  try {
+    const proposal = await acceptedProposals(f, ["one"]);
+    let routeCalls = 0;
+    let costCalls = 0;
+    let routeAvailable = true;
+    let micro = 1_000;
+    const countingRoutes = { resolveRoute: () => {
+      routeCalls += 1;
+      return routeAvailable ? "executor:agent" : undefined;
+    } };
+    const countingCosts = { currentCost: (): CoordinationCostEvidenceV1 => {
+      costCalls += 1;
+      return { kind: "known", admittedCostMicroUsd: micro, evidenceDigest: hex("b") };
+    } };
+    const adoption = new ProjectCoordinationAdoptionServiceV1(f.canonical, countingRoutes, countingCosts);
+    const adopted = await adoption.adopt({ request: operationRequest(), proposal });
+    assert.equal(adopted.replayed, false);
+    assert.deepEqual([routeCalls, costCalls], [2, 2], "new work is routed and priced");
+
+    // The world moves on: the route this operation used is no longer available
+    // and trusted cost evidence has changed. Neither event may retroactively
+    // break the receipt for work that legitimately committed under the old
+    // answer, so the identical committed request must still return it.
+    routeAvailable = false;
+    micro = 999_999;
+    routeCalls = 0;
+    costCalls = 0;
+    const replayed = await adoption.adopt({ request: operationRequest(), proposal });
+    assert.deepEqual({ receiptId: replayed.receiptId, receiptDigest: replayed.receiptDigest,
+      jobIds: replayed.jobIds, taskUnits: replayed.taskUnits,
+      concurrencyUnits: replayed.concurrencyUnits, replayed: replayed.replayed },
+    { receiptId: adopted.receiptId, receiptDigest: adopted.receiptDigest, jobIds: adopted.jobIds,
+      taskUnits: adopted.taskUnits, concurrencyUnits: adopted.concurrencyUnits, replayed: true });
+    // The committed request was found and verified first, so neither mutable
+    // port was consulted at all on the retry.
+    assert.deepEqual([routeCalls, costCalls], [0, 0], "a retry consults no mutable port");
+
+    // Ports that are outright unavailable are equally irrelevant to a retry.
+    const unavailable = new ProjectCoordinationAdoptionServiceV1(f.canonical,
+      { resolveRoute: () => { throw new Error("route resolution unavailable"); } },
+      { currentCost: (): CoordinationCostEvidenceV1 => { throw new Error("pricing unavailable"); } });
+    assert.equal((await unavailable.adopt({ request: operationRequest() })).receiptId, adopted.receiptId);
+    assert.equal((await unavailable.adopt({ request: operationRequest(), proposal })).replayed, true);
+
+    // Nothing was adopted again and no allowance was consumed a second time.
+    const receipts = await f.raw.query<{ count: string; cost: string | null }>(
+      `SELECT count(*)::text AS count,max(admitted_cost_microusd)::text AS cost
+       FROM control_project_coordination_operation_receipts`);
+    assert.deepEqual(receipts.rows[0], { count: "1", cost: "2000" });
+
+    // Changed request content under the same idempotency key is still a
+    // conflict, and it is refused as a conflict before anything is priced.
+    routeCalls = 0;
+    costCalls = 0;
+    await assert.rejects(adoption.adopt({ request: operationRequest({ selectedLocalIds: ["task-1"] }),
+      proposal }), /adoption_replay_conflict/);
+    await assert.rejects(adoption.adopt({ request: operationRequest({ approvedRouteIds: ["executor:other"] }),
+      proposal }), /adoption_replay_conflict/);
+    assert.deepEqual([routeCalls, costCalls], [0, 0]);
+
+    // Genuinely new work is not swallowed by the replay path: it still consults
+    // both ports and still fails closed on the unavailable route.
+    await assert.rejects(adoption.adopt({ proposal, request: operationRequest({
+      idempotencyKey: "coordination-adopt-fresh", operationId: "operation:fresh",
+      requestId: "request:adopt:fresh", workflowId: "workflow:adopt:fresh" }) }),
+    /policy_route_mismatch/);
+    assert.equal(routeCalls, 1, "new work is routed");
+    const stillOne = await f.raw.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM control_project_coordination_operation_receipts");
+    assert.equal(stillOne.rows[0]?.count, "1");
+
+    // A caller copy is still cross-checked on a retry: a substituted proposal
+    // object is refused rather than answered with the committed receipt.
+    await assert.rejects(adoption.adopt({ request: operationRequest(),
+      proposal: { ...proposal, tasks: proposal.tasks.map((task) => ({ ...task,
+        requiredCapability: "capability.cheap" })) } }), /proposal_evidence_mismatch/);
+  } finally { await f.close(); }
+});
+
 test("exact replay returns the original receipt even after the coordinator is revoked", async () => {
   const f = await fixture();
   try {

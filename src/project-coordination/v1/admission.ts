@@ -3,6 +3,19 @@ import { coordinationRouteKinds } from "./schemas";
 
 export const PROJECT_WORK_ADMISSION_REQUEST_V1 = "control-room.project-work-admission-request/v1" as const;
 
+/**
+ * The standing-delegation action a stored owner policy must list before it can
+ * be the authority for admitting shared work resources at all.
+ *
+ * A delegation policy is a bounded grant of specific actions, not a general
+ * token of standing. Existence, currency and ownership of a policy row say
+ * nothing about whether its owner delegated *this* operation, so the policy
+ * cited by a `kind: "policy"` admission request must name this exact action.
+ * A policy that only allows, say, `proposal.adopt` delegates proposal adoption
+ * and nothing else, and can never stand behind a repository writer.
+ */
+export const PROJECT_WORK_ADMISSION_POLICY_ACTION_V1 = "work.admit" as const;
+
 const id = z.string().min(3).max(180).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
 const instant = z.string().datetime({ offset: true });
 
