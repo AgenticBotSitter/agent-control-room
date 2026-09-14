@@ -12,7 +12,6 @@
 // scheduler artifact. A token is only ever taken from the operator's environment or from
 // `gh auth token`, held in memory for the request, and redacted from any message.
 import { spawnSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -20,7 +19,8 @@ import { readWorkerInbox } from "../public-worker-inbox.mjs";
 import { actionsFingerprint, describeChange } from "./lib/inbox-fingerprint.mjs";
 import {
   RUNTIME_VERSION, appendBoundedLog, assertRepository, assertWorkerId, ensureWorkerDirectory,
-  logFile, readState, signalFile, stateFile, workerDirectory, workerSlug, writeSignal, writeJsonAtomic,
+  logFile, readState, recordExternalSignal, signalFile, stateFile, workerDirectory, workerSlug, writeSignal,
+  writeJsonAtomic,
 } from "./lib/runtime.mjs";
 
 export const DEFAULT_INTERVAL_SECONDS = 300;
@@ -161,7 +161,14 @@ export async function runTick({ options, reader = readWorkerInbox, token, now = 
     };
     writeSignal(signalPath, payload);
     if (options.signalDirectory) {
-      writeFileSync(join(options.signalDirectory, `${workerSlug(options.workerId)}.signal`), `${JSON.stringify(payload)}\n`, "utf8");
+      // The extra signal lives outside the runtime directory, so two things matter that do not for
+      // the owned one. It is written atomically, because a poller in another process must never
+      // observe a half-written file - the raw write it used to do allowed exactly that. And its
+      // exact path is recorded in the ownership marker, because uninstall removes only what it can
+      // prove it created, and would otherwise leave this file behind.
+      const externalSignal = join(options.signalDirectory, `${workerSlug(options.workerId)}.signal`);
+      writeJsonAtomic(externalSignal, payload);
+      recordExternalSignal(directory, externalSignal);
     }
     notified = true;
   }

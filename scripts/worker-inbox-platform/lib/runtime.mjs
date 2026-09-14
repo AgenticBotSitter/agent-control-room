@@ -83,13 +83,39 @@ export function ensureWorkerDirectory(directory, { workerId }) {
   return directory;
 }
 
-export function isOwnedDirectory(directory) {
+function readMarker(directory) {
   try {
     const parsed = JSON.parse(readFileSync(markerFile(directory), "utf8"));
-    return parsed?.version === RUNTIME_VERSION;
+    return parsed && typeof parsed === "object" ? parsed : undefined;
   } catch {
-    return false;
+    return undefined;
   }
+}
+
+// Paths this tool wrote OUTSIDE its own directory. Only exact file paths are ever recorded, never
+// a directory, so cleanup can never delete a directory this tool did not create.
+function recordedExternalSignals(marker) {
+  return Array.isArray(marker?.externalSignals)
+    ? marker.externalSignals.filter(entry => typeof entry === "string" && entry.length > 0)
+    : [];
+}
+
+export function isOwnedDirectory(directory) {
+  return readMarker(directory)?.version === RUNTIME_VERSION;
+}
+
+// Records a signal file written outside the runtime directory, so uninstall can remove it. Without
+// this the optional extra signal - which exists precisely so another process can watch a known path
+// - would be orphaned by every uninstall. Idempotent: recording the same path twice is a no-op.
+export function recordExternalSignal(directory, signalPath) {
+  const marker = readMarker(directory);
+  if (marker?.version !== RUNTIME_VERSION) {
+    throw new Error("worker_inbox_runtime_directory_not_owned");
+  }
+  const recorded = recordedExternalSignals(marker);
+  if (recorded.includes(signalPath)) return false;
+  writeJsonAtomic(markerFile(directory), { ...marker, externalSignals: [...recorded, signalPath] });
+  return true;
 }
 
 export function readState(file) {
@@ -163,7 +189,8 @@ export function removeOwnedFiles(directory, { dryRun = false } = {}) {
   if (!existsSync(directory)) {
     return { refused: false, missing: true, removed: [], preserved: [] };
   }
-  if (!isOwnedDirectory(directory)) {
+  const marker = readMarker(directory);
+  if (marker?.version !== RUNTIME_VERSION) {
     return { refused: true, reason: "worker_inbox_runtime_directory_not_owned", removed: [], preserved: [] };
   }
   const removed = [];
@@ -172,6 +199,15 @@ export function removeOwnedFiles(directory, { dryRun = false } = {}) {
     if (!existsSync(target)) continue;
     if (!dryRun) rmSync(target, { recursive: true, force: true });
     removed.push(name);
+  }
+  // Files written outside this directory - the optional extra signal - are recorded in the marker
+  // when they are written. Only the exact recorded file paths are removed; the containing directory
+  // is never touched, because this tool did not create it. A recorded path that has since been
+  // deleted by the operator is skipped rather than reported as removed.
+  for (const target of recordedExternalSignals(marker)) {
+    if (!existsSync(target)) continue;
+    if (!dryRun) rmSync(target, { force: true });
+    removed.push(target);
   }
   // Compare bare directory entry names, not paths: markerFile() returns a full path, so
   // comparing it to readdirSync() output would classify our own marker as a foreign file

@@ -17,8 +17,8 @@ import { actionsFingerprint } from "../scripts/worker-inbox-platform/lib/inbox-f
 import { artifactsFor, iso8601Duration, systemdQuote, xmlEscape } from "../scripts/worker-inbox-platform/lib/artifacts.mjs";
 import { instructionsFor } from "../scripts/worker-inbox-platform/lib/instructions.mjs";
 import {
-  appendBoundedLog, ensureWorkerDirectory, isOwnedDirectory, logFile, readState, removeOwnedFiles,
-  signalFile, stateFile, workerDirectory,
+  appendBoundedLog, ensureWorkerDirectory, isOwnedDirectory, logFile, markerFile, readState,
+  removeOwnedFiles, signalFile, stateFile, workerDirectory, workerSlug,
 } from "../scripts/worker-inbox-platform/lib/runtime.mjs";
 import { isWellFormedXml } from "../scripts/worker-inbox-platform/lib/xml-wellformed.mjs";
 import { generate } from "../scripts/worker-inbox-platform/worker-inbox-generate.mjs";
@@ -695,6 +695,42 @@ test("an output directory outside the owned one is refused, not written and orph
   assert.equal(cli.status, 1, "the generator maps any refusal to exit 1");
   assert.match(cli.stderr, /worker_inbox_platform_out_directory_not_owned/u);
   assert.equal(existsSync(join(root, "nope")), false);
+});
+
+test("the extra signal is written whole, recorded, and cleaned up without touching a foreign directory", async (t) => {
+  const root = scratch(t);
+  const directory = workerDirectory({ workerId: WORKER_ID, runtimeRoot: root });
+  const foreign = join(root, "elsewhere", "signals");
+  mkdirSync(foreign, { recursive: true });
+  // A file belonging to another process in the same directory. Uninstall must not go near it, and
+  // must not remove the directory either: this tool did not create that directory.
+  const operatorFile = join(foreign, "keep-me.txt");
+  writeFileSync(operatorFile, "operator file\n", "utf8");
+
+  const options = tickOptions(root, {
+    fetchImpl: fakeGithub(assignment()).fetchImpl, signalDirectory: foreign,
+  });
+  const result = await runTick({ options, now: CLOCK });
+  assert.equal(result.change, "baseline-action");
+
+  const external = join(foreign, `${workerSlug(WORKER_ID)}.signal`);
+  assert.equal(existsSync(external), true, "the extra signal must be written");
+  // Content parity with the owned signal, which is written by the atomic helper. Atomicity itself
+  // is NOT observable from a single-threaded read - a raw write reads back whole too - so this test
+  // does not claim to prove it. The code uses the same atomic writer for both files; that is a
+  // statement about the code, not something this assertion establishes.
+  assert.equal(readFileSync(external, "utf8"), readFileSync(signalFile(directory), "utf8"),
+    "the extra signal must carry the same payload as the owned one");
+
+  const marker = JSON.parse(readFileSync(markerFile(directory), "utf8"));
+  assert.deepEqual(marker.externalSignals, [external],
+    "the exact file path must be recorded, not the directory that contains it");
+
+  const removed = uninstall({ options: { workerId: WORKER_ID, runtimeRoot: root } });
+  assert.ok(removed.removed.includes(external), "uninstall must remove the file it recorded");
+  assert.equal(existsSync(external), false);
+  assert.equal(existsSync(foreign), true, "the foreign directory must survive");
+  assert.equal(existsSync(operatorFile), true, "another process's file must survive");
 });
 
 test("a nested field whose key order differs between reads is not a change", () => {
