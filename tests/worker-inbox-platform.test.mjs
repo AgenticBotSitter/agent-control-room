@@ -606,6 +606,31 @@ test("instructions cover start, inspect, stop, uninstall, and the wake limitatio
     /worker_inbox_platform_platform_invalid/u);
 });
 
+test("the generated instructions warn that a scheduler PATH can break --token-from-gh", () => {
+  const forPlatform = platform => instructionsFor({
+    platform, workerId: WORKER_ID, artifactDirectory: "/tmp/a b/c",
+    runtimeDirectory: "/tmp/a b/rt", repository: REPOSITORY_NAME,
+  });
+
+  // launchd and systemd user services do not inherit the shell environment, so the flag they are
+  // told to use can fail on a scheduler even though it works in a terminal. The generated text has
+  // to say so, and name the failure, or an operator installs a job that never polls.
+  for (const platform of ["launchd", "systemd"]) {
+    const text = forPlatform(platform);
+    assert.match(text, /Scheduler PATH/u, `${platform} instructions must warn about the scheduler PATH`);
+    assert.match(text, /worker_inbox_platform_gh_token_unavailable/u,
+      `${platform} instructions must name the failure an operator will actually see`);
+    assert.match(text, /does not\s+fall back to anonymous|not\s+fall back to anonymous requests/u,
+      `${platform} instructions must say the failure is not a silent fallback`);
+  }
+
+  // Task Scheduler runs with the user environment, so it must NOT carry a caveat that does not
+  // apply to it - a warning that cannot be acted on is its own kind of untrue.
+  const windows = forPlatform("windows");
+  assert.doesNotMatch(windows, /Scheduler PATH/u);
+  assert.match(windows, /--token-from-gh/u, "windows still documents the flag it can use");
+});
+
 test("a nested field whose key order differs between reads is not a change", () => {
   // The fingerprint serialises whatever fields the accepted client reports, so it must not be
   // sensitive to the order keys happen to be written in. If a future field nests an object

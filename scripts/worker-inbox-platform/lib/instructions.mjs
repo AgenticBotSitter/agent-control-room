@@ -21,6 +21,17 @@ export function instructionsFor({ platform, workerId, artifactDirectory, runtime
     "Credentials:",
     "  No token is generated, copied, printed, or stored by this tool. Set GITHUB_TOKEN in the",
     "  environment you control, or pass --token-from-gh to use `gh auth token` in memory.",
+    // A scheduler does not inherit the interactive shell environment, so `gh` may not be on the
+    // PATH a tick runs with - the flag then fails even though it works in a terminal. Windows Task
+    // Scheduler runs with the user environment and does not have this problem; launchd and systemd
+    // user services do.
+    ...(platform === "windows" ? [] : [
+      "  Scheduler PATH: this scheduler does not inherit your shell environment, so",
+      "  --token-from-gh only works if `gh` is on the PATH the tick runs with. If it is not, the",
+      "  tick fails loudly with worker_inbox_platform_gh_token_unavailable and exit 1 - it does not",
+      "  fall back to anonymous requests. Fix it by supplying the token through the environment file",
+      "  the unit reads, or by adding the directory holding `gh` to PATH. See the platform page.",
+    ]),
     `  Runtime files: "${runtimeDirectory}"`,
     `  Repository: ${repository}`,
   ];
