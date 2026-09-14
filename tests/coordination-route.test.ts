@@ -13,6 +13,10 @@
 //   * invalid same-origin -> 401/403 access_denied and never reaches the service;
 //   * missing JWT -> 401 authentication_required, no service call;
 //   * bad JWT signature -> 401 authentication_required;
+//   * simultaneous same-key POSTs -> engine runs once, both callers get the
+//     same outcome (in-flight coalescing, perf-only, not durable replay);
+//   * sequential same-key retry -> re-runs the engine (documents the missing
+//     durable receipt seam for appoint/replace/revoke);
 //   * valid JWT, GET page -> 200 with the wire-shaped page payload;
 //   * valid JWT, POST appoint without Idempotency-Key -> 400 invalid_request;
 //   * valid JWT, POST appoint with bad revision -> 200 refused (revision envelope)
@@ -39,6 +43,9 @@ const FIXTURE_NOW = Date.parse("2026-09-14T00:00:00.000Z");
 const FIXTURE_ORIGIN = "https://private.example.invalid";
 const FIXTURE_TENANT = "tenant:test";
 const FIXTURE_KEYS = generateKeyPairSync("rsa", { modulusLength: 2048 });
+// A second keypair the trust store never sees. Tokens signed with it carry a
+// valid shape but a bad signature — the verifier must refuse them.
+const WRONG_KEYS = generateKeyPairSync("rsa", { modulusLength: 2048 });
 
 function makeTrust(now: number): AccessTrust {
   return {
@@ -59,12 +66,23 @@ function makeToken(now: number, audience: string, subject = "test-owner"): strin
   return `${header}.${claims}.${sign("RSA-SHA256", Buffer.from(`${header}.${claims}`), FIXTURE_KEYS.privateKey).toString("base64url")}`;
 }
 
+function makeBadSignatureToken(now: number, audience: string, subject = "test-owner"): string {
+  const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT", kid: "test-public-key" })).toString("base64url");
+  const claims = Buffer.from(JSON.stringify({
+    iss: "https://access.example.invalid", aud: [audience], sub: subject, type: "app",
+    iat: now / 1000 - 60, exp: now / 1000 + 300,
+  })).toString("base64url");
+  // Signed with the wrong private key: header claims kid test-public-key but
+  // the signature does not verify against the trusted JWK.
+  return `${header}.${claims}.${sign("RSA-SHA256", Buffer.from(`${header}.${claims}`), WRONG_KEYS.privateKey).toString("base64url")}`;
+}
+
 interface RouteFixture {
   handle: (request: Request) => Promise<Response>;
   dispose: () => Promise<void>;
 }
 
-async function buildRouteFixture(opts: { coordinationEnabled?: boolean } = {}): Promise<RouteFixture> {
+async function buildRouteFixture(opts: { coordinationEnabled?: boolean; engineDelayMs?: number; onEngineWrite?: () => void } = {}): Promise<RouteFixture> {
   const db = new PGlite();
   for (const file of (await readdir("db/migrations")).filter((f) => f.endsWith(".sql")).sort()) {
     await db.exec(await readFile(`db/migrations/${file}`, "utf8"));
@@ -108,6 +126,8 @@ async function buildRouteFixture(opts: { coordinationEnabled?: boolean } = {}): 
 
   const port: ProjectCoordinationCanonicalPortV1 = {
     async assignProjectCoordinatorV1(input) {
+      opts.onEngineWrite?.();
+      if (opts.engineDelayMs) await new Promise((resolve) => setTimeout(resolve, opts.engineDelayMs));
       if (input.operation === "revoke") {
         const existing = headRows.get(input.appointment.projectId);
         if (!existing) throw new ProjectCoordinationErrorV1("no_coordinator" as never);
@@ -251,6 +271,21 @@ test("missing JWT produces authentication_required and never reaches the service
   });
   const response = await f.handle(request);
   assert.equal(response.status, 401);
+});
+
+test("bad JWT signature produces authentication_required and never reaches the service", async (t) => {
+  const f = await buildRouteFixture(); t.after(() => f.dispose());
+  // Signed with a key the trust store never saw: well-formed JWT, wrong signature.
+  const token = makeBadSignatureToken(FIXTURE_NOW, "test-app");
+  const request = new Request(`${FIXTURE_ORIGIN}/api/v1/projects/project:example/coordination`, {
+    method: "GET",
+    headers: { "cf-access-jwt-assertion": token },
+  });
+  const response = await f.handle(request);
+  assert.equal(response.status, 401);
+  const body = await response.json();
+  // The verifier must refuse before the service runs — no page payload, no grant check.
+  assert.match(JSON.stringify(body), /authentication_required/);
 });
 
 test("POST without Idempotency-Key is invalid_request at the HTTP boundary", async (t) => {
@@ -424,7 +459,7 @@ test("POST with a stale revision is refused with stale_revision", async (t) => {
   assert.equal(result.reasonCode, "stale_revision");
 });
 
-test("replaying a POST with the same Idempotency-Key returns the cached outcome without re-running the engine", async (t) => {
+test("sequential same-key retry re-runs the engine — no durable replay without the receipt seam", async (t) => {
   const f = await buildRouteFixture(); t.after(() => f.dispose());
   const token = makeToken(FIXTURE_NOW, "test-app");
   const observedAt = new Date(FIXTURE_NOW).toISOString();
@@ -456,15 +491,66 @@ test("replaying a POST with the same Idempotency-Key returns the cached outcome 
   assert.equal(first.status, 200);
   assert.equal(firstResult.revision.expectedCoordinatorVersion, 1);
 
-  // Second call with the same Idempotency-Key MUST replay the cached outcome
-  // — the engine MUST NOT run a second time. If it did, the version would
-  // advance to 2 and the assertion would fail.
+  // Second call with the same Idempotency-Key RE-RUNS the engine: the
+  // in-flight map is perf-only and holds nothing after the first response.
+  // The submitted revision (0) is now stale against head (1), so the engine
+  // refuses with stale_revision. This pins the honest current behavior AND
+  // the reason durable replay needs the missing receipt seam: without a
+  // canonical saved receipt for appoint/replace/revoke, a lost response
+  // followed by a retry cannot be reconciled without repeating the command.
+  // Missing seam: no method on ProjectCoordinationCanonicalPortV1 accepts an
+  // idempotency key for the coordinator lifecycle (assign/revoke); the
+  // control_project_coordination_operation_receipts path covers proposal
+  // adoption only (adoptProjectCoordinationProposalV1).
   const second = await f.handle(buildRequest());
   assert.equal(second.status, 200);
   const secondResult = await second.clone().json();
-  assert.equal(secondResult.status, "accepted");
+  assert.equal(secondResult.status, "refused");
+  assert.equal(secondResult.reasonCode, "stale_revision");
   assert.equal(secondResult.revision.expectedCoordinatorVersion, 1);
-  // The body must be identical to the first response (cached, not re-evaluated).
+});
+
+test("simultaneous same-key POSTs run the engine once and both callers get the same outcome", async (t) => {
+  let engineWrites = 0;
+  const f = await buildRouteFixture({
+    engineDelayMs: 20,
+    onEngineWrite: () => { engineWrites += 1; },
+  });
+  t.after(() => f.dispose());
+  const token = makeToken(FIXTURE_NOW, "test-app");
+  const observedAt = new Date(FIXTURE_NOW).toISOString();
+  const body = JSON.stringify({
+    revision: {
+      projectId: "project:example",
+      expectedCoordinatorVersion: 0,
+      expectedPolicyVersion: 0,
+      expectedConflictsVersion: 0,
+      expectedAttentionVersion: 0,
+      observedAt,
+    },
+    coordinatorActorType: "human",
+    coordinatorIdentityId: "owner-self-7",
+  });
+  const buildRequest = () => new Request(`${FIXTURE_ORIGIN}/api/v1/projects/project:example/coordination/appoint-coordinator`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "cf-access-jwt-assertion": token,
+      "idempotency-key": "appointment-race01",
+      "origin": FIXTURE_ORIGIN,
+    },
+    body,
+  });
+  // Both requests are in flight at once. The in-flight map coalesces them:
+  // the engine runs exactly once and both callers receive the same recorded
+  // outcome. This is perf-only coalescing, not durable replay.
+  const [first, second] = await Promise.all([f.handle(buildRequest()), f.handle(buildRequest())]);
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  const firstResult = await first.json();
+  const secondResult = await second.json();
+  assert.equal(engineWrites, 1);
+  assert.equal(firstResult.status, "accepted");
   assert.deepEqual(secondResult, firstResult);
 });
 
@@ -493,10 +579,10 @@ test("different Idempotency-Keys on the same project both run the engine", async
       coordinatorIdentityId: "owner-self-6",
     }),
   });
-  // Two distinct Idempotency-Keys — different cache slots — both must run.
+  // Two distinct Idempotency-Keys — different in-flight slots — both must run.
   // The first call installs the coordinator; the second call MUST re-run the
-  // engine (different cache key) and refuse with coordinator_already_active,
-  // proving the replay cache did not return the cached 200.
+  // engine (different key) and refuse with stale_revision on the now-outdated
+  // revision, proving no cross-key short-circuit.
   const first = await f.handle(buildRequest("appointment-distinct1"));
   assert.equal(first.status, 200);
   const firstResult = await first.clone().json();

@@ -27,10 +27,6 @@ import { projectCoordinationActionResultSchema, projectCoordinationPageSchema } 
 import { createAccessVerifier, requireSameOrigin, WebAccessError, type AccessTrust } from "./access-verifier";
 import { privateResponseHeaders as responseHeaders, readBoundedJson, webFailure } from "./http-common";
 import type { ProjectCoordinationHttpService } from "./project-coordination-http";
-import {
-  IdempotencyReplayCache,
-  type IdempotencyCacheKey,
-} from "./idempotency-replay-cache";
 
 type Identity = Parameters<ProjectCoordinationHttpService["read"]>[0];
 type RevisionInput = Parameters<ProjectCoordinationHttpService["appointCoordinator"]>[1] extends infer T
@@ -48,11 +44,17 @@ export interface CoordinationHttpHandlerOptions {
    */
   isCoordinationEnabled?: () => Promise<boolean>;
   /**
-   * Replay cache for POST outcomes keyed by Idempotency-Key + projectId +
-   * subaction + identity. When omitted, every POST runs once and replays
-   * are not protected — production deployments should always pass one.
+   * In-flight request coalescing, shared across handler invocations within one
+   * process. Two simultaneous POSTs carrying the same Idempotency-Key run the
+   * engine once; both callers receive the same recorded outcome. This is a
+   * performance optimization only — it is NOT durable replay. A sequential
+   * retry after the first response, a reconstructed handler, or a process
+   * restart re-runs the engine. Durable replay for appoint/replace/revoke is
+   * blocked on the missing shared seam (see the module docstring in
+   * project-coordination-http.ts); the canonical receipt path covers proposal
+   * adoption only.
    */
-  replayCache?: IdempotencyReplayCache;
+  inflight?: Map<string, Promise<unknown>>;
 }
 
 const IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9:_-]{8,160}$/;
@@ -130,7 +132,11 @@ export function createCoordinationHttpHandler(options: CoordinationHttpHandlerOp
   const verifyIdentity = createAccessVerifier(options.trust);
   const clock = options.clock ?? Date.now;
   const isCoordinationEnabled = options.isCoordinationEnabled ?? (() => Promise.resolve(true));
-  const replayCache = options.replayCache ?? new IdempotencyReplayCache({ clock });
+  const inflight = options.inflight ?? new Map<string, Promise<unknown>>();
+  // Composite in-flight key. Identity subject is included so one owner's retry
+  // can never be answered with another owner's outcome.
+  const inflightKey = (idempotencyKey: string, projectId: string, subaction: string, identitySubject: string) =>
+    `${idempotencyKey}\n${projectId}\n${subaction}\n${identitySubject}`;
   return async (request: Request): Promise<Response> => {
     try {
         requireSameOrigin(request, options.origin);
@@ -156,57 +162,61 @@ export function createCoordinationHttpHandler(options: CoordinationHttpHandlerOp
         const body = await readJsonBody(request);
         await ensureEnabledOrRefuse(isCoordinationEnabled);
 
-        const cacheKey: IdempotencyCacheKey = {
-          idempotencyKey,
-          projectId,
-          subaction,
-          identitySubject: identity.subject,
-        };
-        const cached = replayCache.lookup(cacheKey);
-        if (cached) {
-          return Response.json(cached.body as object, { status: cached.status, headers: responseHeaders });
+        const key = inflightKey(idempotencyKey, projectId, subaction, identity.subject);
+        // Atomic check-and-register: no await sits between get and set, so two
+        // simultaneous same-key requests cannot both miss.
+        const running = inflight.get(key);
+        if (running) {
+          const outcome = await running;
+          return Response.json(outcome as object, { headers: responseHeaders });
         }
-
-      let outcome: unknown;
-      switch (subaction) {
-        case "appoint-coordinator": {
-          const input = { projectId, ...extractAppointFields(body) };
-          outcome = await options.service.appointCoordinator(identity, input);
-          break;
+        const invocation = (async (): Promise<unknown> => {
+          let outcome: unknown;
+          switch (subaction) {
+            case "appoint-coordinator": {
+              const input = { projectId, ...extractAppointFields(body) };
+              outcome = await options.service.appointCoordinator(identity, input);
+              break;
+            }
+            case "replace-coordinator": {
+              const input = { projectId, ...extractAppointFields(body) };
+              outcome = await options.service.replaceCoordinator(identity, input);
+              break;
+            }
+            case "revoke-coordinator": {
+              // Revoke uses the same shape as replace/appoint but with `operation: "revoke"`;
+              // the HTTP service's revoke input is structurally identical to appoint input.
+              const input = { projectId, ...extractAppointFields(body) };
+              outcome = await options.service.revokeCoordinator(identity, input);
+              break;
+            }
+            case "pause-policy": {
+              const input = { projectId, ...extractPolicyFields(body) };
+              outcome = await options.service.pauseDelegationPolicy(identity, input);
+              break;
+            }
+            case "resume-policy": {
+              const input = { projectId, ...extractPolicyFields(body) };
+              outcome = await options.service.resumeDelegationPolicy(identity, input);
+              break;
+            }
+            case "revoke-policy": {
+              const input = { projectId, ...extractPolicyFields(body) };
+              outcome = await options.service.revokeDelegationPolicy(identity, input);
+              break;
+            }
+            default:
+              throw new WebAccessError("not_found");
+          }
+          return projectCoordinationActionResultSchema.parse(outcome);
+        })();
+        inflight.set(key, invocation);
+        try {
+          const parsed = await invocation;
+          return Response.json(parsed as object, { headers: responseHeaders });
+        } finally {
+          inflight.delete(key);
         }
-        case "replace-coordinator": {
-          const input = { projectId, ...extractAppointFields(body) };
-          outcome = await options.service.replaceCoordinator(identity, input);
-          break;
-        }
-        case "revoke-coordinator": {
-          // Revoke uses the same shape as replace/appoint but with `operation: "revoke"`;
-          // the HTTP service's revoke input is structurally identical to appoint input.
-          const input = { projectId, ...extractAppointFields(body) };
-          outcome = await options.service.revokeCoordinator(identity, input);
-          break;
-        }
-        case "pause-policy": {
-          const input = { projectId, ...extractPolicyFields(body) };
-          outcome = await options.service.pauseDelegationPolicy(identity, input);
-          break;
-        }
-        case "resume-policy": {
-          const input = { projectId, ...extractPolicyFields(body) };
-          outcome = await options.service.resumeDelegationPolicy(identity, input);
-          break;
-        }
-        case "revoke-policy": {
-          const input = { projectId, ...extractPolicyFields(body) };
-          outcome = await options.service.revokeDelegationPolicy(identity, input);
-          break;
-        }
-        default:
-          throw new WebAccessError("not_found");
-      }
-      const parsed = projectCoordinationActionResultSchema.parse(outcome);
-      replayCache.record(cacheKey, 200, parsed);
-      return Response.json(parsed, { headers: responseHeaders });
     } catch (error) {
 return webFailure(error);
     }
