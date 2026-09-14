@@ -9,9 +9,16 @@ const issue = (number, labels, updated_at = "2026-09-14T10:00:00Z") => ({
   number, title: `Issue ${number}`, html_url: `https://github.example/issues/${number}`,
   state: "open", updated_at, labels: labels.map(name => ({ name })),
 });
-const comment = (body, association = "MEMBER", login = "trusted-maintainer") => ({
-  body, author_association: association, user: { login },
+const comment = (body, association = "MEMBER", login = "trusted-maintainer", type = "User") => ({
+  body, author_association: association, user: { login, type },
 });
+// Only the serialized controller posts authoritative transition records.
+const controllerComment = body => comment(body, "NONE", "github-actions[bot]", "Bot");
+const handoff = (issue, state, worker = "worker:test-01", action = "worker") => ({
+  issue, requestId: 1, phase: "complete", workerId: worker, state, action,
+  head: "a".repeat(40), reviewUrl: `https://github.example/issues/${issue}`,
+});
+const handoffMarker = record => `Workflow handoff\n\n<!-- agent-control-room-handoff:v1 ${JSON.stringify(record)} -->`;
 // The repository's own submission convention: a pull request names the issue it delivers.
 const pull = (number, declares, { state = "open", merged = false, body } = {}) => ({
   number, state, merged_at: merged ? "2026-09-14T00:00:00Z" : null,
@@ -247,6 +254,45 @@ test("an open correction submission keeps an issue healthy when an earlier one m
   });
   assert.ok((await readQueueHealth({ fetchImpl: allResolved.fetchImpl }))
     .anomalies.find(item => item.issue === 170).codes.includes("linked_pull_request_mismatch"));
+});
+
+test("a controller handoff record is authoritative and outranks an advisory action marker", async () => {
+  // The merged contributor handbook declares a legacy action:v1 marker advisory: it
+  // "cannot prove that a maintainer, rather than a worker using that same account,
+  // authorized it." The controller handoff:v1 record is authoritative, so it must win
+  // and the report must name which record it used.
+  const api = fakeFetch({
+    issues: [issue(170, ["status:changes-required", "action:worker"])],
+    comments: { 170: [
+      comment(actionMarker("worker:stale-01", "changes-required", 170)),
+      controllerComment(handoffMarker(handoff(170, "changes-required", "worker:real-01"))),
+    ] },
+    pulls: [],
+  });
+  const report = await readQueueHealth({ fetchImpl: api.fetchImpl, trustedLogins: ["trusted-maintainer"] });
+  assert.equal(report.oldestCorrection.workerId, "worker:real-01");
+  assert.equal(report.oldestCorrection.recordTrust, "controller-record");
+  assert.deepEqual(report.anomalies, []);
+});
+
+test("an advisory-only record is reported as advisory, never as authoritative", async () => {
+  const api = fakeFetch({
+    issues: [issue(170, ["status:changes-required", "action:worker"])],
+    comments: { 170: [comment(actionMarker("worker:test-01", "changes-required", 170))] },
+    pulls: [],
+  });
+  const report = await readQueueHealth({ fetchImpl: api.fetchImpl, trustedLogins: ["trusted-maintainer"] });
+  assert.equal(report.oldestCorrection.recordTrust, "advisory");
+  assert.match(renderQueueHealth(report), /record: advisory/);
+
+  // A controller record with a malformed payload is not authoritative.
+  const malformed = fakeFetch({
+    issues: [issue(170, ["status:changes-required", "action:worker"])],
+    comments: { 170: [controllerComment('Workflow handoff\n\n<!-- agent-control-room-handoff:v1 {"issue":170} -->')] },
+    pulls: [],
+  });
+  assert.ok((await readQueueHealth({ fetchImpl: malformed.fetchImpl }))
+    .anomalies.find(item => item.issue === 170).codes.includes("worker_action_marker_missing"));
 });
 
 test("the human-readable report states who acts next for the oldest review and correction", async () => {

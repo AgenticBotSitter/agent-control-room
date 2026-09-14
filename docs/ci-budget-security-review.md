@@ -1,5 +1,16 @@
 # Public CI: reviewed settings
 
+## Contributor handoff workflow addition
+
+The review-handoff workflow reads trusted `main` code and handles issue-comment
+commands only. It has contents-read, issues-write and pull-requests-read permissions;
+no secrets, deployments, PR checkout or provider access. Maintainer transition commands
+require a separately controlled configured login distinct from the claimed PR author.
+Both claim/handoff workflows use one bounded queue (`queue: max`, at most 100 pending).
+No timed GitHub polling job is introduced. Worker monitoring is a local foreground
+read-only command until separately installed. See
+[implementation status](WORKFLOW_IMPLEMENTATION_STATUS.md) for activation limits.
+
 Enabled September 12, 2026 with owner authorization; workflow introduced by PR #15.
 This supersedes earlier instructions to keep public Actions disabled.
 

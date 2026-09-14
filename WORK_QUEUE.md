@@ -40,6 +40,11 @@ issue; active contributor branches retain ownership until accepted or handed off
 
 ## Live views
 
+Contributor handoff improvements and their activation requirements are tracked in
+[workflow implementation status](docs/WORKFLOW_IMPLEMENTATION_STATUS.md).
+Existing assignments retain their ownership. The handbook explains both the current
+manual fallback and the separately configured automated handoffs.
+
 - [Ready](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aready)
 - [Working](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aworking)
 - [In review](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Ain-review)

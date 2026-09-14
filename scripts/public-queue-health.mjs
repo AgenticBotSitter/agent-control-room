@@ -9,6 +9,7 @@
 // worker-inbox marker parser so one grammar defines every handoff record.
 import { pathToFileURL } from "node:url";
 import { parseActionMarker } from "./public-worker-inbox.mjs";
+import { parseHandoff } from "./review-handoff-controller.mjs";
 
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const CLAIM_MARKER = /<!-- agent-control-room-claim:v2 issue=(\d+) request=(\d+) actor=([A-Za-z0-9][A-Za-z0-9-]{0,38}) worker=([A-Za-z0-9][A-Za-z0-9._:-]{2,79}) -->/;
@@ -163,18 +164,38 @@ async function readDeclaredSubmissions({ fetchImpl, root, token, maxPages = DEFA
   return { byIssue, truncated: list.truncated };
 }
 
+/**
+ * The serialized controller (`github-actions[bot]`, a GitHub App bot account) is the only
+ * authoritative source of review, correction and ownership transitions.
+ */
+const CONTROLLER = comment => comment?.user?.login === "github-actions[bot]" && comment?.user?.type === "Bot";
+
 function trusted(marker, comment, trustedLogins) {
   if (!marker) return false;
-  return trustedLogins.includes(comment?.user?.login) || TRUSTED_ASSOCIATIONS.has(comment?.author_association);
+  return CONTROLLER(comment) || trustedLogins.includes(comment?.user?.login)
+    || TRUSTED_ASSOCIATIONS.has(comment?.author_association);
 }
 
-/** Latest trusted action marker on an issue, if any. */
-function latestAction(comments, issueNumber, trustedLogins) {
-  const matches = comments.flatMap(comment => {
+/**
+ * The latest workflow record for an issue, with its provenance.
+ *
+ * A controller `handoff:v1` record is authoritative. A legacy `action:v1` marker is
+ * advisory: per the contributor handbook it "can describe a requested handoff but cannot
+ * prove that a maintainer, rather than a worker using that same account, authorized it."
+ * The controller record therefore wins whenever both exist, and the report names which
+ * one it used instead of presenting advisory data as authoritative.
+ */
+function latestWorkflowRecord(comments, issueNumber, trustedLogins) {
+  let controllerRecord;
+  let advisory;
+  for (const comment of comments) {
+    const handoff = parseHandoff(comment);
+    if (handoff && handoff.issue === issueNumber) controllerRecord = { marker: handoff, trust: "controller-record" };
+    if (CONTROLLER(comment)) continue;
     const marker = parseActionMarker(comment?.body);
-    return trusted(marker, comment, trustedLogins) && marker.issue === issueNumber ? [marker] : [];
-  });
-  return matches.at(-1);
+    if (trusted(marker, comment, trustedLogins) && marker.issue === issueNumber) advisory = { marker, trust: "advisory" };
+  }
+  return controllerRecord ?? advisory;
 }
 
 /** Latest trusted accepted-claim marker on an issue, if any. */
@@ -265,13 +286,13 @@ export async function readQueueHealth({
       truncated = truncated || history.truncated;
     }
 
-    const action = latestAction(comments, issue.number, trustedLogins);
+    const record = latestWorkflowRecord(comments, issue.number, trustedLogins);
     const claim = latestClaim(comments, issue.number, trustedLogins);
     if (claim) claimed += 1;
 
-    if (status === "changes-required" && !action) codes.push("worker_action_marker_missing");
+    if (status === "changes-required" && !record) codes.push("worker_action_marker_missing");
     // A correction was requested but the issue still advertises an active review.
-    if (status === "in-review" && (action?.state === "changes-required" || actions.includes("action:worker")))
+    if (status === "in-review" && (record?.marker.state === "changes-required" || actions.includes("action:worker")))
       codes.push("correction_not_applied");
 
     // Submitted work: compare the advertised state with the issue's declared submissions.
@@ -295,7 +316,8 @@ export async function readQueueHealth({
       if (status === "changes-required")
         correctionRecords.push({ issue: issue.number, title: sanitize(issue.title), since,
           ageDays: ageDays(since, now), responsibilityArea: RESPONSIBILITY_AREAS[status],
-          workerId: action?.workerId, url: issueUrlOf(repository, issue.number) });
+          workerId: record?.marker.workerId, recordTrust: record?.trust,
+          url: issueUrlOf(repository, issue.number) });
     }
 
     if (codes.length > 0) anomalies.push(Object.freeze({
@@ -347,10 +369,12 @@ export function renderQueueHealth(report) {
   }
   lines.push("", `Active reviews: ${report.activeReviewCount}`, `Claimed assignments: ${report.claimedAssignments}`);
   // The responsibility area is reported for every actionable record, not only anomalies,
-  // so a reader always knows who acts next without naming a person or bot.
+  // so a reader always knows who acts next without naming a person or bot. A correction
+  // also reports whether its record is controller-authoritative or merely advisory.
   const describe = record => record
     ? `#${record.issue} ${record.title} (since ${record.since}${record.ageDays === undefined ? "" : `, ${record.ageDays}d`})`
       + `\n  next: ${record.responsibilityArea}`
+      + (record.recordTrust ? `\n  record: ${record.recordTrust}` : "")
     : "none";
   lines.push(`Oldest review: ${describe(report.oldestReview)}`);
   lines.push(`Oldest correction: ${describe(report.oldestCorrection)}`);
