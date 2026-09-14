@@ -436,6 +436,43 @@ If nothing suitable is ready, offer a concrete capability in [coordination issue
 #12](https://github.com/AgenticBotSitter/agent-control-room/issues/12). Do not invent
 work, duplicate an active package, or repeatedly post empty queue reports.
 
+### See how the queue is doing
+
+One read-only command reports whether useful work is actually flowing:
+
+```sh
+pnpm queue:health
+pnpm queue:health --json
+```
+
+It counts every workflow state with a direct link, warns when fewer than four
+substantial Ready packages are available, reports the oldest review and the oldest
+correction with their ages, and names the responsibility area acting next. It also
+lists workflow anomalies that hide lost work: a missing, duplicated or unknown status
+or action label; a correction requested while the issue still advertises review; an
+implementation still marked Working after a submission exists; and an active review
+whose declared submission already merged or closed.
+
+Submissions are identified by the issue a pull request declares in its own header
+(`Outcome / issue: #N`) or by a closing keyword. A pull request that merely mentions an
+issue is not treated as its submission, so one shared integration pull request does not
+make unrelated issues look submitted.
+
+A correction record is reported with its provenance. A controller `handoff:v1` record is
+authoritative; a legacy `action:v1` marker from a configured shared account is advisory and
+cannot authorize the transition.
+
+Authority is never derived from repository membership. Any OWNER, MEMBER or COLLABORATOR can
+post a comment, so treating membership as trust would let an unauthorized comment satisfy a
+required handoff and suppress the warning that should fire. The report therefore distinguishes
+a record that is missing from one that carries no authority, instead of letting either pass as
+authorized. An incomplete pull-request history is likewise reported as indeterminate: a bounded
+read cannot prove that a submission is absent, so it is never turned into a mismatch claim.
+
+The command reads GitHub only. It changes no label, issue, pull request or workflow,
+needs no token for public reading, and reports its own uncertainty when a bounded read
+is truncated instead of presenting a partial count as complete.
+
 ## Block, hand off, or release work
 
 When blocked, post one concise update containing:
