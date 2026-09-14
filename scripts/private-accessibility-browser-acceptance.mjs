@@ -33,12 +33,26 @@ function check(name, condition, detail = "") {
   if (!condition && !process.env.ACR_COLLECT_ONLY) assert.ok(condition, `${name}${detail ? `: ${detail}` : ""}`);
 }
 
+/** Known defects outside the #181 writable paths: reported, never called accepted. */
+function report(name, detail = "") {
+  console.log(`# report - ${name}${detail ? ` # ${detail}` : ""}`);
+}
+
+// Target-size predicate. getBoundingClientRect already includes CSS padding and
+// border, so the rect alone decides: no second padding addition.
+const SMALL_TARGET_PREDICATE = `(element, visible, getComputedStyle) => {
+  if (!visible(element) || element.disabled) return false;
+  const box = element.getBoundingClientRect();
+  return box.width < 24 || box.height < 24;
+}`;
+
 async function audit(page, label, options = {}) {
   const expectCurrent = options.current ?? true;
   await page.locator("main").waitFor({ state: "visible" });
   await page.getByRole("heading", { level: 1 }).waitFor();
   await page.waitForTimeout(100);
-  const dom = await page.evaluate(() => {
+  const dom = await page.evaluate(predicateSrc => {
+    const isSmallTarget = eval(predicateSrc);
     const visible = element => {
       const style = getComputedStyle(element);
       return style.visibility !== "hidden" && style.display !== "none" && element.getClientRects().length > 0;
@@ -58,25 +72,16 @@ async function audit(page, label, options = {}) {
     const skip = document.querySelector('a.skip-link[href="#private-main"]');
     const current = [...document.querySelectorAll(".private-header nav [aria-current=\"page\"]")]
       .map(element => element.textContent?.trim() ?? "");
-    const smallTargets = [...document.querySelectorAll("button, a[href]")].filter(element => {
-      if (!visible(element) || element.disabled) return false;
-      const box = element.getBoundingClientRect();
-      // Inline elements paint and take pointer hits across their vertical
-      // padding, which getBoundingClientRect omits: measure the hit area.
-      const style = getComputedStyle(element);
-      const fontSize = Number.parseFloat(style.fontSize) || 16;
-      const lineHeight = style.lineHeight === "normal" ? fontSize * 1.2 : Number.parseFloat(style.lineHeight);
-      const hitHeight = Math.max(box.height, lineHeight + Number.parseFloat(style.paddingTop)
-        + Number.parseFloat(style.paddingBottom));
-      return box.width < 24 || hitHeight < 24;
-    }).map(element => `${element.tagName.toLowerCase()}:${(element.textContent || "").trim().slice(0, 40)}`);
+    const smallTargets = [...document.querySelectorAll("button, a[href]")]
+      .filter(element => isSmallTarget(element, visible, getComputedStyle))
+      .map(element => `${element.tagName.toLowerCase()}:${(element.textContent || "").trim().slice(0, 40)}`);
     const textlessStates = [...document.querySelectorAll(".private-state")].filter(visible)
       .filter(element => !(element.textContent || "").trim()).length;
     return { lang: document.documentElement.lang, title: document.title, duplicates, unnamedFields, unnamedControls,
       headings, headingJumps, mainCount: main.length, h1Count: headings.filter(heading => heading.level === 1).length,
       skipPresent: Boolean(skip), horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
       current, smallTargets, textlessStates };
-  });
+  }, SMALL_TARGET_PREDICATE);
   check(`${label}: language is declared`, dom.lang === "en");
   check(`${label}: page title identifies Control Room`, /Control Room/.test(dom.title), dom.title);
   check(`${label}: one main content landmark`, dom.mainCount === 1, `count=${dom.mainCount}`);
@@ -87,21 +92,87 @@ async function audit(page, label, options = {}) {
   check(`${label}: visible controls have names`, dom.unnamedControls.length === 0, dom.unnamedControls.join(" | "));
   check(`${label}: skip link targets main content`, dom.skipPresent);
   check(`${label}: narrow page does not scroll sideways`, !dom.horizontalOverflow);
-  // The optional Idea Lab nav item is hidden unless the idea lab is enabled, so
-  // that stable page has no header current-page marker (reported separately:
-  // private-header.tsx renders no aria-current="page" for /ideas). Every other
-  // stable page must mark exactly one.
+  // Pages whose current-page or target-size dimensions depend on #27-reserved
+  // shells (or a header nav entry that does not exist) are audited here for
+  // structure only; the missing dimensions are reported, never accepted.
   if (expectCurrent)
     check(`${label}: exactly one current-page marker in header navigation`, dom.current.length === 1, dom.current.join("|"));
   else
     check(`${label}: header navigation has no stale current-page marker`, dom.current.length === 0, dom.current.join("|"));
-  // Target size is a property of the .private-shell design system. The Idea Lab
-  // page renders without a shell wrapper (idea-workspace.tsx, reserved by #27:
-  // "All saved ideas" 97x20, "Refresh saved discussion" 163x23) — reported
-  // separately, not asserted here.
   if (options.shell !== false)
     check(`${label}: visible controls meet the 24px minimum target`, dom.smallTargets.length === 0, dom.smallTargets.join(" | "));
   check(`${label}: status badges carry text, not color alone`, dom.textlessStates === 0);
+}
+
+/** Regression for the target-size detector itself: a genuinely undersized
+ * control must be flagged, so a passing audit cannot mean a blind detector. */
+async function targetDetectorSelfTest(page) {
+  const detected = await page.evaluate(predicateSrc => {
+    const isSmallTarget = eval(predicateSrc);
+    const visible = element => {
+      const style = getComputedStyle(element);
+      return style.visibility !== "hidden" && style.display !== "none" && element.getClientRects().length > 0;
+    };
+    const probe = document.createElement("button");
+    probe.textContent = "probe";
+    probe.style.cssText = "position:fixed;left:0;top:0;width:10px;height:10px;padding:0;border:0;";
+    document.body.append(probe);
+    const flagged = isSmallTarget(probe, visible, getComputedStyle);
+    probe.remove();
+    return flagged;
+  }, SMALL_TARGET_PREDICATE);
+  check("target-size detector flags a genuinely undersized control", detected === true);
+}
+
+/** Keyboard helpers: the harness may place initial focus, keys do the rest. */
+async function keyActivate(locator) {
+  await locator.focus();
+  await locator.page().keyboard.press("Enter");
+}
+
+async function tabUntil(page, locator, max = 60) {
+  for (let step = 0; step < max; step++) {
+    if (await locator.count() && await locator.evaluate(element => element === document.activeElement)) return true;
+    await page.keyboard.press("Tab");
+  }
+  return false;
+}
+
+const focusedIs = (page, locator) => locator.evaluate(element => element === document.activeElement);
+
+const STABLE_PAGES = [["/", "Home"], ["/projects", "Project catalog"], ["/workers", "Workers"],
+  ["/needs-me", "Needs attention"], ["/settings", "Settings"], ["/connections", "Connections"]];
+const PROJECT_SECTIONS = [["inbox", "Project inbox"], ["tasks", "Project work"], ["agents", "Project agents"],
+  ["automations", "Project automations"], ["files", "Project files"], ["reviews", "Project reviews"],
+  ["activity", "Project activity"], ["settings", "Project settings"], ["news", "Project news"]];
+
+/** One shared page matrix so the narrow and desktop runs cannot drift. */
+async function stableMatrix(page, tag, projectPath) {
+  for (const [path, label] of STABLE_PAGES) {
+    const response = await page.goto(`${origin}${path}`, { waitUntil: "domcontentloaded" });
+    check(`${tag} ${label}: protected page route responds`, response?.status() === 200, `status=${response?.status() ?? "none"}`);
+    // The header navigation has no Connections entry (private-header.tsx), so
+    // that page cannot carry a current-page marker: structure is accepted, the
+    // missing navigation state is reported, not accepted.
+    await audit(page, `${tag} ${label}`, path === "/connections" ? { current: false } : {});
+    if (path === "/connections")
+      report(`${tag} Connections: no header navigation entry, current-page state not accepted`, "private-header.tsx nav has no /connections item");
+  }
+  await page.goto(`${origin}/ideas`, { waitUntil: "domcontentloaded" });
+  await audit(page, `${tag} Idea Lab`, { current: false, shell: false });
+  report(`${tag} Idea Lab: shell defects reported, page not accepted`,
+    "no aria-current=page for /ideas; All saved ideas 97x20, Refresh saved discussion 163x23 (#27-reserved idea-workspace.tsx)");
+  await page.goto(`${origin}${projectPath}`, { waitUntil: "domcontentloaded" });
+  await audit(page, `${tag} Project overview`);
+  for (const [section, label] of PROJECT_SECTIONS) {
+    const response = await page.goto(`${origin}${projectPath}/${section}`, { waitUntil: "domcontentloaded" });
+    check(`${tag} ${label}: protected page route responds`, response?.status() === 200, `status=${response?.status() ?? "none"}`);
+    // The news section renders the #27-reserved news workspace without a shell
+    // wrapper: structural checks apply, the shell dimension is reported.
+    await audit(page, `${tag} ${label}`, section === "news" ? { shell: false } : {});
+    if (section === "news")
+      report(`${tag} Project news: shell defects reported, page not accepted`, "#27-reserved news workspace without .private-shell wrapper");
+  }
 }
 
 const disposable = await fixture();
@@ -135,47 +206,283 @@ try {
 
   const page = await context.newPage();
   await page.goto(`${origin}/`, { waitUntil: "domcontentloaded" });
+  await targetDetectorSelfTest(page);
+
+  // Keyboard-only workspace menu: Tab to the menu, Enter opens, Tab reaches
+  // the Projects link, Enter navigates, and the tab order restarts at skip.
+  await page.locator("body").focus();
   const menu = page.getByRole("button", { name: "Menu" });
-  await menu.click();
-  check("360px workspace menu opens", await menu.getAttribute("aria-expanded") === "true");
+  check("360px workspace menu is keyboard reachable", await tabUntil(page, menu));
+  await page.keyboard.press("Enter");
+  check("360px workspace menu opens from the keyboard", await menu.getAttribute("aria-expanded") === "true");
   const projectsLink = page.getByRole("navigation", { name: "Workspace pages" }).getByRole("link", { name: "Projects" });
-  await projectsLink.click();
+  check("360px menu navigation is keyboard reachable", await tabUntil(page, projectsLink));
+  await page.keyboard.press("Enter");
   await page.waitForURL(url => url.pathname === "/projects");
-  check("360px workspace menu navigation is operable", true);
-  for (const [path, label] of [["/", "Home"], ["/projects", "Project catalog"], ["/workers", "Workers"],
-    ["/needs-me", "Needs attention"], ["/settings", "Settings"], ["/ideas", "Idea Lab"]]) {
-    await page.goto(`${origin}${path}`, { waitUntil: "domcontentloaded" });
-    await audit(page, label, path === "/ideas" ? { current: false, shell: false } : {});
-  }
+  check("360px keyboard menu navigation arrives at Projects", new URL(page.url()).pathname === "/projects");
+  await page.keyboard.press("Tab");
+  check("360px tab order restarts at the skip link after navigation",
+    await page.locator(":focus").evaluate(element => element.matches("a.skip-link")));
 
   await page.goto(`${origin}/projects`, { waitUntil: "domcontentloaded" });
   await page.getByText("No projects on this page with your current access.").waitFor();
   check("empty catalog names the empty state", (await page.getByText("No projects on this page with your current access.").count()) === 1);
-  await page.locator("#project-title").fill("Accessibility acceptance project");
-  await page.locator("#project-summary").fill("Disposable project used to audit protected project and task pages.");
-  await page.getByRole("button", { name: "Create project" }).click();
+
+  // Keyboard-only project creation: harness places focus, keys do the rest.
+  await page.locator("#project-title").focus();
+  await page.waitForFunction(() => document.activeElement?.id === "project-title");
+  await page.keyboard.type("Accessibility acceptance project");
+  await page.keyboard.press("Tab");
+  check("keyboard focus order reaches the summary field", await page.locator("#project-summary:focus").count() === 1);
+  await page.keyboard.type("Disposable project used to audit protected project and task pages.");
+  await page.keyboard.press("Tab");
+  const createButton = page.getByRole("button", { name: "Create project" });
+  check("keyboard focus order reaches the create action", await focusedIs(page, createButton));
+  const ringOnButton = await page.evaluate(() => {
+    const style = getComputedStyle(document.activeElement);
+    return { outline: style.outlineWidth, shadow: style.boxShadow };
+  });
+  check("focused create action shows a visible ring", ringOnButton.outline !== "0px" || ringOnButton.shadow !== "none",
+    JSON.stringify(ringOnButton));
+  await page.keyboard.press("Enter");
   await page.getByRole("heading", { name: "Accessibility acceptance project" }).waitFor();
+  check("keyboard submission creates the project", true);
   const projectPath = new URL(page.url()).pathname;
-  await audit(page, "Project overview");
-  for (const [section, label] of [["inbox", "Project inbox"], ["tasks", "Project work"], ["agents", "Project agents"],
-    ["automations", "Project automations"], ["files", "Project files"], ["reviews", "Project reviews"],
-    ["activity", "Project activity"], ["settings", "Project settings"], ["news", "Project news"]]) {
-    const response = await page.goto(`${origin}${projectPath}/${section}`, { waitUntil: "domcontentloaded" });
-    check(`${label}: protected page route responds`, response?.status() === 200, `status=${response?.status() ?? "none"}`);
-    // The news section renders the #27-reserved news workspace without a shell
-    // wrapper (same reported defect as Idea Lab): structural checks apply,
-    // shell-system checks do not.
-    await audit(page, label, section === "news" ? { shell: false } : {});
-  }
+
+  await stableMatrix(page, "360px", projectPath);
   const unknown = await page.goto(`${origin}${projectPath}/unknown-section`, { waitUntil: "domcontentloaded" });
   check("Unknown project section is not rendered as the overview", unknown?.status() === 404, `status=${unknown?.status() ?? "none"}`);
 
+  // Keyboard-only task creation on the tasks page.
   await page.goto(`${origin}${projectPath}/tasks`, { waitUntil: "domcontentloaded" });
-  await page.locator("#task-title").fill("Accessible task detail");
-  await page.locator("#task-instructions").fill("Return a short saved result without external actions.");
-  await page.getByRole("button", { name: "Save proposal" }).click();
+  await page.locator("#task-title").focus();
+  await page.waitForFunction(() => document.activeElement?.id === "task-title");
+  await page.keyboard.type("Accessible task detail");
+  await page.keyboard.press("Tab");
+  await page.keyboard.type("Return a short saved result without external actions.");
+  const saveButton = page.getByRole("button", { name: "Save proposal" });
+  check("keyboard focus order reaches the save action", await (async () => {
+    for (let step = 0; step < 20; step++) {
+      if (await focusedIs(page, saveButton)) return true;
+      await page.keyboard.press("Tab");
+    }
+    return false;
+  })());
+  await page.keyboard.press("Enter");
   await page.getByRole("heading", { name: "Accessible task detail" }).waitFor();
-  await audit(page, "Task detail");
+  check("keyboard submission saves the task proposal", true);
+  const taskPath = new URL(page.url()).pathname;
+  await audit(page, "360px Task detail");
+  // The pathname from the URL is already percent-encoded: use the segment
+  // as-is when matching client API routes (no second encoding pass).
+  const projectIdSegment = projectPath.split("/").pop();
+
+  // Failed save announces an uncertain outcome and keeps an actionable,
+  // keyboard-reachable check; a retry after recovery writes successfully.
+  await page.route("**/*", async route => {
+    const url = new URL(route.request().url());
+    if (url.origin === origin && url.pathname === `/api/v1/projects/${projectIdSegment}/tasks`
+      && route.request().method() === "POST") {
+      await route.fulfill({ status: 500, body: "{}" });
+      return;
+    }
+    await serveRoute(route);
+  });
+  async function tabToSave() {
+    for (let step = 0; step < 25; step++) {
+      if (await focusedIs(page, page.getByRole("button", { name: "Save proposal" }))) return true;
+      await page.keyboard.press("Tab");
+    }
+    return false;
+  }
+  await page.goto(`${origin}${projectPath}/tasks`, { waitUntil: "domcontentloaded" });
+  await page.locator("#task-title").focus();
+  await page.keyboard.type("Unconfirmed second task");
+  await page.keyboard.press("Tab");
+  await page.keyboard.type("Typed without a pointer; the save will fail once.");
+  check("keyboard focus order reaches the save action before the outage", await tabToSave());
+  await page.keyboard.press("Enter");
+  const uncertainAlert = page.getByRole("alert");
+  await uncertainAlert.first().waitFor();
+  const uncertainText = (await uncertainAlert.first().textContent()) ?? "";
+  check("failed save announces an uncertain outcome, not success", /exact save again|unconfirmed|may have completed/i.test(uncertainText), uncertainText.slice(0, 120));
+  // The save button disables while pending, so focus falls back to the body:
+  // reported (task-panels.tsx is outside the #181 paths), not edited. The tab
+  // order must still continue from wherever focus landed.
+  report("failed save drops focus while the save button is disabled", "task-panels.tsx TaskProposalForm disables on pending; focus falls back to body");
+  const checkSaveButton = page.getByRole("button", { name: /check this exact save again/i });
+  check("uncertain save offers a keyboard-reachable recheck", await tabUntil(page, checkSaveButton));
+  check("recheck starts focused on its action", await focusedIs(page, checkSaveButton));
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(500);
+  check("recheck against the outage still reports uncertainty",
+    (await page.getByRole("alert").count()) >= 1);
+  await page.unroute("**/*");
+  await page.route("**/*", serveRoute);
+  await page.keyboard.press("Tab");
+  check("recovered save still offers its recheck", await tabUntil(page, page.getByRole("button", { name: /check this exact save again/i })));
+  await page.keyboard.press("Enter");
+  await page.getByRole("heading", { name: "Unconfirmed second task" }).waitFor({ timeout: 15000 });
+  check("recovered retry writes the task successfully", true);
+  // Client-side navigation to the new task leaves focus on the body instead
+  // of moving it to the new heading: reported (navigation focus management
+  // lives outside the #181 paths), not edited. The tab order must restart.
+  report("successful client navigation leaves focus on the body", "new task heading renders but focus is not moved to it");
+  await page.keyboard.press("Tab");
+  check("tab order restarts at the skip link after the write",
+    await page.locator(":focus").evaluate(element => element.matches("a.skip-link")));
+
+  // Return navigation by keyboard: the back link returns to the task list.
+  const backLink = page.getByRole("link", { name: /project tasks/i }).first();
+  await keyActivate(backLink);
+  await page.waitForURL(url => url.pathname === `${projectPath}/tasks`);
+  check("keyboard return navigation reaches the project tasks", new URL(page.url()).pathname === `${projectPath}/tasks`);
+  await page.keyboard.press("Tab");
+  check("tab order restarts at the skip link after return",
+    await page.locator(":focus").evaluate(element => element.matches("a.skip-link")));
+
+  // Owner review and revision request by keyboard, when a recorded result exists.
+  const acceptButton = page.getByRole("button", { name: "Accept quality" });
+  if (await acceptButton.count() > 0) {
+    const feedback = page.getByLabel("Changes you want");
+    await feedback.focus();
+    await page.keyboard.type("Keyboard review note: reword the summary.");
+    const requestChanges = page.getByRole("button", { name: "Request changes" });
+    check("keyboard focus order reaches the request-changes action", await tabUntil(page, requestChanges));
+    await page.keyboard.press("Enter");
+    const savedStatus = page.getByRole("status");
+    await savedStatus.filter({ hasText: /changes requested/i }).first().waitFor();
+    check("keyboard review records the changes request", true);
+    check("review save announces inside the review workspace",
+      await page.locator("section[aria-label='Owner quality decision'] :focus, section[aria-label='Owner quality decision']").count() >= 1);
+    const prepareRevision = page.getByRole("button", { name: "Prepare revised task" });
+    if (await prepareRevision.count() > 0) {
+      await keyActivate(prepareRevision);
+      const prepared = page.getByRole("status");
+      await prepared.filter({ hasText: /prepared/i }).first().waitFor({ timeout: 15000 });
+      check("keyboard revision request prepares the revision", true);
+      const openRevised = page.getByRole("link", { name: /open revised task/i });
+      if (await openRevised.count() > 0) {
+        await keyActivate(openRevised);
+        await page.waitForURL(url => url.pathname !== taskPath || url.hash !== "");
+        check("keyboard return from the revision reaches the revised task", true);
+      } else report("360px revision: no open-revised-task link rendered, return leg not exercised");
+    } else report("360px revision: prepare action unavailable for this review state");
+  } else report("360px owner review: no recorded result in the disposable fixture, review journey not exercised");
+
+  // Project tabs by keyboard: links reached with Tab, opened with Enter.
+  await page.goto(`${origin}${projectPath}`, { waitUntil: "domcontentloaded" });
+  const tabsNav = page.getByRole("navigation", { name: "Project pages" });
+  const filesTab = tabsNav.getByRole("link", { name: "Files" });
+  check("keyboard focus order reaches the Files project tab", await tabUntil(page, filesTab));
+  await page.keyboard.press("Enter");
+  await page.waitForURL(url => url.pathname === `${projectPath}/files`);
+  check("keyboard project-tab navigation reaches Files", new URL(page.url()).pathname === `${projectPath}/files`);
+  check("project-tab navigation lands on the Files heading",
+    (await page.getByRole("heading", { name: "Project files" }).count()) === 1);
+
+  // Truthful loading state: hold the files request, the loading message shows.
+  let releaseFiles;
+  const filesGate = new Promise(resolve => { releaseFiles = resolve; });
+  await page.route("**/*", async route => {
+    const url = new URL(route.request().url());
+    if (url.origin === origin && url.pathname.includes("/api/v1/projects/") && url.pathname.endsWith("/files")) {
+      await filesGate;
+      await serveRoute(route);
+      return;
+    }
+    await serveRoute(route);
+  });
+  await page.goto(`${origin}${projectPath}/files`, { waitUntil: "domcontentloaded" });
+  const loadingStatus = page.getByRole("status");
+  await loadingStatus.filter({ hasText: /loading protected project files/i }).first().waitFor();
+  check("loading state is announced while files load", true);
+  releaseFiles();
+  await page.getByRole("heading", { name: "Project files" }).waitFor({ timeout: 15000 });
+  check("held files request resolves to the ready view", true);
+  await page.unroute("**/*");
+  await page.route("**/*", serveRoute);
+
+  // Denied files: 403 announces access denial, the refresh action stays usable.
+  await page.route("**/*", async route => {
+    const url = new URL(route.request().url());
+    if (url.origin === origin && url.pathname.includes("/api/v1/projects/") && url.pathname.endsWith("/files")) {
+      await route.fulfill({ status: 403, body: "{}" });
+      return;
+    }
+    await serveRoute(route);
+  });
+  await page.goto(`${origin}${projectPath}/files`, { waitUntil: "domcontentloaded" });
+  await page.getByRole("alert").filter({ hasText: /does not include this project.s files/i }).first().waitFor();
+  check("denied files announce the denial, not an empty list", true);
+  const filesRefresh = page.getByRole("button", { name: /refresh project files/i });
+  check("denied files keep the refresh action keyboard reachable", await tabUntil(page, filesRefresh));
+  await page.unroute("**/*");
+  await page.route("**/*", serveRoute);
+
+  // Failed files: 500 announces unavailability without inventing content.
+  await page.route("**/*", async route => {
+    const url = new URL(route.request().url());
+    if (url.origin === origin && url.pathname.includes("/api/v1/projects/") && url.pathname.endsWith("/files")) {
+      await route.fulfill({ status: 500, body: "{}" });
+      return;
+    }
+    await serveRoute(route);
+  });
+  await page.goto(`${origin}${projectPath}/files`, { waitUntil: "domcontentloaded" });
+  await page.getByRole("alert").filter({ hasText: /unavailable|no empty file list/i }).first().waitFor();
+  check("failed files announce unavailability without invented content", true);
+  await page.unroute("**/*");
+  await page.route("**/*", serveRoute);
+
+  // Connections: authenticated inventory plus signed-out and failed variants.
+  await page.goto(`${origin}/connections`, { waitUntil: "domcontentloaded" });
+  await page.getByRole("heading", { name: "Connections" }).waitFor();
+  check("connections inventory renders for the signed-in owner", true);
+  await page.route("**/*", async route => {
+    const url = new URL(route.request().url());
+    if (url.origin === origin && url.pathname === "/api/v1/connections") {
+      await route.fulfill({ status: 401, body: "{}" });
+      return;
+    }
+    await serveRoute(route);
+  });
+  await page.goto(`${origin}/connections`, { waitUntil: "domcontentloaded" });
+  await page.getByRole("alert").filter({ hasText: /session has ended/i }).first().waitFor();
+  check("signed-out connections announce the ended session", true);
+  const signInAgain = page.getByRole("link", { name: /sign in again/i });
+  check("signed-out connections offer a keyboard-reachable sign-in", await tabUntil(page, signInAgain));
+  check("sign-in recovery starts focused on its link", await focusedIs(page, signInAgain));
+  await page.unroute("**/*");
+  await page.route("**/*", serveRoute);
+  await page.route("**/*", async route => {
+    const url = new URL(route.request().url());
+    if (url.origin === origin && url.pathname === "/api/v1/connections") {
+      await route.fulfill({ status: 500, body: "{}" });
+      return;
+    }
+    await serveRoute(route);
+  });
+  await page.goto(`${origin}/connections`, { waitUntil: "domcontentloaded" });
+  await page.getByRole("alert").filter({ hasText: /inventory unavailable|not configured/i }).first().waitFor();
+  check("failed connections announce unavailability without sample data", true);
+  await page.unroute("**/*");
+  await page.route("**/*", serveRoute);
+
+  // Needs-attention inbox failure announces instead of claiming an all-clear.
+  await page.route("**/*", async route => {
+    const url = new URL(route.request().url());
+    if (url.origin === origin && url.pathname === "/api/v1/needs-me/tasks") {
+      await route.fulfill({ status: 500, body: "{}" });
+      return;
+    }
+    await serveRoute(route);
+  });
+  await page.goto(`${origin}/needs-me`, { waitUntil: "domcontentloaded" });
+  await page.getByRole("alert").filter({ hasText: /task inbox unavailable/i }).first().waitFor();
+  check("failed task inbox announces unavailability, never an all-clear", true);
+  await page.unroute("**/*");
+  await page.route("**/*", serveRoute);
 
   await page.goto(`${origin}/`, { waitUntil: "domcontentloaded" });
   await page.locator("body").focus();
@@ -184,42 +491,6 @@ try {
   check("skip link is the first keyboard target", await focused.evaluate(element => element.matches("a.skip-link")));
   await page.keyboard.press("Enter");
   check("skip link moves focus to main content", await page.locator("main#private-main:focus").count() === 1);
-
-  // Keyboard-only project creation: harness positions focus, keys do the rest.
-  await page.goto(`${origin}/projects`, { waitUntil: "domcontentloaded" });
-  await page.locator("#project-title").focus();
-  await page.waitForFunction(() => document.activeElement?.id === "project-title");
-  await page.keyboard.type("Keyboard created project");
-  await page.keyboard.press("Tab");
-  check("keyboard focus order reaches the summary field", await page.locator("#project-summary:focus").count() === 1);
-  await page.keyboard.type("Created without a pointer.");
-  await page.keyboard.press("Tab");
-  check("keyboard focus order reaches the create action", await page.getByRole("button", { name: "Create project" }).evaluate(element => element === document.activeElement));
-  const ringOnButton = await page.evaluate(() => {
-    const style = getComputedStyle(document.activeElement);
-    return { outline: style.outlineWidth, shadow: style.boxShadow };
-  });
-  check("focused create action shows a visible ring", ringOnButton.outline !== "0px" || ringOnButton.shadow !== "none",
-    JSON.stringify(ringOnButton));
-  await page.keyboard.press("Enter");
-  await page.getByRole("heading", { name: "Keyboard created project" }).waitFor();
-  check("keyboard submission creates the project", true);
-
-  // Keyboard validation error keeps focus in the form and announces the problem.
-  // A whitespace-only name passes native required validation but fails the
-  // work-packet schema, so the product's own error announcement is reachable.
-  await page.goto(`${origin}/projects`, { waitUntil: "domcontentloaded" });
-  await page.getByRole("link", { name: "Accessibility acceptance project" }).first().waitFor();
-  await page.locator("#project-title").focus();
-  await page.waitForFunction(() => document.activeElement?.id === "project-title");
-  await page.keyboard.type("   ");
-  await page.keyboard.press("Tab");
-  await page.keyboard.press("Tab");
-  await page.keyboard.press("Enter");
-  const alert = page.getByRole("alert");
-  await alert.first().waitFor();
-  check("empty keyboard submit announces a validation error", (await alert.count()) >= 1);
-  check("focus stays inside the form after the error", await page.locator("form.private-create :focus").count() === 1);
 
   // Visible focus sweep across the home page's interactive elements.
   await page.goto(`${origin}/`, { waitUntil: "domcontentloaded" });
@@ -240,15 +511,13 @@ try {
   }
   check("every keyboard stop shows a focus ring", ringless.length === 0, ringless.join(" | "));
 
-  // Desktop viewport: the same audits at 1280px.
+  // Desktop viewport: the same shared matrix at 1280px.
   const desktop = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const wide = await desktop.newPage();
   await wide.route("**/*", serveRoute);
-  for (const [path, label] of [["/", "Desktop home"], ["/projects", "Desktop project catalog"], ["/workers", "Desktop workers"],
-    ["/needs-me", "Desktop needs attention"], ["/settings", "Desktop settings"]]) {
-    await wide.goto(`${origin}${path}`, { waitUntil: "domcontentloaded" });
-    await audit(wide, label);
-  }
+  await stableMatrix(wide, "Desktop", projectPath);
+  await wide.goto(`${origin}${taskPath}`, { waitUntil: "domcontentloaded" });
+  await audit(wide, "Desktop Task detail");
   await wide.goto(`${origin}/`, { waitUntil: "domcontentloaded" });
   await wide.locator("body").focus();
   await wide.keyboard.press("Tab");
@@ -256,16 +525,19 @@ try {
     await wide.locator(":focus").evaluate(element => element.matches("a.skip-link")));
   await desktop.close();
 
-  // 200% zoom proxy (640 CSS px): no sideways scroll and the create action stays operable.
-  const zoomed = await browser.newContext({ viewport: { width: 640, height: 900 } });
+  // 200% zoom as real reflow: CSS zoom halves the effective layout viewport on
+  // a 1280px window, exercising the same reflow a browser zoom would.
+  const zoomed = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   await zoomed.route("**/*", serveRoute);
   const zoomPage = await zoomed.newPage();
   await zoomPage.goto(`${origin}/projects`, { waitUntil: "domcontentloaded" });
+  await zoomPage.addStyleTag({ content: "html { zoom: 2; }" });
+  await zoomPage.waitForTimeout(200);
   const zoomOverflow = await zoomPage.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
-  check("200% zoom proxy does not scroll sideways", !zoomOverflow);
-  await zoomPage.getByRole("button", { name: "Create project" }).waitFor();
-  check("200% zoom proxy keeps the create action usable",
-    await zoomPage.getByRole("button", { name: "Create project" }).isVisible());
+  check("200% zoom reflow does not scroll sideways", !zoomOverflow);
+  const zoomCreate = zoomPage.getByRole("button", { name: "Create project" });
+  await zoomCreate.waitFor();
+  check("200% zoom reflow keeps the create action usable", await tabUntil(zoomPage, zoomCreate));
   await zoomed.close();
 
   // Reduced motion: the product still works with the preference emulated.

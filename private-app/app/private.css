@@ -49,6 +49,10 @@
 .private-action-link:hover { background: var(--surface-2); }
 .private-note { font-size: .875rem; margin-top: 1.5rem; }
 .private-shell main p a { padding-block: .15rem; }
+/* In-text and in-list links are inline by default, so their rect ignores block
+ * metrics: make them inline-block with a 24px floor so the measured target
+ * matches the painted hit area. */
+.private-shell main p a, .private-shell main li a { display: inline-block; min-height: 24px; }
 .private-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 360px); gap: 2rem; align-items: start; }
 .private-project-grid { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); gap: 1rem; }
 .private-project-grid li, .private-create, .private-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
