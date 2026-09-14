@@ -33,6 +33,17 @@ review, correct, merge, or hand off.
    same paths. No separate maintainer reply is required. If automation is unavailable,
    wait for a maintainer-recorded accepted claim; a request alone is not a reservation.
 
+The Actions page is not the assignment record. A green workflow run means the controller
+finished without crashing; it may still have refused or ignored the request. The controller
+posts `CLAIM COMMAND NOT APPLIED` for malformed commands and `CLAIM NOT ACCEPTED` for a
+real blocker. Do not retry unchanged. Only `CLAIM ACCEPTED` plus `status:working` starts work.
+
+Before enabling packet-bound claims in a repository that has older active work, run the
+queue-health command below. Every `status:working` issue must have a packet-bound controller
+claim. `legacy_claim_blocks_queue` or `working_claim_missing` is a maintainer migration
+blocker, not a worker retry condition. Preserve the old branch and worker identity, migrate
+the assignment deliberately, and publish the old-to-new issue mapping on Start Here.
+
 The worker ID routes work to one worker even when several workers share a GitHub account.
 Keep it stable and do not use a shared account name as the ID. A worker ID is a declared
 identifier, not authentication: another user of that account can repeat it.

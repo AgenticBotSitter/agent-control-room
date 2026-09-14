@@ -215,6 +215,12 @@ function latestClaim(comments, issueNumber, advisoryLogins) {
   return matches.at(-1);
 }
 
+function hasPacketBoundControllerClaim(comments, issueNumber) {
+  const pattern = new RegExp(`<!--\\s*agent-control-room-claim:v3\\s+issue=${issueNumber}\\s+request=\\d+\\s+actor=[^\\s]+\\s+worker=[^\\s]+\\s+packet=[a-f0-9]{64}\\s+accepted=\\d+`);
+  return comments.some(comment => CONTROLLER(comment) && typeof comment.body === "string"
+    && /^(CLAIM ACCEPTED|CLAIM RENEWED) —/.test(comment.body) && pattern.test(comment.body));
+}
+
 function oldest(records) {
   return records.slice().sort((a, b) => (a.since < b.since ? -1 : a.since > b.since ? 1 : 0))[0];
 }
@@ -301,6 +307,10 @@ export async function readQueueHealth({
     const record = latestWorkflowRecord(comments, issue.number, advisoryLogins);
     const claim = latestClaim(comments, issue.number, advisoryLogins);
     if (claim) claimed += 1;
+
+    if (status === "working" && !claim) codes.push("working_claim_missing");
+    else if (status === "working" && !hasPacketBoundControllerClaim(comments, issue.number))
+      codes.push("legacy_claim_blocks_queue");
 
     if (status === "changes-required" && !record) codes.push("worker_action_marker_missing");
     // A record exists but carries no authority. A legacy shared-account marker cannot
