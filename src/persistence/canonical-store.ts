@@ -1,4 +1,5 @@
 import {
+  DOMAIN_CONTRACT_VERSION,
   approvalTransitions,
   artifactTransitions,
   attemptTransitions,
@@ -25,7 +26,33 @@ import {
   type WorkflowRecord,
 } from "../domain/v1";
 import { isRepositorySimulationDatabaseClientV1, type DatabaseClient, type DatabaseSession } from "./database";
-import { assertAuthorityDigest, assertNoSecretMaterial, computeEffectOperationDigest, sha256Digest } from "../security";
+import { assertAuthorityDigest, assertNoSecretMaterial, computeAuthorityDigest, computeEffectOperationDigest, sha256Digest } from "../security";
+import {
+  NO_WORKSPACE_ANCHOR_RESOURCE_ID_V1,
+  canonicalProjectWorkResourceDeclarationV1,
+  projectWorkResourceAdmissionDigestV1,
+  projectWorkResourceDeclarationDigestV1,
+  type ProjectWorkResourceDeclarationV1,
+} from "../contracts/v1/project-coordination-boundaries";
+import {
+  PROJECT_COORDINATION_OPERATION_RECEIPT_V1,
+  acquireProcessRetirementAuthorizationV1,
+  coordinationOperationRequestSchemaV1,
+  coordinatorAppointmentSchemaV1,
+  failProjectCoordinationV1,
+  findResourceConflictsV1,
+  narrowWriteResourcesV1,
+  projectCoordinationProposalDigestV1,
+  projectWorkAdmissionRecheckSchemaV1,
+  projectWorkAdmissionRequestSchemaV1,
+  type CoordinationCostEvidenceV1,
+  type CoordinationOperationRequestV1,
+  type CoordinationProposalValidationV1,
+  type CoordinatorAppointmentV1,
+  type HeldScopeV1,
+  type ProjectCoordinationProposalV1,
+  type ProjectWorkAdmissionResultV1,
+} from "../project-coordination/v1";
 import { isHostProxyV1 } from "../security/host-value";
 import { actionInboxItemSchemaV1, type ActionInboxItemV1 } from "../operator-surfaces/v1";
 import { acquireReadyFrontierCanonicalPromotionAuthorizationV1 } from "../ready-frontier/v1/promotion-service";
@@ -1265,6 +1292,798 @@ export class CanonicalStore {
         occurredAt: input.occurredAt,
         safeMetadata: { policyDecisionId: input.policyDecisionId, approvalId: effect.approvalId },
       }, true);
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Project coordination and safe parallel work (issue #167 / #175).
+  //
+  // Every operation below follows the one lock order fixed by
+  // docs/PROJECT_COORDINATION_IMPLEMENTATION_CONTRACT.md:
+  //   1. initiating owner identity and current grants
+  //   2. tenant
+  //   3. project / manual project head
+  //   4. coordinator head, then policy head when one is used
+  //   5. proposal, harness run and its immutable retained-artifact receipt
+  //   6. referenced existing jobs in sorted ID order
+  //   7. node and new attempt/lease
+  //   8. the new holder, its scopes and the operation receipt
+  // A route that needed a different order would be a deadlock, so the shared
+  // helpers below are the only way these rows are locked.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Owner authority for a coordination operation. WebSessionAuthority stays
+   * human-only: an agent coordinator can never satisfy this check, so it can
+   * never appoint itself, widen its own policy or approve its own proposal.
+   */
+  async #lockOwnerAuthorityV1(tx: DatabaseSession, input: {
+    tenantId: string; identityId: string; projectId: string; occurredAt: string; action: string;
+  }): Promise<void> {
+    const identity = (await tx.query<{ actor_type: string; state: string }>(
+      "SELECT actor_type,state FROM control_identities WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
+      [input.tenantId, input.identityId])).rows[0];
+    if (identity?.actor_type !== "human" || identity.state !== "active") {
+      failProjectCoordinationV1("owner_authority_missing");
+    }
+    const grants = (await tx.query<{ id: string; role_key: string; allowed_actions: string[];
+      project_ids: string[]; expires_at: string | null; revoked_at: string | null }>(
+      `SELECT id,role_key,allowed_actions,project_ids,expires_at,revoked_at FROM control_role_grants
+       WHERE tenant_id=$1 AND identity_id=$2 ORDER BY id FOR SHARE`,
+      [input.tenantId, input.identityId])).rows;
+    const at = Date.parse(input.occurredAt);
+    const usable = grants.some((grant) => grant.role_key === "owner"
+      && (!grant.expires_at || Date.parse(grant.expires_at) > at)
+      && (!grant.revoked_at || Date.parse(grant.revoked_at) > at)
+      && (grant.allowed_actions.includes("*") || grant.allowed_actions.includes(input.action))
+      && (grant.project_ids.includes("*") || grant.project_ids.includes(input.projectId)));
+    if (!usable) failProjectCoordinationV1("owner_authority_missing");
+  }
+
+  async #lockTenantProjectV1(tx: DatabaseSession, tenantId: string, projectId: string): Promise<void> {
+    const tenant = await tx.query<{ id: string }>("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [tenantId]);
+    if (!tenant.rows[0]) failProjectCoordinationV1("invalid_input");
+    const project = (await tx.query<{ lifecycle: string }>(
+      `SELECT h.lifecycle FROM projects p
+       JOIN control_manual_project_heads h ON h.tenant_id=p.tenant_id AND h.project_id=p.id
+       WHERE p.tenant_id=$1 AND p.id=$2 FOR SHARE OF p,h`, [tenantId, projectId])).rows[0];
+    if (project?.lifecycle !== "active") failProjectCoordinationV1("invalid_input");
+  }
+
+  async #lockCoordinatorHeadV1(tx: DatabaseSession, tenantId: string, projectId: string) {
+    return (await tx.query<{ state: string; coordinator_identity_id: string; coordinator_actor_type: string;
+      executor_id: string | null; adapter_id: string | null; connector_profile_digest: string | null;
+      execution_binding_digest: string | null; version: string; assigned_at: string }>(
+      `SELECT state,coordinator_identity_id,coordinator_actor_type,executor_id,adapter_id,
+         connector_profile_digest,execution_binding_digest,version::text AS version,assigned_at
+       FROM control_project_coordinator_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE`,
+      [tenantId, projectId])).rows[0];
+  }
+
+  /**
+   * Appoints, replaces, re-appoints or revokes the project coordinator. The head
+   * row is versioned and append-only-updated by migration 0075, so a revoked
+   * coordinator's history survives and its next assignment increments the same
+   * head version. No branch of this operation issues a session, a grant, a login
+   * or an execution authorization.
+   */
+  async assignProjectCoordinatorV1(input: {
+    operation: "assign" | "revoke";
+    appointment: CoordinatorAppointmentV1;
+    executionBindingDigest?: string;
+  }): Promise<{ version: number; state: "active" | "revoked"; executionBindingDigest?: string }> {
+    const appointment = coordinatorAppointmentSchemaV1.parse(input.appointment);
+    if (input.operation === "assign"
+      && (appointment.coordinatorActorType === "agent") !== (input.executionBindingDigest !== undefined)) {
+      failProjectCoordinationV1("invalid_input");
+    }
+    return this.#transaction(async (tx) => {
+      await this.#lockOwnerAuthorityV1(tx, { tenantId: appointment.tenantId, identityId: appointment.ownerIdentityId,
+        projectId: appointment.projectId, occurredAt: appointment.occurredAt,
+        action: input.operation === "revoke" ? "coordinator.revoke" : "coordinator.assign" });
+      await this.#lockTenantProjectV1(tx, appointment.tenantId, appointment.projectId);
+      const coordinator = (await tx.query<{ actor_type: string; state: string }>(
+        "SELECT actor_type,state FROM control_identities WHERE tenant_id=$1 AND id=$2 FOR SHARE",
+        [appointment.tenantId, appointment.coordinatorIdentityId])).rows[0];
+      if (!coordinator || coordinator.state !== "active"
+        || coordinator.actor_type !== appointment.coordinatorActorType) {
+        failProjectCoordinationV1("invalid_input");
+      }
+      const head = await this.#lockCoordinatorHeadV1(tx, appointment.tenantId, appointment.projectId);
+      if (input.operation === "revoke") {
+        if (!head) failProjectCoordinationV1("coordinator_absent");
+        if (head.state !== "active") failProjectCoordinationV1("coordinator_revoked");
+        const version = Number(head.version) + 1;
+        await tx.query(`UPDATE control_project_coordinator_heads
+          SET state='revoked',version=$1,revoked_at=$2,updated_at=$2
+          WHERE tenant_id=$3 AND project_id=$4`,
+        [version, appointment.occurredAt, appointment.tenantId, appointment.projectId]);
+        return { version, state: "revoked" as const };
+      }
+      const payload = json({ appointedBy: appointment.ownerIdentityId, grantsHumanLogin: false,
+        grantsExecutionAuthority: false, permitsSelfApproval: false });
+      if (!head) {
+        await tx.query(`INSERT INTO control_project_coordinator_heads
+          (tenant_id,project_id,state,coordinator_identity_id,coordinator_actor_type,executor_id,adapter_id,
+           connector_profile_digest,execution_binding_digest,assigned_by_owner_identity_id,version,
+           assigned_at,updated_at,payload)
+          VALUES($1,$2,'active',$3,$4,$5,$6,$7,$8,$9,1,$10,$10,$11::jsonb)`,
+        [appointment.tenantId, appointment.projectId, appointment.coordinatorIdentityId,
+          appointment.coordinatorActorType, appointment.executorId ?? null, appointment.adapterId ?? null,
+          appointment.connectorProfileDigest ?? null, input.executionBindingDigest ?? null,
+          appointment.ownerIdentityId, appointment.occurredAt, payload]);
+        return { version: 1, state: "active" as const, ...(input.executionBindingDigest
+          ? { executionBindingDigest: input.executionBindingDigest } : {}) };
+      }
+      const version = Number(head.version) + 1;
+      await tx.query(`UPDATE control_project_coordinator_heads
+        SET state='active',coordinator_identity_id=$1,coordinator_actor_type=$2,executor_id=$3,adapter_id=$4,
+          connector_profile_digest=$5,execution_binding_digest=$6,assigned_by_owner_identity_id=$7,
+          version=$8,revoked_at=NULL,updated_at=$9,payload=$10::jsonb
+        WHERE tenant_id=$11 AND project_id=$12`,
+      [appointment.coordinatorIdentityId, appointment.coordinatorActorType, appointment.executorId ?? null,
+        appointment.adapterId ?? null, appointment.connectorProfileDigest ?? null,
+        input.executionBindingDigest ?? null, appointment.ownerIdentityId, version, appointment.occurredAt,
+        payload, appointment.tenantId, appointment.projectId]);
+      return { version, state: "active" as const, ...(input.executionBindingDigest
+        ? { executionBindingDigest: input.executionBindingDigest } : {}) };
+    });
+  }
+
+  /** Pauses or revokes an owner-authored bounded policy. Every other bound requires a new policy. */
+  async setProjectDelegationPolicyStateV1(input: {
+    tenantId: string; projectId: string; policyId: string; ownerIdentityId: string;
+    toState: "paused" | "active" | "revoked"; occurredAt: string;
+  }): Promise<{ version: number; state: string }> {
+    return this.#transaction(async (tx) => {
+      await this.#lockOwnerAuthorityV1(tx, { tenantId: input.tenantId, identityId: input.ownerIdentityId,
+        projectId: input.projectId, occurredAt: input.occurredAt, action: "policy.set_state" });
+      await this.#lockTenantProjectV1(tx, input.tenantId, input.projectId);
+      const policy = (await tx.query<{ state: string; version: string; project_id: string }>(
+        `SELECT state,version::text AS version,project_id FROM control_project_delegation_policies
+         WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, [input.tenantId, input.policyId])).rows[0];
+      if (!policy || policy.project_id !== input.projectId) failProjectCoordinationV1("invalid_input");
+      if (policy.state === "revoked") failProjectCoordinationV1("policy_revoked");
+      const version = Number(policy.version) + 1;
+      await tx.query(`UPDATE control_project_delegation_policies SET state=$1,version=$2,updated_at=$3
+        WHERE tenant_id=$4 AND id=$5`, [input.toState, version, input.occurredAt, input.tenantId, input.policyId]);
+      return { version, state: input.toState };
+    });
+  }
+
+  /**
+   * Durably records one validated exact retained result as an accepted or safely
+   * rejected proposal. The current coordinator head and the immutable artifact
+   * receipt are rechecked under lock, so a result produced by a coordinator that
+   * has since been replaced or revoked cannot be adopted. A rejected row stores a
+   * bounded reason only; the invalid text stays in the protected artifact.
+   */
+  async recordProjectCoordinationProposalV1(input: {
+    proposalId: string;
+    validation: CoordinationProposalValidationV1;
+    ingestedAt: string;
+  }): Promise<{ proposalId: string; validationState: "accepted" | "rejected"; safeReasonCode?: string;
+    proposalDigest?: string; replayed: boolean }> {
+    const validation = input.validation;
+    if (!validation.evidence) failProjectCoordinationV1("proposal_evidence_mismatch");
+    const evidence = validation.evidence;
+    const marker = evidence.planningMarker;
+    return this.#transaction(async (tx) => {
+      await this.#lockTenantProjectV1(tx, marker.tenantId, marker.projectId);
+      const head = await this.#lockCoordinatorHeadV1(tx, marker.tenantId, marker.projectId);
+      const receipt = (await tx.query<{ receipt: unknown; project_id: string; job_id: string; attempt_id: string }>(
+        `SELECT receipt,project_id,job_id,attempt_id FROM control_native_artifact_receipts
+         WHERE tenant_id=$1 AND run_id=$2 AND artifact_id=$3 FOR SHARE`,
+        [marker.tenantId, marker.runId, evidence.artifactId])).rows[0];
+
+      let state: "accepted" | "rejected" = validation.validationState;
+      let reason: string | undefined = validation.validationState === "rejected"
+        ? validation.safeReasonCode : undefined;
+      const fail = (code: string) => { state = "rejected"; reason ??= code; };
+      if (!head || head.state !== "active") fail("coordinator_revoked");
+      else if (head.coordinator_identity_id !== marker.coordinatorIdentityId
+        || Number(head.version) !== marker.coordinatorVersion
+        || head.execution_binding_digest !== marker.executionBindingDigest) fail("coordinator_not_current");
+      if (!receipt) fail("artifact_receipt_mismatch");
+      else if (receipt.project_id !== marker.projectId || receipt.job_id !== marker.planningJobId
+        || receipt.attempt_id !== marker.attemptId
+        || sha256Digest(receipt.receipt) !== evidence.artifactReceiptDigest) fail("artifact_receipt_mismatch");
+      if (state === "rejected" && !reason) reason = "evidence_invalid";
+
+      const accepted = state === "accepted" && validation.validationState === "accepted"
+        ? validation : undefined;
+      const proposalDigest = accepted?.proposalDigest;
+
+      const prior = (await tx.query<{ id: string; validation_state: string; proposal_digest: string | null;
+        safe_reason_code: string | null; source_run_id: string }>(
+        `SELECT id,validation_state,proposal_digest,safe_reason_code,source_run_id
+         FROM control_project_coordination_proposals
+         WHERE tenant_id=$1 AND (id=$2 OR source_run_id=$3) FOR UPDATE`,
+        [marker.tenantId, input.proposalId, marker.runId])).rows;
+      if (prior.length) {
+        const existing = prior[0]!;
+        if (prior.length > 1 || existing.id !== input.proposalId || existing.source_run_id !== marker.runId
+          || existing.validation_state !== state || (existing.proposal_digest ?? undefined) !== proposalDigest
+          || (existing.safe_reason_code ?? undefined) !== reason) {
+          failProjectCoordinationV1("adoption_replay_conflict");
+        }
+        return { proposalId: input.proposalId, validationState: state,
+          ...(reason ? { safeReasonCode: reason } : {}), ...(proposalDigest ? { proposalDigest } : {}),
+          replayed: true };
+      }
+      await tx.query(`INSERT INTO control_project_coordination_proposals
+        (tenant_id,id,project_id,coordinator_identity_id,coordinator_version,source_run_id,source_artifact_id,
+         source_content_hash,source_receipt_digest,source_execution_binding_digest,validation_state,
+         proposal_schema,proposal_digest,proposal,action_set,task_count,edge_count,safe_reason_code,ingested_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15::jsonb,$16,$17,$18,$19)`,
+      [marker.tenantId, input.proposalId, marker.projectId, marker.coordinatorIdentityId,
+        marker.coordinatorVersion, marker.runId, evidence.artifactId, evidence.contentHash,
+        evidence.artifactReceiptDigest, marker.executionBindingDigest, state,
+        accepted ? accepted.proposal.schema : null, proposalDigest ?? null,
+        accepted ? json(accepted.proposal) : null,
+        json(accepted ? accepted.proposal.tasks.map((task) => task.localId) : []),
+        accepted ? accepted.proposal.tasks.length : 0, accepted ? accepted.proposal.edges.length : 0,
+        reason ?? null, input.ingestedAt]);
+      return { proposalId: input.proposalId, validationState: state,
+        ...(reason ? { safeReasonCode: reason } : {}), ...(proposalDigest ? { proposalDigest } : {}),
+        replayed: false };
+    });
+  }
+
+  /**
+   * Turns an accepted proposal into ordinary canonical work. Owner-reviewed and
+   * bounded-policy adoption enter here through the same operation, create the same
+   * non-runnable request/workflow/job records, the same dependency edges and the
+   * same owner-attention item, and write the same append-only receipt.
+   *
+   * Exact replay returns the original receipt and consumes no task, cost or
+   * concurrency allowance again. Changed content under the same idempotency key
+   * conflicts.
+   */
+  async adoptProjectCoordinationProposalV1(input: {
+    request: CoordinationOperationRequestV1;
+    requestDigest: string;
+    routes: Record<string, string>;
+    cost: CoordinationCostEvidenceV1;
+  }): Promise<{ receiptId: string; receiptDigest: string; jobIds: string[]; taskUnits: number;
+    concurrencyUnits: number; replayed: boolean }> {
+    const request = coordinationOperationRequestSchemaV1.parse(input.request);
+    const authorization = request.authorization;
+    return this.#transaction(async (tx) => {
+      await this.#lockOwnerAuthorityV1(tx, { tenantId: request.tenantId, identityId: authorization.ownerIdentityId,
+        projectId: request.projectId, occurredAt: request.occurredAt, action: "proposal.adopt" });
+      await this.#lockTenantProjectV1(tx, request.tenantId, request.projectId);
+      const head = await this.#lockCoordinatorHeadV1(tx, request.tenantId, request.projectId);
+      if (!head) failProjectCoordinationV1("coordinator_absent");
+      if (head!.state !== "active") failProjectCoordinationV1("coordinator_revoked");
+
+      let policy: { id: string; state: string; version: string; policy_digest: string; coordinator_version: string;
+        allowed_actions: string[]; eligible_routes: string[]; max_total_tasks: number;
+        max_total_cost_microusd: string; max_concurrent_tasks: number; valid_from: string; valid_until: string;
+        owner_identity_id: string } | undefined;
+      if (authorization.kind === "policy") {
+        policy = (await tx.query<NonNullable<typeof policy>>(
+          `SELECT id,state,version::text AS version,policy_digest,coordinator_version::text AS coordinator_version,
+             allowed_actions,eligible_routes,max_total_tasks,max_total_cost_microusd::text AS max_total_cost_microusd,
+             max_concurrent_tasks,valid_from,valid_until,owner_identity_id
+           FROM control_project_delegation_policies
+           WHERE tenant_id=$1 AND id=$2 AND project_id=$3 FOR UPDATE`,
+          [request.tenantId, authorization.policyId, request.projectId])).rows[0];
+        if (!policy) failProjectCoordinationV1("invalid_input");
+      }
+
+      // The policy row serializes quota accounting, so the replay lookup happens
+      // with that lock held and a waiter reads the committed receipt.
+      const priorReceipt = (await tx.query<{ id: string; request_digest: string; receipt_digest: string;
+        task_units: number; concurrency_units: number }>(
+        `SELECT id,request_digest,receipt_digest,task_units,concurrency_units
+         FROM control_project_coordination_operation_receipts
+         WHERE tenant_id=$1 AND authorization_kind=$2 AND initiating_identity_id=$3 AND idempotency_key=$4
+         FOR UPDATE`,
+        [request.tenantId, authorization.kind, authorization.ownerIdentityId, request.idempotencyKey])).rows[0];
+      if (priorReceipt) {
+        if (priorReceipt.request_digest !== input.requestDigest || priorReceipt.id !== request.operationId) {
+          failProjectCoordinationV1("adoption_replay_conflict");
+        }
+        const jobs = (await tx.query<{ canonical_job_id: string }>(
+          `SELECT canonical_job_id FROM control_project_coordination_operation_jobs
+           WHERE tenant_id=$1 AND operation_receipt_id=$2 ORDER BY proposal_local_id`,
+          [request.tenantId, priorReceipt.id])).rows.map((row) => row.canonical_job_id);
+        if (jobs.length !== request.selectedLocalIds.length) failProjectCoordinationV1("adoption_replay_conflict");
+        return { receiptId: priorReceipt.id, receiptDigest: priorReceipt.receipt_digest, jobIds: jobs,
+          taskUnits: Number(priorReceipt.task_units), concurrencyUnits: Number(priorReceipt.concurrency_units),
+          replayed: true };
+      }
+
+      const proposalRow = (await tx.query<{ project_id: string; coordinator_identity_id: string;
+        coordinator_version: string; validation_state: string; proposal_digest: string | null;
+        proposal: unknown }>(
+        `SELECT project_id,coordinator_identity_id,coordinator_version::text AS coordinator_version,
+           validation_state,proposal_digest,proposal
+         FROM control_project_coordination_proposals WHERE tenant_id=$1 AND id=$2 FOR SHARE`,
+        [request.tenantId, request.proposalId])).rows[0];
+      if (!proposalRow || proposalRow.validation_state !== "accepted" || !proposalRow.proposal) {
+        failProjectCoordinationV1("proposal_not_accepted");
+      }
+      if (proposalRow!.project_id !== request.projectId) failProjectCoordinationV1("proposal_project_mismatch");
+      const proposal = proposalRow!.proposal as ProjectCoordinationProposalV1;
+      if (projectCoordinationProposalDigestV1(proposal) !== proposalRow!.proposal_digest) {
+        failProjectCoordinationV1("proposal_evidence_mismatch");
+      }
+      const alreadyAdopted = (await tx.query<{ id: string }>(
+        `SELECT id FROM control_project_coordination_operation_receipts
+         WHERE tenant_id=$1 AND proposal_id=$2 AND operation='proposal.adopt' FOR UPDATE`,
+        [request.tenantId, request.proposalId])).rows[0];
+      if (alreadyAdopted) failProjectCoordinationV1("proposal_already_adopted");
+      if (proposalRow!.coordinator_identity_id !== head!.coordinator_identity_id
+        || Number(proposalRow!.coordinator_version) !== Number(head!.version)) {
+        failProjectCoordinationV1("coordinator_version_stale");
+      }
+
+      const selected = proposal.tasks.filter((task) => request.selectedLocalIds.includes(task.localId));
+      if (selected.length !== request.selectedLocalIds.length) failProjectCoordinationV1("invalid_input");
+      // A partial selection may not silently drop a dependency edge: adopting the
+      // dependent half alone would make work runnable earlier than proposed.
+      const selectedLocals = new Set(selected.map((task) => task.localId));
+      if (proposal.edges.some((edge) =>
+        selectedLocals.has(edge.fromLocalId) !== selectedLocals.has(edge.toLocalId))) {
+        failProjectCoordinationV1("invalid_input");
+      }
+      const at = Date.parse(request.occurredAt);
+
+      if (policy) {
+        if (policy.state === "revoked") failProjectCoordinationV1("policy_revoked");
+        if (policy.state !== "active") failProjectCoordinationV1("policy_inactive");
+        if (policy.owner_identity_id !== authorization.ownerIdentityId) failProjectCoordinationV1("owner_authority_missing");
+        if (Number(policy.coordinator_version) !== Number(head!.version)) failProjectCoordinationV1("coordinator_version_stale");
+        if (at < Date.parse(policy.valid_from) || at >= Date.parse(policy.valid_until)) {
+          failProjectCoordinationV1("policy_expired");
+        }
+        if (!policy.allowed_actions.includes("proposal.adopt")) failProjectCoordinationV1("policy_route_mismatch");
+      }
+
+      const routeFor = (localId: string): string => {
+        const route = input.routes[localId];
+        if (!route) failProjectCoordinationV1("policy_route_mismatch");
+        if (policy) {
+          if (!policy.eligible_routes.includes(route!)) failProjectCoordinationV1("policy_route_mismatch");
+        } else if (!request.approvedRouteIds.includes(route!)) {
+          failProjectCoordinationV1("policy_route_mismatch");
+        }
+        return route!;
+      };
+      const routes = new Map(selected.map((task) => [task.localId, routeFor(task.localId)] as const));
+
+      let admittedCost: number | undefined;
+      let costEvidenceDigest: string | undefined;
+      if (input.cost.kind === "known") {
+        admittedCost = input.cost.admittedCostMicroUsd;
+        costEvidenceDigest = input.cost.evidenceDigest;
+        if (!Number.isSafeInteger(admittedCost) || admittedCost < 0) failProjectCoordinationV1("invalid_input");
+      } else if (policy) {
+        // Missing cost evidence is unknown. Unknown can never satisfy a ceiling.
+        failProjectCoordinationV1("policy_cost_unknown");
+      }
+
+      if (policy) {
+        const used = (await tx.query<{ tasks: string; cost: string }>(
+          `SELECT COALESCE(SUM(task_units),0)::text AS tasks,
+             COALESCE(SUM(admitted_cost_microusd),0)::text AS cost
+           FROM control_project_coordination_operation_receipts WHERE tenant_id=$1 AND policy_id=$2`,
+          [request.tenantId, policy.id])).rows[0];
+        if (Number(used?.tasks ?? 0) + selected.length > policy.max_total_tasks) {
+          failProjectCoordinationV1("policy_task_allowance_exhausted");
+        }
+        // Micro-USD ceilings are bigint columns; comparing them as doubles could
+        // silently admit an over-ceiling operation, so the accounting stays exact.
+        if (BigInt(used?.cost ?? "0") + BigInt(admittedCost ?? 0)
+          > BigInt(policy.max_total_cost_microusd)) {
+          failProjectCoordinationV1("policy_cost_allowance_exhausted");
+        }
+        const active = (await tx.query<{ count: string }>(
+          `SELECT count(*)::text AS count FROM control_project_coordination_operation_jobs j
+           JOIN control_project_coordination_operation_receipts r
+             ON r.tenant_id=j.tenant_id AND r.id=j.operation_receipt_id
+           JOIN control_jobs c ON c.tenant_id=j.tenant_id AND c.id=j.canonical_job_id
+           WHERE j.tenant_id=$1 AND r.policy_id=$2
+             AND c.state NOT IN ('succeeded','failed','cancelled','rejected')`,
+          [request.tenantId, policy.id])).rows[0];
+        if (Number(active?.count ?? 0) + selected.length > policy.max_concurrent_tasks) {
+          failProjectCoordinationV1("policy_concurrency_exhausted");
+        }
+      }
+
+      const jobIdFor = (localId: string) =>
+        `job:coordination:${sha256Digest({ operationId: request.operationId, localId }).slice(7, 39)}`;
+      const jobIds = selected.map((task) => jobIdFor(task.localId)).sort();
+      // Referenced existing job rows are locked in sorted ID order.
+      for (const jobId of jobIds) {
+        const existing = await tx.query<{ id: string }>(
+          "SELECT id FROM control_jobs WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [request.tenantId, jobId]);
+        if (existing.rows[0]) failProjectCoordinationV1("adoption_replay_conflict");
+      }
+
+      const common = { contractVersion: DOMAIN_CONTRACT_VERSION, tenantId: request.tenantId,
+        version: 0, createdAt: request.occurredAt, updatedAt: request.occurredAt } as const;
+      const requestRecord: RequestRecord = { ...common, kind: "request", id: request.requestId,
+        projectId: request.projectId, title: `Adopted coordination proposal ${request.proposalId}`.slice(0, 180),
+        objective: "Record owner-authorized coordination work as non-runnable proposed work",
+        state: "draft", priority: 50,
+        requestedBy: { actorId: authorization.ownerIdentityId, actorType: "human" },
+        idempotencyKey: `coordination-adopt-${sha256Digest({ operationId: request.operationId }).slice(7, 39)}` };
+      const workflowRecord: WorkflowRecord = { ...common, kind: "workflow", id: request.workflowId,
+        requestId: request.requestId, projectId: request.projectId, definitionVersion: "1.0.0",
+        definitionDigest: proposalRow!.proposal_digest!, authorityMode: "control_room_native",
+        state: "proposed", jobIds };
+
+      const localById = new Map(selected.map((task) => [task.localId, task] as const));
+      const dependencies = proposal.edges
+        .filter((edge) => localById.has(edge.fromLocalId) && localById.has(edge.toLocalId))
+        .map((edge) => ({ jobId: jobIdFor(edge.toLocalId), dependsOnJobId: jobIdFor(edge.fromLocalId) }));
+      const jobRecords: JobRecord[] = selected.map((task) => {
+        const dependsOnJobIds = dependencies.filter((edge) => edge.jobId === jobIdFor(task.localId))
+          .map((edge) => edge.dependsOnJobId).sort();
+        const authority: JobRecord["authority"] = {
+          projectId: request.projectId, allowedExecutor: routes.get(task.localId)!,
+          allowedOperations: ["prepare.project-coordination"], credentialRefs: [], filesystemRoots: [],
+          networkPolicy: "none", allowedNetworkDestinations: [], effectPolicy: "none", maxRisk: "low",
+          maxDurationSeconds: 3_600, maxConcurrentEffects: 0, maxCostUsd: 0,
+          expiresAt: request.authorityExpiresAt, digest: `sha256:${"0".repeat(64)}`,
+        };
+        authority.digest = computeAuthorityDigest(authority);
+        return { ...common, kind: "job", id: jobIdFor(task.localId), workflowId: request.workflowId,
+          projectId: request.projectId, jobType: `coordination.plan.${task.localId}`,
+          specVersion: "project-coordination-plan/v1",
+          inputDigest: sha256Digest({ title: task.title, instructions: task.instructions }),
+          state: "proposed", priority: 50, requiredCapability: task.requiredCapability, dependsOnJobIds,
+          authority, retryPolicy: { maxAttempts: 1, backoffSeconds: 0, retryableFailureCodes: [],
+            retryAfterOrphan: false, ambiguousEffectPolicy: "attention" } };
+      });
+
+      const attentionId = `attention:coordination:${sha256Digest({ operationId: request.operationId }).slice(7, 39)}`;
+      const actionInbox: ActionInboxItemV1 = {
+        id: attentionId, tenantId: request.tenantId, projectId: request.projectId,
+        workItemId: jobIds[0]!, kind: "review", state: "resolved",
+        requestedAction: "Adopted coordination proposal recorded as proposed work",
+        reasonCode: authorization.kind === "owner"
+          ? "project_coordination_owner_adopted" : "project_coordination_policy_adopted",
+        blockedWorkItemIds: [],
+        legalResponses: [{ id: "response.open_source", kind: "open_source", label: "Open the adopted proposal",
+          requiresConfirmation: false, available: true }],
+        evidence: [
+          { id: request.proposalId, kind: "audit", digest: proposalRow!.proposal_digest!,
+            observedAt: request.occurredAt },
+          { id: request.operationId, kind: "audit", digest: input.requestDigest, observedAt: request.occurredAt },
+        ],
+        createdAt: request.occurredAt, deliveryState: "not_requested",
+      };
+      actionInboxItemSchemaV1.parse(actionInbox);
+      for (const record of [requestRecord, workflowRecord, ...jobRecords]) {
+        assertNoSecretMaterial(record, `${record.kind} record`);
+      }
+      assertNoSecretMaterial(actionInbox, "action inbox item");
+
+      await this.#insertWith(tx, domainEntitySchema.parse(requestRecord) as DomainEntity);
+      await this.#insertWith(tx, domainEntitySchema.parse(workflowRecord) as DomainEntity);
+      for (const job of jobRecords) {
+        assertAuthorityDigest(job.authority);
+        await this.#insertWith(tx, domainEntitySchema.parse(job) as DomainEntity);
+      }
+      for (const edge of dependencies) {
+        await tx.query(`INSERT INTO control_job_dependencies (tenant_id,job_id,depends_on_job_id) VALUES ($1,$2,$3)`,
+          [request.tenantId, edge.jobId, edge.dependsOnJobId]);
+      }
+      await tx.query(`INSERT INTO control_action_inbox
+        (id,tenant_id,project_id,work_item_id,kind,state,delivery_state,created_at,expires_at,payload)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,NULL,$9::jsonb)`,
+      [actionInbox.id, actionInbox.tenantId, actionInbox.projectId ?? null, actionInbox.workItemId ?? null,
+        actionInbox.kind, actionInbox.state, actionInbox.deliveryState, actionInbox.createdAt, json(actionInbox)]);
+
+      const receiptPayload = {
+        schema: PROJECT_COORDINATION_OPERATION_RECEIPT_V1,
+        operationId: request.operationId, tenantId: request.tenantId, projectId: request.projectId,
+        proposalId: request.proposalId, proposalDigest: proposalRow!.proposal_digest!,
+        authorizationKind: authorization.kind, initiatingIdentityId: authorization.ownerIdentityId,
+        coordinatorVersion: Number(head!.version), jobIds, requestDigest: input.requestDigest,
+        startsWork: false, grantsExecutionAuthority: false, permitsAssignment: false,
+      };
+      const receiptDigest = sha256Digest(receiptPayload);
+      await tx.query(`INSERT INTO control_project_coordination_operation_receipts
+        (tenant_id,id,project_id,proposal_id,operation,authorization_kind,initiating_identity_id,policy_id,
+         policy_version,policy_digest,coordinator_version,idempotency_key,request_digest,task_units,
+         admitted_cost_microusd,cost_evidence_digest,concurrency_units,receipt_digest,payload,committed_at)
+        VALUES($1,$2,$3,$4,'proposal.adopt',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb,$19)`,
+      [request.tenantId, request.operationId, request.projectId, request.proposalId, authorization.kind,
+        authorization.ownerIdentityId, policy?.id ?? null, policy ? Number(policy.version) : null,
+        policy?.policy_digest ?? null, Number(head!.version), request.idempotencyKey, input.requestDigest,
+        selected.length, admittedCost ?? null, costEvidenceDigest ?? null, selected.length, receiptDigest,
+        json(receiptPayload), request.occurredAt]);
+      for (const task of selected) {
+        await tx.query(`INSERT INTO control_project_coordination_operation_jobs
+          (tenant_id,operation_receipt_id,proposal_local_id,project_id,canonical_job_id,
+           recommended_route_digest,admitted_cost_microusd,cost_evidence_digest)
+          VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [request.tenantId, request.operationId, task.localId, request.projectId, jobIdFor(task.localId),
+          sha256Digest({ routeId: routes.get(task.localId)! }), admittedCost ?? null, costEvidenceDigest ?? null]);
+      }
+      return { receiptId: request.operationId, receiptDigest, jobIds, taskUnits: selected.length,
+        concurrencyUnits: selected.length, replayed: false };
+    });
+  }
+
+  /**
+   * The one canonical resource-conflict operation. Manual, scheduled and
+   * news-collection callers all enter here, so none of them can acquire a holder
+   * on a private path or in a different lock order.
+   */
+  async admitProjectWorkResourcesV1(value: unknown): Promise<ProjectWorkAdmissionResultV1> {
+    const input = projectWorkAdmissionRequestSchemaV1.parse(value);
+    if (input.declaration === undefined || input.declaration === null) {
+      failProjectCoordinationV1("resource_declaration_missing");
+    }
+    let declaration: ProjectWorkResourceDeclarationV1;
+    try {
+      declaration = canonicalProjectWorkResourceDeclarationV1(input.declaration);
+    } catch {
+      return failProjectCoordinationV1("resource_declaration_invalid");
+    }
+    if (declaration.tenantId !== input.tenantId || declaration.projectId !== input.projectId
+      || declaration.jobId !== input.jobId) failProjectCoordinationV1("resource_declaration_invalid");
+    const declarationDigest = projectWorkResourceDeclarationDigestV1(declaration);
+    const admissionDigest = projectWorkResourceAdmissionDigestV1({
+      schema: "control-room.project-work-resource-admission/v1", tenantId: input.tenantId,
+      projectId: input.projectId, jobId: input.jobId, attemptId: input.attemptId, leaseId: input.leaseId,
+      nodeId: input.nodeId, admissionId: input.admissionId, declarationDigest });
+    const anchorResourceId = declaration.workspace.kind === "none"
+      ? NO_WORKSPACE_ANCHOR_RESOURCE_ID_V1 : declaration.workspace.resourceId;
+    const baseRevision = declaration.workspace.baseRevision;
+    const workspaceIntentDigest = declaration.workspace.workspaceIntentDigest;
+    const enforcedWorkspaceId = input.disjointWriters.enforcedWorkspaceId;
+
+    return this.#transaction(async (tx) => {
+      // 1. authority
+      await this.#lockOwnerAuthorityV1(tx, { tenantId: input.tenantId, identityId: input.authority.ownerIdentityId,
+        projectId: input.projectId, occurredAt: input.acquiredAt, action: "work.admit" });
+      if (input.authority.kind === "policy") {
+        const policy = (await tx.query<{ state: string; valid_from: string; valid_until: string;
+          project_id: string; owner_identity_id: string }>(
+          `SELECT state,valid_from,valid_until,project_id,owner_identity_id
+           FROM control_project_delegation_policies WHERE tenant_id=$1 AND id=$2 FOR SHARE`,
+          [input.tenantId, input.authority.policyId])).rows[0];
+        const at = Date.parse(input.acquiredAt);
+        if (!policy || policy.project_id !== input.projectId
+          || policy.owner_identity_id !== input.authority.ownerIdentityId) failProjectCoordinationV1("invalid_input");
+        if (policy!.state === "revoked") failProjectCoordinationV1("policy_revoked");
+        if (policy!.state !== "active") failProjectCoordinationV1("policy_inactive");
+        if (at < Date.parse(policy!.valid_from) || at >= Date.parse(policy!.valid_until)) {
+          failProjectCoordinationV1("policy_expired");
+        }
+      }
+      // 2-3. tenant, then project/schedule head. Scheduled callers acquire the
+      // tenant before their project read for exactly this reason.
+      await this.#lockTenantProjectV1(tx, input.tenantId, input.projectId);
+      // 4. job
+      const job = (await tx.query<{ project_id: string; state: string }>(
+        "SELECT project_id,state FROM control_jobs WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
+        [input.tenantId, input.jobId])).rows[0];
+      if (!job || job.project_id !== input.projectId) failProjectCoordinationV1("invalid_input");
+
+      // 5. every immutable resource registry row, sorted by resource ID
+      const resourceIds = [...new Set([anchorResourceId, ...declaration.scopes.map((scope) => scope.resourceId)])]
+        .sort();
+      const registry = (await tx.query<{ id: string; kind: string; configuration_digest: string }>(
+        `SELECT id,kind,configuration_digest FROM control_work_resources
+         WHERE tenant_id=$1 AND id = ANY($2::text[]) ORDER BY id FOR SHARE`,
+        [input.tenantId, resourceIds])).rows;
+      if (registry.length !== resourceIds.length) failProjectCoordinationV1("resource_declaration_invalid");
+      const registered = new Map(registry.map((row) => [row.id, row] as const));
+      for (const scope of declaration.scopes) {
+        const row = registered.get(scope.resourceId);
+        if (!row || row.kind !== scope.resourceKind
+          || row.configuration_digest !== scope.resourceConfigurationDigest) {
+          failProjectCoordinationV1("resource_declaration_invalid");
+        }
+      }
+
+      // 6. existing held admissions and their scopes
+      const held = (await tx.query<{ id: string; attempt_id: string; workspace_intent_digest: string;
+        payload: { enforcedWorkspaceId?: string } }>(
+        `SELECT id,attempt_id,workspace_intent_digest,payload FROM control_attempt_resource_admissions
+         WHERE tenant_id=$1 AND state='held' ORDER BY id FOR UPDATE`, [input.tenantId])).rows;
+      const priorAdmission = held.find((row) => row.id === input.admissionId);
+      const heldScopes = (await tx.query<{ admission_id: string; resource_id: string;
+        access_mode: HeldScopeV1["accessMode"]; scope_kind: HeldScopeV1["scopeKind"]; path_fold: string }>(
+        `SELECT s.admission_id,s.resource_id,s.access_mode,s.scope_kind,s.path_fold
+         FROM control_attempt_resource_scopes s
+         JOIN control_attempt_resource_admissions a ON a.tenant_id=s.tenant_id AND a.id=s.admission_id
+         WHERE s.tenant_id=$1 AND a.state='held' AND a.attempt_id<>$2
+         ORDER BY s.admission_id,s.resource_id,s.scope_kind,s.path_fold`,
+        [input.tenantId, input.attemptId])).rows.map((row) => ({ admissionId: row.admission_id,
+        resourceId: row.resource_id, accessMode: row.access_mode, scopeKind: row.scope_kind,
+        path: row.path_fold }));
+
+      const existing = (await tx.query<{ id: string; attempt_id: string; lease_id: string; state: string;
+        declaration_digest: string; version: string }>(
+        `SELECT id,attempt_id,lease_id,state,declaration_digest,version::text AS version
+         FROM control_attempt_resource_admissions
+         WHERE tenant_id=$1 AND (id=$2 OR attempt_id=$3 OR lease_id=$4) ORDER BY id FOR UPDATE`,
+        [input.tenantId, input.admissionId, input.attemptId, input.leaseId])).rows;
+      if (existing.length > 1) failProjectCoordinationV1("resource_admission_replay_conflict");
+      if (existing.length === 1) {
+        const prior = existing[0]!;
+        if (prior.id !== input.admissionId || prior.attempt_id !== input.attemptId
+          || prior.lease_id !== input.leaseId || prior.declaration_digest !== declarationDigest) {
+          failProjectCoordinationV1("resource_admission_replay_conflict");
+        }
+        // A retired holder is not re-acquired by replaying its admission.
+        if (prior.state !== "held") failProjectCoordinationV1("resource_admission_retired");
+        if (!priorAdmission) failProjectCoordinationV1("resource_admission_retired");
+        return { admissionId: input.admissionId, admissionDigest, declarationDigest, workspaceIntentDigest,
+          version: Number(prior.version), replayed: true };
+      }
+
+      // Unknown legacy work is never presumed safe. A started attempt with no
+      // admission record may hold anything, so no new declaration - reader or
+      // writer - can be judged against it until it is reconciled. Omission never
+      // means read-only and no holder is synthesized from a guess. An attempt that
+      // has not started is excluded because the start fence refuses to release
+      // transport bytes without a current-holder proof, so it cannot already hold
+      // a resource.
+      const legacy = (await tx.query<{ count: string }>(
+        `SELECT count(*)::text AS count FROM control_attempts a
+         LEFT JOIN control_attempt_resource_admissions r ON r.tenant_id=a.tenant_id AND r.attempt_id=a.id
+         WHERE a.tenant_id=$1 AND a.id<>$2 AND a.state IN ('leased','running','waiting')
+           AND a.payload->>'startedAt' IS NOT NULL AND r.id IS NULL`,
+        [input.tenantId, input.attemptId])).rows[0];
+      if (Number(legacy?.count ?? 0) > 0) failProjectCoordinationV1("resource_legacy_work_unreconciled");
+
+      const conflicts = findResourceConflictsV1(declaration.scopes, heldScopes);
+      const narrow = narrowWriteResourcesV1(declaration.scopes);
+      if (narrow.length > 0) {
+        if (!input.disjointWriters.permitted || !enforcedWorkspaceId) {
+          failProjectCoordinationV1("resource_disjoint_write_not_permitted");
+        }
+        // Distinctness is required against every holder that already touches one
+        // of the repositories this declaration writes narrowly.
+        const sharing = new Set(heldScopes.filter((scope) => narrow.includes(scope.resourceId))
+          .map((scope) => scope.admissionId));
+        for (const other of held) {
+          if (!sharing.has(other.id)) continue;
+          if (other.workspace_intent_digest === workspaceIntentDigest
+            || other.payload?.enforcedWorkspaceId === enforcedWorkspaceId) {
+            failProjectCoordinationV1("resource_workspace_not_distinct");
+          }
+        }
+      }
+      if (conflicts.length > 0) failProjectCoordinationV1("resource_conflict");
+
+      // 7. node, attempt and lease
+      const node = (await tx.query<{ state: string }>(
+        "SELECT state FROM control_nodes WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [input.tenantId, input.nodeId]))
+        .rows[0];
+      if (node?.state !== "active") failProjectCoordinationV1("invalid_input");
+      const lease = (await tx.query<{ job_id: string; attempt_id: string; node_id: string; state: string }>(
+        `SELECT job_id,attempt_id,node_id,state FROM control_leases WHERE tenant_id=$1 AND id=$2 FOR UPDATE`,
+        [input.tenantId, input.leaseId])).rows[0];
+      if (!lease || lease.job_id !== input.jobId || lease.attempt_id !== input.attemptId
+        || lease.node_id !== input.nodeId) failProjectCoordinationV1("invalid_input");
+
+      // 8. the new holder and its immutable scopes
+      await tx.query(`INSERT INTO control_attempt_resource_admissions
+        (tenant_id,id,project_id,job_id,attempt_id,lease_id,node_id,repository_resource_id,base_revision,
+         workspace_intent_digest,declaration_digest,state,version,acquired_at,payload)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'held',1,$12,$13::jsonb)`,
+      [input.tenantId, input.admissionId, input.projectId, input.jobId, input.attemptId, input.leaseId,
+        input.nodeId, anchorResourceId, baseRevision, workspaceIntentDigest, declarationDigest,
+        input.acquiredAt, json({ routeKind: input.routeKind, admissionDigest,
+          workspaceKind: declaration.workspace.kind,
+          ...(enforcedWorkspaceId ? { enforcedWorkspaceId } : {}),
+          disjointWritersPermitted: input.disjointWriters.permitted })]);
+      for (const scope of declaration.scopes) {
+        await tx.query(`INSERT INTO control_attempt_resource_scopes
+          (tenant_id,admission_id,resource_id,access_mode,scope_kind,path,path_fold)
+          VALUES($1,$2,$3,$4,$5,$6,$7)`,
+        [input.tenantId, input.admissionId, scope.resourceId, scope.accessMode, scope.scopeKind,
+          scope.path, scope.path]);
+      }
+      return { admissionId: input.admissionId, admissionDigest, declarationDigest, workspaceIntentDigest,
+        version: 1, replayed: false };
+    });
+  }
+
+  /**
+   * Canonical recheck before any start fence. A missing holder, a retired holder
+   * or a declaration that has changed since admission all refuse; nothing here
+   * re-derives a holder from a guess.
+   */
+  async recheckProjectWorkResourceAdmissionV1(value: unknown): Promise<{
+    admissionId: string; admissionDigest: string; declarationDigest: string; version: number; state: "held";
+  }> {
+    const input = projectWorkAdmissionRecheckSchemaV1.parse(value);
+    if (input.declaration === undefined || input.declaration === null) {
+      failProjectCoordinationV1("resource_declaration_missing");
+    }
+    let declarationDigest: string;
+    try {
+      declarationDigest = projectWorkResourceDeclarationDigestV1(input.declaration);
+    } catch {
+      return failProjectCoordinationV1("resource_declaration_invalid");
+    }
+    return this.#transaction(async (tx) => {
+      const row = (await tx.query<{ project_id: string; job_id: string; attempt_id: string; lease_id: string;
+        node_id: string; declaration_digest: string; state: string; version: string }>(
+        `SELECT project_id,job_id,attempt_id,lease_id,node_id,declaration_digest,state,version::text AS version
+         FROM control_attempt_resource_admissions WHERE tenant_id=$1 AND id=$2 FOR SHARE`,
+        [input.tenantId, input.admissionId])).rows[0];
+      if (!row) failProjectCoordinationV1("resource_admission_absent");
+      if (row!.state !== "held") failProjectCoordinationV1("resource_admission_retired");
+      if (row!.project_id !== input.projectId || row!.job_id !== input.jobId
+        || row!.attempt_id !== input.attemptId || row!.lease_id !== input.leaseId
+        || row!.node_id !== input.nodeId) failProjectCoordinationV1("resource_admission_absent");
+      if (row!.declaration_digest !== declarationDigest) failProjectCoordinationV1("resource_declaration_changed");
+      const scopes = (await tx.query<{ count: string }>(
+        "SELECT count(*)::text AS count FROM control_attempt_resource_scopes WHERE tenant_id=$1 AND admission_id=$2",
+        [input.tenantId, input.admissionId])).rows[0];
+      if (Number(scopes?.count ?? 0) === 0) failProjectCoordinationV1("resource_declaration_changed");
+      return { admissionId: input.admissionId, declarationDigest, state: "held" as const,
+        version: Number(row!.version),
+        admissionDigest: projectWorkResourceAdmissionDigestV1({
+          schema: "control-room.project-work-resource-admission/v1", tenantId: input.tenantId,
+          projectId: input.projectId, jobId: input.jobId, attemptId: input.attemptId, leaseId: input.leaseId,
+          nodeId: input.nodeId, admissionId: input.admissionId, declarationDigest }) };
+    });
+  }
+
+  /**
+   * Retires a resource holder. The only accepted input is an authorization minted
+   * by `authorizeProcessRetirementV1` from exact authenticated process-retirement
+   * evidence. Lease expiry, disconnect, browser closure, result text and transport
+   * receipts reach no branch of this method, and the reserved `trusted_no_start`
+   * value is never written.
+   */
+  async retireProjectWorkResourceAdmissionV1(operationAuthorization: unknown): Promise<{
+    admissionId: string; version: number; replayed: boolean;
+  }> {
+    const authorization = acquireProcessRetirementAuthorizationV1(operationAuthorization);
+    if (!authorization) return failProjectCoordinationV1("retirement_evidence_unauthorized");
+    const proof = authorization.proof;
+    return this.#transaction(async (tx) => {
+      await this.#lockTenantProjectV1(tx, proof.tenantId, proof.projectId);
+      const jobRow = await tx.query<{ id: string }>(
+        "SELECT id FROM control_jobs WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [proof.tenantId, proof.jobId]);
+      if (!jobRow.rows[0]) failProjectCoordinationV1("invalid_input");
+      const row = (await tx.query<{ project_id: string; job_id: string; attempt_id: string; lease_id: string;
+        node_id: string; declaration_digest: string; state: string; version: string;
+        retirement_proof_digest: string | null; retirement_kind: string | null }>(
+        `SELECT project_id,job_id,attempt_id,lease_id,node_id,declaration_digest,state,version::text AS version,
+           retirement_proof_digest,retirement_kind
+         FROM control_attempt_resource_admissions WHERE tenant_id=$1 AND id=$2 FOR UPDATE`,
+        [proof.tenantId, proof.admissionId])).rows[0];
+      if (!row) failProjectCoordinationV1("resource_admission_absent");
+      if (row!.project_id !== proof.projectId || row!.job_id !== proof.jobId
+        || row!.attempt_id !== proof.attemptId || row!.lease_id !== proof.leaseId
+        || row!.node_id !== proof.nodeId) failProjectCoordinationV1("retirement_evidence_invalid");
+      const expectedAdmissionDigest = projectWorkResourceAdmissionDigestV1({
+        schema: "control-room.project-work-resource-admission/v1", tenantId: proof.tenantId,
+        projectId: proof.projectId, jobId: proof.jobId, attemptId: proof.attemptId, leaseId: proof.leaseId,
+        nodeId: proof.nodeId, admissionId: proof.admissionId, declarationDigest: row!.declaration_digest });
+      if (proof.resourceAdmissionDigest !== expectedAdmissionDigest) {
+        failProjectCoordinationV1("retirement_evidence_invalid");
+      }
+      if (row!.state === "retired") {
+        if (row!.retirement_kind !== "trusted_process_retired"
+          || row!.retirement_proof_digest !== authorization.proofDigest) {
+          failProjectCoordinationV1("retirement_replay_conflict");
+        }
+        return { admissionId: proof.admissionId, version: Number(row!.version), replayed: true };
+      }
+      const version = Number(row!.version) + 1;
+      await tx.query(`UPDATE control_attempt_resource_admissions
+        SET state='retired',version=$1,retired_at=$2,retirement_kind='trusted_process_retired',
+          retirement_proof_digest=$3
+        WHERE tenant_id=$4 AND id=$5 AND state='held'`,
+      [version, proof.observedAt, authorization.proofDigest, proof.tenantId, proof.admissionId]);
+      return { admissionId: proof.admissionId, version, replayed: false };
     });
   }
 
