@@ -30,22 +30,49 @@ const relativePath = z
   );
 
 // Head state the page renders as "who is the coordinator now".
-export const coordinatorHeadStateSchema = z
+//
+// Two-shape discriminated union: a populated head carries version >= 1 plus the
+// identity and binding fields; an empty head carries version 0 with the identity
+// and binding fields all nullable. The browser's switch narrows on `state`
+// so the active-page and empty-page views both stay type-safe.
+const coordinatorHeadPopulatedSchema = z
   .object({
     tenantId: id,
     projectId: catalogProjectIdSchema,
     version: z.number().int().min(1),
-    state: z.enum(["active", "revoked", "none"]),
-    coordinatorActorType: z.enum(["human", "agent"]).nullable(),
-    coordinatorIdentityId: id.nullable(),
+    state: z.enum(["active", "revoked"]),
+    coordinatorActorType: z.enum(["human", "agent"]),
+    coordinatorIdentityId: id,
     executorId: id.nullable(),
     adapterId: id.nullable(),
     connectorProfileDigest: digest.nullable(),
     executionBindingDigest: digest.nullable(),
-    appointedAt: instant.nullable(),
-    appointedByOwnerIdentityId: id.nullable(),
+    appointedAt: instant,
+    appointedByOwnerIdentityId: id,
   })
   .strict();
+
+const coordinatorHeadEmptySchema = z
+  .object({
+    tenantId: id,
+    projectId: catalogProjectIdSchema,
+    version: z.literal(0),
+    state: z.literal("none"),
+    coordinatorActorType: z.null(),
+    coordinatorIdentityId: z.null(),
+    executorId: z.null(),
+    adapterId: z.null(),
+    connectorProfileDigest: z.null(),
+    executionBindingDigest: z.null(),
+    appointedAt: z.null(),
+    appointedByOwnerIdentityId: z.null(),
+  })
+  .strict();
+
+export const coordinatorHeadStateSchema = z.discriminatedUnion("state", [
+  coordinatorHeadPopulatedSchema,
+  coordinatorHeadEmptySchema,
+]);
 
 // A bounded delegation policy attached to the same head. The coordinator can
 // only adopt proposals when a policy is active and inside its validity window.

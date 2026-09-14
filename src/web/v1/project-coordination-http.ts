@@ -41,6 +41,29 @@ export interface ProjectCoordinationCanonicalStoreAdapter {
   coordinator: ProjectCoordinationCanonicalPortV1;
   /** Version of the active coordinator head. 0 when no head exists. */
   coordinatorVersion: (projectId: string) => Promise<number>;
+  /**
+   * Optional projection read for the active coordinator head. The HTTP service
+   * uses this to render a populated coordinatorHead in the page payload so the
+   * workspace component does not have to fetch the canonical row to render
+   * "who is the coordinator now". When the fixture-only store omits this, the
+   * service falls back to the empty `state: "none"` branch.
+   */
+  readActiveHead?: (
+    projectId: string,
+  ) => Promise<{
+    tenantId: string;
+    projectId: string;
+    version: number;
+    state: "active" | "revoked";
+    coordinatorActorType: "human" | "agent";
+    coordinatorIdentityId: string;
+    executorId: string | null;
+    adapterId: string | null;
+    connectorProfileDigest: string | null;
+    executionBindingDigest: string | null;
+    appointedAt: string;
+    appointedByOwnerIdentityId: string;
+  } | null>;
   /** Version of the policy row tied to a project. 0 when no policy exists. */
   policyVersion: (projectId: string) => Promise<number>;
   /**
@@ -534,6 +557,7 @@ export class ProjectCoordinationHttpService {
     const enabled = await this.store.coordinationEnabled();
     const observedAt = new Date(this.options.clock()).toISOString();
     const headVersion = await this.store.coordinatorVersion(projectId);
+    const headProjection = await this.buildCoordinatorHeadForPage(projectId, headVersion, observedAt);
     return {
       project: {
         projectId: project.projectId,
@@ -547,26 +571,63 @@ export class ProjectCoordinationHttpService {
       },
       coordinationEnabled: enabled,
       observedAt,
-      coordinatorHead: {
-        tenantId: this.options.scope.tenantId,
-        projectId: project.projectId as never,
-        version: headVersion,
-        state: headVersion === 0 ? "none" : "active",
-        coordinatorActorType: null,
-        coordinatorIdentityId: null,
-        executorId: null,
-        adapterId: null,
-        connectorProfileDigest: null,
-        executionBindingDigest: null,
-        appointedAt: null,
-        appointedByOwnerIdentityId: null,
-      },
+      coordinatorHead: headProjection.coordinatorHead,
       delegationPolicy: (await this.store.readDelegationPolicySummary?.(projectId)) ?? null,
       activeWork: [],
       dependencies: [],
       conflicts: [],
       attention: [],
-      nextAction: "appoint-coordinator",
+      nextAction: headVersion === 0 ? "appoint-coordinator" : "view-active-work",
+    };
+  }
+
+  private async buildCoordinatorHeadForPage(
+    projectId: string,
+    headVersion: number,
+    _observedAt: string,
+  ): Promise<{ coordinatorHead: ProjectCoordinationPagePayload["coordinatorHead"] }> {
+    if (headVersion === 0) {
+      return {
+        coordinatorHead: {
+          tenantId: this.options.scope.tenantId,
+          projectId,
+          version: 0,
+          state: "none",
+          coordinatorActorType: null,
+          coordinatorIdentityId: null,
+          executorId: null,
+          adapterId: null,
+          connectorProfileDigest: null,
+          executionBindingDigest: null,
+          appointedAt: null,
+          appointedByOwnerIdentityId: null,
+        },
+      };
+    }
+    const head = await this.store.readActiveHead?.(projectId);
+    if (!head) {
+      // Fakes-only store: do not fabricate a populated head. The workspace
+      // handles the empty-head view; the page does not invent coordinator
+      // identity, executor, or binding fields it cannot honestly read.
+      return {
+        coordinatorHead: {
+          tenantId: this.options.scope.tenantId,
+          projectId,
+          version: 0,
+          state: "none",
+          coordinatorActorType: null,
+          coordinatorIdentityId: null,
+          executorId: null,
+          adapterId: null,
+          connectorProfileDigest: null,
+          executionBindingDigest: null,
+          appointedAt: null,
+          appointedByOwnerIdentityId: null,
+        },
+      };
+    }
+    return {
+      coordinatorHead: head,
     };
   }
 }

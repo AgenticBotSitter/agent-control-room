@@ -221,6 +221,24 @@ export async function projectCoordinationHttpFixture(options: FixtureOptions) {
     async coordinatorVersion(projectId) {
       return headRows.get(projectId)?.version ?? 0;
     },
+    async readActiveHead(projectId) {
+      const row = headRows.get(projectId);
+      if (!row || row.state === "revoked") return null;
+      return {
+        tenantId: "tenant:test",
+        projectId,
+        version: row.version,
+        state: row.state,
+        coordinatorActorType: row.coordinatorActorType,
+        coordinatorIdentityId: row.coordinatorIdentityId,
+        executorId: row.executorId ?? null,
+        adapterId: row.adapterId ?? null,
+        connectorProfileDigest: row.connectorProfileDigest ?? null,
+        executionBindingDigest: row.executionBindingDigest ?? null,
+        appointedAt: row.occurredAt,
+        appointedByOwnerIdentityId: row.ownerIdentityId,
+      };
+    },
     async policyVersion(projectId) {
       return policyByProject.get(projectId)?.coordinatorVersion ?? 0;
     },
