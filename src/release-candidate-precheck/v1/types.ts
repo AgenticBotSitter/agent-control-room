@@ -63,8 +63,24 @@ export interface ReleaseCandidateAuthorityFlagsV1 {
   ownerAuthority: false;
 }
 
+/** A single component's preserved real accepted values. These come directly
+ * from the input record (the operator-supplied acceptedCommit and evidenceDigest
+ * that were emitted at acceptance time) and are never re-derived from the
+ * candidate root. */
+export interface ReleaseCandidateComponentResultV1 {
+  readonly id: string;
+  readonly acceptedCommit: string;
+  readonly evidenceDigest: string;
+}
+
 export type ReleaseCandidatePrecheckResultV1 =
   | { status: 'blocked_missing_inputs'; reason: string }
   | { status: 'blocked_invalid_inputs'; reason: string }
-  | { status: 'precheck_complete_not_accepted'; recordDigest: string;
+  | { status: 'precheck_complete_not_accepted';
+      schema: string;
+      candidateCommit: string;
+      artifactDigest: string;
+      artifactManifestDigest: string;
+      releaseVersion: string;
+      components: ReadonlyArray<ReleaseCandidateComponentResultV1>;
       componentCount: number; authority: ReleaseCandidateAuthorityFlagsV1 };

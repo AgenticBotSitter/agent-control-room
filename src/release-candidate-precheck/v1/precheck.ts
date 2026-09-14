@@ -208,20 +208,21 @@ export function evaluateReleaseCandidatePrecheckV1(
     if (evidenceDigest !== expectedBinding) {
       return invalid(`invalid:components[${index}].evidenceDigest-binding`);
     }
-    canonicalComponents.push({ id: expectedId, acceptedCommit, evidenceDigest });
+    canonicalComponents.push(Object.freeze({ id: expectedId, acceptedCommit, evidenceDigest }));
   }
-  const canonical = {
+  // Preserve the real per-component accepted values into the output without
+  // replacing them with anything computed from the candidate root. The output
+  // also surfaces the root's artifact / manifest / candidate / version so a
+  // caller can re-verify the binding against the accepted components. Status
+  // is explicitly precheck-complete-not-accepted; all authority flags remain
+  // false. No record-level re-derived digest is emitted.
+  return Object.freeze({ status: 'precheck_complete_not_accepted' as const,
+    schema: RELEASE_CANDIDATE_PRECHECK_SCHEMA_V1,
+    candidateCommit: rootCandidate,
     artifactDigest: rootArtifact,
     artifactManifestDigest: rootManifest,
-    candidateCommit: rootCandidate,
-    components: canonicalComponents,
     releaseVersion: root.releaseVersion as string,
-    schema: RELEASE_CANDIDATE_PRECHECK_SCHEMA_V1,
-    sourceDigest: root.sourceDigest as string,
-    treeDigest: root.treeDigest as string,
-  };
-  return Object.freeze({ status: 'precheck_complete_not_accepted' as const,
-    recordDigest: sha256Digest(canonical),
+    components: Object.freeze(canonicalComponents),
     componentCount: componentIds.length,
     authority: Object.freeze({ approval: false as const, qualification: false as const,
       installation: false as const, deployment: false as const, execution: false as const,
