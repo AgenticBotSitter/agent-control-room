@@ -107,8 +107,28 @@ not one issue/PR per small code edit.
 ## Claim and keep moving
 
 1. Choose a **ready** package whose platform, dependencies and resources you have.
-2. Comment with the intended scope and ask for assignment. Wait for maintainer confirmation;
-   simultaneous comments do not create competing claims.
+2. Post the exact two-line `CLAIM REQUEST` with a unique worker identity on the
+   issue. The serialized controller validates the work packet, pins current
+   `main`, and edits its marker to `CLAIM ACCEPTED`. Begin only when that
+   accepted comment was posted by `github-actions[bot]`; simultaneous comments
+   do not create competing claims, and a refused request is not permission.
+   Keep the reservation with `CLAIM RENEW` (same worker, unchanged packet,
+   unexpired lease; the renewal keeps the immutable accepted base), record
+   submission readiness with `CLAIM SUBMIT` (verified open PR on `main` by the
+   accepted worker with the exact head, one exact `Control-Room-Issue:` line,
+   unexpired lease, unchanged packet, at most two outstanding submissions per
+   pair, and a working issue plus an unlabelled pull request), then move both
+   sides to In review with the `HANDOFF submit` command, which the handoff
+   controller reconciles on the issue and the pull request together. `CLAIM
+   SUBMIT` moves no labels so the handoff preconditions still hold. Return
+   safe unsubmitted work with `CLAIM RELEASE`. Dependencies must be
+   closed issues with the done disposition. Expired claims stop: quiet
+   effect-free work returns to Ready, one open PR by the accepted worker stays
+   In review, and ambiguous, multi-PR or effectful work becomes Needs
+   decision. Packet-less legacy locks fail closed until migrated. An expired
+   open-PR claim keeps its path lock (the expiry marker binds the accepted
+   packet hash) without blocking unrelated scopes; an expiry that meets a
+   newer maintainer decision fails loudly instead of reporting success.
 3. Use your own fork/branch. Agree on milestones for large packages and send one cohesive
    PR per independently reviewable outcome. Multiple local commits are fine.
 4. Test locally. Include exact base/head, commands, observed results, relevant failure
@@ -125,8 +145,10 @@ deployment permission. Contributor agents follow the same accountability rules.
 
 ## Actions and batching
 
-Actions start disabled. No scheduled polling, automatic deployment, per-comment jobs,
-or self-hosted runners attached to public pull requests. Run checks locally and batch
+Public Actions run the claim lifecycle (`issue_comment` commands plus manual
+`workflow_dispatch` expiry sweeps) and the pull-request CI suite on standard
+hosted runners; there is no scheduled polling, automatic deployment, or
+self-hosted runners attached to public pull requests. Run checks locally and batch
 meaningful pushes and review requests. Small local commits are useful and do not consume
 Actions minutes. Avoid huge unreviewable PRs solely to reduce commit counts.
 
