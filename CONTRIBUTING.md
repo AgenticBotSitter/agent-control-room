@@ -137,6 +137,15 @@ maintainer-led. These areas need explicit scope and risk-appropriate independent
 not an ordinary UI issue that quietly grows into an authority change. Small UI/docs
 changes should receive proportionate review rather than a production release ceremony.
 
+Review state must always identify the next actor. `status:in-review` plus
+`action:reviewer` means the reviewer acts. If material corrections are requested, the
+issue and pull request move together to `status:changes-required` plus `action:worker`,
+and the reviewer posts one consolidated correction list with the assigned worker marker.
+After corrections, `status:re-review` plus `action:reviewer` returns the changed portion
+to review. See the [public contribution flow](docs/PUBLIC_CONTRIBUTION_FLOW.md). Workers
+can read their explicit inbox with `node scripts/public-worker-inbox.mjs --worker-id WORKER_ID`; it is a
+read-only public GitHub check and consumes no GitHub Actions minutes.
+
 Merge and deployment are separate decisions. Untrusted PRs must not run with maintainer
 credentials or on private agent hosts. Contributor tests use disposable resources.
 Report vulnerabilities through the project's designated private reporting route once

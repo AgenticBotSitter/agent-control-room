@@ -184,11 +184,18 @@ production changes; those remain separately scoped owner actions.
 
 Each work issue has exactly one status plus platform/difficulty, owner or unassigned
 state, dependencies, immutable base/target, owned paths, reuse choice and checks.
-Ready means it can begin without guessing a shared contract. Working and In review
-show active implementation and submitted evidence. Waiting means the decision is
+Ready means it can begin without guessing a shared contract. Working means the accepted
+worker acts. In review and Re-review mean the assigned reviewer acts. Changes required
+means the original worker corrects the same pull request. The accompanying `action:*`
+label always names the next responsibility; “pending” is not a workflow state. Waiting means the decision is
 settled, but a named prerequisite or separately authorized real-world test is pending.
 Needs decision means an actual lead or owner decision is required. Paused means the
 work is intentionally inactive.
+
+Package size is visible before claim: feature, integration, platform, or release package,
+normally representing 4–12 human-equivalent focused hours. Tiny related changes are
+batched instead of advertised as separate work. The full handoff and local worker-inbox
+rules are in [PUBLIC_CONTRIBUTION_FLOW.md](docs/PUBLIC_CONTRIBUTION_FLOW.md).
 
 The automatic claim controller confirms ready reservations using a GitHub-login plus
 unique-worker identifier in one short repository-wide serialized workflow. Each exact

@@ -30,6 +30,7 @@ everyone; no separate private core.
 | What you want to know | Direct link / answer |
 | --- | --- |
 | What can I take on now? | [Ready assignments](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aready) is the authoritative list. |
+| How large is each assignment and who acts next? | [Public contribution flow](docs/PUBLIC_CONTRIBUTION_FLOW.md) — substantial packages, unambiguous action ownership, correction handoffs and worker inboxes. |
 | What is being worked or reviewed? | [Working](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aworking) · [In review](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Ain-review) · [Open PRs](https://github.com/AgenticBotSitter/agent-control-room/pulls) |
 | What is waiting on a named prerequisite or authorized real-world test? | [Waiting](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Awaiting) — the decision is settled, but the named prerequisite is pending |
 | What needs a lead or owner decision? | [Needs decision](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aneeds-decision) — an actual decision is required |
@@ -91,6 +92,12 @@ inventing or duplicating work. Maintainers will publish a safe independent slice
 identify the dependency blocking it. Our [worker instructions](skills/public-build-worker/SKILL.md)
 and [review instructions](skills/public-build-review/SKILL.md) are optional reusable
 guides; there is no private controller or mandatory result-manifest ceremony.
+
+When a review requests corrections, both the issue and pull request say
+`status:changes-required` plus `action:worker`; they do not remain ambiguously pending.
+Workers can run `node scripts/public-worker-inbox.mjs --worker-id YOUR-STABLE-WORKER-ID` to see their
+current explicit action. Tiny fixes are bundled into substantial feature, integration,
+platform, or release packages rather than advertised as separate jobs.
 
 ### How the group build is organized
 
