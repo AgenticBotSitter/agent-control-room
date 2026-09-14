@@ -93,6 +93,28 @@ test("working without an accepted controller claim is not treated as healthy", a
   assert.ok(report.anomalies.find(item => item.issue === 166).codes.includes("working_claim_missing"));
 });
 
+test("claim health follows renewal and clearing lifecycle records", async () => {
+  const renewed = `CLAIM RENEWED — reserved\n<!-- agent-control-room-claim:v3 issue=166 request=2 actor=maintainer worker=worker:test-01 packet=${"b".repeat(64)} accepted=1700000001000 -->`;
+  const active = fakeFetch({ issues: [issue(166, ["status:working"])], comments: { 166: [controllerComment(renewed)] } });
+  assert.deepEqual((await readQueueHealth({ fetchImpl: active.fetchImpl })).anomalies, []);
+
+  const released = `CLAIM RELEASED — returned\n<!-- agent-control-room-claim:v3 issue=166 request=3 actor=maintainer worker=worker:test-01 released=1700000002000 -->`;
+  const stale = fakeFetch({ issues: [issue(166, ["status:working"])],
+    comments: { 166: [controllerComment(claimMarker(166, "worker:test-01")), controllerComment(released)] } });
+  assert.ok((await readQueueHealth({ fetchImpl: stale.fetchImpl }))
+    .anomalies.find(item => item.issue === 166).codes.includes("working_claim_missing"));
+});
+
+test("truncated claim history reports uncertainty instead of a definite missing claim", async () => {
+  const crowded = Array.from({ length: 100 }, (_, index) => comment(`ordinary ${index}`, "NONE", `user-${index}`));
+  const api = fakeFetch({ issues: [issue(166, ["status:working"])], comments: { 166: crowded } });
+  const report = await readQueueHealth({ fetchImpl: api.fetchImpl, maxPages: 1 });
+  const codes = report.anomalies.find(item => item.issue === 166).codes;
+  assert.deepEqual(codes, ["claim_history_indeterminate"]);
+  assert.ok(!codes.includes("working_claim_missing"));
+  assert.ok(report.warnings.includes("queue_read_truncated"));
+});
+
 test("ambiguous status and action labels are detected instead of guessed", async () => {
   const api = fakeFetch({
     issues: [
