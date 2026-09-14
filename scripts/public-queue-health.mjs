@@ -13,7 +13,6 @@ import { parseHandoff } from "./review-handoff-controller.mjs";
 
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const CLAIM_MARKER = /<!-- agent-control-room-claim:v2 issue=(\d+) request=(\d+) actor=([A-Za-z0-9][A-Za-z0-9-]{0,38}) worker=([A-Za-z0-9][A-Za-z0-9._:-]{2,79}) -->/;
-const TRUSTED_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
 const SECRET_PATTERNS = [/gh[pousr]_[A-Za-z0-9]{16,}/g, /github_pat_[A-Za-z0-9_]{20,}/g];
 // A submission declares the issue it delivers in its header block: the repository's own
 // `Outcome / issue: #N` form, a closing keyword, or an implementation claim. A prose
@@ -26,12 +25,15 @@ const PR_DECLARATION = [
 const PR_DECLARATION_WINDOW = 2000;
 
 /**
- * Logins whose markers are trusted even when the read is unauthenticated. A public read
- * masks `author_association` (a real maintainer is reported as `CONTRIBUTOR`, the
- * trusted controller as `NONE`), so association alone cannot identify either. Membership
- * never makes an unknown public comment trusted.
+ * Identities whose transition markers are recognised as *advisory* legacy records.
+ *
+ * Trust is never derived from `author_association`. Every repository OWNER, MEMBER and
+ * COLLABORATOR can post a comment, so treating membership as trust would let an
+ * unauthorized comment satisfy a required handoff and silently suppress a missing-record
+ * warning. Authority belongs to the serialized controller alone; the identities below are
+ * named explicitly and everything they post is reported as advisory, never authoritative.
  */
-export const DEFAULT_TRUSTED_LOGINS = Object.freeze(["github-actions[bot]", "MarvinAi5"]);
+export const DEFAULT_ADVISORY_LOGINS = Object.freeze(["MarvinAi5"]);
 
 /** Minimum number of substantial Ready packages that must stay available. */
 export const READY_FLOOR = 4;
@@ -170,10 +172,16 @@ async function readDeclaredSubmissions({ fetchImpl, root, token, maxPages = DEFA
  */
 const CONTROLLER = comment => comment?.user?.login === "github-actions[bot]" && comment?.user?.type === "Bot";
 
-function trusted(marker, comment, trustedLogins) {
+/**
+ * Whether a marker comes from an identity authorised to post it.
+ *
+ * The controller is authoritative. A configured advisory identity is recognised but is
+ * never authoritative. Association grants nothing: it is checked only to prove the
+ * absence of authority, never to supply it.
+ */
+function trusted(marker, comment, advisoryLogins) {
   if (!marker) return false;
-  return CONTROLLER(comment) || trustedLogins.includes(comment?.user?.login)
-    || TRUSTED_ASSOCIATIONS.has(comment?.author_association);
+  return CONTROLLER(comment) || advisoryLogins.includes(comment?.user?.login);
 }
 
 /**
@@ -185,7 +193,7 @@ function trusted(marker, comment, trustedLogins) {
  * The controller record therefore wins whenever both exist, and the report names which
  * one it used instead of presenting advisory data as authoritative.
  */
-function latestWorkflowRecord(comments, issueNumber, trustedLogins) {
+function latestWorkflowRecord(comments, issueNumber, advisoryLogins) {
   let controllerRecord;
   let advisory;
   for (const comment of comments) {
@@ -193,16 +201,16 @@ function latestWorkflowRecord(comments, issueNumber, trustedLogins) {
     if (handoff && handoff.issue === issueNumber) controllerRecord = { marker: handoff, trust: "controller-record" };
     if (CONTROLLER(comment)) continue;
     const marker = parseActionMarker(comment?.body);
-    if (trusted(marker, comment, trustedLogins) && marker.issue === issueNumber) advisory = { marker, trust: "advisory" };
+    if (trusted(marker, comment, advisoryLogins) && marker.issue === issueNumber) advisory = { marker, trust: "advisory" };
   }
   return controllerRecord ?? advisory;
 }
 
 /** Latest trusted accepted-claim marker on an issue, if any. */
-function latestClaim(comments, issueNumber, trustedLogins) {
+function latestClaim(comments, issueNumber, advisoryLogins) {
   const matches = comments.flatMap(comment => {
     const marker = parseClaimMarker(comment?.body);
-    return trusted(marker, comment, trustedLogins) && marker.issue === issueNumber ? [marker] : [];
+    return trusted(marker, comment, advisoryLogins) && marker.issue === issueNumber ? [marker] : [];
   });
   return matches.at(-1);
 }
@@ -223,7 +231,7 @@ function ageDays(since, now) {
  */
 export async function readQueueHealth({
   repository = "AgenticBotSitter/agent-control-room",
-  token, fetchImpl = fetch, trustedLogins = DEFAULT_TRUSTED_LOGINS,
+  token, fetchImpl = fetch, advisoryLogins = DEFAULT_ADVISORY_LOGINS,
   readSubmissions = readDeclaredSubmissions,
   maxPages = DEFAULT_MAX_PAGES, maxPullPages = DEFAULT_MAX_PULL_PAGES,
   now = Date.now(),
@@ -245,12 +253,16 @@ export async function readQueueHealth({
   let claimed = 0;
   let submissions;
   let submissionReads = 0;
+  // Tracked apart from the queue-wide flag: an incomplete pull history must never be used
+  // to infer that a submission is absent or resolved.
+  let submissionTruncated = false;
 
   // Pull data is read at most once, and only if some issue actually needs it.
   const submissionFor = async issueNumber => {
     if (!submissions) {
       submissions = await readSubmissions({ fetchImpl, root, token, maxPages: maxPullPages });
       truncated = truncated || submissions.truncated;
+      submissionTruncated = submissionTruncated || submissions.truncated;
     }
     submissionReads += 1;
     return submissions.byIssue.get(issueNumber) ?? [];
@@ -286,11 +298,15 @@ export async function readQueueHealth({
       truncated = truncated || history.truncated;
     }
 
-    const record = latestWorkflowRecord(comments, issue.number, trustedLogins);
-    const claim = latestClaim(comments, issue.number, trustedLogins);
+    const record = latestWorkflowRecord(comments, issue.number, advisoryLogins);
+    const claim = latestClaim(comments, issue.number, advisoryLogins);
     if (claim) claimed += 1;
 
     if (status === "changes-required" && !record) codes.push("worker_action_marker_missing");
+    // A record exists but carries no authority. A legacy shared-account marker cannot
+    // authorize the transition, so it must not suppress the missing-record signal.
+    if (status === "changes-required" && record?.trust === "advisory")
+      codes.push("worker_action_marker_not_authoritative");
     // A correction was requested but the issue still advertises an active review.
     if (status === "in-review" && (record?.marker.state === "changes-required" || actions.includes("action:worker")))
       codes.push("correction_not_applied");
@@ -302,10 +318,13 @@ export async function readQueueHealth({
       const closed = declared.filter(pull => pull.state === "closed");
       // A submission exists but the issue still advertises active implementation.
       if (status === "working" && open.length > 0) codes.push("submitted_work_still_working");
-      // An active review or correction is advertised, but every declared submission is
-      // already resolved and none is open.
-      if (status !== "working" && open.length === 0 && closed.length > 0)
-        codes.push("linked_pull_request_mismatch");
+      // Review or correction is advertised with no open submission. Never infer absence
+      // from an incomplete pull history: report it as indeterminate instead.
+      if (status !== "working" && open.length === 0) {
+        if (submissionTruncated) codes.push("submission_indeterminate");
+        else if (closed.length > 0) codes.push("linked_pull_request_mismatch");
+        else codes.push("submission_missing");
+      }
     }
 
     if (status && STATUSES.includes(status)) {

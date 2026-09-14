@@ -452,9 +452,15 @@ issue is not treated as its submission, so one shared integration pull request d
 make unrelated issues look submitted.
 
 A correction record is reported with its provenance. A controller `handoff:v1` record is
-authoritative; a legacy `action:v1` marker is advisory and cannot prove that a maintainer
-authorized the transition, so the controller record wins whenever both exist and the
-report never presents an advisory record as an authoritative one.
+authoritative; a legacy `action:v1` marker from a configured shared account is advisory and
+cannot authorize the transition.
+
+Authority is never derived from repository membership. Any OWNER, MEMBER or COLLABORATOR can
+post a comment, so treating membership as trust would let an unauthorized comment satisfy a
+required handoff and suppress the warning that should fire. The report therefore distinguishes
+a record that is missing from one that carries no authority, instead of letting either pass as
+authorized. An incomplete pull-request history is likewise reported as indeterminate: a bounded
+read cannot prove that a submission is absent, so it is never turned into a mismatch claim.
 
 The command reads GitHub only. It changes no label, issue, pull request or workflow,
 needs no token for public reading, and reports its own uncertainty when a bounded read

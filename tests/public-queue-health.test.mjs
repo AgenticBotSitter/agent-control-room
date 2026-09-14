@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  DEFAULT_MAX_PAGES, DEFAULT_TRUSTED_LOGINS, READY_FLOOR, STATUSES,
+  DEFAULT_MAX_PAGES, DEFAULT_ADVISORY_LOGINS, READY_FLOOR, STATUSES,
   declaredSubmissionIssue, parseClaimMarker, readQueueHealth, renderQueueHealth, renderQueueHealthJson,
 } from "../scripts/public-queue-health.mjs";
 
@@ -51,9 +51,10 @@ test("a healthy queue reports counts, links, capacity and no anomalies", async (
       issue(166, ["status:working", "help wanted"]),
       issue(125, ["status:in-review", "action:reviewer"])],
     comments: { 166: [comment(claimMarker(166, "worker:test-01"))] },
-    pulls: [],
+    // A healthy in-review state must have an open submission, so give it one.
+    pulls: [pull(204, 125)],
   });
-  const report = await readQueueHealth({ fetchImpl: api.fetchImpl, trustedLogins: ["trusted-maintainer"] });
+  const report = await readQueueHealth({ fetchImpl: api.fetchImpl, advisoryLogins: ["trusted-maintainer"] });
 
   assert.deepEqual(report.counts.ready, READY_FLOOR);
   assert.equal(report.counts.working, 1);
@@ -87,7 +88,7 @@ test("ambiguous status and action labels are detected instead of guessed", async
       issue(12, ["action:worker"]),
       issue(13, ["status:teleported"]),
     ],
-    pulls: [],
+    pulls: [pull(300, 11)],
   });
   const report = await readQueueHealth({ fetchImpl: api.fetchImpl });
   const codes = number => report.anomalies.find(item => item.issue === number)?.codes ?? [];
@@ -122,7 +123,7 @@ test("stale reviews and corrections report the oldest item and its age", async (
     comments: { 126: [comment(actionMarker("worker:test-01", "changes-required", 126))] },
     pulls: [],
   });
-  const report = await readQueueHealth({ fetchImpl: api.fetchImpl, trustedLogins: ["trusted-maintainer"], now });
+  const report = await readQueueHealth({ fetchImpl: api.fetchImpl, advisoryLogins: ["trusted-maintainer"], now });
   assert.equal(report.oldestReview.issue, 125);
   assert.equal(report.oldestReview.ageDays, 10);
   assert.equal(report.oldestCorrection.issue, 126);
@@ -139,16 +140,20 @@ test("a newer trusted reassignment changes the correction owner and a spoofed ma
       comment(actionMarker("worker:test-01", "changes-required", 170)),
       comment(actionMarker("worker:new-01", "changes-required", 170)),
     ] },
+    pulls: [pull(301, 170)],
   });
-  const report = await readQueueHealth({ fetchImpl: reassigned.fetchImpl, trustedLogins: ["trusted-maintainer"] });
+  const report = await readQueueHealth({ fetchImpl: reassigned.fetchImpl, advisoryLogins: ["trusted-maintainer"] });
   assert.equal(report.oldestCorrection.workerId, "worker:new-01");
-  assert.deepEqual(report.anomalies, []);
+  // The reassignment is recognised, but it carries no authority: it is a legacy
+  // shared-account marker, so the gap in authority is reported rather than hidden.
+  assert.deepEqual(report.anomalies.find(item => item.issue === 170).codes,
+    ["worker_action_marker_not_authoritative"]);
 
   const spoofed = fakeFetch({
     issues: [issue(170, ["status:changes-required", "action:worker"])],
     comments: { 170: [comment(actionMarker("worker:test-01", "changes-required", 170), "NONE", "random-outsider")] },
   });
-  const spoofedReport = await readQueueHealth({ fetchImpl: spoofed.fetchImpl, trustedLogins: ["trusted-maintainer"] });
+  const spoofedReport = await readQueueHealth({ fetchImpl: spoofed.fetchImpl, advisoryLogins: ["trusted-maintainer"] });
   assert.ok(spoofedReport.anomalies.find(item => item.issue === 170).codes.includes("worker_action_marker_missing"));
 });
 
@@ -161,7 +166,7 @@ test("corrections requested but still In review, and submitted work still Workin
     comments: { 180: [comment(actionMarker("worker:test-01", "changes-required", 180))], 166: [] },
     pulls: [pull(200, 166)],
   });
-  const report = await readQueueHealth({ fetchImpl: api.fetchImpl, trustedLogins: ["trusted-maintainer"] });
+  const report = await readQueueHealth({ fetchImpl: api.fetchImpl, advisoryLogins: ["trusted-maintainer"] });
   assert.ok(report.anomalies.find(item => item.issue === 180).codes.includes("correction_not_applied"));
   assert.ok(report.anomalies.find(item => item.issue === 166).codes.includes("submitted_work_still_working"));
 });
@@ -228,7 +233,7 @@ test("an open implementation claim keeps a resubmitted correction healthy", asyn
   // it manufactures drift findings.
   const api = fakeFetch({
     issues: [issue(125, ["status:changes-required", "action:worker"])],
-    comments: { 125: [comment(actionMarker("worker:test-01", "changes-required", 125))] },
+    comments: { 125: [controllerComment(handoffMarker(handoff(125, "changes-required")))] },
     pulls: [
       pull(142, 125, { state: "closed", merged: true, body: "Closes #125." }),
       pull(150, 125, { body: "Implements #125 (worker `w-01`, base `154587f`)." }),
@@ -241,7 +246,7 @@ test("an open correction submission keeps an issue healthy when an earlier one m
   // An issue may have several declared submissions; one open one means review is live.
   const openCorrection = fakeFetch({
     issues: [issue(170, ["status:changes-required", "action:worker"])],
-    comments: { 170: [comment(actionMarker("worker:test-01", "changes-required", 170))] },
+    comments: { 170: [controllerComment(handoffMarker(handoff(170, "changes-required")))] },
     pulls: [pull(196, 170, { state: "closed", merged: true }), pull(183, 170)],
   });
   assert.deepEqual((await readQueueHealth({ fetchImpl: openCorrection.fetchImpl })).anomalies, []);
@@ -249,7 +254,7 @@ test("an open correction submission keeps an issue healthy when an earlier one m
   // With every declared submission resolved and none open, the review state has drifted.
   const allResolved = fakeFetch({
     issues: [issue(170, ["status:changes-required", "action:worker"])],
-    comments: { 170: [comment(actionMarker("worker:test-01", "changes-required", 170))] },
+    comments: { 170: [controllerComment(handoffMarker(handoff(170, "changes-required")))] },
     pulls: [pull(196, 170, { state: "closed", merged: true }), pull(183, 170, { state: "closed" })],
   });
   assert.ok((await readQueueHealth({ fetchImpl: allResolved.fetchImpl }))
@@ -267,9 +272,9 @@ test("a controller handoff record is authoritative and outranks an advisory acti
       comment(actionMarker("worker:stale-01", "changes-required", 170)),
       controllerComment(handoffMarker(handoff(170, "changes-required", "worker:real-01"))),
     ] },
-    pulls: [],
+    pulls: [pull(302, 170)],
   });
-  const report = await readQueueHealth({ fetchImpl: api.fetchImpl, trustedLogins: ["trusted-maintainer"] });
+  const report = await readQueueHealth({ fetchImpl: api.fetchImpl, advisoryLogins: ["trusted-maintainer"] });
   assert.equal(report.oldestCorrection.workerId, "worker:real-01");
   assert.equal(report.oldestCorrection.recordTrust, "controller-record");
   assert.deepEqual(report.anomalies, []);
@@ -281,7 +286,7 @@ test("an advisory-only record is reported as advisory, never as authoritative", 
     comments: { 170: [comment(actionMarker("worker:test-01", "changes-required", 170))] },
     pulls: [],
   });
-  const report = await readQueueHealth({ fetchImpl: api.fetchImpl, trustedLogins: ["trusted-maintainer"] });
+  const report = await readQueueHealth({ fetchImpl: api.fetchImpl, advisoryLogins: ["trusted-maintainer"] });
   assert.equal(report.oldestCorrection.recordTrust, "advisory");
   assert.match(renderQueueHealth(report), /record: advisory/);
 
@@ -305,7 +310,7 @@ test("the human-readable report states who acts next for the oldest review and c
     comments: { 126: [comment(actionMarker("worker:test-01", "changes-required", 126))] },
     pulls: [],
   });
-  const report = await readQueueHealth({ fetchImpl: api.fetchImpl, trustedLogins: ["trusted-maintainer"], now });
+  const report = await readQueueHealth({ fetchImpl: api.fetchImpl, advisoryLogins: ["trusted-maintainer"], now });
   const text = renderQueueHealth(report);
   // The responsibility area must appear in the human-readable report, not only in anomalies.
   assert.match(text, /Oldest review: #125 Issue 125 \(since [^)]*\)\n {2}next: Reviewer: review the exact submitted commit\./);
@@ -345,35 +350,96 @@ test("pagination stays bounded and the report declares its own uncertainty", asy
   assert.equal(busyReport.uncertainty.submissionReads, 1);
 });
 
-test("trust survives a public read that masks membership, and masking never grants trust", async () => {
-  // Real observed behaviour: an unauthenticated read reports a genuine maintainer as
-  // `CONTRIBUTOR`, and the claim controller as `NONE`. An allowlist must carry trust.
-  const masked = fakeFetch({
-    issues: [issue(170, ["status:changes-required", "action:worker"]), issue(199, ["status:working"])],
-    comments: {
-      170: [comment(actionMarker("worker:test-01", "changes-required", 170), "CONTRIBUTOR", "MarvinAi5")],
-      199: [comment(claimMarker(199, "marvin-project-templates-01"), "NONE", "github-actions[bot]")],
-    },
-    pulls: [],
+test("authority comes from the controller, never from repository membership", async () => {
+  // The controller posts claim and handoff records as `github-actions[bot]`. A public read
+  // masks author_association (a genuine maintainer reads as CONTRIBUTOR, the controller as
+  // NONE), so membership can neither identify a poster nor authorize one.
+  const controller = fakeFetch({
+    issues: [issue(199, ["status:working"])],
+    comments: { 199: [comment(claimMarker(199, "marvin-project-templates-01"), "NONE", "github-actions[bot]", "Bot")] },
   });
-  const report = await readQueueHealth({ fetchImpl: masked.fetchImpl });
-  assert.equal(report.oldestCorrection.workerId, "worker:test-01");
-  assert.equal(report.claimedAssignments, 1);
-  assert.deepEqual(report.anomalies, []);
-  assert.ok(DEFAULT_TRUSTED_LOGINS.includes("github-actions[bot]"));
+  const controllerReport = await readQueueHealth({ fetchImpl: controller.fetchImpl });
+  assert.equal(controllerReport.claimedAssignments, 1);
+  assert.deepEqual(controllerReport.anomalies, []);
 
-  const forged = fakeFetch({
+  // A configured advisory identity is recognised, but its record never becomes
+  // authoritative and the gap in authority is reported rather than hidden.
+  const advisory = fakeFetch({
     issues: [issue(170, ["status:changes-required", "action:worker"])],
-    comments: { 170: [comment(actionMarker("worker:test-01", "changes-required", 170), "CONTRIBUTOR", "outsider")] },
+    comments: { 170: [comment(actionMarker("worker:test-01", "changes-required", 170), "CONTRIBUTOR", "MarvinAi5")] },
+    pulls: [pull(303, 170)],
   });
-  assert.ok((await readQueueHealth({ fetchImpl: forged.fetchImpl }))
-    .anomalies.find(item => item.issue === 170).codes.includes("worker_action_marker_missing"));
+  const advisoryReport = await readQueueHealth({ fetchImpl: advisory.fetchImpl });
+  assert.equal(advisoryReport.oldestCorrection.workerId, "worker:test-01");
+  assert.equal(advisoryReport.oldestCorrection.recordTrust, "advisory");
+  assert.deepEqual(advisoryReport.anomalies.find(item => item.issue === 170).codes,
+    ["worker_action_marker_not_authoritative"]);
 
-  const authenticated = fakeFetch({
-    issues: [issue(170, ["status:changes-required", "action:worker"])],
-    comments: { 170: [comment(actionMarker("worker:test-01", "changes-required", 170), "MEMBER", "someone")] },
+  // Regression for a material review finding: trust must never be derived from
+  // author_association. Every one of these can post a comment, so treating membership as
+  // trust would let an unauthorized comment satisfy a required handoff and suppress the
+  // missing-record warning that should fire.
+  for (const association of ["OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR"]) {
+    const byAssociation = fakeFetch({
+      issues: [issue(170, ["status:changes-required", "action:worker"])],
+      comments: { 170: [comment(actionMarker("worker:test-01", "changes-required", 170), association, "not-configured")] },
+      pulls: [pull(304, 170)],
+    });
+    const report = await readQueueHealth({ fetchImpl: byAssociation.fetchImpl, advisoryLogins: [] });
+    assert.deepEqual(report.anomalies.find(item => item.issue === 170).codes,
+      ["worker_action_marker_missing"], `${association} must not grant trust`);
+  }
+
+  assert.ok(DEFAULT_ADVISORY_LOGINS.includes("MarvinAi5"));
+  assert.ok(!DEFAULT_ADVISORY_LOGINS.includes("github-actions[bot]"),
+    "the controller is authoritative through its bot identity, not a login allowlist");
+});
+
+test("an advertised review or correction with no declared submission is reported, not assumed healthy", async () => {
+  // Material review finding: a review state with no submission at all was reported as
+  // healthy unless a closed pull request happened to be found. Absence of any submission
+  // is itself drift, and it must be reported.
+  for (const status of ["in-review", "re-review"]) {
+    const api = fakeFetch({ issues: [issue(199, [`status:${status}`, "action:reviewer"])] });
+    assert.deepEqual((await readQueueHealth({ fetchImpl: api.fetchImpl }))
+      .anomalies.find(item => item.issue === 199).codes, ["submission_missing"],
+    `${status} with no submission must be reported`);
+  }
+  const correction = fakeFetch({
+    issues: [issue(199, ["status:changes-required", "action:worker"])],
+    comments: { 199: [controllerComment(handoffMarker(handoff(199, "changes-required")))] },
   });
-  assert.deepEqual((await readQueueHealth({ fetchImpl: authenticated.fetchImpl, trustedLogins: [] })).anomalies, []);
+  assert.deepEqual((await readQueueHealth({ fetchImpl: correction.fetchImpl }))
+    .anomalies.find(item => item.issue === 199).codes, ["submission_missing"]);
+
+  // Work still being implemented is not drift: there is nothing to submit yet.
+  const working = fakeFetch({ issues: [issue(199, ["status:working", "action:worker"])] });
+  assert.deepEqual((await readQueueHealth({ fetchImpl: working.fetchImpl })).anomalies, []);
+});
+
+test("an incomplete pull history reports the submission as indeterminate, never as drift", async () => {
+  // Material review finding: a bounded pull read cannot prove that a submission is absent
+  // or resolved. The relevant open pull request may simply sit outside the retained pages,
+  // so an incomplete history must never be turned into a mismatch claim.
+  const crowded = Array.from({ length: 100 },
+    (_, index) => pull(1000 + index, 9000 + index, { state: "closed", merged: true }));
+  const truncated = fakeFetch({
+    issues: [issue(199, ["status:in-review", "action:reviewer"])],
+    pulls: crowded,
+  });
+  const report = await readQueueHealth({ fetchImpl: truncated.fetchImpl });
+  assert.deepEqual(report.anomalies.find(item => item.issue === 199).codes, ["submission_indeterminate"],
+    "a truncated pull history must not be reported as a missing or mismatched submission");
+  assert.ok(report.warnings.includes("queue_read_truncated"));
+
+  // The identical state with a complete history is reported as a genuinely missing
+  // submission, which proves the indeterminate result came from the truncation.
+  const complete = fakeFetch({
+    issues: [issue(199, ["status:in-review", "action:reviewer"])],
+    pulls: crowded.slice(0, 3),
+  });
+  assert.deepEqual((await readQueueHealth({ fetchImpl: complete.fetchImpl }))
+    .anomalies.find(item => item.issue === 199).codes, ["submission_missing"]);
 });
 
 test("API failure and invalid input fail closed with a bounded message", async () => {
