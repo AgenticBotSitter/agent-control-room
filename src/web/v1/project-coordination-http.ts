@@ -529,6 +529,15 @@ export class ProjectCoordinationHttpService {
     currentAttentionVersion: number,
     observedAt: string,
   ): ProjectCoordinationActionOutcome | null {
+    if (input.revision.projectId !== input.projectId) {
+      return this.refused("invalid_input", observedAt, {
+        expectedCoordinatorVersion: currentCoordinatorVersion,
+        expectedPolicyVersion: currentPolicyVersion,
+        expectedConflictsVersion: currentConflictsVersion,
+        expectedAttentionVersion: currentAttentionVersion,
+      },
+        input.projectId);;
+    }
     if (
       input.revision.expectedCoordinatorVersion !== currentCoordinatorVersion
       || input.revision.expectedPolicyVersion !== currentPolicyVersion

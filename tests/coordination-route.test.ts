@@ -356,3 +356,70 @@ test("disabled coordination flag blocks writes; reads still succeed", async (t) 
   assert.notEqual(writeResponse.status, 200);
   assert.notEqual(writeResponse.status, 201);
 });
+
+test("POST with a revision from a different project is refused with invalid_input", async (t) => {
+  const f = await buildRouteFixture(); t.after(() => f.dispose());
+  const token = makeToken(FIXTURE_NOW, "test-app");
+  const body = JSON.stringify({
+    revision: {
+      projectId: "project:other",
+      expectedCoordinatorVersion: 0,
+      expectedPolicyVersion: 0,
+      expectedConflictsVersion: 0,
+      expectedAttentionVersion: 0,
+      observedAt: new Date(FIXTURE_NOW).toISOString(),
+    },
+    coordinatorActorType: "human",
+    coordinatorIdentityId: "owner-self-3",
+  });
+  const request = new Request(`${FIXTURE_ORIGIN}/api/v1/projects/project:example/coordination/appoint-coordinator`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "cf-access-jwt-assertion": token,
+      "idempotency-key": "appointment-cross12",
+      "origin": FIXTURE_ORIGIN,
+    },
+    body,
+  });
+  const response = await f.handle(request);
+  const result = await response.clone().json();
+  // Cross-project revision MUST be refused — clients cannot mix revisions
+  // from different projects, otherwise stale-revision guards can be bypassed.
+  assert.equal(result.status, "refused");
+  assert.equal(result.reasonCode, "invalid_input");
+});
+
+test("POST with a stale revision is refused with stale_revision", async (t) => {
+  const f = await buildRouteFixture(); t.after(() => f.dispose());
+  const token = makeToken(FIXTURE_NOW, "test-app");
+  const observedAt = new Date(FIXTURE_NOW).toISOString();
+  const body = JSON.stringify({
+    revision: {
+      projectId: "project:example",
+      expectedCoordinatorVersion: 99,
+      expectedPolicyVersion: 0,
+      expectedConflictsVersion: 0,
+      expectedAttentionVersion: 0,
+      observedAt,
+    },
+    coordinatorActorType: "human",
+    coordinatorIdentityId: "owner-self-4",
+  });
+  const request = new Request(`${FIXTURE_ORIGIN}/api/v1/projects/project:example/coordination/appoint-coordinator`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "cf-access-jwt-assertion": token,
+      "idempotency-key": "appointment-stale123",
+      "origin": FIXTURE_ORIGIN,
+    },
+    body,
+  });
+  const response = await f.handle(request);
+  const result = await response.clone().json();
+  // Stale revision MUST be refused — the client observed a snapshot that
+  // doesn't match the current canonical version.
+  assert.equal(result.status, "refused");
+  assert.equal(result.reasonCode, "stale_revision");
+});
