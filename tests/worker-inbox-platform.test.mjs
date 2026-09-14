@@ -6,7 +6,7 @@
 // reads, so these tests exercise the real reuse path rather than a stand-in for it.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -18,7 +18,7 @@ import { artifactsFor, iso8601Duration, systemdQuote, xmlEscape } from "../scrip
 import { instructionsFor } from "../scripts/worker-inbox-platform/lib/instructions.mjs";
 import {
   appendBoundedLog, ensureWorkerDirectory, isOwnedDirectory, logFile, markerFile, readState,
-  removeOwnedFiles, signalFile, stateFile, workerDirectory, workerSlug,
+  removeOwnedFiles, signalFile, stateFile, workerDirectory, workerSlug, writeJsonAtomic,
 } from "../scripts/worker-inbox-platform/lib/runtime.mjs";
 import { isWellFormedXml } from "../scripts/worker-inbox-platform/lib/xml-wellformed.mjs";
 import { generate } from "../scripts/worker-inbox-platform/worker-inbox-generate.mjs";
@@ -731,6 +731,82 @@ test("the extra signal is written whole, recorded, and cleaned up without touchi
   assert.equal(existsSync(external), false);
   assert.equal(existsSync(foreign), true, "the foreign directory must survive");
   assert.equal(existsSync(operatorFile), true, "another process's file must survive");
+});
+
+test("a hand-edited marker cannot make uninstall delete an unrelated file", (t) => {
+  const root = scratch(t);
+  const directory = workerDirectory({ workerId: WORKER_ID, runtimeRoot: root });
+  ensureWorkerDirectory(directory, { workerId: WORKER_ID });
+
+  // A file belonging to the operator, with a name this tool never writes.
+  const precious = join(root, "precious.txt");
+  writeFileSync(precious, "do not delete\n", "utf8");
+
+  // The marker is a plain file that anything with write access to the runtime directory can edit, so
+  // it is not trustworthy input. Pointing it at files this tool could not have created must not turn
+  // uninstall into a delete-anything tool.
+  const marker = JSON.parse(readFileSync(markerFile(directory), "utf8"));
+  marker.externalSignals = [precious, "/etc/hosts", "relative/path.signal", 42];
+  writeFileSync(markerFile(directory), `${JSON.stringify(marker, null, 2)}\n`, "utf8");
+
+  const removed = uninstall({ options: { workerId: WORKER_ID, runtimeRoot: root } });
+  assert.equal(existsSync(precious), true, "an unrelated file must survive a tampered marker");
+  assert.equal(existsSync("/etc/hosts"), true);
+  assert.ok(!removed.removed.includes(precious), "it must not even be reported as removed");
+  assert.deepEqual(removed.rejectedExternalSignals, [precious, "/etc/hosts", "relative/path.signal", 42],
+    "entries that cannot be trusted must be reported rather than silently accepted");
+});
+
+test("a symlinked artifact directory cannot smuggle writes outside the owned directory", (t) => {
+  const root = scratch(t);
+  const directory = workerDirectory({ workerId: WORKER_ID, runtimeRoot: root });
+  const outside = join(root, "outside-artifacts");
+  mkdirSync(outside, { recursive: true });
+  mkdirSync(directory, { recursive: true });
+  // generated/ points somewhere else entirely. A lexical check accepts this happily - the string
+  // path really is inside the runtime directory - while the bytes land outside the boundary.
+  symlinkSync(outside, join(directory, "generated"));
+
+  assert.throws(
+    () => generate({
+      options: {
+        workerId: WORKER_ID, repository: REPOSITORY_NAME, runtimeRoot: root, platform: "launchd",
+      },
+      scriptPath: "script.mjs", nodePath: "node",
+    }),
+    /worker_inbox_platform_out_directory_not_owned/u,
+    "a symlinked generated directory must be refused, not written through",
+  );
+  assert.deepEqual(readdirSync(outside), [], "nothing may be written outside the owned directory");
+});
+
+test("a failed atomic write cleans up its temporary file instead of leaving it unowned", (t) => {
+  const root = scratch(t);
+  // The target is a directory, so the rename fails after the temporary file has been written.
+  const target = join(root, "a-directory");
+  mkdirSync(target, { recursive: true });
+  const temporary = `${target}.${process.pid}.tmp`;
+
+  assert.throws(() => writeJsonAtomic(target, { hello: "world" }));
+  assert.equal(existsSync(temporary), false,
+    "a temporary file left behind is not an owned entry, so uninstall could never remove it");
+});
+
+test("the external signal is recorded before it is written, so a failed write cannot orphan it", async (t) => {
+  const root = scratch(t);
+  const directory = workerDirectory({ workerId: WORKER_ID, runtimeRoot: root });
+  // A regular file where a directory is needed, so the external write fails after recording.
+  const blocked = join(root, "blocked-signal-path");
+  writeFileSync(blocked, "not a directory\n", "utf8");
+
+  const options = tickOptions(root, {
+    fetchImpl: fakeGithub(assignment()).fetchImpl, signalDirectory: blocked,
+  });
+  await assert.rejects(() => runTick({ options, now: CLOCK }));
+
+  const marker = JSON.parse(readFileSync(markerFile(directory), "utf8"));
+  assert.deepEqual(marker.externalSignals, [join(blocked, `${workerSlug(WORKER_ID)}.signal`)],
+    "recording must happen first: a recorded path that does not exist is harmless, an unrecorded file is an orphan");
 });
 
 test("a nested field whose key order differs between reads is not a change", () => {

@@ -40,6 +40,10 @@ export function usage() {
     "",
     "This does not remove a scheduler entry. Unload it first with the platform command in",
     "the setup instructions, then run this. Files not created by this tool are left alone.",
+    "",
+    "The optional extra signal file is removed only if the ownership marker records its exact",
+    "path and that path is one this tool could have written. Anything else in the marker is",
+    "reported as ignored and left untouched.",
   ].join("\n");
 }
 
@@ -68,6 +72,12 @@ function main(argv) {
     console.log(`worker-inbox-uninstall: ${verb} ${result.removed.length} owned entr${result.removed.length === 1 ? "y" : "ies"} in "${result.directory}".`);
     for (const name of result.removed) console.log(`  ${verb}: ${name}`);
     for (const name of result.preserved) console.log(`  preserved (not created by this tool): ${name}`);
+    // A recorded path that cannot be trusted means the marker has been edited or corrupted. It is
+    // reported rather than ignored: silently declining to remove something is exactly the kind of
+    // quiet behaviour that leaves an operator unable to explain what their runtime directory holds.
+    for (const name of result.rejectedExternalSignals ?? []) {
+      console.error(`  ignored (not a path this tool could have written): ${JSON.stringify(name)}`);
+    }
   }
   return result.refused ? EXIT_REFUSED : EXIT_OK;
 }

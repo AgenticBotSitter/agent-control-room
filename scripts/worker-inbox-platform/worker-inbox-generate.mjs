@@ -4,7 +4,7 @@
 // text files into an output directory and prints the instructions for the operator. Actual
 // native scheduler installation is separately authorized and is not performed or claimed
 // here.
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -108,7 +108,18 @@ export function generate({ options: provided = {}, scriptPath, nodePath, now = (
   if (!isWithin(artifactDirectory, ownedArtifactDirectory)) {
     throw new Error("worker_inbox_platform_out_directory_not_owned");
   }
+  // Lexical containment is necessary but not sufficient. A symlinked generated/ directory passes the
+  // relative-path test while writing physically outside the runtime directory, where uninstall could
+  // never clean up - rmSync removes the symlink itself, not what it points at. So compare against the
+  // RESOLVED RUNTIME DIRECTORY rather than against the resolved generated/ directory: comparing the
+  // candidate to itself would resolve identically and prove nothing.
+  mkdirSync(ownedArtifactDirectory, { recursive: true });
+  const createdHere = !existsSync(artifactDirectory);
   mkdirSync(artifactDirectory, { recursive: true });
+  if (!isWithin(realpathSync(artifactDirectory), realpathSync(runtimeDirectory))) {
+    if (createdHere) rmSync(artifactDirectory, { recursive: true, force: true });
+    throw new Error("worker_inbox_platform_out_directory_not_owned");
+  }
 
   const shared = {
     workerId,

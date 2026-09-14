@@ -9,7 +9,7 @@ import {
   existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 // Same shapes the accepted inbox client enforces, so a watcher and the inbox agree on what
 // a valid worker ID and repository are.
@@ -92,12 +92,22 @@ function readMarker(directory) {
   }
 }
 
-// Paths this tool wrote OUTSIDE its own directory. Only exact file paths are ever recorded, never
-// a directory, so cleanup can never delete a directory this tool did not create.
-function recordedExternalSignals(marker) {
-  return Array.isArray(marker?.externalSignals)
-    ? marker.externalSignals.filter(entry => typeof entry === "string" && entry.length > 0)
-    : [];
+// Paths this tool wrote OUTSIDE its own directory. The marker is a plain file that anyone who can
+// write the runtime directory can edit, so it is NOT trusted input: an entry is honoured only if it
+// is an absolute path whose basename is exactly the signal name for the marker's own worker. That
+// keeps a hand-edited marker from turning uninstall into a delete-anything tool. Entries that fail
+// this are reported rather than silently dropped.
+function externalSignalEntries(marker) {
+  // Everything listed is kept for reporting, including entries of the wrong type: a marker with
+  // junk in it is exactly what an operator needs to be told about.
+  const listed = Array.isArray(marker?.externalSignals) ? marker.externalSignals : [];
+  const expected = typeof marker?.workerId === "string" && WORKER_ID_PATTERN.test(marker.workerId)
+    ? `${workerSlug(marker.workerId)}.signal`
+    : undefined;
+  const accepted = listed.filter(entry =>
+    typeof entry === "string" && entry.length > 0
+    && expected !== undefined && isAbsolute(entry) && basename(entry) === expected);
+  return { accepted, rejected: listed.filter(entry => !accepted.includes(entry)) };
 }
 
 export function isOwnedDirectory(directory) {
@@ -112,9 +122,11 @@ export function recordExternalSignal(directory, signalPath) {
   if (marker?.version !== RUNTIME_VERSION) {
     throw new Error("worker_inbox_runtime_directory_not_owned");
   }
-  const recorded = recordedExternalSignals(marker);
-  if (recorded.includes(signalPath)) return false;
-  writeJsonAtomic(markerFile(directory), { ...marker, externalSignals: [...recorded, signalPath] });
+  const recorded = externalSignalEntries(marker);
+  if (recorded.accepted.includes(signalPath)) return false;
+  writeJsonAtomic(markerFile(directory), {
+    ...marker, externalSignals: [...recorded.accepted, signalPath],
+  });
   return true;
 }
 
@@ -132,8 +144,19 @@ export function readState(file) {
 export function writeJsonAtomic(file, value) {
   mkdirSync(dirname(file), { recursive: true });
   const temporary = `${file}.${process.pid}.tmp`;
-  writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-  renameSync(temporary, file);
+  try {
+    writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+    renameSync(temporary, file);
+  } catch (error) {
+    // Never leave the temporary file behind. It is not an owned entry, so uninstall would preserve
+    // it as a foreign file and the runtime directory could then never be removed.
+    try {
+      rmSync(temporary, { force: true });
+    } catch {
+      // Best effort: the original write error is the one worth reporting.
+    }
+    throw error;
+  }
   return file;
 }
 
@@ -187,11 +210,14 @@ export function readSignal(file) {
 // rather than deleted.
 export function removeOwnedFiles(directory, { dryRun = false } = {}) {
   if (!existsSync(directory)) {
-    return { refused: false, missing: true, removed: [], preserved: [] };
+    return { refused: false, missing: true, removed: [], preserved: [], rejectedExternalSignals: [] };
   }
   const marker = readMarker(directory);
   if (marker?.version !== RUNTIME_VERSION) {
-    return { refused: true, reason: "worker_inbox_runtime_directory_not_owned", removed: [], preserved: [] };
+    return {
+      refused: true, reason: "worker_inbox_runtime_directory_not_owned",
+      removed: [], preserved: [], rejectedExternalSignals: [],
+    };
   }
   const removed = [];
   for (const name of OWNED_ENTRIES) {
@@ -204,7 +230,8 @@ export function removeOwnedFiles(directory, { dryRun = false } = {}) {
   // when they are written. Only the exact recorded file paths are removed; the containing directory
   // is never touched, because this tool did not create it. A recorded path that has since been
   // deleted by the operator is skipped rather than reported as removed.
-  for (const target of recordedExternalSignals(marker)) {
+  const external = externalSignalEntries(marker);
+  for (const target of external.accepted) {
     if (!existsSync(target)) continue;
     if (!dryRun) rmSync(target, { force: true });
     removed.push(target);
@@ -228,5 +255,5 @@ export function removeOwnedFiles(directory, { dryRun = false } = {}) {
       preserved.push(directory);
     }
   }
-  return { refused: false, missing: false, removed, preserved, directoryRemoved };
+  return { refused: false, missing: false, removed, preserved, directoryRemoved, rejectedExternalSignals: external.rejected };
 }

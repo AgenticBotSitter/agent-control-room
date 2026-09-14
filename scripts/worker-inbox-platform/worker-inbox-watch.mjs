@@ -167,8 +167,11 @@ export async function runTick({ options, reader = readWorkerInbox, token, now = 
       // exact path is recorded in the ownership marker, because uninstall removes only what it can
       // prove it created, and would otherwise leave this file behind.
       const externalSignal = join(options.signalDirectory, `${workerSlug(options.workerId)}.signal`);
-      writeJsonAtomic(externalSignal, payload);
+      // Record BEFORE writing. If the process dies between the two, a recorded path that does not
+      // exist is harmless - uninstall skips missing files - whereas a written file that was never
+      // recorded is an orphan nothing can prove it created. So the ordering is deliberate.
       recordExternalSignal(directory, externalSignal);
+      writeJsonAtomic(externalSignal, payload);
     }
     notified = true;
   }
