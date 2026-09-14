@@ -90,6 +90,28 @@ identify the dependency blocking it. Our [worker instructions](skills/public-bui
 and [review instructions](skills/public-build-review/SKILL.md) are optional reusable
 guides; there is no private controller or mandatory result-manifest ceremony.
 
+### How the group build is organized
+
+Contributors build complete outcomes; maintainers settle shared contracts, review,
+integrate and merge. Work is grouped into eight substantial streams rather than a
+sequence of tiny tasks:
+
+1. self-service contributor workflow;
+2. project leadership and safe parallel work;
+3. one shared Hermes-and-Codex result loop;
+4. durable database, file storage and server composition;
+5. installable Linux service, recovery and release qualification;
+6. Mac/Linux worker installation with a separate Windows validation lane;
+7. the complete customizable project workspace and browser journey; and
+8. optional Idea Lab, news, schedules and additional adapters.
+
+The [live work queue](WORK_QUEUE.md) maps these outcomes to current issues and
+dependencies. Existing contributors retain their accepted paths. A worker can repair
+ordinary failures inside a claimed outcome and can continue a separate accepted
+assignment while review is pending. Maintainers prioritize changed pull requests and
+decisions that unblock a whole stream; nonblocking style preferences do not hold up a
+working contribution.
+
 ## Help finish the public release
 
 **[Start here: live work queue](WORK_QUEUE.md)** — ready work, progress, waiting

@@ -10,11 +10,12 @@ Permanent entry point for people and bots. Read the [build/reuse plan](PUBLIC_BU
 and [worker skill](skills/public-build-worker/SKILL.md). Issues are the live status
 record; no documentation commit is needed every time a job changes state.
 
-Public `main` is the reconciled implementation baseline through PR #152. It now
+Public `main` is the reconciled implementation baseline through PR #177. It now
 includes the configurable-project proof, explicit project pages, safe Project News,
 owner-attention prioritization, exact and relative activity times, verified 360px
 navigation, restart-style recovery after both successful and failed verification,
-and exact-version Codex start/read fences with a noncanonical bounded result reader.
+exact-version Codex start/read fences, project-coordinator persistence, and the fixed
+resource/admission boundaries required for safe parallel work.
 The private Codex host now composes a bridge-recorded activation into one start or
 the exact durable thread/turn into one recovery read using only explicit injected
 ports. A strict owned fake byte-process adapter supplies both JSONL profiles and
@@ -63,13 +64,14 @@ The issue labels are the live source of truth; this summary tells a new contribu
 where the work is concentrated without requiring chat history.
 
 - **Assigned:** #2 Windows portability, #8 Hermes connector, #27 Idea Lab/article
-  research, #62 Claude connector, #63 PostgreSQL/recovery, #64 distributable
-  service and #125 Mac/Linux worker-lifecycle corrections.
+  research, #63 PostgreSQL/recovery, #64 distributable service, #125 Mac/Linux
+  worker-lifecycle corrections, #166 project templates, #170 self-service claims,
+  #172 operator assembly, #173 Codex result return and #175 safe parallel work.
 - **Ready for automatic reservation now:** use the live Ready link above. No issue is
   advertised here as ready after it has been claimed or completed.
-- **Lead integration active:** shared server composition, security boundaries and
-  final review of the assigned packages. PR #147 merged the common private
-  assignment core used by owner and future scheduled assignment.
+- **Lead integration active:** freeze the shared resource-bound wire contract, review
+  changed submissions, resolve dependency conflicts and open the next large convergence
+  package. The lead is the reviewer/integrator, not the default feature implementer.
 - **Recently completed:** #11 portable release notices, #115/#135 persistent local
   artifact storage and composition, #116 truthful schedule planning/status, #120
   occurrence admission, #121 the security/recovery fault matrix, #122 offline
@@ -89,6 +91,27 @@ current `main` revision and changes Ready to Working before its marker says `CLA
 ACCEPTED`. Begin new work only when that accepted marker was posted by
 `github-actions[bot]` and the issue is Working. A request, `CLAIM PENDING`, label
 change or failed workflow by itself is not permission to edit.
+
+## Eight large delivery streams
+
+These are the stable outcomes. Individual issues may finish inputs to one stream, but
+the stream is complete only when its user-visible outcome passes.
+
+| Stream | Current issues | Complete outcome |
+| --- | --- | --- |
+| Self-service contributor flow | #170 | Claim, renew, release and submit substantial work without a human relay; no automated merge authority |
+| Project leadership and parallel work | #167/#175 | A bounded coordinator can plan work while overlapping writers are safely refused and exact resources stay held until process retirement |
+| Mixed-harness result loop | #8/#173, then #66 | Hermes and Codex each return one exact bounded result through the same review/revision path without blind redispatch |
+| Durable server core | #63/#65/#66/#172 | One fail-closed PostgreSQL, queue, protected-file, connector and review service survives drain/restart |
+| Install, recovery and release | #60/#61/#64/#67 | One frozen Linux artifact installs, updates, rolls back and restores under private authenticated access |
+| Worker fleet kit | #2/#125/#68 | Repeatable Mac/Linux setup and honest separate Windows readiness for enroll, reconnect, revoke, upgrade and remove |
+| Complete product workspace | #1/#10/#166 | Two configured projects show workers, work, results, files, review and failures across keyboard, mobile, reload and archive/reopen journeys |
+| Optional workflows and adapters | #27/#29/#30/#62/#168 | Idea Lab, news, schedules, voice and additional harnesses reuse the same project, authority, queue and result paths |
+
+The first release requires the Hermes/Codex loop, durable server, install/recovery,
+worker kit and product workspace. Safe parallel work and self-service contribution
+continue alongside that critical path. Optional workflows do not delay the first
+installable release.
 
 ## Complete installable-release work board
 
