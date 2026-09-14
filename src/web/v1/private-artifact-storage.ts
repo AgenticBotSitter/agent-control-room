@@ -2,11 +2,13 @@ import { z } from "zod";
 import { timingSafeEqual } from "node:crypto";
 import type { DatabaseClient } from "../../persistence/database";
 import { artifactManifestRecordSchema } from "../../domain/v1";
-import { checkedResultBytes, nativeResultReceiptSchema, type NativeResultConfiguration,
-  type NativeResultReadConfiguration } from "../../artifacts/v1/native-results";
+import { checkedResultBytes, nativeResultReceiptSchema, type NativeResultReadConfiguration,
+  type NativeResultConfiguration } from "../../artifacts/v1/native-results";
 import { codexResultReceiptSchemaV1 } from "../../artifacts/v1/codex-result-receipt";
+import { durableResultReceiptSchemaV1, durableResultReceiptTagV1 } from "../../artifacts/v1/durable-result-receipt";
 import { nativeResultReservationSchemaV1 } from "../../artifacts/v1/native-result-reservation";
 import { codexResultReservationSchemaV1 } from "../../artifacts/v1/codex-result-reservation";
+import { durableResultReservationSchemaV1 } from "../../artifacts/v1/durable-result-publication";
 import {
   createArtifactBackupInventoryV1,
   type ArtifactBackupInventoryV1,
@@ -28,7 +30,8 @@ const inventoryHeaderSchema = z.object({
   storageNamespaceDigest: digestSchema,
 }).strict();
 
-const receiptSchema = z.discriminatedUnion("schema", [nativeResultReceiptSchema, codexResultReceiptSchemaV1]);
+const receiptSchema = z.discriminatedUnion("schema", [nativeResultReceiptSchema, codexResultReceiptSchemaV1,
+  durableResultReceiptSchemaV1]);
 
 type InventoryRow = {
   tenant_id: string | null;
@@ -109,11 +112,19 @@ export function bindPrivateArtifactStorageV1<T extends ArtifactConsumers>(
   return result as T;
 }
 
-function reservation(value: unknown) {
+type InventoryReservation = { identity: { tenantId: string; projectId: string; jobId: string; attemptId: string;
+  runId: string; artifactId: string; contentHash: string; sizeBytes: number };
+  state: string; manifestDigest: string | null; receiptDigest: string | null };
+type InventoryReservationTag = "native-result-write-reservation/v1" | "durable-result-write-reservation/v1";
+
+function reservation(value: unknown): { reserved: InventoryReservation; tagPurpose: InventoryReservationTag } {
   const native = nativeResultReservationSchemaV1.safeParse(value);
-  if (native.success) return native.data;
+  if (native.success) return { reserved: native.data, tagPurpose: "native-result-write-reservation/v1" };
   const codex = codexResultReservationSchemaV1.safeParse(value);
-  return codex.success ? codex.data : unavailable();
+  if (codex.success) return { reserved: codex.data, tagPurpose: "native-result-write-reservation/v1" };
+  const durable = durableResultReservationSchemaV1.safeParse(value);
+  if (durable.success) return { reserved: durable.data, tagPurpose: "durable-result-write-reservation/v1" };
+  return unavailable();
 }
 
 /**
@@ -163,11 +174,13 @@ export async function openPrivateArtifactStorageV1(
       if (!parsedReceipt.success) return unavailable();
       const receipt = parsedReceipt.data;
       const manifest = artifactManifestRecordSchema.parse(row.manifest);
-      const reserved = reservation(row.reservation);
+      const { reserved, tagPurpose } = reservation(row.reservation);
       const identity = reserved.identity;
-      const receiptTag = hmacSha256Tag(key, { purpose: receipt.schema === "control-room.codex-result-receipt/v1"
-        ? "codex-result-receipt/v1" : "native-result-receipt/v1", receipt });
-      const reservationTag = hmacSha256Tag(key, { purpose: "native-result-write-reservation/v1", reservation: reserved });
+      const receiptTag = receipt.schema === "control-room.durable-result-receipt/v1"
+        ? durableResultReceiptTagV1(key, receipt)
+        : hmacSha256Tag(key, { purpose: receipt.schema === "control-room.codex-result-receipt/v1"
+          ? "codex-result-receipt/v1" : "native-result-receipt/v1", receipt });
+      const reservationTag = hmacSha256Tag(key, { purpose: tagPurpose, reservation: reserved });
       const equalTag = (expected: string, actual: string) => {
         const left = Buffer.from(expected), right = Buffer.from(actual);
         return left.length === right.length && timingSafeEqual(left, right);
