@@ -91,6 +91,24 @@ export async function restoreDatabase({ backup, target, confirmTarget, pgBin, re
       await grantClient.query(`ALTER ${object.kind} "public"."${object.name}" OWNER TO "${canonicalOwner}"`);
     }
     await grantClient.query(await readFile(join(resolve(dirname(fileURLToPath(import.meta.url)), "../.."), "db/roles/production_roles.sql"), "utf8"));
+    // Memberships do not survive pg_restore --no-owner either: reconcile the
+    // exact memberships recorded at backup time. Login roles must already exist
+    // (the operator provisions the target with production_provision.sql first);
+    // a missing login fails closed with the repair instruction instead of
+    // silently verifying a weaker role model. GRANT is idempotent, and recorded
+    // administration rights (WITH ADMIN OPTION) are reproduced faithfully so the
+    // target-observed comparison below sees the backup's real authority.
+    const recorded = Array.isArray(metadata.evidence?.memberships) ? metadata.evidence.memberships : [];
+    for (const entry of recorded) {
+      const member = entry?.member, role = entry?.role;
+      if (typeof member !== "string" || typeof role !== "string" ||
+        !/^[a-z0-9_]+$/.test(member) || !/^[a-z0-9_]+$/.test(role)) {
+        throw new Error("restore_refused_membership_shape");
+      }
+      const { rows } = await grantClient.query("SELECT 1 FROM pg_roles WHERE rolname = $1", [member]);
+      if (rows.length === 0) throw new Error(`restore_refused_missing_login_role:${member}`);
+      await grantClient.query(`GRANT "${role}" TO "${member}"${entry.admin_option === true ? " WITH ADMIN OPTION" : ""}`);
+    }
   } finally {
     await grantClient.end();
   }
@@ -104,6 +122,7 @@ export async function restoreDatabase({ backup, target, confirmTarget, pgBin, re
   const actual = computeDatabaseRestoreIdentity({
     ledgerDigest: metadata.ledgerDigest,
     rolesDigest: digestOf(evidence.roles),
+    membershipsDigest: digestOf(evidence.memberships),
     schemaDigest: evidence.schemaDigest,
     rowsDigest: digestOf(evidence.rows),
     ownersDigest: digestOf(evidence.grants),

@@ -25,6 +25,7 @@ import { Client } from "pg";
 import { computeDatabaseRestoreIdentity } from "./restore-identity.mjs";
 import { readSchemaDigest } from "./apply-migrations.mjs";
 import { collectDatabaseEvidence, connectTarget, digestOf, targetCli } from "./evidence.mjs";
+import { MEMBERSHIPS_SNAPSHOT_SQL, ROLES_SNAPSHOT_SQL } from "./evidence.mjs";
 
 const exec = promisify(execFile);
 const flag = (args, name, fallback) => {
@@ -45,9 +46,8 @@ async function collectConsistentSnapshot(source, { requiredTables }) {
     await evidenceClient.query("BEGIN ISOLATION LEVEL SERIALIZABLE READ ONLY DEFERRABLE");
     const ledger = (await evidenceClient.query(
       "SELECT filename, digest, ledger_order, pre_schema_digest, post_schema_digest FROM control_room_schema_migrations ORDER BY ledger_order")).rows;
-    const roles = (await evidenceClient.query(
-      `SELECT rolname, rolcanlogin, rolcreatedb, rolcreaterole, rolsuper FROM pg_roles
-       WHERE rolname LIKE 'control\\_room\\_%' ORDER BY rolname`)).rows;
+    const roles = (await evidenceClient.query(ROLES_SNAPSHOT_SQL)).rows;
+    const memberships = (await evidenceClient.query(MEMBERSHIPS_SNAPSHOT_SQL)).rows;
     const grants = (await evidenceClient.query(
       `SELECT n.nspname || '.' || c.relname AS object, pg_get_userbyid(c.relowner) AS owner,
               coalesce(c.relacl, acldefault(CASE WHEN c.relkind = 'S' THEN 's'::"char" ELSE 'r'::"char" END, c.relowner))::text AS acl
@@ -67,7 +67,7 @@ async function collectConsistentSnapshot(source, { requiredTables }) {
     // is the proven consistency mechanism for taking a snapshot export and an
     // evidence read from the same database state.
     const txid = (await evidenceClient.query("SELECT pg_export_snapshot() AS snap")).rows[0].snap;
-    return { evidence: { ledger, roles, grants, rows, schemaDigest }, txid, evidenceClient };
+    return { evidence: { ledger, roles, memberships, grants, rows, schemaDigest }, txid, evidenceClient };
   } catch (error) {
     try { await evidenceClient.query("ROLLBACK"); } catch {}
     throw error;
@@ -103,11 +103,12 @@ export async function backupDatabase({ source, out, pgBin, requiredTables = [], 
   }
   const { evidence } = snapshot;
   const rolesDigest = digestOf(evidence.roles);
+  const membershipsDigest = digestOf(evidence.memberships);
   const metadata = {
     version: 1, release, createdAt: new Date().toISOString(),
     sourceFingerprint: digestOf(source), ledgerDigest, snapshotXid: snapshot.txid,
     identity: computeDatabaseRestoreIdentity({
-      ledgerDigest, rolesDigest,
+      ledgerDigest, rolesDigest, membershipsDigest,
       schemaDigest: evidence.schemaDigest, rowsDigest: digestOf(evidence.rows),
       ownersDigest: digestOf(evidence.grants), ledgerRowsDigest: digestOf(evidence.ledger),
     }),

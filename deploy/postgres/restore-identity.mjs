@@ -28,17 +28,18 @@ export function parseArtifactSetDigest(input) {
 }
 
 /**
- * @param {{ ledgerDigest: string, rolesDigest: string, schemaDigest: string, rowsDigest: string, ownersDigest: string, ledgerRowsDigest: string, artifactSetDigest?: unknown }} parts
+ * @param {{ ledgerDigest: string, rolesDigest: string, membershipsDigest: string, schemaDigest: string, rowsDigest: string, ownersDigest: string, ledgerRowsDigest: string, artifactSetDigest?: unknown }} parts
  */
-export function computeDatabaseRestoreIdentity({ ledgerDigest, rolesDigest, schemaDigest, rowsDigest, ownersDigest, ledgerRowsDigest, artifactSetDigest }) {
+export function computeDatabaseRestoreIdentity({ ledgerDigest, rolesDigest, membershipsDigest, schemaDigest, rowsDigest, ownersDigest, ledgerRowsDigest, artifactSetDigest }) {
   for (const [name, value] of [["ledgerDigest", ledgerDigest], ["rolesDigest", rolesDigest],
+      ["membershipsDigest", membershipsDigest],
       ["schemaDigest", schemaDigest], ["rowsDigest", rowsDigest], ["ownersDigest", ownersDigest],
       ["ledgerRowsDigest", ledgerRowsDigest]]) {
     if (typeof value !== "string" || !DIGEST_RE.test(value)) throw new Error(`restore_identity_invalid:${name}`);
   }
   const artifact = parseArtifactSetDigest(artifactSetDigest);
   const identity = {
-    version: 1, ledgerDigest, rolesDigest, schemaDigest, rowsDigest, ownersDigest, ledgerRowsDigest,
+    version: 1, ledgerDigest, rolesDigest, membershipsDigest, schemaDigest, rowsDigest, ownersDigest, ledgerRowsDigest,
     ...(artifact === undefined ? {} : { artifactSetDigest: artifact }),
   };
   return { ...identity, identityDigest: `sha256:${sha256(canonical(identity))}` };
@@ -52,7 +53,7 @@ export function verifyRestoredIdentity(expected, actual) {
   if (typeof expected !== "object" || expected === null || typeof actual !== "object" || actual === null) {
     throw new Error("restore_identity_mismatch:shape");
   }
-  for (const key of ["ledgerDigest", "rolesDigest", "schemaDigest", "rowsDigest", "ownersDigest",
+  for (const key of ["ledgerDigest", "rolesDigest", "membershipsDigest", "schemaDigest", "rowsDigest", "ownersDigest",
       "ledgerRowsDigest", "identityDigest"]) {
     if (expected[key] !== actual[key]) throw new Error(`restore_identity_mismatch:${key}`);
   }

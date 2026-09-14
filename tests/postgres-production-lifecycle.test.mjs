@@ -14,6 +14,8 @@ import { Client } from "pg";
 import { applyMigrations, readSchemaDigest } from "../deploy/postgres/apply-migrations.mjs";
 import { backupDatabase } from "../deploy/postgres/backup-database.mjs";
 import { restoreDatabase } from "../deploy/postgres/restore-database.mjs";
+import { collectDatabaseEvidence, digestOf } from "../deploy/postgres/evidence.mjs";
+import { computeDatabaseRestoreIdentity, verifyRestoredIdentity } from "../deploy/postgres/restore-identity.mjs";
 import { collectLedgerEntries, ledgerDigest } from "../scripts/generate-migration-ledger.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -102,6 +104,14 @@ after(async () => {
 
 async function freshDatabase(name) {
   await query(adminDb(), `CREATE DATABASE "${name}" OWNER fixture_admin`);
+}
+
+async function roleMemberships(conn) {
+  return (await query(conn,
+    `SELECT m.rolname AS member, r.rolname AS role, am.admin_option FROM pg_auth_members am
+     JOIN pg_roles m ON m.oid = am.member JOIN pg_roles r ON r.oid = am.roleid
+     WHERE m.rolname LIKE 'control@_room@_%' ESCAPE '@' OR r.rolname LIKE 'control@_room@_%' ESCAPE '@'
+     ORDER BY 1, 2`)).rows;
 }
 
 async function stageRoot(fileCount) {
@@ -291,10 +301,103 @@ test("backup and disposable restore preserve rows, owners, grants and identity",
   assert.deepEqual(restoredRows, sourceRows);
   const ownerOf = async (conn) => (await query(conn, "SELECT pg_get_userbyid(c.relowner) AS owner FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relname = 'tenants'")).rows[0].owner;
   assert.equal(await ownerOf(target("cr_prod_restored")), await ownerOf(target("cr_prod_source")));
+  // Role model preserved: the reconciled target carries exactly the source's
+  // control-room memberships (roles are cluster-global in this fixture, which
+  // is why the dedicated reconcile test below revokes first to prove the
+  // re-grant path instead of merely observing shared state).
+  assert.deepEqual(await roleMemberships(target("cr_prod_restored")), await roleMemberships(target("cr_prod_source")));
 });
 
 test("restore refuses unconfirmed and non-empty targets", needsPg, async () => {
   const out = join(run, "backup-set");
   await assert.rejects(restoreDatabase({ backup: out, target: target("cr_prod_restored"), bootstrapTarget: bootstrapTarget("cr_prod_restored"), migrateTarget: migrateTarget("cr_prod_restored"), confirmTarget: target("cr_prod_other"), pgBin: BIN }), /restore_refused_unconfirmed_target/);
   await assert.rejects(restoreDatabase({ backup: out, target: target("cr_prod_source"), bootstrapTarget: bootstrapTarget("cr_prod_source"), migrateTarget: migrateTarget("cr_prod_source"), confirmTarget: target("cr_prod_source"), pgBin: BIN }), /restore_refused_nonempty_target/);
+});
+
+test("restore reconciles a revoked membership from the recorded role model", needsPg, async () => {
+  const out = join(run, "backup-set");
+  // Revoke cluster-wide, then restore into a fresh database: the reconcile
+  // step must re-grant the recorded membership or the identity check fails.
+  await query(target("cr_prod_source"), "REVOKE control_room_application FROM control_room_app");
+  const before = await roleMemberships(target("cr_prod_source"));
+  assert.ok(!before.some(entry => entry.member === "control_room_app" && entry.role === "control_room_application"));
+  await freshDatabase("cr_prod_reconcile");
+  const restored = await restoreDatabase({ backup: out, target: target("cr_prod_reconcile"), confirmTarget: target("cr_prod_reconcile"), pgBin: BIN, requiredTables: ["tenants"] });
+  assert.equal(restored.planned, false);
+  const after = await roleMemberships(target("cr_prod_reconcile"));
+  assert.ok(after.some(entry => entry.member === "control_room_app" && entry.role === "control_room_application" && entry.admin_option === false));
+});
+
+test("restore identity fails closed on a flipped sensitive role attribute", needsPg, async () => {
+  const meta = JSON.parse(await readFile(join(run, "backup-set/metadata.json"), "utf8"));
+  await query(target("cr_prod_restored"), "ALTER ROLE control_room_app WITH REPLICATION");
+  try {
+    const evidence = await collectDatabaseEvidence(target("cr_prod_restored"), { requiredTables: ["tenants"] });
+    assert.ok(evidence.roles.some(role => role.rolname === "control_room_app" && role.rolreplication === true));
+    const tampered = computeDatabaseRestoreIdentity({
+      ledgerDigest: meta.ledgerDigest, rolesDigest: digestOf(evidence.roles),
+      membershipsDigest: digestOf(evidence.memberships), schemaDigest: evidence.schemaDigest,
+      rowsDigest: digestOf(evidence.rows), ownersDigest: digestOf(evidence.grants),
+      ledgerRowsDigest: digestOf(evidence.ledger),
+    });
+    assert.throws(() => verifyRestoredIdentity(meta.identity, tampered), /restore_identity_mismatch:rolesDigest/);
+  } finally {
+    await query(target("cr_prod_restored"), "ALTER ROLE control_room_app WITH NOREPLICATION");
+  }
+});
+
+test("restore identity fails closed on a revoked membership", needsPg, async () => {
+  const meta = JSON.parse(await readFile(join(run, "backup-set/metadata.json"), "utf8"));
+  await query(target("cr_prod_restored"), "REVOKE control_room_application FROM control_room_app");
+  try {
+    const evidence = await collectDatabaseEvidence(target("cr_prod_restored"), { requiredTables: ["tenants"] });
+    const tampered = computeDatabaseRestoreIdentity({
+      ledgerDigest: meta.ledgerDigest, rolesDigest: digestOf(evidence.roles),
+      membershipsDigest: digestOf(evidence.memberships), schemaDigest: evidence.schemaDigest,
+      rowsDigest: digestOf(evidence.rows), ownersDigest: digestOf(evidence.grants),
+      ledgerRowsDigest: digestOf(evidence.ledger),
+    });
+    assert.throws(() => verifyRestoredIdentity(meta.identity, tampered), /restore_identity_mismatch:membershipsDigest/);
+  } finally {
+    await query(target("cr_prod_restored"), "GRANT control_room_application TO control_room_app");
+  }
+});
+
+test("operator provision script creates logins via psql without exposing passwords", needsPg, async () => {
+  await freshDatabase("cr_prod_provision");
+  const psqlEnv = {
+    PATH: "/usr/bin:/bin", LC_ALL: "C", TMPDIR: run,
+    PGHOST: socket, PGPORT: String(PORT), PGUSER: "fixture_admin",
+    PGPASSWORD: "fixture_only", PGDATABASE: "cr_prod_provision",
+  };
+  const provision = (vars) => exec(join(BIN, "psql"),
+    ["-v", `migrator_password=${vars.migrator}`, "-v", `app_password=${vars.app}`,
+     "-v", `scheduler_password=${vars.scheduler}`,
+     "-f", join(ROOT, "db/roles/production_provision.sql"), "-X", "-q"],
+    { env: psqlEnv, timeout: 60000, maxBuffer: 1 << 26 });
+  // Short passwords fail closed before any login is created.
+  const short = await provision({ migrator: "x".repeat(23), app: "y".repeat(24), scheduler: "z".repeat(24) }).then(
+    () => { throw new Error("provision_accepted_short_password"); },
+    (error) => error);
+  assert.match(`${short.stderr ?? ""}`, /provision_refused_short_migrator_password/);
+  // Full run: genuinely executable through real psql variable substitution.
+  const pw = { migrator: "provision-test-migrator-0001", app: "provision-test-app-00001", scheduler: "provision-test-scheduler-0001" };
+  const done = await provision(pw);
+  for (const secret of Object.values(pw)) {
+    assert.ok(!`${done.stdout ?? ""}${done.stderr ?? ""}`.includes(secret), "password leaked into psql output");
+  }
+  const roles = (await query(target("cr_prod_provision"),
+    "SELECT rolname, rolcanlogin, rolpassword FROM pg_roles WHERE rolname LIKE 'control@_room@_%' ESCAPE '@' ORDER BY 1")).rows;
+  const byName = new Map(roles.map(role => [role.rolname, role]));
+  for (const login of ["control_room_migrator", "control_room_app", "control_room_scheduler"]) {
+    assert.equal(byName.get(login)?.rolcanlogin, true, `${login} can login`);
+    assert.ok(byName.get(login)?.rolpassword, `${login} has a password set`);
+  }
+  assert.ok(!byName.get("control_room_migrator").rolpassword.includes(pw.migrator), "password stored hashed, not plaintext");
+  const memberships = await roleMemberships(target("cr_prod_provision"));
+  for (const [member, role] of [["control_room_migrator", "control_room_schema_owner"],
+      ["control_room_app", "control_room_application"],
+      ["control_room_scheduler", "control_room_schedule_admissions"]]) {
+    assert.ok(memberships.some(entry => entry.member === member && entry.role === role), `${member} in ${role}`);
+  }
 });

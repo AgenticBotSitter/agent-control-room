@@ -69,7 +69,7 @@ test("restore refuses an unconfirmed target without connecting", async () => {
 test("restore identity round-trips and refuses field mismatch", () => {
   const base = {
     ledgerDigest: `sha256:${"1".repeat(64)}`, rolesDigest: `sha256:${"2".repeat(64)}`,
-    schemaDigest: `sha256:${"3".repeat(64)}`, rowsDigest: `sha256:${"4".repeat(64)}`,
+    membershipsDigest: `sha256:${"8".repeat(64)}`, schemaDigest: `sha256:${"3".repeat(64)}`, rowsDigest: `sha256:${"4".repeat(64)}`,
     ownersDigest: `sha256:${"5".repeat(64)}`, ledgerRowsDigest: `sha256:${"6".repeat(64)}`,
   };
   const identity = computeDatabaseRestoreIdentity(base);
@@ -93,7 +93,7 @@ test("#65 artifact-set digest placeholder validates shape only", () => {
   assert.throws(() => parseArtifactSetDigest("sha256:abc"), /artifact_set_digest_invalid/);
   const base = {
     ledgerDigest: `sha256:${"1".repeat(64)}`, rolesDigest: `sha256:${"2".repeat(64)}`,
-    schemaDigest: `sha256:${"3".repeat(64)}`, rowsDigest: `sha256:${"4".repeat(64)}`,
+    membershipsDigest: `sha256:${"8".repeat(64)}`, schemaDigest: `sha256:${"3".repeat(64)}`, rowsDigest: `sha256:${"4".repeat(64)}`,
     ownersDigest: `sha256:${"5".repeat(64)}`, ledgerRowsDigest: `sha256:${"6".repeat(64)}`,
     artifactSetDigest: digest,
   };
