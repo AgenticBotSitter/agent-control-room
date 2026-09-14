@@ -17,8 +17,8 @@ import { actionsFingerprint } from "../scripts/worker-inbox-platform/lib/inbox-f
 import { artifactsFor, iso8601Duration, systemdQuote, xmlEscape } from "../scripts/worker-inbox-platform/lib/artifacts.mjs";
 import { instructionsFor } from "../scripts/worker-inbox-platform/lib/instructions.mjs";
 import {
-  appendBoundedLog, ensureWorkerDirectory, isOwnedDirectory, logFile, markerFile, readState,
-  removeOwnedFiles, signalFile, stateFile, workerDirectory, workerSlug, writeJsonAtomic,
+  RUNTIME_VERSION, appendBoundedLog, ensureWorkerDirectory, isOwnedDirectory, logFile, markerFile,
+  readState, removeOwnedFiles, signalFile, stateFile, workerDirectory, workerSlug, writeJsonAtomic,
 } from "../scripts/worker-inbox-platform/lib/runtime.mjs";
 import { isWellFormedXml } from "../scripts/worker-inbox-platform/lib/xml-wellformed.mjs";
 import { generate } from "../scripts/worker-inbox-platform/worker-inbox-generate.mjs";
@@ -766,6 +766,40 @@ test("the extra signal is written whole, recorded, and cleaned up without touchi
   assert.equal(existsSync(external), false);
   assert.equal(existsSync(foreign), true, "the foreign directory must survive");
   assert.equal(existsSync(operatorFile), true, "another process's file must survive");
+});
+
+test("a foreign file at the external signal path is refused, not overwritten", async (t) => {
+  const root = scratch(t);
+  const signals = join(root, "signals");
+  mkdirSync(signals, { recursive: true });
+  const target = join(signals, `${workerSlug(WORKER_ID)}.signal`);
+  writeFileSync(target, "someone else's data\n", "utf8");
+
+  const options = tickOptions(root, { fetchImpl: fakeGithub(assignment()).fetchImpl, signalDirectory: signals });
+  await assert.rejects(() => runTick({ options, now: CLOCK }),
+    /worker_inbox_platform_signal_file_not_owned/u,
+    "a matching filename is not evidence of ownership, so this must refuse rather than overwrite");
+  assert.equal(readFileSync(target, "utf8"), "someone else's data\n", "the foreign file must be untouched");
+
+  // The refusal must not be so broad that it rejects this tool's own previous signal.
+  writeJsonAtomic(target, { version: RUNTIME_VERSION, workerId: WORKER_ID, at: CLOCK().toISOString() });
+  const result = await runTick({ options, now: CLOCK });
+  assert.equal(result.notified, true, "our own signal is still updated in place");
+  assert.equal(JSON.parse(readFileSync(target, "utf8")).workerId, WORKER_ID);
+});
+
+test("the watcher does not delete lookalike files in the operator's signal directory", async (t) => {
+  const root = scratch(t);
+  const signals = join(root, "signals");
+  mkdirSync(signals, { recursive: true });
+  const lookalike = join(signals, `${workerSlug(WORKER_ID)}.signal.999999.tmp`);
+  writeFileSync(lookalike, "not ours\n", "utf8");
+
+  const options = tickOptions(root, { fetchImpl: fakeGithub(assignment()).fetchImpl, signalDirectory: signals });
+  await runTick({ options, now: CLOCK });
+
+  assert.equal(existsSync(lookalike), true,
+    "this directory belongs to the operator: only files the tool records are ever removed there");
 });
 
 test("a hand-edited marker cannot authorise the deletion of any file", (t) => {

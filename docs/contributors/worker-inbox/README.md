@@ -209,9 +209,34 @@ name — see the note above.
 | --- | --- |
 | `worker_inbox_api_403` | Anonymous GitHub rate limit. Set `GITHUB_TOKEN`, or pass `--token-from-gh`. |
 | `worker_inbox_worker_id_invalid` | The worker ID must match the shape the inbox enforces: `[A-Za-z0-9][A-Za-z0-9._:-]{2,79}`. |
+| `worker_inbox_platform_signal_file_not_owned` | Something already exists at the extra-signal path that is not this tool's own signal for this worker. The watcher refuses to overwrite it rather than destroy a file it cannot prove it created. Point `--signal-directory` somewhere else, or move the file deliberately. |
 | Never signals anything | Run the inbox client itself — `node scripts/public-worker-inbox.mjs --worker-id YOUR-STABLE-WORKER-ID` — and read its `Record:` line; the watcher above does not print it. That line, not the labels, says whether the record is a controller record or advisory. Only a controller **claim** or **handoff** for your worker can be an actionable assignment: the issue must be open, carry **exactly one** matching `status:<state>` label, and a handoff — but not a claim — also needs **exactly one** matching `action:<action>` label. A legacy action marker is **advisory**: the client reports it as needing attention, never as an actionable assignment, so adding labels cannot make it one. Two labels of the same kind are ambiguous and are reported as needing attention rather than as an assignment. |
 | Signals stopped | Check `watch.log` for failures. Repeated failures mean the action is *unknown*, not cleared. |
 | `Cannot wake an agent` | Expected. See the limitation above. |
+
+## What containment does and does not guarantee
+
+The generator refuses an output directory outside the worker's own `generated/` directory, refuses
+a symlinked one outright, and re-checks containment after the artifacts are written. That closes
+misconfiguration and the ordinary symlink cases.
+
+It does **not** guarantee that nothing can be written outside the runtime directory. A concurrent
+local process that replaces the checked directory with a symlink in the window between the check
+and the write can still cause artifacts to go elsewhere, and the post-write check reports that
+rather than preventing it. Plain Node has no race-free "open this directory and write through the
+handle" call, so this is **best-effort detection, not a boundary against a local attacker who
+already has write access to the runtime directory**. It is stated here rather than left implied.
+
+Two related rules, both narrower than they may look:
+
+- Files inside the tool's **own** runtime directory whose names are a temporary this tool can write
+  — `state.json`, `signal.json`, or the ownership marker, followed by `.<digits>.tmp` — are treated
+  as owned. That is what lets a run killed mid-write still be cleaned up; the alternative is a
+  runtime directory that can never be removed. Nothing outside the runtime directory is removed on
+  that basis.
+- The extra signal file is the one file written **outside** the runtime directory. It is removed
+  only when the operator names its directory on the uninstall command, and it is only ever
+  overwritten when the file already there parses as this tool's own signal for this worker.
 
 ## Scope
 

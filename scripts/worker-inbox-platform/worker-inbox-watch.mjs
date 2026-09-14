@@ -12,7 +12,7 @@
 // scheduler artifact. A token is only ever taken from the operator's environment or from
 // `gh auth token`, held in memory for the request, and redacted from any message.
 import { spawnSync } from "node:child_process";
-import { readdirSync, rmSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -168,17 +168,20 @@ export async function runTick({ options, reader = readWorkerInbox, token, now = 
       // exact path is recorded in the ownership marker, because uninstall removes only what it can
       // prove it created, and would otherwise leave this file behind.
       const externalSignal = join(options.signalDirectory, `${workerSlug(options.workerId)}.signal`);
-      // A process killed mid-write leaves its own temporary file here. This directory is not ours to
-      // sweep at uninstall time (the operator names it explicitly), so the tool tidies its own litter
-      // as it goes instead of accumulating it.
-      try {
-        for (const stale of readdirSync(options.signalDirectory)) {
-          if (stale.startsWith(`${workerSlug(options.workerId)}.signal.`) && stale.endsWith(".tmp")) {
-            rmSync(join(options.signalDirectory, stale), { force: true });
-          }
+      // An existing file at that exact path is not necessarily ours: this directory belongs to the
+      // operator, and a matching filename is not evidence of ownership. Adopt an existing file only
+      // when its contents are this tool's own signal for this worker; otherwise refuse, rather than
+      // overwrite something that may belong to another process.
+      if (existsSync(externalSignal)) {
+        let existing;
+        try {
+          existing = JSON.parse(readFileSync(externalSignal, "utf8"));
+        } catch {
+          existing = undefined;
         }
-      } catch {
-        // The directory may not exist yet; writeJsonAtomic creates it below.
+        if (existing?.version !== RUNTIME_VERSION || existing?.workerId !== options.workerId) {
+          throw new Error("worker_inbox_platform_signal_file_not_owned");
+        }
       }
       // Record BEFORE writing. If the process dies between the two, a recorded path that does not
       // exist is harmless - uninstall skips missing files - whereas a written file that was never

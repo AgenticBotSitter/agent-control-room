@@ -42,6 +42,10 @@ schtasks /Delete /TN "AgentControlRoomWorkerInbox-<worker>-<digest>" /F
 node scripts\worker-inbox-platform\worker-inbox-uninstall.mjs --worker-id YOUR-STABLE-WORKER-ID
 ```
 
+If you configured an extra signal directory (the watcher's `--signal-directory`), add
+`--signal-directory DIR` to that last command. Without it the extra signal file is left in place
+and the command prints the directory to name — that file is removed only when you name it.
+
 ## What the generated task contains
 
 | Element | Value and why |
