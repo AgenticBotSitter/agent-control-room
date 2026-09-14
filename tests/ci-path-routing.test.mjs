@@ -314,6 +314,34 @@ test("every lane command that ran before still runs, so no test loses its lane",
   }
 });
 
+test("no job output is interpolated into a shell command", () => {
+  // The routing outputs are derived from the changed-path list, which a pull request
+  // controls. Interpolating one into `run:` would let a crafted file name execute as
+  // shell, so outputs must reach a step through `env:` and be quoted there. `if:`
+  // conditions are evaluated by the runner rather than a shell and are exempt.
+  const lines = workflow.split("\n");
+  const offenders = [];
+  for (let index = 0; index < lines.length; index++) {
+    const match = /^(\s*)(?:-\s*)?run:\s*(.*)$/.exec(lines[index]);
+    if (!match) continue;
+    const indentation = match[1].length;
+    const block = [match[2]];
+    let cursor = index;
+    while (++cursor < lines.length) {
+      const next = /^(\s*)(.*)$/.exec(lines[cursor]);
+      if (!next || (next[2].trim() && next[1].length <= indentation)) break;
+      block.push(next[2]);
+    }
+    for (const line of block) {
+      if (/\$\{\{[^}]*\boutputs\./u.test(line)) offenders.push(line.trim().slice(0, 90));
+    }
+  }
+  assert.deepEqual(offenders, [], "job outputs must be passed through env:, never interpolated");
+  // And the rule has to be doing something: the same scan must find the expressions
+  // where they are legitimate, so a scan that silently matches nothing is caught.
+  const legitimate = lines.filter((line) => /^\s*if: \$\{\{[^}]*\boutputs\./u.test(line));
+  assert.ok(legitimate.length >= LANES.length, "the lane conditions should still read routing outputs");
+});
 test("the routing helper is exercised by the workflow, not only by its test", () => {
   assert.match(workflow, /node scripts\/ci-path-routing\.mjs/u);
 });

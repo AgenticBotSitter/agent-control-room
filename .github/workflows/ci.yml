@@ -90,14 +90,25 @@ jobs:
           fi
           node scripts/ci-path-routing.mjs /tmp/changed-paths.txt
       - name: Summarise the routing decision
+        # Every value reaches the shell as an environment variable. The outputs are
+        # derived from the changed-path list, so a crafted file name must never be
+        # interpolated into a command line: `${{ }}` inside `run:` would execute it.
+        env:
+          CLASSES: ${{ steps.route.outputs.classes }}
+          FULL: ${{ steps.route.outputs.full }}
+          DEMO: ${{ steps.route.outputs.demo }}
+          SERVER: ${{ steps.route.outputs.server }}
+          COMPONENTS: ${{ steps.route.outputs.components }}
+          ARTICLES: ${{ steps.route.outputs.articles }}
+          REASON: ${{ steps.route.outputs.reason }}
         run: |
+          echo "routing reason: ${REASON}"
           {
             echo "### Changed-path routing"
             echo ""
-            echo "- Classes: \`${{ steps.route.outputs.classes }}\`"
-            echo "- Complete suite required: \`${{ steps.route.outputs.full }}\`"
-            echo "- Lanes run early: \`demo=${{ steps.route.outputs.demo }} server=${{ steps.route.outputs.server }} components=${{ steps.route.outputs.components }} articles=${{ steps.route.outputs.articles }}\`"
-            echo "- Reason: ${{ steps.route.outputs.reason }}"
+            echo "- Classes: \`${CLASSES}\`"
+            echo "- Complete suite required: \`${FULL}\`"
+            echo "- Lanes run early: \`demo=${DEMO} server=${SERVER} components=${COMPONENTS} articles=${ARTICLES}\`"
             echo ""
             echo "Every lane not run early is run by \`full-gate\`, so the complete suite still runs before merge."
           } >> "$GITHUB_STEP_SUMMARY"
