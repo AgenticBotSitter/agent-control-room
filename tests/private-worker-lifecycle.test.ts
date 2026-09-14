@@ -4,9 +4,10 @@ import { chmod, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { validatePrivateCodexStatePathsV1 } from '../src/node-bridge/private-codex-configuration';
+import { SqliteBridgeJournal } from '../src/node-bridge/journal';
 import { createWorkerLifecycleFixture, projectSyntheticRecovery, recordSyntheticLifecycle,
-  reopenSyntheticLifecycle, runSyntheticLauncherScenario, runSyntheticPrivateCodexRecovery } from
-  './helpers/private-worker-lifecycle';
+  reopenSyntheticLifecycle, runSyntheticLauncherScenario, runSyntheticPrivateCodexRecovery,
+  syntheticStartPair } from './helpers/private-worker-lifecycle';
 
 async function owned(t: TestContext) {
   const root = await mkdtemp(join(tmpdir(), 'control-room-worker-test-')); await chmod(root, 0o700);
@@ -18,12 +19,39 @@ test('interruption and reopen preserve exact admitted identity without duplicate
   const f = await owned(t);
   assert.deepEqual(validatePrivateCodexStatePathsV1({ bridge: f.bridgePath, starts: f.startPath }),
     { bridge: f.bridgePath, starts: f.startPath });
+  // Seed one delivery row to the bridge journal. The interrupt/reopen path
+  // must not create a second delivery, a second turn or a second start. The
+  // assertion below is what proves "no second delivery is created after
+  // reopen", addressing the round-2 finding that this lifecycle was previously
+  // exercised only against the starts journal, not against the durable bridge
+  // journal where deliveries are recorded.
+  const pair = syntheticStartPair();
+  const seed = new SqliteBridgeJournal(f.bridgePath);
+  (seed as unknown as { db: { prepare(sql: string): { run: (...args: unknown[]) => unknown } } }).db.prepare(
+    `INSERT INTO bridge_codex_deliveries (queue_id,message_id,tenant_id,project_id,node_id,job_id,
+       attempt_id,run_id,frame_json,frame_digest,receipt_json,receipt_digest)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(pair.admission.queueId, 'message:delivery:initial', 'tenant:synthetic', 'project:synthetic',
+      'node:synthetic', pair.admission.scope.jobId, pair.admission.scope.attemptId,
+      pair.admission.scope.runId, '{}', 'sha256:' + '0'.repeat(64), '{}',
+      'sha256:' + '0'.repeat(64));
+  seed.close();
   const interrupted = recordSyntheticLifecycle(f.startPath, 'thread');
   assert.equal(interrupted.status, 'thread_recorded_turn_unknown'); assert.equal(interrupted.turnId, null);
   assert.equal(interrupted.permitsRetry, false); assert.equal(interrupted.permitsResume, false);
   const reopened = reopenSyntheticLifecycle(f.startPath);
   assert.equal(reopened.status, interrupted.status); assert.equal(reopened.threadId, interrupted.threadId);
   assert.equal(reopened.readIdentity, null);
+  // Reopen the bridge journal and confirm the seeded delivery row is intact
+  // and no second delivery row was created by the interrupt/reopen cycle.
+  const reopenedBridge = new SqliteBridgeJournal(f.bridgePath);
+  const deliveryCount = ((reopenedBridge as unknown as { db: { prepare(sql: string):
+    { get: (...args: unknown[]) => unknown } } }).db.prepare(
+    `SELECT count(*) AS count FROM bridge_codex_deliveries WHERE queue_id=?`).get(
+    pair.admission.queueId) as { count: number }).count;
+  assert.equal(deliveryCount, 1,
+    `bridge journal must hold exactly one delivery for the admitted run; got ${deliveryCount}`);
+  reopenedBridge.close();
   const duplicate = recordSyntheticLifecycle(f.startPath, 'thread');
   assert.equal(duplicate.status, 'thread_recorded_turn_unknown');
 });
