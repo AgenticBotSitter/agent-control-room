@@ -40,6 +40,18 @@ not an executable plugin and not proof that advertised operations work.
   credential lookup, approval, signing, schema writes and task completion stay in the
   reviewed core. Removing an extension cannot remove canonical history.
 
+For the public initial release, an external `control-room-project-adapter/v1`
+manifest is admissible only with `authorityMode: "advisory"`, an exactly empty
+`supportedCommands` list and a duplicate-free subset of the seven finite
+`supportedReadOperations` declared in `src/contracts/v1/types.ts`. Its change feed is
+also read-only projection input. The command types retained in that source contract
+are not a public extension permission: command-capable adapters require a separately
+reviewed core binding and are unavailable through this subset. Disabling or removing
+an extension may remove its current projections from view, but must leave canonical
+projects, work, attempts, results, review decisions and audit history unchanged. A
+conformance package must prove these rules before an external extension is enabled;
+that package is not an MVP blocker for the first Hermes-plus-Codex release.
+
 ## Initial connector decisions
 
 ### Hermes
@@ -100,8 +112,9 @@ bind the existing shared queue entry to the complete verified Codex approval pac
 and exact machine/work settings; a replacement connection cannot create a second send
 intent. The trusted Codex queue collaborator now checks the locked canonical job,
 attempt, lease, node and recalculated job-authority digest before recording that shared
-queue entry. Canonical Codex task planning and owner-review composition remain required
-before native use. The node-private Codex start journal now
+queue entry. Canonical task planning, result publication and owner-review composition
+are present in source; native use still requires the corrected long-lived process/result
+session integration and physical qualification. The node-private Codex start journal now
 stores the exact correlated thread receipt before its turn receipt, survives reopen,
 and returns an explicit unknown state when the turn receipt is absent. It is an
 observation record only: it cannot list or guess sessions and grants no start, retry,
@@ -145,8 +158,10 @@ The portable node bridge now negotiates `harness.codex.dispatch.v1`, verifies th
 owner permit and exact local enrollment/profile/workspace bindings, records one
 immutable private delivery, and returns one signed receipt. It never replays an
 uncertain receipt across reconnect, and this intake path has no process or workspace
-effect port. Canonical Codex planning/owner-review composition and the actual start
-composition remain separately required.
+effect port. The fixed local start and canonical planning/owner-review compositions
+are present in source. The remaining gap is corrected ownership of result return on
+the long-lived node session, automatic connection recovery where proven safe, and
+separately authorized physical process/provider qualification.
 The fake-JSONL acceptance lane now passes one recorded bridge activation through
 the private host into one thread/turn start, then reopens the exact durable pair for
 read-only recovery. It also refuses duplicate or missing activation, interrupted

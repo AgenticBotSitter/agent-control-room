@@ -159,17 +159,13 @@ No live agent-runtime/platform combination is claimed supported by this preview.
 
 ## Contributor starting points
 
-**Current implementation baseline:** the current public `main` through
-[PR #152](https://github.com/AgenticBotSitter/agent-control-room/pull/152), including the
+**Current implementation baseline:** current public `main`. It includes the
 lead-integrated application navigation and protected route corrections, configurable
-project proof, explicit project pages, safe Project News, browser lifecycle coverage
-and owner-attention prioritization, plus exact and relative activity times, verified
-360px navigation, restart-style failed-verification recovery, and exact-version Codex
-start/read fences with a noncanonical bounded result reader through
-[PR #110](https://github.com/AgenticBotSitter/agent-control-room/pull/110). It also
-contains the bounded Claude Code connector foundation and replay-safe schedule
-planning/assignment; neither is a claim that a live Claude process or scheduled agent
-start is enabled. The
+project proof, explicit project pages, safe Project News, browser lifecycle coverage,
+owner-attention prioritization, resource-bound wire contracts, the bounded Claude Code
+connector foundation and replay-safe schedule planning/assignment. None of those source
+components claims that a live Claude process, native agent or scheduled agent start is
+enabled. The
 [September 9 contributor handoff](CONTRIBUTOR_HANDOFF.md) remains historical evidence;
 new contributions use the base recorded in their issue. This is not production
 acceptance and does not supersede active contributors' branches.
@@ -181,9 +177,9 @@ before assignment. All 17 implementation directions are recorded; selected
 components are not yet all integrated.
 
 The public package includes sanitized Idea Lab and news workflows, connector updates
-and generic database/operator templates. The PR #152 candidate passed strict type
-checking and every public validation lane. Templates are not configured services, and
-these checks are not production acceptance.
+and generic database/operator templates. Merged changes are checked by the public
+validation lanes. Templates are not configured services, and source checks are not
+production acceptance.
 
 - [Setup and verified check commands](SETUP.md)
 - [How to contribute and get work assigned](CONTRIBUTING.md)
