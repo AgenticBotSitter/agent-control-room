@@ -107,8 +107,16 @@ not one issue/PR per small code edit.
 ## Claim and keep moving
 
 1. Choose a **ready** package whose platform, dependencies and resources you have.
-2. Comment with the intended scope and ask for assignment. Wait for maintainer confirmation;
-   simultaneous comments do not create competing claims.
+2. Post the exact two-line `CLAIM REQUEST` with a unique worker identity on the
+   issue. The serialized controller validates the work packet, pins current
+   `main`, and edits its marker to `CLAIM ACCEPTED`. Begin only when that
+   accepted comment was posted by `github-actions[bot]`; simultaneous comments
+   do not create competing claims, and a refused request is not permission.
+   Keep the reservation with `CLAIM RENEW` (same worker, unchanged packet),
+   submit with `CLAIM SUBMIT` (verified open PR, target, author and exact head),
+   or return safe unsubmitted work with `CLAIM RELEASE`. Expired claims stop:
+   quiet effect-free work returns to Ready, an open pull request stays In
+   review, and ambiguous or effectful work becomes Needs decision.
 3. Use your own fork/branch. Agree on milestones for large packages and send one cohesive
    PR per independently reviewable outcome. Multiple local commits are fine.
 4. Test locally. Include exact base/head, commands, observed results, relevant failure
@@ -125,8 +133,10 @@ deployment permission. Contributor agents follow the same accountability rules.
 
 ## Actions and batching
 
-Actions start disabled. No scheduled polling, automatic deployment, per-comment jobs,
-or self-hosted runners attached to public pull requests. Run checks locally and batch
+Public Actions run the claim lifecycle (`issue_comment` commands plus manual
+`workflow_dispatch` expiry sweeps) and the pull-request CI suite on standard
+hosted runners; there is no scheduled polling, automatic deployment, or
+self-hosted runners attached to public pull requests. Run checks locally and batch
 meaningful pushes and review requests. Small local commits are useful and do not consume
 Actions minutes. Avoid huge unreviewable PRs solely to reduce commit counts.
 
