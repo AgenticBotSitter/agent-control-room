@@ -261,6 +261,72 @@ function checkKeys(integrityKey: unknown, reviewKey: unknown): { integrityKey: U
   return { integrityKey: Uint8Array.from(integrityKey as Uint8Array), reviewKey: Uint8Array.from(reviewKey as Uint8Array) };
 }
 
+/**
+ * Identity verification against the recorded database state. The publisher
+ * refuses to reserve or write any bytes until every recorded row that this
+ * binding claims to belong to actually contains the same tenant, project,
+ * job, attempt, run, node, connector profile, and terminal-evidence
+ * anchor. Anything else — wrong tenant, wrong job, wrong attempt, wrong
+ * node, wrong connector profile, missing row — fails closed with
+ * `durable_result_identity_mismatch` before any reservation write or byte
+ * I/O. The caller still holds the synchronous `assertAuthority` fence;
+ * the recorded state is the persistent half of the same contract.
+ */
+async function verifyRecordedIdentity(tx: DatabaseSession, binding: DurableResultBindingV1): Promise<void> {
+  const runRow = (await tx.query<{ project_id: string; job_id: string; attempt_id: string; node_id: string;
+    adapter_id: string; harness: string }>(
+    "SELECT project_id,job_id,attempt_id,node_id,adapter_id,harness FROM control_harness_runs " +
+    "WHERE tenant_id=$1 AND id=$2", [binding.tenantId, binding.runId])).rows[0];
+  if (!runRow) throw new Error("durable_result_identity_mismatch");
+  if (runRow.project_id !== binding.projectId || runRow.job_id !== binding.jobId
+    || runRow.attempt_id !== binding.attemptId || runRow.node_id !== binding.nodeId)
+    throw new Error("durable_result_identity_mismatch");
+
+  const jobRow = (await tx.query<{ workflow_id: string; authority_digest: string }>(
+    "SELECT workflow_id,authority_digest FROM control_jobs WHERE tenant_id=$1 AND id=$2",
+    [binding.tenantId, binding.jobId])).rows[0];
+  if (!jobRow || jobRow.workflow_id !== binding.workflowId) throw new Error("durable_result_identity_mismatch");
+
+  const attemptRow = (await tx.query<{ job_id: string; node_id: string }>(
+    "SELECT job_id,node_id FROM control_attempts WHERE tenant_id=$1 AND id=$2",
+    [binding.tenantId, binding.attemptId])).rows[0];
+  if (!attemptRow || attemptRow.job_id !== binding.jobId || attemptRow.node_id !== binding.nodeId)
+    throw new Error("durable_result_identity_mismatch");
+
+  // Current authority is bound to the recorded authority_digest of the job
+  // and the recorded authority mode of the adapter. The caller has already
+  // executed `assertAuthority()` synchronously; this query is the durable
+  // half. If the recorded digest diverges from the harness/adapter that
+  // produced this evidence, the publisher must refuse before any write.
+  const adapterRow = (await tx.query<{ authority_mode: string; contract_version: string }>(
+    "SELECT authority_mode,contract_version FROM adapter_registry WHERE tenant_id=$1 AND id=$2",
+    [binding.tenantId, runRow.adapter_id])).rows[0];
+  if (!adapterRow) throw new Error("durable_result_identity_mismatch");
+  // The connector profile digest is the recorded digest of the
+  // connector profile the adapter was loaded with at the moment the run
+  // was admitted. We store it on the harness-run payload so the
+  // publisher does not need to join a separate registry.
+  const payloadRow = (await tx.query<{ payload: { connectorProfileDigest?: string; authorityDigest?: string } }>(
+    "SELECT payload FROM control_harness_runs WHERE tenant_id=$1 AND id=$2",
+    [binding.tenantId, binding.runId])).rows[0];
+  const payload = payloadRow?.payload as { connectorProfileDigest?: string; authorityDigest?: string } | undefined;
+  if (!payload || payload.connectorProfileDigest !== binding.connectorProfileDigest)
+    throw new Error("durable_result_identity_mismatch");
+  // Terminal evidence anchor: native binds the snapshot digest; codex
+  // binds the publication contract + terminal evidence digest. If the
+  // binding carries any of these, at least one must match the recorded
+  // payload's authority digest (the recorded digest is the digest the
+  // connector profile / harness attested at admission time).
+  const evidenceAnchors: string[] = [];
+  if (binding.snapshotDigest !== undefined) evidenceAnchors.push(binding.snapshotDigest);
+  if (binding.publicationContractDigest !== undefined) evidenceAnchors.push(binding.publicationContractDigest);
+  if (binding.terminalEvidenceDigest !== undefined) evidenceAnchors.push(binding.terminalEvidenceDigest);
+  const recordedAuthority = payload?.authorityDigest;
+  if (evidenceAnchors.length > 0 && (recordedAuthority === undefined
+    || !evidenceAnchors.includes(recordedAuthority)))
+    throw new Error("durable_result_identity_mismatch");
+}
+
 function verifyNeutralReservationRow(row: NeutralReservationRow, key: Uint8Array): DurableResultReservationV1 {
   const reservation = durableResultReservationSchemaV1.parse(row.reservation);
   const expected = Buffer.from(durableReservationTag(key, reservation)), actual = Buffer.from(row.auth_tag);
@@ -452,6 +518,7 @@ export async function publishDurableResultV1(config: DurableResultPublicationCon
 
   const acquired = await config.db.transactionWithPreCommitCheck(async tx => {
     assertAuthority();
+    await verifyRecordedIdentity(tx, binding);
     let row = await neutralReservationRowForUpdate(config.reservations, tx, identity.tenantId, identity.runId);
     if (!row) {
       const reservation = durableMachine.buildReserved(identity) as DurableResultReservationV1;

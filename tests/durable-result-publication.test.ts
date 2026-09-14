@@ -70,15 +70,15 @@ const text = (suffix: string) => `Durable neutral result ${suffix}.`;
 const bytesOf = (suffix: string) => new TextEncoder().encode(text(suffix));
 
 function nativeBinding(runId: string): DurableResultBindingV1 {
-  return { tenantId: binding.tenantId, projectId: binding.projectId, jobId: binding.jobId,
-    attemptId: binding.attemptId, runId, nodeId: binding.nodeId, workflowId: "workflow:test", harness: "native",
+  return { tenantId: binding.tenantId, projectId: binding.projectId, jobId: `job:${runId}`,
+    attemptId: `attempt:${runId}`, runId, nodeId: binding.nodeId, workflowId: "workflow:test", harness: "native",
     connectorProfileDigest: digest("c"), snapshotDigest: digest("s"), snapshotVersion: 1,
     acceptanceProfileId: "profile:test", acceptanceProfileDigest: digest("p") };
 }
 
 function codexBinding(runId: string): DurableResultBindingV1 {
-  return { tenantId: binding.tenantId, projectId: binding.projectId, jobId: binding.jobId,
-    attemptId: binding.attemptId, runId, nodeId: binding.nodeId, workflowId: "workflow:test", harness: "codex",
+  return { tenantId: binding.tenantId, projectId: binding.projectId, jobId: `job:${runId}`,
+    attemptId: `attempt:${runId}`, runId, nodeId: binding.nodeId, workflowId: "workflow:test", harness: "codex",
     connectorProfileDigest: digest("c"), publicationContractDigest: digest("d"), terminalEvidenceDigest: digest("e"),
     threadId: "thread:test", turnId: "turn:test", itemId: "item:test",
     acceptanceProfileId: "profile:test", acceptanceProfileDigest: digest("p") };
@@ -102,9 +102,9 @@ async function setup() {
     restartStore, restartReservations: createPersistentNeutralReservationPort(restartStore) };
 }
 
-async function setupWithProvision(runId: string) {
+async function setupWithProvision(runId: string, authorityDigest = digest("s")) {
   const f = await setup();
-  await f.provisionRun(runId);
+  await f.provisionRun(runId, `job:${runId}`, `attempt:${runId}`, authorityDigest);
   return f;
 }
 
@@ -122,7 +122,8 @@ function configAfterRestart(f: Awaited<ReturnType<typeof setup>>, storage: Contr
 
 for (const [flavor, makeBinding] of [["native", nativeBinding], ["codex", codexBinding]] as const) {
   test(`${flavor}: one exact result publishes once and replays the same receipt after restart`, async t => {
-    const f = await setupWithProvision(`run:durable-replay-${flavor}`); t.after(f.close);
+    const f = await setupWithProvision(`run:durable-replay-${flavor}`,
+      flavor === "codex" ? digest("d") : digest("s")); t.after(f.close);
       const storage = new ControlledStorage();
       const runId = `run:durable-replay-${flavor}`;
     const receivedAt = at(9000);
@@ -144,12 +145,13 @@ for (const [flavor, makeBinding] of [["native", nativeBinding], ["codex", codexB
 
     const read = await f.db.transaction(tx => readDurableResultV1(tx, f.resultKey, "local",
       (artifactId, signal) => storage.read(artifactId, signal),
-      binding.tenantId, binding.projectId, binding.jobId, first.receipt.artifactId));
+      binding.tenantId, binding.projectId, makeBinding(runId).jobId, first.receipt.artifactId));
     assert.equal(read?.text, text(flavor));
   });
 
   test(`${flavor}: a poisoned storage port stays poisoned: subsequent calls fail closed before any write`, async t => {
-    const f = await setupWithProvision(`run:durable-poison-${flavor}`); t.after(f.close);
+    const f = await setupWithProvision(`run:durable-poison-${flavor}`,
+      flavor === "codex" ? digest("d") : digest("s")); t.after(f.close);
     const storage = new ControlledStorage();
     storage.throwAfterPut = true;
     const runId = `run:durable-poison-${flavor}`;
@@ -257,7 +259,7 @@ test("revoked authority refuses before any reservation or byte write", async t =
 
 test("oversize, non-UTF8 and tampered readback all fail closed", async t => {
   const f = await (async () => { const x = await setup();
-    for (const r of ["run:durable-oversize","run:durable-badutf","run:durable-tampered"]) await x.provisionRun(r);
+    for (const r of ["run:durable-oversize","run:durable-badutf","run:durable-tampered"]) await x.provisionRun(r, `job:${r}`, `attempt:${r}`);
     return x; })(); t.after(f.close);
   const receivedAt = at(9600);
   const oversize = new Uint8Array(65_537);
@@ -286,10 +288,10 @@ test("the protected reader returns verified text and fails closed on tampering",
     { binding: nativeBinding(runId), bytes: bytesOf("read"), receivedAt, assertAuthority: () => {} });
   const read = (artifactId: string, signal?: AbortSignal) => storage.read(artifactId, signal);
   const good = await f.db.transaction(tx => readDurableResultV1(tx, f.resultKey, "local", read,
-    binding.tenantId, binding.projectId, binding.jobId, captured.receipt.artifactId));
+    binding.tenantId, binding.projectId, nativeBinding(runId).jobId, captured.receipt.artifactId));
   assert.equal(good?.text, text("read"));
   const wrongProject = await f.db.transaction(tx => readDurableResultV1(tx, f.resultKey, "local", read,
-    binding.tenantId, "project:other", binding.jobId, captured.receipt.artifactId));
+    binding.tenantId, "project:other", nativeBinding(runId).jobId, captured.receipt.artifactId));
   assert.equal(wrongProject, undefined);
   storage.tamperReadback = true;
   // Tampered readback now also flips the port's `isStorageUncertain`
@@ -298,13 +300,13 @@ test("the protected reader returns verified text and fails closed on tampering",
   // subsequent calls on the same poisoned port fail closed at the
   // storage boundary.
   await assert.rejects(() => f.db.transaction(tx => readDurableResultV1(tx, f.resultKey, "local", read,
-    binding.tenantId, binding.projectId, binding.jobId, captured.receipt.artifactId)),
+    binding.tenantId, binding.projectId, nativeBinding(runId).jobId, captured.receipt.artifactId)),
   /result_content_unavailable|synthetic_storage_uncertain/);
   // Reset the tamper flag, but the port stays poisoned: subsequent
   // reads on the same port fail closed at the storage boundary.
   storage.tamperReadback = false;
   await assert.rejects(() => f.db.transaction(tx => readDurableResultV1(tx, f.resultKey, "local", read,
-    binding.tenantId, binding.projectId, binding.jobId, captured.receipt.artifactId)),
+    binding.tenantId, binding.projectId, nativeBinding(runId).jobId, captured.receipt.artifactId)),
   /synthetic_storage_uncertain/);
   // A fresh storage port (simulated restart) clears the poisoning and
   // returns the original bytes intact.
@@ -312,13 +314,14 @@ test("the protected reader returns verified text and fails closed on tampering",
   freshStorage.artifacts.set(captured.receipt.artifactId, bytesOf("read"));
   const freshRead = (artifactId: string, signal?: AbortSignal) => freshStorage.read(artifactId, signal);
   const recovered = await f.db.transaction(tx => readDurableResultV1(tx, f.resultKey, "local", freshRead,
-    binding.tenantId, binding.projectId, binding.jobId, captured.receipt.artifactId));
+    binding.tenantId, binding.projectId, nativeBinding(runId).jobId, captured.receipt.artifactId));
   assert.equal(recovered?.text, text("read"));
 });
 
 test("exactly one pending owner-review target exists and cross-harness pairs refuse", async t => {
   const f = await (async () => { const x = await setup();
-    for (const r of ["run:durable-plan-native","run:durable-plan-codex"]) await x.provisionRun(r);
+    await x.provisionRun("run:durable-plan-native", "job:run:durable-plan-native", "attempt:run:durable-plan-native", digest("s"));
+    await x.provisionRun("run:durable-plan-codex", "job:run:durable-plan-codex", "attempt:run:durable-plan-codex", digest("d"));
     return x; })(); t.after(f.close);
   const storage = new ControlledStorage();
   const receivedAt = at(9800);
@@ -423,8 +426,8 @@ test("the backup inventory includes the neutral receipt and exact stored bytes",
      JOIN control_artifact_manifests m ON m.tenant_id=r.tenant_id AND m.id=r.artifact_id
      AND m.project_id=r.project_id AND m.job_id=r.job_id AND m.attempt_id=r.attempt_id
      WHERE r.tenant_id=$1 AND r.run_id=$2`, [binding.tenantId, runId])).rows;
-  const row = { tenant_id: binding.tenantId, project_id: binding.projectId, job_id: binding.jobId,
-    attempt_id: binding.attemptId, run_id: runId, artifact_id: captured.receipt.artifactId,
+  const row = { tenant_id: binding.tenantId, project_id: binding.projectId, job_id: nativeBinding(runId).jobId,
+    attempt_id: nativeBinding(runId).attemptId, run_id: runId, artifact_id: captured.receipt.artifactId,
     receipt: receiptRows[0].receipt, receipt_auth_tag: receiptRows[0].auth_tag, manifest: receiptRows[0].manifest,
     reservation: reservationRows[0].reservation, reservation_auth_tag: reservationRows[0].auth_tag };
   const database = (rows: unknown[]): Pick<DatabaseClient, "query"> => ({ query: async <T>() => ({ rows: rows as T[] }) });

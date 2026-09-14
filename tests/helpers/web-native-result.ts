@@ -1,5 +1,6 @@
 import { nativeTaskFixture, at, observation, registration, inputDigest } from "../native-task-fixture";
 import { instant, binding } from "../hermes-native-fixture";
+import { createHash } from "node:crypto";
 import { SecurityStore, sha256Digest, InMemoryRollbackCheckpointStoreV1 } from "../../src/security";
 import { createAccessVerifier } from "../../src/web/v1/access-verifier";
 import { WebTaskService, type WebTaskKeys } from "../../src/web/v1/task-service";
@@ -8,6 +9,8 @@ import { NativeTaskResultService } from "../../src/node-control/native-task-resu
 import { InMemoryArtifactStorage } from "../../src/node-executor/artifact-storage";
 import { CompletionGateStoreV1, type CompletionAcceptanceProfileV1, type CompletionReviewTargetV1 } from "../../src/completion-gate/v1";
 import { token, request, trust } from "./web-foundation";
+
+const digest = (seed = "a") => `sha256:${createHash("sha256").update(`durable-test:${seed}`).digest("hex")}`;
 
 function runRunKey(runId: string): string {
   let h = 0;
@@ -66,8 +69,7 @@ export async function webNativeResultFixture() {
     await reviewStore.registerProfile(profile); await reviewStore.registerTarget(target);
     return { profile, target };
   }
-  async function provisionRun(runId: string) {
-    const jobId = `job:${runId}`, attemptId = `attempt:${runId}`;
+  async function provisionRun(runId: string, jobId: string, attemptId: string, authorityDigest = digest("s")) {
     const keyDigest = runRunKey(runId), runDigest = runRunDigest(runId, "run-digest-", "sha256"),
       runTag = runRunDigest(runId, "run-tag-", "hmac-sha256");
     await f.db.query(`INSERT INTO control_jobs(id,tenant_id,workflow_id,project_id,state,version,priority,required_capability,authority_digest,payload,created_at,updated_at)
@@ -91,16 +93,17 @@ export async function webNativeResultFixture() {
         leaseEpoch: 1, attemptNumber: 1, contractVersion: "control-room-domain/v1"
       }), at(-60_000)]);
     await f.db.query(`INSERT INTO control_harness_runs(id,tenant_id,project_id,job_id,attempt_id,node_id,adapter_id,harness,native_session_key_digest,parent_run_id,revision_of_run_id,state,last_sequence,run_digest,run_auth_tag,payload,created_at,updated_at,last_observed_at)
-      VALUES ($1,'tenant:test',$2,$3,$4,'node:test','adapter.hermes.native_runs.v1','hermes',$5,NULL,NULL,'discovered',0,$6,$7,$8,$9,$9,$9)`,
-      [runId, binding.projectId, jobId, attemptId, keyDigest, runDigest, runTag, JSON.stringify({
+      VALUES ($1,'tenant:test',$2,$3,$4,'node:test',$6,'hermes',$5,NULL,NULL,'discovered',0,$7,$8,$9,$10,$10,$10)`,
+      [runId, binding.projectId, jobId, attemptId, keyDigest, adapterId, runDigest, runTag, JSON.stringify({
         id: runId, jobId, state: "discovered", nodeId: binding.nodeId, harness: "hermes",
-        tenantId: binding.tenantId, adapterId: "adapter.hermes.native_runs.v1", attemptId,
+        tenantId: binding.tenantId, adapterId, attemptId,
         createdAt: at(-60_000), projectId: binding.projectId, resumable: false, updatedAt: at(-60_000),
         cancelState: "not_requested", schemaVersion: "control-room-harness/v1", adapterVersion: "1.0.0",
-        harnessVersion: "2026.8.31", lastObservedAt: at(-60_000), nativeSessionKeyDigest: keyDigest
+        harnessVersion: "2026.8.31", lastObservedAt: at(-60_000), nativeSessionKeyDigest: keyDigest,
+        connectorProfileDigest: digest("c"), authorityDigest
       }), at(-60_000)]);
   }
-  async function provisionRuns(runIds: string[]) { for (const r of runIds) await provisionRun(r); }
+  async function provisionRuns(runIds: string[]) { for (const r of runIds) await provisionRun(r, `job:${r}`, `attempt:${r}`); }
   return { ...f, storage, results, resultService, config, harnessKey, resultKey, taskKeys, tasks, scope, identity, jwt,
     accessTrust, checkpoints, reviewKey, reviewStore, complete, reviewTarget, provisionRun, provisionRuns };
 }
