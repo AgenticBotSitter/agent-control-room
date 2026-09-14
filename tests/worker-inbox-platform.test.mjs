@@ -346,17 +346,41 @@ test("logs stay bounded and keep the newest line", async (t) => {
   const root = scratch(t);
   const github = fakeGithub(assignment({ state: "working" }));
   const options = tickOptions(root, { fetchImpl: github.fetchImpl, maxLogBytes: 512 });
+  // Built in UTC and asserted from the same clock, so the expectation cannot depend on where this
+  // runs. A host-local constructor plus a hard-coded offset passed on a UTC-6 machine and failed on
+  // GitHub, which runs in UTC.
+  const tickClock = index => new Date(Date.UTC(2026, 8, 14, 12, index));
 
   for (let index = 0; index < 40; index++) {
     Object.assign(github.holder, assignment({ state: index % 2 === 0 ? "working" : "changes-required" }));
-    await runTick({ options, now: () => new Date(2026, 8, 14, 12, index) });
+    await runTick({ options, now: () => tickClock(index) });
   }
 
   const bounded = readFileSync(logFile(workerDirectory({ workerId: WORKER_ID, runtimeRoot: root })), "utf8");
   assert.ok(statSync(logFile(workerDirectory({ workerId: WORKER_ID, runtimeRoot: root }))).size <= 512,
     "the log must stay within its bound");
   assert.match(bounded, /\[log truncated by worker-inbox-platform/u);
-  assert.match(bounded, /2026-09-14T18:39:00\.000Z/u, "the newest line must survive truncation");
+  // The newest line is still named exactly, just without a hard-coded local offset.
+  assert.match(bounded, new RegExp(tickClock(39).toISOString().replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "u"),
+    "the newest line must survive truncation");
+
+  // The tick loop above cannot prove the truncation POLICY: whether the final append happens to
+  // trigger a truncation is incidental, so a truncation that discarded everything would still
+  // leave the newest line present at the end of the log. This fills the log to within one line of
+  // the bound and then appends the line that must overflow, so the newest-line assertion only
+  // passes if the truncation kept the newest lines. The truncation is asserted, so this probe
+  // cannot quietly stop testing anything.
+  const overflow = join(root, "bound.log");
+  const probeLine = suffix => `${"filler".repeat(10)}-${suffix}`;
+  const probeSize = () => statSync(overflow, { throwIfNoEntry: false })?.size ?? 0;
+  while (probeSize() <= 512 - (Buffer.byteLength(probeLine("newest-line")) + 1)) {
+    appendBoundedLog(overflow, probeLine("filler"), { maxBytes: 512 });
+  }
+  const overflowing = appendBoundedLog(overflow, probeLine("newest-line"), { maxBytes: 512 });
+  assert.equal(overflowing.truncated, true, "the probe must actually trigger a truncation");
+  assert.match(readFileSync(overflow, "utf8"), /-newest-line/u,
+    "the line that triggered the truncation must survive it");
+  assert.ok(statSync(overflow).size <= 512, "and the bound must still hold after it");
 
   assert.throws(() => appendBoundedLog(join(root, "x.log"), "line", { maxBytes: 10 }),
     /worker_inbox_platform_log_bound_invalid/u);
