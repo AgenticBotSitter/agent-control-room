@@ -21,8 +21,10 @@ Direct agent-wake integration is deliberately not claimed here.
 
 - Node.js 22.13 or newer.
 - A checkout of this repository (the watcher reuses the accepted inbox client from it).
-- Optional: `GITHUB_TOKEN` in your environment, or an authenticated `gh`, to avoid the
-  anonymous GitHub rate limit.
+- Optional: a GitHub token, to avoid the anonymous rate limit. Set `GITHUB_TOKEN` in your
+  environment, or pass `--token-from-gh` to use `gh auth token` in memory. An authenticated `gh`
+  by itself is **not** enough: the flag is opt-in, so without one of these the watcher makes
+  anonymous requests and will hit the rate limit on a busy repository.
 
 ## Quick start
 
@@ -32,6 +34,9 @@ Run one tick by hand. This is read-only and safe:
 node scripts/worker-inbox-platform/worker-inbox-watch.mjs --once \
   --worker-id YOUR-STABLE-WORKER-ID
 ```
+
+Add `--token-from-gh` to that command if the anonymous rate limit bites. It reads
+`gh auth token` in memory; no token value is written anywhere.
 
 You will see one of these, exactly as printed:
 

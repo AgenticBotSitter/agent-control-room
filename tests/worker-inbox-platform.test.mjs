@@ -719,11 +719,26 @@ test("the client renders a Record line and the watcher console does not", async 
   assert.match(renderWorkerInbox(WORKER_ID, actions), /^Record: /mu,
     "the accepted client must render a Record line for the row's instruction to be followable");
 
-  const result = await runTick({
-    options: tickOptions(scratch(t), { fetchImpl: fakeGithub(assignment()).fetchImpl }), now: CLOCK,
-  });
-  assert.ok(!/Record:/u.test(result.message),
-    "the watcher console must not be presented as the Record line it does not produce");
+  const root = scratch(t);
+  const options = tickOptions(root, { fetchImpl: github.fetchImpl });
+
+  const first = await runTick({ options, now: CLOCK });
+  assert.equal(first.change, "baseline-action");
+  // A second tick on the same runtime is unchanged, which takes the other console branch.
+  const second = await runTick({ options, now: CLOCK });
+  assert.equal(second.change, "unchanged");
+
+  // Both branches, because the notification and the quiet bookkeeping line are built by different
+  // paths and either could leak the Record line. Asserting on the tick result instead of the
+  // console line proved nothing: it never exercised this function at all.
+  for (const tick of [first, second]) {
+    const emitted = consoleDecision({
+      result: tick, options: { once: true, json: false }, lastReported: undefined,
+    });
+    assert.equal(emitted.print, true, "each tick must emit a console line for this to prove anything");
+    assert.ok(!/Record:/u.test(emitted.line),
+      `the console line for a ${tick.change} tick must not be mistaken for a Record line`);
+  }
 });
 
 test("the accepted inbox client is reused rather than reimplemented", async (t) => {
