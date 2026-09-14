@@ -48,6 +48,7 @@
 .private-action-link { display: inline-flex; min-height: 44px; align-items: center; border: 1px solid var(--border-strong); border-radius: .55rem; margin-top: .5rem; padding: .6rem .9rem; color: var(--green); font-weight: 700; }
 .private-action-link:hover { background: var(--surface-2); }
 .private-note { font-size: .875rem; margin-top: 1.5rem; }
+.private-shell main p a { padding-block: .15rem; }
 .private-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 360px); gap: 2rem; align-items: start; }
 .private-project-grid { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); gap: 1rem; }
 .private-project-grid li, .private-create, .private-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
@@ -66,6 +67,9 @@
 .private-create button { background: var(--green); color: var(--surface); margin-top: .3rem; }
 .private-shell button:disabled { opacity: .55; cursor: wait; }
 .private-shell textarea:focus-visible, .private-shell input:focus-visible { outline: 3px solid var(--green); outline-offset: 2px; }
+.private-shell a:focus-visible, .private-shell button:focus-visible, .private-shell select:focus-visible,
+.private-shell summary:focus-visible, .private-shell [tabindex]:focus-visible { outline: 3px solid var(--green); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .private-shell *, .private-shell *::before, .private-shell *::after { transition: none; animation: none; scroll-behavior: auto; } }
 .private-notice { background: var(--amber-soft); border: 1px solid var(--amber); border-radius: .75rem; padding: 1rem; margin-bottom: 1.5rem; }
 .private-back { display: inline-block; margin-bottom: 1.2rem; color: var(--muted); }
 .private-tabs { display: flex; gap: 1.5rem; border-bottom: 1px solid var(--border); margin-bottom: 1.5rem; }
