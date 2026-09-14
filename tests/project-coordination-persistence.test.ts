@@ -4,6 +4,13 @@ import { fixture, now } from "./helpers/web-foundation";
 import { nativeTaskLifecycleFixture } from "./helpers/native-task-lifecycle";
 import { nativeQualityCompletionFixture } from "./helpers/native-quality-completion";
 import type { JobRecord, AttemptRecord, LeaseRecord } from "../src/domain/v1";
+import {
+  canonicalProjectWorkResourceDeclarationV1, currentResourceHolderProofDigestV2,
+  noWorkspaceAnchorConfigurationDigestV1, noWorkspaceIntentDigestV1,
+  processRetirementProofDigestV1, projectCoordinatorExecutionBindingDigestV1,
+  projectCoordinatorPlanningMarkerDigestV1, projectWorkResourceAdmissionDigestV1,
+  projectWorkResourceDeclarationDigestV1, verifyCurrentResourceHolderProofV2,
+} from "../src/contracts/v1";
 
 const at = new Date(now).toISOString();
 const digest = `sha256:${"a".repeat(64)}`;
@@ -149,4 +156,103 @@ test("accepted proposals require their schema and cannot authorize another proje
       VALUES('tenant:test','operation:cross-project','project:coordination-other','proposal:valid',
        'proposal.adopt','owner','identity:test',1,'operation-cross-project',$1,0,0,$1,'{}',$2)`, [digest, at]));
   } finally { await x.close(); }
+});
+
+const boundaryDigest = (character: string) => `sha256:${character.repeat(64)}`;
+const boundaryBase = { tenantId: "tenant:test", projectId: "project:test", jobId: "job:test" };
+
+test("coordination boundary binds exact planner identity, job, attempt and run", () => {
+  const binding = { schema: "control-room.project-coordinator-execution-binding/v1" as const,
+    tenantId: boundaryBase.tenantId, projectId: boundaryBase.projectId, coordinatorIdentityId: "identity:agent",
+    executorId: "executor:agent", adapterId: "adapter:agent", connectorProfileDigest: boundaryDigest("a") };
+  const bindingDigest = projectCoordinatorExecutionBindingDigestV1(binding);
+  const marker = { schema: "control-room.project-coordinator-planning-marker/v1" as const,
+    tenantId: boundaryBase.tenantId, projectId: boundaryBase.projectId, planningJobId: boundaryBase.jobId,
+    planningJobDigest: boundaryDigest("2"), planningInputDigest: boundaryDigest("3"), attemptId: "attempt:plan",
+    runId: "run:plan", nodeId: "node:plan", coordinatorIdentityId: "identity:agent", coordinatorVersion: 3,
+    adapterId: binding.adapterId, connectorProfileDigest: binding.connectorProfileDigest,
+    executionBindingDigest: bindingDigest, executionRequestDigest: boundaryDigest("4"),
+    ownerIdentityId: "identity:owner", ownerRequestId: "request:owner", ownerRequestDigest: boundaryDigest("b"),
+    expectedProposalSchema: "control-room.project-coordination-proposal/v1" as const,
+    createdAt: "2026-09-14T00:00:00.000Z" };
+  const markerDigest = projectCoordinatorPlanningMarkerDigestV1(marker);
+  assert.notEqual(markerDigest, projectCoordinatorPlanningMarkerDigestV1({ ...marker, runId: "run:other" }));
+  assert.notEqual(markerDigest, projectCoordinatorPlanningMarkerDigestV1({ ...marker, planningJobDigest: boundaryDigest("5") }));
+  assert.notEqual(bindingDigest, projectCoordinatorExecutionBindingDigestV1({ ...binding, adapterId: "adapter:other" }));
+  assert.throws(() => projectCoordinatorPlanningMarkerDigestV1({ ...marker, suppliedAgentIdentity: "identity:other" }));
+});
+
+test("coordination resource declaration is deterministic and rejects ambiguous scopes", () => {
+  const declaration = { schema: "control-room.project-work-resource-declaration/v1" as const, ...boundaryBase,
+    workspace: { kind: "repository" as const, resourceId: "resource:repo",
+      resourceConfigurationDigest: boundaryDigest("c"), baseRevision: "abc123",
+      workspaceIntentDigest: boundaryDigest("d") },
+    scopes: [
+      { resourceId: "resource:logical", resourceKind: "logical" as const,
+        resourceConfigurationDigest: boundaryDigest("e"), accessMode: "read" as const,
+        scopeKind: "logical" as const, path: "" },
+      { resourceId: "resource:repo", resourceKind: "repository" as const,
+        resourceConfigurationDigest: boundaryDigest("c"), accessMode: "write" as const,
+        scopeKind: "tree" as const, path: "Src/Feature" },
+    ] };
+  assert.equal(canonicalProjectWorkResourceDeclarationV1(declaration).scopes[1]?.path, "src/feature");
+  assert.equal(projectWorkResourceDeclarationDigestV1(declaration),
+    projectWorkResourceDeclarationDigestV1({ ...declaration, scopes: [...declaration.scopes].reverse() }));
+  assert.throws(() => projectWorkResourceDeclarationDigestV1({ ...declaration, scopes: [
+    declaration.scopes[1], { ...declaration.scopes[1], path: "src/feature", accessMode: "read" },
+  ] }), /duplicate_scope/);
+  assert.throws(() => projectWorkResourceDeclarationDigestV1({ ...declaration, scopes: [{
+    resourceId: declaration.workspace.resourceId, resourceKind: "logical",
+    resourceConfigurationDigest: declaration.workspace.resourceConfigurationDigest,
+    accessMode: "write", scopeKind: "logical", path: "",
+  }] }), /workspace_scope_missing/);
+  assert.throws(() => projectWorkResourceDeclarationDigestV1({ ...declaration, scopes: [
+    declaration.scopes[1], { resourceId: "resource:logical:no-workspace:v1", resourceKind: "logical",
+      resourceConfigurationDigest: noWorkspaceAnchorConfigurationDigestV1(boundaryBase.tenantId),
+      accessMode: "write", scopeKind: "logical", path: "" },
+  ] }), /reserved_anchor_scope/);
+});
+
+test("coordination logical-only work and exact admission cannot borrow a workspace or attempt", () => {
+  const lineage = { ...boundaryBase, attemptId: "attempt:test", leaseId: "lease:test", nodeId: "node:test" };
+  const declaration = { schema: "control-room.project-work-resource-declaration/v1" as const, ...boundaryBase,
+    workspace: { kind: "none" as const, anchorResourceId: "resource:logical:no-workspace:v1" as const,
+      anchorConfigurationDigest: noWorkspaceAnchorConfigurationDigestV1(boundaryBase.tenantId),
+      baseRevision: "no-workspace:v1" as const, workspaceIntentDigest: noWorkspaceIntentDigestV1(boundaryBase) },
+    scopes: [{ resourceId: "resource:news-source", resourceKind: "logical" as const,
+      resourceConfigurationDigest: boundaryDigest("1"), accessMode: "write" as const,
+      scopeKind: "logical" as const, path: "" }] };
+  const declarationDigest = projectWorkResourceDeclarationDigestV1(declaration);
+  const admission = { schema: "control-room.project-work-resource-admission/v1" as const, ...lineage,
+    admissionId: "admission:test", declarationDigest };
+  const admissionDigest = projectWorkResourceAdmissionDigestV1(admission);
+  assert.notEqual(admissionDigest, projectWorkResourceAdmissionDigestV1({ ...admission, attemptId: "attempt:other" }));
+  assert.throws(() => projectWorkResourceDeclarationDigestV1({ ...declaration, scopes: [{
+    resourceId: "resource:logical:no-workspace:v1", resourceKind: "logical",
+    resourceConfigurationDigest: noWorkspaceAnchorConfigurationDigestV1(boundaryBase.tenantId),
+    accessMode: "write", scopeKind: "logical", path: "",
+  }] }), /reserved_anchor_scope/);
+});
+
+test("current holder and process-retirement evidence bind exact run and expire quickly", () => {
+  const proof = { schema: "control-room.current-resource-holder/v2" as const, ...boundaryBase,
+    attemptId: "attempt:test", leaseId: "lease:test", nodeId: "node:test", runId: "run:test",
+    admissionId: "admission:test", resourceAdmissionDigest: boundaryDigest("3"),
+    startAuthorizationDigest: boundaryDigest("4"), admissionVersion: 1, state: "held" as const,
+    checkedAt: "2026-09-14T00:00:00.000Z", expiresAt: "2026-09-14T00:00:10.000Z" };
+  const proofDigest = currentResourceHolderProofDigestV2(proof);
+  assert.notEqual(proofDigest, currentResourceHolderProofDigestV2({ ...proof, admissionVersion: 2 }));
+  assert.throws(() => currentResourceHolderProofDigestV2({ ...proof, state: "retired" }));
+  assert.throws(() => verifyCurrentResourceHolderProofV2({ ...proof, expiresAt: "2026-09-14T00:00:11.000Z" }, proof,
+    Date.parse("2026-09-14T00:00:01.000Z")), /current_resource_holder_proof_invalid/);
+  assert.throws(() => verifyCurrentResourceHolderProofV2(proof, { ...proof, runId: "run:other" },
+    Date.parse("2026-09-14T00:00:01.000Z")), /current_resource_holder_proof_invalid/);
+  const retirement = { schema: "control-room.process-retirement-proof/v1" as const, ...boundaryBase,
+    attemptId: proof.attemptId, leaseId: proof.leaseId, nodeId: proof.nodeId, admissionId: proof.admissionId,
+    resourceAdmissionDigest: proof.resourceAdmissionDigest, runId: proof.runId,
+    processIdentityDigest: boundaryDigest("7"), sourceKind: "native_recovery" as const,
+    sourceEvidenceDigest: boundaryDigest("8"), observedAt: proof.checkedAt };
+  assert.notEqual(processRetirementProofDigestV1(retirement),
+    processRetirementProofDigestV1({ ...retirement, runId: "run:other" }));
+  assert.throws(() => processRetirementProofDigestV1({ ...retirement, sourceKind: "lease_expired" }));
 });
