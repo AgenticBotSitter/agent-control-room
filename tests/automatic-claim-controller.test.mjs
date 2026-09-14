@@ -1033,3 +1033,98 @@ test("a definite expiry marker failure recovers on the next sweep without relabe
   assert.deepEqual(api.labels(125), ["status:ready"]);
   assert.ok(api.comments(125).some(comment => comment.body.startsWith("CLAIM EXPIRED —")));
 });
+
+/* ---- Second maintainer review round: expiry locks, exact state, cycle-bound
+ * caps, ambiguous-claim crash. ---- */
+
+test("an expired open-PR claim keeps its path lock without blocking unrelated scopes", async () => {
+  const old = 1_700_000_000_000;
+  const now = old + 73 * 3_600_000;
+  const api = fakeQueue({
+    issues: [
+      { number: 125, labels: ["status:ready"], packet: { writeScopes: ["docs/fresh/**"] } },
+      { number: 126, labels: ["status:working"], packet: { writeScopes: ["docs/kept/**"] } },
+    ],
+    pulls: [{ number: 42, state: "open", title: "Work (#126)", body: "Closes #126", base: { ref: "main" },
+      head: { sha: "c".repeat(40) }, user: { login: "shared-account" } }],
+  });
+  await seedAccepted(api, 126, "worker:kept-01", "shared-account", old);
+  const swept = await runClaimSweep({ repository, api, now });
+  assert.deepEqual(swept.outcomes, [{ issue: 126, action: "in-review", reason: "open_pr" }]);
+  assert.deepEqual(api.labels(126), ["status:in-review"]);
+  const expired = api.comments(126).find(comment => comment.body.startsWith("CLAIM EXPIRED —"));
+  assert.ok(expired, "open-PR expiry leaves an expiry marker");
+  assert.ok(expired.body.includes(`packet=${packetHash(parseClaimPacket(api.body(126)))}`),
+    "expiry marker binds the accepted packet hash");
+  api.setBody(125, packetBody({ writeScopes: ["docs/kept/overlap.md"] }));
+  assert.deepEqual(
+    await runClaimController({ event: lifecycleEvent("CLAIM REQUEST\nworker-id: worker:late-01"), repository, api }),
+    { status: "refused", reason: "scope_overlap" });
+  api.setBody(125, packetBody({ writeScopes: ["docs/fresh/new.md"] }));
+  assert.equal((await acceptHelper(api, 125, "worker:late-01")).status, "accepted");
+});
+
+test("a concurrent maintainer pause fails the expiry instead of reporting success", async () => {
+  const old = 1_700_000_000_000;
+  const now = old + 73 * 3_600_000;
+  let api;
+  api = fakeQueue({ issues: [{ number: 125, labels: ["status:working"] }],
+    failAt: ({ method, path }) => {
+      if (method === "DELETE" && path.includes("/labels/status%3Aworking"))
+        api.request("POST", `/repos/${repository}/issues/125/labels`, { labels: ["status:paused"] });
+      return undefined;
+    } });
+  await seedAccepted(api, 125, "worker:race-01", "shared-account", old);
+  await assert.rejects(runClaimSweep({ repository, api, now }), /claim_controller_state_changed/);
+  const labels = api.labels(125);
+  assert.ok(labels.includes("status:paused"), "the newer maintainer decision is never overwritten");
+  assert.ok(!labels.includes("status:working"), "the stale reservation is not restored over it");
+  const resweep = await runClaimSweep({ repository, api, now });
+  assert.deepEqual(resweep.outcomes, [], "no success is reported while the state is undecided");
+});
+
+test("a historical release does not hide a later cycle's in-review submission", async () => {
+  const head = "c".repeat(40);
+  const now = 1_700_000_100_000;
+  const actor = "shared-account";
+  const worker = "worker:cyc-01";
+  const api = fakeQueue({
+    issues: [
+      { number: 125, labels: ["status:working"], packet: { writeScopes: ["docs/s1/**"] } },
+      { number: 126, labels: ["status:in-review"], packet: { writeScopes: ["docs/s2/**"] } },
+      { number: 127, labels: ["status:in-review"], packet: { writeScopes: ["docs/s3/**"] } },
+    ],
+    pulls: [125, 126, 127].map((issue, index) => ({ number: 42 + index, state: "open",
+      title: `Work (#${issue})`, body: `Closes #${issue}`, base: { ref: "main" },
+      head: { sha: head }, user: { login: actor } })),
+  });
+  const post = (number, body) => api.request("POST", `/repos/${repository}/issues/${number}/comments`, { body });
+  const acceptedMark = (number, request) =>
+    `CLAIM ACCEPTED — \`@${actor}\` using worker identity \`${worker}\`.\n\n<!-- agent-control-room-claim:v3 issue=${number} request=${request} actor=${actor} worker=${worker} packet=${"d".repeat(64)} accepted=${now - 1000} -->`;
+  const submittedMark = (number, request, pr) =>
+    `CLAIM SUBMITTED — \`@${actor}\` using worker identity \`${worker}\` submitted PR #${pr}.\n\n<!-- agent-control-room-claim:v3 issue=${number} request=${request} actor=${actor} worker=${worker} packet=${"d".repeat(64)} accepted=${now - 1000} pr=${pr} sha=${head} -->`;
+  // Issue 126: an earlier cycle submitted and released, then a later cycle submitted again.
+  await post(126, acceptedMark(126, 500));
+  await post(126, submittedMark(126, 500, 43));
+  await post(126, `CLAIM RELEASED — \`@${actor}\` using worker identity \`${worker}\`.\n\n<!-- agent-control-room-claim:v3 issue=126 request=500 actor=${actor} worker=${worker} released=${now - 500} -->`);
+  await post(126, acceptedMark(126, 501));
+  await post(126, submittedMark(126, 501, 43));
+  await post(127, acceptedMark(127, 502));
+  await post(127, submittedMark(127, 502, 44));
+  await seedAccepted(api, 125, worker, actor);
+  assert.deepEqual(await runClaimSubmit({ event: lifecycleEvent(
+    `CLAIM SUBMIT\nworker-id: ${worker}\npr: 42\nsha: ${head}`, 125), repository, api, now }),
+  { status: "refused", reason: "in_review_limit" });
+  assert.deepEqual(api.labels(125), ["status:working"]);
+});
+
+test("an ambiguous claim expires to needs-decision without crashing", async () => {
+  const old = 1_700_000_000_000;
+  const now = old + 73 * 3_600_000;
+  const api = fakeQueue({ issues: [{ number: 125, labels: ["status:working"] }] });
+  await seedAccepted(api, 125, "worker:amb-01", "shared-account", old);
+  await seedAccepted(api, 125, "worker:amb-02", "shared-account", old);
+  const swept = await runClaimSweep({ repository, api, now });
+  assert.deepEqual(swept.outcomes, [{ issue: 125, action: "needs-decision", reason: "ambiguous_claim" }]);
+  assert.deepEqual(api.labels(125), ["status:needs-decision"]);
+});

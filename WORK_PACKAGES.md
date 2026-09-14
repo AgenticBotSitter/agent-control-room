@@ -120,7 +120,10 @@ not one issue/PR per small code edit.
    closed issues with the done disposition. Expired claims stop: quiet
    effect-free work returns to Ready, one open PR by the accepted worker stays
    In review, and ambiguous, multi-PR or effectful work becomes Needs
-   decision. Packet-less legacy locks fail closed until migrated.
+   decision. Packet-less legacy locks fail closed until migrated. An expired
+   open-PR claim keeps its path lock (the expiry marker binds the accepted
+   packet hash) without blocking unrelated scopes; an expiry that meets a
+   newer maintainer decision fails loudly instead of reporting success.
 3. Use your own fork/branch. Agree on milestones for large packages and send one cohesive
    PR per independently reviewable outcome. Multiple local commits are fine.
 4. Test locally. Include exact base/head, commands, observed results, relevant failure
