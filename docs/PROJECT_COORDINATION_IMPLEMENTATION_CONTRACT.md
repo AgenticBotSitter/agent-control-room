@@ -29,9 +29,25 @@ Migrations 0075 and 0076 reserve the durable records:
 ## Binding and proposal
 
 A server-only resolver maps an active agent identity to executor, adapter,
-optional connector profile and one binding digest. Identity ID never doubles as
-executor ID. Human coordinators have no execution binding. A revoked row remains
+required connector profile and one stable binding digest. The exact digest is
+`sha256Digest({schema, tenantId, projectId, coordinatorIdentityId, executorId,
+adapterId, connectorProfileDigest})`, where schema is
+`control-room.project-coordinator-execution-binding/v1`. Identity ID never doubles
+as executor ID. Human coordinators have no execution binding. A revoked row remains
 and its next assignment increments the same head version.
+
+An agent result is eligible for proposal parsing only when a server-created,
+immutable `control-room.project-coordinator-planning-marker/v1` names the exact
+tenant, project, planning job and job/input digests, attempt, run, node, adapter and
+profile, coordinator identity/version, stable execution binding, exact execution
+request, owner request ID/digest, expected proposal schema and creation time. Its digest covers
+that complete strict object. Ordinary task results never acquire this meaning from
+their text, job title, capability, action inbox entry or browser input. The marker
+will receive a dedicated append-only database record, unique by exact run, when
+the lead-owned retained-result integration lands after the active database-role
+package. Ingestion locks and rechecks the row alongside
+the coordinator head and immutable result receipt. Existing action-inbox, harness-run and execution-plan rows are evidence
+inputs but are not substitutes for this authority marker.
 
 The proposal format is control-room.project-coordination-proposal/v1: one strict
 JSON object and no surrounding prose or code fence. Reject duplicate JSON keys
@@ -88,12 +104,26 @@ exhaustion fails.
 
 ## Shared work admission and lock order
 
-Trusted product configuration resolves repository aliases to immutable
-tenant-scoped resource IDs. Clients cannot create a different spelling to evade
-conflicts. Each admitted attempt binds one repository/base revision, one
-workspace-intent digest, up to 64 path scopes and up to 32 logical resources.
-Paths follow the syntax in the parent decision and compare by stored lowercase
-complete segments.
+Trusted product configuration resolves repository and logical aliases to immutable
+tenant-scoped resource IDs and configuration digests. Clients cannot create a
+different spelling to evade conflicts. The exact strict declaration schema and
+digest functions are in `src/contracts/v1/project-coordination-boundaries.ts`.
+The declaration digest covers tenant, project and job; an explicit repository or
+no-workspace choice; immutable resource/configuration IDs; base revision;
+workspace-intent digest; and the sorted effective scopes. The separate admission
+digest adds exact attempt, lease, node and admission IDs, preventing one attempt
+from reusing another attempt's declaration.
+
+Repository paths compare as lowercase complete segments. Duplicate scopes,
+including the same scope declared once read and once write, refuse instead of
+depending on input order. Limits are 64 repository scopes and 32 logical scopes.
+Repository work requires a scope for its workspace resource. Logical-only work
+uses `workspace.kind=none`, at least one logical scope, the reserved immutable
+`logical:no-workspace:v1` anchor, `baseRevision=no-workspace:v1`, and a deterministic
+no-workspace intent digest over tenant, project and job. The separate admission
+digest binds the exact attempt lineage. The legacy-named
+`repository_resource_id` column stores this anchor; it does not turn logical work
+into repository work. The anchor is not itself a conflict scope.
 
 Fix existing route order before enabling parallel writers:
 
@@ -118,13 +148,35 @@ Same-repository writing serializes unless an owner policy permits exact disjoint
 scopes and the selected harness enforces a separate workspace. Otherwise use a
 root-tree write scope.
 
-Unknown active legacy attempts block new tenant writer admission until
-reconciled; omission never means read-only. Dispatch and Codex activation bind
-the admission/declaration digest and recheck it immediately before start.
+Unknown active legacy attempts block new tenant writer admission until reconciled;
+omission never means read-only and no holder is synthesized from guesses. A reader
+may proceed only when its declared resources do not require any assumption about
+legacy work. Started legacy work may complete through its existing result path.
+After version-two activation, unstarted version-one queue/delivery records are
+historical evidence only and cannot be sent, started, retried or reinterpreted.
+
+Do not alter strict version-one frames. Parallel version-two queue, submission,
+lease, dispatch, receipt, current-admission, activation and local-start records all
+carry the exact resource admission ID and digest under new digest namespaces and
+negotiated worker features. Version-one signatures cannot authorize version two.
+
+The final start fence uses an authenticated current-holder port, captured by the
+server/node composition rather than supplied per request. It rereads the exact
+holder, requires `held`, verifies the stored declaration/scopes and returns the
+strict proof defined in the shared contract module. The proof names the exact run and
+start authorization, may live for at most ten seconds, and is verified against a
+trusted clock and exact expected fields. Native start checks
+it immediately before releasing transport bytes. Codex checks it before workspace
+preparation, `thread/start` and `turn/start`. Missing, expired, changed or retired
+proof fails closed with no retry or reactivation; a historical signed dispatch is
+not proof that the holder is still current.
 
 Lease expiry, disconnect, browser closure, result text and transport receipt do
-not retire a holder. Only exact trusted no-start evidence or exact process
-retirement may change held to retired, in the completion/recovery transaction.
+not retire a holder. This implementation permits retirement only from exact
+authenticated process-retirement evidence matching the strict shared schema and bound to tenant/project/job/attempt/
+lease/node/admission/run and the process/evidence digests. The database's reserved
+`trusted_no_start` value remains unused until a separate lead-owned proof contract
+exists. A holder without process-retirement proof stays held.
 Quality acceptance and capacity release remain separate decisions.
 
 ## Acceptance
