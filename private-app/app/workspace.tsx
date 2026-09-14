@@ -1,6 +1,6 @@
 "use client";
 import { SessionObservations } from './session-observations';
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ProjectCatalog } from "../../app/components/project-catalog";
 import { ProjectCreateForm } from "../../app/components/project-create-form";
 import { BrowserRequestError, browserErrorMessage, createProjectBrowserClient } from "../../src/web/v1/browser-client";
@@ -10,8 +10,60 @@ import { PrivateHeader } from "./private-header";
 import { ProjectOverviewActivity } from "./project-overview-activity";
 import { ProjectNavigation } from "./project-navigation";
 import { ConfiguredTimestamp } from "./configured-timestamp";
-import { useProductModule } from "./product-configuration";
+import { useProductConfiguration, useProductModule } from "./product-configuration";
 import { ProjectScheduleStatusPanel } from "./schedule-status";
+import { ProjectModuleAvailability } from "./project-module-availability";
+
+/** Browser-side canonical JSON: stable across equivalent object key ordering. Mirrors the
+ * server's canonical-digest implementation so the template-selection key the browser sends
+ * matches the digest the server validates. Kept inline because this is the only consumer. */
+function canonicalJsonClient(value: unknown): string {
+  if (value === null) return "null";
+  if (typeof value === "boolean" || typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new Error("non_finite_number");
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) return `[${value.map((item) => canonicalJsonClient(item)).join(",")}]`;
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const keys = Object.keys(record).sort();
+    return `{${keys.map((key) => {
+      const child = record[key];
+      if (child === undefined || typeof child === "function" || typeof child === "symbol" || typeof child === "bigint")
+        throw new Error("non_json_value");
+      return `${JSON.stringify(key)}:${canonicalJsonClient(child)}`;
+    }).join(",")}}`;
+  }
+  throw new Error("non_json_value");
+}
+
+/** Browser-side sha256 hex digest via WebCrypto. The server uses node:crypto for the same input. */
+async function sha256DigestClient(value: unknown): Promise<string> {
+  const bytes = new TextEncoder().encode(canonicalJsonClient(value));
+  const subtle = (globalThis as { crypto?: Crypto }).crypto?.subtle;
+  if (!subtle) throw new Error("subtle_unavailable");
+  const digest = await subtle.digest("SHA-256", bytes);
+  return `sha256:${Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("")}`;
+}
+
+/** Template options for the project create form, paired with the digest the server validates against. */
+function useProductTemplateOptions(): readonly { templateId: string; displayName: string; configurationDigest: string }[] {
+  const configuration = useProductConfiguration();
+  const [digest, setDigest] = useState<string | undefined>();
+  useEffect(() => {
+    let cancelled = false;
+    if (!configuration) { setDigest(undefined); return; }
+    void sha256DigestClient(configuration).then((value) => { if (!cancelled) setDigest(value); });
+    return () => { cancelled = true; };
+  }, [configuration]);
+  return useMemo(() => {
+    if (!configuration || !digest) return [];
+    return configuration.projectTemplates.map((template: { id: string; displayName: string }) => ({
+      templateId: template.id, displayName: template.displayName, configurationDigest: digest,
+    }));
+  }, [configuration, digest]);
+}
 
 export type ProjectSection = "overview" | "inbox" | "agents" | "automations" | "settings";
 
@@ -41,6 +93,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
   projectId?: string; section?: ProjectSection; after?: string; lifecycleFilter?: WebProject["lifecycle"];
 }) {
   const sessionObservations = useProductModule("sessionObservations");
+  const templateOptions = useProductTemplateOptions();
   const [client] = useState(() => createProjectBrowserClient());
   const [projects, setProjects] = useState<ProjectView[]>([]);
   const [catalog, setCatalog] = useState<ProjectCatalogPage>();
@@ -97,7 +150,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
     return () => { live = false; clearInterval(interval); window.removeEventListener("focus", focus); };
   }, [client, projectId, refresh, after, lifecycleFilter]);
 
-  async function create(draft: { title: string; summary: string }) {
+  async function create(draft: { title: string; summary: string; templateSelection?: { templateId: string; configurationDigest: string } }) {
     if (writeBusy.current || client.hasPending()) return;
     writeBusy.current = true; generation.current++;
     setPending(true); setError(undefined);
@@ -155,7 +208,8 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
             {catalog.sources.ordinary === "not_authorized" && <p className="private-note">Ordinary projects are not included with your current access.</p>}
           </>}
           <p className="private-note">Each project has its own Tasks page for preparation, assignment, approval and results. That page shows which services are configured; opening a project does not start an agent.</p></div>
-          {catalog?.canCreate ? <ProjectCreateForm pending={pending || client.hasPending() || state !== "ready"} result={result} onCreate={draft => { void create(draft); }} />
+          {catalog?.canCreate ? <ProjectCreateForm pending={pending || client.hasPending() || state !== "ready"} result={result} templates={templateOptions}
+            onCreate={draft => { void create(draft); }} />
             : state === "ready" && <p className="private-note">Your current access does not allow creating ordinary projects.</p>}</div>
       </> : <>
         <a href="/projects" className="private-back">← All projects</a>
@@ -163,12 +217,13 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
         {state === "ready" && project && <>
           <div className="private-heading"><span className="private-state">{project.lifecycle} · {project.origin === "idea_lab" ? "From Idea Lab" : "Ordinary project"}</span><h1>{project.title}</h1></div>
           <ProjectIdeaOrigin project={project} />
-          <ProjectNavigation projectId={projectId} current={section} />
+          <ProjectNavigation projectId={projectId} current={section} presentation={project.presentation} />
           {section === "overview" && <section className="private-panel"><h2>Purpose</h2>
             <p className="private-summary">{project.summary || "No summary added."}</p>
             <p className="private-note"><a href={`/projects/${encodeURIComponent(projectId)}/tasks`}>Open project tasks</a> to prepare work, check assignment and approval, and inspect recorded progress and results. Task controls report unavailable services rather than assuming a live agent is connected.</p>
             <p className="private-note">Saved revision {project.version} · <ConfiguredTimestamp value={project.updatedAt} prefix="Updated" /></p>
           </section>}
+          <ProjectModuleAvailability presentation={project.presentation} />
           {section === "inbox" && <section className="private-panel"><h2>Project inbox</h2>
             <p>Open the saved attention list and choose an item from this project. The list reports missing checks and uncertain work instead of claiming an all-clear.</p>
             <a className="private-action-link" href="/needs-me">Open needs attention</a>
