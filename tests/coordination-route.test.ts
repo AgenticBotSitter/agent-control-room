@@ -32,11 +32,13 @@ import test from "node:test";
 
 import { PGlite } from "@electric-sql/pglite";
 import { adaptPglite } from "../src/persistence/database";
+import { sha256Digest } from "../src/security/digest";
 import { SecurityStore } from "../src/security/security-store";
 import { createAccessVerifier, type AccessTrust } from "../src/web/v1/access-verifier";
 import { createPrivateWebProcess } from "../src/web/v1/private-process";
 import type { ProjectCoordinationCanonicalStoreAdapter } from "../src/web/v1/project-coordination-http";
 import type { ProjectCoordinationCanonicalPortV1 } from "../src/project-coordination/v1/services";
+import type { CoordinatorLifecycleReceiptV1 } from "../src/project-coordination/v1/schemas";
 import { ProjectCoordinationErrorV1 } from "../src/project-coordination/v1/errors";
 
 const FIXTURE_NOW = Date.parse("2026-09-14T00:00:00.000Z");
@@ -79,10 +81,16 @@ function makeBadSignatureToken(now: number, audience: string, subject = "test-ow
 
 interface RouteFixture {
   handle: (request: Request) => Promise<Response>;
+  /**
+   * Fresh handler + service + in-flight map over the same durable rows —
+   * simulates a process restart. Only in-memory coalescing is lost; the
+   * receipt ledger (like PG rows) survives.
+   */
+  rebuild: () => { handle: (request: Request) => Promise<Response> };
   dispose: () => Promise<void>;
 }
 
-async function buildRouteFixture(opts: { coordinationEnabled?: boolean; engineDelayMs?: number; onEngineWrite?: () => void } = {}): Promise<RouteFixture> {
+async function buildRouteFixture(opts: { coordinationEnabled?: boolean; engineDelayMs?: number; onEngineWrite?: () => void; onEngineCommit?: () => void } = {}): Promise<RouteFixture> {
   const db = new PGlite();
   for (const file of (await readdir("db/migrations")).filter((f) => f.endsWith(".sql")).sort()) {
     await db.exec(await readFile(`db/migrations/${file}`, "utf8"));
@@ -112,6 +120,11 @@ async function buildRouteFixture(opts: { coordinationEnabled?: boolean; engineDe
   });
 
   const headRows = new Map<string, { state: "active" | "revoked"; version: number; coordinatorActorType: "human" | "agent"; coordinatorIdentityId: string; executorId?: string; adapterId?: string; connectorProfileDigest?: string; executionBindingDigest?: string; occurredAt: string; ownerIdentityId: string }>();
+  type CoordinatorHeadRow = NonNullable<ReturnType<typeof headRows.get>>;
+  // Durable receipt ledger mirroring control_idempotency for the coordinator
+  // lifecycle: one saved receipt per Idempotency-Key. Shared by rebuilt
+  // handlers in reconstruction tests, like PG rows survive a restart.
+  const lifecycleReceipts = new Map<string, { contentKey: string; receipt: CoordinatorLifecycleReceiptV1 }>();
   const policyRows = new Map<string, { policyId: string; state: "active" | "paused" | "revoked"; coordinatorVersion: number; ownerIdentityId: string }>();
   const policyByProject = new Map<string, { policyId: string; state: "active" | "paused" | "revoked"; coordinatorVersion: number; ownerIdentityId: string }>();
   const projects = new Map<string, { projectId: string; title: string; summary: string; lifecycle: string; version: number; createdAt: string; updatedAt: string }>([["project:example", {
@@ -126,20 +139,60 @@ async function buildRouteFixture(opts: { coordinationEnabled?: boolean; engineDe
 
   const port: ProjectCoordinationCanonicalPortV1 = {
     async assignProjectCoordinatorV1(input) {
+      // Mirrors the merged canonical receipt semantics: the idempotency
+      // ledger is probed first (exact retry returns the saved receipt,
+      // changed content under the same key conflicts), then the expected
+      // version is enforced. Appoint is version-checked upsert, like the
+      // merged engine — there is no already_active refusal at this layer.
+      const contentKey = JSON.stringify({
+        operation: input.operation,
+        appointment: input.appointment,
+        expectedVersion: input.expectedVersion,
+        executionBindingDigest: input.executionBindingDigest ?? null,
+      });
+      const prior = lifecycleReceipts.get(input.idempotencyKey);
+      if (prior) {
+        if (prior.contentKey !== contentKey) {
+          throw new ProjectCoordinationErrorV1("coordinator_replay_conflict" as never);
+        }
+        return { ...prior.receipt, replayed: true as const };
+      }
+      const headVersion = headRows.get(input.appointment.projectId)?.version ?? 0;
+      if (input.expectedVersion !== headVersion) {
+        throw new ProjectCoordinationErrorV1("coordinator_version_stale" as never);
+      }
+      // Builds the same receipt shape the merged canonical store writes,
+      // so the service's receipt parse behaves identically against the fake.
+      const buildReceipt = (version: number, state: "active" | "revoked") => {
+        const body = {
+          schema: "control-room.project-coordinator-lifecycle-receipt/v1" as const,
+          operation: input.operation,
+          tenantId: input.appointment.tenantId,
+          projectId: input.appointment.projectId,
+          idempotencyKey: input.idempotencyKey,
+          requestDigest: input.requestDigest,
+          expectedVersion: input.expectedVersion,
+          version,
+          state,
+        };
+        return { ...body, receiptDigest: sha256Digest(body) };
+      };
       opts.onEngineWrite?.();
       if (opts.engineDelayMs) await new Promise((resolve) => setTimeout(resolve, opts.engineDelayMs));
       if (input.operation === "revoke") {
         const existing = headRows.get(input.appointment.projectId);
-        if (!existing) throw new ProjectCoordinationErrorV1("no_coordinator" as never);
-        const next = { ...existing, state: "revoked" as const };
+        if (!existing) throw new ProjectCoordinationErrorV1("coordinator_absent" as never);
+        const next: CoordinatorHeadRow = { ...existing, state: "revoked" };
         headRows.set(input.appointment.projectId, next);
-        return { version: existing.version, state: "revoked" as const };
+        const receipt = buildReceipt(existing.version, "revoked");
+        lifecycleReceipts.set(input.idempotencyKey, { contentKey, receipt });
+        opts.onEngineCommit?.();
+        return { ...receipt, replayed: false as const };
       }
       const existing = headRows.get(input.appointment.projectId);
-      if (existing && existing.state === "active") throw new ProjectCoordinationErrorV1("coordinator_already_active" as never);
       const version = (existing?.version ?? 0) + 1;
-      const row = {
-        state: "active" as const,
+      const row: CoordinatorHeadRow = {
+        state: "active",
         version,
         coordinatorActorType: input.appointment.coordinatorActorType,
         coordinatorIdentityId: input.appointment.coordinatorIdentityId,
@@ -151,7 +204,10 @@ async function buildRouteFixture(opts: { coordinationEnabled?: boolean; engineDe
         ownerIdentityId: input.appointment.ownerIdentityId,
       };
       headRows.set(input.appointment.projectId, row);
-      return { version, state: "active" as const, executionBindingDigest: input.executionBindingDigest };
+      const receipt = buildReceipt(version, "active");
+      lifecycleReceipts.set(input.idempotencyKey, { contentKey, receipt });
+      opts.onEngineCommit?.();
+      return { ...receipt, replayed: false as const };
     },
     async setProjectDelegationPolicyStateV1(input) {
       const existing = policyRows.get(input.policyId);
@@ -224,13 +280,28 @@ async function buildRouteFixture(opts: { coordinationEnabled?: boolean; engineDe
     database: { client, close: async () => { await db.close(); } },
     coordination: { store },
   });
+  const toFixture = (application: { handle: (request: Request, render: () => Promise<Response> | Response) => Promise<Response> }) => ({
+    handle: async (request: Request) => {
+      return application.handle(request, () => new Response(null, { status: 404 }));
+    },
+  });
   // We use the wired application directly; pass a noop render so unknown
   // paths return 404 instead of an SSR shell. We only care about
   // /api/v1/projects/:id/coordination paths.
   return {
-    handle: async (request: Request) => {
-      return application.handle(request, () => new Response(null, { status: 404 }));
-    },
+    ...toFixture(application),
+    rebuild: () => toFixture(createPrivateWebProcess({
+      origin: FIXTURE_ORIGIN,
+      issuer: trust.issuer,
+      audience: trust.audience,
+      tenantId: FIXTURE_TENANT,
+      workspaceId: "workspace:test",
+      maxSessionSeconds: 604800,
+      clock: () => FIXTURE_NOW,
+      loadKeys: async () => trust.keys,
+      database: { client, close: async () => {} },
+      coordination: { store },
+    })),
     dispose: async () => { void db.close(); },
   };
 }
@@ -459,8 +530,10 @@ test("POST with a stale revision is refused with stale_revision", async (t) => {
   assert.equal(result.reasonCode, "stale_revision");
 });
 
-test("sequential same-key retry re-runs the engine — no durable replay without the receipt seam", async (t) => {
-  const f = await buildRouteFixture(); t.after(() => f.dispose());
+test("sequential same-key retry returns the saved receipt without repeating the coordinator change", async (t) => {
+  let commits = 0;
+  const f = await buildRouteFixture({ onEngineCommit: () => { commits += 1; } });
+  t.after(() => f.dispose());
   const token = makeToken(FIXTURE_NOW, "test-app");
   const observedAt = new Date(FIXTURE_NOW).toISOString();
   const body = JSON.stringify({
@@ -485,36 +558,32 @@ test("sequential same-key retry re-runs the engine — no durable replay without
     },
     body,
   });
-  // First call runs the engine and bumps the canonical coordinator version.
+  // First call runs the engine, records one permanent receipt, and bumps the
+  // canonical coordinator version.
   const first = await f.handle(buildRequest());
   const firstResult = await first.clone().json();
   assert.equal(first.status, 200);
+  assert.equal(firstResult.status, "accepted");
   assert.equal(firstResult.revision.expectedCoordinatorVersion, 1);
+  assert.equal(commits, 1);
 
-  // Second call with the same Idempotency-Key RE-RUNS the engine: the
-  // in-flight map is perf-only and holds nothing after the first response.
-  // The submitted revision (0) is now stale against head (1), so the engine
-  // refuses with stale_revision. This pins the honest current behavior AND
-  // the reason durable replay needs the missing receipt seam: without a
-  // canonical saved receipt for appoint/replace/revoke, a lost response
-  // followed by a retry cannot be reconciled without repeating the command.
-  // Missing seam: no method on ProjectCoordinationCanonicalPortV1 accepts an
-  // idempotency key for the coordinator lifecycle (assign/revoke); the
-  // control_project_coordination_operation_receipts path covers proposal
-  // adoption only (adoptProjectCoordinationProposalV1).
+  // Lost response: the client retries the byte-identical request. The route
+  // passes the exact Idempotency-Key into the merged service, whose PG
+  // transaction finds the saved receipt and returns it — no second write,
+  // same recorded outcome.
   const second = await f.handle(buildRequest());
   assert.equal(second.status, 200);
   const secondResult = await second.clone().json();
-  assert.equal(secondResult.status, "refused");
-  assert.equal(secondResult.reasonCode, "stale_revision");
-  assert.equal(secondResult.revision.expectedCoordinatorVersion, 1);
+  assert.equal(secondResult.status, "accepted");
+  assert.deepEqual(secondResult, firstResult);
+  assert.equal(commits, 1);
 });
 
 test("simultaneous same-key POSTs run the engine once and both callers get the same outcome", async (t) => {
-  let engineWrites = 0;
+  let commits = 0;
   const f = await buildRouteFixture({
     engineDelayMs: 20,
-    onEngineWrite: () => { engineWrites += 1; },
+    onEngineCommit: () => { commits += 1; },
   });
   t.after(() => f.dispose());
   const token = makeToken(FIXTURE_NOW, "test-app");
@@ -549,9 +618,54 @@ test("simultaneous same-key POSTs run the engine once and both callers get the s
   assert.equal(second.status, 200);
   const firstResult = await first.json();
   const secondResult = await second.json();
-  assert.equal(engineWrites, 1);
+  assert.equal(commits, 1);
   assert.equal(firstResult.status, "accepted");
   assert.deepEqual(secondResult, firstResult);
+});
+
+test("reconstructed handler returns the saved receipt — restart loses no retry safety", async (t) => {
+  let commits = 0;
+  const f = await buildRouteFixture({ onEngineCommit: () => { commits += 1; } });
+  t.after(() => f.dispose());
+  const token = makeToken(FIXTURE_NOW, "test-app");
+  const observedAt = new Date(FIXTURE_NOW).toISOString();
+  const body = JSON.stringify({
+    revision: {
+      projectId: "project:example",
+      expectedCoordinatorVersion: 0,
+      expectedPolicyVersion: 0,
+      expectedConflictsVersion: 0,
+      expectedAttentionVersion: 0,
+      observedAt,
+    },
+    coordinatorActorType: "human",
+    coordinatorIdentityId: "owner-self-8",
+  });
+  const buildRequest = () => new Request(`${FIXTURE_ORIGIN}/api/v1/projects/project:example/coordination/appoint-coordinator`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "cf-access-jwt-assertion": token,
+      "idempotency-key": "appointment-restart01",
+      "origin": FIXTURE_ORIGIN,
+    },
+    body,
+  });
+  const first = await f.handle(buildRequest());
+  const firstResult = await first.clone().json();
+  assert.equal(firstResult.status, "accepted");
+  assert.equal(commits, 1);
+
+  // Simulate a Control Room restart: a fresh handler, service, and in-flight
+  // map over the same durable rows. The retry must be answered from the
+  // saved receipt — no second coordinator write.
+  const rebuilt = f.rebuild();
+  const second = await rebuilt.handle(buildRequest());
+  assert.equal(second.status, 200);
+  const secondResult = await second.clone().json();
+  assert.equal(secondResult.status, "accepted");
+  assert.deepEqual(secondResult, firstResult);
+  assert.equal(commits, 1);
 });
 
 test("different Idempotency-Keys on the same project both run the engine", async (t) => {

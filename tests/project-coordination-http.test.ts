@@ -60,12 +60,17 @@ test("appoint-coordinator creates a head and returns a new revision", async (t) 
     revision: readRevisionFromPage(read),
     coordinatorActorType: "human",
     coordinatorIdentityId: "owner-self-2",
+    idempotencyKey: "http-test-key-01",
   });
   assert.equal(outcome.status, "accepted");
   assert.equal(outcome.revision.expectedCoordinatorVersion, read.coordinatorHead.version + 1);
 });
 
-test("appoint-coordinator refuses an already-active head", async (t) => {
+test("appoint-coordinator on an active head follows the merged upsert semantics", async (t) => {
+  // The merged canonical engine treats appoint as version-checked upsert
+  // (PR #219): there is no already_active refusal at the engine boundary.
+  // The HTTP layer follows the engine — a fresh key with a matching revision
+  // advances the head instead of refusing.
   const f = await projectCoordinationHttpFixture({ now: FIXTURE_NOW });
   t.after(() => f.dispose());
   const read = await f.service.read(f.identity, "project:example");
@@ -74,6 +79,7 @@ test("appoint-coordinator refuses an already-active head", async (t) => {
     revision: readRevisionFromPage(read),
     coordinatorActorType: "human",
     coordinatorIdentityId: "owner-self-2",
+    idempotencyKey: "http-test-key-02",
   });
   const reread = await f.service.read(f.identity, "project:example");
   const outcome = await f.service.appointCoordinator(f.identity, {
@@ -81,12 +87,16 @@ test("appoint-coordinator refuses an already-active head", async (t) => {
     revision: readRevisionFromPage(reread),
     coordinatorActorType: "human",
     coordinatorIdentityId: "owner-self-3",
+    idempotencyKey: "http-test-upsert-01",
   });
-  assert.equal(outcome.status, "refused");
-  assert.equal(outcome.reasonCode, "coordinator_already_active");
+  assert.equal(outcome.status, "accepted");
+  assert.equal(outcome.revision.expectedCoordinatorVersion, 2);
 });
 
 test("replace-coordinator on a fresh project refuses with no_coordinator", async (t) => {
+  // The HTTP layer keeps this guard: replace names an existing head, so a
+  // missing head refuses before the engine runs. (Appoint is the upsert path
+  // under the merged engine, not replace.)
   const f = await projectCoordinationHttpFixture({ now: FIXTURE_NOW });
   t.after(() => f.dispose());
   const read = await f.service.read(f.identity, "project:example");
@@ -95,9 +105,60 @@ test("replace-coordinator on a fresh project refuses with no_coordinator", async
     revision: readRevisionFromPage(read),
     coordinatorActorType: "human",
     coordinatorIdentityId: "owner-self-2",
+    idempotencyKey: "http-test-replace-fresh-01",
   });
   assert.equal(outcome.status, "refused");
   assert.equal(outcome.reasonCode, "no_coordinator");
+});
+
+test("exact retry with the same Idempotency-Key returns the saved receipt without a second write", async (t) => {
+  const f = await projectCoordinationHttpFixture({ now: FIXTURE_NOW });
+  t.after(() => f.dispose());
+  const read = await f.service.read(f.identity, "project:example");
+  const revision = readRevisionFromPage(read);
+  const first = await f.service.appointCoordinator(f.identity, {
+    projectId: "project:example",
+    revision,
+    coordinatorActorType: "human",
+    coordinatorIdentityId: "owner-self-2",
+    idempotencyKey: "http-test-replay-01",
+  });
+  assert.equal(first.status, "accepted");
+  // Lost response: the client retries the byte-identical request. The engine
+  // finds the saved receipt and returns it — the head version does not move.
+  const second = await f.service.appointCoordinator(f.identity, {
+    projectId: "project:example",
+    revision,
+    coordinatorActorType: "human",
+    coordinatorIdentityId: "owner-self-2",
+    idempotencyKey: "http-test-replay-01",
+  });
+  assert.equal(second.status, "accepted");
+  assert.deepEqual(second, first);
+});
+
+test("changed content under the same Idempotency-Key is refused with coordinator_replay_conflict", async (t) => {
+  const f = await projectCoordinationHttpFixture({ now: FIXTURE_NOW });
+  t.after(() => f.dispose());
+  const read = await f.service.read(f.identity, "project:example");
+  const revision = readRevisionFromPage(read);
+  const first = await f.service.appointCoordinator(f.identity, {
+    projectId: "project:example",
+    revision,
+    coordinatorActorType: "human",
+    coordinatorIdentityId: "owner-self-2",
+    idempotencyKey: "http-test-conflict-01",
+  });
+  assert.equal(first.status, "accepted");
+  const second = await f.service.appointCoordinator(f.identity, {
+    projectId: "project:example",
+    revision,
+    coordinatorActorType: "human",
+    coordinatorIdentityId: "owner-self-9",
+    idempotencyKey: "http-test-conflict-01",
+  });
+  assert.equal(second.status, "refused");
+  assert.equal(second.reasonCode, "coordinator_replay_conflict");
 });
 
 test("coordinator self-approval: a human coordinator identity that matches the acting owner is refused", async (t) => {
@@ -109,6 +170,7 @@ test("coordinator self-approval: a human coordinator identity that matches the a
     revision: readRevisionFromPage(read),
     coordinatorActorType: "human",
     coordinatorIdentityId: "identity:owner",
+    idempotencyKey: "http-test-key-05",
   });
   assert.equal(outcome.status, "refused");
   assert.equal(outcome.reasonCode, "coordinator_self_approval");
@@ -123,6 +185,7 @@ test("agent coordinators must carry the execution-binding fields", async (t) => 
     revision: readRevisionFromPage(read),
     coordinatorActorType: "agent",
     coordinatorIdentityId: "identity:agent",
+    idempotencyKey: "http-test-key-06",
     executorId: "executor:agent",
     adapterId: "adapter:agent",
     connectorProfileDigest: "sha256:" + "0".repeat(64),
@@ -139,6 +202,7 @@ test("agent coordinators with coordinatorIdentityId === executorId are refused",
     revision: readRevisionFromPage(read),
     coordinatorActorType: "agent",
     coordinatorIdentityId: "identity:self",
+    idempotencyKey: "http-test-key-07",
     executorId: "identity:self",
     adapterId: "adapter:agent",
     connectorProfileDigest: "sha256:" + "0".repeat(64),
@@ -158,6 +222,7 @@ test("stale revision guard refuses any lifecycle action", async (t) => {
     revision: readRevisionFromPage(read),
     coordinatorActorType: "human",
     coordinatorIdentityId: "owner-self-2",
+    idempotencyKey: "http-test-key-08",
   });
   // Try to act against the old revision.
   const stale = await f.service.replaceCoordinator(f.identity, {
@@ -165,6 +230,7 @@ test("stale revision guard refuses any lifecycle action", async (t) => {
     revision: readRevisionFromPage(read),
     coordinatorActorType: "human",
     coordinatorIdentityId: "owner-self-3",
+    idempotencyKey: "http-test-key-09",
   });
   assert.equal(stale.status, "refused");
   assert.equal(stale.reasonCode, "stale_revision");
@@ -219,6 +285,7 @@ test("disabled coordination surfaces the page but refuses every lifecycle action
     revision: readRevisionFromPage(read),
     coordinatorActorType: "human",
     coordinatorIdentityId: "owner-self-2",
+    idempotencyKey: "http-test-key-10",
   });
   // The service does not refuse on the disabled flag at the HTTP layer; the
   // server composition gates the action. We document that here by asserting

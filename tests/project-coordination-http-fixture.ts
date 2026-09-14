@@ -25,6 +25,8 @@ import { ProjectCoordinationHttpService, type ProjectCoordinationCanonicalStoreA
 import type { VerifiedWebIdentity } from "../src/web/v1/access-verifier";
 import { ProjectCoordinationErrorV1 } from "../src/project-coordination/v1/errors";
 import type { ProjectCoordinationCanonicalPortV1 } from "../src/project-coordination/v1/services";
+import type { CoordinatorLifecycleReceiptV1 } from "../src/project-coordination/v1/schemas";
+import { sha256Digest } from "../src/security/digest";
 
 interface FixtureOptions {
   now: number;
@@ -121,6 +123,8 @@ export async function projectCoordinationHttpFixture(options: FixtureOptions) {
   });
 
   const headRows = new Map<string, CoordinatorHeadRow>();
+  // Same durable receipt ledger as the route-test fixture.
+  const lifecycleReceipts = new Map<string, { contentKey: string; receipt: CoordinatorLifecycleReceiptV1 }>();
   const policyRows = new Map<string, DelegationPolicyRow>();
   const policyByProject = new Map<string, DelegationPolicyRow>();
   const attentionByProject = new Map<string, number>();
@@ -150,15 +154,49 @@ export async function projectCoordinationHttpFixture(options: FixtureOptions) {
 
   const port: ProjectCoordinationCanonicalPortV1 = {
     async assignProjectCoordinatorV1(input) {
+      // Mirrors the merged canonical receipt semantics (see the route-test
+      // fixture): ledger probe first, then expected-version enforcement.
+      const contentKey = JSON.stringify({
+        operation: input.operation,
+        appointment: input.appointment,
+        expectedVersion: input.expectedVersion,
+        executionBindingDigest: input.executionBindingDigest ?? null,
+      });
+      const prior = lifecycleReceipts.get(input.idempotencyKey);
+      if (prior) {
+        if (prior.contentKey !== contentKey) {
+          throw new ProjectCoordinationErrorV1("coordinator_replay_conflict" as never);
+        }
+        return { ...prior.receipt, replayed: true as const };
+      }
+      const headVersion = headRows.get(input.appointment.projectId)?.version ?? 0;
+      if (input.expectedVersion !== headVersion) {
+        throw new ProjectCoordinationErrorV1("coordinator_version_stale" as never);
+      }
+      const buildReceipt = (version: number, state: "active" | "revoked") => {
+        const body = {
+          schema: "control-room.project-coordinator-lifecycle-receipt/v1" as const,
+          operation: input.operation,
+          tenantId: input.appointment.tenantId,
+          projectId: input.appointment.projectId,
+          idempotencyKey: input.idempotencyKey,
+          requestDigest: input.requestDigest,
+          expectedVersion: input.expectedVersion,
+          version,
+          state,
+        };
+        return { ...body, receiptDigest: sha256Digest(body) };
+      };
       if (input.operation === "revoke") {
         const existing = headRows.get(input.appointment.projectId);
-        if (!existing) throw new ProjectCoordinationErrorV1("no_coordinator" as never);
+        if (!existing) throw new ProjectCoordinationErrorV1("coordinator_absent" as never);
         const next: CoordinatorHeadRow = { ...existing, state: "revoked" };
         headRows.set(input.appointment.projectId, next);
-        return { version: existing.version, state: "revoked" };
+        const receipt = buildReceipt(existing.version, "revoked");
+        lifecycleReceipts.set(input.idempotencyKey, { contentKey, receipt });
+        return { ...receipt, replayed: false as const };
       }
       const existing = headRows.get(input.appointment.projectId);
-      if (existing && existing.state === "active") throw new ProjectCoordinationErrorV1("coordinator_already_active" as never);
       const version = (existing?.version ?? 0) + 1;
       const row: CoordinatorHeadRow = {
         state: "active",
@@ -173,7 +211,9 @@ export async function projectCoordinationHttpFixture(options: FixtureOptions) {
         ownerIdentityId: input.appointment.ownerIdentityId,
       };
       headRows.set(input.appointment.projectId, row);
-      return { version, state: "active", executionBindingDigest: input.executionBindingDigest };
+      const receipt = buildReceipt(version, "active");
+      lifecycleReceipts.set(input.idempotencyKey, { contentKey, receipt });
+      return { ...receipt, replayed: false as const };
     },
     async setProjectDelegationPolicyStateV1(input) {
       const existing = policyRows.get(input.policyId);

@@ -189,6 +189,7 @@ export type ProjectCoordinationReasonCode =
   | "stale_revision"
   | "no_coordinator"
   | "coordinator_already_active"
+  | "coordinator_replay_conflict"
   | "policy_required"
   | "policy_already_active"
   | "policy_already_revoked"
@@ -229,6 +230,12 @@ interface ProjectCoordinatorAppointInput extends ProjectCoordinationActionReques
   executorId?: string;
   adapterId?: string;
   connectorProfileDigest?: string;
+  /**
+   * The route's exact Idempotency-Key, passed through to the merged
+   * coordinator service. The PG transaction records one permanent receipt
+   * per key and returns it on exact retry.
+   */
+  idempotencyKey: string;
 }
 
 interface ProjectCoordinatorRevokePolicyInput extends ProjectCoordinationActionRequest {
@@ -245,7 +252,15 @@ const ACTIONS = {
   read: "coordination.read",
 } as const;
 
-function coerceReasonCode(value: unknown): ProjectCoordinationReasonCode | undefined {
+/**
+ * Engine refusal codes the HTTP layer translates into the wire envelope.
+ * Most pass through verbatim; `coordinator_version_stale` becomes the
+ * long-standing `stale_revision` wire code and `coordinator_absent` becomes
+ * `no_coordinator` so revoke-missing keeps its historic shape.
+ */
+type EngineRefusalCode = ProjectCoordinationReasonCode | "coordinator_version_stale" | "coordinator_absent";
+
+function coerceReasonCode(value: unknown): EngineRefusalCode | undefined {
   // The real engine throws ProjectCoordinationErrorV1 with a `safeCode`. The
   // transport and a few first-party wrappers use a `code` field instead. The
   // fixtures throw `Error("…")` with the code on the message. Take whichever
@@ -264,6 +279,9 @@ function coerceReasonCode(value: unknown): ProjectCoordinationReasonCode | undef
     case "stale_revision":
     case "no_coordinator":
     case "coordinator_already_active":
+    case "coordinator_replay_conflict":
+    case "coordinator_version_stale":
+    case "coordinator_absent":
     case "policy_required":
     case "policy_already_active":
     case "policy_already_revoked":
@@ -360,6 +378,13 @@ export class ProjectCoordinationHttpService {
       const currentAttentionVersion = await this.store.attentionVersion(input.projectId);
       const observedAt = new Date(this.options.clock()).toISOString();
 
+      // Revision gate, minus the coordinator version. The coordinator version
+      // is owned by the merged engine: the PG transaction probes the
+      // idempotency ledger first (exact retry returns its saved receipt) and
+      // only then enforces expectedVersion. Refusing a coordinator mismatch
+      // here would make durable replay unreachable, so a mismatch defers to
+      // the engine instead. Policy/conflict/attention versions are outside
+      // the receipt's scope and still refuse immediately.
       const versionCheck = this.checkRevisions(
         input,
         currentCoordinatorVersion,
@@ -367,6 +392,7 @@ export class ProjectCoordinationHttpService {
         currentConflictsVersion,
         currentAttentionVersion,
         observedAt,
+        true,
       );
       if (versionCheck) return versionCheck;
 
@@ -378,14 +404,11 @@ export class ProjectCoordinationHttpService {
           expectedAttentionVersion: currentAttentionVersion,
         }, input.projectId);
       }
-      if (!requireExistingHead && currentCoordinatorVersion > 0) {
-        return this.refused("coordinator_already_active", observedAt, {
-          expectedCoordinatorVersion: currentCoordinatorVersion,
-          expectedPolicyVersion: currentPolicyVersion,
-          expectedConflictsVersion: currentConflictsVersion,
-          expectedAttentionVersion: currentAttentionVersion,
-        }, input.projectId);
-      }
+      // No already_active pre-check: the merged canonical engine treats
+      // appoint as version-checked upsert and decides in PostgreSQL. An exact
+      // retry must reach the engine to collect its saved receipt; a
+      // same-key/changed-content retry is refused there with
+      // coordinator_replay_conflict.
 
       // Self-approval: the acting owner identity must not name itself as the
       // coordinator. This is the documented refusal surface for an agent that
@@ -453,31 +476,48 @@ export class ProjectCoordinationHttpService {
 
       actor.require(action, input.projectId);
       const coordinatorService = new ProjectCoordinatorServiceV1(this.store.coordinator);
-      const operation = action === ACTIONS.revoke ? "revoke" : "assign";
+      // The merged service requires the route's exact Idempotency-Key and the
+      // submitted expected version. Its PG transaction returns the saved
+      // receipt on an exact retry, refuses changed content under the same key,
+      // and refuses stale versions — the durable authority for this route.
+      const operation = action === ACTIONS.revoke ? "revoke" : action === ACTIONS.replace ? "replace" : "appoint";
       try {
-        await coordinatorService[operation === "revoke" ? "revoke" : "appoint"](
-          operation === "revoke" ? appointment : appointment,
+        const receipt = await coordinatorService[operation](
+          appointment,
+          input.idempotencyKey,
+          input.revision.expectedCoordinatorVersion,
         );
-      } catch (error: unknown) {
-        const code = coerceReasonCode(
-          (error as { code?: unknown })?.code ?? (error as { reasonCode?: unknown })?.reasonCode,
-        );
-        if (code) return this.refused(code, observedAt, {
-          expectedCoordinatorVersion: currentCoordinatorVersion,
+        return this.accepted(observedAt, {
+          expectedCoordinatorVersion: receipt.version,
           expectedPolicyVersion: currentPolicyVersion,
           expectedConflictsVersion: currentConflictsVersion,
           expectedAttentionVersion: currentAttentionVersion,
         },
-        input.projectId);;
+          input.projectId);;
+      } catch (error: unknown) {
+        // Pass the error itself: the engine throws ProjectCoordinationErrorV1
+        // carrying safeCode (no `code` field), and coerce reads all surfaces.
+        const code = coerceReasonCode(error);
+        const wireCode: ProjectCoordinationReasonCode | undefined =
+          code === "coordinator_version_stale" ? "stale_revision"
+          : code === "coordinator_absent" ? "no_coordinator"
+          : code;
+        if (wireCode) {
+          // Re-read the head version so the stale envelope reports the
+          // version the engine actually saw, not the pre-call read.
+          const latestCoordinatorVersion = await this.store.coordinatorVersion(input.projectId).catch(
+            () => currentCoordinatorVersion,
+          );
+          return this.refused(wireCode, observedAt, {
+            expectedCoordinatorVersion: latestCoordinatorVersion,
+            expectedPolicyVersion: currentPolicyVersion,
+            expectedConflictsVersion: currentConflictsVersion,
+            expectedAttentionVersion: currentAttentionVersion,
+          },
+          input.projectId);;
+        }
         throw error;
       }
-      return this.accepted(observedAt, {
-        expectedCoordinatorVersion: currentCoordinatorVersion + 1,
-        expectedPolicyVersion: currentPolicyVersion,
-        expectedConflictsVersion: currentConflictsVersion,
-        expectedAttentionVersion: currentAttentionVersion,
-      },
-        input.projectId);;
     });
   }
 
@@ -595,6 +635,11 @@ export class ProjectCoordinationHttpService {
     currentConflictsVersion: number,
     currentAttentionVersion: number,
     observedAt: string,
+    // When true, the coordinator-version equality is skipped: the merged
+    // coordinator engine owns that check (replay probe first, then
+    // expectedVersion enforcement). Policy/conflict/attention versions are
+    // outside the receipt's scope and always compare here.
+    skipCoordinatorVersion = false,
   ): ProjectCoordinationActionOutcome | null {
     if (input.revision.projectId !== input.projectId) {
       return this.refused("invalid_input", observedAt, {
@@ -606,7 +651,7 @@ export class ProjectCoordinationHttpService {
         input.projectId);;
     }
     if (
-      input.revision.expectedCoordinatorVersion !== currentCoordinatorVersion
+      (!skipCoordinatorVersion && input.revision.expectedCoordinatorVersion !== currentCoordinatorVersion)
       || input.revision.expectedPolicyVersion !== currentPolicyVersion
       || input.revision.expectedConflictsVersion !== currentConflictsVersion
       || input.revision.expectedAttentionVersion !== currentAttentionVersion

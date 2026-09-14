@@ -172,21 +172,24 @@ export function createCoordinationHttpHandler(options: CoordinationHttpHandlerOp
         }
         const invocation = (async (): Promise<unknown> => {
           let outcome: unknown;
+          // The route's exact Idempotency-Key flows into the coordinator
+          // service, whose PG transaction is the durable replay authority.
+          const lifecycle = <T extends Record<string, unknown>>(extra: T) => ({ projectId, ...extra, idempotencyKey });
           switch (subaction) {
             case "appoint-coordinator": {
-              const input = { projectId, ...extractAppointFields(body) };
+              const input = lifecycle(extractAppointFields(body));
               outcome = await options.service.appointCoordinator(identity, input);
               break;
             }
             case "replace-coordinator": {
-              const input = { projectId, ...extractAppointFields(body) };
+              const input = lifecycle(extractAppointFields(body));
               outcome = await options.service.replaceCoordinator(identity, input);
               break;
             }
             case "revoke-coordinator": {
               // Revoke uses the same shape as replace/appoint but with `operation: "revoke"`;
               // the HTTP service's revoke input is structurally identical to appoint input.
-              const input = { projectId, ...extractAppointFields(body) };
+              const input = lifecycle(extractAppointFields(body));
               outcome = await options.service.revokeCoordinator(identity, input);
               break;
             }

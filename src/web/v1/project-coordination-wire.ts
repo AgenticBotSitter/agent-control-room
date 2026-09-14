@@ -331,6 +331,7 @@ export const projectCoordinationActionResultSchema = z
         "stale_revision",
         "no_coordinator",
         "coordinator_already_active",
+        "coordinator_replay_conflict",
         "policy_required",
         "policy_already_active",
         "policy_already_revoked",
