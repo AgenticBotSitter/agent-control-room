@@ -643,6 +643,69 @@ test("a controller claim needs no action label, as the troubleshooting table sta
     "the client must fetch all open issues, not only action-labelled ones");
 });
 
+test("a legacy action marker is advisory and never an actionable assignment", async (t) => {
+  // The troubleshooting row lists what makes an issue actionable, and this clause was wrong
+  // twice before it was pinned. A legacy action marker is NOT one of those paths: the client
+  // treats an advisory record as needing attention even when its status label matches exactly,
+  // so no amount of labelling turns it into an actionable controller assignment.
+  const github = fakeGithub(assignment());
+  const actions = await readWorkerInbox({
+    workerId: WORKER_ID, repository: REPOSITORY_NAME, fetchImpl: github.fetchImpl,
+  });
+  assert.equal(actions.length, 1, "an advisory record is still reported, just not as actionable");
+  assert.equal(actions[0].trust, "advisory");
+  assert.equal(actions[0].disposition, "attention",
+    "an advisory record must never be reported as an actionable assignment");
+});
+
+test("a handoff needs one matching action label while a claim does not", async (t) => {
+  // Two halves of the same rule, deliberately in one test so they cannot drift apart again: the
+  // action label is required for a handoff and not for a claim. This is the clause the previous
+  // two documentation attempts each got wrong in a different way.
+  const number = 199;
+  const withLabel = fakeGithub(controllerAssignment({ state: "changes-required" }));
+  const complete = await readWorkerInbox({
+    workerId: WORKER_ID, repository: REPOSITORY_NAME, fetchImpl: withLabel.fetchImpl,
+  });
+  assert.equal(complete[0].disposition, "action", "a handoff carrying its action label is actionable");
+
+  const withoutLabel = fakeGithub({
+    issues: [githubIssue(number, ["status:changes-required"])],
+    comments: { [number]: [controllerComment(handoffMarker({ number, state: "changes-required" }))] },
+  });
+  const missing = await readWorkerInbox({
+    workerId: WORKER_ID, repository: REPOSITORY_NAME, fetchImpl: withoutLabel.fetchImpl,
+  });
+  assert.equal(missing.length, 1, "the issue is still fetched without any action label");
+  assert.equal(missing[0].disposition, "attention",
+    "a handoff missing its action label is not actionable");
+
+  const claimed = fakeGithub({
+    issues: [githubIssue(number, ["status:working"])],
+    comments: { [number]: [claimComment({ number })] },
+  });
+  const claim = await readWorkerInbox({
+    workerId: WORKER_ID, repository: REPOSITORY_NAME, fetchImpl: claimed.fetchImpl,
+  });
+  assert.equal(claim[0].disposition, "action", "a claim is actionable without any action label");
+});
+
+test("two labels of the same kind make an issue ambiguous, not actionable", async (t) => {
+  // The row tells operators that conflicting labels produce an attention result. Pin it, since
+  // "an operator adds a label" is exactly the wrong turn this advice is meant to prevent.
+  const number = 199;
+  const github = fakeGithub({
+    issues: [githubIssue(number, ["status:changes-required", "status:working", "action:worker"])],
+    comments: { [number]: [controllerComment(handoffMarker({ number, state: "changes-required" }))] },
+  });
+  const actions = await readWorkerInbox({
+    workerId: WORKER_ID, repository: REPOSITORY_NAME, fetchImpl: github.fetchImpl,
+  });
+  assert.equal(actions.length, 1);
+  assert.equal(actions[0].disposition, "attention",
+    "two status labels must not be reported as an actionable assignment");
+});
+
 test("the accepted inbox client is reused rather than reimplemented", async (t) => {
   const root = scratch(t);
   const github = fakeGithub(assignment());
