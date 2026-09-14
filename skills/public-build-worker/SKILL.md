@@ -44,9 +44,11 @@ posted by `github-actions[bot]`; public users can copy text but cannot grant a c
 `CLAIM PENDING`, your request, a label change by itself, or an Actions failure is not permission.
 If that comment later says `CLAIM REVOKED — STOP`, stop; the accepted permission no longer exists.
 Malformed, duplicate, non-ready and needs-decision requests are refused, as are
-requests whose work packet is missing or invalid, whose dependencies are still
-open, whose effects are not `none`, whose path scopes overlap another Working or
-In-review reservation, or whose pair already holds a Working claim. Do not wait
+requests whose work packet is missing or invalid, whose dependencies are not
+closed issues with the done disposition, whose effects are not `none`, whose
+path scopes overlap another Working or In-review reservation, whose other
+locks are packet-less legacy or drifted from their accepted markers, or whose
+pair already holds a Working claim. Do not wait
 for the legacy V2 controller on public work.
 
 Every Ready issue carries one strict machine-readable packet
@@ -55,15 +57,18 @@ dependencies, checks, risk, effects and a finite lease in hours. Only literal
 paths and terminal `/**` prefixes are valid scopes; any other globbing or path
 escape is refused.
 
-Keep a reservation with `CLAIM RENEW` (same login and worker, unchanged packet
-only). Submit with a four-line `CLAIM SUBMIT` naming the open pull request
+Keep a reservation with `CLAIM RENEW` (same login and worker, unchanged packet,
+unexpired lease; the renewal preserves the immutable accepted base). Submit
+with a four-line `CLAIM SUBMIT` naming the open pull request
 number and its exact head SHA; the controller verifies the PR is open against
-`main`, authored by your login, and references the issue, then moves it to In
+`main`, authored by your login, references the issue exactly, the packet is
+unchanged and the lease is unexpired, then moves it to In
 review while the path lock stays in force — you may then claim another
-independent packet. Return safe, effect-free, unsubmitted work with
+independent packet, up to two In-review submissions per pair. Return safe,
+effect-free, unsubmitted work with
 `CLAIM RELEASE`. Expired leases stop automatically: quiet work returns to
-Ready, an open pull request stays In review, and ambiguous or effectful work
-becomes Needs decision.
+Ready, one open PR by the accepted worker stays In review, and ambiguous,
+multi-PR or effectful work becomes Needs decision.
 
 The accepted marker binds the reservation to both the requester's GitHub login and
 unique worker ID. Each exact login-and-worker pair may hold one active implementation;

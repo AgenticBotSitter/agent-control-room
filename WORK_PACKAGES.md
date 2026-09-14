@@ -112,11 +112,15 @@ not one issue/PR per small code edit.
    `main`, and edits its marker to `CLAIM ACCEPTED`. Begin only when that
    accepted comment was posted by `github-actions[bot]`; simultaneous comments
    do not create competing claims, and a refused request is not permission.
-   Keep the reservation with `CLAIM RENEW` (same worker, unchanged packet),
-   submit with `CLAIM SUBMIT` (verified open PR, target, author and exact head),
-   or return safe unsubmitted work with `CLAIM RELEASE`. Expired claims stop:
-   quiet effect-free work returns to Ready, an open pull request stays In
-   review, and ambiguous or effectful work becomes Needs decision.
+   Keep the reservation with `CLAIM RENEW` (same worker, unchanged packet,
+   unexpired lease; the renewal keeps the immutable accepted base), submit
+   with `CLAIM SUBMIT` (verified open PR, target, author and exact head,
+   unexpired lease, unchanged packet, at most two In-review per pair),
+   or return safe unsubmitted work with `CLAIM RELEASE`. Dependencies must be
+   closed issues with the done disposition. Expired claims stop: quiet
+   effect-free work returns to Ready, one open PR by the accepted worker stays
+   In review, and ambiguous, multi-PR or effectful work becomes Needs
+   decision. Packet-less legacy locks fail closed until migrated.
 3. Use your own fork/branch. Agree on milestones for large packages and send one cohesive
    PR per independently reviewable outcome. Multiple local commits are fine.
 4. Test locally. Include exact base/head, commands, observed results, relevant failure

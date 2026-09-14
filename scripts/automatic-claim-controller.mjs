@@ -153,7 +153,11 @@ export async function runClaimController({ event, repository, api }) {
   const held = await pairClaims(api, repository, actor, request.workerId);
   if (held.filter(entry => entry.status === "working").length >= MAX_ACTIVE_WORKING)
     return Object.freeze({ status: "refused", reason: "working_limit" });
-  const locks = await lockedScopes(api, repository, value.issueNumber);
+  const locks = await verifiedLockScopes(api, repository, value.issueNumber);
+  if (locks.legacy.length > 0)
+    return Object.freeze({ status: "refused", reason: "legacy_lock_manual", issues: locks.legacy });
+  if (locks.mismatched.length > 0)
+    return Object.freeze({ status: "refused", reason: "lock_packet_changed", issues: locks.mismatched });
   if (locks.scopes.some(scope => packet.writeScopes.some(own => scopesOverlap(own, scope))))
     return Object.freeze({ status: "refused", reason: "scope_overlap" });
   const ref = await api.request("GET", `/repos/${repository}/git/ref/heads/main`);
@@ -254,7 +258,14 @@ export async function runClaimController({ event, repository, api }) {
  *   CLAIM REQUEST / RENEW / RELEASE  +  worker-id: <id>
  *   CLAIM SUBMIT  +  worker-id: <id>  +  pr: <n>  +  sha: <40 hex>
  * Accepted reservations use v3 markers that bind the packet hash and accept
- * time; v2 markers stay recognized read-only during migration. */
+ * time; v2 markers stay recognized read-only during migration. Dependencies
+ * are complete only for closed issues with the done disposition. Renew and
+ * submit check the marker-bound lease before mutating. Submit, release and
+ * sweep record a pending journal comment before moving labels, reconcile lost
+ * responses from exact state, and roll back only an unchanged partial
+ * transition — never a newer maintainer status. Expiry keeps an issue In
+ * review only for exactly one open PR by the accepted worker targeting main
+ * with an exact issue reference. */
 
 export const PACKET_PREFIX = "<!-- acr-public-work:v1";
 const PACKET_PATTERN = /<!--\s*acr-public-work:v1\s*(\{.*?\})\s*-->/s;
@@ -397,9 +408,9 @@ const acceptedBodyV3 = (value, sha, hash, accepted) =>
     "This reservation grants no repository authority. Use only the issue's owned paths, checks and effect limits.",
     markerV3(value, hash, accepted)].join("\n");
 
-const renewedBodyV3 = (value, hash, accepted) =>
+const renewedBodyV3 = (value, hash, accepted, base) =>
   [`CLAIM RENEWED — \`@${value.actor}\` using worker identity \`${value.workerId}\` keeps public issue #${value.issueNumber}.`, "",
-    "The work packet is unchanged; the lease restarts from this renewal.",
+    `Base: \`${base}\` (immutable from acceptance)`, "The work packet is unchanged; the lease restarts from this renewal.",
     markerV3(value, hash, accepted)].join("\n");
 
 const submittedBodyV3 = (value, hash, accepted, pr, sha) =>
@@ -407,10 +418,10 @@ const submittedBodyV3 = (value, hash, accepted, pr, sha) =>
     `Head: \`${sha}\`. The issue path lock stays in force while the pull request is in review.`,
     markerV3(value, hash, accepted, ` pr=${pr} sha=${sha}`)].join("\n");
 
-const releasedBody = value =>
+const releasedBody = (value, now) =>
   [`CLAIM RELEASED — the reservation by \`@${value.actor}\` using worker identity \`${value.workerId}\` on public issue #${value.issueNumber} is returned.`, "",
     "Safe, effect-free, unsubmitted work is reservable again. A release is not permission to start.",
-    `<!-- agent-control-room-claim:v3 issue=${value.issueNumber} request=${value.requestId} actor=${value.actor} worker=${value.workerId} released=${Date.now()} -->`].join("\n");
+    `<!-- agent-control-room-claim:v3 issue=${value.issueNumber} request=${value.requestId} actor=${value.actor} worker=${value.workerId} released=${now} -->`].join("\n");
 
 const markerMatches = (comment, value, version) => comment?.user?.login === "github-actions[bot]"
   && comment?.user?.type === "Bot" && typeof comment?.body === "string"
@@ -433,6 +444,11 @@ const acceptedMarkerFor = (comments, value) => {
   return current;
 };
 
+const safelyInReview = issue => issue.state === "open" && !issue.pull_request
+  && labelNames(issue).filter(label => label.startsWith("status:")).join("") === "status:in-review";
+
+const recordAccepted = (comments, value) => acceptedMarkerFor(comments, value)?.marker.accepted;
+
 async function issuesByStatus(api, repository, status) {
   const found = [];
   for (let page = 1; page <= 10; page++) {
@@ -444,19 +460,53 @@ async function issuesByStatus(api, repository, status) {
   throw new Error("claim_controller_issue_set_ambiguous");
 }
 
-/** Locked path scopes from other Working and In-review packets; packet-less legacy issues are noted, not blocking. */
-async function lockedScopes(api, repository, excludeIssue) {
+/** Live accepted/renewed markers for one issue; clearing markers after each marker end it. */
+const liveAcceptedMarkers = (comments, issueNumber) => {
+  const found = [];
+  for (const comment of comments) {
+    if (comment?.user?.login !== "github-actions[bot]" || comment?.user?.type !== "Bot"
+      || typeof comment.body !== "string" || !Number.isSafeInteger(comment?.id)) continue;
+    if (!comment.body.startsWith("CLAIM ACCEPTED —") && !comment.body.startsWith("CLAIM RENEWED —")) continue;
+    const marker = parseClaimMarker(comment.body);
+    if (!marker || marker.issue !== issueNumber) continue;
+    if (clearedByReleaseOrExpiry(comments, issueNumber, marker.actor, marker.worker, comment.id)) continue;
+    found.push({ comment, marker });
+  }
+  return found;
+};
+
+/** Locked path scopes from other Working and In-review packets with verified marker identity.
+ * Packet-less legacy locks and locks whose current packet drifted from the accepted
+ * marker fail closed instead of being collected and ignored. */
+async function verifiedLockScopes(api, repository, excludeIssue) {
   const scopes = [];
   const legacy = [];
+  const mismatched = [];
   for (const status of ["working", "in-review"]) {
     for (const issue of await issuesByStatus(api, repository, status)) {
       if (issue.number === excludeIssue) continue;
       const packet = parseClaimPacket(issue.body);
-      if (packet) scopes.push(...packet.writeScopes);
-      else legacy.push(issue.number);
+      if (!packet) {
+        legacy.push(issue.number);
+        continue;
+      }
+      let live = [];
+      try {
+        live = liveAcceptedMarkers(await commentsFor(api, repository, issue.number), issue.number)
+          .filter(entry => entry.marker.version === 3 && entry.marker.packet);
+      } catch {
+        mismatched.push(issue.number);
+        continue;
+      }
+      if (live.length !== 1 || packetHash(packet) !== live[0].marker.packet) {
+        mismatched.push(issue.number);
+        continue;
+      }
+      scopes.push(...packet.writeScopes);
     }
   }
-  return Object.freeze({ scopes, legacy: Object.freeze([...new Set(legacy)].sort((a, b) => a - b)) });
+  const sorted = values => Object.freeze([...new Set(values)].sort((a, b) => a - b));
+  return Object.freeze({ scopes, legacy: sorted(legacy), mismatched: sorted(mismatched) });
 }
 
 /** Active reservations held by one login-and-worker pair across Working and In-review. */
@@ -484,27 +534,42 @@ async function pairClaims(api, repository, actor, workerId) {
 async function dependenciesComplete(api, repository, packet) {
   for (const dep of packet.dependencies) {
     const issue = await issueFor(api, repository, dep);
-    if (!issue || issue.state !== "closed") return false;
+    if (!issue || issue.pull_request || issue.state !== "closed") return false;
+    if (issue.state_reason === "not_planned") return false;
+    if (!labelNames(issue).includes("status:done")) return false;
   }
   return true;
 }
 
+function exactIssueReference(text, issueNumber) {
+  return typeof text === "string"
+    && new RegExp(`(?:^|[^0-9])#${issueNumber}(?![0-9])`).test(text);
+}
+
 function openPrReferences(body, issueNumber) {
-  return typeof body === "string" && new RegExp(`#${issueNumber}\\b`).test(body);
+  return exactIssueReference(body, issueNumber);
+}
+
+function prReferencesIssue(pr, issueNumber) {
+  return exactIssueReference(pr?.body, issueNumber) || exactIssueReference(pr?.title, issueNumber);
 }
 
 async function openPrsForIssue(api, repository, issueNumber) {
-  const found = [];
+  const detailed = await openPrRefsForIssue(api, repository, issueNumber);
+  return Object.freeze(detailed.matching);
+}
+
+async function openPrRefsForIssue(api, repository, issueNumber) {
+  const matching = [];
   for (let page = 1; page <= 3; page++) {
     const batch = await api.request("GET", `/repos/${repository}/pulls?state=open&per_page=100&page=${page}`);
     if (!Array.isArray(batch)) throw new Error("claim_controller_api_invalid");
     for (const pr of batch) {
-      if (pr && Number.isSafeInteger(pr?.number)
-        && (openPrReferences(pr.body, issueNumber) || openPrReferences(pr.title, issueNumber))) found.push(pr);
+      if (pr && Number.isSafeInteger(pr?.number) && prReferencesIssue(pr, issueNumber)) matching.push(pr);
     }
-    if (batch.length < 100) return Object.freeze(found);
+    if (batch.length < 100) return Object.freeze({ matching: Object.freeze(matching), truncated: false });
   }
-  return Object.freeze(found);
+  return Object.freeze({ matching: Object.freeze(matching), truncated: true });
 }
 
 function validEvent(event, command, repository, api, extra = true) {
@@ -527,6 +592,21 @@ async function sweepQuietly(api, repository, now) {
   }
 }
 
+/** Marker-bound lease state: renew and submit must check expiry before acting. */
+const leaseStatus = (record, packet, now) => {
+  if (!record?.marker || record.marker.version !== 3 || !record.marker.packet
+    || !Number.isSafeInteger(record.marker.accepted)) return "lease_unknown";
+  if (!packet) return "packet_changed";
+  const ageHours = (now - record.marker.accepted) / 3_600_000;
+  if (!Number.isFinite(ageHours) || ageHours < 0 || ageHours > packet.leaseHours) return "lease_expired";
+  return "active";
+};
+
+const acceptedBase = body => {
+  const match = /Base: `([a-f0-9]{40})`/.exec(typeof body === "string" ? body : "");
+  return match ? match[1] : undefined;
+};
+
 /** CLAIM RENEW extends only the same worker's unchanged packet. */
 export async function runClaimRenew({ event, repository, api, now = Date.now() }) {
   const command = parseClaimCommand(event?.comment?.body);
@@ -543,14 +623,66 @@ export async function runClaimRenew({ event, repository, api, now = Date.now() }
   const packet = parseClaimPacket(current.body);
   if (!packet || packetHash(packet) !== record.marker.packet)
     return Object.freeze({ status: "refused", reason: "packet_changed" });
+  const lease = leaseStatus(record, packet, now);
+  if (lease !== "active") return Object.freeze({ status: "refused", reason: lease });
+  const base = acceptedBase(record.comment.body);
+  if (!base) return Object.freeze({ status: "refused", reason: "base_unknown" });
   const renewed = await api.request("PATCH", `/repos/${repository}/issues/comments/${record.comment.id}`,
-    { body: renewedBodyV3(value, packetHash(packet), now) });
+    { body: renewedBodyV3(value, packetHash(packet), now, base) });
   if (!Number.isSafeInteger(renewed?.id)) throw new Error("claim_controller_api_invalid");
   const saved = await api.request("GET", `/repos/${repository}/issues/comments/${record.comment.id}`);
   if (typeof saved?.body !== "string" || !saved.body.startsWith("CLAIM RENEWED —"))
     throw new Error("claim_controller_state_changed");
   return Object.freeze({ status: "renewed", ...(await sweepQuietly(api, repository, now)),
     workerId: value.workerId, actor, issueNumber: value.issueNumber, accepted: now });
+}
+
+const SUBMIT_PENDING_PATTERN = /<!--\s*agent-control-room-claim:v3\s+issue=(\d+)\s+submit-pending=(\d+)\s+actor=([^\s]+)\s+worker=([^\s]+)\s+packet=([a-f0-9]{64})\s+accepted=(\d+)\s+pr=(\d+)\s+sha=([a-f0-9]{40})\s*-->/;
+
+const submitPendingBodyV3 = (value, hash, accepted, pr, sha, now) =>
+  [`CLAIM SUBMIT PENDING — \`@${value.actor}\` using worker identity \`${value.workerId}\` will submit PR #${pr} for public issue #${value.issueNumber}.`, "",
+    `Head: \`${sha}\`. Labels move to In review only after this pending record exists, so a lost response can be reconciled without duplicating the transition.`,
+    `<!-- agent-control-room-claim:v3 issue=${value.issueNumber} submit-pending=${now} actor=${value.actor} worker=${value.workerId} packet=${hash} accepted=${accepted} pr=${pr} sha=${sha} -->`].join("\n");
+
+const findSubmitPending = (comments, value, pr, sha, hash) => {
+  for (const comment of comments) {
+    if (comment?.user?.login !== "github-actions[bot]" || comment?.user?.type !== "Bot"
+      || typeof comment.body !== "string" || !Number.isSafeInteger(comment?.id)) continue;
+    if (!comment.body.startsWith("CLAIM SUBMIT PENDING —")) continue;
+    const match = SUBMIT_PENDING_PATTERN.exec(comment.body);
+    if (!match) continue;
+    if (Number(match[1]) === value.issueNumber && match[3] === value.actor && match[4] === value.workerId
+      && match[5] === hash && Number(match[7]) === pr && match[8] === sha)
+      return { comment, packet: match[5] };
+  }
+  return undefined;
+};
+
+const findSubmitted = (comments, value, pr, sha) => {
+  for (const comment of comments) {
+    if (comment?.user?.login !== "github-actions[bot]" || comment?.user?.type !== "Bot"
+      || typeof comment.body !== "string" || !Number.isSafeInteger(comment?.id)) continue;
+    if (!comment.body.startsWith("CLAIM SUBMITTED —")) continue;
+    const marker = parseClaimMarker(comment.body);
+    if (marker && marker.issue === value.issueNumber && marker.actor === value.actor
+      && marker.worker === value.workerId && marker.pr === pr && marker.sha === sha) return comment;
+  }
+  return undefined;
+};
+
+const nonStatusLabels = labels => labels.filter(label => !label.startsWith("status:"));
+
+/** Restore one status label only when the fresh issue is exactly the expected partial state. */
+async function restoreStatusLabel(api, repository, issueNumber, restore, originalNonStatus, error) {
+  const fresh = await issueFor(api, repository, issueNumber);
+  const statuses = labelNames(fresh).filter(label => label.startsWith("status:"));
+  const nonStatus = nonStatusLabels(normalizedLabels(fresh));
+  if (fresh.state === "open" && !fresh.pull_request && statuses.length === 0
+    && JSON.stringify(nonStatus) === JSON.stringify([...originalNonStatus].sort()))
+    await addLabels(api, repository, issueNumber, [restore]);
+  else throw error;
+  const restored = await issueFor(api, repository, issueNumber);
+  if (!labelNames(restored).includes(restore)) throw error;
 }
 
 /** CLAIM SUBMIT verifies the open PR, target, author and exact head, then moves to In review with the path lock kept. */
@@ -561,33 +693,116 @@ export async function runClaimSubmit({ event, repository, api, now = Date.now() 
     || !validEvent(event, command, repository, api,
       Number.isSafeInteger(command.pr) && SHA40.test(command.sha))) return Object.freeze({ status: "ignored" });
   const value = { issueNumber: event.issue.number, requestId: event.comment.id, actor, workerId: command.workerId };
+  const prMatches = async (packetHashValue, accepted) => {
+    const pr = await api.request("GET", `/repos/${repository}/pulls/${command.pr}`);
+    return pr && pr.state === "open" && pr.base?.ref === "main" && pr.head?.sha === command.sha
+      && pr.user?.login === actor && prReferencesIssue(pr, value.issueNumber)
+      ? { pr, hash: packetHashValue, accepted } : undefined;
+  };
   const current = await issueFor(api, repository, value.issueNumber);
-  if (!safelyWorking(current)) return Object.freeze({ status: "refused", reason: "issue_not_working" });
+  if (!safelyWorking(current)) {
+    const pendingComments = await commentsFor(api, repository, value.issueNumber);
+    const submitted = findSubmitted(pendingComments, value, command.pr, command.sha);
+    if (submitted) {
+      const after = await issueFor(api, repository, value.issueNumber);
+      const statuses = labelNames(after).filter(label => label.startsWith("status:"));
+      if (after.state === "open" && statuses.length === 1 && statuses[0] === "status:in-review")
+        return Object.freeze({ status: "submitted", reconciled: true,
+          workerId: value.workerId, actor, issueNumber: value.issueNumber, pr: command.pr, sha: command.sha });
+    }
+    const packet = parseClaimPacket(current.body);
+    const pending = packet ? findSubmitPending(pendingComments, value, command.pr, command.sha, packetHash(packet)) : undefined;
+    if (pending && (await prMatches(pending.packet, recordAccepted(pendingComments, value))) && safelyInReview(current)) {
+      const submittedBody = submittedBodyV3(value, pending.packet,
+        recordAccepted(pendingComments, value) ?? now, command.pr, command.sha);
+      try {
+        await api.request("PATCH", `/repos/${repository}/issues/comments/${pending.comment.id}`, { body: submittedBody });
+      } catch (error) {
+        const saved = await api.request("GET", `/repos/${repository}/issues/comments/${pending.comment.id}`);
+        if (typeof saved?.body !== "string" || !saved.body.startsWith("CLAIM SUBMITTED —")) throw error;
+      }
+      return Object.freeze({ status: "submitted", reconciled: true,
+        workerId: value.workerId, actor, issueNumber: value.issueNumber, pr: command.pr, sha: command.sha });
+    }
+    return Object.freeze({ status: "refused", reason: "issue_not_working" });
+  }
   const record = acceptedMarkerFor(await commentsFor(api, repository, value.issueNumber), value);
   if (!record) return Object.freeze({ status: "refused", reason: "no_accepted_claim_for_pair" });
+  if (record.marker.version !== 3 || !record.marker.packet)
+    return Object.freeze({ status: "refused", reason: "legacy_claim_manual" });
+  const packet = parseClaimPacket(current.body);
+  if (!packet || packetHash(packet) !== record.marker.packet)
+    return Object.freeze({ status: "refused", reason: "packet_changed" });
+  const lease = leaseStatus(record, packet, now);
+  if (lease !== "active") return Object.freeze({ status: "refused", reason: lease });
   const claims = await pairClaims(api, repository, actor, command.workerId);
   if (claims.filter(entry => entry.status === "in-review").length >= MAX_ACTIVE_IN_REVIEW)
     return Object.freeze({ status: "refused", reason: "in_review_limit" });
-  const pr = await api.request("GET", `/repos/${repository}/pulls/${command.pr}`);
-  if (!pr || pr.state !== "open" || pr.base?.ref !== "main" || pr.head?.sha !== command.sha
-    || pr.user?.login !== actor || !openPrReferences(pr.body, value.issueNumber))
-    return Object.freeze({ status: "refused", reason: "pr_binding_invalid" });
+  const bound = await prMatches(packetHash(packet), record.marker.accepted ?? now);
+  if (!bound) return Object.freeze({ status: "refused", reason: "pr_binding_invalid" });
   const originalLabels = normalizedLabels(current);
-  await removeLabel(api, repository, value.issueNumber, "status:working");
-  await addLabels(api, repository, value.issueNumber, ["status:in-review"]);
+  const originalNonStatus = nonStatusLabels(originalLabels);
+  let pending = findSubmitPending(await commentsFor(api, repository, value.issueNumber),
+    value, command.pr, command.sha, bound.hash);
+  if (!pending) {
+    try {
+      const created = await api.request("POST", `/repos/${repository}/issues/${value.issueNumber}/comments`,
+        { body: submitPendingBodyV3(value, bound.hash, bound.accepted, command.pr, command.sha, now) });
+      if (!Number.isSafeInteger(created?.id)) throw new Error("claim_controller_api_invalid");
+      pending = { comment: created, packet: bound.hash };
+    } catch (error) {
+      pending = findSubmitPending(await commentsFor(api, repository, value.issueNumber),
+        value, command.pr, command.sha, bound.hash);
+      if (!pending) throw error;
+    }
+  }
+  try {
+    await removeLabel(api, repository, value.issueNumber, "status:working");
+    await addLabels(api, repository, value.issueNumber, ["status:in-review"]);
+  } catch (error) {
+    await restoreStatusLabel(api, repository, value.issueNumber, "status:working", originalNonStatus, error);
+    throw error;
+  }
   const after = await issueFor(api, repository, value.issueNumber);
   const statuses = labelNames(after).filter(label => label.startsWith("status:"));
-  if (after.state !== "open" || statuses.length !== 1 || statuses[0] !== "status:in-review")
+  if (after.state !== "open" || after.pull_request || statuses.length !== 1 || statuses[0] !== "status:in-review"
+    || !originalNonStatus.every(label => labelNames(after).includes(label)))
     throw new Error("claim_controller_state_changed");
-  const packet = parseClaimPacket(current.body);
-  const hash = packet ? packetHash(packet) : (record.marker.packet ?? "0".repeat(64));
-  const submitted = await api.request("POST", `/repos/${repository}/issues/${value.issueNumber}/comments`,
-    { body: submittedBodyV3(value, hash, record.marker.accepted ?? now, command.pr, command.sha) });
-  if (!Number.isSafeInteger(submitted?.id)) throw new Error("claim_controller_api_invalid");
+  try {
+    await api.request("PATCH", `/repos/${repository}/issues/comments/${pending.comment.id}`,
+      { body: submittedBodyV3(value, bound.hash, bound.accepted, command.pr, command.sha) });
+  } catch (error) {
+    const saved = await api.request("GET", `/repos/${repository}/issues/comments/${pending.comment.id}`);
+    if (typeof saved?.body !== "string" || !saved.body.startsWith("CLAIM SUBMITTED —")) throw error;
+  }
+  const finalIssue = await issueFor(api, repository, value.issueNumber);
+  const finalComment = await api.request("GET", `/repos/${repository}/issues/comments/${pending.comment.id}`);
+  if (!safelyInReview(finalIssue) || typeof finalComment?.body !== "string"
+    || !finalComment.body.startsWith("CLAIM SUBMITTED —")) throw new Error("claim_controller_state_changed");
   return Object.freeze({ status: "submitted", ...(await sweepQuietly(api, repository, now)),
     workerId: value.workerId, actor, issueNumber: value.issueNumber, pr: command.pr,
     sha: command.sha, preservedLabels: Object.freeze(originalLabels.filter(label => !label.startsWith("status:"))) });
 }
+
+const RELEASE_PENDING_PATTERN = /<!--\s*agent-control-room-claim:v3\s+issue=(\d+)\s+release-pending=(\d+)\s+actor=([^\s]+)\s+worker=([^\s]+)\s+packet=([a-f0-9]{64})\s*-->/;
+
+const releasePendingBodyV3 = (value, hash, now) =>
+  [`CLAIM RELEASE PENDING — the reservation by \`@${value.actor}\` using worker identity \`${value.workerId}\` on public issue #${value.issueNumber} will return to Ready.`, "",
+    "Labels move to Ready only after this pending record exists, so a lost response can be reconciled without duplicating the transition.",
+    `<!-- agent-control-room-claim:v3 issue=${value.issueNumber} release-pending=${now} actor=${value.actor} worker=${value.workerId} packet=${hash} -->`].join("\n");
+
+const findReleasePending = (comments, value, hash) => {
+  for (const comment of comments) {
+    if (comment?.user?.login !== "github-actions[bot]" || comment?.user?.type !== "Bot"
+      || typeof comment.body !== "string" || !Number.isSafeInteger(comment?.id)) continue;
+    if (!comment.body.startsWith("CLAIM RELEASE PENDING —")) continue;
+    const match = RELEASE_PENDING_PATTERN.exec(comment.body);
+    if (!match) continue;
+    if (Number(match[1]) === value.issueNumber && match[3] === value.actor && match[4] === value.workerId
+      && match[5] === hash) return comment;
+  }
+  return undefined;
+};
 
 /** CLAIM RELEASE returns safe, effect-free, unsubmitted work to Ready. */
 export async function runClaimRelease({ event, repository, api, now = Date.now() }) {
@@ -597,26 +812,92 @@ export async function runClaimRelease({ event, repository, api, now = Date.now()
     || !validEvent(event, command, repository, api)) return Object.freeze({ status: "ignored" });
   const value = { issueNumber: event.issue.number, requestId: event.comment.id, actor, workerId: command.workerId };
   const current = await issueFor(api, repository, value.issueNumber);
-  if (!safelyWorking(current)) return Object.freeze({ status: "refused", reason: "issue_not_working" });
-  const comments = await commentsFor(api, repository, value.issueNumber);
-  const record = acceptedMarkerFor(comments, value);
-  if (!record) return Object.freeze({ status: "refused", reason: "no_accepted_claim_for_pair" });
-  if (comments.some(comment => comment?.user?.login === "github-actions[bot]" && comment?.user?.type === "Bot"
-    && typeof comment.body === "string" && comment.body.startsWith("CLAIM SUBMITTED —")
-    && comment.body.includes(`issue=${value.issueNumber} `)))
-    return Object.freeze({ status: "refused", reason: "already_submitted" });
-  const packet = parseClaimPacket(current.body);
-  if (!packet || packet.effects !== "none")
+  const safelyReady = issue => issue.state === "open" && !issue.pull_request
+    && labelNames(issue).filter(label => label.startsWith("status:")).join("") === "status:ready";
+  const releaseable = async issue => {
+    const comments = await commentsFor(api, repository, value.issueNumber);
+    const record = acceptedMarkerFor(comments, value);
+    if (!record || record.marker.version !== 3 || !record.marker.packet) return undefined;
+    const packet = parseClaimPacket(issue.body);
+    if (!packet || packet.effects !== "none" || packetHash(packet) !== record.marker.packet) return undefined;
+    if (comments.some(comment => comment?.user?.login === "github-actions[bot]" && comment?.user?.type === "Bot"
+      && typeof comment.body === "string" && comment.body.startsWith("CLAIM SUBMITTED —")
+      && comment.body.includes(`issue=${value.issueNumber} `))) return undefined;
+    if ((await openPrsForIssue(api, repository, value.issueNumber)).length > 0) return undefined;
+    return { packet: packetHash(packet) };
+  };
+  if (!safelyWorking(current)) {
+    const pendingComments = await commentsFor(api, repository, value.issueNumber);
+    const released = pendingComments.some(comment => comment?.user?.login === "github-actions[bot]"
+      && comment?.user?.type === "Bot" && typeof comment.body === "string"
+      && comment.body.startsWith("CLAIM RELEASED —") && comment.body.includes(`issue=${value.issueNumber} `)
+      && comment.body.includes(`actor=${value.actor} worker=${value.workerId} `));
+    if (released && safelyReady(current))
+      return Object.freeze({ status: "released", reconciled: true,
+        workerId: value.workerId, actor, issueNumber: value.issueNumber });
+    const ready = await releaseable(current);
+    const pending = ready
+      ? findReleasePending(pendingComments, value, ready.packet) : undefined;
+    if (ready && pending && safelyReady(current)) {
+      try {
+        await api.request("PATCH", `/repos/${repository}/issues/comments/${pending.id}`,
+          { body: releasedBody(value, now) });
+      } catch (error) {
+        const saved = await api.request("GET", `/repos/${repository}/issues/comments/${pending.id}`);
+        if (typeof saved?.body !== "string" || !saved.body.startsWith("CLAIM RELEASED —")) throw error;
+      }
+      return Object.freeze({ status: "released", reconciled: true,
+        workerId: value.workerId, actor, issueNumber: value.issueNumber });
+    }
+    return Object.freeze({ status: "refused", reason: "issue_not_working" });
+  }
+  const ready = await releaseable(current);
+  if (!ready) {
+    const comments = await commentsFor(api, repository, value.issueNumber);
+    const record = acceptedMarkerFor(comments, value);
+    if (!record) return Object.freeze({ status: "refused", reason: "no_accepted_claim_for_pair" });
+    if (record.marker.version !== 3 || !record.marker.packet)
+      return Object.freeze({ status: "refused", reason: "legacy_claim_manual" });
+    const packet = parseClaimPacket(current.body);
+    if (!packet || packetHash(packet) !== record.marker.packet)
+      return Object.freeze({ status: "refused", reason: "packet_changed" });
     return Object.freeze({ status: "refused", reason: "release_unsafe" });
-  if ((await openPrsForIssue(api, repository, value.issueNumber)).length > 0)
-    return Object.freeze({ status: "refused", reason: "release_unsafe" });
-  await removeLabel(api, repository, value.issueNumber, "status:working");
-  await addLabels(api, repository, value.issueNumber, ["status:ready"]);
+  }
+  const originalLabels = normalizedLabels(current);
+  const originalNonStatus = nonStatusLabels(originalLabels);
+  let pending = findReleasePending(await commentsFor(api, repository, value.issueNumber), value, ready.packet);
+  if (!pending) {
+    try {
+      const created = await api.request("POST", `/repos/${repository}/issues/${value.issueNumber}/comments`,
+        { body: releasePendingBodyV3(value, ready.packet, now) });
+      if (!Number.isSafeInteger(created?.id)) throw new Error("claim_controller_api_invalid");
+      pending = created;
+    } catch (error) {
+      pending = findReleasePending(await commentsFor(api, repository, value.issueNumber), value, ready.packet);
+      if (!pending) throw error;
+    }
+  }
+  try {
+    await removeLabel(api, repository, value.issueNumber, "status:working");
+    await addLabels(api, repository, value.issueNumber, ["status:ready"]);
+  } catch (error) {
+    await restoreStatusLabel(api, repository, value.issueNumber, "status:working", originalNonStatus, error);
+    throw error;
+  }
   const after = await issueFor(api, repository, value.issueNumber);
-  if (!isReady(after)) throw new Error("claim_controller_state_changed");
-  const released = await api.request("POST", `/repos/${repository}/issues/${value.issueNumber}/comments`,
-    { body: releasedBody(value) });
-  if (!Number.isSafeInteger(released?.id)) throw new Error("claim_controller_api_invalid");
+  if (!safelyReady(after) || !originalNonStatus.every(label => labelNames(after).includes(label)))
+    throw new Error("claim_controller_state_changed");
+  try {
+    await api.request("PATCH", `/repos/${repository}/issues/comments/${pending.id}`,
+      { body: releasedBody(value, now) });
+  } catch (error) {
+    const saved = await api.request("GET", `/repos/${repository}/issues/comments/${pending.id}`);
+    if (typeof saved?.body !== "string" || !saved.body.startsWith("CLAIM RELEASED —")) throw error;
+  }
+  const finalIssue = await issueFor(api, repository, value.issueNumber);
+  const finalComment = await api.request("GET", `/repos/${repository}/issues/comments/${pending.id}`);
+  if (!safelyReady(finalIssue) || typeof finalComment?.body !== "string"
+    || !finalComment.body.startsWith("CLAIM RELEASED —")) throw new Error("claim_controller_state_changed");
   return Object.freeze({ status: "released", ...(await sweepQuietly(api, repository, now)),
     workerId: value.workerId, actor, issueNumber: value.issueNumber });
 }
@@ -631,7 +912,7 @@ export async function runClaimSweep({ repository, api, now = Date.now() }) {
   if (typeof repository !== "string" || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)
     || !api || typeof api.request !== "function" || !Number.isSafeInteger(now))
     throw new Error("claim_controller_sweep_invalid");
-  const outcomes = [];
+  const outcomes = await recoverPendingExpiries(api, repository, now);
   for (const issue of await issuesByStatus(api, repository, "working")) {
     const comments = await commentsFor(api, repository, issue.number);
     const accepted = comments.filter(comment => comment?.user?.login === "github-actions[bot]"
@@ -650,7 +931,7 @@ export async function runClaimSweep({ repository, api, now = Date.now() }) {
         const fresh = await issueFor(api, repository, issue.number);
         if (safelyWorking(fresh)) {
           outcomes.push(await sweepTransition(api, repository, issue.number,
-            "status:working", "status:needs-decision", "needs-decision", "ambiguous_claim"));
+            "status:working", "status:needs-decision", "needs-decision", "ambiguous_claim", now));
         } else {
           outcomes.push({ issue: issue.number, action: "needs-decision", reason: "ambiguous_claim" });
         }
@@ -667,36 +948,141 @@ export async function runClaimSweep({ repository, api, now = Date.now() }) {
         continue;
       }
       outcomes.push(await sweepTransition(api, repository, issue.number,
-        "status:working", "status:needs-decision", "needs-decision", "packet_changed", pair));
+        "status:working", "status:needs-decision", "needs-decision", "packet_changed", pair, now));
       continue;
     }
     if (packet.effects !== "none") {
       outcomes.push(await sweepTransition(api, repository, issue.number,
-        "status:working", "status:needs-decision", "needs-decision", "effectful_claim", pair));
+        "status:working", "status:needs-decision", "needs-decision", "effectful_claim", pair, now));
       continue;
     }
-    if ((await openPrsForIssue(api, repository, issue.number)).length > 0) {
+    const refs = await openPrRefsForIssue(api, repository, issue.number);
+    if (refs.truncated) {
       outcomes.push(await sweepTransition(api, repository, issue.number,
-        "status:working", "status:in-review", "in-review", "open_pr", pair));
+        "status:working", "status:needs-decision", "needs-decision", "ambiguous_pr_list", pair, now));
+      continue;
+    }
+    const owned = refs.matching.filter(pr => pr?.user?.login === live[0].marker.actor && pr?.base?.ref === "main");
+    if (owned.length === 1) {
+      outcomes.push(await sweepTransition(api, repository, issue.number,
+        "status:working", "status:in-review", "in-review", "open_pr", pair, now));
+      continue;
+    }
+    if (owned.length > 1) {
+      outcomes.push(await sweepTransition(api, repository, issue.number,
+        "status:working", "status:needs-decision", "needs-decision", "ambiguous_pr", pair, now));
       continue;
     }
     outcomes.push(await sweepTransition(api, repository, issue.number,
-      "status:working", "status:ready", "ready", "lease_expired_no_pr", pair));
+      "status:working", "status:ready", "ready", "lease_expired_no_pr", pair, now));
   }
   return Object.freeze({ status: "swept", outcomes: Object.freeze(outcomes) });
 }
 
-const expiredBody = (issueNumber, action, reason, pair = "") =>
+const expiredBody = (issueNumber, action, reason, pair = "", now) =>
   [`CLAIM EXPIRED — the Working reservation on public issue #${issueNumber} ended (${action}: ${reason}).`, "",
     "Quiet effect-free work is reservable again; an open pull request stays in review; ambiguous or effectful work needs a maintainer decision.",
-    `<!-- agent-control-room-claim:v3 issue=${issueNumber} expired=${Date.now()} action=${action}${pair} -->`].join("\n");
+    `<!-- agent-control-room-claim:v3 issue=${issueNumber} expired=${now} action=${action}${pair} -->`].join("\n");
 
-async function sweepTransition(api, repository, issueNumber, from, to, action, reason, pair = "") {
-  await removeLabel(api, repository, issueNumber, from);
-  await addLabels(api, repository, issueNumber, [to]);
-  const noted = await api.request("POST", `/repos/${repository}/issues/${issueNumber}/comments`,
-    { body: expiredBody(issueNumber, action, reason, pair) });
-  if (!Number.isSafeInteger(noted?.id)) throw new Error("claim_controller_api_invalid");
+const EXPIRY_PENDING_PATTERN = /<!--\s*agent-control-room-claim:v3\s+issue=(\d+)\s+expiry-pending=(\d+)\s+action=([a-z-]+)\s+reason=([a-z_]+)\s+from=(status:[a-z-]+)\s+to=(status:[a-z-]+)(?:\s+actor=([^\s]+)\s+worker=([^\s]+))?\s*-->/;
+
+const expiryPendingBody = (issueNumber, action, reason, from, to, pair = "", now) =>
+  [`CLAIM EXPIRY PENDING — the Working reservation on public issue #${issueNumber} will end (${action}: ${reason}).`, "",
+    "Labels move only after this pending record exists, so a lost response can be reconciled without duplicating the transition.",
+    `<!-- agent-control-room-claim:v3 issue=${issueNumber} expiry-pending=${now} action=${action} reason=${reason} from=${from} to=${to}${pair ? ` ${pair.trim()}` : ""} -->`].join("\n");
+
+const parsePair = pair => {
+  const match = /actor=([^\s]+)\s+worker=([^\s]+)/.exec(typeof pair === "string" ? pair : "");
+  return match ? { actor: match[1], worker: match[2] } : {};
+};
+
+const findExpiryPendings = (comments, issueNumber) => {
+  const found = [];
+  for (const comment of comments) {
+    if (comment?.user?.login !== "github-actions[bot]" || comment?.user?.type !== "Bot"
+      || typeof comment.body !== "string" || !Number.isSafeInteger(comment?.id)) continue;
+    if (!comment.body.startsWith("CLAIM EXPIRY PENDING —")) continue;
+    const match = EXPIRY_PENDING_PATTERN.exec(comment.body);
+    if (!match || Number(match[1]) !== issueNumber) continue;
+    found.push({ comment, action: match[3], reason: match[4], from: match[5], to: match[6],
+      actor: match[7], worker: match[8] });
+  }
+  return found;
+};
+
+const findExpiryPending = (comments, issueNumber, action, reason, from, to, pair = "") => {
+  const { actor, worker } = parsePair(pair);
+  return findExpiryPendings(comments, issueNumber).find(entry => entry.action === action
+    && entry.reason === reason && entry.from === from && entry.to === to
+    && (entry.actor ?? undefined) === actor && (entry.worker ?? undefined) === worker);
+};
+
+/** Finalize pending expiries whose labels already moved, so a crash between labels and marker recovers. */
+async function recoverPendingExpiries(api, repository, now) {
+  const outcomes = [];
+  for (const status of ["ready", "in-review", "needs-decision"]) {
+    for (const issue of await issuesByStatus(api, repository, status)) {
+      const comments = await commentsFor(api, repository, issue.number);
+      for (const pending of findExpiryPendings(comments, issue.number)) {
+        const labels = labelNames(issue);
+        if (!labels.includes(pending.to) || labels.includes(pending.from)) continue;
+        try {
+          await api.request("PATCH", `/repos/${repository}/issues/comments/${pending.comment.id}`,
+            { body: expiredBody(issue.number, pending.action, pending.reason,
+              pending.actor ? ` actor=${pending.actor} worker=${pending.worker} ` : "", now) });
+        } catch (error) {
+          const saved = await api.request("GET", `/repos/${repository}/issues/comments/${pending.comment.id}`);
+          if (typeof saved?.body !== "string" || !saved.body.startsWith("CLAIM EXPIRED —")) throw error;
+        }
+        outcomes.push(Object.freeze({ issue: issue.number, action: pending.action,
+          reason: pending.reason, recovered: true }));
+      }
+    }
+  }
+  return outcomes;
+}
+
+async function sweepTransition(api, repository, issueNumber, from, to, action, reason, pair = "", now) {
+  const before = await issueFor(api, repository, issueNumber);
+  const originalNonStatus = nonStatusLabels(normalizedLabels(before));
+  let pending = findExpiryPending(await commentsFor(api, repository, issueNumber),
+    issueNumber, action, reason, from, to, pair);
+  if (!pending) {
+    try {
+      const created = await api.request("POST", `/repos/${repository}/issues/${issueNumber}/comments`,
+        { body: expiryPendingBody(issueNumber, action, reason, from, to, pair, now) });
+      if (!Number.isSafeInteger(created?.id)) throw new Error("claim_controller_api_invalid");
+      pending = { comment: created, action, reason, from, to, ...parsePair(pair) };
+    } catch (error) {
+      pending = findExpiryPending(await commentsFor(api, repository, issueNumber),
+        issueNumber, action, reason, from, to, pair);
+      if (!pending) throw error;
+      pending = { ...pending };
+    }
+  }
+  try {
+    await removeLabel(api, repository, issueNumber, from);
+    await addLabels(api, repository, issueNumber, [to]);
+  } catch (error) {
+    await restoreStatusLabel(api, repository, issueNumber, from, originalNonStatus, error);
+    throw error;
+  }
+  const after = await issueFor(api, repository, issueNumber);
+  if (after.state !== "open" || after.pull_request || !labelNames(after).includes(to)
+    || labelNames(after).includes(from)
+    || !originalNonStatus.every(label => labelNames(after).includes(label)))
+    throw new Error("claim_controller_state_changed");
+  try {
+    await api.request("PATCH", `/repos/${repository}/issues/comments/${pending.comment.id}`,
+      { body: expiredBody(issueNumber, action, reason, pair, now) });
+  } catch (error) {
+    const saved = await api.request("GET", `/repos/${repository}/issues/comments/${pending.comment.id}`);
+    if (typeof saved?.body !== "string" || !saved.body.startsWith("CLAIM EXPIRED —")) throw error;
+  }
+  const finalIssue = await issueFor(api, repository, issueNumber);
+  const finalComment = await api.request("GET", `/repos/${repository}/issues/comments/${pending.comment.id}`);
+  if (!labelNames(finalIssue).includes(to) || typeof finalComment?.body !== "string"
+    || !finalComment.body.startsWith("CLAIM EXPIRED —")) throw new Error("claim_controller_state_changed");
   return Object.freeze({ issue: issueNumber, action, reason });
 }
 

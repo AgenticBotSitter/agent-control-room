@@ -34,6 +34,10 @@ function fakeApi(options = {}) {
     else if (method === "GET" && path.includes("/issues?state=open&labels=status%3Ain-review"))
       result = [...(issue.labels.some(value => value.name === "status:in-review") ? [structuredClone(issue)] : []),
         ...structuredClone(options.otherInReview ?? [])];
+    else if (method === "GET" && path.includes("/issues?state=open&labels=status%3A")) {
+      const status = decodeURIComponent(path.match(/status%3A([a-z-]+)/)[1]);
+      result = issue.labels.some(value => value.name === `status:${status}`) ? [structuredClone(issue)] : [];
+    }
     else if (method === "GET" && path.includes("/issues/125/comments?")) result = structuredClone(comments);
     else if (method === "GET" && /\/issues\/\d+\/comments\?/.test(path)) {
       const number = Number(path.match(/\/issues\/(\d+)\/comments/)[1]);
@@ -176,9 +180,11 @@ test("lost final response reconciles the exact accepted comment without duplicat
 });
 
 test("an exact GitHub-actor and worker pair cannot hold two active issue claims", async () => {
-  const other = { number: 77, state: "open", labels: [{ name: "status:working" }] };
+  const lockPacket = parseClaimPacket(packetBody({ writeScopes: ["docs/other/**"] }));
+  const other = { number: 77, state: "open", labels: [{ name: "status:working" }],
+    body: packetBody({ writeScopes: ["docs/other/**"] }) };
   const body = "CLAIM ACCEPTED — `@shared-account` using worker identity `worker:test-01`.\n"
-    + "<!-- agent-control-room-claim:v2 issue=77 request=400 actor=shared-account worker=worker:test-01 -->";
+    + `<!-- agent-control-room-claim:v3 issue=77 request=400 actor=shared-account worker=worker:test-01 packet=${packetHash(lockPacket)} accepted=1700000000000 -->`;
   const api = fakeApi({ otherWorking: [other], otherComments: { 77: [
     { id: 800, body, user: { login: "github-actions[bot]", type: "Bot" } },
   ] } });
@@ -414,7 +420,10 @@ function fakeQueue(options = {}) {
       labels: (item.labels ?? ["status:ready"]).map(name => ({ name })) });
   const comments = new Map();
   const pulls = options.pulls ?? [];
-  const closed = new Set(options.closed ?? []);
+  const closed = new Map((options.closed ?? []).map(entry => typeof entry === "number"
+    ? [entry, { labels: ["status:done"], state_reason: "completed" }]
+    : [entry.number, { labels: entry.labels ?? ["status:done"], state_reason: entry.state_reason ?? "completed",
+      pull_request: entry.pull_request }]));
   const calls = [];
   let nextId = 900;
   const issueState = number => {
@@ -431,8 +440,12 @@ function fakeQueue(options = {}) {
       result = structuredClone(comments.get(Number(path.match(/\/issues\/(\d+)\/comments/)[1])) ?? []);
     } else if (method === "GET" && /\/issues\/\d+$/.test(path)) {
       const number = Number(path.match(/\/issues\/(\d+)$/)[1]);
-      if (closed.has(number)) result = { number, state: "closed" };
-      else if (store.has(number)) result = structuredClone(issueState(number));
+      if (closed.has(number)) {
+        const done = closed.get(number);
+        result = { number, state: "closed", state_reason: done.state_reason,
+          labels: done.labels.map(name => ({ name })),
+          ...(done.pull_request ? { pull_request: {} } : {}) };
+      } else if (store.has(number)) result = structuredClone(issueState(number));
       else result = { number, state: "open", labels: [] };
     } else if (method === "GET" && path.includes("/issues?state=open&labels=status%3A")) {
       const status = decodeURIComponent(path.match(/status%3A([a-z-]+)/)[1]);
@@ -476,6 +489,7 @@ function fakeQueue(options = {}) {
   };
   return { request, calls,
     labels: number => issueState(number).labels.map(value => value.name).sort(),
+    body: number => issueState(number).body,
     comments: number => structuredClone(comments.get(number) ?? []),
     setBody: (number, body) => { issueState(number).body = body; } };
 }
@@ -491,6 +505,14 @@ async function acceptHelper(api, number = 125, worker = "worker:test-01", actor 
   } finally { Date.now = realNow; }
 }
 
+/** Seed a live v3 accepted marker whose packet matches the issue's current body. */
+async function seedAccepted(api, number, worker = "worker:test-01", actor = "shared-account", at = 1_700_000_000_000) {
+  const parsed = parseClaimPacket(api.body(number));
+  assert.ok(parsed, `seed needs a valid packet on issue ${number}`);
+  await api.request("POST", `/repos/${repository}/issues/${number}/comments`, { body:
+    `CLAIM ACCEPTED — \`@${actor}\` using worker identity \`${worker}\`.\n\nOutcome: public issue #${number} as currently defined\n\nBase: \`${sha}\`\n\nTarget: \`main\`\n\nThis reservation grants no repository authority.\n<!-- agent-control-room-claim:v3 issue=${number} request=500 actor=${actor} worker=${worker} packet=${packetHash(parsed)} accepted=${at} -->` });
+}
+
 test("a request is refused for a bad packet, effectful work, open deps, overlap and the working cap", async () => {
   const bad = fakeQueue({ issues: [{ number: 125, body: "no packet" }] });
   assert.deepEqual((await runClaimController({ event: lifecycleEvent("CLAIM REQUEST\nworker-id: w:x-01"), repository, api: bad })).reason, "packet_invalid");
@@ -500,10 +522,13 @@ test("a request is refused for a bad packet, effectful work, open deps, overlap 
   assert.deepEqual((await runClaimController({ event: lifecycleEvent("CLAIM REQUEST\nworker-id: w:x-01"), repository, api: deps })).reason, "dependencies_incomplete");
   const depsClosed = fakeQueue({ issues: [{ number: 125, packet: { dependencies: [124] } }], closed: [124] });
   assert.equal((await acceptHelper(depsClosed)).status, "accepted");
-  const overlap = fakeQueue({ issues: [{ number: 125 }, { number: 126, labels: ["status:working"] }] });
+  const overlap = fakeQueue({ issues: [{ number: 125 }, { number: 126, labels: ["status:working"],
+    packet: { writeScopes: ["scripts/owned-scope.mjs"] } }] });
+  await seedAccepted(overlap, 126, "worker:other-01");
   assert.deepEqual((await runClaimController({ event: lifecycleEvent("CLAIM REQUEST\nworker-id: w:x-01"), repository, api: overlap })).reason, "scope_overlap");
   const disjoint = fakeQueue({ issues: [{ number: 125 }, { number: 126, labels: ["status:working"],
     packet: { writeScopes: ["docs/other/**"] } }] });
+  await seedAccepted(disjoint, 126, "worker:other-01");
   assert.equal((await acceptHelper(disjoint)).status, "accepted");
   const cap = fakeQueue({ issues: [{ number: 125 }, { number: 126, packet: { writeScopes: ["docs/cap/**"] } }] });
   assert.equal((await acceptHelper(cap, 125, "worker:cap-01")).status, "accepted");
@@ -537,6 +562,7 @@ test("renew extends only the same pair with an unchanged packet", async () => {
 
 test("submit verifies the open pull request binding and keeps maintainer labels", async () => {
   const head = "c".repeat(40);
+  const now = 1_700_000_100_000;
   const api = fakeQueue({ issues: [{ number: 125, labels: ["status:working", "platform:macos", "priority:maintainer"] }],
     pulls: [{ number: 42, state: "open", title: "Do it (#125)", body: "Closes #125", base: { ref: "main" },
       head: { sha: head }, user: { login: "shared-account" } }] });
@@ -549,13 +575,13 @@ test("submit verifies the open pull request binding and keeps maintainer labels"
       head: { sha: head }, user: { login: "shared-account" } }] });
   working.request("POST", `/repos/${repository}/issues/125/comments`, { body: marker });
   const submitted = await runClaimSubmit({ event: lifecycleEvent(
-    `CLAIM SUBMIT\nworker-id: worker:submit-01\npr: 42\nsha: ${head}`), repository, api: working });
+    `CLAIM SUBMIT\nworker-id: worker:submit-01\npr: 42\nsha: ${head}`), repository, api: working, now });
   assert.equal(submitted.status, "submitted");
   assert.deepEqual(submitted.preservedLabels, ["platform:macos", "priority:maintainer"]);
   assert.deepEqual(working.labels(125), ["platform:macos", "priority:maintainer", "status:in-review"]);
   assert.match(working.comments(125).at(-1).body, /^CLAIM SUBMITTED —/);
   const wrongHead = await runClaimSubmit({ event: lifecycleEvent(
-    `CLAIM SUBMIT\nworker-id: worker:submit-01\npr: 42\nsha: ${"d".repeat(40)}`), repository, api: working });
+    `CLAIM SUBMIT\nworker-id: worker:submit-01\npr: 42\nsha: ${"d".repeat(40)}`), repository, api: working, now });
   assert.deepEqual(wrongHead, { status: "refused", reason: "issue_not_working" });
 });
 
@@ -567,7 +593,7 @@ test("submit refuses a mismatched pull request without moving labels", async () 
   assert.equal((await acceptHelper(ready, 125, "worker:bind-01")).status, "accepted");
   api.request("POST", `/repos/${repository}/issues/125/comments`, { body: ready.comments(125).at(-1).body });
   const refused = await runClaimSubmit({ event: lifecycleEvent(
-    `CLAIM SUBMIT\nworker-id: worker:bind-01\npr: 42\nsha: ${"c".repeat(40)}`), repository, api });
+    `CLAIM SUBMIT\nworker-id: worker:bind-01\npr: 42\nsha: ${"c".repeat(40)}`), repository, api, now: 1_700_000_100_000 });
   assert.deepEqual(refused, { status: "refused", reason: "pr_binding_invalid" });
   assert.deepEqual(api.labels(125), ["status:working"]);
 });
@@ -581,7 +607,8 @@ test("release returns safe unsubmitted work to ready and refuses the rest", asyn
   assert.equal(released.status, "released");
   assert.deepEqual(api.labels(125), ["status:ready"]);
   const again = await runClaimRelease({ event: lifecycleEvent("CLAIM RELEASE\nworker-id: worker:rel-01"), repository, api });
-  assert.deepEqual(again, { status: "refused", reason: "issue_not_working" });
+  assert.deepEqual(again, { status: "released", reconciled: true,
+    workerId: "worker:rel-01", actor: "shared-account", issueNumber: 125 });
   const withPr = fakeQueue({ issues: [{ number: 126, labels: ["status:working"] }],
     pulls: [{ number: 43, state: "open", title: "Work (#126)", body: "Fixes #126", base: { ref: "main" },
       head: { sha: "e".repeat(40) }, user: { login: "shared-account" } }] });
@@ -699,14 +726,310 @@ test("a renewed claim survives an earlier cycle's expiry marker", async () => {
   assert.equal(swept.outcomes[0].action, "ready");
   const reclaim = await runClaimController({ event: lifecycleEvent("CLAIM REQUEST\nworker-id: worker:cyc-01"), repository, api });
   assert.equal(reclaim.status, "accepted");
-  const renewed = await runClaimRenew({ event: lifecycleEvent("CLAIM RENEW\nworker-id: worker:cyc-01"), repository, api, now: old + 74 * 3_600_000 });
+  const renewed = await runClaimRenew({ event: lifecycleEvent("CLAIM RENEW\nworker-id: worker:cyc-01"), repository, api, now: Date.now() + 100_000 });
   assert.equal(renewed.status, "renewed");
 });
 
 test("an in-review path lock still blocks an overlapping request", async () => {
   const api = fakeQueue({ issues: [{ number: 125, labels: ["status:ready"], packet: { writeScopes: ["skills/locked/**"] } },
     { number: 126, labels: ["status:in-review"], packet: { writeScopes: ["skills/locked/SKILL.md"] } }] });
+  await seedAccepted(api, 126, "worker:other-01");
   const refused = await runClaimController({ event: lifecycleEvent("CLAIM REQUEST\nworker-id: worker:late-01"), repository, api });
   assert.deepEqual(refused, { status: "refused", reason: "scope_overlap" });
   assert.deepEqual(api.labels(125), ["status:ready"]);
+});
+
+/* ---- Maintainer review corrections: packet identity, lease-first lifecycle,
+ * recoverable mutations, actor-bound expiry PRs, completed dependencies. ---- */
+
+const issue181Packet = () => packetBody({
+  base: "7b10beffd02e75a9fddd2873a0fa9db43fda8bb7",
+  writeScopes: ["scripts/private-accessibility-browser-acceptance.mjs", "tests/private-accessibility-product.test.mjs",
+    "private-app/app/private.css", "private-app/app/home-workspace.tsx", "private-app/app/needs-me/workspace.tsx",
+    "private-app/app/settings/workspace.tsx", "private-app/app/connections/workspace.tsx",
+    "private-app/app/project-files-workspace.tsx", "private-app/app/task-workspace.tsx",
+    "app/components/project-catalog-navigation.tsx", "app/components/project-catalog.tsx",
+    "app/components/connection-center.tsx"],
+  checks: ["pnpm build:vps", "node scripts/private-accessibility-browser-acceptance.mjs", "pnpm check"],
+  risk: "standard",
+});
+
+test("the published #181-style packet is accepted, then any packet change blocks submit", async () => {
+  const ready = fakeQueue({ issues: [{ number: 125, body: issue181Packet() }] });
+  assert.equal((await acceptHelper(ready)).status, "accepted");
+  const marker = ready.comments(125).at(-1).body;
+  assert.match(marker, /agent-control-room-claim:v3/);
+  const working = fakeQueue({ issues: [{ number: 125, labels: ["status:working"], body: issue181Packet() }],
+    pulls: [{ number: 42, state: "open", title: "Access (#125)", body: "Closes #125", base: { ref: "main" },
+      head: { sha: "c".repeat(40) }, user: { login: "shared-account" } }] });
+  working.request("POST", `/repos/${repository}/issues/125/comments`, { body: marker });
+  working.setBody(125, issue181Packet().replace("private-app/app/private.css", "private-app/app/other.css"));
+  const refused = await runClaimSubmit({ event: lifecycleEvent(
+    `CLAIM SUBMIT\nworker-id: worker:test-01\npr: 42\nsha: ${"c".repeat(40)}`), repository, api: working, now: 1_700_000_100_000 });
+  assert.deepEqual(refused, { status: "refused", reason: "packet_changed" });
+  assert.deepEqual(working.labels(125), ["status:working"]);
+});
+
+test("a packet-less legacy lock fails closed instead of being ignored", async () => {
+  const api = fakeQueue({ issues: [{ number: 125 },
+    { number: 126, labels: ["status:working"], body: "legacy assignment without a machine packet" }] });
+  const refused = await runClaimController({ event: lifecycleEvent("CLAIM REQUEST\nworker-id: worker:new-01"), repository, api });
+  assert.deepEqual(refused, { status: "refused", reason: "legacy_lock_manual", issues: [126] });
+  assert.deepEqual(api.labels(125), ["status:ready"]);
+});
+
+test("a lock whose packet drifted from its accepted marker fails closed", async () => {
+  const api = fakeQueue({ issues: [{ number: 125 },
+    { number: 126, labels: ["status:working"], packet: { writeScopes: ["docs/drift/**"] } }] });
+  await seedAccepted(api, 126, "worker:other-01");
+  api.setBody(126, packetBody({ writeScopes: ["docs/drift/**"], checks: ["changed check"] }));
+  const refused = await runClaimController({ event: lifecycleEvent("CLAIM REQUEST\nworker-id: worker:new-01"), repository, api });
+  assert.deepEqual(refused, { status: "refused", reason: "lock_packet_changed", issues: [126] });
+  assert.deepEqual(api.labels(125), ["status:ready"]);
+});
+
+test("an expired lease blocks renew and submit before any mutation", async () => {
+  const old = 1_700_000_000_000;
+  const api = fakeQueue({ issues: [{ number: 125 }] });
+  assert.equal((await acceptHelper(api, 125, "worker:old-01", "shared-account", old)).status, "accepted");
+  const renewed = await runClaimRenew({ event: lifecycleEvent("CLAIM RENEW\nworker-id: worker:old-01"),
+    repository, api, now: old + 1000 * 3_600_000 });
+  assert.deepEqual(renewed, { status: "refused", reason: "lease_expired" });
+  const submitted = await runClaimSubmit({ event: lifecycleEvent(
+    `CLAIM SUBMIT\nworker-id: worker:old-01\npr: 42\nsha: ${"c".repeat(40)}`),
+    repository, api, now: old + 1000 * 3_600_000 });
+  assert.deepEqual(submitted, { status: "refused", reason: "lease_expired" });
+  assert.deepEqual(api.labels(125), ["status:working"]);
+  assert.equal(api.comments(125).filter(comment => comment.body.startsWith("CLAIM SUBMIT PENDING —")).length, 0);
+});
+
+test("a renewal preserves the immutable accepted base in the public record", async () => {
+  const api = fakeQueue({ issues: [{ number: 125 }] });
+  assert.equal((await acceptHelper(api)).status, "accepted");
+  const renewed = await runClaimRenew({ event: lifecycleEvent("CLAIM RENEW\nworker-id: worker:test-01"),
+    repository, api, now: 1_700_000_100_000 });
+  assert.equal(renewed.status, "renewed");
+  assert.match(api.comments(125).at(-1).body, new RegExp(`Base: \`${sha}\` \\(immutable from acceptance\\)`));
+});
+
+test("a dependency is complete only when closed, done and not not-planned", async () => {
+  const refused = async (closed, reason) => {
+    const api = fakeQueue({ issues: [{ number: 125, packet: { dependencies: [124] } }], closed });
+    assert.deepEqual((await runClaimController({ event: lifecycleEvent("CLAIM REQUEST\nworker-id: w:x-01"), repository, api })).reason, reason);
+  };
+  await refused([{ number: 124, state_reason: "not_planned" }], "dependencies_incomplete");
+  await refused([{ number: 124, labels: ["platform:any"] }], "dependencies_incomplete");
+  await refused([{ number: 124, pull_request: true }], "dependencies_incomplete");
+  const done = fakeQueue({ issues: [{ number: 125, packet: { dependencies: [124] } }], closed: [124] });
+  assert.equal((await acceptHelper(done)).status, "accepted");
+});
+
+test("submit refuses a pull request owned by another actor", async () => {
+  const ready = fakeQueue({ issues: [{ number: 125, labels: ["status:ready"] }] });
+  assert.equal((await acceptHelper(ready, 125, "worker:actor-01")).status, "accepted");
+  const api = fakeQueue({ issues: [{ number: 125, labels: ["status:working"] }],
+    pulls: [{ number: 42, state: "open", title: "Work (#125)", body: "Closes #125", base: { ref: "main" },
+      head: { sha: "c".repeat(40) }, user: { login: "someone-else" } }] });
+  api.request("POST", `/repos/${repository}/issues/125/comments`, { body: ready.comments(125).at(-1).body });
+  const refused = await runClaimSubmit({ event: lifecycleEvent(
+    `CLAIM SUBMIT\nworker-id: worker:actor-01\npr: 42\nsha: ${"c".repeat(40)}`), repository, api, now: 1_700_000_100_000 });
+  assert.deepEqual(refused, { status: "refused", reason: "pr_binding_invalid" });
+  assert.deepEqual(api.labels(125), ["status:working"]);
+});
+
+test("a pair holding two in-review submissions cannot submit a third", async () => {
+  const head = "c".repeat(40);
+  const now = 1_700_000_100_000;
+  const api = fakeQueue({
+    issues: [
+      { number: 125, labels: ["status:working"], packet: { writeScopes: ["docs/r1/**"] } },
+      { number: 126, labels: ["status:working"], packet: { writeScopes: ["docs/r2/**"] } },
+      { number: 127, labels: ["status:working"], packet: { writeScopes: ["docs/r3/**"] } },
+    ],
+    pulls: [125, 126, 127].map((issue, index) => ({ number: 42 + index, state: "open",
+      title: `Work (#${issue})`, body: `Closes #${issue}`, base: { ref: "main" },
+      head: { sha: head }, user: { login: "shared-account" } })),
+  });
+  for (const number of [125, 126, 127]) await seedAccepted(api, number, "worker:cap-01", "shared-account");
+  const submit = number => runClaimSubmit({ event: lifecycleEvent(
+    `CLAIM SUBMIT\nworker-id: worker:cap-01\npr: ${number - 83}\nsha: ${head}`, number), repository, api, now });
+  assert.equal((await submit(125)).status, "submitted");
+  assert.equal((await submit(126)).status, "submitted");
+  assert.deepEqual(await submit(127), { status: "refused", reason: "in_review_limit" });
+  assert.deepEqual(api.labels(127), ["status:working"]);
+});
+
+test("a lost submit response reconciles without duplicating the transition", async () => {
+  const head = "c".repeat(40);
+  for (const step of ["labels", "marker"]) {
+    const api = fakeQueue({ issues: [{ number: 125, labels: ["status:ready"] }] });
+    assert.equal((await acceptHelper(api, 125, "worker:lost-01")).status, "accepted");
+    const working = fakeQueue({ issues: [{ number: 125, labels: ["status:working"] }],
+      pulls: [{ number: 42, state: "open", title: "Work (#125)", body: "Closes #125", base: { ref: "main" },
+        head: { sha: head }, user: { login: "shared-account" } }],
+      failAt: ({ method, path }) => undefined });
+    working.request("POST", `/repos/${repository}/issues/125/comments`, { body: api.comments(125).at(-1).body });
+    let fired = false;
+    const flaky = { ...working, request: async (method, path, body) => {
+      if (!fired && ((step === "labels" && method === "POST" && path.endsWith("/issues/125/labels"))
+        || (step === "marker" && method === "PATCH" && path.includes("/issues/comments/")))) {
+        fired = true;
+        await working.request(method, path, body);
+        throw new Error("synthetic_lost_api_response");
+      }
+      return working.request(method, path, body);
+    } };
+    const result = await runClaimSubmit({ event: lifecycleEvent(
+      `CLAIM SUBMIT\nworker-id: worker:lost-01\npr: 42\nsha: ${head}`), repository, api: flaky, now: 1_700_000_100_000 });
+    assert.equal(result.status, "submitted");
+    assert.equal(fired, true);
+    assert.deepEqual(working.labels(125), ["status:in-review"]);
+    assert.equal(working.comments(125).filter(comment => comment.body.startsWith("CLAIM SUBMITTED —")).length, 1);
+  }
+});
+
+test("a definite submit label failure rolls back to working without a submitted marker", async () => {
+  const head = "c".repeat(40);
+  const api = fakeQueue({ issues: [{ number: 125, labels: ["status:ready"] }] });
+  assert.equal((await acceptHelper(api, 125, "worker:rb-01")).status, "accepted");
+  const working = fakeQueue({ issues: [{ number: 125, labels: ["status:working"] }],
+    pulls: [{ number: 42, state: "open", title: "Work (#125)", body: "Closes #125", base: { ref: "main" },
+      head: { sha: head }, user: { login: "shared-account" } }] });
+  working.request("POST", `/repos/${repository}/issues/125/comments`, { body: api.comments(125).at(-1).body });
+  let fired = false;
+  const flaky = { ...working, request: (method, path, body) => {
+    if (!fired && method === "POST" && path.endsWith("/issues/125/labels")) { fired = true; throw new Error("synthetic_api_failure"); }
+    return working.request(method, path, body);
+  } };
+  await assert.rejects(runClaimSubmit({ event: lifecycleEvent(
+    `CLAIM SUBMIT\nworker-id: worker:rb-01\npr: 42\nsha: ${head}`), repository, api: flaky, now: 1_700_000_100_000 }), /claim_controller_cleanup_uncertain/);
+  assert.equal(fired, true);
+  assert.deepEqual(working.labels(125), ["status:working"]);
+  assert.equal(working.comments(125).filter(comment => comment.body.startsWith("CLAIM SUBMITTED —")).length, 0);
+});
+
+test("a lost release marker response reconciles and a label failure rolls back", async () => {
+  const ready = fakeQueue({ issues: [{ number: 125, labels: ["status:ready"] }] });
+  assert.equal((await acceptHelper(ready, 125, "worker:rel-01")).status, "accepted");
+  const api = fakeQueue({ issues: [{ number: 125, labels: ["status:working"] }] });
+  api.request("POST", `/repos/${repository}/issues/125/comments`, { body: ready.comments(125).at(-1).body });
+  let lost = false;
+  const flaky = { ...api, request: async (method, path, body) => {
+    if (!lost && method === "PATCH" && path.includes("/issues/comments/")) {
+      lost = true;
+      await api.request(method, path, body);
+      throw new Error("synthetic_lost_api_response");
+    }
+    return api.request(method, path, body);
+  } };
+  const released = await runClaimRelease({ event: lifecycleEvent("CLAIM RELEASE\nworker-id: worker:rel-01"), repository, api: flaky });
+  assert.equal(released.status, "released");
+  assert.equal(lost, true);
+  assert.deepEqual(api.labels(125), ["status:ready"]);
+
+  const ready2 = fakeQueue({ issues: [{ number: 126, labels: ["status:ready"] }] });
+  assert.equal((await acceptHelper(ready2, 126, "worker:rel-02")).status, "accepted");
+  const working2 = fakeQueue({ issues: [{ number: 126, labels: ["status:working"] }] });
+  working2.request("POST", `/repos/${repository}/issues/126/comments`, { body: ready2.comments(126).at(-1).body });
+  let failed = false;
+  const broken = { ...working2, request: (method, path, body) => {
+    if (!failed && method === "POST" && path.endsWith("/issues/126/labels")) { failed = true; throw new Error("synthetic_api_failure"); }
+    return working2.request(method, path, body);
+  } };
+  await assert.rejects(runClaimRelease({ event: lifecycleEvent("CLAIM RELEASE\nworker-id: worker:rel-02", 126), repository, api: broken }), /claim_controller_cleanup_uncertain/);
+  assert.equal(failed, true);
+  assert.deepEqual(working2.labels(126), ["status:working"]);
+  assert.equal(working2.comments(126).filter(comment => comment.body.startsWith("CLAIM RELEASED —")).length, 0);
+});
+
+test("expiry ignores an unrelated mention but escalates multiple owned pull requests", async () => {
+  const old = 1_700_000_000_000;
+  const now = old + 73 * 3_600_000;
+  const api = fakeQueue({
+    issues: [
+      { number: 125, labels: ["status:working"] },
+      { number: 126, labels: ["status:working"], packet: { writeScopes: ["docs/multi/**"] } },
+    ],
+    pulls: [
+      { number: 44, state: "open", title: "Drive-by (#125)", body: "Relates to #125", base: { ref: "main" },
+        head: { sha: "f".repeat(40) }, user: { login: "someone-else" } },
+      { number: 45, state: "open", title: "First (#126)", body: "Closes #126", base: { ref: "main" },
+        head: { sha: "f".repeat(40) }, user: { login: "shared-account" } },
+      { number: 46, state: "open", title: "Second (#126)", body: "Closes #126", base: { ref: "main" },
+        head: { sha: "e".repeat(40) }, user: { login: "shared-account" } },
+    ],
+  });
+  for (const [number, worker] of [[125, "worker:sweep-0125"], [126, "worker:sweep-0126"]]) {
+    const seed = fakeQueue({ issues: [{ number, labels: ["status:ready"],
+      packet: number === 126 ? { writeScopes: ["docs/multi/**"] } : {} }] });
+    assert.equal((await acceptHelper(seed, number, worker, "shared-account", old)).status, "accepted");
+    api.request("POST", `/repos/${repository}/issues/${number}/comments`, { body: seed.comments(number).at(-1).body });
+  }
+  const swept = await runClaimSweep({ repository, api, now });
+  const byIssue = Object.fromEntries(swept.outcomes.map(entry => [entry.issue, entry]));
+  assert.deepEqual(byIssue[125], { issue: 125, action: "ready", reason: "lease_expired_no_pr" });
+  assert.deepEqual(byIssue[126], { issue: 126, action: "needs-decision", reason: "ambiguous_pr" });
+  assert.deepEqual(api.labels(125), ["status:ready"]);
+  assert.deepEqual(api.labels(126), ["status:needs-decision"]);
+});
+
+test("a truncated pull-request listing escalates expiry instead of guessing", async () => {
+  const old = 1_700_000_000_000;
+  const now = old + 73 * 3_600_000;
+  const pulls = Array.from({ length: 100 }, (_, index) => ({ number: 100 + index, state: "open",
+    title: `Bulk (${index})`, body: index === 0 ? "Closes #125" : "Unrelated", base: { ref: "main" },
+    head: { sha: "f".repeat(40) }, user: { login: "someone-else" } }));
+  const api = fakeQueue({ issues: [{ number: 125, labels: ["status:working"] }], pulls });
+  const seed = fakeQueue({ issues: [{ number: 125, labels: ["status:ready"] }] });
+  assert.equal((await acceptHelper(seed, 125, "worker:trunc-01", "shared-account", old)).status, "accepted");
+  api.request("POST", `/repos/${repository}/issues/125/comments`, { body: seed.comments(125).at(-1).body });
+  const swept = await runClaimSweep({ repository, api, now });
+  const outcome = swept.outcomes.find(entry => entry.issue === 125);
+  assert.deepEqual(outcome, { issue: 125, action: "needs-decision", reason: "ambiguous_pr_list" });
+  assert.deepEqual(api.labels(125), ["status:needs-decision"]);
+});
+
+test("a lost expiry marker response reconciles in the same sweep", async () => {
+  const old = 1_700_000_000_000;
+  const now = old + 73 * 3_600_000;
+  const api = fakeQueue({ issues: [{ number: 125, labels: ["status:working"] }] });
+  const seed = fakeQueue({ issues: [{ number: 125, labels: ["status:ready"] }] });
+  assert.equal((await acceptHelper(seed, 125, "worker:lost-01", "shared-account", old)).status, "accepted");
+  api.request("POST", `/repos/${repository}/issues/125/comments`, { body: seed.comments(125).at(-1).body });
+  let lost = false;
+  const flaky = { ...api, request: async (method, path, body) => {
+    if (!lost && method === "PATCH" && path.includes("/issues/comments/")) {
+      lost = true;
+      await api.request(method, path, body);
+      throw new Error("synthetic_lost_api_response");
+    }
+    return api.request(method, path, body);
+  } };
+  const swept = await runClaimSweep({ repository, api: flaky, now });
+  assert.equal(lost, true);
+  assert.deepEqual(swept.outcomes, [{ issue: 125, action: "ready", reason: "lease_expired_no_pr" }]);
+  assert.deepEqual(api.labels(125), ["status:ready"]);
+  assert.ok(api.comments(125).some(comment => comment.body.startsWith("CLAIM EXPIRED —")));
+});
+
+test("a definite expiry marker failure recovers on the next sweep without relabeling", async () => {
+  const old = 1_700_000_000_000;
+  const now = old + 73 * 3_600_000;
+  const api = fakeQueue({ issues: [{ number: 125, labels: ["status:working"] }] });
+  const seed = fakeQueue({ issues: [{ number: 125, labels: ["status:ready"] }] });
+  assert.equal((await acceptHelper(seed, 125, "worker:crash-01", "shared-account", old)).status, "accepted");
+  api.request("POST", `/repos/${repository}/issues/125/comments`, { body: seed.comments(125).at(-1).body });
+  let failed = false;
+  const broken = { ...api, request: (method, path, body) => {
+    if (!failed && method === "PATCH" && path.includes("/issues/comments/")) { failed = true; throw new Error("synthetic_api_failure"); }
+    return api.request(method, path, body);
+  } };
+  await assert.rejects(runClaimSweep({ repository, api: broken, now }), /synthetic_api_failure/);
+  assert.equal(failed, true);
+  assert.deepEqual(api.labels(125), ["status:ready"]);
+  const resweep = await runClaimSweep({ repository, api, now });
+  assert.ok(resweep.outcomes.some(entry => entry.issue === 125 && entry.recovered === true
+    && entry.action === "ready" && entry.reason === "lease_expired_no_pr"));
+  assert.deepEqual(api.labels(125), ["status:ready"]);
+  assert.ok(api.comments(125).some(comment => comment.body.startsWith("CLAIM EXPIRED —")));
 });
