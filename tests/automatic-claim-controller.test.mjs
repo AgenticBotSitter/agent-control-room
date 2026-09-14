@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { isValidScope, packetHash, packetsOverlap, parseClaimCommand, parseClaimMarker, parseClaimPacket, parseClaimRequest, runClaimController, runClaimRelease, runClaimRenew, runClaimSubmit, runClaimSweep, scopeCovers, scopesOverlap } from "../scripts/automatic-claim-controller.mjs";
+import { formatClaimResult, isValidScope, packetHash, packetsOverlap, parseClaimCommand, parseClaimMarker, parseClaimPacket, parseClaimRequest, runClaimController, runClaimRelease, runClaimRenew, runClaimSubmit, runClaimSweep, scopeCovers, scopesOverlap } from "../scripts/automatic-claim-controller.mjs";
 
 const repository = "AgenticBotSitter/agent-control-room";
 const sha = "a".repeat(40);
@@ -798,6 +798,18 @@ test("a packet-less legacy lock fails closed instead of being ignored", async ()
   const refused = await runClaimController({ event: lifecycleEvent("CLAIM REQUEST\nworker-id: worker:new-01"), repository, api });
   assert.deepEqual(refused, { status: "refused", reason: "legacy_lock_manual", issues: [126] });
   assert.deepEqual(api.labels(125), ["status:ready"]);
+});
+
+test("claim outcomes make ignored and refused commands unambiguous", () => {
+  const malformed = formatClaimResult({ status: "ignored" }, "CLAIM REQUEST\nWorker-ID: worker:test-01");
+  assert.match(malformed, /NOT APPLIED/);
+  assert.match(malformed, /worker-id: YOUR-STABLE-WORKER-ID/);
+  assert.match(malformed, /green Actions run means only/);
+  const refused = formatClaimResult({ status: "refused", reason: "legacy_lock_manual", issues: [8, 27] }, "CLAIM REQUEST");
+  assert.match(refused, /NOT ACCEPTED/);
+  assert.match(refused, /legacy_lock_manual/);
+  assert.match(refused, /#8, #27/);
+  assert.equal(formatClaimResult({ status: "accepted" }, "CLAIM REQUEST"), undefined);
 });
 
 test("a lock whose packet drifted from its accepted marker fails closed", async () => {

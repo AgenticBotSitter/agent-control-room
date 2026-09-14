@@ -371,6 +371,34 @@ export function parseClaimCommand(body) {
   return Object.freeze({ command, workerId: worker[1], pr: Number(pr[1]), sha: sha[1] });
 }
 
+const COMMAND_EXAMPLES = Object.freeze({
+  "CLAIM REQUEST": "CLAIM REQUEST\nworker-id: YOUR-STABLE-WORKER-ID",
+  "CLAIM RENEW": "CLAIM RENEW\nworker-id: YOUR-STABLE-WORKER-ID",
+  "CLAIM RELEASE": "CLAIM RELEASE\nworker-id: YOUR-STABLE-WORKER-ID",
+  "CLAIM SUBMIT": `CLAIM SUBMIT\nworker-id: YOUR-STABLE-WORKER-ID\npr: PULL-REQUEST-NUMBER\nsha: EXACT-40-CHARACTER-COMMIT`,
+});
+
+/** A completed workflow is not the same thing as an accepted command. */
+export function formatClaimResult(result, attemptedBody) {
+  if (!result || result.status === "accepted" || result.status === "renewed"
+    || result.status === "submitted" || result.status === "released") return undefined;
+  const header = typeof attemptedBody === "string" ? attemptedBody.replace(/\r\n/g, "\n").split("\n")[0] : "";
+  if (result.status === "ignored") {
+    const example = COMMAND_EXAMPLES[header] ?? COMMAND_EXAMPLES["CLAIM REQUEST"];
+    return ["CLAIM COMMAND NOT APPLIED — the command format is invalid.", "",
+      "Copy the exact format below. Field names are lowercase and extra lines are not allowed:", "",
+      "```text", example, "```", "",
+      "A green Actions run means only that the controller completed safely. Work may begin only after a separate `CLAIM ACCEPTED` comment appears and the issue says `status:working`."].join("\n");
+  }
+  if (result.status !== "refused") return undefined;
+  const affected = Array.isArray(result.issues) && result.issues.length
+    ? ` Affected issues: ${result.issues.map(number => `#${number}`).join(", ")}.` : "";
+  return ["CLAIM NOT ACCEPTED — no work reservation was created.", "",
+    `Reason: \`${result.reason ?? "unspecified"}\`.${affected}`, "",
+    "Do not start work or retry unchanged. Read the issue's latest controller comment or ask the maintainer to correct the named blocker.",
+    "A green Actions run means only that the controller completed safely; it does not mean this claim was accepted."].join("\n");
+}
+
 const MARKER_V2 = "<!-- agent-control-room-claim:v2";
 const MARKER_V3 = "<!-- agent-control-room-claim:v3";
 const MARKER_PATTERN = /<!--\s*agent-control-room-claim:v([23])\s+issue=(\d+)\s+request=(\d+)\s+actor=([^\s]+)\s+worker=([^\s]+)(?:\s+packet=([a-f0-9]{64}))?(?:\s+accepted=(\d+))?(?:\s+pr=(\d+)\s+sha=([a-f0-9]{40}))?\s*-->/;
@@ -1174,10 +1202,14 @@ if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).
     process.stdout.write(`${JSON.stringify(result)}\n`);
   } else {
     const event = JSON.parse(await readFile(eventPath, "utf8"));
+    const api = githubApi(token);
     const command = parseClaimCommand(event?.comment?.body)?.command ?? "";
     const runner = { "CLAIM REQUEST": runClaimController, "CLAIM RENEW": runClaimRenew,
       "CLAIM SUBMIT": runClaimSubmit, "CLAIM RELEASE": runClaimRelease }[command] ?? runClaimController;
-    const result = await runner({ event, repository, api: githubApi(token) });
+    const result = await runner({ event, repository, api });
+    const notice = formatClaimResult(result, event?.comment?.body);
+    if (notice && Number.isSafeInteger(event?.issue?.number) && event.issue.number > 0)
+      await api.request("POST", `/repos/${repository}/issues/${event.issue.number}/comments`, { body: notice });
     process.stdout.write(`${JSON.stringify(result)}\n`);
   }
 }

@@ -28,7 +28,7 @@ const pull = (number, declares, { state = "open", merged = false, body } = {}) =
 const actionMarker = (worker, state, number) =>
   `ACTION REQUIRED\n<!-- agent-control-room-action:v1 worker=${worker} state=${state} issue=${number} -->`;
 const claimMarker = (number, worker) =>
-  `CLAIM ACCEPTED\n<!-- agent-control-room-claim:v2 issue=${number} request=1 actor=maintainer worker=${worker} -->`;
+  `CLAIM ACCEPTED — reserved\n<!-- agent-control-room-claim:v2 issue=${number} request=1 actor=maintainer worker=${worker} -->\n<!-- agent-control-room-claim:v3 issue=${number} request=1 actor=maintainer worker=${worker} packet=${"a".repeat(64)} accepted=1700000000000 -->`;
 const ready = (number, updated) => issue(number, ["status:ready", "help wanted"], updated);
 
 function fakeFetch({ issues = [], comments = {}, pulls = [] } = {}) {
@@ -50,7 +50,7 @@ test("a healthy queue reports counts, links, capacity and no anomalies", async (
     issues: [ready(197), ready(198), ready(199), ready(201),
       issue(166, ["status:working", "help wanted"]),
       issue(125, ["status:in-review", "action:reviewer"])],
-    comments: { 166: [comment(claimMarker(166, "worker:test-01"))] },
+    comments: { 166: [controllerComment(claimMarker(166, "worker:test-01"))] },
     // A healthy in-review state must have an open submission, so give it one.
     pulls: [pull(204, 125)],
   });
@@ -78,6 +78,41 @@ test("an empty Ready queue warns without inventing work and every state stays re
   assert.match(renderQueueHealth(report), /ready: 0 {2}<- below floor/);
   for (const status of STATUSES) assert.equal(typeof report.counts[status], "number");
   assert.equal(report.counts["needs-decision"], 0);
+});
+
+test("packet-less active work is reported as a queue-wide legacy blocker", async () => {
+  const legacy = `CLAIM ACCEPTED — legacy\n<!-- agent-control-room-claim:v2 issue=166 request=1 actor=maintainer worker=worker:test-01 -->`;
+  const api = fakeFetch({ issues: [issue(166, ["status:working"])], comments: { 166: [controllerComment(legacy)] } });
+  const report = await readQueueHealth({ fetchImpl: api.fetchImpl });
+  assert.ok(report.anomalies.find(item => item.issue === 166).codes.includes("legacy_claim_blocks_queue"));
+});
+
+test("working without an accepted controller claim is not treated as healthy", async () => {
+  const api = fakeFetch({ issues: [issue(166, ["status:working"])] });
+  const report = await readQueueHealth({ fetchImpl: api.fetchImpl });
+  assert.ok(report.anomalies.find(item => item.issue === 166).codes.includes("working_claim_missing"));
+});
+
+test("claim health follows renewal and clearing lifecycle records", async () => {
+  const renewed = `CLAIM RENEWED — reserved\n<!-- agent-control-room-claim:v3 issue=166 request=2 actor=maintainer worker=worker:test-01 packet=${"b".repeat(64)} accepted=1700000001000 -->`;
+  const active = fakeFetch({ issues: [issue(166, ["status:working"])], comments: { 166: [controllerComment(renewed)] } });
+  assert.deepEqual((await readQueueHealth({ fetchImpl: active.fetchImpl })).anomalies, []);
+
+  const released = `CLAIM RELEASED — returned\n<!-- agent-control-room-claim:v3 issue=166 request=3 actor=maintainer worker=worker:test-01 released=1700000002000 -->`;
+  const stale = fakeFetch({ issues: [issue(166, ["status:working"])],
+    comments: { 166: [controllerComment(claimMarker(166, "worker:test-01")), controllerComment(released)] } });
+  assert.ok((await readQueueHealth({ fetchImpl: stale.fetchImpl }))
+    .anomalies.find(item => item.issue === 166).codes.includes("working_claim_missing"));
+});
+
+test("truncated claim history reports uncertainty instead of a definite missing claim", async () => {
+  const crowded = Array.from({ length: 100 }, (_, index) => comment(`ordinary ${index}`, "NONE", `user-${index}`));
+  const api = fakeFetch({ issues: [issue(166, ["status:working"])], comments: { 166: crowded } });
+  const report = await readQueueHealth({ fetchImpl: api.fetchImpl, maxPages: 1 });
+  const codes = report.anomalies.find(item => item.issue === 166).codes;
+  assert.deepEqual(codes, ["claim_history_indeterminate"]);
+  assert.ok(!codes.includes("working_claim_missing"));
+  assert.ok(report.warnings.includes("queue_read_truncated"));
 });
 
 test("ambiguous status and action labels are detected instead of guessed", async () => {
@@ -192,6 +227,7 @@ test("a shared pull request that merely mentions an issue is not that issue's su
   // requests referenced many issues, which made unrelated Working issues look submitted.
   const mentioning = fakeFetch({
     issues: [issue(8, ["status:working"])],
+    comments: { 8: [controllerComment(claimMarker(8, "worker:test-01"))] },
     pulls: [
       pull(176, 172, { body: `Outcome / issue: #172 — operator assembly\n\nAlso touches #8 and #64 as inputs.` }),
       pull(187, 187, { body: `Issue: #187\n\nRelated: #8, #27` }),
@@ -202,6 +238,7 @@ test("a shared pull request that merely mentions an issue is not that issue's su
   // A declaration deep inside a long body is a mention, not the delivered issue.
   const deep = fakeFetch({
     issues: [issue(8, ["status:working"])],
+    comments: { 8: [controllerComment(claimMarker(8, "worker:test-01"))] },
     pulls: [pull(190, 999, { body: `${"x".repeat(2100)}\nissue: #8` })],
   });
   assert.deepEqual((await readQueueHealth({ fetchImpl: deep.fetchImpl })).anomalies, []);
@@ -413,7 +450,8 @@ test("an advertised review or correction with no declared submission is reported
     .anomalies.find(item => item.issue === 199).codes, ["submission_missing"]);
 
   // Work still being implemented is not drift: there is nothing to submit yet.
-  const working = fakeFetch({ issues: [issue(199, ["status:working", "action:worker"])] });
+  const working = fakeFetch({ issues: [issue(199, ["status:working", "action:worker"])],
+    comments: { 199: [controllerComment(claimMarker(199, "worker:test-01"))] } });
   assert.deepEqual((await readQueueHealth({ fetchImpl: working.fetchImpl })).anomalies, []);
 });
 
@@ -465,7 +503,7 @@ test("rendered output never publishes a credential value", async () => {
 });
 
 test("claim markers are parsed only in the exact bounded controller form", () => {
-  assert.deepEqual(parseClaimMarker(claimMarker(199, "marvin-project-templates-01")),
+  assert.deepEqual(parseClaimMarker(`CLAIM ACCEPTED\n<!-- agent-control-room-claim:v2 issue=199 request=1 actor=maintainer worker=marvin-project-templates-01 -->`),
     { issue: 199, request: 1, actor: "maintainer", workerId: "marvin-project-templates-01" });
   for (const value of ["CLAIM ACCEPTED", "<!-- agent-control-room-claim:v2 issue=199 -->",
     "<!-- agent-control-room-claim:v2 issue=199 request=1 actor=a worker=b -->"])

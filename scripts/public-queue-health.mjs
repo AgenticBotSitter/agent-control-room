@@ -215,6 +215,29 @@ function latestClaim(comments, issueNumber, advisoryLogins) {
   return matches.at(-1);
 }
 
+function currentClaim(comments, issueNumber, advisoryLogins) {
+  let authoritativeSeen = false;
+  let active;
+  const v3 = new RegExp(`<!--\\s*agent-control-room-claim:v3\\s+issue=${issueNumber}\\s+request=(\\d+)\\s+actor=([^\\s]+)\\s+worker=([^\\s]+)\\s+packet=([a-f0-9]{64})\\s+accepted=(\\d+)`);
+  for (const comment of comments) {
+    if (!CONTROLLER(comment) || typeof comment.body !== "string") continue;
+    const accepted = /^(CLAIM ACCEPTED|CLAIM RENEWED) —/.test(comment.body);
+    const cleared = /^(CLAIM RELEASED|CLAIM EXPIRED) —/.test(comment.body)
+      && comment.body.includes(`issue=${issueNumber} `);
+    if (!accepted && !cleared) continue;
+    authoritativeSeen = true;
+    if (cleared) { active = undefined; continue; }
+    const current = v3.exec(comment.body);
+    const legacy = parseClaimMarker(comment.body);
+    if (current) active = { issue: issueNumber, request: Number(current[1]), actor: current[2],
+      workerId: current[3], packetBound: true };
+    else if (legacy?.issue === issueNumber) active = { ...legacy, packetBound: false };
+  }
+  if (authoritativeSeen) return { claim: active, packetBound: active?.packetBound === true };
+  const advisory = latestClaim(comments, issueNumber, advisoryLogins);
+  return { claim: advisory, packetBound: false };
+}
+
 function oldest(records) {
   return records.slice().sort((a, b) => (a.since < b.since ? -1 : a.since > b.since ? 1 : 0))[0];
 }
@@ -292,15 +315,23 @@ export async function readQueueHealth({
     // Comment-level records carry correction ownership and claim provenance.
     const needsComments = status !== undefined && (SUBMITTED_STATES.has(status) || status === "changes-required");
     let comments = [];
+    let commentHistoryTruncated = false;
     if (needsComments) {
       const history = await pages(fetchImpl, `${root}/issues/${issue.number}/comments?direction=asc`, token, maxPages);
       comments = history.values;
+      commentHistoryTruncated = history.truncated;
       truncated = truncated || history.truncated;
     }
 
     const record = latestWorkflowRecord(comments, issue.number, advisoryLogins);
-    const claim = latestClaim(comments, issue.number, advisoryLogins);
+    const claimState = currentClaim(comments, issue.number, advisoryLogins);
+    const claim = claimState.claim;
     if (claim) claimed += 1;
+
+    if (status === "working" && commentHistoryTruncated) codes.push("claim_history_indeterminate");
+    else if (status === "working" && !claim) codes.push("working_claim_missing");
+    else if (status === "working" && !claimState.packetBound)
+      codes.push("legacy_claim_blocks_queue");
 
     if (status === "changes-required" && !record) codes.push("worker_action_marker_missing");
     // A record exists but carries no authority. A legacy shared-account marker cannot
