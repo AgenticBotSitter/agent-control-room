@@ -365,31 +365,183 @@ test("host lifecycle aborts one start, drains it once and removes signal handler
   assert.deepEqual(await lifecycle.stop(), { status: "closed" });
 });
 
+test("operator assembly drives the real production startup boundary with the captured configuration", async () => {
+  const { settings, trusted } = operatorConfigurationScenario("minimal");
+  const captured = assemblePrivateAgentTaskOperatorConfiguration(settings, trusted);
+  // Drive the captured value directly through the production startup boundary
+  // (validatePrivateTaskStartupConfiguration is what host.start calls before
+  // resource acquisition). The captured value MUST pass without re-substitution
+  // or field remapping — it is a real PrivateTaskStartupConfiguration that
+  // `createPrivateTaskHost.start` accepts as-is.
+  const validated = validatePrivateTaskStartupConfiguration(captured.configuration);
+  assert.equal(validated.web.tenantId, "tenant:operator-synthetic");
+  assert.equal(validated.database.username, "coordinator_test");
+  assert.equal(validated.nativeQueue, true);
+  assert.equal(validated.sessions!.nodes.length, 1);
+  assert.equal(validated.codex, undefined);
+  assert.equal(captured.port, 3210);
+});
+
+test("frozen approval-store capture binds methods to the original trusted receiver", async () => {
+  const { settings, trusted } = operatorConfigurationScenario("minimal");
+  const composed = assemblePrivateAgentTaskOperatorConfiguration(settings, trusted);
+  const captured = composed.configuration.coordinator.approvals!.store as unknown as Record<string, unknown>;
+  // The captured shape is frozen and exposes exactly the trusted methods.
+  assert.ok(Object.isFrozen(captured));
+  assert.equal(typeof captured.acceptInSession, "function");
+  assert.equal(typeof captured.readInSession, "function");
+  assert.equal(typeof captured.receiveDeliveryReceipt, "function");
+  // Mutate the same assembled value (NOT a different scenario) by replacing one
+  // method on the captured store — this must NOT be possible because the
+  // captured object is frozen.
+  assert.throws(() => {
+    (captured as Record<string, unknown>).acceptInSession = () => "mutated";
+  }, /Cannot assign to read only property/);
+  // Likewise, mutate the ORIGINAL trusted store after assembly and assert the
+  // captured store still routes to the original behavior. The captured methods
+  // must execute against the ORIGINAL receiver — not against a later swap of
+  // a property on a reference copied by reference.
+  const store = trusted.approvalStore as Record<string, unknown>;
+  const replacementAccept = async () => "replacement";
+  store.acceptInSession = replacementAccept as unknown as (...args: never[]) => unknown;
+  // Captured store should still route to the ORIGINAL implementation.
+  // Since the original acceptInSession is an inert async, it returns undefined.
+  // The replacement returns the string "replacement". Distinguish by that.
+  const capturedResult = await (captured.acceptInSession as (...args: never[]) => Promise<unknown>)();
+  assert.notEqual(capturedResult, "replacement",
+    "captured acceptInSession must not be the caller's post-assembly replacement");
+  assert.equal(capturedResult, undefined,
+    "captured acceptInSession must remain bound to the original receiver");
+  // The replacement on the trusted store must still be callable via the
+  // trusted reference (sanity check that we did mutate it).
+  const directResult = await (store.acceptInSession as (...args: never[]) => Promise<unknown>)();
+  assert.equal(directResult, "replacement");
+});
+
+test("session sign is bound to the original trusted sessions receiver", async () => {
+  const { settings, trusted } = operatorConfigurationScenario("minimal");
+  const composed = assemblePrivateAgentTaskOperatorConfiguration(settings, trusted);
+  const capturedSign = composed.configuration.coordinator.sessions!.sign;
+  // Mutate the trusted sessions object's sign to a recognisable replacement.
+  const originalSessions = trusted.sessions as unknown as { sign: (frame: unknown) => Promise<{ signature: string }>; nodes: unknown[] };
+  const originalNodesRef = originalSessions.nodes;
+  const replacementSign = async (frame: unknown) => ({ ...(frame as object), signature: "replacement" });
+  originalSessions.sign = replacementSign;
+  // The captured sign MUST still produce the ORIGINAL behavior — `signature: "synthetic"`
+  // — because it was bound to the original receiver at capture time.
+  const out = await (capturedSign as (frame: unknown) => Promise<{ signature: string }>)({ kind: "frame" });
+  assert.equal(out.signature, "synthetic",
+    "captured sign must execute against the original trusted receiver");
+  // Sanity: the trusted reference still routes to the replacement.
+  const trustedOut = await (originalSessions.sign as (frame: unknown) => Promise<{ signature: string }>)({ kind: "frame" });
+  assert.equal(trustedOut.signature, "replacement");
+  // And the original nodes array reference must NOT have been mutated by the
+  // captured sign's signature binding — captured sign should not have modified
+  // the underlying array, only added a synthetic signature to a returned object.
+  assert.equal(originalSessions.nodes, originalNodesRef);
+});
+
+test("idea runtime database must match the declared ideaRuntime role", async () => {
+  const { settings, trusted } = operatorConfigurationScenario("minimal");
+  // Enable idea (the runtime is supplied via trusted.idea.runtime, not via a feature flag).
+  settings.features.idea = true;
+  settings.databaseRoles.ideaRuntime = {
+    host: "127.0.0.1", port: 5433, database: "controlroomtest",
+    username: "idea_runtime_declared", password: "synthetic", majorVersion: 17,
+  };
+  settings.databaseRoles.ideaCreation = {
+    host: "127.0.0.1", port: 5433, database: "controlroomtest",
+    username: "idea_creation", password: "synthetic", majorVersion: 17,
+  };
+  trusted.idea = {
+    creation: { integrityKey: new Uint8Array(32).fill(21), participants: [
+      { participantId: "p1", displayName: "P1", descriptionDigest: "d1", policyDigest: "d1", weight: 1 },
+      { participantId: "p2", displayName: "P2", descriptionDigest: "d2", policyDigest: "d2", weight: 1 },
+      { participantId: "p3", displayName: "P3", descriptionDigest: "d3", policyDigest: "d3", weight: 1 },
+    ] },
+    runtime: {
+      database: {
+        host: "127.0.0.1", port: 5433, database: "controlroomtest",
+        username: "idea_runtime_WRONG", password: "synthetic", majorVersion: 17,
+      },
+      close: async () => {},
+      runtime: {
+        resolve: () => undefined,
+        driver: { mode: "hermes_bot_mode_filtered", invoke: async () => undefined },
+        evidenceAuthority: { verify: async () => undefined },
+        admissionAuthority: { consume: async () => undefined },
+      },
+    },
+  };
+  assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(settings, trusted),
+    /agent_task_operator_config_invalid:idea_runtime_role_mismatch/);
+});
+
+test("idea runtime database mismatch against the declared role refuses even when the trusted database is otherwise valid", async () => {
+  const { settings, trusted } = operatorConfigurationScenario("minimal");
+  settings.features.idea = true;
+  settings.databaseRoles.ideaRuntime = {
+    host: "127.0.0.1", port: 5433, database: "controlroomtest",
+    username: "idea_runtime_declared", password: "synthetic", majorVersion: 17,
+  };
+  settings.databaseRoles.ideaCreation = {
+    host: "127.0.0.1", port: 5433, database: "controlroomtest",
+    username: "idea_creation", password: "synthetic", majorVersion: 17,
+  };
+  trusted.idea = {
+    creation: { integrityKey: new Uint8Array(32).fill(21), participants: [
+      { participantId: "p1", displayName: "P1", descriptionDigest: "d1", policyDigest: "d1", weight: 1 },
+      { participantId: "p2", displayName: "P2", descriptionDigest: "d2", policyDigest: "d2", weight: 1 },
+      { participantId: "p3", displayName: "P3", descriptionDigest: "d3", policyDigest: "d3", weight: 1 },
+    ] },
+    runtime: {
+      database: {
+        host: "127.0.0.1", port: 5433, database: "controlroomtest",
+        username: "idea_runtime_OTHER", password: "synthetic", majorVersion: 17,
+      },
+      close: async () => {},
+      runtime: {
+        resolve: () => undefined,
+        driver: { mode: "hermes_bot_mode_filtered", invoke: async () => undefined },
+        evidenceAuthority: { verify: async () => undefined },
+        admissionAuthority: { consume: async () => undefined },
+      },
+    },
+  };
+  assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(settings, trusted),
+    /idea_runtime_role_mismatch:declared/);
+});
+
 test("operator assembly builds the minimal queue/session/native composition through the production gate", async () => {
   const { settings, trusted } = operatorConfigurationScenario("minimal");
   const composed = assemblePrivateAgentTaskOperatorConfiguration(settings, trusted);
-  assert.equal(composed.web.tenantId, "tenant:operator-synthetic");
-  assert.equal(composed.database.username, "coordinator_test");
-  assert.equal(composed.nativeQueue, true);
-  assert.equal(composed.sessions!.nodes.length, 1);
-  assert.equal(composed.codex, undefined);
-  assert.equal(composed.codexResultReturn, undefined);
-  assert.equal(composed.artifactStorage, undefined);
-  assert.equal(composed.news, undefined);
+  assert.equal(composed.configuration.web.tenantId, "tenant:operator-synthetic");
+  assert.equal(composed.configuration.coordinator.database.username, "coordinator_test");
+  assert.equal(composed.configuration.coordinator.nativeQueue, true);
+  assert.equal(composed.configuration.coordinator.sessions!.nodes.length, 1);
+  assert.equal(composed.configuration.coordinator.codex, undefined);
+  assert.equal(composed.configuration.coordinator.codexResultReturn, undefined);
+  assert.equal(composed.configuration.artifactStorage, undefined);
+  assert.equal(composed.configuration.news, undefined);
   assert.ok(Object.isFrozen(composed));
+  assert.ok(Object.isFrozen(composed.configuration));
+  assert.equal(composed.port, 3210);
 });
 
 test("operator assembly builds the full artifact/result/review/Codex composition", async () => {
   const { settings, trusted } = operatorConfigurationScenario("full");
   const composed = assemblePrivateAgentTaskOperatorConfiguration(settings, trusted);
-  assert.equal(composed.nativeQueueRecovery, true);
-  assert.equal(composed.revisionPlanning, true);
-  assert.equal(composed.queueWorker!.concurrency, 2);
-  assert.equal(composed.codex!.enrollments.length, 1);
-  assert.equal(composed.codexResultReturn?.qualificationReceipt.body.nodeId, "node:operator-codex");
-  assert.equal(composed.nativeHttp!.origin, "https://machine.example.test");
-  assert.ok(composed.artifactStorage !== undefined);
-  assert.equal(composed.sessions!.nodes.length, 2);
+  assert.equal(composed.configuration.coordinator.nativeQueueRecovery, true);
+  assert.equal(composed.configuration.coordinator.revisionPlanning, true);
+  assert.equal(composed.configuration.coordinator.queueWorker!.concurrency, 2);
+  assert.equal(composed.configuration.coordinator.codex!.enrollments.length, 1);
+  assert.equal(
+    (composed.configuration.coordinator.codexResultReturn as { qualificationReceipt: { body: { nodeId: string } } })
+      .qualificationReceipt.body.nodeId,
+    "node:operator-codex");
+  assert.equal(composed.configuration.coordinator.nativeHttp!.origin, "https://machine.example.test");
+  assert.ok(composed.configuration.artifactStorage !== undefined);
+  assert.equal(composed.configuration.coordinator.sessions!.nodes.length, 2);
 });
 
 test("website-only settings cannot enter the operator assembler", async () => {
@@ -440,9 +592,9 @@ test("every operator missing dependency and mismatch class refuses before return
 test("disabled operator components are never constructed from supplied inputs", async () => {
   const { settings, trusted } = operatorConfigurationScenario("minimal");
   const composed = assemblePrivateAgentTaskOperatorConfiguration(settings, trusted);
-  assert.equal(composed.nativeQueueRecovery, undefined);
-  assert.equal(composed.queueWorker, undefined);
-  assert.equal(composed.nativeHttp, undefined);
+  assert.equal(composed.configuration.coordinator.nativeQueueRecovery, undefined);
+  assert.equal(composed.configuration.coordinator.queueWorker, undefined);
+  assert.equal(composed.configuration.coordinator.nativeHttp, undefined);
   assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(settings,
     { ...trusted, nativeHttp: { origin: "https://machine.example.test", peers: [], isPeerCurrent: () => true } }),
   /agent_task_operator_config_invalid:unexpected_trusted_input:nativeHttp/);
@@ -453,13 +605,15 @@ test("repeated operator construction is independent and post-assembly mutation c
   const a = assemblePrivateAgentTaskOperatorConfiguration(first.settings, first.trusted);
   const second = operatorConfigurationScenario("minimal");
   const b = assemblePrivateAgentTaskOperatorConfiguration(second.settings, second.trusted);
-  const norm = (c: typeof a) => ({ db: c.database.username, queue: c.nativeQueue,
-    sessions: c.sessions!.nodes.map(node => node.nodeId), qkey: [...c.quality!.integrityKey], frozen: Object.isFrozen(c) });
+  const norm = (c: typeof a) => ({ db: c.configuration.coordinator.database.username, queue: c.configuration.coordinator.nativeQueue,
+    sessions: c.configuration.coordinator.sessions!.nodes.map(node => node.nodeId),
+    qkey: [...c.configuration.coordinator.quality!.integrityKey],
+    frozen: Object.isFrozen(c) && Object.isFrozen(c.configuration) });
   assert.deepEqual(norm(a), norm(b));
   second.trusted.quality!.integrityKey.fill(9);
   second.settings.port = 9999;
-  assert.notEqual(a.quality!.integrityKey[0], 9);
-  assert.deepEqual([...a.quality!.integrityKey], [...first.trusted.quality!.integrityKey]);
+  assert.notEqual(a.configuration.coordinator.quality!.integrityKey[0], 9);
+  assert.deepEqual([...a.configuration.coordinator.quality!.integrityKey], [...first.trusted.quality!.integrityKey]);
 });
 
 test("the operator assembler performs no environment, filesystem or network access", async () => {
@@ -471,6 +625,7 @@ test("the operator assembler performs no environment, filesystem or network acce
   process.env.CONTROL_ROOM_OPERATOR_SYNTHETIC = "mutated";
   const after = assemblePrivateAgentTaskOperatorConfiguration(settings, trusted);
   delete process.env.CONTROL_ROOM_OPERATOR_SYNTHETIC;
-  assert.deepEqual(after.database, before.database);
-  assert.deepEqual([...after.quality!.integrityKey], [...before.quality!.integrityKey]);
+  assert.deepEqual(after.configuration.coordinator.database, before.configuration.coordinator.database);
+  assert.deepEqual([...after.configuration.coordinator.quality!.integrityKey],
+    [...before.configuration.coordinator.quality!.integrityKey]);
 });

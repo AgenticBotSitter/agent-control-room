@@ -13,6 +13,7 @@ import type { CodexResultIntakeSettingsV1 } from "./codex-result-intake";
 import type { NewsStartupConfiguration } from "./news-startup-configuration";
 import type { PrivateArtifactStorageConfigurationV1 } from "./private-artifact-storage";
 import type { AwaitableRollbackCheckpointStoreV1 } from "../../security";
+import type { TaskCoordinatorConfiguration } from "./task-coordinator-lifecycle";
 
 /** Pure operator-side assembly. This module performs no environment, filesystem,
  * network, listener, credential-store or database access: it only shapes
@@ -130,7 +131,8 @@ const copyKey = (value: unknown, code: string): Uint8Array => {
 export function assemblePrivateAgentTaskOperatorConfiguration(
   settings: unknown,
   trusted: unknown,
-): ReturnType<typeof validatePrivateTaskStartupConfiguration> {
+): { readonly configuration: PrivateTaskStartupConfiguration;
+    readonly port: number } {
   let parsed: AgentTaskOperatorSettingsV1;
   try {
     parsed = operatorSettingsSchema.parse(settings);
@@ -216,6 +218,57 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
   if (typeof store.acceptInSession !== "function" || typeof store.readInSession !== "function") refuse("approval_store_invalid");
   if (f.sessions && typeof store.receiveDeliveryReceipt !== "function") refuse("approval_store_missing_delivery_receipt");
 
+  // Frozen approval-store capture. Every method is bound to the ORIGINAL trusted
+  // store receiver so that post-assembly mutation of the caller's `store`
+  // reference cannot leak into a captured configuration, and the captured shape
+  // is frozen so the trusted methods cannot be replaced or extended on the
+  // returned assembly. The downstream production gate accepts this exact shape.
+  const capturedStore = Object.freeze({
+    acceptInSession: store.acceptInSession.bind(store),
+    readInSession: store.readInSession.bind(store),
+    ...(store.receiveDeliveryReceipt === undefined ? {} : {
+      receiveDeliveryReceipt: store.receiveDeliveryReceipt.bind(store),
+    }),
+  });
+
+  // Idea runtime role binding: when `f.idea && t.idea.runtime` is supplied, the
+  // declared role must exist AND the trusted runtime database must match it.
+  // Without this, a caller could pass any runtime database and bypass the
+  // declared role contract.
+  if (f.idea && t.idea?.runtime) {
+    if (parsed.databaseRoles.ideaRuntime === undefined) {
+      refuse("missing_database_role:ideaRuntime");
+    }
+    const declaredRuntimeRole = parsed.databaseRoles.ideaRuntime as PrivatePostgresConfiguration;
+    const trustedRuntimeDb = t.idea.runtime.database;
+    if (!isRecord(trustedRuntimeDb)
+      || trustedRuntimeDb.host !== primaryHost
+      || trustedRuntimeDb.port !== primaryPort
+      || trustedRuntimeDb.database !== primaryDatabase) {
+      refuse("idea_runtime_role_mismatch");
+    }
+    if (typeof trustedRuntimeDb.username !== "string"
+      || seen.has(trustedRuntimeDb.username) || trustedRuntimeDb.username === webUsername) {
+      refuse("idea_runtime_role_mismatch:reuse");
+    }
+    seen.add(trustedRuntimeDb.username);
+    if (trustedRuntimeDb.host !== declaredRuntimeRole.host
+      || trustedRuntimeDb.port !== declaredRuntimeRole.port
+      || trustedRuntimeDb.database !== declaredRuntimeRole.database
+      || trustedRuntimeDb.username !== declaredRuntimeRole.username) {
+      refuse("idea_runtime_role_mismatch:declared");
+    }
+  }
+
+  // Session signer binding: capture the original trusted sessions object as
+  // the receiver so the captured `sign` cannot be replaced or unbound when
+  // the trusted sessions object is later mutated.
+  const trustedSessions = t.sessions as NonNullable<AgentTaskOperatorTrustedInputs["sessions"]>;
+  const capturedSessions = f.sessions && trustedSessions ? Object.freeze({
+    nodes: [...trustedSessions.nodes],
+    sign: trustedSessions.sign.bind(trustedSessions),
+  }) : undefined;
+
   const coordinator: PrivateTaskStartupConfiguration["coordinator"] = {
     planning: {
       template: planning.template,
@@ -228,7 +281,7 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
     routes: [...t.routes],
     approvals: {
       enrollments: [...t.approvalEnrollments],
-      store: store as unknown as NonNullable<NonNullable<PrivateTaskStartupConfiguration["coordinator"]["approvals"]>["store"]>,
+      store: capturedStore as unknown as NonNullable<NonNullable<PrivateTaskStartupConfiguration["coordinator"]["approvals"]>["store"]>,
     },
     database: dbRole("coordinator") as PrivatePostgresConfiguration,
     ...(f.nativeQueue ? { nativeQueue: true as const } : {}),
@@ -252,7 +305,13 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
         database: dbRole("evidence") as PrivatePostgresConfiguration,
       },
     } : {}),
-    ...(f.sessions && t.sessions ? { sessions: { nodes: [...t.sessions.nodes], sign: t.sessions.sign, database: dbRole("sessions") as PrivatePostgresConfiguration } } : {}),
+    ...(capturedSessions ? {
+      sessions: {
+        nodes: [...capturedSessions.nodes],
+        sign: capturedSessions.sign,
+        database: dbRole("sessions") as PrivatePostgresConfiguration,
+      },
+    } : {}),
     ...(parsed.databaseRoles.queueWorker && f.queueWorker ? {
       queueWorker: {
         database: dbRole("queueWorker") as PrivatePostgresConfiguration,
@@ -268,7 +327,12 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
         integrityKey: copyKey(t.idea.creation.integrityKey, "idea_key_invalid"),
         participants: t.idea.creation.participants,
       },
-      ...(t.idea.runtime ? { ideaRuntime: t.idea.runtime as PrivateTaskStartupConfiguration["coordinator"] extends { ideaRuntime?: infer R } ? R : never } : {}),
+      ...(t.idea.runtime ? {
+        ideaRuntime: {
+          ...(t.idea.runtime as Omit<NonNullable<TaskCoordinatorConfiguration["ideaRuntime"]>, "database">),
+          database: dbRole("ideaRuntime") as PrivatePostgresConfiguration,
+        },
+      } : {}),
     } : {}),
   };
 
@@ -300,5 +364,35 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
   } catch {
     refuse("production_gate_refused");
   }
-  return Object.freeze({ ...validated });
+  // Host-compatible capture. Reconstruct the full `PrivateTaskStartupConfiguration`
+  // shape (with a `coordinator` wrapper) so the captured value can be passed
+  // directly to `createPrivateTaskHost.start` and driven through the real
+  // startup boundary. The flat validated object is the canonical proof that
+  // every coordinator field was accepted; the wrapper makes it host-compatible.
+  const coordinatorShape = full.coordinator;
+  const hostCompatible: PrivateTaskStartupConfiguration = {
+    web: full.web,
+    ...(full.artifactStorage !== undefined ? { artifactStorage: full.artifactStorage } : {}),
+    ...(full.news !== undefined ? { news: full.news } : {}),
+    coordinator: {
+      planning: coordinatorShape.planning,
+      routes: coordinatorShape.routes,
+      approvals: coordinatorShape.approvals!,
+      ...(coordinatorShape.quality ? { quality: coordinatorShape.quality } : {}),
+      ...(coordinatorShape.revisionPlanning ? { revisionPlanning: coordinatorShape.revisionPlanning } : {}),
+      ...(coordinatorShape.nativeHttp ? { nativeHttp: coordinatorShape.nativeHttp } : {}),
+      ...(coordinatorShape.codex ? { codex: coordinatorShape.codex } : {}),
+      ...(coordinatorShape.nativeQueue ? { nativeQueue: coordinatorShape.nativeQueue } : {}),
+      ...(coordinatorShape.nativeQueueRecovery ? { nativeQueueRecovery: coordinatorShape.nativeQueueRecovery } : {}),
+      ...(coordinatorShape.queueWorker ? { queueWorker: coordinatorShape.queueWorker } : {}),
+      database: coordinatorShape.database,
+      ...(coordinatorShape.resultDatabase ? { resultDatabase: coordinatorShape.resultDatabase } : {}),
+      ...(coordinatorShape.ideaCreation ? { ideaCreation: coordinatorShape.ideaCreation } : {}),
+      ...(coordinatorShape.ideaRuntime ? { ideaRuntime: coordinatorShape.ideaRuntime } : {}),
+      ...(coordinatorShape.evidence ? { evidence: coordinatorShape.evidence } : {}),
+      ...(coordinatorShape.sessions ? { sessions: coordinatorShape.sessions } : {}),
+      ...(coordinatorShape.codexResultReturn ? { codexResultReturn: coordinatorShape.codexResultReturn } : {}),
+    },
+  };
+  return Object.freeze({ configuration: Object.freeze(hostCompatible), port: parsed.port });
 }
