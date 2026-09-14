@@ -52,14 +52,14 @@ helpers; no upstream database, process, dependencies or network defaults were im
 
 Control Room changes: event-only data type and precomputed tokens; omit hash-based
 identity/shortcut, ranking and URL normalization; preserve distinct numeric model/
-version/date tokens rather than treating them as the same event. All eligible ABS
+version/date tokens rather than treating them as the same event. All eligible news
 stories have already passed verification. The sparse-title exception is broadened to
 all short token sets on different/unknown direct URLs, not just identical normalized
 titles: the first integration run exposed four regressions where distinct short
 headlines lost their single-letter distinctions. A comparator has no authority to
 verify a story or approve a fetch.
 
-Integration: `selectAbsNewsDigestV1` uses this helper to defer likely duplicate events
+Integration: `selectNewsDigestV1` uses this helper to defer likely duplicate events
 across different existing cluster IDs. Existing canonical IDs, story/evidence digests,
 strict source cap, score order and verified/freshness filters remain intact. This does
 not overwrite or merge source records. Retain this notice and LICENSE when distributing

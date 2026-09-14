@@ -877,24 +877,24 @@ export class CanonicalStore {
    * The collector must bind its saved full plan and recheck its local guard before I/O.
    * This does not replace the node-local protected claim required for remote execution.
    * Any replay refuses another start, even when the preceding caller lost its response. */
-  async beginAbsFeedAttempt(input: { tenantId: string; workspaceId: string; projectId: string; jobId: string;
+  async beginNewsFeedAttempt(input: { tenantId: string; workspaceId: string; projectId: string; jobId: string;
     attemptId: string; effectId: string; nodeId: string; executorId: string; inputDigest: string; operationDigest: string },
   clock: () => number = Date.now): Promise<{ started: true; markerDigest: string; deadline: string }> {
     input = { ...input };
     const startedAt = clock(); let deadline = startedAt;
     const assertCurrent = () => { const current = clock();
-      if (!Number.isSafeInteger(current) || current < startedAt || current >= deadline) throw new Error("abs_feed_attempt_expired"); };
-    if (!Number.isSafeInteger(startedAt)) throw new Error("abs_feed_attempt_expired");
+      if (!Number.isSafeInteger(current) || current < startedAt || current >= deadline) throw new Error("news_feed_attempt_expired"); };
+    if (!Number.isSafeInteger(startedAt)) throw new Error("news_feed_attempt_expired");
     return this.#transactionWithPreCommitCheck(async tx => {
       // Match web admission's identity -> grants -> workspace lock order.
       const proof = (await tx.query<{ identity_id: string; id: string; decided_at: string; expires_at: string; approval_id: string; operation_digest: string }>(
         `SELECT d.identity_id,d.id,d.decided_at,d.expires_at,c.approval_id,c.operation_digest FROM control_approval_consumptions c
          JOIN control_policy_decisions d ON d.tenant_id=c.tenant_id AND d.id=c.policy_decision_id
          WHERE c.tenant_id=$1 AND c.effect_intent_id=$2`, [input.tenantId, input.effectId])).rows[0];
-      if (!proof) throw new Error("abs_feed_attempt_unavailable");
+      if (!proof) throw new Error("news_feed_attempt_unavailable");
       const owner = (await tx.query<{ actor_type: string; state: string }>(
         "SELECT actor_type,state FROM control_identities WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [input.tenantId, proof.identity_id])).rows[0];
-      if (owner?.actor_type !== "human" || owner.state !== "active") throw new Error("abs_feed_attempt_unavailable");
+      if (owner?.actor_type !== "human" || owner.state !== "active") throw new Error("news_feed_attempt_unavailable");
       const rows = await tx.query<{ id: string; role_key: string; allowed_actions: string[]; project_ids: string[];
         risk_ceiling: RoleGrant["riskCeiling"]; allow_external_effects: boolean; require_strong_factor: boolean;
         expires_at: string | null; revoked_at: string | null }>(
@@ -909,7 +909,7 @@ export class CanonicalStore {
         JOIN control_manual_project_heads h ON h.tenant_id=p.tenant_id AND h.project_id=p.id
         WHERE p.tenant_id=$1 AND p.workspace_id=$2 AND p.id=$3 FOR SHARE OF p,h`,
       [input.tenantId, input.workspaceId, input.projectId])).rows[0];
-      if (project?.lifecycle !== "active") throw new Error("abs_feed_attempt_unavailable");
+      if (project?.lifecycle !== "active") throw new Error("news_feed_attempt_unavailable");
       await tx.query("SELECT id FROM control_jobs WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [input.tenantId, input.jobId]);
       const job = await this.#requireWith(tx, input.tenantId, "job", input.jobId) as JobRecord;
       const attempt = await this.#requireWith(tx, input.tenantId, "attempt", input.attemptId) as AttemptRecord;
@@ -919,10 +919,10 @@ export class CanonicalStore {
       const lease = leases.rows[0] ? domainEntitySchema.parse(leases.rows[0].payload) as LeaseRecord : undefined;
       const node = (await tx.query<{ state: string }>("SELECT state FROM control_nodes WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
         [input.tenantId, input.nodeId])).rows[0];
-      const discovery = job.specVersion === "abs-news-discovery/v1";
-      const collectionOperation = discovery ? "abs.news.discover" : "abs.feed.collect";
+      const discovery = job.specVersion === "news-discovery/v1";
+      const collectionOperation = discovery ? "news.discover" : "news.feed.collect";
       if (job.projectId !== input.projectId || job.inputDigest !== input.inputDigest || job.state !== "leased"
-        || !discovery && job.specVersion !== "abs-feed-collection/v1" || job.jobType !== "abs.feed.collection"
+        || !discovery && job.specVersion !== "news-feed-collection/v1" || job.jobType !== "news.feed.collection"
         || job.authority.allowedExecutor !== input.executorId || job.authority.allowedOperations.length !== 1
         || job.authority.allowedOperations[0] !== collectionOperation || job.authority.effectPolicy !== "approval_required"
         || job.authority.maxConcurrentEffects !== 1 || job.authority.credentialRefs.length || job.authority.filesystemRoots.length
@@ -938,12 +938,12 @@ export class CanonicalStore {
         || effect.operation !== collectionOperation || effect.risk !== "low" || !effect.approvalId
         || proof.approval_id !== effect.approvalId || proof.operation_digest !== effect.operationDigest
         || effect.operationDigest !== input.operationDigest || effect.operationDigest !== computeEffectOperationDigest(effect, job.projectId)
-        || effect.destination !== job.authority.allowedNetworkDestinations[0]) throw new Error("abs_feed_attempt_unavailable");
+        || effect.destination !== job.authority.allowedNetworkDestinations[0]) throw new Error("news_feed_attempt_unavailable");
       assertAuthorityDigest(job.authority);
       await tx.query("SELECT id FROM control_approvals WHERE tenant_id=$1 AND id=$2 FOR SHARE", [input.tenantId, effect.approvalId]);
       const approval = await this.#requireWith(tx, input.tenantId, "approval", effect.approvalId) as ApprovalRecord;
       if (approval.state !== "approved" || approval.operationDigest !== effect.operationDigest || approval.scope !== job.projectId
-        || approval.risk !== "low") throw new Error("abs_feed_attempt_unavailable");
+        || approval.risk !== "low") throw new Error("news_feed_attempt_unavailable");
       const occurredAt = new Date(startedAt).toISOString();
       await this.#requirePolicyDecision(tx, { tenantId: input.tenantId, decisionId: proof.id, identityId: proof.identity_id,
         actorType: "human", action: "effect.authorize", resourceType: "effect_intent", resourceId: effect.id,
@@ -952,11 +952,11 @@ export class CanonicalStore {
         authenticatedAt: proof.decided_at, expiresAt: proof.expires_at }, grants, { tenantId: input.tenantId,
         action: "effect.authorize", resourceType: "effect_intent", resourceId: effect.id, projectId: job.projectId,
         risk: "low", externalEffect: true, occurredAt });
-      if (!decision.allowed) throw new Error("abs_feed_attempt_unavailable");
+      if (!decision.allowed) throw new Error("news_feed_attempt_unavailable");
       deadline = Math.min(Date.parse(job.authority.expiresAt), Date.parse(lease.expiresAt), Date.parse(approval.expiresAt),
         Date.parse(proof.expires_at), ...grants.filter(g => decision.matchedGrantIds.includes(g.id))
           .flatMap(g => [g.expiresAt, g.revokedAt].filter((value): value is string => !!value).map(Date.parse)));
-      if (!Number.isFinite(deadline)) throw new Error("abs_feed_attempt_unavailable");
+      if (!Number.isFinite(deadline)) throw new Error("news_feed_attempt_unavailable");
       assertCurrent();
       const claimKey = sha256Digest({ tenantId: input.tenantId, nodeId: input.nodeId, projectId: job.projectId,
         jobId: job.id, attemptId: attempt.id, operationDigest: effect.operationDigest });
@@ -975,48 +975,48 @@ export class CanonicalStore {
   /** Records a trusted collector's outcome; never performs or authorizes another read.
    * A receipt digest identifies evidence, not proof that the evidence is true. The owned
    * collector must retain and validate that evidence before requesting confirmation. */
-  async settleAbsFeedAttempt(value: unknown, clock: () => number = Date.now) {
+  async settleNewsFeedAttempt(value: unknown, clock: () => number = Date.now) {
     const id = z.string().min(1).max(180), digest = z.string().regex(/^sha256:[0-9a-f]{64}$/);
     const input = z.object({ tenantId: id, projectId: id, jobId: id, attemptId: id, effectId: id, nodeId: id,
       markerDigest: digest, outcome: z.enum(["confirmed", "failed", "ambiguous"]), receiptDigest: digest.optional() }).strict()
       .refine(v => (v.outcome === "confirmed") === !!v.receiptDigest).parse(value);
-    const now = clock(); if (!Number.isSafeInteger(now)) throw new Error("abs_feed_settlement_unavailable");
+    const now = clock(); if (!Number.isSafeInteger(now)) throw new Error("news_feed_settlement_unavailable");
     const occurredAt = new Date(now).toISOString(), outcomeDigest = sha256Digest(input);
     let completionDeadline: number | undefined;
     const checkCompletion = () => { const current = clock();
       if (!Number.isSafeInteger(current) || current < now || completionDeadline !== undefined && current >= completionDeadline)
-        throw new Error("abs_feed_settlement_expired"); };
+        throw new Error("news_feed_settlement_expired"); };
     return this.#transactionWithPreCommitCheck(async tx => {
       await tx.query("SELECT id FROM control_jobs WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [input.tenantId, input.jobId]);
       const job = await this.#requireWith(tx, input.tenantId, "job", input.jobId) as JobRecord;
       const attempt = await this.#requireWith(tx, input.tenantId, "attempt", input.attemptId) as AttemptRecord;
       const effect = await this.#requireWith(tx, input.tenantId, "effect_intent", input.effectId) as EffectIntentRecord;
-      const discovery = job.specVersion === "abs-news-discovery/v1";
-      if (job.projectId !== input.projectId || !discovery && job.specVersion !== "abs-feed-collection/v1" || job.jobType !== "abs.feed.collection"
+      const discovery = job.specVersion === "news-discovery/v1";
+      if (job.projectId !== input.projectId || !discovery && job.specVersion !== "news-feed-collection/v1" || job.jobType !== "news.feed.collection"
         || attempt.jobId !== job.id || attempt.nodeId !== input.nodeId || effect.jobId !== job.id || effect.attemptId !== attempt.id
-        || effect.operation !== (discovery ? "abs.news.discover" : "abs.feed.collect") || effect.risk !== "low") throw new Error("abs_feed_settlement_unavailable");
+        || effect.operation !== (discovery ? "news.discover" : "news.feed.collect") || effect.risk !== "low") throw new Error("news_feed_settlement_unavailable");
       const marker = (await tx.query<{ safe_metadata: { markerDigest?: string; deadline?: string } }>(
         "SELECT safe_metadata FROM control_transition_events WHERE tenant_id=$1 AND entity_kind='effect_intent' AND entity_id=$2 AND to_state='executing'",
         [input.tenantId, effect.id])).rows;
       if (marker.length !== 1 || marker[0].safe_metadata.markerDigest !== input.markerDigest
-        || !Number.isFinite(Date.parse(marker[0].safe_metadata.deadline ?? ""))) throw new Error("abs_feed_settlement_unavailable");
+        || !Number.isFinite(Date.parse(marker[0].safe_metadata.deadline ?? ""))) throw new Error("news_feed_settlement_unavailable");
       const suffix = sha256Digest({ tenantId: input.tenantId, effectId: effect.id, markerDigest: input.markerDigest }).slice(7, 47);
       const key = `feed-settle:${suffix}:effect_intent`;
       const prior = (await tx.query<{ safe_metadata: { outcomeDigest?: string }; to_state: string }>(
         "SELECT safe_metadata,to_state FROM control_transition_events WHERE tenant_id=$1 AND entity_kind='effect_intent' AND idempotency_key=$2",
         [input.tenantId, key])).rows[0];
       if (prior) {
-        if (prior.safe_metadata.outcomeDigest !== outcomeDigest || prior.to_state !== effect.state) throw new Error("abs_feed_settlement_conflict");
+        if (prior.safe_metadata.outcomeDigest !== outcomeDigest || prior.to_state !== effect.state) throw new Error("news_feed_settlement_conflict");
         return { replayed: true, effectState: effect.state };
       }
-      if (effect.state !== "executing") throw new Error("abs_feed_settlement_unavailable");
+      if (effect.state !== "executing") throw new Error("news_feed_settlement_unavailable");
       const leases = (await tx.query<{ payload: LeaseRecord }>(
         "SELECT payload FROM control_leases WHERE tenant_id=$1 AND attempt_id=$2 FOR UPDATE", [input.tenantId, attempt.id])).rows;
       const lease = leases.length === 1 ? domainEntitySchema.parse(leases[0].payload) as LeaseRecord : undefined;
       if (!lease || lease.jobId !== job.id || lease.nodeId !== input.nodeId || lease.epoch !== attempt.leaseEpoch)
-        throw new Error("abs_feed_settlement_unavailable");
+        throw new Error("news_feed_settlement_unavailable");
       const orphaned = job.state === "orphaned" && attempt.state === "orphaned";
-      if (!orphaned && (job.state !== "running" || attempt.state !== "running")) throw new Error("abs_feed_settlement_unavailable");
+      if (!orphaned && (job.state !== "running" || attempt.state !== "running")) throw new Error("news_feed_settlement_unavailable");
       // A late/expired attempt cannot turn its observation into a successful execution claim.
       const state = orphaned || lease.state !== "active" || now >= Date.parse(marker[0].safe_metadata.deadline!)
         ? "ambiguous" as const : input.outcome;
@@ -1028,7 +1028,7 @@ export class CanonicalStore {
       await this.#transitionWith(tx, { tenantId: input.tenantId, kind: "effect_intent", entityId: effect.id,
         expectedVersion: effect.version, toState: state, actor, occurredAt, transitionId: `transition:${key}`, idempotencyKey: key,
         safeMetadata: metadata, recordPatch: state === "confirmed" ? { destinationReceipt: input.receiptDigest }
-          : { safeFailureCode: state === "ambiguous" ? "abs_feed_outcome_uncertain" : "abs_feed_read_failed" } }, true);
+          : { safeFailureCode: state === "ambiguous" ? "news_feed_outcome_uncertain" : "news_feed_read_failed" } }, true);
       if (!orphaned) {
         const terminal = state === "confirmed" ? "succeeded" : state === "failed" ? "failed" : "orphaned";
         for (const entity of [job, attempt] as const) await this.#transitionWith(tx, { tenantId: input.tenantId,

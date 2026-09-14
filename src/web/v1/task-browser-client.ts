@@ -1,6 +1,6 @@
 import { BrowserRequestError, type BrowserFailureCode } from "./browser-client";
-import type { AbsNewsWorkOrderProposalV1 } from "../../project-adapters/abs-news/v1/types";
-import { absResearchTaskDraft } from "./abs-research-draft";
+import type { NewsWorkOrderProposalV1 } from "../../project-adapters/news/v1/types";
+import { newsResearchTaskDraft } from "./news-research-draft";
 import { readBrowserJson as json } from "./browser-json";
 import { catalogProjectIdSchema } from "./project-wire";
 import { taskCommandSchema, taskDetailSchema, taskDraftSchema, taskPageSchema, type TaskReceipt } from "./task-wire";
@@ -18,7 +18,7 @@ export const taskErrorMessage: Record<BrowserFailureCode, string> = {
 };
 
 export function createTaskBrowserClient(transport: typeof fetch = fetch, makeKey: () => string = () => crypto.randomUUID()) {
-  let pending: { projectId: string; body: string; key: string; uncertain: boolean; source?: "abs" } | undefined, busy = false;
+  let pending: { projectId: string; body: string; key: string; uncertain: boolean; source?: "news" } | undefined, busy = false;
   const checkId = (id: string) => { if (!catalogProjectIdSchema.safeParse(id).success) throw new BrowserRequestError("invalid_request"); };
   const path = (id: string) => `/api/v1/projects/${encodeURIComponent(id)}/tasks`;
   const failure = (status: number): BrowserFailureCode => ({ 400: "invalid_request", 401: "authentication_required", 403: "access_denied",
@@ -41,7 +41,7 @@ export function createTaskBrowserClient(transport: typeof fetch = fetch, makeKey
     if (!pending || busy) throw new BrowserRequestError("uncertain");
     busy = true;
     try {
-      const response = await call(path(pending.projectId) + (pending.source === "abs" ? "/from-abs" : ""), pending);
+      const response = await call(path(pending.projectId) + (pending.source === "news" ? "/from-news" : ""), pending);
       if (!response.ok) {
         if ([400, 401, 403, 404, 409].includes(response.status)) {
           // A denied check cannot settle whether an earlier attempt committed. Only a first-attempt
@@ -88,18 +88,18 @@ export function createTaskBrowserClient(transport: typeof fetch = fetch, makeKey
       pending ??= { projectId, body, key: makeKey(), uncertain: false };
       return commit();
     },
-    async proposeAbsResearch(projectId: string, proposal: AbsNewsWorkOrderProposalV1) {
+    async proposeNewsResearch(projectId: string, proposal: NewsWorkOrderProposalV1) {
       checkId(projectId);
       let body: string;
       try {
         if (proposal.projectId !== projectId) throw new Error();
-        absResearchTaskDraft(proposal);
+        newsResearchTaskDraft(proposal);
         body = JSON.stringify(proposal);
         if (new TextEncoder().encode(body).length > 24_576) throw new Error();
       } catch { throw new BrowserRequestError("invalid_request"); }
-      if (pending && (pending.source !== "abs" || pending.projectId !== projectId || pending.body !== body))
+      if (pending && (pending.source !== "news" || pending.projectId !== projectId || pending.body !== body))
         throw new BrowserRequestError("uncertain");
-      pending ??= { projectId, body, key: makeKey(), uncertain: false, source: "abs" };
+      pending ??= { projectId, body, key: makeKey(), uncertain: false, source: "news" };
       return commit();
     },
     // Explicit owner interaction only. Polling, reconnect and focus never invoke this method.

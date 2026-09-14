@@ -21,7 +21,7 @@ export default defineConfig({
       preparation: "src/web/v1/private-fixture-preparation.ts", taskApplication: "src/web/v1/private-task-application.ts",
       taskBootstrap: "src/web/v1/private-task-startup.ts", nativeQueueFactories: "src/web/v1/installed-native-queue.ts",
       nativeQueueInspection: "src/persistence/pg-boss-schema-inspection.ts", taskHost: "src/web/v1/private-task-host.ts",
-      articleExtraction: "src/project-adapters/abs-news/v1/article-extraction-runtime.mjs",
+      articleExtraction: "src/project-adapters/news/v1/article-extraction-runtime.mjs",
       productConfiguration: "src/config/v1/product-configuration.ts",
     } } } },
   },
@@ -36,7 +36,7 @@ export default defineConfig({
           && item.code.includes("./article-extraction-worker.mjs")).map(item => posix.dirname(item.fileName)));
         for (const directory of directories) for (const file of ["article-extraction-worker.mjs", "article-extraction.mjs"])
           this.emitFile({ type: "asset", fileName: posix.join(directory, file),
-            source: await readFile(new URL(`./src/project-adapters/abs-news/v1/${file}`, import.meta.url)) });
+            source: await readFile(new URL(`./src/project-adapters/news/v1/${file}`, import.meta.url)) });
       }
       if (this.environment.name !== "client") return;
       // Preserve the required local icon; this does not establish publication rights.

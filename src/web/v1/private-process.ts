@@ -45,7 +45,7 @@ export interface PrivateWebProcessOptions {
   database: { client: DatabaseClient; close: () => Promise<void> };
   /** Optional existing registry integrity key, supplied privately; never loaded or created by this process. */
   ideaProjects?: { integrityKey: Uint8Array };
-  /** Read-only retained ABS source verification. Does not configure collection. */
+  /** Read-only retained news source verification. Does not configure collection. */
   news?: { integrityKey: Uint8Array };
   /** Optional retained observations only; source lifecycle stays with the operator. */
   herdrObservations?: readonly HerdrObservationReader[];

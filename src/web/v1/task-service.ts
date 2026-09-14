@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { absResearchTaskDraft } from "./abs-research-draft";
-import { parseAbsNewsWorkOrderProposalV1 } from "../../project-adapters/abs-news/v1/proposal";
+import { newsResearchTaskDraft } from "./news-research-draft";
+import { parseNewsWorkOrderProposalV1 } from "../../project-adapters/news/v1/proposal";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import { CanonicalStore, type ProposedWorkBundle } from "../../persistence/canonical-store";
 import { DOMAIN_CONTRACT_VERSION, requestRecordSchema, workflowRecordSchema, jobRecordSchema,
@@ -148,14 +148,14 @@ export class WebTaskService {
 
   /** Source selection creates an ordinary proposed task, never execution permission.
    * Provenance describes owner-supplied evidence; hashes alone do not verify news. */
-  async proposeAbsResearch(identity: VerifiedWebIdentity, projectId: string, value: unknown, key: string) {
-    let proposal: ReturnType<typeof parseAbsNewsWorkOrderProposalV1>;
-    try { proposal = parseAbsNewsWorkOrderProposalV1(value); }
+  async proposeNewsResearch(identity: VerifiedWebIdentity, projectId: string, value: unknown, key: string) {
+    let proposal: ReturnType<typeof parseNewsWorkOrderProposalV1>;
+    try { proposal = parseNewsWorkOrderProposalV1(value); }
     catch { throw new WebAccessError("invalid_request"); }
     if (proposal.tenantId !== this.scope.tenantId || proposal.workspaceId !== this.scope.workspaceId
       || proposal.projectId !== projectId) throw new WebAccessError("invalid_request");
-    let draft: ReturnType<typeof absResearchTaskDraft>;
-    try { draft = absResearchTaskDraft(proposal); } catch { throw new WebAccessError("invalid_request"); }
+    let draft: ReturnType<typeof newsResearchTaskDraft>;
+    try { draft = newsResearchTaskDraft(proposal); } catch { throw new WebAccessError("invalid_request"); }
     return this.propose(identity, projectId, draft, key);
   }
 

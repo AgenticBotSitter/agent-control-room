@@ -4,7 +4,7 @@
 -- The fixed feed adapter and canonical admission remain mandatory authority boundaries.
 BEGIN;
 DO $$ BEGIN
-  IF NOT EXISTS(SELECT 1 FROM control_room_queue.queue WHERE name='abs-feed-collection'
+  IF NOT EXISTS(SELECT 1 FROM control_room_queue.queue WHERE name='news-feed-collection'
     AND policy='standard' AND partition=false AND retry_limit=0 AND dead_letter IS NULL AND notify=false) THEN
     RAISE EXCEPTION 'feed queue prerequisite mismatch';
   END IF;

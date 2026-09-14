@@ -34,7 +34,7 @@ export async function startPgBossBoundedRuntime<Reference>(
   PgBoss: PgBossBoundedRuntimeConstructor, database: PgBossBoundedRuntimeDatabase,
   input: { deliver: BoundedDeliveryHandler<Reference>; verifyRecovery?: BoundedRecoveryVerifier<Reference>; concurrency?: number; backend?: "postgres" | "pglite";
     operationTimeoutMs?: number },
-  profile: { errorPrefix: "native_task" | "abs_feed"; startWorker(client: PgBossBoundedWorkerClient,
+  profile: { errorPrefix: "native_task" | "news_feed"; startWorker(client: PgBossBoundedWorkerClient,
     input: { concurrency: number; deliver: BoundedDeliveryHandler<Reference>; verifyRecovery?: BoundedRecoveryVerifier<Reference> }): Promise<{ close(): Promise<void> }> },
 ) {
   const prefix = profile.errorPrefix, startWorker = profile.startWorker.bind(profile);

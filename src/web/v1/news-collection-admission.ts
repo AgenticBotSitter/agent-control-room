@@ -6,10 +6,10 @@ import { SecurityStore } from "../../security/security-store";
 import { appendAuditWith } from "../../audit/audit-store";
 import { computeEffectOperationDigest, sha256Digest } from "../../security";
 import { localId, digestSchema } from "../../harness/v1/native-run-identifiers";
-import type { AbsFeedJobReference } from "../../persistence/pg-boss-abs-feed-worker";
-import { AbsFeedPlanStore } from "../../project-adapters/abs-news/v1/feed-plan-store";
-import { ABS_FEED_JOB } from "../../project-adapters/abs-news/v1/feed-job-plan";
-import { PostgresNewsSourceSettings } from "../../project-adapters/abs-news/v1/source-settings";
+import type { NewsFeedJobReference } from "../../persistence/pg-boss-news-feed-worker";
+import { NewsFeedPlanStore } from "../../project-adapters/news/v1/feed-plan-store";
+import { NEWS_FEED_JOB } from "../../project-adapters/news/v1/feed-job-plan";
+import { PostgresNewsSourceSettings } from "../../project-adapters/news/v1/source-settings";
 import { WebSessionAuthority } from "./session-authority";
 import { WebProjectService } from "./project-service";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
@@ -25,9 +25,9 @@ const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(
 export class WebNewsCollectionAdmission {
   private readonly scope: z.infer<typeof scopeSchema>;
   private readonly key: Uint8Array;
-  private readonly enqueue: (tx: DatabaseSession, reference: AbsFeedJobReference) => Promise<void>;
+  private readonly enqueue: (tx: DatabaseSession, reference: NewsFeedJobReference) => Promise<void>;
   constructor(private readonly db: DatabaseClient, scope: unknown, key: Uint8Array,
-    submission: { enqueueInSession(tx: DatabaseSession, reference: AbsFeedJobReference): Promise<void> },
+    submission: { enqueueInSession(tx: DatabaseSession, reference: NewsFeedJobReference): Promise<void> },
     private readonly clock: () => number = Date.now,
     private readonly collectionMode: "feed" | "discovery" = "feed") {
     this.scope = scopeSchema.parse(scope);
@@ -48,13 +48,13 @@ export class WebNewsCollectionAdmission {
       await tx.query("SELECT id FROM workspaces WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [tenantId, workspaceId]);
       const project = await new WebProjectService(joined(tx), { tenantId, workspaceId }, this.clock).getViewInSession(tx, actor, projectId);
       if (project.lifecycle !== "active") throw new WebAccessError("conflict");
-      const work = await new AbsFeedPlanStore(joined(tx), { tenantId, workspaceId, projectId }, this.key).get(input.jobId);
+      const work = await new NewsFeedPlanStore(joined(tx), { tenantId, workspaceId, projectId }, this.key).get(input.jobId);
       if (!work || work.job.inputDigest !== input.inputDigest || work.job.authority.allowedExecutor !== executorId) throw new WebAccessError("conflict");
       if (expectedSourceId !== undefined && work.plan.configuration.source.sourceId !== expectedSourceId)
         throw new WebAccessError("conflict");
-      if ((work.plan.schema === "control-room.abs-discovery-plan/v1") !== (this.collectionMode === "discovery"))
+      if ((work.plan.schema === "control-room.news-discovery-plan/v1") !== (this.collectionMode === "discovery"))
         throw new WebAccessError("conflict");
-      if (work.plan.schema === "control-room.abs-discovery-plan/v1") {
+      if (work.plan.schema === "control-room.news-discovery-plan/v1") {
         const config = work.plan.configuration;
         const setting = await new PostgresNewsSourceSettings(joined(tx), { tenantId, workspaceId, projectId }, this.key).get(config.source.sourceId);
         if (!setting?.source.enabled || setting.revision !== config.expectedRevision
@@ -62,13 +62,13 @@ export class WebNewsCollectionAdmission {
           throw new WebAccessError("conflict");
       }
       const canonical = new CanonicalStore(joined(tx)), suffix = sha256Digest({ tenantId, projectId, jobId: input.jobId, inputDigest: input.inputDigest }).slice(7, 47);
-      const effectId = `effect:abs-feed:${suffix}`, attemptId = `attempt:abs-feed:${suffix}`, approvalId = `approval:abs-feed:${suffix}`;
+      const effectId = `effect:news-feed:${suffix}`, attemptId = `attempt:news-feed:${suffix}`, approvalId = `approval:news-feed:${suffix}`;
       const base = { contractVersion: DOMAIN_CONTRACT_VERSION, tenantId, version: 0, createdAt: actor.now, updatedAt: actor.now };
       const effect = effectIntentRecordSchema.parse({ ...base, kind: "effect_intent", id: effectId, jobId: input.jobId, attemptId,
         operation: work.job.authority.allowedOperations[0], operationDigest: sha256Digest("pending"), destination: work.job.authority.allowedNetworkDestinations[0],
-        idempotencyKey: `abs-feed-effect:${suffix}`, risk: "low", state: "proposed", approvalId });
+        idempotencyKey: `news-feed-effect:${suffix}`, risk: "low", state: "proposed", approvalId });
       effect.operationDigest = computeEffectOperationDigest(effect, projectId);
-      const reference: AbsFeedJobReference = { schema: "control-room.abs-feed-job/v1", tenantId, projectId,
+      const reference: NewsFeedJobReference = { schema: "control-room.news-feed-job/v1", tenantId, projectId,
         jobId: input.jobId, attemptId, effectId, operationDigest: effect.operationDigest };
       const previous = await canonical.get(tenantId, "effect_intent", effectId);
       if (previous) {
@@ -83,12 +83,12 @@ export class WebNewsCollectionAdmission {
       // retries. Uncertain effects still occupy the source until resolved.
       // Use retained plans rather than trusting a caller's source identifier.
       const active = await tx.query<{ job_id: string }>(
-        `SELECT DISTINCT p.job_id FROM control_abs_feed_plans p
+        `SELECT DISTINCT p.job_id FROM control_news_feed_plans p
          JOIN control_effect_intents e ON e.tenant_id=p.tenant_id AND e.job_id=p.job_id
          WHERE p.tenant_id=$1 AND p.workspace_id=$2 AND p.project_id=$3
            AND e.state NOT IN ('confirmed','failed','cancelled')`,
         [tenantId, workspaceId, projectId]);
-      const plans = new AbsFeedPlanStore(joined(tx), { tenantId, workspaceId, projectId }, this.key);
+      const plans = new NewsFeedPlanStore(joined(tx), { tenantId, workspaceId, projectId }, this.key);
       for (const row of active.rows) {
         const retained = await plans.get(row.job_id);
         if (!retained || retained.plan.configuration.source.sourceId === work.plan.configuration.source.sourceId)
@@ -96,14 +96,14 @@ export class WebNewsCollectionAdmission {
       }
       const job = jobRecordSchema.parse(await canonical.get(tenantId, "job", input.jobId));
       deadline = Math.min(Date.parse(job.authority.expiresAt), Date.parse(identity.expiresAt), Date.parse(identity.verificationExpiresAt),
-        Date.parse(actor.now) + ABS_FEED_JOB.maximumDurationSeconds * 1000);
-      if (job.state !== "proposed" || job.version !== 0 || deadline - Date.parse(actor.now) < ABS_FEED_JOB.maximumDurationSeconds * 1000)
+        Date.parse(actor.now) + NEWS_FEED_JOB.maximumDurationSeconds * 1000);
+      if (job.state !== "proposed" || job.version !== 0 || deadline - Date.parse(actor.now) < NEWS_FEED_JOB.maximumDurationSeconds * 1000)
         throw new WebAccessError("conflict");
       const actorRef = { actorId: actor.id, actorType: "human" as const };
       const ready = await canonical.transition({ tenantId, kind: "job", entityId: job.id, expectedVersion: 0, toState: "ready",
         transitionId: `transition:feed-ready:${suffix}`, idempotencyKey: `feed-ready:${suffix}`, actor: actorRef, occurredAt: actor.now });
       await canonical.claimReadyJob({ tenantId, jobId: job.id, expectedJobVersion: ready.entity.version, nodeId,
-        attemptId, leaseId: `lease:abs-feed:${suffix}`, transitionId: `transition:feed-claim:${suffix}`,
+        attemptId, leaseId: `lease:news-feed:${suffix}`, transitionId: `transition:feed-claim:${suffix}`,
         idempotencyKey: `feed-claim:${suffix}`, actor: actorRef, acquiredAt: actor.now, expiresAt: new Date(deadline).toISOString() });
       await canonical.create(approvalRecordSchema.parse({ ...base, kind: "approval", id: approvalId, operationDigest: effect.operationDigest,
         scope: projectId, risk: "low", state: "pending", requestedBy: actorRef, requiredActorType: "owner", expiresAt: new Date(deadline).toISOString() }));

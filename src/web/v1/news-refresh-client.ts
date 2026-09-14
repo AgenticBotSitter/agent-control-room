@@ -16,7 +16,7 @@ export const newsRefreshDescriptionSchema = z.union([base, base.extend({ configu
 }).strict()]);
 export type NewsRefreshDescription = z.infer<typeof newsRefreshDescriptionSchema>;
 const proposalSchema = z.object({ jobId: id, inputDigest: digest, sourceDigest: digest, replayed: z.boolean(), startsWork: z.literal(false) }).strict();
-const approvalSchema = z.object({ schema: z.literal("control-room.abs-feed-job/v1"), tenantId: id, projectId: id, jobId: id,
+const approvalSchema = z.object({ schema: z.literal("control-room.news-feed-job/v1"), tenantId: id, projectId: id, jobId: id,
   attemptId: id, effectId: id, operationDigest: digest, replayed: z.boolean(), effectState: z.enum(effectIntentStates), networkContacted: z.literal(false) }).strict();
 
 /** Fixed source client. Retains an exact uncertain request; never auto-approves or

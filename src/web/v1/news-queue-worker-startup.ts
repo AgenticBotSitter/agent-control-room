@@ -1,8 +1,8 @@
 import { createBoundedQueueWorkerBootstrap } from "./bounded-queue-worker-startup";
-import { startPgBossAbsFeedRuntime } from "../../persistence/pg-boss-abs-feed-runtime";
+import { startPgBossNewsFeedRuntime } from "../../persistence/pg-boss-news-feed-runtime";
 import type { PgBossBoundedRuntimeConstructor } from "../../persistence/pg-boss-bounded-runtime";
 import type { BoundedDeliveryHandler } from "../../persistence/pg-boss-bounded-worker";
-import type { AbsFeedJobReference } from "../../persistence/pg-boss-abs-feed-worker";
+import type { NewsFeedJobReference } from "../../persistence/pg-boss-news-feed-worker";
 import type { PrivatePostgresConfiguration } from "./private-postgres";
 import type { TaskCoordinatorDatabase } from "./task-coordinator-lifecycle";
 
@@ -13,7 +13,7 @@ export interface NewsQueueWorkerStartupConfiguration {
   application: Pick<PrivatePostgresConfiguration, "host" | "port" | "database"> & {
     coordinatorLogin: string; ingestionLogin: string;
   };
-  collect: BoundedDeliveryHandler<AbsFeedJobReference>;
+  collect: BoundedDeliveryHandler<NewsFeedJobReference>;
   concurrency?: number;
 }
 
@@ -26,9 +26,9 @@ export function createNewsQueueWorkerBootstrap(dependencies: {
   openDatabase: (config: PrivatePostgresConfiguration) => TaskCoordinatorDatabase;
   backend?: "postgres" | "pglite";
 }) {
-  const worker = createBoundedQueueWorkerBootstrap<AbsFeedJobReference>(dependencies, {
-    errorPrefix: "abs_feed_worker", runtimeErrorPrefix: "abs_feed", startRuntime(PgBoss, database, input) {
-      return startPgBossAbsFeedRuntime(PgBoss, database, { collect: input.deliver,
+  const worker = createBoundedQueueWorkerBootstrap<NewsFeedJobReference>(dependencies, {
+    errorPrefix: "news_feed_worker", runtimeErrorPrefix: "news_feed", startRuntime(PgBoss, database, input) {
+      return startPgBossNewsFeedRuntime(PgBoss, database, { collect: input.deliver,
         concurrency: input.concurrency, backend: input.backend });
     },
   });

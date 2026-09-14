@@ -20,7 +20,7 @@ Changed input yields a distinct detail; it never rewrites approved task lineage.
 
 ## Storage and reading checkpoint
 
-Migration 0065 adds immutable `control_abs_article_details` with exact story-version
+Migration 0065 adds immutable `control_news_article_details` with exact story-version
 foreign key, a 128 KiB text constraint and no automatic grants. The existing web
 role gains SELECT only; news ingestion gains SELECT/INSERT. Startup verifies the
 updated role contract and schema fingerprint; it does not apply either template.

@@ -5,7 +5,7 @@ import type { PrivatePostgresConfiguration } from "./private-postgres";
 import type { TaskCoordinatorDatabase } from "./task-coordinator-lifecycle";
 import type { DatabaseSession } from "../../persistence/database";
 import type { NativeQueueWorkerStartupConfiguration } from "./native-queue-worker-startup";
-import { preparePgBossAbsFeedSubmission } from "../../persistence/pg-boss-abs-feed-submission";
+import { preparePgBossNewsFeedSubmission } from "../../persistence/pg-boss-news-feed-submission";
 import { createNewsQueueWorkerBootstrap, type NewsQueueWorkerStartupConfiguration } from "./news-queue-worker-startup";
 
 /** Installed-package composition only. Import/construction opens no pool and starts no worker.
@@ -37,7 +37,7 @@ export function createInstalledNewsQueueFactories(options: {
   if (!["postgres", "pglite"].includes(backend) || typeof openDatabase !== "function")
     throw new Error("installed_news_queue_config_invalid");
   return Object.freeze({
-    prepareNewsSubmission: (database: DatabaseSession) => preparePgBossAbsFeedSubmission(PgBoss, database, { backend }),
+    prepareNewsSubmission: (database: DatabaseSession) => preparePgBossNewsFeedSubmission(PgBoss, database, { backend }),
     startNewsWorker: (configuration: NewsQueueWorkerStartupConfiguration) =>
       createNewsQueueWorkerBootstrap({ PgBoss, openDatabase, backend }).start(configuration),
   });

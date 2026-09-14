@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { articleDetailRecordSchema, type ArticleDetailRecord } from "../../src/project-adapters/abs-news/v1/article-record";
+import { articleDetailRecordSchema, type ArticleDetailRecord } from "../../src/project-adapters/news/v1/article-record";
 import { readBrowserJson } from "../../src/web/v1/browser-json";
 import { ResultText } from "./result-text";
 

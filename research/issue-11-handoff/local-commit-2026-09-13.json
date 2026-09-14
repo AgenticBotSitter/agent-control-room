@@ -1,7 +1,6 @@
 {
   "issue": 11,
   "worker": "portable-notices-builder-01",
-  "branch": "marvin/portable-notices-artifact-derived",
   "baseCommit": "cf45b29c6d39e051d8e6a7093e69a5673af9a1b1",
   "commitSha": "5320b84d20908ce4fc96a246e1b47386e4ecd565",
   "committedAt": "2026-09-13T13:17:21Z",
@@ -19,7 +18,5 @@
     "Convert 19 remaining third_party/<name>/ markdown PROVENANCE files to JSON form",
     "Regenerate THIRD_PARTY.md from artifact-inventory (separate doc-format step)"
   ],
-  "forcePushCommand": "git push --force-with-lease origin marvin/portable-notices-artifact-derived",
-  "remote": "origin/marvin/portable-notices-artifact-derived",
   "remoteSha": "5320b84d20908ce4fc96a246e1b47386e4ecd565"
 }
