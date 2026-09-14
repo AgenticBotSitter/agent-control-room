@@ -13,6 +13,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { readWorkerInbox } from "../scripts/public-worker-inbox.mjs";
+import { actionsFingerprint } from "../scripts/worker-inbox-platform/lib/inbox-fingerprint.mjs";
 import { artifactsFor, iso8601Duration, systemdQuote, xmlEscape } from "../scripts/worker-inbox-platform/lib/artifacts.mjs";
 import { instructionsFor } from "../scripts/worker-inbox-platform/lib/instructions.mjs";
 import {
@@ -594,6 +595,22 @@ test("instructions cover start, inspect, stop, uninstall, and the wake limitatio
   }
   assert.throws(() => instructionsFor({ platform: "plan9", workerId: WORKER_ID, artifactDirectory: "a", runtimeDirectory: "b", repository: REPOSITORY_NAME }),
     /worker_inbox_platform_platform_invalid/u);
+});
+
+test("a nested field whose key order differs between reads is not a change", () => {
+  // The fingerprint serialises whatever fields the accepted client reports, so it must not be
+  // sensitive to the order keys happen to be written in. If a future field nests an object
+  // whose key order is not guaranteed, two reads of unchanged data would otherwise look
+  // different and the operator would be notified on every tick - the opposite failure to the
+  // one this package was just fixed for, and just as bad.
+  const ordered = [{ issue: 199, state: "attention", detail: { alpha: 1, beta: { x: 1, y: 2 } } }];
+  const reordered = [{ issue: 199, state: "attention", detail: { beta: { y: 2, x: 1 }, alpha: 1 } }];
+  assert.equal(actionsFingerprint(ordered).fingerprint, actionsFingerprint(reordered).fingerprint,
+    "key order alone must never count as a change");
+
+  const changed = [{ issue: 199, state: "attention", detail: { alpha: 9, beta: { x: 1, y: 2 } } }];
+  assert.notEqual(actionsFingerprint(ordered).fingerprint, actionsFingerprint(changed).fingerprint,
+    "a real value change must still be detected");
 });
 
 test("the accepted inbox client is reused rather than reimplemented", async (t) => {

@@ -17,6 +17,17 @@ function displayState(action) {
   return "unknown";
 }
 
+// Serialises a value with object keys sorted at every depth. Two reads of unchanged data must
+// produce the same fingerprint even if a value nests an object whose key order is not
+// guaranteed; otherwise such a field would notify the operator on every single tick. A real
+// value change still produces a different string.
+function stableStringify(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(element => stableStringify(element)).join(",")}]`;
+  const keys = Object.keys(value).sort();
+  return `{${keys.map(key => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(",")}}`;
+}
+
 export function normalizeActions(actions) {
   return (Array.isArray(actions) ? actions : [])
     .filter(action => action && Number.isSafeInteger(Number(action.issue)))
@@ -30,7 +41,7 @@ export function normalizeActions(actions) {
       const fields = Object.keys(action)
         .filter(key => key !== "workerId" && action[key] !== undefined)
         .sort()
-        .map(key => [key, typeof action[key] === "string" ? action[key] : JSON.stringify(action[key])]);
+        .map(key => [key, typeof action[key] === "string" ? action[key] : stableStringify(action[key])]);
       return { issue: Number(action.issue), state: displayState(action), fields };
     })
     .sort((left, right) => left.issue - right.issue || left.state.localeCompare(right.state));

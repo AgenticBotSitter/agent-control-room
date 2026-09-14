@@ -33,15 +33,19 @@ node scripts/worker-inbox-platform/worker-inbox-watch.mjs --once \
   --worker-id YOUR-STABLE-WORKER-ID
 ```
 
-You will see one of:
+You will see one of these, exactly as printed:
 
 ```text
-No action assigned to worker YOUR-STABLE-WORKER-ID.
 Action detected for worker YOUR-STABLE-WORKER-ID: 63:changes-required.
 Assigned action changed for worker YOUR-STABLE-WORKER-ID: 63:changes-required.
 All assigned action cleared for worker YOUR-STABLE-WORKER-ID.
-Unchanged for worker YOUR-STABLE-WORKER-ID.
+worker-inbox-watch: No action assigned to worker YOUR-STABLE-WORKER-ID.
+worker-inbox-watch: Unchanged for worker YOUR-STABLE-WORKER-ID.
 ```
+
+A line that tells you to do something is printed on its own. The quieter lines carry a
+`worker-inbox-watch: ` prefix, so that in a shared log you can tell the watcher's routine
+bookkeeping apart from a line that is asking for your attention.
 
 Then generate the scheduler definition for your platform and follow the instructions it
 prints:
@@ -177,7 +181,7 @@ create is preserved and reported rather than deleted. Use `--dry-run` to see the
 | --- | --- |
 | `worker_inbox_api_403` | Anonymous GitHub rate limit. Set `GITHUB_TOKEN`, or pass `--token-from-gh`. |
 | `worker_inbox_worker_id_invalid` | The worker ID must match the shape the inbox enforces: `[A-Za-z0-9][A-Za-z0-9._:-]{2,79}`. |
-| Never signals anything | Confirm the inbox itself sees work: `node scripts/public-worker-inbox.mjs --worker-id YOUR-ID`. An issue needs a matching `action:worker` label, a matching status label, and a matching action marker. |
+| Never signals anything | Confirm the inbox itself sees work: `node scripts/public-worker-inbox.mjs --worker-id YOUR-ID`. An issue needs a matching `action:worker` label, a matching status label, and a record the accepted client treats as authoritative — a controller handoff or claim record, or a legacy action marker, which the client reports as advisory. |
 | Signals stopped | Check `watch.log` for failures. Repeated failures mean the action is *unknown*, not cleared. |
 | `Cannot wake an agent` | Expected. See the limitation above. |
 
