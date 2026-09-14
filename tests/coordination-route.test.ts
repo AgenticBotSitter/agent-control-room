@@ -423,3 +423,94 @@ test("POST with a stale revision is refused with stale_revision", async (t) => {
   assert.equal(result.status, "refused");
   assert.equal(result.reasonCode, "stale_revision");
 });
+
+test("replaying a POST with the same Idempotency-Key returns the cached outcome without re-running the engine", async (t) => {
+  const f = await buildRouteFixture(); t.after(() => f.dispose());
+  const token = makeToken(FIXTURE_NOW, "test-app");
+  const observedAt = new Date(FIXTURE_NOW).toISOString();
+  const body = JSON.stringify({
+    revision: {
+      projectId: "project:example",
+      expectedCoordinatorVersion: 0,
+      expectedPolicyVersion: 0,
+      expectedConflictsVersion: 0,
+      expectedAttentionVersion: 0,
+      observedAt,
+    },
+    coordinatorActorType: "human",
+    coordinatorIdentityId: "owner-self-5",
+  });
+  const buildRequest = () => new Request(`${FIXTURE_ORIGIN}/api/v1/projects/project:example/coordination/appoint-coordinator`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "cf-access-jwt-assertion": token,
+      "idempotency-key": "appointment-replay12",
+      "origin": FIXTURE_ORIGIN,
+    },
+    body,
+  });
+  // First call runs the engine and bumps the canonical coordinator version.
+  const first = await f.handle(buildRequest());
+  const firstResult = await first.clone().json();
+  assert.equal(first.status, 200);
+  assert.equal(firstResult.revision.expectedCoordinatorVersion, 1);
+
+  // Second call with the same Idempotency-Key MUST replay the cached outcome
+  // — the engine MUST NOT run a second time. If it did, the version would
+  // advance to 2 and the assertion would fail.
+  const second = await f.handle(buildRequest());
+  assert.equal(second.status, 200);
+  const secondResult = await second.clone().json();
+  assert.equal(secondResult.status, "accepted");
+  assert.equal(secondResult.revision.expectedCoordinatorVersion, 1);
+  // The body must be identical to the first response (cached, not re-evaluated).
+  assert.deepEqual(secondResult, firstResult);
+});
+
+test("different Idempotency-Keys on the same project both run the engine", async (t) => {
+  const f = await buildRouteFixture(); t.after(() => f.dispose());
+  const token = makeToken(FIXTURE_NOW, "test-app");
+  const observedAt = new Date(FIXTURE_NOW).toISOString();
+  const buildRequest = (key: string) => new Request(`${FIXTURE_ORIGIN}/api/v1/projects/project:example/coordination/appoint-coordinator`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "cf-access-jwt-assertion": token,
+      "idempotency-key": key,
+      "origin": FIXTURE_ORIGIN,
+    },
+    body: JSON.stringify({
+      revision: {
+        projectId: "project:example",
+        expectedCoordinatorVersion: 0,
+        expectedPolicyVersion: 0,
+        expectedConflictsVersion: 0,
+        expectedAttentionVersion: 0,
+        observedAt,
+      },
+      coordinatorActorType: "human",
+      coordinatorIdentityId: "owner-self-6",
+    }),
+  });
+  // Two distinct Idempotency-Keys — different cache slots — both must run.
+  // The first call installs the coordinator; the second call MUST re-run the
+  // engine (different cache key) and refuse with coordinator_already_active,
+  // proving the replay cache did not return the cached 200.
+  const first = await f.handle(buildRequest("appointment-distinct1"));
+  assert.equal(first.status, 200);
+  const firstResult = await first.clone().json();
+  assert.equal(firstResult.status, "accepted");
+  assert.equal(firstResult.revision.expectedCoordinatorVersion, 1);
+
+  const second = await f.handle(buildRequest("appointment-distinct2"));
+  assert.equal(second.status, 200);
+  const secondResult = await second.clone().json();
+  // Different Idempotency-Key → engine re-runs. The client still submits the
+  // original (now-stale) revision, so the engine refuses with stale_revision,
+  // proving the request was not short-circuited by the replay cache.
+  assert.equal(secondResult.status, "refused");
+  assert.equal(secondResult.reasonCode, "stale_revision");
+  // The engine saw the head at version 1 — proving it re-ran, not the cached 0.
+  assert.equal(secondResult.revision.expectedCoordinatorVersion, 1);
+});

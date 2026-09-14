@@ -268,6 +268,21 @@ export async function projectCoordinationHttpFixture(options: FixtureOptions) {
     async attentionVersion(projectId) {
       return attentionByProject.get(projectId) ?? 0;
     },
+    async readActiveWork(_projectId) {
+      // Fakes-only baseline: the fixture does not yet model a real
+      // active-work ledger. The composition surface is wired so the real
+      // canonical store can drop in via this hook.
+      return [];
+    },
+    async readDependencies(_projectId) {
+      return [];
+    },
+    async readConflicts(_projectId) {
+      return [];
+    },
+    async readAttention(_projectId) {
+      return [];
+    },
     async project(projectId) {
       const project = projects.get(projectId);
       if (!project) throw new Error("not_found");

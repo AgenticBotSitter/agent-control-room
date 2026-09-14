@@ -35,6 +35,7 @@ import { WebSessionAuthority } from "./session-authority";
 import { readProjectScheduleStatus } from "../../schedules/read-service";
 import { ProjectCoordinationHttpService, type ProjectCoordinationCanonicalStoreAdapter } from "./project-coordination-http";
 import { createCoordinationHttpHandler } from "./coordination-http";
+import { IdempotencyReplayCache } from "./idempotency-replay-cache";
 
 export interface PrivateWebProcessOptions {
   origin: string; issuer: string; audience: string; tenantId: string; workspaceId: string;
@@ -190,6 +191,10 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
         store: options.coordination.store,
       })
     : undefined;
+  // Share the replay cache across requests so a POST followed by its retry
+  // returns the cached outcome. The cache lives in the closure of the
+  // handler factory; we hold one instance per process.
+  const coordinationReplayCache = new IdempotencyReplayCache({ clock });
   const ownerReviews = options.tasks?.ownerReviews ? new WebTaskReviewService(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, { ...options.tasks.ownerReviews,
       harnessIntegrityKey: options.tasks.harnessIntegrityKey, results: options.tasks.results!, ideaIntegrityKey: options.ideaProjects?.integrityKey }, clock) : undefined;
@@ -494,6 +499,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
               service: coordination,
               clock,
               isCoordinationEnabled: () => coordination.isEnabled(),
+              replayCache: coordinationReplayCache,
             })(request);
           }
           return await createProjectHttpHandler({ origin: site.origin, trust, service, clock })(request);

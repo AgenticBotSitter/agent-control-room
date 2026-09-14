@@ -27,6 +27,10 @@ import { projectCoordinationActionResultSchema, projectCoordinationPageSchema } 
 import { createAccessVerifier, requireSameOrigin, WebAccessError, type AccessTrust } from "./access-verifier";
 import { privateResponseHeaders as responseHeaders, readBoundedJson, webFailure } from "./http-common";
 import type { ProjectCoordinationHttpService } from "./project-coordination-http";
+import {
+  IdempotencyReplayCache,
+  type IdempotencyCacheKey,
+} from "./idempotency-replay-cache";
 
 type Identity = Parameters<ProjectCoordinationHttpService["read"]>[0];
 type RevisionInput = Parameters<ProjectCoordinationHttpService["appointCoordinator"]>[1] extends infer T
@@ -43,6 +47,12 @@ export interface CoordinationHttpHandlerOptions {
    * The page read in the same handler is the natural place to consult this flag.
    */
   isCoordinationEnabled?: () => Promise<boolean>;
+  /**
+   * Replay cache for POST outcomes keyed by Idempotency-Key + projectId +
+   * subaction + identity. When omitted, every POST runs once and replays
+   * are not protected — production deployments should always pass one.
+   */
+  replayCache?: IdempotencyReplayCache;
 }
 
 const IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9:_-]{8,160}$/;
@@ -120,6 +130,7 @@ export function createCoordinationHttpHandler(options: CoordinationHttpHandlerOp
   const verifyIdentity = createAccessVerifier(options.trust);
   const clock = options.clock ?? Date.now;
   const isCoordinationEnabled = options.isCoordinationEnabled ?? (() => Promise.resolve(true));
+  const replayCache = options.replayCache ?? new IdempotencyReplayCache({ clock });
   return async (request: Request): Promise<Response> => {
     try {
         requireSameOrigin(request, options.origin);
@@ -141,9 +152,20 @@ export function createCoordinationHttpHandler(options: CoordinationHttpHandlerOp
         }
 
         if (request.method !== "POST" || url.search) throw new WebAccessError("invalid_request");
-        readIdempotencyKey(request);
+        const idempotencyKey = readIdempotencyKey(request);
         const body = await readJsonBody(request);
         await ensureEnabledOrRefuse(isCoordinationEnabled);
+
+        const cacheKey: IdempotencyCacheKey = {
+          idempotencyKey,
+          projectId,
+          subaction,
+          identitySubject: identity.subject,
+        };
+        const cached = replayCache.lookup(cacheKey);
+        if (cached) {
+          return Response.json(cached.body as object, { status: cached.status, headers: responseHeaders });
+        }
 
       let outcome: unknown;
       switch (subaction) {
@@ -182,7 +204,9 @@ export function createCoordinationHttpHandler(options: CoordinationHttpHandlerOp
         default:
           throw new WebAccessError("not_found");
       }
-      return Response.json(projectCoordinationActionResultSchema.parse(outcome), { headers: responseHeaders });
+      const parsed = projectCoordinationActionResultSchema.parse(outcome);
+      replayCache.record(cacheKey, 200, parsed);
+      return Response.json(parsed, { headers: responseHeaders });
     } catch (error) {
 return webFailure(error);
     }

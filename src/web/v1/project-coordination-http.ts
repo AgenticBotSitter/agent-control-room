@@ -97,6 +97,73 @@ export interface ProjectCoordinationCanonicalStoreAdapter {
   conflictsVersion: (projectId: string) => Promise<number>;
   /** Version used for the attention ledger. 0 when no attention version is recorded. */
   attentionVersion: (projectId: string) => Promise<number>;
+  /**
+   * Optional projection read for the active-work ledger. Returns the canonical
+   * jobs currently leased/running on the project. When omitted, the page
+   * surfaces an empty array.
+   */
+  readActiveWork?: (
+    projectId: string,
+  ) => Promise<Array<{
+    jobId: string;
+    title: string;
+    state: "proposed" | "leased" | "running" | "waiting" | "review" | "finished" | "failed" | "blocked";
+    updatedAt: string;
+    proposalId: string;
+    proposalDigest: string;
+    readScopes: string[];
+    writeScopes: string[];
+  }>>;
+  /**
+   * Optional projection read for the dependency-edge ledger. Returns the
+   * directed edges between active jobs. When omitted, the page surfaces an
+   * empty array.
+   */
+  readDependencies?: (
+    projectId: string,
+  ) => Promise<Array<{
+    fromJobId: string;
+    toJobId: string;
+    required: boolean;
+  }>>;
+  /**
+   * Optional projection read for the conflict ledger. Returns the canonical
+   * resource conflicts raised against the project. When omitted, the page
+   * surfaces an empty array.
+   */
+  readConflicts?: (
+    projectId: string,
+  ) => Promise<Array<{
+    ledgerId: string;
+    projectId: string;
+    repository: string;
+    resourceKind: "tree" | "file" | "logical";
+    resourcePath: string;
+    conflictingAdmissionId: string;
+    conflictingJobId: string;
+    conflictingLeaseId: string;
+    reasonCode: string;
+    raisedAt: string;
+    resolvedAt: string | null;
+    resolutionKind: "retired" | "released" | "expired" | "superseded" | "unspecified" | null;
+  }>>;
+  /**
+   * Optional projection read for the attention ledger. Returns the canonical
+   * attention items raised against the project. When omitted, the page
+   * surfaces an empty array.
+   */
+  readAttention?: (
+    projectId: string,
+  ) => Promise<Array<{
+    attentionId: string;
+    projectId: string;
+    severity: "urgent" | "soon" | "normal";
+    category: "uncertainty" | "failure" | "approval" | "review" | "preparation";
+    ownerQuestion: string;
+    observedAt: string;
+    referencedJobId: string | null;
+    referencedAdmissionId: string | null;
+  }>>;
   /** Project metadata lookup. Throws `not_found` when the project does not exist. */
   project: (projectId: string) => Promise<{
     projectId: string;
@@ -629,10 +696,10 @@ export class ProjectCoordinationHttpService {
       observedAt,
       coordinatorHead: headProjection.coordinatorHead,
       delegationPolicy: (await this.store.readDelegationPolicySummary?.(projectId)) ?? null,
-      activeWork: [],
-      dependencies: [],
-      conflicts: [],
-      attention: [],
+      activeWork: (await this.store.readActiveWork?.(projectId)) ?? [],
+      dependencies: (await this.store.readDependencies?.(projectId)) ?? [],
+      conflicts: (await this.store.readConflicts?.(projectId)) ?? [],
+      attention: (await this.store.readAttention?.(projectId)) ?? [],
       nextAction: headVersion === 0 ? "appoint-coordinator" : "view-active-work",
     };
   }
