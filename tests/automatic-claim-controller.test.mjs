@@ -85,6 +85,7 @@ test("the workflow serializes claims repository-wide with only repository-read a
   assert.match(workflow, /contents: read\n\s+issues: write/);
   assert.ok(workflow.includes("group: automatic-job-claim-${{ github.repository_id }}"));
   assert.match(workflow, /cancel-in-progress: false/);
+  assert.match(workflow, /queue: max/);
   assert.match(workflow, /persist-credentials: false/);
   assert.ok(!workflow.includes("github.event.comment.body }}"));
 });
@@ -99,6 +100,7 @@ test("one ready issue receives one accepted marker, current main base and a labe
   assert.equal(api.comments.length, 1); assert.match(api.comments[0].body, /^CLAIM ACCEPTED —/);
   assert.ok(api.comments[0].body.includes(`Base: \`${sha}\``));
   assert.equal(api.comments[0].body.match(/agent-control-room-claim:v3/g)?.length, 1);
+  assert.equal(api.comments[0].body.match(/agent-control-room-claim:v2 issue=125 request=501 actor=shared-account worker=worker:test-01 -->/g)?.length, 1);
   assert.match(api.comments[0].body, /actor=shared-account worker=worker:test-01/);
   assert.deepEqual(api.issue().labels.map(value => value.name).sort(), ["platform:macos", "status:working"]);
 
@@ -417,9 +419,14 @@ function fakeQueue(options = {}) {
   for (const item of options.issues ?? [])
     store.set(item.number, { number: item.number, title: item.title ?? `issue ${item.number}`, state: "open",
       body: item.body ?? packetBody(item.packet ?? {}),
-      labels: (item.labels ?? ["status:ready"]).map(name => ({ name })) });
+      labels: (item.labels ?? ["status:ready"]).map(name => ({ name })),
+      ...(item.pull_request ? { pull_request: {} } : {}) });
   const comments = new Map();
   const pulls = options.pulls ?? [];
+  const commentUrl = (number, id) => ({
+    html_url: `https://github.com/${repository}/issues/${number}#issuecomment-${id}`,
+    issue_url: `https://api.github.com/repos/${repository}/issues/${number}`,
+    created_at: "2026-09-14T00:00:00.000Z" });
   const closed = new Map((options.closed ?? []).map(entry => typeof entry === "number"
     ? [entry, { labels: ["status:done"], state_reason: "completed" }]
     : [entry.number, { labels: entry.labels ?? ["status:done"], state_reason: entry.state_reason ?? "completed",
@@ -455,7 +462,8 @@ function fakeQueue(options = {}) {
       result = { object: { sha } };
     } else if (method === "POST" && /\/issues\/\d+\/comments$/.test(path)) {
       const number = Number(path.match(/\/issues\/(\d+)\/comments$/)[1]);
-      const comment = { id: ++nextId, body: body.body, user: { login: "github-actions[bot]", type: "Bot" } };
+      const comment = { id: ++nextId, body: body.body, user: { login: "github-actions[bot]", type: "Bot" },
+        ...commentUrl(number, nextId) };
       comments.set(number, [...(comments.get(number) ?? []), comment]);
       result = structuredClone(comment);
     } else if (method === "GET" && /\/issues\/comments\/\d+$/.test(path)) {
@@ -485,12 +493,22 @@ function fakeQueue(options = {}) {
       result = structuredClone(pulls.filter(pr => pr.state === "open"));
     } else throw new Error(`synthetic_unhandled_api:${method}:${path}`);
     if (options.failAt?.({ method, path }) === "after") throw new Error("synthetic_lost_api_response");
+    if (options.observe) options.observe({ method, path,
+      setLabels: (number, names) => { issueState(number).labels = names.map(name => ({ name })); } });
     return result;
   };
   return { request, calls,
     labels: number => issueState(number).labels.map(value => value.name).sort(),
     body: number => issueState(number).body,
     comments: number => structuredClone(comments.get(number) ?? []),
+    issues: () => [...store.values()].map(issue => structuredClone(issue)),
+    seedComment: (number, comment) => {
+      const id = ++nextId;
+      const full = { id, user: { login: "github-actions[bot]", type: "Bot" },
+        ...commentUrl(number, id), ...comment };
+      comments.set(number, [...(comments.get(number) ?? []), full]);
+      return structuredClone(full);
+    },
     setBody: (number, body) => { issueState(number).body = body; } };
 }
 
@@ -560,29 +578,33 @@ test("renew extends only the same pair with an unchanged packet", async () => {
   assert.deepEqual(legacy, { status: "refused", reason: "legacy_claim_manual" });
 });
 
-test("submit verifies the open pull request binding and keeps maintainer labels", async () => {
+test("submit verifies the open pull request binding and records readiness without moving labels", async () => {
   const head = "c".repeat(40);
   const now = 1_700_000_100_000;
+  const boundPull = {
+    number: 42, state: "open", title: "Do it (#125)", body: `Closes #125\nControl-Room-Issue: 125`,
+    base: { ref: "main", repo: { full_name: repository } },
+    head: { sha: head }, user: { login: "shared-account" } };
   const api = fakeQueue({ issues: [{ number: 125, labels: ["status:working", "platform:macos", "priority:maintainer"] }],
-    pulls: [{ number: 42, state: "open", title: "Do it (#125)", body: "Closes #125", base: { ref: "main" },
-      head: { sha: head }, user: { login: "shared-account" } }] });
+    pulls: [boundPull] });
   // Seed an accepted marker first through the working issue.
   const ready = fakeQueue({ issues: [{ number: 125, labels: ["status:ready", "platform:macos", "priority:maintainer"] }] });
   assert.equal((await acceptHelper(ready, 125, "worker:submit-01")).status, "accepted");
   const marker = ready.comments(125).at(-1).body;
   const working = fakeQueue({ issues: [{ number: 125, labels: ["status:working", "platform:macos", "priority:maintainer"] }],
-    pulls: [{ number: 42, state: "open", title: "Do it (#125)", body: "Closes #125", base: { ref: "main" },
-      head: { sha: head }, user: { login: "shared-account" } }] });
+    pulls: [boundPull] });
   working.request("POST", `/repos/${repository}/issues/125/comments`, { body: marker });
   const submitted = await runClaimSubmit({ event: lifecycleEvent(
     `CLAIM SUBMIT\nworker-id: worker:submit-01\npr: 42\nsha: ${head}`), repository, api: working, now });
   assert.equal(submitted.status, "submitted");
-  assert.deepEqual(submitted.preservedLabels, ["platform:macos", "priority:maintainer"]);
-  assert.deepEqual(working.labels(125), ["platform:macos", "priority:maintainer", "status:in-review"]);
+  // No labels move: the HANDOFF submit command performs the both-sides
+  // transition, so the issue stays working and the PR stays unlabelled.
+  assert.deepEqual(working.labels(125), ["platform:macos", "priority:maintainer", "status:working"]);
   assert.match(working.comments(125).at(-1).body, /^CLAIM SUBMITTED —/);
+  assert.match(working.comments(125).at(-1).body, new RegExp(`pr=42 sha=${head}`));
   const wrongHead = await runClaimSubmit({ event: lifecycleEvent(
     `CLAIM SUBMIT\nworker-id: worker:submit-01\npr: 42\nsha: ${"d".repeat(40)}`), repository, api: working, now });
-  assert.deepEqual(wrongHead, { status: "refused", reason: "issue_not_working" });
+  assert.deepEqual(wrongHead, { status: "refused", reason: "pr_binding_invalid" });
 });
 
 test("submit refuses a mismatched pull request without moving labels", async () => {
@@ -847,7 +869,8 @@ test("a pair holding two in-review submissions cannot submit a third", async () 
       { number: 127, labels: ["status:working"], packet: { writeScopes: ["docs/r3/**"] } },
     ],
     pulls: [125, 126, 127].map((issue, index) => ({ number: 42 + index, state: "open",
-      title: `Work (#${issue})`, body: `Closes #${issue}`, base: { ref: "main" },
+      title: `Work (#${issue})`, body: `Closes #${issue}\nControl-Room-Issue: ${issue}`,
+      base: { ref: "main", repo: { full_name: repository } },
       head: { sha: head }, user: { login: "shared-account" } })),
   });
   for (const number of [125, 126, 127]) await seedAccepted(api, number, "worker:cap-01", "shared-account");
@@ -857,21 +880,30 @@ test("a pair holding two in-review submissions cannot submit a third", async () 
   assert.equal((await submit(126)).status, "submitted");
   assert.deepEqual(await submit(127), { status: "refused", reason: "in_review_limit" });
   assert.deepEqual(api.labels(127), ["status:working"]);
+  // Submissions record readiness only: both submitted issues stay working with
+  // their SUBMITTED markers, and the cap counts those outstanding submissions.
+  for (const number of [125, 126]) {
+    assert.deepEqual(api.labels(number), ["status:working"]);
+    assert.equal(api.comments(number).filter(comment => comment.body.startsWith("CLAIM SUBMITTED —")).length, 1);
+  }
 });
 
-test("a lost submit response reconciles without duplicating the transition", async () => {
+test("a lost submit response reconciles without duplicating the record", async () => {
   const head = "c".repeat(40);
-  for (const step of ["labels", "marker"]) {
+  const boundPull = {
+    number: 42, state: "open", title: "Work (#125)", body: `Closes #125\nControl-Room-Issue: 125`,
+    base: { ref: "main", repo: { full_name: repository } },
+    head: { sha: head }, user: { login: "shared-account" } };
+  for (const step of ["pending", "marker"]) {
     const api = fakeQueue({ issues: [{ number: 125, labels: ["status:ready"] }] });
     assert.equal((await acceptHelper(api, 125, "worker:lost-01")).status, "accepted");
     const working = fakeQueue({ issues: [{ number: 125, labels: ["status:working"] }],
-      pulls: [{ number: 42, state: "open", title: "Work (#125)", body: "Closes #125", base: { ref: "main" },
-        head: { sha: head }, user: { login: "shared-account" } }],
+      pulls: [boundPull],
       failAt: ({ method, path }) => undefined });
     working.request("POST", `/repos/${repository}/issues/125/comments`, { body: api.comments(125).at(-1).body });
     let fired = false;
     const flaky = { ...working, request: async (method, path, body) => {
-      if (!fired && ((step === "labels" && method === "POST" && path.endsWith("/issues/125/labels"))
+      if (!fired && ((step === "pending" && method === "POST" && path.endsWith("/issues/125/comments"))
         || (step === "marker" && method === "PATCH" && path.includes("/issues/comments/")))) {
         fired = true;
         await working.request(method, path, body);
@@ -883,26 +915,27 @@ test("a lost submit response reconciles without duplicating the transition", asy
       `CLAIM SUBMIT\nworker-id: worker:lost-01\npr: 42\nsha: ${head}`), repository, api: flaky, now: 1_700_000_100_000 });
     assert.equal(result.status, "submitted");
     assert.equal(fired, true);
-    assert.deepEqual(working.labels(125), ["status:in-review"]);
+    assert.deepEqual(working.labels(125), ["status:working"]);
     assert.equal(working.comments(125).filter(comment => comment.body.startsWith("CLAIM SUBMITTED —")).length, 1);
   }
 });
 
-test("a definite submit label failure rolls back to working without a submitted marker", async () => {
+test("a definite submit marker failure throws without recording submission", async () => {
   const head = "c".repeat(40);
   const api = fakeQueue({ issues: [{ number: 125, labels: ["status:ready"] }] });
   assert.equal((await acceptHelper(api, 125, "worker:rb-01")).status, "accepted");
   const working = fakeQueue({ issues: [{ number: 125, labels: ["status:working"] }],
-    pulls: [{ number: 42, state: "open", title: "Work (#125)", body: "Closes #125", base: { ref: "main" },
+    pulls: [{ number: 42, state: "open", title: "Work (#125)", body: `Closes #125\nControl-Room-Issue: 125`,
+      base: { ref: "main", repo: { full_name: repository } },
       head: { sha: head }, user: { login: "shared-account" } }] });
   working.request("POST", `/repos/${repository}/issues/125/comments`, { body: api.comments(125).at(-1).body });
   let fired = false;
   const flaky = { ...working, request: (method, path, body) => {
-    if (!fired && method === "POST" && path.endsWith("/issues/125/labels")) { fired = true; throw new Error("synthetic_api_failure"); }
+    if (!fired && method === "PATCH" && path.includes("/issues/comments/")) { fired = true; throw new Error("synthetic_api_failure"); }
     return working.request(method, path, body);
   } };
   await assert.rejects(runClaimSubmit({ event: lifecycleEvent(
-    `CLAIM SUBMIT\nworker-id: worker:rb-01\npr: 42\nsha: ${head}`), repository, api: flaky, now: 1_700_000_100_000 }), /claim_controller_cleanup_uncertain/);
+    `CLAIM SUBMIT\nworker-id: worker:rb-01\npr: 42\nsha: ${head}`), repository, api: flaky, now: 1_700_000_100_000 }), /synthetic_api_failure/);
   assert.equal(fired, true);
   assert.deepEqual(working.labels(125), ["status:working"]);
   assert.equal(working.comments(125).filter(comment => comment.body.startsWith("CLAIM SUBMITTED —")).length, 0);
@@ -1128,3 +1161,181 @@ test("an ambiguous claim expires to needs-decision without crashing", async () =
   assert.deepEqual(swept.outcomes, [{ issue: 125, action: "needs-decision", reason: "ambiguous_claim" }]);
   assert.deepEqual(api.labels(125), ["status:needs-decision"]);
 });
+
+test("a dual-marker acceptance parses as the authoritative v3 record", async () => {
+  const api = fakeQueue({ issues: [{ number: 125, labels: ["status:ready"] }] });
+  assert.equal((await acceptHelper(api)).status, "accepted");
+  const body = api.comments(125).at(-1).body;
+  assert.match(body, /^CLAIM ACCEPTED —/);
+  const parsed = parseClaimMarker(body);
+  assert.equal(parsed.version, 3);
+  assert.equal(parsed.issue, 125);
+  assert.equal(parsed.actor, "shared-account");
+  assert.equal(parsed.worker, "worker:test-01");
+  assert.match(parsed.packet, /^[a-f0-9]{64}$/);
+  assert.equal(parsed.accepted, 1_700_000_000_000);
+  const v2only = "CLAIM ACCEPTED — x\n\n<!-- agent-control-room-claim:v2 issue=125 request=501 actor=shared-account worker=worker:test-01 -->";
+  assert.equal(parseClaimMarker(v2only).version, 2);
+});
+
+test("a maintainer pause between removal and addition wins without a second workflow state", async () => {
+  const old = 1_700_000_000_000;
+  const now = old + 73 * 3_600_000;
+  const api = fakeQueue({ issues: [{ number: 125, labels: ["status:working"] }],
+    observe: ({ method, path, setLabels }) => {
+      if (method === "DELETE" && path.includes("/labels/status%3Aworking"))
+        setLabels(125, ["status:paused"]);
+    } });
+  await seedAccepted(api, 125, "worker:race-01", "shared-account", old);
+  await assert.rejects(runClaimSweep({ repository, api, now }), /claim_controller_state_changed/);
+  assert.deepEqual(api.labels(125), ["status:paused"]);
+});
+
+test("a maintainer pause between addition and verification removes only our addition", async () => {
+  const old = 1_700_000_000_000;
+  const now = old + 73 * 3_600_000;
+  const api = fakeQueue({ issues: [{ number: 125, labels: ["status:working"] }],
+    observe: ({ method, path, setLabels }) => {
+      if (method === "POST" && path.endsWith("/issues/125/labels"))
+        setLabels(125, ["status:ready", "status:paused"]);
+    } });
+  await seedAccepted(api, 125, "worker:race-02", "shared-account", old);
+  await assert.rejects(runClaimSweep({ repository, api, now }), /claim_controller_state_changed/);
+  assert.deepEqual(api.labels(125), ["status:paused"]);
+  assert.ok(api.calls.some(call => call.method === "DELETE" && call.path.includes("/labels/status%3Aready")));
+});
+
+/** The accepted v2 record grammar readers on main rely on. Cf.
+ * scripts/review-handoff-controller.mjs acceptedClaim and
+ * scripts/public-worker-inbox.mjs CLAIM_MARKER plus the CLAIM outcome line. */
+const ACCEPTED_V2_RECORD =
+  /<!-- agent-control-room-claim:v2 issue=(\d+) request=(\d+) actor=([^\s]+) worker=([A-Za-z0-9][A-Za-z0-9._:-]{2,79}) -->/;
+
+test("claim and submit records stay compatible with the accepted handoff and inbox interfaces", async () => {
+  const head = "c".repeat(40);
+  const actor = "shared-account";
+  const worker = "worker:chain-01";
+  const now = 1_700_000_100_000;
+  const api = fakeQueue({
+    issues: [
+      { number: 125, labels: ["status:ready"] },
+      { number: 184, labels: [], pull_request: true, title: "Chain (#125)", body: "Chain work" },
+    ],
+    pulls: [{ number: 184, state: "open", title: "Chain (#125)",
+      body: `Chain work, closes #125.\n\nControl-Room-Issue: 125`,
+      base: { ref: "main", repo: { full_name: repository } },
+      head: { sha: head }, user: { login: actor } }],
+  });
+  assert.equal((await acceptHelper(api, 125, worker, actor)).status, "accepted");
+  const accepted = api.comments(125).at(-1);
+  assert.match(accepted.body, /^CLAIM ACCEPTED —/);
+  const v2 = ACCEPTED_V2_RECORD.exec(accepted.body);
+  assert.ok(v2, "the acceptance must carry the accepted v2 handoff/inbox record");
+  assert.deepEqual([Number(v2[1]), v2[3], v2[4]], [125, actor, worker]);
+  const submitted = await runClaimSubmit({ event: lifecycleEvent(
+    `CLAIM SUBMIT\nworker-id: ${worker}\npr: 184\nsha: ${head}`, 125, actor), repository, api, now });
+  assert.equal(submitted.status, "submitted");
+  // The handoff submit preconditions still hold: a working issue, an
+  // unlabelled pull request, one exact issue binding, and a recorded
+  // SUBMITTED marker carrying the same pull request and head.
+  assert.deepEqual(api.labels(125), ["status:working"]);
+  assert.deepEqual(api.labels(184), []);
+  const marker = api.comments(125).find(comment => comment.body.startsWith("CLAIM SUBMITTED —"));
+  assert.ok(marker);
+  assert.match(marker.body, new RegExp(`pr=184 sha=${head}`));
+  // The handoff controller reads the latest v2 comment as the claim: no later
+  // controller comment may carry a v2 marker, or the claim goes invisible.
+  for (const comment of api.comments(125))
+    if (comment.id !== accepted.id) assert.ok(!comment.body.includes("agent-control-room-claim:v2"));
+});
+
+/**
+ * Joined chain across the accepted interfaces: this controller claims and
+ * records submission readiness, the worker inbox reports the assignment, and
+ * the accepted handoff controller moves both the issue and the pull request
+ * through submit, correction, acknowledgment and resubmit with both linked
+ * records consistent. The handoff and inbox modules are imported from a
+ * current main checkout so the test exercises the real readers, not copies.
+ */
+const MAIN_ROOT = process.env.ACR_MAIN_CHECKOUT;
+test("claim, inbox, submit, correction and resubmit stay consistent across both controllers",
+  { skip: MAIN_ROOT ? false : "needs ACR_MAIN_CHECKOUT pointing at a current main checkout" }, async () => {
+    const { pathToFileURL } = await import("node:url");
+    const { join } = await import("node:path");
+    const { runHandoff, parseHandoff } = await import(pathToFileURL(join(MAIN_ROOT, "scripts/review-handoff-controller.mjs")).href);
+    const { readWorkerInbox } = await import(pathToFileURL(join(MAIN_ROOT, "scripts/public-worker-inbox.mjs")).href);
+    const head = "c".repeat(40);
+    const actor = "shared-account";
+    const maintainer = "lead-maintainer";
+    const worker = "worker:chain-01";
+    const now = 1_700_000_100_000;
+    const api = fakeQueue({
+      issues: [
+        { number: 125, labels: ["status:ready"] },
+        { number: 184, labels: [], pull_request: true, title: "Chain (#125)", body: "Chain work" },
+      ],
+      pulls: [{ number: 184, state: "open", title: "Chain (#125)",
+        body: `Chain work, closes #125.\n\nControl-Room-Issue: 125`,
+        base: { ref: "main", repo: { full_name: repository } },
+        head: { sha: head }, user: { login: actor } }],
+    });
+    assert.equal((await acceptHelper(api, 125, worker, actor)).status, "accepted");
+    const acceptedId = api.comments(125).at(-1).id;
+    assert.equal((await runClaimSubmit({ event: lifecycleEvent(
+      `CLAIM SUBMIT\nworker-id: ${worker}\npr: 184\nsha: ${head}`, 125, actor), repository, api, now })).status, "submitted");
+    const handoffApi = (method, path, body) => api.request(method, path, body);
+    const fetchImpl = async url => {
+      const parsed = new URL(url);
+      const json = async () => {
+        const commentsMatch = parsed.pathname.match(/\/issues\/(\d+)\/comments$/);
+        if (commentsMatch) return structuredClone(api.comments(Number(commentsMatch[1])));
+        if (parsed.pathname.endsWith("/issues"))
+          return api.issues().map(issue => ({ ...issue,
+            html_url: `https://github.com/${repository}/issues/${issue.number}` }));
+        throw new Error(`synthetic_unhandled_inbox:${url}`);
+      };
+      return { ok: true, json };
+    };
+    const inbox = () => readWorkerInbox({ workerId: worker, repository, fetchImpl });
+    let entry = (await inbox()).find(action => action.issue === 125);
+    assert.equal(entry?.state, "working");
+    assert.equal(entry?.disposition, "action");
+    assert.equal(entry?.trust, "controller-record");
+    assert.ok(!(await inbox()).some(action => action.issue === 184));
+    const handoffEvent = (command, login, previousId) => {
+      const comment = api.seedComment(125, {
+        body: `HANDOFF ${command}\nworker-id: ${worker}\npr: 184\nhead: ${head}\nprevious: ${previousId}`,
+        user: { login, type: "User" } });
+      return { action: "created", sender: { login }, issue: { number: 125 }, comment };
+    };
+    const run = event => runHandoff({ event, repository, api: handoffApi, maintainers: [maintainer] });
+    let result = await run(handoffEvent("submit", actor, 0));
+    assert.equal(result.status, "recorded");
+    assert.equal(result.state, "in-review");
+    assert.deepEqual(api.labels(125), ["action:reviewer", "status:in-review"]);
+    assert.deepEqual(api.labels(184), ["action:reviewer", "status:in-review"]);
+    entry = (await inbox()).find(action => action.issue === 125);
+    assert.equal(entry?.disposition, "waiting");
+    result = await run(handoffEvent("changes", maintainer, result.commentId));
+    assert.equal(result.state, "changes-required");
+    entry = (await inbox()).find(action => action.issue === 125);
+    assert.equal(entry?.markerState, "changes-required");
+    assert.equal(entry?.acknowledged, false);
+    result = await run(handoffEvent("acknowledge", actor, result.commentId));
+    assert.equal((await inbox()).find(action => action.issue === 125)?.acknowledged, true);
+    result = await run(handoffEvent("resubmit", actor, result.commentId));
+    assert.equal(result.state, "re-review");
+    assert.deepEqual(api.labels(125), ["action:reviewer", "status:re-review"]);
+    assert.deepEqual(api.labels(184), ["action:reviewer", "status:re-review"]);
+    assert.equal((await inbox()).find(action => action.issue === 125)?.disposition, "waiting");
+    // Both linked records agree on every step: the same issue, pull request,
+    // head, worker and claim journal back the claim, the submission and the
+    // handoff chain.
+    const journals = api.comments(125).map(comment => parseHandoff(comment)).filter(Boolean);
+    assert.ok(journals.length >= 4);
+    for (const journal of journals)
+      assert.deepEqual([journal.issue, journal.pr, journal.head, journal.workerId, journal.claimId],
+        [125, 184, head, worker, acceptedId]);
+    const submitted = api.comments(125).find(comment => comment.body.startsWith("CLAIM SUBMITTED —"));
+    assert.ok(submitted?.body.includes(`pr=184 sha=${head}`));
+  });

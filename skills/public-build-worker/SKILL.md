@@ -58,14 +58,17 @@ paths and terminal `/**` prefixes are valid scopes; any other globbing or path
 escape is refused.
 
 Keep a reservation with `CLAIM RENEW` (same login and worker, unchanged packet,
-unexpired lease; the renewal preserves the immutable accepted base). Submit
-with a four-line `CLAIM SUBMIT` naming the open pull request
-number and its exact head SHA; the controller verifies the PR is open against
-`main`, authored by your login, references the issue exactly, the packet is
-unchanged and the lease is unexpired, then moves it to In
-review while the path lock stays in force — you may then claim another
-independent packet, up to two In-review submissions per pair. Return safe,
-effect-free, unsubmitted work with
+unexpired lease; the renewal preserves the immutable accepted base). Record
+submission readiness with a four-line `CLAIM SUBMIT` naming the open pull
+request number and its exact head SHA; the controller verifies the PR is open
+against `main` in the same repository, authored by your login, references the
+issue exactly with one `Control-Room-Issue:` line, the packet is unchanged
+and the lease is unexpired, the issue is still working and the pull request
+carries no workflow labels — then records the SUBMITTED marker and moves no
+labels, so the `HANDOFF submit` command can move the issue and the pull
+request to In review together. The path lock stays in force through review;
+you may then claim another independent packet, up to two outstanding
+submissions per pair. Return safe, effect-free, unsubmitted work with
 `CLAIM RELEASE`. Expired leases stop automatically: quiet work returns to
 Ready, one open PR by the accepted worker stays In review, and ambiguous,
 multi-PR or effectful work becomes Needs decision.

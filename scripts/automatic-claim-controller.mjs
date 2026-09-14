@@ -374,11 +374,15 @@ export function parseClaimCommand(body) {
 const MARKER_V2 = "<!-- agent-control-room-claim:v2";
 const MARKER_V3 = "<!-- agent-control-room-claim:v3";
 const MARKER_PATTERN = /<!--\s*agent-control-room-claim:v([23])\s+issue=(\d+)\s+request=(\d+)\s+actor=([^\s]+)\s+worker=([^\s]+)(?:\s+packet=([a-f0-9]{64}))?(?:\s+accepted=(\d+))?(?:\s+pr=(\d+)\s+sha=([a-f0-9]{40}))?\s*-->/;
+const MARKER_PATTERN_ALL = new RegExp(MARKER_PATTERN.source, "g");
 
 /** Read-only parse of current (v3) and legacy (v2) accepted-claim markers. */
 export function parseClaimMarker(body) {
   if (typeof body !== "string") return undefined;
-  const match = MARKER_PATTERN.exec(body);
+  const matches = [...body.matchAll(MARKER_PATTERN_ALL)];
+  // Dual-marker bodies carry the accepted v2 handoff/inbox record first for
+  // reader compatibility; the v3 marker is authoritative for this controller.
+  const match = matches.find(entry => entry[1] === "3") ?? matches[0];
   if (!match) return undefined;
   const parsed = { version: Number(match[1]), issue: Number(match[2]), request: Number(match[3]),
     actor: match[4], worker: match[5] };
@@ -406,7 +410,7 @@ const acceptedBodyV3 = (value, sha, hash, accepted) =>
   [`CLAIM ACCEPTED — \`@${value.actor}\` using worker identity \`${value.workerId}\`.`, "",
     `Outcome: public issue #${value.issueNumber} as currently defined`, `Base: \`${sha}\``, "Target: `main`", "",
     "This reservation grants no repository authority. Use only the issue's owned paths, checks and effect limits.",
-    markerV3(value, hash, accepted)].join("\n");
+    marker(value), markerV3(value, hash, accepted)].join("\n");
 
 const renewedBodyV3 = (value, hash, accepted, base) =>
   [`CLAIM RENEWED — \`@${value.actor}\` using worker identity \`${value.workerId}\` keeps public issue #${value.issueNumber}.`, "",
@@ -443,9 +447,6 @@ const acceptedMarkerFor = (comments, value) => {
   if (!Number.isSafeInteger(current.comment.id)) return undefined;
   return current;
 };
-
-const safelyInReview = issue => issue.state === "open" && !issue.pull_request
-  && labelNames(issue).filter(label => label.startsWith("status:")).join("") === "status:in-review";
 
 const recordAccepted = (comments, value) => acceptedMarkerFor(comments, value)?.marker.accepted;
 
@@ -532,16 +533,22 @@ async function pairClaims(api, repository, actor, workerId) {
   for (const status of ["working", "in-review"]) {
     for (const issue of await issuesByStatus(api, repository, status)) {
       const comments = await commentsFor(api, repository, issue.number);
+      let held = false;
+      let submitted = false;
       for (const comment of comments) {
         const parsed = parseClaimMarker(comment.body);
         if (!parsed || parsed.actor !== actor || parsed.worker !== workerId) continue;
         if (comment.body.startsWith("CLAIM RELEASED —")) continue;
-        const released = clearedByReleaseOrExpiry(comments, issue.number, actor, workerId, comment.id);
-        if (!released && (comment.body.startsWith("CLAIM ACCEPTED —") || comment.body.startsWith("CLAIM RENEWED —")
-          || comment.body.startsWith("CLAIM SUBMITTED —"))) {
-          active.push({ issue: issue.number, status, submitted: comment.body.startsWith("CLAIM SUBMITTED —") });
-          break;
+        if (clearedByReleaseOrExpiry(comments, issue.number, actor, workerId, comment.id)) continue;
+        if (comment.body.startsWith("CLAIM SUBMITTED —")) {
+          submitted = true;
+          continue;
         }
+        if (comment.body.startsWith("CLAIM ACCEPTED —") || comment.body.startsWith("CLAIM RENEWED —"))
+          held = true;
+      }
+      if (held) {
+        active.push({ issue: issue.number, status, submitted });
       }
     }
   }
@@ -689,20 +696,68 @@ const findSubmitted = (comments, value, pr, sha) => {
 
 const nonStatusLabels = labels => labels.filter(label => !label.startsWith("status:"));
 
-/** Restore one status label only when the fresh issue is exactly the expected partial state. */
-async function restoreStatusLabel(api, repository, issueNumber, restore, originalNonStatus, error) {
+/** Best-effort restore of the previous status label, only when the fresh issue
+ * is exactly the expected partial state. Any newer maintainer state blocks
+ * the restore instead of being overwritten. */
+async function tryRestoreStatus(api, repository, issueNumber, restore, originalNonStatus) {
   const fresh = await issueFor(api, repository, issueNumber);
   const statuses = labelNames(fresh).filter(label => label.startsWith("status:"));
   const nonStatus = nonStatusLabels(normalizedLabels(fresh));
   if (fresh.state === "open" && !fresh.pull_request && statuses.length === 0
     && JSON.stringify(nonStatus) === JSON.stringify([...originalNonStatus].sort()))
     await addLabels(api, repository, issueNumber, [restore]);
-  else throw error;
-  const restored = await issueFor(api, repository, issueNumber);
-  if (!labelNames(restored).includes(restore)) throw error;
 }
 
-/** CLAIM SUBMIT verifies the open PR, target, author and exact head, then moves to In review with the path lock kept. */
+/**
+ * Move one workflow status label with a re-check before each change. A newer
+ * maintainer state observed after the removal wins: the addition is skipped
+ * and the conflict is reported loudly. When the post-addition check fails,
+ * only the controller's own addition is removed; maintainer labels are never
+ * touched, so the final state can never carry two workflow states from us.
+ */
+async function moveStatusLabel(api, repository, issueNumber, from, to, originalNonStatus) {
+  const before = await issueFor(api, repository, issueNumber);
+  const beforeStatuses = labelNames(before).filter(label => label.startsWith("status:"));
+  if (before.state !== "open" || before.pull_request || beforeStatuses.length !== 1 || beforeStatuses[0] !== from)
+    throw new Error("claim_controller_state_changed");
+  await removeLabel(api, repository, issueNumber, from);
+  const between = await issueFor(api, repository, issueNumber);
+  const betweenStatuses = labelNames(between).filter(label => label.startsWith("status:"));
+  if (between.state !== "open" || between.pull_request || betweenStatuses.length !== 0
+    || !originalNonStatus.every(label => labelNames(between).includes(label)))
+    throw new Error("claim_controller_state_changed");
+  try {
+    await addLabels(api, repository, issueNumber, [to]);
+  } catch (error) {
+    await tryRestoreStatus(api, repository, issueNumber, from, originalNonStatus);
+    throw error;
+  }
+  const after = await issueFor(api, repository, issueNumber);
+  const afterStatuses = labelNames(after).filter(label => label.startsWith("status:"));
+  if (after.state !== "open" || after.pull_request || afterStatuses.length !== 1 || afterStatuses[0] !== to
+    || !originalNonStatus.every(label => labelNames(after).includes(label))) {
+    try {
+      await api.request("DELETE",
+        `/repos/${repository}/issues/${issueNumber}/labels/${encodeURIComponent(to)}`);
+    } catch { /* The next read decides; a failed rollback stays loud below. */ }
+    await tryRestoreStatus(api, repository, issueNumber, from, originalNonStatus);
+    throw new Error("claim_controller_state_changed");
+  }
+}
+
+/** A pull request binds exactly one issue through a single exact binding line. */
+const prIssueBinding = (body, issueNumber) => {
+  if (typeof body !== "string") return false;
+  const bindings = [...body.replace(/\r\n/g, "\n").matchAll(/^Control-Room-Issue: ([1-9][0-9]*)$/gm)];
+  return bindings.length === 1 && Number(bindings[0][1]) === issueNumber;
+};
+
+/** CLAIM SUBMIT verifies the open PR, target, author, exact head, issue binding
+ * and both-sides label state, then records submission readiness. It moves no
+ * labels: the accepted HANDOFF submit command performs the both-sides
+ * Working-to-In-review transition on the issue and the pull request, so the
+ * handoff preconditions (a working issue and an unlabelled pull request) must
+ * still hold after this verification succeeds. */
 export async function runClaimSubmit({ event, repository, api, now = Date.now() }) {
   const command = parseClaimCommand(event?.comment?.body);
   const actor = event?.comment?.user?.login;
@@ -712,32 +767,40 @@ export async function runClaimSubmit({ event, repository, api, now = Date.now() 
   const value = { issueNumber: event.issue.number, requestId: event.comment.id, actor, workerId: command.workerId };
   const prMatches = async (packetHashValue, accepted) => {
     const pr = await api.request("GET", `/repos/${repository}/pulls/${command.pr}`);
-    return pr && pr.state === "open" && pr.base?.ref === "main" && pr.head?.sha === command.sha
-      && pr.user?.login === actor && prReferencesIssue(pr, value.issueNumber)
-      ? { pr, hash: packetHashValue, accepted } : undefined;
+    if (!pr || pr.state !== "open" || pr.base?.ref !== "main" || pr.base?.repo?.full_name !== repository
+      || pr.head?.sha !== command.sha || pr.user?.login !== actor
+      || !prReferencesIssue(pr, value.issueNumber) || !prIssueBinding(pr.body, value.issueNumber))
+      return undefined;
+    const prIssue = await api.request("GET", `/repos/${repository}/issues/${command.pr}`);
+    if (!prIssue || prIssue.state !== "open"
+      || labelNames(prIssue).some(label => label.startsWith("status:") || label.startsWith("action:")))
+      return undefined;
+    return { pr, hash: packetHashValue, accepted };
+  };
+  const finalizeSubmitted = async (pending, bound) => {
+    try {
+      await api.request("PATCH", `/repos/${repository}/issues/comments/${pending.comment.id}`,
+        { body: submittedBodyV3(value, bound.hash, bound.accepted, command.pr, command.sha) });
+    } catch (error) {
+      const saved = await api.request("GET", `/repos/${repository}/issues/comments/${pending.comment.id}`);
+      if (typeof saved?.body !== "string" || !saved.body.startsWith("CLAIM SUBMITTED —")) throw error;
+    }
+    const finalComment = await api.request("GET", `/repos/${repository}/issues/comments/${pending.comment.id}`);
+    if (typeof finalComment?.body !== "string" || !finalComment.body.startsWith("CLAIM SUBMITTED —"))
+      throw new Error("claim_controller_state_changed");
   };
   const current = await issueFor(api, repository, value.issueNumber);
   if (!safelyWorking(current)) {
     const pendingComments = await commentsFor(api, repository, value.issueNumber);
     const submitted = findSubmitted(pendingComments, value, command.pr, command.sha);
-    if (submitted) {
-      const after = await issueFor(api, repository, value.issueNumber);
-      const statuses = labelNames(after).filter(label => label.startsWith("status:"));
-      if (after.state === "open" && statuses.length === 1 && statuses[0] === "status:in-review")
-        return Object.freeze({ status: "submitted", reconciled: true,
-          workerId: value.workerId, actor, issueNumber: value.issueNumber, pr: command.pr, sha: command.sha });
-    }
+    if (submitted)
+      return Object.freeze({ status: "submitted", reconciled: true,
+        workerId: value.workerId, actor, issueNumber: value.issueNumber, pr: command.pr, sha: command.sha });
     const packet = parseClaimPacket(current.body);
     const pending = packet ? findSubmitPending(pendingComments, value, command.pr, command.sha, packetHash(packet)) : undefined;
-    if (pending && (await prMatches(pending.packet, recordAccepted(pendingComments, value))) && safelyInReview(current)) {
-      const submittedBody = submittedBodyV3(value, pending.packet,
-        recordAccepted(pendingComments, value) ?? now, command.pr, command.sha);
-      try {
-        await api.request("PATCH", `/repos/${repository}/issues/comments/${pending.comment.id}`, { body: submittedBody });
-      } catch (error) {
-        const saved = await api.request("GET", `/repos/${repository}/issues/comments/${pending.comment.id}`);
-        if (typeof saved?.body !== "string" || !saved.body.startsWith("CLAIM SUBMITTED —")) throw error;
-      }
+    const bound = pending ? await prMatches(pending.packet, recordAccepted(pendingComments, value) ?? now) : undefined;
+    if (pending && bound) {
+      await finalizeSubmitted(pending, bound);
       return Object.freeze({ status: "submitted", reconciled: true,
         workerId: value.workerId, actor, issueNumber: value.issueNumber, pr: command.pr, sha: command.sha });
     }
@@ -753,12 +816,10 @@ export async function runClaimSubmit({ event, repository, api, now = Date.now() 
   const lease = leaseStatus(record, packet, now);
   if (lease !== "active") return Object.freeze({ status: "refused", reason: lease });
   const claims = await pairClaims(api, repository, actor, command.workerId);
-  if (claims.filter(entry => entry.status === "in-review").length >= MAX_ACTIVE_IN_REVIEW)
+  if (claims.filter(entry => entry.status === "in-review" || entry.submitted).length >= MAX_ACTIVE_IN_REVIEW)
     return Object.freeze({ status: "refused", reason: "in_review_limit" });
   const bound = await prMatches(packetHash(packet), record.marker.accepted ?? now);
   if (!bound) return Object.freeze({ status: "refused", reason: "pr_binding_invalid" });
-  const originalLabels = normalizedLabels(current);
-  const originalNonStatus = nonStatusLabels(originalLabels);
   let pending = findSubmitPending(await commentsFor(api, repository, value.issueNumber),
     value, command.pr, command.sha, bound.hash);
   if (!pending) {
@@ -773,32 +834,9 @@ export async function runClaimSubmit({ event, repository, api, now = Date.now() 
       if (!pending) throw error;
     }
   }
-  try {
-    await removeLabel(api, repository, value.issueNumber, "status:working");
-    await addLabels(api, repository, value.issueNumber, ["status:in-review"]);
-  } catch (error) {
-    await restoreStatusLabel(api, repository, value.issueNumber, "status:working", originalNonStatus, error);
-    throw error;
-  }
-  const after = await issueFor(api, repository, value.issueNumber);
-  const statuses = labelNames(after).filter(label => label.startsWith("status:"));
-  if (after.state !== "open" || after.pull_request || statuses.length !== 1 || statuses[0] !== "status:in-review"
-    || !originalNonStatus.every(label => labelNames(after).includes(label)))
-    throw new Error("claim_controller_state_changed");
-  try {
-    await api.request("PATCH", `/repos/${repository}/issues/comments/${pending.comment.id}`,
-      { body: submittedBodyV3(value, bound.hash, bound.accepted, command.pr, command.sha) });
-  } catch (error) {
-    const saved = await api.request("GET", `/repos/${repository}/issues/comments/${pending.comment.id}`);
-    if (typeof saved?.body !== "string" || !saved.body.startsWith("CLAIM SUBMITTED —")) throw error;
-  }
-  const finalIssue = await issueFor(api, repository, value.issueNumber);
-  const finalComment = await api.request("GET", `/repos/${repository}/issues/comments/${pending.comment.id}`);
-  if (!safelyInReview(finalIssue) || typeof finalComment?.body !== "string"
-    || !finalComment.body.startsWith("CLAIM SUBMITTED —")) throw new Error("claim_controller_state_changed");
+  await finalizeSubmitted(pending, bound);
   return Object.freeze({ status: "submitted", ...(await sweepQuietly(api, repository, now)),
-    workerId: value.workerId, actor, issueNumber: value.issueNumber, pr: command.pr,
-    sha: command.sha, preservedLabels: Object.freeze(originalLabels.filter(label => !label.startsWith("status:"))) });
+    workerId: value.workerId, actor, issueNumber: value.issueNumber, pr: command.pr, sha: command.sha });
 }
 
 const RELEASE_PENDING_PATTERN = /<!--\s*agent-control-room-claim:v3\s+issue=(\d+)\s+release-pending=(\d+)\s+actor=([^\s]+)\s+worker=([^\s]+)\s+packet=([a-f0-9]{64})\s*-->/;
@@ -894,16 +932,7 @@ export async function runClaimRelease({ event, repository, api, now = Date.now()
       if (!pending) throw error;
     }
   }
-  try {
-    await removeLabel(api, repository, value.issueNumber, "status:working");
-    await addLabels(api, repository, value.issueNumber, ["status:ready"]);
-  } catch (error) {
-    await restoreStatusLabel(api, repository, value.issueNumber, "status:working", originalNonStatus, error);
-    throw error;
-  }
-  const after = await issueFor(api, repository, value.issueNumber);
-  if (!safelyReady(after) || !originalNonStatus.every(label => labelNames(after).includes(label)))
-    throw new Error("claim_controller_state_changed");
+  await moveStatusLabel(api, repository, value.issueNumber, "status:working", "status:ready", originalNonStatus);
   try {
     await api.request("PATCH", `/repos/${repository}/issues/comments/${pending.id}`,
       { body: releasedBody(value, now) });
@@ -1100,18 +1129,7 @@ async function sweepTransition(api, repository, issueNumber, from, to, action, r
       pending = { ...pending };
     }
   }
-  try {
-    await removeLabel(api, repository, issueNumber, from);
-    await addLabels(api, repository, issueNumber, [to]);
-  } catch (error) {
-    await restoreStatusLabel(api, repository, issueNumber, from, originalNonStatus, error);
-    throw error;
-  }
-  const after = await issueFor(api, repository, issueNumber);
-  const afterStatuses = labelNames(after).filter(label => label.startsWith("status:"));
-  if (after.state !== "open" || after.pull_request || afterStatuses.length !== 1 || afterStatuses[0] !== to
-    || !originalNonStatus.every(label => labelNames(after).includes(label)))
-    throw new Error("claim_controller_state_changed");
+  await moveStatusLabel(api, repository, issueNumber, from, to, originalNonStatus);
   try {
     await api.request("PATCH", `/repos/${repository}/issues/comments/${pending.comment.id}`,
       { body: expiredBody(issueNumber, action, reason, pair, now, hash) });

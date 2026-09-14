@@ -113,10 +113,15 @@ not one issue/PR per small code edit.
    accepted comment was posted by `github-actions[bot]`; simultaneous comments
    do not create competing claims, and a refused request is not permission.
    Keep the reservation with `CLAIM RENEW` (same worker, unchanged packet,
-   unexpired lease; the renewal keeps the immutable accepted base), submit
-   with `CLAIM SUBMIT` (verified open PR, target, author and exact head,
-   unexpired lease, unchanged packet, at most two In-review per pair),
-   or return safe unsubmitted work with `CLAIM RELEASE`. Dependencies must be
+   unexpired lease; the renewal keeps the immutable accepted base), record
+   submission readiness with `CLAIM SUBMIT` (verified open PR on `main` by the
+   accepted worker with the exact head, one exact `Control-Room-Issue:` line,
+   unexpired lease, unchanged packet, at most two outstanding submissions per
+   pair, and a working issue plus an unlabelled pull request), then move both
+   sides to In review with the `HANDOFF submit` command, which the handoff
+   controller reconciles on the issue and the pull request together. `CLAIM
+   SUBMIT` moves no labels so the handoff preconditions still hold. Return
+   safe unsubmitted work with `CLAIM RELEASE`. Dependencies must be
    closed issues with the done disposition. Expired claims stop: quiet
    effect-free work returns to Ready, one open PR by the accepted worker stays
    In review, and ambiguous, multi-PR or effectful work becomes Needs
