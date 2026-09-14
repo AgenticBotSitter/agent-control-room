@@ -140,6 +140,14 @@ async function tabUntil(page, locator, max = 60) {
 
 const focusedIs = (page, locator) => locator.evaluate(element => element === document.activeElement);
 
+/** Measured focus destination: tag#id.class of whatever holds focus right now. */
+const focusDestination = page => page.evaluate(() => {
+  const element = document.activeElement;
+  if (!element || element === document.body) return "BODY";
+  const classes = (element.className?.baseVal ?? element.className ?? "").toString().split(" ")[0];
+  return `${element.tagName.toLowerCase()}#${element.id || "-"}.${classes}`.slice(0, 80);
+});
+
 const STABLE_PAGES = [["/", "Home"], ["/projects", "Project catalog"], ["/workers", "Workers"],
   ["/needs-me", "Needs attention"], ["/settings", "Settings"], ["/connections", "Connections"]];
 const PROJECT_SECTIONS = [["inbox", "Project inbox"], ["tasks", "Project work"], ["agents", "Project agents"],
@@ -309,10 +317,11 @@ try {
   await uncertainAlert.first().waitFor();
   const uncertainText = (await uncertainAlert.first().textContent()) ?? "";
   check("failed save announces an uncertain outcome, not success", /exact save again|unconfirmed|may have completed/i.test(uncertainText), uncertainText.slice(0, 120));
-  // The save button disables while pending, so focus falls back to the body:
-  // reported (task-panels.tsx is outside the #181 paths), not edited. The tab
-  // order must still continue from wherever focus landed.
-  report("failed save drops focus while the save button is disabled", "task-panels.tsx TaskProposalForm disables on pending; focus falls back to body");
+  // The save button disables while pending: measure where focus actually
+  // lands (task-panels.tsx is outside the #181 paths) instead of asserting a
+  // predetermined destination. The tab order must still continue from there.
+  report(`failed save focus destination is ${await focusDestination(page)}`,
+    "measured immediately after the failed save; TaskProposalForm disables on pending");
   const checkSaveButton = page.getByRole("button", { name: /check this exact save again/i });
   check("uncertain save offers a keyboard-reachable recheck", await tabUntil(page, checkSaveButton));
   check("recheck starts focused on its action", await focusedIs(page, checkSaveButton));
@@ -328,10 +337,11 @@ try {
   await page.getByRole("heading", { name: "Unconfirmed second task" }).waitFor({ timeout: 15000 });
   check("recovered retry writes the task successfully",
     (await page.getByRole("heading", { name: "Unconfirmed second task" }).count()) === 1);
-  // Client-side navigation to the new task leaves focus on the body instead
-  // of moving it to the new heading: reported (navigation focus management
-  // lives outside the #181 paths), not edited. The tab order must restart.
-  report("successful client navigation leaves focus on the body", "new task heading renders but focus is not moved to it");
+  // Client-side navigation to the new task: measure where focus actually
+  // lands (navigation focus management lives outside the #181 paths) instead
+  // of asserting a predetermined destination. The tab order must restart.
+  report(`successful-write focus destination is ${await focusDestination(page)}`,
+    "measured immediately after the recovered write; new task heading renders");
   await page.keyboard.press("Tab");
   check("tab order restarts at the skip link after the write",
     await page.locator(":focus").evaluate(element => element.matches("a.skip-link")));
@@ -550,7 +560,8 @@ try {
     "  return false;",
     "}",
     "const PRED = '(element, visible, getComputedStyle) => { if (!visible(element) || element.disabled) return false; const box = element.getBoundingClientRect(); return box.width < 24 || box.height < 24; }';",
-    "const siteOrigin = 'https://review.example.invalid';",
+    "const TAG = process.env.ACR_REVIEW_TAG || '';",
+    "  const siteOrigin = 'https://review.example.invalid';",
     "const seeded = await ownerReviewFixture();",
     "const assets = await loadPrivateClientAssets(await realpath(ROOT + '/dist-vps/client'));",
     "const app = installPrivateWebProcess({ origin: siteOrigin, ...trust, tenantId: 'tenant:test', workspaceId: 'workspace:test',",
@@ -561,7 +572,7 @@ try {
     "    ownerReviews: { integrityKey: seeded.reviewKey, checkpoints: seeded.checkpoints } } });",
     "const browser = await playwright.chromium.launch({ headless: true });",
     "try {",
-    "  const context = await browser.newContext({ viewport: { width: 360, height: 844 } });",
+    "const context = await browser.newContext({ viewport: { width: Number(process.env.ACR_REVIEW_WIDTH || 360), height: Number(process.env.ACR_REVIEW_HEIGHT || 844) } });",
     "  await context.route('**/*', async (route) => {",
     "    const request = route.request();",
     "    const url = new URL(request.url());",
@@ -593,43 +604,58 @@ try {
     "      h1, skip: !!document.querySelector('a.skip-link[href=\"#private-main\"]'), current, small,",
     "      overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1 };",
     "  }, PRED);",
-    "  check('seeded task page declares language', dom.lang === 'en');",
-    "  check('seeded task page has one main landmark', dom.main === 1, 'count=' + dom.main);",
-    "  check('seeded task page has one heading', dom.h1.length === 1, JSON.stringify(dom.h1));",
-    "  check('seeded task page offers a skip link', dom.skip);",
-    "  check('seeded task page marks Projects current', dom.current.length === 1 && dom.current[0] === 'Projects', dom.current.join('|'));",
-    "  check('seeded task page controls meet 24px', dom.small.length === 0, dom.small.join(' | '));",
-    "  check('seeded task page does not scroll sideways', !dom.overflow);",
+    "  check(TAG + 'seeded task page declares language', dom.lang === 'en');",
+    "  check(TAG + 'seeded task page has one main landmark', dom.main === 1, 'count=' + dom.main);",
+    "  check(TAG + 'seeded task page has one heading', dom.h1.length === 1, JSON.stringify(dom.h1));",
+    "  check(TAG + 'seeded task page offers a skip link', dom.skip);",
+    "  check(TAG + 'seeded task page marks Projects current', dom.current.length === 1 && dom.current[0] === 'Projects', dom.current.join('|'));",
+    "  check(TAG + 'seeded task page controls meet 24px', dom.small.length === 0, dom.small.join(' | '));",
+    "  check(TAG + 'seeded task page does not scroll sideways', !dom.overflow);",
     "  const readResult = page.getByRole('button', { name: 'Read result' });",
     "  await readResult.waitFor({ timeout: 15000 });",
-    "  check('read-result action is keyboard reachable', await tabUntil(page, readResult));",
+    "  check(TAG + 'read-result action is keyboard reachable', await tabUntil(page, readResult));",
     "  await page.keyboard.press('Enter');",
     "  await page.getByRole('heading', { name: 'Received result' }).waitFor();",
-    "  check('keyboard opens the recorded result file', (await page.getByText('A useful private result.').count()) >= 1);",
+    "  check(TAG + 'keyboard opens the recorded result file', (await page.getByText('A useful private result.').count()) >= 1);",
+    "  const expanded = await page.evaluate((src) => {",
+    "    const isSmall = eval(src);",
+    "    const visible = (e) => { const s = getComputedStyle(e); return s.visibility !== 'hidden' && s.display !== 'none' && e.getClientRects().length > 0; };",
+    "    const small = Array.from(document.querySelectorAll('button, a[href]')).filter((e) => isSmall(e, visible, getComputedStyle)).map((e) => e.textContent.trim().slice(0, 30));",
+    "    return { headings: document.querySelectorAll('h1, h2').length,",
+    "      small, overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1 };",
+    "  }, PRED);",
+    "  check(TAG + 'expanded result content names its sections', expanded.headings >= 2, 'headings=' + expanded.headings);",
+    "  check(TAG + 'expanded result controls meet 24px', expanded.small.length === 0, expanded.small.join(' | '));",
+    "  check(TAG + 'expanded result does not scroll sideways', !expanded.overflow);",
+    "  check(TAG + 'expanded review offers the request-changes decision', (await page.getByRole('button', { name: 'Request changes' }).count()) >= 1);",
     "  const accept = page.getByRole('button', { name: 'Accept quality' });",
     "  await accept.waitFor({ timeout: 15000 });",
-    "  check('owner review loads for the recorded result', (await accept.count()) === 1);",
+    "  check(TAG + 'owner review loads for the recorded result', (await accept.count()) === 1);",
     "  await page.getByLabel('Changes you want').focus();",
     "  await page.keyboard.type('Keyboard review note: clarify the summary.');",
     "  const requestChanges = page.getByRole('button', { name: 'Request changes' });",
-    "  check('request-changes action is keyboard reachable', await tabUntil(page, requestChanges));",
+    "  check(TAG + 'request-changes action is keyboard reachable', await tabUntil(page, requestChanges));",
     "  await page.keyboard.press('Enter');",
     "  const saved = page.getByRole('status').filter({ hasText: /changes requested/i }).first();",
     "  await saved.waitFor();",
-    "  check('keyboard review records the changes request', /changes requested/i.test((await saved.textContent()) || ''));",
-    "  console.log('# report - review: save disables the decision buttons while recording, focus falls back to the body # task-owner-review.tsx OwnerReviewPanel disables on pending or held');",
+    "  check(TAG + 'keyboard review records the changes request', /changes requested/i.test((await saved.textContent()) || ''));",
+    "  const reviewDest = await page.evaluate(() => { const e = document.activeElement;",
+    "    if (!e || e === document.body) return 'BODY';",
+    "    const c = (e.className && e.className.baseVal !== undefined ? e.className.baseVal : e.className || '').toString().split(' ')[0];",
+    "    return ((e.tagName || '?').toLowerCase() + '#' + (e.id || '-') + '.' + c).slice(0, 80); });",
+    "  console.log('# report - review: focus destination immediately after the review save is ' + reviewDest + ' # measured at runtime, not predetermined');",
     "  await page.keyboard.press('Tab');",
-    "  check('tab order continues after the review save',",
+    "  check(TAG + 'tab order continues after the review save',",
     "    await page.locator(':focus').evaluate((e) => e !== document.body));",
     "  const prepText = (await page.locator(\"section[aria-label='Prepare revised task']\").first().textContent().catch(() => '')) || '';",
-    "  check('revision preparation reports its unconnected state', prepText.indexOf('Revision preparation is not connected for this app.') !== -1);",
+    "  check(TAG + 'revision preparation reports its unconnected state', prepText.indexOf('Revision preparation is not connected for this app.') !== -1);",
     "  const back = page.getByRole('link', { name: /project tasks/i }).first();",
     "  await back.focus();",
     "  await page.keyboard.press('Enter');",
     "  await page.waitForURL((u) => u.pathname.endsWith('/tasks'));",
-    "  check('keyboard return leaves the reviewed task', new URL(page.url()).pathname.endsWith('/tasks'));",
+    "  check(TAG + 'keyboard return leaves the reviewed task', new URL(page.url()).pathname.endsWith('/tasks'));",
     "  await page.keyboard.press('Tab');",
-    "  check('tab order restarts at the skip link after return',",
+    "  check(TAG + 'tab order restarts at the skip link after return',",
     "    await page.locator(':focus').evaluate((e) => e.matches('a.skip-link')));",
     "  await context.close();",
     "} finally {",
@@ -637,23 +663,26 @@ try {
     "  await app.close().catch(() => {});",
     "}",
     "if (failed) process.exit(1);",
-    "console.log('ok - review: seeded review journey completes');",
+    "console.log('ok - ' + TAG + 'seeded review journey completes');",
   ].join("\n");
   const { join } = await import("node:path");
   const childPath = join(tmpdir(), "acr-review-journey-" + Date.now() + ".mjs");
   writeFileSync(childPath, reviewJourneySource);
-  let childFailed = "";
   try {
-    const child = spawnSync(process.execPath, ["--import", "tsx", childPath],
-      { cwd: repoRoot, env: { ...process.env, ACR_REPO_ROOT: repoRoot }, timeout: 420000, encoding: "utf8" });
-    process.stdout.write(child.stdout || "");
-    process.stderr.write(child.stderr || "");
-    if (child.status !== 0) childFailed = "exit=" + child.status;
-    else if (/^not ok/m.test(child.stdout || "")) childFailed = "not-ok lines present";
+    for (const [tag, width, height] of [["360px", 360, 844], ["1280px", 1280, 900]]) {
+      const child = spawnSync(process.execPath, ["--import", "tsx", childPath],
+        { cwd: repoRoot, env: { ...process.env, ACR_REPO_ROOT: repoRoot,
+          ACR_REVIEW_TAG: `${tag} review: `, ACR_REVIEW_WIDTH: String(width), ACR_REVIEW_HEIGHT: String(height) },
+        timeout: 420000, encoding: "utf8" });
+      process.stdout.write(child.stdout || "");
+      process.stderr.write(child.stderr || "");
+      const childFailed = child.status !== 0 ? "exit=" + child.status
+        : /^not ok/m.test(child.stdout || "") ? "not-ok lines present" : "";
+      check(`seeded owner-review journey completes on genuine pipeline data at ${tag}`, childFailed === "", childFailed);
+    }
   } finally {
     try { unlinkSync(childPath); } catch { /* temp cleanup best effort */ }
   }
-  check("seeded owner-review journey completes on genuine pipeline data", childFailed === "", childFailed);
   report("revision preparation needs the execution planner", "OwnerRevisionPanel honestly reports not-connected; revise wiring is outside the #181 paths");
 
   // 200% zoom as real reflow: CSS zoom halves the effective layout viewport on
