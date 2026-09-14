@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { readWorkerInbox } from "../scripts/public-worker-inbox.mjs";
+import { readWorkerInbox, renderWorkerInbox } from "../scripts/public-worker-inbox.mjs";
 import { actionsFingerprint } from "../scripts/worker-inbox-platform/lib/inbox-fingerprint.mjs";
 import { artifactsFor, iso8601Duration, systemdQuote, xmlEscape } from "../scripts/worker-inbox-platform/lib/artifacts.mjs";
 import { instructionsFor } from "../scripts/worker-inbox-platform/lib/instructions.mjs";
@@ -704,6 +704,26 @@ test("two labels of the same kind make an issue ambiguous, not actionable", asyn
   assert.equal(actions.length, 1);
   assert.equal(actions[0].disposition, "attention",
     "two status labels must not be reported as an actionable assignment");
+});
+
+test("the client renders a Record line and the watcher console does not", async (t) => {
+  // The troubleshooting row tells an operator to run the inbox client and read its Record: line,
+  // and warns that the watcher does not print it. A row that prescribes a diagnostic the
+  // recommended command cannot produce is accurate but useless, so both halves are pinned: the
+  // accepted client renders the line, and the watcher's own console text must never be mistaken
+  // for it.
+  const github = fakeGithub(assignment());
+  const actions = await readWorkerInbox({
+    workerId: WORKER_ID, repository: REPOSITORY_NAME, fetchImpl: github.fetchImpl,
+  });
+  assert.match(renderWorkerInbox(WORKER_ID, actions), /^Record: /mu,
+    "the accepted client must render a Record line for the row's instruction to be followable");
+
+  const result = await runTick({
+    options: tickOptions(scratch(t), { fetchImpl: fakeGithub(assignment()).fetchImpl }), now: CLOCK,
+  });
+  assert.ok(!/Record:/u.test(result.message),
+    "the watcher console must not be presented as the Record line it does not produce");
 });
 
 test("the accepted inbox client is reused rather than reimplemented", async (t) => {
