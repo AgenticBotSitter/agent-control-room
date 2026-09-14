@@ -5,8 +5,12 @@
 export const RELEASE_CANDIDATE_PRECHECK_SCHEMA_V1 =
   'control-room.release-candidate-reference/v1' as const;
 
-/** Exact required components in canonical order. */
-export const RELEASE_CANDIDATE_COMPONENT_IDS_V1 = [
+/** Lexical identity for each required semantic component. Required so
+ *  release artifacts, manifests and the candidate tree commit and tree-digest
+ *  are bound per-component. Treated as canonical literal keys; rewriting this
+ *  array changes the precheck contract. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const RELEASE_CANDIDATE_COMPONENT_IDS_V1: readonly string[] = Object.freeze([
   'browser-journey',
   'hermes-connector',
   'portable-configuration',
@@ -21,7 +25,7 @@ export const RELEASE_CANDIDATE_COMPONENT_IDS_V1 = [
   'server-composition',
   'private-ingress',
   'worker-installation',
-] as const;
+] as const);
 
 export type ReleaseCandidateComponentIdV1 =
   (typeof RELEASE_CANDIDATE_COMPONENT_IDS_V1)[number];
