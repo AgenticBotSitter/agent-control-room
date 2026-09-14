@@ -140,7 +140,7 @@ non-overlapping outcome instead of replacing them.
 | Independently retained backup set | [#128](https://github.com/AgenticBotSitter/agent-control-room/issues/128) | Pinned restic packages the verified database and artifacts outside the primary and proves an exact restore/checkpoint match |
 | Complete agent-task server composition | [#66](https://github.com/AgenticBotSitter/agent-control-room/issues/66) | Operator configuration starts the real database/queue/connectors/results/review lifecycle fail-closed |
 | Private ingress and first-owner setup | [#67](https://github.com/AgenticBotSitter/agent-control-room/issues/67) | Supported gateway, no direct-origin bypass, one owner bootstrap and externally enforced MFA |
-| Mac/Linux worker setup | [#68](https://github.com/AgenticBotSitter/agent-control-room/issues/68) | Fresh Hermes and Codex worker install, enrollment, version checks, reconnect, revocation and removal |
+| Worker setup on first-release hosts | [#68](https://github.com/AgenticBotSitter/agent-control-room/issues/68) | Fresh Hermes worker setup on each claimed host and Codex worker setup on Linux, including enrollment, version checks, reconnect, revocation and removal. Local macOS Codex execution is deferred under #191 |
 
 Accepted foundations no longer shown as open work: [#9](https://github.com/AgenticBotSitter/agent-control-room/issues/9)
 was superseded by #64 after its retired-base PR was preserved as implementation input;
@@ -163,7 +163,7 @@ and the assembled-release gate in #61.
 ### Parallel additions and additional platform support
 
 These jobs are real product work, but they do not block the first Linux-server,
-Mac/Linux-worker Hermes-plus-Codex release.
+qualified-host Hermes plus Linux-Codex release.
 
 | Responsibility | Public job | Finished outcome |
 | --- | --- | --- |

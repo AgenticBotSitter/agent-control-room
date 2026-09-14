@@ -1,5 +1,33 @@
 # Local tooling acquisition log
 
+## macOS Codex process-acquisition fit decision — 2026-09-13
+
+- Purpose: determine whether a maintained component could provide the same held
+  executable, workspace and `CODEX_HOME` guarantees as the reviewed Linux launcher.
+- Decision: do not add a Darwin launcher to the first release. Qualify Codex execution
+  on Linux; keep local macOS Codex execution fail-closed under issue #191.
+- Apple documents `POSIX_SPAWN_START_SUSPENDED`, PID-based running-code lookup and
+  code-validity checks, so a later owner-authorized harmless spike may prove an exact
+  executable before user code runs. Darwin `/dev/fd` does not provide the Linux
+  traversable-directory behavior needed for the protected workspace and `CODEX_HOME`.
+- `swift-subprocess` 1.0.0 is maintained and Apache-2.0 and provides useful spawn,
+  pipe and termination plumbing. It does not verify running code or bind Codex's
+  pathname-based `CODEX_HOME`; adding a Swift helper would therefore add build,
+  signing and IPC work without closing the decisive race. It was not selected or added.
+- launchd, SMAppService and XPC may later supervise a signed helper, but do not provide
+  this per-attempt pipe-owned child plus held home-directory contract.
+- Reopen only after both are proven: an owner-authorized harmless suspended-spawn plus
+  running-code identity check before user code, and a supported inherited protected
+  home-directory handle accepted by Codex or the selected runtime.
+- Primary references: [Apple spawn flags](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/posix_spawnattr_getflags.3.html),
+  [Security.framework running-code lookup](https://developer.apple.com/documentation/security/seccodecopyguestwithattributes(_:_:_:_:)),
+  [code validity](https://developer.apple.com/documentation/security/seccodecheckvalidity(_:_:_:)),
+  [Darwin fdesc implementation](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/miscfs/devfs/devfs_fdesc_support.c),
+  [`swift-subprocess` 1.0.0](https://github.com/swiftlang/swift-subprocess/releases/tag/1.0.0),
+  and the [official Codex signed/notarized macOS release workflow](https://github.com/openai/codex/blob/5b1d6560181680f95cde95c14ed042acc02248ed/.github/workflows/rust-release.yml#L604-L717).
+- Effects: source and documentation review only. No package, helper, binary, credential,
+  provider call, native process, service or deployment was used.
+
 ## Codex TypeScript SDK fit evaluation — 2026-09-13
 
 - Downloaded one isolated npm archive for `@openai/codex-sdk@0.154.0` into a
