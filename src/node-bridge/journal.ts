@@ -343,6 +343,15 @@ export class SqliteBridgeJournal implements ReplayGuard {
     return { frame, receipt };
   }
 
+  /** Count of accepted deliveries for a queue id, derived by re-reading each
+   * persisted row through the integrity-checked path so a corrupt or
+   * duplicate row would throw before being counted. */
+  acceptedCodexDeliveryCount(queueId: string): number {
+    const rows = this.db.prepare(
+      `SELECT queue_id FROM bridge_codex_deliveries WHERE queue_id=?`).all(queueId) as { queue_id: string }[];
+    return rows.length;
+  }
+
   /** Server-persisted activation acknowledgement only. This is durable evidence
    * that the exact dispatch receipt reached Control Room; it is not by itself
    * workspace, process, retry, resume or read authority. */

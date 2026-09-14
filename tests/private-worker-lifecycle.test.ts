@@ -4,9 +4,11 @@ import { chmod, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { validatePrivateCodexStatePathsV1 } from '../src/node-bridge/private-codex-configuration';
-import { createWorkerLifecycleFixture, projectSyntheticRecovery, recordSyntheticLifecycle,
-  reopenSyntheticLifecycle, runSyntheticLauncherScenario, runSyntheticPrivateCodexRecovery } from
-  './helpers/private-worker-lifecycle';
+import { SqliteBridgeJournal } from '../src/node-bridge/journal';
+import { createWorkerLifecycleFixture, projectSyntheticRecovery, buildSyntheticCodexDelivery,
+  recordSyntheticCodexDelivery, recordSyntheticLifecycle, reopenSyntheticLifecycle,
+  runSyntheticLauncherScenario, runSyntheticPrivateCodexRecovery, syntheticStartPair }
+  from './helpers/private-worker-lifecycle';
 
 async function owned(t: TestContext) {
   const root = await mkdtemp(join(tmpdir(), 'control-room-worker-test-')); await chmod(root, 0o700);
@@ -18,12 +20,53 @@ test('interruption and reopen preserve exact admitted identity without duplicate
   const f = await owned(t);
   assert.deepEqual(validatePrivateCodexStatePathsV1({ bridge: f.bridgePath, starts: f.startPath }),
     { bridge: f.bridgePath, starts: f.startPath });
+  const pair = syntheticStartPair();
+  // Route the initial delivery through the production seam: a fully-signed
+  // Codex dispatch frame, persisted via the bridge journal's
+  // `recordCodexDelivery` (the same integrity gate the intake handler uses:
+  // digest match, scope check, time window, no-update trigger).
+  const recorded = recordSyntheticCodexDelivery(f.bridgePath);
+  assert.equal(recorded.receipt.disposition, 'recorded');
+  assert.equal(recorded.receipt.queueId, pair.admission.queueId);
   const interrupted = recordSyntheticLifecycle(f.startPath, 'thread');
   assert.equal(interrupted.status, 'thread_recorded_turn_unknown'); assert.equal(interrupted.turnId, null);
   assert.equal(interrupted.permitsRetry, false); assert.equal(interrupted.permitsResume, false);
   const reopened = reopenSyntheticLifecycle(f.startPath);
   assert.equal(reopened.status, interrupted.status); assert.equal(reopened.threadId, interrupted.threadId);
   assert.equal(reopened.readIdentity, null);
+  // Re-open the bridge journal and confirm the persisted delivery row is
+  // exactly one, no second delivery row was created by the interrupt/reopen
+  // cycle, and the no-update / no-delete triggers still hold (a roundtrip
+  // through the bridge seam must be the only thing that can write here).
+  const reopenedBridge = new SqliteBridgeJournal(f.bridgePath);
+  try {
+    // Use the durable read path: acceptedCodexDelivery reconstructs the row
+    // from its serialized frame + receipt and re-validates both digests, so
+    // a single call proves (a) the row exists, (b) the frame/receipt are
+    // uncorrupted, and (c) the journal accepted them on the original write.
+    const accepted = reopenedBridge.acceptedCodexDelivery(pair.admission.queueId);
+    assert.ok(accepted, 'bridge journal must hold the persisted delivery');
+    assert.equal(accepted.frame.messageId, 'message:dispatch:lifecycle');
+    assert.match(accepted.frame.body.queueId, /^native-queue:[0-9a-f]+$/);
+    assert.equal(accepted.receipt.disposition, 'recorded');
+    assert.equal(accepted.receipt.grantsExecutionAuthority, false);
+    assert.equal(accepted.receipt.startsWork, false);
+    assert.match(accepted.frame.bodyDigest, /^sha256:[0-9a-f]{64}$/);
+    // The same delivery recorded again via the seam must be refused — this
+    // is what proves the durable journal rejected the duplicate.
+    const { frame, receipt } = buildSyntheticCodexDelivery('lifecycle');
+    assert.throws(() => reopenedBridge.recordCodexDelivery(frame, receipt, () => {}),
+      /codex_delivery_already_recorded/);
+    // Re-load the durable inventory; the row count is unchanged after the
+    // refused duplicate attempt. This is the assertion the round-3 review
+    // asked for: the count is held by the bridge journal, not the starts
+    // journal, and the duplicate went through the same seam.
+    const acceptedCount = reopenedBridge.acceptedCodexDeliveryCount(pair.admission.queueId);
+    assert.equal(acceptedCount, 1,
+      `bridge journal must hold exactly one delivery for the admitted run; got ${acceptedCount}`);
+    // Negative control: an unrelated queue id returns zero.
+    assert.equal(reopenedBridge.acceptedCodexDeliveryCount('queue:not-yet-admitted'), 0);
+  } finally { reopenedBridge.close(); }
   const duplicate = recordSyntheticLifecycle(f.startPath, 'thread');
   assert.equal(duplicate.status, 'thread_recorded_turn_unknown');
 });
