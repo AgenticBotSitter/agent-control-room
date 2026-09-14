@@ -282,11 +282,12 @@ test('recovered-result runtime borrows without ownership: exposes no journal or 
     initializedConnectionDigest: sha256Digest('unused'), journal: bridgeJournal, start: starts,
     bridge: { sendCodexResultReturn: async () => { throw new Error('must_not_send'); } },
     channel: { connectionId: 'connection:unused', assertCurrent() { throw new Error('stale'); } },
-    recovery: { project() { throw new Error('must_not_read'); } },
+    recovery: { read() { throw new Error('must_not_read'); },
+      project() { throw new Error('must_not_read'); } },
     qualificationReceipt: qualification, qualificationPublicKeySpki: qualificationSpki,
     qualificationMaximumAgeMs: 300_000, clock: () => Date.now() });
   assert.deepEqual(Object.keys(runtime).sort(), ['cleanupDoubt', 'close', 'recover']);
-  await assert.rejects(runtime.recover('{}', new Date(Date.now()).toISOString(), new AbortController().signal),
+  await assert.rejects(runtime.recover(new Date(Date.now()).toISOString(), new AbortController().signal),
     /codex_recovered_result_unavailable/);
   await runtime.close(); await runtime.close();
   assert.equal(bridgeJournal.codexResultReturn('run:unused'), undefined);

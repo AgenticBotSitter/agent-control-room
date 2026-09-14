@@ -54,6 +54,8 @@ function resultFixture() {
     tenantId: 'tenant:test', projectId: 'project:test', nodeId: 'node:test', jobId: 'job:test',
     attemptId: 'attempt:test', runId: 'run:test', leaseId: 'lease:test', leaseEpoch: 7,
     queueId: 'queue:test', connectionId: 'connection:test',
+    connection: { connectionAttemptId: 'connection:result',
+      initializedConnectionDigest: sha256Digest('initialized:result') },
     dispatchMessageId: 'message:dispatch', dispatchFrameDigest: sha256Digest('dispatch-frame'),
     dispatchBodyDigest: sha256Digest('dispatch-body'), receiptMessageId: 'message:receipt',
     receiptFrameDigest: sha256Digest('receipt-frame'), receiptBodyDigest: sha256Digest('receipt-body'),
@@ -211,15 +213,25 @@ function startEvidence(fixture: ReturnType<typeof resultFixture>, tamperAfterRea
     const tampered = tamperAfterReads >= 0 && loads > tamperAfterReads;
     return { queueId: 'queue:test', runId: 'run:test', threadId: 'thread:durable', turnId: 'turn:durable',
       activationId: fixture.activationFrame.body.activationId,
-      activationDigest: tampered ? sha256Digest('tampered') : fixture.activationFrame.body.activationDigest };
+      activationDigest: tampered ? sha256Digest('tampered') : fixture.activationFrame.body.activationDigest,
+      cleanupVerified: true as const };
   };
-  return { load() { return { status: 'recorded' as const, readIdentity: identity() } as never; },
+  return { load() { return { status: 'recorded' as const, readIdentity: identity(),
+    cleanupVerified: true as const } as never; },
     loads: () => loads };
 }
 
 function recoveryHost(fixture: ReturnType<typeof resultFixture>, calls: string[],
-  mode: 'completed' | 'throw' | 'noncompleted' | 'mismatch' = 'completed') {
-  return { project(raw: string) {
+  mode: 'completed' | 'throw' | 'noncompleted' | 'mismatch' = 'completed',
+  readMode: 'ok' | 'throw' | 'scope-mismatch' = 'ok') {
+  return { read() {
+      calls.push('read');
+      if (readMode === 'throw') throw new Error('synthetic_recovery_read_unavailable');
+      if (readMode === 'scope-mismatch') return { rawResult: rawCompletedResult,
+        scope: { threadId: 'thread:other', turnId: 'turn:durable' } };
+      return { rawResult: rawCompletedResult, scope: { threadId: 'thread:durable', turnId: 'turn:durable' } };
+    },
+    project(raw: string) {
     calls.push('project');
     if (mode === 'throw') throw new Error('synthetic_recovery_secret_malformed');
     if (mode === 'noncompleted') {
@@ -267,13 +279,13 @@ test('one journal instance supplies activation, bridge transmission and sender e
     const calls: string[] = [];
     const starts = startEvidence(f.fixture);
     const runtime = runtimeFor(journal, f.bridge, f.fixture, starts, recoveryHost(f.fixture, calls));
-    const outcome = await runtime.recover(rawCompletedResult, observedAt, new AbortController().signal);
+    const outcome = await runtime.recover(observedAt, new AbortController().signal);
     assert.equal(outcome.disposition, 'receipted');
     if (outcome.disposition !== 'receipted') assert.fail('receipt required');
     assert.equal(outcome.receipt.body.disposition, 'transport_received');
     assert.equal(resultFrames(sent).length, 1);
     assert.equal(journal.codexResultReturn('run:test')?.status, 'receipted');
-    assert.deepEqual(calls, ['project']);
+    assert.deepEqual(calls, ['read', 'project']);
     assert.ok(starts.loads() >= 2);
     runtime.close(); await f.bridge.close(); journal.close();
     const reopened = new SqliteBridgeJournal(path);
@@ -297,14 +309,14 @@ test('missing, summary, secret, malformed and noncompleted output sends no frame
     const calls: string[] = [];
     const runtime = runtimeFor(journal2, g.bridge, g.fixture, startEvidence(g.fixture),
       recoveryHost(g.fixture, calls, item.mode));
-    const outcome = await runtime.recover(item.raw, observedAt, new AbortController().signal);
+    const outcome = await runtime.recover(observedAt, new AbortController().signal);
     assert.equal(outcome.disposition, 'observed', `case ${index} observes only`);
     runtime.close();
   }
   assert.equal(resultFrames(sent2).length, 0);
   assert.equal(journal2.codexResultReturn('run:test'), undefined);
   await assert.rejects(runtimeFor(journal2, g.bridge, g.fixture, startEvidence(g.fixture),
-    recoveryHost(g.fixture, [], 'completed')).recover('', observedAt, new AbortController().signal),
+    recoveryHost(g.fixture, [], 'completed', 'throw')).recover(observedAt, new AbortController().signal),
   /codex_recovered_result_unavailable/);
   await g.bridge.close(); journal2.close();
 });
@@ -324,9 +336,10 @@ test('prepared or sent prevents acquisition and transmission', async () => {
   assert.equal(journal.codexResultReturn('run:test')?.status, 'prepared');
   const calls: string[] = [];
   const runtime = runtimeFor(journal, f.bridge, f.fixture, startEvidence(f.fixture), {
+    read() { calls.push('read'); throw new Error('must_not_read'); },
     project() { calls.push('project'); throw new Error('must_not_acquire'); },
   });
-  await assert.rejects(runtime.recover(rawCompletedResult, observedAt, new AbortController().signal),
+  await assert.rejects(runtime.recover(observedAt, new AbortController().signal),
     /codex_recovered_result_delivery_uncertain/);
   assert.deepEqual(calls, []);
   assert.equal(resultFrames(sent).length, 0);
@@ -344,18 +357,19 @@ test('receipted replays locally without read or send', async () => {
     autoReceipt(journal, sent, () => holder.current!);
     const first = runtimeFor(journal, f.bridge, f.fixture, startEvidence(f.fixture),
       recoveryHost(f.fixture, []));
-    const outcome = await first.recover(rawCompletedResult, observedAt, new AbortController().signal);
+    const outcome = await first.recover(observedAt, new AbortController().signal);
     if (outcome.disposition !== 'receipted') assert.fail('receipt required');
     const framesBefore = resultFrames(sent).length;
     first.close(); await f.bridge.close(); journal.close();
     const reopened = new SqliteBridgeJournal(path), sent2: string[] = [];
     const g = await connect(reopened, sent2, 'reconnect');
     const replay = runtimeFor(reopened, g.bridge, g.fixture, startEvidence(g.fixture), {
+      read() { throw new Error('must_not_read'); },
       project() { throw new Error('must_not_read'); },
     });
     const replayed = await (replay as unknown as {
-      recover(raw: string, at: string, signal: AbortSignal): Promise<{ disposition: string; receipt: { body: { receiptId: string } } }>;
-    }).recover(rawCompletedResult, observedAt, new AbortController().signal);
+      recover(at: string, signal: AbortSignal): Promise<{ disposition: string; receipt: { body: { receiptId: string } } }>;
+    }).recover(observedAt, new AbortController().signal);
     assert.equal(replayed.disposition, 'receipted');
     assert.equal(replayed.receipt.body.receiptId, outcome.receipt.body.receiptId);
     assert.equal(resultFrames(sent2).length, 0);
@@ -386,7 +400,7 @@ test('disconnect before preparation sends nothing', async () => {
     recovery: recoveryHost(f.fixture, []),
     qualificationReceipt: f.fixture.qualification, qualificationPublicKeySpki: qualificationSpki,
     qualificationMaximumAgeMs: 300_000, receiptTimeoutMs: 1_000, clock: () => Date.parse(returnedAt) });
-  await assert.rejects(runtime.recover(rawCompletedResult, observedAt, new AbortController().signal),
+  await assert.rejects(runtime.recover(observedAt, new AbortController().signal),
     /codex_recovered_result_unavailable/);
   assert.equal(sends, 0);
   assert.equal(resultFrames(sent).length, 0);
@@ -404,7 +418,7 @@ test('disconnect after sent remains uncertain and reconnect sends nothing', asyn
       if (frame.type === 'harness.codex.result.return') throw new Error('synthetic_lost_after_write'); };
     const runtime = runtimeFor(journal, f.bridge, f.fixture, startEvidence(f.fixture),
       recoveryHost(f.fixture, []));
-    await assert.rejects(runtime.recover(rawCompletedResult, observedAt, new AbortController().signal), error => {
+    await assert.rejects(runtime.recover(observedAt, new AbortController().signal), error => {
       assert.match(String(error), /codex_recovered_result_delivery_uncertain/);
       assert.doesNotMatch(String(error), /synthetic|secret/); return true;
     });
@@ -414,7 +428,7 @@ test('disconnect after sent remains uncertain and reconnect sends nothing', asyn
     const g = await connect(reopened, sent2, 'reconnect');
     const retry = runtimeFor(reopened, g.bridge, g.fixture, startEvidence(g.fixture),
       recoveryHost(g.fixture, []));
-    await assert.rejects(retry.recover(rawCompletedResult, observedAt, new AbortController().signal),
+    await assert.rejects(retry.recover(observedAt, new AbortController().signal),
       /codex_recovered_result_delivery_uncertain/);
     assert.equal(resultFrames(sent2).length, 0);
     assert.equal(reopened.codexResultReturn('run:test')?.status, 'sent');
@@ -427,12 +441,12 @@ test('sender error with no durable return is unavailable with no automatic retry
   const f = await connect(journal, sent, 'test', async () => { throw new Error('synthetic_sign_secret'); });
   const runtime = runtimeFor(journal, f.bridge, f.fixture, startEvidence(f.fixture),
     recoveryHost(f.fixture, []));
-  await assert.rejects(runtime.recover(rawCompletedResult, observedAt, new AbortController().signal), error => {
+  await assert.rejects(runtime.recover(observedAt, new AbortController().signal), error => {
     assert.match(String(error), /codex_recovered_result_unavailable/);
     assert.doesNotMatch(String(error), /synthetic|secret/); return true;
   });
   assert.equal(journal.codexResultReturn('run:test'), undefined);
-  await assert.rejects(runtime.recover(rawCompletedResult, observedAt, new AbortController().signal),
+  await assert.rejects(runtime.recover(observedAt, new AbortController().signal),
     /codex_recovered_result_unavailable/);
   await f.bridge.close(); journal.close();
 });
@@ -456,13 +470,13 @@ test('altered receipt fails closed and cleanup doubt survives close', async () =
     qualificationReceipt: f.fixture.qualification, qualificationPublicKeySpki: qualificationSpki,
     qualificationMaximumAgeMs: 300_000, receiptTimeoutMs: 1_000, clock: () => Date.parse(returnedAt) });
   assert.equal(runtime.cleanupDoubt, true);
-  await assert.rejects(runtime.recover(rawCompletedResult, observedAt, new AbortController().signal),
+  await assert.rejects(runtime.recover(observedAt, new AbortController().signal),
     /codex_recovered_result_receipt_invalid/);
   assert.equal(sends, 1);
   assert.equal(runtime.cleanupDoubt, true);
   runtime.close(); runtime.close();
   assert.equal(runtime.cleanupDoubt, true);
-  await assert.rejects(runtime.recover(rawCompletedResult, observedAt, new AbortController().signal),
+  await assert.rejects(runtime.recover(observedAt, new AbortController().signal),
     /codex_recovered_result_unavailable/);
   await f.bridge.close(); journal.close();
 });
@@ -488,7 +502,7 @@ test('post-read lineage change fails closed before any send', async () => {
     recovery: recoveryHost(f.fixture, []),
     qualificationReceipt: f.fixture.qualification, qualificationPublicKeySpki: qualificationSpki,
     qualificationMaximumAgeMs: 300_000, receiptTimeoutMs: 1_000, clock: () => Date.parse(returnedAt) });
-  await assert.rejects(runtime.recover(rawCompletedResult, observedAt, new AbortController().signal),
+  await assert.rejects(runtime.recover(observedAt, new AbortController().signal),
     /codex_recovered_result_unavailable/);
   assert.equal(sends, 0);
   assert.equal(resultFrames(sent).length, 0);
@@ -520,8 +534,163 @@ test('returnFrameDigest mismatch fails closed even with matching identity and ac
     recovery: recoveryHost(f.fixture, []),
     qualificationReceipt: f.fixture.qualification, qualificationPublicKeySpki: qualificationSpki,
     qualificationMaximumAgeMs: 300_000, receiptTimeoutMs: 1_000, clock: () => Date.parse(returnedAt) });
-  await assert.rejects(runtime.recover(rawCompletedResult, observedAt, new AbortController().signal),
+  await assert.rejects(runtime.recover(observedAt, new AbortController().signal),
     /codex_recovered_result_receipt_invalid/);
   assert.equal(journal.codexResultReturn('run:test')?.status, 'receipted');
+  runtime.close(); await f.bridge.close(); journal.close();
+});
+
+test('connectionAttemptId substitution for the durable activation connection refuses', async () => {
+  // Finding 2: connectionAttemptId and initializedConnectionDigest come from
+  // the caller but must be bound to authenticated durable activation
+  // evidence before being placed into publication evidence. Substitution
+  // refuses with connection_binding_invalid.
+  const journal = new SqliteBridgeJournal(':memory:'), sent: string[] = [];
+  const f = await connect(journal, sent);
+  const calls: string[] = [];
+  const runtime = createCodexRecoveredResultRuntimeV1({ runId: 'run:test', queueId: 'queue:test',
+    threadId: 'thread:durable', turnId: 'turn:durable',
+    activationId: f.fixture.activationFrame.body.activationId,
+    activationDigest: f.fixture.activationFrame.body.activationDigest,
+    // Substituted connectionAttemptId: not the durable activation value.
+    connectionAttemptId: 'connection:forged',
+    initializedConnectionDigest: sha256Digest('initialized:result'),
+    journal, start: startEvidence(f.fixture), bridge: f.bridge, channel: (() => {
+      const channel = f.bridge.codexResultReturnChannel();
+      if (!channel) throw new Error('channel required'); return channel;
+    })(), recovery: recoveryHost(f.fixture, calls),
+    qualificationReceipt: f.fixture.qualification, qualificationPublicKeySpki: qualificationSpki,
+    qualificationMaximumAgeMs: 300_000, receiptTimeoutMs: 1_000, clock: () => Date.parse(returnedAt) });
+  await assert.rejects(runtime.recover(observedAt, new AbortController().signal),
+    /codex_recovered_result_connection_binding_invalid/);
+  runtime.close(); await f.bridge.close(); journal.close();
+});
+
+test('initializedConnectionDigest substitution refuses even when connectionAttemptId matches', async () => {
+  // Finding 2: substitution of initializedConnectionDigest must refuse
+  // independently of connectionAttemptId.
+  const journal = new SqliteBridgeJournal(':memory:'), sent: string[] = [];
+  const f = await connect(journal, sent);
+  const calls: string[] = [];
+  const runtime = createCodexRecoveredResultRuntimeV1({ runId: 'run:test', queueId: 'queue:test',
+    threadId: 'thread:durable', turnId: 'turn:durable',
+    activationId: f.fixture.activationFrame.body.activationId,
+    activationDigest: f.fixture.activationFrame.body.activationDigest,
+    connectionAttemptId: 'connection:result',
+    initializedConnectionDigest: sha256Digest('initialized:forged'),
+    journal, start: startEvidence(f.fixture), bridge: f.bridge, channel: (() => {
+      const channel = f.bridge.codexResultReturnChannel();
+      if (!channel) throw new Error('channel required'); return channel;
+    })(), recovery: recoveryHost(f.fixture, calls),
+    qualificationReceipt: f.fixture.qualification, qualificationPublicKeySpki: qualificationSpki,
+    qualificationMaximumAgeMs: 300_000, receiptTimeoutMs: 1_000, clock: () => Date.parse(returnedAt) });
+  await assert.rejects(runtime.recover(observedAt, new AbortController().signal),
+    /codex_recovered_result_connection_binding_invalid/);
+  runtime.close(); await f.bridge.close(); journal.close();
+});
+
+test('cleanup_uncertain refuses publication when start evidence does not certify cleanup verified', async () => {
+  // Finding 1: lifecycle gate refuses when the task process did not retire
+  // with cleanup verified.
+  const journal = new SqliteBridgeJournal(':memory:'), sent: string[] = [];
+  const f = await connect(journal, sent);
+  const calls: string[] = [];
+  const lifecycleStart = { load() { return { status: 'recorded' as const,
+    readIdentity: { queueId: 'queue:test', runId: 'run:test', threadId: 'thread:durable',
+      turnId: 'turn:durable', activationId: f.fixture.activationFrame.body.activationId,
+      activationDigest: f.fixture.activationFrame.body.activationDigest,
+      cleanupVerified: false as const }, cleanupVerified: false as const } as never; } };
+  const runtime = createCodexRecoveredResultRuntimeV1({ runId: 'run:test', queueId: 'queue:test',
+    threadId: 'thread:durable', turnId: 'turn:durable',
+    activationId: f.fixture.activationFrame.body.activationId,
+    activationDigest: f.fixture.activationFrame.body.activationDigest,
+    connectionAttemptId: 'connection:result',
+    initializedConnectionDigest: sha256Digest('initialized:result'),
+    journal, start: lifecycleStart, bridge: f.bridge, channel: (() => {
+      const channel = f.bridge.codexResultReturnChannel();
+      if (!channel) throw new Error('channel required'); return channel;
+    })(), recovery: recoveryHost(f.fixture, calls),
+    qualificationReceipt: f.fixture.qualification, qualificationPublicKeySpki: qualificationSpki,
+    qualificationMaximumAgeMs: 300_000, receiptTimeoutMs: 1_000, clock: () => Date.parse(returnedAt) });
+  await assert.rejects(runtime.recover(observedAt, new AbortController().signal),
+    /codex_recovered_result_cleanup_uncertain/);
+  assert.equal(resultFrames(sent).length, 0);
+  runtime.close(); await f.bridge.close(); journal.close();
+});
+
+test('read_scope_mismatch refuses when the owned read returns a different thread/turn scope', async () => {
+  // Finding 1: the host-owned bounded read must declare the thread/turn
+  // scope the read was bounded to. If that scope doesn't match the supplied
+  // lineage, refuse before projection.
+  const journal = new SqliteBridgeJournal(':memory:'), sent: string[] = [];
+  const f = await connect(journal, sent);
+  const calls: string[] = [];
+  const runtime = runtimeFor(journal, f.bridge, f.fixture, startEvidence(f.fixture),
+    recoveryHost(f.fixture, calls, 'completed', 'scope-mismatch'));
+  await assert.rejects(runtime.recover(observedAt, new AbortController().signal),
+    /codex_recovered_result_read_scope_mismatch/);
+  assert.deepEqual(calls, ['read']);
+  runtime.close(); await f.bridge.close(); journal.close();
+});
+
+test('clock_mismatch refuses when caller observedAt is outside the 1s auditing window', async () => {
+  // Finding 1: observation time derives from the trusted clock. A caller-
+  // supplied observedAt more than 1s off the trusted clock refuses.
+  const journal = new SqliteBridgeJournal(':memory:'), sent: string[] = [];
+  const f = await connect(journal, sent);
+  const calls: string[] = [];
+  const farObservedAt = '2026-09-13T11:00:00.000Z'; // ~1h before trusted clock
+  const runtime = createCodexRecoveredResultRuntimeV1({ runId: 'run:test', queueId: 'queue:test',
+    threadId: 'thread:durable', turnId: 'turn:durable',
+    activationId: f.fixture.activationFrame.body.activationId,
+    activationDigest: f.fixture.activationFrame.body.activationDigest,
+    connectionAttemptId: 'connection:result',
+    initializedConnectionDigest: sha256Digest('initialized:result'),
+    journal, start: startEvidence(f.fixture), bridge: f.bridge, channel: (() => {
+      const channel = f.bridge.codexResultReturnChannel();
+      if (!channel) throw new Error('channel required'); return channel;
+    })(), recovery: recoveryHost(f.fixture, calls),
+    qualificationReceipt: f.fixture.qualification, qualificationPublicKeySpki: qualificationSpki,
+    qualificationMaximumAgeMs: 300_000, receiptTimeoutMs: 1_000,
+    clock: () => Date.parse(returnedAt) });
+  await assert.rejects(runtime.recover(farObservedAt, new AbortController().signal),
+    /codex_recovered_result_clock_mismatch/);
+  runtime.close(); await f.bridge.close(); journal.close();
+});
+
+test('stored receipt replay path validates runId / activationId / returnFrameDigest against the supplied lineage', async () => {
+  // Finding 3: full-lineage replay validation. The runtime inspects a
+  // receipted durable entry and refuses with replay_lineage_mismatch if any
+  // of {runId, activationId, returnFrameDigest} disagree with the supplied
+  // lineage. The journal's integrity layer prevents external tamper of the
+  // SQLite-backed row, so the validation logic is exercised by injecting a
+  // minimal journal stub whose returned receipt body intentionally disagrees.
+  const journal = new SqliteBridgeJournal(':memory:'), sent: string[] = [];
+  const f = await connect(journal, sent);
+  const safeJournal = journal as unknown as { acceptedCodexActivation: typeof journal.acceptedCodexActivation;
+    codexResultReturn: typeof journal.codexResultReturn };
+  safeJournal.codexResultReturn = () => ({ status: 'receipted' as const,
+    receipt: { body: { identity: { runId: 'run:other' }, // mismatched runId
+      activation: { activationId: 'codex-activation:other' },
+      returnFrameDigest: sha256Digest('other') } } as never,
+    frame: {} as never,
+    preparedAt: '2026-09-13T12:00:00.000Z', receiptedAt: '2026-09-13T12:00:01.000Z' });
+  const calls: string[] = [];
+  const runtime = createCodexRecoveredResultRuntimeV1({ runId: 'run:test', queueId: 'queue:test',
+    threadId: 'thread:durable', turnId: 'turn:durable',
+    activationId: f.fixture.activationFrame.body.activationId,
+    activationDigest: f.fixture.activationFrame.body.activationDigest,
+    connectionAttemptId: 'connection:result',
+    initializedConnectionDigest: sha256Digest('initialized:result'),
+    journal: safeJournal as never, start: startEvidence(f.fixture), bridge: f.bridge, channel: (() => {
+      const channel = f.bridge.codexResultReturnChannel();
+      if (!channel) throw new Error('channel required'); return channel;
+    })(), recovery: { read() { calls.push('read'); throw new Error('must_not_read'); },
+      project() { calls.push('project'); throw new Error('must_not_read'); } },
+    qualificationReceipt: f.fixture.qualification, qualificationPublicKeySpki: qualificationSpki,
+    qualificationMaximumAgeMs: 300_000, receiptTimeoutMs: 1_000, clock: () => Date.parse(returnedAt) });
+  await assert.rejects(runtime.recover(observedAt, new AbortController().signal),
+    /codex_recovered_result_replay_lineage_mismatch/);
+  assert.deepEqual(calls, []);
   runtime.close(); await f.bridge.close(); journal.close();
 });

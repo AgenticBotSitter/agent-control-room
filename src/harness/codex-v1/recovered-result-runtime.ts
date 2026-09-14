@@ -25,8 +25,12 @@ const exactLineageSchema = z.object({
   initializedConnectionDigest: digestSchema,
 }).strict();
 
-/** Owned recovery read host: projects one stored thread read. No transport, no journal. */
+/** Owned recovery read host: the host owns the bounded read. It returns the
+ * raw result exactly once along with the scope the read is bounded to. The
+ * runtime borrows this host and verifies the scope against the supplied
+ * lineage before projecting. */
 export interface CodexRecoveryReadHostV1 {
+  read(): { rawResult: string; scope: { threadId: string; turnId: string } };
   project(rawResult: string): { threadId: string; turnId: string; status: string; exactPackageResult?: unknown };
 }
 
@@ -113,6 +117,24 @@ export function createCodexRecoveredResultRuntimeV1(input: {
       || identity.threadId !== lineage.threadId || identity.turnId !== lineage.turnId
       || identity.activationId !== lineage.activationId
       || identity.activationDigest !== lineage.activationDigest) refuse('unavailable');
+    // Bind connectionAttemptId to the durable activation's connectionId
+    // (server-signed). Substitution at the call site is refused. The
+    // initializedConnectionDigest comes from the same durable activation body
+    // and is compared byte-for-byte against the supplied lineage value.
+    const bodyView = body as { connectionId?: string;
+      connection?: { connectionAttemptId?: string; initializedConnectionDigest?: string } };
+    const durableConnectionAttemptId = bodyView.connection?.connectionAttemptId ?? bodyView.connectionId;
+    const durableInitializedConnectionDigest = bodyView.connection?.initializedConnectionDigest;
+    if (typeof durableConnectionAttemptId !== 'string' || durableConnectionAttemptId === ''
+      || typeof durableInitializedConnectionDigest !== 'string' || durableInitializedConnectionDigest === ''
+      || durableConnectionAttemptId !== lineage.connectionAttemptId
+      || durableInitializedConnectionDigest !== lineage.initializedConnectionDigest) {
+      refuse('connection_binding_invalid');
+    }
+    // Lifecycle gate: refuse publication when the start evidence does not
+    // certify that the task process retired with cleanup verified.
+    const startLifecycle = (started as { cleanupVerified?: unknown }).cleanupVerified;
+    if (startLifecycle !== true) refuse('cleanup_uncertain');
     return { activationConnectionId: (body as { connectionId: string }).connectionId,
       activationDigest: (body as { activationDigest: string }).activationDigest };
   };
@@ -122,23 +144,53 @@ export function createCodexRecoveredResultRuntimeV1(input: {
     catch { return refuse('cleanup_uncertain'); }
   };
 
+  const readBounded = (): { rawResult: string; scope: { threadId: string; turnId: string } } => {
+    try { return recovery.read(); }
+    catch { return refuse('unavailable'); }
+  };
+
   return Object.freeze({
     /** The owned projection never verifies cleanup; doubt survives every path. */
     cleanupDoubt: true as const,
-    async recover(rawResult: string, observedAt: string,
+    async recover(observedAt: string | undefined,
       signal: AbortSignal): Promise<CodexRecoveredResultDispositionV1> {
       try {
         if (closed) refuse('unavailable');
-        const raw = rawResultSchema.parse(rawResult);
-        const observed = instant.parse(observedAt);
+        // Observation time derives from the trusted clock, not from the
+        // caller. A caller-supplied observedAt is only accepted when it
+        // matches the clock within one second (auditing window). Mismatch
+        // refuses publication.
+        const trustedObserved = new Date(clock()).toISOString();
+        const observed = typeof observedAt === 'string' && instant.safeParse(observedAt).success
+          ? observedAt : trustedObserved;
+        if (observed !== trustedObserved
+          && Math.abs(Date.parse(trustedObserved) - Date.parse(observed)) > 1000) {
+          refuse('clock_mismatch');
+        }
         if (!(signal instanceof AbortSignal) || signal.aborted) refuse('unavailable');
         const durable = readDurable();
         if (durable?.status === 'receipted' && durable.receipt) {
+          // Full-lineage replay validation: verify the stored receipt matches
+          // the supplied exact lineage before returning. Without this gate, a
+          // caller could probe receipted entries by run ID for unrelated runs.
+          const storedReceipt = durable.receipt as { body?: { identity?: { runId?: string };
+            activation?: { activationId?: string }; returnFrameDigest?: string } };
+          if (storedReceipt.body?.identity?.runId !== lineage.runId
+            || storedReceipt.body?.activation?.activationId !== lineage.activationId
+            || storedReceipt.body?.returnFrameDigest !== sha256Digest(durable.frame)) {
+            refuse('replay_lineage_mismatch');
+          }
           return { disposition: 'receipted', receipt: durable.receipt };
         }
         if (durable && (durable.status === 'prepared' || durable.status === 'sent')) {
           refuse('delivery_uncertain');
         }
+        // Owned bounded read: the host invokes its own read authority and
+        // returns the raw result with the scope the read was bounded to.
+        const readBack = readBounded();
+        const raw = rawResultSchema.parse(readBack.rawResult);
+        if (readBack.scope.threadId !== lineage.threadId
+          || readBack.scope.turnId !== lineage.turnId) refuse('read_scope_mismatch');
         if (consumed) refuse('unavailable');
         try { channel.assertCurrent(); } catch { refuse('unavailable'); }
         const before = readLineage();
