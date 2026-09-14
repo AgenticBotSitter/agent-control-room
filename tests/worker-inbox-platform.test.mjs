@@ -6,7 +6,7 @@
 // reads, so these tests exercise the real reuse path rather than a stand-in for it.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -802,6 +802,37 @@ test("the watcher does not delete lookalike files in the operator's signal direc
     "this directory belongs to the operator: only files the tool records are ever removed there");
 });
 
+test("a symlink at the external signal path is refused whatever it points at", async (t) => {
+  const root = scratch(t);
+  const signals = join(root, "signals");
+  mkdirSync(signals, { recursive: true });
+  // The target deliberately holds a signal that would pass the content check, so the refusal cannot
+  // be passing merely because the contents look foreign.
+  const target = join(root, "elsewhere.signal");
+  writeJsonAtomic(target, { version: RUNTIME_VERSION, workerId: WORKER_ID, at: CLOCK().toISOString() });
+  const link = join(signals, `${workerSlug(WORKER_ID)}.signal`);
+  symlinkSync(target, link);
+
+  const options = tickOptions(root, { fetchImpl: fakeGithub(assignment()).fetchImpl, signalDirectory: signals });
+  await assert.rejects(() => runTick({ options, now: CLOCK }),
+    /worker_inbox_platform_signal_path_is_symlink/u,
+    "a symlink is not evidence of ownership, even when its target parses as our own signal");
+  assert.equal(lstatSync(link).isSymbolicLink(), true, "the symlink must be left alone");
+  assert.equal(existsSync(target), true, "and the file it points at must be untouched");
+});
+
+test("a dangling symlink at the external signal path is refused too", async (t) => {
+  const root = scratch(t);
+  const signals = join(root, "signals");
+  mkdirSync(signals, { recursive: true });
+  symlinkSync(join(root, "does-not-exist"), join(signals, `${workerSlug(WORKER_ID)}.signal`));
+
+  const options = tickOptions(root, { fetchImpl: fakeGithub(assignment()).fetchImpl, signalDirectory: signals });
+  await assert.rejects(() => runTick({ options, now: CLOCK }),
+    /worker_inbox_platform_signal_path_is_symlink/u,
+    "existsSync would follow the link and miss this, which is why the check uses lstat");
+});
+
 test("a hand-edited marker cannot authorise the deletion of any file", (t) => {
   const root = scratch(t);
   const directory = workerDirectory({ workerId: WORKER_ID, runtimeRoot: root });
@@ -886,17 +917,24 @@ test("a failed atomic write cleans up its temporary file instead of leaving it u
 test("the external signal is recorded before it is written, so a failed write cannot orphan it", async (t) => {
   const root = scratch(t);
   const directory = workerDirectory({ workerId: WORKER_ID, runtimeRoot: root });
-  // A regular file where a directory is needed, so the external write fails after recording.
-  const blocked = join(root, "blocked-signal-path");
-  writeFileSync(blocked, "not a directory\n", "utf8");
-
-  const options = tickOptions(root, {
-    fetchImpl: fakeGithub(assignment()).fetchImpl, signalDirectory: blocked,
-  });
-  await assert.rejects(() => runTick({ options, now: CLOCK }));
+  // An existing but unwritable directory: lstat on the signal path finds nothing, so the failure
+  // happens at the write - after the recording, which is the ordering under test. (A file where a
+  // directory is needed used to be the mechanism, but that now fails at lstat instead, before the
+  // recording, and would have stopped testing the ordering at all.)
+  const signals = join(root, "signals");
+  mkdirSync(signals, { recursive: true });
+  chmodSync(signals, 0o500);
+  try {
+    const options = tickOptions(root, {
+      fetchImpl: fakeGithub(assignment()).fetchImpl, signalDirectory: signals,
+    });
+    await assert.rejects(() => runTick({ options, now: CLOCK }));
+  } finally {
+    chmodSync(signals, 0o700);
+  }
 
   const marker = JSON.parse(readFileSync(markerFile(directory), "utf8"));
-  assert.deepEqual(marker.externalSignals, [join(blocked, `${workerSlug(WORKER_ID)}.signal`)],
+  assert.deepEqual(marker.externalSignals, [join(signals, `${workerSlug(WORKER_ID)}.signal`)],
     "recording must happen first: a recorded path that does not exist is harmless, an unrecorded file is an orphan");
 });
 

@@ -210,6 +210,7 @@ name — see the note above.
 | `worker_inbox_api_403` | Anonymous GitHub rate limit. Set `GITHUB_TOKEN`, or pass `--token-from-gh`. |
 | `worker_inbox_worker_id_invalid` | The worker ID must match the shape the inbox enforces: `[A-Za-z0-9][A-Za-z0-9._:-]{2,79}`. |
 | `worker_inbox_platform_signal_file_not_owned` | Something already exists at the extra-signal path that is not this tool's own signal for this worker. The watcher refuses to overwrite it rather than destroy a file it cannot prove it created. Point `--signal-directory` somewhere else, or move the file deliberately. |
+| `worker_inbox_platform_signal_path_is_symlink` | The extra-signal path is a symlink. It is refused whatever it points at: a link is not evidence of ownership and writing through it would replace the link rather than the file it names. Point `--signal-directory` at a directory, and let the tool create the signal file itself. |
 | Never signals anything | Run the inbox client itself — `node scripts/public-worker-inbox.mjs --worker-id YOUR-STABLE-WORKER-ID` — and read its `Record:` line; the watcher above does not print it. That line, not the labels, says whether the record is a controller record or advisory. Only a controller **claim** or **handoff** for your worker can be an actionable assignment: the issue must be open, carry **exactly one** matching `status:<state>` label, and a handoff — but not a claim — also needs **exactly one** matching `action:<action>` label. A legacy action marker is **advisory**: the client reports it as needing attention, never as an actionable assignment, so adding labels cannot make it one. Two labels of the same kind are ambiguous and are reported as needing attention rather than as an assignment. |
 | Signals stopped | Check `watch.log` for failures. Repeated failures mean the action is *unknown*, not cleared. |
 | `Cannot wake an agent` | Expected. See the limitation above. |
@@ -236,7 +237,8 @@ Two related rules, both narrower than they may look:
   that basis.
 - The extra signal file is the one file written **outside** the runtime directory. It is removed
   only when the operator names its directory on the uninstall command, and it is only ever
-  overwritten when the file already there parses as this tool's own signal for this worker.
+  overwritten when the file already there parses as this tool's own signal for this worker. A
+  symlink at that path is refused outright, whatever it points at.
 
 ## Scope
 

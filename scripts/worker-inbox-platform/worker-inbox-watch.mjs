@@ -12,7 +12,7 @@
 // scheduler artifact. A token is only ever taken from the operator's environment or from
 // `gh auth token`, held in memory for the request, and redacted from any message.
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -168,11 +168,16 @@ export async function runTick({ options, reader = readWorkerInbox, token, now = 
       // exact path is recorded in the ownership marker, because uninstall removes only what it can
       // prove it created, and would otherwise leave this file behind.
       const externalSignal = join(options.signalDirectory, `${workerSlug(options.workerId)}.signal`);
-      // An existing file at that exact path is not necessarily ours: this directory belongs to the
-      // operator, and a matching filename is not evidence of ownership. Adopt an existing file only
-      // when its contents are this tool's own signal for this worker; otherwise refuse, rather than
-      // overwrite something that may belong to another process.
-      if (existsSync(externalSignal)) {
+      // Nothing at that path is taken on trust: the directory belongs to the operator. A symlink is
+      // refused whatever it points at - a name, and a target, are not evidence of ownership, and the
+      // atomic rename below would replace the link rather than the file it names. A regular file is
+      // adopted only when its contents are this tool's own signal for this worker. lstat does not
+      // follow links, so a dangling symlink is caught too.
+      const existingStat = lstatSync(externalSignal, { throwIfNoEntry: false });
+      if (existingStat?.isSymbolicLink()) {
+        throw new Error("worker_inbox_platform_signal_path_is_symlink");
+      }
+      if (existingStat) {
         let existing;
         try {
           existing = JSON.parse(readFileSync(externalSignal, "utf8"));
