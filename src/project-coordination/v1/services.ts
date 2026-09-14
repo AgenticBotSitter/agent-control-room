@@ -127,6 +127,21 @@ export class ProjectCoordinationProposalServiceV1 {
 }
 
 /**
+ * Trusted cost evidence must be an exact non-negative micro-USD integer with a
+ * well-formed evidence digest. Anything else - a fraction, a negative, `NaN`,
+ * `Infinity`, a string, a missing field - is not evidence and is treated as
+ * `unknown`, which no policy ceiling can admit.
+ */
+function isAdmissibleCostEvidence(
+  value: CoordinationCostEvidenceV1 | undefined | null,
+): value is Extract<CoordinationCostEvidenceV1, { kind: "known" }> {
+  return !!value && value.kind === "known"
+    && typeof value.admittedCostMicroUsd === "number"
+    && Number.isSafeInteger(value.admittedCostMicroUsd) && value.admittedCostMicroUsd >= 0
+    && typeof value.evidenceDigest === "string" && /^sha256:[a-f0-9]{64}$/.test(value.evidenceDigest);
+}
+
+/**
  * Owner-reviewed and bounded-policy adoption. Both paths build the identical
  * request and call one canonical operation, so neither can create work the other
  * could not, and neither can grant execution authority.
@@ -165,13 +180,22 @@ export class ProjectCoordinationAdoptionServiceV1 {
       } catch {
         current = { kind: "unknown" };
       }
-      observed.push(current && current.kind === "known" ? current : { kind: "unknown" });
+      // Each entry is checked on its own before it can contribute. A fractional,
+      // negative, non-finite or non-numeric micro-USD value is not cost evidence:
+      // summing it first would let two halves round into an admissible integer and
+      // silently satisfy a ceiling that exact accounting would have refused.
+      observed.push(isAdmissibleCostEvidence(current) ? current : { kind: "unknown" });
     }
     if (observed.length > 0 && observed.every((entry) => entry.kind === "known")) {
       const known = observed as Array<Extract<CoordinationCostEvidenceV1, { kind: "known" }>>;
-      cost = { kind: "known",
-        admittedCostMicroUsd: known.reduce((total, entry) => total + entry.admittedCostMicroUsd, 0),
-        evidenceDigest: sha256Digest(known.map((entry) => entry.evidenceDigest)) };
+      // Micro-USD totals accumulate as BigInt so the sum handed to the ceiling is
+      // exact. A total past the safe-integer range stays `unknown` rather than
+      // being admitted at a rounded value.
+      const total = known.reduce((sum, entry) => sum + BigInt(entry.admittedCostMicroUsd), BigInt(0));
+      if (total <= BigInt(Number.MAX_SAFE_INTEGER)) {
+        cost = { kind: "known", admittedCostMicroUsd: Number(total),
+          evidenceDigest: sha256Digest(known.map((entry) => entry.evidenceDigest)) };
+      }
     }
 
     const requestDigest = sha256Digest({ request, routes,

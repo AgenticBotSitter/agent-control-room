@@ -606,3 +606,37 @@ test("policy expiry, revocation, exhaustion, unknown cost and route mismatch all
         requestId: "request:adopt:after", workflowId: "workflow:adopt:after" }) }), /coordinator_revoked/);
   } finally { await f.close(); }
 });
+
+test("hostile cost evidence is never summed into an admissible ceiling value", async () => {
+  const f = await fixture();
+  try {
+    const proposal = await acceptedProposals(f, ["one"]);
+    const policyId = await insertPolicy(f, { maxCost: 1_000 });
+    const policyAuth = { kind: "policy" as const, policyId, ownerIdentityId: "identity:owner" };
+    // Each entry must be exact micro-USD on its own. Two halves must not round
+    // into one admissible integer, and a non-finite or non-numeric value must not
+    // escape as an unbounded canonicalisation error.
+    const hostile: unknown[] = [0.5, -1_000_000, Number.NaN, Number.POSITIVE_INFINITY,
+      Number.MAX_SAFE_INTEGER, "0", null, undefined];
+    let key = 1_000;
+    for (const micro of hostile) {
+      const port = { currentCost: () => ({ kind: "known", admittedCostMicroUsd: micro,
+        evidenceDigest: hex("b") }) as CoordinationCostEvidenceV1 };
+      await assert.rejects(new ProjectCoordinationAdoptionServiceV1(f.canonical, routes, port).adopt({
+        request: operationRequest({ authorization: policyAuth,
+          idempotencyKey: `coordination-adopt-${key += 1}`, operationId: `operation:c${key}`,
+          requestId: `request:c${key}`, workflowId: `workflow:c${key}` }), proposal }),
+      /policy_cost_unknown/, String(micro));
+    }
+    // Exact integer evidence still admits, and the ceiling comparison stays exact.
+    const admitted = await new ProjectCoordinationAdoptionServiceV1(f.canonical, routes, knownCost(400))
+      .adopt({ request: operationRequest({ authorization: policyAuth,
+        idempotencyKey: "coordination-adopt-2001", operationId: "operation:c2001",
+        requestId: "request:c2001", workflowId: "workflow:c2001" }), proposal });
+    assert.equal(admitted.replayed, false);
+    const receipts = await f.raw.query<{ count: string; cost: string | null }>(
+      `SELECT count(*)::text AS count, max(admitted_cost_microusd)::text AS cost
+       FROM control_project_coordination_operation_receipts`);
+    assert.deepEqual(receipts.rows[0], { count: "1", cost: "800" });
+  } finally { await f.close(); }
+});
