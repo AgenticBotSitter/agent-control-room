@@ -117,6 +117,8 @@ jobs:
       # configuration contract commits to; none of them ran in CI before.
       - name: Component lanes
         run: pnpm run test:components
+      - name: Resource-bound connector contracts
+        run: node --import tsx --test tests/resource-bound-native-contract-v2.test.ts tests/resource-bound-codex-contract-v2.test.ts tests/resource-bound-local-start-contract-v2.test.ts
 
   test-articles:
     name: Article build lane
