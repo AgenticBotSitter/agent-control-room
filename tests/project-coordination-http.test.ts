@@ -62,7 +62,7 @@ test("appoint-coordinator creates a head and returns a new revision", async (t) 
     coordinatorIdentityId: "owner-self-2",
   });
   assert.equal(outcome.status, "accepted");
-  assert.equal(outcome.expectedCoordinatorVersion, read.coordinatorHead.version + 1);
+  assert.equal(outcome.revision.expectedCoordinatorVersion, read.coordinatorHead.version + 1);
 });
 
 test("appoint-coordinator refuses an already-active head", async (t) => {
@@ -193,7 +193,7 @@ test("pause-policy advances the policy version when accepted", async (t) => {
     policyId: read.delegationPolicy!.policyId,
   });
   assert.equal(outcome.status, "accepted");
-  assert.equal(outcome.expectedPolicyVersion, read.delegationPolicy!.coordinatorVersion + 1);
+  assert.equal(outcome.revision.expectedPolicyVersion, read.delegationPolicy!.coordinatorVersion + 1);
 });
 
 test("resume-policy on a policy that is not paused refuses with policy_already_active", async (t) => {

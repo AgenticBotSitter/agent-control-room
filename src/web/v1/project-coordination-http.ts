@@ -134,11 +134,14 @@ export type ProjectCoordinationReasonCode =
 export interface ProjectCoordinationActionOutcome {
   status: "accepted" | "refused";
   reasonCode?: ProjectCoordinationReasonCode;
-  observedAt?: string;
-  expectedCoordinatorVersion?: number;
-  expectedPolicyVersion?: number;
-  expectedConflictsVersion?: number;
-  expectedAttentionVersion?: number;
+  revision: {
+    projectId: string;
+    expectedCoordinatorVersion: number;
+    expectedPolicyVersion: number;
+    expectedConflictsVersion: number;
+    expectedAttentionVersion: number;
+    observedAt: string;
+  };
 }
 
 interface ProjectCoordinationActionRequest {
@@ -224,6 +227,15 @@ export class ProjectCoordinationHttpService {
     });
   }
 
+  /** Reports whether the coordination surface accepts writes. */
+  async isEnabled(): Promise<boolean> {
+    try {
+      return await this.store.coordinationEnabled();
+    } catch {
+      return false;
+    }
+  }
+
   async appointCoordinator(
     identity: VerifiedWebIdentity,
     input: ProjectCoordinatorAppointInput,
@@ -273,6 +285,7 @@ export class ProjectCoordinationHttpService {
     requireExistingHead: boolean,
   ): Promise<ProjectCoordinationActionOutcome> {
     return this.authority.authenticated(identity, async (_tx, actor) => {
+      actor.require(action, input.projectId, true);
       const projectHead = await this.readProjectHead(actor, input.projectId);
       const currentCoordinatorVersion = await this.store.coordinatorVersion(input.projectId);
       const currentPolicyVersion = await this.store.policyVersion(input.projectId);
@@ -296,7 +309,7 @@ export class ProjectCoordinationHttpService {
           expectedPolicyVersion: currentPolicyVersion,
           expectedConflictsVersion: currentConflictsVersion,
           expectedAttentionVersion: currentAttentionVersion,
-        });
+        }, input.projectId);
       }
       if (!requireExistingHead && currentCoordinatorVersion > 0) {
         return this.refused("coordinator_already_active", observedAt, {
@@ -304,7 +317,7 @@ export class ProjectCoordinationHttpService {
           expectedPolicyVersion: currentPolicyVersion,
           expectedConflictsVersion: currentConflictsVersion,
           expectedAttentionVersion: currentAttentionVersion,
-        });
+        }, input.projectId);
       }
 
       // Self-approval: the acting owner identity must not name itself as the
@@ -319,7 +332,7 @@ export class ProjectCoordinationHttpService {
           expectedPolicyVersion: currentPolicyVersion,
           expectedConflictsVersion: currentConflictsVersion,
           expectedAttentionVersion: currentAttentionVersion,
-        });
+        }, input.projectId);
       }
 
       const appointment: CoordinatorAppointmentV1 = {
@@ -348,7 +361,8 @@ export class ProjectCoordinationHttpService {
             expectedPolicyVersion: currentPolicyVersion,
             expectedConflictsVersion: currentConflictsVersion,
             expectedAttentionVersion: currentAttentionVersion,
-          });
+          },
+        input.projectId);;
         }
         if (appointment.coordinatorIdentityId === appointment.executorId) {
           return this.refused("coordinator_self_approval", observedAt, {
@@ -356,7 +370,8 @@ export class ProjectCoordinationHttpService {
             expectedPolicyVersion: currentPolicyVersion,
             expectedConflictsVersion: currentConflictsVersion,
             expectedAttentionVersion: currentAttentionVersion,
-          });
+          },
+        input.projectId);;
         }
         executionBindingDigest = projectCoordinatorExecutionBindingDigestV1({
           schema: PROJECT_COORDINATOR_EXECUTION_BINDING_V1,
@@ -385,7 +400,8 @@ export class ProjectCoordinationHttpService {
           expectedPolicyVersion: currentPolicyVersion,
           expectedConflictsVersion: currentConflictsVersion,
           expectedAttentionVersion: currentAttentionVersion,
-        });
+        },
+        input.projectId);;
         throw error;
       }
       return this.accepted(observedAt, {
@@ -393,7 +409,8 @@ export class ProjectCoordinationHttpService {
         expectedPolicyVersion: currentPolicyVersion,
         expectedConflictsVersion: currentConflictsVersion,
         expectedAttentionVersion: currentAttentionVersion,
-      });
+      },
+        input.projectId);;
     });
   }
 
@@ -404,6 +421,7 @@ export class ProjectCoordinationHttpService {
     toState: "paused" | "active" | "revoked",
   ): Promise<ProjectCoordinationActionOutcome> {
     return this.authority.authenticated(identity, async (_tx, actor) => {
+      actor.require(action, input.projectId, true);
       const projectHead = await this.readProjectHead(actor, input.projectId);
       const currentCoordinatorVersion = await this.store.coordinatorVersion(input.projectId);
       const currentPolicyVersion = await this.store.policyVersion(input.projectId);
@@ -427,7 +445,8 @@ export class ProjectCoordinationHttpService {
           expectedPolicyVersion: currentPolicyVersion,
           expectedConflictsVersion: currentConflictsVersion,
           expectedAttentionVersion: currentAttentionVersion,
-        });
+        },
+        input.projectId);;
       }
 
       const existingPolicyState = await this.store.coordinator
@@ -460,7 +479,8 @@ export class ProjectCoordinationHttpService {
           expectedPolicyVersion: currentPolicyVersion,
           expectedConflictsVersion: currentConflictsVersion,
           expectedAttentionVersion: currentAttentionVersion,
-        });
+        },
+        input.projectId);;
       }
       if (existingPolicyState === "policy_already_revoked") {
         return this.refused("policy_already_revoked", observedAt, {
@@ -468,7 +488,8 @@ export class ProjectCoordinationHttpService {
           expectedPolicyVersion: currentPolicyVersion,
           expectedConflictsVersion: currentConflictsVersion,
           expectedAttentionVersion: currentAttentionVersion,
-        });
+        },
+        input.projectId);;
       }
       if (existingPolicyState === "policy_already_paused") {
         return this.refused("policy_already_paused", observedAt, {
@@ -476,7 +497,8 @@ export class ProjectCoordinationHttpService {
           expectedPolicyVersion: currentPolicyVersion,
           expectedConflictsVersion: currentConflictsVersion,
           expectedAttentionVersion: currentAttentionVersion,
-        });
+        },
+        input.projectId);;
       }
 
       actor.require(action, input.projectId);
@@ -485,7 +507,8 @@ export class ProjectCoordinationHttpService {
         expectedPolicyVersion: currentPolicyVersion + 1,
         expectedConflictsVersion: currentConflictsVersion,
         expectedAttentionVersion: currentAttentionVersion,
-      });
+      },
+        input.projectId);;
     });
   }
 
@@ -517,7 +540,8 @@ export class ProjectCoordinationHttpService {
         expectedPolicyVersion: currentPolicyVersion,
         expectedConflictsVersion: currentConflictsVersion,
         expectedAttentionVersion: currentAttentionVersion,
-      });
+      },
+        input.projectId);;
     }
     return null;
   }
@@ -531,8 +555,20 @@ export class ProjectCoordinationHttpService {
       expectedConflictsVersion: number;
       expectedAttentionVersion: number;
     },
+    projectId: string,
   ): ProjectCoordinationActionOutcome {
-    return { status: "refused", reasonCode, observedAt, ...expected };
+    return {
+      status: "refused",
+      reasonCode,
+      revision: {
+        projectId,
+        observedAt,
+        expectedCoordinatorVersion: expected.expectedCoordinatorVersion,
+        expectedPolicyVersion: expected.expectedPolicyVersion,
+        expectedConflictsVersion: expected.expectedConflictsVersion,
+        expectedAttentionVersion: expected.expectedAttentionVersion,
+      },
+    };
   }
 
   private accepted(
@@ -543,8 +579,19 @@ export class ProjectCoordinationHttpService {
       expectedConflictsVersion: number;
       expectedAttentionVersion: number;
     },
+    projectId: string,
   ): ProjectCoordinationActionOutcome {
-    return { status: "accepted", observedAt, ...expected };
+    return {
+      status: "accepted",
+      revision: {
+        projectId,
+        observedAt,
+        expectedCoordinatorVersion: expected.expectedCoordinatorVersion,
+        expectedPolicyVersion: expected.expectedPolicyVersion,
+        expectedConflictsVersion: expected.expectedConflictsVersion,
+        expectedAttentionVersion: expected.expectedAttentionVersion,
+      },
+    };
   }
 
   private async composeProjectCoordinationPage(
