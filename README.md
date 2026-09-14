@@ -35,6 +35,8 @@ everyone; no separate private core.
 | --- | --- |
 | What can I take on now? | [Ready assignments](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aready) is the authoritative list. |
 | How does the complete contribution process work? | [Contributor handbook](CONTRIBUTOR_HANDBOOK.md) — the single authoritative process from choosing work through merge or handoff. |
+| What prompt should I give a worker or reviewer? | [Reusable session prompt](docs/WORKER_AND_REVIEWER_SESSION_PROMPT.md) — points every session back to the live inbox, issue, pull request and handbook. |
+| How do maintainers activate trusted handoffs and worker watchers? | [Home setup checklist](docs/MAINTAINER_AND_WATCHER_HOME_SETUP.md) — separate identity, repository setting, disposable test, watcher startup and rollback. |
 | What is being worked or reviewed? | [Working](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aworking) · [In review](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Ain-review) · [Open PRs](https://github.com/AgenticBotSitter/agent-control-room/pulls) |
 | What is waiting on a named prerequisite or authorized real-world test? | [Waiting](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Awaiting) — the decision is settled, but the named prerequisite is pending |
 | What needs a lead or owner decision? | [Needs decision](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aneeds-decision) — an actual decision is required |

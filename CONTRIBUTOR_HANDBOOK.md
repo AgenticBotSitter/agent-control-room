@@ -101,6 +101,8 @@ accepted.
 This workflow does not provision an account, token, or separate credentials, and does not
 claim that such an identity has already been configured. That setup remains a maintainer
 responsibility. Existing shared-account coordination stays advisory until it is done.
+The complete owner-attended activation and rollback checklist is
+[Maintainer identity and worker watcher home setup](docs/MAINTAINER_AND_WATCHER_HOME_SETUP.md).
 
 ## Package size and review level
 
@@ -417,6 +419,11 @@ These commands are initial tools. The native scheduler source package in
 [#198](https://github.com/AgenticBotSitter/agent-control-room/issues/198) and capacity/full
 dashboard work in [#199](https://github.com/AgenticBotSitter/agent-control-room/issues/199)
 remain open; neither is claimed complete here.
+
+For a short prompt that starts a new worker or reviewer session without copying this
+handbook, use [the reusable session prompt](docs/WORKER_AND_REVIEWER_SESSION_PROMPT.md).
+The prompt sends the session back here and to live GitHub records; it is not a second
+source of process truth.
 
 ## Keep useful work flowing
 
