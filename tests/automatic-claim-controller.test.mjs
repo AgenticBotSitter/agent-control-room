@@ -326,6 +326,7 @@ test("a lost cleanup response is reconciled without restoring working or removin
 
 test("malformed packets are refused without any state change", () => {
   assert.ok(parseClaimPacket(packetBody()));
+  assert.ok(parseClaimPacket(packetBody({ risk: "standard" })));
   for (const body of ["no packet here",
     "<!-- acr-public-work:v1 {oops} -->",
     packetBody({ target: "develop" }),
@@ -339,7 +340,8 @@ test("malformed packets are refused without any state change", () => {
     packetBody({ writeScopes: ["/**"] }),
     packetBody({ dependencies: ["not-a-number"] }),
     packetBody({ checks: [] }),
-    packetBody({ risk: "critical" }),
+    packetBody({ risk: "" }),
+    packetBody({ risk: "x".repeat(33)}),
     packetBody({ effects: "deploy" }),
     packetBody({ leaseHours: 0 }),
     packetBody({ leaseHours: -5 }),

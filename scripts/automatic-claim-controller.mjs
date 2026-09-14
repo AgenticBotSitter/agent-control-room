@@ -306,7 +306,6 @@ export function packetsOverlap(pa, pb) {
   return a.some(scopeA => b.some(scopeB => scopesOverlap(scopeA, scopeB)));
 }
 
-const PACKET_RISKS = new Set(["boundary", "internal", "presentation"]);
 const PACKET_EFFECTS = new Set(["none", "filesystem", "network"]);
 
 /** Parse and strictly validate the work packet; undefined means unusable. */
@@ -325,7 +324,8 @@ export function parseClaimPacket(body) {
     || !dependencies.every(dep => Number.isSafeInteger(dep) && dep > 0)) return undefined;
   if (!Array.isArray(checks) || checks.length === 0
     || !checks.every(check => typeof check === "string" && check.length > 0 && check.length <= 200)) return undefined;
-  if (!PACKET_RISKS.has(risk) || !PACKET_EFFECTS.has(effects)) return undefined;
+  if (typeof risk !== "string" || risk.length === 0 || risk.length > 32) return undefined;
+  if (!PACKET_EFFECTS.has(effects)) return undefined;
   if (typeof leaseHours !== "number" || !Number.isFinite(leaseHours) || leaseHours <= 0 || leaseHours > MAX_LEASE_HOURS)
     return undefined;
   return Object.freeze({ target, base, writeScopes: Object.freeze([...writeScopes]),
