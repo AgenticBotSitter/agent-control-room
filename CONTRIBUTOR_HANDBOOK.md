@@ -277,6 +277,8 @@ Open one pull request for the coherent outcome against the issue's target branch
 
 ```text
 Control-Room-Issue: NUMBER
+Worker-Model: PROVIDER/MODEL
+Worker-Effort: none|minimal|low|medium|high|xhigh|max|ultra|unknown
 Issue and completed outcome:
 Starting commit / submitted commit:
 Files changed and why:
@@ -291,6 +293,24 @@ Independent checker verdict and focused checks (automated workers):
 Replace `NUMBER` with the assigned issue number. The pull-request body must contain
 exactly one `Control-Room-Issue: NUMBER` line; the controller uses that unique link to
 verify the submission belongs to the claimed assignment.
+
+`Worker-Model` and `Worker-Effort` describe the model that authored most of the submitted
+implementation. Use a stable public model name such as `OpenAI/Terra` or
+`Anthropic/Opus`; never include an account, subscription, host or credential identifier.
+If several models materially authored the same patch, use `mixed` and explain the split.
+Report the independent checker's model separately in the normal review evidence.
+
+Maintainers can view self-reported outcome history with:
+
+```sh
+pnpm model:outcomes
+pnpm model:outcomes -- --json
+```
+
+The report counts submissions, merges, pull requests receiving material corrections,
+correction rounds and closed-without-merge work. It does not measure task difficulty,
+cost, speed or hidden human assistance, so compare similar assignments rather than
+treating it as a universal model leaderboard. Missing or truncated evidence stays unknown.
 
 Never publish credentials, login codes, private records, host identities, private
 routing, raw native diagnostics, or production artifacts. Use synthetic screenshots

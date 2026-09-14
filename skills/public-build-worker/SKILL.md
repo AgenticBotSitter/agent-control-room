@@ -60,7 +60,8 @@ escape is refused.
 Keep a reservation with `CLAIM RENEW` (same login and worker, unchanged packet,
 unexpired lease; the renewal preserves the immutable accepted base). Record
 submission readiness with a four-line `CLAIM SUBMIT` naming the open pull
-request number and its exact head SHA; the controller verifies the PR is open
+request number and its exact head SHA. The pull request reports exactly one
+`Worker-Model:` line and one `Worker-Effort:` line. The controller verifies the PR is open
 against `main` in the same repository, authored by your login, references the
 issue exactly with one `Control-Room-Issue:` line, the packet is unchanged
 and the lease is unexpired, the issue is still working and the pull request
