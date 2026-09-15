@@ -61,13 +61,20 @@ async function collectConsistentSnapshot(source, { requiredTables }) {
         `SELECT to_jsonb(t) AS v FROM public."${table}" t ORDER BY to_jsonb(t)::text`)).rows;
       rows.push({ table, count: values.length, hash: digestOf(values) });
     }
+    // Database owner is read inside the same snapshot so the recorded owner
+    // and the dumped content cannot diverge.
+    const databaseOwner = (await evidenceClient.query(
+      "SELECT pg_get_userbyid(datdba) AS owner FROM pg_database WHERE datname = current_database()")).rows[0]?.owner;
+    if (typeof databaseOwner !== "string" || !/^[a-z0-9_]+$/.test(databaseOwner)) {
+      throw new Error("evidence_refused_database_owner");
+    }
     // pg_dump runs as a subprocess but opens its own connection. We export the
     // current snapshot's XID via txid_snapshot so any later dump sees the same
     // row versions. The transaction remains open until the dump completes; this
     // is the proven consistency mechanism for taking a snapshot export and an
     // evidence read from the same database state.
     const txid = (await evidenceClient.query("SELECT pg_export_snapshot() AS snap")).rows[0].snap;
-    return { evidence: { ledger, roles, memberships, grants, rows, schemaDigest }, txid, evidenceClient };
+    return { evidence: { ledger, roles, memberships, grants, rows, schemaDigest, databaseOwner }, txid, evidenceClient };
   } catch (error) {
     try { await evidenceClient.query("ROLLBACK"); } catch {}
     throw error;
@@ -111,6 +118,7 @@ export async function backupDatabase({ source, out, pgBin, requiredTables = [], 
       ledgerDigest, rolesDigest, membershipsDigest,
       schemaDigest: evidence.schemaDigest, rowsDigest: digestOf(evidence.rows),
       ownersDigest: digestOf(evidence.grants), ledgerRowsDigest: digestOf(evidence.ledger),
+      databaseOwnerDigest: digestOf(evidence.databaseOwner),
     }),
     evidence,
   };

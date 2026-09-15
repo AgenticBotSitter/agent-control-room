@@ -72,17 +72,22 @@ test("restore identity round-trips and refuses field mismatch", () => {
     ledgerDigest: `sha256:${"1".repeat(64)}`, rolesDigest: `sha256:${"2".repeat(64)}`,
     membershipsDigest: `sha256:${"8".repeat(64)}`, schemaDigest: `sha256:${"3".repeat(64)}`, rowsDigest: `sha256:${"4".repeat(64)}`,
     ownersDigest: `sha256:${"5".repeat(64)}`, ledgerRowsDigest: `sha256:${"6".repeat(64)}`,
+    databaseOwnerDigest: `sha256:${"9".repeat(64)}`,
   };
   const identity = computeDatabaseRestoreIdentity(base);
   assert.equal(verifyRestoredIdentity(identity, { ...identity }), true);
   assert.throws(() => verifyRestoredIdentity(identity, { ...identity, rowsDigest: `sha256:${"6".repeat(64)}` }),
     /restore_identity_mismatch:rowsDigest/);
+  assert.throws(() => verifyRestoredIdentity(identity, { ...identity, databaseOwnerDigest: `sha256:${"0".repeat(64)}` }),
+    /restore_identity_mismatch:databaseOwnerDigest/);
   assert.throws(() => computeDatabaseRestoreIdentity({ ...base, schemaDigest: "nope" }),
     /restore_identity_invalid:schemaDigest/);
   assert.throws(() => verifyRestoredIdentity(identity, { ...identity, ledgerRowsDigest: `sha256:${"7".repeat(64)}` }),
     /restore_identity_mismatch:ledgerRowsDigest/);
   assert.throws(() => computeDatabaseRestoreIdentity({ ...base, ledgerRowsDigest: "nope" }),
     /restore_identity_invalid:ledgerRowsDigest/);
+  assert.throws(() => computeDatabaseRestoreIdentity({ ...base, databaseOwnerDigest: "nope" }),
+    /restore_identity_invalid:databaseOwnerDigest/);
 });
 
 test("#65 artifact-set digest placeholder validates shape only", () => {
@@ -96,6 +101,7 @@ test("#65 artifact-set digest placeholder validates shape only", () => {
     ledgerDigest: `sha256:${"1".repeat(64)}`, rolesDigest: `sha256:${"2".repeat(64)}`,
     membershipsDigest: `sha256:${"8".repeat(64)}`, schemaDigest: `sha256:${"3".repeat(64)}`, rowsDigest: `sha256:${"4".repeat(64)}`,
     ownersDigest: `sha256:${"5".repeat(64)}`, ledgerRowsDigest: `sha256:${"6".repeat(64)}`,
+    databaseOwnerDigest: `sha256:${"9".repeat(64)}`,
     artifactSetDigest: digest,
   };
   const withArtifact = computeDatabaseRestoreIdentity(base);

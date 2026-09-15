@@ -1,7 +1,8 @@
 // Stable database-restore identity consumed by #60/#61, plus the typed placeholder
 // for #65's future artifact-set digest. The identity binds ledger digest, role/grant
-// snapshot, schema digest and required-row hashes: a restored database is accepted
-// only when every piece matches. This module never copies artifacts and never
+// snapshot, schema digest, required-row hashes and the source database owner: a
+// restored database is accepted only when every piece matches, including
+// pg_database ownership. This module never copies artifacts and never
 // invents #65's digest — the placeholder validates shape only.
 import { createHash } from "node:crypto";
 
@@ -28,18 +29,19 @@ export function parseArtifactSetDigest(input) {
 }
 
 /**
- * @param {{ ledgerDigest: string, rolesDigest: string, membershipsDigest: string, schemaDigest: string, rowsDigest: string, ownersDigest: string, ledgerRowsDigest: string, artifactSetDigest?: unknown }} parts
+ * @param {{ ledgerDigest: string, rolesDigest: string, membershipsDigest: string, schemaDigest: string, rowsDigest: string, ownersDigest: string, ledgerRowsDigest: string, databaseOwnerDigest: string, artifactSetDigest?: unknown }} parts
  */
-export function computeDatabaseRestoreIdentity({ ledgerDigest, rolesDigest, membershipsDigest, schemaDigest, rowsDigest, ownersDigest, ledgerRowsDigest, artifactSetDigest }) {
+export function computeDatabaseRestoreIdentity({ ledgerDigest, rolesDigest, membershipsDigest, schemaDigest, rowsDigest, ownersDigest, ledgerRowsDigest, databaseOwnerDigest, artifactSetDigest }) {
   for (const [name, value] of [["ledgerDigest", ledgerDigest], ["rolesDigest", rolesDigest],
       ["membershipsDigest", membershipsDigest],
       ["schemaDigest", schemaDigest], ["rowsDigest", rowsDigest], ["ownersDigest", ownersDigest],
-      ["ledgerRowsDigest", ledgerRowsDigest]]) {
+      ["ledgerRowsDigest", ledgerRowsDigest], ["databaseOwnerDigest", databaseOwnerDigest]]) {
     if (typeof value !== "string" || !DIGEST_RE.test(value)) throw new Error(`restore_identity_invalid:${name}`);
   }
   const artifact = parseArtifactSetDigest(artifactSetDigest);
   const identity = {
     version: 1, ledgerDigest, rolesDigest, membershipsDigest, schemaDigest, rowsDigest, ownersDigest, ledgerRowsDigest,
+    databaseOwnerDigest,
     ...(artifact === undefined ? {} : { artifactSetDigest: artifact }),
   };
   return { ...identity, identityDigest: `sha256:${sha256(canonical(identity))}` };
@@ -54,7 +56,7 @@ export function verifyRestoredIdentity(expected, actual) {
     throw new Error("restore_identity_mismatch:shape");
   }
   for (const key of ["ledgerDigest", "rolesDigest", "membershipsDigest", "schemaDigest", "rowsDigest", "ownersDigest",
-      "ledgerRowsDigest", "identityDigest"]) {
+      "ledgerRowsDigest", "databaseOwnerDigest", "identityDigest"]) {
     if (expected[key] !== actual[key]) throw new Error(`restore_identity_mismatch:${key}`);
   }
   if (JSON.stringify(expected.artifactSetDigest ?? null) !== JSON.stringify(actual.artifactSetDigest ?? null)) {

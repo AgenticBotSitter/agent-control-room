@@ -338,7 +338,7 @@ test("restore identity fails closed on a flipped sensitive role attribute", need
       ledgerDigest: meta.ledgerDigest, rolesDigest: digestOf(evidence.roles),
       membershipsDigest: digestOf(evidence.memberships), schemaDigest: evidence.schemaDigest,
       rowsDigest: digestOf(evidence.rows), ownersDigest: digestOf(evidence.grants),
-      ledgerRowsDigest: digestOf(evidence.ledger),
+      ledgerRowsDigest: digestOf(evidence.ledger), databaseOwnerDigest: digestOf(evidence.databaseOwner),
     });
     assert.throws(() => verifyRestoredIdentity(meta.identity, tampered), /restore_identity_mismatch:rolesDigest/);
   } finally {
@@ -355,7 +355,7 @@ test("restore identity fails closed on a revoked membership", needsPg, async () 
       ledgerDigest: meta.ledgerDigest, rolesDigest: digestOf(evidence.roles),
       membershipsDigest: digestOf(evidence.memberships), schemaDigest: evidence.schemaDigest,
       rowsDigest: digestOf(evidence.rows), ownersDigest: digestOf(evidence.grants),
-      ledgerRowsDigest: digestOf(evidence.ledger),
+      ledgerRowsDigest: digestOf(evidence.ledger), databaseOwnerDigest: digestOf(evidence.databaseOwner),
     });
     assert.throws(() => verifyRestoredIdentity(meta.identity, tampered), /restore_identity_mismatch:membershipsDigest/);
   } finally {
@@ -410,42 +410,62 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
   const CLEAN_PORT = 65435;
   const cleanSocket = join(run, "clean-socket"), cleanData = join(run, "clean-data");
   const cleanBackup = join(run, "clean-backup-set");
+  // The restore target lives in its OWN disposable cluster: roles and
+  // memberships are cluster-wide, so a second database in the source cluster
+  // would inherit the source's role state before target provisioning.
+  const TARGET_PORT = 65436;
+  const targetSocket = join(run, "clean-target-socket"), targetData = join(run, "clean-target-data");
+  const asPostgres = process.getuid?.() === ROOT_UID;
+  const ownDirs = async (...dirs) => {
+    if (asPostgres) await exec("chown", ["-R", `${POSTGRES_UID}:${POSTGRES_GID}`, ...dirs]);
+  };
   await mkdir(cleanSocket, { mode: 0o700 });
-  if (process.getuid?.() === ROOT_UID) {
-    await exec("chown", ["-R", `${POSTGRES_UID}:${POSTGRES_GID}`, cleanSocket, run]);
-    await exec("mkdir", ["-p", cleanData]);
-    await exec("chown", ["-R", `${POSTGRES_UID}:${POSTGRES_GID}`, cleanData]);
-  } else {
-    await mkdir(cleanData, { recursive: true });
-  }
-  await native("initdb", ["-D", cleanData, "-U", "fixture_admin", "--auth-local=trust",
-    "--auth-host=reject", "--no-locale", "--encoding=UTF8"]);
-  await native("pg_ctl", ["-D", cleanData, "-l", join(run, "clean-server.log"), "-w", "-t", "30", "-o",
-    `-k ${cleanSocket} -p ${CLEAN_PORT} -h '' -c unix_socket_permissions=0700 -c shared_buffers=32MB -c max_connections=20`, "start"]);
-  t.after(async () => {
-    try {
-      await native("pg_ctl", ["-D", cleanData, "-m", "fast", "-w", "-t", "30", "stop"]);
-    } finally {
-      await rm(cleanSocket, { recursive: true, force: true });
-      await rm(cleanData, { recursive: true, force: true });
-      await rm(cleanBackup, { recursive: true, force: true });
+  await mkdir(targetSocket, { mode: 0o700 });
+  await ownDirs(cleanSocket, targetSocket, run);
+  const startCluster = async (socket, data, port, log) => {
+    if (asPostgres) {
+      await exec("mkdir", ["-p", data]);
+      await ownDirs(data);
+    } else {
+      await mkdir(data, { recursive: true });
     }
+    await native("initdb", ["-D", data, "-U", "fixture_admin", "--auth-local=trust",
+      "--auth-host=reject", "--no-locale", "--encoding=UTF8"]);
+    await native("pg_ctl", ["-D", data, "-l", join(run, log), "-w", "-t", "30", "-o",
+      `-k ${socket} -p ${port} -h '' -c unix_socket_permissions=0700 -c shared_buffers=32MB -c max_connections=20`, "start"]);
+  };
+  await startCluster(cleanSocket, cleanData, CLEAN_PORT, "clean-server.log");
+  await startCluster(targetSocket, targetData, TARGET_PORT, "clean-target-server.log");
+  t.after(async () => {
+    for (const data of [cleanData, targetData]) {
+      try {
+        await native("pg_ctl", ["-D", data, "-m", "fast", "-w", "-t", "30", "stop"]);
+      } catch {}
+    }
+    await rm(cleanSocket, { recursive: true, force: true });
+    await rm(cleanData, { recursive: true, force: true });
+    await rm(targetSocket, { recursive: true, force: true });
+    await rm(targetData, { recursive: true, force: true });
+    await rm(cleanBackup, { recursive: true, force: true });
   });
   const pw = { migrator: "clean-install-migrator-0001", app: "clean-install-app-000001", scheduler: "clean-install-scheduler-0001" };
-  const psqlBase = {
+  const psqlFor = (socket, port) => ({
     PATH: "/usr/bin:/bin", LC_ALL: "C", TMPDIR: run,
-    PGHOST: cleanSocket, PGPORT: String(CLEAN_PORT), PGUSER: "fixture_admin",
+    PGHOST: socket, PGPORT: String(port), PGUSER: "fixture_admin",
     PGPASSWORD: "fixture_only",
-  };
-  const provisionRoles = (database) => exec(join(BIN, "psql"),
+  });
+  const psqlBase = psqlFor(cleanSocket, CLEAN_PORT);
+  const provisionRoles = (database, env = psqlBase) => exec(join(BIN, "psql"),
     ["-v", `migrator_password=${pw.migrator}`, "-v", `app_password=${pw.app}`,
      "-v", `scheduler_password=${pw.scheduler}`,
      "-f", join(ROOT, "db/roles/production_provision.sql"), "-X", "-q"],
-    { env: { ...psqlBase, PGDATABASE: database }, timeout: 60000, maxBuffer: 1 << 26 });
-  const cleanConn = (database, user = "fixture_admin", password = "fixture_only") =>
-    ({ host: cleanSocket, port: CLEAN_PORT, database, user, password });
-  const cleanQuery = async (database, sql, params = []) => {
-    const client = new Client(cleanConn(database));
+    { env: { ...env, PGDATABASE: database }, timeout: 60000, maxBuffer: 1 << 26 });
+  const cleanConn = (socket, port, database, user = "fixture_admin", password = "fixture_only") =>
+    ({ host: socket, port, database, user, password });
+  const sourceConn = (database, user, password) => cleanConn(cleanSocket, CLEAN_PORT, database, user, password);
+  const targetConn = (database, user, password) => cleanConn(targetSocket, TARGET_PORT, database, user, password);
+  const cleanQuery = async (socket, port, database, sql, params = []) => {
+    const client = new Client(cleanConn(socket, port, database));
     await client.connect();
     try {
       return await client.query(sql, params);
@@ -453,13 +473,14 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
       await client.end();
     }
   };
+  const sourceQuery = (database, sql, params = []) => cleanQuery(cleanSocket, CLEAN_PORT, database, sql, params);
   // Step 0 of the documented fresh install: the database-creation script. The
   // owner stays the invoking superuser — the schema-owner role does not exist
   // yet on a genuinely empty cluster, so an OWNER clause would be rejected.
   await exec(join(BIN, "psql"),
     ["-v", "dbname=cr_clean_install", "-f", join(ROOT, "deploy/postgres/provision-database.sql"), "-X", "-q"],
     { env: { ...psqlBase, PGDATABASE: "postgres" }, timeout: 60000, maxBuffer: 1 << 26 });
-  const preOwner = (await cleanQuery("postgres",
+  const preOwner = (await sourceQuery("postgres",
     "SELECT pg_get_userbyid(datdba) AS owner FROM pg_database WHERE datname = 'cr_clean_install'")).rows[0].owner;
   assert.equal(preOwner, "fixture_admin", "database starts owned by the creating superuser");
   // Step 1: standalone role provisioning on the clean database.
@@ -479,7 +500,7 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
   // The install is complete and least-privilege: logins, groups, memberships,
   // ledger rows, schema-owner object ownership and database ownership, all on
   // the clean cluster.
-  const db = cleanConn("cr_clean_install");
+  const db = sourceConn("cr_clean_install");
   const cleanTargetQuery = async (sql, params = []) => {
     const client = new Client(db);
     await client.connect();
@@ -507,7 +528,7 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
   const owners = (await cleanTargetQuery(
     "SELECT DISTINCT pg_get_userbyid(c.relowner) AS owner FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public'")).rows;
   assert.deepEqual(owners.map(row => row.owner), ["control_room_schema_owner"]);
-  const dbOwner = (await cleanQuery("postgres",
+  const dbOwner = (await sourceQuery("postgres",
     "SELECT pg_get_userbyid(datdba) AS owner FROM pg_database WHERE datname = 'cr_clean_install'")).rows[0].owner;
   assert.equal(dbOwner, "control_room_schema_owner", "bootstrap transfers database ownership after roles exist");
   const ledgerRows = (await cleanTargetQuery("SELECT count(*)::int AS count FROM control_room_schema_migrations")).rows;
@@ -520,20 +541,27 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
   const backup = await backupDatabase({ source: db, out: cleanBackup, pgBin: BIN,
     ledgerDigest: `sha256:${ledger.digest}`, requiredTables: ["tenants"] });
   assert.equal(backup.planned, false);
-  // Step 4: the documented recovery order on a second clean database —
+  // Step 4: the documented recovery order on the SEPARATE target cluster —
   // database script, then role provisioning (restore reconciles memberships
-  // but refuses a missing login, so the logins must pre-exist).
+  // but refuses a missing login, so the logins must pre-exist). The absence
+  // proof first: the target cluster must carry none of the source's role
+  // state before its own provisioning.
+  const targetPsq = psqlFor(targetSocket, TARGET_PORT);
+  const absent = (await cleanQuery(targetSocket, TARGET_PORT, "postgres",
+    "SELECT rolname FROM pg_roles WHERE rolname LIKE 'control@_room@_%' ESCAPE '@'")).rows;
+  assert.deepEqual(absent, [], "target cluster starts with no control-room roles");
   await exec(join(BIN, "psql"),
     ["-v", "dbname=cr_clean_restored", "-f", join(ROOT, "deploy/postgres/provision-database.sql"), "-X", "-q"],
-    { env: { ...psqlBase, PGDATABASE: "postgres" }, timeout: 60000, maxBuffer: 1 << 26 });
-  await provisionRoles("cr_clean_restored");
+    { env: { ...targetPsq, PGDATABASE: "postgres" }, timeout: 60000, maxBuffer: 1 << 26 });
+  await provisionRoles("cr_clean_restored", targetPsq);
   // Step 5: restore into the provisioned empty target and verify the restored
-  // identity field by field (restoreDatabase verifies internally; the digest
-  // equality pins the same identity the backup recorded). Only consumed
-  // inputs are passed — no unused bootstrap/migrate descriptors.
-  const cleanTarget = cleanConn("cr_clean_restored");
+  // identity field by field (restoreDatabase verifies internally, including
+  // the new databaseOwnerDigest; the digest equality pins the same identity
+  // the backup recorded). Only consumed inputs are passed — no unused
+  // bootstrap/migrate descriptors.
+  const cleanTarget = targetConn("cr_clean_restored");
   const restored = await restoreDatabase({ backup: cleanBackup, target: cleanTarget,
-    confirmTarget: cleanConn("cr_clean_restored"), pgBin: BIN, requiredTables: ["tenants"] });
+    confirmTarget: targetConn("cr_clean_restored"), pgBin: BIN, requiredTables: ["tenants"] });
   assert.equal(restored.identityDigest, backup.identityDigest, "restored identity matches the backup identity");
   const sourceRows = (await cleanTargetQuery("SELECT id, display_name FROM tenants ORDER BY id")).rows;
   const restoredClient = new Client(cleanTarget);
@@ -545,7 +573,13 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
     await restoredClient.end();
   }
   assert.deepEqual(await roleMemberships(cleanTarget), memberships, "restored target carries the clean install memberships");
-  const restoredOwners = (await cleanQuery("cr_clean_restored",
+  const restoredOwners = (await cleanQuery(targetSocket, TARGET_PORT, "cr_clean_restored",
     "SELECT DISTINCT pg_get_userbyid(c.relowner) AS owner FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public'")).rows;
   assert.deepEqual(restoredOwners.map(row => row.owner), ["control_room_schema_owner"]);
+  // Database ownership matches the source: the recorded owner is re-applied,
+  // not the invoking administrator.
+  const targetDbOwner = (await cleanQuery(targetSocket, TARGET_PORT, "postgres",
+    "SELECT pg_get_userbyid(datdba) AS owner FROM pg_database WHERE datname = 'cr_clean_restored'")).rows[0].owner;
+  assert.equal(targetDbOwner, dbOwner, "restored database owner matches the source database owner");
+  assert.equal(targetDbOwner, "control_room_schema_owner");
 });

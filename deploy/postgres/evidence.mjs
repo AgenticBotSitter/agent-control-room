@@ -136,7 +136,7 @@ export function connectTarget(target) {
 /**
  * @param {string} connectionString
  * @param {{ requiredTables?: string[] }} [options]
- * @returns {Promise<{ ledger: any[], roles: any[], memberships: any[], grants: any[], rows: { table: string, count: number, hash: string }[], schemaDigest: string }>}
+ * @returns {Promise<{ ledger: any[], roles: any[], memberships: any[], grants: any[], rows: { table: string, count: number, hash: string }[], schemaDigest: string, databaseOwner: string }>}
  */
 export async function collectDatabaseEvidence(target, { requiredTables = [] } = {}) {
   const client = connectTarget(target);
@@ -164,7 +164,15 @@ export async function collectDatabaseEvidence(target, { requiredTables = [] } = 
       const values = (await client.query(`SELECT to_jsonb(t) AS v FROM public."${table}" t ORDER BY to_jsonb(t)::text`)).rows;
       rows.push({ table, count: values.length, hash: digestOf(values) });
     }
-    return { ledger, roles, memberships, grants, rows, schemaDigest: await readSchemaDigest(client) };
+    // Database owner: a restored database must carry the source's pg_database
+    // owner, not the invoking administrator. Bound into the restore identity
+    // (databaseOwnerDigest) and re-applied by restore from the recorded name.
+    const databaseOwner = (await client.query(
+      "SELECT pg_get_userbyid(datdba) AS owner FROM pg_database WHERE datname = current_database()")).rows[0]?.owner;
+    if (typeof databaseOwner !== "string" || !/^[a-z0-9_]+$/.test(databaseOwner)) {
+      throw new Error("evidence_refused_database_owner");
+    }
+    return { ledger, roles, memberships, grants, rows, schemaDigest: await readSchemaDigest(client), databaseOwner };
   } finally {
     await client.end();
   }

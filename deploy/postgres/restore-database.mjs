@@ -49,6 +49,19 @@ export async function restoreDatabase({ backup, target, confirmTarget, pgBin, re
     await probe.end();
   }
   const cli = targetCli(target);
+  // Grantee roles must exist before the dump's GRANT statements replay: the
+  // source's table grants reference groups (reader, backup, …) that the
+  // login-provisioning script does not create. This file is CREATE-only and
+  // idempotent; login roles still come from the operator's target
+  // provisioning, and the membership reconcile below fails closed if one is
+  // missing.
+  const roleClient = connectTarget(target);
+  await roleClient.connect();
+  try {
+    await roleClient.query(await readFile(join(resolve(dirname(fileURLToPath(import.meta.url)), "../.."), "db/roles/production_roles.sql"), "utf8"));
+  } finally {
+    await roleClient.end();
+  }
   await exec(join(pgBin, "pg_restore"), ["--no-owner", ...cli.args, join(backup, "database.dump")],
     { env: { PATH: "/usr/bin:/bin", LC_ALL: "C", ...cli.env }, timeout: 180000, maxBuffer: 1 << 30 });
   // Owners and grants do not survive pg_restore --no-owner: re-apply the recorded
@@ -90,7 +103,6 @@ export async function restoreDatabase({ backup, target, confirmTarget, pgBin, re
       if (!/^[a-z0-9_]+$/.test(object.name)) throw new Error(`restore_refused_object:${object.name}`);
       await grantClient.query(`ALTER ${object.kind} "public"."${object.name}" OWNER TO "${canonicalOwner}"`);
     }
-    await grantClient.query(await readFile(join(resolve(dirname(fileURLToPath(import.meta.url)), "../.."), "db/roles/production_roles.sql"), "utf8"));
     // Memberships do not survive pg_restore --no-owner either: reconcile the
     // exact memberships recorded at backup time. Login roles must already exist
     // (the operator provisions the target with production_provision.sql first);
@@ -109,6 +121,18 @@ export async function restoreDatabase({ backup, target, confirmTarget, pgBin, re
       if (rows.length === 0) throw new Error(`restore_refused_missing_login_role:${member}`);
       await grantClient.query(`GRANT "${role}" TO "${member}"${entry.admin_option === true ? " WITH ADMIN OPTION" : ""}`);
     }
+    // Database ownership must match the source: pg_restore --no-owner leaves
+    // objects re-owned above but the database itself stays with the invoking
+    // administrator. The recorded owner is shape-validated and ensured before
+    // the transfer; any later mismatch then fails the identity check below.
+    const recordedOwner = metadata.evidence?.databaseOwner;
+    if (typeof recordedOwner !== "string" || !/^[a-z0-9_]+$/.test(recordedOwner)) {
+      throw new Error("restore_refused_database_owner_shape");
+    }
+    await grantClient.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${recordedOwner}') THEN
+      CREATE ROLE "${recordedOwner}" NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS; END IF; END; $$;`);
+    await grantClient.query(
+      `DO $$ BEGIN EXECUTE format('ALTER DATABASE %I OWNER TO %I', current_database(), '${recordedOwner}'); END; $$;`);
   } finally {
     await grantClient.end();
   }
@@ -127,6 +151,7 @@ export async function restoreDatabase({ backup, target, confirmTarget, pgBin, re
     rowsDigest: digestOf(evidence.rows),
     ownersDigest: digestOf(evidence.grants),
     ledgerRowsDigest: digestOf(evidence.ledger),
+    databaseOwnerDigest: digestOf(evidence.databaseOwner),
   });
   verifyRestoredIdentity(metadata.identity, actual);
   return { planned: false, targetFingerprint: digestOf(target), identityDigest: actual.identityDigest };
