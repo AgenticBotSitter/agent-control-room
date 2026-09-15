@@ -84,12 +84,22 @@ export async function runHandoff({ event, repository, api, maintainers = [] }) {
   if (issue.state !== 'open' || pr.state !== 'open' || pr.head.sha !== request.head
     || pr.base.repo.full_name !== repository) throw new Error('handoff_target_changed');
   const issueBindings = [...(pr.body ?? '').replace(/\r\n/g, '\n').matchAll(/^Control-Room-Issue: ([1-9][0-9]*)$/gm)];
-  if (issueBindings.length !== 1 || Number(issueBindings[0][1]) !== issueNumber) throw new Error('handoff_pr_issue_mismatch');
+  const adoptingChanges = request.command === 'adopt-changes';
+  const exactIssueBinding = issueBindings.length === 1 && Number(issueBindings[0][1]) === issueNumber;
+  // Legacy correction adoption exists partly to repair older PRs that predate the
+  // mandatory Control-Room-Issue line. During that single maintainer-only
+  // transition, bind the PR to the issue through the existing exact review
+  // evidence below. Every later worker transition still requires the PR body
+  // to contain the one exact issue line.
   const records = comments.map(comment => ({ comment, record: parseHandoff(comment) }))
     .filter(item => item.record?.issue === issueNumber);
   const latest = records.at(-1);
   const replay = latest?.record.requestId === requestId ? latest : undefined;
   const predecessor = replay ? records.at(-2) : latest;
+  const continuingAdoptedLegacy = ['acknowledge', 'stop', 'stopped'].includes(request.command)
+    && issueBindings.length === 0 && predecessor?.record.requiresPrIssueBinding === true;
+  if (!exactIssueBinding && ((!adoptingChanges && !continuingAdoptedLegacy) || issueBindings.length !== 0))
+    throw new Error('handoff_pr_issue_mismatch');
   const claimWorkerId = request.command === 'adopt-changes'
     ? request.claimWorkerId : predecessor?.record.claimWorkerId ?? request.workerId;
   const claim = acceptedClaim(comments, issueNumber, claimWorkerId);
@@ -111,16 +121,20 @@ export async function runHandoff({ event, repository, api, maintainers = [] }) {
     || (!predecessor && equal(workflowLabels(value), ['status:working', 'action:worker']));
   const prIssue = await getIssue(request.pr);
   const stoppingPending = request.command === 'stop' && predecessor?.record.phase === 'pending';
-  const adoptingChanges = request.command === 'adopt-changes';
   if (adoptingChanges && (!request.instruction || request.previousId !== 0 || predecessor))
     throw new Error('handoff_adoption_invalid');
   if (adoptingChanges) {
     const legacy = comments.some(comment => Number.isSafeInteger(comment?.id) && comment.id > claim.id && comment.id < requestId
       && typeof comment.body === 'string'
       && comment.body.includes(`<!-- agent-control-room-action:v1 worker=${claimWorkerId} state=changes-required issue=${issueNumber} -->`));
+    const exactReviewEvidence = comments.some(comment => Number.isSafeInteger(comment?.id)
+      && comment.id > claim.id && comment.id < requestId && typeof comment.body === 'string'
+      && new RegExp(`\\bPR\\s+#${request.pr}\\b`, 'i').test(comment.body)
+      && comment.body.includes(request.head));
     const issueReady = equal(workflowLabels(issue), ['status:changes-required', 'action:worker']);
     const prLabels = workflowLabels(prIssue);
-    if (!legacy || !issueReady || !(prLabels.length === 0 || equal(prLabels, ['status:changes-required', 'action:worker'])))
+    if (!legacy || (!exactIssueBinding && !exactReviewEvidence) || !issueReady
+      || !(prLabels.length === 0 || equal(prLabels, ['status:changes-required', 'action:worker'])))
       throw new Error('handoff_adoption_source_invalid');
   }
   if (!replay && !stoppingPending && !adoptingChanges
@@ -131,6 +145,8 @@ export async function runHandoff({ event, repository, api, maintainers = [] }) {
     state, action, acknowledged, requestId, previousId: request.previousId, claimId: claim.id,
     phase: 'pending', instruction: request.instruction, reviewUrl: ['acknowledge', 'resubmit', 'stopped'].includes(request.command)
       ? predecessor.record.reviewUrl : savedRequest.html_url,
+    requiresPrIssueBinding: !exactIssueBinding
+      && (adoptingChanges || predecessor?.record.requiresPrIssueBinding === true),
     sourceIssueLabels: workflowLabels(issue), sourcePrLabels: workflowLabels(prIssue),
   };
   if (replay && record.phase === 'complete') return { status: 'already-recorded', commentId: replay.comment.id };
