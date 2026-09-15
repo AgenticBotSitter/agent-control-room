@@ -86,11 +86,14 @@ export async function runHandoff({ event, repository, api, maintainers = [] }) {
   const issueBindings = [...(pr.body ?? '').replace(/\r\n/g, '\n').matchAll(/^Control-Room-Issue: ([1-9][0-9]*)$/gm)];
   const adoptingChanges = request.command === 'adopt-changes';
   const exactIssueBinding = issueBindings.length === 1 && Number(issueBindings[0][1]) === issueNumber;
-  const legacyBindings = [...(pr.body ?? '').replace(/\r\n/g, '\n')
-    .matchAll(/^(?:Outcome\s*\/\s*issue\s*:|Closes|Fixes|Resolves)\s*#([1-9][0-9]*)\b/gim)]
+  const normalizedPrBody = (pr.body ?? '').replace(/\r\n/g, '\n');
+  const legacyBindings = [...normalizedPrBody.matchAll(/\b(?:Closes|Fixes|Resolves)\s*#([1-9][0-9]*)\b/gi)]
     .map(match => Number(match[1]));
-  const titleBinding = /\(issue\s+#([1-9][0-9]*)\)/i.exec(pr.title ?? '');
-  if (titleBinding) legacyBindings.push(Number(titleBinding[1]));
+  for (const outcome of normalizedPrBody.matchAll(/^Outcome\s*\/\s*issue\s*:\s*([^\n]*)$/gim)) {
+    legacyBindings.push(...[...outcome[1].matchAll(/#([1-9][0-9]*)\b/g)].map(match => Number(match[1])));
+  }
+  legacyBindings.push(...[...(pr.title ?? '').matchAll(/\(issue\s+#([1-9][0-9]*)\)/gi)]
+    .map(match => Number(match[1])));
   const uniqueLegacyBindings = [...new Set(legacyBindings)];
   const exactLegacyIssueBinding = uniqueLegacyBindings.length === 1 && uniqueLegacyBindings[0] === issueNumber;
   // Legacy correction adoption exists partly to repair older PRs that predate the
