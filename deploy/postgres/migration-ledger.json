@@ -1,0 +1,480 @@
+{
+  "version": 1,
+  "digest": "c1807d26c4d4bf40da7491c07e318dfcd1b1407070db29bd9202a903f75711af",
+  "entries": [
+    {
+      "file": "db/migrations/0001_control_room_core.sql",
+      "order": 1,
+      "sha256": "7d7b3994f8867a385d516ee480771ad425e2950b2fc7554b5d1315f9231cc8ed",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0002_allocation_simulation_audit.sql",
+      "order": 2,
+      "sha256": "7a5ca4ae4f3ed58c526148b44fef4d15e5d91c65319ab622aa5090f47885fe21",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0003_canonical_domain_delivery.sql",
+      "order": 3,
+      "sha256": "95ddcff940c17a2ea655789b479d9a75c86c7650fe75ae76083337c2f6d2df9c",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0004_cr4b_review_hardening.sql",
+      "order": 4,
+      "sha256": "098d3cfcdc6e2259f23e88f6007b47ee80310dcfee77170e212600d64154a6d0",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0005_cr4c_identity_policy.sql",
+      "order": 5,
+      "sha256": "1278ff95469510b4c1557aa21a915a91c4478db6b8ff4c13c429453f71da4299",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0006_cr4d_audit_chain.sql",
+      "order": 6,
+      "sha256": "0d2e6af9f1ad723f54c9b9ef47a6f4e054d57e63f20196eafa8d3efffef4b2a7",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0007_cr4q_integrity_hardening.sql",
+      "order": 7,
+      "sha256": "b52060e391f141c319bf6eca8ef85faa36c7ac6ecd5ff7e04d939cd7766ccdc5",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0008_cr5a_node_protocol_identity.sql",
+      "order": 8,
+      "sha256": "b94d9847b9765bb59c874c5c2221498849bc4767e38f5577e80d24083c963b51",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0009_cr5b_protocol_delivery_semantics.sql",
+      "order": 9,
+      "sha256": "f444d9b0859f9e25b28b02ad7c4c45388502f6788e55bd4922d9cc7598e9eae1",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0010_cr5d_node_operation_requests.sql",
+      "order": 10,
+      "sha256": "a65eb47b9f02ee14ead7e0ad86cef273503b6b40440bbea7f6f783e8f7d9e1dc",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0011_cr5d_node_job_evidence.sql",
+      "order": 11,
+      "sha256": "010bec227c33808a188d96c3142dcbc56c61e8c26527d583de9a29e93cfbcc60",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0012_cr6b_fleet_history.sql",
+      "order": 12,
+      "sha256": "eca4b14497d94eff4cc3a46afa29a93557e6db002588e0fef4cd8d5db0fcf300",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0013_cr6b_fleet_current_subject.sql",
+      "order": 13,
+      "sha256": "a9915f339f88eeb4de0ff5e64de553e4531008a090a4ebaef755a692a7800f2e",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0014_cr6c_resource_reservations.sql",
+      "order": 14,
+      "sha256": "c2e4fd7df7599f011e03b48ee2c600a80fd12f0bcb100dd542e00d1271ae8088",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0015_cr6c_project_budget_reservations.sql",
+      "order": 15,
+      "sha256": "b5208bb3e33c499a170de4dc0ba9cbbc628b4fa81decd41cc64ec9d8f9ce9852",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0016_cr6d_schedule_occurrences.sql",
+      "order": 16,
+      "sha256": "c1389b551d17ec0091903dcfdbeb3e7b56092dd4dfd11dff33b855cbabef7c83",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0017_cr6d_service_incidents.sql",
+      "order": 17,
+      "sha256": "102cb0f273986252b6ace20b8b28e9879c75be6b027c9854ff2c44a0110cca7f",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0018_cr6d_service_incident_remedies.sql",
+      "order": 18,
+      "sha256": "9d3dc47f260060a1ab6fdf8b4322ad5c2402de122d53adde02eede03d7e930d2",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0019_cr6e_operator_surfaces.sql",
+      "order": 19,
+      "sha256": "5a1befb752f028db82374527c97134699991df9471b14e79de672abb326395c0",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0020_cr7_harness_runs.sql",
+      "order": 20,
+      "sha256": "0524b6bdbd44ab1dc4b87403e745402d5d37c7e4e00773f5ff39abe0625f98ea",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0021_cr7e_package_registry.sql",
+      "order": 21,
+      "sha256": "1db7f3be842b8c49f40cdbe830df80d22b40ca2558a026eb4caf0e4150acf74f",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0022_cr8b_completion_gate.sql",
+      "order": 22,
+      "sha256": "64bb9be28b7a84f4f38ddf1e03fb7d4a60ee4ead74a8fcd2db8ca1691d3c7ae4",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0023_cr8d_telegram_delivery.sql",
+      "order": 23,
+      "sha256": "72c09f09510c51208e741974df7d1f96fcab606f35403fbdbd001083457fe081",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0024_cr8q_rollback_checkpoints.sql",
+      "order": 24,
+      "sha256": "7fcef3a321fbe90ae08919d4f12680e54e48bf7ea0aea325094bd5e9528fd3e4",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0025_cr9a_external_content_sync.sql",
+      "order": 25,
+      "sha256": "a461e52cba46035e5a7e9a060fbba5039b73ee708c2695a99680fbcea1307c91",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0026_cr9a_external_content_placement.sql",
+      "order": 26,
+      "sha256": "843fe2549b300d7a1d4bdb60ac2a60739805a91c67c7d55efa768981e9b55d36",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0027_cr11b_ready_frontier_handoffs.sql",
+      "order": 27,
+      "sha256": "b7b03db48bd6ca59e6095197e200cea6f3424506dfd1c48d56a2c0f27f34c6fe",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0028_cr12b_idea_lab_project_lifecycle.sql",
+      "order": 28,
+      "sha256": "a81b3c59d969005963aae7d9ccaa8310e013524be17360131e1a583082341e6e",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0029_cr12b_idea_lab_protected_coordinator.sql",
+      "order": 29,
+      "sha256": "b223e276801074fb560610522aaa7b1212e9d0d2773822825ac7042c8b10a26d",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0030_cr12b_local_fake_pilot.sql",
+      "order": 30,
+      "sha256": "c82ac7ec91830b0488415aa259be7775e44746adf7a41e67f3d06fd55319f6d2",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0031_cr12b_live_panel_authority.sql",
+      "order": 31,
+      "sha256": "0cce314b741e951946a56df920c337a941fc3fe415de1f15510a81bd5faa4b48",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0032_cr12b_idea_qualification_spends.sql",
+      "order": 32,
+      "sha256": "67461e5d538827b74b8245a714a8fd9401c3e40ff602bc37ab2c97183bcbdc87",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0033_cr13a_project_live_events.sql",
+      "order": 33,
+      "sha256": "7aca6c767a8b5e67ef0d41859b11e8172983b96fd2b09d87d7e85f3221d0c008",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0034_cr13a_connection_registry.sql",
+      "order": 34,
+      "sha256": "0c201b83b66a80de38e89c7f53e66ab52a8332c23d84b711c3d32267b3d7a6a3",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0035_cr13a_connection_enrollment_intake.sql",
+      "order": 35,
+      "sha256": "e869fd177a14e175d1d122fef4756745f5edbc71e2f6812fae3a8715bec7ee04",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0036_cr13a_connection_enrollment_node_delivery.sql",
+      "order": 36,
+      "sha256": "e6e6372ee347710706a212a85f72a129c74687adf4cde5991433d6cc89452f0c",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0037_cr13a_native_observation_authorizations.sql",
+      "order": 37,
+      "sha256": "8d4efd8e49f9b1891079c99ee0bf82afc2c731349386ec44ceca8c2eb2f1b154",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0038_cr13a_native_observation_authorization_consumptions.sql",
+      "order": 38,
+      "sha256": "c98128708a164ec7bb888b8f8de3465478451605c46ea41e37d6c45b68647ab5",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0039_cr14b_web_projects.sql",
+      "order": 39,
+      "sha256": "05e43d3ca1780762fae214ca38347a01a2320d41ab0241846488d1717b6c98f3",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0040_cr14b_private_web_lock_support.sql",
+      "order": 40,
+      "sha256": "83e4240a53a77e86f967581c1f3405de77a12143dd7e4271c93a7e29a498a12b",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0041_cr14c_private_task_proposals.sql",
+      "order": 41,
+      "sha256": "9825891d9f8ef1423a12465af39569f6d33a0b63a3960a4bdbccb44cc8b5beba",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0042_cr14c_private_task_results.sql",
+      "order": 42,
+      "sha256": "16c8ca4e23839b4e1b1ca15140031859c97723cf5488941dd4a627a878f771b8",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0043_cr14c_owner_result_review.sql",
+      "order": 43,
+      "sha256": "27435749e36b4e91fffd3468e06f39b15e344a8cea73bbadc78a2e8f80e2eb73",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0044_cr14c_native_review_plans.sql",
+      "order": 44,
+      "sha256": "86513cbb56cf0c011318db34943f9851b3c48dab5ba7bf26b64e6a1bf61bac09",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0045_cr14c_task_execution_plans.sql",
+      "order": 45,
+      "sha256": "c31ba47121ec94e63a4c1b129d95bebcb59061630006af639c9e6825dd6645fb",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0046_cr14c_coordinator_lock_support.sql",
+      "order": 46,
+      "sha256": "6c864ac7e94dbb5becce6ebaed1de22bf4ed213f30f07b13cff945f399c2b0dc",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0047_cr14c_native_approval_packets.sql",
+      "order": 47,
+      "sha256": "e8257bd352c5971ad421f54d317fe138c90617661f5bc6e25d5ff81f4381852a",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0048_cr14c_native_task_queue.sql",
+      "order": 48,
+      "sha256": "baa999af03fe2e9b6ef27ef226a06cee785842e8d5e11d2079220cb9551bc9a1",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0049_cr14c_native_delivery_preparations.sql",
+      "order": 49,
+      "sha256": "140a5651a01edecfef9248d72149019885209fcbff47a789a2fd6985c601723b",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0050_cr14c_native_delivery_envelopes.sql",
+      "order": 50,
+      "sha256": "f0e11f0a20c21e7c9c50a603c4dd187b3d24cc0497561127f39386960fdcdd28",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0051_cr14c_native_transmission_intents.sql",
+      "order": 51,
+      "sha256": "6d2a4e4dd6494e0e075b47d0ebedf470591debff8807da1877782f8bb8761a81",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0052_cr14c_native_delivery_receipts.sql",
+      "order": 52,
+      "sha256": "acb6f70c05654a5a5d892ed7ae35f55bf76da3a271c41a7440717f2ca103ce62",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0053_cr14c_owner_result_verification.sql",
+      "order": 53,
+      "sha256": "b19e78325e83a61378632674e09a938a4f4c1351b6f54bbcae345640bde3f7c1",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0054_cr14c_quality_coordinator.sql",
+      "order": 54,
+      "sha256": "425beeff9e7fc5762ff62f23ef702b817638581a39dd6644d5362ac90e98579f",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0055_cr14c_native_result_writer.sql",
+      "order": 55,
+      "sha256": "235646625730e102baefc918b65cddfdd4edc9546c689732ec8d0f4d4f39062c",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0056_cr14c_native_evidence_locks.sql",
+      "order": 56,
+      "sha256": "db8dde9b3adb0a29191d7ef6f2d29dc7f06592ed98890d96673cdd123f0caf59",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0057_cr14c_protocol_replay_lock.sql",
+      "order": 57,
+      "sha256": "0ff887f53c954a5011f8255fd7f0305692f324a028919280e42e9e3e980c46c5",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0058_audit_chain_required_hashes.sql",
+      "order": 58,
+      "sha256": "0d757ee0e751c3ef0f5a71524ce0184a7c9bea581aa46fbd7204de166b3460ac",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0059_news_postgres.sql",
+      "order": 59,
+      "sha256": "ee6600820cacf283159ef0d445b0d81fb57f20cb2e03b31bf56a8fc00907f87c",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0060_news_source_observations.sql",
+      "order": 60,
+      "sha256": "7135591e747203a54d6b4bcc7dea5562ce533d6bd0e210b4ea8d73ece7346b33",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0061_news_feed_plans.sql",
+      "order": 61,
+      "sha256": "fed50aa8bbd9d9a6a9ea51d782397bf1380c70608d99bb08b907ee7a484dfcca",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0062_news_discovery_baselines.sql",
+      "order": 62,
+      "sha256": "f5c852619364c41ac2ab1712eb016e27aff075601e3eb40b5f6ac40e0fdfffae",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0063_news_source_settings.sql",
+      "order": 63,
+      "sha256": "eed06f618846e2febc1f8d31adc6827f7eb428d30b390e5dd223789f6cf1b4a0",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0064_news_story_archives.sql",
+      "order": 64,
+      "sha256": "cdc6e707b742cf09abbac5e7dcaa978e526f10a5915338ed1831169019507f69",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0065_news_article_details.sql",
+      "order": 65,
+      "sha256": "ebc0f93830f477bdcf1d6ffcc6ff0b6ed2ec693ef074bd017bb6c003940e6962",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0066_restore_stable_delivery_check.sql",
+      "order": 66,
+      "sha256": "7f311e16e5dc6e6d9192022198e11dd1640e2e139b0a2c50db830447063f5551",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0067_cr15a_codex_delivery_envelopes.sql",
+      "order": 67,
+      "sha256": "62b319baecc24397783b262f2dcff297b710ae6395e7235026c9c0b9719842c4",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0068_cr15a_codex_transmission_intents.sql",
+      "order": 68,
+      "sha256": "aa500302a6ce661e9f6e4fc27277fe605dc3468fcfba2373cec7fa053f7872d1",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0069_cr15a_codex_delivery_receipts.sql",
+      "order": 69,
+      "sha256": "33e4487423129330d43c56b8ddb1a730e812efe8286341652f2676ce20ead94d",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0070_cr15a_codex_activation_transmission_intents.sql",
+      "order": 70,
+      "sha256": "0a59c09821963dba1901a2ce93d47ba6f2ff0683d7d282b04733e9e13643e50c",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0071_cr15b_native_result_write_reservations.sql",
+      "order": 71,
+      "sha256": "5a81a4bd90fdb09391f56e53869b53f99bbf5692f30f4872f951847cea9c4896",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0072_cr15c_codex_canonical_results.sql",
+      "order": 72,
+      "sha256": "6708b4152b5babeb7b4045f6a177e0a57818e0039171875ad4abcaf68ab0f571",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0073_scheduled_task_admissions.sql",
+      "order": 73,
+      "sha256": "4a682c369fda14ad200c028bc6d3f2aa5257e57ea5495fb974c3b12cafcef498",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0074_scheduled_assignment_authority.sql",
+      "order": 74,
+      "sha256": "7d9b31c5663e89b4e3884e8b6dfe6ab995b490a257245df0dddb40a353a12cdf",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0075_project_coordination_authority.sql",
+      "order": 75,
+      "sha256": "3c40d90144169adcdbf78fd9716c5a0d6a6bcd207b527d322346d359820c239b",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0076_project_work_resource_admission.sql",
+      "order": 76,
+      "sha256": "76153a5888d5d6768ae5d83ebd91ffac2680c8c293475a2689d1db357e43e595",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/roles/production_roles.sql",
+      "order": 77,
+      "sha256": "a565ab5ae764c49d869bee44703ba34ff267c186d7007d787cc29657d18783b2",
+      "kind": "grants"
+    },
+    {
+      "file": "db/roles/production_table_grants.sql",
+      "order": 78,
+      "sha256": "117867c7d1ff2f4abe51396bf10e127e17a22ef14464f3e7a2b0f440b2315a6f",
+      "kind": "grants"
+    },
+    {
+      "file": "db/roles/production_provision.sql",
+      "order": 79,
+      "sha256": "c099f10a7fc6931bc027908d812612e5ee57198ce12bd0695d0a2d4365022920",
+      "kind": "provision"
+    }
+  ]
+}

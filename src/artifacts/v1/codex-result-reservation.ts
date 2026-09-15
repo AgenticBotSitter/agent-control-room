@@ -4,6 +4,7 @@ import { terminalResultEvidenceSchemaV1 } from "../../harness/v1/terminal-result
 import { digestSchema, localId } from "../../harness/v1/native-run-identifiers";
 import { sha256Digest } from "../../security";
 import { checkedResultBytes, nativeResultId } from "./native-results";
+import { createResultWriteReservationMachine, resultBytesVerificationDigestV1 } from "./result-write-reservation";
 
 const stateSchema = z.enum(["reserved", "bytes_verified", "metadata_committed", "storage_uncertain"]);
 const lastCertainStateSchema = z.enum(["reserved", "bytes_verified"]);
@@ -30,8 +31,7 @@ const materialSchema = z.object({
 }).strict();
 
 function bytesDigest(identity: z.infer<typeof identitySchema>) {
-  return sha256Digest({ artifactId: identity.artifactId, contentHash: identity.contentHash,
-    sizeBytes: identity.sizeBytes, verifiedBytesHash: identity.contentHash, verifiedSizeBytes: identity.sizeBytes });
+  return resultBytesVerificationDigestV1(identity);
 }
 
 export const codexResultReservationSchemaV1 = materialSchema.extend({ contractDigest: digestSchema }).strict()
@@ -64,17 +64,32 @@ function frozen<T>(value: T): T { if (value && typeof value === "object" && !Obj
   for (const key of Reflect.ownKeys(value)) frozen((value as Record<PropertyKey, unknown>)[key]); Object.freeze(value);
 } return value; }
 
-function build(identity: z.infer<typeof identitySchema>, state: z.infer<typeof stateSchema>, fields: {
-  bytesVerificationDigest: string | null; manifestDigest: string | null; receiptDigest: string | null;
-  uncertaintyDigest: string | null; lastCertainState: z.infer<typeof lastCertainStateSchema> | null;
-}) {
-  const identityDigest = sha256Digest(identity);
-  const material = materialSchema.parse({ schema: "control-room.native-result-write-reservation/v1",
-    reservationId: `reservation:codex:${identityDigest.slice(7)}`, identity, identityDigest, state, ...fields,
+/**
+ * Shared lifecycle bound to the Codex identity shape. The Codex replay
+ * leniency (schema self-consistency instead of explicit digest comparison)
+ * is preserved exactly; schemas, digests and errors are unchanged.
+ * NOTE: the material schema literal stays
+ * "control-room.native-result-write-reservation/v1" byte-for-byte: existing
+ * committed rows carry it, and no migration is authorized to rename it.
+ */
+const machine = createResultWriteReservationMachine({
+  reservationSchema: codexResultReservationSchemaV1,
+  materialize: ({ reservationId, identity, identityDigest, state, ...fields }) => ({
+    schema: "control-room.native-result-write-reservation/v1",
+    reservationId,
+    identity,
+    identityDigest,
+    state,
+    ...fields,
     canonicalPublicationAllowed: false, completionVerified: false, grantsExecutionAuthority: false,
-    grantsStorageWriteAuthority: false, permitsRetry: false, permitsCleanup: false, deletesArtifact: false });
-  return frozen(codexResultReservationSchemaV1.parse({ ...material, contractDigest: sha256Digest(material) }));
-}
+    grantsStorageWriteAuthority: false, permitsRetry: false, permitsCleanup: false, deletesArtifact: false,
+  }),
+  bytesVerificationDigest: resultBytesVerificationDigestV1,
+  reservationId: identityDigest => `reservation:codex:${identityDigest.slice(7)}`,
+  unavailable,
+  conflict,
+  compareReplayDigests: false,
+});
 
 export function reserveCodexResultWriteV1(input: { publication: unknown; evidence: unknown; existing?: unknown }) {
   try {
@@ -104,20 +119,13 @@ export function reserveCodexResultWriteV1(input: { publication: unknown; evidenc
       if (existing.identityDigest !== sha256Digest(identity)) conflict();
       return frozen(existing);
     }
-    return build(identity, "reserved", { bytesVerificationDigest: null, manifestDigest: null,
-      receiptDigest: null, uncertaintyDigest: null, lastCertainState: null });
+    return machine.buildReserved(identity) as CodexResultReservationV1;
   } catch (error) { if (error instanceof Error && error.message === "codex_result_reservation_conflict") throw error; return unavailable(); }
 }
 
 export function verifyCodexResultReservationBytesV1(reservationValue: unknown, bytes: Uint8Array) {
   try {
-    const reservation = codexResultReservationSchemaV1.parse(reservationValue);
-    checkedResultBytes(bytes, reservation.identity);
-    if (reservation.state === "storage_uncertain") unavailable();
-    if (reservation.bytesVerificationDigest !== null) return frozen(reservation);
-    if (reservation.state !== "reserved") unavailable();
-    return build(reservation.identity, "bytes_verified", { bytesVerificationDigest: bytesDigest(reservation.identity),
-      manifestDigest: null, receiptDigest: null, uncertaintyDigest: null, lastCertainState: null });
+    return machine.verifyBytes(reservationValue, bytes, checkedResultBytes) as CodexResultReservationV1;
   } catch { return unavailable(); }
 }
 
@@ -125,13 +133,7 @@ export function commitCodexResultReservationMetadataV1(input: { reservation: unk
   try {
     const reservation = codexResultReservationSchemaV1.parse(input.reservation);
     digestSchema.parse(input.manifestDigest); digestSchema.parse(input.receiptDigest);
-    if (reservation.state === "metadata_committed") {
-      if (reservation.manifestDigest !== input.manifestDigest || reservation.receiptDigest !== input.receiptDigest) conflict();
-      return frozen(reservation);
-    }
-    if (reservation.state !== "bytes_verified") unavailable();
-    return build(reservation.identity, "metadata_committed", { bytesVerificationDigest: reservation.bytesVerificationDigest,
-      manifestDigest: input.manifestDigest, receiptDigest: input.receiptDigest, uncertaintyDigest: null, lastCertainState: null });
+    return machine.commitMetadata(reservation, input.manifestDigest, input.receiptDigest) as CodexResultReservationV1;
   } catch (error) { if (error instanceof Error && error.message === "codex_result_reservation_conflict") throw error; return unavailable(); }
 }
 
@@ -139,10 +141,6 @@ export function markCodexResultReservationStorageUncertainV1(input: { reservatio
   try {
     const reservation = codexResultReservationSchemaV1.parse(input.reservation);
     digestSchema.parse(input.uncertaintyDigest);
-    if (reservation.state === "storage_uncertain") return frozen(reservation);
-    if (reservation.state !== "reserved" && reservation.state !== "bytes_verified") unavailable();
-    const lastCertainState = reservation.state === "reserved" ? "reserved" as const : "bytes_verified" as const;
-    return build(reservation.identity, "storage_uncertain", { bytesVerificationDigest: reservation.bytesVerificationDigest,
-      manifestDigest: null, receiptDigest: null, uncertaintyDigest: input.uncertaintyDigest, lastCertainState });
+    return machine.markStorageUncertain(reservation, input.uncertaintyDigest) as CodexResultReservationV1;
   } catch { return unavailable(); }
 }

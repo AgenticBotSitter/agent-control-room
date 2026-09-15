@@ -1,5 +1,18 @@
 # Maintainer identity and worker watcher home setup
 
+> **Public repository status (2026-09-15): activated.** The separately controlled
+> `AgentControlRoomMaintainer` identity is configured through the repository's
+> `HANDOFF_MAINTAINERS` variable with verified Triage access. The owner reports that
+> MFA is enabled; no MFA secret or recovery code was inspected. Disposable issue #226
+> and pull request #227 proved submit, request-changes, acknowledge, resubmit and
+> accept, including synchronized issue/PR labels. The disposable pull request was
+> closed without merge and its branch was deleted. Disposable issue #229 and pull
+> request #230 separately proved maintainer stop, worker stop acknowledgement and
+> integrator handoff; they were also closed without merge and their branch was deleted.
+> Pull request #228 supplied the narrowly required workflow permission and passed
+> review and CI. The workflow evidence is public and sanitized; the MFA statement is
+> owner-attested. This does not expose credentials or grant production access.
+
 Use this checklist when you are at a trusted computer. It activates the contributor
 handoff source that is already on public `main`; it does not deploy Control Room or
 grant access to any private machine.
@@ -115,13 +128,16 @@ credential limited to public repository metadata, issues, and pull requests. Nev
 the maintainer credential on a worker machine. Never paste a token into a command,
 issue, pull request, log, or committed file.
 
-## Current limitation: the watcher does not wake an agent
+## Current limitation: watchers notify but do not wake an agent
 
-The foreground watcher is read-only terminal output. It does not install itself,
-survive a reboot, start an agent, execute a task, or acknowledge an instruction.
-Platform-specific background installation and safe agent wakeup remain tracked public
-work. Until those packages are accepted, a worker session should run the inbox command
-at startup and after pushing or receiving a review.
+The foreground watcher is read-only terminal output. Accepted platform packages now
+provide optional macOS, Linux and Windows background scheduling instructions under
+[`docs/contributors/worker-inbox/`](contributors/worker-inbox/README.md). Installing
+one is a local machine change and must be approved by that machine's owner. These
+watchers survive normal restarts when installed, but they still do not start an agent,
+execute a task, or acknowledge an instruction. A worker session must read the inbox at
+startup and after pushing or receiving a review. Safe automatic agent wakeup remains a
+separate product capability.
 
 ## Rollback
 
@@ -138,7 +154,7 @@ records, revoke GitHub accounts, stop local processes, or release claimed paths.
 
 ## What the owner must do and what the lead can do
 
-The owner must create the account, enable MFA, protect its credentials, and provide its
-exact GitHub login. The lead integrator can then configure the repository variable,
-run the disposable activation check, reconcile the public evidence, and verify each
-watcher package. No production deployment is part of this setup.
+The owner created the account, enabled MFA and retains its credentials. The lead
+integrator configured and proved the public workflow as recorded above. Each worker
+machine owner still decides whether to install its optional background watcher. No
+production deployment is part of this setup.

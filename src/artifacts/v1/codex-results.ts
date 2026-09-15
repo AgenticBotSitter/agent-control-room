@@ -25,6 +25,7 @@ import { assertCanonicalCodexAdmissionInSession,
   readCodexActivationTransmissionIntentInSession } from "../../web/v1/codex-activation-transmission-intent";
 import { readCodexTaskExecutionPlanV3InSession, type CodexTaskExecutionPlan } from "../../web/v1/task-execution-planner";
 import { checkedResultBytes, nativeResultId } from "./native-results";
+import { buildTaskResultManifestV1, putAndReadbackResultBytesV1 } from "./durable-result-publication";
 import { codexResultReceiptSchemaV1, type CodexResultReceiptV1 } from "./codex-result-receipt";
 import { codexResultReservationSchemaV1, commitCodexResultReservationMetadataV1,
   markCodexResultReservationStorageUncertainV1, reserveCodexResultWriteV1,
@@ -382,14 +383,14 @@ export class CodexCanonicalResultPublisherV1 {
     let stored: Awaited<ReturnType<ArtifactStoragePortV1["put"]>>;
     try {
       current(assertCurrent); this.assertBefore(acquired.validUntilMs);
-      stored = await this.io(signal => this.put({ artifactId, bytes, signal }));
+      const fence = () => { current(assertCurrent); this.assertBefore(acquired.validUntilMs); };
+      const placed = await putAndReadbackResultBytesV1(
+        { put: input => this.put(input), read: (artifactId, signal) => this.readBytes(artifactId, signal) },
+        artifactId, bytes, acquired.reservation.identity, operation => this.io(operation), fence);
+      stored = { artifactId, contentHash: publication.result.contentHash, sizeBytes: bytes.byteLength,
+        opaqueLocator: placed.opaqueLocator };
       current(assertCurrent); this.assertBefore(acquired.validUntilMs);
-      if (stored.artifactId !== artifactId || stored.contentHash !== publication.result.contentHash
-        || stored.sizeBytes !== bytes.byteLength) unavailable();
-      const readback = await this.io(signal => this.readBytes(artifactId, signal));
-      current(assertCurrent); this.assertBefore(acquired.validUntilMs);
-      const verifiedReadback = readback ?? unavailable();
-      checkedResultBytes(verifiedReadback, acquired.reservation.identity);
+      const verifiedReadback = placed.readback;
       await this.db.transactionWithPreCommitCheck(async tx => {
         await tx.query("SELECT id FROM control_harness_runs WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [i.tenantId, i.runId]);
         const row = await this.reservationRow(tx, i.tenantId, i.runId); if (!row) unavailable();
@@ -410,13 +411,11 @@ export class CodexCanonicalResultPublisherV1 {
       const reservation = this.verifyReservationRow(row);
       reserveCodexResultWriteV1({ publication, evidence, existing: reservation });
       if (reservation.state !== "bytes_verified") throw new Error("codex_result_manual_reconciliation_required");
-      const manifest: ArtifactManifestRecord = artifactManifestRecordSchema.parse({ contractVersion: DOMAIN_CONTRACT_VERSION,
-        id: artifactId, tenantId: i.tenantId, projectId: i.projectId, jobId: i.jobId, attemptId: i.attemptId,
-        workflowId: acquired.job.workflowId, kind: "artifact_manifest", state: "uploaded", version: 0,
-        createdAt: receivedAt, updatedAt: receivedAt, contentHash: publication.result.contentHash,
-        sizeBytes: bytes.byteLength, mimeType: "text/plain; charset=utf-8", logicalRole: "task_result",
-        schemaVersion: "1.0.0", producerId: i.nodeId, storageClass: this.storageClass,
-        opaqueLocator: stored.opaqueLocator, retentionClass: "private_task_result" });
+      const manifest: ArtifactManifestRecord = buildTaskResultManifestV1({
+        artifactId, tenantId: i.tenantId, projectId: i.projectId, jobId: i.jobId, attemptId: i.attemptId,
+        workflowId: acquired.job.workflowId, nodeId: i.nodeId, contentHash: publication.result.contentHash,
+        sizeBytes: bytes.byteLength, storageClass: this.storageClass,
+        opaqueLocator: stored.opaqueLocator, createdAt: receivedAt });
       assertNoSecretMaterial(manifest);
       const receipt = codexResultReceiptSchemaV1.parse({ schema: "control-room.codex-result-receipt/v1", artifactId,
         tenantId: i.tenantId, projectId: i.projectId, jobId: i.jobId, attemptId: i.attemptId,
