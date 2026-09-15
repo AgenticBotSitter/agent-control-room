@@ -39,7 +39,14 @@ The test:
 3. exercises both projects end-to-end through task creation, progress, result,
    review, linked revision, complete, archive and reopen,
 4. takes sanitized screenshots at wide and narrow widths,
-5. cleans up its context, browser, application and temporary data on exit.
+5. drives the keyboard focus path at both widths and reports the actual
+   first focusable target as observed against the compiled product,
+6. exercises a lost-request and a lost-reply on the project create command
+   and proves they remain distinct by replaying the exact body and
+   idempotency key,
+7. cleans up its context, browser, application and database on exit
+   without removing any temporary profile directory the harness does not
+   own.
 
 `PLAYWRIGHT_MODULE=/abs/path/to/playwright` overrides the module lookup when
 Playwright is installed outside the repo. `PRIVATE_BROWSER_SCREENSHOT_DIR` must
@@ -59,6 +66,29 @@ in the compiled bundle or any database dependency.
 Run `node --import tsx scripts/product-browser-acceptance.mjs --print-plan` to
 regenerate the section between the markers, or call
 `renderProductBrowserJourneys()` from a small script and copy the result here.
+
+## Out of single-process scope
+
+Two steps of the full product lifecycle require runtime wiring that this
+package cannot mount without crossing the issue #214 writeScope; they
+are documented as explicit blockers in the journey plan:
+
+- **Prepare revised task** (linked revision) and **completion**: these
+  require the bootstrap runtime configured with `revisionPlanning`,
+  which is wired only by the bootstrap coordinator used by the private
+  revisions harness. The public product UI never offers the
+  *Prepare revised task* affordance under the single-process
+  `installPrivateWebProcess` entry point used here. Reuse path:
+  `scripts/private-revision-browser-acceptance.mjs` imports
+  `bootstrapOwnerRevisionFixture` and exercises the linked revision
+  lifecycle against a real coordinator. This package keeps the
+  read-result → owner-review part of the flow on the public process and
+  defers the bootstrap-only parts to the private revision harness.
+
+- **Independent review by a separate author**: this is a single-worker
+  Windows host with no second agent registered. The contributor handbook
+  asks for a separate-author proportional review; that step is recorded
+  as not performed locally and is the reviewer's job at first push.
 
 ## Honest evidence
 

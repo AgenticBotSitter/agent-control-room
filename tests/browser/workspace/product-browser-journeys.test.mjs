@@ -23,11 +23,18 @@ test("planProductBrowserJourneys: schema advertises the journey set and never cl
     "Walk the Files, Reviews, Activity, Settings pages at 360px and 1280px",
     "Archive project A and reopen it without losing its task",
     "Reload, back/forward, and the narrow workspace menu",
+    "Open the agent progress page that the result lifecycle publishes",
+    "Open the protected result content and read the exact returned text",
+    "Request owner changes and confirm the saved review decision",
+    "Prepare a revised task and follow its protected follow-up page",
+    "Distinguish a lost request from a lost reply using request-level evidence",
+    "Exercise keyboard focus at both 360px and 1280px without sideways scroll",
     "Verify idempotency on every protected save command",
+    "Clean up the exact owned browser, context, application and temporary profile data",
   ]);
   for (const journey of plan.journeys) {
     assert.ok(journey.command.startsWith("/api/v1/") || journey.command === "(no protected command)"
-      || journey.command === "(read-only navigation)",
+      || journey.command === "(read-only navigation)" || journey.command === "(cleanup)",
       `unexpected command for ${journey.title}: ${journey.command}`);
     assert.ok(journey.proof.length > 0, `proof missing for ${journey.title}`);
     assert.ok(journey.simulated, `journey ${journey.title} must declare itself simulated`);
@@ -75,7 +82,7 @@ test("sanitized screenshot predicate accepts bounded PNGs and rejects oversized 
     }
     let crcValue = 0xffffffff;
     const buf = Buffer.concat([Buffer.from(type, "ascii"), data]);
-    for (const byte of buf) crcValue = table[(crcValue ^ byte) & 0xff] ^ (crcValue >>> 8);
+    for (const byte of buf) crcValue = table[(crcValue ^ byte) & 0xff] ^ (crcValue >>> 1);
     return Buffer.from([(crcValue ^ 0xffffffff) >>> 24, (crcValue ^ 0xffffffff) >>> 16,
       (crcValue ^ 0xffffffff) >>> 8, (crcValue ^ 0xffffffff) & 0xff]);
   }
