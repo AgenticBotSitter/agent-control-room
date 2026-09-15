@@ -574,7 +574,7 @@ or integration change directly. Before merging lead-authored work:
 3. The pull request records the reviewer's declared identity and model, exact reviewed
    commit, verdict, material findings and checks actually performed. The recorded
    commit must still be the pull request's current head. The review is not complete
-   without this visible immutable evidence.
+   without this visible recorded evidence.
 4. The accepted review is followed by the same visible integration handoff used by
    other work: the controller records `accept` plus `action:integrator`, or the
    maintainer records the equivalent current-head acceptance through the handbook's
