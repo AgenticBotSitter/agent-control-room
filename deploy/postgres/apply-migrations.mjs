@@ -274,6 +274,12 @@ async function runBootstrap({ target, env, rootDir }) {
     // postgres in production).
     await client.query(`GRANT CREATE, USAGE ON SCHEMA public TO control_room_schema_owner`);
     await client.query(`GRANT CREATE, USAGE ON SCHEMA public TO control_room_migrator`);
+    // Database ownership transfers to the schema owner here, not in
+    // provision-database.sql: the schema-owner role does not exist when the
+    // database is created, so a clean PostgreSQL would reject an OWNER clause.
+    // ALTER is idempotent — re-running bootstrap on an existing install is a
+    // no-op for ownership.
+    await client.query(`DO $$ BEGIN EXECUTE format('ALTER DATABASE %I OWNER TO control_room_schema_owner', current_database()); END; $$;`);
     // Run the role CREATE block from production_roles.sql as the bootstrap
     // superuser. The migrator session does not have CREATEROLE; this DO block
     // creates the group roles (control_room_application, control_room_reader,

@@ -294,7 +294,7 @@ test("backup and disposable restore preserve rows, owners, grants and identity",
   const backup = await backupDatabase({ source: target("cr_prod_source"), out, pgBin: BIN, ledgerDigest: `sha256:${ledger.digest}`, requiredTables: ["tenants"] });
   assert.equal(backup.planned, false);
   await freshDatabase("cr_prod_restored");
-  const restored = await restoreDatabase({ backup: out, target: target("cr_prod_restored"), bootstrapTarget: bootstrapTarget("cr_prod_restored"), migrateTarget: migrateTarget("cr_prod_restored"), confirmTarget: target("cr_prod_restored"), pgBin: BIN, requiredTables: ["tenants"] });
+  const restored = await restoreDatabase({ backup: out, target: target("cr_prod_restored"), confirmTarget: target("cr_prod_restored"), pgBin: BIN, requiredTables: ["tenants"] });
   assert.equal(restored.identityDigest, backup.identityDigest);
   const sourceRows = (await query(target("cr_prod_source"), "SELECT id, display_name FROM tenants ORDER BY id")).rows;
   const restoredRows = (await query(target("cr_prod_restored"), "SELECT id, display_name FROM tenants ORDER BY id")).rows;
@@ -310,8 +310,8 @@ test("backup and disposable restore preserve rows, owners, grants and identity",
 
 test("restore refuses unconfirmed and non-empty targets", needsPg, async () => {
   const out = join(run, "backup-set");
-  await assert.rejects(restoreDatabase({ backup: out, target: target("cr_prod_restored"), bootstrapTarget: bootstrapTarget("cr_prod_restored"), migrateTarget: migrateTarget("cr_prod_restored"), confirmTarget: target("cr_prod_other"), pgBin: BIN }), /restore_refused_unconfirmed_target/);
-  await assert.rejects(restoreDatabase({ backup: out, target: target("cr_prod_source"), bootstrapTarget: bootstrapTarget("cr_prod_source"), migrateTarget: migrateTarget("cr_prod_source"), confirmTarget: target("cr_prod_source"), pgBin: BIN }), /restore_refused_nonempty_target/);
+  await assert.rejects(restoreDatabase({ backup: out, target: target("cr_prod_restored"), confirmTarget: target("cr_prod_other"), pgBin: BIN }), /restore_refused_unconfirmed_target/);
+  await assert.rejects(restoreDatabase({ backup: out, target: target("cr_prod_source"), confirmTarget: target("cr_prod_source"), pgBin: BIN }), /restore_refused_nonempty_target/);
 });
 
 test("restore reconciles a revoked membership from the recorded role model", needsPg, async () => {
@@ -402,12 +402,14 @@ test("operator provision script creates logins via psql without exposing passwor
   }
 });
 
-test("documented clean install completes on a genuinely empty cluster", needsPg, async (t) => {
+test("documented clean-cluster provision/migrate/backup/restore/verify journey", needsPg, async (t) => {
   // A second disposable cluster: cluster-global roles from earlier tests must
-  // not mask a provision script that assumes groups already exist. Every step
-  // below is the documented operator flow, executed literally.
+  // not mask a provision script that assumes groups already exist, and the
+  // restore target must not inherit shared-cluster role state either. Every
+  // step below is the documented operator flow, executed literally.
   const CLEAN_PORT = 65435;
   const cleanSocket = join(run, "clean-socket"), cleanData = join(run, "clean-data");
+  const cleanBackup = join(run, "clean-backup-set");
   await mkdir(cleanSocket, { mode: 0o700 });
   if (process.getuid?.() === ROOT_UID) {
     await exec("chown", ["-R", `${POSTGRES_UID}:${POSTGRES_GID}`, cleanSocket, run]);
@@ -426,11 +428,24 @@ test("documented clean install completes on a genuinely empty cluster", needsPg,
     } finally {
       await rm(cleanSocket, { recursive: true, force: true });
       await rm(cleanData, { recursive: true, force: true });
+      await rm(cleanBackup, { recursive: true, force: true });
     }
   });
-  const cleanQuery = async (sql, params = []) => {
-    const client = new Client({ host: cleanSocket, port: CLEAN_PORT, database: "postgres",
-      user: "fixture_admin", password: "fixture_only" });
+  const pw = { migrator: "clean-install-migrator-0001", app: "clean-install-app-000001", scheduler: "clean-install-scheduler-0001" };
+  const psqlBase = {
+    PATH: "/usr/bin:/bin", LC_ALL: "C", TMPDIR: run,
+    PGHOST: cleanSocket, PGPORT: String(CLEAN_PORT), PGUSER: "fixture_admin",
+    PGPASSWORD: "fixture_only",
+  };
+  const provisionRoles = (database) => exec(join(BIN, "psql"),
+    ["-v", `migrator_password=${pw.migrator}`, "-v", `app_password=${pw.app}`,
+     "-v", `scheduler_password=${pw.scheduler}`,
+     "-f", join(ROOT, "db/roles/production_provision.sql"), "-X", "-q"],
+    { env: { ...psqlBase, PGDATABASE: database }, timeout: 60000, maxBuffer: 1 << 26 });
+  const cleanConn = (database, user = "fixture_admin", password = "fixture_only") =>
+    ({ host: cleanSocket, port: CLEAN_PORT, database, user, password });
+  const cleanQuery = async (database, sql, params = []) => {
+    const client = new Client(cleanConn(database));
     await client.connect();
     try {
       return await client.query(sql, params);
@@ -438,19 +453,17 @@ test("documented clean install completes on a genuinely empty cluster", needsPg,
       await client.end();
     }
   };
-  await cleanQuery(`CREATE DATABASE "cr_clean_install" OWNER fixture_admin`);
-  const pw = { migrator: "clean-install-migrator-0001", app: "clean-install-app-000001", scheduler: "clean-install-scheduler-0001" };
-  const psqlEnv = {
-    PATH: "/usr/bin:/bin", LC_ALL: "C", TMPDIR: run,
-    PGHOST: cleanSocket, PGPORT: String(CLEAN_PORT), PGUSER: "fixture_admin",
-    PGPASSWORD: "fixture_only", PGDATABASE: "cr_clean_install",
-  };
-  // Step 1 of the documented fresh install: standalone role provisioning.
+  // Step 0 of the documented fresh install: the database-creation script. The
+  // owner stays the invoking superuser — the schema-owner role does not exist
+  // yet on a genuinely empty cluster, so an OWNER clause would be rejected.
   await exec(join(BIN, "psql"),
-    ["-v", `migrator_password=${pw.migrator}`, "-v", `app_password=${pw.app}`,
-     "-v", `scheduler_password=${pw.scheduler}`,
-     "-f", join(ROOT, "db/roles/production_provision.sql"), "-X", "-q"],
-    { env: psqlEnv, timeout: 60000, maxBuffer: 1 << 26 });
+    ["-v", "dbname=cr_clean_install", "-f", join(ROOT, "deploy/postgres/provision-database.sql"), "-X", "-q"],
+    { env: { ...psqlBase, PGDATABASE: "postgres" }, timeout: 60000, maxBuffer: 1 << 26 });
+  const preOwner = (await cleanQuery("postgres",
+    "SELECT pg_get_userbyid(datdba) AS owner FROM pg_database WHERE datname = 'cr_clean_install'")).rows[0].owner;
+  assert.equal(preOwner, "fixture_admin", "database starts owned by the creating superuser");
+  // Step 1: standalone role provisioning on the clean database.
+  await provisionRoles("cr_clean_install");
   // Step 2: the documented two-connection migration command, via the real CLI.
   const adminConn = `host=${cleanSocket} port=${CLEAN_PORT} dbname=cr_clean_install user=fixture_admin`;
   const migratorConn = `host=${cleanSocket} port=${CLEAN_PORT} dbname=cr_clean_install user=control_room_migrator password=${pw.migrator}`;
@@ -464,8 +477,9 @@ test("documented clean install completes on a genuinely empty cluster", needsPg,
   const result = JSON.parse(migrated.stdout);
   assert.ok((result.applied?.length ?? 0) > 0, "migrations applied through the documented CLI");
   // The install is complete and least-privilege: logins, groups, memberships,
-  // ledger rows and schema-owner object ownership, all on the clean cluster.
-  const db = { host: cleanSocket, port: CLEAN_PORT, database: "cr_clean_install", user: "fixture_admin", password: "fixture_only" };
+  // ledger rows, schema-owner object ownership and database ownership, all on
+  // the clean cluster.
+  const db = cleanConn("cr_clean_install");
   const cleanTargetQuery = async (sql, params = []) => {
     const client = new Client(db);
     await client.connect();
@@ -493,7 +507,45 @@ test("documented clean install completes on a genuinely empty cluster", needsPg,
   const owners = (await cleanTargetQuery(
     "SELECT DISTINCT pg_get_userbyid(c.relowner) AS owner FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public'")).rows;
   assert.deepEqual(owners.map(row => row.owner), ["control_room_schema_owner"]);
+  const dbOwner = (await cleanQuery("postgres",
+    "SELECT pg_get_userbyid(datdba) AS owner FROM pg_database WHERE datname = 'cr_clean_install'")).rows[0].owner;
+  assert.equal(dbOwner, "control_room_schema_owner", "bootstrap transfers database ownership after roles exist");
   const ledgerRows = (await cleanTargetQuery("SELECT count(*)::int AS count FROM control_room_schema_migrations")).rows;
   const executable = (await collectLedgerEntries()).filter(entry => (entry.kind ?? "migrate") === "migrate");
   assert.equal(ledgerRows[0].count, executable.length, "every executable ledger entry applied");
+  // Step 3: seed a row and back the clean install up (function inputs actually
+  // consumed: source/out/pgBin/ledgerDigest/requiredTables).
+  await cleanTargetQuery("INSERT INTO tenants(id, display_name) VALUES('tenant:clean', 'clean install')");
+  const ledger = JSON.parse(await readFile(join(ROOT, "deploy/postgres/migration-ledger.json"), "utf8"));
+  const backup = await backupDatabase({ source: db, out: cleanBackup, pgBin: BIN,
+    ledgerDigest: `sha256:${ledger.digest}`, requiredTables: ["tenants"] });
+  assert.equal(backup.planned, false);
+  // Step 4: the documented recovery order on a second clean database —
+  // database script, then role provisioning (restore reconciles memberships
+  // but refuses a missing login, so the logins must pre-exist).
+  await exec(join(BIN, "psql"),
+    ["-v", "dbname=cr_clean_restored", "-f", join(ROOT, "deploy/postgres/provision-database.sql"), "-X", "-q"],
+    { env: { ...psqlBase, PGDATABASE: "postgres" }, timeout: 60000, maxBuffer: 1 << 26 });
+  await provisionRoles("cr_clean_restored");
+  // Step 5: restore into the provisioned empty target and verify the restored
+  // identity field by field (restoreDatabase verifies internally; the digest
+  // equality pins the same identity the backup recorded). Only consumed
+  // inputs are passed — no unused bootstrap/migrate descriptors.
+  const cleanTarget = cleanConn("cr_clean_restored");
+  const restored = await restoreDatabase({ backup: cleanBackup, target: cleanTarget,
+    confirmTarget: cleanConn("cr_clean_restored"), pgBin: BIN, requiredTables: ["tenants"] });
+  assert.equal(restored.identityDigest, backup.identityDigest, "restored identity matches the backup identity");
+  const sourceRows = (await cleanTargetQuery("SELECT id, display_name FROM tenants ORDER BY id")).rows;
+  const restoredClient = new Client(cleanTarget);
+  await restoredClient.connect();
+  try {
+    const restoredRows = (await restoredClient.query("SELECT id, display_name FROM tenants ORDER BY id")).rows;
+    assert.deepEqual(restoredRows, sourceRows, "seed row survives the clean-cluster round trip");
+  } finally {
+    await restoredClient.end();
+  }
+  assert.deepEqual(await roleMemberships(cleanTarget), memberships, "restored target carries the clean install memberships");
+  const restoredOwners = (await cleanQuery("cr_clean_restored",
+    "SELECT DISTINCT pg_get_userbyid(c.relowner) AS owner FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public'")).rows;
+  assert.deepEqual(restoredOwners.map(row => row.owner), ["control_room_schema_owner"]);
 });
