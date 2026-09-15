@@ -483,6 +483,9 @@ job and does not require another claim.
 Before correcting controller-managed work, the worker posts `HANDOFF acknowledge` using
 the command format above and waits for its completed controller record. Use that new record's comment ID as the
 predecessor when resubmitting; acknowledgement is required before `resubmit`.
+The acknowledgement's `head` must be the reviewed commit in the correction record.
+If a correction was already pushed, that older reviewed commit can still be acknowledged;
+the subsequent `resubmit` must name the current pull-request head.
 
 The resulting controller record identifies the next action for the worker inbox. A
 legacy shared-account action marker is advisory and cannot authorize that transition.

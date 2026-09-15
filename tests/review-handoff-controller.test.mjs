@@ -38,7 +38,7 @@ function fixture() {
     const claimWorkerLine = options.claimWorkerId ? `claim-worker-id: ${options.claimWorkerId}\n` : '';
     const comment = { id: ++id, user: { login: actor }, issue_url: `https://api.github.com/repos/${repository}/issues/1`,
       html_url: `https://github.com/${repository}/issues/1#issuecomment-${id}`,
-      body: `HANDOFF ${command}\nworker-id: ${workerId}\n${claimWorkerLine}pr: 2\nhead: ${pr.head.sha}\nprevious: ${previousId}${instruction ? `\n\n${instruction}` : ''}` };
+      body: `HANDOFF ${command}\nworker-id: ${workerId}\n${claimWorkerLine}pr: 2\nhead: ${options.head ?? pr.head.sha}\nprevious: ${previousId}${instruction ? `\n\n${instruction}` : ''}` };
     comments.push(comment);
     return { action: 'created', sender: { login: actor }, issue: { number: 1 }, comment };
   };
@@ -62,6 +62,32 @@ test('full submission, corrections, acknowledgment, revision, acceptance cycle',
   assert.equal(result.action, 'integrator');
   assert.deepEqual(f.issue.labels, ['platform:any', 'status:re-review', 'action:integrator']);
   assert.equal(f.issue.state, 'open');
+});
+
+test('worker can acknowledge the reviewed commit after pushing and resubmit only the current commit', async () => {
+  const f = fixture();
+  let result = await f.run(f.eventFor('submit'));
+  result = await f.run(f.eventFor('changes', 'reviewer', result.commentId));
+  f.pr.head.sha = 'b'.repeat(40);
+  const before = f.mutations.length;
+  await assert.rejects(f.run(f.eventFor('acknowledge', 'builder', result.commentId)), /review_head_changed/);
+  await assert.rejects(f.run(f.eventFor('acknowledge', 'outsider', result.commentId, undefined, { head: sha })), /authority_denied/);
+  assert.equal(f.mutations.length, before);
+  result = await f.run(f.eventFor('acknowledge', 'builder', result.commentId, undefined, { head: sha }));
+  const acknowledged = parseHandoff(f.comments.find(c => c.id === result.commentId));
+  assert.equal(acknowledged.head, sha);
+  assert.equal(acknowledged.acknowledged, true);
+  const afterAcknowledgment = f.mutations.length;
+  await assert.rejects(f.run(f.eventFor('resubmit', 'builder', result.commentId, undefined, { head: sha })), /target_changed/);
+  assert.equal(f.mutations.length, afterAcknowledgment);
+  result = await f.run(f.eventFor('resubmit', 'builder', result.commentId));
+  assert.equal(result.state, 're-review');
+  assert.equal(parseHandoff(f.comments.find(c => c.id === result.commentId)).head, f.pr.head.sha);
+  const afterResubmit = f.mutations.length;
+  await assert.rejects(f.run(f.eventFor('accept', 'reviewer', result.commentId, undefined, { head: sha })), /target_changed/);
+  assert.equal(f.mutations.length, afterResubmit);
+  result = await f.run(f.eventFor('accept', 'reviewer', result.commentId));
+  assert.equal(result.action, 'integrator');
 });
 
 test('shared author cannot approve itself, even if configured maintainer', async () => {
