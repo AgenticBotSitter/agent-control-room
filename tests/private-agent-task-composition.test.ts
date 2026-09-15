@@ -925,3 +925,79 @@ test("idea runtime database majorVersion mismatch refuses with idea_runtime_role
     () => assemblePrivateAgentTaskOperatorConfiguration(settings, trusted),
     /idea_runtime_role_mismatch:major_version/);
 });
+
+test("byte mutation of a non-plain web tasks object after assembly does not leak into configuration.web.tasks.harnessIntegrityKey", () => {
+  // The production gate accepts any structurally valid tasks object,
+  // including one with a non-Object.prototype prototype. deepDetach's
+  // prototype short-circuit would otherwise return the caller's tasks
+  // object as-is, leaving the caller's Uint8Array reachable through the
+  // returned configuration. captureWebTasks reads the supported fields
+  // by name and byte-copies every binary integrity key, so post-assembly
+  // mutation of the original buffer must not change the captured key.
+  class TrustedWebTasks {
+    harnessIntegrityKey: Uint8Array;
+    results: { integrityKey: Uint8Array; storageClass: "local"; storage: object };
+    reviews: { integrityKey: Uint8Array; checkpoints: object };
+    constructor(key: Uint8Array, results: { integrityKey: Uint8Array; storageClass: "local"; storage: object },
+      reviews: { integrityKey: Uint8Array; checkpoints: object }) {
+      this.harnessIntegrityKey = key; this.results = results; this.reviews = reviews;
+    }
+  }
+  const { settings, trusted } = operatorConfigurationScenario("full");
+  // Use the helper's own harness key as the starting point so the production
+  // gate's quality/review checks pass; we mutate the bytes AFTER assembly
+  // to prove the captured configuration is detached.
+  const originalKey = new Uint8Array(trusted.web.tasks.harnessIntegrityKey);
+  const web = trusted.web as unknown as { tasks: { results: { integrityKey: Uint8Array; storageClass: "local";
+    storage: object }; reviews: { integrityKey: Uint8Array; checkpoints: object } } };
+  (trusted as unknown as { web: { tasks: unknown } }).web.tasks =
+    new TrustedWebTasks(originalKey, web.tasks.results, web.tasks.reviews);
+  const captured = assemblePrivateAgentTaskOperatorConfiguration(settings, trusted);
+  const capturedKey = captured.configuration.web.tasks.harnessIntegrityKey;
+  const originalFirstByte = capturedKey[0];
+  // Mutate the caller's original buffer after assembly. The captured
+  // configuration's key bytes must not change.
+  originalKey.fill(0x77, 0, 1);
+  (trusted.web as unknown as { tasks: TrustedWebTasks }).tasks.harnessIntegrityKey.fill(0x99, 0, 1);
+  assert.equal(capturedKey[0], originalFirstByte,
+    "captured web.tasks.harnessIntegrityKey byte must equal the original at assembly time");
+  assert.notEqual(capturedKey, (trusted.web as unknown as { tasks: TrustedWebTasks }).tasks.harnessIntegrityKey,
+    "captured key must not be the caller's Uint8Array reference");
+  assert.notEqual((trusted.web as unknown as { tasks: TrustedWebTasks }).tasks.harnessIntegrityKey[0], originalFirstByte,
+    "sanity: caller mutation took effect on the trusted reference");
+});
+
+test("mutable nested child under a non-plain shallow-frozen web tasks object is detached into configuration.web.tasks.harnessIntegrityKey", () => {
+  // Round-5 second case from the reviewer: an accepted non-plain tasks
+  // object whose parent is shallow-frozen still owns a mutable integrity
+  // key buffer. captureWebTasks must read the supported field by name
+  // (not by recursion through the prototype) and byte-copy it, so the
+  // captured configuration's key is independent of the caller's.
+  class TrustedWebTasks {
+    harnessIntegrityKey: Uint8Array;
+    results: { integrityKey: Uint8Array; storageClass: "local"; storage: object };
+    reviews: { integrityKey: Uint8Array; checkpoints: object };
+    constructor(key: Uint8Array, results: { integrityKey: Uint8Array; storageClass: "local"; storage: object },
+      reviews: { integrityKey: Uint8Array; checkpoints: object }) {
+      this.harnessIntegrityKey = key; this.results = results; this.reviews = reviews;
+    }
+  }
+  const { settings, trusted } = operatorConfigurationScenario("full");
+  const originalKey = new Uint8Array(trusted.web.tasks.harnessIntegrityKey);
+  const web = trusted.web as unknown as { tasks: { results: { integrityKey: Uint8Array; storageClass: "local";
+    storage: object }; reviews: { integrityKey: Uint8Array; checkpoints: object } } };
+  const tasksInstance = new TrustedWebTasks(originalKey, web.tasks.results, web.tasks.reviews);
+  Object.freeze(tasksInstance); // shallow-freeze the caller-owned object
+  (trusted as unknown as { web: { tasks: unknown } }).web.tasks = tasksInstance;
+  const captured = assemblePrivateAgentTaskOperatorConfiguration(settings, trusted);
+  const capturedKey = captured.configuration.web.tasks.harnessIntegrityKey;
+  const originalFirstByte = capturedKey[0];
+  // Even though the parent is shallow-frozen, the buffer inside it is
+  // still mutable. Mutate through the caller; the captured key must not
+  // change.
+  originalKey.fill(0x55, 0, 1);
+  assert.equal(capturedKey[0], originalFirstByte,
+    "captured web.tasks.harnessIntegrityKey byte must not change after caller mutation of the original buffer under a non-plain shallow-frozen tasks input");
+  assert.notEqual(originalKey[0], capturedKey[0],
+    "sanity: caller mutation took effect on the trusted buffer; captured key is detached");
+});

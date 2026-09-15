@@ -164,6 +164,109 @@ function deepDetach<T>(value: T): T {
   return out as unknown as T;
 };
 
+/** Capture the supported web-tasks fields from a structurally valid tasks
+ * object regardless of its prototype. The production gate accepts any
+ * structurally valid `tasks` (plain object, class instance, or shallow-frozen
+ * object), so the assembler cannot rely on `deepDetach`'s prototype short-
+ * circuit to fully detach it. This helper reads the well-known supported
+ * fields by name, byte-copies every binary integrity key, and preserves the
+ * trusted service callbacks as frozen references — so a caller-owned `tasks`
+ * with a non-`Object.prototype` prototype cannot leak its buffers into the
+ * returned configuration. */
+function captureWebTasks(input: unknown): Readonly<{
+  harnessIntegrityKey: Uint8Array;
+  results?: { integrityKey: Uint8Array; storageClass: "local" | "r2"; storage: unknown;
+    storageIoMs?: number };
+  reviews?: { integrityKey: Uint8Array; checkpoints: unknown };
+  ownerReviews?: { integrityKey: Uint8Array; [key: string]: unknown };
+  manualVerificationScenarios?: readonly unknown[];
+}> {
+  if (!isRecord(input)) refuse("website_setting_rejected:tasks");
+  const rawHarness = input.harnessIntegrityKey;
+  if (!(rawHarness instanceof Uint8Array) || rawHarness.length !== 32) refuse("website_setting_rejected:tasks.harnessIntegrityKey");
+  const out: Record<string, unknown> = {
+    harnessIntegrityKey: new Uint8Array(rawHarness),
+  };
+  const rawResults = input.results;
+  if (rawResults !== undefined) {
+    if (!isRecord(rawResults) || !(rawResults.integrityKey instanceof Uint8Array)
+      || rawResults.integrityKey.length !== 32
+      || (rawResults.storageClass !== "local" && rawResults.storageClass !== "r2"))
+      refuse("website_setting_rejected:tasks.results");
+    out.results = Object.freeze({
+      integrityKey: new Uint8Array(rawResults.integrityKey),
+      storageClass: rawResults.storageClass,
+      storage: deepDetach(rawResults.storage),
+      ...(rawResults.storageIoMs === undefined ? {} : { storageIoMs: rawResults.storageIoMs }),
+    });
+  }
+  const rawReviews = input.reviews;
+  if (rawReviews !== undefined) {
+    if (!isRecord(rawReviews) || !(rawReviews.integrityKey instanceof Uint8Array)
+      || rawReviews.integrityKey.length !== 32
+      || !isRecord(rawReviews.checkpoints))
+      refuse("website_setting_rejected:tasks.reviews");
+    out.reviews = Object.freeze({
+      integrityKey: new Uint8Array(rawReviews.integrityKey),
+      checkpoints: deepDetach(rawReviews.checkpoints),
+    });
+  }
+  const rawOwnerReviews = input.ownerReviews;
+  if (rawOwnerReviews !== undefined) {
+    if (!isRecord(rawOwnerReviews) || !(rawOwnerReviews.integrityKey instanceof Uint8Array)
+      || rawOwnerReviews.integrityKey.length !== 32)
+      refuse("website_setting_rejected:tasks.ownerReviews");
+    const ownerShape: Record<string, unknown> = { integrityKey: new Uint8Array(rawOwnerReviews.integrityKey) };
+    for (const key of Object.keys(rawOwnerReviews)) {
+      if (key === "integrityKey") continue;
+      ownerShape[key] = deepDetach(rawOwnerReviews[key]);
+    }
+    out.ownerReviews = Object.freeze(ownerShape);
+  }
+  const rawScenarios = input.manualVerificationScenarios;
+  if (rawScenarios !== undefined) {
+    if (!Array.isArray(rawScenarios)) refuse("website_setting_rejected:tasks.manualVerificationScenarios");
+    const copied = rawScenarios.map(item => deepDetach(item));
+    Object.freeze(copied);
+    out.manualVerificationScenarios = copied;
+  }
+  return Object.freeze(out);
+}
+
+/** Capture the supported web profile fields from a validated private startup
+ * input. The profile carries a `loadKeys` callback and optional nested
+ * service references (`secondaryAccess`, `gatewayAssertionProfile`,
+ * `herdrObservations`, `newsCollections`, `ideaCreation`, `connections`,
+ * `productConfiguration`, `ideaProjects`, `news`); those trusted callbacks
+ * must be preserved as frozen references, not deep-cloned. The `tasks`
+ * field is captured through `captureWebTasks` because the production gate
+ * accepts it as a structurally valid object with any prototype. Every
+ * binary integrity key is byte-copied so post-assembly mutation of the
+ * caller's buffers cannot leak into the returned configuration. */
+function captureWebProfile(input: PrivateStartupConfiguration): PrivateStartupConfiguration {
+  const out: Record<string, unknown> = {
+    origin: input.origin, issuer: input.issuer, audience: input.audience,
+    tenantId: input.tenantId, workspaceId: input.workspaceId,
+    ownerIdentityId: input.ownerIdentityId, maxSessionSeconds: input.maxSessionSeconds,
+    loadKeys: deepDetach(input.loadKeys),
+    database: deepDetach(input.database),
+    ...(input.secondaryAccess === undefined ? {} : { secondaryAccess: deepDetach(input.secondaryAccess) }),
+    ...(input.gatewayAssertionProfile === undefined ? {} : {
+      gatewayAssertionProfile: deepDetach(input.gatewayAssertionProfile) }),
+    ...(input.herdrObservations === undefined ? {} : {
+      herdrObservations: deepDetach(input.herdrObservations) }),
+    ...(input.ideaProjects === undefined ? {} : {
+      ideaProjects: deepDetach(input.ideaProjects) }),
+    ...(input.news === undefined ? {} : { news: deepDetach(input.news) }),
+    ...(input.productConfiguration === undefined ? {} : {
+      productConfiguration: deepDetach(input.productConfiguration) }),
+    ...(input.connections === undefined ? {} : { connections: deepDetach(input.connections) }),
+    ...(input.tasks === undefined ? {} : { tasks: captureWebTasks(input.tasks) }),
+  };
+  Object.freeze(out);
+  return out as unknown as PrivateStartupConfiguration;
+}
+
 /** Assemble one immutable agent-task startup configuration from plain operator
  * settings plus already-constructed trusted inputs. Every refusal throws before
  * any value is returned; a returned configuration passed the production gate. */
@@ -426,7 +529,7 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
   // production gate already validated `full`; `hostCompatible` is the same
   // configuration in the host-shaped wrapper, owned by the host.
   const coordinatorShape = deepDetach(full.coordinator);
-  const webShape = deepDetach(full.web);
+  const webShape = captureWebProfile(full.web);
   const artifactStorageShape = full.artifactStorage === undefined ? undefined : deepDetach(full.artifactStorage);
   const newsShape = full.news === undefined ? undefined : deepDetach(full.news);
   const hostCompatible: PrivateTaskStartupConfiguration = {
