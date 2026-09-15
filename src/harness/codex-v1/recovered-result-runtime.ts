@@ -48,6 +48,55 @@ const refuse = (code: string): never => {
   throw new Error(`codex_recovered_result_${code}`);
 };
 
+type StoredReplayView = {
+  receiptBody?: { identity?: { runId?: unknown; attemptId?: unknown };
+    activation?: { activationId?: unknown; activationDigest?: unknown };
+    connector?: { profileId?: unknown; profileDigest?: unknown };
+    result?: { threadId?: unknown; turnId?: unknown };
+    returnFrameDigest?: unknown };
+  frame?: unknown;
+  activationBody?: { queueId?: unknown; attemptId?: unknown; activationId?: unknown;
+    activationDigest?: unknown; connectorProfileDigest?: unknown;
+    connection?: { connectionAttemptId?: unknown; initializedConnectionDigest?: unknown } };
+};
+
+/** Stored-receipt replay gate. A receipted entry is returned only when the
+ * stored receipt matches the caller's complete lineage: run, queue, thread,
+ * turn, attempt, activation (the session binding), connector profile, and the
+ * connection binding — plus the stored frame digest. Queue, attempt, profile
+ * and connection lineage are proven through the durable activation accepted
+ * under the caller's queueId; the receipt alone carries no queue. Any
+ * disagreement, or an unreadable activation, refuses replay_lineage_mismatch.
+ * Frame authentication stays with the bridge and journal integrity layer; this
+ * gate binds the already-authenticated records to the exact supplied lineage
+ * and grants no replay authority beyond it. */
+function matchStoredReplayLineage(view: StoredReplayView, lineage: {
+  runId: string; queueId: string; threadId: string; turnId: string;
+  activationId: string; activationDigest: string;
+  connectionAttemptId: string; initializedConnectionDigest: string;
+}) {
+  const receipt = view.receiptBody, activation = view.activationBody;
+  const identity = receipt?.identity, storedActivation = receipt?.activation;
+  const connector = receipt?.connector, result = receipt?.result;
+  const connection = activation?.connection;
+  if (!receipt || !activation || !identity || !storedActivation || !connector || !result || !connection
+    || identity.runId !== lineage.runId
+    || result.threadId !== lineage.threadId || result.turnId !== lineage.turnId
+    || storedActivation.activationId !== lineage.activationId
+    || storedActivation.activationDigest !== lineage.activationDigest
+    || receipt.returnFrameDigest !== sha256Digest(view.frame)
+    || activation.queueId !== lineage.queueId
+    || activation.activationId !== lineage.activationId
+    || activation.activationDigest !== lineage.activationDigest
+    || identity.attemptId !== activation.attemptId
+    || (typeof connector.profileId !== 'string' || connector.profileId === '')
+    || connector.profileDigest !== activation.connectorProfileDigest
+    || connection.connectionAttemptId !== lineage.connectionAttemptId
+    || connection.initializedConnectionDigest !== lineage.initializedConnectionDigest) {
+    refuse('replay_lineage_mismatch');
+  }
+}
+
 interface Lineage {
   activationConnectionId: string;
   activationDigest: string;
@@ -170,16 +219,19 @@ export function createCodexRecoveredResultRuntimeV1(input: {
         if (!(signal instanceof AbortSignal) || signal.aborted) refuse('unavailable');
         const durable = readDurable();
         if (durable?.status === 'receipted' && durable.receipt) {
-          // Full-lineage replay validation: verify the stored receipt matches
-          // the supplied exact lineage before returning. Without this gate, a
-          // caller could probe receipted entries by run ID for unrelated runs.
-          const storedReceipt = durable.receipt as { body?: { identity?: { runId?: string };
-            activation?: { activationId?: string }; returnFrameDigest?: string } };
-          if (storedReceipt.body?.identity?.runId !== lineage.runId
-            || storedReceipt.body?.activation?.activationId !== lineage.activationId
-            || storedReceipt.body?.returnFrameDigest !== sha256Digest(durable.frame)) {
-            refuse('replay_lineage_mismatch');
-          }
+          // Full-lineage replay validation: the stored receipt is returned
+          // only when it matches the supplied exact lineage across run,
+          // queue, thread, turn, attempt, activation, profile and connection.
+          // Without this gate, a caller could probe receipted entries by run
+          // ID for unrelated runs.
+          const storedReceipt = durable.receipt as { body?: StoredReplayView['receiptBody'] };
+          let activationBody: StoredReplayView['activationBody'];
+          try {
+            activationBody = (journal.acceptedCodexActivation(lineage.queueId) as
+              { frame?: { body?: StoredReplayView['activationBody'] } } | undefined)?.frame?.body;
+          } catch { refuse('replay_lineage_mismatch'); }
+          matchStoredReplayLineage({ receiptBody: storedReceipt.body, frame: durable.frame,
+            activationBody }, lineage);
           return { disposition: 'receipted', receipt: durable.receipt };
         }
         if (durable && (durable.status === 'prepared' || durable.status === 'sent')) {
@@ -227,12 +279,19 @@ export function createCodexRecoveredResultRuntimeV1(input: {
           refuse('unavailable');
         }
         const stored = readDurable();
-        if (stored?.status !== 'receipted' || !stored.receipt
-          || (receipt as { body?: { identity?: { runId?: string };
-            activation?: { activationId?: string }; returnFrameDigest?: string } }).body?.identity?.runId !== lineage.runId
-          || (receipt as { body?: { activation?: { activationId?: string } } }).body?.activation?.activationId !== lineage.activationId
-          || (receipt as { body?: { returnFrameDigest?: string } }).body?.returnFrameDigest !== sha256Digest(stored.frame)) {
-          refuse('receipt_invalid');
+        if (!stored || stored.status !== 'receipted' || !stored.receipt) refuse('receipt_invalid');
+        {
+          const fresh = receipt as { body?: StoredReplayView['receiptBody'] };
+          const storedFrame: unknown = (stored as { frame: unknown }).frame;
+          let activationBody: StoredReplayView['activationBody'];
+          try {
+            activationBody = (journal.acceptedCodexActivation(lineage.queueId) as
+              { frame?: { body?: StoredReplayView['activationBody'] } } | undefined)?.frame?.body;
+          } catch { refuse('receipt_invalid'); }
+          try {
+            matchStoredReplayLineage({ receiptBody: fresh.body, frame: storedFrame,
+              activationBody }, lineage);
+          } catch { refuse('receipt_invalid'); }
         }
         return { disposition: 'receipted', receipt };
       } catch (error) {

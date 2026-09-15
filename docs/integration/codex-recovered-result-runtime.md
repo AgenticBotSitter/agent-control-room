@@ -2,7 +2,7 @@
 
 Issue #173. Module: `src/harness/codex-v1/recovered-result-runtime.ts` (exported
 from `src/node-bridge/private-node-entry.ts`).
-Tests: `tests/codex-recovered-result-runtime.test.ts` (9 tests reusing the
+Tests: `tests/codex-recovered-result-runtime.test.ts` (reusing the
 `codex-result-sender` live-bridge fixture pattern).
 
 ## What it is
@@ -30,14 +30,14 @@ result-return channel bound to the activation connection, no existing return for
 the run, and current local read authority. Only then it projects through the
 owned host, requires completed status plus an exact package result, captures
 observed time and invokes exactly one `sendRecovered`. The returned transport
-receipt is verified against the journal (run, activation, prepared-frame digest)
-before it is handed back.
+receipt is verified against the journal (run, queue, thread, turn, attempt,
+activation, profile, connection, stored-frame digest) before it is handed back.
 
 ## Dispositions (all errors sanitized, `codex_recovered_result_*`)
 
 | Situation | Outcome |
 | --- | --- |
-| Stored receipt exists | return stored receipt, no read/send |
+| Stored receipt exists | return stored receipt only on full-lineage match, no read/send |
 | Prepared or sent exists | `delivery_uncertain`, never read/send again |
 | Missing/summary/secret/malformed/noncompleted | `observed`, bounded, no sender |
 | Send error, then receipted | return stored receipt |

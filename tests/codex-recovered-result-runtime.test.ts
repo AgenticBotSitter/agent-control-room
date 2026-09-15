@@ -249,15 +249,19 @@ function recoveryHost(fixture: ReturnType<typeof resultFixture>, calls: string[]
 
 function runtimeFor(journal: SqliteBridgeJournal, bridge: PortableNodeBridge,
   fixture: ReturnType<typeof resultFixture>, starts: ReturnType<typeof startEvidence>,
-  recovery: ReturnType<typeof recoveryHost>, clockValue = returnedAt) {
+  recovery: ReturnType<typeof recoveryHost>, clockValue = returnedAt,
+  lineage: { runId?: string; queueId?: string; threadId?: string; turnId?: string;
+    activationId?: string; activationDigest?: string;
+    connectionAttemptId?: string; initializedConnectionDigest?: string } = {}) {
   const channel = bridge.codexResultReturnChannel();
   if (!channel) assert.fail('negotiated result channel required');
-  return createCodexRecoveredResultRuntimeV1({ runId: 'run:test', queueId: 'queue:test',
-    threadId: 'thread:durable', turnId: 'turn:durable',
-    activationId: fixture.activationFrame.body.activationId,
-    activationDigest: fixture.activationFrame.body.activationDigest,
-    connectionAttemptId: 'connection:result',
-    initializedConnectionDigest: sha256Digest('initialized:result'),
+  return createCodexRecoveredResultRuntimeV1({ runId: lineage.runId ?? 'run:test',
+    queueId: lineage.queueId ?? 'queue:test',
+    threadId: lineage.threadId ?? 'thread:durable', turnId: lineage.turnId ?? 'turn:durable',
+    activationId: lineage.activationId ?? fixture.activationFrame.body.activationId,
+    activationDigest: lineage.activationDigest ?? fixture.activationFrame.body.activationDigest,
+    connectionAttemptId: lineage.connectionAttemptId ?? 'connection:result',
+    initializedConnectionDigest: lineage.initializedConnectionDigest ?? sha256Digest('initialized:result'),
     journal, start: starts, bridge, channel, recovery,
     qualificationReceipt: fixture.qualification, qualificationPublicKeySpki: qualificationSpki,
     qualificationMaximumAgeMs: 300_000, receiptTimeoutMs: 1_000, clock: () => Date.parse(clockValue) });
@@ -693,4 +697,93 @@ test('stored receipt replay path validates runId / activationId / returnFrameDig
     /codex_recovered_result_replay_lineage_mismatch/);
   assert.deepEqual(calls, []);
   runtime.close(); await f.bridge.close(); journal.close();
+});
+
+test('stored receipt replay refuses every same-run substitution across the full lineage', async () => {
+  // Correction review item 1: the replay gate must validate the complete
+  // saved queue, thread, turn, attempt, activation, profile and connection
+  // lineage — not only run ID, activation ID and frame digest. Each case
+  // substitutes exactly one field of an otherwise exact sealed entry and
+  // requires replay_lineage_mismatch with no recovery read.
+  const receiptCases: Array<{ name: string; tamper: (body: Record<string, any>) => void }> = [
+    { name: 'runId', tamper: body => { body.identity.runId = 'run:other'; } },
+    { name: 'attemptId', tamper: body => { body.identity.attemptId = 'attempt:other'; } },
+    { name: 'threadId', tamper: body => { body.result.threadId = 'thread:other'; } },
+    { name: 'turnId', tamper: body => { body.result.turnId = 'turn:other'; } },
+    { name: 'activationId', tamper: body => { body.activation.activationId = 'codex-activation:other'; } },
+    { name: 'activationDigest', tamper: body => { body.activation.activationDigest = sha256Digest('other'); } },
+    { name: 'profileDigest', tamper: body => { body.connector.profileDigest = sha256Digest('other'); } },
+    { name: 'returnFrameDigest', tamper: body => { body.returnFrameDigest = sha256Digest('other'); } },
+  ];
+  const lineageCases: Array<{ name: string;
+    lineage: { queueId?: string; threadId?: string; turnId?: string;
+      activationId?: string; activationDigest?: string;
+      connectionAttemptId?: string; initializedConnectionDigest?: string } }> = [
+    { name: 'queueId', lineage: { queueId: 'queue:other' } },
+    { name: 'caller-threadId', lineage: { threadId: 'thread:other' } },
+    { name: 'caller-turnId', lineage: { turnId: 'turn:other' } },
+    { name: 'caller-activationId', lineage: { activationId: 'codex-activation:other' } },
+    { name: 'caller-activationDigest', lineage: { activationDigest: sha256Digest('other') } },
+    { name: 'connectionAttemptId', lineage: { connectionAttemptId: 'connection:other' } },
+    { name: 'initializedConnectionDigest',
+      lineage: { initializedConnectionDigest: sha256Digest('other') } },
+  ];
+  for (const item of receiptCases) {
+    const journal = new SqliteBridgeJournal(':memory:'), sent: string[] = [];
+    const f = await connect(journal, sent);
+    const body = f.fixture.body;
+    const returnFrame = { type: 'harness.codex.result.return', direction: 'node_to_server',
+      senderKind: 'node', tenantId: 'tenant:test', actorId: 'node:test', keyId: 'node-key:test',
+      connectionId: 'connection:test', messageId: 'message:prepared-result',
+      correlationId: 'correlation:test', causationId: body.activation.activationId,
+      sequence: 4, sentAt: body.returnedAt, expiresAt: body.physicalQualification.validUntil,
+      nonce: 'synthetic_prepared_result_nonce_12345678901234567890',
+      bodyDigest: sha256Digest(body), body };
+    const sealed = createCodexResultReturnReceiptBodyV1({ frame: returnFrame as never,
+      recordedAt: body.returnedAt });
+    const tampered = structuredClone(sealed) as unknown as Record<string, any>;
+    item.tamper(tampered);
+    // The gate compares stored fields structurally; the journal integrity
+    // layer (not this gate) owns receiptDigest authentication.
+    (journal as unknown as { codexResultReturn: unknown }).codexResultReturn = () => ({
+      status: 'receipted' as const, receipt: { body: tampered } as never,
+      frame: returnFrame as never,
+      preparedAt: '2026-09-13T12:00:00.000Z', receiptedAt: '2026-09-13T12:00:01.000Z' });
+    const calls: string[] = [];
+    const runtime = runtimeFor(journal, f.bridge, f.fixture, startEvidence(f.fixture), {
+      read() { calls.push('read'); throw new Error('must_not_read'); },
+      project() { calls.push('project'); throw new Error('must_not_read'); },
+    });
+    await assert.rejects(runtime.recover(observedAt, new AbortController().signal),
+      /codex_recovered_result_replay_lineage_mismatch/, `receipt substitution: ${item.name}`);
+    assert.deepEqual(calls, [], `no recovery read for: ${item.name}`);
+    runtime.close(); await f.bridge.close(); journal.close();
+  }
+  for (const item of lineageCases) {
+    const journal = new SqliteBridgeJournal(':memory:'), sent: string[] = [];
+    const f = await connect(journal, sent);
+    const body = f.fixture.body;
+    const returnFrame = { type: 'harness.codex.result.return', direction: 'node_to_server',
+      senderKind: 'node', tenantId: 'tenant:test', actorId: 'node:test', keyId: 'node-key:test',
+      connectionId: 'connection:test', messageId: 'message:prepared-result',
+      correlationId: 'correlation:test', causationId: body.activation.activationId,
+      sequence: 4, sentAt: body.returnedAt, expiresAt: body.physicalQualification.validUntil,
+      nonce: 'synthetic_prepared_result_nonce_12345678901234567890',
+      bodyDigest: sha256Digest(body), body };
+    const sealed = createCodexResultReturnReceiptBodyV1({ frame: returnFrame as never,
+      recordedAt: body.returnedAt });
+    (journal as unknown as { codexResultReturn: unknown }).codexResultReturn = () => ({
+      status: 'receipted' as const, receipt: { body: sealed } as never,
+      frame: returnFrame as never,
+      preparedAt: '2026-09-13T12:00:00.000Z', receiptedAt: '2026-09-13T12:00:01.000Z' });
+    const calls: string[] = [];
+    const runtime = runtimeFor(journal, f.bridge, f.fixture, startEvidence(f.fixture), {
+      read() { calls.push('read'); throw new Error('must_not_read'); },
+      project() { calls.push('project'); throw new Error('must_not_read'); },
+    }, returnedAt, item.lineage);
+    await assert.rejects(runtime.recover(observedAt, new AbortController().signal),
+      /codex_recovered_result_replay_lineage_mismatch/, `lineage substitution: ${item.name}`);
+    assert.deepEqual(calls, [], `no recovery read for: ${item.name}`);
+    runtime.close(); await f.bridge.close(); journal.close();
+  }
 });
