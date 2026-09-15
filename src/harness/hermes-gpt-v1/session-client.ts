@@ -63,11 +63,20 @@ async function invoke<T>(port: HermesSessionToolPortV1, tool: HermesSessionToolN
   return parseHermesSessionReplyV1(schema, raw, `${tool}_reply_unrecognized`);
 }
 
+/** Python `len()` counts codepoints; JavaScript `.length` counts UTF-16 units. */
+function codepointLength(value: string): number {
+  let count = 0;
+  for (const _ of value) count++;
+  return count;
+}
+
 function checkSessionId(sessionId: string): string | undefined {
   if (typeof sessionId !== "string") return "hermes_session_id_invalid";
-  // Upstream trims before measuring, so measure the trimmed value here too.
+  // Upstream trims before measuring, so measure the trimmed value here too,
+  // and measure it in the units upstream uses.
   const trimmed = sessionId.trim();
-  if (trimmed.length === 0 || trimmed.length > HERMES_SESSION_MAX_SESSION_ID_CHARS_V1) {
+  const length = codepointLength(trimmed);
+  if (length === 0 || length > HERMES_SESSION_MAX_SESSION_ID_CHARS_V1) {
     return "hermes_session_id_invalid";
   }
   return undefined;
@@ -77,9 +86,19 @@ function checkSessionId(sessionId: string): string | undefined {
  * Starts one bounded non-interactive turn in an existing Hermes session.
  *
  * This is the only operation that can begin real upstream work, so it is never
- * retried here. A caller that did not observe this reply must reconcile
- * through `hermesSessionJobStatusV1`, or rely on upstream refusing a second
- * concurrent turn for the same session with `SESSION_BUSY`.
+ * retried here, and a caller must not retry it either.
+ *
+ * Upstream's `SESSION_BUSY` lock is **not** a duplicate-execution guarantee. At
+ * the pinned revision `_active_sessions` is process memory, and `_watch` drops
+ * the entry as soon as the turn's process exits. A retry after the first turn
+ * finished — or after any upstream restart — therefore starts a second real
+ * turn. The lock narrows the window to a concurrent retry; it does not close
+ * it.
+ *
+ * There is also no recovery path for a lost reply: the job id is only ever
+ * returned by this call, and the supported tool set has no job-listing
+ * operation, so `hermesSessionJobStatusV1` cannot find a job whose id was
+ * never observed. A lost submit is unrecoverable uncertainty.
  */
 export async function hermesSessionContinueV1(port: HermesSessionToolPortV1, request: {
   sessionId: string; prompt: string; timeoutSeconds?: number;
@@ -88,7 +107,9 @@ export async function hermesSessionContinueV1(port: HermesSessionToolPortV1, req
   if (sessionIdProblem) return invalid(sessionIdProblem);
   const prompt = request.prompt;
   if (typeof prompt !== "string" || prompt.trim().length === 0) return invalid("hermes_session_prompt_invalid");
-  if (prompt.length > HERMES_SESSION_MAX_PROMPT_CHARS_V1) return invalid("hermes_session_prompt_too_large");
+  // Upstream compares `len(prompt)` in codepoints. Counting UTF-16 units here
+  // would refuse an astral-heavy prompt upstream would accept.
+  if (codepointLength(prompt) > HERMES_SESSION_MAX_PROMPT_CHARS_V1) return invalid("hermes_session_prompt_too_large");
   const timeout = request.timeoutSeconds;
   if (timeout !== undefined) {
     if (typeof timeout !== "number" || !Number.isSafeInteger(timeout)) return invalid("hermes_session_timeout_invalid");

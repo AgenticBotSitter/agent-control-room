@@ -24,9 +24,14 @@ import {
  *
  * Three upstream behaviors drive the design:
  *
- * - Upstream refuses a second concurrent turn for the same session with
- *   `SESSION_BUSY`. That refusal, not a local guess, is what prevents a lost
- *   submit from becoming duplicate execution.
+ * - Upstream refuses a second *concurrent* turn for the same session with
+ *   `SESSION_BUSY`. This narrows the duplicate-execution window; it does not
+ *   close it. `_active_sessions` is process memory and `_watch` drops the
+ *   entry when the turn's process exits, so a retry after the turn finished,
+ *   or after an upstream restart, starts a second real turn. A lost submit is
+ *   therefore unrecoverable uncertainty and must never be retried: the job id
+ *   is returned only by the submit call, and the supported tool set has no
+ *   job-listing operation to recover it with.
  * - Upstream marks a job `orphaned` after a restart when process ownership
  *   could not be proven. That is uncertainty, never failure and never
  *   completion.
@@ -57,7 +62,16 @@ export const hermesSessionBindingSchemaV1 = z.object({
 export type HermesSessionBindingV1 = z.infer<typeof hermesSessionBindingSchemaV1>;
 
 export type HermesSessionSubmitOutcomeV1 =
-  | { readonly kind: "started"; readonly upstreamJobId: string; readonly sessionId: string }
+  | {
+    readonly kind: "started";
+    readonly upstreamJobId: string;
+    /** The id upstream actually started against, after its own resolution. */
+    readonly sessionId: string;
+    /** The id this connector asked for. */
+    readonly requestedSessionId: string;
+    /** True when upstream resolved a prefix to a different exact id. */
+    readonly resolvedByUpstream: boolean;
+  }
   /** Upstream already has a running turn for this session; do not start another. */
   | { readonly kind: "busy"; readonly detail: string }
   /** Upstream declined for a named reason; the turn did not start. */
@@ -141,12 +155,14 @@ export async function submitHermesSessionTurnV1(port: HermesSessionToolPortV1, r
     }
     return carried.outcome;
   }
-  // Upstream must have started the turn on the session we named. A mismatch is
-  // a foreign identity, not a usable job.
-  if (carried.value.session_id !== parsed.data.sessionId.trim()) {
-    return { kind: "uncertain", reason: "hermes_session_identity_mismatch" };
-  }
-  return { kind: "started", upstreamJobId: carried.value.job_id, sessionId: carried.value.session_id };
+  // The MCP wrapper in `server.py` resolves a unique-prefix session id before
+  // delegating, so the started id can legitimately differ from the requested
+  // one. Refusing that would strand a turn that has already begun real work.
+  // Record both ids and report the resolution instead.
+  const requested = parsed.data.sessionId.trim();
+  const started = carried.value.session_id;
+  return { kind: "started", upstreamJobId: carried.value.job_id, sessionId: started,
+    requestedSessionId: requested, resolvedByUpstream: started !== requested };
 }
 
 /** Reads one job's current state. Starts nothing and is safe to repeat. */
@@ -189,6 +205,8 @@ function boundedUtf8(text: string, maximumBytes: number): { text: string; bytes:
  */
 export async function collectHermesSessionResultV1(port: HermesSessionToolPortV1, request: {
   binding: HermesSessionBindingV1; upstreamJobId: string; maxChars?: number;
+  /** The id upstream reported starting against, when it resolved a prefix. */
+  upstreamSessionId?: string;
 }, signal?: AbortSignal): Promise<HermesSessionResultOutcomeV1> {
   const parsed = hermesSessionBindingSchemaV1.safeParse(request?.binding);
   if (!parsed.success) return { kind: "invalid", reason: "hermes_session_binding_invalid" };
@@ -205,8 +223,9 @@ export async function collectHermesSessionResultV1(port: HermesSessionToolPortV1
         : { kind: "uncertain", state: "unknown", reason: carried.outcome.reason });
   }
   const value = carried.value;
+  const expectedSessionId = (request.upstreamSessionId ?? parsed.data.sessionId).trim();
   if (value.job_id !== request.upstreamJobId
-    || (value.session_id !== null && value.session_id !== parsed.data.sessionId.trim())) {
+    || (value.session_id !== null && value.session_id !== expectedSessionId)) {
     return { kind: "uncertain", state: "unknown", reason: "hermes_session_result_identity_mismatch" };
   }
   if (!hermesSessionJobIsTerminalV1(value.status)) return { kind: "pending", state: value.status };

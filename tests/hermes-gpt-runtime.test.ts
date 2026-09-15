@@ -22,7 +22,10 @@ class RecordedHermes implements HermesSessionToolPortV1 {
   private readonly active = new Map<string, string>();
   private readonly jobs = new Map<string, Record<string, unknown>>();
   private readonly outputs = new Map<string, string>();
-  constructor(private readonly options: { dropContinueReply?: boolean } = {}) {}
+  constructor(private readonly options: {
+    dropContinueReply?: boolean; resolvePrefixTo?: string; forceReplySessionId?: string;
+    forceStatusJobId?: string; nullResultSessionId?: boolean;
+  } = {}) {}
 
   /** Seed one already-known job, as a restarted server would have on disk. */
   seed(job: Record<string, unknown>, output = ""): void {
@@ -55,21 +58,27 @@ class RecordedHermes implements HermesSessionToolPortV1 {
         return this.error("SESSION_BUSY",
           `This Hermes session already has a running session-control job. Wait for job ${active} to finish.`);
       }
+      // server.py resolves the id before delegating; model that faithfully.
+      const resolved = this.options.resolvePrefixTo ?? this.options.forceReplySessionId ?? sessionId;
       const jobId = String(this.jobs.size + 1).padStart(32, "0");
-      this.jobs.set(jobId, { job_id: jobId, session_id: sessionId, status: "running",
+      this.jobs.set(jobId, { job_id: jobId, session_id: resolved, status: "running",
         created_at: "2026-09-15T10:00:00+00:00", started_at: "2026-09-15T10:00:01+00:00",
         ended_at: null, pid: 9001, return_code: null, timeout: 900, prompt_len: 10 });
       this.outputs.set(jobId, "");
       this.active.set(sessionId, jobId);
+      this.active.set(resolved, jobId);
       // A lost submit: upstream really started the turn, but the caller never
       // observes this reply.
       if (this.options.dropContinueReply) throw new Error("hermes_session_reply_lost");
-      return { success: true, job_id: jobId, session_id: sessionId, status: "running" };
+      return { success: true, job_id: jobId, session_id: resolved, status: "running" };
     }
     const jobId = String(params.job_id);
     const job = this.jobs.get(jobId);
     if (!job) return this.error("JOB_NOT_FOUND", "Hermes session job was not found.");
-    if (tool === "hermes_session_job_status") return { success: true, job };
+    if (tool === "hermes_session_job_status") {
+      return { success: true, job: this.options.forceStatusJobId
+        ? { ...job, job_id: this.options.forceStatusJobId } : job };
+    }
     const cap = Math.max(500, Math.min(Number(params.max_chars ?? HERMES_SESSION_MAX_RESULT_CHARS_V1),
       HERMES_SESSION_MAX_RESULT_CHARS_V1));
     const output = this.outputs.get(jobId) ?? "";
@@ -79,7 +88,8 @@ class RecordedHermes implements HermesSessionToolPortV1 {
     // case where the upstream character cap and Control Room's byte ceiling
     // disagree.
     const codepoints = Array.from(output);
-    return { success: true, job_id: jobId, session_id: job.session_id, status: job.status,
+    return { success: true, job_id: jobId,
+      session_id: this.options.nullResultSessionId ? null : job.session_id, status: job.status,
       return_code: job.return_code ?? null, response: codepoints.slice(0, cap).join(""),
       truncated: codepoints.length > cap };
   }
@@ -110,7 +120,7 @@ test("a second turn for the same session is refused as busy, not as a failure", 
   assert.equal(second.kind, "busy");
 });
 
-test("a lost submit never becomes duplicate execution", async () => {
+test("a lost submit is unrecoverable uncertainty and is never retried by the connector", async () => {
   // Upstream started the turn but the reply was lost in transit.
   const hermes = new RecordedHermes({ dropContinueReply: true });
   const lost = await submitHermesSessionTurnV1(hermes, { binding, prompt: "Do the work." });
@@ -124,6 +134,70 @@ test("a lost submit never becomes duplicate execution", async () => {
 
   // Exactly one turn exists for this session across both attempts.
   assert.equal(hermes.calls.filter(call => call.tool === "hermes_session_continue").length, 2);
+});
+
+test("upstream's session lock narrows the duplicate window but does not close it", async () => {
+  // The honest limit of the SESSION_BUSY protection. `_active_sessions` is
+  // upstream process memory and `_watch` drops the entry when the turn's
+  // process exits, so once the first turn has finished a retry is accepted
+  // and starts a SECOND real turn. This is why a lost submit must never be
+  // retried by any caller, and why this connector never retries internally.
+  const hermes = new RecordedHermes();
+  const first = await submitHermesSessionTurnV1(hermes, { binding, prompt: "Work." });
+  assert.equal(first.kind, "started");
+  const firstJob = first.kind === "started" ? first.upstreamJobId : "";
+
+  // While it runs, the lock holds.
+  assert.equal((await submitHermesSessionTurnV1(hermes, { binding, prompt: "Work." })).kind, "busy");
+
+  // After it finishes, the lock is gone and a retry really does start again.
+  hermes.finish(firstJob, "completed", "First output.");
+  const second = await submitHermesSessionTurnV1(hermes, { binding, prompt: "Work." });
+  assert.equal(second.kind, "started");
+  assert.notEqual(second.kind === "started" ? second.upstreamJobId : firstJob, firstJob);
+});
+
+test("a prefix-resolved session id is recorded, not refused after work has started", async () => {
+  // server.py resolves a unique-prefix id before delegating, so the started id
+  // can differ from the requested one. Refusing would strand a real turn.
+  const hermes = new RecordedHermes({ resolvePrefixTo: "session-2026-09-15-alpha-exact" });
+  const started = await submitHermesSessionTurnV1(hermes, { binding, prompt: "Work." });
+  assert.equal(started.kind, "started");
+  if (started.kind !== "started") return;
+  assert.equal(started.sessionId, "session-2026-09-15-alpha-exact");
+  assert.equal(started.requestedSessionId, binding.sessionId);
+  assert.equal(started.resolvedByUpstream, true);
+
+  // The result path compares against the id upstream actually used.
+  hermes.finish(started.upstreamJobId, "completed", "Resolved output.");
+  const result = await collectHermesSessionResultV1(hermes,
+    { binding, upstreamJobId: started.upstreamJobId, upstreamSessionId: started.sessionId });
+  assert.equal(result.kind, "completed");
+});
+
+test("a submit reply naming a foreign session, and a status reply naming a foreign job, are refused", async () => {
+  const foreignSubmit = new RecordedHermes({ forceReplySessionId: "session-someone-else" });
+  const started = await submitHermesSessionTurnV1(foreignSubmit, { binding, prompt: "Work." });
+  // A resolved prefix is recorded; the caller can still see it differed.
+  assert.equal(started.kind === "started" && started.resolvedByUpstream, true);
+  assert.equal(started.kind === "started" && started.sessionId, "session-someone-else");
+
+  const foreignStatus = new RecordedHermes({ forceStatusJobId: "7".repeat(32) });
+  foreignStatus.seed({ job_id: "8".repeat(32), session_id: binding.sessionId, status: "running",
+    created_at: "2026-09-15T10:00:00+00:00", return_code: null }, "");
+  const polled = await pollHermesSessionJobV1(foreignStatus, "8".repeat(32));
+  assert.equal(polled.kind, "uncertain");
+  assert.equal(polled.kind === "uncertain" && polled.reason, "hermes_session_job_identity_mismatch");
+});
+
+test("a result with a null session id is accepted, as upstream can return one", async () => {
+  // operator_session.py returns meta.get("session_id"), which is null on a
+  // degraded record written by the _watch fallback.
+  const hermes = new RecordedHermes({ nullResultSessionId: true });
+  hermes.seed({ job_id: "2".repeat(32), session_id: binding.sessionId, status: "completed",
+    created_at: "2026-09-15T10:00:00+00:00", return_code: 0 }, "Degraded but real.");
+  const result = await collectHermesSessionResultV1(hermes, { binding, upstreamJobId: "2".repeat(32) });
+  assert.equal(result.kind, "completed");
 });
 
 test("status reads are bounded, repeatable and start nothing", async () => {
@@ -197,6 +271,24 @@ test("upstream's 24,000-character cap and Control Room's 65,536-byte ceiling are
   // The trim never splits a UTF-8 sequence.
   assert.equal(Buffer.byteLength(bounded.text, "utf8"), bounded.sizeBytes);
   assert.ok(!bounded.text.includes("�"));
+
+  // A three-byte codepoint is the case that actually separates a correct trim
+  // from a naive byte slice: 65,536 is an exact multiple of 4, so four-byte
+  // characters land on the boundary either way and prove nothing.
+  const cjk = new RecordedHermes();
+  const third = await submitHermesSessionTurnV1(cjk, { binding, prompt: "Work." });
+  const cjkJob = third.kind === "started" ? third.upstreamJobId : "";
+  cjk.finish(cjkJob, "completed", "あ".repeat(HERMES_SESSION_MAX_RESULT_CHARS_V1));
+  const trimmed = await collectHermesSessionResultV1(cjk, { binding, upstreamJobId: cjkJob });
+  assert.equal(trimmed.kind, "completed");
+  if (trimmed.kind !== "completed") return;
+  assert.equal(trimmed.ceilingTruncated, true);
+  // 65,535 bytes: the largest whole number of 3-byte characters that fits.
+  assert.equal(trimmed.sizeBytes, 65_535);
+  assert.ok(!trimmed.text.includes("�"));
+  // Re-encoding must agree, which a mid-sequence cut would break.
+  assert.equal(Buffer.byteLength(trimmed.text, "utf8"), trimmed.sizeBytes);
+  assert.equal(trimmed.text.at(-1), "あ");
 });
 
 test("a restart-orphaned job is uncertainty, never a completion or a failure", async () => {

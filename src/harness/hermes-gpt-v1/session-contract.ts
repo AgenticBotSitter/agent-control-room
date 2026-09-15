@@ -53,12 +53,18 @@ export type HermesSessionJobStateV1 = (typeof HERMES_SESSION_JOB_STATES_V1)[numb
 export const HERMES_SESSION_TERMINAL_STATES_V1 = ["completed", "failed", "timed_out", "orphaned"] as const;
 
 /**
- * Error codes this connector recognizes from `layer: "session_control"`.
- * An unrecognized code is still parsed as a refusal; it is never guessed at.
+ * Error codes observed at `layer: "session_control"` in the pinned revision.
+ *
+ * The first nine come from `operator_session.py`; the last two are emitted by
+ * the MCP wrapper in `server.py`, which resolves the session id before
+ * delegating. This list is a reading aid, not a gate: an unrecognized code is
+ * still parsed as a refusal and never guessed at, so a future upstream code
+ * degrades safely rather than becoming an unrecognized reply.
  */
 export const HERMES_SESSION_ERROR_CODES_V1 = [
   "SESSION_CONTROL_DISABLED", "INVALID_SESSION_ID", "INVALID_PROMPT", "PROMPT_TOO_LARGE",
   "INVALID_TIMEOUT", "SESSION_BUSY", "HERMES_START_FAILED", "JOB_NOT_FOUND", "INVALID_MAX_CHARS",
+  "SESSION_ID_NOT_FOUND_OR_AMBIGUOUS", "SESSION_CONTINUE_FAILED",
 ] as const;
 export type HermesSessionErrorCodeV1 = (typeof HERMES_SESSION_ERROR_CODES_V1)[number];
 
@@ -84,12 +90,19 @@ export const hermesSessionContinueResponseSchemaV1 = z.object({
   status: z.literal("running"),
 }).passthrough();
 
-/** The persisted job record upstream writes with `_save`. */
+/**
+ * The persisted job record upstream writes with `_save`.
+ *
+ * `session_id` and `created_at` are optional because `_watch` falls back to
+ * `_load(...) or {"job_id": job_id}` when the job file cannot be read, and then
+ * saves a record carrying neither field. Requiring them would turn that
+ * degraded-but-real record into an unrecognized reply.
+ */
 export const hermesSessionJobSchemaV1 = z.object({
   job_id: jobId,
-  session_id: sessionId,
+  session_id: sessionId.optional(),
   status: z.enum(HERMES_SESSION_JOB_STATES_V1),
-  created_at: z.string(),
+  created_at: z.string().optional(),
   started_at: z.string().nullable().optional(),
   ended_at: z.string().nullable().optional(),
   return_code: z.number().int().nullable().optional(),

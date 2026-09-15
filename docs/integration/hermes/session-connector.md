@@ -28,11 +28,20 @@ upstream would quietly replace. Both refusals happen before any call is made.
 
 ## Three upstream behaviors that shape the design
 
-**A lost submit must not become duplicate execution.** Upstream keeps one active job per
-session id and refuses a second concurrent turn with `SESSION_BUSY`. That refusal — not a
-local guess — is the protection. `busy` is therefore a distinct outcome from `refused`: it
-means a turn is already running and must be reconciled, not retried or reported as failure.
-The client never retries `hermes_session_continue`, because a retry could start real work.
+**The session lock narrows the duplicate-execution window; it does not close it.**
+Upstream keeps one active job per session id and refuses a second *concurrent* turn with
+`SESSION_BUSY`. But `_active_sessions` is process memory, and `_watch` drops the entry as
+soon as the turn's process exits. A retry after the first turn finished — or after any
+upstream restart — is accepted and starts a second real turn.
+
+A lost submit is therefore **unrecoverable uncertainty**, and must never be retried by any
+caller. There is no recovery path either: the job id is returned only by the submit call,
+and the supported tool set has no job-listing operation, so a job whose id was never
+observed cannot be found again. The client never retries `hermes_session_continue`, and
+the runtime reports `uncertain` rather than implying the turn can be reconciled.
+
+`busy` remains a distinct outcome from `refused`: it means a turn is running right now and
+must be waited on, not retried or reported as a failure.
 
 **`orphaned` is uncertainty, not an outcome.** Upstream `_reconcile` marks a running job
 `orphaned` after a restart when process ownership could not be proven. The runtime returns
@@ -50,8 +59,17 @@ A successful job with empty output returns `uncertain`, not an empty accepted re
 ## Identity
 
 Every outcome carries the exact Control Room lineage (tenant, project, job, attempt, run,
-node) plus the upstream session and job id. A reply whose `session_id` or `job_id` does not
-match what was requested is refused as an identity mismatch rather than used.
+node) plus the upstream session and job id.
+
+The MCP wrapper in `server.py` resolves a unique-prefix session id before delegating, so
+the id a turn actually starts against can differ from the one requested. Refusing that
+would strand a turn that has already begun real work, so `submitHermesSessionTurnV1`
+records both ids and reports `resolvedByUpstream`; pass the resolved id back as
+`upstreamSessionId` when collecting the result. A `job_id` that does not match what was
+asked for is still refused as an identity mismatch.
+
+That wrapper also emits two further `session_control` codes beyond
+`operator_session.py`: `SESSION_ID_NOT_FOUND_OR_AMBIGUOUS` and `SESSION_CONTINUE_FAILED`.
 
 ## Evidence, and what it does not prove
 

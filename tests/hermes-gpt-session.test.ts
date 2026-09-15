@@ -170,3 +170,18 @@ test("an aborted signal stops the call before it reaches the transport", async (
   assert.equal(call.outcome, "transport_unavailable");
   assert.equal(transport.calls.length, 0);
 });
+
+test("the degraded job record upstream can write is still a recognized reply", async () => {
+  // `_watch` falls back to `_load(...) or {"job_id": job_id}` when the job file
+  // cannot be read, then saves a record carrying neither session_id nor
+  // created_at. Requiring those would turn a real upstream record into an
+  // unrecognized reply and hide a job that genuinely exists.
+  const transport = new RecordedHermesTransport({
+    hermes_session_job_status: [{ success: true, job: { job_id: JOB_ID, status: "failed",
+      return_code: null, ended_at: "2026-09-15T10:30:00+00:00" } }],
+  });
+  const call = await hermesSessionJobStatusV1(transport, JOB_ID);
+  assert.equal(call.outcome, "ok");
+  assert.equal(call.outcome === "ok" && call.value.job.status, "failed");
+  assert.equal(call.outcome === "ok" && call.value.job.session_id, undefined);
+});
