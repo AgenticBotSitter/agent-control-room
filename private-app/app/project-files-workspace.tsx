@@ -7,6 +7,7 @@ import type { TaskProjectFiles } from "../../src/web/v1/task-project-files-wire"
 import { PrivateHeader } from "./private-header";
 import { ProjectNavigation } from "./project-navigation";
 import { ConfiguredTimestamp } from "./configured-timestamp";
+import { taskResultHrefV1 } from "./task-results";
 
 type State = { state: "loading" } | { state: "ready"; value: TaskProjectFiles }
   | { state: "unavailable"; code: BrowserRequestError["code"] };
@@ -29,7 +30,7 @@ export function ProjectFilesView({ projectId, data }: { projectId: string; data:
         <p>{artifact.sizeBytes.toLocaleString()} bytes · <ConfiguredTimestamp value={artifact.receivedAt} prefix="Received" /></p>
         <p>Received bytes matched the worker’s recorded fingerprint. This is not a quality approval.</p>
         <details><summary>File fingerprint</summary><code>{artifact.contentHash}</code></details></div>
-        <a className="private-action-link" href={`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(task.jobId)}#task-results`}>Open protected result</a>
+        <a className="private-action-link" href={taskResultHrefV1(projectId, task.jobId, artifact.artifactId)}>Open protected result</a>
       </li>)}</ul>}
     {value.additionalItemsOmitted && <p className="private-note">More result files remain saved. Open individual tasks to inspect them.</p>}
   </section>;
@@ -50,7 +51,7 @@ export function PrivateProjectFiles({ projectId }: { projectId: string }) {
   }, [projectId, generation]);
   return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1}>
     <a href={`/projects/${encodeURIComponent(projectId)}`} className="private-back">← Project overview</a>
-    <div className="private-heading"><h1>Project files</h1><p>Verified result records from this project. Open a file through its exact task to read and review it.</p></div>
+    <div className="private-heading"><h1>Project files</h1><p>Verified result records from this project. Opening one goes straight to that exact file in its task, where it can be read and reviewed.</p></div>
     <ProjectNavigation projectId={projectId} current="files" />
     <ProjectFilesView projectId={projectId} data={state} />
     <button type="button" onClick={() => setGeneration(value => value + 1)}>Refresh project files</button>
