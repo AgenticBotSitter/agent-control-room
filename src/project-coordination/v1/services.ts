@@ -49,8 +49,13 @@ export interface ProjectCoordinationCanonicalPortV1 {
   setProjectDelegationPolicyStateDurableV1(input: {
     action: "pause" | "resume" | "revoke";
     tenantId: string; projectId: string; policyId: string; ownerIdentityId: string;
-    idempotencyKey: string; requestDigest: string; expectedVersion: number; occurredAt: string;
+    idempotencyKey: string; requestDigest: string; expectedVersion: number;
+    expectedCoordinatorVersion: number; expectedConflictsVersion: number; expectedAttentionVersion: number;
+    occurredAt: string;
   }): Promise<DelegationPolicyLifecycleReceiptV1 & { replayed: boolean }>;
+  findDelegationPolicyLifecycleReceiptV1(input: {
+    tenantId: string; idempotencyKey: string; requestDigest: string;
+  }): Promise<(DelegationPolicyLifecycleReceiptV1 & { replayed: true }) | undefined>;
   recordProjectCoordinationProposalV1(input: {
     proposalId: string; validation: CoordinationProposalValidationV1; ingestedAt: string;
   }): Promise<{ proposalId: string; validationState: "accepted" | "rejected"; safeReasonCode?: string;
@@ -145,30 +150,48 @@ export class ProjectCoordinatorServiceV1 {
    * receipt instead of repeating the mutation.
    */
   async pauseDelegation(input: { tenantId: string; projectId: string; policyId: string;
-    ownerIdentityId: string; idempotencyKey: string; expectedVersion: number; occurredAt: string }) {
+    ownerIdentityId: string; idempotencyKey: string; expectedVersion: number; occurredAt: string;
+    expectedCoordinatorVersion?: number; expectedConflictsVersion?: number; expectedAttentionVersion?: number }) {
     return this.#policyLifecycle("pause", input);
   }
 
   async resumeDelegation(input: { tenantId: string; projectId: string; policyId: string;
-    ownerIdentityId: string; idempotencyKey: string; expectedVersion: number; occurredAt: string }) {
+    ownerIdentityId: string; idempotencyKey: string; expectedVersion: number; occurredAt: string;
+    expectedCoordinatorVersion?: number; expectedConflictsVersion?: number; expectedAttentionVersion?: number }) {
     return this.#policyLifecycle("resume", input);
   }
 
   async revokeDelegation(input: { tenantId: string; projectId: string; policyId: string;
-    ownerIdentityId: string; idempotencyKey: string; expectedVersion: number; occurredAt: string }) {
+    ownerIdentityId: string; idempotencyKey: string; expectedVersion: number; occurredAt: string;
+    expectedCoordinatorVersion?: number; expectedConflictsVersion?: number; expectedAttentionVersion?: number }) {
     return this.#policyLifecycle("revoke", input);
+  }
+
+  async findDelegationPolicyReceipt(input: { action: "pause" | "resume" | "revoke"; tenantId: string;
+    projectId: string; policyId: string; ownerIdentityId: string; idempotencyKey: string; expectedVersion: number;
+    expectedCoordinatorVersion: number; expectedConflictsVersion: number; expectedAttentionVersion: number }) {
+    const requestDigest = delegationPolicyLifecycleRequestDigestV1(input);
+    return this.canonical.findDelegationPolicyLifecycleReceiptV1({ tenantId: input.tenantId,
+      idempotencyKey: input.idempotencyKey, requestDigest });
   }
 
   #policyLifecycle(action: "pause" | "resume" | "revoke", input: { tenantId: string;
     projectId: string; policyId: string; ownerIdentityId: string; idempotencyKey: string;
-    expectedVersion: number; occurredAt: string }) {
+    expectedVersion: number; occurredAt: string; expectedCoordinatorVersion?: number;
+    expectedConflictsVersion?: number; expectedAttentionVersion?: number }) {
     const requestDigest = delegationPolicyLifecycleRequestDigestV1({ action,
       tenantId: input.tenantId, projectId: input.projectId, policyId: input.policyId,
-      ownerIdentityId: input.ownerIdentityId, expectedVersion: input.expectedVersion });
+      ownerIdentityId: input.ownerIdentityId, expectedVersion: input.expectedVersion,
+      expectedCoordinatorVersion: input.expectedCoordinatorVersion,
+      expectedConflictsVersion: input.expectedConflictsVersion,
+      expectedAttentionVersion: input.expectedAttentionVersion });
     return this.canonical.setProjectDelegationPolicyStateDurableV1({ action,
       tenantId: input.tenantId, projectId: input.projectId, policyId: input.policyId,
       ownerIdentityId: input.ownerIdentityId, idempotencyKey: input.idempotencyKey,
-      requestDigest, expectedVersion: input.expectedVersion, occurredAt: input.occurredAt })
+      requestDigest, expectedVersion: input.expectedVersion,
+      expectedCoordinatorVersion: input.expectedCoordinatorVersion ?? 0,
+      expectedConflictsVersion: input.expectedConflictsVersion ?? 0,
+      expectedAttentionVersion: input.expectedAttentionVersion ?? 0, occurredAt: input.occurredAt })
       .then((receipt) => {
         const { replayed, ...durable } = receipt;
         return { ...delegationPolicyLifecycleReceiptSchemaV1.parse(durable), replayed };

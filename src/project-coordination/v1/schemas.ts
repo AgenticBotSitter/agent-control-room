@@ -191,8 +191,8 @@ export type CoordinatorLifecycleReceiptV1 = z.infer<typeof coordinatorLifecycleR
 /**
  * Request digest for one delegation-policy lifecycle action. It binds the
  * action, the policy identity, the acting owner, the project, and the expected
- * policy version: any change to target state, policy identity, expected
- * revisions, actor, project, or action changes the digest, so reusing a key
+ * policy, coordinator, conflict, and attention versions: any change to target
+ * state, policy identity, expected revisions, actor, project, or action changes the digest, so reusing a key
  * for changed content is refused with policy_replay_conflict instead of
  * replaying the saved receipt.
  */
@@ -203,8 +203,13 @@ export function delegationPolicyLifecycleRequestDigestV1(input: {
   policyId: string;
   ownerIdentityId: string;
   expectedVersion: number;
+  expectedCoordinatorVersion?: number;
+  expectedConflictsVersion?: number;
+  expectedAttentionVersion?: number;
 }): string {
-  if (!Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 0) {
+  const revisions = [input.expectedVersion, input.expectedCoordinatorVersion ?? 0,
+    input.expectedConflictsVersion ?? 0, input.expectedAttentionVersion ?? 0];
+  if (revisions.some((version) => !Number.isSafeInteger(version) || version < 0)) {
     failProjectCoordinationV1("invalid_input");
   }
   const identity = JSON.parse(JSON.stringify({
@@ -215,6 +220,9 @@ export function delegationPolicyLifecycleRequestDigestV1(input: {
     policyId: input.policyId,
     ownerIdentityId: input.ownerIdentityId,
     expectedVersion: input.expectedVersion,
+    expectedCoordinatorVersion: input.expectedCoordinatorVersion ?? 0,
+    expectedConflictsVersion: input.expectedConflictsVersion ?? 0,
+    expectedAttentionVersion: input.expectedAttentionVersion ?? 0,
   })) as Record<string, unknown>;
   return sha256Digest(identity);
 }

@@ -22,7 +22,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createAccessVerifier, type AccessTrust } from "../src/web/v1/access-verifier";
-import { projectCoordinationHttpFixture } from "./project-coordination-http-fixture";
+import { projectCoordinationHttpFixture, composedProjectCoordinationHttpFixture } from "./project-coordination-http-fixture";
 
 const FIXTURE_NOW = Date.parse("2026-09-14T00:00:00.000Z");
 const FIXTURE_ORIGIN = "https://private.example.invalid";
@@ -310,6 +310,79 @@ test("exact policy retry reaches the saved receipt before any stale-version refu
   assert.equal(replay.status, "accepted");
   assert.deepEqual(replay.revision.expectedPolicyVersion,
     first.revision.expectedPolicyVersion);
+});
+
+test("composed HTTP policy replay survives attention, coordinator, and conflict drift", async (t) => {
+  const f = await composedProjectCoordinationHttpFixture(FIXTURE_NOW);
+  t.after(() => f.dispose());
+  const pausePath = "/api/v1/projects/project%3Aexample/coordination/pause-policy";
+  const resumePath = "/api/v1/projects/project%3Aexample/coordination/resume-policy";
+  const revokePath = "/api/v1/projects/project%3Aexample/coordination/revoke-policy";
+  const appointPath = "/api/v1/projects/project%3Aexample/coordination/appoint-coordinator";
+  const original = await f.read();
+  assert.equal(original.status, 200);
+  const pauseBody = { policyId: f.policyId, revision: f.revision(original.body) };
+  const first = await f.request(pausePath, pauseBody, "composed-policy-pause-0001");
+  assert.deepEqual(first.body.status, "accepted");
+  const savedPause = await f.db.query<{result:unknown}>(`SELECT result FROM control_idempotency WHERE operation_scope='project-delegation-policy-lifecycle' AND idempotency_key='composed-policy-pause-0001'`);
+  await f.addAttention("after-pause");
+  const pauseReplay = await f.request(pausePath, pauseBody, "composed-policy-pause-0001");
+  assert.equal(pauseReplay.status, 200);
+  assert.equal(pauseReplay.body.status, "accepted");
+  const savedPauseAfterReplay = await f.db.query<{result:unknown}>(`SELECT result FROM control_idempotency WHERE operation_scope='project-delegation-policy-lifecycle' AND idempotency_key='composed-policy-pause-0001'`);
+  assert.deepEqual(savedPauseAfterReplay.rows, savedPause.rows);
+  assert.equal((await f.db.query<{version:string}>(`SELECT version::text AS version FROM control_project_delegation_policies WHERE id=$1`, [f.policyId])).rows[0]?.version, "2");
+  assert.equal((await f.db.query<{count:string}>(`SELECT count(*)::text AS count FROM control_idempotency WHERE operation_scope='project-delegation-policy-lifecycle' AND idempotency_key='composed-policy-pause-0001'`, [])).rows[0]?.count, "1");
+  const changed = await f.request(pausePath, { ...pauseBody, revision: { ...pauseBody.revision,
+    expectedAttentionVersion: pauseBody.revision.expectedAttentionVersion + 1 } }, "composed-policy-pause-0001");
+  assert.equal(changed.body.status, "refused");
+  assert.equal(changed.body.reasonCode, "policy_replay_conflict");
+
+  const paused = await f.read();
+  const resumeBody = { policyId: f.policyId, revision: f.revision(paused.body) };
+  const resumed = await f.request(resumePath, resumeBody, "composed-policy-resume-0001");
+  assert.equal(resumed.body.status, "accepted");
+  const beforeCoordinatorChange = await f.read();
+  const appointed = await f.request(appointPath, { revision: f.revision(beforeCoordinatorChange.body),
+    coordinatorActorType: "human", coordinatorIdentityId: "identity:other" }, "composed-coordinator-0001");
+  assert.equal(appointed.body.status, "accepted");
+  await f.addConflict();
+  const drifted = await f.read();
+  assert.equal((drifted.body.versions as Record<string, number>).coordinatorVersion, 2);
+  assert.notEqual((drifted.body.versions as Record<string, number>).conflictsVersion, 0);
+  const resumeReplay = await f.request(resumePath, resumeBody, "composed-policy-resume-0001");
+  assert.equal(resumeReplay.body.status, "accepted");
+  assert.equal((await f.db.query<{version:string}>(`SELECT version::text AS version FROM control_project_delegation_policies WHERE id=$1`, [f.policyId])).rows[0]?.version, "3");
+
+  const active = await f.read();
+  const revokeBody = { policyId: f.policyId, revision: f.revision(active.body) };
+  const revoked = await f.request(revokePath, revokeBody, "composed-policy-revoke-0001");
+  assert.equal(revoked.body.status, "accepted");
+  await f.addAttention("after-revoke");
+  const revokeReplay = await f.request(revokePath, revokeBody, "composed-policy-revoke-0001");
+  assert.equal(revokeReplay.body.status, "accepted");
+  assert.deepEqual((await f.db.query<{state:string;version:string}>(`SELECT state,version::text AS version FROM control_project_delegation_policies WHERE id=$1`, [f.policyId])).rows[0],
+    { state: "revoked", version: "4" });
+});
+
+test("composed HTTP revoked-policy refusal rolls back its processing receipt", async (t) => {
+  const f = await composedProjectCoordinationHttpFixture(FIXTURE_NOW);
+  t.after(() => f.dispose());
+  const revokePath = "/api/v1/projects/project%3Aexample/coordination/revoke-policy";
+  const resumePath = "/api/v1/projects/project%3Aexample/coordination/resume-policy";
+  const page = await f.read();
+  const revoked = await f.request(revokePath, { policyId: f.policyId, revision: f.revision(page.body) }, "composed-policy-revoke-seed");
+  assert.equal(revoked.body.status, "accepted");
+  const current = await f.read();
+  const refusedBody = { policyId: f.policyId, revision: f.revision(current.body) };
+  const first = await f.request(resumePath, refusedBody, "composed-policy-revoked-0001");
+  assert.equal(first.body.status, "refused");
+  assert.equal(first.body.reasonCode, "policy_revoked");
+  assert.equal((await f.db.query<{count:string}>(`SELECT count(*)::text AS count FROM control_idempotency WHERE operation_scope='project-delegation-policy-lifecycle' AND idempotency_key='composed-policy-revoked-0001' AND status='processing'`, [])).rows[0]?.count, "0");
+  assert.deepEqual((await f.db.query<{state:string;version:string}>(`SELECT state,version::text AS version FROM control_project_delegation_policies WHERE id=$1`, [f.policyId])).rows[0],
+    { state: "revoked", version: "2" });
+  const second = await f.request(resumePath, refusedBody, "composed-policy-revoked-0001");
+  assert.deepEqual(second.body, first.body);
 });
 
 test("policy retry with a rebuilt key and wrong version refuses stale_revision", async (t) => {

@@ -1498,6 +1498,29 @@ export class CanonicalStore {
     });
   }
 
+  async findDelegationPolicyLifecycleReceiptV1(input: {
+    tenantId: string; idempotencyKey: string; requestDigest: string;
+  }): Promise<(DelegationPolicyLifecycleReceiptV1 & { replayed: true }) | undefined> {
+    return this.#transaction(async (tx) => {
+      const durable = (await tx.query<{ request_digest: string; status: string; result: unknown }>(
+        `SELECT request_digest,status,result FROM control_idempotency
+         WHERE tenant_id=$1 AND operation_scope='project-delegation-policy-lifecycle' AND idempotency_key=$2 FOR UPDATE`,
+        [input.tenantId, input.idempotencyKey])).rows[0];
+      if (!durable) return undefined;
+      if (durable.request_digest !== input.requestDigest || durable.status !== "completed") {
+        failProjectCoordinationV1("policy_replay_conflict");
+      }
+      const receipt = delegationPolicyLifecycleReceiptSchemaV1.safeParse(durable.result);
+      if (!receipt.success) failProjectCoordinationV1("policy_replay_conflict");
+      const { receiptDigest, ...body } = receipt.data;
+      if (receipt.data.tenantId !== input.tenantId || receipt.data.idempotencyKey !== input.idempotencyKey
+        || receipt.data.requestDigest !== input.requestDigest || sha256Digest(body) !== receiptDigest) {
+        failProjectCoordinationV1("policy_replay_conflict");
+      }
+      return { ...receipt.data, replayed: true };
+    });
+  }
+
   /**
    * Durably pauses, resumes, or revokes an owner-authored bounded policy. This
    * is the sibling of the coordinator lifecycle operation on the distinct
@@ -1511,7 +1534,9 @@ export class CanonicalStore {
   async setProjectDelegationPolicyStateDurableV1(input: {
     action: "pause" | "resume" | "revoke";
     tenantId: string; projectId: string; policyId: string; ownerIdentityId: string;
-    idempotencyKey: string; requestDigest: string; expectedVersion: number; occurredAt: string;
+    idempotencyKey: string; requestDigest: string; expectedVersion: number;
+    expectedCoordinatorVersion: number; expectedConflictsVersion: number; expectedAttentionVersion: number;
+    occurredAt: string;
   }): Promise<DelegationPolicyLifecycleReceiptV1 & { replayed: boolean }> {
     const toState = input.action === "pause" ? "paused" : input.action === "resume" ? "active" : "revoked";
     const alreadyState = toState === "paused" ? "policy_already_paused"
@@ -1520,7 +1545,10 @@ export class CanonicalStore {
       || !/^sha256:[a-f0-9]{64}$/.test(input.requestDigest)) failProjectCoordinationV1("invalid_input");
     if (input.requestDigest !== delegationPolicyLifecycleRequestDigestV1({ action: input.action,
       tenantId: input.tenantId, projectId: input.projectId, policyId: input.policyId,
-      ownerIdentityId: input.ownerIdentityId, expectedVersion: input.expectedVersion })) {
+      ownerIdentityId: input.ownerIdentityId, expectedVersion: input.expectedVersion,
+      expectedCoordinatorVersion: input.expectedCoordinatorVersion,
+      expectedConflictsVersion: input.expectedConflictsVersion,
+      expectedAttentionVersion: input.expectedAttentionVersion })) {
       failProjectCoordinationV1("invalid_input");
     }
     return this.#transaction(async (tx) => {

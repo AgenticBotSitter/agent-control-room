@@ -218,12 +218,23 @@ async function buildRouteFixture(opts: { coordinationEnabled?: boolean; engineDe
       opts.onEngineCommit?.();
       return { ...receipt, replayed: false as const };
     },
+    async findDelegationPolicyLifecycleReceiptV1(input) {
+      const prior = policyReceipts.get(input.idempotencyKey);
+      if (!prior) return undefined;
+      if (prior.receipt.requestDigest !== input.requestDigest) {
+        throw new ProjectCoordinationErrorV1("policy_replay_conflict" as never);
+      }
+      return { ...prior.receipt, replayed: true as const };
+    },
     async setProjectDelegationPolicyStateDurableV1(input) {
       // Same durable policy receipt semantics as the canonical operation:
       // digest check, per-key ledger probe first, then version enforcement.
       const expectedDigest = delegationPolicyLifecycleRequestDigestV1({ action: input.action,
         tenantId: input.tenantId, projectId: input.projectId, policyId: input.policyId,
-        ownerIdentityId: input.ownerIdentityId, expectedVersion: input.expectedVersion });
+        ownerIdentityId: input.ownerIdentityId, expectedVersion: input.expectedVersion,
+        expectedCoordinatorVersion: input.expectedCoordinatorVersion,
+        expectedConflictsVersion: input.expectedConflictsVersion,
+        expectedAttentionVersion: input.expectedAttentionVersion });
       if (expectedDigest !== input.requestDigest) {
         throw new ProjectCoordinationErrorV1("invalid_input" as never);
       }

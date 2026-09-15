@@ -271,6 +271,11 @@ interface ProjectCoordinatorRevokePolicyInput extends ProjectCoordinationActionR
   idempotencyKey: string;
 }
 
+/** Maps a canonical refusal only after its authenticated transaction rolls back. */
+class TransactionalProjectCoordinationRefusal extends Error {
+  constructor(readonly outcome: ProjectCoordinationActionOutcome) { super("project_coordination_refusal"); }
+}
+
 const ACTIONS = {
   appoint: "coordination.coordinator.appoint",
   replace: "coordination.coordinator.replace",
@@ -572,15 +577,48 @@ export class ProjectCoordinationHttpService {
     action: string,
     input: ProjectCoordinatorRevokePolicyInput,
   ): Promise<ProjectCoordinationActionOutcome> {
-    return this.authority.authenticated(identity, async (tx, actor) => {
+    try {
+      return await this.authority.authenticated(identity, async (tx, actor) => {
       actor.require(action, input.projectId, true);
       const store = this.sessionStore(tx);
+      const observedAt = new Date(this.options.clock()).toISOString();
+      const receiptService = new ProjectCoordinatorServiceV1(store.coordinator);
+      const replayOperation = action === ACTIONS.revokePolicy ? "revoke" as const
+        : action === ACTIONS.resume ? "resume" as const : "pause" as const;
+      let replay;
+      try {
+        replay = await receiptService.findDelegationPolicyReceipt({
+          action: replayOperation, tenantId: this.options.scope.tenantId, projectId: input.projectId,
+          policyId: input.policyId, ownerIdentityId: actor.id, idempotencyKey: input.idempotencyKey,
+          expectedVersion: input.revision.expectedPolicyVersion,
+          expectedCoordinatorVersion: input.revision.expectedCoordinatorVersion,
+          expectedConflictsVersion: input.revision.expectedConflictsVersion,
+          expectedAttentionVersion: input.revision.expectedAttentionVersion,
+        });
+      } catch (error: unknown) {
+        if (coerceReasonCode(error) !== "policy_replay_conflict") throw error;
+        return this.refused("policy_replay_conflict", observedAt, {
+          expectedCoordinatorVersion: input.revision.expectedCoordinatorVersion,
+          expectedPolicyVersion: input.revision.expectedPolicyVersion,
+          expectedConflictsVersion: input.revision.expectedConflictsVersion,
+          expectedAttentionVersion: input.revision.expectedAttentionVersion,
+        }, input.projectId);
+      }
       const projectHead = await this.readProjectHead(actor, input.projectId, store);
       const currentCoordinatorVersion = await store.coordinatorVersion(input.projectId);
       const currentPolicyVersion = await store.policyVersion(input.projectId);
       const currentConflictsVersion = await store.conflictsVersion(input.projectId);
       const currentAttentionVersion = await store.attentionVersion(input.projectId);
-      const observedAt = new Date(this.options.clock()).toISOString();
+      if (replay) {
+        if (replay.alreadyState) return this.refused(replay.alreadyState, observedAt, {
+          expectedCoordinatorVersion: currentCoordinatorVersion, expectedPolicyVersion: replay.version,
+          expectedConflictsVersion: currentConflictsVersion, expectedAttentionVersion: currentAttentionVersion,
+        }, input.projectId);
+        return this.accepted(observedAt, {
+          expectedCoordinatorVersion: currentCoordinatorVersion, expectedPolicyVersion: replay.version,
+          expectedConflictsVersion: currentConflictsVersion, expectedAttentionVersion: currentAttentionVersion,
+        }, input.projectId);
+      }
 
       // Revision gate, minus the policy version. The policy version is owned
       // by the durable engine: the PG transaction probes the idempotency
@@ -629,6 +667,9 @@ export class ProjectCoordinationHttpService {
           ownerIdentityId: actor.id,
           idempotencyKey: input.idempotencyKey,
           expectedVersion: input.revision.expectedPolicyVersion,
+          expectedCoordinatorVersion: input.revision.expectedCoordinatorVersion,
+          expectedConflictsVersion: input.revision.expectedConflictsVersion,
+          expectedAttentionVersion: input.revision.expectedAttentionVersion,
           occurredAt: observedAt,
         });
         if (receipt.alreadyState) {
@@ -659,17 +700,20 @@ export class ProjectCoordinationHttpService {
           const latestPolicyVersion = await store.policyVersion(input.projectId).catch(
             () => currentPolicyVersion,
           );
-          return this.refused(wireCode, observedAt, {
+          throw new TransactionalProjectCoordinationRefusal(this.refused(wireCode, observedAt, {
             expectedCoordinatorVersion: currentCoordinatorVersion,
             expectedPolicyVersion: latestPolicyVersion,
             expectedConflictsVersion: currentConflictsVersion,
             expectedAttentionVersion: currentAttentionVersion,
-          },
-          input.projectId);;
+          }, input.projectId));
         }
         throw error;
       }
-    });
+      });
+    } catch (error: unknown) {
+      if (error instanceof TransactionalProjectCoordinationRefusal) return error.outcome;
+      throw error;
+    }
   }
 
   /** Store bound to the ambient transaction session when it offers one. */
