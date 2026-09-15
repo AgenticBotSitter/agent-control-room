@@ -78,6 +78,7 @@ let browser;
 let context;
 let application;
 let disposable;
+let assets = null;
 const posts = [];
 let launchReusedExistingBrowser = false;
 
@@ -130,13 +131,16 @@ async function assertNoOverflow(page, label) {
 
 try {
   disposable = await fixture();
-  const assets = await loadPrivateClientAssets(await realpath("dist-vps/client"));
+  const clientAssetsRoot = await realpath("dist-vps/client");
+  assets = await loadPrivateClientAssets(clientAssetsRoot);
   application = installPrivateWebProcess({ origin, ...trust,
     tenantId: "tenant:web", workspaceId: "workspace:web",
     database: { client: disposable.client, close: () => disposable.db.close() },
     clock: () => now, loadKeys: async () => trust.keys });
 
   // Reuse an already-running browser if one is around (operator-driven runs).
+  // This is optional: the default behavior is to launch a fresh owned
+  // Chromium process and clean it up ourselves.
   const existingEndpoint = process.env.PLAYWRIGHT_WS_ENDPOINT;
   if (existingEndpoint) {
     browser = await playwright.chromium.connect(existingEndpoint);
