@@ -362,8 +362,23 @@ async function mountTaskResults(options: { search?: string; canReadContent?: boo
   }) as typeof fetch;
   const root = createRoot(dom.window.document.getElementById("root")!);
   const { act } = React;
+  // `act` flushes React's own queued work, but the panel's load is a chain of
+  // protected reads it never hands back to the caller: the authorized list,
+  // then -- when a file is selected -- that file's content. A single flush can
+  // return while a read is still in flight, leaving the panel on "Loading
+  // protected results and review…" or "Reading protected result…". Flush
+  // repeatedly until the panel has settled into the state an assertion is
+  // about, so no assertion races those reads on a slower or loaded machine.
+  const settle = async (ready: () => boolean) => {
+    for (let attempt = 0; attempt < 200 && !ready(); attempt += 1) await act(async () => {});
+  };
+  const idle = () => {
+    const text = dom.window.document.body.textContent ?? "";
+    return !text.includes("Loading protected results and review…") && !text.includes("Reading protected result…");
+  };
   await act(async () => { root.render(React.createElement(PrivateTaskResults,
     { projectId: "project:test", jobId: "job:test", reviewWorkspace: {} as never })); });
+  await settle(idle);
   const restore = async () => {
     // The panel installs a 30s poll, a window listener and in-flight fetches.
     // Unmount inside act so its cleanup aborts them, then let the aborted
@@ -377,7 +392,7 @@ async function mountTaskResults(options: { search?: string; canReadContent?: boo
       else delete (globalThis as Record<string, unknown>)[key];
     }
   };
-  return { dom, root, act, requests, artifacts, restore,
+  return { dom, root, act, requests, artifacts, restore, settle, idle,
     contentRequests: () => requests.filter(url => /\/results\/[^/?]+$/.test(url)) };
 }
 
@@ -415,7 +430,10 @@ test("a background refresh does not move focus into the open result", async () =
     // keyboard user would be yanked back to the top of the result every poll.
     (region as HTMLElement).blur();
     await mounted.act(async () => { mounted.dom.window.dispatchEvent(new mounted.dom.window.Event("focus")); });
-    await mounted.act(async () => {});
+    // The reload clears content before re-reading it, so wait for the reread to
+    // finish rather than inspecting the panel mid-refresh.
+    await mounted.settle(() => mounted.idle()
+      && Boolean(mounted.dom.window.document.querySelector(".private-result-content")));
     const reopened = mounted.dom.window.document.querySelector(".private-result-content");
     assert.ok(reopened);
     assert.notEqual(mounted.dom.window.document.activeElement, reopened);
@@ -443,9 +461,11 @@ test("back and forward move the open file, not just the scroll position", async 
   try {
     const openers = [...mounted.dom.window.document.querySelectorAll("button")]
       .filter(button => button.textContent === "Read result");
+    const body = () => mounted.dom.window.document.body.textContent ?? "";
     await mounted.act(async () => { openers[0]!.click(); });
     assert.equal(new URL(mounted.dom.window.location.href).searchParams.get("result"), "artifact:one");
-    assert.match(mounted.dom.window.document.body.textContent ?? "", /artifact:one PROTECTED RESULT TEXT/);
+    await mounted.settle(() => /artifact:one PROTECTED RESULT TEXT/.test(body()));
+    assert.match(body(), /artifact:one PROTECTED RESULT TEXT/);
 
     // Simulate Back: the URL loses the selection and popstate fires.
     mounted.dom.window.history.replaceState(null, "",
@@ -453,7 +473,10 @@ test("back and forward move the open file, not just the scroll position", async 
     await mounted.act(async () => {
       mounted.dom.window.dispatchEvent(new mounted.dom.window.PopStateEvent("popstate"));
     });
-    assert.doesNotMatch(mounted.dom.window.document.body.textContent ?? "", /PROTECTED RESULT TEXT/);
+    // The close is queued as a microtask and the list is read again, so the
+    // removal is not on the dispatch's own tick either.
+    await mounted.settle(() => !/PROTECTED RESULT TEXT/.test(body()));
+    assert.doesNotMatch(body(), /PROTECTED RESULT TEXT/);
   } finally { await mounted.restore(); }
 });
 
