@@ -84,6 +84,16 @@ the exact blocker on GitHub and inspect independent candidates. Do not retry an
 unchanged refusal. Host sleep, missing login and exhausted provider access must remain
 visible interruptions; a notification watcher alone cannot resolve them.
 
+Follow docs/DAILY_BUILD_ACTIVITY.md for measurement. Keep bounded timestamped intervals
+for building, testing, reviewing, managing, idle, blocked and offline; missing history
+is unknown. Record the actual model/effort or unknown, and split when it changes. Stop
+active timing before a wait. Batch new intervals into normal progress, blocker and
+handoff comments (at least every two hours during a long active session), not extra
+30-minute heartbeat comments. Report declared availability only when known, and report
+exact token counts only when exposed by the provider. Never infer time between polls.
+Timing reports neither grant authority nor add a submission gate. Name the concrete
+reason for idle/blocked time so the lead can fix the right bottleneck on GitHub.
+
 Return a short status containing: current assignment and state, exact commit, outcome
 completed, checks and independent-review result, unresolved material blocker, and the
 single GitHub link where the next actor should continue.

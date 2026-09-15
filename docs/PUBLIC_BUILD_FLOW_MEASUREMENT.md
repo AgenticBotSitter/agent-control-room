@@ -100,6 +100,11 @@ there are at least five accepted, comparable outcomes on each side.
 
 ## Improvement loop
 
+The [daily activity procedure](DAILY_BUILD_ACTIVITY.md) extends this report with
+per-worker elapsed-day and declared-availability percentages, explicit idle/blocked/
+offline/unknown time, and a two-hour diagnosis/action/result loop. It reuses the cost
+and outcome reports below; it does not infer idle time from missing work reports.
+
 At least daily, and after any idle night:
 
 1. Find the largest avoidable waiting bucket.

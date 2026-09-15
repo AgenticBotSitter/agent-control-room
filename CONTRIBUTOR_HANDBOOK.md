@@ -358,6 +358,13 @@ watchers never count as active work. The daily coverage and bottleneck rules are
 
 Full worker/reviewer/lead cost comparison lives in the contribution-metrics report:
 
+For daily per-worker work/idle/blocked/unknown percentages and the two-hour improvement
+loop, follow [Daily build activity](docs/DAILY_BUILD_ACTIVITY.md). Include bounded
+activity batches in normal progress/handoff updates, with the actual model and effort.
+This is reporting, not a new claim or acceptance gate; missing telemetry is unknown,
+never grounds to reject useful code. The lead records its own direct-build, review and
+coordination time under the same rules.
+
 ```sh
 pnpm model:costs
 pnpm model:costs -- --json
