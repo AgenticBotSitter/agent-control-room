@@ -93,6 +93,20 @@ function emptyAssignment() {
   return { issues: [], comments: {} };
 }
 
+test("installed watcher signals newly ready work even when the worker owns nothing", async t => {
+  const runtimeRoot = scratch(t);
+  const api = fakeGithub();
+  const options = { workerId: WORKER_ID, repository: REPOSITORY_NAME, runtimeRoot, fetchImpl: api.fetchImpl };
+  assert.equal((await runTick({ options, now: CLOCK })).notified, false);
+  api.holder.issues = [{ ...githubIssue(208, ["status:ready", "platform:any"]), body:
+    `<!-- acr-public-work:v1 ${JSON.stringify({ target: "main", base: "a".repeat(40), writeScopes: ["src/ideas/**"], dependencies: [], checks: ["pnpm check"], risk: "ordinary", effects: "none", leaseHours: 24 })} -->` }];
+  const discovered = await runTick({ options, now: CLOCK });
+  assert.equal(discovered.notified, true);
+  assert.deepEqual(discovered.observed.states, ["208:ready-candidate"]);
+  assert.equal((await runTick({ options, now: CLOCK })).notified, false);
+  assert.ok(api.calls.every(call => call.method === "GET"));
+});
+
 // A controller record in the shape the accepted client treats as authoritative. Trust comes
 // from the controller bot identity, never from repository membership.
 function controllerComment(body) {

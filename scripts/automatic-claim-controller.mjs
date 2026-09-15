@@ -1141,7 +1141,7 @@ const parsePair = pair => {
 const EXPIRED_MARKER_PATTERN = /<!--\s*agent-control-room-claim:v3\s+issue=(\d+)\s+expired=(\d+)\s+action=([a-z-]+)(?:\s+reason=([a-z_]+))?(?:\s+actor=([^\s]+)\s+worker=([^\s]+))?(?:\s+packet=([a-f0-9]{64}))?\s*-->/;
 
 /** Read-only parse of expiry markers; only open-PR expiries carry a packet hash. */
-const parseExpiredMarker = body => {
+export const parseExpiredMarker = body => {
   if (typeof body !== "string") return undefined;
   const match = EXPIRED_MARKER_PATTERN.exec(body);
   if (!match) return undefined;

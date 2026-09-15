@@ -4,6 +4,18 @@ A small, read-only watcher that runs the accepted public worker inbox on a sched
 tells you when your assigned action changes. It exists so an operator stops re-checking the
 queue by hand while a review is pending.
 
+It now also signals when Ready offers appear or change, even if this worker has no
+assignment. `ready-candidate` means inspect and request a claim; `queue-blocked` means
+the maintainer must repair the packet, labels or open dependencies. All platforms are
+shown so missing capability information never silently hides work. The worker chooses
+based on the full assignment; the claim controller makes the reservation decision.
+
+Existing scheduler commands pick up this behavior when their checkout receives the
+merged update. Use a fast-forward update only on a clean watcher checkout. Preserve
+active implementation branches. A continuously running Node watcher must be restarted
+through its existing approved supervisor after updating; scheduled one-shot runs read
+the updated code on their next invocation. No new scheduler installation is required.
+
 It reuses [`scripts/public-worker-inbox.mjs`](../../../scripts/public-worker-inbox.mjs) as
 the only GitHub client. It does not implement a second queue client, and it never writes to
 GitHub: every request it makes is a `GET`.

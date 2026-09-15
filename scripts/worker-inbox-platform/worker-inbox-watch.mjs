@@ -125,7 +125,7 @@ export async function runTick({ options, reader = readWorkerInbox, token, now = 
   let actions;
   try {
     actions = await reader({
-      workerId: options.workerId, repository: options.repository, token, fetchImpl: options.fetchImpl,
+      workerId: options.workerId, repository: options.repository, token, fetchImpl: options.fetchImpl, includeReady: true,
     });
   } catch (error) {
     const message = redactSecrets(error?.message ?? "worker_inbox_platform_failure", secrets);

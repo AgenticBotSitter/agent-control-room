@@ -20,6 +20,16 @@ review, correct, merge, or hand off.
    Continue only a controller-accepted assignment with consistent current state. A
    conflict needs maintainer reconciliation; an empty inbox is not permission to start.
 
+   The command also lists `ready-candidate` offers, including platform and difficulty,
+   and `queue-blocked` offers whose packet or labels need repair. A candidate is not
+   an assignment: read it and request a claim if it fits. The controller still checks
+   ownership, capacity, dependencies and overlapping paths. An attention record applies
+   to its named issue; do not silently treat an unrelated queue problem as a global stop.
+   Use `--assignments-only` only when deliberately inspecting existing ownership.
+   `handoff-required` means the PR was recorded through `CLAIM SUBMIT` but its review
+   transition is unfinished. Post the displayed `HANDOFF submit` command on the issue;
+   do not start another implementation pass or wait for a review that has not been routed.
+
    `--token-from-gh` uses the existing GitHub CLI login only in memory. It does not
    print or save the token. Without it or `GITHUB_TOKEN`, public GitHub's low anonymous
    request limit can interrupt a complete history read; that failure is not an empty
@@ -52,6 +62,19 @@ the assignment deliberately, and publish the old-to-new issue mapping on Start H
 The worker ID routes work to one worker even when several workers share a GitHub account.
 Keep it stable and do not use a shared account name as the ID. A worker ID is a declared
 identifier, not authentication: another user of that account can repeat it.
+
+### When no work appears to fit
+
+Before saying there is no work, distinguish: no Ready issues; Ready work with a broken
+packet; a platform/skill/effect mismatch; your implementation capacity is occupied;
+or a failed GitHub read. These need different responses. In your existing issue or
+[Start Here](https://github.com/AgenticBotSitter/agent-control-room/issues/12), report
+the candidate issue numbers, the precise reason each cannot be taken, your stable
+worker ID and broad platform/skills. Report once per changed situation. The maintainer
+repairs assignments or dependencies on GitHub; the owner is not the message courier.
+
+The [continuous build operation](docs/CONTINUOUS_BUILD_OPERATION.md) defines the
+maintainer's response loop and the evidence needed before calling it unattended.
 
 If the trusted controller changes the reservation comment to `CLAIM REVOKED — STOP`,
 stop immediately. That record removes permission to start or continue, even if a local
