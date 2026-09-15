@@ -103,6 +103,13 @@ test('maintainer can adopt a legacy correction whose review predates the PR issu
     'Correct the reviewed failures and add the exact Control-Room-Issue line.', { claimWorkerId: 'worker-01' }));
   assert.equal(result.state, 'changes-required');
   assert.equal(parseHandoff(f.comments.find(comment => comment.id === result.commentId)).pr, 2);
+  const acknowledged = await f.run(f.eventFor('acknowledge', 'builder', result.commentId));
+  assert.equal(parseHandoff(f.comments.find(comment => comment.id === acknowledged.commentId)).acknowledged, true);
+  f.pr.head.sha = 'b'.repeat(40);
+  await assert.rejects(f.run(f.eventFor('resubmit', 'builder', acknowledged.commentId)), /pr_issue_mismatch/);
+  f.pr.body = 'Control-Room-Issue: 1';
+  const resubmitted = await f.run(f.eventFor('resubmit', 'builder', acknowledged.commentId));
+  assert.equal(resubmitted.state, 're-review');
 });
 
 test('legacy adoption without a PR issue line requires exact prior PR and head evidence', async () => {
