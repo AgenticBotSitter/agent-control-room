@@ -1168,14 +1168,14 @@ export function createProjectCoordinationCanonicalStoreAdapterV1(options: {
       const conflicts = await openConflicts(projectId);
       return ledgerRevision(conflicts.map((c) =>
         [c.ledgerId, c.conflictingAdmissionId, c.conflictingJobId, c.conflictingLeaseId,
-          c.repository, c.resourcePath, c.reasonCode, c.raisedAt].join("|")));
+          c.repository, c.resourceKind, c.resourcePath, c.reasonCode, c.raisedAt].join("|")));
     },
     async attentionVersion(projectId) {
       // Same list the page surfaces: version and payload cannot disagree.
       // Only persisted fields enter the digest (see ledgerRevision).
       const items = await attentionList(projectId);
       return ledgerRevision(items.map((a) =>
-        [a.attentionId, a.category, a.ownerQuestion, a.observedAt].join("|")));
+        [a.attentionId, a.category, a.ownerQuestion, a.observedAt, a.referencedJobId ?? ""].join("|")));
     },
     async readActiveWork(projectId) {
       // Only coordinator-adopted jobs: the INNER JOINs through the operation
