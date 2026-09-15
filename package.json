@@ -50,7 +50,7 @@
     "test:build-profile": "node --import tsx --test tests/vps-build-profile.test.ts tests/private-vps-launcher.test.mjs",
     "db:verify": "node scripts/verify-migration-ledger.mjs",
     "db:ledger": "node scripts/generate-migration-ledger.mjs",
-    "test:postgres-production": "node --test tests/postgres-production-ledger.test.mjs && PG_BIN=\"${PG_BIN:-/usr/lib/postgresql/17/bin}\" node --import tsx --test --test-concurrency=1 tests/postgres-production-lifecycle.test.mjs"
+    "test:postgres-production": "node --test tests/postgres-production-ledger.test.mjs && PG_BIN=\"${PG_BIN:-/usr/lib/postgresql/17/bin}\" node --import tsx --test --test-concurrency=1 tests/postgres-production-lifecycle.test.mjs tests/postgres-production-coordination.test.mjs"
   },
   "dependencies": {
     "@mozilla/readability": "0.6.0",

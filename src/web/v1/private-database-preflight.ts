@@ -35,7 +35,14 @@ const inserts = new Set(["control_web_sessions", "adapter_registry", "projects",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
   "control_jobs", "control_web_task_commands", "control_completion_gate_records", "control_web_task_review_commands", "control_news_source_settings", "control_news_story_archives",
   "control_policy_decisions", "control_project_lifecycle_events", "control_project_coordinator_heads",
-  "control_project_delegation_policies", "control_idempotency"]);
+  "control_project_delegation_policies"]);
+
+/** Tables whose INSERT grant is column-scoped rather than table-wide. Every
+ * listed column must carry INSERT and every unlisted column must not — a
+ * table-wide INSERT grant on one of these tables fails the check. */
+export const privateWebInsertColumns: Record<string, readonly string[]> = {
+  control_idempotency: ["tenant_id", "operation_scope", "idempotency_key", "request_digest", "status"],
+};
 const updates: Record<string, readonly string[]> = {
   control_identities: ["web_lock"], control_role_grants: ["web_lock"], workspaces: ["web_lock"],
   control_connection_registry_heads: ["web_lock"], control_web_sessions: ["revoked_at"],
@@ -322,8 +329,12 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
         FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid
         WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','f') AND a.attnum>0 AND NOT a.attisdropped`)).rows;
       const reads: ReadonlySet<string> = new Set(allowedReads);
+      // Column-scoped INSERT grants (currently the web role's idempotency
+      // ledger): listed columns must carry INSERT, unlisted must not.
+      const scopedInserts = kind === "web" ? privateWebInsertColumns : {};
       if (!columns.length || columns.some(c => c.extra || c.read !== reads.has(c.table_name)
-        || c.insert !== allowedInserts.has(c.table_name) || c.update !== !!allowedUpdates[c.table_name]?.includes(c.column_name))) fail();
+        || c.insert !== (allowedInserts.has(c.table_name) || !!scopedInserts[c.table_name]?.includes(c.column_name))
+        || c.update !== !!allowedUpdates[c.table_name]?.includes(c.column_name))) fail();
       if (await readPrivateWebSchemaDigest(tx) !== privateWebSchemaDigest) fail();
       const binding = (await tx.query<{ valid: boolean }>(`SELECT EXISTS(SELECT 1 FROM workspaces w
         JOIN control_identities i ON i.tenant_id=w.tenant_id JOIN control_role_grants g ON g.tenant_id=i.tenant_id AND g.identity_id=i.id

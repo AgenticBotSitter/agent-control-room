@@ -79,4 +79,12 @@ test("the restricted private-web role appoints a coordinator and cannot exceed i
   await assert.rejects(
     db.query("UPDATE control_idempotency SET request_digest='sha256:${\"0\".repeat(64)}' WHERE true"),
     /permission denied|not permitted/);
+  // Column-scoped INSERT: smuggling result/completed_at into a fresh receipt
+  // is refused, while the granted five-column shape still works.
+  await assert.rejects(
+    db.query(`INSERT INTO control_idempotency(tenant_id,operation_scope,idempotency_key,request_digest,status,result)
+      VALUES('tenant:test','project-coordinator-lifecycle','smuggle-1','sha256:${"d".repeat(64)}','processing','{}')`),
+    /permission denied|not permitted/);
+  await db.query(`INSERT INTO control_idempotency(tenant_id,operation_scope,idempotency_key,request_digest,status)
+    VALUES('tenant:test','project-coordinator-lifecycle','allowed-1','sha256:${"e".repeat(64)}','processing')`);
 });

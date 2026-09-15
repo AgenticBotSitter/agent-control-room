@@ -42,9 +42,12 @@ GRANT INSERT ON control_web_sessions, adapter_registry, projects, control_manual
 GRANT INSERT ON control_project_coordinator_heads, control_project_delegation_policies
   TO control_room_private_web;
 -- Coordinator lifecycle idempotency ledger: exact-match replay before any
--- head mutation. SELECT + INSERT + completion columns only; the key, scope
--- and request digest are immutable after insert.
-GRANT SELECT, INSERT ON control_idempotency TO control_room_private_web;
+-- head mutation. SELECT plus the five inserted columns plus the completion
+-- update; INSERT is column-scoped so the role can never smuggle
+-- result/completed_at values into a fresh receipt.
+GRANT SELECT ON control_idempotency TO control_room_private_web;
+GRANT INSERT (tenant_id, operation_scope, idempotency_key, request_digest, status)
+  ON control_idempotency TO control_room_private_web;
 GRANT UPDATE (status, result, completed_at) ON control_idempotency TO control_room_private_web;
 -- Tenant existence lock for the lifecycle transaction. The web path never
 -- mutates the tenant row; SELECT covers the read, UPDATE the row lock.

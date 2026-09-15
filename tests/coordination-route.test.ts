@@ -35,6 +35,7 @@ import { adaptPglite } from "../src/persistence/database";
 import { sha256Digest } from "../src/security/digest";
 import { SecurityStore } from "../src/security/security-store";
 import { createAccessVerifier, type AccessTrust } from "../src/web/v1/access-verifier";
+import { createCoordinationHttpHandler } from "../src/web/v1/coordination-http";
 import { createPrivateWebProcess } from "../src/web/v1/private-process";
 import type { ProjectCoordinationCanonicalStoreAdapter } from "../src/web/v1/project-coordination-http";
 import type { ProjectCoordinationCanonicalPortV1 } from "../src/project-coordination/v1/services";
@@ -702,6 +703,46 @@ test("policy pause, resume, and revoke POSTs are refused at the route before any
   }
   // Suspended at the route until #220: no policy service call ran.
   assert.equal(policyCalls, 0);
+});
+
+test("policy POSTs never reach the service facade: direct spy on the handler service", async () => {
+  // The integration test above proves the canonical adapter is untouched.
+  // This test proves the stronger property: the route refuses before
+  // invoking options.service.pause/resume/revokeDelegationPolicy at all.
+  // A facade that called through to the adapter (or refused late) would
+  // increment the counters and fail here.
+  let facadeCalls = 0;
+  const bomb = (name: string) => async (): Promise<never> => {
+    facadeCalls += 1;
+    throw new Error(`service facade must not run during suspension: ${name}`);
+  };
+  const stubService = {
+    pauseDelegationPolicy: bomb("pause"),
+    resumeDelegationPolicy: bomb("resume"),
+    revokeDelegationPolicy: bomb("revoke"),
+  } as unknown as Parameters<typeof createCoordinationHttpHandler>[0]["service"];
+  const handle = createCoordinationHttpHandler({
+    origin: FIXTURE_ORIGIN,
+    trust: makeTrust(FIXTURE_NOW),
+    service: stubService,
+    clock: () => FIXTURE_NOW,
+  });
+  const token = makeToken(FIXTURE_NOW, "test-app");
+  for (const subaction of ["pause-policy", "resume-policy", "revoke-policy"]) {
+    const response = await handle(new Request(`${FIXTURE_ORIGIN}/api/v1/projects/project:example/coordination/${subaction}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "cf-access-jwt-assertion": token,
+        "idempotency-key": `policy-spy01`,
+        "origin": FIXTURE_ORIGIN,
+      },
+      body: JSON.stringify({ policyId: "policy:test" }),
+    }));
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), { error: "access_denied" });
+  }
+  assert.equal(facadeCalls, 0);
 });
 
 test("reconstructed handler returns the saved receipt — restart loses no retry safety", async (t) => {

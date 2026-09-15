@@ -489,6 +489,7 @@ test("page content and versions come from one repeatable-read snapshot", async (
   // instead of trusting the implementation.
   const txFirstStatements: string[] = [];
   let plainTxCount = 0;
+  let snapshotIsolation: string | null = null;
   const wrappedClient: DatabaseClient = {
     query: (statement, params) => f.client.query(statement, params),
     transactionWithPreCommitCheck: (callback, check) =>
@@ -497,9 +498,16 @@ test("page content and versions come from one repeatable-read snapshot", async (
       plainTxCount += 1;
       let first: string | null = null;
       const wrappedSession = {
-        query: <T = Record<string, unknown>>(statement: string, params?: unknown[]) => {
+        query: async <T = Record<string, unknown>>(statement: string, params?: unknown[]) => {
           if (first === null) first = statement;
-          return session.query<T>(statement, params);
+          const result = await session.query<T>(statement, params);
+          if (/SET TRANSACTION ISOLATION LEVEL/i.test(statement)) {
+            // Prove the level took effect inside the same transaction the
+            // page queries run in — not just that a SET string was sent.
+            const shown = await session.query<{ transaction_isolation: string }>("SHOW transaction_isolation");
+            snapshotIsolation = shown.rows[0]?.transaction_isolation ?? null;
+          }
+          return result;
         },
       };
       try {
@@ -520,6 +528,7 @@ test("page content and versions come from one repeatable-read snapshot", async (
   // plain transaction — the page snapshot — must compose the whole page.
   assert.equal(plainTxCount, 1);
   assert.match(txFirstStatements[0] ?? "", /SET TRANSACTION ISOLATION LEVEL REPEATABLE READ/);
+  assert.equal(snapshotIsolation, "repeatable read");
   // The snapshot still serves the real saved content and versions.
   assert.equal(page.attention.length, 2);
   assert.ok(page.versions.attentionVersion > 0);
