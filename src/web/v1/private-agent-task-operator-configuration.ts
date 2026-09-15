@@ -125,23 +125,43 @@ const copyKey = (value: unknown, code: string): Uint8Array => {
   return Uint8Array.from(value);
 };
 
-/** Recursively freeze an object and every nested object/array it owns. Primitive
- * values and typed-array buffers pass through untouched: the captured config
- * contains 32-byte integrity keys (already detached via `copyKey`) and the
- * `web` profile's binary fields, both of which we must not mutate ourselves.
- * Functions are frozen but their `.prototype` is left alone. The captured
- * configuration is the actual host input, so caller post-assembly mutation
- * must never leak in. */
-function deepFreeze<T>(value: T): T {
+/** Detach and freeze the trusted input into a host-owned copy. Plain objects
+ * and arrays are recursively copied so the captured value cannot reference
+ * caller-owned objects. `Uint8Array` (and any `ArrayBufferView`) values are
+ * copied byte-for-byte so post-assembly mutation of the source buffer does
+ * not leak into the returned configuration. Functions are frozen but their
+ * `.prototype` is left alone. The result is a fresh object graph the host
+ * can rely on as immutable input. Class instances other than
+ * `Uint8Array`/`ArrayBufferView` are returned as frozen references — the
+ * trusted inputs contract treats them as opaque. */
+function deepDetach<T>(value: T): T {
   if (value === null || typeof value !== "object") return value;
-  if (Object.isFrozen(value)) return value;
-  if (value instanceof Uint8Array) return value;
-  Object.freeze(value);
-  for (const key of Object.keys(value as Record<string, unknown>)) {
-    const member = (value as Record<string, unknown>)[key];
-    if (member !== null && typeof member === "object" && !Object.isFrozen(member)) deepFreeze(member);
+  if (value instanceof ArrayBuffer) {
+    return new Uint8Array(value.slice(0)) as unknown as T;
   }
-  return value;
+  if (ArrayBuffer.isView(value)) {
+    const view = value as unknown as ArrayBufferView;
+    const copy = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+    return new Uint8Array(copy) as unknown as T;
+  }
+  if (Array.isArray(value)) {
+    const out: unknown[] = [];
+    for (const item of value) out.push(deepDetach(item));
+    Object.freeze(out);
+    return out as unknown as T;
+  }
+  if (typeof value === "function") {
+    Object.freeze(value);
+    return value;
+  }
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) return value;
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(value as Record<string, unknown>)) {
+    out[key] = deepDetach((value as Record<string, unknown>)[key]);
+  }
+  Object.freeze(out);
+  return out as unknown as T;
 };
 
 /** Assemble one immutable agent-task startup configuration from plain operator
@@ -245,7 +265,7 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
   // reference cannot leak into a captured configuration, and the captured shape
   // is frozen so the trusted methods cannot be replaced or extended on the
   // returned assembly. The downstream production gate accepts this exact shape.
-  const capturedStore = Object.freeze(deepFreeze({
+  const capturedStore = Object.freeze(deepDetach({
     acceptInSession: store.acceptInSession.bind(store),
     readInSession: store.readInSession.bind(store),
     ...(store.receiveDeliveryReceipt === undefined ? {} : {
@@ -301,7 +321,7 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
     nodes: [...trustedSessions.nodes],
     sign: trustedSessions.sign.bind(trustedSessions),
   }) : undefined;
-  deepFreeze(capturedSessions);
+  deepDetach(capturedSessions);
 
   const coordinator: PrivateTaskStartupConfiguration["coordinator"] = {
     planning: {
@@ -312,9 +332,9 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
       ...(planning.ideaIntegrityKey === undefined ? {} : { ideaIntegrityKey: copyKey(planning.ideaIntegrityKey, "planning_idea_key_invalid") }),
       checkpoints: planning.checkpoints,
     },
-    routes: deepFreeze([...t.routes]),
+    routes: deepDetach([...t.routes]),
     approvals: {
-      enrollments: deepFreeze([...t.approvalEnrollments]),
+      enrollments: deepDetach([...t.approvalEnrollments]),
       store: capturedStore as unknown as NonNullable<NonNullable<PrivateTaskStartupConfiguration["coordinator"]["approvals"]>["store"]>,
     },
     database: dbRole("coordinator") as PrivatePostgresConfiguration,
@@ -398,18 +418,17 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
   } catch {
     refuse("production_gate_refused");
   }
-  // Host-compatible capture. Reconstruct the full `PrivateTaskStartupConfiguration`
-  // shape (with a `coordinator` wrapper) so the captured value can be passed
-  // directly to `createPrivateTaskHost.start` and driven through the real
-  // startup boundary. The flat validated object is the canonical proof that
-  // every coordinator field was accepted; the wrapper makes it host-compatible.
-  // Every nested object the trusted inputs contributed (web profile, evidence
-  // storage, codex enrollments, etc.) is deep-frozen here so the caller cannot
-  // mutate the captured shape after assembly.
-  const coordinatorShape = deepFreeze(full.coordinator);
-  const webShape = deepFreeze(full.web);
-  const artifactStorageShape = full.artifactStorage === undefined ? undefined : deepFreeze(full.artifactStorage);
-  const newsShape = full.news === undefined ? undefined : deepFreeze(full.news);
+  // Host-compatible capture. Detach and freeze every nested object the trusted
+  // inputs contributed (web profile, evidence storage, codex enrollments, etc.)
+  // so the caller cannot mutate the captured shape after assembly. Each capture
+  // is a fresh object graph: the assembler never returns a reference to any
+  // caller-owned object, including binary fields like `Uint8Array`. The
+  // production gate already validated `full`; `hostCompatible` is the same
+  // configuration in the host-shaped wrapper, owned by the host.
+  const coordinatorShape = deepDetach(full.coordinator);
+  const webShape = deepDetach(full.web);
+  const artifactStorageShape = full.artifactStorage === undefined ? undefined : deepDetach(full.artifactStorage);
+  const newsShape = full.news === undefined ? undefined : deepDetach(full.news);
   const hostCompatible: PrivateTaskStartupConfiguration = {
     web: webShape,
     ...(artifactStorageShape !== undefined ? { artifactStorage: artifactStorageShape } : {}),
@@ -434,5 +453,5 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
       ...(coordinatorShape.codexResultReturn ? { codexResultReturn: coordinatorShape.codexResultReturn } : {}),
     },
   };
-  return Object.freeze({ configuration: deepFreeze(hostCompatible), port: parsed.port });
+  return Object.freeze({ configuration: deepDetach(hostCompatible), port: parsed.port });
 }

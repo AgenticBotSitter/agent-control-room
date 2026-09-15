@@ -851,3 +851,77 @@ test("the operator assembler performs no environment, filesystem or network acce
   assert.deepEqual([...after.configuration.coordinator.quality!.integrityKey],
     [...before.configuration.coordinator.quality!.integrityKey]);
 });
+
+test("byte mutation of the original web harness integrity key after assembly does not leak into the captured web profile", () => {
+  const { settings, trusted } = operatorConfigurationScenario("full");
+  const web = trusted.web as unknown as {
+    tasks: { harnessIntegrityKey: Uint8Array };
+    [key: string]: unknown;
+  };
+  const originalFirstByte = web.tasks.harnessIntegrityKey[0];
+  const captured = assemblePrivateAgentTaskOperatorConfiguration(settings, trusted);
+  const capturedKey = captured.configuration.coordinator.quality!.harnessIntegrityKey;
+  const capturedFirstByte = capturedKey[0];
+  // Mutate the caller's original key bytes and the trusted-web reference AFTER
+  // assembly; the captured configuration's key bytes must not change.
+  web.tasks.harnessIntegrityKey.fill(99, 0, 1);
+  web.tasks = { ...web.tasks, harnessIntegrityKey: Uint8Array.from([0xaa, 0xbb, 0xcc]) };
+  assert.equal(capturedKey[0], capturedFirstByte,
+    "captured harness integrity key byte must not change after caller mutation of the original buffer");
+  assert.equal(capturedKey[0], originalFirstByte,
+    "captured harness integrity key byte must equal the original at assembly time");
+  assert.equal(web.tasks.harnessIntegrityKey[0], 0xaa,
+    "sanity: caller mutation took effect on the trusted reference");
+  assert.notEqual(capturedKey, web.tasks.harnessIntegrityKey,
+    "the captured key must not be the caller's Uint8Array reference");
+});
+
+test("mutable nested object under a shallow-frozen caller input is detached into the captured configuration", () => {
+  // The host provider may pre-emptively Object.freeze the trusted.web it hands
+  // to the assembler; the assembler must still produce a captured profile that
+  // cannot be reached through the caller's input. Simulate the shallow-freeze
+  // pattern (the producer froze the top object but didn't recurse into a
+  // nested object that still owns a mutable integrity key buffer) and prove
+  // the assembler produces a fresh graph, not a reference.
+  const { settings, trusted } = operatorConfigurationScenario("full");
+  const web = trusted.web as unknown as {
+    tasks: { harnessIntegrityKey: Uint8Array };
+    [key: string]: unknown;
+  };
+  // Shallow-freeze the parent only — leave nested objects and Uint8Array
+  // buffers fully mutable.
+  Object.freeze(web.tasks as object);
+  const captured = assemblePrivateAgentTaskOperatorConfiguration(settings, trusted);
+  const capturedFirst = captured.configuration.coordinator.quality!.harnessIntegrityKey[0];
+  // Mutate through the caller-facing surface. The captured value must not
+  // observe any of these mutations.
+  web.tasks.harnessIntegrityKey.fill(0x77, 0, 1);
+  assert.equal(captured.configuration.coordinator.quality!.harnessIntegrityKey[0], capturedFirst,
+    "captured key byte must not change under a shallow-frozen caller input");
+});
+
+test("idea runtime database majorVersion mismatch refuses with idea_runtime_role_mismatch:major_version", () => {
+  // Build a matching runtime then declare the same role with one majorVersion
+  // off. The assembler must refuse before the production gate sees it.
+  const { settings, trusted } = operatorConfigurationScenario("full");
+  const features = settings.features as unknown as Record<string, boolean>;
+  if (!features.idea) features.idea = true;
+  const roles = settings.databaseRoles as unknown as Record<string, unknown>;
+  const coordinator = roles.coordinator as { host: string; port: number; database: string; username: string;
+    password: Uint8Array; majorVersion: 17 };
+  const runtimeUsername = "idea_runtime_major_role";
+  // Declared role and runtime database agree on host/port/database/username/password;
+  // the only drift is majorVersion. That must refuse with the version-specific
+  // code, not with the generic declared or password check.
+  roles.ideaRuntime = { host: coordinator.host, port: coordinator.port, database: coordinator.database,
+    username: runtimeUsername, password: coordinator.password, majorVersion: 16 as unknown as 17 };
+  (trusted as unknown as { idea: unknown }).idea = {
+    creation: { integrityKey: new Uint8Array(32), participants: [] },
+    runtime: { database: { host: coordinator.host, port: coordinator.port, database: coordinator.database,
+      username: runtimeUsername, password: coordinator.password, majorVersion: 17 as 17 } },
+    driver: { mode: "hermes_bot_mode_filtered" }, harness: "hermes",
+  };
+  assert.throws(
+    () => assemblePrivateAgentTaskOperatorConfiguration(settings, trusted),
+    /idea_runtime_role_mismatch:major_version/);
+});
