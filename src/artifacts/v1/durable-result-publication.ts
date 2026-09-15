@@ -114,26 +114,23 @@ const durableReservationIdentitySchemaV1 = z.object({
   schema: z.literal("control-room.durable-result-write-reservation-identity/v1"),
   tenantId: localId, projectId: localId, jobId: localId, attemptId: localId, runId: localId, nodeId: localId,
   artifactId: z.string().regex(/^artifact:result:[a-f0-9]{64}$/),
-  harness: z.enum(["native", "codex"]),
+  // Harness is a publisher-supplied tag identifying the connector that produced
+  // the result. The publisher contract is harness-neutral: any string is
+  // accepted, and every harness-specific evidence field is optional. Built-in
+  // harnesses use "native" or "codex" with their respective evidence; future
+  // connectors (third-party adapters, plugin harnesses, internal tooling) are
+  // not forced to impersonate either. The connector profile digest is the
+  // binding identity; the harness tag is a label, not a gate.
+  harness: z.string().min(1).max(64),
   workflowId: localId,
   connectorProfileDigest: digestSchema,
-  snapshotDigest: digestSchema.nullable(),
-  snapshotVersion: z.number().int().positive().nullable(),
-  publicationContractDigest: digestSchema.nullable(),
-  terminalEvidenceDigest: digestSchema.nullable(),
-  threadId: localId.nullable(), turnId: localId.nullable(), itemId: localId.nullable(),
+  snapshotDigest: digestSchema.optional(),
+  snapshotVersion: z.number().int().positive().optional(),
+  publicationContractDigest: digestSchema.optional(),
+  terminalEvidenceDigest: digestSchema.optional(),
+  threadId: localId.optional(), turnId: localId.optional(), itemId: localId.optional(),
   contentHash: digestSchema, sizeBytes: z.number().int().min(0).max(65_536),
-}).strict().superRefine((value, context) => {
-  const nativeEvidence = value.snapshotDigest !== null && value.snapshotVersion !== null
-    && value.publicationContractDigest === null && value.terminalEvidenceDigest === null
-    && value.threadId === null && value.turnId === null && value.itemId === null;
-  const codexEvidence = value.publicationContractDigest !== null && value.terminalEvidenceDigest !== null
-    && value.threadId !== null && value.turnId !== null && value.itemId !== null
-    && value.snapshotDigest === null && value.snapshotVersion === null;
-  if ((value.harness === "native") !== nativeEvidence || (value.harness === "codex") !== codexEvidence) {
-    context.addIssue({ code: "custom", message: "durable reservation harness evidence mismatch" });
-  }
-});
+}).strict();
 
 const durableReservationMaterialSchemaV1 = z.object({
   schema: z.literal(DURABLE_RESULT_RESERVATION_SCHEMA_V1),
@@ -218,7 +215,15 @@ const durableReservationTag = (key: Uint8Array, reservation: DurableResultReserv
 export interface DurableResultBindingV1 {
   tenantId: string; projectId: string; jobId: string; attemptId: string; runId: string; nodeId: string;
   workflowId: string;
-  harness: "native" | "codex";
+  /**
+   * Harness is a publisher-supplied tag identifying the connector that produced
+   * the result. The publisher contract is harness-neutral: any non-empty
+   * string is accepted. Built-in harnesses use "native" or "codex" with their
+   * respective evidence; future connectors (third-party adapters, plugin
+   * harnesses, internal tooling) may supply their own tag without impersonating
+   * a built-in. The connector profile digest is the binding identity.
+   */
+  harness: string;
   connectorProfileDigest: string;
   snapshotDigest?: string; snapshotVersion?: number;
   publicationContractDigest?: string; terminalEvidenceDigest?: string;
@@ -391,54 +396,74 @@ async function updateNeutralReservation(port: NeutralReservationPort, tx: Databa
 
 function neutralIdentityParts(binding: DurableResultBindingV1) {
   const parsed = z.object({ tenantId: localId, projectId: localId, jobId: localId, attemptId: localId,
-    runId: localId, nodeId: localId, workflowId: localId, harness: z.enum(["native", "codex"]),
+    runId: localId, nodeId: localId, workflowId: localId, harness: z.string().min(1).max(64),
     connectorProfileDigest: digestSchema, acceptanceProfileId: localId, acceptanceProfileDigest: digestSchema })
     .strict().parse({ tenantId: binding.tenantId, projectId: binding.projectId, jobId: binding.jobId,
       attemptId: binding.attemptId, runId: binding.runId, nodeId: binding.nodeId, workflowId: binding.workflowId,
       harness: binding.harness, connectorProfileDigest: binding.connectorProfileDigest,
       acceptanceProfileId: binding.acceptanceProfileId, acceptanceProfileDigest: binding.acceptanceProfileDigest });
-  const evidence = z.object({ snapshotDigest: digestSchema.nullable(), snapshotVersion: z.number().int().positive().nullable(),
-    publicationContractDigest: digestSchema.nullable(), terminalEvidenceDigest: digestSchema.nullable(),
-    threadId: localId.nullable(), turnId: localId.nullable(), itemId: localId.nullable() }).strict().parse({
-    snapshotDigest: binding.snapshotDigest ?? null, snapshotVersion: binding.snapshotVersion ?? null,
-    publicationContractDigest: binding.publicationContractDigest ?? null,
-    terminalEvidenceDigest: binding.terminalEvidenceDigest ?? null,
-    threadId: binding.threadId ?? null, turnId: binding.turnId ?? null, itemId: binding.itemId ?? null });
+  const evidence = z.object({ snapshotDigest: digestSchema.optional(), snapshotVersion: z.number().int().positive().optional(),
+    publicationContractDigest: digestSchema.optional(), terminalEvidenceDigest: digestSchema.optional(),
+    threadId: localId.optional(), turnId: localId.optional(), itemId: localId.optional() }).strict().parse({
+    snapshotDigest: binding.snapshotDigest, snapshotVersion: binding.snapshotVersion,
+    publicationContractDigest: binding.publicationContractDigest,
+    terminalEvidenceDigest: binding.terminalEvidenceDigest,
+    threadId: binding.threadId, turnId: binding.turnId, itemId: binding.itemId });
   return { parsed, evidence };
 }
 
 function buildNeutralIdentity(binding: DurableResultBindingV1, artifactId: string, contentHash: string, sizeBytes: number) {
   const { parsed, evidence } = neutralIdentityParts(binding);
-  return durableReservationIdentitySchemaV1.parse({ schema: "control-room.durable-result-write-reservation-identity/v1",
+  // Strip undefined evidence fields so the canonical digest doesn't walk
+  // absent keys (a future connector publishes with no snapshot, no
+  // contract, no thread/turn/item — all fields are genuinely absent).
+  // The reservation identity records connector anchors, not the snapshot
+  // version — that lives in the receipt.
+  const identity: Record<string, unknown> = { schema: "control-room.durable-result-write-reservation-identity/v1",
     tenantId: parsed.tenantId, projectId: parsed.projectId, jobId: parsed.jobId, attemptId: parsed.attemptId,
     runId: parsed.runId, nodeId: parsed.nodeId, artifactId, harness: parsed.harness, workflowId: parsed.workflowId,
-    connectorProfileDigest: parsed.connectorProfileDigest, ...evidence, contentHash, sizeBytes });
+    connectorProfileDigest: parsed.connectorProfileDigest, contentHash, sizeBytes };
+  for (const [k, v] of Object.entries(evidence)) {
+    if (v !== undefined && k !== "snapshotVersion") identity[k] = v;
+  }
+  return durableReservationIdentitySchemaV1.parse(identity);
 }
 
 function issueNeutralReceipt(binding: DurableResultBindingV1, artifactId: string, manifest: ArtifactManifestRecord,
   contentHash: string, sizeBytes: number, receivedAt: string): DurableResultReceiptV1 {
   const { evidence } = neutralIdentityParts(binding);
-  return durableResultReceiptSchemaV1.parse({ schema: "control-room.durable-result-receipt/v1", artifactId,
+  // Strip undefined evidence fields so the receipt carries only the
+  // evidence the connector actually supplied (null where it was absent
+  // or genuinely missing).
+  const receiptFields: Record<string, unknown> = { schema: "control-room.durable-result-receipt/v1", artifactId,
     tenantId: binding.tenantId, projectId: binding.projectId, jobId: binding.jobId, attemptId: binding.attemptId,
-    runId: binding.runId, nodeId: binding.nodeId, harness: binding.harness, ...evidence,
-    contentHash, sizeBytes, manifestDigest: sha256Digest(manifest), receivedAt,
-    byteCheck: "matched_recorded_claim", qualityAccepted: false, canonicalPublicationAllowed: false,
-    completionVerified: false, releasesCapacity: false, grantsExecutionAuthority: false });
+    runId: binding.runId, nodeId: binding.nodeId, harness: binding.harness, contentHash, sizeBytes,
+    manifestDigest: sha256Digest(manifest), receivedAt, byteCheck: "matched_recorded_claim",
+    qualityAccepted: false, canonicalPublicationAllowed: false, completionVerified: false,
+    releasesCapacity: false, grantsExecutionAuthority: false };
+  for (const [k, v] of Object.entries(evidence)) if (v !== undefined) receiptFields[k] = v;
+  return durableResultReceiptSchemaV1.parse(receiptFields);
 }
 
 function planNeutralReview(binding: DurableResultBindingV1, receipt: DurableResultReceiptV1, receivedAt: string) {
   const { evidence } = neutralIdentityParts(binding);
-  return durableResultReviewPlanSchemaV1.parse({ schema: "control-room.durable-result-review-plan/v1",
+  // Strip undefined evidence fields so the plan carries only the evidence
+  // the connector actually supplied. The review plan records the connector
+  // anchor digests, not the snapshot version — that lives in the receipt.
+  const planFields: Record<string, unknown> = { schema: "control-room.durable-result-review-plan/v1",
     tenantId: binding.tenantId, projectId: binding.projectId, jobId: binding.jobId, attemptId: binding.attemptId,
     runId: binding.runId, nodeId: binding.nodeId, harness: binding.harness,
-    receiptDigest: sha256Digest(receipt),
-    snapshotDigest: evidence.snapshotDigest,
-    publicationContractDigest: evidence.publicationContractDigest,
-    terminalEvidenceDigest: evidence.terminalEvidenceDigest,
-    acceptanceProfileId: binding.acceptanceProfileId, acceptanceProfileDigest: binding.acceptanceProfileDigest,
-    plannedAt: receivedAt,
+    receiptDigest: sha256Digest(receipt), acceptanceProfileId: binding.acceptanceProfileId,
+    acceptanceProfileDigest: binding.acceptanceProfileDigest, plannedAt: receivedAt,
     targetId: `target:durable:${sha256Digest({ tenantId: binding.tenantId, jobId: binding.jobId }).slice(7)}`,
-    qualityAccepted: false, completionVerified: false, releasesCapacity: false, grantsExecutionAuthority: false });
+    qualityAccepted: false, completionVerified: false, releasesCapacity: false, grantsExecutionAuthority: false };
+  // The review plan records connector anchors, not the snapshot version
+  // or thread/turn/item identifiers — those live in the receipt.
+  for (const [k, v] of Object.entries(evidence)) {
+    if (v !== undefined && k !== "snapshotVersion" && k !== "threadId"
+      && k !== "turnId" && k !== "itemId") planFields[k] = v;
+  }
+  return durableResultReviewPlanSchemaV1.parse(planFields);
 }
 
 async function ensureNeutralReviewPlan(tx: DatabaseSession, reviewKey: Uint8Array,

@@ -120,6 +120,39 @@ function configAfterRestart(f: Awaited<ReturnType<typeof setup>>, storage: Contr
   return configOf(f, storage, createPersistentNeutralReservationPort(f.restartStore));
 }
 
+function thirdPartyBinding(runId: string): DurableResultBindingV1 {
+  // A future connector: no snapshot, no publication contract, no
+  // thread/turn/item IDs. The publisher contract must accept this without
+  // forcing the connector to impersonate a built-in harness.
+  return { tenantId: binding.tenantId, projectId: binding.projectId, jobId: `job:${runId}`,
+    attemptId: `attempt:${runId}`, runId, nodeId: binding.nodeId, workflowId: "workflow:test",
+    harness: "third-party", connectorProfileDigest: digest("c"),
+    acceptanceProfileId: "profile:test", acceptanceProfileDigest: digest("p") };
+}
+
+test("third-party harness: a non-native/non-codex connector can publish with only a connector profile digest", async t => {
+  const f = await setupWithProvision("run:durable-third-party", digest("c")); t.after(f.close);
+  const storage = new ControlledStorage();
+  const runId = "run:durable-third-party";
+  const receivedAt = at(9300);
+  const first = await publishDurableResultV1(configOf(f, storage),
+    { binding: thirdPartyBinding(runId), bytes: bytesOf("third-party"), receivedAt, assertAuthority: () => {} });
+  assert.equal(first.replayed, false);
+  // The harness tag is a publisher-supplied label, not a gate. A
+  // connector that supplies neither a snapshot nor a publication contract
+  // is accepted — its identity is recorded by connectorProfileDigest.
+  assert.equal(first.receipt.harness, "third-party");
+  assert.ok(first.receipt.contentHash.startsWith("sha256:"));
+  // The receipt carries only the evidence the connector actually supplied
+  // (no snapshot, no publication contract, no thread/turn/item IDs).
+  assert.equal(first.receipt.snapshotDigest, undefined);
+  assert.equal(first.receipt.publicationContractDigest, undefined);
+  assert.equal(first.receipt.terminalEvidenceDigest, undefined);
+  assert.equal(first.receipt.threadId, undefined);
+  assert.equal(first.receipt.turnId, undefined);
+  assert.equal(first.receipt.itemId, undefined);
+});
+
 for (const [flavor, makeBinding] of [["native", nativeBinding], ["codex", codexBinding]] as const) {
   test(`${flavor}: one exact result publishes once and replays the same receipt after restart`, async t => {
     const f = await setupWithProvision(`run:durable-replay-${flavor}`,

@@ -9,32 +9,27 @@ import type { CompletionReviewTargetV1 } from "./types";
 const instant = z.string().datetime().refine(value => new Date(value).toISOString() === value);
 
 /**
- * Harness-neutral review plan. The `harness` discriminator routes every
- * later read to the matching harness evidence rule: a plan recorded for
- * native evidence can never authorize a Codex-discriminated receipt, and
- * planning never accepts quality, verifies completion, or releases capacity.
+ * Harness-neutral review plan. The `harness` field is a publisher-supplied
+ * tag identifying the connector that authenticated the receipt. The schema
+ * accepts any non-empty string harness and makes all harness-specific
+ * evidence fields optional. Built-in harnesses use "native" or "codex" with
+ * their respective evidence; future connectors may supply their own tag
+ * without impersonating a built-in. Planning never accepts quality, verifies
+ * completion, or releases capacity.
  */
 export const durableResultReviewPlanSchemaV1 = z.object({
   schema: z.literal("control-room.durable-result-review-plan/v1"),
   tenantId: localId, projectId: localId, jobId: localId, attemptId: localId, runId: localId, nodeId: localId,
-  harness: z.enum(["native", "codex"]),
+  harness: z.string().min(1).max(64),
   receiptDigest: digestSchema,
-  snapshotDigest: digestSchema.nullable(),
-  publicationContractDigest: digestSchema.nullable(),
-  terminalEvidenceDigest: digestSchema.nullable(),
+  snapshotDigest: digestSchema.optional(),
+  publicationContractDigest: digestSchema.optional(),
+  terminalEvidenceDigest: digestSchema.optional(),
   acceptanceProfileId: localId, acceptanceProfileDigest: digestSchema, plannedAt: instant,
   targetId: localId,
   qualityAccepted: z.literal(false), completionVerified: z.literal(false),
   releasesCapacity: z.literal(false), grantsExecutionAuthority: z.literal(false),
-}).strict().superRefine((value, context) => {
-  const nativeEvidence = value.snapshotDigest !== null
-    && value.publicationContractDigest === null && value.terminalEvidenceDigest === null;
-  const codexEvidence = value.publicationContractDigest !== null && value.terminalEvidenceDigest !== null
-    && value.snapshotDigest === null;
-  if ((value.harness === "native") !== nativeEvidence || (value.harness === "codex") !== codexEvidence) {
-    context.addIssue({ code: "custom", message: "durable review plan harness evidence mismatch" });
-  }
-});
+}).strict();
 
 export type DurableResultReviewPlanV1 = z.infer<typeof durableResultReviewPlanSchemaV1>;
 export type DurableResultReviewPlanRowV1 = { tenant_id: string; project_id: string; job_id: string; run_id: string;
