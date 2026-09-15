@@ -14,6 +14,7 @@ const activationMaterialSchemaV1 = z.object({
   tenantId: localId, projectId: localId, nodeId: localId, jobId: localId,
   attemptId: localId, runId: localId, leaseId: localId, leaseEpoch: z.number().int().positive(),
   queueId: localId, connectionId: localId,
+  connection: z.object({ connectionAttemptId: localId, initializedConnectionDigest: digestSchema }).strict(),
   dispatchMessageId: localId, dispatchFrameDigest: digestSchema, dispatchBodyDigest: digestSchema,
   receiptMessageId: localId, receiptFrameDigest: digestSchema, receiptBodyDigest: digestSchema,
   permitDigest: digestSchema, inputDigest: digestSchema, operationDigest: digestSchema,

@@ -5,7 +5,9 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { openOwnedPrivateCodexConfigurationV1, openPrivateCodexConfigurationV1,
   validatePrivateCodexStatePathsV1 } from '../src/node-bridge/private-codex-configuration';
-import { CODEX_APP_SERVER_READ_CONTRACT } from '../src/harness/codex-v1/schema-contract';
+import { CODEX_APP_SERVER_ADAPTER } from '../src/harness/codex-v1/delivery-contract';
+import { CODEX_APP_SERVER_READ_CONTRACT, CODEX_APP_SERVER_RESULT_CONTRACT,
+  CODEX_APP_SERVER_START_CONTRACT } from '../src/harness/codex-v1/schema-contract';
 import { SqliteCodexStartJournalV1 } from '../src/harness/codex-v1/start-journal';
 import type { CodexAppServerProcessBindingV1,
   CodexAppServerProcessBytePortV1 } from '../src/harness/codex-v1/app-server-process-session';
@@ -232,4 +234,62 @@ test('owned close attempts acquisition and both journals once and repeats cleanu
     assert.doesNotMatch(String(error), /synthetic|secret/); return true;
   });
   assert.deepEqual(events, ['acquisition-close', 'starts-close', 'bridge-close']);
+});
+
+test('recovered-result runtime borrows without ownership: exposes no journal or bridge handles and leaves both open for the outer owner', async t => {
+  const f = await stateFiles(); t.after(() => rm(f.directory, { recursive: true, force: true }));
+  const { generateKeyPairSync: genKeys } = await import('node:crypto');
+  const { SqliteCodexStartJournalV1: Starts } = await import('../src/harness/codex-v1/start-journal');
+  const { createCodexRecoveredResultRuntimeV1 } = await import('../src/harness/codex-v1/recovered-result-runtime');
+  const { createCodexPhysicalQualificationReceiptBodyV1 } = await import('../src/harness/codex-v1/result-publication-contract');
+  const { signArtifact: sign } = await import('../src/node-policy/v1/crypto');
+  const qualificationKeys = genKeys('ed25519');
+  const qualificationSpki = qualificationKeys.publicKey.export({ type: 'spki', format: 'der' }).toString('base64url');
+  const evidence = <T extends object>(material: T) => ({ ...material, evidenceDigest: sha256Digest(material) });
+  const start = evidence({ evidenceId: 'evidence:start', processAttemptId: 'process:start',
+    connectionAttemptId: 'connection:start', initializedConnectionDigest: sha256Digest('initialized:start'),
+    threadId: 'thread:qualification', turnId: 'turn:qualification', startObserved: true as const,
+    cleanupVerified: true as const });
+  const restartRead = evidence({ evidenceId: 'evidence:restart', processAttemptId: 'process:restart',
+    connectionAttemptId: 'connection:restart', initializedConnectionDigest: sha256Digest('initialized:restart'),
+    threadId: 'thread:qualification', turnId: 'turn:qualification', itemId: 'item:qualification',
+    restartObserved: true as const, exactReadObserved: true as const, cleanupVerified: true as const });
+  const qualification = sign(createCodexPhysicalQualificationReceiptBodyV1({
+    schema: 'control-room.codex-physical-qualification-receipt/v1', qualificationId: 'qualification:owner-test',
+    qualificationSignerKeyId: 'qualification-key:owner-test', tenantId: 'tenant:test', nodeId: 'node:test',
+    connectorProfileId: 'profile:codex:test', connectorProfileDigest: sha256Digest('profile'),
+    exactPackage: { adapterId: CODEX_APP_SERVER_ADAPTER, packageName: CODEX_APP_SERVER_READ_CONTRACT.package,
+      packageVersion: CODEX_APP_SERVER_READ_CONTRACT.version,
+      generatedSchemaBundleSha256: CODEX_APP_SERVER_READ_CONTRACT.generatedBundleSha256,
+      threadStartParamsSchemaSha256: CODEX_APP_SERVER_START_CONTRACT.threadStart.paramsSchemaSha256,
+      threadStartResponseSchemaSha256: CODEX_APP_SERVER_START_CONTRACT.threadStart.responseSchemaSha256,
+      turnStartParamsSchemaSha256: CODEX_APP_SERVER_START_CONTRACT.turnStart.paramsSchemaSha256,
+      turnStartResponseSchemaSha256: CODEX_APP_SERVER_START_CONTRACT.turnStart.responseSchemaSha256,
+      threadReadResponseSchemaSha256: CODEX_APP_SERVER_RESULT_CONTRACT.threadReadResponseSchemaSha256,
+      agentMessageSourceSha256: CODEX_APP_SERVER_RESULT_CONTRACT.agentMessageSourceSha256 },
+    qualifiedAt: '2026-09-13T11:59:00.000Z', start, restartRead,
+    oneFreshProcessPerAttempt: true, sameDurableThreadObserved: true, sameDurableTurnObserved: true,
+    terminalCleanupVerified: true, processReuseObserved: false, retryObserved: false,
+    canonicalPublicationAllowed: false, completionVerified: false, grantsExecutionAuthority: false,
+    permitsRetry: false, permitsResume: false, permitsThreadRead: false }), qualificationKeys.privateKey);
+  const bridgeJournal = new SqliteBridgeJournal(f.paths.bridge);
+  t.after(() => bridgeJournal.close());
+  const starts = new Starts(f.paths.starts);
+  t.after(() => starts.close());
+  const runtime = createCodexRecoveredResultRuntimeV1({ runId: 'run:unused', queueId: 'queue:unused',
+    threadId: 'thread:unused', turnId: 'turn:unused', activationId: 'codex-activation:unused',
+    activationDigest: sha256Digest('unused'), connectionAttemptId: 'connection:unused',
+    initializedConnectionDigest: sha256Digest('unused'), journal: bridgeJournal, start: starts,
+    bridge: { sendCodexResultReturn: async () => { throw new Error('must_not_send'); } },
+    channel: { connectionId: 'connection:unused', assertCurrent() { throw new Error('stale'); } },
+    recovery: { read() { throw new Error('must_not_read'); },
+      project() { throw new Error('must_not_read'); } },
+    qualificationReceipt: qualification, qualificationPublicKeySpki: qualificationSpki,
+    qualificationMaximumAgeMs: 300_000, clock: () => Date.now() });
+  assert.deepEqual(Object.keys(runtime).sort(), ['cleanupDoubt', 'close', 'recover']);
+  await assert.rejects(runtime.recover(new Date(Date.now()).toISOString(), new AbortController().signal),
+    /codex_recovered_result_unavailable/);
+  await runtime.close(); await runtime.close();
+  assert.equal(bridgeJournal.codexResultReturn('run:unused'), undefined);
+  assert.equal(starts.load('run:unused').status, 'not_reserved');
 });

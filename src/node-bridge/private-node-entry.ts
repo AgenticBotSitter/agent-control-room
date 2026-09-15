@@ -5,6 +5,7 @@ export { createCodexLocalStartCompositionV1 } from "../harness/codex-v1/local-st
 export { createCodexLocalReadCompositionV1 } from "../harness/codex-v1/local-read-composition";
 export { createCodexLocalHostV1 } from "../harness/codex-v1/local-host";
 export { createCodexResultSenderV1 } from "../harness/codex-v1/result-sender";
+export { createCodexRecoveredResultRuntimeV1 } from "../harness/codex-v1/recovered-result-runtime";
 export { createCodexAppServerProcessSessionV1 } from "../harness/codex-v1/app-server-process-session";
 export { createCodexNativeProcessAcquisitionV1 } from "./codex-native-process";
 export { createNativeHttpsConnector } from "./native-connector";
