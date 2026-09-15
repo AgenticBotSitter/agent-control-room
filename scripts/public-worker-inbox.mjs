@@ -1,6 +1,8 @@
 import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
-import { parseClaimPacket, parseClaimMarker as parseControllerClaim, parseExpiredMarker } from "./automatic-claim-controller.mjs";
+import { parseClaimPacket, parseClaimMarker as parseControllerClaim, parseExpiredMarker,
+  verifiedLockScopes } from "./automatic-claim-controller.mjs";
+import { evaluateAdmissionDecision, observeMainBase } from "./admission-evaluator.mjs";
 
 const WORKER_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,79}$/;
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -182,23 +184,116 @@ export async function readWorkerInbox({ workerId, repository = "AgenticBotSitter
   if (includeReady) {
     // Discovery reuses the same complete issue snapshot and controller packet parser.
     // Candidates are offers to inspect, never accepted claims or guaranteed eligibility.
+    // Admission runs through the shared evaluator with the COMPLETE fetched issue
+    // history and verified Working/In-review scope locks. Any failed observation
+    // (base, history, locks, evaluator) blocks the offer as unavailable/attention —
+    // a failed observation is never advertised as a validated ready-candidate.
     const openNumbers = new Set(issues.filter(issue => !issue.pull_request).map(issue => issue.number));
+    // Controller-style API over the discovery fetch: exact /repos/OWNER/REPO/...
+    // paths resolved against the API host (never spliced onto the repo root, which
+    // duplicates the repository segment). The supplied inbox token is preserved
+    // for observation requests; it is never logged or echoed into errors.
+    const headers = { accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28",
+      "user-agent": "agent-control-room-worker-inbox", ...(token ? { authorization: `Bearer ${token}` } : {}) };
+    const apiAdapter = { request: async (method, requestedPath) => {
+      if (method !== "GET" || typeof requestedPath !== "string"
+        || !requestedPath.startsWith(`/repos/${repository}/`)) throw new Error("admission_evaluator_observation_invalid");
+      const response = await fetchImpl(`https://api.github.com${requestedPath}`, { headers });
+      if (!response?.ok) throw new Error("admission_evaluator_observation_invalid");
+      return await response.json();
+    } };
+    let observation;
+    let observationError;
+    try {
+      observation = await observeMainBase({ api: apiAdapter, repository });
+    } catch (error) {
+      observation = undefined;
+      observationError = error?.message ?? "admission_evaluator_base_unavailable";
+    }
+    const baseSha = observation?.baseSha;
+    // Verified scope locks, read once per discovery run: Working/In-review packet
+    // scopes with live accepted markers. Legacy (packetless) or drifted locks fail
+    // closed — scopes are incomplete, so no overlap can be proven and no offer may
+    // be advertised. Candidates are Ready, never Working/In-review, so no
+    // self-exclusion is needed.
+    let lockScopes;
+    let locksError;
+    try {
+      const locks = await verifiedLockScopes(apiAdapter, repository, undefined);
+      if (locks.legacy.length > 0 || locks.mismatched.length > 0) {
+        locksError = "admission_locks_unverifiable";
+      } else {
+        lockScopes = locks.scopes;
+      }
+    } catch {
+      locksError = "admission_locks_unverifiable";
+    }
     for (const issue of issues) {
       const labels = labelsOf(issue);
       if (issue.pull_request || !Number.isSafeInteger(issue.number) || !labels.includes("status:ready")) continue;
       const packet = parseClaimPacket(issue.body);
       const conflicts = labels.filter(label => label.startsWith("status:")).length !== 1
         || labels.some(label => label.startsWith("action:"));
-      const dependencies = packet?.dependencies.filter(number => openNumbers.has(number)) ?? [];
-      const reason = conflicts ? "conflicting_ready_labels" : !packet ? "packet_invalid"
-        : dependencies.length ? "open_dependencies" : undefined;
+      const openDeps = packet?.dependencies.filter(number => openNumbers.has(number)) ?? [];
+      // Complete fetched history for this issue; a failed read blocks, never admits.
+      let history;
+      let historyError;
+      try {
+        history = await pages(fetchImpl, `${root}/issues/${issue.number}/comments?direction=asc`, token);
+      } catch (error) {
+        history = undefined;
+        historyError = /^worker_inbox_/.test(error?.message ?? "") ? error.message : "admission_history_incomplete";
+      }
+      let admission = undefined;
+      let admissionError = undefined;
+      if (!conflicts && packet && !historyError && baseSha && !locksError) {
+        try {
+          admission = await evaluateAdmissionDecision({ issue, comments: history, packet,
+            api: apiAdapter, repository, openNumbers, baseSha, observedAt: observation.observedAt,
+            knownLocks: lockScopes });
+        } catch (error) {
+          admissionError = /^(admission_evaluator_|claim_controller_)/.test(error?.message ?? "")
+            ? error.message : "admission_evaluator_unavailable";
+        }
+      } else if (!conflicts && packet && !historyError && baseSha && locksError) {
+        admissionError = locksError;
+      } else if (!conflicts && packet && !historyError && !baseSha) {
+        admissionError = observationError;
+      } else if (!conflicts && packet && historyError) {
+        admissionError = historyError;
+      }
+      // Admit ONLY on an explicit evaluator admit with every observation green.
+      // There is no default admit: any failed observation stays unavailable.
+      const ready = !conflicts && packet && history && baseSha && !locksError
+        && !admissionError && admission?.outcome === "admit";
+      const reason = ready ? undefined
+        : conflicts ? "conflicting_ready_labels"
+        : !packet ? "packet_invalid"
+        : historyError ? "admission_history_incomplete"
+        : !baseSha ? (openDeps.length ? "open_dependencies" : "admission_observation_unavailable")
+        : locksError ? "admission_locks_unverifiable"
+        : admissionError ? "admission_evaluator_unavailable"
+        : admission?.reason === "dependencies_incomplete" ? "open_dependencies"
+        : admission?.reason ?? "admission_incomplete";
       actions.push(Object.freeze({ workerId, issue: issue.number, title: issue.title ?? "",
         issueUrl: `https://github.com/${repository}/issues/${issue.number}`,
         state: reason ? "queue-blocked" : "ready-candidate", disposition: "discovery", trust: "public-offer",
         platforms: labels.filter(label => label.startsWith("platform:")),
         difficulty: labels.filter(label => label.startsWith("difficulty:")),
         ...(packet ? { base: packet.base, effects: packet.effects, writeScopes: packet.writeScopes } : {}),
-        ...(reason ? { reason, dependencies } : {}),
+        ...(admission ? {
+          // The tag carries data-derived evidence only: observedBase is the
+          // fetched ref SHA, but observedAt is wall-clock time and would make
+          // identical ticks fingerprint differently, breaking watcher dedup.
+          admission: Object.freeze({
+            outcome: admission.outcome, reason: admission.reason,
+            observedBase: admission.observedBase,
+            ...(admission.packetBase ? { packetBase: admission.packetBase } : {}),
+            capacity: admission.capacity ?? "unknown", pair: admission.pair ?? "unknown", locks: admission.locks ?? "unknown",
+          }),
+        } : {}),
+        ...(admissionError && !ready ? { admissionError } : {}),
+        ...(reason ? { reason, dependencies: openDeps } : {}),
         action: reason ? `Maintainer repair needed: ${reason}. Report this issue as blocked discovery, not an empty queue.`
           : "Read the issue and compare platform, skills, effects and current capacity. If suitable, request a claim; wait for CLAIM ACCEPTED. The controller checks current ownership, dependencies and path conflicts." }));
     }

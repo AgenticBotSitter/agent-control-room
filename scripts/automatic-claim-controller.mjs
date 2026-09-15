@@ -569,7 +569,7 @@ const liveAcceptedMarkers = (comments, issueNumber) => {
 /** Locked path scopes from other Working and In-review packets with verified marker identity.
  * Packet-less legacy locks and locks whose current packet drifted from the accepted
  * marker fail closed instead of being collected and ignored. */
-async function verifiedLockScopes(api, repository, excludeIssue) {
+export async function verifiedLockScopes(api, repository, excludeIssue) {
   const scopes = [];
   const legacy = [];
   const mismatched = [];

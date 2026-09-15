@@ -10,6 +10,8 @@
 import { pathToFileURL } from "node:url";
 import { parseActionMarker } from "./public-worker-inbox.mjs";
 import { parseHandoff } from "./review-handoff-controller.mjs";
+import { parseClaimPacket, verifiedLockScopes } from "./automatic-claim-controller.mjs";
+import { evaluateAdmissionDecision, observeMainBase } from "./admission-evaluator.mjs";
 
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const CLAIM_MARKER = /<!-- agent-control-room-claim:v2 issue=(\d+) request=(\d+) actor=([A-Za-z0-9][A-Za-z0-9-]{0,38}) worker=([A-Za-z0-9][A-Za-z0-9._:-]{2,79}) -->/;
@@ -394,9 +396,123 @@ export async function readQueueHealth({
     }));
   }
 
+  // Admission offers: the shared evaluator classifies every Ready issue that is
+  // not currently accepted, with the complete fetched history and verified
+  // Working/In-review scope locks. Admitted offers are omitted; every other
+  // offer is reported with its distinct blocker. Any failed observation (base,
+  // history, locks, evaluator) blocks the offer — never advertised pickup.
+  // Already-accepted work retains its pinned base and is never reclassified.
+  const readyIssues = workIssues.filter(issue => labelsOf(issue).includes("status:ready"));
+  const qhHeaders = { accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28",
+    "user-agent": "agent-control-room-queue-health", ...(token ? { authorization: `Bearer ${token}` } : {}) };
+  const qhAdapter = { request: async (method, requestedPath) => {
+    if (method !== "GET" || typeof requestedPath !== "string"
+      || !requestedPath.startsWith(`/repos/${repository}/`)) throw new Error("admission_evaluator_observation_invalid");
+    const response = await fetchImpl(`https://api.github.com${requestedPath}`, { headers: qhHeaders });
+    if (!response?.ok) throw new Error("admission_evaluator_observation_invalid");
+    return await response.json();
+  } };
+  let qhObservation;
+  let qhObservationError;
+  try {
+    qhObservation = await observeMainBase({ api: qhAdapter, repository });
+  } catch (error) {
+    qhObservation = undefined;
+    qhObservationError = error?.message ?? "admission_evaluator_base_unavailable";
+  }
+  const qhBaseSha = qhObservation?.baseSha;
+  let qhLockScopes;
+  let qhLocksError;
+  try {
+    const qhLocks = await verifiedLockScopes(qhAdapter, repository, undefined);
+    if (qhLocks.legacy.length > 0 || qhLocks.mismatched.length > 0) {
+      qhLocksError = "admission_locks_unverifiable";
+    } else {
+      qhLockScopes = qhLocks.scopes;
+    }
+  } catch {
+    qhLocksError = "admission_locks_unverifiable";
+  }
+  const qhOpenNumbers = new Set(workIssues.map(issue => issue.number));
+  const blockedOffers = [];
+  for (const issue of readyIssues) {
+    const readyLabels = labelsOf(issue);
+    const readyConflicts = readyLabels.filter(label => label.startsWith("status:")).length !== 1
+      || readyLabels.some(label => label.startsWith("action:"));
+    const readyPacket = parseClaimPacket(issue.body);
+    let issueComments = [];
+    let issueHistoryIncomplete = false;
+    try {
+      const history = await pages(fetchImpl, `${root}/issues/${issue.number}/comments?direction=asc`, token, maxPages);
+      issueComments = history.values;
+      issueHistoryIncomplete = history.truncated;
+      truncated = truncated || history.truncated;
+    } catch {
+      issueHistoryIncomplete = true;
+    }
+    if (issueHistoryIncomplete) {
+      blockedOffers.push(Object.freeze({ issue: issue.number, title: sanitize(issue.title),
+        url: issueUrlOf(repository, issue.number), admissionError: "admission_history_incomplete" }));
+      continue;
+    }
+    if (latestClaim(issueComments, issue.number, advisoryLogins)) continue;
+    let offerAdmission;
+    let offerAdmissionError;
+    if (readyConflicts) {
+      offerAdmission = Object.freeze({ outcome: "refuse", reason: "conflicting_ready_labels",
+        observedAt: qhObservation?.observedAt ?? "", observedBase: qhBaseSha ?? "" });
+    } else if (!readyPacket) {
+      offerAdmission = Object.freeze({ outcome: "refuse", reason: "packet_invalid",
+        observedAt: qhObservation?.observedAt ?? "", observedBase: qhBaseSha ?? "" });
+    } else if (qhBaseSha === undefined) {
+      const qhOpenDeps = readyPacket.dependencies.filter(number => qhOpenNumbers.has(number));
+      if (qhOpenDeps.length > 0) {
+        offerAdmission = Object.freeze({ outcome: "refuse", reason: "dependencies_incomplete",
+          observedAt: qhObservation?.observedAt ?? "", observedBase: qhBaseSha ?? "" });
+      } else {
+        offerAdmission = Object.freeze({ outcome: "refuse", reason: "admission_observation_unavailable",
+          observedAt: qhObservation?.observedAt ?? "", observedBase: qhBaseSha ?? "" });
+        offerAdmissionError = qhObservationError;
+      }
+    } else if (qhLocksError) {
+      offerAdmission = Object.freeze({ outcome: "refuse", reason: "admission_locks_unverifiable",
+        observedAt: qhObservation?.observedAt ?? "", observedBase: qhBaseSha ?? "" });
+      offerAdmissionError = qhLocksError;
+    } else {
+      try {
+        offerAdmission = await evaluateAdmissionDecision({ issue, comments: issueComments,
+          packet: readyPacket, api: qhAdapter, repository, openNumbers: qhOpenNumbers,
+          baseSha: qhBaseSha, observedAt: qhObservation.observedAt, knownLocks: qhLockScopes });
+      } catch (error) {
+        offerAdmissionError = /^(admission_evaluator_|claim_controller_)/.test(error?.message ?? "")
+          ? error.message : "admission_evaluator_unavailable";
+      }
+    }
+    if (offerAdmission?.outcome === "admit") continue;
+    blockedOffers.push(Object.freeze({ issue: issue.number, title: sanitize(issue.title),
+      url: issueUrlOf(repository, issue.number),
+      ...(offerAdmission ? {
+        admission: Object.freeze({
+          outcome: offerAdmission.outcome, reason: offerAdmission.reason,
+          observedBase: offerAdmission.observedBase,
+          ...(offerAdmission.packetBase ? { packetBase: offerAdmission.packetBase } : {}),
+          capacity: offerAdmission.capacity ?? "unknown", pair: offerAdmission.pair ?? "unknown", locks: offerAdmission.locks ?? "unknown",
+        }),
+      } : {}),
+      ...(offerAdmissionError ? { admissionError: offerAdmissionError } : {}),
+    }));
+  }
+
   const warnings = [];
   if (counts.ready < READY_FLOOR) warnings.push("ready_floor_below_minimum");
   if (truncated) warnings.push("queue_read_truncated");
+  const offersNeedingBaseObservation = blockedOffers.filter(offer =>
+    offer.admission?.reason === "admission_observation_unavailable"
+    || offer.admission?.reason === "packet_base_stale"
+    || offer.admissionError).length;
+  if (qhObservation === undefined && offersNeedingBaseObservation > 0)
+    warnings.push("admission_observation_unavailable");
+  if (blockedOffers.some(offer => offer.admissionError)) warnings.push("admission_evaluation_incomplete");
 
   return Object.freeze({
     repository,
@@ -408,6 +524,7 @@ export async function readQueueHealth({
     oldestReview: oldest(reviewRecords),
     oldestCorrection: oldest(correctionRecords),
     anomalies: Object.freeze(anomalies.sort((a, b) => a.issue - b.issue)),
+    blockedOffers: Object.freeze(blockedOffers.sort((a, b) => a.issue - b.issue)),
     submissionBindingProblems: Object.freeze(submissions?.bindingProblems ?? []),
     warnings: Object.freeze(warnings),
     uncertainty: Object.freeze({

@@ -56,6 +56,7 @@ function githubIssue(number, labels) {
     title: `Issue ${number}`,
     html_url: `https://github.com/${REPOSITORY_NAME}/issues/${number}`,
     labels: labels.map(name => ({ name })),
+    state: "open",
   };
 }
 
@@ -69,11 +70,26 @@ function githubComment(body) {
 }
 
 // Mutating holder so a test can change the assignment between ticks, as GitHub would.
+// The fake mirrors real API behavior the inbox client depends on: the main ref
+// resolves to holder.ref, and label-filtered issue scans return only matching
+// issues (verified lock scans rely on server-side status filtering).
 function fakeGithub(initial = {}) {
-  const holder = { issues: initial.issues ?? [], comments: initial.comments ?? {} };
+  const holder = { issues: initial.issues ?? [], comments: initial.comments ?? {},
+    ref: initial.ref ?? "a".repeat(40) };
   const calls = [];
   const fetchImpl = async (url, init) => {
     calls.push({ url, method: init?.method ?? "GET" });
+    if (url.includes("/git/ref/heads/main")) {
+      return holder.ref === undefined
+        ? { ok: false, status: 404 }
+        : jsonResponse({ object: { sha: holder.ref } });
+    }
+    const labelMatch = /labels=status%3A([^&]*)/u.exec(url);
+    if (labelMatch) {
+      const wanted = decodeURIComponent(labelMatch[1]);
+      return jsonResponse(holder.issues.filter(issue =>
+        (issue?.labels ?? []).some(label => (label?.name ?? label) === wanted)));
+    }
     const commentMatch = /\/issues\/(\d+)\/comments/u.exec(url);
     if (commentMatch) return jsonResponse(holder.comments[Number(commentMatch[1])] ?? []);
     return jsonResponse(holder.issues);
