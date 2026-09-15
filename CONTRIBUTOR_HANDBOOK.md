@@ -314,6 +314,30 @@ correction rounds and closed-without-merge work. It does not measure task diffic
 cost, speed or hidden human assistance, so compare similar assignments rather than
 treating it as a universal model leaderboard. Missing or truncated evidence stays unknown.
 
+Contributors may add optional self-reported cost fields to the pull-request body
+(`Worker-Active-Minutes`, `Worker-Input-Tokens`, `Worker-Output-Tokens`,
+`Worker-Provider-Calls`, `Worker-Interruptions`); each stays `unknown` unless it
+appears exactly once with an exactly valid value. The outcomes report adds objective
+GitHub cycle-time medians (claim to first PR, submission to first decision,
+changes-required to resubmission, claim to merge) and current waiting time by owner.
+Waiting time is wall-clock time, never active model time.
+
+Full worker/reviewer/lead cost comparison lives in the contribution-metrics report:
+
+```sh
+pnpm model:costs
+pnpm model:costs -- --json
+```
+
+Each cost phase is one `acr-contribution-metrics:v1` record. Worker costs come from
+the pull-request fields above; reviewer and lead phases (packet design, review, each
+correction re-review, integration, or a direct lead build) are recorded by posting the
+maintainer phase comment documented in `scripts/public-contribution-metrics.mjs`.
+Unknown stays null; never guess a count the provider did not report. Delegated and
+direct-build methods are compared only within the same difficulty, size and risk
+labels, and only once each side has at least five accepted outcomes — below that the
+report shows observations without a winner and never a single best-model score.
+
 Never publish credentials, login codes, private records, host identities, private
 routing, raw native diagnostics, or production artifacts. Use synthetic screenshots
 and disposable data. A failed check belongs in the report; do not relabel it as passing.
