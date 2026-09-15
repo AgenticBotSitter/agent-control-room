@@ -58,6 +58,9 @@ counts (or `unknown` where the provider does not report them). Use stable public
 account, subscription, machine or credential details. After a review,
 read the complete consolidated findings and use the required acknowledge/resubmit flow.
 Do not describe changes as complete unless they are present at the submitted commit.
+When available, report a tight active-work start and end in the pull-request template.
+Stop timing before waiting. Never stretch a session across an owner pause, review queue,
+offline period or usage reset merely to improve coverage.
 
 While waiting for review, you may work on another separately accepted, non-overlapping
 package within the handbook's capacity limit. Check the inbox after pushing, when

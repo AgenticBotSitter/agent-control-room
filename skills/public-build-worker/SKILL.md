@@ -67,7 +67,8 @@ request number and its exact head SHA. The pull request reports exactly one
 `Worker-Model:` line and one `Worker-Effort:` line, plus any known optional
 `Worker-Active-Minutes:` / `Worker-Input-Tokens:` / `Worker-Output-Tokens:` /
 `Worker-Provider-Calls:` / `Worker-Interruptions:` lines (unknown stays `unknown`,
-never guessed). The controller verifies the PR is open
+never guessed). Add `Worker-Started-At:` and `Worker-Ended-At:` only when they tightly
+bound active implementation; stop timing before any wait or offline period. The controller verifies the PR is open
 against `main` in the same repository, authored by your login, references the
 issue exactly with one `Control-Room-Issue:` line, the packet is unchanged
 and the lease is unexpired, the issue is still working and the pull request
