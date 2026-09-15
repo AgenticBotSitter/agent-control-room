@@ -39,7 +39,8 @@ import { createCoordinationHttpHandler } from "../src/web/v1/coordination-http";
 import { createPrivateWebProcess } from "../src/web/v1/private-process";
 import type { ProjectCoordinationCanonicalStoreAdapter } from "../src/web/v1/project-coordination-http";
 import type { ProjectCoordinationCanonicalPortV1 } from "../src/project-coordination/v1/services";
-import type { CoordinatorLifecycleReceiptV1 } from "../src/project-coordination/v1/schemas";
+import type { CoordinatorLifecycleReceiptV1, DelegationPolicyLifecycleReceiptV1 } from "../src/project-coordination/v1/schemas";
+import { delegationPolicyLifecycleRequestDigestV1 } from "../src/project-coordination/v1/schemas";
 import { ProjectCoordinationErrorV1 } from "../src/project-coordination/v1/errors";
 
 const FIXTURE_NOW = Date.parse("2026-09-14T00:00:00.000Z");
@@ -91,7 +92,7 @@ interface RouteFixture {
   dispose: () => Promise<void>;
 }
 
-async function buildRouteFixture(opts: { coordinationEnabled?: boolean; engineDelayMs?: number; onEngineWrite?: () => void; onEngineCommit?: () => void; onCoordinationCall?: () => void; onPolicyCall?: () => void } = {}): Promise<RouteFixture> {
+async function buildRouteFixture(opts: { coordinationEnabled?: boolean; engineDelayMs?: number; withPolicy?: boolean; onEngineWrite?: () => void; onEngineCommit?: () => void; onCoordinationCall?: () => void; onPolicyCall?: () => void } = {}): Promise<RouteFixture> {
   const db = new PGlite();
   for (const file of (await readdir("db/migrations")).filter((f) => f.endsWith(".sql")).sort()) {
     await db.exec(await readFile(`db/migrations/${file}`, "utf8"));
@@ -126,8 +127,14 @@ async function buildRouteFixture(opts: { coordinationEnabled?: boolean; engineDe
   // lifecycle: one saved receipt per Idempotency-Key. Shared by rebuilt
   // handlers in reconstruction tests, like PG rows survive a restart.
   const lifecycleReceipts = new Map<string, { contentKey: string; receipt: CoordinatorLifecycleReceiptV1 }>();
+  const policyReceipts = new Map<string, { contentKey: string; receipt: DelegationPolicyLifecycleReceiptV1 }>();
   const policyRows = new Map<string, { policyId: string; state: "active" | "paused" | "revoked"; coordinatorVersion: number; ownerIdentityId: string }>();
   const policyByProject = new Map<string, { policyId: string; state: "active" | "paused" | "revoked"; coordinatorVersion: number; ownerIdentityId: string }>();
+  if (opts.withPolicy) {
+    const seed = { policyId: "policy:test", state: "active" as const, coordinatorVersion: 1, ownerIdentityId: "identity:test" };
+    policyRows.set(seed.policyId, seed);
+    policyByProject.set("project:example", seed);
+  }
   const projects = new Map<string, { projectId: string; title: string; summary: string; lifecycle: string; version: number; createdAt: string; updatedAt: string }>([["project:example", {
     projectId: "project:example",
     title: "Example",
@@ -211,17 +218,81 @@ async function buildRouteFixture(opts: { coordinationEnabled?: boolean; engineDe
       opts.onEngineCommit?.();
       return { ...receipt, replayed: false as const };
     },
-    async setProjectDelegationPolicyStateV1(input) {
+    async findDelegationPolicyLifecycleReceiptV1(input) {
+      const prior = policyReceipts.get(input.idempotencyKey);
+      if (!prior) return undefined;
+      if (prior.receipt.requestDigest !== input.requestDigest) {
+        throw new ProjectCoordinationErrorV1("policy_replay_conflict" as never);
+      }
+      return { ...prior.receipt, replayed: true as const };
+    },
+    async setProjectDelegationPolicyStateDurableV1(input) {
+      // Same durable policy receipt semantics as the canonical operation:
+      // digest check, per-key ledger probe first, then version enforcement.
+      const expectedDigest = delegationPolicyLifecycleRequestDigestV1({ action: input.action,
+        tenantId: input.tenantId, projectId: input.projectId, policyId: input.policyId,
+        ownerIdentityId: input.ownerIdentityId, expectedVersion: input.expectedVersion,
+        expectedCoordinatorVersion: input.expectedCoordinatorVersion,
+        expectedConflictsVersion: input.expectedConflictsVersion,
+        expectedAttentionVersion: input.expectedAttentionVersion });
+      if (expectedDigest !== input.requestDigest) {
+        throw new ProjectCoordinationErrorV1("invalid_input" as never);
+      }
+      const contentKey = JSON.stringify({ action: input.action, tenantId: input.tenantId,
+        projectId: input.projectId, policyId: input.policyId, ownerIdentityId: input.ownerIdentityId,
+        expectedVersion: input.expectedVersion });
+      const prior = policyReceipts.get(input.idempotencyKey);
+      if (prior) {
+        if (prior.contentKey !== contentKey) {
+          throw new ProjectCoordinationErrorV1("policy_replay_conflict" as never);
+        }
+        return { ...prior.receipt, replayed: true as const };
+      }
       opts.onCoordinationCall?.();
       opts.onPolicyCall?.();
+      const toState = input.action === "revoke" ? "revoked" as const
+        : input.action === "resume" ? "active" as const : "paused" as const;
+      const alreadyState = toState === "paused" ? "policy_already_paused" as const
+        : toState === "active" ? "policy_already_active" as const
+        : "policy_already_revoked" as const;
+      const buildReceipt = (version: number, state: "active" | "paused" | "revoked",
+        already: typeof alreadyState | undefined) => {
+        const body = {
+          schema: "control-room.project-delegation-policy-lifecycle-receipt/v1" as const,
+          action: input.action,
+          tenantId: input.tenantId,
+          projectId: input.projectId,
+          policyId: input.policyId,
+          ownerIdentityId: input.ownerIdentityId,
+          idempotencyKey: input.idempotencyKey,
+          requestDigest: input.requestDigest,
+          expectedVersion: input.expectedVersion,
+          version,
+          state,
+          ...(already ? { alreadyState: already } : {}),
+        };
+        return { ...body, receiptDigest: sha256Digest(body) };
+      };
       const existing = policyRows.get(input.policyId);
       if (!existing) throw new ProjectCoordinationErrorV1("policy_required" as never);
-      if (input.toState === "active" && existing.state === "active") throw new ProjectCoordinationErrorV1("policy_already_active" as never);
-      if (input.toState === "paused" && existing.state === "paused") throw new ProjectCoordinationErrorV1("policy_already_paused" as never);
-      if (input.toState === "revoked" && existing.state === "revoked") throw new ProjectCoordinationErrorV1("policy_already_revoked" as never);
+      // Only an exact saved-receipt replay (handled above) may bypass the
+      // version guard: a fresh key with a stale version is refused even when
+      // the policy already names the target state.
+      if (existing.state === toState && existing.coordinatorVersion !== input.expectedVersion) {
+        throw new ProjectCoordinationErrorV1("policy_version_stale" as never);
+      }
+      if (existing.state === toState) {
+        const receipt = buildReceipt(existing.coordinatorVersion, toState, alreadyState);
+        policyReceipts.set(input.idempotencyKey, { contentKey, receipt });
+        return { ...receipt, replayed: false as const };
+      }
+      if (existing.state === "revoked") throw new ProjectCoordinationErrorV1("policy_revoked" as never);
+      if (existing.coordinatorVersion !== input.expectedVersion) {
+        throw new ProjectCoordinationErrorV1("policy_version_stale" as never);
+      }
       const next = {
         ...existing,
-        state: input.toState,
+        state: toState,
         coordinatorVersion: existing.coordinatorVersion + 1,
         ownerIdentityId: input.ownerIdentityId,
       };
@@ -229,7 +300,9 @@ async function buildRouteFixture(opts: { coordinationEnabled?: boolean; engineDe
       if (policyByProject.get(input.projectId)?.policyId === input.policyId) {
         policyByProject.set(input.projectId, next);
       }
-      return { version: next.coordinatorVersion, state: input.toState };
+      const receipt = buildReceipt(next.coordinatorVersion, toState, undefined);
+      policyReceipts.set(input.idempotencyKey, { contentKey, receipt });
+      return { ...receipt, replayed: false as const };
     },
     async recordProjectCoordinationProposalV1() { opts.onCoordinationCall?.(); throw new Error("not used"); },
     async loadAcceptedProjectCoordinationProposalV1() { opts.onCoordinationCall?.(); throw new Error("not used"); },
@@ -680,46 +753,68 @@ test("simultaneous same-key POSTs with different content never share one outcome
   assert.notDeepEqual(secondResult, firstResult);
 });
 
-test("policy pause, resume, and revoke POSTs are refused at the route before any service call", async (t) => {
+test("policy pause, resume, and revoke POSTs flow through the route to the durable service", async (t) => {
+  // #220 lifted the route suspension: each policy POST now reaches the
+  // durable engine with the route's exact key and revision envelope.
   let policyCalls = 0;
   const f = await buildRouteFixture({
+    withPolicy: true,
     onPolicyCall: () => { policyCalls += 1; },
   });
   t.after(() => f.dispose());
   const token = makeToken(FIXTURE_NOW, "test-app");
-  for (const subaction of ["pause-policy", "resume-policy", "revoke-policy"]) {
-    const response = await f.handle(new Request(`${FIXTURE_ORIGIN}/api/v1/projects/project:example/coordination/${subaction}`, {
+  const post = (subaction: string, key: string, expectedPolicyVersion: number, policyId = "policy:test") =>
+    f.handle(new Request(`${FIXTURE_ORIGIN}/api/v1/projects/project:example/coordination/${subaction}`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
         "cf-access-jwt-assertion": token,
-        "idempotency-key": `policy-suspended01`,
+        "idempotency-key": key,
         "origin": FIXTURE_ORIGIN,
       },
-      body: JSON.stringify({ policyId: "policy:test" }),
+      body: JSON.stringify({
+        policyId,
+        revision: {
+          projectId: "project:example",
+          expectedCoordinatorVersion: 0,
+          expectedPolicyVersion,
+          expectedConflictsVersion: 0,
+          expectedAttentionVersion: 0,
+        },
+      }),
     }));
-    assert.equal(response.status, 403);
-    assert.deepEqual(await response.json(), { error: "access_denied" });
-  }
-  // Suspended at the route until #220: no policy service call ran.
-  assert.equal(policyCalls, 0);
+  const paused = await post("pause-policy", "policy-flow-pause01", 1);
+  assert.equal(paused.status, 200);
+  assert.deepEqual((await paused.json() as { status: string; revision: { expectedPolicyVersion: number } }).revision.expectedPolicyVersion, 2);
+  const resumed = await post("resume-policy", "policy-flow-resume01", 2);
+  assert.equal(resumed.status, 200);
+  assert.deepEqual((await resumed.json() as { status: string; revision: { expectedPolicyVersion: number } }).revision.expectedPolicyVersion, 3);
+  const revoked = await post("revoke-policy", "policy-flow-revoke01", 3);
+  assert.equal(revoked.status, 200);
+  assert.deepEqual((await revoked.json() as { status: string; revision: { expectedPolicyVersion: number } }).revision.expectedPolicyVersion, 4);
+  // Each POST ran the durable engine exactly once.
+  assert.equal(policyCalls, 3);
 });
 
-test("policy POSTs never reach the service facade: direct spy on the handler service", async () => {
-  // The integration test above proves the canonical adapter is untouched.
-  // This test proves the stronger property: the route refuses before
-  // invoking options.service.pause/resume/revokeDelegationPolicy at all.
-  // A facade that called through to the adapter (or refused late) would
-  // increment the counters and fail here.
-  let facadeCalls = 0;
-  const bomb = (name: string) => async (): Promise<never> => {
-    facadeCalls += 1;
-    throw new Error(`service facade must not run during suspension: ${name}`);
+test("policy POSTs reach the service facade with the route key, revision, and policy", async () => {
+  // Companion to the flow test above: the route invokes
+  // options.service.pause/resume/revokeDelegationPolicy with the exact
+  // Idempotency-Key, the revision envelope, and the policy id — a facade
+  // that swallowed the call (or refused early) would fail here.
+  const seen: { name: string; policyId: string; idempotencyKey: string; expectedPolicyVersion: number }[] = [];
+  const recorder = (name: string) => async (_identity: unknown, input: {
+    policyId: string; idempotencyKey: string; revision: { expectedPolicyVersion: number };
+  }) => {
+    seen.push({ name, policyId: input.policyId, idempotencyKey: input.idempotencyKey,
+      expectedPolicyVersion: input.revision.expectedPolicyVersion });
+    return { status: "accepted" as const, revision: { projectId: "project:example",
+      observedAt: new Date(FIXTURE_NOW).toISOString(), expectedCoordinatorVersion: 0,
+      expectedPolicyVersion: 2, expectedConflictsVersion: 0, expectedAttentionVersion: 0 } };
   };
   const stubService = {
-    pauseDelegationPolicy: bomb("pause"),
-    resumeDelegationPolicy: bomb("resume"),
-    revokeDelegationPolicy: bomb("revoke"),
+    pauseDelegationPolicy: recorder("pause"),
+    resumeDelegationPolicy: recorder("resume"),
+    revokeDelegationPolicy: recorder("revoke"),
   } as unknown as Parameters<typeof createCoordinationHttpHandler>[0]["service"];
   const handle = createCoordinationHttpHandler({
     origin: FIXTURE_ORIGIN,
@@ -728,21 +823,36 @@ test("policy POSTs never reach the service facade: direct spy on the handler ser
     clock: () => FIXTURE_NOW,
   });
   const token = makeToken(FIXTURE_NOW, "test-app");
-  for (const subaction of ["pause-policy", "resume-policy", "revoke-policy"]) {
+  const cases = [
+    { subaction: "pause-policy", name: "pause", key: "policy-facade-pause01" },
+    { subaction: "resume-policy", name: "resume", key: "policy-facade-resume01" },
+    { subaction: "revoke-policy", name: "revoke", key: "policy-facade-revoke01" },
+  ] as const;
+  for (const { subaction, key } of cases) {
     const response = await handle(new Request(`${FIXTURE_ORIGIN}/api/v1/projects/project:example/coordination/${subaction}`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
         "cf-access-jwt-assertion": token,
-        "idempotency-key": `policy-spy01`,
+        "idempotency-key": key,
         "origin": FIXTURE_ORIGIN,
       },
-      body: JSON.stringify({ policyId: "policy:test" }),
+      body: JSON.stringify({
+        policyId: "policy:test",
+        revision: {
+          projectId: "project:example",
+          expectedCoordinatorVersion: 0,
+          expectedPolicyVersion: 1,
+          expectedConflictsVersion: 0,
+          expectedAttentionVersion: 0,
+        },
+      }),
     }));
-    assert.equal(response.status, 403);
-    assert.deepEqual(await response.json(), { error: "access_denied" });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json() as { status: string }).status, "accepted");
   }
-  assert.equal(facadeCalls, 0);
+  assert.deepEqual(seen, cases.map(({ name, key }) => ({ name, policyId: "policy:test",
+    idempotencyKey: key, expectedPolicyVersion: 1 })));
 });
 
 test("reconstructed handler returns the saved receipt — restart loses no retry safety", async (t) => {
