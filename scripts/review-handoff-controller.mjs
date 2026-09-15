@@ -55,6 +55,10 @@ function nextState(command, previous) {
   if (command === 'changes' && ['in-review', 're-review'].includes(previous?.state)) return ['changes-required', 'worker', false];
   if (command === 'acknowledge' && previous?.state === 'changes-required' && !previous.acknowledged) return ['changes-required', 'worker', true];
   if (command === 'resubmit' && previous?.state === 'changes-required' && previous.acknowledged) return ['re-review', 'reviewer', false];
+  // A worker may refresh an already submitted head while it still awaits
+  // review. This is a new review request, never acceptance of the new code.
+  if (command === 'resubmit' && ['in-review', 're-review'].includes(previous?.state)
+    && previous.action === 'reviewer') return ['re-review', 'reviewer', false];
   if (command === 'accept' && ['in-review', 're-review'].includes(previous?.state)) return [previous.state, 'integrator', false];
   if (command === 'stop' && (previous?.state !== 'paused' || previous?.phase === 'pending')) return ['paused', 'worker', false];
   if (command === 'stopped' && previous?.state === 'paused' && !previous.acknowledged) return ['paused', 'integrator', true];
