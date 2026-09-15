@@ -226,11 +226,17 @@ function captureWebTasks(input: unknown): Readonly<{
   const rawScenarios = input.manualVerificationScenarios;
   if (rawScenarios !== undefined) {
     if (!Array.isArray(rawScenarios)) refuse("website_setting_rejected:tasks.manualVerificationScenarios");
-    const copied = rawScenarios.map(item => deepDetach(item));
-    Object.freeze(copied);
+    const copied = Object.freeze(rawScenarios.map(item => deepDetach(item)));
     out.manualVerificationScenarios = copied;
   }
-  return Object.freeze(out);
+  return Object.freeze(out) as Readonly<{
+    harnessIntegrityKey: Uint8Array;
+    results?: { integrityKey: Uint8Array; storageClass: "local" | "r2"; storage: unknown;
+      storageIoMs?: number };
+    reviews?: { integrityKey: Uint8Array; checkpoints: unknown };
+    ownerReviews?: { integrityKey: Uint8Array; [key: string]: unknown };
+    manualVerificationScenarios?: readonly unknown[];
+  }>;
 }
 
 /** Capture the supported web profile fields from a validated private startup

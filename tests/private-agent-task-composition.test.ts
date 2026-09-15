@@ -947,12 +947,14 @@ test("byte mutation of a non-plain web tasks object after assembly does not leak
   // Use the helper's own harness key as the starting point so the production
   // gate's quality/review checks pass; we mutate the bytes AFTER assembly
   // to prove the captured configuration is detached.
+  if (!trusted.web.tasks) throw new Error("test setup: trusted.web.tasks is required");
   const originalKey = new Uint8Array(trusted.web.tasks.harnessIntegrityKey);
   const web = trusted.web as unknown as { tasks: { results: { integrityKey: Uint8Array; storageClass: "local";
     storage: object }; reviews: { integrityKey: Uint8Array; checkpoints: object } } };
   (trusted as unknown as { web: { tasks: unknown } }).web.tasks =
     new TrustedWebTasks(originalKey, web.tasks.results, web.tasks.reviews);
   const captured = assemblePrivateAgentTaskOperatorConfiguration(settings, trusted);
+  if (!captured.configuration.web.tasks) throw new Error("captured web.tasks is required");
   const capturedKey = captured.configuration.web.tasks.harnessIntegrityKey;
   const originalFirstByte = capturedKey[0];
   // Mutate the caller's original buffer after assembly. The captured
@@ -983,6 +985,7 @@ test("mutable nested child under a non-plain shallow-frozen web tasks object is 
     }
   }
   const { settings, trusted } = operatorConfigurationScenario("full");
+  if (!trusted.web.tasks) throw new Error("test setup: trusted.web.tasks is required");
   const originalKey = new Uint8Array(trusted.web.tasks.harnessIntegrityKey);
   const web = trusted.web as unknown as { tasks: { results: { integrityKey: Uint8Array; storageClass: "local";
     storage: object }; reviews: { integrityKey: Uint8Array; checkpoints: object } } };
@@ -990,6 +993,7 @@ test("mutable nested child under a non-plain shallow-frozen web tasks object is 
   Object.freeze(tasksInstance); // shallow-freeze the caller-owned object
   (trusted as unknown as { web: { tasks: unknown } }).web.tasks = tasksInstance;
   const captured = assemblePrivateAgentTaskOperatorConfiguration(settings, trusted);
+  if (!captured.configuration.web.tasks) throw new Error("captured web.tasks is required");
   const capturedKey = captured.configuration.web.tasks.harnessIntegrityKey;
   const originalFirstByte = capturedKey[0];
   // Even though the parent is shallow-frozen, the buffer inside it is
