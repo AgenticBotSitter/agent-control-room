@@ -18,6 +18,7 @@ import {
   type PersistentLocalArtifactStorageConfigurationV1,
 } from "../../artifacts/v1/persistent-local-storage";
 import type { ArtifactReadPortV1, ArtifactStoragePortV1 } from "../../node-executor/artifact-storage";
+import type { NeutralReservationPort } from "../../artifacts/v1/neutral-reservation-port";
 import { digestSchema, localId } from "../../harness/v1/native-run-identifiers";
 import { hmacSha256Tag, sha256Digest } from "../../security";
 
@@ -55,7 +56,8 @@ export type PrivateArtifactStorageConfigurationV1 = Readonly<{
 export type PrivateArtifactStorageV1 = Readonly<{
   storage: ArtifactStoragePortV1 & ArtifactReadPortV1;
   captureInventory(database: Pick<DatabaseClient, "query">, tenantId: string,
-    integrityKey: Uint8Array, signal?: AbortSignal): Promise<ArtifactBackupInventoryV1>;
+    integrityKey: Uint8Array, signal?: AbortSignal,
+    reservations?: NeutralReservationPort): Promise<ArtifactBackupInventoryV1>;
 }>;
 
 export type OpenPrivateArtifactStorageV1 = (
@@ -141,7 +143,7 @@ export async function openPrivateArtifactStorageV1(
   if (!raw || typeof raw.put !== "function" || typeof raw.read !== "function") return unavailable();
   // Keep one exact object behind every bound reader and writer.
   const storage = Object.freeze({ put: raw.put.bind(raw), read: raw.read.bind(raw) });
-  return Object.freeze({ storage, async captureInventory(database, tenantId, integrityKey, signal) {
+  return Object.freeze({ storage, async captureInventory(database, tenantId, integrityKey, signal, reservations) {
     localId.parse(tenantId);
     if (!database || typeof database.query !== "function" || !(integrityKey instanceof Uint8Array)
       || integrityKey.length !== 32 || signal?.aborted) return unavailable();
@@ -168,13 +170,27 @@ export async function openPrivateArtifactStorageV1(
     const entries = [];
     const seen = new Set<string>();
     for (const row of rows) {
-      if (signal?.aborted || !row.receipt || !row.receipt_auth_tag || !row.manifest
-        || !row.reservation || !row.reservation_auth_tag) return unavailable();
+      if (signal?.aborted || !row.receipt || !row.receipt_auth_tag || !row.manifest) return unavailable();
       const parsedReceipt = receiptSchema.safeParse(row.receipt);
       if (!parsedReceipt.success) return unavailable();
       const receipt = parsedReceipt.data;
+      // Neutral reservations live behind the injected reservation boundary,
+      // not the native table, so the SQL join yields no reservation columns
+      // for them. Consult the boundary port when supplied and verify the
+      // returned row with the exact same checks below. Without the port the
+      // reader still fails closed; production server composition passes the
+      // lead-owned PostgreSQL adapter once it lands after #63.
+      let reservationValue = row.reservation, reservationAuthTag = row.reservation_auth_tag;
+      if (reservationValue == null || reservationAuthTag == null) {
+        if (!reservations || typeof reservations.findForUpdate !== "function") return unavailable();
+        const portRow = await reservations.findForUpdate(database, tenantId, receipt.runId);
+        if (!portRow || portRow.tenant_id !== tenantId || portRow.run_id !== receipt.runId
+          || portRow.artifact_id !== receipt.artifactId) return unavailable();
+        reservationValue = portRow.reservation; reservationAuthTag = portRow.auth_tag;
+      }
+      if (typeof reservationAuthTag !== "string") return unavailable();
       const manifest = artifactManifestRecordSchema.parse(row.manifest);
-      const { reserved, tagPurpose } = reservation(row.reservation);
+      const { reserved, tagPurpose } = reservation(reservationValue);
       const identity = reserved.identity;
       const receiptTag = receipt.schema === "control-room.durable-result-receipt/v1"
         ? durableResultReceiptTagV1(key, receipt)
@@ -186,7 +202,7 @@ export async function openPrivateArtifactStorageV1(
         return left.length === right.length && timingSafeEqual(left, right);
       };
       if (reserved.state !== "metadata_committed" || row.tenant_id !== tenantId || receipt.tenantId !== tenantId
-        || !equalTag(receiptTag, row.receipt_auth_tag) || !equalTag(reservationTag, row.reservation_auth_tag)
+        || !equalTag(receiptTag, row.receipt_auth_tag) || !equalTag(reservationTag, reservationAuthTag)
         || row.project_id !== receipt.projectId || row.job_id !== receipt.jobId
         || row.attempt_id !== receipt.attemptId || row.run_id !== receipt.runId
         || row.artifact_id !== receipt.artifactId || seen.has(receipt.artifactId)

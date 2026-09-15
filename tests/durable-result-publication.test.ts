@@ -11,7 +11,7 @@ import { readDurableResultReviewPlanV1, verifyReviewPlanAgainstReceiptV1 } from 
 import { openPrivateArtifactStorageV1, privateArtifactStorageNamespaceDigestV1 } from "../src/web/v1/private-artifact-storage";
 import type { ArtifactReadPortV1, ArtifactStoragePortV1 } from "../src/node-executor/artifact-storage";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
-import { hmacSha256Tag, sha256Digest } from "../src/security";
+import { sha256Digest } from "../src/security";
 import { createInMemoryNeutralReservationPort, createPersistentNeutralReservationPort,
   createPersistentNeutralReservationStore } from "../src/artifacts/v1/neutral-reservation-port";
 import { binding } from "./hermes-native-fixture";
@@ -474,26 +474,13 @@ test("delegated native reservations keep strict replay comparison", async t => {
     uncertaintyDigest: digest("v") }), /native_result_reservation_conflict/);
 });
 
-test("the backup inventory includes the neutral receipt and exact stored bytes", async t => {
+test("the backup inventory captures the neutral result through the actual reader and the reservation boundary", async t => {
   const f = await setupWithProvision("run:durable-inventory"); t.after(f.close);
   const storage = new ControlledStorage();
   const runId = "run:durable-inventory";
   const receivedAt = at(10_100);
   const captured = await publishDurableResultV1(configOf(f, storage),
     { binding: nativeBinding(runId), bytes: bytesOf("inventory"), receivedAt, assertAuthority: () => {} });
-  const reservationRow = f.restartReservations.peek(binding.tenantId, runId);
-  assert.ok(reservationRow);
-  const reservationRows = [{ reservation: reservationRow!.reservation, auth_tag: reservationRow!.auth_tag }];
-  const receiptRows = (await f.db.query<{ receipt: unknown; auth_tag: string; manifest: unknown }>(
-    `SELECT r.receipt,r.auth_tag,m.payload AS manifest FROM control_native_artifact_receipts r
-     JOIN control_artifact_manifests m ON m.tenant_id=r.tenant_id AND m.id=r.artifact_id
-     AND m.project_id=r.project_id AND m.job_id=r.job_id AND m.attempt_id=r.attempt_id
-     WHERE r.tenant_id=$1 AND r.run_id=$2`, [binding.tenantId, runId])).rows;
-  const row = { tenant_id: binding.tenantId, project_id: binding.projectId, job_id: nativeBinding(runId).jobId,
-    attempt_id: nativeBinding(runId).attemptId, run_id: runId, artifact_id: captured.receipt.artifactId,
-    receipt: receiptRows[0].receipt, receipt_auth_tag: receiptRows[0].auth_tag, manifest: receiptRows[0].manifest,
-    reservation: reservationRows[0].reservation, reservation_auth_tag: reservationRows[0].auth_tag };
-  const database = (rows: unknown[]): Pick<DatabaseClient, "query"> => ({ query: async <T>() => ({ rows: rows as T[] }) });
   const opened = await openPrivateArtifactStorageV1(
     { local: { rootPath: "memory:durable-inventory-test", maximumArtifacts: 20, maximumFileBytes: 65_536,
       maximumTotalBytes: 1_000_000, operationTimeoutMs: 2_000 },
@@ -502,12 +489,21 @@ test("the backup inventory includes the neutral receipt and exact stored bytes",
       storageNamespaceDigest: privateArtifactStorageNamespaceDigestV1("artifact-namespace:test",
         "memory:durable-inventory-test") } },
     async () => ({ put: storage.put.bind(storage), read: storage.read.bind(storage) }));
-  const captured_inventory = await opened.captureInventory(database([row]), binding.tenantId, f.resultKey);
+  // Without the neutral reservation boundary the actual reader fails
+  // closed: its SQL join finds receipt and manifest rows but no native-table
+  // reservation for the neutral record. This is the gap the boundary closes.
+  await assert.rejects(opened.captureInventory(f.db, binding.tenantId, f.resultKey),
+    /private_artifact_storage_unavailable/);
+  // Through the boundary port the actual reader — real SQL against the real
+  // test database, no fabricated joined row — captures the neutral receipt
+  // and exact stored bytes.
+  const captured_inventory = await opened.captureInventory(f.db, binding.tenantId, f.resultKey,
+    undefined, f.restartReservations);
   assert.deepEqual(captured_inventory.entries, [{ artifactId: captured.receipt.artifactId,
     contentHash: captured.receipt.contentHash, sizeBytes: captured.receipt.sizeBytes,
     manifestDigest: captured.receipt.manifestDigest, receiptDigest: sha256Digest(captured.receipt) }]);
-  await assert.rejects(opened.captureInventory(database([{ ...row,
-    receipt_auth_tag: hmacSha256Tag(f.resultKey, { purpose: "durable-result-receipt/v1",
-      receipt: { ...(row.receipt as object), sizeBytes: 1 } }) }]), binding.tenantId, f.resultKey),
-  /private_artifact_storage_unavailable/);
+  // A wrong integrity key fails closed through the same actual reader:
+  // neither the receipt nor the reservation auth tag verifies.
+  await assert.rejects(opened.captureInventory(f.db, binding.tenantId, new Uint8Array(32).fill(7),
+    undefined, f.restartReservations), /private_artifact_storage_unavailable/);
 });
