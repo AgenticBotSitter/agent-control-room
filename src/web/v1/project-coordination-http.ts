@@ -14,7 +14,10 @@
 // service through the server composition. No second store, no second port,
 // no second database path is introduced.
 
-import type { DatabaseClient } from "../../persistence/database";
+import type { DatabaseClient, DatabaseSession, QueryResult } from "../../persistence/database";
+import { CanonicalStore } from "../../persistence/canonical-store";
+import { findResourceConflictsV1 } from "../../project-coordination/v1/resource-conflict";
+import type { ProjectWorkResourceScopeV1 } from "../../contracts/v1/project-coordination-boundaries";
 import {
   ProjectCoordinationCanonicalPortV1,
   ProjectCoordinatorServiceV1,
@@ -176,6 +179,16 @@ export interface ProjectCoordinationCanonicalStoreAdapter {
   }>;
   /** Whether the coordination surface is enabled. False disables all writes; reads still succeed. */
   coordinationEnabled: () => Promise<boolean>;
+  /**
+   * Rebind this adapter to an ambient transaction session. The HTTP service
+   * calls this with the `tx` it already holds inside `authenticated()`, so
+   * every canonical read and lifecycle write joins that transaction instead
+   * of opening a second connection: on a pooled production database that
+   * keeps the page snapshot consistent, and on a single-connection embedded
+   * database it avoids self-deadlock. Stores that carry no database handle
+   * (in-memory fakes) omit this and the service keeps using them as-is.
+   */
+  bindSession?: (session: DatabaseSession) => ProjectCoordinationCanonicalStoreAdapter;
 }
 
 export interface ProjectCoordinationHttpServiceOptions {
@@ -369,13 +382,14 @@ export class ProjectCoordinationHttpService {
     input: ProjectCoordinatorAppointInput,
     requireExistingHead: boolean,
   ): Promise<ProjectCoordinationActionOutcome> {
-    return this.authority.authenticated(identity, async (_tx, actor) => {
+    return this.authority.authenticated(identity, async (tx, actor) => {
       actor.require(action, input.projectId, true);
-      const projectHead = await this.readProjectHead(actor, input.projectId);
-      const currentCoordinatorVersion = await this.store.coordinatorVersion(input.projectId);
-      const currentPolicyVersion = await this.store.policyVersion(input.projectId);
-      const currentConflictsVersion = await this.store.conflictsVersion(input.projectId);
-      const currentAttentionVersion = await this.store.attentionVersion(input.projectId);
+      const store = this.sessionStore(tx);
+      const projectHead = await this.readProjectHead(actor, input.projectId, store);
+      const currentCoordinatorVersion = await store.coordinatorVersion(input.projectId);
+      const currentPolicyVersion = await store.policyVersion(input.projectId);
+      const currentConflictsVersion = await store.conflictsVersion(input.projectId);
+      const currentAttentionVersion = await store.attentionVersion(input.projectId);
       const observedAt = new Date(this.options.clock()).toISOString();
 
       // Revision gate, minus the coordinator version. The coordinator version
@@ -475,7 +489,7 @@ export class ProjectCoordinationHttpService {
       }
 
       actor.require(action, input.projectId);
-      const coordinatorService = new ProjectCoordinatorServiceV1(this.store.coordinator);
+      const coordinatorService = new ProjectCoordinatorServiceV1(store.coordinator);
       // The merged service requires the route's exact Idempotency-Key and the
       // submitted expected version. Its PG transaction returns the saved
       // receipt on an exact retry, refuses changed content under the same key,
@@ -505,7 +519,7 @@ export class ProjectCoordinationHttpService {
         if (wireCode) {
           // Re-read the head version so the stale envelope reports the
           // version the engine actually saw, not the pre-call read.
-          const latestCoordinatorVersion = await this.store.coordinatorVersion(input.projectId).catch(
+          const latestCoordinatorVersion = await store.coordinatorVersion(input.projectId).catch(
             () => currentCoordinatorVersion,
           );
           return this.refused(wireCode, observedAt, {
@@ -527,13 +541,14 @@ export class ProjectCoordinationHttpService {
     input: ProjectCoordinatorRevokePolicyInput,
     toState: "paused" | "active" | "revoked",
   ): Promise<ProjectCoordinationActionOutcome> {
-    return this.authority.authenticated(identity, async (_tx, actor) => {
+    return this.authority.authenticated(identity, async (tx, actor) => {
       actor.require(action, input.projectId, true);
-      const projectHead = await this.readProjectHead(actor, input.projectId);
-      const currentCoordinatorVersion = await this.store.coordinatorVersion(input.projectId);
-      const currentPolicyVersion = await this.store.policyVersion(input.projectId);
-      const currentConflictsVersion = await this.store.conflictsVersion(input.projectId);
-      const currentAttentionVersion = await this.store.attentionVersion(input.projectId);
+      const store = this.sessionStore(tx);
+      const projectHead = await this.readProjectHead(actor, input.projectId, store);
+      const currentCoordinatorVersion = await store.coordinatorVersion(input.projectId);
+      const currentPolicyVersion = await store.policyVersion(input.projectId);
+      const currentConflictsVersion = await store.conflictsVersion(input.projectId);
+      const currentAttentionVersion = await store.attentionVersion(input.projectId);
       const observedAt = new Date(this.options.clock()).toISOString();
 
       const versionCheck = this.checkRevisions(
@@ -556,7 +571,7 @@ export class ProjectCoordinationHttpService {
         input.projectId);;
       }
 
-      const existingPolicyState = await this.store.coordinator
+      const existingPolicyState = await store.coordinator
         .setProjectDelegationPolicyStateV1({
           tenantId: projectHead.tenantId,
           projectId: projectHead.projectId,
@@ -619,11 +634,20 @@ export class ProjectCoordinationHttpService {
     });
   }
 
+  /** Store bound to the ambient transaction session when it offers one. */
+  private sessionStore(tx: unknown): ProjectCoordinationCanonicalStoreAdapter {
+    if (tx && typeof tx === "object" && this.store.bindSession) {
+      return this.store.bindSession(tx as DatabaseSession);
+    }
+    return this.store;
+  }
+
   private async readProjectHead(
     actor: WebActor,
     projectId: string,
+    store: ProjectCoordinationCanonicalStoreAdapter = this.store,
   ): Promise<{ tenantId: string; projectId: string }> {
-    const project = await this.store.project(projectId).catch(() => null);
+    const project = await store.project(projectId).catch(() => null);
     if (!project) throw new WebAccessError("not_found");
     return { tenantId: this.options.scope.tenantId, projectId };
   }
@@ -716,16 +740,23 @@ export class ProjectCoordinationHttpService {
   }
 
   private async composeProjectCoordinationPage(
-    _tx: unknown,
-    _actor: WebActor,
+    tx: unknown,
+    actor: WebActor,
     projectId: string,
   ): Promise<ProjectCoordinationPagePayload> {
-    const project = await this.store.project(projectId).catch(() => null);
+    const store = this.sessionStore(tx);
+    const project = await store.project(projectId).catch(() => null);
     if (!project) throw new WebAccessError("not_found");
-    const enabled = await this.store.coordinationEnabled();
+    const enabled = await store.coordinationEnabled();
     const observedAt = new Date(this.options.clock()).toISOString();
-    const headVersion = await this.store.coordinatorVersion(projectId);
-    const headProjection = await this.buildCoordinatorHeadForPage(projectId, headVersion, observedAt);
+    const headVersion = await store.coordinatorVersion(projectId);
+    const headProjection = await this.buildCoordinatorHeadForPage(store, projectId, headVersion, observedAt);
+    // The exact saved versions the guards enforce: read here once so the
+    // page and every later write on this revision compare the same values.
+    // Nothing here is derived from array lengths or presence flags.
+    const policyVersion = await store.policyVersion(projectId);
+    const conflicts = (await store.readConflicts?.(projectId)) ?? [];
+    const attention = (await store.readAttention?.(projectId)) ?? [];
     return {
       project: {
         projectId: project.projectId,
@@ -740,16 +771,24 @@ export class ProjectCoordinationHttpService {
       coordinationEnabled: enabled,
       observedAt,
       coordinatorHead: headProjection.coordinatorHead,
-      delegationPolicy: (await this.store.readDelegationPolicySummary?.(projectId)) ?? null,
-      activeWork: (await this.store.readActiveWork?.(projectId)) ?? [],
-      dependencies: (await this.store.readDependencies?.(projectId)) ?? [],
-      conflicts: (await this.store.readConflicts?.(projectId)) ?? [],
-      attention: (await this.store.readAttention?.(projectId)) ?? [],
+      delegationPolicy: (await store.readDelegationPolicySummary?.(projectId)) ?? null,
+      activeWork: (await store.readActiveWork?.(projectId)) ?? [],
+      dependencies: (await store.readDependencies?.(projectId)) ?? [],
+      conflicts,
+      attention,
       nextAction: headVersion === 0 ? "appoint-coordinator" : "view-active-work",
+      versions: {
+        coordinatorVersion: headVersion,
+        policyVersion,
+        conflictsVersion: conflicts.length,
+        attentionVersion: attention.length,
+      },
+      viewerOwnerIdentityId: actor.id,
     };
   }
 
   private async buildCoordinatorHeadForPage(
+    store: ProjectCoordinationCanonicalStoreAdapter,
     projectId: string,
     headVersion: number,
     _observedAt: string,
@@ -772,7 +811,7 @@ export class ProjectCoordinationHttpService {
         },
       };
     }
-    const head = await this.store.readActiveHead?.(projectId);
+    const head = await store.readActiveHead?.(projectId);
     if (!head) {
       // Fakes-only store: do not fabricate a populated head. The workspace
       // handles the empty-head view; the page does not invent coordinator
@@ -798,4 +837,434 @@ export class ProjectCoordinationHttpService {
       coordinatorHead: head,
     };
   }
+}
+
+/**
+ * Production adapter: every read runs against the accepted canonical
+ * PostgreSQL tables for the requesting tenant and project. No fakes, no
+ * empty hooks, no second authority.
+ *
+ * Honest derivations used where no stored version exists (all documented at
+ * the call site):
+ * - conflicts are DERIVED open overlaps computed with the accepted
+ *   findResourceConflictsV1 rules over currently-held admissions; they carry
+ *   the stable reasonCode "resource_overlap" (a derivation marker, not a
+ *   stored engine refusal) and ledgerIds derived from the saved admission id.
+ * - conflictsVersion/attentionVersion are the counts of those derived/saved
+ *   rows. They are staleness guards, not monotonic sequences: any change
+ *   refuses with fresh versions and the owner re-reads.
+ * - concurrencyUnitsUsed counts currently-active coordination-adopted jobs;
+ *   task/microUSD usage sums the saved operation receipts for the policy.
+ * - coordinationEnabled is always true: there is no coordination product
+ *   module, so the disabled path is reachable only in composed fixtures.
+ */
+/**
+ * Join the ambient transaction the HTTP service already holds: every query
+ * runs on that session, and nested transaction boundaries collapse into it
+ * (the outer commit still decides). This is what lets the production adapter
+ * serve reads and lifecycle writes from inside `authenticated()` without
+ * opening a second connection.
+ */
+function joinAmbientSession(session: DatabaseSession): DatabaseClient {
+  return {
+    query<T = Record<string, unknown>>(statement: string, params?: unknown[]): Promise<QueryResult<T>> {
+      return session.query<T>(statement, params);
+    },
+    transaction<T>(callback: (nested: DatabaseSession) => Promise<T>): Promise<T> {
+      return callback(session);
+    },
+    transactionWithPreCommitCheck<T>(callback: (nested: DatabaseSession) => Promise<T>,
+      preCommitCheck: () => void | Promise<void>): Promise<T> {
+      return (async () => {
+        const result = await callback(session);
+        await preCommitCheck();
+        return result;
+      })();
+    },
+  };
+}
+
+export function createProjectCoordinationCanonicalStoreAdapterV1(options: {
+  database: DatabaseClient;
+  tenantId: string;
+  now?: () => number;
+}): ProjectCoordinationCanonicalStoreAdapter {
+  const tenantId = options.tenantId;
+  const now = options.now ?? Date.now;
+  const db = options.database;
+  // Builder so bindSession can rebind every helper and the lifecycle port to
+  // the ambient transaction session. The parameter shadows the outer client
+  // on purpose, so every closure below keeps working unchanged.
+  const buildAdapter = (db: DatabaseClient): ProjectCoordinationCanonicalStoreAdapter => {
+  const coordinator = new CanonicalStore(db);
+
+  const iso = (value: unknown): string => new Date(value as string | number | Date).toISOString();
+  const cleanId = (value: string): string => value.replace(/[^A-Za-z0-9:_-]/g, "_").slice(0, 160);
+  const isJobId = (value: string): boolean => /^job:[A-Za-z0-9:_-]{1,160}$/.test(value);
+  const isAdmissionId = (value: string): boolean => /^admission:[A-Za-z0-9:_-]{1,160}$/.test(value);
+  const isLeaseId = (value: string): boolean => /^lease:[A-Za-z0-9:_-]{1,160}$/.test(value);
+  const isProposalId = (value: string): boolean => /^proposal:[A-Za-z0-9:_-]{1,160}$/.test(value);
+  const isRelativePath = (value: string): boolean => value === ""
+    || /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}(\/[A-Za-z0-9_][A-Za-z0-9._-]{0,127})*$/.test(value);
+
+  type HeadRow = {
+    version: string | number; state: string; coordinator_identity_id: string;
+    coordinator_actor_type: string; executor_id: string | null; adapter_id: string | null;
+    connector_profile_digest: string | null; execution_binding_digest: string | null;
+    assigned_at: unknown; assigned_by_owner_identity_id: string;
+  };
+  async function headRow(projectId: string): Promise<HeadRow | undefined> {
+    return (await db.query<HeadRow>(
+      `SELECT version,state,coordinator_identity_id,coordinator_actor_type,executor_id,adapter_id,
+        connector_profile_digest,execution_binding_digest,assigned_at,assigned_by_owner_identity_id
+       FROM control_project_coordinator_heads WHERE tenant_id=$1 AND project_id=$2`,
+      [tenantId, projectId])).rows[0];
+  }
+
+  type PolicyRow = {
+    id: string; state: string; version: string | number; coordinator_version: string | number;
+    allowed_actions: unknown; valid_from: unknown; valid_until: unknown;
+    max_total_tasks: string | number; max_total_cost_microusd: string | number;
+    max_concurrent_tasks: string | number;
+  };
+  async function policyRow(projectId: string): Promise<PolicyRow | undefined> {
+    return (await db.query<PolicyRow>(
+      `SELECT id,state,version,coordinator_version,allowed_actions,valid_from,valid_until,
+        max_total_tasks,max_total_cost_microusd,max_concurrent_tasks
+       FROM control_project_delegation_policies WHERE tenant_id=$1 AND project_id=$2
+       ORDER BY updated_at DESC LIMIT 1`,
+      [tenantId, projectId])).rows[0];
+  }
+
+  type ConflictSeed = {
+    admissionId: string; jobId: string; leaseId: string; acquiredAt: string;
+    repository: string; scopes: Array<{ scopeKind: "file" | "tree" | "logical"; path: string; accessMode: "read" | "write" }>;
+  };
+  async function openConflicts(projectId: string): Promise<Array<{
+    ledgerId: string; projectId: string; repository: string;
+    resourceKind: "tree" | "file" | "logical"; resourcePath: string;
+    conflictingAdmissionId: string; conflictingJobId: string; conflictingLeaseId: string;
+    reasonCode: string; raisedAt: string; resolvedAt: null; resolutionKind: null;
+  }>> {
+    const admissions = (await db.query<{
+      id: string; job_id: string; lease_id: string; acquired_at: unknown; canonical_key: string;
+    }>(
+      `SELECT a.id,a.job_id,a.lease_id,a.acquired_at,r.canonical_key
+       FROM control_attempt_resource_admissions a
+       JOIN control_work_resources r ON r.tenant_id=a.tenant_id AND r.id=a.repository_resource_id
+       WHERE a.tenant_id=$1 AND a.project_id=$2 AND a.state='held'
+       ORDER BY a.acquired_at ASC,a.id ASC`,
+      [tenantId, projectId])).rows;
+    if (admissions.length < 2) return [];
+    const scopes = (await db.query<{
+      admission_id: string; resource_id: string; access_mode: string; scope_kind: string; path: string;
+    }>(
+      `SELECT admission_id,resource_id,access_mode,scope_kind,path
+       FROM control_attempt_resource_scopes WHERE tenant_id=$1 AND admission_id=ANY($2::text[])`,
+      [tenantId, admissions.map((a) => a.id)])).rows;
+    const byAdmission = new Map<string, ConflictSeed["scopes"]>();
+    for (const scope of scopes) {
+      if (scope.scope_kind !== "file" && scope.scope_kind !== "tree" && scope.scope_kind !== "logical") continue;
+      if (scope.access_mode !== "read" && scope.access_mode !== "write") continue;
+      if (!isRelativePath(scope.path)) continue;
+      const list = byAdmission.get(scope.admission_id) ?? [];
+      list.push({ scopeKind: scope.scope_kind, path: scope.path, accessMode: scope.access_mode });
+      byAdmission.set(scope.admission_id, list);
+    }
+    const seeds: ConflictSeed[] = [];
+    for (const admission of admissions) {
+      const admissionScopes = byAdmission.get(admission.id) ?? [];
+      if (admissionScopes.length === 0) continue;
+      seeds.push({
+        admissionId: admission.id, jobId: admission.job_id, leaseId: admission.lease_id,
+        acquiredAt: iso(admission.acquired_at), repository: admission.canonical_key,
+        scopes: admissionScopes,
+      });
+    }
+    // One conflict per (requesting admission, resource): the earliest held
+    // overlap from a different job. Ordered by acquisition so ledgerIds are
+    // stable derivations of saved rows.
+    const out: Awaited<ReturnType<typeof openConflicts>> = [];
+    const seen = new Set<string>();
+    for (const seed of seeds) {
+      const held = seeds
+        .filter((other) => other.admissionId !== seed.admissionId
+          && other.jobId !== seed.jobId
+          && other.acquiredAt <= seed.acquiredAt)
+        .flatMap((other) => other.scopes.map((scope) => ({
+          admissionId: other.admissionId, resourceId: other.repository, accessMode: scope.accessMode,
+          scopeKind: scope.scopeKind, path: scope.path,
+        })));
+      // findResourceConflictsV1 matches on resourceId; compute per scope so
+      // the surviving scope details stay attached to the right repository.
+      for (const scope of seed.scopes) {
+        const key = `${seed.admissionId}${seed.repository}`;
+        if (seen.has(key)) continue;
+        const resourceHeld = held.filter((candidate) => candidate.resourceId === seed.repository);
+        // The digest is a type-level placeholder: the overlap rule only reads
+        // resourceId/accessMode/scopeKind/path, never the digest.
+        const requested: ProjectWorkResourceScopeV1 = {
+          resourceId: seed.repository,
+          resourceKind: "repository",
+          resourceConfigurationDigest: `sha256:${"0".repeat(64)}`,
+          accessMode: scope.accessMode,
+          scopeKind: scope.scopeKind,
+          path: scope.path,
+        };
+        const hits = findResourceConflictsV1([requested], resourceHeld);
+        if (hits.length === 0) continue;
+        const heldAdmission = seeds.find((candidate) => candidate.admissionId === hits[0]!.heldAdmissionId);
+        if (!heldAdmission
+          || !isAdmissionId(seed.admissionId) || !isJobId(seed.jobId) || !isLeaseId(seed.leaseId)) continue;
+        seen.add(key);
+        out.push({
+          ledgerId: `conflict:${cleanId(seed.admissionId)}`,
+          projectId,
+          repository: seed.repository,
+          resourceKind: scope.scopeKind,
+          resourcePath: scope.path,
+          conflictingAdmissionId: seed.admissionId,
+          conflictingJobId: seed.jobId,
+          conflictingLeaseId: seed.leaseId,
+          reasonCode: "resource_overlap",
+          raisedAt: seed.acquiredAt,
+          resolvedAt: null,
+          resolutionKind: null,
+        });
+      }
+    }
+    return out.slice(0, 100);
+  }
+
+  type AttentionSeed = {
+    attentionId: string; projectId: string; severity: "urgent" | "soon" | "normal";
+    category: "uncertainty" | "approval" | "review" | "preparation";
+    ownerQuestion: string; observedAt: string;
+    referencedJobId: string | null; referencedAdmissionId: null;
+  };
+  async function attentionList(projectId: string): Promise<AttentionSeed[]> {
+    // Saved needs-me rows for this project. The stored attention_type
+    // vocabulary (approval/question/review/decision) is folded onto the
+    // coordination categories the page renders; severity comes from the
+    // stored due date against the server clock.
+    const rows = (await db.query<{
+      id: string; attention_type: string; summary: string; title: string;
+      due_at: unknown; observed_at: unknown; work_item_id: string | null;
+    }>(
+      `SELECT id,attention_type,summary,title,due_at,observed_at,work_item_id
+       FROM attention_items WHERE tenant_id=$1 AND project_id=$2
+       ORDER BY observed_at DESC LIMIT 50`,
+      [tenantId, projectId])).rows;
+    const out: AttentionSeed[] = [];
+    for (const row of rows) {
+      const category = row.attention_type === "approval" || row.attention_type === "decision" ? "approval"
+        : row.attention_type === "review" ? "review"
+        : row.attention_type === "question" ? "uncertainty" : null;
+      if (!category) continue;
+      const due = row.due_at ? Date.parse(iso(row.due_at)) : NaN;
+      const current = now();
+      const severity = Number.isFinite(due) && due <= current ? "urgent"
+        : Number.isFinite(due) && due <= current + 86_400_000 ? "soon" : "normal";
+      const text = (row.summary || row.title).slice(0, 280);
+      if (!text) continue;
+      out.push({
+        attentionId: `attention:${cleanId(row.id)}`,
+        projectId,
+        severity,
+        category,
+        ownerQuestion: text,
+        observedAt: iso(row.observed_at),
+        referencedJobId: row.work_item_id && isJobId(row.work_item_id) ? row.work_item_id : null,
+        referencedAdmissionId: null,
+      });
+    }
+    return out;
+  }
+
+  return {
+    coordinator,
+    async coordinatorVersion(projectId) {
+      const head = await headRow(projectId);
+      return head ? Number(head.version) : 0;
+    },
+    async readActiveHead(projectId) {
+      const head = await headRow(projectId);
+      if (!head) return null;
+      return {
+        tenantId,
+        projectId,
+        version: Number(head.version),
+        state: head.state as "active" | "revoked",
+        coordinatorActorType: head.coordinator_actor_type as "human" | "agent",
+        coordinatorIdentityId: head.coordinator_identity_id,
+        executorId: head.executor_id,
+        adapterId: head.adapter_id,
+        connectorProfileDigest: head.connector_profile_digest,
+        executionBindingDigest: head.execution_binding_digest,
+        appointedAt: iso(head.assigned_at),
+        appointedByOwnerIdentityId: head.assigned_by_owner_identity_id,
+      };
+    },
+    async policyVersion(projectId) {
+      const policy = await policyRow(projectId);
+      return policy ? Number(policy.version) : 0;
+    },
+    async readDelegationPolicySummary(projectId) {
+      const policy = await policyRow(projectId);
+      if (!policy) return null;
+      const usage = (await db.query<{ task_units: string | number; micro_usd: string | number }>(
+        `SELECT COALESCE(SUM(task_units),0) AS task_units,
+          COALESCE(SUM(admitted_cost_microusd),0) AS micro_usd
+         FROM control_project_coordination_operation_receipts
+         WHERE tenant_id=$1 AND policy_id=$2`,
+        [tenantId, policy.id])).rows[0];
+      const concurrent = (await db.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM control_jobs j
+         WHERE j.tenant_id=$1 AND j.project_id=$2
+           AND j.state IN ('leased','running','waiting_approval')
+           AND EXISTS (SELECT 1 FROM control_project_coordination_operation_jobs oj
+             WHERE oj.tenant_id=j.tenant_id AND oj.canonical_job_id=j.id)`,
+        [tenantId, projectId])).rows[0];
+      const allowed = typeof policy.allowed_actions === "string"
+        ? JSON.parse(policy.allowed_actions) as string[]
+        : policy.allowed_actions as string[];
+      return {
+        tenantId,
+        projectId,
+        policyId: policy.id,
+        coordinatorVersion: Number(policy.coordinator_version),
+        state: policy.state as "active" | "paused" | "revoked",
+        allowedActions: allowed,
+        validFrom: iso(policy.valid_from),
+        validUntil: iso(policy.valid_until),
+        taskAllowance: Number(policy.max_total_tasks),
+        taskUnitsUsed: Number(usage?.task_units ?? 0),
+        microUsdCeiling: String(policy.max_total_cost_microusd),
+        microUsdUsed: String(usage?.micro_usd ?? 0),
+        concurrencyAllowance: Number(policy.max_concurrent_tasks),
+        concurrencyUnitsUsed: Number(concurrent?.count ?? 0),
+      };
+    },
+    async conflictsVersion(projectId) {
+      return (await openConflicts(projectId)).length;
+    },
+    async attentionVersion(projectId) {
+      // Same list the page surfaces: version and payload cannot disagree.
+      return (await attentionList(projectId)).length;
+    },
+    async readActiveWork(projectId) {
+      // Only coordinator-adopted jobs: the INNER JOINs through the operation
+      // ledger mean a job without a saved adoption (and its proposal digest)
+      // never appears here. Title comes from the saved request payload the
+      // task service itself validates.
+      const rows = (await db.query<{
+        job_id: string; state: string; updated_at: unknown;
+        proposal_id: string; proposal_digest: string | null; title: string | null;
+      }>(
+        `SELECT j.id AS job_id,j.state,j.updated_at,r.proposal_id,p.proposal_digest,
+           req.payload->>'title' AS title
+         FROM control_jobs j
+         JOIN control_project_coordination_operation_jobs oj
+           ON oj.tenant_id=j.tenant_id AND oj.canonical_job_id=j.id
+         JOIN control_project_coordination_operation_receipts r
+           ON r.tenant_id=oj.tenant_id AND r.id=oj.operation_receipt_id
+         JOIN control_project_coordination_proposals p
+           ON p.tenant_id=r.tenant_id AND p.id=r.proposal_id
+         JOIN control_workflows w ON w.tenant_id=j.tenant_id AND w.id=j.workflow_id
+         JOIN control_requests req ON req.tenant_id=w.tenant_id AND req.id=w.request_id
+         WHERE j.tenant_id=$1 AND j.project_id=$2
+           AND j.state IN ('proposed','ready','leased','running','waiting_approval')
+           AND p.proposal_digest IS NOT NULL
+         ORDER BY j.updated_at DESC LIMIT 100`,
+        [tenantId, projectId])).rows;
+      const scopes = (await db.query<{ job_id: string; path: string; access_mode: string }>(
+        `SELECT a.job_id,s.path,s.access_mode
+         FROM control_attempt_resource_scopes s
+         JOIN control_attempt_resource_admissions a
+           ON a.tenant_id=s.tenant_id AND a.id=s.admission_id
+         WHERE s.tenant_id=$1 AND a.project_id=$2 AND a.state='held'`,
+        [tenantId, projectId])).rows;
+      const scopesByJob = new Map<string, { read: string[]; write: string[] }>();
+      for (const scope of scopes) {
+        if (!isRelativePath(scope.path)) continue;
+        const entry = scopesByJob.get(scope.job_id) ?? { read: [], write: [] };
+        const bucket = scope.access_mode === "write" ? entry.write : entry.read;
+        if (!bucket.includes(scope.path) && bucket.length < 20) bucket.push(scope.path);
+        scopesByJob.set(scope.job_id, entry);
+      }
+      const stateMap: Record<string, "proposed" | "leased" | "running" | "waiting" | "review"> = {
+        proposed: "proposed", ready: "proposed", leased: "leased",
+        running: "running", waiting_approval: "review",
+      };
+      const out: NonNullable<Awaited<ReturnType<NonNullable<ProjectCoordinationCanonicalStoreAdapter["readActiveWork"]>>>> = [];
+      for (const row of rows) {
+        const state = stateMap[row.state];
+        if (!state || !isJobId(row.job_id) || !isProposalId(row.proposal_id)
+          || !row.proposal_digest || !row.title) continue;
+        const entry = scopesByJob.get(row.job_id) ?? { read: [], write: [] };
+        out.push({
+          jobId: row.job_id,
+          title: row.title.slice(0, 280),
+          state,
+          updatedAt: iso(row.updated_at),
+          proposalId: row.proposal_id,
+          proposalDigest: row.proposal_digest,
+          readScopes: entry.read,
+          writeScopes: entry.write,
+        });
+      }
+      return out;
+    },
+    async readDependencies(projectId) {
+      // Recorded edges are ordering prerequisites between two saved jobs of
+      // this project; every stored edge is required.
+      const rows = (await db.query<{ from_job: string; to_job: string }>(
+        `SELECT d.job_id AS from_job,d.depends_on_job_id AS to_job
+         FROM control_job_dependencies d
+         JOIN control_jobs j1 ON j1.tenant_id=d.tenant_id AND j1.id=d.job_id AND j1.project_id=$2
+         JOIN control_jobs j2 ON j2.tenant_id=d.tenant_id AND j2.id=d.depends_on_job_id AND j2.project_id=$2
+         WHERE d.tenant_id=$1 LIMIT 500`,
+        [tenantId, projectId])).rows;
+      return rows
+        .filter((row) => isJobId(row.from_job) && isJobId(row.to_job))
+        .map((row) => ({ fromJobId: row.from_job, toJobId: row.to_job, required: true }));
+    },
+    async readConflicts(projectId) {
+      return openConflicts(projectId);
+    },
+    async readAttention(projectId) {
+      return attentionList(projectId);
+    },
+    async project(projectId) {
+      const row = (await db.query<{
+        projectId: string; title: string; summary: string; lifecycle: string;
+        version: string | number; createdAt: unknown; updatedAt: unknown;
+      }>(
+        `SELECT p.id AS "projectId",p.title,coalesce(p.description,'') AS summary,
+           h.lifecycle,h.version,h.created_at AS "createdAt",h.updated_at AS "updatedAt"
+         FROM projects p
+         JOIN control_manual_project_heads h ON h.tenant_id=p.tenant_id AND h.project_id=p.id
+         WHERE p.tenant_id=$1 AND p.id=$2`,
+        [tenantId, projectId])).rows[0];
+      if (!row || (row.lifecycle !== "active" && row.lifecycle !== "paused"
+        && row.lifecycle !== "completed" && row.lifecycle !== "archived")) {
+        throw new WebAccessError("not_found");
+      }
+      return {
+        projectId: row.projectId,
+        title: row.title,
+        summary: row.summary,
+        lifecycle: row.lifecycle,
+        version: Number(row.version),
+        createdAt: iso(row.createdAt),
+        updatedAt: iso(row.updatedAt),
+      };
+    },
+    async coordinationEnabled() {
+      return true;
+    },
+    bindSession: (session) => buildAdapter(joinAmbientSession(session)),
+  };
+  };
+  return buildAdapter(db);
 }

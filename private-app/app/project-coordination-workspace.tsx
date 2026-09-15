@@ -12,19 +12,14 @@ import {
   BrowserAuthenticationRecoveryError,
   BrowserRequestError,
   browserErrorMessage,
-  pauseProjectDelegationPolicy,
   readProjectCoordination,
   replaceProjectCoordinator,
-  resumeProjectDelegationPolicy,
   revokeProjectCoordinator,
-  revokeProjectDelegationPolicy,
 } from "../../src/web/v1/project-coordination-browser-client";
 import type {
   ProjectCoordinationPage,
   ProjectCoordinationRevision,
   ProjectCoordinatorAppointRequest,
-  ProjectCoordinatorRevokePolicyRequest,
-  ProjectCoordinatorRevokeRequest,
 } from "../../src/web/v1/project-coordination-wire";
 import { ConfiguredTimestamp } from "./configured-timestamp";
 
@@ -34,12 +29,14 @@ type CoordinationState =
   | { state: "unavailable"; code: BrowserRequestError["code"]; message: string };
 
 function nextRevision(page: ProjectCoordinationPage): ProjectCoordinationRevision {
+  // Exact saved versions, sent back unchanged. Never recomputed from array
+  // lengths or presence flags: the server refused anything else.
   return {
     projectId: page.project.projectId,
-    expectedCoordinatorVersion: page.coordinatorHead.version,
-    expectedPolicyVersion: page.delegationPolicy ? 1 : 0,
-    expectedConflictsVersion: page.conflicts.length,
-    expectedAttentionVersion: page.attention.length,
+    expectedCoordinatorVersion: page.versions.coordinatorVersion,
+    expectedPolicyVersion: page.versions.policyVersion,
+    expectedConflictsVersion: page.versions.conflictsVersion,
+    expectedAttentionVersion: page.versions.attentionVersion,
     observedAt: page.observedAt,
   };
 }
@@ -195,66 +192,40 @@ function CoordinationReadyView({
         revision={revision}
         busy={busy}
         disabled={disabled}
-        onAction={async (action) => {
-          const guard: ProjectCoordinatorRevokePolicyRequest["revision"] = revision;
+        onAction={async (action, selection) => {
+          const guard: ProjectCoordinatorAppointRequest["revision"] = revision;
           switch (action) {
             case "appoint-coordinator":
+            case "replace-coordinator": {
+              if (!selection) return { ok: false, reason: "coordinator_required" };
+              const payload = {
+                projectId,
+                revision: guard,
+                coordinatorActorType: selection.coordinatorActorType,
+                coordinatorIdentityId: selection.coordinatorIdentityId,
+                ...(selection.coordinatorActorType === "agent"
+                  ? {
+                    executorId: selection.executorId,
+                    adapterId: selection.adapterId,
+                    connectorProfileDigest: selection.connectorProfileDigest,
+                  }
+                  : {}),
+              };
+              const call = action === "appoint-coordinator"
+                ? appointProjectCoordinator(payload)
+                : replaceProjectCoordinator(payload);
               return submit(
-                () => appointProjectCoordinator({
-                  projectId,
-                  revision: guard,
-                  coordinatorActorType: "human",
-                  coordinatorIdentityId: "owner-self",
-                }),
+                () => call,
                 async () => { onReloaded(await readProjectCoordination(projectId)); },
               );
-            case "replace-coordinator":
-              return submit(
-                () => replaceProjectCoordinator({
-                  projectId,
-                  revision: guard,
-                  coordinatorActorType: "human",
-                  coordinatorIdentityId: "owner-self",
-                }),
-                async () => { onReloaded(await readProjectCoordination(projectId)); },
-              );
+            }
             case "revoke-coordinator":
               return submit(
                 () => revokeProjectCoordinator({
                   projectId,
                   revision: guard,
                   coordinatorActorType: "human",
-                  coordinatorIdentityId: page.coordinatorHead.coordinatorIdentityId ?? "owner-self",
-                }),
-                async () => { onReloaded(await readProjectCoordination(projectId)); },
-              );
-            case "pause-policy":
-              if (!page.delegationPolicy) return { ok: false, reason: "policy_required" };
-              return submit(
-                () => pauseProjectDelegationPolicy({
-                  projectId,
-                  revision: guard,
-                  policyId: page.delegationPolicy!.policyId,
-                }),
-                async () => { onReloaded(await readProjectCoordination(projectId)); },
-              );
-            case "resume-policy":
-              if (!page.delegationPolicy) return { ok: false, reason: "policy_required" };
-              return submit(
-                () => resumeProjectDelegationPolicy({
-                  projectId,
-                  revision: guard,
-                  policyId: page.delegationPolicy!.policyId,
-                }),
-                async () => { onReloaded(await readProjectCoordination(projectId)); },
-              );
-            case "revoke-policy":
-              if (!page.delegationPolicy) return { ok: false, reason: "policy_required" };
-              return submit(
-                () => revokeProjectDelegationPolicy({
-                  projectId,
-                  revision: guard,
-                  policyId: page.delegationPolicy!.policyId,
+                  coordinatorIdentityId: page.coordinatorHead.coordinatorIdentityId ?? page.viewerOwnerIdentityId,
                 }),
                 async () => { onReloaded(await readProjectCoordination(projectId)); },
               );
@@ -446,7 +417,62 @@ function AttentionSection({ page }: { page: ProjectCoordinationPage }) {
   );
 }
 
-function LifecycleControls({
+export type CoordinatorLifecycleAction = "appoint-coordinator" | "replace-coordinator" | "revoke-coordinator";
+
+export interface CoordinatorSelection {
+  coordinatorActorType: "human" | "agent";
+  coordinatorIdentityId: string;
+  executorId: string;
+  adapterId: string;
+  connectorProfileDigest: string;
+}
+
+/**
+ * Pure validation for the explicit coordinator choice. Appoint and replace
+ * stay disabled until this passes: the browser never invents an identity,
+ * pre-fills one, or sends a half-bound agent. Mirrors the server's
+ * superRefine (agent binding required, identity must differ from executor).
+ */
+export function parseCoordinatorSelection(value: {
+  coordinatorActorType: "human" | "agent";
+  coordinatorIdentityId: string;
+  executorId: string;
+  adapterId: string;
+  connectorProfileDigest: string;
+}): { ok: true; selection: CoordinatorSelection } | { ok: false; reason: string } {
+  const identityId = value.coordinatorIdentityId.trim();
+  if (!identityId) return { ok: false, reason: "Name the coordinator identity explicitly." };
+  if (value.coordinatorActorType === "human") {
+    return {
+      ok: true,
+      selection: {
+        coordinatorActorType: "human",
+        coordinatorIdentityId: identityId,
+        executorId: "",
+        adapterId: "",
+        connectorProfileDigest: "",
+      },
+    };
+  }
+  if (!value.executorId.trim() || !value.adapterId.trim() || !value.connectorProfileDigest.trim()) {
+    return { ok: false, reason: "An agent coordinator needs executor, adapter, and connector digest." };
+  }
+  if (identityId === value.executorId.trim()) {
+    return { ok: false, reason: "The coordinator identity must differ from the executor." };
+  }
+  return {
+    ok: true,
+    selection: {
+      coordinatorActorType: "agent",
+      coordinatorIdentityId: identityId,
+      executorId: value.executorId.trim(),
+      adapterId: value.adapterId.trim(),
+      connectorProfileDigest: value.connectorProfileDigest.trim(),
+    },
+  };
+}
+
+export function LifecycleControls({
   projectId,
   page,
   revision,
@@ -460,36 +486,57 @@ function LifecycleControls({
   busy: boolean;
   disabled: boolean;
   onAction: (
-    action: "appoint-coordinator" | "replace-coordinator" | "revoke-coordinator" | "pause-policy" | "resume-policy" | "revoke-policy",
+    action: CoordinatorLifecycleAction,
+    selection?: CoordinatorSelection,
   ) => Promise<{ ok: true } | { ok: false; reason: string }>;
 }) {
   const head = page.coordinatorHead;
   const policy = page.delegationPolicy;
-  const isHuman = head.coordinatorActorType === "human";
-  const selfApproval = head.coordinatorActorType === "human" && head.coordinatorIdentityId === "owner-self";
+  const selfApproval = head.coordinatorActorType === "human"
+    && head.coordinatorIdentityId !== null
+    && head.coordinatorIdentityId === page.viewerOwnerIdentityId;
 
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [actorType, setActorType] = useState<"human" | "agent">("human");
+  const [identityId, setIdentityId] = useState("");
+  const [executorId, setExecutorId] = useState("");
+  const [adapterId, setAdapterId] = useState("");
+  const [connectorProfileDigest, setConnectorProfileDigest] = useState("");
+  const parsed = parseCoordinatorSelection({
+    coordinatorActorType: actorType,
+    coordinatorIdentityId: identityId,
+    executorId,
+    adapterId,
+    connectorProfileDigest,
+  });
+
+  const run = (
+    action: CoordinatorLifecycleAction,
+    label: string,
+    selection?: CoordinatorSelection,
+  ) => {
+    setFeedback(null);
+    void onAction(action, selection).then((result) => {
+      if (result.ok) {
+        setFeedback(`Saved: ${label}.`);
+        return;
+      }
+      setFeedback(`Not saved: ${result.reason}.`);
+    });
+  };
 
   const button = (
-    action: "appoint-coordinator" | "replace-coordinator" | "revoke-coordinator" | "pause-policy" | "resume-policy" | "revoke-policy",
+    action: CoordinatorLifecycleAction,
     label: string,
     enabled: boolean,
+    selection?: CoordinatorSelection,
     reasonWhenDisabled?: string,
   ) => (
     <li>
       <button
         type="button"
         disabled={busy || disabled || !enabled}
-        onClick={() => {
-          setFeedback(null);
-          void onAction(action).then((result) => {
-            if (result.ok) {
-              setFeedback(`Saved: ${label}.`);
-              return;
-            }
-            setFeedback(`Not saved: ${result.reason}.`);
-          });
-        }}
+        onClick={() => run(action, label, selection)}
       >
         {label}
       </button>
@@ -506,25 +553,88 @@ function LifecycleControls({
         the server returns an accepted result and a new revision. Disabled controls are explained in
         line; the reasons are the only authority for why a control is unavailable.
       </p>
+      <p className="private-note">
+        Delegation policy pause, resume, and revoke are not offered here: those writes are not
+        retry-safe yet and land with the follow-on policy package. Coordinator appoint, replace,
+        and revoke below run against the durable receipt ledger today.
+      </p>
+      <div>
+        <label htmlFor="coord-actor-type">Coordinator actor type</label>
+        <select
+          id="coord-actor-type"
+          value={actorType}
+          disabled={busy || disabled}
+          onChange={(event) => setActorType(event.target.value === "agent" ? "agent" : "human")}
+        >
+          <option value="human">Human</option>
+          <option value="agent">Agent</option>
+        </select>
+        <label htmlFor="coord-identity">Coordinator identity</label>
+        <input
+          id="coord-identity"
+          type="text"
+          value={identityId}
+          disabled={busy || disabled}
+          placeholder="identity:…"
+          onChange={(event) => setIdentityId(event.target.value)}
+        />
+        {actorType === "agent" && (
+          <>
+            <label htmlFor="coord-executor">Executor</label>
+            <input
+              id="coord-executor"
+              type="text"
+              value={executorId}
+              disabled={busy || disabled}
+              onChange={(event) => setExecutorId(event.target.value)}
+            />
+            <label htmlFor="coord-adapter">Adapter</label>
+            <input
+              id="coord-adapter"
+              type="text"
+              value={adapterId}
+              disabled={busy || disabled}
+              onChange={(event) => setAdapterId(event.target.value)}
+            />
+            <label htmlFor="coord-digest">Connector digest</label>
+            <input
+              id="coord-digest"
+              type="text"
+              value={connectorProfileDigest}
+              disabled={busy || disabled}
+              onChange={(event) => setConnectorProfileDigest(event.target.value)}
+            />
+          </>
+        )}
+        <p className="private-note">
+          Name the coordinator explicitly — nothing is pre-filled. Your owner identity is{" "}
+          <code>{page.viewerOwnerIdentityId}</code>; naming it here is refused by the server.
+        </p>
+        {!parsed.ok && identityId.trim() !== "" && <p role="status">{parsed.reason}</p>}
+      </div>
       <ul>
-        {button("appoint-coordinator", "Appoint human coordinator", head.state === "none",
-          head.state === "active" ? "An active coordinator head is already appointed. Replace or revoke instead." : undefined)}
-        {button("replace-coordinator", "Replace coordinator head", head.state !== "none",
-          head.state === "none" ? "There is no current head to replace. Appoint first." : undefined)}
+        {button("appoint-coordinator", "Appoint coordinator", head.state === "none" && parsed.ok,
+          parsed.ok ? parsed.selection : undefined,
+          head.state === "active" ? "An active coordinator head is already appointed. Replace or revoke instead."
+            : !parsed.ok ? "Choose the coordinator above first." : undefined)}
+        {button("replace-coordinator", "Replace coordinator head", head.state !== "none" && parsed.ok,
+          parsed.ok ? parsed.selection : undefined,
+          head.state === "none" ? "There is no current head to replace. Appoint first."
+            : !parsed.ok ? "Choose the coordinator above first." : undefined)}
         {button("revoke-coordinator", "Revoke coordinator head", head.state === "active")}
-        {button("pause-policy", "Pause delegation policy", policy?.state === "active",
-          !policy ? "No delegation policy is attached." : policy.state !== "active" ? "Policy is not active." : undefined)}
-        {button("resume-policy", "Resume delegation policy", policy?.state === "paused",
-          !policy ? "No delegation policy is attached." : policy.state !== "paused" ? "Policy is not paused." : undefined)}
-        {button("revoke-policy", "Revoke delegation policy", policy?.state === "active",
-          !policy ? "No delegation policy is attached." : policy.state === "revoked" ? "Already revoked." : undefined)}
       </ul>
       {feedback && <p role="status">{feedback}</p>}
-      {isHuman && selfApproval && (
+      {selfApproval && (
         <p role="status" className="private-note">
           The current head names you as the coordinator. Replacing or revoking that head from this
           session is the documented owner flow; the page will not let the coordinator identity
           approve its own proposal through the lifecycle controls.
+        </p>
+      )}
+      {policy && (
+        <p className="private-note">
+          Policy <code>{policy.policyId}</code> is <strong>{policy.state}</strong>; its pause,
+          resume, and revoke controls return with the retry-safe policy package.
         </p>
       )}
     </section>

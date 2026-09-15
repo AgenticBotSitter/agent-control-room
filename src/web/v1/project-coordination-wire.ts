@@ -212,6 +212,20 @@ export const projectCoordinationPageSchema = z
       "none",
     ]),
     observedAt: instant,
+    // The exact saved versions the page was rendered with. The browser sends
+    // these back unchanged on writes; the server refuses anything stale. They
+    // are never recomputed client-side from array lengths or presence flags.
+    versions: z
+      .object({
+        coordinatorVersion: z.number().int().min(0).max(1_000_000),
+        policyVersion: z.number().int().min(0).max(1_000_000),
+        conflictsVersion: z.number().int().min(0).max(1_000_000),
+        attentionVersion: z.number().int().min(0).max(1_000_000),
+      })
+      .strict(),
+    // The acting owner's own identity id, so the lifecycle form can warn
+    // before naming it as coordinator (the server refuses self-approval).
+    viewerOwnerIdentityId: id,
   })
   .strict();
 

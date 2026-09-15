@@ -2,7 +2,7 @@
 import { useProductModule } from "./product-configuration";
 import type { EffectiveProjectPresentation } from "../../src/web/v1/project-wire";
 
-type ProjectPage = "overview" | "inbox" | "work" | "agents" | "automations" | "files" | "reviews" | "activity" | "news" | "settings";
+type ProjectPage = "overview" | "inbox" | "work" | "agents" | "automations" | "files" | "reviews" | "activity" | "news" | "coordination" | "settings";
 
 export function ProjectNavigation({ projectId, current, presentation }: {
   projectId: string; current: ProjectPage; presentation?: EffectiveProjectPresentation;
@@ -24,6 +24,7 @@ export function ProjectNavigation({ projectId, current, presentation }: {
     {link(`${base}/files`, "Files", "files")}
     {link(`${base}/reviews`, "Reviews", "reviews")}
     {link(`${base}/activity`, "Activity", "activity")}
+    {link(`${base}/coordination`, "Coordination", "coordination")}
     {news && link(`${base}/news`, "News", "news")}
     {link(`${base}/settings`, "Settings", "settings")}
   </nav>;

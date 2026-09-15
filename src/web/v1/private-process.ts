@@ -73,11 +73,12 @@ export interface PrivateWebProcessOptions {
   revisions?: TaskRevisionOperation;
   queueAttention?: QueueAttentionSource;
   /**
-   * Project coordination surface: a fakes-only store adapter for the canonical
-   * coordination engine. The real canonical store is supplied by the trusted
-   * control-plane composition; the web process does not own the engine's
-   * resource lifecycle. Reads run through the same-origin JWT verifier + owner
-   * grant; writes additionally require an Idempotency-Key header.
+   * Project coordination surface: the canonical store adapter for the
+   * coordination engine. Production supplies the real PostgreSQL-backed
+   * adapter (createProjectCoordinationCanonicalStoreAdapterV1); tests compose
+   * fakes. The web process does not own the engine's resource lifecycle.
+   * Reads run through the same-origin JWT verifier + owner grant; writes
+   * additionally require an Idempotency-Key header.
    */
   coordination?: { store: ProjectCoordinationCanonicalStoreAdapter };
   clock?: () => number;
