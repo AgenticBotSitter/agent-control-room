@@ -57,7 +57,8 @@ Three findings dominate:
    still refuses every call" (`src/harness/hermes-gpt-v1/connector-profile.ts:5-9`,
    **observed**). No FastMCP client, transport or session mapping exists anywhere in `src/`
    (**observed**; `src/harness/hermes-native-v1/` is Control Room's own node protocol, not an
-   upstream hermes-gpt adapter). The Codex side has ~2,900 lines of real adapter source but
+   upstream hermes-gpt adapter). The Codex side has 4,265 lines across 26 files of real
+   adapter source (`src/harness/codex-v1/`, **observed**) but
    its start/read path has only ever run against a fake byte-process
    (`tests/private-agent-task-composition.test.ts:20-62`, ephemeral `generateKeyPairSync`
    signer and `handler = async () => new Response("synthetic")`, **simulated**).
@@ -66,8 +67,16 @@ Three findings dominate:
    six pull requests that are all in correction.** #208, #209 and #210 — the migrated Idea
    Lab, distributable-service and Hermes-connector packages — were claimed at 20:45–20:46 on
    2026-09-14 and have no further comment, no branch and no pull request (**observed**).
-   #210 is the Hermes connector: the single largest MVP blocker is reserved and idle, and its
+   #210 is the Hermes connector: the largest MVP blocker (**inferred**, from CONN-001 being a
+   release gate with no client source) is reserved and idle, and its
    path lock prevents anyone else taking it.
+
+   Worse, **the unstaffed remainder of the queue cannot be claimed at all.** Twelve open
+   issues — #1, #2, #10, #29, #60, #61, #62, #65, #66, #67, #68 and #167, which is *every*
+   waiting MVP package — carry no `acr-public-work:v1` packet (**observed**), and the
+   automatic controller refuses a packetless reservation. #200 hit exactly this refusal
+   before its "PACKET REPAIRED" comment on 2026-09-14 20:24. So the MVP backlog is not
+   merely unstaffed; a willing contributor arriving today could not claim any of it (S9).
 
 3. **Recent delivery capacity went mostly to contributor-workflow tooling, not to the
    product.** Of the 25 pull requests merged on 2026-09-14, ten (#183, #196, #202, #203,
@@ -93,7 +102,9 @@ Detailed order in §3 and §7.
 ## 2. Requirement coverage
 
 Every requirement ID in `docs/PRODUCT_REQUIREMENTS.md` appears exactly once across §2.1 and
-§2.2. §2.1 covers all 71 MVP-priority IDs; §2.2 covers the Always/Next/Later remainder.
+§2.2. §2.1 covers all 70 MVP-priority IDs — the 58 rows marked MVP in the priority tables
+plus the 12 `MVP-00x` release gates — and additionally lists OPS-009, which is Always-priority
+but gates MVP-007 and the §11 journey. §2.2 covers the Always/Next/Later remainder.
 
 ### 2.1 MVP-priority requirements
 
@@ -126,7 +137,7 @@ Every requirement ID in `docs/PRODUCT_REQUIREMENTS.md` appears exactly once acro
 | RES-006 | `src/web/v1/task-project-files-wire.ts`, `private-artifact-storage.ts` | blocked | #65 |
 | RES-008 | `tests/queue-recovery-fence.test.ts`, `native-recovery-fence.test.ts`; distinct lost-request/lost-reply per SUPPORT_MATRIX:11 | simulated | — |
 | RES-009 | `tests/codex-read-recovery.test.ts`, `workspace-restart-inventory.test.ts` | simulated | #66 |
-| CONN-001 | **Codex adapter real (~2,900 lines) but fake-process-tested; Hermes is a 33-line inert profile with no client** | blocked | **#210** (claimed, idle), #173 |
+| CONN-001 | **Codex adapter real (4,265 lines, 26 files) but fake-process-tested; Hermes is a 33-line inert profile with no client** | blocked | **#210** (claimed, idle), #173 |
 | CONN-004 | `src/connection-registry/v1`, `src/node-fleet/v1`; `db/migrations/0034-0038` | simulated | #68 |
 | CONN-005 | `docs/platforms/{linux,macos,windows}-worker.md`; `docs/SUPPORT_MATRIX.md:9-10` | observed (documented), blocked (evidence) | #2, #68 |
 | CONN-007 | `src/harness/hermes-native-v1/https-transport.ts`, `src/web/v1/native-http-node-handler.ts` | simulated | #67, #68 |
@@ -225,7 +236,7 @@ Every requirement ID in `docs/PRODUCT_REQUIREMENTS.md` appears exactly once acro
 | PUB-001 | Always | `LICENSE`, `NOTICE` | accepted |
 | PUB-002 | Always | `docs/license-inventory.json`, runtime-license lanes (#11) | accepted |
 | PUB-004 | Always | `README.md`, `WORK_QUEUE.md`, `CONTRIBUTOR_HANDBOOK.md` | accepted |
-| PUB-005 | Always | Live queue — **but see §5 for six stale states** | accepted (with defects) |
+| PUB-005 | Always | Live queue — **but see §5 for eight stale states** | accepted (with defects) |
 | PUB-006 | Always | `scripts/automatic-claim-controller.mjs` + workflow | accepted |
 | PUB-007 | Always | Handbook review levels; `scripts/review-handoff-controller.mjs` | accepted (source), blocked (activation) |
 | PUB-008 | Always | Two-PR concurrency rule in handbook | accepted |
@@ -288,7 +299,10 @@ one is staffed with visible output.
 | E — Release tooling | #209 → #187 | nothing (idle claim) |
 | F — Product UI | #214 → #10/#1 | #65, #66 for the last mile only |
 
-Tracks A–E share no owned paths (**observed** from each issue's `writeScopes`). Track F's
+Track A/B/E owners carry `acr-public-work:v1` packets and their `writeScopes` do not overlap
+(**observed**). Tracks C and D (#65, #67) carry **no packet at all**, so their non-overlap is
+read from prose rather than a machine-checkable scope (**inferred**) — and the missing packet
+blocks them outright. See S9. Track F's
 `#214` is `status:ready` and unclaimed.
 
 ### 3.3 The single decisive ordering fact
@@ -381,6 +395,7 @@ All **observed** on 2026-09-15.
 | # | State | Why it is wrong | Effect |
 | --- | --- | --- | --- |
 | S1 | #208, #209, #210 `status:working`, claims accepted 2026-09-14 20:45–20:46, zero subsequent activity | Three of the most critical MVP packages hold path locks with no output | **Blocks the critical path.** #210 is the Hermes connector |
+| S9 | **Twelve open issues carry no `acr-public-work:v1` packet: #1, #2, #10, #29, #60, #61, #62, #65, #66, #67, #68, #167** | `automatic-claim-controller.mjs` cannot reserve a packetless issue — exactly the refusal #200 hit before its "PACKET REPAIRED" comment (2026-09-14 20:24). WORK-010 also says a packet missing a required field cannot become claimable | **This is every waiting MVP package.** None of them is claimable today even if a contributor appears. The queue is not merely unstaffed — it is unclaimable |
 | S2 | #8, #27, #64, #185 are **closed** but still carry `status:paused` | Lifecycle says a closed issue is `status:done`; `paused` on a closed issue is undefined | Queue-health and inbox tooling cannot classify them; #211's worker already lost a handoff to exactly this (see #211 comment 2026-09-14 21:16) |
 | S3 | #1, #2 pin base `6bd86541b57d`; #65 and #66 pin `bcb93b8dfb6d` | Both are many merges behind the audit base `d8d8c12c8903` | A worker claiming #65/#66 today would start from a base predating #63, #115, #127, #128 and #175 |
 | S4 | #2 carries `status:waiting` **and** `action:integrator` | Not a valid pair in the handbook lifecycle table; `waiting` takes a named prerequisite, not an actor | Ambiguous next actor |
@@ -404,7 +419,7 @@ Per the assignment, claims are separated by the boundary actually exercised. Not
 lower row is upgraded by anything in a higher row.
 
 **Source-tested (fixtures, injected ports, fake processes) — the large majority.**
-220 test files across 26 lanes; public CI green on `d8d8c12c8903` (**accepted**). Includes
+185 test files across 31 `test:*` lanes; public CI green on `d8d8c12c8903` (**accepted**). Includes
 every Codex start/read/result path, all server composition, all queue/recovery fences, all
 signing and checkpoint work, and all Idea Lab/news behavior. `docs/WORKFLOW_IMPLEMENTATION_STATUS.md:46-52`
 states this boundary honestly for the workflow lanes, and SUPPORT_MATRIX:12,14 for the product.
@@ -456,10 +471,11 @@ Every `CLAIM ACCEPTED` on this repository names the same actor `MarvinAi5`;
 `actor === claim.actor` (**observed**). PUB-007 requires that authors cannot self-merge.
 Nothing currently enforces it. This is #197 and it is unowned.
 
-**R4 — Four critical-path packages have no working contributor (delivery).**
-#210, #209 hold locks with no output; #65, #67 are `status:waiting` with no worker
-(**observed**). #61 depends on all four. A release gate whose inputs are unstaffed will not
-move regardless of how much parallel capacity exists elsewhere (**inferred**).
+**R4 — The critical path is both unstaffed and unclaimable (delivery).**
+#210 and #209 hold locks with no output; #65 and #67 are `status:waiting` with no worker
+**and no `acr-public-work:v1` packet**, so the controller would refuse a reservation
+(**observed**; S9). #61 depends on all four. A release gate whose inputs cannot even be
+claimed will not move regardless of how much capacity exists elsewhere (**inferred**).
 
 **R5 — Stale base pins invite duplicated work (technical).**
 #65 and #66 still pin `bcb93b8dfb6d`, which predates #63, #115, #127, #128 and #175
@@ -478,17 +494,26 @@ Ordered by what unblocks the most. Steps 1–2 are the lead's; 3–5 run in para
 ownership transfers only after the prior worker acknowledges stopping. Request that
 acknowledgement now. #210 is the Hermes connector and is the single largest MVP blocker.
 
-**Step 2 — reconcile the eight states in §5 (lead, immediate).**
-S2 and S3 in particular: re-pinning #65 and #66 from `bcb93b8d` to `d8d8c12c` costs a label
-edit and prevents a contributor rebuilding work that #63/#115/#175 already delivered.
+**Step 2 — add work packets to the twelve packetless issues (lead, immediate, highest
+leverage).** S9. Until #65, #66, #67, #68, #1, #10 and the rest carry an
+`acr-public-work:v1` packet with a current base and `writeScopes`, no contributor can claim
+them through the controller. This is the cheapest action in this report with the largest
+effect: it converts an unclaimable backlog into a claimable one. Re-pin their bases at the
+same time (S3) — #65 and #66 still point at `bcb93b8d`, which predates #63, #115, #127, #128
+and #175.
+
+**Step 2b — reconcile the remaining states in §5 (lead).**
+S2 in particular: four closed issues still carry `status:paused`, which is what stranded
+#211's handoff.
 
 **Step 3 — close the five corrections (existing workers, parallel).**
 #176, #180 (CI is red — fix that too), #189, #213, #218, #222. All six have accepted claims
 and active workers. No new capacity needed.
 
-**Step 4 — start the four unstaffed Layer-2 packages (parallel).**
-#65 storage, #67 ingress, #214 browser proof (already `status:ready`), plus #210 once
-released. These share no paths and need no dependency that is not already accepted.
+**Step 4 — start the four unstaffed Layer-2 packages (parallel, after Step 2).**
+#65 storage, #67 ingress, #214 browser proof (already `status:ready` **and** packeted — the
+only waiting-side work claimable today), plus #210 once released. These share no paths and
+need no dependency that is not already accepted.
 
 **Step 5 — converge.**
 #66 server composition (after #172 + #65) → #68 worker install (after #210 + #209) →
