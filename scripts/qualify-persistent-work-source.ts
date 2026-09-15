@@ -22,8 +22,9 @@
  * reads (exact replay must be byte-identical). Fabricated digests via
  * sha256Digest over fixed labels only. The two signing fixtures below are
  * static public data minted once offline (keypair destroyed at mint): a
- * well-formed ed25519 SPKI and the one signature over the fixed proof bytes.
- * Neither is key material and neither can sign anything else.
+ * well-formed ed25519 SPKI and the one signature over the exact canonical
+ * completion bytes. Neither is key material and neither can authorize
+ * altered completion or recovery evidence.
  */
 
 import { stageCompletionCheckpoint } from "../src/completion-gate/v1/staged-checkpoint";
@@ -78,6 +79,7 @@ export const SCENARIO_NAMES = [
   "checkpoint-advance-contract-guards",
   "revoked-or-mismatched-signer",
   "valid-signing-path",
+  "tampered-completion-evidence-refused",
   "incomplete-artifact-restore",
   "wrong-database-restore-identity",
   "missing-restore-evidence",
@@ -151,23 +153,69 @@ function completeEvidenceBundle(): SourceRestoreEvidenceBundle {
   };
 }
 
-/** Fixed signing-proof material. The scripted channel signs nothing else. */
-const signingProofBytes = () => Buffer.from("persistent-work-source/signing-proof/v1");
+/** Canonical completion-signing bytes. The signature binds the exact staged
+ * completion and restore evidence — project/cluster scope, staged and
+ * completed checkpoint digests, completed revision, database restore identity
+ * and artifact-set identity — in one fixed-key-order representation. Any
+ * alteration of that evidence produces different bytes, which the minted
+ * signature does not verify and the scripted channel refuses to sign. */
+export interface CompletionSignFields {
+  scope: string;
+  stagedDigest: string;
+  completedDigest: string;
+  completedRevision: number;
+  databaseRestoreDigest: string;
+  artifactDigest: string;
+}
 
-/** Static public fixtures minted once offline; the keypair was destroyed at
- * mint. A signature is not key material: this one verifies exactly one fixed
- * message and cannot authorize anything else. */
+export function completionSignBytes(fields: CompletionSignFields): Buffer {
+  return Buffer.from(JSON.stringify({
+    domain: "persistent-work-source/completion/v1",
+    scope: fields.scope,
+    stagedDigest: fields.stagedDigest,
+    completedDigest: fields.completedDigest,
+    completedRevision: fields.completedRevision,
+    databaseRestoreDigest: fields.databaseRestoreDigest,
+    artifactDigest: fields.artifactDigest,
+  }), "utf8");
+}
+
+/** Static public fixtures minted once offline over the exact canonical bytes
+ * of the deterministic valid journey below (keypair destroyed at mint). The
+ * signature verifies those bytes only and cannot authorize anything else. */
 const SIGNING_PROOF_SPKI =
-  "MCowBQYDK2VwAyEAaGUhj-z0aFWOIqV3aSA-DSf6iiPO8F21d_hThMSqwtE";
+  "MCowBQYDK2VwAyEAgWWo444YxzWesl7Pnfsa6WEY-UnxtLYX2GDoLCbpFwo";
 const SIGNING_PROOF_SIGNATURE =
-  "Un6GCnhVli9dJy0zEqx8dnNi5RmCseV246bsfOevtFDYji9ZMeXFeY3Nzjo3iZfM_m_t3yqwUMzRwG2fqTPyCA";
+  "xJkib6XejlBlfEFUKbCw1bTWDxCFSefPEEhE78ksQDBFAC83VFRg-caw8nVSMecgEtNBPWuEtNtNHzJWORlhAQ";
 
-function scriptedSigningChannel(mode: "valid" | "revoked"): OwnerSigningProtocol {
+/** Deterministic evidence of the valid journey: fixed checkpoints, the anchor
+ * restore bundle, and the canonical signing bytes built from them. Shared by
+ * the journey, the signing path, and the tamper-refusal scenario so all three
+ * operate on the same bound evidence. */
+function validCompletionEvidence(): CompletionSignFields & { signBytes: Buffer } {
+  const stagedDigest = rollbackCheckpointDigestV1(checkpointAt(1, 0, "anchor"));
+  const completedDigest = rollbackCheckpointDigestV1(checkpointAt(2, 1, "completed"));
+  const { artifactDigest } = requireRestoreEvidence(completeEvidenceBundle());
+  const fields: CompletionSignFields = {
+    scope: SCOPE,
+    stagedDigest,
+    completedDigest,
+    completedRevision: 2,
+    databaseRestoreDigest: ANCHOR_DATABASE_RESTORE_DIGEST,
+    artifactDigest,
+  };
+  return { ...fields, signBytes: completionSignBytes(fields) };
+}
+
+function scriptedSigningChannel(mode: "valid" | "revoked", expectedSignBytes: Buffer): OwnerSigningProtocol {
   return Object.freeze({
     on() { return {}; },
     off() { return {}; },
     sign(_key: Buffer, bytes: Buffer, callback: (error: unknown, signature?: Buffer) => void) {
-      if (mode === "valid" && bytes.equals(signingProofBytes())) {
+      // The valid channel releases the minted signature for the exact bound
+      // evidence only; altered evidence (different bytes) is refused, and the
+      // revoked channel refuses everything.
+      if (mode === "valid" && bytes.equals(expectedSignBytes)) {
         callback(null, Buffer.from(SIGNING_PROOF_SIGNATURE, "base64url"));
       } else {
         callback(new Error(mode === "valid" ? "scripted signer unexpected material" : "scripted signer revoked"));
@@ -177,9 +225,9 @@ function scriptedSigningChannel(mode: "valid" | "revoked"): OwnerSigningProtocol
   });
 }
 
-function boundedSigner(mode: "valid" | "revoked") {
+function boundedSigner(mode: "valid" | "revoked", expectedSignBytes: Buffer) {
   return createBoundedOwnerSignature({
-    protocol: scriptedSigningChannel(mode),
+    protocol: scriptedSigningChannel(mode, expectedSignBytes),
     close() {},
     publicKeySpki: SIGNING_PROOF_SPKI,
     timeoutMs: 100,
@@ -201,11 +249,22 @@ async function validStagedCompletion(): Promise<Omit<SourceQualificationRecord, 
     return blocked("staged-completion-not-observable");
   }
   const { artifactDigest } = requireRestoreEvidence(completeEvidenceBundle());
-  // The completion journey is owner-authorized: sign the fixed proof material
-  // through the production bounded signer over the scripted valid channel.
+  // The completion journey is owner-authorized: sign the canonical bytes
+  // built from the LIVE staged evidence (observed revision, observed
+  // digests, required restore bundle) through the production bounded signer
+  // over the scripted valid channel. The minted signature verifies those
+  // bytes only — altered evidence produces different bytes and is refused.
+  const signBytes = completionSignBytes({
+    scope: SCOPE,
+    stagedDigest: anchorDigest,
+    completedDigest,
+    completedRevision: observed.revision,
+    databaseRestoreDigest: ANCHOR_DATABASE_RESTORE_DIGEST,
+    artifactDigest,
+  });
   let signature: Uint8Array;
   try {
-    signature = await boundedSigner("valid").sign(signingProofBytes(), new AbortController().signal);
+    signature = await boundedSigner("valid", signBytes).sign(signBytes, new AbortController().signal);
   } catch {
     return blocked("staged-completion-signing-unavailable");
   }
@@ -433,7 +492,7 @@ async function revokedOrMismatchedSigner(): Promise<Omit<SourceQualificationReco
   // package, public or private.
   try {
     createBoundedOwnerSignature({
-      protocol: scriptedSigningChannel("revoked"),
+      protocol: scriptedSigningChannel("revoked", validCompletionEvidence().signBytes),
       close() {},
       publicKeySpki: "mismatched-signer-identity",
       timeoutMs: 100,
@@ -443,7 +502,7 @@ async function revokedOrMismatchedSigner(): Promise<Omit<SourceQualificationReco
     // channel, which refuses it (revoked consent). This is the revoked path:
     // shape-valid, authorization-denied.
     try {
-      await boundedSigner("revoked").sign(signingProofBytes(), new AbortController().signal);
+      await boundedSigner("revoked", validCompletionEvidence().signBytes).sign(validCompletionEvidence().signBytes, new AbortController().signal);
     } catch {
       return {
         case: "revoked-or-mismatched-signer",
@@ -464,10 +523,12 @@ async function revokedOrMismatchedSigner(): Promise<Omit<SourceQualificationReco
 
 async function validSigningPath(): Promise<Omit<SourceQualificationRecord, "schema" | "redactedPaths">> {
   // The well-formed SPKI passes construction, the scripted valid channel
-  // returns the offline-minted signature, and the production signer verifies
-  // it internally before resolving. Internal logic only: synthetic input.
+  // returns the offline-minted signature for the exact canonical completion
+  // bytes, and the production signer verifies it internally before resolving.
+  // Internal logic only: synthetic input.
+  const { signBytes } = validCompletionEvidence();
   try {
-    const signature = await boundedSigner("valid").sign(signingProofBytes(), new AbortController().signal);
+    const signature = await boundedSigner("valid", signBytes).sign(signBytes, new AbortController().signal);
     if (signature.length === 64 && Buffer.from(signature).toString("base64url") === SIGNING_PROOF_SIGNATURE) {
       return {
         case: "valid-signing-path",
@@ -485,6 +546,56 @@ async function validSigningPath(): Promise<Omit<SourceQualificationRecord, "sche
     // Fall through to the bounded failure below.
   }
   return blocked("signing-path-unavailable");
+}
+
+/** Each security-critical identity bound into the signature is altered in
+ * turn; every altered variant must fail to obtain a signature through the
+ * production signer (the scripted valid channel releases the minted
+ * signature for the exact canonical bytes only, and the signer's internal
+ * verify would reject any other bytes). Internal logic only. */
+const TAMPER_FIELDS = [
+  "scope",
+  "stagedDigest",
+  "completedDigest",
+  "completedRevision",
+  "databaseRestoreDigest",
+  "artifactDigest",
+] as const;
+
+async function tamperedCompletionEvidenceRefused(): Promise<Omit<SourceQualificationRecord, "schema" | "redactedPaths">> {
+  const valid = validCompletionEvidence();
+  const refused: Record<string, boolean> = {};
+  for (const field of TAMPER_FIELDS) {
+    const tampered: CompletionSignFields = { ...valid };
+    if (field === "completedRevision") {
+      tampered.completedRevision = valid.completedRevision + 1;
+    } else if (field === "scope") {
+      tampered.scope = `${valid.scope}:forked`;
+    } else {
+      (tampered[field] as string) = `${valid[field]}:tampered`;
+    }
+    const tamperedBytes = completionSignBytes(tampered);
+    if (tamperedBytes.equals(valid.signBytes)) {
+      return blocked(`tampered-evidence-identical:${field}`);
+    }
+    try {
+      await boundedSigner("valid", valid.signBytes).sign(tamperedBytes, new AbortController().signal);
+      return blocked(`tampered-evidence-signed:${field}`);
+    } catch {
+      refused[field] = true;
+    }
+  }
+  return {
+    case: "tampered-completion-evidence-refused",
+    verdict: "pass",
+    reason: "tampered-evidence-refused",
+    evidence: {
+      ...refused,
+      tamperedFields: TAMPER_FIELDS.length,
+      syntheticInput: true,
+      workApproved: false,
+    },
+  };
 }
 
 function incompleteArtifactRestore(): Omit<SourceQualificationRecord, "schema" | "redactedPaths"> {
@@ -591,6 +702,7 @@ export async function qualifyPersistentWorkSource(scenario: ScenarioName): Promi
       case "checkpoint-advance-contract-guards": return emitRecord(checkpointAdvanceContractGuards());
       case "revoked-or-mismatched-signer": return emitRecord(await revokedOrMismatchedSigner());
       case "valid-signing-path": return emitRecord(await validSigningPath());
+      case "tampered-completion-evidence-refused": return emitRecord(await tamperedCompletionEvidenceRefused());
       case "incomplete-artifact-restore": return emitRecord(incompleteArtifactRestore());
       case "wrong-database-restore-identity": return emitRecord(wrongDatabaseRestoreIdentity());
       case "missing-restore-evidence": return emitRecord(missingRestoreEvidence());

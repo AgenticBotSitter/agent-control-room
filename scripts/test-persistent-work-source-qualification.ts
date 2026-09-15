@@ -144,6 +144,17 @@ test("revoked signer is refused at the channel after the malformed identity is r
   assert.equal(record.evidence.signatureProduced, false);
 });
 
+test("altered completion evidence cannot obtain a signature, field by field", async () => {
+  const record = await qualifyPersistentWorkSource("tampered-completion-evidence-refused");
+  assert.equal(record.verdict, "pass");
+  assert.equal(record.reason, "tampered-evidence-refused");
+  assert.equal(record.evidence.tamperedFields, 6);
+  for (const field of ["scope", "stagedDigest", "completedDigest", "completedRevision", "databaseRestoreDigest", "artifactDigest"]) {
+    assert.equal(record.evidence[field], true, `expected refusal for altered ${field}`);
+  }
+  assert.equal(record.evidence.syntheticInput, true);
+});
+
 test("valid signing path verifies through the production signer", async () => {
   const record = await qualifyPersistentWorkSource("valid-signing-path");
   assert.equal(record.verdict, "pass");
@@ -179,7 +190,7 @@ test("exact replay is byte-identical across the full suite", async () => {
   assert.deepEqual(first.map(record => record.case), [...SCENARIO_NAMES]);
   assert.equal(JSON.stringify(first), JSON.stringify(second));
   const passes = first.filter(record => record.verdict === "pass").map(record => record.case).sort();
-  assert.deepEqual(passes, ["checkpoint-advance-contract-guards", "valid-signing-path", "valid-staged-completion"]);
+  assert.deepEqual(passes, ["checkpoint-advance-contract-guards", "tampered-completion-evidence-refused", "valid-signing-path", "valid-staged-completion"]);
 });
 
 test("aggregate disposition stays blocked without real restore evidence", async () => {
@@ -191,7 +202,7 @@ test("aggregate disposition stays blocked without real restore evidence", async 
   // Synthetic passes never become acceptance evidence: every scenario record
   // carries workApproved false, and the disposition never approves either.
   assert.deepEqual(disposition.syntheticPasses,
-    ["checkpoint-advance-contract-guards", "valid-signing-path", "valid-staged-completion"]);
+    ["checkpoint-advance-contract-guards", "tampered-completion-evidence-refused", "valid-signing-path", "valid-staged-completion"]);
   assert.ok(disposition.blocked.length === SCENARIO_NAMES.length - disposition.syntheticPasses.length);
   assert.equal(JSON.stringify(summarizeQualification(records)), JSON.stringify(disposition));
 });
