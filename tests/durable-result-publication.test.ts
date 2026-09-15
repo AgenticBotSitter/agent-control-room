@@ -656,7 +656,7 @@ test("the PostgreSQL adapter refuses an unusable session and an ambiguous row", 
     { query: async () => ({ rows: [] }) } as never, binding.tenantId, "run:pg-guard"), null);
 });
 
-test("the PostgreSQL adapter locks the row, normalizes instants and rejects a non-object body", async t => {
+test("the PostgreSQL adapter emits the row-lock clause, normalizes instants and rejects a non-object body", async t => {
   const f = await setupWithProvision("run:pg-shape"); t.after(f.close);
   const port = createDurableReservationPostgresPortV1();
   const runId = "run:pg-shape";

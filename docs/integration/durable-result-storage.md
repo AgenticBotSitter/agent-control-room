@@ -87,7 +87,7 @@ HMAC tags, state transitions and mirror verification in the publisher.
 
 | Method | Behavior |
 | --- | --- |
-| `findForUpdate` | `SELECT … FOR UPDATE`, so a caller transaction serializes against a concurrent writer |
+| `findForUpdate` | `SELECT … FOR UPDATE`, which is how a caller transaction serializes against a concurrent writer. The lock clause is asserted at the statement level only — PGlite is single-connection, so no test here observes a real lock |
 | `insertFresh` | `ON CONFLICT DO NOTHING`; reports `conflict` for a collision on the primary key `(tenant_id, run_id)` **or** on `UNIQUE (tenant_id, artifact_id)` |
 | `compareAndSwap` | Conditional UPDATE matching stored `state` **and** `contract_digest`; reports `false` and changes nothing otherwise |
 
