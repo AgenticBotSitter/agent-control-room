@@ -123,7 +123,11 @@ const durableReservationIdentitySchemaV1 = z.object({
   // binding identity; the harness tag is a label, not a gate.
   harness: z.string().min(1).max(64),
   workflowId: localId,
-  connectorProfileDigest: digestSchema,
+  // The connector profile digest is the binding identity. The reservation
+  // identity schema marks it optional so a future connector that supplies
+  // its own profile mechanism (or omits one) can still publish. Built-in
+  // harnesses always supply it via the binding.
+  connectorProfileDigest: digestSchema.optional(),
   snapshotDigest: digestSchema.optional(),
   snapshotVersion: z.number().int().positive().optional(),
   publicationContractDigest: digestSchema.optional(),
