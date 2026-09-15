@@ -391,10 +391,15 @@ export function formatClaimResult(result, attemptedBody) {
       "A green Actions run means only that the controller completed safely. Work may begin only after a separate `CLAIM ACCEPTED` comment appears and the issue says `status:working`."].join("\n");
   }
   if (result.status !== "refused") return undefined;
+  const attempted = parseClaimCommand(attemptedBody);
+  const requestOwner = attempted?.workerId
+    ? `This refusal applies only to worker identity \`${attempted.workerId}\` and does not cancel or replace another worker's accepted claim.`
+    : "This refusal applies only to this request and does not cancel or replace another worker's accepted claim.";
   const affected = Array.isArray(result.issues) && result.issues.length
     ? ` Affected issues: ${result.issues.map(number => `#${number}`).join(", ")}.` : "";
   return ["CLAIM NOT ACCEPTED — no work reservation was created.", "",
     `Reason: \`${result.reason ?? "unspecified"}\`.${affected}`, "",
+    requestOwner, "",
     "Do not start work or retry unchanged. Read the issue's latest controller comment or ask the maintainer to correct the named blocker.",
     "A green Actions run means only that the controller completed safely; it does not mean this claim was accepted."].join("\n");
 }

@@ -805,10 +805,13 @@ test("claim outcomes make ignored and refused commands unambiguous", () => {
   assert.match(malformed, /NOT APPLIED/);
   assert.match(malformed, /worker-id: YOUR-STABLE-WORKER-ID/);
   assert.match(malformed, /green Actions run means only/);
-  const refused = formatClaimResult({ status: "refused", reason: "legacy_lock_manual", issues: [8, 27] }, "CLAIM REQUEST");
+  const refused = formatClaimResult({ status: "refused", reason: "legacy_lock_manual", issues: [8, 27] },
+    "CLAIM REQUEST\nworker-id: worker:second-01");
   assert.match(refused, /NOT ACCEPTED/);
   assert.match(refused, /legacy_lock_manual/);
   assert.match(refused, /#8, #27/);
+  assert.match(refused, /applies only to worker identity `worker:second-01`/);
+  assert.match(refused, /does not cancel or replace another worker's accepted claim/);
   assert.equal(formatClaimResult({ status: "accepted" }, "CLAIM REQUEST"), undefined);
 });
 
