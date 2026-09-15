@@ -90,7 +90,7 @@ interface RouteFixture {
   dispose: () => Promise<void>;
 }
 
-async function buildRouteFixture(opts: { coordinationEnabled?: boolean; engineDelayMs?: number; onEngineWrite?: () => void; onEngineCommit?: () => void } = {}): Promise<RouteFixture> {
+async function buildRouteFixture(opts: { coordinationEnabled?: boolean; engineDelayMs?: number; onEngineWrite?: () => void; onEngineCommit?: () => void; onCoordinationCall?: () => void } = {}): Promise<RouteFixture> {
   const db = new PGlite();
   for (const file of (await readdir("db/migrations")).filter((f) => f.endsWith(".sql")).sort()) {
     await db.exec(await readFile(`db/migrations/${file}`, "utf8"));
@@ -139,6 +139,7 @@ async function buildRouteFixture(opts: { coordinationEnabled?: boolean; engineDe
 
   const port: ProjectCoordinationCanonicalPortV1 = {
     async assignProjectCoordinatorV1(input) {
+      opts.onCoordinationCall?.();
       // Mirrors the merged canonical receipt semantics: the idempotency
       // ledger is probed first (exact retry returns the saved receipt,
       // changed content under the same key conflicts), then the expected
@@ -210,6 +211,7 @@ async function buildRouteFixture(opts: { coordinationEnabled?: boolean; engineDe
       return { ...receipt, replayed: false as const };
     },
     async setProjectDelegationPolicyStateV1(input) {
+      opts.onCoordinationCall?.();
       const existing = policyRows.get(input.policyId);
       if (!existing) throw new ProjectCoordinationErrorV1("policy_required" as never);
       if (input.toState === "active" && existing.state === "active") throw new ProjectCoordinationErrorV1("policy_already_active" as never);
@@ -227,19 +229,20 @@ async function buildRouteFixture(opts: { coordinationEnabled?: boolean; engineDe
       }
       return { version: next.coordinatorVersion, state: input.toState };
     },
-    async recordProjectCoordinationProposalV1() { throw new Error("not used"); },
-    async loadAcceptedProjectCoordinationProposalV1() { throw new Error("not used"); },
-    async findCommittedProjectCoordinationAdoptionV1() { throw new Error("not used"); },
-    async adoptProjectCoordinationProposalV1() { throw new Error("not used"); },
-    async admitProjectWorkResourcesV1() { throw new Error("not used"); },
-    async recheckProjectWorkResourceAdmissionV1() { throw new Error("not used"); },
-    async retireProjectWorkResourceAdmissionV1() { throw new Error("not used"); },
+    async recordProjectCoordinationProposalV1() { opts.onCoordinationCall?.(); throw new Error("not used"); },
+    async loadAcceptedProjectCoordinationProposalV1() { opts.onCoordinationCall?.(); throw new Error("not used"); },
+    async findCommittedProjectCoordinationAdoptionV1() { opts.onCoordinationCall?.(); throw new Error("not used"); },
+    async adoptProjectCoordinationProposalV1() { opts.onCoordinationCall?.(); throw new Error("not used"); },
+    async admitProjectWorkResourcesV1() { opts.onCoordinationCall?.(); throw new Error("not used"); },
+    async recheckProjectWorkResourceAdmissionV1() { opts.onCoordinationCall?.(); throw new Error("not used"); },
+    async retireProjectWorkResourceAdmissionV1() { opts.onCoordinationCall?.(); throw new Error("not used"); },
   };
 
   const store: ProjectCoordinationCanonicalStoreAdapter = {
     coordinator: port,
-    async coordinatorVersion(projectId) { return headRows.get(projectId)?.version ?? 0; },
+    async coordinatorVersion(projectId) { opts.onCoordinationCall?.(); return headRows.get(projectId)?.version ?? 0; },
     async readActiveHead(projectId) {
+      opts.onCoordinationCall?.();
       const row = headRows.get(projectId);
       if (!row || row.state === "revoked") return null;
       return {
@@ -255,16 +258,17 @@ async function buildRouteFixture(opts: { coordinationEnabled?: boolean; engineDe
         appointedByOwnerIdentityId: row.ownerIdentityId,
       };
     },
-    async policyVersion(projectId) { return policyByProject.get(projectId)?.coordinatorVersion ?? 0; },
-    async readDelegationPolicySummary() { return null; },
-    async conflictsVersion() { return 0; },
-    async attentionVersion() { return 0; },
+    async policyVersion(projectId) { opts.onCoordinationCall?.(); return policyByProject.get(projectId)?.coordinatorVersion ?? 0; },
+    async readDelegationPolicySummary() { opts.onCoordinationCall?.(); return null; },
+    async conflictsVersion() { opts.onCoordinationCall?.(); return 0; },
+    async attentionVersion() { opts.onCoordinationCall?.(); return 0; },
     async project(projectId) {
+      opts.onCoordinationCall?.();
       const project = projects.get(projectId);
       if (!project) throw new Error("not_found");
       return project;
     },
-    async coordinationEnabled() { return opts.coordinationEnabled ?? true; },
+    async coordinationEnabled() { opts.onCoordinationCall?.(); return opts.coordinationEnabled ?? true; },
   };
 
   const application = createPrivateWebProcess({
@@ -345,7 +349,8 @@ test("missing JWT produces authentication_required and never reaches the service
 });
 
 test("bad JWT signature produces authentication_required and never reaches the service", async (t) => {
-  const f = await buildRouteFixture(); t.after(() => f.dispose());
+  let coordinationCalls = 0;
+  const f = await buildRouteFixture({ onCoordinationCall: () => { coordinationCalls += 1; } }); t.after(() => f.dispose());
   // Signed with a key the trust store never saw: well-formed JWT, wrong signature.
   const token = makeBadSignatureToken(FIXTURE_NOW, "test-app");
   const request = new Request(`${FIXTURE_ORIGIN}/api/v1/projects/project:example/coordination`, {
@@ -357,6 +362,9 @@ test("bad JWT signature produces authentication_required and never reaches the s
   const body = await response.json();
   // The verifier must refuse before the service runs — no page payload, no grant check.
   assert.match(JSON.stringify(body), /authentication_required/);
+  // Machine-checked ordering: the JWT verifier short-circuits before any
+  // coordination store/service entry point runs.
+  assert.equal(coordinationCalls, 0);
 });
 
 test("POST without Idempotency-Key is invalid_request at the HTTP boundary", async (t) => {
