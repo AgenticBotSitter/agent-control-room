@@ -109,9 +109,11 @@ The controller requires a nonempty, valid `HANDOFF_MAINTAINERS` configuration be
 processing any handoff. An unauthorized maintainer decision must not be treated as
 accepted.
 
-This workflow does not provision an account, token, or separate credentials, and does not
-claim that such an identity has already been configured. That setup remains a maintainer
-responsibility. Existing shared-account coordination stays advisory until it is done.
+This workflow does not provision an account, token, or separate credentials. This
+repository currently configures one separately controlled, Triage-only maintainer
+identity and has completed the disposable activation recorded in the setup checklist.
+Legacy shared-account coordination remains advisory; new controller-managed handoffs
+use the configured identity.
 The complete owner-attended activation and rollback checklist is
 [Maintainer identity and worker watcher home setup](docs/MAINTAINER_AND_WATCHER_HOME_SETUP.md).
 
@@ -446,10 +448,11 @@ stops immediately, and missing correction acknowledgements or waiting review/int
 after 60 minutes. It does not assign, wake, or transfer workers. Legacy acknowledgements
 are not machine-verifiable; an unavailable report does not mean nobody is waiting.
 
-These commands are initial tools. The native scheduler source package in
-[#198](https://github.com/AgenticBotSitter/agent-control-room/issues/198) and capacity/full
-dashboard work in [#199](https://github.com/AgenticBotSitter/agent-control-room/issues/199)
-remain open; neither is claimed complete here.
+The cross-platform scheduler source package in
+[#198](https://github.com/AgenticBotSitter/agent-control-room/issues/198) and queue-health
+reporting in [#199](https://github.com/AgenticBotSitter/agent-control-room/issues/199)
+are accepted on `main`. Installing a scheduler is an owner-approved local machine
+change. It remains a notifier only: it does not wake an agent or perform work.
 
 For a short prompt that starts a new worker or reviewer session without copying this
 handbook, use [the reusable session prompt](docs/WORKER_AND_REVIEWER_SESSION_PROMPT.md).
