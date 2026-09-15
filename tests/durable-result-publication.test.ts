@@ -7,7 +7,7 @@ import { durableReceiptFromCodexV1, durableReceiptFromNativeV1 } from "../src/ar
 import { reserveNativeResultWriteV1, markNativeResultReservationStorageUncertainV1 } from "../src/artifacts/v1/native-result-reservation";
 import { resultBytesHash } from "../src/artifacts/v1/native-results";
 import { taskReviewTargetV1 } from "../src/completion-gate/v1/task-review-plan";
-import { readDurableResultReviewPlanV1 } from "../src/completion-gate/v1/durable-result-review-plan";
+import { readDurableResultReviewPlanV1, verifyReviewPlanAgainstReceiptV1 } from "../src/completion-gate/v1/durable-result-review-plan";
 import { openPrivateArtifactStorageV1, privateArtifactStorageNamespaceDigestV1 } from "../src/web/v1/private-artifact-storage";
 import type { ArtifactReadPortV1, ArtifactStoragePortV1 } from "../src/node-executor/artifact-storage";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
@@ -392,6 +392,30 @@ test("exactly one pending owner-review target exists and cross-harness pairs ref
       /task_review_target_unavailable/);
   });
   assert.ok(!("qualityAccepted" in native.target) && !("completionVerified" in native.target));
+});
+
+test("verifyReviewPlanAgainstReceiptV1: a stored plan and its receipt must agree on every carried field", async t => {
+  const f = await setupWithProvision("run:durable-planverify"); t.after(f.close);
+  const storage = new ControlledStorage();
+  const runId = "run:durable-planverify";
+  const receivedAt = at(9500);
+  const captured = await publishDurableResultV1(configOf(f, storage),
+    { binding: nativeBinding(runId), bytes: bytesOf("planverify"), receivedAt, assertAuthority: () => {} });
+  const plan = await f.db.transaction(tx => readDurableResultReviewPlanV1(tx, f.reviewKey,
+    binding.tenantId, binding.projectId, nativeBinding(runId).jobId));
+  assert.ok(plan);
+  // Happy path: the stored plan and the live receipt agree.
+  assert.doesNotThrow(() => verifyReviewPlanAgainstReceiptV1(plan!, captured.receipt));
+  // Tampered receiptDigest: verify fails closed.
+  assert.throws(() => verifyReviewPlanAgainstReceiptV1({ ...plan!, receiptDigest: digest("tampered") }, captured.receipt),
+    /durable_result_review_plan_unavailable/);
+  // Foreign receipt (different run/jobId): verify fails closed.
+  const foreign = { ...captured.receipt, runId: "run:other", jobId: "job:other" };
+  assert.throws(() => verifyReviewPlanAgainstReceiptV1(plan!, foreign),
+    /durable_result_review_plan_unavailable/);
+  // Foreign harness: verify fails closed.
+  assert.throws(() => verifyReviewPlanAgainstReceiptV1({ ...plan!, harness: "codex" }, captured.receipt),
+    /durable_result_review_plan_unavailable/);
 });
 
 test("crash reconciliation reports committed metadata versus manual work", async t => {

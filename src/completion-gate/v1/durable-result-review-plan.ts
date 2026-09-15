@@ -57,6 +57,24 @@ export async function readDurableResultReviewPlanV1(tx: DatabaseSession, key: Ui
   return verifyDurableResultReviewPlanV1(key, row);
 }
 
+/**
+ * Verify that a stored review plan matches the receipt it claims to
+ * govern. The plan is authoritative for the owner-review target's
+ * planning facts; the receipt is authoritative for the connector
+ * evidence. The plan's receiptDigest must equal the receipt's content
+ * digest; every field that both records carry must agree; the plan's
+ * acceptance profile must match the receipt's.
+ */
+export function verifyReviewPlanAgainstReceiptV1(plan: DurableResultReviewPlanV1, receipt: DurableResultReceiptV1): void {
+  if (receipt.schema !== "control-room.durable-result-receipt/v1") unavailable();
+  if (sha256Digest(receipt) !== plan.receiptDigest
+    || plan.tenantId !== receipt.tenantId || plan.projectId !== receipt.projectId
+    || plan.jobId !== receipt.jobId || plan.attemptId !== receipt.attemptId
+    || plan.runId !== receipt.runId || plan.nodeId !== receipt.nodeId
+    || plan.harness !== receipt.harness
+    || plan.acceptanceProfileDigest !== receipt.acceptanceProfileDigest) unavailable();
+}
+
 /** Derives the single pending owner-review target. It records no decision of any kind. */
 export function durableReviewTargetV1(plan: DurableResultReviewPlanV1, receipt: DurableResultReceiptV1): CompletionReviewTargetV1 {
   if (receipt.schema !== "control-room.durable-result-receipt/v1" || receipt.harness !== plan.harness
