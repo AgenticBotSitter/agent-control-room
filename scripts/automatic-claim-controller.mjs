@@ -270,6 +270,7 @@ export async function runClaimController({ event, repository, api }) {
 
 export const PACKET_PREFIX = "<!-- acr-public-work:v1";
 const PACKET_PATTERN = /<!--\s*acr-public-work:v1\s*(\{.*?\})\s*-->/gs;
+const PACKET_MARKER_PATTERN = /<!--\s*acr-public-work:v1\b/g;
 const SHA40 = /^[a-f0-9]{40}$/;
 const MAX_LEASE_HOURS = 720;
 export const MAX_ACTIVE_WORKING = 1;
@@ -320,14 +321,73 @@ export function packetsOverlap(pa, pb) {
 
 const PACKET_EFFECTS = new Set(["none", "filesystem", "network"]);
 
+// JSON.parse silently keeps the last value for a duplicate object key. That
+// is unsafe for an authority packet because the text a reviewer reads can
+// disagree with the value the controller uses. This scanner runs only after
+// JSON.parse has established valid JSON and compares decoded key names, so
+// escaped spellings such as "eff\u0065cts" cannot bypass the duplicate check.
+function hasDuplicateJsonObjectKeys(source) {
+  let index = 0;
+  const whitespace = () => { while (/\s/.test(source[index] ?? "")) index += 1; };
+  const string = () => {
+    const start = index++;
+    while (index < source.length) {
+      if (source[index] === "\\") { index += 2; continue; }
+      if (source[index++] === '"') return JSON.parse(source.slice(start, index));
+    }
+    return undefined;
+  };
+  const value = (depth = 0) => {
+    if (depth > 32) return true;
+    whitespace();
+    if (source[index] === "{") return object(depth + 1);
+    if (source[index] === "[") {
+      index += 1; whitespace();
+      if (source[index] === "]") { index += 1; return false; }
+      while (index < source.length) {
+        if (value(depth + 1)) return true;
+        whitespace();
+        if (source[index] === "]") { index += 1; return false; }
+        index += 1;
+      }
+      return false;
+    }
+    if (source[index] === '"') { string(); return false; }
+    while (index < source.length && !/[\s,\]}]/.test(source[index])) index += 1;
+    return false;
+  };
+  const object = depth => {
+    index += 1; whitespace();
+    const keys = new Set();
+    if (source[index] === "}") { index += 1; return false; }
+    while (index < source.length) {
+      whitespace();
+      const key = string();
+      if (keys.has(key)) return true;
+      keys.add(key);
+      whitespace(); index += 1;
+      if (value(depth)) return true;
+      whitespace();
+      if (source[index] === "}") { index += 1; return false; }
+      index += 1;
+    }
+    return false;
+  };
+  return value(0);
+}
+
 /** Parse and strictly validate the work packet; undefined means unusable. */
 export function parseClaimPacket(body) {
   if (typeof body !== "string" || body.length > 65536) return undefined;
+  if ([...body.matchAll(PACKET_MARKER_PATTERN)].length !== 1) return undefined;
   const matches = [...body.matchAll(PACKET_PATTERN)];
   if (matches.length !== 1) return undefined;
   const match = matches[0];
   let raw;
   try { raw = JSON.parse(match[1]); } catch { return undefined; }
+  try {
+    if (hasDuplicateJsonObjectKeys(match[1])) return undefined;
+  } catch { return undefined; }
   if (!isPlainObject(raw)) return undefined;
   const allowedKeys = ["base", "checks", "dependencies", "effects", "leaseHours", "risk", "target", "writeScopes"];
   if (Object.keys(raw).sort().join("\n") !== allowedKeys.join("\n")) return undefined;
