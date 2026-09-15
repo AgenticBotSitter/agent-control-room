@@ -1498,27 +1498,6 @@ export class CanonicalStore {
     });
   }
 
-  /** Pauses or revokes an owner-authored bounded policy. Every other bound requires a new policy. */
-  async setProjectDelegationPolicyStateV1(input: {
-    tenantId: string; projectId: string; policyId: string; ownerIdentityId: string;
-    toState: "paused" | "active" | "revoked"; occurredAt: string;
-  }): Promise<{ version: number; state: string }> {
-    return this.#transaction(async (tx) => {
-      await this.#lockOwnerAuthorityV1(tx, { tenantId: input.tenantId, identityId: input.ownerIdentityId,
-        projectId: input.projectId, occurredAt: input.occurredAt, action: "policy.set_state" });
-      await this.#lockTenantProjectV1(tx, input.tenantId, input.projectId);
-      const policy = (await tx.query<{ state: string; version: string; project_id: string }>(
-        `SELECT state,version::text AS version,project_id FROM control_project_delegation_policies
-         WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, [input.tenantId, input.policyId])).rows[0];
-      if (!policy || policy.project_id !== input.projectId) failProjectCoordinationV1("invalid_input");
-      if (policy.state === "revoked") failProjectCoordinationV1("policy_revoked");
-      const version = Number(policy.version) + 1;
-      await tx.query(`UPDATE control_project_delegation_policies SET state=$1,version=$2,updated_at=$3
-        WHERE tenant_id=$4 AND id=$5`, [input.toState, version, input.occurredAt, input.tenantId, input.policyId]);
-      return { version, state: input.toState };
-    });
-  }
-
   /**
    * Durably pauses, resumes, or revokes an owner-authored bounded policy. This
    * is the sibling of the coordinator lifecycle operation on the distinct

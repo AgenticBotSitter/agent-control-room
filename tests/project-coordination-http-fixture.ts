@@ -25,7 +25,8 @@ import { ProjectCoordinationHttpService, type ProjectCoordinationCanonicalStoreA
 import type { VerifiedWebIdentity } from "../src/web/v1/access-verifier";
 import { ProjectCoordinationErrorV1 } from "../src/project-coordination/v1/errors";
 import type { ProjectCoordinationCanonicalPortV1 } from "../src/project-coordination/v1/services";
-import type { CoordinatorLifecycleReceiptV1 } from "../src/project-coordination/v1/schemas";
+import type { CoordinatorLifecycleReceiptV1, DelegationPolicyLifecycleReceiptV1 } from "../src/project-coordination/v1/schemas";
+import { delegationPolicyLifecycleRequestDigestV1 } from "../src/project-coordination/v1/schemas";
 import { sha256Digest } from "../src/security/digest";
 
 interface FixtureOptions {
@@ -125,6 +126,7 @@ export async function projectCoordinationHttpFixture(options: FixtureOptions) {
   const headRows = new Map<string, CoordinatorHeadRow>();
   // Same durable receipt ledger as the route-test fixture.
   const lifecycleReceipts = new Map<string, { contentKey: string; receipt: CoordinatorLifecycleReceiptV1 }>();
+  const policyReceipts = new Map<string, { contentKey: string; receipt: DelegationPolicyLifecycleReceiptV1 }>();
   const policyRows = new Map<string, DelegationPolicyRow>();
   const policyByProject = new Map<string, DelegationPolicyRow>();
   const attentionByProject = new Map<string, number>();
@@ -215,15 +217,64 @@ export async function projectCoordinationHttpFixture(options: FixtureOptions) {
       lifecycleReceipts.set(input.idempotencyKey, { contentKey, receipt });
       return { ...receipt, replayed: false as const };
     },
-    async setProjectDelegationPolicyStateV1(input) {
+    async setProjectDelegationPolicyStateDurableV1(input) {
+      // Mirrors the canonical policy receipt semantics: the expected digest
+      // is recomputed, the per-key ledger is probed first (exact retry
+      // returns the saved receipt), then the expected version is enforced
+      // and the prepared mutation runs at most once per key.
+      const expectedDigest = delegationPolicyLifecycleRequestDigestV1({ action: input.action,
+        tenantId: input.tenantId, projectId: input.projectId, policyId: input.policyId,
+        ownerIdentityId: input.ownerIdentityId, expectedVersion: input.expectedVersion });
+      if (expectedDigest !== input.requestDigest) {
+        throw new ProjectCoordinationErrorV1("invalid_input" as never);
+      }
+      const contentKey = JSON.stringify({ action: input.action, tenantId: input.tenantId,
+        projectId: input.projectId, policyId: input.policyId, ownerIdentityId: input.ownerIdentityId,
+        expectedVersion: input.expectedVersion });
+      const prior = policyReceipts.get(input.idempotencyKey);
+      if (prior) {
+        if (prior.contentKey !== contentKey) {
+          throw new ProjectCoordinationErrorV1("policy_replay_conflict" as never);
+        }
+        return { ...prior.receipt, replayed: true as const };
+      }
+      const toState = input.action === "revoke" ? "revoked" as const
+        : input.action === "resume" ? "active" as const : "paused" as const;
+      const alreadyState = toState === "paused" ? "policy_already_paused" as const
+        : toState === "active" ? "policy_already_active" as const
+        : "policy_already_revoked" as const;
+      const buildReceipt = (version: number, state: "active" | "paused" | "revoked",
+        already: typeof alreadyState | undefined) => {
+        const body = {
+          schema: "control-room.project-delegation-policy-lifecycle-receipt/v1" as const,
+          action: input.action,
+          tenantId: input.tenantId,
+          projectId: input.projectId,
+          policyId: input.policyId,
+          ownerIdentityId: input.ownerIdentityId,
+          idempotencyKey: input.idempotencyKey,
+          requestDigest: input.requestDigest,
+          expectedVersion: input.expectedVersion,
+          version,
+          state,
+          ...(already ? { alreadyState: already } : {}),
+        };
+        return { ...body, receiptDigest: sha256Digest(body) };
+      };
       const existing = policyRows.get(input.policyId);
       if (!existing) throw new ProjectCoordinationErrorV1("policy_required" as never);
-      if (input.toState === "active" && existing.state === "active") throw new ProjectCoordinationErrorV1("policy_already_active" as never);
-      if (input.toState === "paused" && existing.state === "paused") throw new ProjectCoordinationErrorV1("policy_already_paused" as never);
-      if (input.toState === "revoked" && existing.state === "revoked") throw new ProjectCoordinationErrorV1("policy_already_revoked" as never);
+      if (existing.state === toState) {
+        const receipt = buildReceipt(existing.coordinatorVersion, toState, alreadyState);
+        policyReceipts.set(input.idempotencyKey, { contentKey, receipt });
+        return { ...receipt, replayed: false as const };
+      }
+      if (existing.state === "revoked") throw new ProjectCoordinationErrorV1("policy_revoked" as never);
+      if (existing.coordinatorVersion !== input.expectedVersion) {
+        throw new ProjectCoordinationErrorV1("policy_version_stale" as never);
+      }
       const next: DelegationPolicyRow = {
         ...existing,
-        state: input.toState,
+        state: toState,
         coordinatorVersion: existing.coordinatorVersion + 1,
         ownerIdentityId: input.ownerIdentityId,
       };
@@ -231,7 +282,9 @@ export async function projectCoordinationHttpFixture(options: FixtureOptions) {
       if (policyByProject.get(input.projectId)?.policyId === input.policyId) {
         policyByProject.set(input.projectId, next);
       }
-      return { version: next.coordinatorVersion, state: input.toState };
+      const receipt = buildReceipt(next.coordinatorVersion, toState, undefined);
+      policyReceipts.set(input.idempotencyKey, { contentKey, receipt });
+      return { ...receipt, replayed: false as const };
     },
     async recordProjectCoordinationProposalV1() {
       throw new Error("not used by http lifecycle tests");

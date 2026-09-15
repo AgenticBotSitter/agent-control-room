@@ -46,10 +46,6 @@ export interface ProjectCoordinationCanonicalPortV1 {
     expectedVersion: number;
     executionBindingDigest?: string;
   }): Promise<CoordinatorLifecycleReceiptV1 & { replayed: boolean }>;
-  setProjectDelegationPolicyStateV1(input: {
-    tenantId: string; projectId: string; policyId: string; ownerIdentityId: string;
-    toState: "paused" | "active" | "revoked"; occurredAt: string;
-  }): Promise<{ version: number; state: string }>;
   setProjectDelegationPolicyStateDurableV1(input: {
     action: "pause" | "resume" | "revoke";
     tenantId: string; projectId: string; policyId: string; ownerIdentityId: string;

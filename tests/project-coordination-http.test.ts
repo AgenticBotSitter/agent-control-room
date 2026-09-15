@@ -244,6 +244,7 @@ test("pause-policy requires an existing policy", async (t) => {
     projectId: "project:example",
     revision: readRevisionFromPage(read),
     policyId: "policy:never",
+    idempotencyKey: "http-test-key-11",
   });
   assert.equal(outcome.status, "refused");
   assert.equal(outcome.reasonCode, "policy_required");
@@ -257,6 +258,7 @@ test("pause-policy advances the policy version when accepted", async (t) => {
     projectId: "project:example",
     revision: readRevisionFromPage(read),
     policyId: read.delegationPolicy!.policyId,
+    idempotencyKey: "http-test-key-12",
   });
   assert.equal(outcome.status, "accepted");
   assert.equal(outcome.revision.expectedPolicyVersion, read.delegationPolicy!.coordinatorVersion + 1);
@@ -270,9 +272,61 @@ test("resume-policy on a policy that is not paused refuses with policy_already_a
     projectId: "project:example",
     revision: readRevisionFromPage(read),
     policyId: read.delegationPolicy!.policyId,
+    idempotencyKey: "http-test-key-13",
   });
   assert.equal(outcome.status, "refused");
   assert.equal(outcome.reasonCode, "policy_already_active");
+});
+
+test("exact policy retry reaches the saved receipt before any stale-version refusal", async (t) => {
+  // The revision gate defers the policy version to the durable engine: even
+  // though the submitted expectedPolicyVersion is stale by the time of the
+  // retry, the engine's ledger probe runs first and returns the receipt.
+  const f = await projectCoordinationHttpFixture({ now: FIXTURE_NOW, withPolicy: true });
+  t.after(() => f.dispose());
+  const read = await f.service.read(f.identity, "project:example");
+  const policyId = read.delegationPolicy!.policyId;
+  const first = await f.service.pauseDelegationPolicy(f.identity, {
+    projectId: "project:example",
+    revision: readRevisionFromPage(read),
+    policyId,
+    idempotencyKey: "http-test-key-14",
+  });
+  assert.equal(first.status, "accepted");
+  // Another key moves the policy on, so the first key's version is now stale.
+  const moved = await f.service.resumeDelegationPolicy(f.identity, {
+    projectId: "project:example",
+    revision: { ...readRevisionFromPage(read), expectedPolicyVersion: 2 },
+    policyId,
+    idempotencyKey: "http-test-key-15",
+  });
+  assert.equal(moved.status, "accepted");
+  const replay = await f.service.pauseDelegationPolicy(f.identity, {
+    projectId: "project:example",
+    revision: readRevisionFromPage(read),
+    policyId,
+    idempotencyKey: "http-test-key-14",
+  });
+  assert.equal(replay.status, "accepted");
+  assert.deepEqual(replay.revision.expectedPolicyVersion,
+    first.revision.expectedPolicyVersion);
+});
+
+test("policy retry with a rebuilt key and wrong version refuses stale_revision", async (t) => {
+  const f = await projectCoordinationHttpFixture({ now: FIXTURE_NOW, withPolicy: true });
+  t.after(() => f.dispose());
+  const read = await f.service.read(f.identity, "project:example");
+  const outcome = await f.service.pauseDelegationPolicy(f.identity, {
+    projectId: "project:example",
+    revision: { ...readRevisionFromPage(read), expectedPolicyVersion: 99 },
+    policyId: read.delegationPolicy!.policyId,
+    idempotencyKey: "http-test-key-16",
+  });
+  assert.equal(outcome.status, "refused");
+  assert.equal(outcome.reasonCode, "stale_revision");
+  // The stale envelope reports the version the engine actually saw.
+  assert.equal(outcome.revision.expectedPolicyVersion,
+    read.delegationPolicy!.coordinatorVersion);
 });
 
 test("disabled coordination surfaces the page but refuses every lifecycle action", async (t) => {
