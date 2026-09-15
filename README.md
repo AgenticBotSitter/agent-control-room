@@ -30,6 +30,11 @@ process for people, bots, reviewers, and maintainers.
 **[How the build keeps moving](docs/CONTINUOUS_BUILD_OPERATION.md)** — work discovery,
 review turnaround, automatic monitoring, and what happens when a worker cannot proceed.
 
+**[Daily work, idle time and improvement](docs/DAILY_BUILD_ACTIVITY.md)** — worker and
+lead time breakdowns, honest model comparisons, and two-hour bottleneck repairs.
+**[Copy the current worker/reviewer prompt](docs/WORKER_AND_REVIEWER_SESSION_PROMPT.md)**
+to join or refresh an existing agent without losing its assignment.
+
 **Current priority:** finish a real mixed-harness project → task → result → review
 workflow, using existing proven components. One configurable public product serves
 everyone; no separate private core.

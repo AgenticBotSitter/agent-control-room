@@ -23,6 +23,14 @@ themselves create, review, or complete work.
    packages available. Existing ownership and valid path locks remain in force.
 6. Each cycle records resolved bottlenecks and checks whether useful delivery improved.
 
+Every run ends with the timestamped queue counts, actions taken, and daily per-worker
+work/idle/blocked/unknown breakdown even when unchanged. Every two hours the lead
+investigates the largest avoidable wait, acts within existing authority, and records
+whether its previous repair helped. The first run after midnight closes the prior
+day. See [Daily build activity](DAILY_BUILD_ACTIVITY.md) for denominators, evidence,
+reporting examples and the public daily-summary procedure. This adds no new worker
+approval or timer; keep substantive work moving between observations.
+
 An API error, contradictory record, missing claim packet, duplicate issue binding,
 or unmatched worker ID is a distinct repair task for the lead. It must never become
 a silent "nothing to do". Do not repair an authority conflict by blindly relabeling it.
