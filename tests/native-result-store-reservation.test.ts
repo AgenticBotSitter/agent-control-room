@@ -178,3 +178,29 @@ test("a valid authenticated reservation for a conflicting identity refuses witho
     x.input.body, x.input.bytes, x.receivedAt), /native_result_reservation_conflict/);
   assert.equal(x.storage.putCalls, 0);
 });
+
+test("the neutral reservation table rejects missing JSON mirrors and cross-run lineage", async t => {
+  const x = await prepared("Neutral reservation constraints."); t.after(x.f.close);
+  const atValue = x.receivedAt;
+  const scalar = [binding.tenantId, binding.projectId, binding.jobId, binding.attemptId,
+    binding.runId, "artifact:durable:missing", `sha256:${"1".repeat(64)}`, "reserved",
+    `sha256:${"2".repeat(64)}`, `hmac-sha256:${"3".repeat(64)}`, atValue];
+  await assert.rejects(() => x.f.db.query(`INSERT INTO control_durable_result_write_reservations
+    (tenant_id,project_id,job_id,attempt_id,run_id,artifact_id,identity_digest,state,contract_digest,reservation,auth_tag,created_at,updated_at)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'{}'::jsonb,$10,$11,$11)`, scalar),
+  /ck_durable_result_reservation_mirrors/);
+
+  const otherRun = "run:durable:other";
+  await x.f.provisionRun(otherRun, "job:durable:other", "attempt:durable:other");
+  const identityDigest = `sha256:${"4".repeat(64)}`, contractDigest = `sha256:${"5".repeat(64)}`;
+  const reservation = { schema: "control-room.durable-result-write-reservation/v1",
+    identity: { tenantId: binding.tenantId, projectId: binding.projectId, jobId: binding.jobId,
+      attemptId: binding.attemptId, runId: otherRun, artifactId: "artifact:durable:cross" },
+    identityDigest, state: "reserved", contractDigest };
+  await assert.rejects(() => x.f.db.query(`INSERT INTO control_durable_result_write_reservations
+    (tenant_id,project_id,job_id,attempt_id,run_id,artifact_id,identity_digest,state,contract_digest,reservation,auth_tag,created_at,updated_at)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$12)`,
+  [binding.tenantId, binding.projectId, binding.jobId, binding.attemptId, otherRun,
+    "artifact:durable:cross", identityDigest, "reserved", contractDigest, JSON.stringify(reservation),
+    `hmac-sha256:${"6".repeat(64)}`, atValue]), /foreign key constraint/);
+});

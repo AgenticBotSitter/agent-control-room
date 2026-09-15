@@ -20,13 +20,17 @@ GRANT SELECT ON workspaces, control_identities, control_role_grants, projects, c
   control_native_delivery_envelopes, control_native_transmission_intents, control_native_delivery_receipts,
   control_task_execution_plans, control_codex_activation_transmission_intents, control_codex_result_publications,
   control_artifact_manifests, control_native_artifact_receipts, control_native_result_write_reservations,
+  control_durable_result_write_reservations,
   audit_events, control_audit_chain_heads
   TO control_room_native_evidence;
 GRANT INSERT ON control_harness_runs, control_harness_run_events, control_codex_result_publications, control_artifact_manifests,
   control_native_artifact_receipts, control_native_result_write_reservations,
+  control_durable_result_write_reservations,
   audit_events, control_audit_chain_heads TO control_room_native_evidence;
 GRANT UPDATE (state,contract_digest,reservation,auth_tag,updated_at)
   ON control_native_result_write_reservations TO control_room_native_evidence;
+GRANT UPDATE (state,contract_digest,reservation,auth_tag,updated_at)
+  ON control_durable_result_write_reservations TO control_room_native_evidence;
 GRANT UPDATE (result_lock) ON control_jobs TO control_room_native_evidence;
 GRANT UPDATE (evidence_lock) ON control_attempts, control_leases TO control_room_native_evidence;
 GRANT UPDATE (coordinator_lock) ON projects, control_manual_project_heads, control_nodes, control_node_keys

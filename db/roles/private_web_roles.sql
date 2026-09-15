@@ -31,6 +31,7 @@ GRANT SELECT ON control_identities, control_role_grants, workspaces, control_web
   control_project_delegation_policies, control_project_coordination_operation_receipts,
   control_project_coordination_operation_jobs, control_work_resources,
   control_attempt_resource_admissions, control_attempt_resource_scopes TO control_room_private_web;
+GRANT SELECT ON control_durable_result_write_reservations TO control_room_private_web;
 GRANT UPDATE (web_lock) ON control_identities, control_role_grants, workspaces,
   control_connection_registry_heads, control_completion_gate_integrity, control_completion_gate_records TO control_room_private_web;
 GRANT INSERT ON control_web_sessions, adapter_registry, projects, control_manual_project_heads,

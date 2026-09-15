@@ -15,9 +15,9 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations 0001-0076, including generic external-content
+// Generated from public migrations 0001-0077, including generic external-content
 // migrations 0025/0026. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "bae881d90c8081cdc3e56062b8228bf623258a8057e902b5cb74e739dabce682";
+export const privateWebSchemaDigest = "57ec401c3656b8c7bafeb8f4679bde81a81029920d6628bb248d910fc5f11503";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "control_schedules", "control_schedule_occurrences",
   "control_news_story_versions", "control_news_source_observations", "control_news_source_settings", "control_news_story_archives", "control_news_article_details",
@@ -29,7 +29,8 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_artifact_manifests", "control_native_artifact_receipts", "control_completion_gate_records", "control_completion_gate_integrity", "control_web_task_review_commands", "control_native_review_plans",
   "control_project_coordinator_heads", "control_project_coordination_proposals", "control_project_delegation_policies",
   "control_project_coordination_operation_receipts", "control_project_coordination_operation_jobs",
-  "control_work_resources", "control_attempt_resource_admissions", "control_attempt_resource_scopes"] as const;
+  "control_work_resources", "control_attempt_resource_admissions", "control_attempt_resource_scopes",
+  "control_durable_result_write_reservations"] as const;
 const inserts = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
   "control_jobs", "control_web_task_commands", "control_completion_gate_records", "control_web_task_review_commands", "control_news_source_settings", "control_news_story_archives",
@@ -131,15 +132,18 @@ const evidenceReads = ["workspaces", "control_identities", "control_role_grants"
   "control_native_delivery_envelopes", "control_native_transmission_intents", "control_native_delivery_receipts",
   "control_task_execution_plans", "control_codex_activation_transmission_intents", "control_codex_result_publications",
   "control_artifact_manifests", "control_native_artifact_receipts", "control_native_result_write_reservations",
+  "control_durable_result_write_reservations",
   "audit_events", "control_audit_chain_heads"];
 const evidenceInserts = new Set(["control_harness_runs", "control_harness_run_events", "control_codex_result_publications", "control_artifact_manifests",
-  "control_native_artifact_receipts", "control_native_result_write_reservations", "audit_events", "control_audit_chain_heads"]);
+  "control_native_artifact_receipts", "control_native_result_write_reservations",
+  "control_durable_result_write_reservations", "audit_events", "control_audit_chain_heads"]);
 const evidenceUpdates: Record<string, readonly string[]> = {
   control_jobs: ["result_lock"], control_attempts: ["evidence_lock"], control_leases: ["evidence_lock"],
   projects: ["coordinator_lock"], control_manual_project_heads: ["coordinator_lock"],
   control_nodes: ["coordinator_lock"], control_node_keys: ["coordinator_lock"],
   control_harness_runs: ["state", "last_sequence", "run_digest", "run_auth_tag", "payload", "updated_at", "last_observed_at"],
   control_native_result_write_reservations: ["state", "contract_digest", "reservation", "auth_tag", "updated_at"],
+  control_durable_result_write_reservations: ["state", "contract_digest", "reservation", "auth_tag", "updated_at"],
   control_audit_chain_heads: ["head_hash", "event_count", "updated_at"],
 };
 const sessionReads = ["workspaces", "control_identities", "control_role_grants", "control_nodes", "control_node_keys",

@@ -10,7 +10,7 @@ tool prints its plan and exits 0.
 
 | Path | Purpose |
 | --- | --- |
-| `deploy/postgres/migration-ledger.json` | Immutable filename/order/sha256 manifest for all 76 `db/migrations/*.sql` files plus the three provisioned role files. Regenerate with `pnpm db:ledger` after any reviewed migration change; verify with `pnpm db:verify`. |
+| `deploy/postgres/migration-ledger.json` | Immutable filename/order/sha256 manifest for all 77 `db/migrations/*.sql` files plus the three provisioned role files. Regenerate with `pnpm db:ledger` after any reviewed migration change; verify with `pnpm db:verify`. |
 | `deploy/postgres/provision-database.sql` | Superuser-run `CREATE DATABASE` template. The database name comes from a psql variable (`-v dbname=…`); the owner stays the invoking superuser because the schema-owner role does not exist yet — the migrate bootstrap transfers ownership afterwards. |
 | `db/roles/production_provision.sql` | Self-sufficient logins: creates the schema-owner, application and schedule-admissions groups it depends on, then the `control_room_migrator` / `control_room_app` / `control_room_scheduler` logins. Passwords arrive only as psql variables sourced from the operator's secret store; runs shorter than 24 characters fail closed. Complements `db/roles/production_roles.sql` (remaining NOLOGIN groups + table grants, re-applied after every migration batch). |
 | `db/setup/production_migration_ledger.sql` | `control_room_schema_migrations` ledger-table DDL. The only production schema object owned by this package; `db/migrations/*.sql` contents are read-only inputs. |
