@@ -21,7 +21,7 @@ named reason:
 | `artifact_storage_r2_unsupported` | `storageClass: "r2"` |
 | `artifact_storage_class_unsupported` | any other storage class |
 | `artifact_storage_root_not_canonical` | a relative, traversing, trailing-separator or duplicated-separator path |
-| `artifact_storage_root_not_owned` | `/` as the root |
+| `artifact_storage_root_not_owned` | a filesystem root in either platform's spelling: `/`, a drive root (`C:\`, `c:\`, `D:/`) or a UNC share root (`\\server\share`, with or without its trailing separator) |
 | `artifact_storage_root_invalid` | an empty, oversized, NUL- or newline-bearing path |
 | `artifact_storage_total_below_file` | a total smaller than one file |
 | `artifact_storage_settings_invalid` | any unknown key, missing field or out-of-range bound |
@@ -31,6 +31,13 @@ Two properties are deliberate.
 **The path is checked, never repaired.** `resolve()` is used only to detect a
 non-canonical path. A configuration that would need repair is refused, so the operator's
 recorded intent and the directory actually opened can never differ.
+
+**A filesystem root is refused in either platform's spelling.** Both the POSIX and the
+win32 parsers run on every host, because an operator file is portable data: a
+Windows-shaped root must be refused for the same reason on a Linux server as on Windows,
+and the refusal must reproduce from any contributor's machine. A whole drive, share or
+host root is never a Control Room-owned namespace — the store would claim everything
+beneath it.
 
 **The namespace digest is always derived.** `artifactStorageNamespaceDigestV1(storageNamespace, rootPath)`
 binds the public namespace to one canonical path without returning or publishing that path.
@@ -109,16 +116,23 @@ exactly one row was affected.
 ### What the adapter evidence proves
 
 Against a real PostgreSQL database with all 77 migrations applied (PGlite, disposable):
-the reservation lands in the neutral table and the native table stays empty; a
-**reconstructed publisher with a brand-new port instance over the same database returns the
-identical verified receipt and performs no second byte write**; both uniqueness collisions
-report `conflict` and leave the surrounding transaction usable; a stale `state` or a stale
-`contract_digest` changes nothing; the database trigger refuses an illegal backwards
-transition; and `created_at` survives a legal swap.
+the reservation lands in the neutral table and the native table stays empty; both
+uniqueness collisions report `conflict` and leave the surrounding transaction usable; a
+stale `state` or a stale `contract_digest` changes nothing; the database trigger refuses
+an illegal backwards transition; and `created_at` survives a legal swap.
 
-This satisfies the acceptance property "reconstructing the application over the same
-PostgreSQL database and persistent directory returns the same verified receipt without
-writing again" for neutral records.
+**The reconstruction acceptance property is exercised against both durable stores
+together**, not the database alone. One test publishes through the real
+`PersistentLocalArtifactStorageV1` in a disposable directory and the real PostgreSQL
+reservation adapter, then reconstructs *both* — a new storage object opened over the same
+directory and a new reservation port over the same database, neither carrying state from
+the first pass — and retries the same submission. It asserts the identical verified
+receipt, zero further byte writes reaching the real store, an unchanged stored file (same
+inode, size and modification time), and that the ordinary protected reader still returns
+the exact text from bytes read off that directory.
+
+A separate, narrower test covers database reconstruction alone with an injected byte
+store; it is labelled as such and does not carry the persistent-directory claim.
 
 It remains **disposable-database evidence**. It is not a production deployment, a physical
 process or host restart, or a live backup and restore claim.

@@ -1,4 +1,4 @@
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute, posix, resolve, win32 } from "node:path";
 import { z } from "zod";
 import { sha256Digest } from "../../security/canonical-digest";
 
@@ -44,6 +44,20 @@ function refuse(reason: string): never {
 }
 
 /**
+ * A filesystem root, in either platform's spelling.
+ *
+ * Both parsers are consulted on every host rather than only the running
+ * platform's. An operator file is portable data: a Windows-shaped root must be
+ * refused for the same reason on a Linux server as on Windows, and the refusal
+ * must be reproducible from any contributor's machine. This covers the POSIX
+ * root, a drive root in either separator or case (`C:\`, `D:/`, `c:\`) and a
+ * UNC share root with or without its trailing separator.
+ */
+function isFilesystemRoot(value: string): boolean {
+  return posix.parse(value).root === value || win32.parse(value).root === value;
+}
+
+/**
  * One explicit persistent directory. The path must already be absolute and
  * canonical: `resolve()` is used to detect `..`, `.`, duplicate separators and
  * trailing separators, never to repair them. A configuration that needed
@@ -53,9 +67,11 @@ function refuse(reason: string): never {
 function canonicalPersistentDirectory(value: unknown): string {
   if (typeof value !== "string" || value.length === 0 || value.length > 4096) refuse("artifact_storage_root_invalid");
   if (value.includes("\0") || value.includes("\n") || value.includes("\r")) refuse("artifact_storage_root_invalid");
+  // A whole drive, share or host root is never a Control Room-owned namespace:
+  // the store would claim everything beneath it. Checked before canonical form
+  // so the refusal names the real problem on every platform.
+  if (isFilesystemRoot(value)) refuse("artifact_storage_root_not_owned");
   if (!isAbsolute(value) || resolve(value) !== value) refuse("artifact_storage_root_not_canonical");
-  // "/" is never a Control Room-owned namespace: the store would claim the host.
-  if (value === "/") refuse("artifact_storage_root_not_owned");
   return value;
 }
 

@@ -222,3 +222,30 @@ test("the startup boundary applies the same operator contract to its captured co
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("a whole drive, share or host root is refused in either platform's spelling", () => {
+  const base = { schema: ARTIFACT_STORAGE_SETTINGS_SCHEMA_V1, storageClass: "local",
+    storageNamespace: "artifact-namespace:roots", maximumArtifacts: 20,
+    maximumFileBytes: 65_536, maximumTotalBytes: 1_000_000, operationTimeoutMs: 2_000 };
+
+  // Both parsers run on every host, so these refusals reproduce from a Linux
+  // server, a macOS contributor machine and a Windows contributor machine
+  // alike. A root is a whole drive, share or host: the store would claim
+  // everything beneath it.
+  for (const root of ["/", "C:\\", "c:\\", "D:/", "\\\\server\\share\\", "\\\\server\\share"]) {
+    assert.throws(() => captureArtifactStorageSettingsV1({ ...base, rootPath: root }),
+      /artifact_storage_root_not_owned/, `expected ${JSON.stringify(root)} to be refused as a filesystem root`);
+  }
+
+  // A dedicated directory beneath a root is accepted. Only the host's own
+  // spelling can satisfy the absolute-and-canonical check, so assert the
+  // form this platform actually uses rather than pretending both pass here.
+  const dedicated = process.platform === "win32" ? "C:\\control-room\\artifacts" : "/var/lib/control-room/artifacts";
+  assert.equal(captureArtifactStorageSettingsV1({ ...base, rootPath: dedicated }).rootPath, dedicated);
+
+  // The foreign spelling is still refused, but as a non-canonical path rather
+  // than as a root — the reason stays accurate on each platform.
+  const foreign = process.platform === "win32" ? "/var/lib/control-room/artifacts" : "C:\\control-room\\artifacts";
+  assert.throws(() => captureArtifactStorageSettingsV1({ ...base, rootPath: foreign }),
+    /artifact_storage_root_not_canonical/);
+});

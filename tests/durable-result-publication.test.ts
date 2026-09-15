@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { resolve } from "node:path";
+import { mkdtemp, readdir, realpath, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import test from "node:test";
 import { publishDurableResultV1, readDurableResultV1, reconcileDurableResultReservationCrashV1,
   type DurableResultBindingV1 } from "../src/artifacts/v1/durable-result-publication";
@@ -524,7 +526,7 @@ test("the backup inventory captures the neutral result through the actual reader
     undefined, f.restartReservations), /private_artifact_storage_unavailable/);
 });
 
-test("the PostgreSQL adapter persists the neutral reservation in its own table and survives restart", async t => {
+test("the PostgreSQL adapter persists the neutral reservation in its own table and replays over the same database", async t => {
   const f = await setupWithProvision("run:pg-durable"); t.after(f.close);
   const storage = new ControlledStorage();
   const runId = "run:pg-durable";
@@ -692,4 +694,73 @@ test("the PostgreSQL adapter emits the row-lock clause, normalizes instants and 
   await assert.rejects(port.findForUpdate(
     { query: async () => ({ rows: [{ ...committed, created_at: new Date(Number.NaN) }] }) } as never,
     binding.tenantId, runId), /durable_reservation_row_invalid/);
+});
+
+test("reconstructing over the same persistent directory and database returns the same receipt without rewriting", async t => {
+  const f = await setupWithProvision("run:pg-persistent"); t.after(f.close);
+  const root = await realpath(await mkdtemp(join(tmpdir(), "control-room-durable-persistent-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const runId = "run:pg-persistent";
+  const receivedAt = at(10_100);
+
+  const namespace = "artifact-namespace:durable-persistent";
+  const storageConfiguration = {
+    local: { rootPath: root, maximumArtifacts: 10, maximumFileBytes: 65_536,
+      maximumTotalBytes: 1_000_000, operationTimeoutMs: 2_000 },
+    inventory: { releaseId: "release:durable", releaseDigest: digest("r"),
+      databaseSchemaVersion: "schema:77", databaseSchemaDigest: digest("s"),
+      storageNamespace: namespace,
+      storageNamespaceDigest: privateArtifactStorageNamespaceDigestV1(namespace, root) },
+  };
+
+  /** Counts real byte writes without replacing the real filesystem store. */
+  const counting = (inner: Awaited<ReturnType<typeof openPrivateArtifactStorageV1>>["storage"]) => {
+    const calls = { put: 0 };
+    return { calls, port: { put: (input: Parameters<typeof inner.put>[0]) => { calls.put++; return inner.put(input); },
+      read: (artifactId: string, signal?: AbortSignal) => inner.read(artifactId, signal) } };
+  };
+
+  // Publish once through the real persistent local store and the real
+  // PostgreSQL reservation adapter.
+  const opened = await openPrivateArtifactStorageV1(storageConfiguration);
+  const first = counting(opened.storage);
+  const published = await publishDurableResultV1(
+    { db: f.db, integrityKey: f.resultKey, reviewKey: f.reviewKey, storage: first.port,
+      storageClass: "local" as const, reservations: createDurableReservationPostgresPortV1() },
+    { binding: nativeBinding(runId), bytes: bytesOf("persistent"), receivedAt, assertAuthority: () => {} });
+  assert.equal(published.replayed, false);
+  assert.equal(first.calls.put, 1);
+
+  // The bytes are on disk, and their exact on-disk identity is recorded.
+  const entries = await readdir(root);
+  assert.equal(entries.length, 1);
+  const before = await stat(join(root, entries[0]));
+
+  // Reconstruct BOTH adapters: a new storage object opened over the same
+  // directory, and a new reservation port over the same database. Neither
+  // carries state from the first pass.
+  const reopened = await openPrivateArtifactStorageV1(storageConfiguration);
+  const second = counting(reopened.storage);
+  const replay = await publishDurableResultV1(
+    { db: f.db, integrityKey: f.resultKey, reviewKey: f.reviewKey, storage: second.port,
+      storageClass: "local" as const, reservations: createDurableReservationPostgresPortV1() },
+    { binding: nativeBinding(runId), bytes: bytesOf("persistent"), receivedAt, assertAuthority: () => {} });
+
+  assert.equal(replay.replayed, true);
+  assert.deepEqual(replay.receipt, published.receipt);
+  // No second byte write reached the real store, and the stored file is
+  // untouched: same inode, size and modification time.
+  assert.equal(second.calls.put, 0);
+  const after = await stat(join(root, entries[0]));
+  assert.deepEqual(await readdir(root), entries);
+  assert.equal(after.ino, before.ino);
+  assert.equal(after.size, before.size);
+  assert.equal(after.mtimeMs, before.mtimeMs);
+
+  // The reconstructed store still returns the exact verified text through the
+  // ordinary protected reader, from bytes read off the same directory.
+  const reread = await f.db.transaction(tx => readDurableResultV1(tx, f.resultKey, "local",
+    (artifactId: string, signal?: AbortSignal) => reopened.storage.read(artifactId, signal),
+    binding.tenantId, binding.projectId, nativeBinding(runId).jobId, published.receipt.artifactId));
+  assert.equal(reread?.text, text("persistent"));
 });
