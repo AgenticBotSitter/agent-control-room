@@ -11,7 +11,8 @@ const COMPONENT_ID = /^[a-z][a-z-]{1,30}$/;
 const FORBIDDEN_SHAPES = [/:\\\/\\/, /^\/[^/]/, /\\/, /\0/, /\r/, /\n/, /\$\{/, /^\s|\s$/];
 
 const RECORD_KEYS = ['schema', 'candidateCommit', 'treeDigest', 'sourceDigest',
-  'releaseVersion', 'artifactDigest', 'artifactManifestDigest', 'components'] as const;
+  'releaseVersion', 'artifactDigest', 'artifactManifestDigest',
+  'aggregateBindingDigest', 'components'] as const;
 const COMPONENT_KEYS = ['id', 'acceptedCommit', 'evidenceDigest'] as const;
 const MAX_DEPTH = 8;
 const MAX_KEYS = 64;
@@ -144,6 +145,12 @@ export function evaluateReleaseCandidatePrecheckV1(
     if (root[field] === undefined) return missing(`missing:${field}`);
     if (!checkString(root[field], pattern)) return invalid(`invalid:${field}`);
   }
+  if (root.aggregateBindingDigest === undefined) {
+    return missing('missing:aggregateBindingDigest');
+  }
+  if (!checkString(root.aggregateBindingDigest, DIGEST)) {
+    return invalid('invalid:aggregateBindingDigest');
+  }
   if (!Array.isArray(root.components)) {
     return root.components === undefined
       ? missing('missing:components')
@@ -155,6 +162,7 @@ export function evaluateReleaseCandidatePrecheckV1(
   const rootCandidate = root.candidateCommit as string;
   const rootArtifact = root.artifactDigest as string;
   const rootManifest = root.artifactManifestDigest as string;
+  const suppliedBindingDigest = root.aggregateBindingDigest as string;
   const canonicalComponents: Array<{ id: string; acceptedCommit: string; evidenceDigest: string }> = [];
   for (let index = 0; index < root.components.length; index++) {
     const item = (root.components as unknown[])[index];
@@ -193,29 +201,64 @@ export function evaluateReleaseCandidatePrecheckV1(
     }
     const acceptedCommit = entry.acceptedCommit as string;
     const evidenceDigest = entry.evidenceDigest as string;
-    // Component-to-root binding: every component must commit to the exact same
-    // candidate, release artifact and artifact manifest as the root record.
-    // Internal exact-candidate consistency only — never acceptance.
-    if (acceptedCommit !== rootCandidate) {
-      return invalid(`invalid:components[${index}].acceptedCommit-mismatch`);
+    // Historical-evidence guard. The component's evidence digest must be a
+    // witness attestation emitted at the component's own historical acceptance
+    // time — NOT a digest re-derived from the candidate root's parameters.
+    // Refuse when the supplied digest equals the candidate-derived binding
+    // (proving the operator reconstructed it from the candidate rather than
+    // producing it from independently trusted historical evidence).
+    const candidateDerivedDigest = sha256Digest({
+      artifactDigest: rootArtifact, artifactManifestDigest: rootManifest,
+      candidateCommit: rootCandidate, componentId: expectedId });
+    if (evidenceDigest === candidateDerivedDigest) {
+      return invalid(`invalid:components[${index}].evidenceDigest-candidate-reconstructed`);
     }
-    // Per-component binding digest: sha256 of {artifact, manifest, candidate, id}.
-    // Each component must carry that digest as its evidence, proving it is bound
-    // to this exact release artifact + manifest + candidate.
-    const expectedBinding = sha256Digest({ artifactDigest: rootArtifact,
-      artifactManifestDigest: rootManifest, candidateCommit: rootCandidate,
-      componentId: expectedId });
-    if (evidenceDigest !== expectedBinding) {
-      return invalid(`invalid:components[${index}].evidenceDigest-binding`);
-    }
+    // Distinct historical guards: refuse repeated historical commits that all
+    // collapse to the candidate (each component must attest a different
+    // historical accept-time decision OR the operator has not actually
+    // assembled different histories). Components may legitimately share an
+    // accepted commit when they were co-accepted, but the digests must then
+    // remain distinct — otherwise the per-component historical attestation is
+    // not actually distinct from the candidate reconstruction. Catch the case
+    // where the operator passes a uniform record with one candidate-derived
+    // digest per slot: at least one slot must carry a non-candidate-derived
+    // digest (already handled above), and per-component attestations must not
+    // collapse to exactly one value across all 14 slots.
     canonicalComponents.push(Object.freeze({ id: expectedId, acceptedCommit, evidenceDigest }));
   }
+  // Verify the historical component digests are all distinct from each other
+  // OR (when multiple components are intentionally co-accepted at the same
+  // commit) the operator still supplies per-component distinct witness
+  // digests. A record where every component carries the same evidenceDigest
+  // means the historical witness set collapsed to a single attestation — that
+  // is not a multi-component assembled release; refuse.
+  const seenDigests = new Set<string>();
+  for (const c of canonicalComponents) {
+    if (seenDigests.has(c.evidenceDigest)) {
+      return invalid('invalid:components.evidenceDigest-not-distinct');
+    }
+    seenDigests.add(c.evidenceDigest);
+  }
+  // Recompute the aggregate binding digest: it must equal
+  // `sha256Digest({ candidateCommit, treeDigest, sourceDigest, releaseVersion,
+  //   artifactDigest, artifactManifestDigest,
+  //   componentEvidenceDigests: [digest per component in canonical order] })`.
+  // The supplied digest MUST equal the recomputed value; otherwise the binding
+  // is forged or substituted.
+  const recomputedBindingDigest = sha256Digest({
+    candidateCommit: rootCandidate, treeDigest: root.treeDigest as string,
+    sourceDigest: root.sourceDigest as string,
+    releaseVersion: root.releaseVersion as string,
+    artifactDigest: rootArtifact, artifactManifestDigest: rootManifest,
+    componentEvidenceDigests: canonicalComponents.map((c) => c.evidenceDigest) });
+  if (suppliedBindingDigest !== recomputedBindingDigest) {
+    return invalid('invalid:aggregateBindingDigest-mismatch');
+  }
   // Preserve the real per-component accepted values into the output without
-  // replacing them with anything computed from the candidate root. The output
-  // also surfaces the root's artifact / manifest / candidate / version so a
-  // caller can re-verify the binding against the accepted components. Status
-  // is explicitly precheck-complete-not-accepted; all authority flags remain
-  // false. No record-level re-derived digest is emitted.
+  // replacing them with anything computed from the candidate root. The
+  // aggregate binding is reported as supplied/recomputed for proof of internal
+  // consistency — never as acceptance. Status is explicitly
+  // precheck-complete-not-accepted; all authority flags remain false.
   return Object.freeze({ status: 'precheck_complete_not_accepted' as const,
     schema: RELEASE_CANDIDATE_PRECHECK_SCHEMA_V1,
     candidateCommit: rootCandidate,
@@ -224,6 +267,8 @@ export function evaluateReleaseCandidatePrecheckV1(
     releaseVersion: root.releaseVersion as string,
     components: Object.freeze(canonicalComponents),
     componentCount: componentIds.length,
+    aggregateBinding: Object.freeze({
+      supplied: suppliedBindingDigest, recomputed: recomputedBindingDigest }),
     authority: Object.freeze({ approval: false as const, qualification: false as const,
       installation: false as const, deployment: false as const, execution: false as const,
       externalEffect: false as const, ownerAuthority: false as const }) });

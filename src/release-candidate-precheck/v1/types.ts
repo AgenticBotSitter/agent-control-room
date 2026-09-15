@@ -45,6 +45,16 @@ export interface ReleaseCandidateReferenceV1 {
   artifactDigest: string;
   artifactManifestDigest: string;
   components: ReleaseCandidateComponentV1[];
+  /** Separately-supplied aggregate binding digest that attests the final
+   * candidate references the historical component set. Verified by the
+   * precheck as
+   *   `sha256Digest({ candidateCommit, treeDigest, sourceDigest, releaseVersion,
+   *     artifactDigest, artifactManifestDigest,
+   *     componentEvidenceDigests: [evidenceDigest per component in
+   *       canonical component order] })`.
+   * Cannot be re-derived from the candidate root without the historical
+   * component digests. Required. */
+  aggregateBindingDigest: string;
 }
 
 export type ReleaseCandidatePrecheckStatusV1 =
@@ -73,6 +83,15 @@ export interface ReleaseCandidateComponentResultV1 {
   readonly evidenceDigest: string;
 }
 
+export interface ReleaseCandidateAggregateBindingResultV1 {
+  /** Aggregate binding digest value supplied in the input. */
+  readonly supplied: string;
+  /** Aggregate binding digest value the precheck recomputes from the historical
+   * component digests and candidate parameters. Equal to `supplied` only when
+   * the binding is internally consistent. */
+  readonly recomputed: string;
+}
+
 export type ReleaseCandidatePrecheckResultV1 =
   | { status: 'blocked_missing_inputs'; reason: string }
   | { status: 'blocked_invalid_inputs'; reason: string }
@@ -83,4 +102,6 @@ export type ReleaseCandidatePrecheckResultV1 =
       artifactManifestDigest: string;
       releaseVersion: string;
       components: ReadonlyArray<ReleaseCandidateComponentResultV1>;
-      componentCount: number; authority: ReleaseCandidateAuthorityFlagsV1 };
+      componentCount: number;
+      aggregateBinding: ReleaseCandidateAggregateBindingResultV1;
+      authority: ReleaseCandidateAuthorityFlagsV1 };
