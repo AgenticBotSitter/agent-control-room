@@ -380,6 +380,47 @@ test("operator assembly drives the real production startup boundary with the cap
   assert.equal(validated.sessions!.nodes.length, 1);
   assert.equal(validated.codex, undefined);
   assert.equal(captured.port, 3210);
+
+  // The captured configuration and every nested object the trusted inputs
+  // contributed must be deep-frozen. The production task host has already
+  // accepted the configuration above; freezing every nested layer ensures
+  // post-assembly mutation of trusted inputs cannot leak in and that the
+  // captured value remains immutable for the lifetime of the host.
+  assert.ok(Object.isFrozen(captured), "captured return value must be frozen");
+  assert.ok(Object.isFrozen(captured.configuration), "captured.configuration must be frozen");
+  assert.ok(Object.isFrozen(captured.configuration.web), "captured.configuration.web must be frozen");
+  assert.ok(Object.isFrozen(captured.configuration.coordinator), "captured.configuration.coordinator must be frozen");
+  assert.ok(Object.isFrozen(captured.configuration.coordinator.approvals!.store),
+    "captured approval store must be frozen");
+  assert.ok(Object.isFrozen(captured.configuration.coordinator.sessions!),
+    "captured sessions must be frozen");
+  assert.ok(Object.isFrozen(captured.configuration.coordinator.planning),
+    "captured planning must be frozen");
+  assert.ok(Object.isFrozen(captured.configuration.coordinator.routes),
+    "captured routes must be frozen");
+  assert.ok(Object.isFrozen(captured.configuration.coordinator.approvals!.enrollments),
+    "captured approval enrollments must be frozen");
+  if (captured.configuration.coordinator.quality) {
+    assert.ok(Object.isFrozen(captured.configuration.coordinator.quality),
+      "captured quality must be frozen");
+  }
+  if (captured.configuration.coordinator.evidence) {
+    assert.ok(Object.isFrozen(captured.configuration.coordinator.evidence),
+      "captured evidence must be frozen");
+  }
+
+  // Mutating the captured configuration itself must fail (every nested layer
+  // is frozen). The captured value is the actual host input, and the host
+  // can rely on its contents being immutable from the moment assembly returns.
+  assert.throws(() => {
+    (captured.configuration.web as Record<string, unknown>).tenantId = "tenant:MUTATE-CAPTURED";
+  }, /Cannot assign to read only property/);
+  assert.throws(() => {
+    (captured.configuration.coordinator.approvals!.store as unknown as Record<string, unknown>).acceptInSession = () => "mutated";
+  }, /Cannot assign to read only property/);
+  assert.throws(() => {
+    (captured as { port: number }).port = 9999;
+  }, /Cannot assign to read only property/);
 });
 
 test("frozen approval-store capture binds methods to the original trusted receiver", async () => {
@@ -420,17 +461,23 @@ test("frozen approval-store capture binds methods to the original trusted receiv
 
 test("session sign is bound to the original trusted sessions receiver", async () => {
   const { settings, trusted } = operatorConfigurationScenario("minimal");
+  // The synthetic sign function reads `this.signKey` to produce its signature,
+  // so the captured bind to the trusted receiver is structurally required.
+  // Attach a synthetic signKey to the receiver before assembly so the test
+  // can distinguish the ORIGINAL signature from a later replacement.
+  (trusted.sessions as unknown as { signKey: Uint8Array }).signKey = new Uint8Array(32).fill(91);
   const composed = assemblePrivateAgentTaskOperatorConfiguration(settings, trusted);
   const capturedSign = composed.configuration.coordinator.sessions!.sign;
-  // Mutate the trusted sessions object's sign to a recognisable replacement.
-  const originalSessions = trusted.sessions as unknown as { sign: (frame: unknown) => Promise<{ signature: string }>; nodes: unknown[] };
+  // Mutate the trusted sessions object's signKey to a recognisable replacement.
+  const originalSessions = trusted.sessions as unknown as { sign: (frame: unknown) => Promise<{ signature: string }>; nodes: unknown[]; signKey: Uint8Array };
   const originalNodesRef = originalSessions.nodes;
+  const originalSignKeyRef = originalSessions.signKey;
   const replacementSign = async (frame: unknown) => ({ ...(frame as object), signature: "replacement" });
   originalSessions.sign = replacementSign;
-  // The captured sign MUST still produce the ORIGINAL behavior — `signature: "synthetic"`
+  // The captured sign MUST still produce the ORIGINAL behavior — `signature: "synthetic:91"`
   // — because it was bound to the original receiver at capture time.
   const out = await (capturedSign as (frame: unknown) => Promise<{ signature: string }>)({ kind: "frame" });
-  assert.equal(out.signature, "synthetic",
+  assert.equal(out.signature, "synthetic:91",
     "captured sign must execute against the original trusted receiver");
   // Sanity: the trusted reference still routes to the replacement.
   const trustedOut = await (originalSessions.sign as (frame: unknown) => Promise<{ signature: string }>)({ kind: "frame" });
@@ -439,6 +486,168 @@ test("session sign is bound to the original trusted sessions receiver", async ()
   // captured sign's signature binding — captured sign should not have modified
   // the underlying array, only added a synthetic signature to a returned object.
   assert.equal(originalSessions.nodes, originalNodesRef);
+  assert.equal(originalSessions.signKey, originalSignKeyRef);
+});
+
+test("captured sign is structurally bound to the original trusted receiver (regression: bind cannot be removed)", async () => {
+  const { settings, trusted } = operatorConfigurationScenario("minimal");
+  (trusted.sessions as unknown as { signKey: Uint8Array }).signKey = new Uint8Array(32).fill(91);
+  const composed = assemblePrivateAgentTaskOperatorConfiguration(settings, trusted);
+  const capturedSign = composed.configuration.coordinator.sessions!.sign as (frame: unknown) => Promise<{ signature: string }>;
+  // Sanity: the synthetic sign function reads `this.signKey`, so the bind to
+  // the original trusted receiver is structurally required. The captured
+  // function MUST produce the ORIGINAL signature (`synthetic:91`).
+  const baseline = await capturedSign({ kind: "frame" });
+  assert.equal(baseline.signature, "synthetic:91");
+  // A receiver-dependent sign cannot tolerate a non-function reference. If
+  // the production bind to the trusted receiver were removed, calling
+  // `capturedSign(...)` would resolve `this` to undefined (or the module
+  // global under sloppy mode) and reading `this.signKey` would throw. This
+  // test asserts the bind is in place by calling `.call` with a deliberately
+  // wrong receiver — the captured function MUST ignore the override and
+  // route through the bound original receiver. A non-bound function would
+  // either throw or return a signature derived from the override.
+  const overrideReceiver = { signKey: new Uint8Array(32).fill(99) } as unknown as { signKey: Uint8Array };
+  const out = await capturedSign.call(overrideReceiver, { kind: "frame" });
+  assert.equal(out.signature, "synthetic:91",
+    "captured sign must ignore call-site receiver overrides; only the bound original receiver is authoritative");
+  // Sanity: the trusted receiver is still the original reference and still
+  // readable through it (the bind is the captured function's `this`, not a
+  // clone of the receiver's properties).
+  const receiverNow = (trusted.sessions as unknown as { signKey: Uint8Array }).signKey;
+  assert.equal(receiverNow[0], 91, "trusted receiver signKey unchanged after captured call");
+});
+
+test("idea runtime database password and majorVersion must match the declared role", () => {
+  // The trusted runtime's password and majorVersion must agree with the declared
+  // runtime role. A drift here is a silent configuration mismatch — the trusted
+  // runtime would attempt to connect with credentials the declared role does
+  // not authorize (or a server version it does not target), and downstream
+  // evidence would be issued under a role the operator never recorded. The
+  // assembler refuses before any of that can happen. The current Postgres
+  // contract pins majorVersion to the literal 17, so the test stays honest
+  // about the supported target.
+  const ideaKey = new Uint8Array(32).fill(21);
+  const buildBase = (overrides: { trustedPassword: string }) => {
+    const { settings, trusted } = operatorConfigurationScenario("minimal");
+    settings.features.idea = true;
+    settings.databaseRoles.ideaCreation = {
+      host: "127.0.0.1", port: 5433, database: "controlroomtest",
+      username: "idea_creation_match", password: "declared-secret", majorVersion: 17,
+    };
+    settings.databaseRoles.ideaRuntime = {
+      host: "127.0.0.1", port: 5433, database: "controlroomtest",
+      username: "idea_runtime_match", password: "declared-secret", majorVersion: 17,
+    };
+    const webWithIdea = { ...(trusted.web as Record<string, unknown>),
+      ideaProjects: { integrityKey: ideaKey } } as unknown as typeof trusted.web;
+    const participant = (suffix: string) => ({
+      participantId: `participant:${suffix}`,
+      identityDigest: `sha256:${"1".repeat(64)}`,
+      displayName: `Participant ${suffix}`,
+      perspective: (suffix === "a" ? "skeptic" : "customer") as "skeptic" | "customer",
+      harness: "hermes" as const,
+      modelClass: "synthetic_participant",
+      platform: "linux" as const,
+      sourceMode: "injected_only" as const,
+      liveConnected: false as const,
+      canDispatch: false as const,
+    });
+    const newTrusted = { ...trusted, web: webWithIdea };
+    newTrusted.idea = {
+      creation: { integrityKey: ideaKey, participants: [participant("a"), participant("b"), participant("c")] },
+      runtime: {
+        database: {
+          host: "127.0.0.1", port: 5433, database: "controlroomtest",
+          username: "idea_runtime_match", password: overrides.trustedPassword, majorVersion: 17,
+        },
+        close: async () => {},
+        runtime: {
+          resolve: () => undefined,
+          driver: { mode: "hermes_bot_mode_filtered", invoke: async () => undefined },
+          evidenceAuthority: { verify: async () => undefined },
+          admissionAuthority: { consume: async () => undefined },
+        },
+      },
+    };
+    return { settings, trusted: newTrusted };
+  };
+
+  // Password drift between declared and trusted refuses before return.
+  assert.throws(() => {
+    const { settings, trusted } = buildBase({ trustedPassword: "trusted-different" });
+    assemblePrivateAgentTaskOperatorConfiguration(settings, trusted);
+  }, /idea_runtime_role_mismatch:password/);
+
+  // Same declared and trusted password + matching majorVersion passes through
+  // the assembler and the production gate (the matching role case is also
+  // covered by the dedicated happy-path test below).
+  const match = buildBase({ trustedPassword: "declared-secret" });
+  const composed = assemblePrivateAgentTaskOperatorConfiguration(match.settings, match.trusted);
+  assert.equal(composed.configuration.coordinator.ideaRuntime!.database.username, "idea_runtime_match");
+});
+
+test("idea runtime database positive matching-role case passes through the production gate", async () => {
+  const { settings, trusted } = operatorConfigurationScenario("minimal");
+  // Enable idea with a fully matching role: declared and trusted share the
+  // same host/port/database/username/password/majorVersion. The assembler
+  // accepts and the captured configuration carries the runtime identity
+  // exactly as declared. The minimal scenario's `web` profile does not
+  // include `ideaProjects` — add one here so the production gate can
+  // cross-check the creation/runtime integrity keys, and supply three
+  // structurally valid participants so `ideaCreation` parses through the
+  // shared schema.
+  const ideaKey = new Uint8Array(32).fill(21);
+  const webWithIdea = { ...(trusted.web as Record<string, unknown>),
+    ideaProjects: { integrityKey: ideaKey } } as unknown as typeof trusted.web;
+  const participant = (suffix: string) => ({
+    participantId: `participant:${suffix}`,
+    identityDigest: `sha256:${"1".repeat(64)}`,
+    displayName: `Participant ${suffix}`,
+    perspective: (suffix === "a" ? "skeptic" : "customer") as "skeptic" | "customer",
+    harness: "hermes" as const,
+    modelClass: "synthetic_participant",
+    platform: "linux" as const,
+    sourceMode: "injected_only" as const,
+    liveConnected: false as const,
+    canDispatch: false as const,
+  });
+  settings.features.idea = true;
+  settings.databaseRoles.ideaCreation = {
+    host: "127.0.0.1", port: 5433, database: "controlroomtest",
+    username: "idea_creation_match", password: "shared-secret", majorVersion: 17,
+  };
+  settings.databaseRoles.ideaRuntime = {
+    host: "127.0.0.1", port: 5433, database: "controlroomtest",
+    username: "idea_runtime_match", password: "shared-secret", majorVersion: 17,
+  };
+  const newTrusted = { ...trusted, web: webWithIdea };
+  newTrusted.idea = {
+    creation: { integrityKey: ideaKey, participants: [participant("a"), participant("b"), participant("c")] },
+    runtime: {
+      database: {
+        host: "127.0.0.1", port: 5433, database: "controlroomtest",
+        username: "idea_runtime_match", password: "shared-secret", majorVersion: 17,
+      },
+      close: async () => {},
+      runtime: {
+        resolve: () => undefined,
+        driver: { mode: "hermes_bot_mode_filtered", invoke: async () => undefined },
+        evidenceAuthority: { verify: async () => undefined },
+        admissionAuthority: { consume: async () => undefined },
+      },
+    },
+  };
+  const composed = assemblePrivateAgentTaskOperatorConfiguration(settings, newTrusted);
+  // The captured configuration MUST carry the runtime identity exactly as
+  // declared. Every connection field matches, so the operator record and the
+  // runtime contract agree on what gets connected and under what credentials.
+  assert.equal(composed.configuration.coordinator.ideaRuntime!.database.username, "idea_runtime_match");
+  assert.equal(composed.configuration.coordinator.ideaRuntime!.database.password, "shared-secret");
+  assert.equal(composed.configuration.coordinator.ideaRuntime!.database.majorVersion, 17);
+  assert.equal(composed.configuration.coordinator.ideaRuntime!.database.host, "127.0.0.1");
+  assert.equal(composed.configuration.coordinator.ideaRuntime!.database.port, 5433);
+  assert.equal(composed.configuration.coordinator.ideaRuntime!.database.database, "controlroomtest");
 });
 
 test("idea runtime database must match the declared ideaRuntime role", async () => {

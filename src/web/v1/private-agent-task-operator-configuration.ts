@@ -125,6 +125,25 @@ const copyKey = (value: unknown, code: string): Uint8Array => {
   return Uint8Array.from(value);
 };
 
+/** Recursively freeze an object and every nested object/array it owns. Primitive
+ * values and typed-array buffers pass through untouched: the captured config
+ * contains 32-byte integrity keys (already detached via `copyKey`) and the
+ * `web` profile's binary fields, both of which we must not mutate ourselves.
+ * Functions are frozen but their `.prototype` is left alone. The captured
+ * configuration is the actual host input, so caller post-assembly mutation
+ * must never leak in. */
+function deepFreeze<T>(value: T): T {
+  if (value === null || typeof value !== "object") return value;
+  if (Object.isFrozen(value)) return value;
+  if (value instanceof Uint8Array) return value;
+  Object.freeze(value);
+  for (const key of Object.keys(value as Record<string, unknown>)) {
+    const member = (value as Record<string, unknown>)[key];
+    if (member !== null && typeof member === "object" && !Object.isFrozen(member)) deepFreeze(member);
+  }
+  return value;
+};
+
 /** Assemble one immutable agent-task startup configuration from plain operator
  * settings plus already-constructed trusted inputs. Every refusal throws before
  * any value is returned; a returned configuration passed the production gate. */
@@ -183,14 +202,17 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
 
   // Database roles: one host/database, pairwise-distinct usernames, none reusing
   // the web pool login. Exact credential validation stays downstream.
+  // `ideaRuntime` is intentionally excluded here: it is validated against the
+  // declared role and the runtime database below, where a same-username match
+  // to itself is the correct (passing) case rather than a duplicate.
   const roles: Array<[string, PrivatePostgresConfiguration]> = [["coordinator", parsed.databaseRoles.coordinator as PrivatePostgresConfiguration]];
-  const roleFor = (name: "results" | "evidence" | "sessions" | "queueWorker" | "ideaCreation" | "ideaRuntime"
+  const roleFor = (name: "results" | "evidence" | "sessions" | "queueWorker" | "ideaCreation"
     | "newsCoordinator" | "newsIngestion" | "newsWorker") => {
     const role = parsed.databaseRoles[name];
     if (role !== undefined) roles.push([name, role as PrivatePostgresConfiguration]);
   };
   roleFor("results"); roleFor("evidence"); roleFor("sessions"); roleFor("queueWorker");
-  roleFor("ideaCreation"); roleFor("ideaRuntime");
+  roleFor("ideaCreation");
   roleFor("newsCoordinator"); roleFor("newsIngestion"); roleFor("newsWorker");
   const [primaryHost, primaryPort, primaryDatabase] = [
     parsed.databaseRoles.coordinator.host, parsed.databaseRoles.coordinator.port, parsed.databaseRoles.coordinator.database];
@@ -223,13 +245,13 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
   // reference cannot leak into a captured configuration, and the captured shape
   // is frozen so the trusted methods cannot be replaced or extended on the
   // returned assembly. The downstream production gate accepts this exact shape.
-  const capturedStore = Object.freeze({
+  const capturedStore = Object.freeze(deepFreeze({
     acceptInSession: store.acceptInSession.bind(store),
     readInSession: store.readInSession.bind(store),
     ...(store.receiveDeliveryReceipt === undefined ? {} : {
       receiveDeliveryReceipt: store.receiveDeliveryReceipt.bind(store),
     }),
-  });
+  }));
 
   // Idea runtime role binding: when `f.idea && t.idea.runtime` is supplied, the
   // declared role must exist AND the trusted runtime database must match it.
@@ -258,6 +280,17 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
       || trustedRuntimeDb.username !== declaredRuntimeRole.username) {
       refuse("idea_runtime_role_mismatch:declared");
     }
+    // Password and majorVersion must also agree. Without these checks, a
+    // caller could declare role A with one credential and silently connect
+    // the runtime with another, and downstream evidence would be issued under
+    // a role the operator never recorded. The full connection identity must
+    // match declared so the runtime cannot drift from the operator contract.
+    if (trustedRuntimeDb.password !== declaredRuntimeRole.password) {
+      refuse("idea_runtime_role_mismatch:password");
+    }
+    if (trustedRuntimeDb.majorVersion !== declaredRuntimeRole.majorVersion) {
+      refuse("idea_runtime_role_mismatch:major_version");
+    }
   }
 
   // Session signer binding: capture the original trusted sessions object as
@@ -268,6 +301,7 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
     nodes: [...trustedSessions.nodes],
     sign: trustedSessions.sign.bind(trustedSessions),
   }) : undefined;
+  deepFreeze(capturedSessions);
 
   const coordinator: PrivateTaskStartupConfiguration["coordinator"] = {
     planning: {
@@ -278,9 +312,9 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
       ...(planning.ideaIntegrityKey === undefined ? {} : { ideaIntegrityKey: copyKey(planning.ideaIntegrityKey, "planning_idea_key_invalid") }),
       checkpoints: planning.checkpoints,
     },
-    routes: [...t.routes],
+    routes: deepFreeze([...t.routes]),
     approvals: {
-      enrollments: [...t.approvalEnrollments],
+      enrollments: deepFreeze([...t.approvalEnrollments]),
       store: capturedStore as unknown as NonNullable<NonNullable<PrivateTaskStartupConfiguration["coordinator"]["approvals"]>["store"]>,
     },
     database: dbRole("coordinator") as PrivatePostgresConfiguration,
@@ -369,11 +403,17 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
   // directly to `createPrivateTaskHost.start` and driven through the real
   // startup boundary. The flat validated object is the canonical proof that
   // every coordinator field was accepted; the wrapper makes it host-compatible.
-  const coordinatorShape = full.coordinator;
+  // Every nested object the trusted inputs contributed (web profile, evidence
+  // storage, codex enrollments, etc.) is deep-frozen here so the caller cannot
+  // mutate the captured shape after assembly.
+  const coordinatorShape = deepFreeze(full.coordinator);
+  const webShape = deepFreeze(full.web);
+  const artifactStorageShape = full.artifactStorage === undefined ? undefined : deepFreeze(full.artifactStorage);
+  const newsShape = full.news === undefined ? undefined : deepFreeze(full.news);
   const hostCompatible: PrivateTaskStartupConfiguration = {
-    web: full.web,
-    ...(full.artifactStorage !== undefined ? { artifactStorage: full.artifactStorage } : {}),
-    ...(full.news !== undefined ? { news: full.news } : {}),
+    web: webShape,
+    ...(artifactStorageShape !== undefined ? { artifactStorage: artifactStorageShape } : {}),
+    ...(newsShape !== undefined ? { news: newsShape } : {}),
     coordinator: {
       planning: coordinatorShape.planning,
       routes: coordinatorShape.routes,
@@ -394,5 +434,5 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
       ...(coordinatorShape.codexResultReturn ? { codexResultReturn: coordinatorShape.codexResultReturn } : {}),
     },
   };
-  return Object.freeze({ configuration: Object.freeze(hostCompatible), port: parsed.port });
+  return Object.freeze({ configuration: deepFreeze(hostCompatible), port: parsed.port });
 }

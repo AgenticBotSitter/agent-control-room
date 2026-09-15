@@ -14,6 +14,7 @@ import { privateArtifactStorageNamespaceDigestV1 } from "../../src/web/v1/privat
 import type {
   AgentTaskOperatorSettingsV1, AgentTaskOperatorTrustedInputs,
 } from "../../src/web/v1/private-agent-task-operator-configuration";
+import type { ManagedNativeSessionSettings } from "../../src/web/v1/managed-native-sessions";
 import { instant } from "../hermes-native-fixture";
 
 const TENANT = "tenant:operator-synthetic";
@@ -199,8 +200,17 @@ export function operatorConfigurationScenario(kind: "minimal" | "full"): Operato
     sessions: {
       nodes: [sessionNode(NODE, [NATIVE_DELIVERY_FEATURE]),
         ...(full ? [sessionNode(CODEX_NODE, [NATIVE_DELIVERY_FEATURE, CODEX_DELIVERY_FEATURE, CODEX_RESULT_RETURN_FEATURE_V1])] : [])],
-      sign: (async (frame: unknown) => ({ ...(frame as object), signature: "synthetic" })) as never,
-    },
+      // Receiver-dependent sign: the function reads `this.signKey` so that
+      // the production bind to the trusted receiver is structurally required.
+      // An arrow function would never read `this` and the bind would be a
+      // no-op; a non-arrow function that reads `this.signKey` cannot produce
+      // the captured signature after post-assembly mutation of the receiver.
+      // The trusted-inputs type does not name a `signKey` field, so the receiver
+      // is widened with a structural cast and the field lives only in the test.
+      sign: function (this: { signKey: Uint8Array }, frame: unknown) {
+        return { ...(frame as object), signature: `synthetic:${this.signKey[0]}` };
+      } as unknown as ManagedNativeSessionSettings["sign"],
+    } as unknown as ManagedNativeSessionSettings,
   };
   const databaseRoles: AgentTaskOperatorSettingsV1["databaseRoles"] = {
     coordinator: role("coordinator_test"),
