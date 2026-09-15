@@ -1,12 +1,25 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import {
   CLAUDE_CODE_MAX_LINE_BYTES_V1,
   CLAUDE_CODE_MAX_RESULT_BYTES_V1,
   createClaudeCodeStreamDecoderV1,
   decodeClaudeCodeStreamJsonLinesV1,
+  type ClaudeCodeResultFrameV1,
 } from "../src/harness/claude-code-v1/stream-json-decode";
 import { claudeCodeConnectorProfileV1 } from "../src/harness/claude-code-v1/connector-profile";
+import {
+  CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1,
+  publishClaudeTerminalResultV1,
+  type ClaudeTerminalResultPublicationInputV1,
+} from "../src/harness/claude-code-v1/result-publication";
+import {
+  CLAUDE_CODE_SESSION_DISPOSITION_SCHEMA_V1,
+  type ClaudeCodeProcessBindingV1,
+  type ClaudeCodeSessionDispositionV1,
+} from "../src/harness/claude-code-v1/owned-process-session";
+import type { DurableResultPublicationConfigurationV1 } from "../src/artifacts/v1/durable-result-publication";
 
 // Every value here is freshly authored and synthetic. No host path, real session
 // identifier or captured transcript appears in this file.
@@ -224,4 +237,212 @@ test("the decoded result frame exposes no unbounded free-text field", () => {
     .filter(([key, value]) => typeof value === "string" && !known.includes(key))
     .map(([key]) => key);
   assert.deepEqual(unexpected, [], "every exported string must be a mapped code, a digest or the bounded result text");
+});
+
+/* ------------------------------------------------------------------ */
+/* Durable result publication bridge: refusals that never reach the    */
+/* shared publisher.                                                   */
+/*                                                                     */
+/* Every case below must fail closed on bridge-local evidence alone,   */
+/* so the injected publication configuration is deliberately hostile:  */
+/* its database, storage and reservation ports throw and count any     */
+/* touch. A zero count is the proof that no publisher work — and       */
+/* therefore no reservation, no byte write and no receipt — was ever   */
+/* attempted. The configuration also carries no acquire, dispatch or   */
+/* capacity capability at all, so no such effect is expressible.       */
+/* ------------------------------------------------------------------ */
+
+const bridgeDigest = (seed: string) =>
+  `sha256:${createHash("sha256").update(`claude-bridge:${seed}`).digest("hex")}`;
+
+const RETAINED_BINDING = Object.freeze({
+  tenantId: "tenant:test", projectId: "project:test", jobId: "job:claude-bridge",
+  attemptId: "attempt:claude-bridge", runId: "run:claude-bridge", nodeId: "node:test",
+  workflowId: "workflow:test", acceptanceProfileId: "profile:test",
+  acceptanceProfileDigest: bridgeDigest("acceptance"),
+});
+
+const PROCESS_BINDING: ClaudeCodeProcessBindingV1 = Object.freeze({
+  processAttemptId: "attempt.process.bridge", runId: RETAINED_BINDING.runId,
+  attemptId: RETAINED_BINDING.attemptId, invocationDigest: bridgeDigest("invocation"),
+});
+
+function dispositionFor(overrides: Partial<ClaudeCodeSessionDispositionV1> = {}): ClaudeCodeSessionDispositionV1 {
+  return {
+    schema: CLAUDE_CODE_SESSION_DISPOSITION_SCHEMA_V1,
+    processAttemptId: PROCESS_BINDING.processAttemptId, runId: PROCESS_BINDING.runId,
+    attemptId: PROCESS_BINDING.attemptId, closed: true, cleanupUncertain: false, exitObserved: true,
+    exitMalformed: false, terminalResultConfirmed: true, resubmissionSafe: false,
+    reasonCode: "closed_with_decoded_terminal_result", grantsExecutionAuthority: false,
+    canonicalPublicationAllowed: false, permitsRetry: false, permitsResume: false,
+    ...overrides,
+  };
+}
+
+/** Real decode of a real line sequence; the bridge never sees a hand-made frame here. */
+function decodedTerminal(lines: readonly string[]) {
+  const decoder = createClaudeCodeStreamDecoderV1();
+  let last: ReturnType<typeof decoder.accept> | undefined;
+  for (const line of lines) last = decoder.accept(line);
+  assert.equal(last?.kind, "result");
+  return { frame: last as ClaudeCodeResultFrameV1, state: decoder.state() };
+}
+
+/** A publication configuration that cannot be used without being detected. */
+function forbiddenPublication() {
+  const calls = { db: 0, storage: 0, reservations: 0 };
+  const boom = (what: keyof typeof calls) => () => {
+    calls[what] += 1;
+    throw new Error("shared_publisher_must_not_be_reached");
+  };
+  const config = {
+    db: { query: boom("db"), transaction: boom("db"), transactionWithPreCommitCheck: boom("db") },
+    integrityKey: new Uint8Array(32).fill(3), reviewKey: new Uint8Array(32).fill(4),
+    storage: { put: boom("storage"), read: boom("storage") },
+    storageClass: "local" as const,
+    reservations: { findForUpdate: boom("reservations"), insertFresh: boom("reservations"),
+      compareAndSwap: boom("reservations") },
+  } as unknown as DurableResultPublicationConfigurationV1;
+  return { config, calls };
+}
+
+function bridgeInput(overrides: Partial<ClaudeTerminalResultPublicationInputV1> = {},
+  lines: readonly string[] = [initLine(), resultLine()]): ClaudeTerminalResultPublicationInputV1 {
+  const { frame, state } = decodedTerminal(lines);
+  return {
+    retainedBinding: { ...RETAINED_BINDING },
+    processBinding: { ...PROCESS_BINDING },
+    retainedSession: { processAttemptId: PROCESS_BINDING.processAttemptId, sessionId: SESSION,
+      terminalFrameDigest: frame.frameDigest },
+    disposition: dispositionFor(),
+    terminalFrame: frame,
+    decoderState: state,
+    acceptedConnectorProfileDigest: CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1,
+    receivedAt: "2027-01-01T00:00:00.000Z",
+    assertAuthority: () => {},
+    ...overrides,
+  };
+}
+
+async function refuses(input: ClaudeTerminalResultPublicationInputV1, pattern: RegExp) {
+  const { config, calls } = forbiddenPublication();
+  await assert.rejects(() => publishClaudeTerminalResultV1(config, input), pattern);
+  assert.deepEqual(calls, { db: 0, storage: 0, reservations: 0 },
+    "a bridge-local refusal must never reach the shared publisher, its database or its storage");
+}
+
+test("the bridge fixes the harness tag and connector profile digest from the accepted profile", () => {
+  assert.equal(claudeCodeConnectorProfileV1.harness, "claude");
+  assert.match(CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1, /^sha256:[a-f0-9]{64}$/);
+  // A caller may only confirm the digest it retained; supplying any other
+  // connector's digest is refused before the publisher is reached.
+  assert.notEqual(CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1, bridgeDigest("other-connector"));
+});
+
+test("a retained session ID that differs from the independently decoded terminal session refuses", async () => {
+  await refuses(bridgeInput({ retainedSession: { processAttemptId: PROCESS_BINDING.processAttemptId,
+    sessionId: OTHER_SESSION, terminalFrameDigest: decodedTerminal([initLine(), resultLine()]).frame.frameDigest } }),
+  /claude_code_result_publication_session_mismatch/);
+});
+
+test("a retained terminal-frame digest that differs from the decoded frame refuses", async () => {
+  await refuses(bridgeInput({ retainedSession: { processAttemptId: PROCESS_BINDING.processAttemptId,
+    sessionId: SESSION, terminalFrameDigest: bridgeDigest("some-other-frame") } }),
+  /claude_code_result_publication_evidence_digest_mismatch/);
+});
+
+test("a connector profile digest other than the accepted Claude profile refuses", async () => {
+  await refuses(bridgeInput({ acceptedConnectorProfileDigest: bridgeDigest("other-connector") }),
+    /claude_code_result_publication_connector_profile_mismatch/);
+});
+
+test("a process binding that does not match the retained publication binding refuses", async () => {
+  await refuses(bridgeInput({ processBinding: { ...PROCESS_BINDING, runId: "run:claude-other" },
+    disposition: dispositionFor({ runId: "run:claude-other" }) }),
+  /claude_code_result_publication_binding_mismatch/);
+  // The same refusal covers an attempt that drifted, and a retained session
+  // bound to some other process attempt.
+  await refuses(bridgeInput({ processBinding: { ...PROCESS_BINDING, attemptId: "attempt:claude-other" },
+    disposition: dispositionFor({ attemptId: "attempt:claude-other" }) }),
+  /claude_code_result_publication_binding_mismatch/);
+  await refuses(bridgeInput({ retainedSession: { processAttemptId: "attempt.process.other", sessionId: SESSION,
+    terminalFrameDigest: decodedTerminal([initLine(), resultLine()]).frame.frameDigest } }),
+  /claude_code_result_publication_binding_mismatch/);
+});
+
+test("a failed, non-terminal or uncertain session publishes nothing", async () => {
+  // Failed: the decoder classified the terminal frame as failed.
+  await refuses(bridgeInput({}, [initLine(), resultLine({ is_error: true })]),
+    /claude_code_result_publication_session_not_terminal/);
+  await refuses(bridgeInput({}, [initLine(), resultLine({ terminal_reason: "max_turns" })]),
+    /claude_code_result_publication_session_not_terminal/);
+  // Non-terminal: the session is still open, or the decoder never saw a
+  // terminal frame, or the caller never confirmed one.
+  await refuses(bridgeInput({ disposition: dispositionFor({ closed: false, reasonCode: "session_open" }) }),
+    /claude_code_result_publication_session_not_terminal/);
+  await refuses(bridgeInput({ disposition: dispositionFor({ terminalResultConfirmed: false,
+    reasonCode: "closed_without_terminal_result" }) }),
+  /claude_code_result_publication_session_not_terminal/);
+  await refuses(bridgeInput({ decoderState: { ...decodedTerminal([initLine(), resultLine()]).state,
+    terminalObserved: false } }), /claude_code_result_publication_session_not_terminal/);
+  // Uncertain: cleanup never confirmed, or the exit was never observed or was
+  // malformed. None of these proves the result, so none may publish.
+  await refuses(bridgeInput({ disposition: dispositionFor({ cleanupUncertain: true,
+    reasonCode: "cleanup_uncertain_result_unproven" }) }),
+  /claude_code_result_publication_session_not_terminal/);
+  await refuses(bridgeInput({ disposition: dispositionFor({ exitObserved: false }) }),
+    /claude_code_result_publication_session_not_terminal/);
+  await refuses(bridgeInput({ disposition: dispositionFor({ exitMalformed: true }) }),
+    /claude_code_result_publication_session_not_terminal/);
+  // A poisoned decode is uncertain evidence, whatever the transport says.
+  await refuses(bridgeInput({ decoderState: { ...decodedTerminal([initLine(), resultLine()]).state,
+    failed: true, reasonCode: "malformed_json" } }),
+  /claude_code_result_publication_session_not_terminal/);
+});
+
+test("oversized or invalid terminal result bytes are rejected before any publisher work", async () => {
+  const base = decodedTerminal([initLine(), resultLine()]);
+  const oversized = "x".repeat(CLAUDE_CODE_MAX_RESULT_BYTES_V1 + 1);
+  // The decoder already refuses an oversized result, so this synthetic frame
+  // exists only to prove the bridge applies the same ceiling independently.
+  await refuses(bridgeInput({ terminalFrame: { ...base.frame, resultText: oversized,
+    resultBytes: Buffer.byteLength(oversized, "utf8"),
+    resultTextDigest: `sha256:${createHash("sha256").update(Buffer.from(oversized, "utf8")).digest("hex")}` } }),
+  /claude_code_result_publication_result_unusable/);
+  // A terminal frame carrying no result text at all publishes nothing.
+  await refuses(bridgeInput({ terminalFrame: { ...base.frame, resultText: undefined, resultBytes: 0,
+    resultTextDigest: undefined } }), /claude_code_result_publication_result_unusable/);
+  // Text and reported digest must agree; a frame that contradicts itself is
+  // not usable evidence.
+  await refuses(bridgeInput({ terminalFrame: { ...base.frame, resultTextDigest: bridgeDigest("wrong-text") } }),
+    /claude_code_result_publication_result_unusable/);
+  // A reported byte count that disagrees with the actual text is refused too.
+  await refuses(bridgeInput({ terminalFrame: { ...base.frame, resultBytes: base.frame.resultBytes + 1 } }),
+    /claude_code_result_publication_result_unusable/);
+});
+
+test("missing retained authority or retained identity refuses rather than being invented", async () => {
+  await refuses(bridgeInput({ assertAuthority: undefined as unknown as () => void }),
+    /claude_code_result_publication_unavailable/);
+  // Retained identity is parsed whole: a missing or malformed field is a
+  // refusal, never a value this bridge fills in from transport output.
+  for (const field of ["tenantId", "projectId", "jobId", "attemptId", "runId", "nodeId", "workflowId"] as const) {
+    await refuses(bridgeInput({ retainedBinding: { ...RETAINED_BINDING, [field]: "" } }), /./);
+  }
+  await refuses(bridgeInput({ retainedSession: { processAttemptId: PROCESS_BINDING.processAttemptId,
+    sessionId: "not-a-session-id",
+    terminalFrameDigest: decodedTerminal([initLine(), resultLine()]).frame.frameDigest } }), /./);
+});
+
+test("the decoded terminal frame carries no publication identity for the bridge to read", () => {
+  const { frame } = decodedTerminal([initLine(), resultLine()]);
+  const exported = Object.keys(frame);
+  for (const forbidden of ["tenantId", "projectId", "jobId", "attemptId", "runId", "nodeId", "workflowId",
+    "acceptanceProfileId", "acceptanceProfileDigest", "connectorProfileDigest", "grants", "keys"]) {
+    assert.equal(exported.includes(forbidden), false,
+      `terminal JSON must never be able to supply ${forbidden}`);
+  }
+  // Content and observed session evidence only.
+  assert.deepEqual(exported.filter(key => key === "sessionId" || key === "resultText"
+    || key === "frameDigest").sort(), ["frameDigest", "resultText", "sessionId"]);
 });
