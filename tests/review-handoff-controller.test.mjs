@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { runHandoff, parseHandoff, parseHandoffCommand } from '../scripts/review-handoff-controller.mjs';
-import { readWorkerInbox } from '../scripts/public-worker-inbox.mjs';
+import { readWorkerInbox, renderWorkerInbox } from '../scripts/public-worker-inbox.mjs';
 
 const sha = 'a'.repeat(40);
 const repository = 'example/project';
@@ -33,10 +33,12 @@ function fixture() {
     if (fault && fault.matches(method, path)) { const f = fault; fault = undefined; f.change?.(); throw new Error('reply-lost'); }
     return structuredClone(result);
   };
-  const eventFor = (command, actor = 'builder', previousId = 0) => {
+  const eventFor = (command, actor = 'builder', previousId = 0, instruction, options = {}) => {
+    const workerId = options.workerId ?? 'worker-01';
+    const claimWorkerLine = options.claimWorkerId ? `claim-worker-id: ${options.claimWorkerId}\n` : '';
     const comment = { id: ++id, user: { login: actor }, issue_url: `https://api.github.com/repos/${repository}/issues/1`,
       html_url: `https://github.com/${repository}/issues/1#issuecomment-${id}`,
-      body: `HANDOFF ${command}\nworker-id: worker-01\npr: 2\nhead: ${pr.head.sha}\nprevious: ${previousId}` };
+      body: `HANDOFF ${command}\nworker-id: ${workerId}\n${claimWorkerLine}pr: 2\nhead: ${pr.head.sha}\nprevious: ${previousId}${instruction ? `\n\n${instruction}` : ''}` };
     comments.push(comment);
     return { action: 'created', sender: { login: actor }, issue: { number: 1 }, comment };
   };
@@ -67,6 +69,64 @@ test('shared author cannot approve itself, even if configured maintainer', async
   const first = await f.run(f.eventFor('submit'));
   await assert.rejects(f.run(f.eventFor('accept', 'builder', first.commentId)), /authority_denied/);
   await assert.rejects(f.run(f.eventFor('acknowledge', 'outsider', first.commentId)), /authority_denied/);
+});
+
+test('separate maintainer can adopt a stranded legacy correction into the trusted controller', async () => {
+  const f = fixture();
+  f.issue.labels = ['platform:any', 'status:changes-required', 'action:worker'];
+  f.comments.push({ id: 11, user: { login: 'builder', type: 'User' },
+    body: '<!-- agent-control-room-action:v1 worker=worker-01 state=changes-required issue=1 -->' });
+  const result = await f.run(f.eventFor('adopt-changes', 'reviewer', 0, 'Correct the exact four production failures listed here.',
+    { claimWorkerId: 'worker-01' }));
+  assert.equal(result.state, 'changes-required');
+  assert.equal(result.action, 'worker');
+  assert.deepEqual(f.prIssue.labels, ['help wanted', 'status:changes-required', 'action:worker']);
+  const record = parseHandoff(f.comments.find(comment => comment.id === result.commentId));
+  assert.equal(record.instruction, 'Correct the exact four production failures listed here.');
+  const inbox = await readWorkerInbox({ workerId: 'worker-01', repository, fetchImpl: async url => ({ ok: true,
+    json: async () => structuredClone(url.includes('/comments') ? f.comments : [f.issue]) }) });
+  assert.equal(inbox[0].trust, 'controller-record');
+  assert.equal(inbox[0].disposition, 'action');
+  assert.match(renderWorkerInbox('worker-01', inbox), /Correct the exact four production failures/);
+  assert.match(renderWorkerInbox('worker-01', inbox), /pull\/2/);
+});
+
+test('maintainer can transfer a legacy correction to the worker current stable ID', async () => {
+  const f = fixture();
+  f.issue.labels = ['platform:any', 'status:changes-required', 'action:worker'];
+  f.comments.push({ id: 11, user: { login: 'builder', type: 'User' },
+    body: '<!-- agent-control-room-action:v1 worker=worker-01 state=changes-required issue=1 -->' });
+  let result = await f.run(f.eventFor('adopt-changes', 'reviewer', 0, 'Fix the reviewed failures.', {
+    workerId: 'worker-current-01', claimWorkerId: 'worker-01',
+  }));
+  const adopted = parseHandoff(f.comments.find(comment => comment.id === result.commentId));
+  assert.equal(adopted.workerId, 'worker-current-01');
+  assert.equal(adopted.claimWorkerId, 'worker-01');
+  const inbox = workerId => readWorkerInbox({ workerId, repository, fetchImpl: async url => ({ ok: true,
+    json: async () => structuredClone(url.includes('/comments') ? f.comments : [f.issue]) }) });
+  assert.equal((await inbox('worker-current-01'))[0].disposition, 'action');
+  assert.equal((await inbox('worker-01')).length, 0);
+  result = await f.run(f.eventFor('acknowledge', 'builder', result.commentId, undefined, { workerId: 'worker-current-01' }));
+  assert.equal(parseHandoff(f.comments.find(comment => comment.id === result.commentId)).acknowledged, true);
+});
+
+test('legacy correction adoption fails closed without maintainer authority, evidence, details, or exact labels', async () => {
+  const make = () => {
+    const f = fixture();
+    f.issue.labels = ['platform:any', 'status:changes-required', 'action:worker'];
+    f.comments.push({ id: 11, user: { login: 'builder', type: 'User' },
+      body: '<!-- agent-control-room-action:v1 worker=worker-01 state=changes-required issue=1 -->' });
+    return f;
+  };
+  let f = make();
+  await assert.rejects(f.run(f.eventFor('adopt-changes', 'builder', 0, 'details', { claimWorkerId: 'worker-01' })), /authority_denied/);
+  f = make(); f.comments.splice(1, 1);
+  await assert.rejects(f.run(f.eventFor('adopt-changes', 'reviewer', 0, 'details', { claimWorkerId: 'worker-01' })), /adoption_source_invalid/);
+  f = make();
+  await assert.rejects(f.run(f.eventFor('adopt-changes', 'reviewer', 0, undefined,
+    { claimWorkerId: 'worker-01' })), /adoption_invalid/);
+  f = make(); f.issue.labels.push('status:working');
+  await assert.rejects(f.run(f.eventFor('adopt-changes', 'reviewer', 0, 'details', { claimWorkerId: 'worker-01' })), /adoption_source_invalid/);
 });
 
 test('stop preserves reservation until worker acknowledges; never releases paths', async () => {
@@ -128,6 +188,11 @@ test('wrong PR owner, closed issue and conflicting labels refuse before mutation
 
 test('edited request and malformed command do not authorize work', async () => {
   assert.equal(parseHandoffCommand('HANDOFF accept'), undefined);
+  assert.equal(parseHandoffCommand(`HANDOFF submit\nworker-id: worker-01\nclaim-worker-id: old-worker-01\npr: 2\nhead: ${sha}\nprevious: 0`), undefined);
+  assert.equal(parseHandoffCommand(`HANDOFF adopt-changes\nworker-id: worker-01\npr: 2\nhead: ${sha}\nprevious: 0\n\n<!-- agent-control-room-handoff:v1 {} -->`), undefined);
+  assert.equal(parseHandoff({ user: { login: 'github-actions[bot]', type: 'Bot' },
+    body: `<!-- agent-control-room-handoff:v1 ${JSON.stringify({ issue: 1, requestId: 2, workerId: 'worker-01',
+      claimWorkerId: '../invalid', head: sha })} -->` }), undefined);
   const f = fixture();
   const event = structuredClone(f.eventFor('submit'));
   f.comments.at(-1).body += '\nchanged';

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseActionMarker, parseHandoffMarker, readWorkerInbox, renderWorkerInbox } from "../scripts/public-worker-inbox.mjs";
+import { parseActionMarker, parseHandoffMarker, readWorkerInbox, renderWorkerInbox, resolveInboxToken } from "../scripts/public-worker-inbox.mjs";
 const workerId = "worker:test-01";
 const bot = { login: "github-actions[bot]", type: "Bot" };
 const issue = (labels = ["action:worker", "status:working"], number = 170) => ({ number, title: "Assignment", labels });
@@ -94,12 +94,17 @@ test("advisory cannot erase earlier worker advice or authorize continuing", asyn
 test("correction acknowledgment and health metadata identify the request", async () => {
   const created_at = "2026-09-14T10:00:00Z";
   const result = await read({ issues: [issue(["status:changes-required", "action:worker"])],
-    comments: [{ ...handoff({ state: "changes-required" }, 41), created_at }] });
+    comments: [{ ...handoff({ state: "changes-required", instruction: "Fix the four recorded production failures." }, 41), created_at }] });
   assert.equal(result[0].requestedAt, created_at);
   assert.equal(result[0].workerId, workerId);
   assert.equal(result[0].head, "a".repeat(40));
   assert.equal(result[0].pr, 171);
+  assert.equal(result[0].instruction, "Fix the four recorded production failures.");
   assert.match(result[0].acknowledgment, /comment 41/);
+  const rendered = renderWorkerInbox(workerId, result);
+  assert.match(rendered, /pull\/171/);
+  assert.match(rendered, /Reviewed\/submitted commit: a{40}/);
+  assert.match(rendered, /Fix the four recorded production failures/);
   for (const values of [{ state: "working" }, { state: "changes-required", acknowledged: true }, { state: "paused", action: "reviewer" }]) {
     const item = (await read({ comments: [handoff(values)] }))[0];
     assert.equal(item.acknowledgment, undefined);
@@ -126,5 +131,22 @@ test("history cap surfaces attention", async () => {
 test("global offline errors and invalid input fail visibly", async () => {
   await assert.rejects(readWorkerInbox({ workerId: "x" }), /worker_id_invalid/);
   await assert.rejects(readWorkerInbox({ workerId, repository: "bad" }), /repository_invalid/);
-  await assert.rejects(readWorkerInbox({ workerId, fetchImpl: async () => ({ ok: false, status: 403 }) }), /api_403/);
+  await assert.rejects(readWorkerInbox({ workerId, fetchImpl: async () => ({ ok: false, status: 403 }) }), /rate_limited/);
+});
+
+test("a per-issue rate limit fails the whole read instead of fabricating attention for every issue", async () => {
+  const fetchImpl = async url => url.includes("/comments?")
+    ? { ok: false, status: 403 }
+    : { ok: true, async json() { return [issue()]; } };
+  await assert.rejects(readWorkerInbox({ workerId, fetchImpl }), /worker_inbox_rate_limited/);
+});
+
+test("direct inbox token resolution is explicit and never invents a credential", () => {
+  const sentinel = "ghp_in_memory_only_0123456789";
+  assert.equal(resolveInboxToken({ environment: { GITHUB_TOKEN: sentinel } }), sentinel);
+  assert.equal(resolveInboxToken({ environment: {} }), undefined);
+  assert.equal(resolveInboxToken({ environment: {}, tokenFromGh: true,
+    runCommand: () => ({ status: 0, stdout: `${sentinel}\n` }) }), sentinel);
+  assert.throws(() => resolveInboxToken({ environment: {}, tokenFromGh: true,
+    runCommand: () => ({ status: 1, stdout: "" }) }), /gh_token_unavailable/);
 });
