@@ -15,6 +15,7 @@
 // no second database path is introduced.
 
 import type { DatabaseClient, DatabaseSession, QueryResult } from "../../persistence/database";
+import { createHash } from "node:crypto";
 import { CanonicalStore } from "../../persistence/canonical-store";
 import { findResourceConflictsV1 } from "../../project-coordination/v1/resource-conflict";
 import type { ProjectWorkResourceScopeV1 } from "../../contracts/v1/project-coordination-boundaries";
@@ -757,6 +758,9 @@ export class ProjectCoordinationHttpService {
     const policyVersion = await store.policyVersion(projectId);
     const conflicts = (await store.readConflicts?.(projectId)) ?? [];
     const attention = (await store.readAttention?.(projectId)) ?? [];
+    // Ledger revisions come from the same store methods the write guards
+    // enforce — never from array lengths — so the page and every later
+    // write on this revision compare the same values.
     return {
       project: {
         projectId: project.projectId,
@@ -780,8 +784,8 @@ export class ProjectCoordinationHttpService {
       versions: {
         coordinatorVersion: headVersion,
         policyVersion,
-        conflictsVersion: conflicts.length,
-        attentionVersion: attention.length,
+        conflictsVersion: await store.conflictsVersion(projectId),
+        attentionVersion: await store.attentionVersion(projectId),
       },
       viewerOwnerIdentityId: actor.id,
     };
@@ -899,6 +903,21 @@ export function createProjectCoordinationCanonicalStoreAdapterV1(options: {
   const coordinator = new CanonicalStore(db);
 
   const iso = (value: unknown): string => new Date(value as string | number | Date).toISOString();
+  /**
+   * Content revision for the unversioned ledgers (conflicts, attention).
+   * These ledgers have no version column, so the revision is a 52-bit
+   * digest over the ordered persisted tuples that constitute the ledger:
+   * it changes if and only if saved ledger content changes, which is
+   * exactly the optimistic-concurrency property the revision guards need.
+   * Clock-derived display fields (e.g. attention severity) are excluded so
+   * the mere passage of time never invalidates a revision. Empty ledger
+   * reads 0, matching the "no ledger" guard convention.
+   */
+  const ledgerRevision = (tuples: string[]): number => {
+    if (tuples.length === 0) return 0;
+    const digest = createHash("sha256").update([...tuples].sort().join("\n")).digest("hex");
+    return Number.parseInt(digest.slice(0, 13), 16);
+  };
   const cleanId = (value: string): string => value.replace(/[^A-Za-z0-9:_-]/g, "_").slice(0, 160);
   const isJobId = (value: string): boolean => /^job:[A-Za-z0-9:_-]{1,160}$/.test(value);
   const isAdmissionId = (value: string): boolean => /^admission:[A-Za-z0-9:_-]{1,160}$/.test(value);
@@ -1146,11 +1165,17 @@ export function createProjectCoordinationCanonicalStoreAdapterV1(options: {
       };
     },
     async conflictsVersion(projectId) {
-      return (await openConflicts(projectId)).length;
+      const conflicts = await openConflicts(projectId);
+      return ledgerRevision(conflicts.map((c) =>
+        [c.ledgerId, c.conflictingAdmissionId, c.conflictingJobId, c.conflictingLeaseId,
+          c.repository, c.resourcePath, c.reasonCode, c.raisedAt].join("|")));
     },
     async attentionVersion(projectId) {
       // Same list the page surfaces: version and payload cannot disagree.
-      return (await attentionList(projectId)).length;
+      // Only persisted fields enter the digest (see ledgerRevision).
+      const items = await attentionList(projectId);
+      return ledgerRevision(items.map((a) =>
+        [a.attentionId, a.category, a.ownerQuestion, a.observedAt].join("|")));
     },
     async readActiveWork(projectId) {
       // Only coordinator-adopted jobs: the INNER JOINs through the operation

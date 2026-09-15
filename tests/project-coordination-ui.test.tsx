@@ -46,6 +46,7 @@ const iso = (ms: number): string => new Date(ms).toISOString();
 interface Seed {
   identity: VerifiedWebIdentity;
   service: ProjectCoordinationHttpService;
+  client: { query: (statement: string, params?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }> };
   handle: (request: Request) => Promise<Response>;
   dispose: () => Promise<void>;
 }
@@ -231,6 +232,7 @@ async function seed(): Promise<Seed> {
   return {
     identity,
     service,
+    client,
     handle: async (request: Request) => application.handle(request, () => new Response(null, { status: 404 })),
     dispose: async () => { void db.close(); },
   };
@@ -253,9 +255,13 @@ test("two isolated projects return their own saved coordination data", async (t)
   assert.equal(alpha.conflicts[0]?.ledgerId, "conflict:admission:a2");
   assert.equal(alpha.conflicts[0]?.conflictingJobId, "job:a2");
   assert.equal(alpha.attention.length, 2);
-  assert.deepEqual(alpha.versions, {
-    coordinatorVersion: 3, policyVersion: 2, conflictsVersion: 1, attentionVersion: 2,
-  });
+  // Exact saved revisions, not array lengths: the page versions must equal
+  // what the guards enforce, and the ledger revisions must be nonzero for
+  // nonempty ledgers (content digests, not counts).
+  assert.equal(alpha.versions.coordinatorVersion, 3);
+  assert.equal(alpha.versions.policyVersion, 2);
+  assert.ok(alpha.versions.conflictsVersion > 0);
+  assert.ok(alpha.versions.attentionVersion > 0);
   assert.equal(alpha.viewerOwnerIdentityId, "identity:owner");
 
   const beta = await f.service.read(f.identity, "project:beta");
@@ -268,8 +274,55 @@ test("two isolated projects return their own saved coordination data", async (t)
   assert.deepEqual(beta.conflicts, []);
   assert.equal(beta.attention.length, 1);
   assert.equal(beta.attention[0]?.category, "review");
-  assert.deepEqual(beta.versions, {
-    coordinatorVersion: 1, policyVersion: 0, conflictsVersion: 0, attentionVersion: 1,
+  assert.equal(beta.versions.coordinatorVersion, 1);
+  assert.equal(beta.versions.policyVersion, 0);
+  assert.equal(beta.versions.conflictsVersion, 0);
+  assert.ok(beta.versions.attentionVersion > 0);
+  // Isolation extends to revisions: identical ledger shapes on different
+  // projects still carry their own content (beta's single attention row
+  // cannot share alpha's two-row revision).
+  assert.notEqual(beta.versions.attentionVersion, alpha.versions.attentionVersion);
+});
+
+test("a same-count ledger mutation changes the revision and stales the old one", async (t) => {
+  const f = await seed(); t.after(() => f.dispose());
+  const before = await f.service.read(f.identity, "project:alpha");
+  // Swap one attention row for another: the count stays 2, so a
+  // length-derived version would miss this change entirely.
+  await f.client.query(`DELETE FROM attention_items WHERE id='attn-2'`);
+  await f.client.query(`INSERT INTO attention_items(id,tenant_id,workspace_id,project_id,work_item_id,adapter_id,source_record_id,
+    source_version,attention_type,title,summary,due_at,created_at_source,observed_at,payload,updated_at)
+    VALUES('attn-4','tenant:test','workspace:test','project:alpha',NULL,'adapter:test','src-4','1','approval',
+    'Alpha approval replacement','Approve the replacement scope',NULL,$1,$1,'{}',$1)`, [new Date(NOW - 7_000).toISOString()]);
+  const after = await f.service.read(f.identity, "project:alpha");
+  assert.equal(after.attention.length, 2);
+  assert.notEqual(after.versions.attentionVersion, before.versions.attentionVersion);
+  // The pre-swap revision is now stale: a write naming it is refused with
+  // the exact saved revisions.
+  const outcome = await f.service.appointCoordinator(f.identity, {
+    projectId: "project:alpha",
+    revision: {
+      projectId: "project:alpha",
+      expectedCoordinatorVersion: before.versions.coordinatorVersion,
+      expectedPolicyVersion: before.versions.policyVersion,
+      expectedConflictsVersion: before.versions.conflictsVersion,
+      expectedAttentionVersion: before.versions.attentionVersion,
+      observedAt: before.observedAt,
+    },
+    idempotencyKey: `stale-attention-${NOW}`,
+    coordinatorActorType: "human",
+    coordinatorIdentityId: "identity:coord-a",
+  });
+  assert.equal(outcome.status, "refused");
+  if (outcome.status !== "refused") throw new Error("expected refusal");
+  assert.equal(outcome.reasonCode, "stale_revision");
+  assert.deepEqual(outcome.revision, {
+    projectId: "project:alpha",
+    observedAt: outcome.revision.observedAt,
+    expectedCoordinatorVersion: after.versions.coordinatorVersion,
+    expectedPolicyVersion: after.versions.policyVersion,
+    expectedConflictsVersion: after.versions.conflictsVersion,
+    expectedAttentionVersion: after.versions.attentionVersion,
   });
 });
 
@@ -307,10 +360,12 @@ test("a stale policy version refuses with the exact saved versions", async (t) =
   });
   assert.equal(outcome.status, "refused");
   assert.equal(outcome.reasonCode, "stale_revision");
+  const fresh = await f.service.read(f.identity, "project:alpha");
   assert.deepEqual(
     [outcome.revision.expectedCoordinatorVersion, outcome.revision.expectedPolicyVersion,
       outcome.revision.expectedConflictsVersion, outcome.revision.expectedAttentionVersion],
-    [3, 2, 1, 2],
+    [fresh.versions.coordinatorVersion, fresh.versions.policyVersion,
+      fresh.versions.conflictsVersion, fresh.versions.attentionVersion],
   );
 });
 

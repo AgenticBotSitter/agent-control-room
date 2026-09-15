@@ -215,12 +215,15 @@ export const projectCoordinationPageSchema = z
     // The exact saved versions the page was rendered with. The browser sends
     // these back unchanged on writes; the server refuses anything stale. They
     // are never recomputed client-side from array lengths or presence flags.
+    // Ledger revisions are 52-bit content digests over saved rows (the
+    // ledgers have no version column), so the bound is the JSON-safe
+    // integer range rather than a small sequence cap.
     versions: z
       .object({
-        coordinatorVersion: z.number().int().min(0).max(1_000_000),
-        policyVersion: z.number().int().min(0).max(1_000_000),
-        conflictsVersion: z.number().int().min(0).max(1_000_000),
-        attentionVersion: z.number().int().min(0).max(1_000_000),
+        coordinatorVersion: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+        policyVersion: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+        conflictsVersion: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+        attentionVersion: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
       })
       .strict(),
     // The acting owner's own identity id, so the lifecycle form can warn
@@ -238,10 +241,10 @@ export type ProjectCoordinationPage = z.infer<typeof projectCoordinationPageSche
 export const projectCoordinationRevisionSchema = z
   .object({
     projectId: catalogProjectIdSchema,
-    expectedCoordinatorVersion: z.number().int().min(0).max(1_000_000),
-    expectedPolicyVersion: z.number().int().min(0).max(1_000_000),
-    expectedConflictsVersion: z.number().int().min(0).max(1_000_000),
-    expectedAttentionVersion: z.number().int().min(0).max(1_000_000),
+    expectedCoordinatorVersion: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    expectedPolicyVersion: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    expectedConflictsVersion: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    expectedAttentionVersion: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
     observedAt: instant,
   })
   .strict();
