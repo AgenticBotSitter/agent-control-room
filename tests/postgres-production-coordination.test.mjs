@@ -23,12 +23,20 @@ import { tmpdir } from "node:os";
 import { Client } from "pg";
 import { applyMigrations } from "../deploy/postgres/apply-migrations.mjs";
 import { privateWebInsertColumns } from "../src/web/v1/private-database-preflight.ts";
+import { sha256Digest } from "../src/security/digest.ts";
+import {
+  ProjectCoordinationHttpService,
+  createProjectCoordinationCanonicalStoreAdapterV1,
+} from "../src/web/v1/project-coordination-http.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const BIN = process.env.PG_BIN ?? "/usr/lib/postgresql/17/bin";
+const CANDIDATE_BINS = [process.env.PG_BIN, "/opt/homebrew/opt/postgresql@17/bin", "/usr/lib/postgresql/17/bin"]
+  .filter(Boolean);
+const BIN = CANDIDATE_BINS.find((dir) => existsSync(join(dir, "initdb")) && existsSync(join(dir, "postgres")))
+  ?? "/usr/lib/postgresql/17/bin";
 const PG_AVAILABLE = existsSync(join(BIN, "initdb")) && existsSync(join(BIN, "postgres"));
-const needsPg = PG_AVAILABLE ? undefined : { skip: "needs PostgreSQL 17 binaries (PG_BIN or /usr/lib/postgresql/17/bin)" };
-const PORT = 65435;
+const needsPg = PG_AVAILABLE ? undefined : { skip: "needs PostgreSQL 17 binaries (PG_BIN, /opt/homebrew/opt/postgresql@17/bin, or /usr/lib/postgresql/17/bin)" };
+const PORT = 65437;
 const exec = promisify(execFile);
 
 let run = "", socket = "", data = "";
@@ -90,9 +98,40 @@ before(async () => {
   const roleSql = await readFile(join(ROOT, "db/roles/private_web_roles.sql"), "utf8");
   await query(target("cr_prod_coord200"), roleSql);
   await query(target("cr_prod_coord200"),
-    `CREATE LOGIN coord_web_200 WITH PASSWORD 'w200-${"x".repeat(16)}' IN ROLE control_room_private_web`);
+    `CREATE ROLE coord_web_200 WITH LOGIN PASSWORD 'w200-${"x".repeat(16)}' IN ROLE control_room_private_web`);
   await query(target("cr_prod_coord200"),
     `INSERT INTO tenants(id, display_name) VALUES('tenant:test','Role proof tenant')`);
+  // Seeds the barrier/page tests need: attention rows reference the
+  // workspace, project, and adapter; the page path needs a live project
+  // head plus an authorized owner identity with a live session.
+  await query(target("cr_prod_coord200"),
+    `INSERT INTO workspaces(id,tenant_id,display_name) VALUES('workspace:test','tenant:test','Test workspace')`);
+  await query(target("cr_prod_coord200"),
+    `INSERT INTO adapter_registry(id,tenant_id,source_system,contract_version,authority_mode,status,redaction_policy_version,cursor_retention_days)
+     VALUES('adapter:test','tenant:test','control-room-manual','1.0.0','control_room_native','disabled','v1',30)`);
+  await query(target("cr_prod_coord200"),
+    `INSERT INTO projects(id,tenant_id,workspace_id,adapter_id,source_record_id,source_version,title,description,
+     normalized_state,domain_state,health,authority_mode,observed_at,payload,updated_at)
+     VALUES('project:alpha','tenant:test','workspace:test','adapter:test','project:alpha','1','Alpha','Seed',
+     'running','seed','healthy','control_room_native',now(),'{}',now())`);
+  await query(target("cr_prod_coord200"),
+    `INSERT INTO control_manual_project_heads(tenant_id,project_id,lifecycle,version,created_at,updated_at)
+     VALUES('tenant:test','project:alpha','active',1,now(),now())`);
+  const subjectDigest = sha256Digest({ provider: "test", subject: "pg-owner" });
+  const issued = new Date(Date.now() - 60_000).toISOString();
+  const expires = new Date(Date.now() + 3_600_000).toISOString();
+  await query(target("cr_prod_coord200"),
+    `INSERT INTO control_identities(id,tenant_id,actor_type,display_name,auth_provider,auth_subject_digest,state,created_at,updated_at)
+     VALUES('identity:pg-owner','tenant:test','human','PG owner','test',$1,'active',now(),now())`, [subjectDigest]);
+  await query(target("cr_prod_coord200"),
+    `INSERT INTO control_role_grants(id,tenant_id,identity_id,role_key,allowed_actions,project_ids,risk_ceiling,
+     allow_external_effects,require_strong_factor,created_at,updated_at)
+     VALUES('grant:pg-1','tenant:test','identity:pg-owner','owner','[\"*\"]','[\"*\"]','critical',true,false,now(),now())`);
+  await query(target("cr_prod_coord200"),
+    `INSERT INTO control_web_sessions(tenant_id,token_digest,identity_id,issued_at,expires_at)
+     VALUES('tenant:test',$1,'identity:pg-owner',$2,$3)`, [PAGE_TOKEN_DIGEST, issued, expires]);
+  pageIdentity.issuedAt = issued;
+  pageIdentity.expiresAt = expires;
 });
 
 after(async () => {
@@ -107,6 +146,50 @@ after(async () => {
 const webTarget = () => ({ host: socket, port: PORT, database: "cr_prod_coord200",
   user: "coord_web_200", password: `w200-${"x".repeat(16)}` });
 const DIGEST = (ch) => `sha256:${ch.repeat(64)}`;
+// Page-path identity: issued/expiry are filled from the seeded session row
+// in before() so the service's exact-match check always pairs them.
+const PAGE_TOKEN_DIGEST = DIGEST("f");
+const pageIdentity = {
+  provider: "test",
+  subject: "pg-owner",
+  tokenDigest: PAGE_TOKEN_DIGEST,
+  issuedAt: "",
+  expiresAt: "",
+  verificationExpiresAt: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+};
+// Minimal DatabaseClient over one pg connection, so the service under test
+// runs its real transaction path (BEGIN/COMMIT) on that connection.
+const clientFor = (conn) => ({
+  query: (statement, params = []) => conn.query(statement, params),
+  transaction: async (callback) => {
+    await conn.query("BEGIN");
+    try {
+      const result = await callback({ query: (s, p = []) => conn.query(s, p) });
+      await conn.query("COMMIT");
+      return result;
+    } catch (cause) {
+      await conn.query("ROLLBACK").catch(() => {});
+      throw cause;
+    }
+  },
+  transactionWithPreCommitCheck: async (callback, preCommitCheck) => {
+    await conn.query("BEGIN");
+    try {
+      const result = await callback({ query: (s, p = []) => conn.query(s, p) });
+      await preCommitCheck();
+      await conn.query("COMMIT");
+      return result;
+    } catch (cause) {
+      await conn.query("ROLLBACK").catch(() => {});
+      throw cause;
+    }
+  },
+});
+const insertAttention = (id, sourceRecordId) => query(target("cr_prod_coord200"),
+  `INSERT INTO attention_items(id,tenant_id,workspace_id,project_id,work_item_id,adapter_id,source_record_id,
+   source_version,attention_type,title,summary,due_at,created_at_source,observed_at,payload,updated_at)
+   VALUES($1,'tenant:test','workspace:test','project:alpha',NULL,'adapter:test',$2,'1','approval','T','S',NULL,now(),now(),'{}',now())`,
+  [id, sourceRecordId]);
 
 test("restricted login runs the idempotency lifecycle and cannot exceed column authority", needsPg, async () => {
   // Allowed five-column insert as the restricted login.
@@ -152,49 +235,92 @@ test("preflight insert-column map matches the granted idempotency columns", need
     ["idempotency_key", "operation_scope", "request_digest", "status", "tenant_id"]);
 });
 
-test("repeatable-read snapshot hides a concurrent commit; read-committed shows it", needsPg, async () => {
-  const seedRow = (id) => query(target("cr_prod_coord200"),
-    `INSERT INTO attention_items(id,tenant_id,workspace_id,project_id,work_item_id,adapter_id,source_record_id,
-     source_version,attention_type,title,summary,due_at,created_at_source,observed_at,payload,updated_at)
-     VALUES($1,'tenant:test','workspace:test','project:alpha',NULL,'adapter:test','seed','1','approval','T','S',NULL,now(),now(),'{}',now())`,
-    [id]);
-  await seedRow("attn-barrier-0");
-  const readIds = async (client) => (await client.query(
-    `SELECT id FROM attention_items WHERE tenant_id='tenant:test' AND project_id='project:alpha' ORDER BY 1`)).rows.map((r) => r.id);
-
-  // Barrier case: A holds a repeatable-read snapshot across B's commit.
+test("page composition holds its authorization locks: a concurrent revocation blocks, then the snapshot hides a concurrent insert", needsPg, async () => {
+  await insertAttention("attn-pg-1", "pg-src-1");
   const connA = await open(target("cr_prod_coord200"));
-  const connB = await open(target("cr_prod_coord200"));
   try {
-    await connA.query("BEGIN");
-    await connA.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
-    assert.deepEqual(await readIds(connA), ["attn-barrier-0"]);
-    await connB.query(`INSERT INTO attention_items(id,tenant_id,workspace_id,project_id,work_item_id,adapter_id,source_record_id,
-      source_version,attention_type,title,summary,due_at,created_at_source,observed_at,payload,updated_at)
-      VALUES('attn-barrier-1','tenant:test','workspace:test','project:alpha',NULL,'adapter:test','seed','1','approval','T','S',NULL,now(),now(),'{}',now())`);
-    // A still sees the old snapshot: old content pairs with the old version
-    // the page already computed — never old content with a new version.
-    assert.deepEqual(await readIds(connA), ["attn-barrier-0"]);
-    await connA.query("COMMIT");
+    const service = new ProjectCoordinationHttpService({
+      database: clientFor(connA),
+      scope: { tenantId: "tenant:test", workspaceId: "workspace:test" },
+      clock: Date.now,
+      store: createProjectCoordinationCanonicalStoreAdapterV1({
+        database: clientFor(connA), tenantId: "tenant:test", now: Date.now,
+      }),
+      readProbe: { beforeSnapshot: async () => {
+        entered = true;
+        await gate;
+      } },
+    });
+    // Hold the read inside its authorization transaction: auth locks taken,
+    // page not yet composed.
+    let entered = false;
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const inFlight = service.read(pageIdentity, "project:alpha");
+    const deadline = Date.now() + 15_000;
+    while (!entered) {
+      if (Date.now() > deadline) throw new Error("page read never reached its snapshot gate");
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    // A revocation committed now cannot slip between the check and the
+    // data: the session row is locked by the in-flight read, so the
+    // revocation blocks instead. lock_timeout turns the block into proof.
+    // (A dedicated connection: lock_timeout is session-scoped, and the
+    // one-shot query helper cannot send SET + UPDATE together.)
+    const connB = await open(target("cr_prod_coord200"));
+    let revokeBlocked;
+    try {
+      await connB.query("SET lock_timeout = '2s'");
+      revokeBlocked = await connB.query(
+        `UPDATE control_web_sessions SET revoked_at = now()
+         WHERE tenant_id = 'tenant:test' AND token_digest = $1`, [PAGE_TOKEN_DIGEST]).then(
+        () => null, (cause) => cause);
+    } finally {
+      await connB.end();
+    }
+    assert.match(String(revokeBlocked?.message ?? revokeBlocked ?? ""), /lock timeout|could not obtain lock/i);
+    // An unrelated content commit lands while the read is held.
+    await insertAttention("attn-pg-2", "pg-src-2");
+    release();
+    const page = await inFlight;
+    // The repeatable-read snapshot predates the concurrent insert: old
+    // content pairs with its own version, never with the new row's.
+    assert.equal(page.attention.length, 1);
+    assert.ok(page.versions.attentionVersion > 0);
   } finally {
     await connA.end();
-    await connB.end();
   }
-
-  // Control case: without repeatable read the same interleave is visible,
-  // which is exactly the mixed pairing the page snapshot must prevent.
+  // A fresh read takes a new snapshot and sees both rows.
   const connC = await open(target("cr_prod_coord200"));
-  const connD = await open(target("cr_prod_coord200"));
   try {
-    await connC.query("BEGIN");
-    assert.deepEqual(await readIds(connC), ["attn-barrier-0", "attn-barrier-1"]);
-    await connD.query(`INSERT INTO attention_items(id,tenant_id,workspace_id,project_id,work_item_id,adapter_id,source_record_id,
-      source_version,attention_type,title,summary,due_at,created_at_source,observed_at,payload,updated_at)
-      VALUES('attn-barrier-2','tenant:test','workspace:test','project:alpha',NULL,'adapter:test','seed','1','approval','T','S',NULL,now(),now(),'{}',now())`);
-    assert.deepEqual(await readIds(connC), ["attn-barrier-0", "attn-barrier-1", "attn-barrier-2"]);
-    await connC.query("COMMIT");
+    const fresh = new ProjectCoordinationHttpService({
+      database: clientFor(connC),
+      scope: { tenantId: "tenant:test", workspaceId: "workspace:test" },
+      clock: Date.now,
+      store: createProjectCoordinationCanonicalStoreAdapterV1({
+        database: clientFor(connC), tenantId: "tenant:test", now: Date.now,
+      }),
+    });
+    assert.equal((await fresh.read(pageIdentity, "project:alpha")).attention.length, 2);
   } finally {
     await connC.end();
+  }
+  // A committed revocation is observed: the next read is refused outright.
+  await query(target("cr_prod_coord200"),
+    `UPDATE control_web_sessions SET revoked_at = now()
+     WHERE tenant_id = 'tenant:test' AND token_digest = $1`, [PAGE_TOKEN_DIGEST]);
+  const connD = await open(target("cr_prod_coord200"));
+  try {
+    const revoked = new ProjectCoordinationHttpService({
+      database: clientFor(connD),
+      scope: { tenantId: "tenant:test", workspaceId: "workspace:test" },
+      clock: Date.now,
+      store: createProjectCoordinationCanonicalStoreAdapterV1({
+        database: clientFor(connD), tenantId: "tenant:test", now: Date.now,
+      }),
+    });
+    await assert.rejects(revoked.read(pageIdentity, "project:alpha"), /authentication_required/);
+  } finally {
     await connD.end();
   }
 });

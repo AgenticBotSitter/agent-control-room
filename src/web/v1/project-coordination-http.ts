@@ -197,6 +197,13 @@ export interface ProjectCoordinationHttpServiceOptions {
   scope: { tenantId: string; workspaceId: string };
   clock: () => number;
   store: ProjectCoordinationCanonicalStoreAdapter;
+  /**
+   * Test instrumentation for the page read. Called inside the
+   * authorization transaction after the action check and before the page
+   * snapshot composes, so tests can interleave clock/row changes
+   * deterministically. Never set in production wiring.
+   */
+  readProbe?: { beforeSnapshot?: (tx: DatabaseSession, actor: WebActor) => Promise<void> };
 }
 
 export type ProjectCoordinationReasonCode =
@@ -320,19 +327,21 @@ export class ProjectCoordinationHttpService {
   }
 
   async read(identity: VerifiedWebIdentity, projectId: string): Promise<ProjectCoordinationPagePayload> {
-    // Authorization (including the session touch) commits in its own
-    // transaction first. Every displayed collection and its revision guard
-    // then reads from one REPEATABLE READ snapshot, so a concurrent commit
-    // can never pair old content with a new accepting version: the page
-    // either predates the commit (write refused stale) or includes it.
-    const actor = await this.authority.authenticated(identity, async (_tx, candidate) => {
-      candidate.require(ACTIONS.read, projectId);
-      return candidate;
-    });
-    return this.options.database.transaction(async (snapshot) => {
-      await snapshot.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
-      return this.composeProjectCoordinationPage(snapshot, actor, projectId) as Promise<ProjectCoordinationPagePayload>;
-    });
+    // Authorization and page snapshot share one repeatable-read
+    // transaction: the identity/session locks are held through every page
+    // query, so a revocation committed mid-read blocks until this commit
+    // (already-running wins) and can never slip between the check and the
+    // data. The pre-commit freshness check still refuses a read whose
+    // session or identity expired while composing; the post-compose assert
+    // re-runs the same boundary before any byte leaves the service.
+    // Content and versions therefore always pair from one snapshot.
+    return this.authority.authenticated(identity, async (tx, actor) => {
+      actor.require(ACTIONS.read, projectId);
+      await this.options.readProbe?.beforeSnapshot?.(tx, actor);
+      const page = await this.composeProjectCoordinationPage(tx, actor, projectId) as ProjectCoordinationPagePayload;
+      actor.assertTimeCurrent();
+      return page;
+    }, { repeatableReadSnapshot: true });
   }
 
   /** Reports whether the coordination surface accepts writes. */

@@ -10,8 +10,9 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { PGlite } from "@electric-sql/pglite";
 
-import { adaptPglite, type DatabaseClient } from "../src/persistence/database";
+import { adaptPglite, type DatabaseClient, type DatabaseSession } from "../src/persistence/database";
 import { SecurityStore } from "../src/security/security-store";
+import type { WebActor } from "../src/web/v1/session-authority";
 import { createAccessVerifier, type AccessTrust } from "../src/web/v1/access-verifier";
 import type { VerifiedWebIdentity } from "../src/web/v1/access-verifier";
 import { createPrivateWebProcess } from "../src/web/v1/private-process";
@@ -53,7 +54,10 @@ interface Seed {
   dispose: () => Promise<void>;
 }
 
-async function seed(): Promise<Seed> {
+async function seed(options?: {
+  clockRef?: { now: number };
+  readProbe?: { beforeSnapshot?: (tx: DatabaseSession, actor: WebActor) => Promise<void> };
+}): Promise<Seed> {
   const db = new PGlite();
   for (const file of (await readdir("db/migrations")).filter((f) => f.endsWith(".sql")).sort()) {
     await db.exec(await readFile(`db/migrations/${file}`, "utf8"));
@@ -216,8 +220,9 @@ async function seed(): Promise<Seed> {
   const service = new ProjectCoordinationHttpService({
     database: client,
     scope: { tenantId: TENANT, workspaceId: "workspace:test" },
-    clock: () => NOW,
+    clock: () => options?.clockRef?.now ?? NOW,
     store,
+    ...(options?.readProbe ? { readProbe: options.readProbe } : {}),
   });
   const application = createPrivateWebProcess({
     origin: ORIGIN,
@@ -484,18 +489,18 @@ test("policy pause, resume, and revoke are not offered before #220", () => {
 
 test("page content and versions come from one repeatable-read snapshot", async (t) => {
   const f = await seed(); t.after(() => f.dispose());
-  // Wrap the database handle: count top-level transactions and record the
-  // first statement of each, so the test observes the snapshot boundary
-  // instead of trusting the implementation.
+  // Wrap the database handle: the read path must run authorization and the
+  // whole page composition in exactly one transaction whose first statement
+  // requests the repeatable-read snapshot — observable here instead of
+  // trusted from the implementation.
   const txFirstStatements: string[] = [];
-  let plainTxCount = 0;
+  let guardedTxCount = 0;
   let snapshotIsolation: string | null = null;
   const wrappedClient: DatabaseClient = {
     query: (statement, params) => f.client.query(statement, params),
-    transactionWithPreCommitCheck: (callback, check) =>
-      f.client.transactionWithPreCommitCheck(callback, check),
-    transaction: (callback) => f.client.transaction(async (session) => {
-      plainTxCount += 1;
+    transaction: (callback) => f.client.transaction(callback),
+    transactionWithPreCommitCheck: (callback, check) => f.client.transactionWithPreCommitCheck(async (session) => {
+      guardedTxCount += 1;
       let first: string | null = null;
       const wrappedSession = {
         query: async <T = Record<string, unknown>>(statement: string, params?: unknown[]) => {
@@ -515,7 +520,7 @@ test("page content and versions come from one repeatable-read snapshot", async (
       } finally {
         txFirstStatements.push(first ?? "<no statements>");
       }
-    }),
+    }, check),
   };
   const service = new ProjectCoordinationHttpService({
     database: wrappedClient,
@@ -524,15 +529,49 @@ test("page content and versions come from one repeatable-read snapshot", async (
     store: f.store,
   });
   const page = await service.read(f.identity, "project:alpha");
-  // Authorization runs through transactionWithPreCommitCheck; exactly one
-  // plain transaction — the page snapshot — must compose the whole page.
-  assert.equal(plainTxCount, 1);
+  // One guarded transaction total: authorization locks and every page query
+  // share it, so no revocation or content commit can land in between.
+  assert.equal(guardedTxCount, 1);
   assert.match(txFirstStatements[0] ?? "", /SET TRANSACTION ISOLATION LEVEL REPEATABLE READ/);
   assert.equal(snapshotIsolation, "repeatable read");
   // The snapshot still serves the real saved content and versions.
   assert.equal(page.attention.length, 2);
   assert.ok(page.versions.attentionVersion > 0);
   assert.equal(page.conflicts.length, 1);
+});
+
+test("a delayed read that crosses session expiry returns no data", async (t) => {
+  const clockRef = { now: NOW };
+  let probeRan = false;
+  const f = await seed({ clockRef, readProbe: { beforeSnapshot: async () => {
+    probeRan = true;
+    // The page composes slowly: expiry (identity and session, NOW + 300s)
+    // passes before the first page query runs.
+    clockRef.now = NOW + 400_000;
+  } } });
+  t.after(() => f.dispose());
+  const error = await f.service.read(f.identity, "project:alpha").then(
+    () => null, (cause) => cause as { code?: string; message?: string });
+  assert.ok(probeRan);
+  // The pre-commit freshness check and the post-compose assert refuse the
+  // whole read: rejection carries no page payload.
+  assert.equal(error?.code, "authentication_required");
+});
+
+test("a session revoked before the read is refused with no data", async (t) => {
+  const f = await seed(); t.after(() => f.dispose());
+  // Warm read first: the authorization touch may insert the live session
+  // row; revoke every session row afterwards so no live row can survive.
+  const warm = await f.service.read(f.identity, "project:alpha");
+  assert.equal(warm.attention.length, 2);
+  await f.client.query(`UPDATE control_web_sessions SET revoked_at=$1 WHERE tenant_id='tenant:test'`,
+    [new Date(NOW).toISOString()]);
+  const live = await f.client.query<{ count: number | string }>(
+    `SELECT count(*) FROM control_web_sessions WHERE tenant_id='tenant:test' AND revoked_at IS NULL`);
+  assert.equal(Number(live.rows[0]?.count), 0);
+  const error = await f.service.read(f.identity, "project:alpha").then(
+    () => null, (cause) => cause as { code?: string });
+  assert.equal(error?.code, "authentication_required");
 });
 
 test("a concurrent attention insert cannot pair old content with a new accepting version", async (t) => {
