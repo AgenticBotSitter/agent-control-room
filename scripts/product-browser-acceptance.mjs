@@ -7,10 +7,12 @@
 // private browser harnesses already prove; this script adds nothing new to the
 // compiled runtime.
 //
-// Every scenario runs against a single in-memory handler installed through
-// `installPrivateWebProcess` with the same disposable PGlite database that the
-// `ownerReviewFixture` populated, so the result lifecycle already published by
-// the fixture is reachable through the running product UI. A single Playwright
+// Every scenario runs against a single in-memory handler installed through the
+// bootstrap runtime with the same disposable PGlite database that the
+// `nativeQualityCompletionFixture` published, so the result lifecycle already
+// published by the fixture is reachable through the running product UI and the
+// "Prepare revised task" affordance is enabled by `revisionPlanning: true` with
+// the quality scenario that the fixture supplies. A single Playwright
 // `context.route` bridges each browser request to the running process. No TCP
 // listener, no remote request, no provider, no live agent and no production
 // host are used.
@@ -19,8 +21,8 @@
 // real product UI:
 //   1. Two UI projects survive create, archive, reopen, deep-link reload,
 //      browser back/forward, browser context reconnect, narrow-screen menu.
-//   2. A result lifecycle (published by the owner-review fixture) returns a
-//      sanitised payload that the product page exposes through "Read result",
+//   2. A result lifecycle (published by the bootstrap-quality fixture) returns
+//      a sanitised payload that the product page exposes through "Read result",
 //      shows the exact returned text, and keeps it visible after reload.
 //   3. An owner change request is accepted and re-renders after reload
 //      without replaying the POST. A Prepare revised task call returns a
@@ -29,11 +31,12 @@
 //      creates no record, aborted response is the only unconfirmed-but-
 //      server-received entry, and explicit retry replays the exact body and
 //      idempotency key.
-//   5. Keyboard focus reaches the skip link and an operable task link at
-//      360px and 1280px without sideways scroll.
-//   6. The owned Chromium process, context, application, database and temp
-//      profile directory are cleaned up; no second run inherits a previous
-//      profile.
+//   5. Keyboard focus reaches the skip link (or, at the wide layout, the
+//      documented first control) and an operable task link at 360px and
+//      1280px without sideways scroll.
+//   6. The owned Chromium process, context, application, bootstrap and
+//      coordinator databases, and temp profile directory are cleaned up; no
+//      second run inherits a previous profile.
 //
 // Evidence states what is simulated. Screenshots stay inside the operator-
 // supplied directory and never leave the repo path.
@@ -72,11 +75,13 @@ await mkdir(requestedScreenshotDirectory, { recursive: true });
 const screenshotDirectory = await realpath(requestedScreenshotDirectory);
 
 const { default: handler } = await import("../dist-vps/server/index.js");
-const { installPrivateWebProcess } = await import("../dist-vps/server/runtime.js");
+const { createPrivateTaskBootstrap } = await import("../dist-vps/server/taskBootstrap.js");
+const { installPrivateApplication } = await import("../dist-vps/server/runtime.js");
 const { loadPrivateClientAssets } = await import("../dist-vps/server/serving.js");
-const { ownerReviewFixture } = await import("../tests/helpers/web-owner-review.ts");
-const { binding, instant } = await import("../tests/hermes-native-fixture.ts");
+const { nativeQualityCompletionFixture } = await import("../tests/helpers/native-quality-completion.ts");
+const { taskStartupFixture } = await import("../tests/helpers/task-startup.ts");
 const { origin } = await import("../tests/helpers/web-foundation.ts");
+const { binding } = await import("../tests/hermes-native-fixture.ts");
 
 const checks = [];
 function check(name, condition, detail = "") {
@@ -90,7 +95,8 @@ function check(name, condition, detail = "") {
 let browser;
 let context;
 let application;
-let disposable;
+let startup;
+let fixture;
 let assets = null;
 const posts = [];
 const deliveredFlags = new WeakMap();
@@ -181,7 +187,12 @@ async function assertKeyboardProbe(page, label, expectedHref) {
         || firstFocusInfo.tag === "BUTTON"
         || (firstFocusInfo.tag === "A" && typeof firstFocusInfo.href === "string" && firstFocusInfo.href.length > 0)),
     JSON.stringify(firstFocusInfo));
-  // Skip-link path: Enter advances focus to the main landmark.
+  // Skip-link path: Enter advances focus to the main landmark. This branch
+  // only asserts what the live product UI actually does: if the first
+  // tab stop is the documented skip link, pressing Enter must move focus to
+  // the main landmark. The non-skip-link path is intentionally not asserted
+  // because the layout-specific Enter binding varies by viewport and was
+  // never part of the documented contract for issue #214.
   if (firstFocusInfo?.isSkipLink || firstFocusInfo?.isMainSkipLinkText) {
     await page.keyboard.press("Enter");
     const mainFocused = await page.evaluate(() => {
@@ -191,8 +202,8 @@ async function assertKeyboardProbe(page, label, expectedHref) {
     });
     check(`${label} Enter advances focus to the main landmark`, mainFocused);
   } else {
-    check(`${label} Enter advances focus to the main landmark`, true,
-      "non-skip-link first tab stop; Enter binding is layout-specific and intentionally not asserted");
+    check(`${label} Enter-binding for non-skip-link first tab stop is not asserted`,
+      true, "layout-specific binding intentionally not contracted for #214");
   }
   // Walk forward until a known intra-app anchor (the alpha task link) is focused.
   let taskFocused = false;
@@ -209,22 +220,28 @@ async function assertKeyboardProbe(page, label, expectedHref) {
 }
 
 try {
-  // ONE base fixture owns the database, the access trust, the pre-published
-  // result for binding.projectId and the owner-review task keys.
-  disposable = await ownerReviewFixture();
+  // ONE bootstrap-runtime fixture owns the disposable PGlite databases, the
+  // access trust, the pre-published result for binding.projectId/binding.jobId,
+  // the quality scenario, and `revisionPlanning: true` so the public product
+  // UI exposes "Prepare revised task". The bootstrap is the exact composition
+  // private-revision-browser-acceptance.mjs reuses for the same lifecycle.
+  fixture = await nativeQualityCompletionFixture();
+  startup = await taskStartupFixture(fixture.f.assignmentFixture);
+  const installedApplication = await createPrivateTaskBootstrap({ clock: fixture.f.clock,
+    install: installPrivateApplication, openDatabase: startup.openDatabase })
+    .start({ ...startup.config, coordinator: { ...startup.config.coordinator,
+      quality: { ...fixture.f.ownerConfig, scenarios: [fixture.scenario] }, revisionPlanning: true } });
+  check("bootstrap runtime exposes revision preparation on the public product UI",
+    installedApplication.isReady() && Boolean(installedApplication.revisions));
+  application = installedApplication;
   assets = await loadPrivateClientAssets(await realpath("dist-vps/client"));
-
-  application = installPrivateWebProcess({ ...disposable.accessTrust, origin: origin,
-    tenantId: disposable.scope.tenantId, workspaceId: disposable.scope.workspaceId,
-    tasks: disposable.ownerKeys, loadKeys: async () => disposable.accessTrust.keys,
-    database: { client: disposable.db, close: () => disposable.close() },
-    clock: () => instant + 6000 });
+  const ownerJwt = fixture.f.jwt;
 
   // Always launch a fresh owned Chromium. No PLAYWRIGHT_WS_ENDPOINT branch.
   browser = await playwright.chromium.launch({ headless: true });
 
   context = await browser.newContext({ viewport: { width: 360, height: 844 } });
-  await installProtectedRequestRouting(context, disposable.jwt);
+  await installProtectedRequestRouting(context, ownerJwt);
   let page = await context.newPage();
 
   // ------ Home page, narrow focus probe --------------------------------------
@@ -314,7 +331,7 @@ try {
   try { await context.close(); }
   catch (error) { cleanupErrors.push(["reconnect-context-close", error]); }
   context = await browser.newContext({ viewport: { width: 360, height: 844 } });
-  await installProtectedRequestRouting(context, disposable.jwt);
+  await installProtectedRequestRouting(context, ownerJwt);
   const reconnectedPage = await context.newPage();
   await reconnectedPage.goto(`${origin}${alphaPath}`, { waitUntil: "domcontentloaded" });
   await reconnectedPage.getByRole("heading", { name: "Browser acceptance alpha" }).waitFor();
@@ -388,8 +405,10 @@ try {
   await saveSanitizedScreenshot(page, "product-browser-narrow.png", 360, 844);
 
   // ------ Result lifecycle: progress, Read result, owner review, linked revision
-  // The ownerReviewFixture pre-installed a result for binding.projectId/binding.jobId.
+  // The nativeQualityCompletionFixture pre-installed a result for
+  // binding.projectId/binding.jobId with the synthetic qualityText payload.
   const resultPath = `/projects/${encodeURIComponent(binding.projectId)}/tasks/${encodeURIComponent(binding.jobId)}`;
+  const resultText = "# Result\nA useful synthetic document with an explicit result.\n# Evidence\nThe fixture supplied this evidence.\n";
   const resultPage = await context.newPage();
   await resultPage.goto(`${origin}${resultPath}`, { waitUntil: "domcontentloaded" });
   await resultPage.getByRole("heading", { name: "Result files" }).waitFor();
@@ -397,14 +416,14 @@ try {
   check("compiled task page lists the returned result",
     await resultPage.getByRole("button", { name: "Read result" }).isVisible());
   check("returned text is not displayed before the owner opens it",
-    await resultPage.getByText("A useful private result.", { exact: true }).count() === 0);
+    await resultPage.getByText("A useful synthetic document", { exact: false }).count() === 0);
 
   await resultPage.getByRole("button", { name: "Read result" }).click();
   const resultRegion = resultPage.getByRole("region", { name: "Protected result content" });
   await resultRegion.waitFor();
   await assertNoOverflow(resultPage, "opened protected result at 360px");
   check("owner can read the exact protected result",
-    await resultRegion.locator('textarea[aria-label="Agent result text"]').inputValue() === "A useful private result.");
+    await resultRegion.locator('textarea[aria-label="Agent result text"]').inputValue() === resultText);
   check("open result is clearly separated from executable instructions",
     await resultPage.getByText(/Agent-written content, not instructions for Control Room/).isVisible());
 
@@ -423,25 +442,6 @@ try {
   check("quality decision sent the exact owner feedback",
     JSON.parse(reviewPosts[0]?.body ?? "{}").feedback === feedback);
 
-  // Prepare-revised step is documented as out of single-process scope.
-  //
-  // The public product UI only renders "Prepare revised task" when the
-  // running private web process received a `revisions.plan` provider. The
-  // `installPrivateWebProcess` entry point used by this harness is a singleton
-  // that the team designed for thin no-coordinator setups, so revisions are
-  // not wired here by default. The full revision lifecycle is exercised by
-  // scripts/private-revision-browser-acceptance.mjs, which uses the bootstrap
-  // runtime with `revisionPlanning: true` against a separate coordinator.
-  // Mounting that coordinator inline would cross the #214 writeScope (it
-  // touches the test helpers and the task coordinator bootstrap internals).
-  // This PR keeps the public-process portion (read result, owner review,
-  // re-rendering after reload) and flags the bootstrap-only revision step
-  // honestly below rather than fabricating labels that the public product
-  // never renders in this configuration.
-  const reviewOnlyPosts = posts.filter(entry => /\/reviews\/[^/]+$/.test(entry.path));
-  check("owner review lifecycle is reachable end-to-end through the public product UI",
-    reviewOnlyPosts.length === 1, `posts=${reviewOnlyPosts.length}`);
-
   // Re-render the owner decision after reload without replaying the POST.
   await resultPage.goto(`${origin}${resultPath}`, { waitUntil: "domcontentloaded" });
   await resultPage.getByRole("heading", { name: "Result files" }).waitFor();
@@ -455,6 +455,57 @@ try {
     await resultPage.getByText(/does not authorize external actions or start another agent run/).isVisible());
   check("reload did not repeat the quality command",
     posts.filter(entry => /\/reviews\/[^/]+$/.test(entry.path)).length === 1);
+
+  // ------ Prepare revised task: bootstrap runtime exposes a revisions.plan ----
+  // provider because the fixture set revisionPlanning: true and registered the
+  // quality scenario. The public product UI therefore renders the
+  // "Prepare revised task" affordance on the same result page. This is the
+  // assigned lifecycle step that the previous harness incorrectly flagged as
+  // out of scope; running it inline proves the public UI reaches the linked
+  // follow-up task page and survives reload without re-issuing the prepare
+  // command.
+  await resultPage.getByRole("button", { name: "Prepare revised task" }).waitFor();
+  check("saved owner review exposes the Prepare revised task affordance", true);
+  await resultPage.getByRole("button", { name: "Prepare revised task" }).click();
+  const prepared = resultPage.getByRole("status").filter({ hasText: /Revision \d+ is prepared/ });
+  await prepared.waitFor();
+  const revisionChild = prepared.getByRole("link", { name: "Open revised task" });
+  const childHref = await revisionChild.getAttribute("href");
+  check("browser receives a distinct linked follow-up task",
+    typeof childHref === "string" && childHref !== resultPath
+      && childHref.startsWith(`/projects/${encodeURIComponent(binding.projectId)}/tasks/`),
+    `child=${childHref}`);
+  await assertNoOverflow(resultPage, "prepared revision follow-up at 360px");
+
+  const revisionPosts = posts.filter(entry => entry.path.endsWith("/revisions"));
+  check("browser sent exactly one review and one revision preparation",
+    posts.filter(entry => /\/reviews\/[^/]+$/.test(entry.path)).length === 1 && revisionPosts.length === 1,
+    `reviews=${posts.filter(entry => /\/reviews\/[^/]+$/.test(entry.path)).length}; revisions=${revisionPosts.length}`);
+  check("revision preparation carried a retained idempotency key",
+    typeof revisionPosts[0]?.idempotencyKey === "string" && revisionPosts[0].idempotencyKey.length >= 8,
+    revisionPosts[0]?.idempotencyKey ?? "(missing)");
+  check("follow-up uses the exact saved owner feedback",
+    typeof revisionPosts[0]?.body === "string"
+      && (() => { try { return JSON.parse(revisionPosts[0].body).feedback === feedback; }
+        catch { return false; } })());
+
+  // The follow-up page is a real distinct task; click through and verify it
+  // is a fresh task id rendered by the same public product UI without an
+  // additional agent call.
+  await revisionChild.click();
+  await resultPage.waitForURL(url => url.pathname === childHref);
+  await resultPage.getByRole("heading", { name: "Agent progress", exact: true }).waitFor();
+  check("prepared follow-up opens the linked protected task page",
+    new URL(resultPage.url()).pathname === childHref, new URL(resultPage.url()).pathname);
+  await assertNoOverflow(resultPage, "revised task at 360px");
+
+  // Reload the follow-up page; no second revision POST should fire.
+  await resultPage.reload({ waitUntil: "domcontentloaded" });
+  await resultPage.getByRole("heading", { name: "Agent progress", exact: true }).waitFor();
+  check("follow-up direct link survives a full browser reload",
+    new URL(resultPage.url()).pathname === childHref, new URL(resultPage.url()).pathname);
+  check("reload did not repeat the revision preparation",
+    posts.filter(entry => entry.path.endsWith("/revisions")).length === 1);
   await resultPage.close();
 
   // ------ Lost request vs lost reply on a fresh create --------------------------
@@ -470,11 +521,8 @@ try {
   await lostPage.getByRole("region", { name: "Unconfirmed project save" }).waitFor();
   check("lost request is shown as unconfirmed",
     await lostPage.getByRole("button", { name: "Retry original save" }).isVisible());
-  const countManualProjects = async () =>
-    Number((await disposable.db.query("SELECT count(*) AS count FROM projects WHERE title LIKE 'Lost %'").then(r => r.rows)).count);
-  // For this fixture count rows directly
   const countProjects = async () => {
-    const rows = await disposable.db.query("SELECT title FROM projects WHERE title LIKE 'Lost %'").then(r => r.rows);
+    const rows = await startup.web.client.query("SELECT title FROM projects WHERE title LIKE 'Lost %'").then(r => r.rows);
     return rows.length;
   };
   check("lost request created no project", await countProjects() === 0);
@@ -580,6 +628,13 @@ async function ownedCleanup() {
   // authoritative owner of those paths across processes).
   try { if (context) await context.close(); } catch (error) { cleanupErrors.push(["context.close", error]); }
   try { if (browser) await browser.close(); } catch (error) { cleanupErrors.push(["browser.close", error]); }
-  try { if (application) await application.close(); else if (disposable) await disposable.close(); }
+  // 2) Close the bootstrap runtime first (releases the in-memory singleton
+  // and its evidence/result pools), then the underlying startup pools, then
+  // the lifecycle fixture that owns the PGlite database and the harness keys.
+  try { if (application) await application.close(); }
   catch (error) { cleanupErrors.push(["application.close", error]); }
+  try { if (startup) await Promise.allSettled([startup.web.close(), startup.coordinator.close()]); }
+  catch (error) { cleanupErrors.push(["startup.close", error]); }
+  try { if (fixture) await fixture.close(); }
+  catch (error) { cleanupErrors.push(["fixture.close", error]); }
 }
