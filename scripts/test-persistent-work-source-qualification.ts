@@ -3,13 +3,15 @@
  *
  * Run: node --import tsx --test scripts/test-persistent-work-source-qualification.ts
  *
- * Covers every acceptance case: valid staged completion, database-first and
- * checkpoint-first split failures, lost acknowledgements, write timeouts,
- * stale/rolled-back checkpoints, advance-contract guards, revoked or
- * mismatched signer identity, incomplete artifact restore, wrong database
- * restore identity, missing restore evidence as a bounded blocked state, and
- * exact replay. Proves statically that the runner exposes no network,
- * subprocess, credential, filesystem-write, database-write or effect adapter.
+ * Covers every acceptance case: valid staged completion (with owner
+ * signature), database-first and checkpoint-first split failures, lost
+ * acknowledgements, write timeouts, stale/rolled-back checkpoints,
+ * advance-contract guards, revoked signer refusal alongside mismatched signer
+ * identity, a valid signing path, incomplete artifact restore, wrong database
+ * restore identity, missing restore evidence as a bounded blocked state, the
+ * always-blocked aggregate disposition, and exact replay. Proves statically
+ * that the runner exposes no network, subprocess, credential, filesystem-write,
+ * database-write or effect adapter.
  */
 
 import assert from "node:assert/strict";
@@ -19,6 +21,7 @@ import { redactSecrets, assertNoSecretMaterial } from "../src/security/redaction
 import {
   qualifyPersistentWorkSource,
   qualifyAllPersistentWorkSources,
+  summarizeQualification,
   SCENARIO_NAMES,
 } from "./qualify-persistent-work-source";
 
@@ -77,13 +80,15 @@ test("sanitizer redacts hostile material instead of passing it through", () => {
   assert.ok(redactedPaths.length === 2);
 });
 
-test("valid staged completion passes with observable single advance", async () => {
+test("valid staged completion passes with observable single advance and owner signature", async () => {
   const record = await qualifyPersistentWorkSource("valid-staged-completion");
   assert.equal(record.verdict, "pass");
   assert.equal(record.reason, "staged-completion-verified");
   assert.equal(record.evidence.anchorRevision, 1);
   assert.equal(record.evidence.completedRevision, 2);
   assert.equal(record.evidence.checkpointAdvances, 1);
+  assert.equal(record.evidence.signatureLength, 64);
+  assert.equal(record.evidence.syntheticInput, true);
 });
 
 test("database-first split is blocked and the anchor is untouched", async () => {
@@ -130,11 +135,21 @@ test("checkpoint record and advance contracts hold in both directions", async ()
   assert.equal(record.evidence.guardsHeld, 3);
 });
 
-test("revoked or mismatched signer identity produces no signature", async () => {
+test("revoked signer is refused at the channel after the malformed identity is rejected", async () => {
   const record = await qualifyPersistentWorkSource("revoked-or-mismatched-signer");
   assert.equal(record.verdict, "blocked");
-  assert.equal(record.reason, "signer-identity-rejected");
+  assert.equal(record.reason, "revoked-signer-refused");
+  assert.equal(record.evidence.malformedIdentityRejected, true);
+  assert.equal(record.evidence.revokedChannelRefused, true);
   assert.equal(record.evidence.signatureProduced, false);
+});
+
+test("valid signing path verifies through the production signer", async () => {
+  const record = await qualifyPersistentWorkSource("valid-signing-path");
+  assert.equal(record.verdict, "pass");
+  assert.equal(record.reason, "signing-path-verified");
+  assert.equal(record.evidence.signatureLength, 64);
+  assert.equal(record.evidence.syntheticInput, true);
 });
 
 test("incomplete artifact restore is blocked with both digests named", async () => {
@@ -164,5 +179,19 @@ test("exact replay is byte-identical across the full suite", async () => {
   assert.deepEqual(first.map(record => record.case), [...SCENARIO_NAMES]);
   assert.equal(JSON.stringify(first), JSON.stringify(second));
   const passes = first.filter(record => record.verdict === "pass").map(record => record.case).sort();
-  assert.deepEqual(passes, ["checkpoint-advance-contract-guards", "valid-staged-completion"]);
+  assert.deepEqual(passes, ["checkpoint-advance-contract-guards", "valid-signing-path", "valid-staged-completion"]);
+});
+
+test("aggregate disposition stays blocked without real restore evidence", async () => {
+  const records = await qualifyAllPersistentWorkSources();
+  const disposition = summarizeQualification(records);
+  assert.equal(disposition.disposition, "blocked");
+  assert.equal(disposition.reason, "missing-real-restore-evidence:synthetic-passes-are-internal-logic-only");
+  assert.equal(disposition.scenarios, SCENARIO_NAMES.length);
+  // Synthetic passes never become acceptance evidence: every scenario record
+  // carries workApproved false, and the disposition never approves either.
+  assert.deepEqual(disposition.syntheticPasses,
+    ["checkpoint-advance-contract-guards", "valid-signing-path", "valid-staged-completion"]);
+  assert.ok(disposition.blocked.length === SCENARIO_NAMES.length - disposition.syntheticPasses.length);
+  assert.equal(JSON.stringify(summarizeQualification(records)), JSON.stringify(disposition));
 });
