@@ -19,6 +19,7 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 // migrations 0025/0026. Catalog query below; not a mutable database marker.
 export const privateWebSchemaDigest = "57ec401c3656b8c7bafeb8f4679bde81a81029920d6628bb248d910fc5f11503";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
+  "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
   "control_news_story_versions", "control_news_source_observations", "control_news_source_settings", "control_news_story_archives", "control_news_article_details",
   "control_idea_sessions", "control_idea_contributions", "control_idea_syntheses", "control_idea_decisions", "control_idea_bot_run_events",
@@ -36,6 +37,13 @@ const inserts = new Set(["control_web_sessions", "adapter_registry", "projects",
   "control_jobs", "control_web_task_commands", "control_completion_gate_records", "control_web_task_review_commands", "control_news_source_settings", "control_news_story_archives",
   "control_policy_decisions", "control_project_lifecycle_events", "control_project_coordinator_heads",
   "control_project_delegation_policies"]);
+
+/** Tables whose INSERT grant is column-scoped rather than table-wide. Every
+ * listed column must carry INSERT and every unlisted column must not — a
+ * table-wide INSERT grant on one of these tables fails the check. */
+export const privateWebInsertColumns: Record<string, readonly string[]> = {
+  control_idempotency: ["tenant_id", "operation_scope", "idempotency_key", "request_digest", "status"],
+};
 const updates: Record<string, readonly string[]> = {
   control_identities: ["web_lock"], control_role_grants: ["web_lock"], workspaces: ["web_lock"],
   control_connection_registry_heads: ["web_lock"], control_web_sessions: ["revoked_at"],
@@ -48,6 +56,8 @@ const updates: Record<string, readonly string[]> = {
     "connector_profile_digest", "execution_binding_digest", "assigned_by_owner_identity_id", "version",
     "assigned_at", "updated_at", "revoked_at", "payload"],
   control_project_delegation_policies: ["state", "version", "updated_at"],
+  control_idempotency: ["status", "result", "completed_at"],
+  tenants: ["coordinator_lock"],
 };
 const fail = () => { throw new Error("private_database_preflight_failed"); };
 const ideaCreationReads = ["workspaces", "control_identities", "control_role_grants", "control_web_sessions",
@@ -323,8 +333,12 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
         FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid
         WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','f') AND a.attnum>0 AND NOT a.attisdropped`)).rows;
       const reads: ReadonlySet<string> = new Set(allowedReads);
+      // Column-scoped INSERT grants (currently the web role's idempotency
+      // ledger): listed columns must carry INSERT, unlisted must not.
+      const scopedInserts = kind === "web" ? privateWebInsertColumns : {};
       if (!columns.length || columns.some(c => c.extra || c.read !== reads.has(c.table_name)
-        || c.insert !== allowedInserts.has(c.table_name) || c.update !== !!allowedUpdates[c.table_name]?.includes(c.column_name))) fail();
+        || c.insert !== (allowedInserts.has(c.table_name) || !!scopedInserts[c.table_name]?.includes(c.column_name))
+        || c.update !== !!allowedUpdates[c.table_name]?.includes(c.column_name))) fail();
       if (await readPrivateWebSchemaDigest(tx) !== privateWebSchemaDigest) fail();
       const binding = (await tx.query<{ valid: boolean }>(`SELECT EXISTS(SELECT 1 FROM workspaces w
         JOIN control_identities i ON i.tenant_id=w.tenant_id JOIN control_role_grants g ON g.tenant_id=i.tenant_id AND g.identity_id=i.id

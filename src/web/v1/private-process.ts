@@ -33,6 +33,8 @@ import { ideaCreationOptionsSchema } from "./idea-wire";
 import { parseProductConfigurationV1, type ProductConfigurationV1 } from "../../config/v1/product-configuration";
 import { WebSessionAuthority } from "./session-authority";
 import { readProjectScheduleStatus } from "../../schedules/read-service";
+import { ProjectCoordinationHttpService, type ProjectCoordinationCanonicalStoreAdapter } from "./project-coordination-http";
+import { createCoordinationHttpHandler } from "./coordination-http";
 
 export interface PrivateWebProcessOptions {
   origin: string; issuer: string; audience: string; tenantId: string; workspaceId: string;
@@ -70,6 +72,15 @@ export interface PrivateWebProcessOptions {
   submission?: TaskSubmissionOperation;
   revisions?: TaskRevisionOperation;
   queueAttention?: QueueAttentionSource;
+  /**
+   * Project coordination surface: the canonical store adapter for the
+   * coordination engine. Production supplies the real PostgreSQL-backed
+   * adapter (createProjectCoordinationCanonicalStoreAdapterV1); tests compose
+   * fakes. The web process does not own the engine's resource lifecycle.
+   * Reads run through the same-origin JWT verifier + owner grant; writes
+   * additionally require an Idempotency-Key header.
+   */
+  coordination?: { store: ProjectCoordinationCanonicalStoreAdapter };
   clock?: () => number;
   /** Tests may shorten the production drain ceiling; never extend it. */
   drainMs?: number;
@@ -172,6 +183,18 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock, "workspace_configuration");
   const scheduleAuthority = new WebSessionAuthority(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock);
+  const coordination = options.coordination
+    ? new ProjectCoordinationHttpService({
+        database: options.database.client,
+        scope: { tenantId: options.tenantId, workspaceId: options.workspaceId },
+        clock,
+        store: options.coordination.store,
+      })
+    : undefined;
+  // Shared in-flight map so simultaneous same-key POSTs coalesce onto one
+  // engine invocation. Perf-only: it is not durable replay (see
+  // createCoordinationHttpHandler docs). One instance per process.
+  const coordinationInflight = new Map<string, Promise<unknown>>();
   const ownerReviews = options.tasks?.ownerReviews ? new WebTaskReviewService(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, { ...options.tasks.ownerReviews,
       harnessIntegrityKey: options.tasks.harnessIntegrityKey, results: options.tasks.results!, ideaIntegrityKey: options.ideaProjects?.integrityKey }, clock) : undefined;
@@ -468,6 +491,16 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             return new Response(`event: project-snapshot\ndata: ${JSON.stringify({ project })}\n\n`, {
               headers: { ...privateResponseHeaders, "content-type": "text/event-stream", "x-accel-buffering": "no" },
             });
+          }
+          if (coordination && /^\/api\/v1\/projects\/[^/]+\/coordination(?:\/[^/]+)?$/.test(url.pathname)) {
+            return await createCoordinationHttpHandler({
+              origin: site.origin,
+              trust,
+              service: coordination,
+              clock,
+              isCoordinationEnabled: () => coordination.isEnabled(),
+              inflight: coordinationInflight,
+            })(request);
           }
           return await createProjectHttpHandler({ origin: site.origin, trust, service, clock })(request);
         }
