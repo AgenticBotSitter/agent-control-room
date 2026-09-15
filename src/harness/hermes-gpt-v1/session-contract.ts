@@ -69,7 +69,22 @@ export const HERMES_SESSION_ERROR_CODES_V1 = [
 export type HermesSessionErrorCodeV1 = (typeof HERMES_SESSION_ERROR_CODES_V1)[number];
 
 const jobId = z.string().regex(HERMES_SESSION_JOB_ID_PATTERN_V1);
-const sessionId = z.string().min(1).max(HERMES_SESSION_MAX_SESSION_ID_CHARS_V1);
+
+/**
+ * Upstream bounds the session id with Python `len()`, which counts codepoints.
+ * Zod's `.max()` counts UTF-16 units, so an astral-heavy id that upstream
+ * accepts would be rejected here as an unrecognized reply. Count the same
+ * units upstream counts.
+ */
+const codepointLength = (value: string): number => {
+  let count = 0;
+  for (const _ of value) count++;
+  return count;
+};
+const sessionId = z.string().min(1).refine(
+  value => codepointLength(value) <= HERMES_SESSION_MAX_SESSION_ID_CHARS_V1,
+  { message: "session id exceeds the upstream codepoint limit" },
+);
 
 /** `operator_policy.make_error_envelope`. `success` and `ok` are both false for compatibility. */
 export const hermesSessionErrorEnvelopeSchemaV1 = z.object({

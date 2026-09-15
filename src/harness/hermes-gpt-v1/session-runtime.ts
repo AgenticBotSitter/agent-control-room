@@ -93,6 +93,10 @@ export type HermesSessionResultOutcomeV1 =
     readonly schema: typeof HERMES_SESSION_OUTCOME_SCHEMA_V1;
     readonly binding: HermesSessionBindingV1;
     readonly upstreamJobId: string;
+    /** The upstream session the text actually came from, after any resolution. */
+    readonly upstreamSessionId: string;
+    /** True when that id differs from the one the binding requested. */
+    readonly sessionIdResolvedByUpstream: boolean;
     readonly text: string;
     readonly contentHash: string;
     readonly sizeBytes: number;
@@ -223,6 +227,12 @@ export async function collectHermesSessionResultV1(port: HermesSessionToolPortV1
         : { kind: "uncertain", state: "unknown", reason: carried.outcome.reason });
   }
   const value = carried.value;
+  // When `upstreamSessionId` is supplied this is a self-consistency check, not
+  // an independent identity check: it compares upstream's reply against
+  // upstream's own earlier reply, which catches a transport swapping the id
+  // between calls but cannot adjudicate a foreign session. The connector has
+  // no basis to adjudicate one — `resolve_session_id` bottoms out outside the
+  // pinned revision, so the resolution rule is not visible here.
   const expectedSessionId = (request.upstreamSessionId ?? parsed.data.sessionId).trim();
   if (value.job_id !== request.upstreamJobId
     || (value.session_id !== null && value.session_id !== expectedSessionId)) {
@@ -243,6 +253,8 @@ export async function collectHermesSessionResultV1(port: HermesSessionToolPortV1
     schema: HERMES_SESSION_OUTCOME_SCHEMA_V1,
     binding: parsed.data,
     upstreamJobId: value.job_id,
+    upstreamSessionId: expectedSessionId,
+    sessionIdResolvedByUpstream: expectedSessionId !== parsed.data.sessionId.trim(),
     text: bounded.text,
     contentHash: sha256Digest(bounded.text),
     sizeBytes: bounded.bytes,

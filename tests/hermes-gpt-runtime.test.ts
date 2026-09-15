@@ -175,10 +175,12 @@ test("a prefix-resolved session id is recorded, not refused after work has start
   assert.equal(result.kind, "completed");
 });
 
-test("a submit reply naming a foreign session, and a status reply naming a foreign job, are refused", async () => {
+test("a differing submit session id is recorded as a resolution; a foreign status job id is refused", async () => {
+  // Submit deliberately does NOT refuse a differing id: upstream may have
+  // resolved a prefix, and refusing would strand a turn that already started
+  // real work. The difference is recorded so the caller can see it.
   const foreignSubmit = new RecordedHermes({ forceReplySessionId: "session-someone-else" });
   const started = await submitHermesSessionTurnV1(foreignSubmit, { binding, prompt: "Work." });
-  // A resolved prefix is recorded; the caller can still see it differed.
   assert.equal(started.kind === "started" && started.resolvedByUpstream, true);
   assert.equal(started.kind === "started" && started.sessionId, "session-someone-else");
 

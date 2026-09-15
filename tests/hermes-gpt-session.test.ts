@@ -185,3 +185,31 @@ test("the degraded job record upstream can write is still a recognized reply", a
   assert.equal(call.outcome === "ok" && call.value.job.status, "failed");
   assert.equal(call.outcome === "ok" && call.value.job.session_id, undefined);
 });
+
+test("prompt and session-id bounds count codepoints, as Python does", async () => {
+  // 40,000 astral codepoints are 40,000 characters to upstream's len(), but
+  // 80,000 UTF-16 units in JavaScript. Counting units would refuse a prompt
+  // upstream accepts, so this must be sent.
+  const transport = new RecordedHermesTransport({
+    hermes_session_continue: [{ success: true, job_id: JOB_ID, session_id: SESSION_ID, status: "running" }],
+  });
+  const astral = "\u{1F600}".repeat(40_000);
+  assert.equal(astral.length, 80_000);
+  assert.ok(astral.length > HERMES_SESSION_MAX_PROMPT_CHARS_V1);
+  const accepted = await hermesSessionContinueV1(transport, { sessionId: SESSION_ID, prompt: astral });
+  assert.equal(accepted.outcome, "ok");
+
+  // One codepoint past upstream's ceiling is still refused.
+  const tooLarge = await hermesSessionContinueV1(transport,
+    { sessionId: SESSION_ID, prompt: "\u{1F600}".repeat(HERMES_SESSION_MAX_PROMPT_CHARS_V1 + 1) });
+  assert.equal(tooLarge.outcome, "invalid_request");
+  assert.equal(tooLarge.outcome === "invalid_request" && tooLarge.reason, "hermes_session_prompt_too_large");
+
+  // The session-id bound counts the same way: 256 astral codepoints are within
+  // upstream's 256-character limit.
+  const wideId = await hermesSessionContinueV1(
+    new RecordedHermesTransport({ hermes_session_continue: [
+      { success: true, job_id: JOB_ID, session_id: "\u{1F600}".repeat(256), status: "running" }] }),
+    { sessionId: "\u{1F600}".repeat(256), prompt: "go" });
+  assert.equal(wideId.outcome, "ok");
+});
