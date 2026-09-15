@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { formatClaimResult, isValidScope, packetHash, packetsOverlap, parseClaimCommand, parseClaimMarker, parseClaimPacket, parseClaimRequest, runClaimController, runClaimRelease, runClaimRenew, runClaimSubmit, runClaimSweep, scopeCovers, scopesOverlap } from "../scripts/automatic-claim-controller.mjs";
+import { readWorkerInbox } from "../scripts/public-worker-inbox.mjs";
+import { readQueueHealth } from "../scripts/public-queue-health.mjs";
 
 const repository = "AgenticBotSitter/agent-control-room";
 const sha = "a".repeat(40);
@@ -1475,3 +1477,94 @@ function baseRequestWithMain(api, sha) {
     return await original(method, path, body);
   };
 }
+
+// Round 2 (issue #259): the controller and both reports must classify the SAME
+// adversarial snapshot identically. One snapshot store serves the controller's
+// api adapter and the injected fetch for discovery and queue health.
+const snapshotPacket = (base, dependencies = []) => `Work packet.\n\n<!-- acr-public-work:v1 ${JSON.stringify({
+  target: "main", base, writeScopes: ["scripts/owned-scope.mjs"], dependencies,
+  checks: ["node --test tests/owned-scope.test.mjs"], risk: "boundary", effects: "none", leaseHours: 72,
+})}\n-->`;
+const snapshotIssue = (number, { base = "a".repeat(40), dependencies = [], labels = ["status:ready"], state = "open" } = {}) => ({
+  number, title: `Snapshot ${number}`, state, body: snapshotPacket(base, dependencies),
+  labels: labels.map(name => ({ name })),
+});
+const snapshotStore = ({ issues, commentsByIssue = {}, refSha }) => {
+  const byNumber = new Map(issues.map(issue => [issue.number, issue]));
+  const controllerApi = async (method, path) => {
+    if (method !== "GET") throw new Error(`snapshot_unexpected_write:${method}:${path}`);
+    if (/\/issues\/\d+\/comments\?/.test(path)) {
+      const number = Number(path.match(/\/issues\/(\d+)\/comments/)[1]);
+      return structuredClone(commentsByIssue[number] ?? []);
+    }
+    if (/\/issues\?state=open&labels=status%3A/.test(path)) return [];
+    const single = path.match(/\/issues\/(\d+)$/);
+    if (single) {
+      const found = byNumber.get(Number(single[1]));
+      if (!found) throw new Error(`snapshot_missing_issue:${single[1]}`);
+      return structuredClone(found);
+    }
+    if (/\/git\/ref\/heads\/main$/.test(path)) return { object: { sha: refSha } };
+    throw new Error(`snapshot_unhandled_api:${method}:${path}`);
+  };
+  const fetchImpl = async url => {
+    if (url.includes("/git/ref/heads/main"))
+      return { ok: true, status: 200, async json() { return { object: { sha: refSha } }; } };
+    const cm = /\/issues\/(\d+)\/comments/.exec(url);
+    if (cm) {
+      const all = commentsByIssue[cm[1]] ?? [];
+      const page = Number(/page=(\d+)/.exec(url)?.[1] ?? 1);
+      return { ok: true, status: 200, async json() { return structuredClone(all.slice((page - 1) * 100, page * 100)); } };
+    }
+    const sm = /\/issues\/(\d+)(?:[?/]|$)/.exec(url);
+    if (sm) return { ok: true, status: 200, async json() { return structuredClone(byNumber.get(Number(sm[1])) ?? null); } };
+    if (url.includes("/pulls")) return { ok: true, status: 200, async json() { return []; } };
+    if (url.includes("/issues")) return { ok: true, status: 200, async json() { return structuredClone(issues); } };
+    return { ok: false, status: 404, async json() { return {}; } };
+  };
+  return { controllerApi: { request: controllerApi }, fetchImpl };
+};
+
+test("controller and reports classify the same stale-base snapshot identically", async () => {
+  const mainSha = "f".repeat(40);
+  const staleBase = "c".repeat(40);
+  const issues = [snapshotIssue(125, { base: staleBase })];
+  const { controllerApi, fetchImpl } = snapshotStore({ issues, refSha: mainSha });
+  const decided = await runClaimController({ event: event(), repository, api: controllerApi });
+  assert.equal(decided.status, "refused");
+  assert.equal(decided.reason, "packet_base_stale");
+  const offers = (await readWorkerInbox({ workerId: "worker:test-01", includeReady: true, fetchImpl }))
+    .filter(action => action.disposition === "discovery");
+  assert.equal(offers.length, 1);
+  assert.equal(offers[0].state, "queue-blocked");
+  assert.equal(offers[0].reason, "packet_base_stale");
+  assert.equal(offers[0].admission.reason, "packet_base_stale");
+  assert.equal(offers[0].admission.observedBase, mainSha);
+  assert.equal(offers[0].admission.packetBase, staleBase);
+  assert.equal(offers[0].admission.capacity, "unknown");
+  const report = await readQueueHealth({ fetchImpl });
+  assert.equal(report.blockedOffers.length, 1);
+  assert.equal(report.blockedOffers[0].admission.reason, "packet_base_stale");
+  assert.equal(report.blockedOffers[0].admission.observedBase, mainSha);
+});
+
+test("controller and reports classify the same open-dependency snapshot identically", async () => {
+  const mainSha = "a".repeat(40);
+  const issues = [
+    snapshotIssue(125, { base: mainSha, dependencies: [126] }),
+    snapshotIssue(126, { labels: [] }),
+  ];
+  const { controllerApi, fetchImpl } = snapshotStore({ issues, refSha: mainSha });
+  const decided = await runClaimController({ event: event(), repository, api: controllerApi });
+  assert.equal(decided.status, "refused");
+  assert.equal(decided.reason, "dependencies_incomplete");
+  const offers = (await readWorkerInbox({ workerId: "worker:test-01", includeReady: true, fetchImpl }))
+    .filter(action => action.disposition === "discovery");
+  const dep = offers.find(action => action.issue === 125);
+  assert.equal(dep.state, "queue-blocked");
+  assert.equal(dep.reason, "open_dependencies");
+  assert.equal(dep.admission.reason, "dependencies_incomplete");
+  const report = await readQueueHealth({ fetchImpl });
+  const blocked = report.blockedOffers.find(offer => offer.issue === 125);
+  assert.equal(blocked.admission.reason, "dependencies_incomplete");
+});

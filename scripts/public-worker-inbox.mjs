@@ -190,18 +190,24 @@ export async function readWorkerInbox({ workerId, repository = "AgenticBotSitter
     // we cannot synthesize an actor/worker to gate pair or capacity decisions.
     const openNumbers = new Set(issues.filter(issue => !issue.pull_request).map(issue => issue.number));
     let observation;
+    let observationError;
+    const headers = { accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28", "user-agent": "agent-control-room-worker-inbox" };
+    const apiAdapter = { request: async (method, requestedPath) => {
+      // The evaluator passes full API paths (/repos/OWNER/REPO/...). Resolve them
+      // against the API host directly; never splice them onto the repo root, which
+      // duplicates the repository segment.
+      if (method !== "GET" || typeof requestedPath !== "string"
+        || !requestedPath.startsWith(`/repos/${repository}/`)) return null;
+      const response = await fetchImpl(`https://api.github.com${requestedPath}`, { headers });
+      if (!response?.ok) return null;
+      return await response.json();
+    } };
     try {
-      const headers = { accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28", "user-agent": "agent-control-room-worker-inbox" };
-      const apiAdapter = { request: async (method, requestedPath) => {
-        if (method !== "GET") return null;
-        const cleaned = requestedPath.replace(/^\/repos\/[^/]+\//, "/");
-        const url = `${root}${cleaned}`;
-        const response = await fetchImpl(url, { headers });
-        if (!response?.ok) return null;
-        return await response.json();
-      } };
       observation = await observeMainBase({ api: apiAdapter, repository });
-    } catch { observation = undefined; }
+    } catch (error) {
+      observation = undefined;
+      observationError = error?.message ?? "admission_evaluator_base_unavailable";
+    }
     const baseSha = observation?.baseSha;
     for (const issue of issues) {
       const labels = labelsOf(issue);
@@ -214,7 +220,8 @@ export async function readWorkerInbox({ workerId, repository = "AgenticBotSitter
       if (!conflicts && packet && baseSha) {
         try {
           admission = await evaluateAdmissionDecision({
-            issue, comments: [], packet, openNumbers, baseSha, observedAt: observation.observedAt,
+            issue, comments: [], packet, api: apiAdapter, repository,
+            openNumbers, baseSha, observedAt: observation.observedAt,
           });
         } catch (error) {
           admissionError = /^admission_evaluator_/.test(error?.message) ? error.message : "admission_evaluator_unavailable";
@@ -224,23 +231,25 @@ export async function readWorkerInbox({ workerId, repository = "AgenticBotSitter
         ?? (conflicts ? "refuse" : !packet ? "refuse" : "admit");
       const admissionReason = admission?.reason
         ?? (conflicts ? "conflicting_ready_labels" : !packet ? "packet_invalid" : undefined);
-      // Discovery stays correct when the base observation is unavailable (rate-limited,
-      // permission error, API outage): fall back to the same dependency check the
-      // original code used so a stale-base or unknown-base offer is still classified
-      // when its dependencies are open. The shared evaluator is the authoritative
-      // source; the fallback only fires when observation could not complete.
+      // Unknown is not admitted. When the base observation failed (403/404/network),
+      // no offer may be advertised as a validated ready-candidate: dependency-only
+      // refusals still classify (they need no base), but every otherwise-plausible
+      // offer is explicitly blocked as observation-unavailable.
       const dependencies = packet?.dependencies.filter(number => openNumbers.has(number)) ?? [];
       const baseObserved = baseSha !== undefined;
       const ready = baseObserved
         ? admissionOutcome === "admit" && !conflicts && packet
-        : !conflicts && packet !== undefined && dependencies.length === 0;
+        : false;
       // Discovery maps the evaluator's "dependencies_incomplete" refusal back to the
       // public "open_dependencies" vocabulary so existing reports stay readable; the
       // shared evaluator preserves the canonical reason inside `admission.reason`.
       const reason = !ready
         ? (admissionReason === "dependencies_incomplete" ? "open_dependencies" : admissionReason
-          ?? (dependencies.length ? "open_dependencies" : "admission_incomplete"))
+          ?? (!baseObserved
+            ? (dependencies.length ? "open_dependencies" : "admission_observation_unavailable")
+            : dependencies.length ? "open_dependencies" : "admission_incomplete"))
         : undefined;
+      if (!baseObserved && admissionError === undefined) admissionError = observationError;
       actions.push(Object.freeze({ workerId, issue: issue.number, title: issue.title ?? "",
         issueUrl: `https://github.com/${repository}/issues/${issue.number}`,
         state: reason ? "queue-blocked" : "ready-candidate", disposition: "discovery", trust: "public-offer",
@@ -252,6 +261,7 @@ export async function readWorkerInbox({ workerId, repository = "AgenticBotSitter
             outcome: admission.outcome, reason: admission.reason,
             observedAt: admission.observedAt, observedBase: admission.observedBase,
             ...(admission.packetBase ? { packetBase: admission.packetBase } : {}),
+            capacity: admission.capacity ?? "unknown", pair: admission.pair ?? "unknown", locks: admission.locks ?? "unknown",
           }),
         } : {}),
         ...(admissionError ? { admissionError } : {}),

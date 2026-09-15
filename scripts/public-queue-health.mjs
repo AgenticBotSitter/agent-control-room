@@ -406,30 +406,62 @@ export async function readQueueHealth({
   const readyIssues = workIssues.filter(issue => labelsOf(issue).includes("status:ready"));
   // Comments are fetched at most once for any issue that needs admission evaluation
   // so we can detect an already-accepted Ready offer (CLAIM ACCEPTED marker) and
-  // leave its pinned base intact even when the live main has moved on.
+  // leave its pinned base intact even when the live main has moved on. History is
+  // read with the same bounded pagination the controller uses (100 per page, max
+  // 10 pages): a failed or truncated read is explicit incomplete history, never
+  // an empty history — missing history must not become "no prior reservation".
   const commentsByIssue = new Map();
+  const historyIncompleteByIssue = new Map();
+  const queueHealthHeaders = {
+    accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28", "user-agent": "agent-control-room-queue-health",
+  };
   const commentsForIssue = async number => {
     if (commentsByIssue.has(number)) return commentsByIssue.get(number);
-    const value = await fetchImpl(`${root}/issues/${number}/comments`, { headers: {
-      accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28", "user-agent": "agent-control-room-queue-health",
-    } });
-    const list = value?.ok ? await value.json() : [];
-    commentsByIssue.set(number, Array.isArray(list) ? list : []);
-    return commentsByIssue.get(number);
+    const collected = [];
+    let incomplete = false;
+    for (let page = 1; page <= 10; page++) {
+      let value;
+      try {
+        value = await fetchImpl(`${root}/issues/${number}/comments?per_page=100&page=${page}`, { headers: queueHealthHeaders });
+      } catch {
+        incomplete = true;
+        break;
+      }
+      if (!value?.ok) { incomplete = true; break; }
+      let batch;
+      try {
+        batch = await value.json();
+      } catch {
+        incomplete = true;
+        break;
+      }
+      if (!Array.isArray(batch)) { incomplete = true; break; }
+      collected.push(...batch);
+      if (batch.length < 100) break;
+      if (page === 10) incomplete = true;
+    }
+    commentsByIssue.set(number, collected);
+    historyIncompleteByIssue.set(number, incomplete);
+    return collected;
   };
   let observation;
+  let observationError;
+  const apiAdapter = { request: async (method, requestedPath) => {
+    // The evaluator passes full API paths (/repos/OWNER/REPO/...). Resolve them
+    // against the API host directly; never splice them onto the repo root, which
+    // duplicates the repository segment.
+    if (method !== "GET" || typeof requestedPath !== "string"
+      || !requestedPath.startsWith(`/repos/${repository}/`)) return null;
+    const response = await fetchImpl(`https://api.github.com${requestedPath}`, { headers: queueHealthHeaders });
+    if (!response?.ok) return null;
+    return await response.json();
+  } };
   try {
-    const headers = { accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28", "user-agent": "agent-control-room-queue-health" };
-    const apiAdapter = { request: async (method, requestedPath) => {
-      if (method !== "GET") return null;
-      const cleaned = requestedPath.replace(/^\/repos\/[^/]+\//, "/");
-      const url = `${root}${cleaned}`;
-      const response = await fetchImpl(url, { headers });
-      if (!response?.ok) return null;
-      return await response.json();
-    } };
     observation = await observeMainBase({ api: apiAdapter, repository });
-  } catch { observation = undefined; }
+  } catch (error) {
+    observation = undefined;
+    observationError = error?.message ?? "admission_evaluator_base_unavailable";
+  }
   const baseSha = observation?.baseSha;
   const openNumbers = new Set(workIssues.map(issue => issue.number));
   const blockedOffers = [];
@@ -441,12 +473,22 @@ export async function readQueueHealth({
     // Already accepted work retains its pinned base from the marker; queue health
     // does not reclassify it as blocked just because main has advanced. We fetch
     // the issue's comments lazily so a live accepted-claim marker is respected.
+    // When the history itself could not be read completely, the issue is blocked
+    // as history-incomplete: an unread history is unknown, not unreserved.
     const issueComments = await commentsForIssue(issue.number);
+    if (historyIncompleteByIssue.get(issue.number)) {
+      blockedOffers.push(Object.freeze({
+        issue: issue.number,
+        title: sanitize(issue.title),
+        url: issueUrlOf(repository, issue.number),
+        admissionError: "admission_history_incomplete",
+      }));
+      continue;
+    }
     const claim = latestClaim(issueComments, issue.number, advisoryLogins);
     if (claim) continue;
     let admission;
     let admissionError;
-    let requiresBaseObservation = false;
     if (conflicts) {
       admission = Object.freeze({ outcome: "refuse", reason: "conflicting_ready_labels",
         observedAt: observation?.observedAt ?? "", observedBase: baseSha ?? "" });
@@ -454,25 +496,29 @@ export async function readQueueHealth({
       admission = Object.freeze({ outcome: "refuse", reason: "packet_invalid",
         observedAt: observation?.observedAt ?? "", observedBase: baseSha ?? "" });
     } else if (baseSha === undefined) {
-      requiresBaseObservation = true;
+      // Unknown is not admitted. Without the live base, dependency-only refusals
+      // still classify (they need no base); every otherwise-plausible offer is
+      // explicitly blocked as observation-unavailable.
       const openDeps = packet.dependencies.filter(number => openNumbers.has(number));
       if (openDeps.length > 0) {
         admission = Object.freeze({ outcome: "refuse", reason: "dependencies_incomplete",
           observedAt: observation?.observedAt ?? "", observedBase: baseSha ?? "" });
       } else {
-        admission = Object.freeze({ outcome: "admit", reason: "admission_incomplete_observation",
+        admission = Object.freeze({ outcome: "refuse", reason: "admission_observation_unavailable",
           observedAt: observation?.observedAt ?? "", observedBase: baseSha ?? "" });
+        admissionError = observationError;
       }
     } else {
       try {
         admission = await evaluateAdmissionDecision({
-          issue, comments: [], packet, openNumbers, baseSha, observedAt: observation.observedAt,
+          issue, comments: issueComments, packet, api: apiAdapter, repository,
+          openNumbers, baseSha, observedAt: observation.observedAt,
         });
       } catch (error) {
         admissionError = /^admission_evaluator_/.test(error?.message) ? error.message : "admission_evaluator_unavailable";
       }
     }
-    if (admission?.outcome === "admit" && !requiresBaseObservation) continue;
+    if (admission?.outcome === "admit") continue;
     const offer = {
       issue: issue.number,
       title: sanitize(issue.title),
@@ -482,6 +528,7 @@ export async function readQueueHealth({
           outcome: admission.outcome, reason: admission.reason,
           observedAt: admission.observedAt, observedBase: admission.observedBase,
           ...(admission.packetBase ? { packetBase: admission.packetBase } : {}),
+          capacity: admission.capacity ?? "unknown", pair: admission.pair ?? "unknown", locks: admission.locks ?? "unknown",
         }),
       } : {}),
       ...(admissionError ? { admissionError } : {}),
@@ -497,7 +544,7 @@ export async function readQueueHealth({
   // queue where every offer was classified by packet/conflicts alone, does not
   // raise this warning.
   const offersNeedingBaseObservation = blockedOffers.filter(offer =>
-    offer.admission?.reason === "admission_incomplete_observation"
+    offer.admission?.reason === "admission_observation_unavailable"
     || offer.admission?.reason === "packet_base_stale"
     || offer.admissionError).length;
   if (observation === undefined && offersNeedingBaseObservation > 0)

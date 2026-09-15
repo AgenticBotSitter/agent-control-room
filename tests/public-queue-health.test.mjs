@@ -588,3 +588,72 @@ test("queue health classifies a malformed packet offer as blocked without claimi
   assert.equal(report.blockedOffers.length, 1);
   assert.equal(report.blockedOffers[0].admission.reason, "packet_invalid");
 });
+
+// Round 2 (issue #259): adapter URL construction is exact. Every endpoint the
+// health path requests must be the real API URL; any unexpected endpoint —
+// especially a doubled repository segment — fails the test.
+test("queue health requests only exact API URLs with no duplicated repository segment", async () => {
+  const refSha = "f".repeat(40);
+  const seen = [];
+  const fetchImpl = async url => {
+    seen.push(url);
+    if (url.includes("/git/ref/heads/main")) return { ok: true, status: 200, async json() { return { object: { sha: refSha } }; } };
+    if (url.includes("/comments")) return { ok: true, status: 200, async json() { return []; } };
+    if (url.includes("/pulls")) return { ok: true, status: 200, async json() { return []; } };
+    return { ok: true, status: 200, async json() { return [issue(125, ["status:ready", "help wanted"], "2026-09-14T10:00:00Z",
+      { body: packetBody({ base: refSha }) })]; } };
+  };
+  const report = await readQueueHealth({ fetchImpl });
+  assert.ok(seen.includes(`https://api.github.com/repos/AgenticBotSitter/agent-control-room/git/ref/heads/main`),
+    `expected exact ref URL, saw: ${seen.join(" | ")}`);
+  for (const url of seen) {
+    assert.ok(!url.includes("agent-control-room/agent-control-room"), `duplicated repository segment: ${url}`);
+    assert.ok(url.startsWith("https://api.github.com/repos/AgenticBotSitter/agent-control-room/"), `unexpected endpoint: ${url}`);
+  }
+  assert.equal(report.uncertainty.observationComplete, true);
+});
+
+// Round 2 (issue #259): history pagination is bounded but complete. A relevant
+// CLAIM ACCEPTED record beyond page 1 must still filter the offer (retaining its
+// pinned base), and a failed later page must classify as history-incomplete —
+// never as an empty history with no prior reservation.
+test("queue health finds an accepted-claim record beyond comments page 1", async () => {
+  const refSha = "a".repeat(40);
+  const accepted = controllerComment(claimMarker(125, "worker:test-01"));
+  const fetchImpl = async url => {
+    if (url.includes("/git/ref/heads/main")) return { ok: true, status: 200, async json() { return { object: { sha: refSha } }; } };
+    if (url.includes("/pulls")) return { ok: true, status: 200, async json() { return []; } };
+    const page = Number(/page=(\d+)/.exec(url)?.[1] ?? 1);
+    if (url.includes("/comments")) {
+      if (page === 1) return { ok: true, status: 200, async json() { return Array(100).fill(controllerComment("routine note")); } };
+      if (page === 2) return { ok: true, status: 200, async json() { return [accepted]; } };
+      return { ok: true, status: 200, async json() { return []; } };
+    }
+    return { ok: true, status: 200, async json() { return [issue(125, ["status:ready", "help wanted"], "2026-09-14T10:00:00Z",
+      { body: packetBody({ base: refSha }) })]; } };
+  };
+  const report = await readQueueHealth({ fetchImpl });
+  // The offer is filtered before admission: already-accepted work retains its
+  // pinned base even though main matches and the packet is otherwise valid.
+  assert.equal(report.blockedOffers.length, 0);
+});
+
+test("queue health classifies a failed later comments page as history-incomplete", async () => {
+  const refSha = "a".repeat(40);
+  const fetchImpl = async url => {
+    if (url.includes("/git/ref/heads/main")) return { ok: true, status: 200, async json() { return { object: { sha: refSha } }; } };
+    if (url.includes("/pulls")) return { ok: true, status: 200, async json() { return []; } };
+    const page = Number(/page=(\d+)/.exec(url)?.[1] ?? 1);
+    if (url.includes("/comments")) {
+      if (page === 1) return { ok: true, status: 200, async json() { return Array(100).fill(controllerComment("routine note")); } };
+      throw new Error("socket hang up");
+    }
+    return { ok: true, status: 200, async json() { return [issue(125, ["status:ready", "help wanted"], "2026-09-14T10:00:00Z",
+      { body: packetBody({ base: refSha }) })]; } };
+  };
+  const report = await readQueueHealth({ fetchImpl });
+  assert.equal(report.blockedOffers.length, 1);
+  assert.equal(report.blockedOffers[0].issue, 125);
+  assert.equal(report.blockedOffers[0].admissionError, "admission_history_incomplete");
+  assert.ok(report.warnings.includes("admission_evaluation_incomplete"));
+});

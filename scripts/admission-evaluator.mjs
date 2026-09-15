@@ -1,76 +1,92 @@
-// Read-only admission evaluator used by the controller and discovery/health scripts.
+// Read-only admission predicates shared by the controller and discovery/health scripts.
 //
-// Extracted from the controller's pre-reservation gates so the same decision ordering
-// (issue status, packet validity, effects, dependencies, capacity, locks, scope, base)
-// is applied wherever a "Ready" offer is reported. This module performs ONLY HTTP GETs
-// (one to /repos/.../git/ref/heads/main and the caller's pre-fetched issues/comments);
-// it never POSTs, never mutates labels or comments, and never creates an assignment.
+// This module is the SINGLE SOURCE for the controller's pre-reservation gates.
+// The implementations below are the controller's exact predicates, relocated here
+// (not reimplemented): same order, same refusal vocabulary, same error codes.
+// The controller imports them; discovery calls evaluateAdmissionDecision for the
+// global subset. Per-worker fit (pair/capacity/locks) stays in the controller;
+// reports surface those dimensions as explicit unknown markers instead of
+// implying fit from global admission.
 //
-// Every caller must supply the same observation window that the controller would have
-// at the same instant. The evaluator returns the observation time/base so callers can
-// surface them and stay bounded; incomplete observations are reported as errors, never
-// as empty results.
-//
-// The evaluator separates global offer validity (packet, dependencies, base, locks)
-// from per-worker fit (active pair, capacity). Discovery uses global validity; the
-// controller also applies per-worker fit before accepting a claim.
+// The module performs ONLY HTTP GETs. It never POSTs, never mutates labels or
+// comments, and never creates an assignment.
 
-const ACCEPTED_HISTORY_PATTERN = /<!--\s*agent-control-room-claim:v3\s+issue=(\d+)\s+request=(\d+)\s+actor=(\S+)\s+worker=(\S+)\s+packet=([a-f0-9]{64})\s+accepted=(\d+)/;
+const MARKER_V2 = "<!-- agent-control-room-claim:v2";
+const MARKER_V3 = "<!-- agent-control-room-claim:v3";
 const CONTROLLER = comment => comment?.user?.login === "github-actions[bot]" && comment?.user?.type === "Bot";
 
-function isReady(issue) {
-  const labels = Array.isArray(issue?.labels) ? issue.labels.map(label => typeof label === "string" ? label : label?.name).filter(label => typeof label === "string") : [];
-  const statuses = labels.filter(label => label.startsWith("status:"));
-  return statuses.length === 1 && statuses[0] === "status:ready";
+const labelNames = issue => (Array.isArray(issue?.labels) ? issue.labels.map(label =>
+  typeof label === "string" ? label : label?.name).filter(label => typeof label === "string") : []);
+
+/** Exact controller Ready predicate: open, not a PR, exactly one status label, and it is ready. */
+export function isReady(issue) {
+  const statuses = labelNames(issue).filter(label => label.startsWith("status:"));
+  return issue?.state === "open" && !issue?.pull_request && statuses.length === 1 && statuses[0] === "status:ready";
 }
 
-/** Whether the issue already has a live accepted-claim marker that has not been released. */
+/**
+ * Exact controller accepted-history predicate: the latest controller record wins.
+ * An ACCEPTED/RENEWED marker (v2 or v3, bound to this issue) means live unless a
+ * later RELEASED/EXPIRED record for the same issue clears it.
+ */
 export function liveAcceptedHistory(comments, issueNumber) {
-  if (!Array.isArray(comments)) return false;
-  for (const comment of comments) {
-    if (!CONTROLLER(comment) || typeof comment.body !== "string") continue;
-    const accepted = /^(CLAIM ACCEPTED|CLAIM RENEWED) —/.test(comment.body);
-    const cleared = /^(CLAIM RELEASED|CLAIM EXPIRED) —/.test(comment.body)
+  let latest = 0;
+  let live = false;
+  for (const comment of (Array.isArray(comments) ? comments : [])) {
+    if (comment?.user?.login !== "github-actions[bot]" || comment?.user?.type !== "Bot"
+      || typeof comment.body !== "string" || !Number.isSafeInteger(comment?.id)) continue;
+    const clearing = (comment.body.startsWith("CLAIM RELEASED —") || comment.body.startsWith("CLAIM EXPIRED —"))
       && comment.body.includes(`issue=${issueNumber} `);
-    if (cleared) continue;
-    if (accepted && comment.body.includes(`issue=${issueNumber} `)) return true;
-  }
-  return false;
-}
-
-function scopesOverlap(own, other) {
-  if (typeof own !== "string" || typeof other !== "string") return false;
-  const ownPrefix = own.endsWith("/**") ? own.slice(0, -3) : own;
-  const otherPrefix = other.endsWith("/**") ? other.slice(0, -3) : other;
-  return ownPrefix === otherPrefix
-    || (own.endsWith("/**") && other.startsWith(ownPrefix + "/"))
-    || (other.endsWith("/**") && own.startsWith(otherPrefix + "/"));
-}
-
-/** Whether the actor-and-worker pair holds an active (unreleased) reservation. */
-export async function activePairExists({ api, repository, actor, workerId, issues }) {
-  if (!api || typeof api.request !== "function" || typeof repository !== "string"
-    || typeof actor !== "string" || typeof workerId !== "string") return false;
-  for (const issue of (issues ?? [])) {
-    if (!Number.isSafeInteger(issue?.number) || issue.pull_request) continue;
-    let comments;
-    try { comments = await api.request("GET", `/repos/${repository}/issues/${issue.number}/comments?per_page=100`); }
-    catch { continue; }
-    if (!Array.isArray(comments)) continue;
-    for (const comment of comments) {
-      if (!CONTROLLER(comment) || typeof comment.body !== "string") continue;
-      const match = ACCEPTED_HISTORY_PATTERN.exec(comment.body);
-      if (!match) continue;
-      const cleared = /^(CLAIM RELEASED|CLAIM EXPIRED) —/.test(comment.body);
-      if (cleared) continue;
-      if (Number(match[1]) !== issue.number) continue;
-      if (match[3] === actor && match[4] === workerId) return true;
+    const accepting = (comment.body.startsWith("CLAIM ACCEPTED —") || comment.body.startsWith("CLAIM RENEWED —"))
+      && (comment.body.includes(`${MARKER_V2} issue=${issueNumber} `)
+        || comment.body.includes(`${MARKER_V3} issue=${issueNumber} `));
+    if ((clearing || accepting) && comment.id > latest) {
+      latest = comment.id;
+      live = accepting;
     }
   }
-  return false;
+  return live;
 }
 
-/** Whether every declared dependency issue is closed (i.e. not in `issues?` as open). */
+/** Bounded paginated comment read. Mirrors the controller's commentsFor: 10 pages max, hard error on shape violation. */
+async function fetchCommentsPaged(api, repository, issueNumber) {
+  const comments = [];
+  for (let page = 1; page <= 10; page++) {
+    const batch = await api.request("GET", `/repos/${repository}/issues/${issueNumber}/comments?per_page=100&page=${page}`);
+    if (!Array.isArray(batch)) throw new Error("claim_controller_api_invalid");
+    comments.push(...batch);
+    if (batch.length < 100) return comments;
+  }
+  throw new Error("claim_controller_comment_history_ambiguous");
+}
+
+/**
+ * Exact controller pair predicate: scans open Working issues (bounded pagination)
+ * for a live CLAIM ACCEPTED marker bound to this actor+worker pair.
+ */
+export async function activePairExists(api, repository, value, excludeIssue) {
+  for (let page = 1; page <= 10; page++) {
+    const issues = await api.request("GET", `/repos/${repository}/issues?state=open&labels=status%3Aworking&per_page=100&page=${page}`);
+    if (!Array.isArray(issues)) throw new Error("claim_controller_api_invalid");
+    for (const issue of issues) {
+      if (issue?.pull_request || !Number.isSafeInteger(issue?.number) || issue.number === excludeIssue) continue;
+      const pair = ` actor=${value.actor} worker=${value.workerId} `;
+      if ((await fetchCommentsPaged(api, repository, issue.number)).some(comment => comment?.user?.login === "github-actions[bot]"
+        && comment?.user?.type === "Bot" && typeof comment.body === "string"
+        && comment.body.startsWith("CLAIM ACCEPTED —")
+        && (comment.body.includes(MARKER_V2) || comment.body.includes(MARKER_V3))
+        && comment.body.includes(pair))) return true;
+    }
+    if (issues.length < 100) return false;
+  }
+  throw new Error("claim_controller_working_set_ambiguous");
+}
+
+/**
+ * Set-membership dependency pre-check used only when no API is available.
+ * A dependency is COMPLETE only per dependencyIssueComplete below; absence from
+ * an open-issue set is a necessary but not sufficient signal.
+ */
 export function dependenciesComplete({ packet, openNumbers }) {
   if (!packet || !Array.isArray(packet.dependencies)) return false;
   const open = openNumbers instanceof Set ? openNumbers : new Set(openNumbers ?? []);
@@ -78,10 +94,9 @@ export function dependenciesComplete({ packet, openNumbers }) {
 }
 
 /**
- * Whether every declared dependency issue is closed, done and not not_planned.
- * Equivalent to the controller's previous `dependenciesComplete(api, repository, packet)`:
- * a dependency is complete only when the issue is fetched, not a PR, `state === "closed"`,
- * `state_reason !== "not_planned"`, and labelled `status:done`.
+ * Exact controller dependency predicate: a dependency is complete only when the
+ * issue fetches cleanly, is not a PR, is closed, was not not_planned, and carries
+ * status:done. Never infer completion from set absence alone.
  */
 export async function dependencyIssueComplete({ api, repository, number }) {
   if (!api || typeof api.request !== "function" || typeof repository !== "string"
@@ -89,10 +104,7 @@ export async function dependencyIssueComplete({ api, repository, number }) {
   const issue = await api.request("GET", `/repos/${repository}/issues/${number}`);
   if (!issue || issue.pull_request || issue.state !== "closed") return false;
   if (issue.state_reason === "not_planned") return false;
-  const labels = (Array.isArray(issue?.labels) ? issue.labels : [])
-    .map(label => typeof label === "string" ? label : label?.name)
-    .filter(label => typeof label === "string");
-  if (!labels.includes("status:done")) return false;
+  if (!labelNames(issue).includes("status:done")) return false;
   return true;
 }
 
@@ -104,48 +116,65 @@ export async function dependenciesCompleteDetailed({ api, repository, packet }) 
   return true;
 }
 
-/** Evaluate whether a single Ready issue is a valid global offer and (optionally) per-worker fit. */
-export async function evaluateAdmissionDecision({
-  issue, comments = [], api, repository, openNumbers, packet, packetBase, baseSha,
-  actor, workerId, observedAt = new Date().toISOString(),
-}) {
-  if (!issue || !Number.isSafeInteger(issue?.number)) {
-    return Object.freeze({ outcome: "refuse", reason: "issue_unknown", observedAt, observedBase: baseSha ?? "" });
-  }
-  if (!isReady(issue)) {
-    return Object.freeze({ outcome: "refuse", reason: "issue_not_ready", issue: issue.number, observedAt, observedBase: baseSha ?? "" });
-  }
-  if (liveAcceptedHistory(comments, issue.number)) {
-    return Object.freeze({ outcome: "refuse", reason: "accepted_history_requires_release", issue: issue.number, observedAt, observedBase: baseSha ?? "" });
-  }
-  if (!packet) {
-    return Object.freeze({ outcome: "refuse", reason: "packet_invalid", issue: issue.number, observedAt, observedBase: baseSha ?? "" });
-  }
-  if (packet.effects !== "none") {
-    return Object.freeze({ outcome: "refuse", reason: "packet_effectful", issue: issue.number, observedAt, observedBase: baseSha ?? "" });
-  }
-  if (!dependenciesComplete({ packet, openNumbers })) {
-    return Object.freeze({ outcome: "refuse", reason: "dependencies_incomplete", issue: issue.number, observedAt, observedBase: baseSha ?? "" });
-  }
-  if (typeof baseSha !== "string" || !/^[a-f0-9]{40}$/.test(baseSha)) {
-    return Object.freeze({ outcome: "refuse", reason: "base_unknown", issue: issue.number, observedAt, observedBase: baseSha ?? "" });
-  }
-  if (packet.base !== baseSha) {
-    return Object.freeze({ outcome: "refuse", reason: "packet_base_stale", issue: issue.number, observedAt, observedBase: baseSha, packetBase: packet.base });
-  }
-  // Per-worker fit is opt-in: discovery callers omit `actor`/`workerId` and the
-  // evaluator returns the global verdict only. The controller supplies both and
-  // gates the remaining pair/capacity/lock/scope checks before transitioning to
-  // Working. Lock and scope data is the controller's responsibility because the
-  // evaluator must not POST.
-  if (actor === undefined && workerId === undefined) {
-    return Object.freeze({ outcome: "admit", issue: issue.number, observedAt, observedBase: baseSha,
-      globalOnly: true, packet });
-  }
-  return Object.freeze({ outcome: "admit", issue: issue.number, observedAt, observedBase: baseSha, packet });
+function scopesOverlap(own, other) {
+  if (typeof own !== "string" || typeof other !== "string") return false;
+  const ownPrefix = own.endsWith("/**") ? own.slice(0, -3) : own;
+  const otherPrefix = other.endsWith("/**") ? other.slice(0, -3) : other;
+  return ownPrefix === otherPrefix
+    || (own.endsWith("/**") && other.startsWith(ownPrefix + "/"))
+    || (other.endsWith("/**") && own.startsWith(otherPrefix + "/"));
 }
 
-/** Bounded observation helper: returns the current `main` SHA. Throws on missing base or pagination error. */
+/**
+ * Global admission verdict for one Ready issue, in the controller's gate order:
+ * ready → accepted-history → packet → effects → dependencies → scope → base.
+ * Pair/capacity/locks are per-worker fit and are NOT decided here; when the
+ * caller cannot supply them they are returned as explicit unknown markers so no
+ * report can present global admission as proof of fit.
+ */
+export async function evaluateAdmissionDecision({
+  issue, comments = [], api, repository, openNumbers, packet, baseSha,
+  knownLocks, observedAt = new Date().toISOString(),
+}) {
+  const base = { observedAt, observedBase: typeof baseSha === "string" ? baseSha : "" };
+  const unknownFit = { capacity: "unknown", pair: "unknown", locks: knownLocks === undefined ? "unknown" : "checked" };
+  if (!issue || !Number.isSafeInteger(issue?.number)) {
+    return Object.freeze({ outcome: "refuse", reason: "issue_unknown", ...base, ...unknownFit });
+  }
+  if (!isReady(issue)) {
+    return Object.freeze({ outcome: "refuse", reason: "issue_not_ready", issue: issue.number, ...base, ...unknownFit });
+  }
+  if (liveAcceptedHistory(comments, issue.number)) {
+    return Object.freeze({ outcome: "refuse", reason: "accepted_history_requires_release", issue: issue.number, ...base, ...unknownFit });
+  }
+  if (!packet) {
+    return Object.freeze({ outcome: "refuse", reason: "packet_invalid", issue: issue.number, ...base, ...unknownFit });
+  }
+  if (packet.effects !== "none") {
+    return Object.freeze({ outcome: "refuse", reason: "packet_effectful", issue: issue.number, ...base, ...unknownFit });
+  }
+  const depsOk = (api && typeof api.request === "function" && typeof repository === "string")
+    ? await dependenciesCompleteDetailed({ api, repository, packet })
+    : dependenciesComplete({ packet, openNumbers });
+  if (!depsOk) {
+    return Object.freeze({ outcome: "refuse", reason: "dependencies_incomplete", issue: issue.number, ...base, ...unknownFit });
+  }
+  if (knownLocks !== undefined) {
+    const locks = Array.isArray(knownLocks) ? knownLocks : [];
+    if (locks.some(scope => (packet.writeScopes ?? []).some(own => scopesOverlap(own, scope)))) {
+      return Object.freeze({ outcome: "refuse", reason: "scope_overlap", issue: issue.number, ...base, ...unknownFit });
+    }
+  }
+  if (typeof baseSha !== "string" || !/^[a-f0-9]{40}$/.test(baseSha)) {
+    return Object.freeze({ outcome: "refuse", reason: "base_unknown", issue: issue.number, ...base, ...unknownFit });
+  }
+  if (packet.base !== baseSha) {
+    return Object.freeze({ outcome: "refuse", reason: "packet_base_stale", issue: issue.number, ...base, packetBase: packet.base, ...unknownFit });
+  }
+  return Object.freeze({ outcome: "admit", issue: issue.number, ...base, globalOnly: true, packet, ...unknownFit });
+}
+
+/** Bounded observation helper: returns the current `main` SHA. Throws on missing base. */
 export async function observeMainBase({ api, repository, observedAt = new Date().toISOString() }) {
   if (!api || typeof api.request !== "function" || typeof repository !== "string") {
     throw new Error("admission_evaluator_observation_invalid");
@@ -158,4 +187,4 @@ export async function observeMainBase({ api, repository, observedAt = new Date()
   return Object.freeze({ baseSha: sha, observedAt });
 }
 
-export const __test = Object.freeze({ scopesOverlap, isReady, ACCEPTED_HISTORY_PATTERN, CONTROLLER });
+export const __test = Object.freeze({ scopesOverlap, labelNames, MARKER_V2, MARKER_V3, CONTROLLER });
