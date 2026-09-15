@@ -13,8 +13,8 @@ import { ConfiguredTimestamp } from "./configured-timestamp";
 const reviewLabel: Record<TaskReviewEvidence["status"], string> = { pending: "Review in progress", changes_requested: "Changes requested",
   verification_blocked: "Verification blocked", revision_limit_reached: "Revision limit reached", ready: "Quality review complete", superseded: "Replaced by a newer revision" };
 
-export function TaskResultsPanel({ page, content: suppliedContent, pending, onOpen, onClose, onReviewSaved, reviewWorkspace, verificationWorkspace }: { page: TaskResultsPage; content?: TaskResultContent;
-  pending: boolean; onOpen: (artifactId: string) => void; onClose: () => void; onReviewSaved?: () => void; reviewWorkspace?: TaskReviewWorkspace;
+export function TaskResultsPanel({ page, content: suppliedContent, pending, selectedArtifactId, onOpen, onClose, onReviewSaved, reviewWorkspace, verificationWorkspace }: { page: TaskResultsPage; content?: TaskResultContent;
+  pending: boolean; selectedArtifactId?: string; onOpen: (artifactId: string) => void; onClose: () => void; onReviewSaved?: () => void; reviewWorkspace?: TaskReviewWorkspace;
   verificationWorkspace?: TaskVerificationWorkspace }) {
   const content = page.canReadContent && suppliedContent?.projectId === page.projectId
     && suppliedContent.jobId === page.jobId && page.items.some(item =>
@@ -25,15 +25,30 @@ export function TaskResultsPanel({ page, content: suppliedContent, pending, onOp
   // user is never returned to the top of a long list.
   const openedRegion = useRef<HTMLElement>(null);
   const openers = useRef(new Map<string, HTMLButtonElement | null>());
-  const lastOpened = useRef<string | undefined>(undefined);
-  const openArtifactId = content?.artifact.artifactId;
+  const focusedFor = useRef<string | undefined>(undefined);
+  // Keyed on the *selection*, not on whether content is currently present.
+  // Every background refresh clears content briefly while the same file stays
+  // selected; keying on content would move focus twice per poll and, because
+  // the opener button is disabled while pending, would drop it on the document
+  // body. Keying on the selection makes a refresh invisible to focus.
   useEffect(() => {
-    if (openArtifactId) { lastOpened.current = openArtifactId; openedRegion.current?.focus(); return; }
-    const previous = lastOpened.current;
+    if (selectedArtifactId) {
+      // Move focus once, when a different file is opened. The panel reloads on
+      // a 30-second poll and on window focus, and each reload briefly clears
+      // content; keying on the selection rather than on content means those
+      // reloads never move focus. (They still drop it, because clearing
+      // content unmounts the open region — that is pre-existing behaviour of
+      // the reload, not something this selection change introduces.)
+      if (!content || focusedFor.current === selectedArtifactId) return;
+      focusedFor.current = selectedArtifactId;
+      openedRegion.current?.focus();
+      return;
+    }
+    const previous = focusedFor.current;
     if (!previous) return;
-    lastOpened.current = undefined;
+    focusedFor.current = undefined;
     openers.current.get(previous)?.focus();
-  }, [openArtifactId]);
+  }, [selectedArtifactId, content]);
   return <div className="private-task-results"><section className="private-panel"><h2>Result files</h2>
     {page.resultSource === "not_configured" ? <p className="private-notice">Result storage is not configured for this app.</p>
       : !page.items.length ? <p>No result files have been received for this task.</p> : <ul className="private-result-list">
@@ -125,6 +140,9 @@ export function PrivateTaskResults(props: PrivateTaskResultsProps) {
  * list before any content is read, so a guessed or stale ID cannot reach
  * another project's data.
  */
+/** Written with escapes so the guard stays visible and cannot be silently mangled. */
+const CONTROL_CHARACTERS_V1 = /[\u0000-\u001f\u007f]/u;
+
 export const TASK_RESULT_SELECTION_PARAM_V1 = "result" as const;
 
 export function taskResultHrefV1(projectId: string, jobId: string, artifactId?: string): string {
@@ -140,7 +158,7 @@ export function readTaskResultSelectionV1(search: string): string | undefined {
     const value = new URLSearchParams(search).get(TASK_RESULT_SELECTION_PARAM_V1);
     // Bound it the way a route segment is bounded; a hostile value never
     // reaches a request, but it should not reach the DOM either.
-    return value && value.length > 0 && value.length <= 256 && !/[ -]/u.test(value)
+    return value && value.length > 0 && value.length <= 256 && !CONTROL_CHARACTERS_V1.test(value)
       ? value : undefined;
   } catch { return undefined; }
 }
@@ -173,12 +191,17 @@ function TaskResultsReader({ projectId, jobId, reviewWorkspace, verificationWork
   useEffect(() => {
     const sync = () => {
       const next = currentSelection();
+      // Compare against the live URL rather than inside a state updater: an
+      // updater must stay pure, and StrictMode double-invokes it.
       setSelected(previous => {
-        if (previous === next) return previous;
-        generation.current++;
-        setContent(undefined);
-        setUnavailableSelection(undefined);
-        setPending(Boolean(next));
+        if (previous !== next) {
+          generation.current++;
+          queueMicrotask(() => {
+            setContent(undefined);
+            setUnavailableSelection(undefined);
+            setPending(Boolean(next));
+          });
+        }
         return next;
       });
     };
@@ -198,22 +221,31 @@ function TaskResultsReader({ projectId, jobId, reviewWorkspace, verificationWork
         const next = await client.results(projectId, jobId, abort.signal);
         if (!live || current !== generation.current) return;
         let result: TaskResultContent | undefined;
-        let missing: string | undefined;
+        let missing: string | undefined, denied = false;
         if (selected) {
           // A URL-supplied ID is validated against this project's authorized
           // list before any content request. An ID that is not listed here is
           // reported as unavailable in this task rather than read, and rather
           // than failing the whole panel: the list is already scoped to the
           // caller's access, so this reveals nothing about another project.
-          if (!next.canReadContent || !next.items.some(item => item.artifactId === selected)) {
+          if (!next.canReadContent) {
+            // Metadata-only access is a different situation from an unlisted
+            // ID, and the panel already explains it per file. Do not claim the
+            // file is missing from the list.
+            denied = true;
+          } else if (!next.items.some(item => item.artifactId === selected)) {
             missing = selected;
           } else {
             result = await client.resultContent(projectId, jobId, selected, abort.signal);
           }
         }
         if (live && current === generation.current) {
-          setPage(next); setContent(result); setError(undefined); setUnavailableSelection(missing);
-          if (missing) {
+          setPage(next); setContent(result); setError(undefined);
+          // Only a load that actually carried a selection may change the
+          // notice. Refusing a selection clears it, which re-runs this effect;
+          // that second pass must not wipe the explanation it just produced.
+          if (selected) setUnavailableSelection(missing);
+          if (missing || denied) {
             // Drop the unusable selection so a reload does not repeat it.
             setSelected(undefined);
             writeSelection(undefined, "replace");
@@ -236,7 +268,7 @@ function TaskResultsReader({ projectId, jobId, reviewWorkspace, verificationWork
     {!page && !error && <p role="status">Loading protected results and review…</p>}
     {unavailableSelection && <p className="private-notice" role="alert">The requested result file{" "}
       <code>{unavailableSelection}</code> is not in this task’s authorized file list. Nothing was read.</p>}
-    {page && page.projectId === projectId && page.jobId === jobId && <TaskResultsPanel page={page} content={content} pending={pending} reviewWorkspace={reviewWorkspace} verificationWorkspace={verificationWorkspace}
+    {page && page.projectId === projectId && page.jobId === jobId && <TaskResultsPanel page={page} content={content} pending={pending} selectedArtifactId={selected} reviewWorkspace={reviewWorkspace} verificationWorkspace={verificationWorkspace}
       onReviewSaved={() => setRefresh(value => value + 1)}
       onOpen={artifactId => {
         generation.current++; setPending(true); setContent(undefined); setUnavailableSelection(undefined);

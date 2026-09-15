@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createHash } from "node:crypto";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import Home from "../private-app/app/page";
@@ -10,7 +11,7 @@ import { ProjectCatalogNavigation } from "../app/components/project-catalog-navi
 import { createProjectBrowserClient } from "../src/web/v1/browser-client";
 import { readTaskHomeActivity } from "../src/web/v1/task-home-browser-client";
 import { ProjectOverviewActivityView } from "../private-app/app/project-overview-activity";
-import { readTaskResultSelectionV1, taskResultHrefV1 } from "../private-app/app/task-results";
+import { PrivateTaskResults, readTaskResultSelectionV1, taskResultHrefV1 } from "../private-app/app/task-results";
 import { readTaskProjectOverview } from "../src/web/v1/task-project-overview-browser-client";
 import { ProjectFilesView } from "../private-app/app/project-files-workspace";
 import { readTaskProjectFiles } from "../src/web/v1/task-project-files-browser-client";
@@ -307,4 +308,161 @@ test("the exact-result link encodes each segment separately", () => {
   // A project or job containing a separator must not be able to forge a path.
   assert.equal(taskResultHrefV1("project:a/b", "job:c?d", "artifact:e#f"),
     "/projects/project%3Aa%2Fb/tasks/job%3Ac%3Fd?result=artifact%3Ae%23f#task-results");
+});
+
+/**
+ * Mounted coverage for URL-addressable result selection.
+ *
+ * These use the repository's existing jsdom + react-dom/client + act pattern
+ * (see tests/task-results-lifecycle.test.mjs). Playwright is not available
+ * here, so these are not browser evidence — but the validation, history and
+ * focus behaviour are component behaviour and must not rest on pure-function
+ * tests alone.
+ */
+async function mountTaskResults(options: { search?: string; canReadContent?: boolean; items?: string[] } = {}) {
+  // jsdom ships no type declarations and cannot be augmented. Import it once
+  // and bind exactly the surface these tests use, rather than widening the
+  // module to `any`.
+  // @ts-expect-error untyped module
+  const jsdomModule = await import("jsdom");
+  const JSDOM = (jsdomModule as { JSDOM: unknown }).JSDOM as new (
+    html: string, options?: { url?: string; pretendToBeVisual?: boolean },
+  ) => { window: Window & typeof globalThis };
+  const React = await import("react");
+  const { createRoot } = await import("react-dom/client");
+  const dom = new JSDOM('<div id="root"></div>',
+    { url: `https://control.invalid/projects/project%3Atest/tasks/job%3Atest${options.search ?? ""}#task-results`,
+      pretendToBeVisual: true });
+  const saved = Object.fromEntries(["window", "document", "IS_REACT_ACT_ENVIRONMENT", "fetch"]
+    .map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true });
+  const requests: string[] = [];
+  const ids = options.items ?? ["artifact:one", "artifact:two"];
+  // Each file's fingerprint must match the exact bytes the reader returns, or
+  // the protected reader correctly refuses the content.
+  const textFor = (artifactId: string) => `${artifactId} PROTECTED RESULT TEXT`;
+  const artifacts = ids.map(artifactId => ({ artifactId, attemptId: "attempt:one", runId: "run:one",
+    contentHash: `sha256:${createHash("sha256").update(textFor(artifactId)).digest("hex")}`,
+    sizeBytes: Buffer.byteLength(textFor(artifactId)), receivedAt: "2026-09-08T12:00:00.000Z",
+    byteCheck: "matched_recorded_claim", qualityAccepted: false }));
+  globalThis.fetch = (async (url: string) => {
+    requests.push(String(url));
+    const path = String(url);
+    const match = /\/results\/([^/?]+)$/.exec(path);
+    if (match) {
+      const artifact = artifacts.find(item => item.artifactId === decodeURIComponent(match[1]));
+      if (!artifact) return new Response("no", { status: 404 });
+      return Response.json({ projectId: "project:test", jobId: "job:test", artifact,
+        text: textFor(artifact.artifactId), contentVerifiedAt: artifact.receivedAt, untrustedContent: true });
+    }
+    return Response.json({ projectId: "project:test", jobId: "job:test", observedAt: "2026-09-08T12:00:00.000Z",
+      resultSource: "configured", reviewSource: "configured", items: artifacts, reviews: [],
+      additionalResultsOmitted: false, additionalTargetsOmitted: false,
+      canReadContent: options.canReadContent ?? true, reviewCommands: "not_connected" });
+  }) as typeof fetch;
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  const { act } = React;
+  await act(async () => { root.render(React.createElement(PrivateTaskResults,
+    { projectId: "project:test", jobId: "job:test", reviewWorkspace: {} as never })); });
+  const restore = async () => {
+    // The panel installs a 30s poll, a window listener and in-flight fetches.
+    // Unmount inside act so its cleanup aborts them, then let the aborted
+    // promises settle before the globals disappear -- otherwise a late
+    // continuation dereferences a `window` that no longer exists.
+    try { await act(async () => { root.unmount(); }); } catch { /* already torn down */ }
+    await new Promise(resolve => setImmediate(resolve));
+    dom.window.close();
+    for (const [key, descriptor] of Object.entries(saved)) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete (globalThis as Record<string, unknown>)[key];
+    }
+  };
+  return { dom, root, act, requests, artifacts, restore,
+    contentRequests: () => requests.filter(url => /\/results\/[^/?]+$/.test(url)) };
+}
+
+test("an unlisted URL selection is refused without any content request", async () => {
+  const mounted = await mountTaskResults({ search: "?result=artifact%3Anot-in-this-task" });
+  try {
+    // The authorized list is fetched; the unlisted file is never read.
+    assert.equal(mounted.contentRequests().length, 0);
+    assert.match(mounted.dom.window.document.body.textContent ?? "",
+      /is not in this task’s authorized file list/);
+    // The unusable selection is dropped so a reload does not repeat it.
+    assert.equal(new URL(mounted.dom.window.location.href).searchParams.get("result"), null);
+  } finally { await mounted.restore(); }
+});
+
+test("a listed URL selection opens that exact file and moves focus into it", async () => {
+  const mounted = await mountTaskResults({ search: "?result=artifact%3Atwo" });
+  try {
+    assert.deepEqual(mounted.contentRequests().map(url => decodeURIComponent(url).split("/").pop()),
+      ["artifact:two"]);
+    const body = mounted.dom.window.document.body;
+    assert.match(body.textContent ?? "", /artifact:two PROTECTED RESULT TEXT/);
+    const region = mounted.dom.window.document.querySelector(".private-result-content");
+    assert.equal(mounted.dom.window.document.activeElement, region);
+  } finally { await mounted.restore(); }
+});
+
+test("a background refresh does not move focus into the open result", async () => {
+  const mounted = await mountTaskResults({ search: "?result=artifact%3Aone" });
+  try {
+    const region = mounted.dom.window.document.querySelector(".private-result-content");
+    assert.equal(mounted.dom.window.document.activeElement, region);
+    // The panel reloads on window focus and on a 30-second poll. Focus must be
+    // moved once, when the file is opened -- never again on a reload, or a
+    // keyboard user would be yanked back to the top of the result every poll.
+    (region as HTMLElement).blur();
+    await mounted.act(async () => { mounted.dom.window.dispatchEvent(new mounted.dom.window.Event("focus")); });
+    await mounted.act(async () => {});
+    const reopened = mounted.dom.window.document.querySelector(".private-result-content");
+    assert.ok(reopened);
+    assert.notEqual(mounted.dom.window.document.activeElement, reopened);
+  } finally { await mounted.restore(); }
+});
+
+test("closing returns focus to the button that opened the file", async () => {
+  const mounted = await mountTaskResults({ search: "?result=artifact%3Aone" });
+  try {
+    const close = [...mounted.dom.window.document.querySelectorAll("button")]
+      .find(button => button.textContent === "Close result");
+    assert.ok(close);
+    await mounted.act(async () => { close!.click(); });
+    const openers = [...mounted.dom.window.document.querySelectorAll("button")]
+      .filter(button => button.textContent === "Read result");
+    assert.equal(mounted.dom.window.document.activeElement, openers[0]);
+    assert.equal(new URL(mounted.dom.window.location.href).searchParams.get("result"), null);
+    // The anchor is preserved so the panel stays addressable.
+    assert.equal(new URL(mounted.dom.window.location.href).hash, "#task-results");
+  } finally { await mounted.restore(); }
+});
+
+test("back and forward move the open file, not just the scroll position", async () => {
+  const mounted = await mountTaskResults();
+  try {
+    const openers = [...mounted.dom.window.document.querySelectorAll("button")]
+      .filter(button => button.textContent === "Read result");
+    await mounted.act(async () => { openers[0]!.click(); });
+    assert.equal(new URL(mounted.dom.window.location.href).searchParams.get("result"), "artifact:one");
+    assert.match(mounted.dom.window.document.body.textContent ?? "", /artifact:one PROTECTED RESULT TEXT/);
+
+    // Simulate Back: the URL loses the selection and popstate fires.
+    mounted.dom.window.history.replaceState(null, "",
+      "/projects/project%3Atest/tasks/job%3Atest#task-results");
+    await mounted.act(async () => {
+      mounted.dom.window.dispatchEvent(new mounted.dom.window.PopStateEvent("popstate"));
+    });
+    assert.doesNotMatch(mounted.dom.window.document.body.textContent ?? "", /PROTECTED RESULT TEXT/);
+  } finally { await mounted.restore(); }
+});
+
+test("metadata-only access is reported as denied, not as a missing file", async () => {
+  const mounted = await mountTaskResults({ search: "?result=artifact%3Aone", canReadContent: false });
+  try {
+    assert.equal(mounted.contentRequests().length, 0);
+    const body = mounted.dom.window.document.body.textContent ?? "";
+    assert.doesNotMatch(body, /is not in this task’s authorized file list/);
+    assert.match(body, /Your access permits metadata, not reading this file/);
+  } finally { await mounted.restore(); }
 });
