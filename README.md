@@ -27,6 +27,9 @@ This README is the front door; detailed documents are optional depth, not a hunt
 covering the entire choose → claim → build → check → review → correct → merge or handoff
 process for people, bots, reviewers, and maintainers.
 
+**[How the build keeps moving](docs/CONTINUOUS_BUILD_OPERATION.md)** — work discovery,
+review turnaround, automatic monitoring, and what happens when a worker cannot proceed.
+
 **Current priority:** finish a real mixed-harness project → task → result → review
 workflow, using existing proven components. One configurable public product serves
 everyone; no separate private core.

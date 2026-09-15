@@ -22,6 +22,53 @@ function fakeFetch({ issues = [issue()], comments = [claim()], failIssue, full =
   } };
 }
 const read = options => readWorkerInbox({ workerId, fetchImpl: fakeFetch(options).fetchImpl });
+const packet = values => `<!-- acr-public-work:v1 ${JSON.stringify({ target: "main", base: "a".repeat(40),
+  writeScopes: ["src/example/**"], dependencies: [], checks: ["pnpm check"], risk: "ordinary", effects: "none", leaseHours: 24, ...values })} -->`;
+const currentClaim = (outcome, extra = "", id = 3) => ({ id, user: bot, body: `CLAIM ${outcome} — record\n<!-- agent-control-room-claim:v3 issue=170 request=2 actor=MarvinAi5 worker=${workerId} packet=${"b".repeat(64)} accepted=1000${extra} -->` });
+
+test("current controller submission and renewal reach the worker", async () => {
+  for (const outcome of ["ACCEPTED", "RENEWED"]) {
+    const result = await read({ comments: [currentClaim(outcome)] });
+    assert.equal(result[0].disposition, "action");
+  }
+  const result = await read({ issues: [issue(["status:in-review"])], comments: [claim(),
+    currentClaim("SUBMITTED", ` pr=171 sha=${"c".repeat(40)}`)] });
+  assert.equal(result[0].disposition, "waiting");
+  assert.equal(result[0].pr, 171);
+  assert.equal(result[0].head, "c".repeat(40));
+});
+
+test("release and expiry end stale ownership; later advisory cannot resurrect it", async () => {
+  for (const body of [
+    `CLAIM RELEASED — record\n<!-- agent-control-room-claim:v3 issue=170 request=2 actor=MarvinAi5 worker=${workerId} released=2000 -->`,
+    `CLAIM EXPIRED — record\n<!-- agent-control-room-claim:v3 issue=170 expired=2000 action=ready reason=lease_expired_no_pr actor=MarvinAi5 worker=${workerId} -->`,
+  ]) {
+    const result = await read({ issues: [issue(["status:ready"])], comments: [claim(), { id: 3, user: bot, body }, legacy(workerId, "working", 4)] });
+    assert.equal(result[0].disposition, "released");
+    assert.match(result[0].action, /Do not continue/);
+    const forged = await read({ issues: [issue(["status:working"])], comments: [claim(), { id: 3, user: { login: "worker", type: "User" }, body }] });
+    assert.equal(forged[0].disposition, "action");
+  }
+});
+
+test("discovery distinguishes new candidates, invalid packets and dependencies without authorizing work", async () => {
+  const issues = [
+    { ...issue(["status:ready", "platform:any"], 1), body: packet() },
+    { ...issue(["status:ready"], 2), body: packet({ writeScopes: ["src/*.ts"] }) },
+    { ...issue(["status:ready"], 3), body: packet({ dependencies: [4] }) },
+    issue(["status:waiting"], 4),
+    { ...issue(["status:ready", "status:working"], 5), body: packet() },
+  ];
+  const result = await readWorkerInbox({ workerId, includeReady: true, fetchImpl: fakeFetch({ issues, comments: [] }).fetchImpl });
+  const offers = result.filter(action => action.disposition === "discovery");
+  assert.deepEqual(offers.map(action => [action.issue, action.state, action.reason]), [
+    [1, "ready-candidate", undefined], [2, "queue-blocked", "packet_invalid"],
+    [3, "queue-blocked", "open_dependencies"], [5, "queue-blocked", "conflicting_ready_labels"],
+  ]);
+  assert.equal(offers[0].trust, "public-offer");
+  assert.match(offers[0].action, /wait for CLAIM ACCEPTED/);
+  assert.match(renderWorkerInbox(workerId, offers), /platform:any/);
+});
 test("bounded marker parsing", () => {
   assert.equal(parseActionMarker(legacy().body).workerId, workerId);
   assert.equal(parseActionMarker("ACTION REQUIRED"), undefined);

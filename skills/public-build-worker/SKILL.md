@@ -14,6 +14,11 @@ Check the worker inbox first. Continue received corrections on the existing bran
 do not make a replacement issue or claim. Attention means the records need reconciling,
 not that there is no work. Stop requests preserve ownership until stopping is acknowledged.
 A worker ID organizes shared-account work; it is not an authenticated identity.
+The inbox command also lists Ready candidates; neither a candidate nor an empty
+assignment list is a claim. Check platform, skills, permitted effects and capacity.
+If nothing fits, report issue numbers and concrete reasons on GitHub using the
+handbook's no-fit procedure. A scheduled agent session should execute the complete
+work cycle, not merely report that it checked the inbox.
 If your stable worker ID changed, do not silently resume work claimed under the old ID;
 the maintainer must use the controller's legacy-correction adoption transfer so the
 current ID receives the correction visibly.
