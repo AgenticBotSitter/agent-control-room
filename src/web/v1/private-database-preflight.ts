@@ -19,6 +19,7 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 // migrations 0025/0026. Catalog query below; not a mutable database marker.
 export const privateWebSchemaDigest = "bae881d90c8081cdc3e56062b8228bf623258a8057e902b5cb74e739dabce682";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
+  "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
   "control_news_story_versions", "control_news_source_observations", "control_news_source_settings", "control_news_story_archives", "control_news_article_details",
   "control_idea_sessions", "control_idea_contributions", "control_idea_syntheses", "control_idea_decisions", "control_idea_bot_run_events",
@@ -34,7 +35,7 @@ const inserts = new Set(["control_web_sessions", "adapter_registry", "projects",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
   "control_jobs", "control_web_task_commands", "control_completion_gate_records", "control_web_task_review_commands", "control_news_source_settings", "control_news_story_archives",
   "control_policy_decisions", "control_project_lifecycle_events", "control_project_coordinator_heads",
-  "control_project_delegation_policies"]);
+  "control_project_delegation_policies", "control_idempotency"]);
 const updates: Record<string, readonly string[]> = {
   control_identities: ["web_lock"], control_role_grants: ["web_lock"], workspaces: ["web_lock"],
   control_connection_registry_heads: ["web_lock"], control_web_sessions: ["revoked_at"],
@@ -47,6 +48,8 @@ const updates: Record<string, readonly string[]> = {
     "connector_profile_digest", "execution_binding_digest", "assigned_by_owner_identity_id", "version",
     "assigned_at", "updated_at", "revoked_at", "payload"],
   control_project_delegation_policies: ["state", "version", "updated_at"],
+  control_idempotency: ["status", "result", "completed_at"],
+  tenants: ["coordinator_lock"],
 };
 const fail = () => { throw new Error("private_database_preflight_failed"); };
 const ideaCreationReads = ["workspaces", "control_identities", "control_role_grants", "control_web_sessions",

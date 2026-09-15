@@ -90,7 +90,7 @@ interface RouteFixture {
   dispose: () => Promise<void>;
 }
 
-async function buildRouteFixture(opts: { coordinationEnabled?: boolean; engineDelayMs?: number; onEngineWrite?: () => void; onEngineCommit?: () => void; onCoordinationCall?: () => void } = {}): Promise<RouteFixture> {
+async function buildRouteFixture(opts: { coordinationEnabled?: boolean; engineDelayMs?: number; onEngineWrite?: () => void; onEngineCommit?: () => void; onCoordinationCall?: () => void; onPolicyCall?: () => void } = {}): Promise<RouteFixture> {
   const db = new PGlite();
   for (const file of (await readdir("db/migrations")).filter((f) => f.endsWith(".sql")).sort()) {
     await db.exec(await readFile(`db/migrations/${file}`, "utf8"));
@@ -212,6 +212,7 @@ async function buildRouteFixture(opts: { coordinationEnabled?: boolean; engineDe
     },
     async setProjectDelegationPolicyStateV1(input) {
       opts.onCoordinationCall?.();
+      opts.onPolicyCall?.();
       const existing = policyRows.get(input.policyId);
       if (!existing) throw new ProjectCoordinationErrorV1("policy_required" as never);
       if (input.toState === "active" && existing.state === "active") throw new ProjectCoordinationErrorV1("policy_already_active" as never);
@@ -629,6 +630,78 @@ test("simultaneous same-key POSTs run the engine once and both callers get the s
   assert.equal(commits, 1);
   assert.equal(firstResult.status, "accepted");
   assert.deepEqual(secondResult, firstResult);
+});
+
+test("simultaneous same-key POSTs with different content never share one outcome", async (t) => {
+  const f = await buildRouteFixture({ engineDelayMs: 20 });
+  t.after(() => f.dispose());
+  const token = makeToken(FIXTURE_NOW, "test-app");
+  const observedAt = new Date(FIXTURE_NOW).toISOString();
+  const buildRequest = (coordinatorIdentityId: string) => new Request(`${FIXTURE_ORIGIN}/api/v1/projects/project:example/coordination/appoint-coordinator`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "cf-access-jwt-assertion": token,
+      "idempotency-key": "appointment-changed01",
+      "origin": FIXTURE_ORIGIN,
+    },
+    body: JSON.stringify({
+      revision: {
+        projectId: "project:example",
+        expectedCoordinatorVersion: 0,
+        expectedPolicyVersion: 0,
+        expectedConflictsVersion: 0,
+        expectedAttentionVersion: 0,
+        observedAt,
+      },
+      coordinatorActorType: "human",
+      coordinatorIdentityId,
+    }),
+  });
+  // Same Idempotency-Key, different coordinator identities, both in flight.
+  // The canonical body digest keeps them in separate in-flight slots: the
+  // engine must run for each, and the second caller must never receive the
+  // first caller's accepted receipt.
+  const [first, second] = await Promise.all([
+    f.handle(buildRequest("owner-self-9")),
+    f.handle(buildRequest("owner-self-10")),
+  ]);
+  assert.equal(first.status, 200);
+  const firstResult = await first.json();
+  const secondResult = await second.json();
+  // Both changed-content requests ran in separate in-flight slots: the
+  // second caller is never answered with the first caller's accepted
+  // receipt. Depending on interleaving it is refused with
+  // coordinator_replay_conflict (durable ledger wins) or accepts its own
+  // distinct receipt — either way its outcome differs. Receipts embed the
+  // request digest, so equality with the first outcome is impossible.
+  assert.equal(firstResult.status, "accepted");
+  assert.notDeepEqual(secondResult, firstResult);
+});
+
+test("policy pause, resume, and revoke POSTs are refused at the route before any service call", async (t) => {
+  let policyCalls = 0;
+  const f = await buildRouteFixture({
+    onPolicyCall: () => { policyCalls += 1; },
+  });
+  t.after(() => f.dispose());
+  const token = makeToken(FIXTURE_NOW, "test-app");
+  for (const subaction of ["pause-policy", "resume-policy", "revoke-policy"]) {
+    const response = await f.handle(new Request(`${FIXTURE_ORIGIN}/api/v1/projects/project:example/coordination/${subaction}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "cf-access-jwt-assertion": token,
+        "idempotency-key": `policy-suspended01`,
+        "origin": FIXTURE_ORIGIN,
+      },
+      body: JSON.stringify({ policyId: "policy:test" }),
+    }));
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), { error: "access_denied" });
+  }
+  // Suspended at the route until #220: no policy service call ran.
+  assert.equal(policyCalls, 0);
 });
 
 test("reconstructed handler returns the saved receipt — restart loses no retry safety", async (t) => {

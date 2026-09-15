@@ -320,9 +320,18 @@ export class ProjectCoordinationHttpService {
   }
 
   async read(identity: VerifiedWebIdentity, projectId: string): Promise<ProjectCoordinationPagePayload> {
-    return this.authority.authenticated(identity, async (tx, actor) => {
-      actor.require(ACTIONS.read, projectId);
-      return this.composeProjectCoordinationPage(tx, actor, projectId) as Promise<ProjectCoordinationPagePayload>;
+    // Authorization (including the session touch) commits in its own
+    // transaction first. Every displayed collection and its revision guard
+    // then reads from one REPEATABLE READ snapshot, so a concurrent commit
+    // can never pair old content with a new accepting version: the page
+    // either predates the commit (write refused stale) or includes it.
+    const actor = await this.authority.authenticated(identity, async (_tx, candidate) => {
+      candidate.require(ACTIONS.read, projectId);
+      return candidate;
+    });
+    return this.options.database.transaction(async (snapshot) => {
+      await snapshot.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
+      return this.composeProjectCoordinationPage(snapshot, actor, projectId) as Promise<ProjectCoordinationPagePayload>;
     });
   }
 

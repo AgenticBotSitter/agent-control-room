@@ -10,7 +10,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { PGlite } from "@electric-sql/pglite";
 
-import { adaptPglite } from "../src/persistence/database";
+import { adaptPglite, type DatabaseClient } from "../src/persistence/database";
 import { SecurityStore } from "../src/security/security-store";
 import { createAccessVerifier, type AccessTrust } from "../src/web/v1/access-verifier";
 import type { VerifiedWebIdentity } from "../src/web/v1/access-verifier";
@@ -18,6 +18,7 @@ import { createPrivateWebProcess } from "../src/web/v1/private-process";
 import {
   ProjectCoordinationHttpService,
   createProjectCoordinationCanonicalStoreAdapterV1,
+  type ProjectCoordinationCanonicalStoreAdapter,
 } from "../src/web/v1/project-coordination-http";
 import { ProjectNavigation } from "../private-app/app/project-navigation";
 import {
@@ -46,7 +47,8 @@ const iso = (ms: number): string => new Date(ms).toISOString();
 interface Seed {
   identity: VerifiedWebIdentity;
   service: ProjectCoordinationHttpService;
-  client: { query: (statement: string, params?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }> };
+  store: ProjectCoordinationCanonicalStoreAdapter;
+  client: DatabaseClient;
   handle: (request: Request) => Promise<Response>;
   dispose: () => Promise<void>;
 }
@@ -232,6 +234,7 @@ async function seed(): Promise<Seed> {
   return {
     identity,
     service,
+    store,
     client,
     handle: async (request: Request) => application.handle(request, () => new Response(null, { status: 404 })),
     dispose: async () => { void db.close(); },
@@ -477,4 +480,100 @@ test("policy pause, resume, and revoke are not offered before #220", () => {
   assert.match(html, /not offered here/);
   assert.match(html, /policy:alpha-1/);
   assert.match(html, /Coordinator identity/);
+});
+
+test("page content and versions come from one repeatable-read snapshot", async (t) => {
+  const f = await seed(); t.after(() => f.dispose());
+  // Wrap the database handle: count top-level transactions and record the
+  // first statement of each, so the test observes the snapshot boundary
+  // instead of trusting the implementation.
+  const txFirstStatements: string[] = [];
+  let plainTxCount = 0;
+  const wrappedClient: DatabaseClient = {
+    query: (statement, params) => f.client.query(statement, params),
+    transactionWithPreCommitCheck: (callback, check) =>
+      f.client.transactionWithPreCommitCheck(callback, check),
+    transaction: (callback) => f.client.transaction(async (session) => {
+      plainTxCount += 1;
+      let first: string | null = null;
+      const wrappedSession = {
+        query: <T = Record<string, unknown>>(statement: string, params?: unknown[]) => {
+          if (first === null) first = statement;
+          return session.query<T>(statement, params);
+        },
+      };
+      try {
+        return await callback(wrappedSession);
+      } finally {
+        txFirstStatements.push(first ?? "<no statements>");
+      }
+    }),
+  };
+  const service = new ProjectCoordinationHttpService({
+    database: wrappedClient,
+    scope: { tenantId: "tenant:test", workspaceId: "workspace:test" },
+    clock: () => NOW,
+    store: f.store,
+  });
+  const page = await service.read(f.identity, "project:alpha");
+  // Authorization runs through transactionWithPreCommitCheck; exactly one
+  // plain transaction — the page snapshot — must compose the whole page.
+  assert.equal(plainTxCount, 1);
+  assert.match(txFirstStatements[0] ?? "", /SET TRANSACTION ISOLATION LEVEL REPEATABLE READ/);
+  // The snapshot still serves the real saved content and versions.
+  assert.equal(page.attention.length, 2);
+  assert.ok(page.versions.attentionVersion > 0);
+  assert.equal(page.conflicts.length, 1);
+});
+
+test("a concurrent attention insert cannot pair old content with a new accepting version", async (t) => {
+  const f = await seed(); t.after(() => f.dispose());
+  const before = await f.service.read(f.identity, "project:alpha");
+  assert.equal(before.attention.length, 2);
+  // Concurrent change lands between the page read and the write attempt.
+  await f.client.query(`INSERT INTO attention_items(id,tenant_id,workspace_id,project_id,work_item_id,adapter_id,source_record_id,
+    source_version,attention_type,title,summary,due_at,created_at_source,observed_at,payload,updated_at)
+    VALUES('attn-9','tenant:test','workspace:test','project:alpha',NULL,'adapter:test','src-9','1','approval',
+    'Late approval','Arrived after the page read',$1,$2,$2,'{}',$2)`,
+    [new Date(NOW + 86_400_000).toISOString(), new Date(NOW).toISOString()]);
+  const revisionOf = (versions: typeof before.versions) => ({
+    projectId: "project:alpha",
+    expectedCoordinatorVersion: versions.coordinatorVersion,
+    expectedPolicyVersion: versions.policyVersion,
+    expectedConflictsVersion: versions.conflictsVersion,
+    expectedAttentionVersion: versions.attentionVersion,
+    observedAt: new Date(NOW).toISOString(),
+  });
+  // The old versions no longer accept: the guard refuses with the exact new
+  // versions, so the caller can never write against content it did not see.
+  const stale = await f.service.appointCoordinator(f.identity, {
+    projectId: "project:alpha",
+    revision: revisionOf(before.versions),
+    coordinatorActorType: "human",
+    coordinatorIdentityId: "identity:coord-b",
+    idempotencyKey: `snapshot-stale-${NOW}`,
+  });
+  assert.equal(stale.status, "refused");
+  if (stale.status !== "refused") throw new Error("expected a refusal");
+  assert.equal(stale.reasonCode, "stale_revision");
+  // A fresh read pairs the new row with the new versions, and that pair accepts.
+  const after = await f.service.read(f.identity, "project:alpha");
+  assert.equal(after.attention.length, 3);
+  assert.notEqual(after.versions.attentionVersion, before.versions.attentionVersion);
+  assert.deepEqual(stale.revision, {
+    projectId: "project:alpha",
+    observedAt: stale.revision.observedAt,
+    expectedCoordinatorVersion: after.versions.coordinatorVersion,
+    expectedPolicyVersion: after.versions.policyVersion,
+    expectedConflictsVersion: after.versions.conflictsVersion,
+    expectedAttentionVersion: after.versions.attentionVersion,
+  });
+  const fresh = await f.service.appointCoordinator(f.identity, {
+    projectId: "project:alpha",
+    revision: revisionOf(after.versions),
+    coordinatorActorType: "human",
+    coordinatorIdentityId: "identity:coord-b",
+    idempotencyKey: `snapshot-fresh-${NOW}`,
+  });
+  assert.equal(fresh.status, "accepted");
 });

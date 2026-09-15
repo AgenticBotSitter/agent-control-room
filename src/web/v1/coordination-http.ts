@@ -13,9 +13,9 @@
 //   POST   /api/v1/projects/:projectId/coordination/appoint-coordinator
 //   POST   /api/v1/projects/:projectId/coordination/replace-coordinator
 //   POST   /api/v1/projects/:projectId/coordination/revoke-coordinator
-//   POST   /api/v1/projects/:projectId/coordination/pause-policy
-//   POST   /api/v1/projects/:projectId/coordination/resume-policy
-//   POST   /api/v1/projects/:projectId/coordination/revoke-policy
+//   POST   /api/v1/projects/:projectId/coordination/pause-policy      (suspended: 403 until #220)
+//   POST   /api/v1/projects/:projectId/coordination/resume-policy     (suspended: 403 until #220)
+//   POST   /api/v1/projects/:projectId/coordination/revoke-policy     (suspended: 403 until #220)
 //
 // All POST routes require:
 //   * Content-Type: application/json
@@ -26,6 +26,7 @@
 import { projectCoordinationActionResultSchema, projectCoordinationPageSchema } from "./project-coordination-wire";
 import { createAccessVerifier, requireSameOrigin, WebAccessError, type AccessTrust } from "./access-verifier";
 import { privateResponseHeaders as responseHeaders, readBoundedJson, webFailure } from "./http-common";
+import { sha256Digest } from "../../security/digest";
 import type { ProjectCoordinationHttpService } from "./project-coordination-http";
 
 type Identity = Parameters<ProjectCoordinationHttpService["read"]>[0];
@@ -116,24 +117,19 @@ function extractAppointFields(body: unknown): {
   };
 }
 
-function extractPolicyFields(body: unknown): { revision: RevisionInput; policyId: string } {
-  if (!body || typeof body !== "object") throw new WebAccessError("invalid_request");
-  const candidate = body as Record<string, unknown>;
-  if (typeof candidate.policyId !== "string" || !candidate.policyId) {
-    throw new WebAccessError("invalid_request");
-  }
-  return { revision: buildRevision(body), policyId: candidate.policyId };
-}
-
 export function createCoordinationHttpHandler(options: CoordinationHttpHandlerOptions) {
   const verifyIdentity = createAccessVerifier(options.trust);
   const clock = options.clock ?? Date.now;
   const isCoordinationEnabled = options.isCoordinationEnabled ?? (() => Promise.resolve(true));
   const inflight = options.inflight ?? new Map<string, Promise<unknown>>();
   // Composite in-flight key. Identity subject is included so one owner's retry
-  // can never be answered with another owner's outcome.
-  const inflightKey = (idempotencyKey: string, projectId: string, subaction: string, identitySubject: string) =>
-    `${idempotencyKey}\n${projectId}\n${subaction}\n${identitySubject}`;
+  // can never be answered with another owner's outcome. The canonical body
+  // digest is included so two simultaneous requests with the same key but
+  // different content never share one outcome: each runs, and the PG
+  // idempotency ledger (the durable authority) refuses the changed content
+  // under the same key with coordinator_replay_conflict.
+  const inflightKey = (idempotencyKey: string, projectId: string, subaction: string, identitySubject: string, bodyDigest: string) =>
+    `${idempotencyKey}\n${projectId}\n${subaction}\n${identitySubject}\n${bodyDigest}`;
   return async (request: Request): Promise<Response> => {
     try {
         requireSameOrigin(request, options.origin);
@@ -159,7 +155,7 @@ export function createCoordinationHttpHandler(options: CoordinationHttpHandlerOp
         const body = await readJsonBody(request);
         await ensureEnabledOrRefuse(isCoordinationEnabled);
 
-        const key = inflightKey(idempotencyKey, projectId, subaction, identity.subject);
+        const key = inflightKey(idempotencyKey, projectId, subaction, identity.subject, sha256Digest(body));
         // Atomic check-and-register: no await sits between get and set, so two
         // simultaneous same-key requests cannot both miss.
         const running = inflight.get(key);
@@ -190,21 +186,13 @@ export function createCoordinationHttpHandler(options: CoordinationHttpHandlerOp
               outcome = await options.service.revokeCoordinator(identity, input);
               break;
             }
-            case "pause-policy": {
-              const input = { projectId, ...extractPolicyFields(body) };
-              outcome = await options.service.pauseDelegationPolicy(identity, input);
-              break;
-            }
-            case "resume-policy": {
-              const input = { projectId, ...extractPolicyFields(body) };
-              outcome = await options.service.resumeDelegationPolicy(identity, input);
-              break;
-            }
-            case "revoke-policy": {
-              const input = { projectId, ...extractPolicyFields(body) };
-              outcome = await options.service.revokeDelegationPolicy(identity, input);
-              break;
-            }
+            case "pause-policy":
+            case "resume-policy":
+            case "revoke-policy":
+              // Suspended at the route until #220 lands durable policy
+              // replay. Hiding the UI buttons is not enough: authenticated
+              // direct POSTs must be refused here, before any service call.
+              throw new WebAccessError("access_denied");
             default:
               throw new WebAccessError("not_found");
           }
