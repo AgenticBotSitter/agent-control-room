@@ -60,23 +60,36 @@ recomputes this digest as
 sha256Digest({
   candidateCommit, treeDigest, sourceDigest, releaseVersion,
   artifactDigest, artifactManifestDigest,
-  componentEvidenceDigests: [c.evidenceDigest, ...] in canonical component order
+  components: [{ id, acceptedCommit, evidenceDigest }, ...] in canonical component order
 })
 ```
 
 and refuses with `aggregateBindingDigest-mismatch` when the supplied value does
 not equal the recomputed value. The aggregate binding cannot be re-derived from
-the candidate root parameters alone — it requires every component's historical
-evidence digest, so substituting even one component's digest changes the
-aggregate.
+the candidate root parameters alone — it requires every component's
+independently attested historical acceptance commit AND its evidence digest, so
+substituting even one component's commit *or* digest (with the supplied binding
+digest unchanged) changes the aggregate.
 
 A record where all 14 component digests collapse to a single value is also
 refused with `components.evidenceDigest-not-distinct` because it does not
 represent a multi-component assembled release.
 
 The output surfaces `aggregateBinding: { supplied, recomputed }` so a caller
-can verify the recompute equals the supplied value. Equality is internal
-consistency, never acceptance.
+can verify the recompute equals the supplied value. Aggregate binding equality
+is internal consistency, never acceptance. This precheck cannot authenticate
+historical approval from caller-supplied hashes alone — the digests and commits
+are caller-supplied; the binding only proves that the supplied set is
+internally self-consistent and consistent with the supplied candidate root
+parameters. A correctly recomputed record still means
+`precheck_complete_not_accepted`, never release approval.
+
+## Honest limitation
+
+This precheck does not add signatures, a trusted registry, or another authority
+source. A record whose caller can produce a coherent (commit, digest, binding)
+set will pass; the precheck cannot prove who produced the values. It is a
+pure internal-consistency check, not an authorization system.
 
 ## Refusal matrix
 

@@ -242,15 +242,23 @@ export function evaluateReleaseCandidatePrecheckV1(
   // Recompute the aggregate binding digest: it must equal
   // `sha256Digest({ candidateCommit, treeDigest, sourceDigest, releaseVersion,
   //   artifactDigest, artifactManifestDigest,
-  //   componentEvidenceDigests: [digest per component in canonical order] })`.
-  // The supplied digest MUST equal the recomputed value; otherwise the binding
-  // is forged or substituted.
+  //   components: [{ id, acceptedCommit, evidenceDigest }, ...] in canonical order })`.
+  // Each component contributes the full historical tuple (id, acceptedCommit,
+  // evidenceDigest) so the binding cannot be re-derived from candidate root
+  // parameters alone — it requires every component's independently attested
+  // historical acceptance commit AND its evidence digest. A substitution of
+  // acceptedCommit alone (with digests and aggregate binding digest
+  // unchanged) therefore mismatches; the operator must recompute the
+  // aggregate binding alongside any historical-commit change. The supplied
+  // digest MUST equal the recomputed value; otherwise the binding is forged
+  // or substituted.
   const recomputedBindingDigest = sha256Digest({
     candidateCommit: rootCandidate, treeDigest: root.treeDigest as string,
     sourceDigest: root.sourceDigest as string,
     releaseVersion: root.releaseVersion as string,
     artifactDigest: rootArtifact, artifactManifestDigest: rootManifest,
-    componentEvidenceDigests: canonicalComponents.map((c) => c.evidenceDigest) });
+    components: canonicalComponents.map((c) => ({ id: c.id,
+      acceptedCommit: c.acceptedCommit, evidenceDigest: c.evidenceDigest })) });
   if (suppliedBindingDigest !== recomputedBindingDigest) {
     return invalid('invalid:aggregateBindingDigest-mismatch');
   }

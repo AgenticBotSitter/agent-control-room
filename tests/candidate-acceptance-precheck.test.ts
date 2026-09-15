@@ -34,12 +34,14 @@ function historicalEvidenceDigest(id: string, index: number): string {
     attestationKind: 'historical-component-acceptance-v1' });
 }
 
-function aggregateBindingDigestFor(componentDigests: string[]): string {
+function aggregateBindingDigestFor(components: Array<{ id: string;
+  acceptedCommit: string; evidenceDigest: string }>): string {
   return sha256Digest({
     candidateCommit: ROOT_CANDIDATE, treeDigest: ROOT_TREE, sourceDigest: ROOT_SOURCE,
     releaseVersion: ROOT_VERSION, artifactDigest: ROOT_ARTIFACT,
     artifactManifestDigest: ROOT_MANIFEST,
-    componentEvidenceDigests: componentDigests });
+    components: components.map((c) => ({ id: c.id, acceptedCommit: c.acceptedCommit,
+      evidenceDigest: c.evidenceDigest })) });
 }
 
 /** A complete, correctly-formed multi-history record: each component is accepted
@@ -52,7 +54,7 @@ function historicalCompleteRecord(opts: { componentsOverride?: Array<{ id: strin
     .map((id, i) => ({
       id, acceptedCommit: commit(`h${i}`),
       evidenceDigest: historicalEvidenceDigest(id, i) }));
-  const aggregateBindingDigest = aggregateBindingDigestFor(components.map((c) => c.evidenceDigest));
+  const aggregateBindingDigest = aggregateBindingDigestFor(components);
   return {
     schema: RELEASE_CANDIDATE_PRECHECK_SCHEMA_V1,
     candidateCommit: ROOT_CANDIDATE, treeDigest: ROOT_TREE, sourceDigest: ROOT_SOURCE,
@@ -111,36 +113,39 @@ test('multi-history example — every component keeps its own distinct historica
 
 test('a substituted historical accepted commit refuses — only the digest binds', () => {
   // Substitute component 5's historical accepted commit with a different
-  // historical commit. The precheck must recompute the aggregate binding
-  // digest from the unchanged historical digest set + the new commit and
-  // refuse when the supplied aggregateBindingDigest no longer matches.
+  // historical commit AND leave the supplied aggregateBindingDigest exactly
+  // as it was for the original (commit, digest) tuple. The precheck must
+  // recompute the aggregate binding digest from the new historical-commit
+  // set and refuse with aggregateBindingDigest-mismatch — proving the
+  // aggregate binding binds the historical accepted commits, not just the
+  // digests. Realistic operator error: "I signed off at commit ZZ for
+  // component 5, but my archive still has the old aggregate binding from
+  // when component 5 was at its prior commit." This mismatch means the
+  // historical acceptance set and the candidate's binding carry different
+  // histories and must refuse.
   const record = historicalCompleteRecord();
   const index = 5;
   const target = (record.components as { id: string; acceptedCommit: string;
     evidenceDigest: string }[])[index]!;
+  const originalCommit = target.acceptedCommit;
   target.acceptedCommit = commit('zz'); // historical commit from a different acceptance
-  // The aggregate binding digest value remains the OLD one, computed against
-  // the original accepted set — supplied digest now mismatches the recomputed
-  // value built from the historical digests + this new commit.
-  // Actually per the design, the binding is computed from the digests only
-  // (digests drive it). So substituting acceptedCommit alone with digest
-  // unchanged WOULD still produce the same aggregate binding. To make the
-  // substitution rejectable, we change acceptedCommit AND omit recomputing
-  // the binding digest — that's the realistic operator error: "I signed off
-  // at commit ZZ for component 5, but my archive still has the old aggregate
-  // binding from when component 5 was at its prior commit." This mismatch
-  // means the historical acceptance set and the candidate's binding carry
-  // different histories and must refuse.
-  record.aggregateBindingDigest = aggregateBindingDigestFor(
-    (record.components as { evidenceDigest: string }[]).map((c) => c.evidenceDigest));
-  // Note: aggregateBindingDigestFor used here is the freshly-computed value
-  // for the historical digests, independent of acceptedCommit. To simulate
-  // the meaningful substitution failure, override with a stale digest:
-  record.aggregateBindingDigest = `sha256:${'f'.repeat(64)}`;
+  // evidenceDigest is UNCHANGED — digest-only rebinding would still pass.
+  // The supplied aggregateBindingDigest is UNCHANGED — it was computed for
+  // the original (commit, digest) tuple at this slot. Now the recomputed
+  // binding uses the new commit, which differs.
+  assert.notEqual(originalCommit, target.acceptedCommit);
   const outcome = evaluateReleaseCandidatePrecheckV1(record);
   assert.equal(outcome.status, 'blocked_invalid_inputs',
-    'substituted historical commit whose binding was not refreshed must refuse');
+    'substituted historical commit with stale aggregate binding must refuse');
   assert.match(outcome.reason, /aggregateBindingDigest-mismatch/);
+  // Sanity: when the operator refreshes the binding to match the new commit,
+  // the record is complete (the precheck still does NOT accept — it returns
+  // precheck_complete_not_accepted, never approval).
+  record.aggregateBindingDigest = aggregateBindingDigestFor(
+    record.components as Array<{ id: string; acceptedCommit: string; evidenceDigest: string }>);
+  const refreshed = evaluateReleaseCandidatePrecheckV1(record);
+  assert.equal(refreshed.status, 'precheck_complete_not_accepted',
+    'refreshing the binding with the new commit restores complete-not-accepted, never acceptance');
 });
 
 test('a substituted component evidence digest refuses with aggregateBindingDigest-mismatch', () => {
@@ -174,7 +179,8 @@ test('a forensically candidate-reconstructed component refuses — never indepen
   for (let i = 0; i < components.length; i++) {
     components[i]!.evidenceDigest = candidateDerivedBindingDigest(components[i]!.id);
   }
-  record.aggregateBindingDigest = aggregateBindingDigestFor(components.map((c) => c.evidenceDigest));
+  record.aggregateBindingDigest = aggregateBindingDigestFor(
+    components as Array<{ id: string; acceptedCommit: string; evidenceDigest: string }>);
   const outcome = evaluateReleaseCandidatePrecheckV1(record);
   assert.equal(outcome.status, 'blocked_invalid_inputs',
     'candidate-reconstructed evidence digests are not historical attestation');
@@ -194,7 +200,8 @@ test('refuses a record where all 14 component evidence digests collapse to a sin
     candidateCommit: ROOT_CANDIDATE, treeDigest: ROOT_TREE, sourceDigest: ROOT_SOURCE,
     releaseVersion: ROOT_VERSION, artifactDigest: ROOT_ARTIFACT,
     artifactManifestDigest: ROOT_MANIFEST,
-    aggregateBindingDigest: aggregateBindingDigestFor(components.map((c) => c.evidenceDigest)),
+    aggregateBindingDigest: aggregateBindingDigestFor(
+      components as Array<{ id: string; acceptedCommit: string; evidenceDigest: string }>),
     components,
   };
   const outcome = evaluateReleaseCandidatePrecheckV1(record);
@@ -299,8 +306,12 @@ test('a historical record where the aggregate binding digest omits the digest se
   // against a stale or partial digest set (e.g. with one component omitted)
   // — provides an audit-trail of when the binding was last recomputed.
   const record = historicalCompleteRecord();
-  const components = record.components as { evidenceDigest: string }[];
-  const trimmed: string[] = components.slice(0, components.length - 1).map((c) => c.evidenceDigest);
+  const components = record.components as { evidenceDigest: string; id: string;
+    acceptedCommit: string }[];
+  const trimmed: Array<{ id: string; acceptedCommit: string;
+    evidenceDigest: string }> = components.slice(0, components.length - 1)
+    .map((c) => ({ id: c.id, acceptedCommit: c.acceptedCommit,
+      evidenceDigest: c.evidenceDigest }));
   record.aggregateBindingDigest = aggregateBindingDigestFor(trimmed);
   const outcome = evaluateReleaseCandidatePrecheckV1(record);
   assert.equal(outcome.status, 'blocked_invalid_inputs');

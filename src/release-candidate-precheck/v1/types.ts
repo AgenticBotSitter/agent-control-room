@@ -50,10 +50,11 @@ export interface ReleaseCandidateReferenceV1 {
    * precheck as
    *   `sha256Digest({ candidateCommit, treeDigest, sourceDigest, releaseVersion,
    *     artifactDigest, artifactManifestDigest,
-   *     componentEvidenceDigests: [evidenceDigest per component in
-   *       canonical component order] })`.
-   * Cannot be re-derived from the candidate root without the historical
-   * component digests. Required. */
+   *     components: [{ id, acceptedCommit, evidenceDigest }, ...] in
+   *       canonical component order })`.
+   * Cannot be re-derived from the candidate root parameters alone — it
+   * requires every component's independently attested historical acceptance
+   * commit AND its evidence digest. Required. */
   aggregateBindingDigest: string;
 }
 
