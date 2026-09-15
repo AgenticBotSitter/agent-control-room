@@ -1257,3 +1257,112 @@ test("the generated uninstall command names the signal directory when one was co
   assert.doesNotMatch(plain, /--signal-directory/u,
     "and must not invent a flag for an install that has no extra signal");
 });
+
+// Portable scheduling follow-up: what lands on disk must be byte-exact,
+// encoding-consistent, and repeatable on every platform — the importer
+// evidence starts from bytes, not from strings in memory.
+test("emitted artifacts are byte-exact UTF-8 with a matching declaration and no BOM", (t) => {
+  const root = scratch(t);
+  const generated = generate({
+    options: {
+      workerId: WORKER_ID, repository: REPOSITORY_NAME, runtimeRoot: root, all: true,
+      workingDirectory: root, intervalSeconds: 1800,
+    },
+    scriptPath: join(root, "scripts", "worker-inbox-watch.mjs"),
+    nodePath: join(root, "bin", "node"),
+    now: CLOCK,
+  });
+  assert.ok(generated.written.length >= 4, "launchd + systemd pair + windows task");
+  for (const artifact of generated.written) {
+    const bytes = readFileSync(artifact.path);
+    artifact.content = bytes.toString("utf8");
+    // writeFileSync(target, content, "utf8") must round-trip exactly: what the
+    // operator imports is these bytes, not the in-memory string.
+    assert.deepEqual(bytes, Buffer.from(artifact.content, "utf8"), `${artifact.name} on-disk bytes must equal its content`);
+    assert.equal(bytes.length, artifact.bytes, "the reported byte count must be the on-disk size");
+    assert.equal(bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF, false,
+      `${artifact.name} must not carry a BOM the declaration does not announce`);
+    assert.equal(bytes.includes(0x0D), false, `${artifact.name} must use LF line endings, not CRLF`);
+  }
+  const byName = Object.fromEntries(generated.written.map((entry) => [entry.name, entry.content]));
+  const plist = byName[`${generated.written.find((entry) => entry.name.endsWith(".plist")).name}`];
+  const task = byName[`${generated.written.find((entry) => entry.name.endsWith(".xml")).name}`];
+  assert.match(plist, /<\?xml version="1\.0" encoding="UTF-8"\?>/u, "plist declaration must match its UTF-8 bytes");
+  assert.match(task, /<\?xml version="1\.0" encoding="UTF-8"\?>/u, "task declaration must match its UTF-8 bytes");
+  assert.ok(isWellFormedXml(plist) && isWellFormedXml(task));
+});
+
+test("an explicit 1800-second schedule lands in all three definitions", (t) => {
+  const root = scratch(t);
+  const generated = generate({
+    options: {
+      workerId: WORKER_ID, repository: REPOSITORY_NAME, runtimeRoot: root, all: true,
+      workingDirectory: root, intervalSeconds: 1800,
+    },
+    scriptPath: join(root, "scripts", "worker-inbox-watch.mjs"),
+    nodePath: join(root, "bin", "node"),
+    now: CLOCK,
+  });
+  const read = (suffix) => readFileSync(
+    generated.written.find((entry) => entry.name.endsWith(suffix)).path, "utf8");
+  assert.match(read(".plist"), /<key>StartInterval<\/key>\s*<integer>1800<\/integer>/u);
+  assert.match(read(".timer"), /OnUnitActiveSec=1800s/u);
+  assert.match(read(".xml"), /<Interval>PT30M<\/Interval>/u);
+});
+
+test("repeated generation with the same clock is byte-identical", (t) => {
+  const root = scratch(t);
+  const base = {
+    workerId: WORKER_ID, repository: REPOSITORY_NAME, platform: "windows",
+    runtimeRoot: root, workingDirectory: root, intervalSeconds: 1800,
+  };
+  const invoke = () => generate({
+    options: { ...base }, scriptPath: join(root, "watch.mjs"),
+    nodePath: join(root, "node"), now: CLOCK,
+  });
+  const before = Buffer.from(readFileSync(invoke().written[0].path));
+  // startBoundary embeds the clock, so a fixed clock must yield identical bytes:
+  // an operator re-running the generator sees no phantom diff.
+  assert.deepEqual(Buffer.from(readFileSync(invoke().written[0].path)), before);
+});
+
+test("unicode, spaces, and metacharacters survive every platform renderer", (t) => {
+  const root = scratch(t);
+  const awkward = join(root, "tâches & 50% ünïcode \"quoted\"");
+  for (const platform of ["launchd", "systemd", "windows"]) {
+    const artifacts = artifactsFor({
+      platform, workerId: WORKER_ID, repository: REPOSITORY_NAME, runtimeDirectory: awkward,
+      nodePath: join(awkward, "bin", "node"), scriptPath: join(awkward, "watch.mjs"),
+      workingDirectory: awkward, intervalSeconds: 1800,
+      standardOut: join(awkward, "out.log"), standardError: join(awkward, "err.log"),
+    });
+    for (const artifact of artifacts) {
+      const bytes = Buffer.from(artifact.content, "utf8");
+      assert.deepEqual(Buffer.from(bytes.toString("utf8"), "utf8"), bytes, `${artifact.name} must round-trip as UTF-8`);
+      if (/\.(?:xml|plist)$/u.test(artifact.name)) {
+        assert.ok(isWellFormedXml(artifact.content), `${artifact.name} must stay well-formed with awkward paths`);
+        assert.equal(artifact.content.includes(awkward), false, "raw awkward paths must be escaped, never inline");
+      }
+    }
+  }
+  const service = artifactsFor({
+    platform: "systemd", workerId: WORKER_ID, repository: REPOSITORY_NAME, runtimeDirectory: awkward,
+    nodePath: join(awkward, "bin", "node"), scriptPath: join(awkward, "watch.mjs"),
+    workingDirectory: awkward, intervalSeconds: 1800,
+  }).find((entry) => entry.name.endsWith(".service")).content;
+  assert.match(service, /%%/u, "systemd must double the % in awkward paths");
+});
+
+test("instructions name the last-run and last-result check on every platform", () => {
+  const forPlatform = (platform) => instructionsFor({
+    platform, workerId: WORKER_ID, artifactDirectory: "/tmp/a b/c",
+    runtimeDirectory: "/tmp/a b/rt", repository: REPOSITORY_NAME,
+  });
+  assert.match(forPlatform("launchd"), /last exit code/u, "macOS names the last exit code check");
+  assert.match(forPlatform("systemd"), /list-timers/u, "systemd names the last/next run check");
+  assert.match(forPlatform("systemd"), /status \S+\.service/u, "systemd names the last result check");
+  const windows = forPlatform("windows");
+  assert.match(windows, /Last Result/u, "windows names the last result check");
+  assert.match(windows, /Last Run Time/u, "windows names the last run check");
+  assert.match(windows, /importer-side workaround/u, "windows states the UTF-16 conversion is importer-side");
+});

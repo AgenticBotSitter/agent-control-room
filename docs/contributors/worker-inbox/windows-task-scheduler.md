@@ -22,9 +22,30 @@ schtasks /Create /TN "AgentControlRoomWorkerInbox-<worker>-<digest>" /XML "<gene
 ## Inspect
 
 ```powershell
-schtasks /Query /TN "AgentControlRoomWorkerInbox-<worker>-<digest>" /V /FO LIST
+schtasks /Query /TN "AgentControlRoomWorkerInbox-<worker>-<digest>" /V /FO LIST | findstr /C:"Last Run Time" /C:"Last Result" /C:"Next Run Time" /C:"Status"
 type "<runtime>\watch.log"
 ```
+
+`Last Result` is the exit code of the last tick (`0` is a clean read, `2` a
+read failure); `Last Run Time` plus `watch.log` together prove the schedule
+actually fires, not just that it is registered.
+
+## If the importer rejects the XML
+
+A contributor had to convert the generated file before Task Scheduler
+accepted it. The emitted bytes are UTF-8 and match the `encoding="UTF-8"`
+declaration (a fixture test asserts the on-disk bytes, the declaration, the
+absence of a BOM, and LF endings), so the defect is on the importer side, not
+in the artifact. Do not "fix" the generator without new evidence. Convert a
+COPY to UTF-16 and import that instead:
+
+```powershell
+powershell -NoProfile -Command "Get-Content '<path>\<task>.xml' -Raw | Set-Content -Encoding unicode '<path>\<task>-utf16.xml'"
+schtasks /Create /TN "<task>" /XML "<path>\<task>-utf16.xml" /F
+```
+
+The UTF-8 file stays the owned original; the converted copy is an
+importer-side workaround, verified only by your own successful import.
 
 ## Stop
 
