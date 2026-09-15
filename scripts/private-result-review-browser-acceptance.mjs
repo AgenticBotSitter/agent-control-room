@@ -124,6 +124,44 @@ try {
   check("reload did not repeat the quality command",
     posts.filter(entry => /\/reviews\/[^/]+$/.test(entry.path)).length === 1);
 
+  // Exact-artifact navigation: the selection lives in the URL, so it must
+  // survive a reload and move with back/forward, and an unlisted ID must never
+  // be read.
+  const resultRegionByName = page.getByRole("region", { name: "Protected result content" });
+  const openArtifactId = await page.getByRole("region", { name: "Protected result content" })
+    .locator("code").first().innerText();
+
+  await page.goto(`${origin}${taskPath}?result=${encodeURIComponent(openArtifactId)}#task-results`,
+    { waitUntil: "domcontentloaded" });
+  await resultRegionByName.waitFor();
+  check("an exact result URL opens that file without another click",
+    await resultRegionByName.locator('textarea[aria-label="Agent result text"]').inputValue()
+      === "A useful private result.");
+  await checkNoPageOverflow(page, "exact result URL");
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await resultRegionByName.waitFor();
+  check("the open file survives a full browser reload", await resultRegionByName.isVisible());
+
+  await page.getByRole("button", { name: "Close result" }).click();
+  check("closing the file clears it from the address bar",
+    !new URL(page.url()).searchParams.has("result"));
+  await page.goBack({ waitUntil: "domcontentloaded" });
+  await resultRegionByName.waitFor();
+  check("browser Back reopens the previously open file", await resultRegionByName.isVisible());
+
+  const readsBefore = posts.length;
+  await page.goto(`${origin}${taskPath}?result=${encodeURIComponent("artifact:not-in-this-task")}#task-results`,
+    { waitUntil: "domcontentloaded" });
+  await page.getByRole("heading", { name: "Result files" }).waitFor();
+  check("an unlisted result ID is refused without reading anything",
+    await page.getByText(/is not in this task’s authorized file list/).isVisible()
+      && await resultRegionByName.count() === 0);
+  check("the refused ID is dropped from the address bar",
+    !new URL(page.url()).searchParams.has("result"));
+  check("the refused ID produced no additional command", posts.length === readsBefore);
+  await checkNoPageOverflow(page, "refused result selection");
+
   await context.close();
   console.log(`# ${checks.filter(value => value.passed).length}/${checks.length} checks passed; no listener, remote request or native agent was created`);
 } finally {

@@ -10,6 +10,7 @@ import { ProjectCatalogNavigation } from "../app/components/project-catalog-navi
 import { createProjectBrowserClient } from "../src/web/v1/browser-client";
 import { readTaskHomeActivity } from "../src/web/v1/task-home-browser-client";
 import { ProjectOverviewActivityView } from "../private-app/app/project-overview-activity";
+import { readTaskResultSelectionV1, taskResultHrefV1 } from "../private-app/app/task-results";
 import { readTaskProjectOverview } from "../src/web/v1/task-project-overview-browser-client";
 import { ProjectFilesView } from "../private-app/app/project-files-workspace";
 import { readTaskProjectFiles } from "../src/web/v1/task-project-files-browser-client";
@@ -191,7 +192,15 @@ test("project files link verified metadata to the exact protected task result", 
   const html = renderToStaticMarkup(createElement(ProjectFilesView, { projectId: task.projectId,
     data: { state: "ready", value } }));
   assert.match(html, /Research result/); assert.match(html, /42 bytes/);
-  assert.match(html, /projects\/project%3Aalpha\/tasks\/job%3Adone#task-results/);
+  // The link now names the exact artifact, not just the task's results anchor,
+  // so opening a file from Files lands on that file rather than a generic list.
+  assert.match(html,
+    /projects\/project%3Aalpha\/tasks\/job%3Adone\?result=artifact%3Aone#task-results/);
+  assert.equal(taskResultHrefV1("project:alpha", "job:done", "artifact:one"),
+    "/projects/project%3Aalpha/tasks/job%3Adone?result=artifact%3Aone#task-results");
+  // Without an artifact the anchor-only form is preserved for plain navigation.
+  assert.equal(taskResultHrefV1("project:alpha", "job:done"),
+    "/projects/project%3Aalpha/tasks/job%3Adone#task-results");
   assert.doesNotMatch(html, /filesystem|storage locator|download/i);
   let requested = "", method = "";
   const transport = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -253,4 +262,49 @@ test("settings links to the real session surface without credential controls", (
   assert.match(html, /href="\/session"/);
   assert.match(html, /does not expose credentials/);
   assert.doesNotMatch(html, /password|api key|secret key/i);
+});
+
+test("home links each recent result to its exact file, not a generic results anchor", () => {
+  const task = { projectId: "project:alpha", requestId: "request:alpha", jobId: "job:done", title: "Research result",
+    state: "succeeded" as const, version: 3, createdAt: "2026-09-04T10:00:00.000Z", updatedAt: "2026-09-04T12:00:00.000Z" };
+  const artifact = { artifactId: "artifact:one", attemptId: "attempt:one", runId: "run:one",
+    contentHash: `sha256:${"a".repeat(64)}`, sizeBytes: 42, receivedAt: "2026-09-04T12:00:00.000Z",
+    byteCheck: "matched_recorded_claim" as const, qualityAccepted: false as const };
+  const second = { ...artifact, artifactId: "artifact:two", contentHash: `sha256:${"b".repeat(64)}` };
+  const state = {
+    projects: { state: "unavailable", code: "unavailable" },
+    attention: { state: "unavailable", code: "unavailable" },
+    connections: { state: "unavailable", code: "unavailable" },
+    activity: { state: "ready", value: { projectId: task.projectId, active: [], recentTasks: [],
+      recentResults: [{ task, artifact }, { task, artifact: second }], additionalResultsOmitted: false,
+      resultSource: "configured", observedAt: "2026-09-04T12:00:00.000Z", startsWork: false } },
+  } as unknown as HomeDashboardState;
+  const html = renderToStaticMarkup(createElement(HomeDashboard, { data: state }));
+  // Two artifacts in one task must produce two distinct exact links.
+  assert.match(html, /tasks\/job%3Adone\?result=artifact%3Aone#task-results/);
+  assert.match(html, /tasks\/job%3Adone\?result=artifact%3Atwo#task-results/);
+});
+
+test("a result selection is read from the URL only when it is a usable identifier", () => {
+  assert.equal(readTaskResultSelectionV1("?result=artifact%3Aone"), "artifact:one");
+  assert.equal(readTaskResultSelectionV1("result=artifact%3Aone"), "artifact:one");
+  // Absent, empty and malformed selections are simply "no selection"; they are
+  // never turned into a request.
+  assert.equal(readTaskResultSelectionV1(""), undefined);
+  assert.equal(readTaskResultSelectionV1("?other=artifact%3Aone"), undefined);
+  assert.equal(readTaskResultSelectionV1("?result="), undefined);
+  // Control characters and oversized values are refused before reaching the DOM
+  // or a request path.
+  assert.equal(readTaskResultSelectionV1(`?result=${encodeURIComponent(`bad${String.fromCharCode(0)}id`)}`), undefined);
+  assert.equal(readTaskResultSelectionV1(`?result=${"x".repeat(257)}`), undefined);
+  assert.equal(readTaskResultSelectionV1(`?result=${"x".repeat(256)}`), "x".repeat(256));
+  // A selection is carried verbatim; it is validated against the authorized
+  // list by the reader, not trusted here.
+  assert.equal(readTaskResultSelectionV1(`?result=${encodeURIComponent("../other-project")}`), "../other-project");
+});
+
+test("the exact-result link encodes each segment separately", () => {
+  // A project or job containing a separator must not be able to forge a path.
+  assert.equal(taskResultHrefV1("project:a/b", "job:c?d", "artifact:e#f"),
+    "/projects/project%3Aa%2Fb/tasks/job%3Ac%3Fd?result=artifact%3Ae%23f#task-results");
 });
