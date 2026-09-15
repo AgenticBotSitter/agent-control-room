@@ -327,11 +327,18 @@ GitHub cycle-time medians (claim to first PR, submission to first decision,
 changes-required to resubmission, claim to merge) and current waiting time by owner.
 Waiting time is wall-clock time, never active model time.
 
+Add `Worker-Started-At` and `Worker-Ended-At` when they tightly bound active work.
+Stop the interval before waiting; if separated work periods cannot be represented
+honestly, use `unknown` rather than one broad interval. Claims, open pull requests and
+watchers never count as active work. The daily coverage and bottleneck rules are in
+[`docs/PUBLIC_BUILD_FLOW_MEASUREMENT.md`](docs/PUBLIC_BUILD_FLOW_MEASUREMENT.md).
+
 Full worker/reviewer/lead cost comparison lives in the contribution-metrics report:
 
 ```sh
 pnpm model:costs
 pnpm model:costs -- --json
+pnpm flow:report
 ```
 
 Each cost phase is one `acr-contribution-metrics:v1` record. Worker costs come from

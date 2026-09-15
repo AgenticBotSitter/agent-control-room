@@ -30,6 +30,7 @@
     "queue:health": "node scripts/public-queue-health.mjs",
     "model:outcomes": "node scripts/public-model-outcomes.mjs",
     "model:costs": "node scripts/public-contribution-metrics.mjs",
+    "flow:report": "node scripts/public-contribution-metrics.mjs --window-hours 24",
     "test:access": "node --import tsx --test tests/access-library.test.ts",
     "test:offline-auth-conformance": "node --import tsx --test --test-concurrency=1 tests/private-owner-bootstrap-conformance.test.ts tests/private-ingress-conformance.test.ts",
     "test:owner-bootstrap": "node --import tsx --test --test-concurrency=1 tests/owner-bootstrap-ceremony-core.test.ts tests/owner-bootstrap-ceremony-request-faults.test.ts tests/owner-bootstrap-ceremony-recovery.test.ts tests/owner-bootstrap-ceremony-control-faults.test.ts tests/owner-bootstrap-ceremony-preflight-faults.test.ts tests/owner-bootstrap-ceremony-lifecycle-faults.test.ts tests/owner-bootstrap-ceremony-close-races.test.ts tests/owner-bootstrap-ceremony-close-bootstrap.test.ts tests/owner-bootstrap-ceremony-routing.test.ts",
