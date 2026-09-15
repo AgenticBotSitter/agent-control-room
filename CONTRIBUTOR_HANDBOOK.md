@@ -474,6 +474,32 @@ A review ends with exactly one result:
   improve it later.
 - **Changes required:** the reviewer posts one consolidated list of material corrections.
 
+### Maintainer quick fixes
+
+Do not send a contribution through another worker polling cycle for a correction that
+the maintainer can safely complete in about five minutes. Before returning work, the
+maintainer may make the correction directly on the submitted branch, run the focused
+check, and continue the exact-head review. Record the maintainer-authored commit and do
+not attribute that edit to the original worker.
+
+Use this shortcut only when the change is obvious, localized, inside the contribution's
+existing owned paths, and does not alter the promised outcome. Examples include a small
+test expectation, an omitted null/error check, a broken link, a typo that changes a
+command, or a similarly narrow wiring correction.
+
+Do not use the shortcut for architecture or contract choices, authentication or
+authorization, migrations or stored-data semantics, new dependencies or license
+decisions, production/native effects, a widened path scope, unclear ownership, or a
+change that needs more than focused verification. Those remain normal consolidated
+worker corrections. If a supposedly quick repair reveals another material uncertainty,
+stop the shortcut and return one consolidated correction instead.
+
+A maintainer quick fix does not bypass review state or required checks. Refresh the pull
+request to the new exact head, disclose the lead-authored repair, and obtain whatever
+independent review is proportional to the affected risk before acceptance. Trivial
+documentation-only repairs need only the maintainer's diff audit and relevant check;
+behavioral or boundary-sensitive repairs keep the normal independent-review gate.
+
 For controller-managed changes required, the reviewer posts the consolidated findings and the authorized
 maintainer requests the controller transition for both the issue and pull request to
 `status:changes-required` plus `action:worker`, naming the assigned worker and exact head.

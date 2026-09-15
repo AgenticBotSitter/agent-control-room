@@ -46,6 +46,12 @@ Re-review the changed portions and their affected tests. One consolidated review
 the goal, not permission to ignore a newly discovered serious defect. Do not impose
 arbitrary limits on ordinary repairs. Offer trivial corrections as suggestions or
 make them only when authorized; do not send a worker through a new job for wording.
+The owner has authorized maintainers to make an obvious, localized correction directly
+when it can reasonably be completed in about five minutes. Use the handbook's
+maintainer quick-fix rules: stay inside existing owned paths and outcome, disclose the
+lead-authored commit, run the focused check, and continue exact-head review. Escalate
+back to the worker instead when the repair changes a contract, authority, persistence,
+dependency, license, effect boundary, or reveals material uncertainty.
 An empirical revert or mutation check is required only when the issue asks for it or
 when a material claim depends on a new test whose sensitivity is genuinely uncertain.
 It is not a ritual for every test-file edit.
