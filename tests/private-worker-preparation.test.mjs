@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { checkPrivateWorkerPreparationV1 } from '../scripts/check-private-worker-preparation.mjs';
+import { comparePreparations, explainPreparation } from '../src/worker-preparation-report/v1/explain.mjs';
 import { sha256Digest } from '../src/security/canonical-digest.ts';
 
 const digest = value => sha256Digest(value);
@@ -82,4 +87,111 @@ test('stale or unverified capability and missing usage stay unavailable or unkno
   const unsupported = fixture(); unsupported.requestedOperations.push('cancel');
   const unsupportedResult = checkPrivateWorkerPreparationV1(unsupported);
   assert.equal(unsupportedResult.ready, false); assert.equal(unsupportedResult.operations.cancel, 'unavailable');
+});
+
+const explainInput = changes => { const input = fixture(); for (const change of changes) change(input); return input; };
+const explainResult = input => explainPreparation(checkPrivateWorkerPreparationV1(structuredClone(input)));
+const rendered = explanation => explanation.lines.join('\n');
+
+test('ready facts explain readiness, permitted operations and disclose no identities', () => {
+  const explanation = explainResult(fixture());
+  assert.equal(explanation.readiness, 'ready');
+  assert.ok(explanation.lines.includes('Preparation outcome: ready.'));
+  assert.ok(explanation.lines.includes('Permitted operations: read, result, status, submit.'));
+  assert.ok(explanation.lines.includes('Blocked operations: none.'));
+  const text = rendered(explanation);
+  for (const secret of ['tenant:test', 'node:test', 'synthetic_pass', 'connector.synthetic.codex',
+    'bridge.control-room.v1', 'runtime.node', 'probe:worker', 'submit_synthetic_evidence']) {
+    assert.doesNotMatch(text, new RegExp(secret.replace(/[.:-]/g, '\\$&')));
+  }
+  assert.doesNotMatch(text, /sha256:[a-f0-9]{64}/);
+});
+
+test('ready-to-stale comparison reports the transition and grants no authority', () => {
+  const before = explainResult(fixture());
+  const stale = explainInput([input => { input.facts.evaluatedAt = '2026-09-13T12:20:00.000Z'; }]);
+  const after = explainResult(stale);
+  assert.equal(after.readiness, 'not-ready');
+  const comparison = comparePreparations(before, after);
+  assert.ok(comparison.lines.includes('Readiness changed: ready to not-ready.'));
+  assert.ok(comparison.lines.includes('Comparison grants no execution authority.'));
+  assert.equal(comparison.grantsExecutionAuthority, false);
+  const same = comparePreparations(before, explainResult(fixture()));
+  assert.ok(same.lines.includes('Readiness unchanged: ready.'));
+});
+
+test('missing capability, insufficient scratch and unavailable operations explain plainly', () => {
+  const blocked = explainResult(explainInput([input => { input.facts.capabilities[0].outcome = 'blocked'; }]));
+  assert.equal(blocked.readiness, 'not-ready');
+  assert.ok(rendered(blocked).includes('The required capability probe has no passing recorded outcome.'));
+  const scratch = explainResult(explainInput([input => {
+    input.facts.telemetry.availableStorageBytes = { quality: 'observed', value: 10 };
+  }]));
+  assert.ok(rendered(scratch).includes('Reported scratch storage is below the required amount.'));
+  const cancelled = explainResult(explainInput([input => { input.requestedOperations.push('cancel'); }]));
+  assert.ok(cancelled.lines.includes('Blocked operations: cancel.'));
+});
+
+test('malformed input refuses generically without echoing raw fields', () => {
+  for (const bad of [{}, { schema: 'wrong' }, null, 'just a string']) {
+    let result;
+    try {
+      result = bad !== null && typeof bad === 'object' ? checkPrivateWorkerPreparationV1(bad) : undefined;
+    } catch {
+      result = undefined;
+    }
+    const explanation = explainPreparation(result);
+    assert.equal(explanation.readiness, 'refused');
+    assert.ok(explanation.lines.includes('Preparation outcome: refused.'));
+  }
+  assert.throws(() => checkPrivateWorkerPreparationV1({ canary: 'CANARY-RAW-INPUT-9' }),
+    /private_worker_preparation_unavailable/);
+});
+
+test('explanations are deterministic and never mutate their inputs', () => {
+  const input = fixture();
+  const frozen = structuredClone(input);
+  const first = JSON.stringify(explainResult(input));
+  const second = JSON.stringify(explainResult(input));
+  assert.equal(first, second);
+  assert.deepEqual(input, frozen);
+  const before = explainResult(fixture());
+  const beforeFrozen = structuredClone(before);
+  comparePreparations(before, explainResult(fixture()));
+  assert.deepEqual(before, beforeFrozen);
+});
+
+test('canary secrets and raw input text never appear in explanations', () => {
+  const input = fixture();
+  input.facts.gpuClasses = ['CANARY-GPU-CLASS-7'];
+  input.facts.capabilities[0].reasonCode = 'CANARY-REASON-8';
+  const text = rendered(explainResult(input));
+  assert.doesNotMatch(text, /CANARY-GPU-CLASS-7/);
+  assert.doesNotMatch(text, /CANARY-REASON-8/);
+});
+
+test('explain CLI helps, explains a document, and refuses generically', () => {
+  const script = new URL('../scripts/explain-worker-preparation.mjs', import.meta.url).pathname;
+  const run = args => execFileSync(process.execPath, ['--import', 'tsx', script, ...args], { encoding: 'utf8' });
+  const help = run(['--help']);
+  assert.match(help, /--input <facts\.json>/);
+  const dir = mkdtempSync(join(tmpdir(), 'prep-'));
+  const readyPath = join(dir, 'ready.json');
+  writeFileSync(readyPath, JSON.stringify(fixture()));
+  const out = JSON.parse(run(['--input', readyPath]));
+  assert.equal(out.explanation.readiness, 'ready');
+  assert.ok(!JSON.stringify(out).includes('tenant:test'));
+  const badPath = join(dir, 'bad.json');
+  writeFileSync(badPath, '{"canary":"CANARY-CLI-RAW-5"}');
+  let failed;
+  try {
+    execFileSync(process.execPath, ['--import', 'tsx', script, '--input', badPath],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (error) {
+    failed = error;
+  }
+  assert.ok(failed, 'malformed input must exit non-zero');
+  assert.match(failed.stderr, /refused supplied facts/);
+  assert.doesNotMatch(failed.stderr, /CANARY-CLI-RAW-5/);
+  assert.doesNotMatch(JSON.stringify(failed.stdout ?? ''), /CANARY-CLI-RAW-5/);
 });
