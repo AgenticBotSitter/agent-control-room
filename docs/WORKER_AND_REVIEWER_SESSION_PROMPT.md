@@ -53,7 +53,8 @@ self-approve or self-merge.
 
 Submit or correct the same pull request using the handbook's exact format. Report what
 works, what failed, what was not tested, the exact current commit, and the model and
-effort that authored most of the patch. Use stable public model names only; never include
+effort that authored most of the patch, plus best-available active minutes and token
+counts (or `unknown` where the provider does not report them). Use stable public model names only; never include
 account, subscription, machine or credential details. After a review,
 read the complete consolidated findings and use the required acknowledge/resubmit flow.
 Do not describe changes as complete unless they are present at the submitted commit.
