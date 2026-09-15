@@ -124,6 +124,23 @@ test('legacy adoption without a PR issue line requires exact prior PR and head e
     { claimWorkerId: 'worker-01' })), /adoption_source_invalid/);
 });
 
+for (const acknowledgeFirst of [false, true]) test(`legacy adoption can stop safely ${acknowledgeFirst ? 'after acknowledgment' : 'immediately'}`, async () => {
+  const f = fixture();
+  f.pr.body = 'Legacy contribution awaiting correction';
+  f.issue.labels = ['platform:any', 'status:changes-required', 'action:worker'];
+  f.comments.push({ id: 11, user: { login: 'builder', type: 'User' },
+    body: '<!-- agent-control-room-action:v1 worker=worker-01 state=changes-required issue=1 -->' });
+  f.comments.push({ id: 12, user: { login: 'reviewer', type: 'User' },
+    body: `Maintainer re-review of PR #2 at ${sha}: correct this pull request.` });
+  let result = await f.run(f.eventFor('adopt-changes', 'reviewer', 0, 'Correct the reviewed failures.',
+    { claimWorkerId: 'worker-01' }));
+  if (acknowledgeFirst) result = await f.run(f.eventFor('acknowledge', 'builder', result.commentId));
+  result = await f.run(f.eventFor('stop', 'reviewer', result.commentId));
+  assert.equal(result.state, 'paused');
+  result = await f.run(f.eventFor('stopped', 'builder', result.commentId));
+  assert.equal(result.action, 'integrator');
+});
+
 test('maintainer can transfer a legacy correction to the worker current stable ID', async () => {
   const f = fixture();
   f.issue.labels = ['platform:any', 'status:changes-required', 'action:worker'];

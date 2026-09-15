@@ -96,9 +96,9 @@ export async function runHandoff({ event, repository, api, maintainers = [] }) {
   const latest = records.at(-1);
   const replay = latest?.record.requestId === requestId ? latest : undefined;
   const predecessor = replay ? records.at(-2) : latest;
-  const acknowledgingAdoptedLegacy = request.command === 'acknowledge' && issueBindings.length === 0
-    && predecessor?.record.requiresPrIssueBinding === true;
-  if (!exactIssueBinding && ((!adoptingChanges && !acknowledgingAdoptedLegacy) || issueBindings.length !== 0))
+  const continuingAdoptedLegacy = ['acknowledge', 'stop', 'stopped'].includes(request.command)
+    && issueBindings.length === 0 && predecessor?.record.requiresPrIssueBinding === true;
+  if (!exactIssueBinding && ((!adoptingChanges && !continuingAdoptedLegacy) || issueBindings.length !== 0))
     throw new Error('handoff_pr_issue_mismatch');
   const claimWorkerId = request.command === 'adopt-changes'
     ? request.claimWorkerId : predecessor?.record.claimWorkerId ?? request.workerId;
@@ -145,7 +145,8 @@ export async function runHandoff({ event, repository, api, maintainers = [] }) {
     state, action, acknowledged, requestId, previousId: request.previousId, claimId: claim.id,
     phase: 'pending', instruction: request.instruction, reviewUrl: ['acknowledge', 'resubmit', 'stopped'].includes(request.command)
       ? predecessor.record.reviewUrl : savedRequest.html_url,
-    requiresPrIssueBinding: adoptingChanges && !exactIssueBinding,
+    requiresPrIssueBinding: !exactIssueBinding
+      && (adoptingChanges || predecessor?.record.requiresPrIssueBinding === true),
     sourceIssueLabels: workflowLabels(issue), sourcePrLabels: workflowLabels(prIssue),
   };
   if (replay && record.phase === 'complete') return { status: 'already-recorded', commentId: replay.comment.id };
