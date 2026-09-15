@@ -422,7 +422,7 @@ or the latest pending journal comment ID.
 | `changes` | Separately configured maintainer | Return one consolidated material correction list |
 | `adopt-changes` | Separately configured maintainer | One-time migration of a matching legacy correction into a trusted record |
 | `acknowledge` | Accepted worker actor | Acknowledge receiving the correction handoff |
-| `resubmit` | Accepted worker actor | Submit the corrected exact head for re-review |
+| `resubmit` | Accepted worker actor | Submit the corrected exact head, or refresh a newer head still awaiting review |
 | `accept` | Separately configured maintainer | Send the reviewed exact head to integration |
 | `stop` | Separately configured maintainer | Revoke permission to continue, retaining ownership |
 | `stopped` | Accepted worker actor | Acknowledge stopping; enable a deliberate lead handoff |
@@ -502,6 +502,12 @@ previous: LATEST_CONTROLLER_COMMENT_ID
 
 The records move to `status:re-review` plus `action:reviewer`. Re-review focuses on the
 changed portions and affected behavior rather than restarting an unchanged full review.
+If a submitted PR receives another commit while it is still In review/Re-review with
+`action:reviewer`, use the same `HANDOFF resubmit` command with its latest completed
+record and current head. This refresh requests review; it does not accept the new code
+or require a fabricated correction/acknowledgment cycle. Changes-required still needs
+acknowledgment first. An already accepted integrator decision cannot be replaced this
+way; ask the maintainer to reconcile it. Never edit a controller record manually.
 Workers should run their inbox after a pull-request update or use a local read-only
 scheduler. It displays accepted claims, handoffs, revocations, and conflicts. Resolve
 conflicts before continuing the affected assignment; preserve links to submitted work.

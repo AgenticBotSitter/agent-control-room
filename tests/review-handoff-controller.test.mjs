@@ -90,6 +90,28 @@ test('worker can acknowledge the reviewed commit after pushing and resubmit only
   assert.equal(result.action, 'integrator');
 });
 
+test('a changed submission can refresh review but cannot bypass authority or an accepted decision', async () => {
+  const f = fixture();
+  let result = await f.run(f.eventFor('submit'));
+  const originalId = result.commentId;
+  f.pr.head.sha = 'b'.repeat(40);
+  const before = f.mutations.length;
+  await assert.rejects(f.run(f.eventFor('resubmit', 'outsider', result.commentId)), /authority_denied/);
+  await assert.rejects(f.run(f.eventFor('resubmit', 'builder', result.commentId, undefined, { head: sha })), /target_changed/);
+  await assert.rejects(f.run(f.eventFor('accept', 'reviewer', result.commentId)), /review_head_changed/);
+  assert.equal(f.mutations.length, before);
+  result = await f.run(f.eventFor('resubmit', 'builder', result.commentId, 'Updated test registration; review this exact head.'));
+  assert.equal(result.state, 're-review');
+  assert.equal(result.action, 'reviewer');
+  assert.equal(parseHandoff(f.comments.find(c => c.id === result.commentId)).head, f.pr.head.sha);
+  await assert.rejects(f.run(f.eventFor('resubmit', 'builder', originalId)), /predecessor_changed/);
+  result = await f.run(f.eventFor('accept', 'reviewer', result.commentId));
+  f.pr.head.sha = 'c'.repeat(40);
+  const acceptedMutations = f.mutations.length;
+  await assert.rejects(f.run(f.eventFor('resubmit', 'builder', result.commentId)), /transition_invalid/);
+  assert.equal(f.mutations.length, acceptedMutations);
+});
+
 test('shared author cannot approve itself, even if configured maintainer', async () => {
   const f = fixture();
   const first = await f.run(f.eventFor('submit'));
