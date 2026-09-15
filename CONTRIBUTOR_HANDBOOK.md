@@ -26,6 +26,9 @@ review, correct, merge, or hand off.
    ownership, capacity, dependencies and overlapping paths. An attention record applies
    to its named issue; do not silently treat an unrelated queue problem as a global stop.
    Use `--assignments-only` only when deliberately inspecting existing ownership.
+   `handoff-required` means the PR was recorded through `CLAIM SUBMIT` but its review
+   transition is unfinished. Post the displayed `HANDOFF submit` command on the issue;
+   do not start another implementation pass or wait for a review that has not been routed.
 
    `--token-from-gh` uses the existing GitHub CLI login only in memory. It does not
    print or save the token. Without it or `GITHUB_TOKEN`, public GitHub's low anonymous

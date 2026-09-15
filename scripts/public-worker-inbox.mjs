@@ -133,6 +133,18 @@ export async function readWorkerInbox({ workerId, repository = "AgenticBotSitter
     if (latest && latest.marker.workerId !== workerId) continue;
     if (!latest && !conflicting && !malformed) continue;
     const marker = latest?.marker;
+    // CLAIM SUBMIT records the exact PR but deliberately leaves labels Working.
+    // HANDOFF submit is the existing operation that moves both issue and PR to review.
+    if (latest?.outcome === "SUBMITTED" && marker.pr && marker.head && !conflicting && !malformed
+      && statusLabels.length === 1 && statusLabels[0] === "status:working" && actionLabels.length === 0
+      && !official.some(record => record.kind === "handoff")) {
+      actions.push(Object.freeze({ ...base, state: "handoff-required", disposition: "action", trust: "controller-record",
+        markerCommentId: latest.comment.id, pr: marker.pr, head: marker.head,
+        action: "The PR is submitted; finish its review handoff using the command below on this issue. No further implementation is requested.",
+        instruction: `HANDOFF submit\nworker-id: ${workerId}\npr: ${marker.pr}\nhead: ${marker.head}\nprevious: 0`,
+        instructionUrl: base.issueUrl }));
+      continue;
+    }
     const ended = ["RELEASED", "EXPIRED"].includes(latest?.outcome);
     if (ended && !conflicting && !malformed && statusLabels.length === 1
       && ["status:ready", "status:needs-decision", "status:paused"].includes(statusLabels[0])) {

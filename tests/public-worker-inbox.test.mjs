@@ -36,6 +36,10 @@ test("current controller submission and renewal reach the worker", async () => {
   assert.equal(result[0].disposition, "waiting");
   assert.equal(result[0].pr, 171);
   assert.equal(result[0].head, "c".repeat(40));
+  const beforeHandoff = await read({ issues: [issue(["status:working"])], comments: [claim(),
+    currentClaim("SUBMITTED", ` pr=171 sha=${"c".repeat(40)}`)] });
+  assert.equal(beforeHandoff[0].state, "handoff-required");
+  assert.match(beforeHandoff[0].instruction, /^HANDOFF submit\nworker-id: worker:test-01\npr: 171/);
 });
 
 test("release and expiry end stale ownership; later advisory cannot resurrect it", async () => {
