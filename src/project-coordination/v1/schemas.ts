@@ -188,6 +188,54 @@ export const coordinatorLifecycleReceiptSchemaV1 = z.object({
 }).strict();
 export type CoordinatorLifecycleReceiptV1 = z.infer<typeof coordinatorLifecycleReceiptSchemaV1>;
 
+/**
+ * Request digest for one delegation-policy lifecycle action. It binds the
+ * action, the policy identity, the acting owner, the project, and the expected
+ * policy version: any change to target state, policy identity, expected
+ * revisions, actor, project, or action changes the digest, so reusing a key
+ * for changed content is refused with policy_replay_conflict instead of
+ * replaying the saved receipt.
+ */
+export function delegationPolicyLifecycleRequestDigestV1(input: {
+  action: "pause" | "resume" | "revoke";
+  tenantId: string;
+  projectId: string;
+  policyId: string;
+  ownerIdentityId: string;
+  expectedVersion: number;
+}): string {
+  if (!Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 0) {
+    failProjectCoordinationV1("invalid_input");
+  }
+  const identity = JSON.parse(JSON.stringify({
+    schema: "control-room.project-delegation-policy-lifecycle-request/v1",
+    action: input.action,
+    tenantId: input.tenantId,
+    projectId: input.projectId,
+    policyId: input.policyId,
+    ownerIdentityId: input.ownerIdentityId,
+    expectedVersion: input.expectedVersion,
+  })) as Record<string, unknown>;
+  return sha256Digest(identity);
+}
+
+export const delegationPolicyLifecycleReceiptSchemaV1 = z.object({
+  schema: z.literal("control-room.project-delegation-policy-lifecycle-receipt/v1"),
+  action: z.enum(["pause", "resume", "revoke"]),
+  tenantId: id,
+  projectId: id,
+  policyId: id,
+  ownerIdentityId: id,
+  idempotencyKey: z.string().min(12).max(180).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
+  requestDigest: digest,
+  expectedVersion: z.number().int().min(0),
+  version: z.number().int().min(1),
+  state: z.enum(["active", "paused", "revoked"]),
+  alreadyState: z.enum(["policy_already_active", "policy_already_paused", "policy_already_revoked"]).optional(),
+  receiptDigest: digest,
+}).strict();
+export type DelegationPolicyLifecycleReceiptV1 = z.infer<typeof delegationPolicyLifecycleReceiptSchemaV1>;
+
 export const coordinationOperationRequestSchemaV1 = z.object({
   tenantId: id,
   projectId: id,

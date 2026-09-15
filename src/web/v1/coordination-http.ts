@@ -88,6 +88,18 @@ function ensureEnabledOrRefuse(enabled: () => Promise<boolean>): Promise<void> {
   });
 }
 
+function extractPolicyFields(body: unknown): {
+  revision: RevisionInput;
+  policyId: string;
+} {
+  if (!body || typeof body !== "object") throw new WebAccessError("invalid_request");
+  const candidate = body as Record<string, unknown>;
+  if (typeof candidate.policyId !== "string" || !candidate.policyId) {
+    throw new WebAccessError("invalid_request");
+  }
+  return { revision: buildRevision(body), policyId: candidate.policyId };
+}
+
 function extractAppointFields(body: unknown): {
   revision: RevisionInput;
   coordinatorActorType: "human" | "agent";
@@ -186,13 +198,21 @@ export function createCoordinationHttpHandler(options: CoordinationHttpHandlerOp
               outcome = await options.service.revokeCoordinator(identity, input);
               break;
             }
-            case "pause-policy":
-            case "resume-policy":
-            case "revoke-policy":
-              // Suspended at the route until #220 lands durable policy
-              // replay. Hiding the UI buttons is not enough: authenticated
-              // direct POSTs must be refused here, before any service call.
-              throw new WebAccessError("access_denied");
+            case "pause-policy": {
+              const input = lifecycle(extractPolicyFields(body));
+              outcome = await options.service.pauseDelegationPolicy(identity, input);
+              break;
+            }
+            case "resume-policy": {
+              const input = lifecycle(extractPolicyFields(body));
+              outcome = await options.service.resumeDelegationPolicy(identity, input);
+              break;
+            }
+            case "revoke-policy": {
+              const input = lifecycle(extractPolicyFields(body));
+              outcome = await options.service.revokeDelegationPolicy(identity, input);
+              break;
+            }
             default:
               throw new WebAccessError("not_found");
           }

@@ -353,6 +353,8 @@ export const projectCoordinationActionResultSchema = z
         "policy_already_active",
         "policy_already_revoked",
         "policy_already_paused",
+        "policy_replay_conflict",
+        "policy_revoked",
         "coordinator_self_approval",
         "invalid_input",
         "unknown_tenant",
