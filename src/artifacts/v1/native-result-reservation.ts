@@ -3,6 +3,7 @@ import { nativeTaskSnapshotBodySchema } from "../../harness/v1/native-observatio
 import { digestSchema, localId } from "../../harness/v1/native-run-identifiers";
 import { sha256Digest } from "../../security";
 import { checkedResultBytes, nativeResultId } from "./native-results";
+import { createResultWriteReservationMachine, resultBytesVerificationDigestV1 } from "./result-write-reservation";
 
 export const NATIVE_RESULT_RESERVATION_SCHEMA_V1 =
   "control-room.native-result-write-reservation/v1" as const;
@@ -50,14 +51,8 @@ const reservationMaterialSchemaV1 = z.object({
   deletesArtifact: z.literal(false),
 }).strict();
 
-function bytesVerificationDigestV1(identity: z.infer<typeof reservationIdentitySchemaV1>): string {
-  return sha256Digest({
-    artifactId: identity.artifactId,
-    contentHash: identity.contentHash,
-    sizeBytes: identity.sizeBytes,
-    verifiedBytesHash: identity.contentHash,
-    verifiedSizeBytes: identity.sizeBytes,
-  });
+function bytesVerificationDigestV1(_identity: z.infer<typeof reservationIdentitySchemaV1>): string {
+  return resultBytesVerificationDigestV1(_identity);
 }
 
 export const nativeResultReservationSchemaV1 = reservationMaterialSchemaV1.extend({
@@ -103,21 +98,16 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-function buildReservation(identity: z.infer<typeof reservationIdentitySchemaV1>, state: {
-  state: z.infer<typeof stateSchema>;
-  bytesVerificationDigest: string | null;
-  manifestDigest: string | null;
-  receiptDigest: string | null;
-  uncertaintyDigest: string | null;
-  lastCertainState: z.infer<typeof lastCertainStateSchema> | null;
-}): NativeResultReservationV1 {
-  const identityDigest = sha256Digest(identity);
-  const material = reservationMaterialSchemaV1.parse({
+/** Shared lifecycle bound to the native identity shape; schemas, digests and errors are unchanged. */
+const machine = createResultWriteReservationMachine({
+  reservationSchema: nativeResultReservationSchemaV1,
+  materialize: ({ reservationId, identity, identityDigest, state, ...fields }) => ({
     schema: NATIVE_RESULT_RESERVATION_SCHEMA_V1,
-    reservationId: `reservation:native:${identityDigest.slice(7)}`,
+    reservationId,
     identity,
     identityDigest,
-    ...state,
+    state,
+    ...fields,
     canonicalPublicationAllowed: false,
     completionVerified: false,
     grantsExecutionAuthority: false,
@@ -125,9 +115,13 @@ function buildReservation(identity: z.infer<typeof reservationIdentitySchemaV1>,
     permitsRetry: false,
     permitsCleanup: false,
     deletesArtifact: false,
-  });
-  return deepFreeze(nativeResultReservationSchemaV1.parse({ ...material, contractDigest: sha256Digest(material) }));
-}
+  }),
+  bytesVerificationDigest: resultBytesVerificationDigestV1,
+  reservationId: identityDigest => `reservation:native:${identityDigest.slice(7)}`,
+  unavailable,
+  conflict,
+  compareReplayDigests: true,
+});
 
 function reservationIdentity(input: { tenantId: string; nodeId: string; snapshot: unknown }) {
   const tenantId = localId.parse(input.tenantId), nodeId = localId.parse(input.nodeId);
@@ -170,8 +164,7 @@ export function reserveNativeResultWriteV1(input: {
       if (existing.identityDigest !== sha256Digest(identity)) conflict();
       return deepFreeze(existing);
     }
-    return buildReservation(identity, { state: "reserved", bytesVerificationDigest: null,
-      manifestDigest: null, receiptDigest: null, uncertaintyDigest: null, lastCertainState: null });
+    return machine.buildReserved(identity) as NativeResultReservationV1;
   } catch (error) {
     if (error instanceof Error && error.message === "native_result_reservation_conflict") throw error;
     return unavailable();
@@ -183,22 +176,7 @@ export function verifyNativeResultReservationBytesV1(
   reservationValue: unknown,
   bytesValue: Uint8Array,
 ): NativeResultReservationV1 {
-  try {
-    const reservation = nativeResultReservationSchemaV1.parse(reservationValue);
-    checkedResultBytes(bytesValue, reservation.identity);
-    const bytesVerificationDigest = bytesVerificationDigestV1(reservation.identity);
-    if (reservation.state === "storage_uncertain") return unavailable();
-    if (reservation.bytesVerificationDigest !== null) {
-      if (reservation.bytesVerificationDigest !== bytesVerificationDigest) conflict();
-      return deepFreeze(reservation);
-    }
-    if (reservation.state !== "reserved") return unavailable();
-    return buildReservation(reservation.identity, { state: "bytes_verified", bytesVerificationDigest,
-      manifestDigest: null, receiptDigest: null, uncertaintyDigest: null, lastCertainState: null });
-  } catch (error) {
-    if (error instanceof Error && error.message === "native_result_reservation_conflict") throw error;
-    return unavailable();
-  }
+  return machine.verifyBytes(reservationValue, bytesValue, checkedResultBytes) as NativeResultReservationV1;
 }
 
 /** Records only proposed metadata evidence in the contract; it performs no metadata or byte write. */
@@ -210,16 +188,8 @@ export function commitNativeResultReservationMetadataV1(input: {
   try {
     const parsedInput = z.object({ reservation: z.unknown(), manifestDigest: digestSchema,
       receiptDigest: digestSchema }).strict().parse(input);
-    const reservation = nativeResultReservationSchemaV1.parse(parsedInput.reservation);
-    const manifestDigest = parsedInput.manifestDigest, receiptDigest = parsedInput.receiptDigest;
-    if (reservation.state === "metadata_committed") {
-      if (reservation.manifestDigest !== manifestDigest || reservation.receiptDigest !== receiptDigest) conflict();
-      return deepFreeze(reservation);
-    }
-    if (reservation.state !== "bytes_verified" || reservation.bytesVerificationDigest === null) return unavailable();
-    return buildReservation(reservation.identity, { state: "metadata_committed",
-      bytesVerificationDigest: reservation.bytesVerificationDigest, manifestDigest, receiptDigest,
-      uncertaintyDigest: null, lastCertainState: null });
+    return machine.commitMetadata(parsedInput.reservation,
+      parsedInput.manifestDigest, parsedInput.receiptDigest) as NativeResultReservationV1;
   } catch (error) {
     if (error instanceof Error && error.message === "native_result_reservation_conflict") throw error;
     return unavailable();
@@ -233,16 +203,8 @@ export function markNativeResultReservationStorageUncertainV1(input: {
 }): NativeResultReservationV1 {
   try {
     const parsedInput = z.object({ reservation: z.unknown(), uncertaintyDigest: digestSchema }).strict().parse(input);
-    const reservation = nativeResultReservationSchemaV1.parse(parsedInput.reservation);
-    const uncertaintyDigest = parsedInput.uncertaintyDigest;
-    if (reservation.state === "storage_uncertain") {
-      if (reservation.uncertaintyDigest !== uncertaintyDigest) conflict();
-      return deepFreeze(reservation);
-    }
-    if (reservation.state !== "reserved" && reservation.state !== "bytes_verified") return unavailable();
-    return buildReservation(reservation.identity, { state: "storage_uncertain",
-      bytesVerificationDigest: reservation.bytesVerificationDigest, manifestDigest: null, receiptDigest: null,
-      uncertaintyDigest, lastCertainState: reservation.state });
+    return machine.markStorageUncertain(parsedInput.reservation,
+      parsedInput.uncertaintyDigest) as NativeResultReservationV1;
   } catch (error) {
     if (error instanceof Error && error.message === "native_result_reservation_conflict") throw error;
     return unavailable();

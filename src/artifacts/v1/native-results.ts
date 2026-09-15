@@ -10,6 +10,8 @@ import type { ArtifactReadPortV1, ArtifactStoragePortV1 } from "../../node-execu
 import { commitNativeResultReservationMetadataV1, markNativeResultReservationStorageUncertainV1,
   nativeResultReservationSchemaV1, reserveNativeResultWriteV1, verifyNativeResultReservationBytesV1,
   type NativeResultReservationV1 } from "./native-result-reservation";
+import { buildTaskResultManifestV1, durableStorageIo, putAndReadbackResultBytesV1,
+  type DurableStorageIoState, type StoragePoisoningPortV1 } from "./durable-result-publication";
 import { codexResultReceiptSchemaV1, type CodexResultReceiptV1 } from "./codex-result-receipt";
 
 const id = z.string().min(3).max(180).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
@@ -80,17 +82,14 @@ export class NativeResultStore {
     if (!Number.isSafeInteger(this.storageIoMs) || this.storageIoMs < 1 || this.storageIoMs > 2000) throw new Error("result_configuration_invalid");
   }
   private async io<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
-    if (this.storageUncertain) throw new Error("result_storage_uncertain");
-    const abort = new AbortController(), started = performance.now(); let timer: ReturnType<typeof setTimeout> | undefined;
+    const state: DurableStorageIoState = { storageUncertain: this.storageUncertain, storageIoMs: this.storageIoMs };
+    const poisoningPort: StoragePoisoningPortV1 = {
+      isStorageUncertain: (this as unknown as { storage?: StoragePoisoningPortV1 }).storage?.isStorageUncertain };
     try {
-      const result = await Promise.race([Promise.resolve().then(() => operation(abort.signal)), new Promise<never>((_, reject) => {
-        timer = setTimeout(() => { this.storageUncertain = true; abort.abort(); reject(new Error("result_storage_uncertain")); }, this.storageIoMs);
-      })]);
-      if (this.storageUncertain || performance.now() - started >= this.storageIoMs) {
-        this.storageUncertain = true; abort.abort(); throw new Error("result_storage_uncertain");
-      }
-      return result;
-    } finally { clearTimeout(timer); }
+      return await durableStorageIo(state, poisoningPort, operation, "result_storage_uncertain");
+    } finally {
+      this.storageUncertain = state.storageUncertain;
+    }
   }
   private verify(row: Row): { receipt: TaskResultReceipt; manifest: ArtifactManifestRecord } {
     const parsed = nativeResultReceiptSchema.safeParse(row.receipt);
@@ -226,14 +225,12 @@ export class NativeResultStore {
     let stored: Awaited<ReturnType<ArtifactStoragePortV1["put"]>>;
     try {
       assertCurrent();
-      stored = await this.io(signal => this.put!({ artifactId, bytes, signal }));
+      const placed = await putAndReadbackResultBytesV1(
+        { put: input => this.put!(input), read: (artifactId, signal) => this.readBytes(artifactId, signal) },
+        artifactId, bytes, body.result, operation => this.io(operation), assertCurrent);
+      stored = { artifactId, contentHash: body.result.contentHash, sizeBytes: bytes.byteLength,
+        opaqueLocator: placed.opaqueLocator };
       assertCurrent();
-      if (stored.artifactId !== artifactId || stored.contentHash !== body.result.contentHash || stored.sizeBytes !== bytes.byteLength)
-        throw new Error("result_storage_unavailable");
-      const readback = await this.io(signal => this.readBytes(artifactId, signal));
-      assertCurrent();
-      if (!readback) throw new Error("result_storage_unavailable");
-      checkedResultBytes(readback, body.result);
       await this.db.transactionWithPreCommitCheck(async tx => {
         await tx.query("SELECT id FROM control_harness_runs WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [tenantId, body.runId]);
         const row = await this.reservationRow(tx, tenantId, body.runId);
@@ -241,7 +238,7 @@ export class NativeResultStore {
         const reserved = this.verifyReservation(row);
         if (reserved.contractDigest !== acquisition.reservation.contractDigest || reserved.state !== "reserved")
           throw new Error("result_manual_reconciliation_required");
-        const verified = verifyNativeResultReservationBytesV1(reserved, readback);
+        const verified = verifyNativeResultReservationBytesV1(reserved, placed.readback);
         await this.updateReservation(tx, reserved, verified, receivedAt);
       }, assertCurrent);
     } catch {
@@ -257,12 +254,10 @@ export class NativeResultStore {
       reserveNativeResultWriteV1({ tenantId, nodeId, snapshot: body, existing: verifiedReservation });
       if (verifiedReservation.state !== "bytes_verified") throw new Error("result_manual_reconciliation_required");
       const job = await this.bound(tx, tenantId, nodeId, body);
-      const manifest: ArtifactManifestRecord = artifactManifestRecordSchema.parse({ contractVersion: DOMAIN_CONTRACT_VERSION,
-        id: artifactId, tenantId, projectId: body.projectId, jobId: body.jobId, attemptId: body.attemptId, workflowId: job.workflowId,
-        kind: "artifact_manifest", state: "uploaded", version: 0, createdAt: receivedAt, updatedAt: receivedAt,
-        contentHash: body.result!.contentHash, sizeBytes: bytes.byteLength, mimeType: "text/plain; charset=utf-8",
-        logicalRole: "task_result", schemaVersion: "1.0.0", producerId: nodeId, storageClass: this.storageClass,
-        opaqueLocator: stored.opaqueLocator, retentionClass: "private_task_result" });
+      const manifest = buildTaskResultManifestV1({ artifactId, tenantId, projectId: body.projectId,
+        jobId: body.jobId, attemptId: body.attemptId, workflowId: job.workflowId, nodeId,
+        contentHash: body.result!.contentHash, sizeBytes: bytes.byteLength, storageClass: this.storageClass,
+        opaqueLocator: stored.opaqueLocator, createdAt: receivedAt });
       assertNoSecretMaterial(manifest);
       const receipt = nativeResultReceiptSchema.parse({ schema: "control-room.native-result-receipt/v1", artifactId, tenantId,
         projectId: body.projectId, jobId: body.jobId, attemptId: body.attemptId, runId: body.runId, nodeId,
