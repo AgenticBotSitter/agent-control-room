@@ -28,6 +28,8 @@ import {
   ProjectCoordinationHttpService,
   createProjectCoordinationCanonicalStoreAdapterV1,
 } from "../src/web/v1/project-coordination-http.ts";
+import { CanonicalStore } from "../src/persistence/canonical-store.ts";
+import { ProjectCoordinatorServiceV1 } from "../src/project-coordination/v1/services.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CANDIDATE_BINS = [process.env.PG_BIN, "/opt/homebrew/opt/postgresql@17/bin", "/usr/lib/postgresql/17/bin"]
@@ -322,5 +324,58 @@ test("page composition holds its authorization locks: a concurrent revocation bl
     await assert.rejects(revoked.read(pageIdentity, "project:alpha"), /authentication_required/);
   } finally {
     await connD.end();
+  }
+});
+
+test("policy lifecycle is durable on the live cluster: one mutation, saved receipt, conflict, stale", needsPg, async () => {
+  // The real CanonicalStore over a live PG 17 connection: pause records one
+  // receipt and increments once, the exact retry collects it, changed
+  // content conflicts, and a rebuilt key with a wrong version is stale.
+  // (Runs on the canonical service directly, so the revoked web session
+  // above does not matter: owner authority comes from the role grant.)
+  const digest = sha256Digest({ policy: "pg-1" });
+  const ownerDigest = sha256Digest({ id: "identity:pg-owner" });
+  await query(target("cr_prod_coord200"),
+    `INSERT INTO control_project_delegation_policies
+     (tenant_id,id,project_id,coordinator_identity_id,coordinator_version,state,version,policy_digest,
+      owner_identity_id,owner_identity_digest,allowed_actions,eligible_routes,risk_ceiling,effect_ceiling,
+      max_total_tasks,max_total_cost_microusd,max_concurrent_tasks,valid_from,valid_until,payload,
+      created_at,updated_at)
+     VALUES('tenant:test','policy:pg-1','project:alpha','identity:pg-owner',1,'active',1,$1,
+      'identity:pg-owner',$2,'["proposal.adopt"]','["executor:agent"]','low','none',
+      8,1000000,8,now(),now() + interval '1 hour','{}',now(),now())`,
+    [digest, ownerDigest]);
+  const conn = await open(target("cr_prod_coord200"));
+  try {
+    const service = () => new ProjectCoordinatorServiceV1(new CanonicalStore(clientFor(conn)));
+    const base = { tenantId: "tenant:test", projectId: "project:alpha",
+      policyId: "policy:pg-1", ownerIdentityId: "identity:pg-owner" };
+    const first = await service().pauseDelegation({ ...base,
+      idempotencyKey: "pg-policy-pause-1", expectedVersion: 1, occurredAt: new Date().toISOString() });
+    assert.equal(first.replayed, false);
+    assert.equal(first.version, 2);
+    assert.equal(first.state, "paused");
+    const retry = await service().pauseDelegation({ ...base,
+      idempotencyKey: "pg-policy-pause-1", expectedVersion: 1,
+      occurredAt: new Date(Date.now() + 1_000).toISOString() });
+    assert.equal(retry.replayed, true);
+    assert.equal(retry.receiptDigest, first.receiptDigest);
+    await assert.rejects(service().pauseDelegation({ ...base,
+      idempotencyKey: "pg-policy-pause-1", expectedVersion: 99,
+      occurredAt: new Date().toISOString() }), /policy_replay_conflict/);
+    await assert.rejects(service().resumeDelegation({ ...base,
+      idempotencyKey: "pg-policy-rebuilt-1", expectedVersion: 1,
+      occurredAt: new Date().toISOString() }), /policy_version_stale/);
+    const rows = await conn.query(
+      `SELECT version::text AS version FROM control_project_delegation_policies
+       WHERE tenant_id='tenant:test' AND id='policy:pg-1'`);
+    assert.equal(rows.rows[0]?.version, "2");
+    const ledger = await conn.query(
+      `SELECT count(*)::text AS count FROM control_idempotency
+       WHERE tenant_id='tenant:test' AND operation_scope='project-delegation-policy-lifecycle'
+         AND status='completed'`);
+    assert.equal(ledger.rows[0]?.count, "1");
+  } finally {
+    await conn.end();
   }
 });

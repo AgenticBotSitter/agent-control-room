@@ -647,13 +647,15 @@ test("policy expiry, revocation, exhaustion, unknown cost and route mismatch all
 
     const pausable = await insertPolicy(f, { id: "policy:pausable" });
     await coordinators.pauseDelegation({ tenantId: "tenant:test", projectId: "project:test",
-      policyId: pausable, ownerIdentityId: "identity:owner", occurredAt: at(5_000) });
+      policyId: pausable, ownerIdentityId: "identity:owner",
+      idempotencyKey: "backend-pause-1", expectedVersion: 1, occurredAt: at(5_000) });
     await assert.rejects(new ProjectCoordinationAdoptionServiceV1(f.canonical, routes, knownCost(1))
       .adopt({ proposal, request: policyRequest(pausable, { proposalId: "proposal:three",
         operationId: "operation:paused", idempotencyKey: "coordination-adopt-paused",
         requestId: "request:adopt:paused", workflowId: "workflow:adopt:paused" }) }), /policy_inactive/);
     await coordinators.revokeDelegation({ tenantId: "tenant:test", projectId: "project:test",
-      policyId: pausable, ownerIdentityId: "identity:owner", occurredAt: at(6_000) });
+      policyId: pausable, ownerIdentityId: "identity:owner",
+      idempotencyKey: "backend-revoke-1", expectedVersion: 2, occurredAt: at(6_000) });
     await assert.rejects(new ProjectCoordinationAdoptionServiceV1(f.canonical, routes, knownCost(1))
       .adopt({ proposal, request: policyRequest(pausable, { proposalId: "proposal:three",
         operationId: "operation:revoked", idempotencyKey: "coordination-adopt-revoked",
@@ -895,5 +897,150 @@ test("exact replay returns the original receipt even after the coordinator is re
       proposalId: "proposal:two", idempotencyKey: "coordination-adopt-0002",
       operationId: "operation:two", requestId: "request:adopt:two",
       workflowId: "workflow:adopt:two" }) }), /coordinator_revoked/);
+  } finally { await f.close(); }
+});
+
+test("delegation-policy pause, resume, and revoke are durable per idempotency key", async () => {
+  const f = await fixture();
+  try {
+    const service = () => new ProjectCoordinatorServiceV1(f.canonical);
+    const base = { tenantId: "tenant:test", projectId: "project:test",
+      ownerIdentityId: "identity:owner" };
+    const op = { pause: "pauseDelegation", resume: "resumeDelegation",
+      revoke: "revokeDelegation" } as const;
+    const policyId = await insertPolicy(f, { id: "policy:durable" });
+
+    // Table: each action records one receipt and increments the version
+    // exactly once; the exact retry returns the recorded receipt.
+    const plan = [
+      { action: "pause", key: "policy-durable-pause", expectedVersion: 1, version: 2, state: "paused" },
+      { action: "resume", key: "policy-durable-resume", expectedVersion: 2, version: 3, state: "active" },
+      { action: "revoke", key: "policy-durable-revoke", expectedVersion: 3, version: 4, state: "revoked" },
+    ] as const;
+    for (const row of plan) {
+      const call = (occurredAt: string) => service()[op[row.action]]({ ...base, policyId,
+        idempotencyKey: row.key, expectedVersion: row.expectedVersion, occurredAt });
+      const first = await call(at());
+      assert.equal(first.replayed, false);
+      assert.equal(first.version, row.version);
+      assert.equal(first.state, row.state);
+      assert.equal(first.alreadyState, undefined);
+      const retry = await call(at(1_000));
+      assert.equal(retry.replayed, true);
+      assert.deepEqual(
+        { version: retry.version, state: retry.state, receiptDigest: retry.receiptDigest },
+        { version: first.version, state: first.state, receiptDigest: first.receiptDigest });
+    }
+
+    // Changed content under a recorded key conflicts instead of mutating.
+    await assert.rejects(service().pauseDelegation({ ...base, policyId,
+      idempotencyKey: "policy-durable-pause", expectedVersion: 99, occurredAt: at() }),
+    /policy_replay_conflict/);
+    await assert.rejects(service().pauseDelegation({ ...base, policyId,
+      ownerIdentityId: "identity:agent", idempotencyKey: "policy-durable-pause",
+      expectedVersion: 1, occurredAt: at() }), /policy_replay_conflict/);
+
+    // A rebuilt key with a wrong expected version is stale, not a silent
+    // second write. (A fresh policy keeps the version gate ahead of the
+    // revoked-terminal refusal.)
+    const stalePolicy = await insertPolicy(f, { id: "policy:stale-version" });
+    await assert.rejects(service().pauseDelegation({ ...base, policyId: stalePolicy,
+      idempotencyKey: "policy-durable-rebuilt", expectedVersion: 99, occurredAt: at() }),
+    /policy_version_stale/);
+
+    // A fresh key with a stale expected version never sneaks past the
+    // version guard through the already-state path: revoking the revoked
+    // policy (version 4) with a stale version is stale, not already-revoked.
+    // Pause/resume against the revoked policy keep the retained terminal
+    // refusal regardless of version — a revoked policy is terminal.
+    await assert.rejects(service().revokeDelegation({ ...base, policyId,
+      idempotencyKey: "policy-durable-stale-revoke", expectedVersion: 1, occurredAt: at() }),
+    /policy_version_stale/);
+    await assert.rejects(service().pauseDelegation({ ...base, policyId,
+      idempotencyKey: "policy-durable-stale-pause", expectedVersion: 1, occurredAt: at() }),
+    /policy_revoked/);
+    await assert.rejects(service().resumeDelegation({ ...base, policyId,
+      idempotencyKey: "policy-durable-stale-resume", expectedVersion: 1, occurredAt: at() }),
+    /policy_revoked/);
+
+    // The ledger holds one completed receipt per key: three mutations.
+    const receipts = await f.raw.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM control_idempotency
+       WHERE tenant_id='tenant:test' AND operation_scope='project-delegation-policy-lifecycle'
+         AND status='completed'`);
+    assert.equal(receipts.rows[0]?.count, "3");
+
+    // A rebuilt service over the same rows collects the saved receipt: a
+    // restart loses no retry safety.
+    const rebuilt = await service().revokeDelegation({ ...base, policyId,
+      idempotencyKey: "policy-durable-revoke", expectedVersion: 3, occurredAt: at(2_000) });
+    assert.equal(rebuilt.replayed, true);
+    assert.equal(rebuilt.version, 4);
+
+    // Already-state outcomes originate in the canonical layer and mutate
+    // nothing: resuming an active policy records its outcome, version held.
+    const fresh = await insertPolicy(f, { id: "policy:already" });
+    const already = await service().resumeDelegation({ ...base, policyId: fresh,
+      idempotencyKey: "policy-durable-already", expectedVersion: 1, occurredAt: at() });
+    assert.equal(already.replayed, false);
+    assert.equal(already.alreadyState, "policy_already_active");
+    assert.equal(already.version, 1);
+    const alreadyRetry = await service().resumeDelegation({ ...base, policyId: fresh,
+      idempotencyKey: "policy-durable-already", expectedVersion: 1, occurredAt: at(1_000) });
+    assert.equal(alreadyRetry.replayed, true);
+    assert.equal(alreadyRetry.alreadyState, "policy_already_active");
+
+    // Resuming the still-active fresh policy with a stale version is stale,
+    // not already-active: the version guard runs before the already-state
+    // outcome for every action.
+    await assert.rejects(service().resumeDelegation({ ...base, policyId: fresh,
+      idempotencyKey: "policy-durable-stale-active", expectedVersion: 99, occurredAt: at() }),
+    /policy_version_stale/);
+
+    // A caller whose view is current still gets the already-state outcome on
+    // a revoked policy: revoking the revoked policy at version 4 records
+    // policy_already_revoked and holds the version.
+    const alreadyRevoked = await service().revokeDelegation({ ...base, policyId,
+      idempotencyKey: "policy-durable-already-revoked", expectedVersion: 4, occurredAt: at() });
+    assert.equal(alreadyRevoked.replayed, false);
+    assert.equal(alreadyRevoked.alreadyState, "policy_already_revoked");
+    assert.equal(alreadyRevoked.version, 4);
+
+    // Pausing a paused policy with a stale version is stale, not
+    // already-paused — and resuming at the current version then succeeds,
+    // proving the version (not the state) was the blocker.
+    const pausedPolicy = await insertPolicy(f, { id: "policy:stale-paused" });
+    const paused = await service().pauseDelegation({ ...base, policyId: pausedPolicy,
+      idempotencyKey: "policy-durable-pause-twice", expectedVersion: 1, occurredAt: at() });
+    assert.equal(paused.version, 2);
+    await assert.rejects(service().pauseDelegation({ ...base, policyId: pausedPolicy,
+      idempotencyKey: "policy-durable-pause-stale", expectedVersion: 1, occurredAt: at() }),
+    /policy_version_stale/);
+    const unpaused = await service().resumeDelegation({ ...base, policyId: pausedPolicy,
+      idempotencyKey: "policy-durable-resume-current", expectedVersion: 2, occurredAt: at() });
+    assert.equal(unpaused.version, 3);
+    assert.equal(unpaused.state, "active");
+
+    // Simultaneous duplicates mutate once: one caller wins, the loser either
+    // replays the saved receipt or conflicts mid-flight, and the exact retry
+    // afterwards always collects the recorded receipt.
+    const racing = await insertPolicy(f, { id: "policy:racing" });
+    const racers = await Promise.allSettled([
+      service().pauseDelegation({ ...base, policyId: racing,
+        idempotencyKey: "policy-durable-race", expectedVersion: 1, occurredAt: at() }),
+      service().pauseDelegation({ ...base, policyId: racing,
+        idempotencyKey: "policy-durable-race", expectedVersion: 1, occurredAt: at() }),
+    ]);
+    for (const racer of racers) {
+      if (racer.status === "rejected") assert.match(String(racer.reason), /policy_replay_conflict/);
+    }
+    const collected = await service().pauseDelegation({ ...base, policyId: racing,
+      idempotencyKey: "policy-durable-race", expectedVersion: 1, occurredAt: at(2_000) });
+    assert.equal(collected.replayed, true);
+    assert.equal(collected.version, 2);
+    const racingRows = await f.raw.query<{ version: string }>(
+      `SELECT version::text AS version FROM control_project_delegation_policies
+       WHERE tenant_id='tenant:test' AND id='policy:racing'`);
+    assert.equal(racingRows.rows[0]?.version, "2");
   } finally { await f.close(); }
 });

@@ -6,6 +6,8 @@ import {
   coordinatorLifecycleRequestDigestV1,
   coordinatorLifecycleReceiptSchemaV1,
   coordinationOperationRequestSchemaV1,
+  delegationPolicyLifecycleRequestDigestV1,
+  delegationPolicyLifecycleReceiptSchemaV1,
   projectCoordinationProposalDigestV1,
   type CoordinationCostEvidencePortV1,
   type CoordinationCostEvidenceV1,
@@ -13,6 +15,7 @@ import {
   type CoordinationRouteResolverPortV1,
   type CoordinatorAppointmentV1,
   type CoordinatorLifecycleReceiptV1,
+  type DelegationPolicyLifecycleReceiptV1,
   type ProjectCoordinationProposalV1,
 } from "./schemas";
 import {
@@ -43,10 +46,11 @@ export interface ProjectCoordinationCanonicalPortV1 {
     expectedVersion: number;
     executionBindingDigest?: string;
   }): Promise<CoordinatorLifecycleReceiptV1 & { replayed: boolean }>;
-  setProjectDelegationPolicyStateV1(input: {
+  setProjectDelegationPolicyStateDurableV1(input: {
+    action: "pause" | "resume" | "revoke";
     tenantId: string; projectId: string; policyId: string; ownerIdentityId: string;
-    toState: "paused" | "active" | "revoked"; occurredAt: string;
-  }): Promise<{ version: number; state: string }>;
+    idempotencyKey: string; requestDigest: string; expectedVersion: number; occurredAt: string;
+  }): Promise<DelegationPolicyLifecycleReceiptV1 & { replayed: boolean }>;
   recordProjectCoordinationProposalV1(input: {
     proposalId: string; validation: CoordinationProposalValidationV1; ingestedAt: string;
   }): Promise<{ proposalId: string; validationState: "accepted" | "rejected"; safeReasonCode?: string;
@@ -136,21 +140,39 @@ export class ProjectCoordinatorServiceV1 {
    * Pauses delegated autonomy. The coordinator head reserves only `active` and
    * `revoked`, and pause/revoke are the only in-place policy changes, so a pause
    * is expressed by pausing the bounded policy: automatic adoption stops at once
-   * while owner-reviewed adoption stays available.
+   * while owner-reviewed adoption stays available. The exact Idempotency-Key
+   * flows into the durable canonical operation; a retry collects the saved
+   * receipt instead of repeating the mutation.
    */
   async pauseDelegation(input: { tenantId: string; projectId: string; policyId: string;
-    ownerIdentityId: string; occurredAt: string }) {
-    return this.canonical.setProjectDelegationPolicyStateV1({ ...input, toState: "paused" });
+    ownerIdentityId: string; idempotencyKey: string; expectedVersion: number; occurredAt: string }) {
+    return this.#policyLifecycle("pause", input);
   }
 
   async resumeDelegation(input: { tenantId: string; projectId: string; policyId: string;
-    ownerIdentityId: string; occurredAt: string }) {
-    return this.canonical.setProjectDelegationPolicyStateV1({ ...input, toState: "active" });
+    ownerIdentityId: string; idempotencyKey: string; expectedVersion: number; occurredAt: string }) {
+    return this.#policyLifecycle("resume", input);
   }
 
   async revokeDelegation(input: { tenantId: string; projectId: string; policyId: string;
-    ownerIdentityId: string; occurredAt: string }) {
-    return this.canonical.setProjectDelegationPolicyStateV1({ ...input, toState: "revoked" });
+    ownerIdentityId: string; idempotencyKey: string; expectedVersion: number; occurredAt: string }) {
+    return this.#policyLifecycle("revoke", input);
+  }
+
+  #policyLifecycle(action: "pause" | "resume" | "revoke", input: { tenantId: string;
+    projectId: string; policyId: string; ownerIdentityId: string; idempotencyKey: string;
+    expectedVersion: number; occurredAt: string }) {
+    const requestDigest = delegationPolicyLifecycleRequestDigestV1({ action,
+      tenantId: input.tenantId, projectId: input.projectId, policyId: input.policyId,
+      ownerIdentityId: input.ownerIdentityId, expectedVersion: input.expectedVersion });
+    return this.canonical.setProjectDelegationPolicyStateDurableV1({ action,
+      tenantId: input.tenantId, projectId: input.projectId, policyId: input.policyId,
+      ownerIdentityId: input.ownerIdentityId, idempotencyKey: input.idempotencyKey,
+      requestDigest, expectedVersion: input.expectedVersion, occurredAt: input.occurredAt })
+      .then((receipt) => {
+        const { replayed, ...durable } = receipt;
+        return { ...delegationPolicyLifecycleReceiptSchemaV1.parse(durable), replayed };
+      });
   }
 
   async revoke(appointment: CoordinatorAppointmentV1, idempotencyKey: string, expectedVersion: number) {

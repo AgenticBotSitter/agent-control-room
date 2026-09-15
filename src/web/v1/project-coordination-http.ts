@@ -215,6 +215,8 @@ export type ProjectCoordinationReasonCode =
   | "policy_already_active"
   | "policy_already_revoked"
   | "policy_already_paused"
+  | "policy_replay_conflict"
+  | "policy_revoked"
   | "coordinator_self_approval"
   | "invalid_input"
   | "unknown_tenant"
@@ -261,6 +263,12 @@ interface ProjectCoordinatorAppointInput extends ProjectCoordinationActionReques
 
 interface ProjectCoordinatorRevokePolicyInput extends ProjectCoordinationActionRequest {
   policyId: string;
+  /**
+   * The route's exact Idempotency-Key, passed through to the durable policy
+   * service. The PG transaction records one permanent receipt per key and
+   * returns it on exact retry.
+   */
+  idempotencyKey: string;
 }
 
 const ACTIONS = {
@@ -279,7 +287,8 @@ const ACTIONS = {
  * long-standing `stale_revision` wire code and `coordinator_absent` becomes
  * `no_coordinator` so revoke-missing keeps its historic shape.
  */
-type EngineRefusalCode = ProjectCoordinationReasonCode | "coordinator_version_stale" | "coordinator_absent";
+type EngineRefusalCode = ProjectCoordinationReasonCode | "coordinator_version_stale" | "coordinator_absent"
+  | "policy_version_stale" | "policy_revoked";
 
 function coerceReasonCode(value: unknown): EngineRefusalCode | undefined {
   // The real engine throws ProjectCoordinationErrorV1 with a `safeCode`. The
@@ -307,6 +316,9 @@ function coerceReasonCode(value: unknown): EngineRefusalCode | undefined {
     case "policy_already_active":
     case "policy_already_revoked":
     case "policy_already_paused":
+    case "policy_replay_conflict":
+    case "policy_version_stale":
+    case "policy_revoked":
     case "coordinator_self_approval":
     case "invalid_input":
     case "unknown_tenant":
@@ -378,21 +390,21 @@ export class ProjectCoordinationHttpService {
     identity: VerifiedWebIdentity,
     input: ProjectCoordinatorRevokePolicyInput,
   ): Promise<ProjectCoordinationActionOutcome> {
-    return this.runPolicyAction(identity, ACTIONS.pause, input, "paused");
+    return this.runPolicyAction(identity, ACTIONS.pause, input);
   }
 
   async resumeDelegationPolicy(
     identity: VerifiedWebIdentity,
     input: ProjectCoordinatorRevokePolicyInput,
   ): Promise<ProjectCoordinationActionOutcome> {
-    return this.runPolicyAction(identity, ACTIONS.resume, input, "active");
+    return this.runPolicyAction(identity, ACTIONS.resume, input);
   }
 
   async revokeDelegationPolicy(
     identity: VerifiedWebIdentity,
     input: ProjectCoordinatorRevokePolicyInput,
   ): Promise<ProjectCoordinationActionOutcome> {
-    return this.runPolicyAction(identity, ACTIONS.revokePolicy, input, "revoked");
+    return this.runPolicyAction(identity, ACTIONS.revokePolicy, input);
   }
 
   private async runCoordinatorAction(
@@ -534,6 +546,7 @@ export class ProjectCoordinationHttpService {
         const wireCode: ProjectCoordinationReasonCode | undefined =
           code === "coordinator_version_stale" ? "stale_revision"
           : code === "coordinator_absent" ? "no_coordinator"
+          : code === "policy_version_stale" || code === "policy_revoked" ? undefined
           : code;
         if (wireCode) {
           // Re-read the head version so the stale envelope reports the
@@ -558,7 +571,6 @@ export class ProjectCoordinationHttpService {
     identity: VerifiedWebIdentity,
     action: string,
     input: ProjectCoordinatorRevokePolicyInput,
-    toState: "paused" | "active" | "revoked",
   ): Promise<ProjectCoordinationActionOutcome> {
     return this.authority.authenticated(identity, async (tx, actor) => {
       actor.require(action, input.projectId, true);
@@ -570,6 +582,13 @@ export class ProjectCoordinationHttpService {
       const currentAttentionVersion = await store.attentionVersion(input.projectId);
       const observedAt = new Date(this.options.clock()).toISOString();
 
+      // Revision gate, minus the policy version. The policy version is owned
+      // by the durable engine: the PG transaction probes the idempotency
+      // ledger first (exact retry returns its saved receipt) and only then
+      // enforces expectedVersion. Refusing a policy mismatch here would make
+      // durable replay unreachable, so a mismatch defers to the engine.
+      // Coordinator/conflict/attention versions are outside the receipt's
+      // scope and still refuse immediately.
       const versionCheck = this.checkRevisions(
         input,
         currentCoordinatorVersion,
@@ -577,6 +596,8 @@ export class ProjectCoordinationHttpService {
         currentConflictsVersion,
         currentAttentionVersion,
         observedAt,
+        false,
+        true,
       );
       if (versionCheck) return versionCheck;
 
@@ -590,66 +611,64 @@ export class ProjectCoordinationHttpService {
         input.projectId);;
       }
 
-      const existingPolicyState = await store.coordinator
-        .setProjectDelegationPolicyStateV1({
+      actor.require(action, input.projectId);
+      const delegationService = new ProjectCoordinatorServiceV1(store.coordinator);
+      // The durable service requires the route's exact Idempotency-Key and
+      // the submitted expected version. Its PG transaction returns the saved
+      // receipt on an exact retry, refuses changed content under the same
+      // key with policy_replay_conflict, and refuses stale versions — the
+      // durable authority for this route. The already-state outcomes
+      // originate in PostgreSQL; this layer maps them and never invents them.
+      const operation = action === ACTIONS.revokePolicy ? "revokeDelegation"
+        : action === ACTIONS.resume ? "resumeDelegation" : "pauseDelegation";
+      try {
+        const receipt = await delegationService[operation]({
           tenantId: projectHead.tenantId,
           projectId: projectHead.projectId,
           policyId: input.policyId,
           ownerIdentityId: actor.id,
-          toState,
+          idempotencyKey: input.idempotencyKey,
+          expectedVersion: input.revision.expectedPolicyVersion,
           occurredAt: observedAt,
-        })
-        .then((result) => result.state as "active" | "paused" | "revoked")
-        .catch((error: unknown) => {
-          const code = coerceReasonCode(error);
-          if (code === "policy_already_active" && toState === "active") {
-            return "policy_already_active" as const;
-          }
-          if (code === "policy_already_revoked" && toState === "revoked") {
-            return "policy_already_revoked" as const;
-          }
-          if (code === "policy_already_paused" && toState === "paused") {
-            return "policy_already_paused" as const;
-          }
-          throw error;
         });
-
-      if (existingPolicyState === "policy_already_active") {
-        return this.refused("policy_already_active", observedAt, {
+        if (receipt.alreadyState) {
+          return this.refused(receipt.alreadyState, observedAt, {
+            expectedCoordinatorVersion: currentCoordinatorVersion,
+            expectedPolicyVersion: receipt.version,
+            expectedConflictsVersion: currentConflictsVersion,
+            expectedAttentionVersion: currentAttentionVersion,
+          },
+          input.projectId);;
+        }
+        return this.accepted(observedAt, {
           expectedCoordinatorVersion: currentCoordinatorVersion,
-          expectedPolicyVersion: currentPolicyVersion,
+          expectedPolicyVersion: receipt.version,
           expectedConflictsVersion: currentConflictsVersion,
           expectedAttentionVersion: currentAttentionVersion,
         },
         input.projectId);;
+      } catch (error: unknown) {
+        const code = coerceReasonCode(error);
+        const wireCode: ProjectCoordinationReasonCode | undefined =
+          code === "policy_version_stale" ? "stale_revision"
+          : code === "coordinator_version_stale" || code === "coordinator_absent" ? undefined
+          : code;
+        if (wireCode) {
+          // Re-read the head version so the stale envelope reports the
+          // version the engine actually saw, not the pre-call read.
+          const latestPolicyVersion = await store.policyVersion(input.projectId).catch(
+            () => currentPolicyVersion,
+          );
+          return this.refused(wireCode, observedAt, {
+            expectedCoordinatorVersion: currentCoordinatorVersion,
+            expectedPolicyVersion: latestPolicyVersion,
+            expectedConflictsVersion: currentConflictsVersion,
+            expectedAttentionVersion: currentAttentionVersion,
+          },
+          input.projectId);;
+        }
+        throw error;
       }
-      if (existingPolicyState === "policy_already_revoked") {
-        return this.refused("policy_already_revoked", observedAt, {
-          expectedCoordinatorVersion: currentCoordinatorVersion,
-          expectedPolicyVersion: currentPolicyVersion,
-          expectedConflictsVersion: currentConflictsVersion,
-          expectedAttentionVersion: currentAttentionVersion,
-        },
-        input.projectId);;
-      }
-      if (existingPolicyState === "policy_already_paused") {
-        return this.refused("policy_already_paused", observedAt, {
-          expectedCoordinatorVersion: currentCoordinatorVersion,
-          expectedPolicyVersion: currentPolicyVersion,
-          expectedConflictsVersion: currentConflictsVersion,
-          expectedAttentionVersion: currentAttentionVersion,
-        },
-        input.projectId);;
-      }
-
-      actor.require(action, input.projectId);
-      return this.accepted(observedAt, {
-        expectedCoordinatorVersion: currentCoordinatorVersion,
-        expectedPolicyVersion: currentPolicyVersion + 1,
-        expectedConflictsVersion: currentConflictsVersion,
-        expectedAttentionVersion: currentAttentionVersion,
-      },
-        input.projectId);;
     });
   }
 
@@ -683,6 +702,11 @@ export class ProjectCoordinationHttpService {
     // expectedVersion enforcement). Policy/conflict/attention versions are
     // outside the receipt's scope and always compare here.
     skipCoordinatorVersion = false,
+    // When true, the policy-version equality is skipped: the durable policy
+    // engine owns that check (saved-receipt probe first, then
+    // expectedVersion enforcement). An exact retry must reach the engine to
+    // collect its receipt even when the policy has since moved on.
+    skipPolicyVersion = false,
   ): ProjectCoordinationActionOutcome | null {
     if (input.revision.projectId !== input.projectId) {
       return this.refused("invalid_input", observedAt, {
@@ -695,7 +719,7 @@ export class ProjectCoordinationHttpService {
     }
     if (
       (!skipCoordinatorVersion && input.revision.expectedCoordinatorVersion !== currentCoordinatorVersion)
-      || input.revision.expectedPolicyVersion !== currentPolicyVersion
+      || (!skipPolicyVersion && input.revision.expectedPolicyVersion !== currentPolicyVersion)
       || input.revision.expectedConflictsVersion !== currentConflictsVersion
       || input.revision.expectedAttentionVersion !== currentAttentionVersion
     ) {
