@@ -53,21 +53,12 @@ async function issueFor(api, repository, number) {
 }
 
 async function activePairExists(api, repository, value, excludeIssue) {
-  for (let page = 1; page <= 10; page++) {
-    const issues = await api.request("GET", `/repos/${repository}/issues?state=open&labels=status%3Aworking&per_page=100&page=${page}`);
-    if (!Array.isArray(issues)) throw new Error("claim_controller_api_invalid");
-    for (const issue of issues) {
-      if (issue?.pull_request || !Number.isSafeInteger(issue?.number) || issue.number === excludeIssue) continue;
-      const pair = ` actor=${value.actor} worker=${value.workerId} `;
-      if ((await commentsFor(api, repository, issue.number)).some(comment => comment?.user?.login === "github-actions[bot]"
-        && comment?.user?.type === "Bot" && typeof comment.body === "string"
-        && comment.body.startsWith("CLAIM ACCEPTED —")
-        && (comment.body.includes(MARKER_PREFIX) || comment.body.includes(MARKER_PREFIX.replace(":v2", ":v3")))
-        && comment.body.includes(pair))) return true;
-    }
-    if (issues.length < 100) return false;
-  }
-  throw new Error("claim_controller_working_set_ambiguous");
+  const held = (await pairClaims(api, repository, value.actor, value.workerId))
+    .filter(entry => entry.issue !== excludeIssue);
+  if (held.some(entry => entry.status === "changes-required")) return "corrections_first";
+  if (held.length >= MAX_TOTAL_ASSIGNMENTS) return "assignment_limit";
+  if (held.filter(entry => entry.status === "working").length >= MAX_ACTIVE_WORKING) return "working_limit";
+  return undefined;
 }
 
 function isReady(issue) {
@@ -143,7 +134,8 @@ export async function runClaimController({ event, repository, api }) {
   if (!isReady(current)) return Object.freeze({ status: "refused", reason: "issue_not_ready" });
   if (liveAcceptedHistory(await commentsFor(api, repository, value.issueNumber), value.issueNumber))
     return Object.freeze({ status: "refused", reason: "accepted_history_requires_release" });
-  if (await activePairExists(api, repository, value)) return Object.freeze({ status: "refused", reason: "actor_worker_pair_active" });
+  const capacityRefusal = await activePairExists(api, repository, value);
+  if (capacityRefusal) return Object.freeze({ status: "refused", reason: capacityRefusal });
   const now = Date.now();
   const packet = parseClaimPacket(current.body);
   if (!packet) return Object.freeze({ status: "refused", reason: "packet_invalid" });
@@ -273,8 +265,9 @@ const PACKET_PATTERN = /<!--\s*acr-public-work:v1\s*(\{.*?\})\s*-->/gs;
 const PACKET_MARKER_PATTERN = /<!--\s*acr-public-work:v1\b/g;
 const SHA40 = /^[a-f0-9]{40}$/;
 const MAX_LEASE_HOURS = 720;
-export const MAX_ACTIVE_WORKING = 1;
-export const MAX_ACTIVE_IN_REVIEW = 2;
+export const MAX_ACTIVE_WORKING = 2;
+export const MAX_TOTAL_ASSIGNMENTS = 3;
+export const MAX_ACTIVE_IN_REVIEW = 3;
 
 function isPlainObject(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -624,19 +617,29 @@ async function verifiedLockScopes(api, repository, excludeIssue) {
   return Object.freeze({ scopes, legacy: sorted(legacy), mismatched: sorted(mismatched) });
 }
 
-/** Active reservations held by one login-and-worker pair across Working and In-review. */
+/** Count retained ownership, not just builds: review/corrections cannot hide capacity. */
 async function pairClaims(api, repository, actor, workerId) {
   const active = [];
-  for (const status of ["working", "in-review"]) {
+  const seen = new Set();
+  for (const status of ["working", "in-review", "re-review", "changes-required", "waiting", "paused", "needs-decision"]) {
     for (const issue of await issuesByStatus(api, repository, status)) {
+      if (seen.has(issue.number)) continue;
       const comments = await commentsFor(api, repository, issue.number);
       let held = false;
       let submitted = false;
       for (const comment of comments) {
+        if (comment?.user?.login !== "github-actions[bot]" || comment?.user?.type !== "Bot") continue;
         const parsed = parseClaimMarker(comment.body);
-        if (!parsed || parsed.actor !== actor || parsed.worker !== workerId) continue;
+        if (!parsed || parsed.issue !== issue.number || parsed.actor !== actor || parsed.worker !== workerId) continue;
         if (comment.body.startsWith("CLAIM RELEASED —")) continue;
-        if (clearedByReleaseOrExpiry(comments, issue.number, actor, workerId, comment.id)) continue;
+        // Expiry stops execution but does not free capacity when an open PR or
+        // ambiguous work is retained. Quiet expiry returns Ready (not enumerated).
+        if (comments.some(other => other.id > comment.id
+          && other?.user?.login === "github-actions[bot]" && other?.user?.type === "Bot"
+          && (other.body?.startsWith("CLAIM RELEASED —") ||
+            (other.body?.startsWith("CLAIM EXPIRED —") && parseExpiredMarker(other.body)?.action === "ready"))
+          && other.body.includes(`issue=${issue.number} `)
+          && other.body.includes(`actor=${actor} worker=${workerId} `))) continue;
         if (comment.body.startsWith("CLAIM SUBMITTED —")) {
           submitted = true;
           continue;
@@ -645,6 +648,7 @@ async function pairClaims(api, repository, actor, workerId) {
           held = true;
       }
       if (held) {
+        seen.add(issue.number);
         active.push({ issue: issue.number, status, submitted });
       }
     }
@@ -913,7 +917,8 @@ export async function runClaimSubmit({ event, repository, api, now = Date.now() 
   const lease = leaseStatus(record, packet, now);
   if (lease !== "active") return Object.freeze({ status: "refused", reason: lease });
   const claims = await pairClaims(api, repository, actor, command.workerId);
-  if (claims.filter(entry => entry.status === "in-review" || entry.submitted).length >= MAX_ACTIVE_IN_REVIEW)
+  if (claims.filter(entry => entry.issue !== value.issueNumber &&
+    (entry.status === "in-review" || entry.status === "re-review" || entry.submitted)).length >= MAX_ACTIVE_IN_REVIEW)
     return Object.freeze({ status: "refused", reason: "in_review_limit" });
   const bound = await prMatches(packetHash(packet), record.marker.accepted ?? now);
   if (!bound) return Object.freeze({ status: "refused", reason: "pr_binding_invalid" });

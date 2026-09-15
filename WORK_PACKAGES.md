@@ -116,7 +116,7 @@ not one issue/PR per small code edit.
    unexpired lease; the renewal keeps the immutable accepted base), record
    submission readiness with `CLAIM SUBMIT` (verified open PR on `main` by the
    accepted worker with the exact head, one exact `Control-Room-Issue:` line,
-   unexpired lease, unchanged packet, at most two outstanding submissions per
+   unexpired lease, unchanged packet, at most three outstanding submissions per
    pair, and a working issue plus an unlabelled pull request), then move both
    sides to In review with the `HANDOFF submit` command, which the handoff
    controller reconciles on the issue and the pull request together. `CLAIM
