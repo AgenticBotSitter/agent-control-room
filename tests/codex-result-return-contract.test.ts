@@ -67,6 +67,8 @@ function activation() {
     tenantId: "tenant:test", projectId: "project:test", nodeId: "node:test", jobId: "job:test",
     attemptId: "attempt:test", runId: "run:test", leaseId: "lease:test", leaseEpoch: 7,
     queueId: "queue:test", connectionId: "connection:test",
+    connection: { connectionAttemptId: "connection:result",
+      initializedConnectionDigest: sha256Digest("initialized:result") },
     dispatchMessageId: "message:dispatch", dispatchFrameDigest: sha256Digest("dispatch-frame"),
     dispatchBodyDigest: sha256Digest("dispatch-body"), receiptMessageId: "message:receipt",
     receiptFrameDigest: sha256Digest("receipt-frame"), receiptBodyDigest: sha256Digest("receipt-body"),
