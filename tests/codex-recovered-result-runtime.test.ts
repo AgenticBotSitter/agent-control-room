@@ -713,6 +713,8 @@ test('stored receipt replay refuses every same-run substitution across the full 
     { name: 'activationId', tamper: body => { body.activation.activationId = 'codex-activation:other'; } },
     { name: 'activationDigest', tamper: body => { body.activation.activationDigest = sha256Digest('other'); } },
     { name: 'profileDigest', tamper: body => { body.connector.profileDigest = sha256Digest('other'); } },
+    { name: 'profileId-empty', tamper: body => { body.connector.profileId = ''; } },
+    { name: 'profileId-missing', tamper: body => { delete body.connector.profileId; } },
     { name: 'returnFrameDigest', tamper: body => { body.returnFrameDigest = sha256Digest('other'); } },
   ];
   const lineageCases: Array<{ name: string;
