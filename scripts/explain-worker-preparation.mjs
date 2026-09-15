@@ -1,16 +1,10 @@
-import { readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 import { checkPrivateWorkerPreparationV1 } from './check-private-worker-preparation.mjs';
 import { comparePreparations, explainPreparation } from '../src/worker-preparation-report/v1/explain.mjs';
+import { readBoundedText } from '../src/worker-preparation-report/v1/read-bounded.mjs';
 
-const MAX_INPUT_BYTES = 1024 * 1024;
 const GENERIC_REFUSAL = 'Control Room worker preparation explanation refused supplied facts.';
-
-async function readBounded(path) {
-  const handle = await readFile(resolve(path), 'utf8').catch(() => null);
-  return typeof handle === 'string' && Buffer.byteLength(handle, 'utf8') <= MAX_INPUT_BYTES ? handle : null;
-}
 
 function parseArgs(args) {
   const values = { input: undefined, previous: undefined, help: false };
@@ -55,13 +49,13 @@ async function main(args) {
     }
     throw new Error('preparation_explain_usage');
   }
-  const text = await readBounded(parsed.input);
+  const text = await readBoundedText(resolve(parsed.input));
   if (text === null) throw new Error('preparation_explain_unreadable');
   const current = await explainDocument(text);
   if (!current) throw new Error('preparation_explain_refused');
   const output = { explanation: current };
   if (parsed.previous) {
-    const previousText = await readBounded(parsed.previous);
+    const previousText = await readBoundedText(resolve(parsed.previous));
     if (previousText === null) throw new Error('preparation_explain_unreadable');
     const previous = await explainDocument(previousText);
     if (!previous) throw new Error('preparation_explain_refused');

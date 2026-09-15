@@ -10,7 +10,9 @@ the existing checker, and renders fixed sentences from the accepted result only.
 node --import tsx scripts/explain-worker-preparation.mjs --input facts.json [--previous older-facts.json]
 ```
 
-`--help` prints usage. Malformed or unevaluable input exits 1 with the generic
+`--help` prints usage. Each input is read through an open handle capped at
+1MiB+1 byte and closed on every exit, so oversized or non-regular inputs
+refuse before unbounded memory is consumed. Malformed or unevaluable input exits 1 with the generic
 refusal `Control Room worker preparation explanation refused supplied facts.`
 on stderr. No host scan, credential read, or endpoint discovery happens; the
 checker starts no harness and the comparison grants no execution authority.

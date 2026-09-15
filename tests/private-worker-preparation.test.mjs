@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { checkPrivateWorkerPreparationV1 } from '../scripts/check-private-worker-preparation.mjs';
 import { comparePreparations, explainPreparation } from '../src/worker-preparation-report/v1/explain.mjs';
+import { MAX_PREPARATION_INPUT_BYTES, readBoundedText } from '../src/worker-preparation-report/v1/read-bounded.mjs';
 import { sha256Digest } from '../src/security/canonical-digest.ts';
 
 const digest = value => sha256Digest(value);
@@ -194,4 +195,80 @@ test('explain CLI helps, explains a document, and refuses generically', () => {
   assert.match(failed.stderr, /refused supplied facts/);
   assert.doesNotMatch(failed.stderr, /CANARY-CLI-RAW-5/);
   assert.doesNotMatch(JSON.stringify(failed.stdout ?? ''), /CANARY-CLI-RAW-5/);
+});
+
+const fakeHandle = (size, { regular = true, failAfter = -1 } = {}) => {
+  let position = 0, closed = false, requested = 0, reads = 0;
+  const handle = {
+    state: () => ({ closed, requested, reads }),
+    async stat() { return { isFile: () => regular }; },
+    async read() {
+      reads++;
+      if (failAfter >= 0 && reads > failAfter) throw new Error('synthetic_read_failure');
+      if (position >= size) return { bytesRead: 0, buffer: Buffer.alloc(0) };
+      const n = Math.min(65536, size - position);
+      position += n; requested += n;
+      return { bytesRead: n, buffer: Buffer.alloc(n, 0x61) };
+    },
+    async close() { closed = true; },
+  };
+  return handle;
+};
+
+test('bounded reader returns small files exactly and closes the handle', async () => {
+  const handle = fakeHandle(100);
+  const text = await readBoundedText('/synthetic/small.json', { open: async () => handle });
+  assert.equal(text, 'a'.repeat(100));
+  assert.equal(handle.state().closed, true);
+});
+
+test('bounded reader stops at the limit on oversized input and closes', async () => {
+  const handle = fakeHandle(5 * 1024 * 1024);
+  const text = await readBoundedText('/synthetic/huge.json', { open: async () => handle });
+  assert.equal(text, null);
+  const { requested, closed } = handle.state();
+  assert.ok(requested <= MAX_PREPARATION_INPUT_BYTES + 65536,
+    `reader stopped early at ${requested} bytes`);
+  assert.equal(closed, true);
+});
+
+test('bounded reader accepts exactly the limit and refuses one byte more', async () => {
+  const exact = fakeHandle(MAX_PREPARATION_INPUT_BYTES);
+  assert.equal((await readBoundedText('/synthetic/exact.json', { open: async () => exact }))?.length,
+    MAX_PREPARATION_INPUT_BYTES);
+  const over = fakeHandle(MAX_PREPARATION_INPUT_BYTES + 1);
+  assert.equal(await readBoundedText('/synthetic/over.json', { open: async () => over }), null);
+  assert.equal(over.state().closed, true);
+});
+
+test('bounded reader refuses non-regular, unreadable and failing inputs', async () => {
+  const dir = fakeHandle(100, { regular: false });
+  assert.equal(await readBoundedText('/synthetic/dir', { open: async () => dir }), null);
+  assert.equal(dir.state().closed, true);
+  assert.equal(await readBoundedText('/synthetic/missing', {
+    open: async () => { throw new Error('ENOENT'); } }), null);
+  const failing = fakeHandle(100000, { failAfter: 1 });
+  assert.equal(await readBoundedText('/synthetic/failing', { open: async () => failing }), null);
+  assert.equal(failing.state().closed, true);
+});
+
+test('explain CLI refuses oversized files and directories without echoing data', () => {
+  const script = new URL('../scripts/explain-worker-preparation.mjs', import.meta.url).pathname;
+  const run = args => execFileSync(process.execPath, ['--import', 'tsx', script, ...args],
+    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const dir = mkdtempSync(join(tmpdir(), 'prep-bounded-'));
+  const bigPath = join(dir, 'big.json');
+  writeFileSync(bigPath, `{"canary":"CANARY-OVERSIZE-11","pad":"${'x'.repeat(3 * 1024 * 1024)}"}`);
+  for (const target of [bigPath, dir]) {
+    let failed;
+    try {
+      run(['--input', target]);
+    } catch (error) {
+      failed = error;
+    }
+    assert.ok(failed, `oversized input must exit non-zero: ${target}`);
+    assert.match(failed.stderr, /refused supplied facts/);
+    assert.doesNotMatch(failed.stderr, /CANARY-OVERSIZE-11/);
+    assert.doesNotMatch(JSON.stringify(failed.stdout ?? ''), /CANARY-OVERSIZE-11/);
+  }
 });
