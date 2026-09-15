@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 
 import { readWorkerInbox, renderWorkerInbox } from "../scripts/public-worker-inbox.mjs";
 import { actionsFingerprint } from "../scripts/worker-inbox-platform/lib/inbox-fingerprint.mjs";
-import { artifactsFor, iso8601Duration, systemdQuote, xmlEscape } from "../scripts/worker-inbox-platform/lib/artifacts.mjs";
+import { artifactsFor, iso8601Duration, systemdQuote, windowCommandLine, xmlEscape } from "../scripts/worker-inbox-platform/lib/artifacts.mjs";
 import { instructionsFor } from "../scripts/worker-inbox-platform/lib/instructions.mjs";
 import {
   RUNTIME_VERSION, appendBoundedLog, ensureWorkerDirectory, isOwnedDirectory, logFile, markerFile,
@@ -1275,9 +1275,9 @@ test("emitted artifacts are byte-exact UTF-8 with a matching declaration and no 
   assert.ok(generated.written.length >= 4, "launchd + systemd pair + windows task");
   for (const artifact of generated.written) {
     const bytes = readFileSync(artifact.path);
-    artifact.content = bytes.toString("utf8");
-    // writeFileSync(target, content, "utf8") must round-trip exactly: what the
-    // operator imports is these bytes, not the in-memory string.
+    // written[].content is the emitted string the generator handed to the
+    // writer: the bytes on disk must equal it exactly, so a changed,
+    // truncated, or replaced payload fails here instead of passing.
     assert.deepEqual(bytes, Buffer.from(artifact.content, "utf8"), `${artifact.name} on-disk bytes must equal its content`);
     assert.equal(bytes.length, artifact.bytes, "the reported byte count must be the on-disk size");
     assert.equal(bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF, false,
@@ -1329,11 +1329,12 @@ test("repeated generation with the same clock is byte-identical", (t) => {
 test("unicode, spaces, and metacharacters survive every platform renderer", (t) => {
   const root = scratch(t);
   const awkward = join(root, "tâches & 50% ünïcode \"quoted\"");
+  const nodePath = join(awkward, "bin", "node");
+  const scriptPath = join(awkward, "watch.mjs");
   for (const platform of ["launchd", "systemd", "windows"]) {
     const artifacts = artifactsFor({
       platform, workerId: WORKER_ID, repository: REPOSITORY_NAME, runtimeDirectory: awkward,
-      nodePath: join(awkward, "bin", "node"), scriptPath: join(awkward, "watch.mjs"),
-      workingDirectory: awkward, intervalSeconds: 1800,
+      nodePath, scriptPath, workingDirectory: awkward, intervalSeconds: 1800,
       standardOut: join(awkward, "out.log"), standardError: join(awkward, "err.log"),
     });
     for (const artifact of artifacts) {
@@ -1344,13 +1345,27 @@ test("unicode, spaces, and metacharacters survive every platform renderer", (t) 
         assert.equal(artifact.content.includes(awkward), false, "raw awkward paths must be escaped, never inline");
       }
     }
+    // A renderer that drops a path would still pass the checks above: every
+    // rendered artifact must carry the escaped path it was given.
+    const joined = artifacts.map((entry) => entry.content).join("\n");
+    if (platform === "launchd") {
+      assert.ok(joined.includes(`<string>${xmlEscape(scriptPath)}</string>`), "plist must carry the escaped script path");
+      assert.ok(joined.includes(`<string>${xmlEscape(awkward)}</string>`), "plist must carry the escaped working directory");
+    }
+    if (platform === "systemd") {
+      assert.ok(joined.includes(systemdQuote(scriptPath)), "service must carry the quoted script path");
+      assert.ok(joined.includes("%%"), "systemd must double the % in awkward paths");
+    }
+    if (platform === "windows") {
+      // The task must quote every argument so CreateProcess reconstructs them:
+      // re-quote the same values and require the exact rendered sequence.
+      const expected = [scriptPath, "--once", "--worker-id", WORKER_ID, "--repository", REPOSITORY_NAME,
+        "--runtime-root", awkward].map(windowCommandLine).join(" ");
+      assert.ok(joined.includes(`<Arguments>${xmlEscape(expected)}</Arguments>`),
+        "task Arguments must carry the fully quoted command line");
+      assert.ok(joined.includes(`<Command>${xmlEscape(nodePath)}</Command>`), "task must carry the escaped node path");
+    }
   }
-  const service = artifactsFor({
-    platform: "systemd", workerId: WORKER_ID, repository: REPOSITORY_NAME, runtimeDirectory: awkward,
-    nodePath: join(awkward, "bin", "node"), scriptPath: join(awkward, "watch.mjs"),
-    workingDirectory: awkward, intervalSeconds: 1800,
-  }).find((entry) => entry.name.endsWith(".service")).content;
-  assert.match(service, /%%/u, "systemd must double the % in awkward paths");
 });
 
 test("instructions name the last-run and last-result check on every platform", () => {
@@ -1362,7 +1377,8 @@ test("instructions name the last-run and last-result check on every platform", (
   assert.match(forPlatform("systemd"), /list-timers/u, "systemd names the last/next run check");
   assert.match(forPlatform("systemd"), /status \S+\.service/u, "systemd names the last result check");
   const windows = forPlatform("windows");
-  assert.match(windows, /Last Result/u, "windows names the last result check");
-  assert.match(windows, /Last Run Time/u, "windows names the last run check");
-  assert.match(windows, /importer-side workaround/u, "windows states the UTF-16 conversion is importer-side");
+  assert.match(windows, /Get-ScheduledTaskInfo/u, "windows names the object-based last-result check");
+  assert.match(windows, /LastTaskResult/u, "windows names the last result property");
+  assert.match(windows, /-Encoding UTF8/u, "windows names the conversion input encoding explicitly");
+  assert.match(windows, /does not diagnose the rejection/u, "windows states what the fixture does not prove");
 });
