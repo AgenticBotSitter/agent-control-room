@@ -655,3 +655,41 @@ test("the PostgreSQL adapter refuses an unusable session and an ambiguous row", 
   assert.equal(await port.findForUpdate(
     { query: async () => ({ rows: [] }) } as never, binding.tenantId, "run:pg-guard"), null);
 });
+
+test("the PostgreSQL adapter locks the row, normalizes instants and rejects a non-object body", async t => {
+  const f = await setupWithProvision("run:pg-shape"); t.after(f.close);
+  const port = createDurableReservationPostgresPortV1();
+  const runId = "run:pg-shape";
+  await publishDurableResultV1(configOf(f, new ControlledStorage(), port),
+    { binding: nativeBinding(runId), bytes: bytesOf("shape"), receivedAt: at(10_100), assertAuthority: () => {} });
+
+  // PGlite is single-connection, so no test in this repository can observe a
+  // real row lock. Assert the emitted statement instead: this is a guard
+  // against a refactor silently dropping the clause, NOT a concurrency proof.
+  const statements: string[] = [];
+  const recording = { query: async (statement: string) => { statements.push(statement); return { rows: [] }; } };
+  assert.equal(await port.findForUpdate(recording as never, binding.tenantId, runId), null);
+  assert.equal(statements.length, 1);
+  assert.match(statements[0], /FOR UPDATE\s*$/);
+  assert.match(statements[0], /FROM control_durable_result_write_reservations/);
+  // The neutral adapter must never read the native-only sibling table.
+  assert.ok(!statements[0].includes("control_native_result_write_reservations"));
+
+  // timestamptz arrives as a Date; the port interface declares strings.
+  const committed = await f.db.transaction(tx => port.findForUpdate(tx, binding.tenantId, runId));
+  assert.ok(committed);
+  assert.equal(typeof committed.created_at, "string");
+  assert.equal(typeof committed.updated_at, "string");
+  assert.equal(new Date(committed.created_at).toISOString(), committed.created_at);
+
+  // A jsonb array or scalar is not a reservation body and never reaches the publisher.
+  for (const body of [[1, 2], 7, "text", null]) {
+    await assert.rejects(port.findForUpdate(
+      { query: async () => ({ rows: [{ ...committed, reservation: body }] }) } as never,
+      binding.tenantId, runId), /durable_reservation_row_invalid/);
+  }
+  // An unparseable instant is refused rather than returned as "Invalid Date".
+  await assert.rejects(port.findForUpdate(
+    { query: async () => ({ rows: [{ ...committed, created_at: new Date(Number.NaN) }] }) } as never,
+    binding.tenantId, runId), /durable_reservation_row_invalid/);
+});

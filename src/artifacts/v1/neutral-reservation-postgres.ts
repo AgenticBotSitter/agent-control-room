@@ -77,7 +77,11 @@ function storedRow(row: StoredRow | undefined): NeutralReservationRowV1 | null {
     "identity_digest", "state", "contract_digest", "auth_tag"] as const) {
     if (typeof row[column] !== "string" || row[column].length === 0) failed("durable_reservation_row_invalid");
   }
-  if (row.reservation === null || row.reservation === undefined) failed("durable_reservation_row_invalid");
+  // The table's mirror CHECK already requires a jsonb object, so this guard is
+  // defense in depth for any other session implementation: an array or scalar
+  // body never reaches the publisher as a reservation.
+  if (typeof row.reservation !== "object" || row.reservation === null
+    || Array.isArray(row.reservation)) failed("durable_reservation_row_invalid");
   return {
     tenant_id: row.tenant_id, project_id: row.project_id, job_id: row.job_id,
     attempt_id: row.attempt_id, run_id: row.run_id, artifact_id: row.artifact_id,
