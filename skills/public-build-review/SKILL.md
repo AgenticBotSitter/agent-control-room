@@ -56,6 +56,14 @@ The lead owns final acceptance and merging; independent reviewers do not approve
 own implementation. Merge accepted work in dependency order and verify the combined
 candidate before calling it a release.
 
+Lead-authored repairs and integrations follow the same gate. The author first audits
+the exact diff and affected dependency boundary. A separate fresh-context reviewer who
+did not author the changed files then reviews the exact commit. Do not merge while any
+required check is queued, running, skipped, canceled, missing or failed. A material
+repair requires another review of the repaired commit. After merge, verify the expected
+commit is on public `main` and check the smallest meaningful combined behavior before
+recording completion.
+
 ## Return the action explicitly
 
 Return one consolidated correction or acceptance record for the exact submitted commit.
