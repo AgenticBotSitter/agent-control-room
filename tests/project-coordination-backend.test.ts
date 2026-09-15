@@ -948,6 +948,21 @@ test("delegation-policy pause, resume, and revoke are durable per idempotency ke
       idempotencyKey: "policy-durable-rebuilt", expectedVersion: 99, occurredAt: at() }),
     /policy_version_stale/);
 
+    // A fresh key with a stale expected version never sneaks past the
+    // version guard through the already-state path: revoking the revoked
+    // policy (version 4) with a stale version is stale, not already-revoked.
+    // Pause/resume against the revoked policy keep the retained terminal
+    // refusal regardless of version — a revoked policy is terminal.
+    await assert.rejects(service().revokeDelegation({ ...base, policyId,
+      idempotencyKey: "policy-durable-stale-revoke", expectedVersion: 1, occurredAt: at() }),
+    /policy_version_stale/);
+    await assert.rejects(service().pauseDelegation({ ...base, policyId,
+      idempotencyKey: "policy-durable-stale-pause", expectedVersion: 1, occurredAt: at() }),
+    /policy_revoked/);
+    await assert.rejects(service().resumeDelegation({ ...base, policyId,
+      idempotencyKey: "policy-durable-stale-resume", expectedVersion: 1, occurredAt: at() }),
+    /policy_revoked/);
+
     // The ledger holds one completed receipt per key: three mutations.
     const receipts = await f.raw.query<{ count: string }>(
       `SELECT count(*)::text AS count FROM control_idempotency
@@ -974,6 +989,37 @@ test("delegation-policy pause, resume, and revoke are durable per idempotency ke
       idempotencyKey: "policy-durable-already", expectedVersion: 1, occurredAt: at(1_000) });
     assert.equal(alreadyRetry.replayed, true);
     assert.equal(alreadyRetry.alreadyState, "policy_already_active");
+
+    // Resuming the still-active fresh policy with a stale version is stale,
+    // not already-active: the version guard runs before the already-state
+    // outcome for every action.
+    await assert.rejects(service().resumeDelegation({ ...base, policyId: fresh,
+      idempotencyKey: "policy-durable-stale-active", expectedVersion: 99, occurredAt: at() }),
+    /policy_version_stale/);
+
+    // A caller whose view is current still gets the already-state outcome on
+    // a revoked policy: revoking the revoked policy at version 4 records
+    // policy_already_revoked and holds the version.
+    const alreadyRevoked = await service().revokeDelegation({ ...base, policyId,
+      idempotencyKey: "policy-durable-already-revoked", expectedVersion: 4, occurredAt: at() });
+    assert.equal(alreadyRevoked.replayed, false);
+    assert.equal(alreadyRevoked.alreadyState, "policy_already_revoked");
+    assert.equal(alreadyRevoked.version, 4);
+
+    // Pausing a paused policy with a stale version is stale, not
+    // already-paused — and resuming at the current version then succeeds,
+    // proving the version (not the state) was the blocker.
+    const pausedPolicy = await insertPolicy(f, { id: "policy:stale-paused" });
+    const paused = await service().pauseDelegation({ ...base, policyId: pausedPolicy,
+      idempotencyKey: "policy-durable-pause-twice", expectedVersion: 1, occurredAt: at() });
+    assert.equal(paused.version, 2);
+    await assert.rejects(service().pauseDelegation({ ...base, policyId: pausedPolicy,
+      idempotencyKey: "policy-durable-pause-stale", expectedVersion: 1, occurredAt: at() }),
+    /policy_version_stale/);
+    const unpaused = await service().resumeDelegation({ ...base, policyId: pausedPolicy,
+      idempotencyKey: "policy-durable-resume-current", expectedVersion: 2, occurredAt: at() });
+    assert.equal(unpaused.version, 3);
+    assert.equal(unpaused.state, "active");
 
     // Simultaneous duplicates mutate once: one caller wins, the loser either
     // replays the saved receipt or conflicts mid-flight, and the exact retry

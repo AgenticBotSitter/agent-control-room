@@ -1581,6 +1581,13 @@ export class CanonicalStore {
         [json(receipt), input.tenantId, input.idempotencyKey, input.requestDigest]);
         return { ...receipt, replayed: false as const };
       };
+      // Only an exact saved-receipt replay (handled above) may bypass the
+      // version guard: a fresh key with a stale expected version is refused
+      // even when the policy already names the target state. The
+      // already-state outcome is for a caller whose view is current.
+      if (policy.state === toState && Number(policy.version) !== input.expectedVersion) {
+        failProjectCoordinationV1("policy_version_stale");
+      }
       if (policy.state === toState) {
         // Already in the target state on first execution: no mutation, the
         // recorded receipt carries the canonical already-state outcome.

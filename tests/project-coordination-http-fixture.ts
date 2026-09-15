@@ -263,6 +263,12 @@ export async function projectCoordinationHttpFixture(options: FixtureOptions) {
       };
       const existing = policyRows.get(input.policyId);
       if (!existing) throw new ProjectCoordinationErrorV1("policy_required" as never);
+      // Only an exact saved-receipt replay (handled above) may bypass the
+      // version guard: a fresh key with a stale version is refused even when
+      // the policy already names the target state.
+      if (existing.state === toState && existing.coordinatorVersion !== input.expectedVersion) {
+        throw new ProjectCoordinationErrorV1("policy_version_stale" as never);
+      }
       if (existing.state === toState) {
         const receipt = buildReceipt(existing.coordinatorVersion, toState, alreadyState);
         policyReceipts.set(input.idempotencyKey, { contentKey, receipt });
