@@ -19,6 +19,8 @@ import {
 } from "../../artifacts/v1/persistent-local-storage";
 import type { ArtifactReadPortV1, ArtifactStoragePortV1 } from "../../node-executor/artifact-storage";
 import type { NeutralReservationPort } from "../../artifacts/v1/neutral-reservation-port";
+import { ARTIFACT_STORAGE_SETTINGS_SCHEMA_V1, artifactStorageNamespaceDigestV1,
+  captureArtifactStorageSettingsV1 } from "../../config/v1/artifact-storage";
 import { digestSchema, localId } from "../../harness/v1/native-run-identifiers";
 import { hmacSha256Tag, sha256Digest } from "../../security";
 
@@ -73,24 +75,42 @@ type ArtifactConsumers = {
 
 function unavailable(): never { throw new Error("private_artifact_storage_unavailable"); }
 
-/** Binds a public namespace identity to one trusted canonical operator path without returning that path. */
-export function privateArtifactStorageNamespaceDigestV1(storageNamespace: string, rootPath: string): string {
-  return sha256Digest({ purpose: "private-artifact-storage-namespace/v1", storageNamespace, rootPath });
-}
+/**
+ * Binds a public namespace identity to one trusted canonical operator path without returning that path.
+ *
+ * The derivation is owned by the operator-configuration module so one rule
+ * governs both the operator file and this startup boundary; the original name
+ * is retained for existing callers.
+ */
+export const privateArtifactStorageNamespaceDigestV1 = artifactStorageNamespaceDigestV1;
 
 export function capturePrivateArtifactStorageConfigurationV1(
   input: PrivateArtifactStorageConfigurationV1,
 ): PrivateArtifactStorageConfigurationV1 {
   try {
     if (!input || typeof input !== "object" || !input.local || typeof input.local !== "object") return unavailable();
-    const local = Object.freeze({
-      rootPath: z.string().min(1).max(4096).parse(input.local.rootPath),
-      maximumArtifacts: z.number().int().min(1).max(10_000).parse(input.local.maximumArtifacts),
-      maximumFileBytes: z.number().int().min(1).max(65_536).parse(input.local.maximumFileBytes),
-      maximumTotalBytes: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).parse(input.local.maximumTotalBytes),
-      operationTimeoutMs: z.number().int().min(1).max(2_000).parse(input.local.operationTimeoutMs),
-    });
     const inventory = Object.freeze(inventoryHeaderSchema.parse(input.inventory));
+    // Delegate the byte-store bounds and the one explicit persistent directory
+    // to the operator-configuration owner. A non-canonical root or a total
+    // below one file is refused here instead of surfacing later as an opaque
+    // storage error at first write.
+    const captured = captureArtifactStorageSettingsV1({
+      schema: ARTIFACT_STORAGE_SETTINGS_SCHEMA_V1,
+      storageClass: "local",
+      storageNamespace: inventory.storageNamespace,
+      rootPath: input.local.rootPath,
+      maximumArtifacts: input.local.maximumArtifacts,
+      maximumFileBytes: input.local.maximumFileBytes,
+      maximumTotalBytes: input.local.maximumTotalBytes,
+      operationTimeoutMs: input.local.operationTimeoutMs,
+    });
+    const local = Object.freeze({
+      rootPath: captured.rootPath,
+      maximumArtifacts: captured.maximumArtifacts,
+      maximumFileBytes: captured.maximumFileBytes,
+      maximumTotalBytes: captured.maximumTotalBytes,
+      operationTimeoutMs: captured.operationTimeoutMs,
+    });
     if (inventory.storageNamespaceDigest !== privateArtifactStorageNamespaceDigestV1(
       inventory.storageNamespace, local.rootPath)) return unavailable();
     return Object.freeze({ local, inventory });
