@@ -421,6 +421,19 @@ test("operator assembly drives the real production startup boundary with the cap
   assert.throws(() => {
     (captured as { port: number }).port = 9999;
   }, /Cannot assign to read only property/);
+  // Deep-nested mutation must also fail. The captured configuration includes
+  // multi-level nested database-role values; mutation of any deep-nested
+  // property must fail because deepFreeze has frozen every nested layer.
+  assert.throws(() => {
+    (captured.configuration.coordinator.database as unknown as Record<string, unknown>).username = "mutated-db-user";
+  }, /Cannot assign to read only property/);
+  assert.throws(() => {
+    (captured.configuration.coordinator.sessions!.database as unknown as Record<string, unknown>).username = "mutated-session-user";
+  }, /Cannot assign to read only property/);
+  assert.throws(() => {
+    (captured.configuration.web.tasks as Record<string, unknown>).harnessIntegrityKey =
+      new Uint8Array(32).fill(99);
+  }, /Cannot assign to read only property/);
 });
 
 test("frozen approval-store capture binds methods to the original trusted receiver", async () => {
