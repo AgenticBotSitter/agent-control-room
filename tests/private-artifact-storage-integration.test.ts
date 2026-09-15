@@ -9,6 +9,9 @@ import { commitNativeResultReservationMetadataV1, reserveNativeResultWriteV1,
 import { nativeResultId, resultBytesHash } from "../src/artifacts/v1/native-results";
 import { bindPrivateArtifactStorageV1, openPrivateArtifactStorageV1, privateArtifactStorageNamespaceDigestV1,
   type PrivateArtifactStorageConfigurationV1 } from "../src/web/v1/private-artifact-storage";
+import { ARTIFACT_STORAGE_SETTINGS_SCHEMA_V1, artifactStorageNamespaceDigestV1,
+  captureArtifactStorageConfigurationV1, captureArtifactStorageSettingsV1,
+  exportArtifactStorageSettingsV1 } from "../src/config/v1/artifact-storage";
 import type { DatabaseClient } from "../src/persistence/database";
 import { hmacSha256Tag, sha256Digest } from "../src/security";
 
@@ -125,4 +128,97 @@ test("missing, duplicated and wrong database bindings fail before readiness", as
     receipt_auth_tag: hmacSha256Tag(integrityKey,
       { purpose: "codex-result-receipt/v1", receipt: incompleteCodex }) }]), tenantId, integrityKey),
   /private_artifact_storage_unavailable/);
+});
+
+test("operator settings resolve one explicit persistent directory and derive the namespace digest", () => {
+  const rootPath = "/synthetic/operator-result-storage";
+  const settings = { schema: ARTIFACT_STORAGE_SETTINGS_SCHEMA_V1, storageClass: "local",
+    storageNamespace: "artifact-namespace:operator", rootPath, maximumArtifacts: 20,
+    maximumFileBytes: 65_536, maximumTotalBytes: 1_000_000, operationTimeoutMs: 2_000 };
+  const release = { releaseId: "release:test", releaseDigest: sha256Digest("release"),
+    databaseSchemaVersion: "schema:71", databaseSchemaDigest: sha256Digest("schema") };
+
+  const captured = captureArtifactStorageConfigurationV1(settings, release);
+  assert.equal(captured.local.rootPath, rootPath);
+  assert.equal(captured.inventory.storageNamespaceDigest,
+    artifactStorageNamespaceDigestV1("artifact-namespace:operator", rootPath));
+  assert.ok(Object.isFrozen(captured) && Object.isFrozen(captured.local) && Object.isFrozen(captured.inventory));
+
+  // The digest is always derived, never carried in: a stale or forged digest
+  // cannot bind this namespace to a different directory.
+  const moved = captureArtifactStorageConfigurationV1({ ...settings, rootPath: `${rootPath}-other` }, release);
+  assert.notEqual(moved.inventory.storageNamespaceDigest, captured.inventory.storageNamespaceDigest);
+
+  // Supplying a digest is an unknown key and is refused outright.
+  assert.throws(() => captureArtifactStorageConfigurationV1(
+    { ...settings, storageNamespaceDigest: captured.inventory.storageNamespaceDigest }, release),
+  /artifact_storage_settings_invalid/);
+});
+
+test("operator settings refuse unsupported storage, uncanonical roots and unusable bounds", () => {
+  const rootPath = "/synthetic/operator-refusals";
+  const base = { schema: ARTIFACT_STORAGE_SETTINGS_SCHEMA_V1, storageClass: "local",
+    storageNamespace: "artifact-namespace:operator", rootPath, maximumArtifacts: 20,
+    maximumFileBytes: 65_536, maximumTotalBytes: 1_000_000, operationTimeoutMs: 2_000 };
+  const refuses = (patch: Record<string, unknown>, pattern: RegExp) =>
+    assert.throws(() => captureArtifactStorageSettingsV1({ ...base, ...patch }), pattern);
+
+  // Object storage stays unadvertised until a separately tested adapter exists.
+  refuses({ storageClass: "r2" }, /artifact_storage_r2_unsupported/);
+  refuses({ storageClass: "s3" }, /artifact_storage_class_unsupported/);
+
+  // One explicit persistent directory: relative, traversing, trailing-separator
+  // and duplicated-separator forms are refused rather than repaired, so the
+  // recorded intent and the opened directory can never differ.
+  for (const bad of ["relative/path", "/synthetic/../etc", "/synthetic/trailing/", "/synthetic//double", "."]) {
+    refuses({ rootPath: bad }, /artifact_storage_root_(invalid|not_canonical)/);
+  }
+  refuses({ rootPath: "/" }, /artifact_storage_root_not_owned/);
+  refuses({ rootPath: "/synthetic/nul\0byte" }, /artifact_storage_root_invalid/);
+  refuses({ rootPath: "" }, /artifact_storage_settings_invalid|artifact_storage_root_invalid/);
+
+  // A total below one file accepts a store that can never hold a single
+  // result; refuse at capture rather than at the first write.
+  refuses({ maximumTotalBytes: 100, maximumFileBytes: 65_536 }, /artifact_storage_total_below_file/);
+
+  // The bounded result ceiling and operation deadline are contract limits.
+  refuses({ maximumFileBytes: 65_537 }, /artifact_storage_settings_invalid/);
+  refuses({ operationTimeoutMs: 2_001 }, /artifact_storage_settings_invalid/);
+  refuses({ maximumArtifacts: 0 }, /artifact_storage_settings_invalid/);
+
+  // Equal total and file size is the smallest usable store and is accepted.
+  assert.equal(captureArtifactStorageSettingsV1(
+    { ...base, maximumFileBytes: 1_024, maximumTotalBytes: 1_024 }).maximumTotalBytes, 1_024);
+});
+
+test("the portable export carries the namespace identity and never the private directory", () => {
+  const rootPath = "/synthetic/operator-export";
+  const exported = JSON.parse(exportArtifactStorageSettingsV1({
+    schema: ARTIFACT_STORAGE_SETTINGS_SCHEMA_V1, storageClass: "local",
+    storageNamespace: "artifact-namespace:operator", rootPath, maximumArtifacts: 20,
+    maximumFileBytes: 65_536, maximumTotalBytes: 1_000_000, operationTimeoutMs: 2_000 }));
+  assert.equal(exported.storageNamespaceDigest,
+    artifactStorageNamespaceDigestV1("artifact-namespace:operator", rootPath));
+  assert.ok(!("rootPath" in exported));
+  assert.ok(!JSON.stringify(exported).includes("/synthetic"));
+});
+
+test("the startup boundary applies the same operator contract to its captured configuration", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "acr-storage-contract-")));
+  try {
+    // A canonical absolute root still opens exactly as before.
+    const opened = await openPrivateArtifactStorageV1(configuration(root));
+    assert.equal(typeof opened.storage.put, "function");
+
+    // The tightened contract now refuses at the startup boundary what would
+    // otherwise surface later as an opaque storage error at first write.
+    const uncanonical = `${root}/`;
+    await assert.rejects(openPrivateArtifactStorageV1(configuration(uncanonical)),
+      /private_artifact_storage_unavailable/);
+    await assert.rejects(openPrivateArtifactStorageV1({ ...configuration(root),
+      local: { ...configuration(root).local, maximumTotalBytes: 10, maximumFileBytes: 65_536 } }),
+    /private_artifact_storage_unavailable/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

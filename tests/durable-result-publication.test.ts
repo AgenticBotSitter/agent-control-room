@@ -482,12 +482,15 @@ test("the backup inventory captures the neutral result through the actual reader
   const captured = await publishDurableResultV1(configOf(f, storage),
     { binding: nativeBinding(runId), bytes: bytesOf("inventory"), receivedAt, assertAuthority: () => {} });
   const opened = await openPrivateArtifactStorageV1(
-    { local: { rootPath: "memory:durable-inventory-test", maximumArtifacts: 20, maximumFileBytes: 65_536,
+    // Absolute canonical namespace root, matching the operator-configuration
+    // contract. The storage port is injected, so no directory is opened or
+    // created; the path is namespace identity only.
+    { local: { rootPath: "/synthetic/durable-inventory-test", maximumArtifacts: 20, maximumFileBytes: 65_536,
       maximumTotalBytes: 1_000_000, operationTimeoutMs: 2_000 },
     inventory: { releaseId: "release:test", releaseDigest: digest("r"), databaseSchemaVersion: "schema:71",
       databaseSchemaDigest: digest("s"), storageNamespace: "artifact-namespace:test",
       storageNamespaceDigest: privateArtifactStorageNamespaceDigestV1("artifact-namespace:test",
-        "memory:durable-inventory-test") } },
+        "/synthetic/durable-inventory-test") } },
     async () => ({ put: storage.put.bind(storage), read: storage.read.bind(storage) }));
   // Without the neutral reservation boundary the actual reader fails
   // closed: its SQL join finds receipt and manifest rows but no native-table
