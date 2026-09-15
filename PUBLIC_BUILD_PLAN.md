@@ -87,7 +87,8 @@ Use [CONTRIBUTING.md](CONTRIBUTING.md), the
 - Debug and repair ordinary code within scope without arbitrary retry counts. If
   repeated attempts produce no new evidence, report the blocker and take a different
   reserved independent item. Failed tests are not disqualification.
-- Keep one active implementation and normally up to two submitted PRs. Continue
+- Keep at most two active builds and three total assignments under the handbook's
+  separate-context, corrections-first rules. Continue
   independent assigned work while reviews happen; don't begin dependent changes early.
 - Submit one concise PR: outcome, base/head, checks/results, untested limitations and
   upstream/license changes. No separate metadata commit or mandatory JSON report.

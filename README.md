@@ -27,6 +27,11 @@ This README is the front door; detailed documents are optional depth, not a hunt
 covering the entire choose → claim → build → check → review → correct → merge or handoff
 process for people, bots, reviewers, and maintainers.
 
+**Worker capacity update (September 15):** two active builds and three total assignments
+per stable worker, with separate worktrees/execution contexts for parallel builds.
+Corrections come first. Check for the next job immediately after submitting—do not
+wait for the 30-minute timer. [Full rules and how to refresh existing workers](CONTRIBUTOR_HANDBOOK.md#keep-useful-work-flowing).
+
 **[How the build keeps moving](docs/CONTINUOUS_BUILD_OPERATION.md)** — work discovery,
 review turnaround, automatic monitoring, and what happens when a worker cannot proceed.
 

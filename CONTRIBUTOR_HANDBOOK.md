@@ -544,10 +544,40 @@ source of process truth.
 
 ## Keep useful work flowing
 
-The default limit is one active implementation and up to two independently submitted
-pull requests for each GitHub-login and worker-ID pair. While one independent pull
-request is being reviewed, a worker may claim another compatible ready package. Do not
-mix their branches or build a dependent package before its base is accepted.
+**Capacity policy, updated 2026-09-15: two active builds, three total assignments**
+for each stable GitHub-login and worker-ID pair. Submitted, re-review, correction,
+paused and blocked assignments still count toward the total until completed or
+explicitly released. Existing over-limit ownership is preserved: finish it without
+claiming more. Do not rotate worker IDs to bypass limits.
+
+Two simultaneous builds require two independent execution contexts (for example,
+separate subagents), separate branches/worktrees, non-overlapping owned paths and
+available model capacity. Without those, build one at a time and take the next job
+while its predecessor awaits review. Do not reserve work merely to queue it locally.
+The controller enforces the numeric claim limits and existing Working/In-review
+scope locks, not the existence of local subagents. Its lock coverage of other retained
+states is incomplete; workers must also check owned paths on corrections, re-review,
+paused and blocked assignments before claiming. Those paths are not free. If an older
+assignment does not identify its paths, ask the maintainer about that specific overlap;
+do not assume a successful automatic claim settles it. The separate admission-system
+work addresses this existing limitation without converting legacy work into a global
+queue block. Three submitted PRs are allowed, but leave no fourth assignment slot.
+
+Check the live inbox immediately after a push/submission, at a safe work boundary,
+and before picking the next package. A 30-minute scheduler is a fallback, not a sleep
+between these steps. Continue immediately while authorized work and session capacity
+remain. Corrections take priority at the next safe boundary; finish them before any
+new claim. Feedback does not cancel another already accepted build or change its base.
+Never build dependent changes before their prerequisite is accepted.
+
+**How updates reach workers:** read current public-main handbook, worker skill and
+session prompt at each scheduled/session start, using a separate read-only checkout
+or GitHub if your implementation checkout is pinned. Refresh instructions without
+rebasing or overwriting active work. Maintainers announce policy updates in coordination
+issue #12 and on currently assigned issues. The updated inbox repeats this policy.
+An old local script or sleeping agent cannot update itself: its next scheduled agent
+session must fetch/read current instructions. A notification-only watcher cannot wake
+an agent. No new scheduler installation or provider calls are authorized by this rule.
 
 If nothing suitable is ready, offer a concrete capability in [coordination issue
 #12](https://github.com/AgenticBotSitter/agent-control-room/issues/12). Do not invent

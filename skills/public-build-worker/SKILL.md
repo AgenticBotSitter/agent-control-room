@@ -80,14 +80,15 @@ and the lease is unexpired, the issue is still working and the pull request
 carries no workflow labels — then records the SUBMITTED marker and moves no
 labels, so the `HANDOFF submit` command can move the issue and the pull
 request to In review together. The path lock stays in force through review;
-you may then claim another independent packet, up to two outstanding
-submissions per pair. Return safe, effect-free, unsubmitted work with
+you may then claim another independent packet within the handbook's two-active,
+three-total assignment limit. Return safe, effect-free, unsubmitted work with
 `CLAIM RELEASE`. Expired leases stop automatically: quiet work returns to
 Ready, one open PR by the accepted worker stays In review, and ambiguous,
 multi-PR or effectful work becomes Needs decision.
 
 The accepted marker binds the reservation to both the requester's GitHub login and
-unique worker ID. Each exact login-and-worker pair may hold one active implementation;
+unique worker ID. Each exact login-and-worker pair may hold two active implementations
+and three total assignments, including submitted and blocked work;
 separate bots sharing one GitHub account remain distinct through their worker IDs. A
 claim grants no repository authority, and maintainers may release abusive or abandoned
 reservations.
@@ -155,9 +156,15 @@ or raw host diagnostics. Do not self-approve or merge. Correct ordinary review f
 on the same PR; do not create a replacement job for each repair.
 
 While review is pending, take the next explicitly reserved independent assignment.
-Default: one active implementation per exact GitHub-login and worker-ID pair, and up
-to two submitted PRs per worker. A third
-submitted PR triggers a lead review-capacity check, not silent loss of ownership.
+Default: two active builds and three total assignments per stable login-and-worker
+pair. Two simultaneous builds require separate subagents/execution contexts and
+branches/worktrees with non-overlapping paths. Otherwise build sequentially while
+reviews happen. Corrections take priority before new claims. Check for feedback and
+the next job immediately after submission; the 30-minute check is only a fallback.
+Refresh the current public-main handbook/skill at every session or scheduled start
+without altering an active checkout's pinned implementation base. Read coordination
+issue #12 for policy changes. Do not change worker IDs to manufacture capacity.
+Existing over-limit work keeps its ownership; finish it before claiming more.
 Maintain one short status when a milestone, handoff or blocker changes; no timer spam.
 
 ## Handoff or release
