@@ -369,8 +369,14 @@ async function mountTaskResults(options: { search?: string; canReadContent?: boo
   // protected results and review…" or "Reading protected result…". Flush
   // repeatedly until the panel has settled into the state an assertion is
   // about, so no assertion races those reads on a slower or loaded machine.
-  const settle = async (ready: () => boolean) => {
-    for (let attempt = 0; attempt < 200 && !ready(); attempt += 1) await act(async () => {});
+  const settle = async (ready: () => boolean, perform?: () => void) => {
+    if (perform) await act(async () => { perform(); });
+    for (let attempt = 0; attempt < 200 && !ready(); attempt += 1) {
+      // jsdom queues real history.back()/forward() traversal -- and the
+      // popstate it dispatches -- as its own task, not a microtask, so a
+      // plain act() flush can miss it. Give the event loop a tick too.
+      await act(async () => { await new Promise(resolve => dom.window.setTimeout(resolve, 0)); });
+    }
   };
   const idle = () => {
     const text = dom.window.document.body.textContent ?? "";
@@ -462,20 +468,52 @@ test("back and forward move the open file, not just the scroll position", async 
     const openers = [...mounted.dom.window.document.querySelectorAll("button")]
       .filter(button => button.textContent === "Read result");
     const body = () => mounted.dom.window.document.body.textContent ?? "";
-    await mounted.act(async () => { openers[0]!.click(); });
-    assert.equal(new URL(mounted.dom.window.location.href).searchParams.get("result"), "artifact:one");
+    const selected = () => new URL(mounted.dom.window.location.href).searchParams.get("result");
+
+    // Real pushState navigation, exactly as the panel performs it, so jsdom's
+    // own history stack (not a hand-built URL) drives back()/forward().
+    await mounted.settle(() => selected() === "artifact:one",
+      () => { openers[0]!.click(); });
+    assert.equal(selected(), "artifact:one");
     await mounted.settle(() => /artifact:one PROTECTED RESULT TEXT/.test(body()));
     assert.match(body(), /artifact:one PROTECTED RESULT TEXT/);
+    assert.doesNotMatch(body(), /artifact:two PROTECTED RESULT TEXT/);
 
-    // Simulate Back: the URL loses the selection and popstate fires.
-    mounted.dom.window.history.replaceState(null, "",
-      "/projects/project%3Atest/tasks/job%3Atest#task-results");
-    await mounted.act(async () => {
-      mounted.dom.window.dispatchEvent(new mounted.dom.window.PopStateEvent("popstate"));
-    });
-    // The close is queued as a microtask and the list is read again, so the
-    // removal is not on the dispatch's own tick either.
+    // Open a second, distinct file so Back/Forward has two real positions to
+    // move between rather than a selection and an absence of one.
+    await mounted.settle(() => selected() === "artifact:two",
+      () => { openers[1]!.click(); });
+    assert.equal(selected(), "artifact:two");
+    await mounted.settle(() => /artifact:two PROTECTED RESULT TEXT/.test(body()));
+    assert.match(body(), /artifact:two PROTECTED RESULT TEXT/);
+    assert.doesNotMatch(body(), /artifact:one PROTECTED RESULT TEXT/);
+
+    // Back: real browser history navigation, not a synthesized popstate.
+    await mounted.settle(() => selected() === "artifact:one",
+      () => { mounted.dom.window.history.back(); });
+    await mounted.settle(() => /artifact:one PROTECTED RESULT TEXT/.test(body()));
+    assert.equal(selected(), "artifact:one");
+    assert.match(body(), /artifact:one PROTECTED RESULT TEXT/);
+    // The exact prior artifact wins outright: no stale artifact:two response,
+    // requested moments earlier, is left showing once Back settles.
+    assert.doesNotMatch(body(), /artifact:two PROTECTED RESULT TEXT/);
+
+    // Forward: returns to the second exact artifact, again by real navigation.
+    await mounted.settle(() => selected() === "artifact:two",
+      () => { mounted.dom.window.history.forward(); });
+    await mounted.settle(() => /artifact:two PROTECTED RESULT TEXT/.test(body()));
+    assert.equal(selected(), "artifact:two");
+    assert.match(body(), /artifact:two PROTECTED RESULT TEXT/);
+    assert.doesNotMatch(body(), /artifact:one PROTECTED RESULT TEXT/);
+
+    // Back twice more: returns to no selection, and closing still fires from
+    // real navigation, not only from an in-page Close click.
+    await mounted.settle(() => selected() === "artifact:one",
+      () => { mounted.dom.window.history.back(); });
+    await mounted.settle(() => selected() === null,
+      () => { mounted.dom.window.history.back(); });
     await mounted.settle(() => !/PROTECTED RESULT TEXT/.test(body()));
+    assert.equal(selected(), null);
     assert.doesNotMatch(body(), /PROTECTED RESULT TEXT/);
   } finally { await mounted.restore(); }
 });
