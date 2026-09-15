@@ -560,6 +560,39 @@ and closes it. A green
 pull request, review comment, partial merge, or demo does not by itself complete a whole
 feature or release.
 
+### Lead-authored work uses the same safety gate
+
+A lead, maintainer, or integrator does not waive independent review by writing a repair
+or integration change directly. Before merging lead-authored work:
+
+1. The author reviews the exact intended diff, its dependency assumptions and the
+   relevant failure paths, then runs the focused checks needed for that risk.
+2. A separate fresh-context reviewer who did not author the changed files inspects the
+   exact commit. Shared persistence, execution, authorization, recovery and release
+   changes receive focused boundary review; ordinary documentation receives a
+   proportionate check.
+3. The pull request records the reviewer's declared identity and model, exact reviewed
+   commit, verdict, material findings and checks actually performed. The recorded
+   commit must still be the pull request's current head. The review is not complete
+   without this visible recorded evidence.
+4. The accepted review is followed by the same visible integration handoff used by
+   other work: the controller records `accept` plus `action:integrator`, or the
+   maintainer records the equivalent current-head acceptance through the handbook's
+   explicit manual fallback. A review comment alone is not merge authority.
+5. Every required GitHub check must finish successfully. A queued, running, skipped,
+   canceled or missing required check is not a pass, and auto-merge must not substitute
+   for observing the final results.
+6. Material repair after that review requires another independent review of the exact
+   repaired commit and its affected behavior.
+7. After merge, the integrator verifies that public `main` contains the expected merge
+   and runs or observes the smallest meaningful combined check before declaring the
+   work complete.
+
+Independent review is a defect-finding gate, not ceremonial approval. Its material
+findings are corrected or explicitly resolved on the public record; the author cannot
+silently overrule them. If an independent reviewer is unavailable, the work waits
+rather than being represented as accepted.
+
 Deployment is a separate decision. Public pull requests never run with maintainer
 credentials or on private agent hosts. Production startup, private ingress, database
 changes, backups, native agent calls, and consequential actions retain their explicit
