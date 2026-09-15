@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { resolve } from "node:path";
 import test from "node:test";
 import { publishDurableResultV1, readDurableResultV1, reconcileDurableResultReservationCrashV1,
   type DurableResultBindingV1 } from "../src/artifacts/v1/durable-result-publication";
@@ -19,6 +20,13 @@ import { at } from "./native-task-fixture";
 import { webNativeResultFixture } from "./helpers/web-native-result";
 
 const digest = (seed = "a") => `sha256:${createHash("sha256").update(`durable-test:${seed}`).digest("hex")}`;
+
+/**
+ * Namespace identity only: the storage port is injected, so no directory is
+ * opened or created. Resolved rather than written as a POSIX literal so the
+ * root stays canonical on every platform a contributor runs this lane from.
+ */
+const syntheticRoot = resolve("/synthetic/durable-inventory-test");
 
 class ControlledStorage implements ArtifactStoragePortV1, ArtifactReadPortV1 {
   readonly artifacts = new Map<string, Uint8Array>();
@@ -484,13 +492,15 @@ test("the backup inventory captures the neutral result through the actual reader
   const opened = await openPrivateArtifactStorageV1(
     // Absolute canonical namespace root, matching the operator-configuration
     // contract. The storage port is injected, so no directory is opened or
-    // created; the path is namespace identity only.
-    { local: { rootPath: "/synthetic/durable-inventory-test", maximumArtifacts: 20, maximumFileBytes: 65_536,
+    // created; the path is namespace identity only. Resolved rather than
+    // written as a POSIX literal so the root stays canonical on every
+    // platform a contributor runs this lane from.
+    { local: { rootPath: syntheticRoot, maximumArtifacts: 20, maximumFileBytes: 65_536,
       maximumTotalBytes: 1_000_000, operationTimeoutMs: 2_000 },
     inventory: { releaseId: "release:test", releaseDigest: digest("r"), databaseSchemaVersion: "schema:71",
       databaseSchemaDigest: digest("s"), storageNamespace: "artifact-namespace:test",
       storageNamespaceDigest: privateArtifactStorageNamespaceDigestV1("artifact-namespace:test",
-        "/synthetic/durable-inventory-test") } },
+        syntheticRoot) } },
     async () => ({ put: storage.put.bind(storage), read: storage.read.bind(storage) }));
   // Without the neutral reservation boundary the actual reader fails
   // closed: its SQL join finds receipt and manifest rows but no native-table
