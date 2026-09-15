@@ -13,8 +13,10 @@ import { openPrivateArtifactStorageV1, privateArtifactStorageNamespaceDigestV1 }
 import type { ArtifactReadPortV1, ArtifactStoragePortV1 } from "../src/node-executor/artifact-storage";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
 import { sha256Digest } from "../src/security";
+import { createDurableReservationPostgresPortV1 } from "../src/artifacts/v1/neutral-reservation-postgres";
 import { createInMemoryNeutralReservationPort, createPersistentNeutralReservationPort,
-  createPersistentNeutralReservationStore } from "../src/artifacts/v1/neutral-reservation-port";
+  createPersistentNeutralReservationStore,
+  type NeutralReservationPort } from "../src/artifacts/v1/neutral-reservation-port";
 import { binding } from "./hermes-native-fixture";
 import { at } from "./native-task-fixture";
 import { webNativeResultFixture } from "./helpers/web-native-result";
@@ -95,8 +97,9 @@ function codexBinding(runId: string): DurableResultBindingV1 {
 async function setup() {
   const f = await webNativeResultFixture();
   // Reservation persistence goes through the injected neutral port. The
-  // PostgreSQL adapter for the dedicated neutral table is lead-owned and
-  // pending, so tests inject either:
+  // production PostgreSQL adapter is exercised separately against the real
+  // migration-0077 table; these two shims keep the publisher's own behavior
+  // tests independent of a database round trip. Tests inject either:
   //  - `nonpersistentReservations`: InMemoryNeutralReservationPort,
   //    labeled test-only, never survives reconstruction. Use for
   //    single-shot publish/conflict/uncertainty tests.
@@ -117,7 +120,7 @@ async function setupWithProvision(runId: string, authorityDigest = digest("s")) 
 }
 
 function configOf(f: Awaited<ReturnType<typeof setup>>, storage: ControlledStorage,
-  reservations = f.restartReservations) {
+  reservations: NeutralReservationPort = f.restartReservations) {
   return { db: f.db, integrityKey: f.resultKey, reviewKey: f.reviewKey, storage,
     storageClass: "local" as const, reservations };
 }
@@ -519,4 +522,136 @@ test("the backup inventory captures the neutral result through the actual reader
   // neither the receipt nor the reservation auth tag verifies.
   await assert.rejects(opened.captureInventory(f.db, binding.tenantId, new Uint8Array(32).fill(7),
     undefined, f.restartReservations), /private_artifact_storage_unavailable/);
+});
+
+test("the PostgreSQL adapter persists the neutral reservation in its own table and survives restart", async t => {
+  const f = await setupWithProvision("run:pg-durable"); t.after(f.close);
+  const storage = new ControlledStorage();
+  const runId = "run:pg-durable";
+  const port = createDurableReservationPostgresPortV1();
+  // One submission replayed after a restart carries its original receipt
+  // instant; the bound review plan is part of that submission's identity.
+  const receivedAt = at(10_100);
+
+  const first = await publishDurableResultV1(configOf(f, storage, port),
+    { binding: nativeBinding(runId), bytes: bytesOf("pg"), receivedAt, assertAuthority: () => {} });
+  assert.equal(first.replayed, false);
+  assert.equal(storage.putCalls, 1);
+
+  // The row lands in the neutral sibling table only. The native-only table
+  // from migration 0071 is untouched, so no schema literal or role boundary
+  // was widened to make this record fit.
+  const stored = (await f.db.query<{ state: string; schema: string; created_at: string | Date }>(
+    `SELECT state, reservation->>'schema' AS schema, created_at
+     FROM control_durable_result_write_reservations WHERE tenant_id=$1 AND run_id=$2`,
+    [binding.tenantId, runId])).rows;
+  assert.equal(stored.length, 1);
+  assert.equal(stored[0].state, "metadata_committed");
+  assert.equal(stored[0].schema, "control-room.durable-result-write-reservation/v1");
+  const native = (await f.db.query(
+    "SELECT run_id FROM control_native_result_write_reservations WHERE tenant_id=$1 AND run_id=$2",
+    [binding.tenantId, runId])).rows;
+  assert.equal(native.length, 0);
+
+  // Acceptance property: reconstructing over the same database and the same
+  // persistent bytes returns the identical verified receipt and writes no
+  // second copy. A brand-new port instance holds no state of its own.
+  const replay = await publishDurableResultV1(
+    configOf(f, storage, createDurableReservationPostgresPortV1()),
+    { binding: nativeBinding(runId), bytes: bytesOf("pg"), receivedAt, assertAuthority: () => {} });
+  assert.equal(replay.replayed, true);
+  assert.equal(storage.putCalls, 1);
+  assert.deepEqual(replay.receipt, first.receipt);
+});
+
+test("the PostgreSQL adapter reports both uniqueness conflicts without aborting the transaction", async t => {
+  const f = await setupWithProvision("run:pg-conflict"); t.after(f.close);
+  const port = createDurableReservationPostgresPortV1();
+  const runId = "run:pg-conflict";
+  await publishDurableResultV1(configOf(f, new ControlledStorage(), port),
+    { binding: nativeBinding(runId), bytes: bytesOf("conflict"), receivedAt: at(10_100), assertAuthority: () => {} });
+
+  const existing = await f.db.transaction(tx => port.findForUpdate(tx, binding.tenantId, runId));
+  assert.ok(existing);
+
+  // The table's mirror CHECK is evaluated before uniqueness, so a colliding
+  // row must still mirror its own reservation body exactly. Rewrite both the
+  // column and the mirrored identity field together.
+  const mirrored = (row: typeof existing, field: "run_id" | "artifact_id", value: string) => {
+    const reservation = structuredClone(row.reservation) as { identity: Record<string, unknown> };
+    reservation.identity[field === "run_id" ? "runId" : "artifactId"] = value;
+    return { ...row, [field]: value, reservation };
+  };
+
+  await f.db.transaction(async tx => {
+    // Same (tenant, run): the primary key collides.
+    assert.equal(await port.insertFresh(tx, mirrored(existing, "artifact_id", "artifact:other")), "conflict");
+    // Same (tenant, artifact) under a different run: the artifact uniqueness
+    // collides instead. Both must report `conflict`, and neither may poison
+    // the surrounding transaction — a raised unique violation would turn an
+    // ordinary replay into an unrecoverable failure.
+    assert.equal(await port.insertFresh(tx, mirrored(existing, "run_id", "run:pg-conflict-other")), "conflict");
+    // The transaction is still usable, which is the property under test.
+    assert.ok(await port.findForUpdate(tx, binding.tenantId, runId));
+  });
+});
+
+test("compareAndSwap applies only on the exact prior state and preserves created_at", async t => {
+  const f = await setupWithProvision("run:pg-swap"); t.after(f.close);
+  const port = createDurableReservationPostgresPortV1();
+  const runId = "run:pg-swap";
+  await publishDurableResultV1(configOf(f, new ControlledStorage(), port),
+    { binding: nativeBinding(runId), bytes: bytesOf("swap"), receivedAt: at(10_100), assertAuthority: () => {} });
+  const committed = await f.db.transaction(tx => port.findForUpdate(tx, binding.tenantId, runId));
+  assert.ok(committed);
+  assert.equal(committed.state, "metadata_committed");
+
+  await f.db.transaction(async tx => {
+    // A stale prior state changes nothing and reports false.
+    assert.equal(await port.compareAndSwap(tx,
+      { tenantId: binding.tenantId, runId, state: "reserved", contractDigest: committed.contract_digest },
+      { ...committed, state: "storage_uncertain", updated_at: at(10_500) }), false);
+    // A stale contract digest is equally refused even with the right state.
+    assert.equal(await port.compareAndSwap(tx,
+      { tenantId: binding.tenantId, runId, state: committed.state, contractDigest: digest("stale") },
+      { ...committed, state: "storage_uncertain", updated_at: at(10_500) }), false);
+    const unchanged = await port.findForUpdate(tx, binding.tenantId, runId);
+    assert.deepEqual(unchanged, committed);
+  });
+
+  // The database's own trigger independently refuses an illegal transition,
+  // so the adapter cannot be used to walk the state machine backwards.
+  await assert.rejects(f.db.transaction(tx => port.compareAndSwap(tx,
+    { tenantId: binding.tenantId, runId, state: committed.state, contractDigest: committed.contract_digest },
+    { ...committed, state: "reserved", updated_at: at(10_500) })), /transition rejected/);
+
+  // created_at is never in SET, so a legal swap preserves the creation instant.
+  const reserved = await setupWithProvision("run:pg-created"); t.after(reserved.close);
+  const freshPort = createDurableReservationPostgresPortV1();
+  await publishDurableResultV1(configOf(reserved, new ControlledStorage(), freshPort),
+    { binding: nativeBinding("run:pg-created"), bytes: bytesOf("created"), receivedAt: at(10_100),
+      assertAuthority: () => {} });
+  const row = (await reserved.db.query<{ created_at: string | Date; updated_at: string | Date }>(
+    `SELECT created_at, updated_at FROM control_durable_result_write_reservations
+     WHERE tenant_id=$1 AND run_id=$2`, [binding.tenantId, "run:pg-created"])).rows[0];
+  assert.equal(new Date(row.created_at).toISOString(), at(10_100));
+  assert.ok(new Date(row.updated_at).getTime() >= new Date(row.created_at).getTime());
+});
+
+test("the PostgreSQL adapter refuses an unusable session and an ambiguous row", async t => {
+  const f = await setupWithProvision("run:pg-guard"); t.after(f.close);
+  const port = createDurableReservationPostgresPortV1();
+  await assert.rejects(port.findForUpdate(undefined as never, binding.tenantId, "run:pg-guard"),
+    /durable_reservation_session_invalid/);
+  await assert.rejects(port.findForUpdate({ query: "not a function" } as never, binding.tenantId, "run:pg-guard"),
+    /durable_reservation_session_invalid/);
+  // A row missing an identity column is rejected rather than returned as a
+  // partially-formed reservation for the publisher to verify.
+  await assert.rejects(port.findForUpdate(
+    { query: async () => ({ rows: [{ tenant_id: "", project_id: "p", job_id: "j", attempt_id: "a", run_id: "r",
+      artifact_id: "x", identity_digest: "d", state: "reserved", contract_digest: "c", reservation: {},
+      auth_tag: "t", created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z" }] }) } as never,
+    binding.tenantId, "run:pg-guard"), /durable_reservation_row_invalid/);
+  assert.equal(await port.findForUpdate(
+    { query: async () => ({ rows: [] }) } as never, binding.tenantId, "run:pg-guard"), null);
 });

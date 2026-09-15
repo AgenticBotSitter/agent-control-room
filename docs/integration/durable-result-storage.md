@@ -73,25 +73,52 @@ that the startup boundary applies the same rules.
 All of this is **source-tested with disposable data**. It is not a production, physical
 restart, or live backup claim.
 
-## Known gap: the neutral reservation PostgreSQL adapter
+## The neutral reservation PostgreSQL adapter
 
-`src/artifacts/v1/neutral-reservation-postgres.ts` is **not delivered here.** The
-harness-neutral publisher persists reservations through `NeutralReservationPort`
-(`src/artifacts/v1/neutral-reservation-port.ts`), and the production adapter needs a
-dedicated neutral sibling table that does not exist in migrations 0001–0076.
+`src/artifacts/v1/neutral-reservation-postgres.ts` implements `NeutralReservationPort`
+against `control_durable_result_write_reservations` from the lead-owned migration 0077.
+That table is a **sibling** of the native-only table from 0071, not a replacement: 0071's
+CHECK pins `control-room.native-result-write-reservation/v1` while the neutral publisher
+writes `control-room.durable-result-write-reservation/v1`, and neither that constraint nor
+its role boundary is widened here.
 
-It cannot reuse the native table: `db/migrations/0071_cr15b_native_result_write_reservations.sql`
-pins `reservation->>'schema' = 'control-room.native-result-write-reservation/v1'` in a CHECK
-constraint, while the neutral publisher writes `control-room.durable-result-write-reservation/v1`.
-Both port documents state the native-only constraint is never widened.
+The port stays opaque. The adapter holds no key, interprets no reservation body, and leaves
+HMAC tags, state transitions and mirror verification in the publisher.
 
-Creating the neutral table requires a migration, a role grant and a regenerated migration
-ledger — all outside this package's owned paths, and `risk:shared` schema work. Until the
-lead-owned migration lands, production composition must inject a reservation port, and the
-inventory reader fails closed when neither a native reservation row nor a port is supplied.
+| Method | Behavior |
+| --- | --- |
+| `findForUpdate` | `SELECT … FOR UPDATE`, so a caller transaction serializes against a concurrent writer |
+| `insertFresh` | `ON CONFLICT DO NOTHING`; reports `conflict` for a collision on the primary key `(tenant_id, run_id)` **or** on `UNIQUE (tenant_id, artifact_id)` |
+| `compareAndSwap` | Conditional UPDATE matching stored `state` **and** `contract_digest`; reports `false` and changes nothing otherwise |
 
-Consequently the acceptance property "reconstructing the application over the same
+Two choices are deliberate.
+
+**`ON CONFLICT DO NOTHING` rather than catching a unique violation.** A raised `23505`
+aborts the caller's transaction, which would turn an ordinary replay into an unrecoverable
+failure. The conflict is reported as a value instead.
+
+**`created_at` and every identity column are absent from `SET`.** The stored creation
+instant is preserved and identity is immutable. This matches the port contract, matches the
+five columns the evidence role is granted `UPDATE` on, and is independently enforced by the
+table's own `guard_durable_result_write_reservation_update()` trigger — the tests exercise
+that trigger rather than trusting the adapter alone.
+
+`QueryResult` exposes only `rows`, so both mutations use `RETURNING` to observe whether
+exactly one row was affected.
+
+### What the adapter evidence proves
+
+Against a real PostgreSQL database with all 77 migrations applied (PGlite, disposable):
+the reservation lands in the neutral table and the native table stays empty; a
+**reconstructed publisher with a brand-new port instance over the same database returns the
+identical verified receipt and performs no second byte write**; both uniqueness collisions
+report `conflict` and leave the surrounding transaction usable; a stale `state` or a stale
+`contract_digest` changes nothing; the database trigger refuses an illegal backwards
+transition; and `created_at` survives a legal swap.
+
+This satisfies the acceptance property "reconstructing the application over the same
 PostgreSQL database and persistent directory returns the same verified receipt without
-writing again" is **not** proven for neutral records against a real database. The existing
-restart evidence uses the test-only persistent port, which shares process memory across
-reconstructions and is not durability.
+writing again" for neutral records.
+
+It remains **disposable-database evidence**. It is not a production deployment, a physical
+process or host restart, or a live backup and restore claim.
