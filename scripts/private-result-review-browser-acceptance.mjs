@@ -47,6 +47,9 @@ const assets = await loadPrivateClientAssets(await realpath("dist-vps/client"));
 let application;
 let browser;
 const posts = [];
+// Result content is fetched with GET, so a POST-only log cannot observe it.
+// Record content reads separately or the refusal check below proves nothing.
+const contentReads = [];
 
 try {
   application = installPrivateWebProcess({ ...fixture.accessTrust, origin,
@@ -64,6 +67,9 @@ try {
     headers.set("accept", headers.get("accept") ?? "text/html");
     if (!["GET", "HEAD"].includes(browserRequest.method())) headers.set("origin", origin);
     const body = browserRequest.postDataBuffer();
+    if (browserRequest.method() === "GET" && /\/results\/[^/]+$/.test(url.pathname)) {
+      contentReads.push(url.pathname);
+    }
     if (browserRequest.method() === "POST" && url.pathname.startsWith("/api/")) {
       posts.push(Object.freeze({ path: url.pathname, body: body?.toString("utf8") ?? "",
         idempotencyKey: headers.get("idempotency-key") }));
@@ -150,7 +156,7 @@ try {
   await resultRegionByName.waitFor();
   check("browser Back reopens the previously open file", await resultRegionByName.isVisible());
 
-  const readsBefore = posts.length;
+  const readsBefore = contentReads.length;
   await page.goto(`${origin}${taskPath}?result=${encodeURIComponent("artifact:not-in-this-task")}#task-results`,
     { waitUntil: "domcontentloaded" });
   await page.getByRole("heading", { name: "Result files" }).waitFor();
@@ -159,7 +165,8 @@ try {
       && await resultRegionByName.count() === 0);
   check("the refused ID is dropped from the address bar",
     !new URL(page.url()).searchParams.has("result"));
-  check("the refused ID produced no additional command", posts.length === readsBefore);
+  check("the refused ID produced no content read", contentReads.length === readsBefore,
+    `content reads before=${readsBefore} after=${contentReads.length}`);
   await checkNoPageOverflow(page, "refused result selection");
 
   await context.close();

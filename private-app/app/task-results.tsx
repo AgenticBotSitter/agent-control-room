@@ -191,8 +191,11 @@ function TaskResultsReader({ projectId, jobId, reviewWorkspace, verificationWork
   useEffect(() => {
     const sync = () => {
       const next = currentSelection();
-      // Compare against the live URL rather than inside a state updater: an
-      // updater must stay pure, and StrictMode double-invokes it.
+      // The comparison stays in the updater because it needs the committed
+      // previous value, but the resulting state changes are queued outside it:
+      // StrictMode double-invokes an updater, and issuing render-phase updates
+      // from one is what must be avoided. The ref bump is idempotent on a
+      // double-invoke because it is re-read by the next effect run.
       setSelected(previous => {
         if (previous !== next) {
           generation.current++;
