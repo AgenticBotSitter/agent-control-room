@@ -89,9 +89,11 @@ export async function runHandoff({ event, repository, api, maintainers = [] }) {
   const normalizedPrBody = (pr.body ?? '').replace(/\r\n/g, '\n');
   const legacyBindings = [...normalizedPrBody.matchAll(/\b(?:Closes|Fixes|Resolves)\s*#([1-9][0-9]*)\b/gi)]
     .map(match => Number(match[1]));
-  for (const outcome of normalizedPrBody.matchAll(/^Outcome\s*\/\s*issue\s*:\s*([^\n]*)$/gim)) {
-    legacyBindings.push(...[...outcome[1].matchAll(/#([1-9][0-9]*)\b/g)].map(match => Number(match[1])));
-  }
+  // Older contributors sometimes described the parent issue later on the same
+  // line. Only the first issue immediately after this explicit field labels the
+  // PR; closing keywords elsewhere are still collected above and must agree.
+  legacyBindings.push(...[...normalizedPrBody.matchAll(/^Outcome\s*\/\s*issue\s*:\s*#([1-9][0-9]*)\b/gim)]
+    .map(match => Number(match[1])));
   legacyBindings.push(...[...(pr.title ?? '').matchAll(/\(issue\s+#([1-9][0-9]*)\)/gi)]
     .map(match => Number(match[1])));
   const uniqueLegacyBindings = [...new Set(legacyBindings)];

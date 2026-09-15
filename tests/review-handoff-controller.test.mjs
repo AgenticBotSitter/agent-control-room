@@ -149,6 +149,17 @@ for (const legacyBinding of ['Closes #1', 'Fixes #1', 'Resolves #1', 'Outcome / 
     assert.equal(result.state, 'changes-required');
   });
 
+test('legacy outcome field ignores a later descriptive parent reference', async () => {
+  const f = fixture();
+  f.pr.body = 'Outcome / issue: #1 — authorized by parent #61.';
+  f.pr.title = 'Legacy contribution (issue #1)';
+  f.issue.labels = ['platform:any', 'status:changes-required', 'action:worker'];
+  f.comments.push({ id: 11, user: { login: 'builder', type: 'User' },
+    body: '<!-- agent-control-room-action:v1 worker=worker-01 state=changes-required issue=1 -->' });
+  const result = await f.run(f.eventFor('adopt-changes', 'reviewer', 0, 'details', { claimWorkerId: 'worker-01' }));
+  assert.equal(result.state, 'changes-required');
+});
+
 for (const acknowledgeFirst of [false, true]) test(`legacy adoption can stop safely ${acknowledgeFirst ? 'after acknowledgment' : 'immediately'}`, async () => {
   const f = fixture();
   f.pr.body = 'Closes #1';
