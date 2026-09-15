@@ -81,7 +81,10 @@ export async function runHandoff({ event, repository, api, maintainers = [] }) {
   ]);
   if (savedRequest.body !== event.comment.body || savedRequest.user?.login !== actor
     || savedRequest.issue_url !== `https://api.github.com/repos/${repository}/issues/${issueNumber}`) throw new Error('handoff_request_changed');
-  if (issue.state !== 'open' || pr.state !== 'open' || pr.head.sha !== request.head
+  // Acknowledgment records receipt of the predecessor's review, even when the
+  // worker has already pushed a correction. Every other command targets HEAD.
+  const acknowledgingReview = request.command === 'acknowledge';
+  if (issue.state !== 'open' || pr.state !== 'open' || (!acknowledgingReview && pr.head.sha !== request.head)
     || pr.base.repo.full_name !== repository) throw new Error('handoff_target_changed');
   const issueBindings = [...(pr.body ?? '').replace(/\r\n/g, '\n').matchAll(/^Control-Room-Issue: ([1-9][0-9]*)$/gm)];
   const adoptingChanges = request.command === 'adopt-changes';
@@ -173,7 +176,8 @@ export async function runHandoff({ event, repository, api, maintainers = [] }) {
     const currentClaim = acceptedClaim(history, issueNumber, claimWorkerId);
     const currentPr = await api('GET', `${root}/pulls/${request.pr}`);
     if (current?.id !== journalId || currentClaim.id !== claim.id || currentClaim.actor !== claim.actor
-      || currentPr.head.sha !== request.head || currentPr.state !== 'open' || currentPr.body !== pr.body) throw new Error('handoff_concurrent_change');
+      || currentPr.head.sha !== (acknowledgingReview ? pr.head.sha : request.head)
+      || currentPr.state !== 'open' || currentPr.body !== pr.body) throw new Error('handoff_concurrent_change');
   }
   for (const [number, source] of [[issueNumber, record.sourceIssueLabels], [request.pr, record.sourcePrLabels]]) {
     await fresh();
