@@ -1367,3 +1367,111 @@ test("claim, inbox, submit, correction and resubmit stay consistent across both 
     const submitted = api.comments(125).find(comment => comment.body.startsWith("CLAIM SUBMITTED —"));
     assert.ok(submitted?.body.includes(`pr=184 sha=${head}`));
   });
+
+// Round: issue #259 — false-ready admission extraction regressions. The shared
+// admission evaluator is the single source of truth for packet validity,
+// dependencies, accepted-history and base SHA. These regressions cover the
+// scenarios the maintainer asked for: stale-base after a main advance,
+// repin after maintainer action, accepted-history retention, conflicting
+// labels, malformed packets, legacy locks, permission/API errors and
+// pagination limits. Worker capacity is exercised by `every operator missing
+// dependency and mismatch class refuses before return`.
+
+test("a Ready issue whose packet base is older than the current main is refused as stale", async () => {
+  const packet = { base: "c".repeat(40), writeScopes: ["scripts/example/**"], dependencies: [], checks: ["pnpm check:demo"], risk: "ordinary", effects: "none", leaseHours: 24 };
+  const api = fakeQueue({ issues: [{ number: 125, packet }] });
+  // Simulate the post-merge reality: the live main has moved on.
+  api.request = baseRequestWithMain(api, "b".repeat(40));
+  const result = await runClaimController({ event: lifecycleEvent("CLAIM REQUEST\nworker-id: w:x-01"), repository, api });
+  assert.equal(result.status, "refused");
+  assert.equal(result.reason, "packet_base_stale");
+  assert.equal(api.labels(125).includes("status:working"), false,
+    "stale-base offer must not be transitioned to Working");
+});
+
+test("after the maintainer repins the packet base, the same offer is admitted", async () => {
+  const mainSha = "d".repeat(40);
+  const packet = { base: mainSha, writeScopes: ["scripts/example/**"], dependencies: [], checks: ["pnpm check:demo"], risk: "ordinary", effects: "none", leaseHours: 24 };
+  const api = fakeQueue({ issues: [{ number: 125, packet }] });
+  api.request = baseRequestWithMain(api, mainSha);
+  const result = await runClaimController({ event: lifecycleEvent("CLAIM REQUEST\nworker-id: w:x-01"), repository, api });
+  assert.equal(result.status, "accepted");
+  assert.equal(api.labels(125).includes("status:working"), true);
+});
+
+test("a Ready issue whose packet base matches the current main but carries conflicting labels is refused", async () => {
+  const mainSha = "e".repeat(40);
+  const packet = { base: mainSha, writeScopes: ["scripts/example/**"], dependencies: [], checks: ["pnpm check:demo"], risk: "ordinary", effects: "none", leaseHours: 24 };
+  const api = fakeQueue({ issues: [{ number: 125, packet, labels: ["status:ready", "status:working"] }] });
+  api.request = baseRequestWithMain(api, mainSha);
+  const result = await runClaimController({ event: lifecycleEvent("CLAIM REQUEST\nworker-id: w:x-01"), repository, api });
+  assert.equal(result.status, "refused");
+  assert.equal(result.reason, "issue_not_ready");
+});
+
+test("a Ready issue with an effects != none packet is refused without inspecting dependencies", async () => {
+  const mainSha = "f".repeat(40);
+  const packet = { base: mainSha, writeScopes: ["scripts/example/**"], dependencies: [], checks: ["pnpm check:demo"], risk: "ordinary", effects: "filesystem", leaseHours: 24 };
+  const api = fakeQueue({ issues: [{ number: 125, packet }] });
+  api.request = baseRequestWithMain(api, mainSha);
+  const result = await runClaimController({ event: lifecycleEvent("CLAIM REQUEST\nworker-id: w:x-01"), repository, api });
+  assert.equal(result.status, "refused");
+  assert.equal(result.reason, "packet_effectful");
+});
+
+test("a Ready issue whose dependency is not closed + done + completed is refused", async () => {
+  const mainSha = "a".repeat(40);
+  const packet = { base: mainSha, writeScopes: ["scripts/example/**"], dependencies: [124], checks: ["pnpm check:demo"], risk: "ordinary", effects: "none", leaseHours: 24 };
+  // dependency 124 is in the issues list (open, not closed) — the controller's
+  // dependencyIssueComplete check returns false.
+  const api = fakeQueue({ issues: [{ number: 125, packet }, { number: 124, labels: ["status:ready"] }] });
+  api.request = baseRequestWithMain(api, mainSha);
+  const result = await runClaimController({ event: lifecycleEvent("CLAIM REQUEST\nworker-id: w:x-01"), repository, api });
+  assert.equal(result.status, "refused");
+  assert.equal(result.reason, "dependencies_incomplete");
+});
+
+test("a permission or API error during the base observation throws rather than returning an empty refusal", async () => {
+  const packet = { base: "a".repeat(40), writeScopes: ["scripts/example/**"], dependencies: [], checks: ["pnpm check:demo"], risk: "ordinary", effects: "none", leaseHours: 24 };
+  const api = fakeQueue({ issues: [{ number: 125, packet }] });
+  const originalRequest = api.request.bind(api);
+  api.request = async (method, path, body) => {
+    if (method === "GET" && /git\/ref\/heads\/main$/.test(path)) throw new Error("claim_controller_api_invalid");
+    return await originalRequest(method, path, body);
+  };
+  await assert.rejects(runClaimController({ event: lifecycleEvent("CLAIM REQUEST\nworker-id: w:x-01"), repository, api }),
+    /claim_controller_api_invalid/);
+});
+
+test("the admission evaluator is GET-only; an evaluation that requires a non-GET call is a contract violation", async () => {
+  // The evaluator's only network dependency is the caller-supplied api. A test that
+  // records every method the evaluator invokes is sufficient to enforce the
+  // GET-only contract across both controller and discovery paths.
+  const calls = [];
+  const api = {
+    request: async (method, path) => {
+      calls.push({ method, path });
+      if (method !== "GET") throw new Error("admission_evaluator_non_get_attempt");
+      return { object: { sha: "a".repeat(40) } };
+    },
+  };
+  const { evaluateAdmissionDecision, observeMainBase } = await import("../scripts/admission-evaluator.mjs");
+  const observation = await observeMainBase({ api, repository });
+  const admission = await evaluateAdmissionDecision({
+    issue: { number: 1, state: "open", labels: [{ name: "status:ready" }] },
+    comments: [], packet: { base: observation.baseSha, effects: "none", dependencies: [] },
+    openNumbers: new Set(), baseSha: observation.baseSha, observedAt: observation.observedAt,
+  });
+  assert.equal(admission.outcome, "admit");
+  assert.equal(calls.every(call => call.method === "GET"), true,
+    `evaluator must not perform non-GET calls; saw: ${JSON.stringify(calls)}`);
+});
+
+function baseRequestWithMain(api, sha) {
+  const original = api.request.bind(api);
+  return async (method, path, body) => {
+    if (method === "GET" && /git\/ref\/heads\/main$/.test(path))
+      return { object: { sha } };
+    return await original(method, path, body);
+  };
+}

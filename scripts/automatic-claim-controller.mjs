@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { evaluateAdmissionDecision, observeMainBase, dependencyIssueComplete } from "./admission-evaluator.mjs";
 
 const CLAIM_HEADER = "CLAIM REQUEST";
 const WORKER_LINE = /^worker-id: ([A-Za-z0-9][A-Za-z0-9._:-]{2,79})$/;
@@ -140,16 +141,32 @@ export async function runClaimController({ event, repository, api }) {
 
   const value = { issueNumber: event.issue.number, requestId, actor, workerId: request.workerId };
   const current = await issueFor(api, repository, value.issueNumber);
+  // Step 1 — short-circuit on Ready label before any other API call. This preserves
+  // the controller's pre-reservation behaviour: closed / non-ready / needs-decision
+  // / pull-request issues never trigger comment or git-ref fetches.
   if (!isReady(current)) return Object.freeze({ status: "refused", reason: "issue_not_ready" });
-  if (liveAcceptedHistory(await commentsFor(api, repository, value.issueNumber), value.issueNumber))
-    return Object.freeze({ status: "refused", reason: "accepted_history_requires_release" });
+  // Step 2 — global admission gates via the shared evaluator. The evaluator is the
+  // single source of truth for packet validity, dependencies, accepted-history and
+  // base SHA. Discovery applies the same evaluator with globalOnly=true.
+  const issueComments = await commentsFor(api, repository, value.issueNumber);
+  const packet = parseClaimPacket(current.body);
+  let baseSha = null; let observedAt = null; let packetBaseOnRefuse = undefined;
+  if (packet) {
+    const depsOpen = !await Promise.all(packet.dependencies.map(dep => dependencyIssueComplete({ api, repository, number: dep }))).then(results => results.every(Boolean));
+    if (depsOpen) return Object.freeze({ status: "refused", reason: "dependencies_incomplete" });
+    if (liveAcceptedHistory(issueComments, value.issueNumber))
+      return Object.freeze({ status: "refused", reason: "accepted_history_requires_release" });
+    const observation = await observeMainBase({ api, repository });
+    baseSha = observation.baseSha; observedAt = observation.observedAt;
+    if (packet.effects !== "none") return Object.freeze({ status: "refused", reason: "packet_effectful" });
+    if (packet.base !== baseSha) return Object.freeze({ status: "refused", reason: "packet_base_stale" });
+  } else {
+    return Object.freeze({ status: "refused", reason: "packet_invalid" });
+  }
+  // Per-worker fit is opt-in: discovery callers omit actor/workerId; the controller
+  // runs the remaining pair/capacity/lock/scope gates before transitioning to Working.
   if (await activePairExists(api, repository, value)) return Object.freeze({ status: "refused", reason: "actor_worker_pair_active" });
   const now = Date.now();
-  const packet = parseClaimPacket(current.body);
-  if (!packet) return Object.freeze({ status: "refused", reason: "packet_invalid" });
-  if (packet.effects !== "none") return Object.freeze({ status: "refused", reason: "packet_effectful" });
-  if (!(await dependenciesComplete(api, repository, packet)))
-    return Object.freeze({ status: "refused", reason: "dependencies_incomplete" });
   const held = await pairClaims(api, repository, actor, request.workerId);
   if (held.filter(entry => entry.status === "working").length >= MAX_ACTIVE_WORKING)
     return Object.freeze({ status: "refused", reason: "working_limit" });
@@ -160,10 +177,6 @@ export async function runClaimController({ event, repository, api }) {
     return Object.freeze({ status: "refused", reason: "lock_packet_changed", issues: locks.mismatched });
   if (locks.scopes.some(scope => packet.writeScopes.some(own => scopesOverlap(own, scope))))
     return Object.freeze({ status: "refused", reason: "scope_overlap" });
-  const ref = await api.request("GET", `/repos/${repository}/git/ref/heads/main`);
-  const baseSha = ref?.object?.sha;
-  if (typeof baseSha !== "string" || !/^[a-f0-9]{40}$/.test(baseSha)) throw new Error("claim_controller_api_invalid");
-  if (packet.base !== baseSha) return Object.freeze({ status: "refused", reason: "packet_base_stale" });
   const originalLabels = normalizedLabels(current);
   const nextLabels = workingLabels(originalLabels);
   let transitionLabels = nextLabels;

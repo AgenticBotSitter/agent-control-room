@@ -5,9 +5,9 @@ import {
   declaredSubmissionIssue, parseClaimMarker, readQueueHealth, renderQueueHealth, renderQueueHealthJson,
 } from "../scripts/public-queue-health.mjs";
 
-const issue = (number, labels, updated_at = "2026-09-14T10:00:00Z") => ({
+const issue = (number, labels, updated_at = "2026-09-14T10:00:00Z", extras = {}) => ({
   number, title: `Issue ${number}`, html_url: `https://github.example/issues/${number}`,
-  state: "open", updated_at, labels: labels.map(name => ({ name })),
+  state: "open", updated_at, labels: labels.map(name => ({ name })), ...extras,
 });
 const comment = (body, association = "MEMBER", login = "trusted-maintainer", type = "User") => ({
   body, author_association: association, user: { login, type },
@@ -30,6 +30,11 @@ const actionMarker = (worker, state, number) =>
 const claimMarker = (number, worker) =>
   `CLAIM ACCEPTED — reserved\n<!-- agent-control-room-claim:v2 issue=${number} request=1 actor=maintainer worker=${worker} -->\n<!-- agent-control-room-claim:v3 issue=${number} request=1 actor=maintainer worker=${worker} packet=${"a".repeat(64)} accepted=1700000000000 -->`;
 const ready = (number, updated) => issue(number, ["status:ready", "help wanted"], updated);
+const packetBody = overrides => `<!-- acr-public-work:v1 ${JSON.stringify({
+  target: "main", base: "a".repeat(40),
+  writeScopes: ["scripts/example/**"], dependencies: [], checks: ["pnpm check:demo"], risk: "ordinary", effects: "none", leaseHours: 24,
+  ...overrides,
+})} -->`;
 
 test("malformed submission bindings are visible instead of disappearing from the report", async () => {
   const api = fakeFetch({ issues: [issue(214, ["status:working"])],
@@ -39,11 +44,16 @@ test("malformed submission bindings are visible instead of disappearing from the
   assert.match(renderQueueHealth(report), /PR #244 submission_issue_binding_missing_or_invalid/);
 });
 
-function fakeFetch({ issues = [], comments = {}, pulls = [] } = {}) {
+function fakeFetch({ issues = [], comments = {}, pulls = [], extraHandlers = {} } = {}) {
   const calls = [];
   const ok = value => ({ ok: true, status: 200, async json() { return structuredClone(value); } });
+  const fail = (status = 503) => ({ ok: false, status, async json() { throw new Error(`http_${status}`); } });
   const fetchImpl = async url => {
     calls.push(url);
+    if (extraHandlers.ref && url.includes("/git/ref/heads/main")) {
+      const handler = extraHandlers.ref;
+      return typeof handler === "object" && "status" in handler && handler.status ? fail(handler.status) : ok(handler);
+    }
     if (url.includes("/issues?")) return ok(issues);
     if (url.includes("/pulls?")) return ok(pulls);
     const commentsMatch = /\/issues\/(\d+)\/comments/.exec(url);
@@ -520,4 +530,61 @@ test("claim markers are parsed only in the exact bounded controller form", () =>
   for (const value of ["CLAIM ACCEPTED", "<!-- agent-control-room-claim:v2 issue=199 -->",
     "<!-- agent-control-room-claim:v2 issue=199 request=1 actor=a worker=b -->"])
     assert.equal(parseClaimMarker(value), undefined);
+});
+
+// Round: issue #259 — false-ready admission extraction regressions for queue health.
+
+test("queue health lists a Ready offer as a blocked admission when its packet base is stale", async () => {
+  const mainSha = "f".repeat(40);
+  const staleBase = "c".repeat(40);
+  const api = fakeFetch({
+    issues: [issue(125, ["status:ready", "help wanted"], "2026-09-14T10:00:00Z",
+      { body: packetBody({ base: staleBase }) })],
+    pulls: [],
+    extraHandlers: { ref: { object: { sha: mainSha } } },
+  });
+  const report = await readQueueHealth({ fetchImpl: api.fetchImpl });
+  assert.equal(report.blockedOffers.length, 1);
+  assert.equal(report.blockedOffers[0].issue, 125);
+  assert.equal(report.blockedOffers[0].admission.reason, "packet_base_stale");
+  assert.equal(report.blockedOffers[0].admission.observedBase, mainSha);
+  assert.equal(report.blockedOffers[0].admission.packetBase, staleBase);
+});
+
+test("queue health reports an admission-observation warning when the base ref is unavailable", async () => {
+  const api = fakeFetch({
+    issues: [issue(125, ["status:ready", "help wanted"], "2026-09-14T10:00:00Z",
+      { body: packetBody({ base: "a".repeat(40) }) })],
+    pulls: [],
+    extraHandlers: { ref: { status: 503 } },
+  });
+  const report = await readQueueHealth({ fetchImpl: api.fetchImpl });
+  assert.ok(report.warnings.includes("admission_observation_unavailable"));
+});
+
+test("queue health omits already-accepted Ready offers from blockedOffers", async () => {
+  const mainSha = "a".repeat(40);
+  const api = fakeFetch({
+    issues: [issue(125, ["status:ready", "help wanted"], "2026-09-14T10:00:00Z",
+      { body: packetBody({ base: mainSha }) })],
+    comments: { 125: [controllerComment(claimMarker(125, "worker:test-01"))] },
+    pulls: [],
+    extraHandlers: { ref: { object: { sha: "z".repeat(40) } } },
+  });
+  const report = await readQueueHealth({ fetchImpl: api.fetchImpl });
+  // The offer is filtered out before admission evaluation because already-accepted
+  // work retains its pinned base, even when main has moved on.
+  assert.equal(report.blockedOffers.length, 0);
+});
+
+test("queue health classifies a malformed packet offer as blocked without claiming an assignment", async () => {
+  const api = fakeFetch({
+    issues: [issue(125, ["status:ready", "help wanted"], "2026-09-14T10:00:00Z",
+      { body: "no packet here" })],
+    pulls: [],
+    extraHandlers: { ref: { object: { sha: "a".repeat(40) } } },
+  });
+  const report = await readQueueHealth({ fetchImpl: api.fetchImpl });
+  assert.equal(report.blockedOffers.length, 1);
+  assert.equal(report.blockedOffers[0].admission.reason, "packet_invalid");
 });

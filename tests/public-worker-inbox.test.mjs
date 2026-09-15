@@ -3,7 +3,8 @@ import test from "node:test";
 import { parseActionMarker, parseHandoffMarker, readWorkerInbox, renderWorkerInbox, resolveInboxToken } from "../scripts/public-worker-inbox.mjs";
 const workerId = "worker:test-01";
 const bot = { login: "github-actions[bot]", type: "Bot" };
-const issue = (labels = ["action:worker", "status:working"], number = 170) => ({ number, title: "Assignment", labels });
+const issue = (labels = ["action:worker", "status:working"], number = 170, extras = {}) =>
+  ({ number, title: "Assignment", labels, ...extras });
 const legacy = (worker = workerId, state = "working", id = 1) => ({ id, user: { login: "MarvinAi5", type: "User" }, author_association: "OWNER",
   body: `<!-- agent-control-room-action:v1 worker=${worker} state=${state} issue=170 -->` });
 const claim = (outcome = "ACCEPTED", worker = workerId, id = 1) => ({ id, user: bot,
@@ -200,4 +201,61 @@ test("direct inbox token resolution is explicit and never invents a credential",
     runCommand: () => ({ status: 0, stdout: `${sentinel}\n` }) }), sentinel);
   assert.throws(() => resolveInboxToken({ environment: {}, tokenFromGh: true,
     runCommand: () => ({ status: 1, stdout: "" }) }), /gh_token_unavailable/);
+});
+
+// Round: issue #259 — false-ready admission extraction regressions for discovery.
+
+test("discovery tags a stale-base offer with the same admission reason the controller refuses", async () => {
+  const staleBase = "c".repeat(40);
+  const packet = (number, base = staleBase) => `<!-- acr-public-work:v1 ${JSON.stringify({
+    target: "main", base, writeScopes: [`src/example-${number}/**`], dependencies: [],
+    checks: ["pnpm check:demo"], risk: "ordinary", effects: "none", leaseHours: 24,
+  })} -->`;
+  const issues = [
+    issue(["status:ready", "platform:any"], 1, { body: packet(1, "f".repeat(40)) }),
+    issue(["status:ready"], 2, { body: packet(2, staleBase) }),
+  ];
+  const fetchImpl = async url => {
+    if (url.includes("/git/ref/heads/main")) return { ok: true, status: 200, async json() { return { object: { sha: "f".repeat(40) } }; } };
+    if (url.includes("/issues?")) return { ok: true, status: 200, async json() { return issues; } };
+    if (url.includes("/comments")) return { ok: true, status: 200, async json() { return []; } };
+    return { ok: false, status: 404, async json() { return {}; } };
+  };
+  const result = await readWorkerInbox({ workerId, includeReady: true, fetchImpl });
+  const offers = result.filter(action => action.disposition === "discovery");
+  assert.equal(offers.length, 2);
+  const fresh = offers.find(offer => offer.issue === 1);
+  const stale = offers.find(offer => offer.issue === 2);
+  assert.equal(fresh.state, "ready-candidate");
+  assert.equal(stale.state, "queue-blocked");
+  assert.equal(stale.reason, "packet_base_stale");
+  assert.equal(stale.admission.reason, "packet_base_stale");
+  assert.equal(stale.admission.observedBase, "f".repeat(40));
+  assert.equal(stale.admission.packetBase, staleBase);
+});
+
+test("discovery falls back to the dependency check when the base ref cannot be observed", async () => {
+  const packet = (number, deps) => `<!-- acr-public-work:v1 ${JSON.stringify({
+    target: "main", base: "a".repeat(40), writeScopes: [`src/example-${number}/**`], dependencies: deps,
+    checks: ["pnpm check:demo"], risk: "ordinary", effects: "none", leaseHours: 24,
+  })} -->`;
+  const issues = [
+    issue(["status:ready"], 1, { body: packet(1, []) }),
+    issue(["status:ready"], 2, { body: packet(2, [3]) }),
+    issue(["status:ready"], 3),
+  ];
+  const fetchImpl = async url => {
+    if (url.includes("/git/ref/heads/main")) return { ok: false, status: 503, async json() { throw new Error("http_503"); } };
+    if (url.includes("/issues?")) return { ok: true, status: 200, async json() { return issues; } };
+    if (url.includes("/comments")) return { ok: true, status: 200, async json() { return []; } };
+    return { ok: false, status: 404, async json() { return {}; } };
+  };
+  const result = await readWorkerInbox({ workerId, includeReady: true, fetchImpl });
+  const offers = result.filter(action => action.disposition === "discovery");
+  assert.ok(offers.length >= 2);
+  // Issue 2 has an open dependency (3) so it remains blocked under the fallback.
+  const depOffer = offers.find(offer => offer.issue === 2);
+  assert.ok(depOffer, "issue 2 should appear as a discovery offer");
+  assert.equal(depOffer.state, "queue-blocked");
+  assert.equal(depOffer.reason, "open_dependencies");
 });
