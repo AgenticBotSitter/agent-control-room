@@ -1,6 +1,7 @@
 import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import { parseClaimPacket, parseClaimMarker as parseControllerClaim, parseExpiredMarker } from "./automatic-claim-controller.mjs";
+import { evaluateAdmissionDecision, observeMainBase } from "./admission-evaluator.mjs";
 
 const WORKER_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,79}$/;
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -182,22 +183,88 @@ export async function readWorkerInbox({ workerId, repository = "AgenticBotSitter
   if (includeReady) {
     // Discovery reuses the same complete issue snapshot and controller packet parser.
     // Candidates are offers to inspect, never accepted claims or guaranteed eligibility.
+    // The shared admission evaluator produces distinct blockers so the same
+    // readiness check the controller applies also classifies stale-base, malformed
+    // packet, open-dependency and accepted-history offers without claiming an
+    // assignment. No per-worker fit is evaluated here: with no real worker context
+    // we cannot synthesize an actor/worker to gate pair or capacity decisions.
     const openNumbers = new Set(issues.filter(issue => !issue.pull_request).map(issue => issue.number));
+    let observation;
+    let observationError;
+    const headers = { accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28", "user-agent": "agent-control-room-worker-inbox" };
+    const apiAdapter = { request: async (method, requestedPath) => {
+      // The evaluator passes full API paths (/repos/OWNER/REPO/...). Resolve them
+      // against the API host directly; never splice them onto the repo root, which
+      // duplicates the repository segment.
+      if (method !== "GET" || typeof requestedPath !== "string"
+        || !requestedPath.startsWith(`/repos/${repository}/`)) return null;
+      const response = await fetchImpl(`https://api.github.com${requestedPath}`, { headers });
+      if (!response?.ok) return null;
+      return await response.json();
+    } };
+    try {
+      observation = await observeMainBase({ api: apiAdapter, repository });
+    } catch (error) {
+      observation = undefined;
+      observationError = error?.message ?? "admission_evaluator_base_unavailable";
+    }
+    const baseSha = observation?.baseSha;
     for (const issue of issues) {
       const labels = labelsOf(issue);
       if (issue.pull_request || !Number.isSafeInteger(issue.number) || !labels.includes("status:ready")) continue;
       const packet = parseClaimPacket(issue.body);
       const conflicts = labels.filter(label => label.startsWith("status:")).length !== 1
         || labels.some(label => label.startsWith("action:"));
+      let admission = undefined;
+      let admissionError = undefined;
+      if (!conflicts && packet && baseSha) {
+        try {
+          admission = await evaluateAdmissionDecision({
+            issue, comments: [], packet, api: apiAdapter, repository,
+            openNumbers, baseSha, observedAt: observation.observedAt,
+          });
+        } catch (error) {
+          admissionError = /^admission_evaluator_/.test(error?.message) ? error.message : "admission_evaluator_unavailable";
+        }
+      }
+      const admissionOutcome = admission?.outcome
+        ?? (conflicts ? "refuse" : !packet ? "refuse" : "admit");
+      const admissionReason = admission?.reason
+        ?? (conflicts ? "conflicting_ready_labels" : !packet ? "packet_invalid" : undefined);
+      // Unknown is not admitted. When the base observation failed (403/404/network),
+      // no offer may be advertised as a validated ready-candidate: dependency-only
+      // refusals still classify (they need no base), but every otherwise-plausible
+      // offer is explicitly blocked as observation-unavailable.
       const dependencies = packet?.dependencies.filter(number => openNumbers.has(number)) ?? [];
-      const reason = conflicts ? "conflicting_ready_labels" : !packet ? "packet_invalid"
-        : dependencies.length ? "open_dependencies" : undefined;
+      const baseObserved = baseSha !== undefined;
+      const ready = baseObserved
+        ? admissionOutcome === "admit" && !conflicts && packet
+        : false;
+      // Discovery maps the evaluator's "dependencies_incomplete" refusal back to the
+      // public "open_dependencies" vocabulary so existing reports stay readable; the
+      // shared evaluator preserves the canonical reason inside `admission.reason`.
+      const reason = !ready
+        ? (admissionReason === "dependencies_incomplete" ? "open_dependencies" : admissionReason
+          ?? (!baseObserved
+            ? (dependencies.length ? "open_dependencies" : "admission_observation_unavailable")
+            : dependencies.length ? "open_dependencies" : "admission_incomplete"))
+        : undefined;
+      if (!baseObserved && admissionError === undefined) admissionError = observationError;
       actions.push(Object.freeze({ workerId, issue: issue.number, title: issue.title ?? "",
         issueUrl: `https://github.com/${repository}/issues/${issue.number}`,
         state: reason ? "queue-blocked" : "ready-candidate", disposition: "discovery", trust: "public-offer",
         platforms: labels.filter(label => label.startsWith("platform:")),
         difficulty: labels.filter(label => label.startsWith("difficulty:")),
         ...(packet ? { base: packet.base, effects: packet.effects, writeScopes: packet.writeScopes } : {}),
+        ...(admission ? {
+          admission: Object.freeze({
+            outcome: admission.outcome, reason: admission.reason,
+            observedAt: admission.observedAt, observedBase: admission.observedBase,
+            ...(admission.packetBase ? { packetBase: admission.packetBase } : {}),
+            capacity: admission.capacity ?? "unknown", pair: admission.pair ?? "unknown", locks: admission.locks ?? "unknown",
+          }),
+        } : {}),
+        ...(admissionError ? { admissionError } : {}),
         ...(reason ? { reason, dependencies } : {}),
         action: reason ? `Maintainer repair needed: ${reason}. Report this issue as blocked discovery, not an empty queue.`
           : "Read the issue and compare platform, skills, effects and current capacity. If suitable, request a claim; wait for CLAIM ACCEPTED. The controller checks current ownership, dependencies and path conflicts." }));

@@ -5,9 +5,9 @@ import {
   declaredSubmissionIssue, parseClaimMarker, readQueueHealth, renderQueueHealth, renderQueueHealthJson,
 } from "../scripts/public-queue-health.mjs";
 
-const issue = (number, labels, updated_at = "2026-09-14T10:00:00Z") => ({
+const issue = (number, labels, updated_at = "2026-09-14T10:00:00Z", extras = {}) => ({
   number, title: `Issue ${number}`, html_url: `https://github.example/issues/${number}`,
-  state: "open", updated_at, labels: labels.map(name => ({ name })),
+  state: "open", updated_at, labels: labels.map(name => ({ name })), ...extras,
 });
 const comment = (body, association = "MEMBER", login = "trusted-maintainer", type = "User") => ({
   body, author_association: association, user: { login, type },
@@ -30,6 +30,11 @@ const actionMarker = (worker, state, number) =>
 const claimMarker = (number, worker) =>
   `CLAIM ACCEPTED — reserved\n<!-- agent-control-room-claim:v2 issue=${number} request=1 actor=maintainer worker=${worker} -->\n<!-- agent-control-room-claim:v3 issue=${number} request=1 actor=maintainer worker=${worker} packet=${"a".repeat(64)} accepted=1700000000000 -->`;
 const ready = (number, updated) => issue(number, ["status:ready", "help wanted"], updated);
+const packetBody = overrides => `<!-- acr-public-work:v1 ${JSON.stringify({
+  target: "main", base: "a".repeat(40),
+  writeScopes: ["scripts/example/**"], dependencies: [], checks: ["pnpm check:demo"], risk: "ordinary", effects: "none", leaseHours: 24,
+  ...overrides,
+})} -->`;
 
 test("malformed submission bindings are visible instead of disappearing from the report", async () => {
   const api = fakeFetch({ issues: [issue(214, ["status:working"])],
@@ -39,11 +44,16 @@ test("malformed submission bindings are visible instead of disappearing from the
   assert.match(renderQueueHealth(report), /PR #244 submission_issue_binding_missing_or_invalid/);
 });
 
-function fakeFetch({ issues = [], comments = {}, pulls = [] } = {}) {
+function fakeFetch({ issues = [], comments = {}, pulls = [], extraHandlers = {} } = {}) {
   const calls = [];
   const ok = value => ({ ok: true, status: 200, async json() { return structuredClone(value); } });
+  const fail = (status = 503) => ({ ok: false, status, async json() { throw new Error(`http_${status}`); } });
   const fetchImpl = async url => {
     calls.push(url);
+    if (extraHandlers.ref && url.includes("/git/ref/heads/main")) {
+      const handler = extraHandlers.ref;
+      return typeof handler === "object" && "status" in handler && handler.status ? fail(handler.status) : ok(handler);
+    }
     if (url.includes("/issues?")) return ok(issues);
     if (url.includes("/pulls?")) return ok(pulls);
     const commentsMatch = /\/issues\/(\d+)\/comments/.exec(url);
@@ -520,4 +530,130 @@ test("claim markers are parsed only in the exact bounded controller form", () =>
   for (const value of ["CLAIM ACCEPTED", "<!-- agent-control-room-claim:v2 issue=199 -->",
     "<!-- agent-control-room-claim:v2 issue=199 request=1 actor=a worker=b -->"])
     assert.equal(parseClaimMarker(value), undefined);
+});
+
+// Round: issue #259 — false-ready admission extraction regressions for queue health.
+
+test("queue health lists a Ready offer as a blocked admission when its packet base is stale", async () => {
+  const mainSha = "f".repeat(40);
+  const staleBase = "c".repeat(40);
+  const api = fakeFetch({
+    issues: [issue(125, ["status:ready", "help wanted"], "2026-09-14T10:00:00Z",
+      { body: packetBody({ base: staleBase }) })],
+    pulls: [],
+    extraHandlers: { ref: { object: { sha: mainSha } } },
+  });
+  const report = await readQueueHealth({ fetchImpl: api.fetchImpl });
+  assert.equal(report.blockedOffers.length, 1);
+  assert.equal(report.blockedOffers[0].issue, 125);
+  assert.equal(report.blockedOffers[0].admission.reason, "packet_base_stale");
+  assert.equal(report.blockedOffers[0].admission.observedBase, mainSha);
+  assert.equal(report.blockedOffers[0].admission.packetBase, staleBase);
+});
+
+test("queue health reports an admission-observation warning when the base ref is unavailable", async () => {
+  const api = fakeFetch({
+    issues: [issue(125, ["status:ready", "help wanted"], "2026-09-14T10:00:00Z",
+      { body: packetBody({ base: "a".repeat(40) }) })],
+    pulls: [],
+    extraHandlers: { ref: { status: 503 } },
+  });
+  const report = await readQueueHealth({ fetchImpl: api.fetchImpl });
+  assert.ok(report.warnings.includes("admission_observation_unavailable"));
+});
+
+test("queue health omits already-accepted Ready offers from blockedOffers", async () => {
+  const mainSha = "a".repeat(40);
+  const api = fakeFetch({
+    issues: [issue(125, ["status:ready", "help wanted"], "2026-09-14T10:00:00Z",
+      { body: packetBody({ base: mainSha }) })],
+    comments: { 125: [controllerComment(claimMarker(125, "worker:test-01"))] },
+    pulls: [],
+    extraHandlers: { ref: { object: { sha: "z".repeat(40) } } },
+  });
+  const report = await readQueueHealth({ fetchImpl: api.fetchImpl });
+  // The offer is filtered out before admission evaluation because already-accepted
+  // work retains its pinned base, even when main has moved on.
+  assert.equal(report.blockedOffers.length, 0);
+});
+
+test("queue health classifies a malformed packet offer as blocked without claiming an assignment", async () => {
+  const api = fakeFetch({
+    issues: [issue(125, ["status:ready", "help wanted"], "2026-09-14T10:00:00Z",
+      { body: "no packet here" })],
+    pulls: [],
+    extraHandlers: { ref: { object: { sha: "a".repeat(40) } } },
+  });
+  const report = await readQueueHealth({ fetchImpl: api.fetchImpl });
+  assert.equal(report.blockedOffers.length, 1);
+  assert.equal(report.blockedOffers[0].admission.reason, "packet_invalid");
+});
+
+// Round 2 (issue #259): adapter URL construction is exact. Every endpoint the
+// health path requests must be the real API URL; any unexpected endpoint —
+// especially a doubled repository segment — fails the test.
+test("queue health requests only exact API URLs with no duplicated repository segment", async () => {
+  const refSha = "f".repeat(40);
+  const seen = [];
+  const fetchImpl = async url => {
+    seen.push(url);
+    if (url.includes("/git/ref/heads/main")) return { ok: true, status: 200, async json() { return { object: { sha: refSha } }; } };
+    if (url.includes("/comments")) return { ok: true, status: 200, async json() { return []; } };
+    if (url.includes("/pulls")) return { ok: true, status: 200, async json() { return []; } };
+    return { ok: true, status: 200, async json() { return [issue(125, ["status:ready", "help wanted"], "2026-09-14T10:00:00Z",
+      { body: packetBody({ base: refSha }) })]; } };
+  };
+  const report = await readQueueHealth({ fetchImpl });
+  assert.ok(seen.includes(`https://api.github.com/repos/AgenticBotSitter/agent-control-room/git/ref/heads/main`),
+    `expected exact ref URL, saw: ${seen.join(" | ")}`);
+  for (const url of seen) {
+    assert.ok(!url.includes("agent-control-room/agent-control-room"), `duplicated repository segment: ${url}`);
+    assert.ok(url.startsWith("https://api.github.com/repos/AgenticBotSitter/agent-control-room/"), `unexpected endpoint: ${url}`);
+  }
+  assert.equal(report.uncertainty.observationComplete, true);
+});
+
+// Round 2 (issue #259): history pagination is bounded but complete. A relevant
+// CLAIM ACCEPTED record beyond page 1 must still filter the offer (retaining its
+// pinned base), and a failed later page must classify as history-incomplete —
+// never as an empty history with no prior reservation.
+test("queue health finds an accepted-claim record beyond comments page 1", async () => {
+  const refSha = "a".repeat(40);
+  const accepted = controllerComment(claimMarker(125, "worker:test-01"));
+  const fetchImpl = async url => {
+    if (url.includes("/git/ref/heads/main")) return { ok: true, status: 200, async json() { return { object: { sha: refSha } }; } };
+    if (url.includes("/pulls")) return { ok: true, status: 200, async json() { return []; } };
+    const page = Number(/page=(\d+)/.exec(url)?.[1] ?? 1);
+    if (url.includes("/comments")) {
+      if (page === 1) return { ok: true, status: 200, async json() { return Array(100).fill(controllerComment("routine note")); } };
+      if (page === 2) return { ok: true, status: 200, async json() { return [accepted]; } };
+      return { ok: true, status: 200, async json() { return []; } };
+    }
+    return { ok: true, status: 200, async json() { return [issue(125, ["status:ready", "help wanted"], "2026-09-14T10:00:00Z",
+      { body: packetBody({ base: refSha }) })]; } };
+  };
+  const report = await readQueueHealth({ fetchImpl });
+  // The offer is filtered before admission: already-accepted work retains its
+  // pinned base even though main matches and the packet is otherwise valid.
+  assert.equal(report.blockedOffers.length, 0);
+});
+
+test("queue health classifies a failed later comments page as history-incomplete", async () => {
+  const refSha = "a".repeat(40);
+  const fetchImpl = async url => {
+    if (url.includes("/git/ref/heads/main")) return { ok: true, status: 200, async json() { return { object: { sha: refSha } }; } };
+    if (url.includes("/pulls")) return { ok: true, status: 200, async json() { return []; } };
+    const page = Number(/page=(\d+)/.exec(url)?.[1] ?? 1);
+    if (url.includes("/comments")) {
+      if (page === 1) return { ok: true, status: 200, async json() { return Array(100).fill(controllerComment("routine note")); } };
+      throw new Error("socket hang up");
+    }
+    return { ok: true, status: 200, async json() { return [issue(125, ["status:ready", "help wanted"], "2026-09-14T10:00:00Z",
+      { body: packetBody({ base: refSha }) })]; } };
+  };
+  const report = await readQueueHealth({ fetchImpl });
+  assert.equal(report.blockedOffers.length, 1);
+  assert.equal(report.blockedOffers[0].issue, 125);
+  assert.equal(report.blockedOffers[0].admissionError, "admission_history_incomplete");
+  assert.ok(report.warnings.includes("admission_evaluation_incomplete"));
 });

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isReady, liveAcceptedHistory, activePairExists, dependenciesCompleteDetailed, observeMainBase } from "./admission-evaluator.mjs";
 
 const CLAIM_HEADER = "CLAIM REQUEST";
 const WORKER_LINE = /^worker-id: ([A-Za-z0-9][A-Za-z0-9._:-]{2,79})$/;
@@ -52,28 +53,6 @@ async function issueFor(api, repository, number) {
   return issue;
 }
 
-async function activePairExists(api, repository, value, excludeIssue) {
-  for (let page = 1; page <= 10; page++) {
-    const issues = await api.request("GET", `/repos/${repository}/issues?state=open&labels=status%3Aworking&per_page=100&page=${page}`);
-    if (!Array.isArray(issues)) throw new Error("claim_controller_api_invalid");
-    for (const issue of issues) {
-      if (issue?.pull_request || !Number.isSafeInteger(issue?.number) || issue.number === excludeIssue) continue;
-      const pair = ` actor=${value.actor} worker=${value.workerId} `;
-      if ((await commentsFor(api, repository, issue.number)).some(comment => comment?.user?.login === "github-actions[bot]"
-        && comment?.user?.type === "Bot" && typeof comment.body === "string"
-        && comment.body.startsWith("CLAIM ACCEPTED —")
-        && (comment.body.includes(MARKER_PREFIX) || comment.body.includes(MARKER_PREFIX.replace(":v2", ":v3")))
-        && comment.body.includes(pair))) return true;
-    }
-    if (issues.length < 100) return false;
-  }
-  throw new Error("claim_controller_working_set_ambiguous");
-}
-
-function isReady(issue) {
-  const statuses = labelNames(issue).filter(label => label.startsWith("status:"));
-  return issue.state === "open" && !issue.pull_request && statuses.length === 1 && statuses[0] === "status:ready";
-}
 const workingLabels = original => unique([...original.filter(label => label !== "status:ready" && label !== "help wanted"), "status:working"]).sort();
 const exactState = (issue, labels) => issue.state === "open" && !issue.pull_request && sameLabels(normalizedLabels(issue), labels);
 const safeWorkingExtension = (issue, expected) => {
@@ -84,25 +63,6 @@ const safeWorkingExtension = (issue, expected) => {
 };
 const safelyWorking = issue => issue.state === "open" && !issue.pull_request
   && labelNames(issue).filter(label => label.startsWith("status:")).join("") === "status:working";
-const liveAcceptedHistory = (comments, issueNumber) => {
-  let latest = 0;
-  let live = false;
-  for (const comment of comments) {
-    if (comment?.user?.login !== "github-actions[bot]" || comment?.user?.type !== "Bot"
-      || typeof comment.body !== "string" || !Number.isSafeInteger(comment?.id)) continue;
-    const clearing = (comment.body.startsWith("CLAIM RELEASED —") || comment.body.startsWith("CLAIM EXPIRED —"))
-      && comment.body.includes(`issue=${issueNumber} `);
-    const accepting = (comment.body.startsWith("CLAIM ACCEPTED —") || comment.body.startsWith("CLAIM RENEWED —"))
-      && (comment.body.includes(`${MARKER_PREFIX} issue=${issueNumber} `)
-        || comment.body.includes(`${MARKER_PREFIX.replace(":v2", ":v3")} issue=${issueNumber} `));
-    if ((clearing || accepting) && comment.id > latest) {
-      latest = comment.id;
-      live = accepting;
-    }
-  }
-  return live;
-};
-
 async function removeLabel(api, repository, issueNumber, label) {
   let error;
   try { await api.request("DELETE", `/repos/${repository}/issues/${issueNumber}/labels/${encodeURIComponent(label)}`); }
@@ -140,16 +100,27 @@ export async function runClaimController({ event, repository, api }) {
 
   const value = { issueNumber: event.issue.number, requestId, actor, workerId: request.workerId };
   const current = await issueFor(api, repository, value.issueNumber);
+  // Step 1 — short-circuit on Ready label before any other API call. This preserves
+  // the controller's pre-reservation behaviour: closed / non-ready / needs-decision
+  // / pull-request issues never trigger comment or git-ref fetches.
   if (!isReady(current)) return Object.freeze({ status: "refused", reason: "issue_not_ready" });
-  if (liveAcceptedHistory(await commentsFor(api, repository, value.issueNumber), value.issueNumber))
+  // Step 2 — gates below reuse the shared read-only predicates from
+  // admission-evaluator.mjs in the original order: accepted-history, pair,
+  // packet, effects, dependencies, capacity, locks, scope, base. Discovery
+  // applies the same evaluator entry point for the global subset.
+  const issueComments = await commentsFor(api, repository, value.issueNumber);
+  if (liveAcceptedHistory(issueComments, value.issueNumber))
     return Object.freeze({ status: "refused", reason: "accepted_history_requires_release" });
   if (await activePairExists(api, repository, value)) return Object.freeze({ status: "refused", reason: "actor_worker_pair_active" });
   const now = Date.now();
   const packet = parseClaimPacket(current.body);
   if (!packet) return Object.freeze({ status: "refused", reason: "packet_invalid" });
   if (packet.effects !== "none") return Object.freeze({ status: "refused", reason: "packet_effectful" });
-  if (!(await dependenciesComplete(api, repository, packet)))
+  if (!(await dependenciesCompleteDetailed({ api, repository, packet })))
     return Object.freeze({ status: "refused", reason: "dependencies_incomplete" });
+  // Per-worker fit gates below are unchanged from the original order: capacity,
+  // then locks, then scope. Base observation stays last, as originally.
+  let baseSha = null;
   const held = await pairClaims(api, repository, actor, request.workerId);
   if (held.filter(entry => entry.status === "working").length >= MAX_ACTIVE_WORKING)
     return Object.freeze({ status: "refused", reason: "working_limit" });
@@ -160,9 +131,13 @@ export async function runClaimController({ event, repository, api }) {
     return Object.freeze({ status: "refused", reason: "lock_packet_changed", issues: locks.mismatched });
   if (locks.scopes.some(scope => packet.writeScopes.some(own => scopesOverlap(own, scope))))
     return Object.freeze({ status: "refused", reason: "scope_overlap" });
-  const ref = await api.request("GET", `/repos/${repository}/git/ref/heads/main`);
-  const baseSha = ref?.object?.sha;
-  if (typeof baseSha !== "string" || !/^[a-f0-9]{40}$/.test(baseSha)) throw new Error("claim_controller_api_invalid");
+  // Base observation stays last, as originally. A missing/invalid ref is a
+  // transport error, not a refusal: preserve the original throw code.
+  try {
+    baseSha = (await observeMainBase({ api, repository })).baseSha;
+  } catch {
+    throw new Error("claim_controller_api_invalid");
+  }
   if (packet.base !== baseSha) return Object.freeze({ status: "refused", reason: "packet_base_stale" });
   const originalLabels = normalizedLabels(current);
   const nextLabels = workingLabels(originalLabels);
@@ -650,16 +625,6 @@ async function pairClaims(api, repository, actor, workerId) {
     }
   }
   return Object.freeze(active);
-}
-
-async function dependenciesComplete(api, repository, packet) {
-  for (const dep of packet.dependencies) {
-    const issue = await issueFor(api, repository, dep);
-    if (!issue || issue.pull_request || issue.state !== "closed") return false;
-    if (issue.state_reason === "not_planned") return false;
-    if (!labelNames(issue).includes("status:done")) return false;
-  }
-  return true;
 }
 
 function exactIssueReference(text, issueNumber) {

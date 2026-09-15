@@ -3,7 +3,8 @@ import test from "node:test";
 import { parseActionMarker, parseHandoffMarker, readWorkerInbox, renderWorkerInbox, resolveInboxToken } from "../scripts/public-worker-inbox.mjs";
 const workerId = "worker:test-01";
 const bot = { login: "github-actions[bot]", type: "Bot" };
-const issue = (labels = ["action:worker", "status:working"], number = 170) => ({ number, title: "Assignment", labels });
+const issue = (labels = ["action:worker", "status:working"], number = 170, extras = {}) =>
+  ({ number, title: "Assignment", state: "open", labels, ...extras });
 const legacy = (worker = workerId, state = "working", id = 1) => ({ id, user: { login: "MarvinAi5", type: "User" }, author_association: "OWNER",
   body: `<!-- agent-control-room-action:v1 worker=${worker} state=${state} issue=170 -->` });
 const claim = (outcome = "ACCEPTED", worker = workerId, id = 1) => ({ id, user: bot,
@@ -16,8 +17,13 @@ function fakeFetch({ issues = [issue()], comments = [claim()], failIssue, full =
   const calls = [];
   return { calls, fetchImpl: async url => {
     calls.push(url);
+    if (url.includes("/git/ref/heads/main"))
+      return { ok: true, async json() { return { object: { sha: "a".repeat(40) } }; } };
     const number = /\/issues\/(\d+)\/comments/.exec(url)?.[1];
     if (number === String(failIssue)) throw new Error("offline private details");
+    if (number) return { ok: true, async json() { return full ? Array(100).fill(claim()) : comments; } };
+    const single = /\/issues\/(\d+)(?:[?/]|$)/.exec(url)?.[1];
+    if (single) return { ok: true, async json() { return issues.find(entry => entry.number === Number(single)) ?? null; } };
     return { ok: true, async json() { return number ? full ? Array(100).fill(claim()) : comments : issues; } };
   } };
 }
@@ -201,3 +207,117 @@ test("direct inbox token resolution is explicit and never invents a credential",
   assert.throws(() => resolveInboxToken({ environment: {}, tokenFromGh: true,
     runCommand: () => ({ status: 1, stdout: "" }) }), /gh_token_unavailable/);
 });
+
+// Round: issue #259 — false-ready admission extraction regressions for discovery.
+
+test("discovery tags a stale-base offer with the same admission reason the controller refuses", async () => {
+  const staleBase = "c".repeat(40);
+  const packet = (number, base = staleBase) => `<!-- acr-public-work:v1 ${JSON.stringify({
+    target: "main", base, writeScopes: [`src/example-${number}/**`], dependencies: [],
+    checks: ["pnpm check:demo"], risk: "ordinary", effects: "none", leaseHours: 24,
+  })} -->`;
+  const issues = [
+    issue(["status:ready", "platform:any"], 1, { body: packet(1, "f".repeat(40)) }),
+    issue(["status:ready"], 2, { body: packet(2, staleBase) }),
+  ];
+  const fetchImpl = async url => {
+    if (url.includes("/git/ref/heads/main")) return { ok: true, status: 200, async json() { return { object: { sha: "f".repeat(40) } }; } };
+    if (url.includes("/issues?")) return { ok: true, status: 200, async json() { return issues; } };
+    if (url.includes("/comments")) return { ok: true, status: 200, async json() { return []; } };
+    return { ok: false, status: 404, async json() { return {}; } };
+  };
+  const result = await readWorkerInbox({ workerId, includeReady: true, fetchImpl });
+  const offers = result.filter(action => action.disposition === "discovery");
+  assert.equal(offers.length, 2);
+  const fresh = offers.find(offer => offer.issue === 1);
+  const stale = offers.find(offer => offer.issue === 2);
+  assert.equal(fresh.state, "ready-candidate");
+  assert.equal(stale.state, "queue-blocked");
+  assert.equal(stale.reason, "packet_base_stale");
+  assert.equal(stale.admission.reason, "packet_base_stale");
+  assert.equal(stale.admission.observedBase, "f".repeat(40));
+  assert.equal(stale.admission.packetBase, staleBase);
+});
+
+test("discovery falls back to the dependency check when the base ref cannot be observed", async () => {
+  const packet = (number, deps) => `<!-- acr-public-work:v1 ${JSON.stringify({
+    target: "main", base: "a".repeat(40), writeScopes: [`src/example-${number}/**`], dependencies: deps,
+    checks: ["pnpm check:demo"], risk: "ordinary", effects: "none", leaseHours: 24,
+  })} -->`;
+  const issues = [
+    issue(["status:ready"], 1, { body: packet(1, []) }),
+    issue(["status:ready"], 2, { body: packet(2, [3]) }),
+    issue(["status:ready"], 3),
+  ];
+  const fetchImpl = async url => {
+    if (url.includes("/git/ref/heads/main")) return { ok: false, status: 503, async json() { throw new Error("http_503"); } };
+    if (url.includes("/issues?")) return { ok: true, status: 200, async json() { return issues; } };
+    if (url.includes("/comments")) return { ok: true, status: 200, async json() { return []; } };
+    return { ok: false, status: 404, async json() { return {}; } };
+  };
+  const result = await readWorkerInbox({ workerId, includeReady: true, fetchImpl });
+  const offers = result.filter(action => action.disposition === "discovery");
+  assert.ok(offers.length >= 2);
+  // Issue 2 has an open dependency (3) so it remains blocked under the fallback.
+  const depOffer = offers.find(offer => offer.issue === 2);
+  assert.ok(depOffer, "issue 2 should appear as a discovery offer");
+  assert.equal(depOffer.state, "queue-blocked");
+  assert.equal(depOffer.reason, "open_dependencies");
+});
+
+// Round 2 (issue #259): adapter URL construction is exact. Every endpoint the
+// discovery path requests must be the real API URL; any unexpected endpoint —
+// especially a doubled repository segment — fails the test.
+test("discovery requests only exact API URLs with no duplicated repository segment", async () => {
+  const refSha = "f".repeat(40);
+  const seen = [];
+  const issues = [{ ...issue(["status:ready", "platform:any"], 1), body: packet({ base: refSha }) }];
+  const fetchImpl = async url => {
+    seen.push(url);
+    if (url.includes("/git/ref/heads/main")) return { ok: true, status: 200, async json() { return { object: { sha: refSha } }; } };
+    if (url.includes("/comments")) return { ok: true, status: 200, async json() { return []; } };
+    return { ok: true, status: 200, async json() { return issues; } };
+  };
+  const result = await readWorkerInbox({ workerId, includeReady: true, fetchImpl });
+  const offers = result.filter(action => action.disposition === "discovery");
+  assert.equal(offers.length, 1);
+  assert.equal(offers[0].state, "ready-candidate");
+  assert.ok(seen.includes(`https://api.github.com/repos/AgenticBotSitter/agent-control-room/git/ref/heads/main`),
+    `expected exact ref URL, saw: ${seen.join(" | ")}`);
+  for (const url of seen) {
+    assert.ok(!url.includes("agent-control-room/agent-control-room"), `duplicated repository segment: ${url}`);
+    assert.ok(url.startsWith("https://api.github.com/repos/AgenticBotSitter/agent-control-room/"), `unexpected endpoint: ${url}`);
+  }
+});
+
+// Round 2 (issue #259): unknown is not admitted. A 403, 404, or network failure
+// on the base ref must block every otherwise-plausible offer explicitly — never
+// advertise it as a validated ready-candidate — while other assignments stay visible.
+for (const failure of [
+  { name: "403", ref: { ok: false, status: 403, async json() { throw new Error("http_403"); } } },
+  { name: "404", ref: { ok: false, status: 404, async json() { return {}; } } },
+  { name: "network", ref: async () => { throw new Error("socket hang up"); } },
+]) {
+  test(`discovery blocks plausible offers as observation-unavailable on base ref ${failure.name}`, async () => {
+    const issues = [
+      { ...issue(["status:ready", "platform:any"], 1), body: packet({ base: "a".repeat(40) }) },
+      { ...issue(["action:worker", "status:working"], 170), body: undefined },
+    ];
+    const fetchImpl = async url => {
+      if (url.includes("/git/ref/heads/main")) {
+        const outcome = typeof failure.ref === "function" ? await failure.ref() : failure.ref;
+        return outcome;
+      }
+      if (url.includes("/comments")) return { ok: true, status: 200, async json() { return [legacy()]; } };
+      return { ok: true, status: 200, async json() { return issues; } };
+    };
+    const result = await readWorkerInbox({ workerId, includeReady: true, fetchImpl });
+    const offers = result.filter(action => action.disposition === "discovery");
+    assert.equal(offers.length, 1);
+    assert.equal(offers[0].state, "queue-blocked");
+    assert.equal(offers[0].reason, "admission_observation_unavailable");
+    // The working assignment for this worker is still visible alongside the block.
+    assert.ok(result.some(action => action.disposition !== "discovery"),
+      "other useful assignments must stay visible when observation fails");
+  });
+}
