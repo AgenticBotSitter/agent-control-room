@@ -71,12 +71,14 @@ Three findings dominate:
    release gate with no client source) is reserved and idle, and its
    path lock prevents anyone else taking it.
 
-   Worse, **the unstaffed remainder of the queue cannot be claimed at all.** Twelve open
-   issues — #1, #2, #10, #29, #60, #61, #62, #65, #66, #67, #68 and #167, which is *every*
-   waiting MVP package — carry no `acr-public-work:v1` packet (**observed**), and the
-   automatic controller refuses a packetless reservation. #200 hit exactly this refusal
-   before its "PACKET REPAIRED" comment on 2026-09-14 20:24. So the MVP backlog is not
-   merely unstaffed; a willing contributor arriving today could not claim any of it (S9).
+   Worse, **the unstaffed remainder of the queue cannot be claimed at all, and needs two
+   separate repairs before it can be.** Twelve open issues — #1, #2, #10, #29, #60, #61,
+   #62, #65, #66, #67, #68 and #167, which is *every* waiting MVP package — are both
+   `status:waiting` and carry no `acr-public-work:v1` packet (**observed**; 20 of the 31
+   open issues lack a packet in total). `automatic-claim-controller.mjs` refuses these at
+   `isReady` (`:143`, `issue_not_ready`) **before** it ever parses the packet (`:148`,
+   `packet_invalid`), so a contributor arriving today is turned away twice over. Relabelling
+   alone would not fix it and adding packets alone would not fix it (S9).
 
 3. **Recent delivery capacity went mostly to contributor-workflow tooling, not to the
    product.** Of the 25 pull requests merged on 2026-09-14, ten (#183, #196, #202, #203,
@@ -236,7 +238,7 @@ but gates MVP-007 and the §11 journey. §2.2 covers the Always/Next/Later remai
 | PUB-001 | Always | `LICENSE`, `NOTICE` | accepted |
 | PUB-002 | Always | `docs/license-inventory.json`, runtime-license lanes (#11) | accepted |
 | PUB-004 | Always | `README.md`, `WORK_QUEUE.md`, `CONTRIBUTOR_HANDBOOK.md` | accepted |
-| PUB-005 | Always | Live queue — **but see §5 for eight stale states** | accepted (with defects) |
+| PUB-005 | Always | Live queue — **but see §5 for nine stale states** | accepted (with defects) |
 | PUB-006 | Always | `scripts/automatic-claim-controller.mjs` + workflow | accepted |
 | PUB-007 | Always | Handbook review levels; `scripts/review-handoff-controller.mjs` | accepted (source), blocked (activation) |
 | PUB-008 | Always | Two-PR concurrency rule in handbook | accepted |
@@ -299,10 +301,11 @@ one is staffed with visible output.
 | E — Release tooling | #209 → #187 | nothing (idle claim) |
 | F — Product UI | #214 → #10/#1 | #65, #66 for the last mile only |
 
-Track A/B/E owners carry `acr-public-work:v1` packets and their `writeScopes` do not overlap
-(**observed**). Tracks C and D (#65, #67) carry **no packet at all**, so their non-overlap is
-read from prose rather than a machine-checkable scope (**inferred**) — and the missing packet
-blocks them outright. See S9. Track F's
+Only track E (#209, #187) is fully packeted, and track A's #210 is packeted; #172, #173, #66,
+#68, #65 and #67 carry **no `acr-public-work:v1` packet at all** (**observed**). So for most
+of this graph the non-overlap is read from issue prose rather than from a machine-checkable
+`writeScopes` (**inferred**), and the tracks whose issues also sit at `status:waiting` cannot
+be reserved at all. See S9. Track F's
 `#214` is `status:ready` and unclaimed.
 
 ### 3.3 The single decisive ordering fact
@@ -395,7 +398,7 @@ All **observed** on 2026-09-15.
 | # | State | Why it is wrong | Effect |
 | --- | --- | --- | --- |
 | S1 | #208, #209, #210 `status:working`, claims accepted 2026-09-14 20:45–20:46, zero subsequent activity | Three of the most critical MVP packages hold path locks with no output | **Blocks the critical path.** #210 is the Hermes connector |
-| S9 | **Twelve open issues carry no `acr-public-work:v1` packet: #1, #2, #10, #29, #60, #61, #62, #65, #66, #67, #68, #167** | `automatic-claim-controller.mjs` cannot reserve a packetless issue — exactly the refusal #200 hit before its "PACKET REPAIRED" comment (2026-09-14 20:24). WORK-010 also says a packet missing a required field cannot become claimable | **This is every waiting MVP package.** None of them is claimable today even if a contributor appears. The queue is not merely unstaffed — it is unclaimable |
+| S9 | **Every waiting MVP package — #1, #2, #10, #29, #60, #61, #62, #65, #66, #67, #68, #167 — is `status:waiting` *and* carries no `acr-public-work:v1` packet.** (20 of the 31 open issues lack a packet; #172 and #173 are packetless too, though they are in correction rather than waiting) | Two independent gates. `automatic-claim-controller.mjs:143` refuses a non-`status:ready` issue as `issue_not_ready`; only after that does `:148` refuse a packetless one as `packet_invalid`. #200 hit the *packet* gate (2026-09-14 20:24 "PACKET REPAIRED") — but it was already `status:ready`, so that precedent does not transfer. WORK-010 separately says an incomplete packet cannot become claimable | **None of the twelve is claimable today even if a contributor appears**, and fixing either gate alone changes nothing. Both a `status:ready` relabel and a packet are required |
 | S2 | #8, #27, #64, #185 are **closed** but still carry `status:paused` | Lifecycle says a closed issue is `status:done`; `paused` on a closed issue is undefined | Queue-health and inbox tooling cannot classify them; #211's worker already lost a handoff to exactly this (see #211 comment 2026-09-14 21:16) |
 | S3 | #1, #2 pin base `6bd86541b57d`; #65 and #66 pin `bcb93b8dfb6d` | Both are many merges behind the audit base `d8d8c12c8903` | A worker claiming #65/#66 today would start from a base predating #63, #115, #127, #128 and #175 |
 | S4 | #2 carries `status:waiting` **and** `action:integrator` | Not a valid pair in the handbook lifecycle table; `waiting` takes a named prerequisite, not an actor | Ambiguous next actor |
@@ -472,10 +475,12 @@ Every `CLAIM ACCEPTED` on this repository names the same actor `MarvinAi5`;
 Nothing currently enforces it. This is #197 and it is unowned.
 
 **R4 — The critical path is both unstaffed and unclaimable (delivery).**
-#210 and #209 hold locks with no output; #65 and #67 are `status:waiting` with no worker
-**and no `acr-public-work:v1` packet**, so the controller would refuse a reservation
-(**observed**; S9). #61 depends on all four. A release gate whose inputs cannot even be
-claimed will not move regardless of how much capacity exists elsewhere (**inferred**).
+#210 and #209 hold locks with no output; #65 and #67 are `status:waiting` with no worker,
+which the controller refuses as `issue_not_ready`
+(`scripts/automatic-claim-controller.mjs:143`), and they additionally carry no packet, which
+would refuse them again at `:148` (**observed**; S9). #61 depends on all four. A release gate
+whose inputs cannot even be claimed will not move regardless of how much capacity exists
+elsewhere (**inferred**).
 
 **R5 — Stale base pins invite duplicated work (technical).**
 #65 and #66 still pin `bcb93b8dfb6d`, which predates #63, #115, #127, #128 and #175
@@ -492,15 +497,21 @@ Ordered by what unblocks the most. Steps 1–2 are the lead's; 3–5 run in para
 **Step 1 — reclaim the idle critical path (lead, immediate).**
 #210, #209 and #208 hold locks with no output. Per `CONTRIBUTOR_HANDBOOK.md:517-523`,
 ownership transfers only after the prior worker acknowledges stopping. Request that
-acknowledgement now. #210 is the Hermes connector and is the single largest MVP blocker.
+acknowledgement now. #210 is the Hermes connector and is the largest MVP blocker
+(**inferred**, as in §1).
 
-**Step 2 — add work packets to the twelve packetless issues (lead, immediate, highest
-leverage).** S9. Until #65, #66, #67, #68, #1, #10 and the rest carry an
-`acr-public-work:v1` packet with a current base and `writeScopes`, no contributor can claim
-them through the controller. This is the cheapest action in this report with the largest
-effect: it converts an unclaimable backlog into a claimable one. Re-pin their bases at the
-same time (S3) — #65 and #66 still point at `bcb93b8d`, which predates #63, #115, #127, #128
-and #175.
+**Step 2 — make the waiting MVP packages claimable (lead, immediate, highest leverage).**
+S9. Each of #1, #2, #10, #29, #60, #61, #62, #65, #66, #67, #68 and #167 needs **both**
+repairs, because the controller applies two independent gates: relabel `status:waiting` →
+`status:ready` once its named prerequisite is genuinely met (`isReady`, `:143`), **and** add
+an `acr-public-work:v1` packet with a current base and `writeScopes` (`:148`). Doing only one
+changes nothing. Re-pin the bases in the same pass (S3) — #65 and #66 still point at
+`bcb93b8d`, which predates #63, #115, #127, #128 and #175. This is the cheapest action in
+this report with the largest effect: it converts an unclaimable backlog into a claimable one.
+
+Note that several of the twelve are correctly `status:waiting` today — #61 genuinely waits on
+its dependencies. The point is not to mark everything ready; it is that #65 and #67, whose
+prerequisites are already accepted (§3.1 Layer 2), are still labelled waiting and packetless.
 
 **Step 2b — reconcile the remaining states in §5 (lead).**
 S2 in particular: four closed issues still carry `status:paused`, which is what stranded
