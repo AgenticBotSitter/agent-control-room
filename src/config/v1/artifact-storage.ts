@@ -50,8 +50,14 @@ function refuse(reason: string): never {
  * platform's. An operator file is portable data: a Windows-shaped root must be
  * refused for the same reason on a Linux server as on Windows, and the refusal
  * must be reproducible from any contributor's machine. This covers the POSIX
- * root, a drive root in either separator or case (`C:\`, `D:/`, `c:\`) and a
- * UNC share root with or without its trailing separator.
+ * root, a drive root in either separator or case (`C:\`, `D:/`, `c:\`), a UNC
+ * share root with or without its trailing separator, and the extended-length
+ * and device forms (`\\?\C:\`, `\\.\C:\`).
+ *
+ * Note that `win32.parse` already returns `/` as the root of `/`, so today the
+ * win32 branch alone would catch every case and the posix branch adds no
+ * unique coverage — it is retained only so the POSIX root stays refused if
+ * that win32 behavior ever narrows. Do not read it as separately tested.
  */
 function isFilesystemRoot(value: string): boolean {
   return posix.parse(value).root === value || win32.parse(value).root === value;
