@@ -271,6 +271,18 @@ export function createCodexRecoveredResultRuntimeV1(input: {
         catch {
           const settled = readDurable();
           if (settled?.status === 'receipted' && settled.receipt) {
+            // The send failed but a receipt landed meanwhile: the stored
+            // receipt is returned only through the same complete-lineage
+            // validator. A substituted receipt arriving in this interval
+            // must not bypass the identity check.
+            const landed = settled.receipt as { body?: StoredReplayView['receiptBody'] };
+            let settledActivation: StoredReplayView['activationBody'];
+            try {
+              settledActivation = (journal.acceptedCodexActivation(lineage.queueId) as
+                { frame?: { body?: StoredReplayView['activationBody'] } } | undefined)?.frame?.body;
+            } catch { refuse('replay_lineage_mismatch'); }
+            matchStoredReplayLineage({ receiptBody: landed.body, frame: (settled as { frame: unknown }).frame,
+              activationBody: settledActivation }, lineage);
             return { disposition: 'receipted', receipt: settled.receipt };
           }
           if (settled && (settled.status === 'prepared' || settled.status === 'sent')) {

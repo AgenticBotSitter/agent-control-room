@@ -789,3 +789,47 @@ test('stored receipt replay refuses every same-run substitution across the full 
     runtime.close(); await f.bridge.close(); journal.close();
   }
 });
+
+test('sender-error receipted fallback runs the complete-lineage validator', async () => {
+  // Round-4 correction: when sendRecovered throws and the journal has meanwhile
+  // become receipted, the landed receipt must pass matchStoredReplayLineage. A
+  // same-run substituted receipt in this interval refuses without returning it;
+  // an exact landed receipt still returns.
+  const sealedEntry = (fixture: ReturnType<typeof resultFixture>) => {
+    const body = fixture.body;
+    const returnFrame = { type: 'harness.codex.result.return', direction: 'node_to_server',
+      senderKind: 'node', tenantId: 'tenant:test', actorId: 'node:test', keyId: 'node-key:test',
+      connectionId: 'connection:test', messageId: 'message:prepared-result',
+      correlationId: 'correlation:test', causationId: body.activation.activationId,
+      sequence: 4, sentAt: body.returnedAt, expiresAt: body.physicalQualification.validUntil,
+      nonce: 'synthetic_prepared_result_nonce_12345678901234567890',
+      bodyDigest: sha256Digest(body), body };
+    const receiptBody = createCodexResultReturnReceiptBodyV1({ frame: returnFrame as never, recordedAt: body.returnedAt });
+    return { returnFrame, receiptBody };
+  };
+  for (const tamper of [null, (body: Record<string, any>) => { body.result.threadId = 'thread:other'; }] as const) {
+    const journal = new SqliteBridgeJournal(':memory:'), sent: string[] = [];
+    const f = await connect(journal, sent, 'test', async () => { throw new Error('synthetic_sign_secret'); });
+    const { returnFrame, receiptBody } = sealedEntry(f.fixture);
+    const landed = tamper
+      ? (() => { const copy = structuredClone(receiptBody); tamper(copy); return copy; })()
+      : receiptBody;
+    let reads = 0;
+    (journal as unknown as { codexResultReturn: unknown }).codexResultReturn = () => {
+      reads++;
+      if (reads < 3) return undefined;
+      return { status: 'receipted', receipt: { body: landed }, frame: returnFrame,
+        preparedAt: '2026-09-13T12:00:00.000Z', receiptedAt: '2026-09-13T12:00:01.000Z' };
+    };
+    const runtime = runtimeFor(journal, f.bridge, f.fixture, startEvidence(f.fixture),
+      recoveryHost(f.fixture, []));
+    if (tamper) {
+      await assert.rejects(runtime.recover(observedAt, new AbortController().signal),
+        /codex_recovered_result_replay_lineage_mismatch/);
+    } else {
+      const outcome = await runtime.recover(observedAt, new AbortController().signal);
+      assert.equal(outcome.disposition, 'receipted');
+    }
+    runtime.close(); await f.bridge.close(); journal.close();
+  }
+});
