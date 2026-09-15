@@ -1,4 +1,5 @@
 import { pathToFileURL } from "node:url";
+import { spawnSync } from "node:child_process";
 
 const WORKER_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,79}$/;
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -40,7 +41,11 @@ async function apiJson(fetchImpl, url, token) {
     "x-github-api-version": "2022-11-28",
     "user-agent": "agent-control-room-worker-inbox",
   } });
-  if (!response?.ok) throw new Error(`worker_inbox_api_${response?.status ?? "invalid"}`);
+  if (!response?.ok) {
+    const status = response?.status ?? "invalid";
+    if (status === 403 || status === 429) throw new Error("worker_inbox_rate_limited");
+    throw new Error(`worker_inbox_api_${status}`);
+  }
   const value = await response.json();
   if (!Array.isArray(value)) throw new Error("worker_inbox_api_invalid");
   return value;
@@ -78,6 +83,7 @@ export async function readWorkerInbox({ workerId, repository = "AgenticBotSitter
     let comments;
     try { comments = await pages(fetchImpl, `${root}/issues/${issue.number}/comments?direction=asc`, token); }
     catch (error) {
+      if (error?.message === "worker_inbox_rate_limited") throw error;
       actions.push(Object.freeze({ ...base, state: "attention", disposition: "attention", trust: "unverified",
         action: "History could not be verified; refresh before continuing.", reason: /^worker_inbox_/.test(error.message) ? error.message : "worker_inbox_history_unavailable" }));
       continue;
@@ -134,6 +140,7 @@ export async function readWorkerInbox({ workerId, repository = "AgenticBotSitter
       disposition, trust: latest?.trust ?? "unverified", action: next,
       markerState: marker?.state, markerCommentId: latest?.comment.id,
       requestedAt: latest?.comment.created_at, head: marker?.head, pr: marker?.pr,
+      instruction: latest?.kind === "handoff" && typeof marker?.instruction === "string" ? marker.instruction : undefined,
       instructionUrl: latest?.comment.html_url, acknowledged: marker?.acknowledged,
       ...(latest?.kind === "handoff" && marker.phase === "complete" && !marker.acknowledged
         && (marker.state === "changes-required" || controllerStop)
@@ -156,6 +163,9 @@ export function renderWorkerInbox(workerId, actions) {
       `Record: ${action.trust === "advisory" ? "ADVISORY" : action.trust}; ${action.disposition}`,
       `Next: ${action.action}`,
       ...(action.acknowledgment ? [action.acknowledgment] : []),
+      ...(action.pr ? [`Pull request: ${action.issueUrl.replace(/\/issues\/\d+$/, `/pull/${action.pr}`)}`] : []),
+      ...(action.head ? [`Reviewed/submitted commit: ${action.head}`] : []),
+      ...(action.instruction ? ["Correction details:", action.instruction] : []),
       `Instructions: ${action.instructionUrl ?? action.issueUrl}`,
       "",
     ]),
@@ -163,19 +173,31 @@ export function renderWorkerInbox(workerId, actions) {
 }
 
 function argumentsFor(argv) {
-  const values = { repository: "AgenticBotSitter/agent-control-room", json: false };
+  const values = { repository: "AgenticBotSitter/agent-control-room", json: false, tokenFromGh: false };
   for (let index = 0; index < argv.length; index++) {
     if (argv[index] === "--worker-id") values.workerId = argv[++index];
     else if (argv[index] === "--repository") values.repository = argv[++index];
     else if (argv[index] === "--json") values.json = true;
+    else if (argv[index] === "--token-from-gh") values.tokenFromGh = true;
     else throw new Error(`worker_inbox_argument_invalid:${argv[index]}`);
   }
   return values;
 }
 
+export function resolveInboxToken({ environment = process.env, tokenFromGh = false, runCommand = spawnSync } = {}) {
+  const direct = environment?.GITHUB_TOKEN;
+  if (typeof direct === "string" && direct.trim()) return direct.trim();
+  if (!tokenFromGh) return undefined;
+  const result = runCommand("gh", ["auth", "token"], { encoding: "utf8", timeout: 10000, maxBuffer: 65536 });
+  if (!result || result.status !== 0) throw new Error("worker_inbox_gh_token_unavailable");
+  const value = String(result.stdout ?? "").trim();
+  return value || undefined;
+}
+
 async function main() {
   const options = argumentsFor(process.argv.slice(2));
-  const actions = await readWorkerInbox({ ...options, token: process.env.GITHUB_TOKEN });
+  const token = resolveInboxToken({ tokenFromGh: options.tokenFromGh });
+  const actions = await readWorkerInbox({ ...options, token });
   console.log(options.json ? JSON.stringify({ workerId: options.workerId, actions }, null, 2)
     : renderWorkerInbox(options.workerId, actions));
 }

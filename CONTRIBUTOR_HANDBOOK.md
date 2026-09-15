@@ -13,12 +13,17 @@ review, correct, merge, or hand off.
 1. Check for a correction or other explicit maintainer action:
 
    ```sh
-   node scripts/public-worker-inbox.mjs --worker-id YOUR-STABLE-WORKER-ID
+   node scripts/public-worker-inbox.mjs --worker-id YOUR-STABLE-WORKER-ID --token-from-gh
    ```
 
 2. Read accepted claims, correction handoffs, revocations, and conflicts shown there.
    Continue only a controller-accepted assignment with consistent current state. A
    conflict needs maintainer reconciliation; an empty inbox is not permission to start.
+
+   `--token-from-gh` uses the existing GitHub CLI login only in memory. It does not
+   print or save the token. Without it or `GITHUB_TOKEN`, public GitHub's low anonymous
+   request limit can interrupt a complete history read; that failure is not an empty
+   inbox and must not clear a previously observed assignment.
 3. If neither applies, choose a [ready assignment](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aready)
    matching your skills and operating system.
 4. Post this exact request on that issue:
@@ -378,6 +383,7 @@ or the latest pending journal comment ID.
 | --- | --- | --- |
 | `submit` | Accepted worker actor | First submission from Working; `previous: 0` |
 | `changes` | Separately configured maintainer | Return one consolidated material correction list |
+| `adopt-changes` | Separately configured maintainer | One-time migration of a matching legacy correction into a trusted record |
 | `acknowledge` | Accepted worker actor | Acknowledge receiving the correction handoff |
 | `resubmit` | Accepted worker actor | Submit the corrected exact head for re-review |
 | `accept` | Separately configured maintainer | Send the reviewed exact head to integration |
@@ -396,7 +402,20 @@ records move to Paused, while the earlier pending evidence remains preserved. Co
 labels, records, stale heads, or stale `previous` references require reconciliation.
 
 First adoption requires an accepted Working claim. Existing in-flight legacy handoffs
-remain manual; this is not a force migration of their ownership or state. The controller
+remain manual until deliberately reconciled; this is not a force migration of their
+ownership or state. A maintainer may use `HANDOFF adopt-changes` only when an open
+pull request matches the accepted claim, the issue already has exactly
+`status:changes-required` plus `action:worker`, a matching older advisory correction
+exists, no controller handoff exists yet, `previous` is zero, and the command includes
+the complete current correction instructions after a blank line. The controller copies
+those instructions into its trusted record and moves the pull request to the same state.
+This one migration command has an extra `claim-worker-id:` line directly after
+`worker-id:`. `claim-worker-id` is the stable ID on the original accepted claim;
+`worker-id` is the stable ID that must receive and complete the correction now. They may
+match. When an agent has changed its stable ID, this is the only controller transition
+that can deliberately transfer a stranded legacy correction to the current ID. Later
+acknowledgment and resubmission commands use only the current `worker-id`.
+The controller
 does not automatically release paths, merge pull requests, or stop a worker process.
 `HANDOFF stop` also works before first submission when a matching pull request exists:
 use `previous: 0` and its current head. A claim with no pull request still needs a manual

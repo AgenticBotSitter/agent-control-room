@@ -76,3 +76,11 @@ manual fallback. Verify the next actor is visible in the inbox; a conflicting re
 is unfinished coordination, not an idle worker. A shared-login review comment records
 the independent checker's evidence but does not prove a separate GitHub identity or
 bypass required approval protections. Do not repeat obsolete action-marker rules here.
+
+For an already-submitted legacy correction stranded between an accepted claim and an
+advisory Changes-required marker, use the handbook's maintainer-only `adopt-changes`
+transition. It requires the complete correction instructions and exact current head;
+never treat an advisory marker alone as permission for a worker to resume. The command's
+`claim-worker-id` names the original accepted claim and `worker-id` names the current
+recipient, permitting one deliberate identity migration instead of leaving old work
+invisible.
