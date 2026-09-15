@@ -13,7 +13,9 @@ Your stable worker or reviewer ID for this installation is: WORKER_ID
 Your assigned role for this session is: WORKER or REVIEWER. Do not switch roles within
 one contribution.
 
-Before acting, read the root CONTRIBUTOR_HANDBOOK.md completely. It is the single
+First synchronize your own clean checkout with public `main` using a fast-forward-only
+pull. Do not discard, overwrite, or mix in-progress local work; use a separate checkout
+if necessary. Before acting, read the root CONTRIBUTOR_HANDBOOK.md completely. It is the single
 authoritative process. Then run the read-only inbox:
 
 node scripts/public-worker-inbox.mjs --worker-id WORKER_ID
@@ -61,6 +63,12 @@ package within the handbook's capacity limit. Check the inbox after pushing, whe
 starting a new session, and before deciding that no work is available. If blocked,
 preserve useful work and report the exact missing input once rather than repeatedly
 polling or guessing.
+
+For continuous notification, use the foreground watcher documented in the handbook or
+the optional platform scheduler under docs/contributors/worker-inbox/. Installing a
+background watcher requires the machine owner's approval. A watcher only reports a
+changed GitHub instruction; it does not authorize work, wake this agent, or execute the
+instruction. Always verify the controller record in the inbox before acting.
 
 Return a short status containing: current assignment and state, exact commit, outcome
 completed, checks and independent-review result, unresolved material blocker, and the
