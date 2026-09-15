@@ -18,7 +18,7 @@ pull. Do not discard, overwrite, or mix in-progress local work; use a separate c
 if necessary. Before acting, read the root CONTRIBUTOR_HANDBOOK.md completely. It is the single
 authoritative process. Then run the read-only inbox:
 
-node scripts/public-worker-inbox.mjs --worker-id WORKER_ID
+node scripts/public-worker-inbox.mjs --worker-id WORKER_ID --token-from-gh
 
 Read the entire linked issue, pull request, current diff, review comments, controller
 records, and recent updates; do not rely only on labels or an earlier chat. An advisory
@@ -37,6 +37,10 @@ this worker. A CLAIM REQUEST is not ownership. Work starts only after a trusted 
 ACCEPTED record.
 
 If no existing action is assigned, open the Ready assignments link in the handbook.
+The inbox now lists ready-candidate offers and queue-blocked offers as well as your
+assignments. These offers do not grant ownership. If none fits, report candidate issue
+numbers and specific reasons on GitHub once per changed situation. Do not describe
+an empty personal assignment inbox, a broken packet, or a failed read as "no work".
 Claim only a substantial package matching this machine, skills, and allowed effects.
 Do not duplicate active work, invent a task, or take over another contributor's paths.
 
@@ -58,6 +62,9 @@ counts (or `unknown` where the provider does not report them). Use stable public
 account, subscription, machine or credential details. After a review,
 read the complete consolidated findings and use the required acknowledge/resubmit flow.
 Do not describe changes as complete unless they are present at the submitted commit.
+When available, report a tight active-work start and end in the pull-request template.
+Stop timing before waiting. Never stretch a session across an owner pause, review queue,
+offline period or usage reset merely to improve coverage.
 
 While waiting for review, you may work on another separately accepted, non-overlapping
 package within the handbook's capacity limit. Check the inbox after pushing, when
@@ -70,6 +77,22 @@ the optional platform scheduler under docs/contributors/worker-inbox/. Installin
 background watcher requires the machine owner's approval. A watcher only reports a
 changed GitHub instruction; it does not authorize work, wake this agent, or execute the
 instruction. Always verify the controller record in the inbox before acting.
+If this session was started by an owner-approved agent scheduler, perform the whole
+read/claim-or-correct/build/check/submit cycle rather than ending after the inbox check.
+After a submission, inspect other candidates within capacity. After a refusal, report
+the exact blocker on GitHub and inspect independent candidates. Do not retry an
+unchanged refusal. Host sleep, missing login and exhausted provider access must remain
+visible interruptions; a notification watcher alone cannot resolve them.
+
+Follow docs/DAILY_BUILD_ACTIVITY.md for measurement. Keep bounded timestamped intervals
+for building, testing, reviewing, managing, idle, blocked and offline; missing history
+is unknown. Record the actual model/effort or unknown, and split when it changes. Stop
+active timing before a wait. Batch new intervals into normal progress, blocker and
+handoff comments (at least every two hours during a long active session), not extra
+30-minute heartbeat comments. Report declared availability only when known, and report
+exact token counts only when exposed by the provider. Never infer time between polls.
+Timing reports neither grant authority nor add a submission gate. Name the concrete
+reason for idle/blocked time so the lead can fix the right bottleneck on GitHub.
 
 Return a short status containing: current assignment and state, exact commit, outcome
 completed, checks and independent-review result, unresolved material blocker, and the

@@ -13,12 +13,27 @@ review, correct, merge, or hand off.
 1. Check for a correction or other explicit maintainer action:
 
    ```sh
-   node scripts/public-worker-inbox.mjs --worker-id YOUR-STABLE-WORKER-ID
+   node scripts/public-worker-inbox.mjs --worker-id YOUR-STABLE-WORKER-ID --token-from-gh
    ```
 
 2. Read accepted claims, correction handoffs, revocations, and conflicts shown there.
    Continue only a controller-accepted assignment with consistent current state. A
    conflict needs maintainer reconciliation; an empty inbox is not permission to start.
+
+   The command also lists `ready-candidate` offers, including platform and difficulty,
+   and `queue-blocked` offers whose packet or labels need repair. A candidate is not
+   an assignment: read it and request a claim if it fits. The controller still checks
+   ownership, capacity, dependencies and overlapping paths. An attention record applies
+   to its named issue; do not silently treat an unrelated queue problem as a global stop.
+   Use `--assignments-only` only when deliberately inspecting existing ownership.
+   `handoff-required` means the PR was recorded through `CLAIM SUBMIT` but its review
+   transition is unfinished. Post the displayed `HANDOFF submit` command on the issue;
+   do not start another implementation pass or wait for a review that has not been routed.
+
+   `--token-from-gh` uses the existing GitHub CLI login only in memory. It does not
+   print or save the token. Without it or `GITHUB_TOKEN`, public GitHub's low anonymous
+   request limit can interrupt a complete history read; that failure is not an empty
+   inbox and must not clear a previously observed assignment.
 3. If neither applies, choose a [ready assignment](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aready)
    matching your skills and operating system.
 4. Post this exact request on that issue:
@@ -47,6 +62,19 @@ the assignment deliberately, and publish the old-to-new issue mapping on Start H
 The worker ID routes work to one worker even when several workers share a GitHub account.
 Keep it stable and do not use a shared account name as the ID. A worker ID is a declared
 identifier, not authentication: another user of that account can repeat it.
+
+### When no work appears to fit
+
+Before saying there is no work, distinguish: no Ready issues; Ready work with a broken
+packet; a platform/skill/effect mismatch; your implementation capacity is occupied;
+or a failed GitHub read. These need different responses. In your existing issue or
+[Start Here](https://github.com/AgenticBotSitter/agent-control-room/issues/12), report
+the candidate issue numbers, the precise reason each cannot be taken, your stable
+worker ID and broad platform/skills. Report once per changed situation. The maintainer
+repairs assignments or dependencies on GitHub; the owner is not the message courier.
+
+The [continuous build operation](docs/CONTINUOUS_BUILD_OPERATION.md) defines the
+maintainer's response loop and the evidence needed before calling it unattended.
 
 If the trusted controller changes the reservation comment to `CLAIM REVOKED — STOP`,
 stop immediately. That record removes permission to start or continue, even if a local
@@ -322,11 +350,25 @@ GitHub cycle-time medians (claim to first PR, submission to first decision,
 changes-required to resubmission, claim to merge) and current waiting time by owner.
 Waiting time is wall-clock time, never active model time.
 
+Add `Worker-Started-At` and `Worker-Ended-At` when they tightly bound active work.
+Stop the interval before waiting; if separated work periods cannot be represented
+honestly, use `unknown` rather than one broad interval. Claims, open pull requests and
+watchers never count as active work. The daily coverage and bottleneck rules are in
+[`docs/PUBLIC_BUILD_FLOW_MEASUREMENT.md`](docs/PUBLIC_BUILD_FLOW_MEASUREMENT.md).
+
 Full worker/reviewer/lead cost comparison lives in the contribution-metrics report:
+
+For daily per-worker work/idle/blocked/unknown percentages and the two-hour improvement
+loop, follow [Daily build activity](docs/DAILY_BUILD_ACTIVITY.md). Include bounded
+activity batches in normal progress/handoff updates, with the actual model and effort.
+This is reporting, not a new claim or acceptance gate; missing telemetry is unknown,
+never grounds to reject useful code. The lead records its own direct-build, review and
+coordination time under the same rules.
 
 ```sh
 pnpm model:costs
 pnpm model:costs -- --json
+pnpm flow:report
 ```
 
 Each cost phase is one `acr-contribution-metrics:v1` record. Worker costs come from
@@ -378,6 +420,7 @@ or the latest pending journal comment ID.
 | --- | --- | --- |
 | `submit` | Accepted worker actor | First submission from Working; `previous: 0` |
 | `changes` | Separately configured maintainer | Return one consolidated material correction list |
+| `adopt-changes` | Separately configured maintainer | One-time migration of a matching legacy correction into a trusted record |
 | `acknowledge` | Accepted worker actor | Acknowledge receiving the correction handoff |
 | `resubmit` | Accepted worker actor | Submit the corrected exact head for re-review |
 | `accept` | Separately configured maintainer | Send the reviewed exact head to integration |
@@ -396,7 +439,20 @@ records move to Paused, while the earlier pending evidence remains preserved. Co
 labels, records, stale heads, or stale `previous` references require reconciliation.
 
 First adoption requires an accepted Working claim. Existing in-flight legacy handoffs
-remain manual; this is not a force migration of their ownership or state. The controller
+remain manual until deliberately reconciled; this is not a force migration of their
+ownership or state. A maintainer may use `HANDOFF adopt-changes` only when an open
+pull request matches the accepted claim, the issue already has exactly
+`status:changes-required` plus `action:worker`, a matching older advisory correction
+exists, no controller handoff exists yet, `previous` is zero, and the command includes
+the complete current correction instructions after a blank line. The controller copies
+those instructions into its trusted record and moves the pull request to the same state.
+This one migration command has an extra `claim-worker-id:` line directly after
+`worker-id:`. `claim-worker-id` is the stable ID on the original accepted claim;
+`worker-id` is the stable ID that must receive and complete the correction now. They may
+match. When an agent has changed its stable ID, this is the only controller transition
+that can deliberately transfer a stranded legacy correction to the current ID. Later
+acknowledgment and resubmission commands use only the current `worker-id`.
+The controller
 does not automatically release paths, merge pull requests, or stop a worker process.
 `HANDOFF stop` also works before first submission when a matching pull request exists:
 use `previous: 0` and its current head. A claim with no pull request still needs a manual
@@ -559,6 +615,39 @@ verifies the smallest meaningful combined behavior, changes the issue to `status
 and closes it. A green
 pull request, review comment, partial merge, or demo does not by itself complete a whole
 feature or release.
+
+### Lead-authored work uses the same safety gate
+
+A lead, maintainer, or integrator does not waive independent review by writing a repair
+or integration change directly. Before merging lead-authored work:
+
+1. The author reviews the exact intended diff, its dependency assumptions and the
+   relevant failure paths, then runs the focused checks needed for that risk.
+2. A separate fresh-context reviewer who did not author the changed files inspects the
+   exact commit. Shared persistence, execution, authorization, recovery and release
+   changes receive focused boundary review; ordinary documentation receives a
+   proportionate check.
+3. The pull request records the reviewer's declared identity and model, exact reviewed
+   commit, verdict, material findings and checks actually performed. The recorded
+   commit must still be the pull request's current head. The review is not complete
+   without this visible recorded evidence.
+4. The accepted review is followed by the same visible integration handoff used by
+   other work: the controller records `accept` plus `action:integrator`, or the
+   maintainer records the equivalent current-head acceptance through the handbook's
+   explicit manual fallback. A review comment alone is not merge authority.
+5. Every required GitHub check must finish successfully. A queued, running, skipped,
+   canceled or missing required check is not a pass, and auto-merge must not substitute
+   for observing the final results.
+6. Material repair after that review requires another independent review of the exact
+   repaired commit and its affected behavior.
+7. After merge, the integrator verifies that public `main` contains the expected merge
+   and runs or observes the smallest meaningful combined check before declaring the
+   work complete.
+
+Independent review is a defect-finding gate, not ceremonial approval. Its material
+findings are corrected or explicitly resolved on the public record; the author cannot
+silently overrule them. If an independent reviewer is unavailable, the work waits
+rather than being represented as accepted.
 
 Deployment is a separate decision. Public pull requests never run with maintainer
 credentials or on private agent hosts. Production startup, private ingress, database

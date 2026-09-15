@@ -14,6 +14,14 @@ Check the worker inbox first. Continue received corrections on the existing bran
 do not make a replacement issue or claim. Attention means the records need reconciling,
 not that there is no work. Stop requests preserve ownership until stopping is acknowledged.
 A worker ID organizes shared-account work; it is not an authenticated identity.
+The inbox command also lists Ready candidates; neither a candidate nor an empty
+assignment list is a claim. Check platform, skills, permitted effects and capacity.
+If nothing fits, report issue numbers and concrete reasons on GitHub using the
+handbook's no-fit procedure. A scheduled agent session should execute the complete
+work cycle, not merely report that it checked the inbox.
+If your stable worker ID changed, do not silently resume work claimed under the old ID;
+the maintainer must use the controller's legacy-correction adoption transfer so the
+current ID receives the correction visibly.
 
 Read the issue's outcome, platform, pinned base, owned paths, dependencies and checks.
 Use an isolated checkout. Reuse selected upstream components and preserve notices.
@@ -61,7 +69,11 @@ Keep a reservation with `CLAIM RENEW` (same login and worker, unchanged packet,
 unexpired lease; the renewal preserves the immutable accepted base). Record
 submission readiness with a four-line `CLAIM SUBMIT` naming the open pull
 request number and its exact head SHA. The pull request reports exactly one
-The pull request reports exactly one `Worker-Model:` line and one `Worker-Effort:` line, plus any known optional `Worker-Active-Minutes:` / `Worker-Input-Tokens:` / `Worker-Output-Tokens:` / `Worker-Provider-Calls:` / `Worker-Interruptions:` lines (unknown stays `unknown`, never guessed). The controller verifies the PR is open
+`Worker-Model:` line and one `Worker-Effort:` line, plus any known optional
+`Worker-Active-Minutes:` / `Worker-Input-Tokens:` / `Worker-Output-Tokens:` /
+`Worker-Provider-Calls:` / `Worker-Interruptions:` lines (unknown stays `unknown`,
+never guessed). Add `Worker-Started-At:` and `Worker-Ended-At:` only when they tightly
+bound active implementation; stop timing before any wait or offline period. The controller verifies the PR is open
 against `main` in the same repository, authored by your login, references the
 issue exactly with one `Control-Room-Issue:` line, the packet is unchanged
 and the lease is unexpired, the issue is still working and the pull request

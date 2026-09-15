@@ -8,7 +8,7 @@ export function createInboxPoller({ read = readWorkerInbox, emit = console.log, 
   let previous;
   return async () => {
     let result;
-    try { result = { ok: true, actions: await read({ workerId, repository, token }) }; }
+    try { result = { ok: true, actions: await read({ workerId, repository, token, includeReady: true }) }; }
     catch { result = { ok: false, message: 'GitHub inbox unavailable. Existing assignments remain unresolved; retry on the next poll.' }; }
     const digest = createHash('sha256').update(JSON.stringify(result)).digest('hex');
     if (digest !== previous) {

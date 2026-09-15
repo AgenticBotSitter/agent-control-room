@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { parsePhaseRecord, parsePhaseRecords, compareDelegatedToDirect, readContributionMetrics,
-  renderContributionMetrics, ROLES, COMPARABLE_GROUP_MINIMUM } from "../scripts/public-contribution-metrics.mjs";
+  parseTrustedPhaseRecords, renderContributionMetrics, summarizeAcceptedOutcomes,
+  summarizeCurrentBottlenecks, summarizeWorkCoverage,
+  ROLES, COMPARABLE_GROUP_MINIMUM } from "../scripts/public-contribution-metrics.mjs";
 
 const marker = payload => `Lead review phase.\n\n<!-- acr-contribution-metrics:v1 ${JSON.stringify(payload)} -->`;
 const phase = (role, overrides = {}) => ({ schema: "acr-contribution-metrics:v1", role, model: "Lead/Planner",
@@ -36,6 +38,23 @@ test("phase record batches count malformed markers without coercing them", () =>
   ]);
   assert.equal(records.length, 1);
   assert.equal(malformed, 2);
+});
+
+test("operational phase timing requires a trusted, bound, non-duplicate record", () => {
+  const located = (body, login = "AgentControlRoomMaintainer", location = 10) => ({ body,
+    user: { login }, issue_url: `https://api.github.com/repos/o/r/issues/${location}` });
+  const valid = located(marker(phase("lead-review")));
+  const result = parseTrustedPhaseRecords([
+    valid,
+    structuredClone(valid),
+    located(marker(phase("lead-review", { startedAt: "2026-09-01T11:00:00.000Z",
+      endedAt: "2026-09-01T11:20:00.000Z" })), "public-outsider"),
+    located(marker(phase("lead-review", { issue: 99 }))),
+  ], { pullIssue: new Map([[11, 10]]), knownIssues: new Set([10]) });
+  assert.equal(result.records.length, 1);
+  assert.equal(result.duplicate, 1);
+  assert.equal(result.untrusted, 2);
+  assert.equal(result.malformed, 0);
 });
 
 const claim = ms => ({ body: `CLAIM ACCEPTED — x.\n<!-- agent-control-room-claim:v3 issue=10 request=1 actor=a worker=w packet=p accepted=${ms} -->`,
@@ -135,8 +154,126 @@ test("open, interrupted and truncated histories render honestly", async () => {
   assert.match(renderContributionMetrics(bad), /malformed/i);
 });
 
+test("a claim-bound worker with missing timestamps is reported as unmeasured, not zero", async () => {
+  const accepted = { body: `CLAIM ACCEPTED — x.\n<!-- agent-control-room-claim:v3 issue=10 request=1 actor=worker-login worker=worker-01 packet=${"a".repeat(64)} accepted=${T0} -->`,
+    user: { login: "github-actions[bot]", type: "Bot" }, created_at: new Date(T0).toISOString(),
+    issue_url: "https://api.github.com/repos/o/r/issues/10" };
+  const pull = { number: 11, user: { login: "worker-login" }, body: workerBody(), state: "open", merged_at: null,
+    created_at: new Date(T0 + 60_000).toISOString() };
+  const fetchImpl = async url => ({ ok: true, status: 200, async json() {
+    if (url.includes("/pulls?")) return [pull];
+    if (url.includes("/issues/comments?")) return [accepted];
+    return [{ number: 10, state: "open", updated_at: new Date(T0).toISOString(),
+      labels: labels.labels.map(name => ({ name })) }];
+  } });
+  const report = await readContributionMetrics({ repository: "o/r", fetchImpl, nowMs: T0 + 3_600_000 });
+  assert.equal(report.flowCoverage.timingUnknown, 1);
+  assert.equal(report.flowCoverage.reportedCoverageMinutes, 0);
+  assert.equal(report.excludedWorkerRecords, 0);
+});
+
+test("worker timing cannot backfill coverage from before the accepted claim", async () => {
+  const acceptedAt = T0 + 59 * 60_000;
+  const accepted = { body: `CLAIM ACCEPTED — x.\n<!-- agent-control-room-claim:v3 issue=10 request=1 actor=worker-login worker=worker-01 packet=${"a".repeat(64)} accepted=${acceptedAt} -->`,
+    user: { login: "github-actions[bot]", type: "Bot" }, created_at: new Date(acceptedAt).toISOString(),
+    issue_url: "https://api.github.com/repos/o/r/issues/10" };
+  const pull = { number: 11, user: { login: "worker-login" },
+    body: `${workerBody()}\nWorker-Started-At: ${new Date(T0).toISOString()}\nWorker-Ended-At: ${new Date(T0 + 60 * 60_000).toISOString()}`,
+    state: "open", merged_at: null, created_at: new Date(acceptedAt).toISOString() };
+  const fetchImpl = async url => ({ ok: true, status: 200, async json() {
+    if (url.includes("/pulls?")) return [pull];
+    if (url.includes("/issues/comments?")) return [accepted];
+    return [{ number: 10, state: "open", updated_at: new Date(acceptedAt).toISOString(),
+      labels: labels.labels.map(name => ({ name })) }];
+  } });
+  const report = await readContributionMetrics({ repository: "o/r", fetchImpl,
+    nowMs: T0 + 61 * 60_000, windowHours: 2 });
+  assert.equal(report.flowCoverage.reportedCoverageMinutes, 0);
+  assert.equal(report.excludedWorkerRecords, 1);
+});
+
 test("interrupted phases keep their flag and counts", () => {
   const record = parsePhaseRecord(marker(phase("worker", { model: "Worker/Sol", interrupted: true, interruptions: 2 })));
   assert.equal(record.interrupted, true);
   assert.equal(record.interruptions, 2);
+});
+
+test("flow coverage merges overlapping tight work sessions and exposes every gap", () => {
+  const nowMs = Date.parse("2026-09-15T12:00:00.000Z");
+  const record = (role, startedAt, endedAt, activeMinutes) => phase(role, { startedAt, endedAt, activeMinutes });
+  const report = summarizeWorkCoverage([
+    record("worker", "2026-09-15T10:00:00.000Z", "2026-09-15T11:00:00.000Z", 60),
+    record("reviewer", "2026-09-15T10:30:00.000Z", "2026-09-15T11:30:00.000Z", 60),
+  ], { nowMs, windowHours: 3 });
+  assert.equal(report.reportedSessions, 2);
+  assert.equal(report.reportedCoverageMinutes, 90);
+  assert.equal(report.reportedCoveragePercent, 0.5);
+  assert.equal(report.longestUnreportedGapMinutes, 60);
+  assert.equal(report.activeAgentMinutes, 120);
+  assert.equal(report.timingUnknown, 0);
+  assert.equal(report.timingLoose, 0);
+  assert.equal(report.timingInvalid, 0);
+});
+
+test("loose, impossible, missing and boundary timing cannot inflate flow coverage", () => {
+  const nowMs = Date.parse("2026-09-15T12:00:00.000Z");
+  const report = summarizeWorkCoverage([
+    phase("worker", { startedAt: "2026-09-15T09:00:00.000Z", endedAt: "2026-09-15T11:00:00.000Z", activeMinutes: 5 }),
+    phase("reviewer", { startedAt: "2026-09-15T10:00:00.000Z", endedAt: "2026-09-15T10:30:00.000Z", activeMinutes: 40 }),
+    phase("lead-review", { startedAt: null, endedAt: null, activeMinutes: null }),
+    phase("lead-integration", { startedAt: "2026-09-15T08:30:00.000Z", endedAt: "2026-09-15T09:30:00.000Z", activeMinutes: 60 }),
+  ], { nowMs, windowHours: 3 });
+  assert.equal(report.reportedCoverageMinutes, 30);
+  assert.equal(report.activeAgentMinutes, 5);
+  assert.equal(report.timingLoose, 1);
+  assert.equal(report.timingInvalid, 1);
+  assert.equal(report.timingUnknown, 1);
+  assert.equal(report.boundaryPartial, 1);
+});
+
+test("current bottlenecks name the responsible area and use state-specific alarms", () => {
+  const nowMs = Date.parse("2026-09-15T12:00:00.000Z");
+  const issue = (number, status, minutes, extra = []) => ({ number, state: "open", title: `Issue ${number}`,
+    html_url: `https://example.test/issues/${number}`,
+    updated_at: new Date(nowMs - minutes * 60_000).toISOString(),
+    labels: [{ name: `status:${status}` }, ...extra.map(name => ({ name }))] });
+  const rows = summarizeCurrentBottlenecks([
+    issue(1, "ready", 61), issue(2, "working", 200), issue(3, "working", 241),
+    issue(4, "waiting", 1_500), issue(5, "waiting", 100),
+    issue(6, "working", 61, ["action:integrator"]),
+    { ...issue(7, "ready", 500), pull_request: {} },
+  ], nowMs);
+  assert.deepEqual(rows.filter(row => row.overdue).map(row => [row.issue, row.owner]),
+    [[4, "dependency"], [3, "worker"], [1, "queue-pickup"], [6, "integrator"]]);
+  assert.equal(rows.find(row => row.issue === 2).overdue, false);
+  assert.equal(rows.find(row => row.issue === 5).thresholdMinutes, 1_440);
+});
+
+test("bottleneck rendering cannot echo a credential-shaped issue title", () => {
+  const nowMs = Date.parse("2026-09-15T12:00:00.000Z");
+  const rows = summarizeCurrentBottlenecks([{ number: 9, state: "open",
+    title: `Do not print ghp_${"a".repeat(30)}`,
+    html_url: "https://example.test/issues/9", updated_at: "2026-09-15T10:00:00.000Z",
+    labels: [{ name: "status:ready" }] }], nowMs);
+  assert.equal(rows[0].title, "Do not print [redacted]");
+});
+
+test("daily and weekly delivery counts unique accepted substantial outcomes only", () => {
+  const nowMs = Date.parse("2026-09-15T12:00:00.000Z");
+  const pulls = [
+    { body: "Control-Room-Issue: 1", merged: true, merged_at: "2026-09-15T10:00:00.000Z" },
+    { body: "Control-Room-Issue: 1", merged: true, merged_at: "2026-09-15T11:00:00.000Z" },
+    { body: "Control-Room-Issue: 2", merged: true, merged_at: "2026-09-12T10:00:00.000Z" },
+    { body: "Control-Room-Issue: 3", merged: true, merged_at: "2026-09-15T11:00:00.000Z" },
+    { body: "Control-Room-Issue: 4", merged: false, merged_at: null },
+  ];
+  const issues = new Map([
+    [1, { state: "closed", labels: ["status:done", "size:feature-package"] }],
+    [2, { state: "closed", labels: ["status:done", "size:integration-package"] }],
+    [3, { state: "closed", labels: ["status:done"] }],
+  ]);
+  assert.deepEqual(summarizeAcceptedOutcomes(pulls, issues, nowMs), {
+    accepted24h: 1, accepted7d: 2, mergedPulls7d: 4, classificationUnknown: 1,
+    note: "Counts unique closed, status:done issues with a substantial package-size label; commits and unclassified pull requests do not count."
+  });
 });

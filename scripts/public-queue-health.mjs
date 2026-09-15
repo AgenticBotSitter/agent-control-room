@@ -104,6 +104,15 @@ export function parseClaimMarker(body) {
 /** The issue a submitted pull request declares it delivers, if any. */
 export function declaredSubmissionIssue(body, window = PR_DECLARATION_WINDOW) {
   if (typeof body !== "string") return undefined;
+  const normalized = body.replace(/\r\n/g, "\n");
+  const bindings = [...normalized.matchAll(/^Control-Room-Issue: ([1-9][0-9]*)$/gm)];
+  // Match the handoff controller's single canonical binding across the whole body.
+  // Do not fall back to prose when a malformed or duplicate canonical field exists.
+  if (/^Control-Room-Issue:/m.test(normalized)) {
+    if (bindings.length !== 1 || (normalized.match(/^Control-Room-Issue:/gm) ?? []).length !== 1) return undefined;
+    const issue = Number(bindings[0][1]);
+    return Number.isSafeInteger(issue) ? issue : undefined;
+  }
   const header = body.slice(0, window);
   for (const pattern of PR_DECLARATION) {
     const match = pattern.exec(header);
@@ -150,10 +159,16 @@ async function pages(fetchImpl, url, token, maxPages) {
 async function readDeclaredSubmissions({ fetchImpl, root, token, maxPages = DEFAULT_MAX_PULL_PAGES }) {
   const list = await pages(fetchImpl, `${root}/pulls?state=all&sort=created&direction=desc`, token, maxPages);
   const byIssue = new Map();
+  const bindingProblems = [];
   for (const pull of list.values) {
     if (!Number.isSafeInteger(pull?.number)) continue;
     const issue = declaredSubmissionIssue(pull.body);
-    if (issue === undefined) continue;
+    if (issue === undefined) {
+      if (pull.state === "open") bindingProblems.push({ pr: pull.number,
+        url: typeof pull.html_url === "string" ? pull.html_url : "",
+        reason: "submission_issue_binding_missing_or_invalid" });
+      continue;
+    }
     const existing = byIssue.get(issue) ?? [];
     existing.push(Object.freeze({
       number: pull.number,
@@ -163,7 +178,7 @@ async function readDeclaredSubmissions({ fetchImpl, root, token, maxPages = DEFA
     }));
     byIssue.set(issue, existing);
   }
-  return { byIssue, truncated: list.truncated };
+  return { byIssue, truncated: list.truncated, bindingProblems };
 }
 
 /**
@@ -393,6 +408,7 @@ export async function readQueueHealth({
     oldestReview: oldest(reviewRecords),
     oldestCorrection: oldest(correctionRecords),
     anomalies: Object.freeze(anomalies.sort((a, b) => a.issue - b.issue)),
+    submissionBindingProblems: Object.freeze(submissions?.bindingProblems ?? []),
     warnings: Object.freeze(warnings),
     uncertainty: Object.freeze({
       truncated,
@@ -438,6 +454,8 @@ export function renderQueueHealth(report) {
     lines.push(`    ${anomaly.url}`);
   }
   lines.push("", "Links");
+  for (const problem of report.submissionBindingProblems ?? [])
+    lines.push(`Submission needs maintainer reconciliation: PR #${problem.pr} ${problem.reason} ${problem.url}`);
   for (const status of STATUSES) lines.push(`  ${status}: ${report.links[status]}`);
   return lines.join("\n");
 }

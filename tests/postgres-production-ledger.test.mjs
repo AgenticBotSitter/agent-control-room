@@ -17,8 +17,28 @@ const ROOT = new URL("..", import.meta.url).pathname;
 
 test("committed ledger matches the working tree", async () => {
   const result = await verifyMigrationLedger({ rootDir: ROOT });
-  assert.equal(result.files, 79);
+  assert.equal(result.files, 80);
   assert.match(result.digest, /^[a-f0-9]{64}$/);
+});
+
+test("durable result reservations use a separate constrained table and least-privilege grants", async () => {
+  const migration = await readFile(join(ROOT, "db/migrations/0077_durable_result_write_reservations.sql"), "utf8");
+  assert.match(migration, /CREATE TABLE control_durable_result_write_reservations/);
+  assert.match(migration, /reservation->>'schema'='control-room\.durable-result-write-reservation\/v1'/);
+  assert.doesNotMatch(migration, /reservation->>'schema'='control-room\.native-result-write-reservation\/v1'/);
+  assert.match(migration, /PRIMARY KEY \(tenant_id,run_id\)/);
+  assert.match(migration, /UNIQUE \(tenant_id,artifact_id\)/);
+  assert.match(migration, /UNIQUE \(tenant_id,id,project_id,job_id,attempt_id\)/);
+  assert.match(migration, /FOREIGN KEY \(tenant_id,run_id,project_id,job_id,attempt_id\)/);
+  assert.match(migration, /jsonb_typeof\(reservation\)='object'/);
+  assert.match(migration, /contractDigest'=contract_digest\) IS TRUE/);
+  assert.match(migration, /guard_durable_result_write_reservation_update/);
+  assert.match(migration, /reject_append_only_mutation/);
+
+  const evidence = await readFile(join(ROOT, "db/roles/native_evidence_roles.sql"), "utf8");
+  assert.match(evidence, /GRANT UPDATE \(state,contract_digest,reservation,auth_tag,updated_at\)\s+ON control_durable_result_write_reservations TO control_room_native_evidence/);
+  const web = await readFile(join(ROOT, "db/roles/private_web_roles.sql"), "utf8");
+  assert.match(web, /GRANT SELECT ON control_durable_result_write_reservations TO control_room_private_web/);
 });
 
 test("ledger refuses altered, missing, extra and reordered files", async t => {
@@ -54,7 +74,7 @@ test("ledger refuses altered, missing, extra and reordered files", async t => {
 test("operator tools are inert without explicit targets", async () => {
   const planned = await applyMigrations({});
   assert.equal(planned.planned, true);
-  assert.equal(planned.files, 79);
+  assert.equal(planned.files, 80);
   const backup = await backupDatabase({});
   assert.equal(backup.planned, true);
   const restore = await restoreDatabase({});
@@ -129,7 +149,7 @@ test("migration CLI refuses the removed single-target form and partial pairs", a
   // No flags: effect-free plan, exit 0, no connection attempted.
   const plan = JSON.parse((await cli([])).stdout);
   assert.equal(plan.planned, true);
-  assert.equal(plan.files, 79);
+  assert.equal(plan.files, 80);
   // The documented single --target form never worked: loud refusal, non-zero exit.
   await assert.rejects(cli(["--target", "host=/none dbname=x user=y"]), /migration_removed_flag/);
   // Partial pairs are refused before any connection.

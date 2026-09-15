@@ -56,6 +56,18 @@ The lead owns final acceptance and merging; independent reviewers do not approve
 own implementation. Merge accepted work in dependency order and verify the combined
 candidate before calling it a release.
 
+Lead-authored repairs and integrations follow the same gate. The author first audits
+the exact diff and affected dependency boundary. A separate fresh-context reviewer who
+did not author the changed files then reviews the exact commit. Record the reviewer's
+declared identity and model, exact commit, verdict, material findings and performed
+checks on the pull request, and verify that commit is still its current head. Require
+the normal visible controller or manual current-head acceptance handoff to the
+integrator; a review comment is not merge authority. Do not merge while any required
+check is queued, running, skipped, canceled, missing or failed. A material repair
+requires another review of the repaired commit. After merge, verify the expected commit
+is on public `main` and check the smallest meaningful combined behavior before recording
+completion.
+
 ## Return the action explicitly
 
 Return one consolidated correction or acceptance record for the exact submitted commit.
@@ -64,3 +76,11 @@ manual fallback. Verify the next actor is visible in the inbox; a conflicting re
 is unfinished coordination, not an idle worker. A shared-login review comment records
 the independent checker's evidence but does not prove a separate GitHub identity or
 bypass required approval protections. Do not repeat obsolete action-marker rules here.
+
+For an already-submitted legacy correction stranded between an accepted claim and an
+advisory Changes-required marker, use the handbook's maintainer-only `adopt-changes`
+transition. It requires the complete correction instructions and exact current head;
+never treat an advisory marker alone as permission for a worker to resume. The command's
+`claim-worker-id` names the original accepted claim and `worker-id` names the current
+recipient, permitting one deliberate identity migration instead of leaving old work
+invisible.

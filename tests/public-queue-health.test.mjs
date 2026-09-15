@@ -31,6 +31,14 @@ const claimMarker = (number, worker) =>
   `CLAIM ACCEPTED — reserved\n<!-- agent-control-room-claim:v2 issue=${number} request=1 actor=maintainer worker=${worker} -->\n<!-- agent-control-room-claim:v3 issue=${number} request=1 actor=maintainer worker=${worker} packet=${"a".repeat(64)} accepted=1700000000000 -->`;
 const ready = (number, updated) => issue(number, ["status:ready", "help wanted"], updated);
 
+test("malformed submission bindings are visible instead of disappearing from the report", async () => {
+  const api = fakeFetch({ issues: [issue(214, ["status:working"])],
+    pulls: [pull(244, 214, { body: "Control-Room-Issue: 214\nControl-Room-Issue: 214" })] });
+  const report = await readQueueHealth({ fetchImpl: api.fetchImpl });
+  assert.equal(report.submissionBindingProblems[0].pr, 244);
+  assert.match(renderQueueHealth(report), /PR #244 submission_issue_binding_missing_or_invalid/);
+});
+
 function fakeFetch({ issues = [], comments = {}, pulls = [] } = {}) {
   const calls = [];
   const ok = value => ({ ok: true, status: 200, async json() { return structuredClone(value); } });
@@ -246,6 +254,10 @@ test("a shared pull request that merely mentions an issue is not that issue's su
 
 test("both accepted declaration forms are recognised and prose is not", () => {
   assert.equal(declaredSubmissionIssue("Outcome / issue: #170 — queue self-service"), 170);
+  assert.equal(declaredSubmissionIssue("Control-Room-Issue: 65\n\nIssue: #1"), 65);
+  assert.equal(declaredSubmissionIssue(`${"x".repeat(2500)}\nControl-Room-Issue: 65\r\n`), 65);
+  assert.equal(declaredSubmissionIssue("Control-Room-Issue: 65\nControl-Room-Issue: 65"), undefined);
+  assert.equal(declaredSubmissionIssue("Control-Room-Issue: bad\nIssue: #65"), undefined);
   assert.equal(declaredSubmissionIssue("Issue:     #166"), 166);
   assert.equal(declaredSubmissionIssue("Issue and completed outcome: #125"), 125);
   assert.equal(declaredSubmissionIssue("Closes #148."), 148);

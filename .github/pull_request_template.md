@@ -4,6 +4,8 @@ Control-Room-Issue: NUMBER
 Worker-Model: PROVIDER/MODEL
 Worker-Effort: none|minimal|low|medium|high|xhigh|max|ultra|unknown
 Worker-Active-Minutes: MINUTES_EXCLUDING_WAITING (optional, or unknown)
+Worker-Started-At: ISO_8601_ACTIVE_WORK_START (optional, or unknown)
+Worker-Ended-At: ISO_8601_ACTIVE_WORK_END (optional, or unknown)
 Worker-Input-Tokens: COUNT (optional, exact provider-reported count or unknown)
 Worker-Output-Tokens: COUNT (optional, exact provider-reported count or unknown)
 Worker-Provider-Calls: COUNT (optional, exact count or unknown)

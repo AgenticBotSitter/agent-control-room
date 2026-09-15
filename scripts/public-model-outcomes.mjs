@@ -45,6 +45,12 @@ function parseCount(raw) {
   return Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 }
 
+function parseInstant(raw) {
+  if (raw === undefined || raw.trim().toLowerCase() === "unknown") return undefined;
+  const value = Date.parse(raw.trim());
+  return Number.isFinite(value) && value >= 0 ? new Date(value).toISOString() : undefined;
+}
+
 export function parseReportedMetrics(body) {
   return {
     activeMinutes: parseMinutes(exactField(body, "Worker-Active-Minutes")),
@@ -52,6 +58,8 @@ export function parseReportedMetrics(body) {
     outputTokens: parseCount(exactField(body, "Worker-Output-Tokens")),
     providerCalls: parseCount(exactField(body, "Worker-Provider-Calls")),
     interruptions: parseCount(exactField(body, "Worker-Interruptions")),
+    startedAt: parseInstant(exactField(body, "Worker-Started-At")),
+    endedAt: parseInstant(exactField(body, "Worker-Ended-At")),
   };
 }
 

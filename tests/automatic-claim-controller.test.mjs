@@ -6,7 +6,7 @@ import { formatClaimResult, isValidScope, packetHash, packetsOverlap, parseClaim
 const repository = "AgenticBotSitter/agent-control-room";
 const sha = "a".repeat(40);
 const packetBody = (overrides = {}) => {
-  const packet = { target: "main", base: "b".repeat(40), writeScopes: ["scripts/owned-scope.mjs"],
+  const packet = { target: "main", base: sha, writeScopes: ["scripts/owned-scope.mjs"],
     dependencies: [], checks: ["node --test tests/owned-scope.test.mjs"], risk: "boundary", effects: "none",
     leaseHours: 72, ...overrides };
   return `Work packet.\n\n<!-- acr-public-work:v1 ${JSON.stringify(packet)}\n-->`;
@@ -337,6 +337,15 @@ test("malformed packets are refused without any state change", () => {
   assert.ok(parseClaimPacket(packetBody({ risk: "standard" })));
   for (const body of ["no packet here",
     "<!-- acr-public-work:v1 {oops} -->",
+    `${packetBody()}\n${packetBody({ writeScopes: ["docs/conflict/**"] })}`,
+    `${packetBody()}\n<!-- acr-public-work:v1 no-json-here -->`,
+    `<!-- acr-public-work:v1 no-json-here -->\n${packetBody()}`,
+    packetBody().replace('"effects":"none"', '"effects":"network","effects":"none"'),
+    packetBody().replace('"writeScopes":["scripts/owned-scope.mjs"]', '"writeScopes":["secrets/**"],"writeScopes":["scripts/owned-scope.mjs"]'),
+    packetBody().replace(/"base":"[a-f0-9]{40}"/, '"base":"1111111111111111111111111111111111111111","base":"0123456789abcdef0123456789abcdef01234567"'),
+    packetBody().replace('"effects":"none"', '"eff\\u0065cts":"network","effects":"none"'),
+    packetBody().replace('"dependencies":[]', `"dependencies":${"[".repeat(8000)}0${"]".repeat(8000)}`),
+    packetBody({ writeScopez: ["docs/typo/**"] }),
     packetBody({ target: "develop" }),
     packetBody({ base: "short" }),
     packetBody({ writeScopes: [] }),
@@ -540,6 +549,10 @@ test("a request is refused for a bad packet, effectful work, open deps, overlap 
   assert.deepEqual((await runClaimController({ event: lifecycleEvent("CLAIM REQUEST\nworker-id: w:x-01"), repository, api: deps })).reason, "dependencies_incomplete");
   const depsClosed = fakeQueue({ issues: [{ number: 125, packet: { dependencies: [124] } }], closed: [124] });
   assert.equal((await acceptHelper(depsClosed)).status, "accepted");
+  const staleBase = fakeQueue({ issues: [{ number: 125, packet: { base: "c".repeat(40) } }] });
+  assert.deepEqual(await runClaimController({ event: lifecycleEvent("CLAIM REQUEST\nworker-id: w:x-01"), repository, api: staleBase }),
+    { status: "refused", reason: "packet_base_stale" });
+  assert.deepEqual(staleBase.labels(125), ["status:ready"]);
   const overlap = fakeQueue({ issues: [{ number: 125 }, { number: 126, labels: ["status:working"],
     packet: { writeScopes: ["scripts/owned-scope.mjs"] } }] });
   await seedAccepted(overlap, 126, "worker:other-01");
@@ -765,7 +778,7 @@ test("an in-review path lock still blocks an overlapping request", async () => {
  * recoverable mutations, actor-bound expiry PRs, completed dependencies. ---- */
 
 const issue181Packet = () => packetBody({
-  base: "7b10beffd02e75a9fddd2873a0fa9db43fda8bb7",
+  base: sha,
   writeScopes: ["scripts/private-accessibility-browser-acceptance.mjs", "tests/private-accessibility-product.test.mjs",
     "private-app/app/private.css", "private-app/app/home-workspace.tsx", "private-app/app/needs-me/workspace.tsx",
     "private-app/app/settings/workspace.tsx", "private-app/app/connections/workspace.tsx",
@@ -805,10 +818,13 @@ test("claim outcomes make ignored and refused commands unambiguous", () => {
   assert.match(malformed, /NOT APPLIED/);
   assert.match(malformed, /worker-id: YOUR-STABLE-WORKER-ID/);
   assert.match(malformed, /green Actions run means only/);
-  const refused = formatClaimResult({ status: "refused", reason: "legacy_lock_manual", issues: [8, 27] }, "CLAIM REQUEST");
+  const refused = formatClaimResult({ status: "refused", reason: "legacy_lock_manual", issues: [8, 27] },
+    "CLAIM REQUEST\nworker-id: worker:second-01");
   assert.match(refused, /NOT ACCEPTED/);
   assert.match(refused, /legacy_lock_manual/);
   assert.match(refused, /#8, #27/);
+  assert.match(refused, /concerns only this command using worker identity `worker:second-01`/);
+  assert.match(refused, /does not cancel or replace any existing accepted claim/);
   assert.equal(formatClaimResult({ status: "accepted" }, "CLAIM REQUEST"), undefined);
 });
 

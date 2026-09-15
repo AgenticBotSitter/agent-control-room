@@ -30,9 +30,11 @@ test("outcomes count unique corrected heads and keep open work distinct", () => 
 test("worker cost fields stay unknown unless exactly one valid value is reported", () => {
   const full = "Control-Room-Issue: 1\nWorker-Active-Minutes: 12.5\nWorker-Input-Tokens: 100\nWorker-Output-Tokens: 20\nWorker-Provider-Calls: 3\nWorker-Interruptions: 0";
   assert.deepEqual(parseReportedMetrics(full),
-    { activeMinutes: 12.5, inputTokens: 100, outputTokens: 20, providerCalls: 3, interruptions: 0 });
+    { activeMinutes: 12.5, inputTokens: 100, outputTokens: 20, providerCalls: 3, interruptions: 0,
+      startedAt: undefined, endedAt: undefined });
   assert.deepEqual(parseReportedMetrics("Control-Room-Issue: 1"),
-    { activeMinutes: undefined, inputTokens: undefined, outputTokens: undefined, providerCalls: undefined, interruptions: undefined });
+    { activeMinutes: undefined, inputTokens: undefined, outputTokens: undefined, providerCalls: undefined, interruptions: undefined,
+      startedAt: undefined, endedAt: undefined });
   // Duplicated, negative, non-numeric and overflowed values are unknown, never coerced.
   assert.equal(parseReportedMetrics("Worker-Input-Tokens: 1\nWorker-Input-Tokens: 2").inputTokens, undefined);
   assert.equal(parseReportedMetrics("Worker-Input-Tokens: -5").inputTokens, undefined);
@@ -40,6 +42,10 @@ test("worker cost fields stay unknown unless exactly one valid value is reported
   assert.equal(parseReportedMetrics(`Worker-Input-Tokens: ${2 ** 53}`).inputTokens, undefined);
   assert.equal(parseReportedMetrics("Worker-Active-Minutes: soon").activeMinutes, undefined);
   assert.equal(parseReportedMetrics("Worker-Active-Minutes: -1").activeMinutes, undefined);
+  assert.equal(parseReportedMetrics("Worker-Started-At: someday").startedAt, undefined);
+  assert.equal(parseReportedMetrics("Worker-Started-At: unknown").startedAt, undefined);
+  assert.equal(parseReportedMetrics("Worker-Started-At: 2026-09-15T10:00:00Z").startedAt,
+    "2026-09-15T10:00:00.000Z");
   // Medians use known values only; sums never wrap into guessed totals.
   assert.equal(median([3, 1, 2]), 2);
   assert.equal(median([4, 1, 2, 3]), 2.5);
