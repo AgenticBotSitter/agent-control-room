@@ -181,7 +181,7 @@ test("lost final response reconciles the exact accepted comment without duplicat
   assert.equal(api.comments.length, 1); assert.match(api.comments[0].body, /^CLAIM ACCEPTED —/);
 });
 
-test("an exact GitHub-actor and worker pair cannot hold two active issue claims", async () => {
+test("an exact GitHub-actor and worker pair can hold two non-overlapping active issue claims", async () => {
   const lockPacket = parseClaimPacket(packetBody({ writeScopes: ["docs/other/**"] }));
   const other = { number: 77, state: "open", labels: [{ name: "status:working" }],
     body: packetBody({ writeScopes: ["docs/other/**"] }) };
@@ -190,11 +190,7 @@ test("an exact GitHub-actor and worker pair cannot hold two active issue claims"
   const api = fakeApi({ otherWorking: [other], otherComments: { 77: [
     { id: 800, body, user: { login: "github-actions[bot]", type: "Bot" } },
   ] } });
-  assert.deepEqual(await runClaimController({ event: event(), repository, api }),
-    { status: "refused", reason: "actor_worker_pair_active" });
-  assert.equal(api.comments.length, 0);
-  const otherWorker = await runClaimController({ event: event("CLAIM REQUEST\nworker-id: worker:test-02"), repository, api });
-  assert.equal(otherWorker.status, "accepted");
+  assert.equal((await runClaimController({ event: event(), repository, api })).status, "accepted");
 
   const secondApi = fakeApi({ otherWorking: [other], otherComments: { 77: [
     { id: 800, body, user: { login: "github-actions[bot]", type: "Bot" } },
@@ -540,6 +536,60 @@ async function seedAccepted(api, number, worker = "worker:test-01", actor = "sha
     `CLAIM ACCEPTED — \`@${actor}\` using worker identity \`${worker}\`.\n\nOutcome: public issue #${number} as currently defined\n\nBase: \`${sha}\`\n\nTarget: \`main\`\n\nThis reservation grants no repository authority.\n<!-- agent-control-room-claim:v3 issue=${number} request=500 actor=${actor} worker=${worker} packet=${packetHash(parsed)} accepted=${at} -->` });
 }
 
+test("two-active / three-total capacity includes reviews and preserves existing ownership", async () => {
+  const worker = "worker:capacity-01";
+  for (const [states, expected] of [
+    [["working"], "accepted"],
+    [["working", "in-review"], "accepted"],
+    [["in-review", "re-review"], "accepted"],
+    [["working", "working"], "working_limit"],
+    [["in-review", "re-review", "waiting"], "assignment_limit"],
+    [["in-review", "paused", "needs-decision"], "assignment_limit"],
+    [["changes-required"], "corrections_first"],
+  ]) {
+    const held = states.map((state, index) => ({ number: 126 + index,
+      labels: [`status:${state}`], packet: { writeScopes: [`docs/held-${index}/**`] } }));
+    const api = fakeQueue({ issues: [{ number: 125 }, ...held] });
+    for (const issue of held) await seedAccepted(api, issue.number, worker, "shared-account", Date.now());
+    const result = await runClaimController({ event: lifecycleEvent(
+      `CLAIM REQUEST\nworker-id: ${worker}`, 125), repository, api });
+    assert.equal(result.reason ?? result.status, expected, states.join(","));
+    for (const issue of held) assert.deepEqual(api.labels(issue.number), issue.labels,
+      "capacity refuses new work without releasing existing ownership");
+    if (expected !== "accepted") assert.equal(api.comments(125).length, 0);
+  }
+});
+
+test("third simultaneous build is refused after two serialized accepts", async () => {
+  const api = fakeQueue({ issues: [125, 126, 127].map(number => ({ number,
+    packet: { writeScopes: [`docs/work-${number}/**`] } })) });
+  assert.equal((await acceptHelper(api, 125, "worker:parallel-01")).status, "accepted");
+  assert.equal((await acceptHelper(api, 126, "worker:parallel-01")).status, "accepted");
+  const result = await runClaimController({ event: lifecycleEvent(
+    "CLAIM REQUEST\nworker-id: worker:parallel-01", 127), repository, api });
+  assert.deepEqual(result, { status: "refused", reason: "working_limit" });
+  assert.deepEqual(api.labels(127), ["status:ready"]);
+});
+
+test("quiet expiry cannot resurrect an old worker while retained expired reviews still count", async () => {
+  for (const retained of [false, true]) {
+    const worker = "worker:expiry-cap-01";
+    const api = fakeQueue({ issues: [{ number: 125 }, ...[126, 127, 128].map(number => ({
+      number, labels: [retained ? "status:in-review" : "status:working"],
+      packet: { writeScopes: [`docs/expired-${number}/**`] },
+    }))] });
+    for (const number of [126, 127, 128]) {
+      await seedAccepted(api, number, worker, "shared-account", Date.now());
+      await api.request("POST", `/repos/${repository}/issues/${number}/comments`, { body:
+        `CLAIM EXPIRED — reservation ended.\n<!-- agent-control-room-claim:v3 issue=${number} expired=${Date.now()} action=${retained ? "in-review" : "ready"} reason=${retained ? "open_pr" : "quiet"} actor=shared-account worker=${worker} packet=${packetHash(parseClaimPacket(api.body(number)))} -->` });
+      if (!retained) await seedAccepted(api, number, "worker:new-owner-01", "shared-account", Date.now());
+    }
+    const result = await runClaimController({ event: lifecycleEvent(
+      `CLAIM REQUEST\nworker-id: ${worker}`, 125), repository, api });
+    assert.equal(result.reason ?? result.status, retained ? "assignment_limit" : "accepted");
+  }
+});
+
 test("a request is refused for a bad packet, effectful work, open deps, overlap and the working cap", async () => {
   const bad = fakeQueue({ issues: [{ number: 125, body: "no packet" }] });
   assert.deepEqual((await runClaimController({ event: lifecycleEvent("CLAIM REQUEST\nworker-id: w:x-01"), repository, api: bad })).reason, "packet_invalid");
@@ -564,8 +614,7 @@ test("a request is refused for a bad packet, effectful work, open deps, overlap 
   const cap = fakeQueue({ issues: [{ number: 125 }, { number: 126, packet: { writeScopes: ["docs/cap/**"] } }] });
   assert.equal((await acceptHelper(cap, 125, "worker:cap-01")).status, "accepted");
   const second = await runClaimController({ event: lifecycleEvent("CLAIM REQUEST\nworker-id: worker:cap-01", 126), repository, api: cap });
-  assert.equal(second.status, "refused");
-  assert.ok(["actor_worker_pair_active", "working_limit"].includes(second.reason), second.reason);
+  assert.equal(second.status, "accepted");
 });
 
 test("renew extends only the same pair with an unchanged packet", async () => {
@@ -887,7 +936,7 @@ test("submit refuses a pull request owned by another actor", async () => {
   assert.deepEqual(api.labels(125), ["status:working"]);
 });
 
-test("a pair holding two in-review submissions cannot submit a third", async () => {
+test("a pair may submit three retained assignments without trapping the third", async () => {
   const head = "c".repeat(40);
   const now = 1_700_000_100_000;
   const api = fakeQueue({
@@ -906,11 +955,11 @@ test("a pair holding two in-review submissions cannot submit a third", async () 
     `CLAIM SUBMIT\nworker-id: worker:cap-01\npr: ${number - 83}\nsha: ${head}`, number), repository, api, now });
   assert.equal((await submit(125)).status, "submitted");
   assert.equal((await submit(126)).status, "submitted");
-  assert.deepEqual(await submit(127), { status: "refused", reason: "in_review_limit" });
+  assert.equal((await submit(127)).status, "submitted");
   assert.deepEqual(api.labels(127), ["status:working"]);
   // Submissions record readiness only: both submitted issues stay working with
   // their SUBMITTED markers, and the cap counts those outstanding submissions.
-  for (const number of [125, 126]) {
+  for (const number of [125, 126, 127]) {
     assert.deepEqual(api.labels(number), ["status:working"]);
     assert.equal(api.comments(number).filter(comment => comment.body.startsWith("CLAIM SUBMITTED —")).length, 1);
   }
@@ -1154,6 +1203,7 @@ test("a historical release does not hide a later cycle's in-review submission", 
       { number: 125, labels: ["status:working"], packet: { writeScopes: ["docs/s1/**"] } },
       { number: 126, labels: ["status:in-review"], packet: { writeScopes: ["docs/s2/**"] } },
       { number: 127, labels: ["status:in-review"], packet: { writeScopes: ["docs/s3/**"] } },
+      { number: 128, labels: ["status:re-review"], packet: { writeScopes: ["docs/s4/**"] } },
     ],
     pulls: [125, 126, 127].map((issue, index) => ({ number: 42 + index, state: "open",
       title: `Work (#${issue})`, body: `Closes #${issue}`, base: { ref: "main" },
@@ -1172,6 +1222,8 @@ test("a historical release does not hide a later cycle's in-review submission", 
   await post(126, submittedMark(126, 501, 43));
   await post(127, acceptedMark(127, 502));
   await post(127, submittedMark(127, 502, 44));
+  await post(128, acceptedMark(128, 503));
+  await post(128, submittedMark(128, 503, 45));
   await seedAccepted(api, 125, worker, actor);
   assert.deepEqual(await runClaimSubmit({ event: lifecycleEvent(
     `CLAIM SUBMIT\nworker-id: ${worker}\npr: 42\nsha: ${head}`, 125), repository, api, now }),
@@ -1326,7 +1378,7 @@ test("claim, inbox, submit, correction and resubmit stay consistent across both 
     };
     const inbox = () => readWorkerInbox({ workerId: worker, repository, fetchImpl });
     let entry = (await inbox()).find(action => action.issue === 125);
-    assert.equal(entry?.state, "working");
+    assert.equal(entry?.state, "handoff-required");
     assert.equal(entry?.disposition, "action");
     assert.equal(entry?.trust, "controller-record");
     assert.ok(!(await inbox()).some(action => action.issue === 184));

@@ -2,6 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { parseActionMarker, parseHandoffMarker, readWorkerInbox, renderWorkerInbox, resolveInboxToken } from "../scripts/public-worker-inbox.mjs";
 const workerId = "worker:test-01";
+test("capacity update is discoverable even when the personal inbox is empty", () => {
+  const rendered = renderWorkerInbox(workerId, []);
+  assert.match(rendered, /2 active builds \/ 3 total assignments/);
+  assert.match(rendered, /Corrections first/);
+  assert.match(rendered, /immediately after submission/);
+  assert.match(rendered, /Refresh public-main CONTRIBUTOR_HANDBOOK.md/);
+});
 const bot = { login: "github-actions[bot]", type: "Bot" };
 const issue = (labels = ["action:worker", "status:working"], number = 170) => ({ number, title: "Assignment", labels });
 const legacy = (worker = workerId, state = "working", id = 1) => ({ id, user: { login: "MarvinAi5", type: "User" }, author_association: "OWNER",
