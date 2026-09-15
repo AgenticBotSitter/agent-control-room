@@ -571,12 +571,20 @@ or integration change directly. Before merging lead-authored work:
    exact commit. Shared persistence, execution, authorization, recovery and release
    changes receive focused boundary review; ordinary documentation receives a
    proportionate check.
-3. Every required GitHub check must finish successfully. A queued, running, skipped,
+3. The pull request records the reviewer's declared identity and model, exact reviewed
+   commit, verdict, material findings and checks actually performed. The recorded
+   commit must still be the pull request's current head. The review is not complete
+   without this visible immutable evidence.
+4. The accepted review is followed by the same visible integration handoff used by
+   other work: the controller records `accept` plus `action:integrator`, or the
+   maintainer records the equivalent current-head acceptance through the handbook's
+   explicit manual fallback. A review comment alone is not merge authority.
+5. Every required GitHub check must finish successfully. A queued, running, skipped,
    canceled or missing required check is not a pass, and auto-merge must not substitute
    for observing the final results.
-4. Material repair after that review requires another independent review of the exact
+6. Material repair after that review requires another independent review of the exact
    repaired commit and its affected behavior.
-5. After merge, the integrator verifies that public `main` contains the expected merge
+7. After merge, the integrator verifies that public `main` contains the expected merge
    and runs or observes the smallest meaningful combined check before declaring the
    work complete.
 
