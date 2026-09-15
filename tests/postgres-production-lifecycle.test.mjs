@@ -134,14 +134,15 @@ async function stageRoot(fileCount) {
 
 test("clean install applies the full ledger, creates logins, then reruns as no-op", needsPg, async () => {
   await freshDatabase("cr_prod_install");
+  const expectedMigrations = (await collectLedgerEntries(ROOT)).filter(entry => (entry.kind ?? "migrate") === "migrate");
   const first = await applyMigrations({ target: target("cr_prod_install"), bootstrapTarget: bootstrapTarget("cr_prod_install"), migrateTarget: migrateTarget("cr_prod_install"), rootDir: ROOT, env: { ...process.env, ...passwords } });
   assert.equal(first.planned, false);
-  assert.equal(first.applied.length, 76);
+  assert.equal(first.applied.length, expectedMigrations.length);
   assert.equal(first.logins, "applied");
   assert.ok(first.objects > 50);
   assert.match(first.schemaDigest, /^sha256:[a-f0-9]{64}$/);
   const orders = (await query(target("cr_prod_install"), "SELECT ledger_order FROM control_room_schema_migrations ORDER BY ledger_order")).rows;
-  assert.deepEqual(orders.map(row => row.ledger_order), Array.from({ length: 76 }, (_, index) => index + 1));
+  assert.deepEqual(orders.map(row => row.ledger_order), Array.from({ length: expectedMigrations.length }, (_, index) => index + 1));
   const second = await applyMigrations({ target: target("cr_prod_install"), bootstrapTarget: bootstrapTarget("cr_prod_install"), migrateTarget: migrateTarget("cr_prod_install"), rootDir: ROOT });
   assert.equal(second.noOp, true);
   assert.deepEqual(second.applied, []);
