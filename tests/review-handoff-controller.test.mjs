@@ -93,7 +93,7 @@ test('separate maintainer can adopt a stranded legacy correction into the truste
 
 test('maintainer can adopt a legacy correction whose review predates the PR issue line', async () => {
   const f = fixture();
-  f.pr.body = 'Legacy contribution awaiting correction';
+  f.pr.body = 'Outcome / issue: #1 — legacy contribution awaiting correction';
   f.issue.labels = ['platform:any', 'status:changes-required', 'action:worker'];
   f.comments.push({ id: 11, user: { login: 'builder', type: 'User' },
     body: '<!-- agent-control-room-action:v1 worker=worker-01 state=changes-required issue=1 -->' });
@@ -112,21 +112,46 @@ test('maintainer can adopt a legacy correction whose review predates the PR issu
   assert.equal(resubmitted.state, 're-review');
 });
 
-test('legacy adoption without a PR issue line requires exact prior PR and head evidence', async () => {
+test('legacy adoption without a PR issue line requires one unambiguous legacy PR binding', async () => {
   const f = fixture();
   f.pr.body = 'Legacy contribution awaiting correction';
   f.issue.labels = ['platform:any', 'status:changes-required', 'action:worker'];
   f.comments.push({ id: 11, user: { login: 'builder', type: 'User' },
     body: '<!-- agent-control-room-action:v1 worker=worker-01 state=changes-required issue=1 -->' });
-  f.comments.push({ id: 12, user: { login: 'reviewer', type: 'User' },
-    body: `Maintainer re-review of PR #999 at ${sha}: unrelated pull request.` });
+  await assert.rejects(f.run(f.eventFor('adopt-changes', 'reviewer', 0, 'details',
+    { claimWorkerId: 'worker-01' })), /adoption_source_invalid/);
+  f.pr.body = 'Closes #999';
+  await assert.rejects(f.run(f.eventFor('adopt-changes', 'reviewer', 0, 'details',
+    { claimWorkerId: 'worker-01' })), /adoption_source_invalid/);
+  f.pr.body = 'Closes #1\nFixes #999';
+  await assert.rejects(f.run(f.eventFor('adopt-changes', 'reviewer', 0, 'details',
+    { claimWorkerId: 'worker-01' })), /adoption_source_invalid/);
+  f.pr.body = 'Closes #1, Fixes #999';
+  await assert.rejects(f.run(f.eventFor('adopt-changes', 'reviewer', 0, 'details',
+    { claimWorkerId: 'worker-01' })), /adoption_source_invalid/);
+  f.pr.body = 'Outcome / issue: #1; Resolves #999';
+  await assert.rejects(f.run(f.eventFor('adopt-changes', 'reviewer', 0, 'details',
+    { claimWorkerId: 'worker-01' })), /adoption_source_invalid/);
+  f.pr.body = 'Legacy contribution awaiting correction';
+  f.pr.title = 'Repair queue (issue #1) follow-up (issue #999)';
   await assert.rejects(f.run(f.eventFor('adopt-changes', 'reviewer', 0, 'details',
     { claimWorkerId: 'worker-01' })), /adoption_source_invalid/);
 });
 
+for (const legacyBinding of ['Closes #1', 'Fixes #1', 'Resolves #1', 'Outcome / issue: #1'])
+  test(`legacy adoption recognizes explicit binding form: ${legacyBinding.split(' ')[0]}`, async () => {
+    const f = fixture();
+    f.pr.body = legacyBinding;
+    f.issue.labels = ['platform:any', 'status:changes-required', 'action:worker'];
+    f.comments.push({ id: 11, user: { login: 'builder', type: 'User' },
+      body: '<!-- agent-control-room-action:v1 worker=worker-01 state=changes-required issue=1 -->' });
+    const result = await f.run(f.eventFor('adopt-changes', 'reviewer', 0, 'details', { claimWorkerId: 'worker-01' }));
+    assert.equal(result.state, 'changes-required');
+  });
+
 for (const acknowledgeFirst of [false, true]) test(`legacy adoption can stop safely ${acknowledgeFirst ? 'after acknowledgment' : 'immediately'}`, async () => {
   const f = fixture();
-  f.pr.body = 'Legacy contribution awaiting correction';
+  f.pr.body = 'Closes #1';
   f.issue.labels = ['platform:any', 'status:changes-required', 'action:worker'];
   f.comments.push({ id: 11, user: { login: 'builder', type: 'User' },
     body: '<!-- agent-control-room-action:v1 worker=worker-01 state=changes-required issue=1 -->' });

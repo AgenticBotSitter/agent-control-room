@@ -86,6 +86,16 @@ export async function runHandoff({ event, repository, api, maintainers = [] }) {
   const issueBindings = [...(pr.body ?? '').replace(/\r\n/g, '\n').matchAll(/^Control-Room-Issue: ([1-9][0-9]*)$/gm)];
   const adoptingChanges = request.command === 'adopt-changes';
   const exactIssueBinding = issueBindings.length === 1 && Number(issueBindings[0][1]) === issueNumber;
+  const normalizedPrBody = (pr.body ?? '').replace(/\r\n/g, '\n');
+  const legacyBindings = [...normalizedPrBody.matchAll(/\b(?:Closes|Fixes|Resolves)\s*#([1-9][0-9]*)\b/gi)]
+    .map(match => Number(match[1]));
+  for (const outcome of normalizedPrBody.matchAll(/^Outcome\s*\/\s*issue\s*:\s*([^\n]*)$/gim)) {
+    legacyBindings.push(...[...outcome[1].matchAll(/#([1-9][0-9]*)\b/g)].map(match => Number(match[1])));
+  }
+  legacyBindings.push(...[...(pr.title ?? '').matchAll(/\(issue\s+#([1-9][0-9]*)\)/gi)]
+    .map(match => Number(match[1])));
+  const uniqueLegacyBindings = [...new Set(legacyBindings)];
+  const exactLegacyIssueBinding = uniqueLegacyBindings.length === 1 && uniqueLegacyBindings[0] === issueNumber;
   // Legacy correction adoption exists partly to repair older PRs that predate the
   // mandatory Control-Room-Issue line. During that single maintainer-only
   // transition, bind the PR to the issue through the existing exact review
@@ -127,13 +137,9 @@ export async function runHandoff({ event, repository, api, maintainers = [] }) {
     const legacy = comments.some(comment => Number.isSafeInteger(comment?.id) && comment.id > claim.id && comment.id < requestId
       && typeof comment.body === 'string'
       && comment.body.includes(`<!-- agent-control-room-action:v1 worker=${claimWorkerId} state=changes-required issue=${issueNumber} -->`));
-    const exactReviewEvidence = comments.some(comment => Number.isSafeInteger(comment?.id)
-      && comment.id > claim.id && comment.id < requestId && typeof comment.body === 'string'
-      && new RegExp(`\\bPR\\s+#${request.pr}\\b`, 'i').test(comment.body)
-      && comment.body.includes(request.head));
     const issueReady = equal(workflowLabels(issue), ['status:changes-required', 'action:worker']);
     const prLabels = workflowLabels(prIssue);
-    if (!legacy || (!exactIssueBinding && !exactReviewEvidence) || !issueReady
+    if (!legacy || (!exactIssueBinding && !exactLegacyIssueBinding) || !issueReady
       || !(prLabels.length === 0 || equal(prLabels, ['status:changes-required', 'action:worker'])))
       throw new Error('handoff_adoption_source_invalid');
   }
