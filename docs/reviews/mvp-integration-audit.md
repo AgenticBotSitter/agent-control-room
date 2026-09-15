@@ -509,9 +509,14 @@ changes nothing. Re-pin the bases in the same pass (S3) — #65 and #66 still po
 `bcb93b8d`, which predates #63, #115, #127, #128 and #175. This is the cheapest action in
 this report with the largest effect: it converts an unclaimable backlog into a claimable one.
 
-Note that several of the twelve are correctly `status:waiting` today — #61 genuinely waits on
-its dependencies. The point is not to mark everything ready; it is that #65 and #67, whose
-prerequisites are already accepted (§3.1 Layer 2), are still labelled waiting and packetless.
+Not all twelve should be relabelled: several are correctly `status:waiting` today — #61
+genuinely waits on its dependencies. The point is narrower. #67 names exactly one
+prerequisite, "after accepted #28 provider wiring", and #28 is closed `status:done`
+(**observed**) — it is simply waiting on nothing. #65 names "coordinate database records with
+#63 and trusted startup with #66"; #63 is closed `status:done`, and #66 reads as a downstream
+consumer rather than a prerequisite (**inferred**, consistent with §3.1 placing #66 in Layer 3
+behind #65). Both therefore look ready to start and are still labelled waiting **and**
+packetless. The lead should confirm the #65/#66 direction before relabelling it.
 
 **Step 2b — reconcile the remaining states in §5 (lead).**
 S2 in particular: four closed issues still carry `status:paused`, which is what stranded
