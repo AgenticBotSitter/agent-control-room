@@ -165,7 +165,7 @@ export function generate({ options: provided = {}, scriptPath, nodePath, now = (
       }
       const target = join(artifactDirectory, artifact.name);
       writeFileSync(target, artifact.content, "utf8");
-      written.push({ platform, name: artifact.name, path: target, bytes: Buffer.byteLength(artifact.content, "utf8") });
+      written.push({ platform, name: artifact.name, path: target, content: artifact.content, bytes: Buffer.byteLength(artifact.content, "utf8") });
     }
     instructions.push({ platform, artifactDirectory, text: instructionsFor({
       platform, workerId, artifactDirectory, runtimeDirectory, repository,

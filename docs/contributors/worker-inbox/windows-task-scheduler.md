@@ -23,8 +23,33 @@ schtasks /Create /TN "AgentControlRoomWorkerInbox-<worker>-<digest>" /XML "<gene
 
 ```powershell
 schtasks /Query /TN "AgentControlRoomWorkerInbox-<worker>-<digest>" /V /FO LIST
+powershell -NoProfile -Command "Get-ScheduledTaskInfo -TaskName 'AgentControlRoomWorkerInbox-<worker>-<digest>' | Select-Object TaskName, LastRunTime, LastTaskResult, NextRunTime, NumberOfMissedRuns"
 type "<runtime>\watch.log"
 ```
+
+`LastTaskResult` is the exit code of the last tick (`0` is a clean read, `2`
+a read failure); `LastRunTime` plus `watch.log` together prove the schedule
+actually fires, not just that it is registered. Prefer the PowerShell line
+over filtering the `schtasks` list for English labels: the objects work
+regardless of the display language.
+
+## If the importer rejects the XML
+
+A contributor had to convert the generated file before Task Scheduler
+accepted it. The fixture confirms the artifact is internally
+UTF-8-consistent, but that does not diagnose the rejection — do not change
+the generator without new evidence. As a workaround, convert a COPY to
+UTF-16 and import that instead, naming the input encoding explicitly:
+the file is deliberately BOM-less, and Windows PowerShell 5.1 would
+otherwise decode non-ASCII paths with the active ANSI code page.
+
+```powershell
+powershell -NoProfile -Command "Get-Content '<path>\<task>.xml' -Raw -Encoding UTF8 | Set-Content -Encoding Unicode '<path>\<task>-utf16.xml'"
+schtasks /Create /TN "<task>" /XML "<path>\<task>-utf16.xml" /F
+```
+
+The UTF-8 file stays the owned original; the converted copy is an
+importer-side workaround, verified only by your own successful import.
 
 ## Stop
 

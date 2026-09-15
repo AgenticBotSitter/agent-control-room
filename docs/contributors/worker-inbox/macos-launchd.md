@@ -33,11 +33,15 @@ launchctl bootstrap gui/$(id -u) \
 ## Inspect
 
 ```sh
-launchctl print gui/$(id -u)/com.agent-control-room.worker-inbox.<worker>-<digest>
+launchctl print gui/$(id -u)/com.agent-control-room.worker-inbox.<worker>-<digest> | grep -Ei "state|last exit code|last run"
 tail -n 40 "<runtime>/watch.log"
 tail -n 40 "<runtime>/launchd.out.log"
 tail -n 40 "<runtime>/launchd.err.log"
 ```
+
+`last exit code` is the result of the last tick (`0` clean, `2` read
+failure); together with `watch.log` it proves the job fires, not just that
+it is loaded.
 
 ## Stop
 
