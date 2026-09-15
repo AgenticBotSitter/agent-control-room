@@ -129,6 +129,11 @@ const durableReservationIdentitySchemaV1 = z.object({
   publicationContractDigest: digestSchema.optional(),
   terminalEvidenceDigest: digestSchema.optional(),
   threadId: localId.optional(), turnId: localId.optional(), itemId: localId.optional(),
+  // The connector profile digest and acceptance profile digest are the
+  // binding identity. Surface them on the reservation so concurrent
+  // publishers can verify the binding identity without joining back.
+  acceptanceProfileId: localId.optional(),
+  acceptanceProfileDigest: digestSchema.optional(),
   contentHash: digestSchema, sizeBytes: z.number().int().min(0).max(65_536),
 }).strict();
 
@@ -422,7 +427,12 @@ function buildNeutralIdentity(binding: DurableResultBindingV1, artifactId: strin
   const identity: Record<string, unknown> = { schema: "control-room.durable-result-write-reservation-identity/v1",
     tenantId: parsed.tenantId, projectId: parsed.projectId, jobId: parsed.jobId, attemptId: parsed.attemptId,
     runId: parsed.runId, nodeId: parsed.nodeId, artifactId, harness: parsed.harness, workflowId: parsed.workflowId,
-    connectorProfileDigest: parsed.connectorProfileDigest, contentHash, sizeBytes };
+    connectorProfileDigest: parsed.connectorProfileDigest,
+    // Surface the acceptance profile on the reservation so concurrent
+    // publishers can verify the binding identity without joining back.
+    acceptanceProfileId: binding.acceptanceProfileId,
+    acceptanceProfileDigest: binding.acceptanceProfileDigest,
+    contentHash, sizeBytes };
   for (const [k, v] of Object.entries(evidence)) {
     if (v !== undefined && k !== "snapshotVersion") identity[k] = v;
   }
@@ -437,10 +447,15 @@ function issueNeutralReceipt(binding: DurableResultBindingV1, artifactId: string
   // or genuinely missing).
   const receiptFields: Record<string, unknown> = { schema: "control-room.durable-result-receipt/v1", artifactId,
     tenantId: binding.tenantId, projectId: binding.projectId, jobId: binding.jobId, attemptId: binding.attemptId,
-    runId: binding.runId, nodeId: binding.nodeId, harness: binding.harness, contentHash, sizeBytes,
-    manifestDigest: sha256Digest(manifest), receivedAt, byteCheck: "matched_recorded_claim",
-    qualityAccepted: false, canonicalPublicationAllowed: false, completionVerified: false,
-    releasesCapacity: false, grantsExecutionAuthority: false };
+    runId: binding.runId, nodeId: binding.nodeId, harness: binding.harness,
+    // Surface the connector profile and acceptance profile digests so
+    // readers can verify the binding identity without joining back.
+    connectorProfileDigest: binding.connectorProfileDigest,
+    acceptanceProfileId: binding.acceptanceProfileId,
+    acceptanceProfileDigest: binding.acceptanceProfileDigest,
+    contentHash, sizeBytes, manifestDigest: sha256Digest(manifest), receivedAt,
+    byteCheck: "matched_recorded_claim", qualityAccepted: false, canonicalPublicationAllowed: false,
+    completionVerified: false, releasesCapacity: false, grantsExecutionAuthority: false };
   for (const [k, v] of Object.entries(evidence)) if (v !== undefined) receiptFields[k] = v;
   return durableResultReceiptSchemaV1.parse(receiptFields);
 }

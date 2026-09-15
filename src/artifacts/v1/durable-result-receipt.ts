@@ -26,6 +26,12 @@ export const durableResultReceiptSchemaV1 = z.object({
   publicationContractDigest: digestSchema.optional(),
   terminalEvidenceDigest: digestSchema.optional(),
   threadId: localId.optional(), turnId: localId.optional(), itemId: localId.optional(),
+  // The connector profile digest and acceptance profile digest are the
+  // binding identity. Surface them on the receipt so readers can verify
+  // the publisher without joining back to the binding row.
+  connectorProfileDigest: digestSchema.optional(),
+  acceptanceProfileId: localId.optional(),
+  acceptanceProfileDigest: digestSchema.optional(),
   contentHash: digestSchema, sizeBytes: z.number().int().min(0).max(65_536),
   manifestDigest: digestSchema, receivedAt: instant,
   byteCheck: z.literal("matched_recorded_claim"), qualityAccepted: z.literal(false),

@@ -151,6 +151,12 @@ test("third-party harness: a non-native/non-codex connector can publish with onl
   assert.equal(first.receipt.threadId, undefined);
   assert.equal(first.receipt.turnId, undefined);
   assert.equal(first.receipt.itemId, undefined);
+  // The receipt surfaces the connector profile and acceptance profile
+  // digests so readers can verify the binding identity without joining
+  // back to the binding row.
+  assert.equal(first.receipt.connectorProfileDigest, digest("c"));
+  assert.equal(first.receipt.acceptanceProfileId, "profile:test");
+  assert.equal(first.receipt.acceptanceProfileDigest, digest("p"));
 });
 
 for (const [flavor, makeBinding] of [["native", nativeBinding], ["codex", codexBinding]] as const) {
