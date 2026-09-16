@@ -36,7 +36,11 @@ function isDataDescriptor(value: unknown): value is { value: unknown } {
  * getter, prototype getter, frozen/Sealed access) is treated as attacker input
  * and refused. Proxy detection uses `util.types.isProxy`, which inspects the
  * internal [[ProxyTarget]] slot without invoking any user trap. */
-function readPlain(value: unknown, depth: number): unknown {
+/** Trap-free plain-data walk, shared with the release-candidate acceptance
+ * layer (`./acceptance`) so both surfaces refuse the same exotic shapes
+ * (Proxy traps, accessors, prototype pollution, Symbols, non-enumerable,
+ * unknown / sparse keys) through one hardened implementation. */
+export function readPlain(value: unknown, depth: number): unknown {
   if (depth > MAX_DEPTH) throw new Error('depth');
   if (value === null || typeof value !== 'object') return value;
   // Proxy rejection — util.types.isProxy is a brand check that does not invoke

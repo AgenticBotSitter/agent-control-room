@@ -2,7 +2,13 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { canonicalJson, sha256Digest } from '../src/security/canonical-digest';
-import { evaluateReleaseCandidatePrecheckV1 } from '../src/release-candidate-precheck/v1/index';
+import { dryRunReleaseCandidateAcceptanceV1,
+  evaluateReleaseCandidateAcceptanceV1,
+  evaluateReleaseCandidatePrecheckV1,
+  RELEASE_CANDIDATE_ACCEPTANCE_DRY_RUN_STEPS_V1,
+  RELEASE_CANDIDATE_ACCEPTANCE_SCHEMA_V1,
+  RELEASE_CANDIDATE_ACCEPTANCE_STATES_V1,
+  type ReleaseCandidateAcceptanceEntryResultV1 } from '../src/release-candidate-precheck/v1/index';
 import { RELEASE_CANDIDATE_COMPONENT_IDS_V1,
   RELEASE_CANDIDATE_PRECHECK_SCHEMA_V1 } from '../src/release-candidate-precheck/v1/types';
 
@@ -384,7 +390,9 @@ test('attacker code never runs during reflection — every hostile reflection pa
 test('the new source imports no effect client and exposes no effect port', () => {
   const files = ['src/release-candidate-precheck/v1/types.ts',
     'src/release-candidate-precheck/v1/precheck.ts',
-    'src/release-candidate-precheck/v1/index.ts'];
+    'src/release-candidate-precheck/v1/index.ts',
+    'src/release-candidate-precheck/v1/acceptance.ts',
+    'src/release-candidate-precheck/v1/acceptance-types.ts'];
   const forbidden = ['node:fs', 'node:process', 'node:child_process', 'node:net', 'node:http',
     'fetch(', 'XMLHttpRequest', 'child_process', 'process.', 'globalThis', 'require(',
     'pg-native', 'better-sqlite', 'node:sqlite', 'console.'];
@@ -397,9 +405,438 @@ test('the new source imports no effect client and exposes no effect port', () =>
   const precheckSource = readFileSync(new URL('../src/release-candidate-precheck/v1/precheck.ts',
     import.meta.url), 'utf8');
   assert.match(precheckSource, /from 'node:util'/);
+  // The acceptance layer reuses the precheck's hardened plain-data walk and the
+  // precheck evaluator; it must not carry its own reflection or node:util import.
+  const acceptanceSource = readFileSync(new URL(
+    '../src/release-candidate-precheck/v1/acceptance.ts', import.meta.url), 'utf8');
+  assert.match(acceptanceSource, /from '\.\/precheck'/,
+    'the acceptance layer must reuse the precheck module');
   const otherSources = files.filter((f) => f !== 'src/release-candidate-precheck/v1/precheck.ts')
     .map((f) => readFileSync(new URL(`../${f}`, import.meta.url), 'utf8'));
   for (const src of otherSources) {
     assert.doesNotMatch(src, /from 'node:util'/, 'node:util import confined to precheck.ts');
   }
+  // `readPlain` stays internal to the package: shared between the two modules,
+  // never widened into the module's public surface.
+  const indexSource = readFileSync(new URL('../src/release-candidate-precheck/v1/index.ts',
+    import.meta.url), 'utf8');
+  const exportedNames = [...indexSource.matchAll(/export \{([\s\S]*?)\} from/g)]
+    .flatMap((match) => match[1]!.split(',').map((part) => part.trim().replace(/^type\s+/, '')));
+  assert.ok(exportedNames.length > 10);
+  assert.ok(!exportedNames.includes('readPlain'),
+    'the shared walker must not be widened into the public surface');
 });
+
+// ---------------------------------------------------------------------------
+// Release-candidate acceptance record (issue #61)
+// ---------------------------------------------------------------------------
+
+/** The single frozen public revision every acceptance in a record is taken
+ *  against. A second base is a mixed-base refusal, never a re-base. */
+const ACCEPT_BASE = commit('f0');
+const NON_ACCEPTED_STATES = ['pending', 'rejected', 'superseded', 'withdrawn'];
+
+type AcceptanceEntry = { id: string; acceptanceState: string; acceptanceBaseCommit: string;
+  acceptedCommit: string; evidenceDigest: string };
+
+function acceptanceEntriesFor(base: string): AcceptanceEntry[] {
+  return historicalCompleteRecord().components.map((c) => ({ id: c.id,
+    acceptanceState: 'accepted', acceptanceBaseCommit: base, acceptedCommit: c.acceptedCommit,
+    evidenceDigest: c.evidenceDigest }));
+}
+
+/** Independent recomputation of the acceptance binding digest, mirroring the
+ * documented formula in acceptance-types.ts. */
+function acceptanceBindingFor(entries: AcceptanceEntry[], opts: { base?: string;
+  candidate?: string; version?: string; artifact?: string } = {}): string {
+  return sha256Digest({ candidateCommit: opts.candidate ?? ROOT_CANDIDATE,
+    releaseVersion: opts.version ?? ROOT_VERSION, artifactDigest: opts.artifact ?? ROOT_ARTIFACT,
+    artifactManifestDigest: ROOT_MANIFEST, frozenBaseCommit: opts.base ?? ACCEPT_BASE,
+    acceptances: entries.map((e) => ({ id: e.id, acceptedCommit: e.acceptedCommit,
+      evidenceDigest: e.evidenceDigest, acceptanceState: e.acceptanceState,
+      acceptanceBaseCommit: e.acceptanceBaseCommit })) });
+}
+
+function acceptanceRecord(opts: { base?: string; candidate?: string; version?: string;
+  artifact?: string } = {}) {
+  const base = opts.base ?? ACCEPT_BASE;
+  const entries = acceptanceEntriesFor(base);
+  return {
+    schema: RELEASE_CANDIDATE_ACCEPTANCE_SCHEMA_V1,
+    expectedCandidateCommit: opts.candidate ?? ROOT_CANDIDATE,
+    expectedReleaseVersion: opts.version ?? ROOT_VERSION,
+    expectedArtifactDigest: opts.artifact ?? ROOT_ARTIFACT,
+    frozenBaseCommit: base,
+    acceptanceBindingDigest: acceptanceBindingFor(entries, opts),
+    reference: historicalCompleteRecord(),
+    acceptances: entries,
+  };
+}
+
+const REASON_SHAPE = /^[A-Za-z0-9:[\]._-]+$/;
+
+test('an acceptance record over 14 accepted components returns acceptance_record_complete_not_authorized', () => {
+  const record = acceptanceRecord();
+  const outcome = evaluateReleaseCandidateAcceptanceV1(record);
+  assert.equal(outcome.status, 'acceptance_record_complete_not_authorized');
+  if (outcome.status !== 'acceptance_record_complete_not_authorized') {
+    assert.fail('complete acceptance record required');
+  }
+  assert.equal(outcome.schema, RELEASE_CANDIDATE_ACCEPTANCE_SCHEMA_V1);
+  assert.equal(outcome.candidateCommit, ROOT_CANDIDATE);
+  assert.equal(outcome.frozenBaseCommit, ACCEPT_BASE);
+  assert.equal(outcome.releaseVersion, ROOT_VERSION);
+  assert.equal(outcome.artifactDigest, ROOT_ARTIFACT);
+  assert.equal(outcome.artifactManifestDigest, ROOT_MANIFEST);
+  assert.equal(outcome.componentCount, 14);
+  assert.equal(outcome.acceptedComponentCount, 14);
+  assert.equal(outcome.acceptances.length, 14);
+  assert.ok(Object.isFrozen(outcome));
+  assert.ok(Object.isFrozen(outcome.acceptances));
+  // Completeness is never authorization.
+  assert.deepEqual(outcome.authority, { approval: false, qualification: false,
+    installation: false, deployment: false, execution: false, externalEffect: false,
+    ownerAuthority: false });
+  assert.equal(outcome.acceptanceBinding.supplied, outcome.acceptanceBinding.recomputed);
+  assert.equal(outcome.acceptanceBinding.supplied, record.acceptanceBindingDigest);
+  const referenceComponents = record.reference.components;
+  for (let index = 0; index < outcome.acceptances.length; index++) {
+    const entry: ReleaseCandidateAcceptanceEntryResultV1 = outcome.acceptances[index]!;
+    assert.ok(Object.isFrozen(entry));
+    assert.equal(entry.id, RELEASE_CANDIDATE_COMPONENT_IDS_V1[index]);
+    assert.equal(entry.acceptanceState, 'accepted');
+    assert.equal(entry.acceptanceBaseCommit, ACCEPT_BASE);
+    assert.equal(entry.acceptedCommit, referenceComponents[index]!.acceptedCommit);
+    assert.equal(entry.evidenceDigest, referenceComponents[index]!.evidenceDigest,
+      `component ${index} must preserve its own historical acceptance values`);
+  }
+});
+
+test('the acceptance dry run reports constant non-secret steps and never authorizes', () => {
+  const plan = dryRunReleaseCandidateAcceptanceV1(acceptanceRecord());
+  if (plan.status !== 'acceptance_record_complete_not_authorized') {
+    assert.fail('a complete record must produce a dry-run plan');
+  }
+  assert.equal(plan.dryRun, true);
+  assert.equal(plan.authorized, false);
+  assert.equal(plan.componentCount, 14);
+  assert.equal(plan.acceptedComponentCount, 14);
+  assert.ok(Object.isFrozen(plan));
+  assert.ok(Object.isFrozen(RELEASE_CANDIDATE_ACCEPTANCE_DRY_RUN_STEPS_V1));
+  assert.deepEqual(plan.steps, RELEASE_CANDIDATE_ACCEPTANCE_DRY_RUN_STEPS_V1);
+  assert.ok(plan.steps.length >= 3);
+  for (const step of plan.steps) {
+    assert.equal(typeof step, 'string');
+    assert.equal(step, step.trim());
+    assert.doesNotMatch(step, /:\/\/|\$\{|[A-Za-z]:\\|^\//, 'steps must stay non-secret and non-locator');
+  }
+  assert.deepEqual(plan.authority, { approval: false, qualification: false,
+    installation: false, deployment: false, execution: false, externalEffect: false,
+    ownerAuthority: false });
+});
+
+test('every non-accepted component state refuses as unaccepted and yields no dry-run steps', () => {
+  assert.ok(Object.isFrozen(RELEASE_CANDIDATE_ACCEPTANCE_STATES_V1));
+  assert.deepEqual([...RELEASE_CANDIDATE_ACCEPTANCE_STATES_V1],
+    ['accepted', ...NON_ACCEPTED_STATES]);
+  const target = 7;
+  for (const state of NON_ACCEPTED_STATES) {
+    const record = acceptanceRecord();
+    record.acceptances[target]!.acceptanceState = state;
+    const outcome = evaluateReleaseCandidateAcceptanceV1(record);
+    assert.equal(outcome.status, 'blocked_unaccepted_inputs', state);
+    if (outcome.status !== 'blocked_unaccepted_inputs') assert.fail('refusal required');
+    assert.equal(outcome.reason, `unaccepted:acceptances[${target}]:${state}`);
+    assert.match(outcome.reason, REASON_SHAPE);
+    assert.equal(outcome.componentId, RELEASE_CANDIDATE_COMPONENT_IDS_V1[target]);
+    const plan = dryRunReleaseCandidateAcceptanceV1(record);
+    assert.equal(plan.status, 'blocked_unaccepted_inputs');
+    assert.equal(plan.steps.length, 0, 'a dry run must never plan from an unaccepted input');
+  }
+});
+
+test('a second acceptance base refuses as mixed-base and is never silently re-based', () => {
+  const record = acceptanceRecord();
+  const target = 11;
+  record.acceptances[target]!.acceptanceBaseCommit = commit('f1');
+  const outcome = evaluateReleaseCandidateAcceptanceV1(record);
+  assert.equal(outcome.status, 'blocked_mixed_base');
+  if (outcome.status !== 'blocked_mixed_base') assert.fail('refusal required');
+  assert.equal(outcome.reason, `mixed-base:acceptances[${target}]`);
+  assert.match(outcome.reason, REASON_SHAPE);
+  assert.equal(outcome.componentId, RELEASE_CANDIDATE_COMPONENT_IDS_V1[target]);
+  assert.doesNotMatch(canonicalJson(outcome), new RegExp(commit('f1')));
+  // A record that declares two bases as its own frozen base is still refused:
+  // the frozen base must match every acceptance, not a majority of them.
+  const spread = acceptanceRecord();
+  spread.acceptances[0]!.acceptanceBaseCommit = commit('f2');
+  spread.frozenBaseCommit = commit('f2');
+  assert.equal(evaluateReleaseCandidateAcceptanceV1(spread).status, 'blocked_mixed_base');
+});
+
+test('a stale expected candidate commit or release version refuses before any binding check', () => {
+  const staleCandidate = acceptanceRecord({ candidate: commit('d9') });
+  const candidateOutcome = evaluateReleaseCandidateAcceptanceV1(staleCandidate);
+  assert.equal(candidateOutcome.status, 'blocked_stale_candidate');
+  if (candidateOutcome.status !== 'blocked_stale_candidate') assert.fail('refusal required');
+  assert.equal(candidateOutcome.reason, 'stale:candidate-commit');
+  assert.match(candidateOutcome.reason, REASON_SHAPE);
+  const staleVersion = acceptanceRecord({ version: '9.9.9' });
+  const versionOutcome = evaluateReleaseCandidateAcceptanceV1(staleVersion);
+  assert.equal(versionOutcome.status, 'blocked_stale_candidate');
+  if (versionOutcome.status !== 'blocked_stale_candidate') assert.fail('refusal required');
+  assert.equal(versionOutcome.reason, 'stale:release-version');
+  // Staleness is decided against the precheck's own derivation, so a record that
+  // agrees with itself but not with its reference is still refused.
+  assert.equal(evaluateReleaseCandidatePrecheckV1(
+    (acceptanceRecord() as Record<string, unknown>).reference as object).status,
+    'precheck_complete_not_accepted');
+});
+
+test('artifact, acceptance-binding, commit and evidence digest mismatches each refuse on their own', () => {
+  const artifactRecord = acceptanceRecord({ artifact: digest('zz') });
+  const artifactOutcome = evaluateReleaseCandidateAcceptanceV1(artifactRecord);
+  assert.equal(artifactOutcome.status, 'blocked_digest_mismatch');
+  if (artifactOutcome.status !== 'blocked_digest_mismatch') assert.fail('refusal required');
+  assert.equal(artifactOutcome.reason, 'digest-mismatch:artifact-digest');
+  const bindingRecord = acceptanceRecord();
+  bindingRecord.acceptanceBindingDigest = digest('bad');
+  const bindingOutcome = evaluateReleaseCandidateAcceptanceV1(bindingRecord);
+  assert.equal(bindingOutcome.status, 'blocked_digest_mismatch');
+  if (bindingOutcome.status !== 'blocked_digest_mismatch') assert.fail('refusal required');
+  assert.equal(bindingOutcome.reason, 'digest-mismatch:acceptance-binding');
+  assert.match(bindingOutcome.reason, REASON_SHAPE);
+  // A reordered-but-complete acceptance digest set must not collide with the
+  // supplied binding: the binding is over canonical component order.
+  const reorderedBindings = acceptanceRecord();
+  const entries = reorderedBindings.acceptances;
+  [entries[2], entries[3]] = [entries[3]!, entries[2]!];
+  const reorderedOutcome = evaluateReleaseCandidateAcceptanceV1(reorderedBindings);
+  assert.ok(['blocked_invalid_inputs', 'blocked_digest_mismatch']
+    .includes(reorderedOutcome.status), reorderedOutcome.status);
+});
+
+test('a substituted accepted commit or evidence digest refuses instead of being reconciled', () => {
+  const commitRecord = acceptanceRecord();
+  const commitTarget = 3;
+  commitRecord.acceptances[commitTarget]!.acceptedCommit = commit('d3');
+  const commitOutcome = evaluateReleaseCandidateAcceptanceV1(commitRecord);
+  assert.equal(commitOutcome.status, 'blocked_digest_mismatch');
+  if (commitOutcome.status !== 'blocked_digest_mismatch') assert.fail('refusal required');
+  assert.equal(commitOutcome.reason, `digest-mismatch:acceptances[${commitTarget}].acceptedCommit`);
+  assert.equal(commitOutcome.componentId, RELEASE_CANDIDATE_COMPONENT_IDS_V1[commitTarget]);
+  const digestRecord = acceptanceRecord();
+  const digestTarget = 5;
+  digestRecord.acceptances[digestTarget]!.evidenceDigest = historicalEvidenceDigest('substituted', 99);
+  const digestOutcome = evaluateReleaseCandidateAcceptanceV1(digestRecord);
+  assert.equal(digestOutcome.status, 'blocked_digest_mismatch');
+  if (digestOutcome.status !== 'blocked_digest_mismatch') assert.fail('refusal required');
+  assert.equal(digestOutcome.reason, `digest-mismatch:acceptances[${digestTarget}].evidenceDigest`);
+  // Recomputing the binding digest around a substituted component does not help:
+  // the substitution is refused against the reference before the binding is read.
+  const rebound = acceptanceRecord();
+  rebound.acceptances[digestTarget]!.evidenceDigest = historicalEvidenceDigest('substituted', 99);
+  rebound.acceptanceBindingDigest = acceptanceBindingFor(rebound.acceptances);
+  const reboundOutcome = evaluateReleaseCandidateAcceptanceV1(rebound);
+  assert.equal(reboundOutcome.status, 'blocked_digest_mismatch');
+  assert.match(String(reboundOutcome.reason), /evidenceDigest/);
+});
+
+test('missing acceptance record, field, entry or entry field returns blocked_missing_inputs', () => {
+  for (const input of [undefined, null, 42, 'record', []]) {
+    assert.equal(evaluateReleaseCandidateAcceptanceV1(input).status, 'blocked_missing_inputs');
+  }
+  for (const field of ['schema', 'expectedCandidateCommit', 'expectedReleaseVersion',
+    'expectedArtifactDigest', 'frozenBaseCommit', 'acceptanceBindingDigest', 'reference',
+    'acceptances']) {
+    const record = acceptanceRecord() as unknown as Record<string, unknown>;
+    delete record[field];
+    const outcome = evaluateReleaseCandidateAcceptanceV1(record);
+    assert.equal(outcome.status, 'blocked_missing_inputs', field);
+    if (outcome.status !== 'blocked_missing_inputs') assert.fail('missing required');
+    assert.match(outcome.reason, REASON_SHAPE);
+  }
+  for (const field of ['id', 'acceptanceState', 'acceptanceBaseCommit', 'acceptedCommit',
+    'evidenceDigest']) {
+    const record = acceptanceRecord() as unknown as Record<string, unknown>;
+    const entries = record.acceptances as Array<Record<string, unknown>>;
+    delete entries[4]![field];
+    const outcome = evaluateReleaseCandidateAcceptanceV1(record);
+    assert.equal(outcome.status, 'blocked_missing_inputs', field);
+    if (outcome.status !== 'blocked_missing_inputs') assert.fail('missing required');
+    assert.equal(outcome.reason, `missing:acceptances[4].${field}`);
+    assert.match(outcome.reason, REASON_SHAPE);
+  }
+});
+
+test('unknown fields, wrong shapes, reordered or short acceptance lists are refused as invalid', () => {
+  const extra = acceptanceRecord() as unknown as Record<string, unknown>;
+  extra.surprise = 'nope';
+  assert.equal(evaluateReleaseCandidateAcceptanceV1(extra).status, 'blocked_invalid_inputs');
+  const extraEntry = acceptanceRecord() as unknown as Record<string, unknown>;
+  (extraEntry.acceptances as Array<Record<string, unknown>>)[0]!.frobnicate = 1;
+  const extraEntryOutcome = evaluateReleaseCandidateAcceptanceV1(extraEntry);
+  assert.equal(extraEntryOutcome.status, 'blocked_invalid_inputs');
+  assert.equal(extraEntryOutcome.reason, 'invalid:acceptances[0].frobnicate');
+  for (const mutate of [
+    (r: ReturnType<typeof acceptanceRecord>) => { (r as { schema: string }).schema = 'control-room.other/v1'; },
+    (r: ReturnType<typeof acceptanceRecord>) => { r.expectedCandidateCommit = 'short'; },
+    (r: ReturnType<typeof acceptanceRecord>) => { r.expectedReleaseVersion = 'v1'; },
+    (r: ReturnType<typeof acceptanceRecord>) => { r.expectedArtifactDigest = 'sha256:xyz'; },
+    (r: ReturnType<typeof acceptanceRecord>) => { r.frozenBaseCommit = 'Z'.repeat(40); },
+    (r: ReturnType<typeof acceptanceRecord>) => { r.acceptanceBindingDigest = 'sha256:short'; },
+    (r: ReturnType<typeof acceptanceRecord>) => { r.acceptances[0]!.acceptanceState = 'approved'; },
+    (r: ReturnType<typeof acceptanceRecord>) => { r.acceptances[0]!.acceptedCommit = 'nope'; },
+    (r: ReturnType<typeof acceptanceRecord>) => { r.acceptances[0]!.evidenceDigest = 'sha256:xyz'; },
+    (r: ReturnType<typeof acceptanceRecord>) => { r.acceptances = r.acceptances.slice(0, 13); },
+    (r: ReturnType<typeof acceptanceRecord>) => {
+      [r.acceptances[0], r.acceptances[1]] = [r.acceptances[1]!, r.acceptances[0]!]; },
+  ]) {
+    const record = acceptanceRecord();
+    mutate(record);
+    const outcome = evaluateReleaseCandidateAcceptanceV1(record);
+    assert.equal(outcome.status, 'blocked_invalid_inputs', canonicalJson(outcome));
+    if (outcome.status !== 'blocked_invalid_inputs') assert.fail('refusal required');
+    assert.match(outcome.reason, REASON_SHAPE);
+  }
+  const extraComponent = acceptanceRecord() as unknown as Record<string, unknown>;
+  (extraComponent.acceptances as unknown[]).push(acceptanceEntriesFor(ACCEPT_BASE)[0]);
+  assert.equal(evaluateReleaseCandidateAcceptanceV1(extraComponent).status, 'blocked_invalid_inputs');
+  const brokenReference = acceptanceRecord() as unknown as Record<string, unknown>;
+  delete (brokenReference.reference as Record<string, unknown>).treeDigest;
+  const brokenOutcome = evaluateReleaseCandidateAcceptanceV1(brokenReference);
+  assert.equal(brokenOutcome.status, 'blocked_missing_inputs',
+    'reference refusals are propagated, never re-implemented');
+  assert.equal(brokenOutcome.reason, 'reference:missing:treeDigest');
+});
+
+test('secret-, credential-, URL-, locator- or filesystem-shaped acceptance values are refused', () => {
+  for (const evil of ['«redacted:sk-…»', 'https://example.test/acceptance.json', '/etc/passwd',
+    'C:\\release\\acceptance.json', '${ACCEPTANCE_DIGEST}', '..\\..\\secret',
+    `sha256:${'g'.repeat(64)}`]) {
+    const record = acceptanceRecord();
+    record.expectedArtifactDigest = evil;
+    const outcome = evaluateReleaseCandidateAcceptanceV1(record);
+    assert.equal(outcome.status, 'blocked_invalid_inputs', evil.slice(0, 12));
+    assert.doesNotMatch(canonicalJson(outcome), /sk-live|example\.test|passwd/);
+    const entryRecord = acceptanceRecord();
+    entryRecord.acceptances[0]!.acceptedCommit = evil;
+    const entryOutcome = evaluateReleaseCandidateAcceptanceV1(entryRecord);
+    assert.equal(entryOutcome.status, 'blocked_invalid_inputs', evil.slice(0, 12));
+    assert.doesNotMatch(canonicalJson(entryOutcome), /sk-live|example\.test|passwd/);
+    assert.match(entryOutcome.reason, REASON_SHAPE);
+  }
+});
+
+test('inherited, non-enumerable, Symbol, accessor and Proxy acceptance inputs are refused without running attacker code', () => {
+  let getterRan = false, trapRan = false, keysTrapRan = false;
+  const accessored = { ...acceptanceRecord() } as Record<string, unknown>;
+  Object.defineProperty(accessored, 'expectedCandidateCommit', { enumerable: true,
+    get() { getterRan = true; return ROOT_CANDIDATE; }, configurable: true });
+  assert.equal(evaluateReleaseCandidateAcceptanceV1(accessored).status, 'blocked_invalid_inputs');
+  assert.equal(getterRan, false, 'an accessor must never be invoked');
+
+  const entryAccessored = acceptanceRecord() as unknown as Record<string, unknown>;
+  const entryList = entryAccessored.acceptances as Array<Record<string, unknown>>;
+  Object.defineProperty(entryList[2]!, 'acceptedCommit', { enumerable: true,
+    get() { getterRan = true; return commit('h2'); }, configurable: true });
+  assert.equal(evaluateReleaseCandidateAcceptanceV1(entryAccessored).status,
+    'blocked_invalid_inputs');
+  assert.equal(getterRan, false);
+
+  const symbolled = acceptanceRecord() as unknown as Record<string | symbol, unknown>;
+  symbolled[Symbol('smuggle')] = 'x';
+  assert.equal(evaluateReleaseCandidateAcceptanceV1(symbolled).status, 'blocked_invalid_inputs');
+
+  const hidden = acceptanceRecord() as unknown as Record<string, unknown>;
+  Object.defineProperty(hidden, 'frozenBaseCommit', { enumerable: false, value: ACCEPT_BASE });
+  assert.equal(evaluateReleaseCandidateAcceptanceV1(hidden).status, 'blocked_invalid_inputs');
+
+  const parent = { expectedReleaseVersion: ROOT_VERSION };
+  const child = Object.create(parent) as Record<string, unknown>;
+  Object.assign(child, acceptanceRecord());
+  delete (child as Record<string, unknown>).expectedReleaseVersion;
+  assert.equal(evaluateReleaseCandidateAcceptanceV1(child).status, 'blocked_invalid_inputs');
+
+  const proxied = new Proxy(acceptanceRecord(), { get() {
+    trapRan = true; throw new Error('must_not_execute'); } });
+  assert.equal(evaluateReleaseCandidateAcceptanceV1(proxied).status, 'blocked_invalid_inputs');
+  assert.equal(trapRan, false, 'a Proxy get trap must never execute');
+
+  const protoTrapped = new Proxy(acceptanceRecord(), { getPrototypeOf() {
+    trapRan = true; return null; } });
+  assert.equal(evaluateReleaseCandidateAcceptanceV1(protoTrapped).status, 'blocked_invalid_inputs');
+  assert.equal(trapRan, false);
+
+  const keysTrapped = new Proxy(acceptanceRecord(), { ownKeys() {
+    keysTrapRan = true; return Object.keys(acceptanceRecord()); } });
+  assert.equal(evaluateReleaseCandidateAcceptanceV1(keysTrapped).status, 'blocked_invalid_inputs');
+  assert.equal(keysTrapRan, false);
+
+  const sparseEntries = acceptanceRecord() as unknown as Record<string, unknown>;
+  const sparse = [] as unknown[];
+  sparse[13] = { id: RELEASE_CANDIDATE_COMPONENT_IDS_V1[13], acceptanceState: 'accepted',
+    acceptanceBaseCommit: ACCEPT_BASE, acceptedCommit: commit('h13'),
+    evidenceDigest: historicalEvidenceDigest('last', 13) };
+  sparseEntries.acceptances = sparse;
+  assert.equal(evaluateReleaseCandidateAcceptanceV1(sparseEntries).status, 'blocked_invalid_inputs');
+
+  const revoked = Proxy.revocable(acceptanceRecord(), {});
+  revoked.revoke();
+  assert.equal(evaluateReleaseCandidateAcceptanceV1(revoked.proxy).status, 'blocked_invalid_inputs');
+
+  // The same hardened walker guards the reused reference subtree.
+  const referenceProxied = acceptanceRecord() as unknown as Record<string, unknown>;
+  referenceProxied.reference = new Proxy(acceptanceRecord().reference, { get() {
+    trapRan = true; throw new Error('must_not_execute'); } });
+  assert.equal(evaluateReleaseCandidateAcceptanceV1(referenceProxied).status,
+    'blocked_invalid_inputs');
+  assert.equal(trapRan, false);
+});
+
+test('acceptance evaluation is deterministic, repeats identically and mutates no input', () => {
+  const record = acceptanceRecord();
+  const before = canonicalJson(rebuildAcceptanceRecord(record));
+  const first = evaluateReleaseCandidateAcceptanceV1(record);
+  const second = evaluateReleaseCandidateAcceptanceV1(record);
+  const rebuilt = evaluateReleaseCandidateAcceptanceV1(rebuildAcceptanceRecord(record));
+  assert.equal(canonicalJson(first), canonicalJson(second));
+  assert.equal(canonicalJson(first), canonicalJson(rebuilt),
+    'rebuilding the same record must not change the outcome');
+  assert.equal(canonicalJson(rebuildAcceptanceRecord(record)), before,
+    'the evaluator must not mutate its input');
+  assert.equal(canonicalJson(dryRunReleaseCandidateAcceptanceV1(record)),
+    canonicalJson(dryRunReleaseCandidateAcceptanceV1(record)));
+});
+
+test('top-level key order is part of the record identity, exactly as in the precheck', () => {
+  // The precheck's `exactKeys` compares keys positionally, so the acceptance
+  // layer inherits that rule deliberately: a re-keyed document is a different
+  // document and is refused rather than silently re-interpreted.
+  const record = acceptanceRecord() as Record<string, unknown>;
+  const reordered: Record<string, unknown> = {};
+  for (const key of Object.keys(record).reverse()) reordered[key] = record[key];
+  const outcome = evaluateReleaseCandidateAcceptanceV1(reordered);
+  assert.equal(outcome.status, 'blocked_invalid_inputs');
+  if (outcome.status !== 'blocked_invalid_inputs') assert.fail('refusal required');
+  assert.equal(outcome.reason, 'invalid:record');
+  const precheckRecord = historicalCompleteRecord() as unknown as Record<string, unknown>;
+  const precheckReordered: Record<string, unknown> = {};
+  for (const key of Object.keys(precheckRecord).reverse()) precheckReordered[key] = precheckRecord[key];
+  assert.equal(evaluateReleaseCandidatePrecheckV1(precheckReordered).status,
+    'blocked_invalid_inputs', 'the reused precheck applies the same positional key rule');
+});
+
+/** Rebuild the record from its own values in canonical key order, so an
+ *  identical record can be proven to produce an identical outcome. */
+function rebuildAcceptanceRecord(record: ReturnType<typeof acceptanceRecord>) {
+  const entries = record.acceptances.map((entry) => ({ id: entry.id,
+    acceptanceState: entry.acceptanceState, acceptanceBaseCommit: entry.acceptanceBaseCommit,
+    acceptedCommit: entry.acceptedCommit, evidenceDigest: entry.evidenceDigest }));
+  return { schema: record.schema, expectedCandidateCommit: record.expectedCandidateCommit,
+    expectedReleaseVersion: record.expectedReleaseVersion,
+    expectedArtifactDigest: record.expectedArtifactDigest,
+    frozenBaseCommit: record.frozenBaseCommit,
+    acceptanceBindingDigest: record.acceptanceBindingDigest,
+    reference: record.reference, acceptances: entries };
+}
