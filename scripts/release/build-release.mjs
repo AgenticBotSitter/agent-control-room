@@ -201,29 +201,37 @@ export function assembleRelease({
       };
     });
 
-    // Pack. Deterministic settings: fixed mtime/owner and sorted members make
-    // the archive byte-reproducible for the same inputs.
-    packer({ staging, archivePath });
-
-    const archiveBytes = statSync(archivePath).size;
-    const archiveSha256 = sha256File(archivePath);
-
-    const manifest = {
+    // The inner manifest travels INSIDE the archive so an unpacked tree can
+    // verify itself without the source checkout. It is written and packed below,
+    // after the member inventory is final.
+    const innerEntries = entries.filter(e => e.path !== MANIFEST_NAME);
+    const inner = {
       schema: MANIFEST_SCHEMA,
       version: resolvedVersion,
       revision,
       previousRevision,
       builtAt,
       nodeVersion,
-      archive: { name: archiveName, bytes: archiveBytes, sha256: archiveSha256 },
       root: ARCHIVE_PREFIX,
       requiredMembers: REQUIRED_MEMBERS,
-      members: entries,
-      fileCount: entries.length,
-      totalBytes: entries.reduce((n, e) => n + e.bytes, 0),
+      members: innerEntries,
+      fileCount: innerEntries.length,
+      totalBytes: innerEntries.reduce((n, e) => n + e.bytes, 0),
     };
+    writeFileSync(join(staging, MANIFEST_NAME), JSON.stringify(inner, null, 2) + "\n");
+
+    // Pack so the archive carries the self-consistent manifest. The digest cycle
+    // is broken by construction: the manifest never records the digest of the
+    // archive that carries it.
+    packer({ staging, archivePath });
+
+    const archiveBytes = statSync(archivePath).size;
+    const archiveSha256 = sha256File(archivePath);
+
+    // Outer manifest = the inner one plus the archive's own integrity metadata.
+    const manifest = { ...inner, archive: { name: archiveName, bytes: archiveBytes, sha256: archiveSha256 } };
     writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
-    return { archivePath, manifestPath, version: resolvedVersion, fileCount: entries.length, totalBytes: manifest.totalBytes, archiveBytes, archiveSha256 };
+    return { archivePath, manifestPath, version: resolvedVersion, fileCount: innerEntries.length, totalBytes: inner.totalBytes, archiveBytes, archiveSha256 };
   } finally {
     rmSync(staging, { recursive: true, force: true });
   }

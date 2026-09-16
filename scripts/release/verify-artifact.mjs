@@ -103,8 +103,11 @@ export function verifyUnpacked({ unpackedRoot, manifestPath } = {}) {
     checked++;
   }
 
-  // Nothing may be present that the manifest does not list.
+  // Nothing may be present that the manifest does not list — except the
+  // manifest itself, which carries the inventory and therefore cannot list its
+  // own digest. It is metadata, not a member.
   for (const p of treeRelativePaths(unpackedRoot)) {
+    if (p === MANIFEST_NAME) continue;
     if (!seen.has(p)) problems.push(`unlisted_extra:${p}`);
   }
 
