@@ -115,7 +115,8 @@ export function PrivateNewsWorkspace({ projectId, after, sourceAfter, view = "hi
         {after ? <a href={`${base}/news?${new URLSearchParams({ view, order, ...(sourceAfter ? { sourceAfter } : {}) })}`}>First saved stories</a> : null}
         {page.sourcesNextCursor ? <a href={`${base}/news?${new URLSearchParams({ view, order, ...(after ? { after } : {}), sourceAfter: page.sourcesNextCursor })}`}>Next source checks</a> : null}
         {!reading!.stories.length ? <p>No saved stories in this view on this page.</p> : reading!.stories.map(story => <article className="private-panel" key={story.storyId}>
-          <h2><a href={story.canonicalUrl} target="_blank" rel="noopener noreferrer">{story.title}</a></h2>
+          <h2><a href={story.canonicalUrl} target="_blank" rel="noopener noreferrer"
+            style={{ display: "inline-flex", minHeight: 24, alignItems: "center" }}>{story.title}</a></h2>
           <p>{story.summary}</p><p>{story.verificationState === "verified" ? "Source evidence retained" : "Source needs review"} · {story.queue.replaceAll("_", " ")}</p>
           <NewsArticleReader key={`${projectId}:${story.storyId}:${story.storyDigest}`} projectId={projectId} storyId={story.storyId} storyDigest={story.storyDigest} canonicalUrl={story.canonicalUrl} />
           <p>{story.sourceLabel ?? new URL(story.canonicalUrl).hostname}{story.publishedAt ? ` · Published ${story.publishedAt}` : story.discoveredAt ? ` · Discovered ${story.discoveredAt}` : " · Date unknown"}</p>
