@@ -49,6 +49,7 @@ export function windowsTaskName(workerId) {
 function watchArguments({ workerId, repository, runtimeDirectory, signalDirectory, tokenFromGh }) {
   const values = [
     "--once",
+    "--scheduled",
     "--worker-id", workerId,
     "--repository", repository,
     "--runtime-root", runtimeDirectory,

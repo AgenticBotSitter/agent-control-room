@@ -46,6 +46,12 @@ export function redactSecrets(text, secrets = []) {
   return value;
 }
 
+export function isRateLimitFailure(message) {
+  return message === "worker_inbox_rate_limited"
+    || message === "worker_inbox_api_403"
+    || message === "worker_inbox_api_429";
+}
+
 export function resolveToken({ environment = process.env, tokenFromGh = false, runCommand = spawnSync } = {}) {
   const direct = environment?.GITHUB_TOKEN;
   if (typeof direct === "string" && direct.trim()) return direct.trim();
@@ -75,12 +81,14 @@ export function argumentsFor(argv) {
     else if (flag === "--interval") options.intervalSeconds = Number(argv[++index]);
     else if (flag === "--max-log-bytes") options.maxLogBytes = Number(argv[++index]);
     else if (flag === "--once") options.once = true;
+    else if (flag === "--scheduled") options.scheduled = true;
     else if (flag === "--json") options.json = true;
     else if (flag === "--token-from-gh") options.tokenFromGh = true;
     else if (flag === "--help") options.help = true;
     else throw new Error(`worker_inbox_platform_argument_invalid:${flag}`);
   }
   if (options.help) return options;
+  if (options.scheduled && !options.once) throw new Error("worker_inbox_platform_scheduled_requires_once");
   assertWorkerId(options.workerId);
   assertRepository(options.repository);
   if (!Number.isFinite(options.intervalSeconds) || options.intervalSeconds < 1) {
@@ -104,6 +112,7 @@ export function usage() {
     "  --interval SECONDS        Poll interval in loop mode (default 300).",
     "  --max-log-bytes N         Bounded log size (default 65536).",
     "  --once                    Run a single tick and exit.",
+    "  --scheduled               Scheduler mode: keep transient rate limits quiet (requires --once).",
     "  --json                    Print the tick result as JSON.",
     "  --token-from-gh           Use `gh auth token` in memory when GITHUB_TOKEN is unset.",
     "  --help                    Show this message.",
@@ -129,6 +138,7 @@ export async function runTick({ options, reader = readWorkerInbox, token, now = 
     });
   } catch (error) {
     const message = redactSecrets(error?.message ?? "worker_inbox_platform_failure", secrets);
+    const rateLimited = isRateLimitFailure(message);
     appendBoundedLog(logPath, `${at} outcome=failure error=${message}`, { maxBytes: options.maxLogBytes });
     writeJsonAtomic(statePath, {
       ...(previous ?? {}),
@@ -139,7 +149,10 @@ export async function runTick({ options, reader = readWorkerInbox, token, now = 
       lastOutcome: "failure",
       lastError: message,
     });
-    return { outcome: "failure", error: message, directory, statePath, logPath, signalPath, notified: false, changed: false };
+    return {
+      outcome: "failure", error: message, directory, statePath, logPath, signalPath,
+      notified: false, changed: false, quiet: rateLimited,
+    };
   }
 
   const current = actionsFingerprint(actions);
@@ -221,6 +234,11 @@ export async function runTick({ options, reader = readWorkerInbox, token, now = 
 // tick, so nothing is lost by staying quiet.
 export function consoleDecision({ result, options, lastReported }) {
   if (options.json) return { print: true, stream: "stdout", line: JSON.stringify(result, null, 2), signature: undefined };
+  // A scheduled watcher must not wake an AI worker merely because GitHub asked it to slow down.
+  // The bounded log and state still record the failure, and --once still reports it to a human.
+  if (result.outcome === "failure" && result.quiet && (!options.once || options.scheduled)) {
+    return { print: false, signature: `quiet-rate-limit:${result.error}` };
+  }
   const signature = result.outcome === "failure"
     ? `failure:${result.error}`
     : result.notified ? `change:${result.change}:${result.observed.fingerprint}` : "unchanged";
@@ -276,7 +294,9 @@ export async function main(argv = process.argv.slice(2), { reader, environment =
       lastReported = decision.signature;
     }
 
-    if (result.outcome === "failure" && options.once) return EXIT_TRANSIENT;
+    if (result.outcome === "failure" && options.once) {
+      return result.quiet && options.scheduled ? EXIT_OK : EXIT_TRANSIENT;
+    }
     if (options.once) return EXIT_OK;
     await sleep(options.intervalSeconds * 1000);
   } while (!stopped);

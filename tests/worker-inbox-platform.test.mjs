@@ -225,6 +225,7 @@ test("a rate-limited read is reported, never masked as an empty inbox", async (t
 
   const result = await runTick({ options, reader: limited, now: CLOCK });
   assert.equal(result.outcome, "failure");
+  assert.equal(result.quiet, true, "a scheduled rate-limit tick must not wake the AI worker");
   assert.match(readState(stateFile(result.directory)).lastError, /worker_inbox_api_403/u,
     "the failure code must be persisted, not swallowed");
   assert.match(readFileSync(logFile(result.directory), "utf8"), /worker_inbox_api_403/u,
@@ -259,6 +260,14 @@ test("console output is quiet in a loop and reports a repeated failure only once
   assert.match(reportedFailure.line, /worker_inbox_api_403/u);
   assert.equal(consoleDecision({ result: failure, options: loop, lastReported: reportedFailure.signature }).print, false,
     "a repeated identical failure must not spam the operator");
+
+  const rateLimit = { ...failure, quiet: true };
+  assert.equal(consoleDecision({ result: rateLimit, options: loop, lastReported: undefined }).print, false,
+    "a transient scheduled rate limit must stay silent rather than waking the worker");
+  assert.equal(consoleDecision({ result: rateLimit, options: { once: true, scheduled: false, json: false }, lastReported: undefined }).print, true,
+    "an operator-requested one-shot read still reports the rate limit");
+  assert.equal(consoleDecision({ result: rateLimit, options: { once: true, scheduled: true, json: false }, lastReported: undefined }).print, false,
+    "a scheduler one-shot keeps a transient rate limit silent");
 
   // --once always reports, because the operator asked for exactly one result.
   assert.equal(consoleDecision({ result: unchanged, options: { once: true, json: false }, lastReported: "unchanged" }).print, true);
@@ -318,6 +327,8 @@ test("a read failure exits 2 while a configuration error exits 1", async (t) => 
   const base = ["--once", "--worker-id", WORKER_ID, "--repository", REPOSITORY_NAME, "--runtime-root", root];
 
   assert.equal(await watchMain(base, { reader: failing, environment: {} }), EXIT_TRANSIENT);
+  assert.equal(await watchMain([...base, "--scheduled"], { reader: failing, environment: {} }), EXIT_OK,
+    "scheduled rate limiting is recorded but must not wake a worker through failure output");
   assert.equal(await watchMain(["--help"], { environment: {} }), EXIT_OK);
   assert.equal(await watchMain(["--worker-id", "x", "--once"], { environment: {} }), EXIT_CONFIG);
   assert.equal(await watchMain(["--worker-id", WORKER_ID, "--repository", "not-a-repository", "--once"], { environment: {} }), EXIT_CONFIG);
@@ -332,6 +343,7 @@ test("the CLI refuses an invalid worker ID before any read", () => {
   assert.throws(() => watchArguments(["--worker-id", "ab"]), /worker_inbox_platform_worker_id_invalid/u);
   assert.throws(() => watchArguments(["--worker-id", WORKER_ID, "--repository", "nope"]), /worker_inbox_platform_repository_invalid/u);
   assert.throws(() => watchArguments(["--worker-id", WORKER_ID, "--interval", "0"]), /worker_inbox_platform_interval_invalid/u);
+  assert.throws(() => watchArguments(["--worker-id", WORKER_ID, "--scheduled"]), /scheduled_requires_once/u);
 });
 
 test("a restart reuses persisted state instead of re-notifying", async (t) => {
@@ -1359,7 +1371,7 @@ test("unicode, spaces, and metacharacters survive every platform renderer", (t) 
     if (platform === "windows") {
       // The task must quote every argument so CreateProcess reconstructs them:
       // re-quote the same values and require the exact rendered sequence.
-      const expected = [scriptPath, "--once", "--worker-id", WORKER_ID, "--repository", REPOSITORY_NAME,
+      const expected = [scriptPath, "--once", "--scheduled", "--worker-id", WORKER_ID, "--repository", REPOSITORY_NAME,
         "--runtime-root", awkward].map(windowCommandLine).join(" ");
       assert.ok(joined.includes(`<Arguments>${xmlEscape(expected)}</Arguments>`),
         "task Arguments must carry the fully quoted command line");
