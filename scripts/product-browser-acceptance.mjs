@@ -107,6 +107,7 @@ const posts = [];
 const deliveredFlags = new WeakMap();
 let dropMode = undefined; // "request" -> abort before delivery; "response" -> abort after delivery
 const cleanupErrors = [];
+let completionEvidenceIncomplete = false;
 
 async function installProtectedRequestRouting(ctx, ownerJwt) {
   await ctx.route("**/*", async route => {
@@ -585,6 +586,7 @@ try {
   catch (error) { sweepBeforeError = error; }
 
   if (sweepBeforeError) {
+    completionEvidenceIncomplete = true;
     recordUntested("bootstrap completion-capable sweep observes the reviewed source task",
       `installedApplication.quality.sweep threw: ${sweepBeforeError?.message ?? String(sweepBeforeError)}`,
       { reason: "completion-capable composition unavailable" });
@@ -622,6 +624,7 @@ try {
     try { canonicalStates = await readCanonicalStates(); }
     catch (error) { canonicalError = error; }
     if (canonicalError) {
+      completionEvidenceIncomplete = true;
       recordUntested("completion transitions the source job to succeeded",
         `CanonicalStore(startup.coordinator.client).get threw: ${canonicalError?.message ?? String(canonicalError)}`,
         { reason: "canonical read unavailable in this composition", reusePath: "tests/vps-built-quality.test.mjs" });
@@ -645,6 +648,7 @@ try {
     let replay = null;
     try { replay = await completionReconcile(); } catch (error) { replayError = error; }
     if (replayError) {
+      completionEvidenceIncomplete = true;
       recordUntested("replayed reconcile against the completed source task returns the same receipt",
         `reconcile threw: ${replayError?.message ?? String(replayError)}`,
         { reason: "completion-capable composition unavailable" });
@@ -775,9 +779,15 @@ try {
   await page.close();
   await ownedCleanup();
   const passed = checks.filter(value => value.passed).length;
-  if (cleanupErrors.length > 0) {
-    console.error(`# ${passed}/${checks.length} checks passed; cleanup errors: `,
-      JSON.stringify(cleanupErrors.map(([step, error]) => [step, error.message ?? String(error)])));
+  if (cleanupErrors.length > 0 || completionEvidenceIncomplete) {
+    console.error(`# ${passed}/${checks.length} checks passed; acceptance did not complete`);
+    if (cleanupErrors.length > 0) {
+      console.error("# cleanup errors:",
+        JSON.stringify(cleanupErrors.map(([step, error]) => [step, error.message ?? String(error)])));
+    }
+    if (completionEvidenceIncomplete) {
+      console.error("# required completion evidence was unavailable; acceptance failed");
+    }
     process.exitCode = 1;
   } else {
     console.log(`# ${passed}/${checks.length} checks passed; no listener or remote request was created`);
