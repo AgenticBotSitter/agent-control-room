@@ -11,7 +11,7 @@ digest `privateWebSchemaDigest` (`bb294b…`): migration SQL applied with CRLF
 embeds `\r\n` in `pg_get_functiondef` / column defaults, so the preflight gate
 (`verifyDatabase`, `private-database-preflight.ts:291`) refuses startup and the
 `audit-required-hashes` test fails directly. After cloning, confirm zero CRLF
-files: `git ls-files --eol | grep -c "w/crlf"` must print `0` (re-verified `0`
+files: `git ls-files --eol | grep -cE "w/(crlf|mixed)"` must print `0` (re-verified `0`
 on 2026-09-12 with `.gitattributes` pinned). If it does not, do NOT delete
 tracked files inside a worktree that holds your changes. Confirm a clean slate
 first (`git status --short` must be empty — commit or stash your work, never
@@ -23,7 +23,7 @@ cd C:\opt\data\work
 git clone --config core.autocrlf=false --config core.eol=lf <repo-url> agent-control-room-lfcheck
 cd agent-control-room-lfcheck
 git checkout <revision-under-test>
-git ls-files --eol | Select-String 'w/crlf'   # expect no output
+git ls-files --eol | Select-String 'w/(crlf|mixed)'   # expect no output
 ```
 
 Plain `git checkout-index -f -a` and `git reset --hard` skip byte-identical
@@ -85,3 +85,96 @@ dirs afterward. Interactive-interrupt cleanup is untested (needs a console).
 
 Native Herdr/owner-signing ports (darwin/linux-only by design), live
 Hermes/Codex execution (separate gate), production DB, machine-wide cleanup.
+
+## 6. PowerShell preparation probe
+
+`node scripts/windows/check-windows-preparation.mjs` spawns a fixed PowerShell
+probe (`scripts/windows/windows-preparation-probe.ps1`) with the safe flags
+`-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass`, bounded
+output (`maxBuffer: 64 KiB`) and a 60 s timeout. The probe inspects
+already-installed tools only:
+
+- PowerShell version
+- `node --version`
+- `pnpm --version`
+
+It never downloads code: `npx --yes pnpm@...` is forbidden in the probe
+because on an unprepared machine it would fetch and execute remote code and
+write to the npm cache. Installing or upgrading tools is a separate,
+explicitly authorized step. DPAPI is deliberately not probed — MVP worker
+preparation neither uses nor verifies it, and loading `System.Security`
+alone would not verify `CurrentUser` operation.
+
+The probe reports one `key: value` line per tool; the classifier
+(`scripts/windows/classify-preparation-result.mjs`) validates every
+capability and its minimum version (Node `>= 22.13.0`, pnpm `>= 11.19.0`).
+A missing tool or an under-minimum version is `missing`, never `available`.
+The probe never invokes a harness, never reads credentials, and never makes
+a native effect. Exit codes come from the single canonical table in
+`scripts/windows/windows-exit-codes.mjs`, shared with the line-endings and
+launcher scripts (`src/node-policy/v1/types.ts:keyAvailabilityStates`):
+
+| Exit | Category |
+|---|---|
+| 0 | available — every required tool/version verified |
+| 1 | missing — required capability absent or below minimum |
+| 2 | locked — PowerShell failed / signal / timeout / empty stdout |
+| 3 | corrupt — probe script missing on disk |
+| 4 | unavailable_platform — PowerShell itself not on PATH |
+| 5 | permission_denied — the OS refused the spawn (EACCES/EPERM) |
+| 6 | interaction_required (reserved) |
+
+## 7. Supported launcher modes
+
+`node scripts/windows/decide-launcher-mode.mjs <mode>` returns one of:
+
+| Mode | Decision | Reason |
+|---|---|---|
+| `contributor-demo` | available | Disposable pglite demo on `127.0.0.1:3000/local-preview` |
+| `remote-worker-prep` | available | Preparation probe only (this package) |
+| `production-server` | refused | unavailable_platform — Linux is the initial production target |
+| `posix-vps-custody` | refused | unavailable_platform — POSIX `getuid`-only path |
+| `live-harness-launch` | refused | permission_denied — native harness activation is Q2/Q3/Q6 gated |
+| anything else | refused | corrupt — closest canonical member for malformed input |
+
+Use `decideLauncherMode(mode)` from the module to gate Windows automation
+without spawning a child. CLI exit codes come from the same canonical table
+(`scripts/windows/windows-exit-codes.mjs`), so callers match on one mapping:
+
+| Reason | Exit |
+|---|---|
+| available | 0 |
+| unavailable_platform | 4 |
+| permission_denied | 5 |
+| corrupt | 3 |
+
+## 8. Cleanup ledger (Windows-specific)
+
+Per `ziggy-machine-profile` §6, every disposable Windows artifact must be
+individually removed and listed. On Windows this means:
+
+- File deletion: `unlinkSync` after `lstat` check for symlink, never a
+  wildcard `rm -rf *`.
+- For a dir created with `mkdtempSync`: `rmSync(scratchDir, {
+  recursive: true, force: true })` after every `unlinkSync` inside has
+  succeeded.
+- `forceDelete` is forbidden — if a file is locked, stop and report, do not
+  retry with stronger primitives.
+- `%TEMP%` hygiene: any probe creating dirs there must list them in the
+  packet's side-effect ledger and prove removal.
+- No reparse points, symlinks, junctions as cleanup targets — resolve and
+  inspect first.
+
+Tests use `mkdtempSync(join(tmpdir(), "windows-*"))` with `rmSync` in a
+`finally` block, so leftover dirs are reported as test failures, not as
+silent host pollution.
+
+## 9. Test lane coverage
+
+| Lane | Command | Files |
+|---|---|---|
+| `test:windows-preparation` | `node --test tests/windows-preparation.test.mjs` | 16 unit tests for `classify-preparation-result.mjs` + the shared exit table |
+| `test:windows-line-endings` | `node --test tests/windows-line-endings.test.mjs` | 7 tests; spawns the script against disposable fixture repos (LF, CRLF, mixed) |
+| `test:windows-launcher-modes` | `node --test tests/windows-launcher-modes.test.mjs` | 9 tests for `decide-launcher-mode.mjs` |
+
+All three lanes are pure ESM (`.mjs`); no `tsx` import required.
