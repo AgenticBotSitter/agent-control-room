@@ -293,49 +293,23 @@ test("mounted panel: a stale pending old-project response cannot replace new-pro
   }
 });
 
-test("mounted panel: pressing Enter inside a real form triggers the panel's refresh submit", async () => {
-  // Mount the panel inside a <form> that wraps its refresh button as a real
-  // submit button. Pressing Enter in a focused input must submit the form,
-  // and the panel's onSubmit must trigger a refresh — the only honest
-  // keyboard-activation proof for an Enter key. We do not call .click().
+test("mounted panel: refresh is a focusable semantic button and activation refreshes", async () => {
+  // jsdom does not implement a browser's implicit keyboard activation for
+  // buttons. Prove the production control is a real, focusable button, then
+  // exercise its activation without claiming physical-keyboard evidence.
   const second: ProjectScheduleStatus = { ...value, observedAt: "2026-09-05T12:00:00.000Z" };
   const responses: Array<() => Response> = [() => Response.json(value), () => Response.json(second)];
   const handle = await mountPanel({ response: () => { const next = responses.shift() ?? (() => Response.json(second)); return next(); } });
   try {
-    // Inject a <form> wrapping the refresh button so the button is a real
-    // semantic submit, plus a focused <input> (the canonical place from which
-    // Enter submits a form). React rendering here is imperative because we
-    // want the panel's existing DOM, not a separate React tree.
+    const button = [...handle.dom.window.document.querySelectorAll("button")]
+      .find(candidate => /refresh schedule status/i.test(candidate.textContent ?? ""));
+    assert.ok(button, "expected the mounted refresh button");
+    assert.equal(button.tagName, "BUTTON");
+    assert.equal(button.getAttribute("type"), "button");
+    button.focus();
+    assert.equal(handle.dom.window.document.activeElement, button);
     await handle.act(async () => {
-      const root = handle.dom.window.document.getElementById("root");
-      const form = handle.dom.window.document.createElement("form");
-      form.id = "test-form";
-      // Move the panel into the form so the button submits this form.
-      while (root?.firstChild) form.appendChild(root.firstChild);
-      const input = handle.dom.window.document.createElement("input");
-      input.id = "test-form-input";
-      input.type = "text";
-      form.appendChild(input);
-      root?.appendChild(form);
-      const button = form.querySelector("button");
-      assert.ok(button, "expected refresh button inside form");
-      button.setAttribute("type", "submit");
-      input.focus();
-      // Intercept form submit so Enter causes a refresh instead of a page reload.
-      form.addEventListener("submit", (event) => {
-        event.preventDefault();
-        button.click();
-      });
-    });
-    // Dispatch a real keydown Enter on the focused input — no manual click.
-    await handle.act(async () => {
-      const input = handle.dom.window.document.getElementById("test-form-input") as HTMLInputElement | null;
-      assert.ok(input, "expected focused input");
-      const form = handle.dom.window.document.querySelector("form") as HTMLFormElement | null;
-      assert.ok(form, "expected form in DOM");
-      // Dispatch on the form so the submit listener routes through the browser's
-      // real "implicit submission" path (input Enter -> form submit).
-      form.dispatchEvent(new handle.dom.window.Event("submit", { bubbles: true, cancelable: true }));
+      button.click();
     });
     // Wait for the new observedAt to render.
     for (let attempt = 0; attempt < 200; attempt += 1) {
@@ -343,7 +317,7 @@ test("mounted panel: pressing Enter inside a real form triggers the panel's refr
       await handle.act(async () => { await new Promise(resolve => handle.dom.window.setTimeout(resolve, 10)); });
     }
     const body = handle.dom.window.document.body.textContent ?? "";
-    assert.match(body, /2026-09-05/, "Enter-submit must trigger a refresh that renders the second observedAt");
+    assert.match(body, /2026-09-05/, "button activation must refresh and render the second observedAt");
     assert.match(body, /Schedules refreshed/);
   } finally { await handle.restore(); }
 });
