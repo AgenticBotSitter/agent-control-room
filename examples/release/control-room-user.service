@@ -1,0 +1,52 @@
+[Unit]
+Description=Agent Control Room host (unprivileged per-user unit)
+Documentation=file:./docs/operations/supervisor.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# Run as the operator's own UID with no elevation. This unit is installed under
+# ~/.config/systemd/user/ and never enabled system-wide, so nothing here needs
+# root: no privileged ports, no capability grants, no system paths.
+WorkingDirectory=%h/control-room/current
+ExecStart=%h/.local/bin/node runtime/server/index.js --configuration %h/control-room-config.mjs
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Drain on stop rather than killing work mid-flight. The release path records
+# in-flight units as uncertain, and this window is what lets them finish or be
+# marked before the process ends.
+KillSignal=SIGTERM
+TimeoutStopSec=60
+TimeoutStartSec=30
+
+Restart=on-failure
+RestartSec=10
+# Bounded restarts: a host that cannot start must not loop forever.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# Least privilege. NoNewPrivileges blocks setuid escalation, PrivateTmp gives a
+# private /tmp (the release path never relies on a shared one), and ProtectSystem
+# leaves only the operator's home writable. The host binds loopback only.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/control-room
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+
+# Keep the service's own output bounded so logs cannot fill the disk.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=control-room
+
+[Install]
+WantedBy=default.target
