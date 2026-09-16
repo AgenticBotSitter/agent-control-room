@@ -9,10 +9,11 @@ short-lived installation tokens. Worker computers receive neither the app privat
 installation token. Existing contributor identities remain responsible for Git pushes until a
 separately reviewed push path exists.
 
-This repository contains the effect-free authentication and webhook admission core plus a
-PostgreSQL replay-store adapter and least-privilege database role. It is not live. No key has
-been generated, no webhook has been enabled, no database migration has been applied, and no
-listener has been opened.
+This repository contains the effect-free authentication and webhook admission core, a
+PostgreSQL replay-store adapter and least-privilege database role, and the private broker
+composition that converts verified events into content-free wake-up hints. It is not live. No
+key has been generated, no webhook has been enabled, no database migration has been applied,
+and no listener has been opened.
 
 ## Recorded public identifiers
 
@@ -41,7 +42,11 @@ appear in GitHub, R2, logs, issue comments, worker files, or chat.
    replay, repository,
    installation, event, and action checks before it can create a wake-up hint. A wake-up hint is
    not work authority; workers still follow the repository claim and review controller.
-7. The included in-memory replay adapter is disposable-test support only. The production adapter
+7. Wake-up hints contain only event type, action, repository, issue or pull-request number,
+   delivery sequence, and observation time. Issue titles, comments, PR bodies, and other
+   repository-controlled text never enter the notification channel. A sink failure falls back
+   to the staggered read-only watcher; it never causes unverified work to run.
+8. The included in-memory replay adapter is disposable-test support only. The production adapter
    writes both replay keys atomically to PostgreSQL and survives process restarts. A live listener
    remains blocked until this migration and its narrow database role are rehearsed on real
    PostgreSQL and the complete private broker wrapper is reviewed.
@@ -50,7 +55,7 @@ appear in GitHub, R2, logs, issue comments, worker files, or chat.
 
 1. Review and merge the effect-free authentication and webhook admission core.
 2. Build the private VPS broker around narrow, allowlisted worker operations and bounded audits.
-3. Add a private notification path from verified webhook events to the existing Control Room
+3. Add a private durable notification sink from verified webhook events to the existing Control Room
    worker queue. Retain staggered polling as a quiet fallback.
 4. Rehearse with fake credentials and injected GitHub responses.
 5. Prepare a persistent supervisor, owner-only secret files, rollback, and health checks.
