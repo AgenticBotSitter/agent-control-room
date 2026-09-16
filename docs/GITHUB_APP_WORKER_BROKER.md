@@ -66,6 +66,7 @@ appear in GitHub, R2, logs, issue comments, worker files, or chat.
    Retain staggered polling as a quiet fallback. **Complete in source; not migrated or started.**
 4. Rehearse with fake credentials and injected GitHub responses.
 5. Prepare a persistent supervisor, owner-only secret files, rollback, and health checks.
+   **Complete in source; not installed or activated.**
 6. With fresh owner approval, generate one private key and place it directly on the VPS.
 7. With fresh owner approval, configure a webhook URL and secret, then verify delivery signatures.
 8. Pilot one worker. Confirm token expiry, restart, disconnect, duplicate delivery, 403/429
@@ -76,6 +77,73 @@ The production wrapper should use owner-only secret-file paths such as
 `ACR_GITHUB_APP_PRIVATE_KEY_FILE` and `ACR_GITHUB_WEBHOOK_SECRET_FILE`; secret values must not be
 placed directly in service definitions or command lines. Exact paths and service ownership are
 private operator configuration, not public repository data.
+
+## Reviewed operator package
+
+The repository now includes an inert production package under `deploy/github-app/` and the
+launcher `scripts/run-github-worker-broker.mjs`. It does not install or start itself.
+
+- `operator-config.mjs` reads one non-secret settings file and four secret files through one
+  opened file descriptor, so the object checked is the object read. Production files are owned
+  by root, never by the unprivileged service identity. Secrets may be group-readable by the
+  dedicated service group but cannot be group-writable or accessed by other users. Final-path
+  symlinks, changing files, missing files, unexpected settings, embedded secret values, and
+  oversized files fail closed.
+- The GitHub App key is parsed by performing one offline signature. This sends nothing to
+  GitHub and the generated proof is discarded. The service does not exchange an installation
+  token during preparation.
+- The worker read route uses a separate, fixed-length bearer secret and constant-time
+  comparison. The webhook secret, worker secret, database password, and app key are never
+  accepted on the command line or stored in the service unit.
+- `agent-control-room-github-worker-broker.service` runs as the dedicated `control-room` user,
+  applies systemd hardening, restarts only after failure with a bounded rate, and gives shutdown
+  40 seconds to complete. It references only paths, never secret values.
+- Readiness is the existing `/healthz` database probe. The application prints its ready message
+  only after the loopback listener binds; the `Type=simple` systemd unit itself does not claim a
+  readiness-notification protocol. Failed setup closes acquired database/listener resources and
+  returns a nonzero status with a sanitized message.
+
+### Operator-owned files
+
+The examples define shapes only. A VPS operator must create the operator module as root-owned and
+not group- or world-writable. The settings and four secret files are `root:control-room` mode
+`0640`, making them readable but not writable by the dedicated service identity and inaccessible
+to other users. Private values never enter GitHub, chat, R2, shell history, or logs:
+
+1. `/etc/control-room/github-worker-broker.operator.mjs`, copied byte-for-byte from the pinned
+   release's reviewed `deploy/github-app/operator-config.mjs`, root-owned and immutable to the
+   service identity.
+2. `/etc/control-room/github-worker-broker.env`, copied from the example and containing paths
+   only.
+3. `/etc/control-room/github-worker-broker.settings.json`, based on the example, with the
+   deployment-selected loopback ports and dedicated database name.
+4. The four files named by the environment file: app private key, webhook secret, worker-read
+   secret, and dedicated broker database password.
+
+The database role and migration must be applied and verified before the unit is enabled. The
+exact production sequence is: make a verified backup; apply the reviewed migration with the
+restricted migrator; verify the ledger and broker grants; install the unit but leave it disabled;
+run a foreground health/restart rehearsal; then request fresh activation authority.
+
+Before any listener attempt, the operator can run the launcher with `--check --configuration`
+and the protected operator-module path. Check-only mode reads and validates the protected files,
+performs the offline key signature, constructs and closes the lazy database pool, and exits. It
+does not connect to PostgreSQL, contact GitHub, or open a listener. Passing this check is not live
+database, tunnel, webhook, restart, or rollback evidence.
+
+The public tunnel route must forward **only** `POST /webhooks/github` to this listener. It must
+not publish the health or worker-hint paths. Worker hint reads stay on the approved private
+machine path (for example, SSH forwarding or the owner's private network) and still require the
+separate worker-read secret. The webhook path relies on GitHub's verified signature rather than
+the owner's human Access login; no other path receives that exception.
+
+### Rollback
+
+Stop and disable only this broker unit, remove the webhook route from the private tunnel, revoke
+the App private key in GitHub, and return workers to their existing read-only watchers. Do not
+delete wake or replay rows during incident response. If a migration rollback is required, restore
+the verified pre-change database backup into the approved recovery target; do not hand-edit the
+production schema.
 
 ## Rate limits and Actions
 
