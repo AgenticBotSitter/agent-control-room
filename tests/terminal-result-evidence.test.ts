@@ -5,6 +5,7 @@ import { sha256Digest } from "../src/security/canonical-digest";
 import {
   projectCodexTerminalResultEvidenceV1,
   projectHermesTerminalResultEvidenceV1,
+  projectUpstreamHermesSessionResultEvidenceV1,
   terminalResultEvidenceSchemaV1,
 } from "../src/harness/v1/terminal-result-evidence";
 
@@ -152,4 +153,168 @@ test("captures inputs and deeply freezes both variants against mutation", () => 
   assert.equal(codexResult.source.threadId, "thread:one");
   assert.throws(() => { (hermesResult.source as { snapshotVersion: number }).snapshotVersion = 9; }, TypeError);
   assert.throws(() => { (codexResult.content as { sizeBytes: number }).sizeBytes = 1; }, TypeError);
+});
+
+/* ------------------------------------------------------------------ */
+/* Upstream Hermes session result evidence                              */
+/* ------------------------------------------------------------------ */
+
+const upstreamReplyDigest = (overrides: Record<string, unknown>) => {
+  const { response: _response, ...base } = upstreamReply(overrides);
+  return sha256Digest(base);
+};
+
+function upstreamReply(overrides: Record<string, unknown> = {}) {
+  return {
+    success: true,
+    job_id: "0123456789abcdef0123456789abcdef",
+    session_id: "session:one",
+    status: "completed",
+    return_code: 0,
+    response: "exact upstream terminal result",
+    truncated: false,
+    ...overrides,
+  };
+}
+
+const upstreamConnectorProfileDigest = digest("upstream-profile");
+
+function upstreamInput(overrides: Record<string, unknown> = {}) {
+  return {
+    lineage,
+    retained: {
+      connectorProfileDigest: upstreamConnectorProfileDigest,
+      upstreamSessionId: "session:one",
+      upstreamJobId: "0123456789abcdef0123456789abcdef",
+    },
+    outcome: upstreamReply(),
+    upstreamCeilingTruncated: false,
+    observedAt: "2026-09-15T12:00:00.000Z",
+    ...overrides,
+  };
+}
+
+test("projects strict inert upstream Hermes session result evidence without authorizing publication", () => {
+  const input = upstreamInput();
+  const result = projectUpstreamHermesSessionResultEvidenceV1(input);
+  assert.equal(result.kind, "upstream_hermes_session_result");
+  assert.deepEqual(result.lineage, lineage);
+  assert.equal(result.terminalState, "completed");
+  assert.equal(result.source.upstreamSessionId, input.retained.upstreamSessionId);
+  assert.equal(result.source.upstreamJobId, input.retained.upstreamJobId);
+  assert.equal(result.source.connectorProfileDigest, upstreamConnectorProfileDigest);
+  assert.equal(result.source.upstreamReplyDigest, upstreamReplyDigest({}));
+  const expectedBytes = Buffer.from(input.outcome.response, "utf8");
+  assert.equal(result.content.sizeBytes, expectedBytes.byteLength);
+  assert.equal(result.content.contentHash, `sha256:${createHash("sha256").update(expectedBytes).digest("hex")}`);
+  assert.equal(result.canonicalPublicationAllowed, false);
+  assert.equal(result.qualityAccepted, false);
+  assert.equal(result.completionRecorded, false);
+  assert.equal(result.grantsExecutionAuthority, false);
+  assert.equal(result.permitsRetry, false);
+  assert.equal(result.permitsResume, false);
+  assert.deepEqual(terminalResultEvidenceSchemaV1.parse(result), result);
+  assert.ok(Object.isFrozen(result));
+  assert.ok(Object.isFrozen(result.source));
+  assert.ok(Object.isFrozen(result.lineage));
+});
+
+test("upstream Hermes projection is deterministic on exact replay and accepts both truncation flags independently", () => {
+  const first = projectUpstreamHermesSessionResultEvidenceV1(upstreamInput());
+  const replay = projectUpstreamHermesSessionResultEvidenceV1(upstreamInput());
+  assert.deepEqual(replay, first);
+  // Both flags are independent: a truncated upstream response with a
+  // separately-applied ceiling flag preserves both facts.
+  const truncated = projectUpstreamHermesSessionResultEvidenceV1(upstreamInput({
+    outcome: upstreamReply({ truncated: true }),
+    upstreamCeilingTruncated: true,
+  }));
+  assert.equal(truncated.source.upstreamTruncated, true);
+  assert.equal(truncated.source.upstreamCeilingTruncated, true);
+  // A non-truncated reply defaults the ceiling flag to false when omitted.
+  const plain = projectUpstreamHermesSessionResultEvidenceV1(upstreamInput({ upstreamCeilingTruncated: undefined }));
+  assert.equal(plain.source.upstreamTruncated, false);
+  assert.equal(plain.source.upstreamCeilingTruncated, false);
+});
+
+test("refuses upstream Hermes evidence for mismatched upstream identity and tampered digests", () => {
+  // Wrong upstream job id (forged reply under the right session).
+  assert.throws(() => projectUpstreamHermesSessionResultEvidenceV1(upstreamInput({
+    retained: { connectorProfileDigest: upstreamConnectorProfileDigest,
+      upstreamSessionId: "session:one", upstreamJobId: "fedcba9876543210fedcba9876543210" },
+  })), /terminal_result_evidence_unavailable/);
+  // Wrong upstream session id (job id matches, session does not).
+  assert.throws(() => projectUpstreamHermesSessionResultEvidenceV1(upstreamInput({
+    outcome: upstreamReply({ session_id: "session:other" }),
+  })), /terminal_result_evidence_unavailable/);
+  // Tampered evidence digest.
+  const baseline = projectUpstreamHermesSessionResultEvidenceV1(upstreamInput());
+  assert.throws(() => terminalResultEvidenceSchemaV1.parse({ ...baseline,
+    evidenceDigest: digest("tampered-evidence") }), /terminal result evidence digest mismatch/);
+  // Mismatched upstream reply digest: a reply whose status/return_code/
+  // truncated fields were silently changed after projection would still have
+  // the wrong upstreamReplyDigest. The projection recomputes it from the
+  // reply material, so a tampered reply produces a distinct evidence
+  // digest and cannot collide with the original.
+  const fresh = projectUpstreamHermesSessionResultEvidenceV1(upstreamInput({
+    outcome: upstreamReply({ truncated: true, return_code: 1 }),
+  }));
+  assert.equal(fresh.source.upstreamReplyDigest, upstreamReplyDigest({ truncated: true, return_code: 1 }));
+  assert.notEqual(fresh.evidenceDigest, baseline.evidenceDigest);
+});
+
+test("refuses upstream Hermes evidence for non-completed, refusal envelopes, empty/whitespace text, malformed Unicode and forged shape", () => {
+  // The projection refuses every non-completed terminal state before
+  // publication: failed, running, starting, timed_out, orphaned, pending.
+  for (const status of ["failed", "running", "starting", "timed_out", "orphaned", "pending"]) {
+    assert.throws(() => projectUpstreamHermesSessionResultEvidenceV1(upstreamInput({
+      outcome: upstreamReply({ status }),
+    })), /terminal_result_evidence_unavailable/);
+  }
+  // Refusal envelopes (success:false) are rejected without coercing.
+  assert.throws(() => projectUpstreamHermesSessionResultEvidenceV1(upstreamInput({
+    outcome: { success: false, error: "refused", layer: "session_control", code: "JOB_NOT_FOUND",
+      safe_message: "Job not found", suggested_action: "check" },
+  })), /terminal_result_evidence_unavailable/);
+  // Empty response text fails closed; the publisher cannot accept below floor.
+  assert.throws(() => projectUpstreamHermesSessionResultEvidenceV1(upstreamInput({
+    outcome: upstreamReply({ response: "" }),
+  })), /terminal_result_evidence_unavailable/);
+  // Whitespace-only text also fails closed.
+  assert.throws(() => projectUpstreamHermesSessionResultEvidenceV1(upstreamInput({
+    outcome: upstreamReply({ response: "   \n   " }),
+  })), /terminal_result_evidence_unavailable/);
+  // Malformed Unicode fails closed even when its self-digest would match.
+  assert.throws(() => projectUpstreamHermesSessionResultEvidenceV1(upstreamInput({
+    outcome: upstreamReply({ response: "\ud800" }),
+  })), /terminal_result_evidence_unavailable/);
+  // An unknown extra outcome field is refused (no silent coercion).
+  assert.throws(() => projectUpstreamHermesSessionResultEvidenceV1(upstreamInput({
+    outcome: { ...upstreamReply(), phantom: "field" },
+  })), /terminal_result_evidence_unavailable/);
+  // Cross-variant inputs (Codex / Hermes-native snapshots) are rejected.
+  assert.throws(() => projectUpstreamHermesSessionResultEvidenceV1({
+    ...upstreamInput(),
+    snapshot,
+  }), /terminal_result_evidence_unavailable/);
+  // A `text`-only shape that looks like the runtime outcome is NOT accepted
+  // by the projection; the projection requires the exact upstream reply.
+  assert.throws(() => projectUpstreamHermesSessionResultEvidenceV1({
+    lineage, retained: { connectorProfileDigest: upstreamConnectorProfileDigest,
+      upstreamSessionId: "session:one", upstreamJobId: "0123456789abcdef0123456789abcdef" },
+    outcome: { kind: "completed", text: "exact upstream terminal result" },
+  }), /terminal_result_evidence_unavailable/);
+});
+
+test("upstream Hermes projection is order-independent across rebuilds and deeply freezes the result", () => {
+  const input = upstreamInput();
+  const before = projectUpstreamHermesSessionResultEvidenceV1(input);
+  // Mutate the retained binding; the frozen result must not change.
+  (input.retained as { connectorProfileDigest: string }).connectorProfileDigest = digest("other");
+  (input.outcome as { response: string }).response = "tampered-after-projection";
+  assert.equal(before.source.connectorProfileDigest, upstreamConnectorProfileDigest);
+  assert.equal(before.content.sizeBytes, Buffer.byteLength("exact upstream terminal result"));
+  // Deep freeze guards against post-projection mutation.
+  assert.throws(() => { (before.source as { upstreamTruncated: boolean }).upstreamTruncated = true; }, TypeError);
+  assert.throws(() => { (before.content as { sizeBytes: number }).sizeBytes = 0; }, TypeError);
 });

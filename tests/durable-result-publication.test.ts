@@ -7,6 +7,8 @@ import test from "node:test";
 import { publishDurableResultV1, readDurableResultV1, reconcileDurableResultReservationCrashV1,
   type DurableResultBindingV1 } from "../src/artifacts/v1/durable-result-publication";
 import { durableReceiptFromCodexV1, durableReceiptFromNativeV1 } from "../src/artifacts/v1/durable-result-receipt";
+import { publishHermesSessionResultV1,
+  type HermesSessionResultOutcomeV1 } from "../src/harness/hermes-gpt-v1/result-publication";
 import { reserveNativeResultWriteV1, markNativeResultReservationStorageUncertainV1 } from "../src/artifacts/v1/native-result-reservation";
 import { resultBytesHash } from "../src/artifacts/v1/native-results";
 import { taskReviewTargetV1 } from "../src/completion-gate/v1/task-review-plan";
@@ -763,4 +765,235 @@ test("reconstructing over the same persistent directory and database returns the
     (artifactId: string, signal?: AbortSignal) => reopened.storage.read(artifactId, signal),
     binding.tenantId, binding.projectId, nativeBinding(runId).jobId, published.receipt.artifactId));
   assert.equal(reread?.text, text("persistent"));
+});
+
+
+/* ------------------------------------------------------------------ */
+/* Upstream Hermes session result publication                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Construct the upstream Hermes session outcome (the success side of the
+ * pinned `hermes_session_job_result` reply, lifted into the durable
+ * publisher's input shape). Matches the `HermesSessionResultOutcomeV1`
+ * completed variant in `session-runtime.ts`.
+ */
+function upstreamHermesOutcome(runId: string, overrides: Partial<{
+  text: string; truncated: boolean; ceilingTruncated: boolean; returnCode: number | null;
+  upstreamJobId: string; upstreamSessionId: string; sessionIdResolved: boolean;
+}> = {}): HermesSessionResultOutcomeV1 {
+  const text = overrides.text ?? "exact upstream terminal result";
+  const upstreamJobId = overrides.upstreamJobId ?? "0123456789abcdef0123456789abcdef";
+  const upstreamSessionId = overrides.upstreamSessionId ?? `session:${runId}`;
+  const textBytes = new TextEncoder().encode(text);
+  return {
+    kind: "completed",
+    schema: "control-room.hermes-session-outcome/v1" as never,
+    binding: { lineage: {
+      tenantId: binding.tenantId, projectId: binding.projectId,
+      jobId: `job:${runId}`, attemptId: `attempt:${runId}`,
+      runId, nodeId: binding.nodeId,
+    }, sessionId: upstreamSessionId },
+    upstreamJobId, upstreamSessionId,
+    sessionIdResolvedByUpstream: overrides.sessionIdResolved ?? false,
+    text,
+    contentHash: resultBytesHash(textBytes),
+    sizeBytes: textBytes.byteLength,
+    upstreamTruncated: overrides.truncated ?? false,
+    ceilingTruncated: overrides.ceilingTruncated ?? false,
+    returnCode: overrides.returnCode ?? 0,
+    canonicalPublicationAllowed: false,
+    qualityAccepted: false,
+    completionRecorded: false,
+    grantsExecutionAuthority: false,
+    permitsRetry: false,
+    permitsResume: false,
+  };
+}
+
+function upstreamHermesInput(runId: string, overrides: Parameters<typeof upstreamHermesOutcome>[1] = {}) {
+  return {
+    outcome: upstreamHermesOutcome(runId, overrides),
+    connectorProfileDigest: digest("c"),
+    workflowId: "workflow:test",
+    assertAuthority: () => {},
+  };
+}
+
+test("upstream Hermes: a completed session result publishes exactly once and replays the existing receipt", async t => {
+  const f = await setupWithProvision("run:durable-upstream-hermes"); t.after(f.close);
+  const storage = new ControlledStorage();
+  const runId = "run:durable-upstream-hermes";
+  const receivedAt = at(9300);
+  const input = upstreamHermesInput(runId);
+  const first = await publishHermesSessionResultV1(configOf(f, storage), { ...input, receivedAt });
+  assert.equal(first.replayed, false);
+  // The receipt is inert; the connector profile digest is bound into the
+  // identity and surfaced on the receipt.
+  assert.equal(first.receipt.harness, "upstream-hermes");
+  assert.equal(first.receipt.connectorProfileDigest, digest("c"));
+  assert.equal(first.receipt.contentHash, resultBytesHash(new TextEncoder().encode("exact upstream terminal result")));
+  // The receipt carries no snapshot, no publication contract, and no
+  // thread/turn/item — those are the native/codex concerns, not the
+  // upstream connector's.
+  assert.equal(first.receipt.snapshotDigest, undefined);
+  assert.equal(first.receipt.publicationContractDigest, undefined);
+  assert.equal(first.receipt.terminalEvidenceDigest, undefined);
+  assert.equal(first.receipt.threadId, undefined);
+  assert.equal(first.receipt.turnId, undefined);
+  assert.equal(first.receipt.itemId, undefined);
+  // The projected evidence is frozen and bound to upstream identity.
+  assert.equal(first.evidence.kind, "upstream_hermes_session_result");
+  assert.equal(first.evidence.source.upstreamSessionId, input.outcome.kind === "completed" ? input.outcome.upstreamSessionId : "");
+  assert.equal(first.evidence.source.upstreamJobId, input.outcome.kind === "completed" ? input.outcome.upstreamJobId : "");
+  assert.equal(first.evidence.source.connectorProfileDigest, digest("c"));
+  assert.equal(first.evidence.source.upstreamTruncated, false);
+  assert.equal(first.evidence.source.upstreamCeilingTruncated, false);
+  assert.equal(first.evidence.content.sizeBytes, Buffer.byteLength("exact upstream terminal result"));
+  assert.equal(first.evidence.canonicalPublicationAllowed, false);
+  assert.equal(first.evidence.qualityAccepted, false);
+  assert.equal(first.evidence.completionRecorded, false);
+  assert.equal(first.evidence.grantsExecutionAuthority, false);
+  assert.equal(first.evidence.permitsRetry, false);
+  assert.equal(first.evidence.permitsResume, false);
+  // The pending owner-review target is recorded. Review is required: the
+  // publisher grants no execution authority. The durable target carries
+  // the receipt digest as its subject and is frozen for downstream readers.
+  // The durable review target carries the binding's jobId as its subject
+  // (the publisher's contract uses the durable identity, not the artifact),
+  // and the receipt content hash as the subject digest.
+  assert.equal(first.target.subjectId, `job:${runId}`);
+  assert.equal(first.target.subjectDigest, first.receipt.contentHash);
+  assert.equal(first.target.revisionNumber, 0);
+  assert.ok(Object.isFrozen(first.evidence));
+
+  // Exact replay: same outcome, same durable identity, no second write.
+  const replayed = await publishHermesSessionResultV1(configOf(f, storage), { ...input, receivedAt });
+  assert.equal(replayed.replayed, true);
+  assert.deepEqual(replayed.receipt, first.receipt);
+  assert.deepEqual(replayed.evidence, first.evidence);
+  // The replay target is a fresh object with the same content; assert the
+  // identifying fields rather than reference identity.
+  assert.equal(replayed.target.id, first.target.id);
+  assert.equal(replayed.target.subjectId, first.target.subjectId);
+  assert.equal(replayed.target.subjectDigest, first.target.subjectDigest);
+  assert.equal(replayed.target.acceptanceProfileDigest, first.target.acceptanceProfileDigest);
+  // No second byte write reached the storage port.
+  assert.equal(storage.putCalls, 1);
+
+  // The ordinary protected reader returns the verified text. The reader
+  // keys on the binding's jobId, which for this fixture is
+  // `job:run:durable-upstream-hermes` (see upstreamHermesInput above).
+  const read = await f.db.transaction(tx => readDurableResultV1(tx, f.resultKey, "local",
+    (artifactId, signal) => storage.read(artifactId, signal),
+    binding.tenantId, binding.projectId, `job:${runId}`, first.receipt.artifactId));
+  assert.equal(read?.text, "exact upstream terminal result");
+});
+
+test("upstream Hermes: changed text under the same durable identity fails closed without rewriting", async t => {
+  const f = await setupWithProvision("run:durable-upstream-hermes-changed"); t.after(f.close);
+  const storage = new ControlledStorage();
+  const runId = "run:durable-upstream-hermes-changed";
+  const receivedAt = at(9400);
+  await publishHermesSessionResultV1(configOf(f, storage), { ...upstreamHermesInput(runId, { text: "original" }), receivedAt });
+  const before = storage.putCalls;
+  // A forged second publication with different text must fail closed at the
+  // identity-mismatch check inside the durable publisher.
+  await assert.rejects(publishHermesSessionResultV1(configOf(f, storage),
+    { ...upstreamHermesInput(runId, { text: "forged" }), receivedAt }),
+    /durable_result_reservation_conflict|durable_result_identity_mismatch|durable_result_manual_reconciliation_required|durable_result_storage_uncertain/);
+  // No second byte write reached the storage port.
+  assert.equal(storage.putCalls, before);
+});
+
+test("upstream Hermes: wrong upstream job id / wrong connector profile digest fail closed without durable writes", async t => {
+  const f = await setupWithProvision("run:durable-upstream-hermes-id"); t.after(f.close);
+  const storage = new ControlledStorage();
+  const runId = "run:durable-upstream-hermes-id";
+  const receivedAt = at(9500);
+  // Wrong upstream job id: the adapter's pre-projection guard rejects the
+  // job id pattern before the durable publisher is reached. The wrong
+  // upstream session id case is structurally impossible through the
+  // adapter (the outcome supplies the only session id the adapter ever
+  // sees), so the projection-level guard is exercised in
+  // `terminal-result-evidence.test.ts` instead.
+  await assert.rejects(publishHermesSessionResultV1(configOf(f, storage),
+    { ...upstreamHermesInput(runId, { upstreamJobId: "not-hex-job-id" }), receivedAt }),
+    /upstream_hermes_invalid_upstream_job_id/);
+  // Wrong connector profile digest: the durable publisher's
+  // `verifyRecordedIdentity` rejects the binding before any write.
+  await assert.rejects(publishHermesSessionResultV1(configOf(f, storage),
+    { ...upstreamHermesInput(runId), connectorProfileDigest: digest("wrong-profile"), receivedAt }),
+    /durable_result_identity_mismatch/);
+  assert.equal(storage.putCalls, 0);
+});
+
+test("upstream Hermes: every non-completed outcome is refused before publication", async t => {
+  const f = await setupWithProvision("run:durable-upstream-hermes-states"); t.after(f.close);
+  const storage = new ControlledStorage();
+  for (const kind of ["failed", "uncertain", "pending", "unknown_job", "invalid"] as const) {
+    const outcome = {
+      kind, ...(kind === "failed" ? { state: "failed", returnCode: 1 }
+        : kind === "uncertain" ? { state: "orphaned", reason: "process not owned" }
+        : kind === "pending" ? { state: "running" }
+        : kind === "unknown_job" ? { detail: "no such job" }
+        : { reason: "invalid reply" }),
+    } as HermesSessionResultOutcomeV1;
+    await assert.rejects(publishHermesSessionResultV1(configOf(f, storage),
+      { outcome, connectorProfileDigest: digest("c"), workflowId: "workflow:test", assertAuthority: () => {} }),
+      /upstream_hermes_session_result_not_completed|terminal_result_evidence_unavailable/);
+  }
+  assert.equal(storage.putCalls, 0);
+});
+
+test("upstream Hermes: authority loss before each durable effect aborts the publication with zero writes", async t => {
+  const f = await setupWithProvision("run:durable-upstream-hermes-auth"); t.after(f.close);
+  const storage = new ControlledStorage();
+  const runId = "run:durable-upstream-hermes-auth";
+  let authorityCalls = 0;
+  const losing = () => { authorityCalls++; throw new Error("upstream_binding_revoked"); };
+  await assert.rejects(publishHermesSessionResultV1(configOf(f, storage),
+    { ...upstreamHermesInput(runId), assertAuthority: losing }),
+    /upstream_binding_revoked/);
+  // Authority is checked before the reservation write, before byte I/O,
+  // before manifest/receipt/audit appends. Zero durable writes.
+  assert.equal(storage.putCalls, 0);
+  // The fence was invoked at least once (publisher's first assertAuthority).
+  assert.ok(authorityCalls >= 1);
+});
+
+test("upstream Hermes: storage uncertainty surfaces as uncertainty and never grants permission to retry Hermes", async t => {
+  const f = await setupWithProvision("run:durable-upstream-hermes-uncertain"); t.after(f.close);
+  const storage = new ControlledStorage();
+  const runId = "run:durable-upstream-hermes-uncertain";
+  storage.throwAfterPut = true;
+  await assert.rejects(publishHermesSessionResultV1(configOf(f, storage),
+    { ...upstreamHermesInput(runId), receivedAt: at(9600) }),
+    /durable_result_storage_uncertain/);
+  // No completion, no retry grant.
+  assert.equal(storage.putCalls, 1);
+});
+
+test("upstream Hermes: both truncation flags are preserved on the receipt", async t => {
+  const f = await setupWithProvision("run:durable-upstream-hermes-trunc"); t.after(f.close);
+  const storage = new ControlledStorage();
+  const runId = "run:durable-upstream-hermes-trunc";
+  const receivedAt = at(9700);
+  const truncated = await publishHermesSessionResultV1(configOf(f, storage),
+    { ...upstreamHermesInput(runId, { text: "trimmed to upstream ceiling", truncated: true, ceilingTruncated: true }),
+      receivedAt });
+  assert.equal(truncated.replayed, false);
+  assert.equal(truncated.evidence.source.upstreamTruncated, true);
+  assert.equal(truncated.evidence.source.upstreamCeilingTruncated, true);
+  assert.equal(truncated.evidence.content.sizeBytes, Buffer.byteLength("trimmed to upstream ceiling"));
+});
+
+test("upstream Hermes: invalid connector profile digest shape is rejected without durable writes", async t => {
+  const f = await setupWithProvision("run:durable-upstream-hermes-shape"); t.after(f.close);
+  const storage = new ControlledStorage();
+  const runId = "run:durable-upstream-hermes-shape";
+  await assert.rejects(publishHermesSessionResultV1(configOf(f, storage),
+    { ...upstreamHermesInput(runId), connectorProfileDigest: "not-a-digest" }),
+    /upstream_hermes_invalid_connector_profile_digest/);
+  assert.equal(storage.putCalls, 0);
 });
