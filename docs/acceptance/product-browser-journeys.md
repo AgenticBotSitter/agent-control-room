@@ -109,8 +109,11 @@ read uses the `coordinator_test` role (the same role that locked the run
 row). The script asserts `job.state === "succeeded"`,
 `attempt.state === "succeeded"` and `lease.state === "released"`. A
 replay of `installedApplication.quality.reconcile` against the same
-input returns the same completion receipt with `replayed: true`,
-proving the receipt is canonical and replay-safe. The public product UI
+input returns the same completion receipt with `replayed: true`, and the
+script compares the replay's full receipt object against the receipt the
+first pass stored (a deep equality on the receipt, guarded against a
+null-vs-null vacuous pass), proving the receipt is canonical and
+replay-safe. The public product UI
 on the source task page is then reloaded and asserted to render the
 saved accept-quality decision without re-issuing a protected command.
 
@@ -120,7 +123,7 @@ fixture's raw database) in a PGlite role without the harness-runs grant,
 which is the wrong composition for the completion transition. This round
 uses the bootstrap composition described above; it is the same
 `TaskQualityCoordinator.sweep` / `.reconcile` path that
-`tests/vps-built-quality.test.mjs` lines 60–104 exercise, against the
+`tests/vps-built-quality.test.mjs` lines 59–107 exercise, against the
 exact same `coordinator_test` role PGlite setup, with only surrounding
 plumbing differences.
 

@@ -654,6 +654,16 @@ try {
       check("replayed reconcile reports the completion receipt as a replay",
         replay?.completion?.replayed === true,
         `completion.replayed=${replay?.completion?.replayed}`);
+      // The replay must hand back the SAME canonical receipt, not merely a
+      // second completed disposition. Compare the full receipt object the
+      // first pass stored with the one the replay returned; the receipt
+      // identity guard below keeps the comparison falsifiable when either
+      // side is missing instead of letting two nulls compare equal.
+      check("replayed reconcile returns the same completion receipt as the first pass",
+        replay?.completion?.receipt?.jobId === completionInput.jobId
+        && JSON.stringify(replay?.completion?.receipt ?? null)
+        === JSON.stringify(item?.result?.completion?.receipt ?? null),
+        `receipt match=${JSON.stringify(replay?.completion?.receipt ?? null) === JSON.stringify(item?.result?.completion?.receipt ?? null)}`);
     }
   }
   // Reload the source result page in the browser; the public product UI must
