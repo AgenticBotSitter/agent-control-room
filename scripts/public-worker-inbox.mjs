@@ -44,7 +44,15 @@ async function apiJson(fetchImpl, url, token) {
   } });
   if (!response?.ok) {
     const status = response?.status ?? "invalid";
-    if (status === 403 || status === 429) throw new Error("worker_inbox_rate_limited");
+    if (status === 429 || (status === 403 && (response.headers?.get?.("x-ratelimit-remaining") === "0"
+      || response.headers?.get?.("retry-after")))) throw new Error("worker_inbox_rate_limited");
+    if (status === 403 && token) {
+      // GitHub also returns 403 for rejected credentials. Do not call that a rate limit:
+      // doing so makes a permanently broken watcher look transient and leaves work unseen.
+      const body = typeof response.text === "function" ? (await response.text()).slice(0, 4096) : "";
+      if (/fine-grained personal access tokens|bad credentials|token.+(?:expired|lifetime)/i.test(body))
+        throw new Error("worker_inbox_credential_rejected");
+    }
     throw new Error(`worker_inbox_api_${status}`);
   }
   const value = await response.json();
