@@ -20,6 +20,10 @@ import {
   type ClaudeCodeSessionDispositionV1,
 } from "../src/harness/claude-code-v1/owned-process-session";
 import type { DurableResultPublicationConfigurationV1 } from "../src/artifacts/v1/durable-result-publication";
+import {
+  projectClaudeTerminalResultEvidenceV1,
+  terminalResultEvidenceSchemaV1,
+} from "../src/harness/v1/terminal-result-evidence";
 import { sha256Digest } from "../src/security/canonical-digest";
 
 // Every value here is freshly authored and synthetic. No host path, real session
@@ -598,4 +602,245 @@ test("the decoded terminal frame carries no publication identity for the bridge 
   // Content and observed session evidence only.
   assert.deepEqual(exported.filter(key => key === "sessionId" || key === "resultText"
     || key === "frameDigest").sort(), ["frameDigest", "resultText", "sessionId"]);
+});
+
+/* ------------------------------------------------------------------ */
+/* Shared terminal-result evidence projection.                         */
+/*                                                                     */
+/* Claude joins the SAME harness-neutral discriminated union the other  */
+/* harnesses use. Every case below exercises the projector directly,    */
+/* with no database, storage, reservation or process anywhere in the    */
+/* call: the projection is pure.                                       */
+/* ------------------------------------------------------------------ */
+
+const RESULT_TEXT = "placeholder result text";
+
+function claudeEvidenceInput(overrides: Record<string, unknown> = {},
+  lines: readonly string[] = [initLine(), resultLine()]) {
+  const { frame, state } = decodedTerminal(lines);
+  const rawLine = lines[lines.length - 1];
+  return {
+    lineage: { tenantId: RETAINED_BINDING.tenantId, projectId: RETAINED_BINDING.projectId,
+      jobId: RETAINED_BINDING.jobId, attemptId: RETAINED_BINDING.attemptId,
+      runId: RETAINED_BINDING.runId, nodeId: RETAINED_BINDING.nodeId },
+    retained: { processAttemptId: PROCESS_BINDING.processAttemptId, sessionId: SESSION,
+      connectorProfileDigest: CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1,
+      terminalFrameDigest: frame.frameDigest },
+    terminalFrameRawLine: rawLine,
+    resultSubtypeCode: frame.subtypeCode,
+    decoderFramesAccepted: state.framesAccepted,
+    observedAt: "2027-01-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+/** Rebuilds a raw line and the retained digest that honestly describes it. */
+function honestMaterial(payload: Record<string, unknown>) {
+  const rawLine = JSON.stringify(payload);
+  return { rawLine, digest: sha256Digest(JSON.parse(rawLine)) };
+}
+
+test("the shared union carries a Claude member that projects inert, frozen, lineage-bound evidence", () => {
+  const evidence = projectClaudeTerminalResultEvidenceV1(claudeEvidenceInput());
+  const { frame, state } = decodedTerminal([initLine(), resultLine()]);
+
+  // Discriminates on `kind`, and the union parses its own output back.
+  assert.equal(evidence.kind, "claude_terminal_result");
+  assert.equal(evidence.schema, "control-room.terminal-result-evidence/v1");
+  const reparsed = terminalResultEvidenceSchemaV1.parse(evidence);
+  assert.equal(reparsed.kind, "claude_terminal_result");
+  // `kind` is what selects the member: the same object relabelled as another
+  // harness's kind no longer satisfies that member's own source shape.
+  assert.throws(() => terminalResultEvidenceSchemaV1.parse(
+    { ...evidence, kind: "codex_exact_completed_turn" }), /.*/);
+  assert.throws(() => terminalResultEvidenceSchemaV1.parse(
+    { ...evidence, kind: "hermes_native_snapshot" }), /.*/);
+
+  // Content is recomputed from the actual result bytes, not read from a claim.
+  assert.equal(evidence.content.sizeBytes, Buffer.byteLength(RESULT_TEXT, "utf8"));
+  assert.equal(evidence.content.contentHash, contentDigest(RESULT_TEXT));
+  // Identity comes from the retained side only.
+  assert.equal(evidence.lineage.runId, RETAINED_BINDING.runId);
+  assert.equal(evidence.source.sessionId, SESSION);
+  assert.equal(evidence.source.processAttemptId, PROCESS_BINDING.processAttemptId);
+  assert.equal(evidence.source.connectorProfileDigest, CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1);
+  assert.equal(evidence.source.terminalFrameDigest, frame.frameDigest);
+  assert.equal(evidence.source.resultSubtypeCode, "success");
+  assert.equal(evidence.source.terminalReasonPresent, false);
+  assert.equal(evidence.source.decoderFramesAccepted, state.framesAccepted);
+  assert.equal(evidence.terminalState, "completed");
+  assert.equal(evidence.observedAt, "2027-01-01T00:00:00.000Z");
+
+  // Inert: it approves, completes, publishes, retries and resumes nothing.
+  assert.equal(evidence.canonicalPublicationAllowed, false);
+  assert.equal(evidence.qualityAccepted, false);
+  assert.equal(evidence.completionRecorded, false);
+  assert.equal(evidence.grantsExecutionAuthority, false);
+  assert.equal(evidence.permitsRetry, false);
+  assert.equal(evidence.permitsResume, false);
+
+  // Deeply frozen, and deterministic across repeated projections of the same
+  // retained material (which is what makes an exact replay byte-identical).
+  assert.ok(Object.isFrozen(evidence));
+  assert.ok(Object.isFrozen(evidence.source));
+  assert.ok(Object.isFrozen(evidence.lineage));
+  assert.deepEqual(projectClaudeTerminalResultEvidenceV1(claudeEvidenceInput()), evidence);
+});
+
+test("a forged or tampered Claude evidence digest is refused by the shared union", () => {
+  const evidence = projectClaudeTerminalResultEvidenceV1(claudeEvidenceInput());
+  // A hand-built evidence object claiming the original digest over changed
+  // content: the union recomputes the digest and refuses.
+  assert.throws(() => terminalResultEvidenceSchemaV1.parse({ ...evidence,
+    content: { contentHash: bridgeDigest("forged-content"), sizeBytes: 11 } }),
+  /terminal result evidence digest mismatch/);
+  assert.throws(() => terminalResultEvidenceSchemaV1.parse({ ...evidence,
+    lineage: { ...evidence.lineage, runId: "run:claude-other" } }),
+  /terminal result evidence digest mismatch/);
+  assert.throws(() => terminalResultEvidenceSchemaV1.parse({ ...evidence,
+    source: { ...evidence.source, sessionId: OTHER_SESSION } }),
+  /terminal result evidence digest mismatch/);
+  // Flipping an inert flag is refused by the literal before the digest even
+  // matters, so evidence can never be re-minted as authority.
+  assert.throws(() => terminalResultEvidenceSchemaV1.parse({ ...evidence,
+    canonicalPublicationAllowed: true }), /.*/);
+});
+
+test("the Claude projection binds to raw material, never to a supplied digest", () => {
+  // A retained digest that does not re-derive from the material refuses.
+  assert.throws(() => projectClaudeTerminalResultEvidenceV1(claudeEvidenceInput({
+    retained: { processAttemptId: PROCESS_BINDING.processAttemptId, sessionId: SESSION,
+      connectorProfileDigest: CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1,
+      terminalFrameDigest: bridgeDigest("some-other-frame") } })),
+  /terminal_result_evidence_unavailable/);
+
+  // Tampering the material while keeping the retained digest refuses: the
+  // recomputed digest no longer matches.
+  const tampered = resultLine({ result: "text that was never observed" });
+  assert.throws(() => projectClaudeTerminalResultEvidenceV1(
+    claudeEvidenceInput({ terminalFrameRawLine: tampered })),
+  /terminal_result_evidence_unavailable/);
+
+  // Re-minting the retained digest over tampered material is not a bypass of
+  // the union either: it produces DIFFERENT evidence, whose content hash is
+  // the tampered text's, so it can never stand in for the honest evidence.
+  const reminted = projectClaudeTerminalResultEvidenceV1(claudeEvidenceInput({
+    terminalFrameRawLine: tampered,
+    retained: { processAttemptId: PROCESS_BINDING.processAttemptId, sessionId: SESSION,
+      connectorProfileDigest: CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1,
+      terminalFrameDigest: sha256Digest(JSON.parse(tampered)) } }));
+  const honest = projectClaudeTerminalResultEvidenceV1(claudeEvidenceInput());
+  assert.notEqual(reminted.evidenceDigest, honest.evidenceDigest);
+  assert.notEqual(reminted.content.contentHash, honest.content.contentHash);
+});
+
+test("the Claude projection refuses malformed, stale, mismatched and non-terminal material", () => {
+  const cases: [string, Record<string, unknown>][] = [
+    // Malformed / absent raw material.
+    ["not parseable JSON", { terminalFrameRawLine: "{not json" }],
+    ["JSON that is not an object", { terminalFrameRawLine: "[]" }],
+    ["an empty line", { terminalFrameRawLine: "" }],
+  ];
+  for (const [label, overrides] of cases) {
+    assert.throws(() => projectClaudeTerminalResultEvidenceV1(claudeEvidenceInput(overrides)),
+      /terminal_result_evidence_unavailable/, label);
+  }
+
+  // A well formed NON-terminal line, honestly digested, is still not a result.
+  const init = honestMaterial(JSON.parse(initLine()));
+  assert.throws(() => projectClaudeTerminalResultEvidenceV1(claudeEvidenceInput({
+    terminalFrameRawLine: init.rawLine,
+    retained: { processAttemptId: PROCESS_BINDING.processAttemptId, sessionId: SESSION,
+      connectorProfileDigest: CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1,
+      terminalFrameDigest: init.digest } })),
+  /terminal_result_evidence_unavailable/);
+
+  // Material observed on another session, honestly digested.
+  const other = honestMaterial(JSON.parse(resultLine({}, OTHER_SESSION)));
+  assert.throws(() => projectClaudeTerminalResultEvidenceV1(claudeEvidenceInput({
+    terminalFrameRawLine: other.rawLine,
+    retained: { processAttemptId: PROCESS_BINDING.processAttemptId, sessionId: SESSION,
+      connectorProfileDigest: CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1,
+      terminalFrameDigest: other.digest } })),
+  /terminal_result_evidence_unavailable/);
+
+  // Errored and terminal-reason-bearing material never becomes successful
+  // terminal evidence, however honestly it is digested.
+  for (const extra of [{ is_error: true }, { terminal_reason: "cancelled" },
+    { terminal_reason: "max_turns" }]) {
+    const m = honestMaterial(JSON.parse(resultLine(extra)));
+    assert.throws(() => projectClaudeTerminalResultEvidenceV1(claudeEvidenceInput({
+      terminalFrameRawLine: m.rawLine,
+      retained: { processAttemptId: PROCESS_BINDING.processAttemptId, sessionId: SESSION,
+        connectorProfileDigest: CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1,
+        terminalFrameDigest: m.digest } })),
+    /terminal_result_evidence_unavailable/, JSON.stringify(extra));
+  }
+
+  // Retained identity is parsed, never invented: a malformed retained field or
+  // a missing pinned timestamp refuses rather than being filled in.
+  assert.throws(() => projectClaudeTerminalResultEvidenceV1(
+    claudeEvidenceInput({ observedAt: undefined })), /terminal_result_evidence_unavailable/);
+  assert.throws(() => projectClaudeTerminalResultEvidenceV1(
+    claudeEvidenceInput({ lineage: { ...claudeEvidenceInput().lineage, runId: "" } })),
+  /terminal_result_evidence_unavailable/);
+  // An unexpected extra field is refused rather than forwarded.
+  assert.throws(() => projectClaudeTerminalResultEvidenceV1(
+    claudeEvidenceInput({ unexpected: true })), /terminal_result_evidence_unavailable/);
+});
+
+test("the Claude projection refuses oversized, empty and invalid UTF-8 result text", () => {
+  const refuse = (result: unknown, label: string) => {
+    const payload: Record<string, unknown> = { type: "result", subtype: "success", is_error: false,
+      session_id: SESSION, total_cost_usd: 0, usage: {} };
+    if (result !== undefined) payload.result = result;
+    const m = honestMaterial(payload);
+    assert.throws(() => projectClaudeTerminalResultEvidenceV1(claudeEvidenceInput({
+      terminalFrameRawLine: m.rawLine,
+      retained: { processAttemptId: PROCESS_BINDING.processAttemptId, sessionId: SESSION,
+        connectorProfileDigest: CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1,
+        terminalFrameDigest: m.digest } })),
+    /terminal_result_evidence_unavailable/, label);
+  };
+  refuse(undefined, "absent result text");
+  refuse("", "empty result text");
+  refuse("   \n\t  ".replace(/\n/g, " "), "whitespace-only result text");
+  refuse(42, "non-string result text");
+  // One byte over the 65,536-byte ceiling the connector result contract fixes.
+  refuse("x".repeat(CLAUDE_CODE_MAX_RESULT_BYTES_V1 + 1), "oversized result text");
+  // A lone high surrogate is not well formed Unicode; it would silently become
+  // U+FFFD on encode, so the projection refuses instead of publishing bytes
+  // that are not the observed text.
+  refuse(`lead ${String.fromCharCode(0xd800)} trail`, "lone high surrogate");
+  refuse(`lead ${String.fromCharCode(0xdc00)} trail`, "lone low surrogate");
+  // Secret-looking material in the result text refuses rather than being
+  // carried into shared evidence — the same scan the Codex and upstream
+  // Hermes projections apply. The token below is a synthetic placeholder and
+  // authenticates nothing.
+  refuse(`Authorization: Bearer ${"z".repeat(24)}`, "bearer-token-shaped result text");
+  refuse(`api_key = ${"q".repeat(20)}`, "api-key-shaped result text");
+
+  // Exactly at the ceiling still projects, so the refusal above is the ceiling
+  // and not the fixture.
+  const atCeiling = "y".repeat(CLAUDE_CODE_MAX_RESULT_BYTES_V1);
+  const m = honestMaterial({ type: "result", subtype: "success", is_error: false,
+    session_id: SESSION, result: atCeiling, total_cost_usd: 0, usage: {} });
+  const evidence = projectClaudeTerminalResultEvidenceV1(claudeEvidenceInput({
+    terminalFrameRawLine: m.rawLine,
+    retained: { processAttemptId: PROCESS_BINDING.processAttemptId, sessionId: SESSION,
+      connectorProfileDigest: CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1,
+      terminalFrameDigest: m.digest } }));
+  assert.equal(evidence.content.sizeBytes, CLAUDE_CODE_MAX_RESULT_BYTES_V1);
+});
+
+test("a successful publication returns shared evidence bound to the published bytes", async () => {
+  // The bridge's own refusals still fire first (their taxonomy is unchanged),
+  // and on the success path the evidence it returns is the shared union's.
+  const { config, calls } = forbiddenPublication();
+  // The shared publisher is still reached only once the evidence projects, so
+  // a projection refusal must also leave the publisher untouched.
+  const tampered = resultLine({ result: "never observed" });
+  await assert.rejects(() => publishClaudeTerminalResultV1(config,
+    bridgeInput({ terminalFrameRawLine: tampered })), /.*/);
+  assert.deepEqual(calls, { db: 0, storage: 0, reservations: 0 });
 });

@@ -21,6 +21,7 @@ import {
   type ClaudeTerminalResultPublicationInputV1,
 } from "../src/harness/claude-code-v1/result-publication";
 import type { DurableResultPublicationConfigurationV1 } from "../src/artifacts/v1/durable-result-publication";
+import { terminalResultEvidenceSchemaV1 } from "../src/harness/v1/terminal-result-evidence";
 import { resultBytesHash } from "../src/artifacts/v1/native-results";
 import { createPersistentNeutralReservationPort,
   createPersistentNeutralReservationStore } from "../src/artifacts/v1/neutral-reservation-port";
@@ -551,6 +552,30 @@ test("an accepted Claude terminal result reaches the real shared durable publish
   // The stored bytes are the decoded terminal text and nothing else.
   const stored = await f.storage.read(published.receipt.artifactId);
   assert.equal(new TextDecoder().decode(stored!), text);
+
+  // The publication carries the SHARED harness-neutral terminal evidence, not
+  // a connector-local one: it is a member of the same discriminated union the
+  // Hermes and Codex paths project into, and the union parses it back.
+  assert.equal(published.evidence.kind, "claude_terminal_result");
+  assert.equal(terminalResultEvidenceSchemaV1.parse(published.evidence).kind, "claude_terminal_result");
+  // The evidence content is bound to the bytes that were actually published.
+  assert.equal(published.evidence.content.sizeBytes, published.receipt.sizeBytes);
+  assert.equal(published.evidence.content.contentHash,
+    `sha256:${createHash("sha256").update(Buffer.from(text, "utf8")).digest("hex")}`);
+  // Its source is the retained owned-session identity and the observed frame.
+  assert.equal(published.evidence.source.sessionId, evidence.retainedSession.sessionId);
+  assert.equal(published.evidence.source.processAttemptId, evidence.processBinding.processAttemptId);
+  assert.equal(published.evidence.source.terminalFrameDigest, evidence.frame.frameDigest);
+  assert.equal(published.evidence.source.connectorProfileDigest, CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1);
+  assert.equal(published.evidence.lineage.runId, runId);
+  // Evidence is inert and frozen: it approves, completes and releases nothing.
+  assert.equal(published.evidence.canonicalPublicationAllowed, false);
+  assert.equal(published.evidence.qualityAccepted, false);
+  assert.equal(published.evidence.completionRecorded, false);
+  assert.equal(published.evidence.grantsExecutionAuthority, false);
+  assert.equal(published.evidence.permitsRetry, false);
+  assert.equal(published.evidence.permitsResume, false);
+  assert.ok(Object.isFrozen(published.evidence));
 });
 
 test("exact publication retry replays the same receipt and starts no new process", async t => {
@@ -568,6 +593,10 @@ test("exact publication retry replays the same receipt and starts no new process
   assert.equal(again.replayed, true);
   assert.deepEqual(again.receipt, first.receipt);
   assert.deepEqual(again.target, first.target);
+  // The shared evidence is byte-identical across the replay too: the
+  // projection is pinned to the caller's `receivedAt`, so it invents no clock.
+  assert.deepEqual(again.evidence, first.evidence);
+  assert.equal(again.evidence.evidenceDigest, first.evidence.evidenceDigest);
 
   // A reconstructed bridge over the same database and the same reservation
   // store replays identically: this bridge holds no state of its own.
@@ -575,6 +604,7 @@ test("exact publication retry replays the same receipt and starts no new process
     f.configWith(createPersistentNeutralReservationPort(f.store)), bridgeInputFor(evidence, runId));
   assert.equal(reconstructed.replayed, true);
   assert.deepEqual(reconstructed.receipt, first.receipt);
+  assert.deepEqual(reconstructed.evidence, first.evidence);
 
   assert.equal(f.storage.putCalls, 1, "a replay must not write bytes again");
   assert.equal(acquisitions, acquisitionsAfterEvidence,

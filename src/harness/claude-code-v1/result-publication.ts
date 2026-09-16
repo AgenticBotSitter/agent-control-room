@@ -6,6 +6,8 @@ import { publishDurableResultV1, type DurableResultBindingV1,
   type DurableResultPublicationConfigurationV1 } from "../../artifacts/v1/durable-result-publication";
 import type { DurableResultReceiptV1 } from "../../artifacts/v1/durable-result-receipt";
 import type { CompletionReviewTargetV1 } from "../../completion-gate/v1/types";
+import { projectClaudeTerminalResultEvidenceV1,
+  type ClaudeTerminalResultEvidenceV1 } from "../v1/terminal-result-evidence";
 import { claudeCodeConnectorProfileV1 } from "./connector-profile";
 import { CLAUDE_CODE_MAX_RESULT_BYTES_V1, CLAUDE_CODE_STREAM_FRAME_SCHEMA_V1,
   type ClaudeCodeResultFrameV1, type ClaudeCodeStreamDecoderStateV1 } from "./stream-json-decode";
@@ -99,6 +101,14 @@ export interface ClaudeTerminalResultPublicationInputV1 {
 export interface ClaudeTerminalResultPublicationV1 {
   readonly receipt: DurableResultReceiptV1;
   readonly target: CompletionReviewTargetV1;
+  /**
+   * The harness-neutral, inert terminal-result evidence this publication was
+   * bound to, projected through the SHARED
+   * `src/harness/v1/terminal-result-evidence.ts` union — the same layer the
+   * Hermes and Codex paths use. It is evidence, not authority: every one of
+   * its flags is false and it approves, completes and releases nothing.
+   */
+  readonly evidence: ClaudeTerminalResultEvidenceV1;
   readonly replayed: boolean;
   /** This bridge approves, completes, releases and redispatches nothing. */
   readonly qualityAccepted: false;
@@ -285,6 +295,48 @@ export async function publishClaudeTerminalResultV1(
   if (frame.resultText !== resultText || frame.resultBytes !== bytes.byteLength
     || frame.resultTextDigest !== textDigest(resultText)) unusableResult();
 
+  // ------------------------------------------------------------------
+  // Shared evidence projection. Claude joins the SAME harness-neutral
+  // terminal-evidence discipline Hermes and Codex already use, rather than
+  // ending at a connector-local bridge. The projector is handed the retained
+  // facts and the exact raw terminal line; it re-parses that line itself,
+  // recomputes its canonical digest with the same `sha256Digest`, requires it
+  // to equal the retained `terminalFrameDigest`, and recomputes the content
+  // hash and byte length from the actual result bytes. Nothing already
+  // computed here is passed to it as a shortcut, so the projection is an
+  // independent second derivation over the same raw material rather than a
+  // re-check of this function's own conclusions.
+  //
+  // It is called after this module's own refusals so the bridge's refusal
+  // taxonomy stays the specific one callers and tests depend on; a projection
+  // failure surfaces unswallowed as `terminal_result_evidence_unavailable`.
+  // ------------------------------------------------------------------
+  const evidence = projectClaudeTerminalResultEvidenceV1({
+    lineage: {
+      tenantId: retained.tenantId, projectId: retained.projectId, jobId: retained.jobId,
+      attemptId: retained.attemptId, runId: retained.runId, nodeId: retained.nodeId,
+    },
+    retained: {
+      processAttemptId: session.processAttemptId,
+      sessionId: session.sessionId,
+      connectorProfileDigest: CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1,
+      terminalFrameDigest: session.terminalFrameDigest,
+    },
+    terminalFrameRawLine: rawLine,
+    resultSubtypeCode: frame.subtypeCode,
+    decoderFramesAccepted: state.framesAccepted,
+    // The caller's pinned receipt timestamp, so an exact replay projects
+    // byte-identical evidence alongside the replayed receipt.
+    observedAt: input.receivedAt,
+  });
+  // The bytes about to be published must be exactly the bytes the shared
+  // evidence was computed over. The evidence content hash came from the
+  // projector's own independent read of the verified material, so this is the
+  // published payload being bound to the shared evidence rather than to this
+  // module's local read of the same line.
+  if (evidence.content.contentHash !== textDigest(resultText)
+    || evidence.content.sizeBytes !== bytes.byteLength) evidenceMismatch();
+
   const binding: DurableResultBindingV1 = {
     tenantId: retained.tenantId, projectId: retained.projectId, jobId: retained.jobId,
     attemptId: retained.attemptId, runId: retained.runId, nodeId: retained.nodeId,
@@ -311,6 +363,7 @@ export async function publishClaudeTerminalResultV1(
   return Object.freeze({
     receipt: published.receipt,
     target: published.target,
+    evidence,
     replayed: published.replayed,
     qualityAccepted: false,
     releasesCapacity: false,

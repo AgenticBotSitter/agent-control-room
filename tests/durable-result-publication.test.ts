@@ -9,6 +9,8 @@ import { publishDurableResultV1, readDurableResultV1, reconcileDurableResultRese
 import { durableReceiptFromCodexV1, durableReceiptFromNativeV1 } from "../src/artifacts/v1/durable-result-receipt";
 import { publishHermesSessionResultV1,
   type HermesSessionResultOutcomeV1 } from "../src/harness/hermes-gpt-v1/result-publication";
+import { projectClaudeTerminalResultEvidenceV1,
+  terminalResultEvidenceSchemaV1 } from "../src/harness/v1/terminal-result-evidence";
 import { reserveNativeResultWriteV1, markNativeResultReservationStorageUncertainV1 } from "../src/artifacts/v1/native-result-reservation";
 import { resultBytesHash } from "../src/artifacts/v1/native-results";
 import { taskReviewTargetV1 } from "../src/completion-gate/v1/task-review-plan";
@@ -1092,4 +1094,81 @@ test("upstream Hermes: invalid connector profile digest shape is rejected withou
       receivedAt: "2026-09-15T12:00:00.000Z" }),
     /upstream_hermes_invalid_connector_profile_digest/);
   assert.equal(storage.putCalls, 0);
+});
+
+/* ------------------------------------------------------------------ */
+/* Shared terminal-evidence union: the Claude member.                   */
+/*                                                                      */
+/* The durable path's connector anchors are carried by the shared       */
+/* `terminal-result-evidence` union. These cases prove the Claude       */
+/* member discriminates on `kind` within that union and that a forged   */
+/* evidence digest is refused there, alongside the members the other    */
+/* harnesses already publish through. No database, storage or           */
+/* reservation is involved: the projection is pure.                     */
+/* ------------------------------------------------------------------ */
+
+const CLAUDE_EVIDENCE_SESSION = "00000000-0000-4000-8000-0000000000c1";
+
+function claudeTerminalLine(overrides: Record<string, unknown> = {}) {
+  return JSON.stringify({ type: "result", subtype: "success", is_error: false,
+    session_id: CLAUDE_EVIDENCE_SESSION, result: "durable-lane Claude terminal result",
+    total_cost_usd: 0, usage: {}, ...overrides });
+}
+
+function claudeEvidenceFor(rawLine = claudeTerminalLine()) {
+  return projectClaudeTerminalResultEvidenceV1({
+    lineage: { tenantId: binding.tenantId, projectId: binding.projectId, jobId: "job:claude-union",
+      attemptId: "attempt:claude-union", runId: "run:claude-union", nodeId: binding.nodeId },
+    retained: { processAttemptId: "attempt.process.claude-union", sessionId: CLAUDE_EVIDENCE_SESSION,
+      connectorProfileDigest: digest("claude-profile"),
+      terminalFrameDigest: sha256Digest(JSON.parse(rawLine)) },
+    terminalFrameRawLine: rawLine,
+    resultSubtypeCode: "success",
+    decoderFramesAccepted: 2,
+    observedAt: at(9900),
+  });
+}
+
+test("the shared terminal-evidence union discriminates the Claude member on kind", () => {
+  const claude = claudeEvidenceFor();
+  assert.equal(claude.kind, "claude_terminal_result");
+  // The union accepts it and selects the Claude member, not a sibling.
+  const parsed = terminalResultEvidenceSchemaV1.parse(claude);
+  assert.equal(parsed.kind, "claude_terminal_result");
+  assert.ok("terminalFrameDigest" in parsed.source);
+  // The same evidence relabelled as another harness's kind no longer
+  // satisfies that member's source shape, so the union cannot be crossed.
+  for (const kind of ["hermes_native_snapshot", "codex_exact_completed_turn",
+    "upstream_hermes_session_result"]) {
+    assert.throws(() => terminalResultEvidenceSchemaV1.parse({ ...claude, kind }),
+      /.*/, `relabelled as ${kind}`);
+  }
+  // It is inert, exactly like every other member of the union.
+  assert.equal(claude.canonicalPublicationAllowed, false);
+  assert.equal(claude.qualityAccepted, false);
+  assert.equal(claude.completionRecorded, false);
+  assert.equal(claude.grantsExecutionAuthority, false);
+  assert.equal(claude.permitsRetry, false);
+  assert.equal(claude.permitsResume, false);
+  assert.ok(Object.isFrozen(claude));
+});
+
+test("a forged Claude evidence digest is refused by the shared union", () => {
+  const claude = claudeEvidenceFor();
+  // The digest is recomputed over the whole material, so every substitution
+  // under a preserved digest is refused.
+  for (const forged of [
+    { content: { contentHash: digest("forged"), sizeBytes: 7 } },
+    { lineage: { ...claude.lineage, runId: "run:claude-other" } },
+    { source: { ...claude.source, sessionId: "00000000-0000-4000-8000-0000000000c2" } },
+    { source: { ...claude.source, terminalFrameDigest: digest("forged-frame") } },
+    { observedAt: at(9901) },
+  ]) {
+    assert.throws(() => terminalResultEvidenceSchemaV1.parse({ ...claude, ...forged }),
+      /terminal result evidence digest mismatch/, JSON.stringify(Object.keys(forged)));
+  }
+  // And a projection over tampered material never re-derives the honest
+  // evidence digest, so it cannot stand in for it.
+  const tampered = claudeTerminalLine({ result: "text that was never observed" });
+  assert.notEqual(claudeEvidenceFor(tampered).evidenceDigest, claude.evidenceDigest);
 });
