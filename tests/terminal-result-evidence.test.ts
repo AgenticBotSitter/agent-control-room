@@ -3,6 +3,13 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 import { sha256Digest } from "../src/security/canonical-digest";
 import {
+  REMOTE_ARTIFACT_RETURN_SCHEMA_V1,
+  acceptRemoteArtifactReturnV1,
+  deliveredBytesV1,
+  inMemoryRemoteArtifactReceiptStoreV1,
+  remoteArtifactReturnIdV1,
+} from "../src/harness/v1/remote-artifact-return";
+import {
   projectCodexTerminalResultEvidenceV1,
   projectHermesTerminalResultEvidenceV1,
   projectUpstreamHermesSessionResultEvidenceV1,
@@ -360,4 +367,222 @@ test("upstream Hermes projection is order-independent across rebuilds and deeply
   // Deep freeze guards against post-projection mutation.
   assert.throws(() => { (before.source as { upstreamTruncated: boolean }).upstreamTruncated = true; }, TypeError);
   assert.throws(() => { (before.content as { sizeBytes: number }).sizeBytes = 0; }, TypeError);
+});
+/* ------------------------------------------------------------------ */
+/* RES-007: bounded remote artifact-return transport boundary          */
+/* ------------------------------------------------------------------ */
+
+// Reuses this file's existing `lineage`, `text`, `contentHash`, `snapshot`
+// and `expectedHermes()` fixtures rather than restating them, so the RES-007
+// cases exercise the same canonical evidence the rest of the suite does.
+const remoteEvidence = () => projectHermesTerminalResultEvidenceV1({
+  expected: expectedHermes(),
+  snapshot: structuredClone(snapshot),
+});
+
+const remoteIdentity = () => ({
+  ...structuredClone(lineage),
+  leaseId: snapshot.leaseId,
+  leaseEpoch: snapshot.leaseEpoch,
+  sourceKind: "ssh" as const,
+  sourceRef: "sandbox-a/host-7",
+});
+
+const remoteTransport = (overrides: Record<string, unknown> = {}) => ({
+  schema: REMOTE_ARTIFACT_RETURN_SCHEMA_V1,
+  transport: "ssh" as const,
+  endpointLabel: "approved-upstream-a",
+  capabilities: ["stream_digest", "exact_length", "at_most_once_delivery", "remote_cleanup_ack"] as const,
+  approvalReferenceId: "approval:one",
+  approvalReferenceDigest: sha256Digest("approval"),
+  sourceIdentityFingerprint: sha256Digest(remoteIdentity()),
+  ...overrides,
+});
+
+const remoteReservation = (overrides: Record<string, unknown> = {}) => ({
+  reservationId: "reservation:one",
+  identity: remoteIdentity(),
+  expectedContentDigest: contentHash,
+  expectedSizeBytes: Buffer.byteLength(text),
+  currentLeaseEpoch: snapshot.leaseEpoch,
+  reservationExpiresAt: "2026-09-13T13:00:00.000Z",
+  ...overrides,
+});
+
+const remoteDelivery = (overrides: Record<string, unknown> = {}) => ({
+  declaredSizeBytes: Buffer.byteLength(text),
+  declaredContentDigest: contentHash,
+  chunks: [new Uint8Array(Buffer.from(text, "utf8"))],
+  observedAt: "2026-09-13T12:30:00.000Z",
+  terminalEvidence: remoteEvidence(),
+  ...overrides,
+});
+
+const call = (overrides: Record<string, unknown> = {}) => acceptRemoteArtifactReturnV1({
+  transport: remoteTransport(),
+  reservation: remoteReservation(),
+  delivery: remoteDelivery(),
+  store: inMemoryRemoteArtifactReceiptStoreV1(),
+  ...overrides,
+} as never);
+
+test("RES-007 returns one bounded artifact with exact identity and digest", () => {
+  const result = call();
+  assert.equal(result.accepted, true, `expected acceptance: ${JSON.stringify(
+    result.accepted === false ? result.refusal : null)}`);
+  if (result.accepted !== true) return;
+  const receipt = result.receipt;
+  assert.deepEqual(receipt.identity, remoteIdentity());
+  assert.equal(receipt.contentDigest, contentHash);
+  assert.equal(receipt.sizeBytes, Buffer.byteLength(text));
+  assert.equal(receipt.transport, "ssh");
+  assert.equal(receipt.replayed, false);
+  assert.equal(receipt.returnId, remoteArtifactReturnIdV1({
+    identity: remoteIdentity(), contentDigest: contentHash, sizeBytes: Buffer.byteLength(text) }));
+  // The transport carried bytes; it granted nothing.
+  assert.equal(receipt.canonicalPublicationAllowed, false);
+  assert.equal(receipt.completionRecorded, false);
+  assert.equal(receipt.grantsExecutionAuthority, false);
+  assert.equal(receipt.releasesCapacity, false);
+  assert.equal(receipt.permitsRetry, false);
+  assert.equal(receipt.permitsResume, false);
+  assert.equal(receipt.startsWork, false);
+});
+
+test("RES-007 refuses an unsupported transport and an undeclared capability", () => {
+  // A sandbox descriptor cannot carry an ssh-approved source.
+  const wrongTransport = call({ transport: remoteTransport({ transport: "sandbox" }) });
+  assert.equal(wrongTransport.accepted, false);
+  assert.equal(wrongTransport.accepted === false && wrongTransport.refusal.outcome, "transport_unsupported");
+  assert.equal(wrongTransport.accepted === false && wrongTransport.refusal.receiptProduced, false);
+
+  // A transport that does not declare a required capability is refused, not
+  // assumed to behave as if it did.
+  const missing = call({
+    transport: remoteTransport({ capabilities: ["stream_digest"] }),
+    requiredCapabilities: ["at_most_once_delivery"],
+  });
+  assert.equal(missing.accepted, false);
+  assert.equal(missing.accepted === false && missing.refusal.outcome, "capability_unsupported");
+
+  const unknownTransport = call({ transport: { ...remoteTransport(), transport: "carrier_pigeon" } });
+  assert.equal(unknownTransport.accepted, false);
+  assert.equal(unknownTransport.accepted === false && unknownTransport.refusal.outcome, "transport_descriptor_invalid");
+});
+
+test("RES-007 refuses a disconnect, distinguishing it from truncation", () => {
+  const partial = Buffer.from(text, "utf8").subarray(0, 7);
+  const dropped = call({ delivery: remoteDelivery({ disconnectedAfterBytes: 7, chunks: [new Uint8Array(partial)] }) });
+  assert.equal(dropped.accepted, false);
+  assert.equal(dropped.accepted === false && dropped.refusal.outcome, "disconnected");
+  // The remote copy is still there — a dropped carrier leaves it unconfirmed.
+  assert.equal(dropped.accepted === false && dropped.refusal.remoteArtifactMayRemain, true);
+
+  // Truncation with the carrier INTACT is a different named refusal.
+  const short = call({
+    delivery: remoteDelivery({
+      declaredSizeBytes: Buffer.byteLength(text),
+      chunks: [new Uint8Array(partial)],
+    }),
+  });
+  assert.equal(short.accepted, false);
+  assert.equal(short.accepted === false && short.refusal.outcome, "truncated");
+});
+
+test("RES-007 refuses a wrong identity and a stale run", () => {
+  const foreign = call({ transport: remoteTransport({ sourceIdentityFingerprint: sha256Digest("someone-else") }) });
+  assert.equal(foreign.accepted, false);
+  assert.equal(foreign.accepted === false && foreign.refusal.outcome, "identity_mismatch");
+
+  // Same run, but its lease epoch is behind the reservation's current epoch:
+  // an artifact from a superseded attempt may not be accepted late.
+  const stale = call({ reservation: remoteReservation({ currentLeaseEpoch: snapshot.leaseEpoch + 1 }) });
+  assert.equal(stale.accepted, false);
+  assert.equal(stale.accepted === false && stale.refusal.outcome, "run_stale");
+});
+
+test("RES-007 refuses a return observed after the reservation expired", () => {
+  const late = call({ delivery: remoteDelivery({ observedAt: "2026-09-13T14:00:00.000Z" }) });
+  assert.equal(late.accepted, false);
+  assert.equal(late.accepted === false && late.refusal.outcome, "reservation_expired");
+});
+
+test("RES-007 refuses changed content under the same identity as a conflict", () => {
+  const store = inMemoryRemoteArtifactReceiptStoreV1();
+  const first = acceptRemoteArtifactReturnV1({
+    transport: remoteTransport(), reservation: remoteReservation(),
+    delivery: remoteDelivery(), store,
+  } as never);
+  assert.equal(first.accepted, true);
+
+  // Exact replay: same reservation, same bytes -> the recorded receipt, verbatim.
+  const replay = acceptRemoteArtifactReturnV1({
+    transport: remoteTransport(), reservation: remoteReservation(),
+    delivery: remoteDelivery(), store,
+  } as never);
+  assert.equal(replay.accepted, true);
+  if (replay.accepted !== true || first.accepted !== true) return;
+  assert.equal(replay.receipt.replayed, true);
+  assert.equal(replay.receipt.returnId, first.receipt.returnId);
+  assert.equal(replay.receipt.receiptDigest, first.receipt.receiptDigest);
+
+  // Changed content under the SAME identity must conflict rather than replace
+  // already-accepted work.
+  const otherText = "different terminal result";
+  const otherHash = `sha256:${createHash("sha256").update(otherText, "utf8").digest("hex")}`;
+  const conflict = acceptRemoteArtifactReturnV1({
+    transport: remoteTransport(), 
+    reservation: remoteReservation({ expectedContentDigest: otherHash, expectedSizeBytes: Buffer.byteLength(otherText) }),
+    delivery: remoteDelivery({
+      declaredSizeBytes: Buffer.byteLength(otherText), declaredContentDigest: otherHash,
+      chunks: [new Uint8Array(Buffer.from(otherText, "utf8"))],
+    }),
+    store,
+  } as never);
+  assert.equal(conflict.accepted, false);
+  assert.equal(conflict.accepted === false && conflict.refusal.outcome, "content_conflict");
+  // The originally accepted bytes were not replaced.
+  assert.equal(store.find("reservation:one")?.contentDigest, contentHash);
+});
+
+test("RES-007 refuses cleanup uncertainty even when the bytes are good", () => {
+  const result = call({ delivery: remoteDelivery({ cleanupUncertain: true }) });
+  assert.equal(result.accepted, false);
+  assert.equal(result.accepted === false && result.refusal.outcome, "cleanup_uncertain");
+  assert.equal(result.accepted === false && result.refusal.remoteArtifactMayRemain, true);
+  assert.equal(result.accepted === false && result.refusal.receiptProduced, false);
+});
+
+test("RES-007 refuses bytes that do not match the transport's own digest claim", () => {
+  const result = call({ delivery: remoteDelivery({ declaredContentDigest: sha256Digest("lie") }) });
+  assert.equal(result.accepted, false);
+  assert.equal(result.accepted === false && result.refusal.outcome, "content_rejected");
+});
+
+test("RES-007 refuses evidence belonging to a different run", () => {
+  // Valid evidence, but for another run: the lineage no longer matches the
+  // reservation, so the delivery is refused as an identity mismatch.
+  const foreignSnapshot = { ...structuredClone(snapshot), runId: "run:other" };
+  const foreignEvidence = projectHermesTerminalResultEvidenceV1({
+    expected: { lineage: { ...structuredClone(lineage), runId: "run:other" }, registration: {
+      leaseId: foreignSnapshot.leaseId, leaseEpoch: foreignSnapshot.leaseEpoch,
+      bindingDigest: foreignSnapshot.bindingDigest, sessionKeyDigest: foreignSnapshot.sessionKeyDigest } },
+    snapshot: foreignSnapshot,
+  });
+  const result = call({ delivery: remoteDelivery({ terminalEvidence: foreignEvidence }) });
+  assert.equal(result.accepted, false);
+  assert.equal(result.accepted === false && result.refusal.outcome, "identity_mismatch");
+});
+
+test("RES-007 refuses an unparseable reservation and never produces a receipt", () => {
+  const result = call({ reservation: { reservationId: "reservation:one" } });
+  assert.equal(result.accepted, false);
+  assert.equal(result.accepted === false && result.refusal.outcome, "reservation_missing");
+  assert.equal(result.accepted === false && result.refusal.receiptProduced, false);
+});
+
+test("RES-007 deliveredBytes honours the point where the carrier dropped", () => {
+  const full = new Uint8Array(Buffer.from(text, "utf8"));
+  assert.equal(deliveredBytesV1(remoteDelivery()).byteLength, full.byteLength);
+  assert.equal(deliveredBytesV1(remoteDelivery({ disconnectedAfterBytes: 3 })).byteLength, 3);
 });
