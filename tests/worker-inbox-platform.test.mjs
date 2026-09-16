@@ -53,6 +53,7 @@ function actionMarker(workerId, state, issue) {
 function githubIssue(number, labels) {
   return {
     number,
+    state: "open",
     title: `Issue ${number}`,
     html_url: `https://github.com/${REPOSITORY_NAME}/issues/${number}`,
     labels: labels.map(name => ({ name })),
@@ -74,6 +75,12 @@ function fakeGithub(initial = {}) {
   const calls = [];
   const fetchImpl = async (url, init) => {
     calls.push({ url, method: init?.method ?? "GET" });
+    if (url.endsWith("/git/ref/heads/main")) {
+      return jsonResponse({ object: { sha: "a".repeat(40) } });
+    }
+    if (url.includes("labels=status%3Aworking") || url.includes("labels=status%3Ain-review")) {
+      return jsonResponse([]);
+    }
     const commentMatch = /\/issues\/(\d+)\/comments/u.exec(url);
     if (commentMatch) return jsonResponse(holder.comments[Number(commentMatch[1])] ?? []);
     return jsonResponse(holder.issues);
