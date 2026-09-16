@@ -29,10 +29,15 @@
  */
 import assert from "node:assert/strict";
 import { realpath } from "node:fs/promises";
-import handler from "../../dist-vps/server/index.js";
-import { createPrivateTaskBootstrap } from "../../dist-vps/server/taskBootstrap.js";
-import { installPrivateApplication } from "../../dist-vps/server/runtime.js";
-import { createPrivateNodeHandler, loadPrivateClientAssets } from "../../dist-vps/server/serving.js";
+// The compiled application is a build artifact (`pnpm build` writes `dist-vps`), so it is absent
+// from a clean checkout: the `quick` lane type-checks this file before any build, where a static
+// import of `../../dist-vps/server/index.js` fails with TS2307. The four entry points are therefore
+// loaded through a computed specifier at run time, and the signatures still come from the source
+// modules that build compiles (see `vite.vps.config.ts`), so this file stays typed.
+import type { createPrivateNodeHandler as createPrivateNodeHandlerFactory,
+  loadPrivateClientAssets as loadPrivateClientAssetsFactory } from "../../src/web/v1/private-serving";
+import type { createPrivateTaskBootstrap as createPrivateTaskBootstrapFactory } from "../../src/web/v1/private-task-startup";
+import type { installPrivateApplication as installPrivateApplicationFactory } from "../../src/web/v1/private-process";
 import { createTaskRevisionBrowserClient, revisionRequestFromReview } from "../../src/web/v1/task-revision-browser-client";
 import { CanonicalStore } from "../../src/persistence/canonical-store";
 import { nativeQualityCompletionFixture } from "../helpers/native-quality-completion";
@@ -42,12 +47,38 @@ import { origin, request } from "../helpers/web-foundation";
 import type { JobRecord, RequestRecord, WorkflowRecord } from "../../src/domain/v1/types";
 import type { JourneyOutcomeV1 } from "./attributed-cases";
 
+// Signatures of the compiled entry points, taken from the source modules the build compiles.
+type CompiledServingModule = {
+  createPrivateNodeHandler: typeof createPrivateNodeHandlerFactory;
+  loadPrivateClientAssets: typeof loadPrivateClientAssetsFactory;
+};
+type CompiledTaskBootstrapModule = { createPrivateTaskBootstrap: typeof createPrivateTaskBootstrapFactory };
+type CompiledRuntimeModule = { installPrivateApplication: typeof installPrivateApplicationFactory };
+type CompiledIndexModule = { default: Parameters<typeof createPrivateNodeHandlerFactory>[0]["handler"] };
+
+const compiledServerDirectory = new URL("../../dist-vps/server/", import.meta.url);
+const loadCompiledServer = async <Module>(file: string): Promise<Module> => {
+  const url = new URL(file, compiledServerDirectory);
+  try {
+    return (await import(url.href)) as Module;
+  } catch (cause) {
+    throw new Error(`this journey drives the compiled application: build it first (pnpm build); `
+      + `${url.href} did not load: ${cause instanceof Error ? cause.message : String(cause)}`);
+  }
+};
+
 export async function runReviewRevisionLineageJourney(): Promise<JourneyOutcomeV1> {
   const steps: JourneyOutcomeV1["steps"] = [], findings: string[] = [];
   const record = (step: string, detail: string) => { steps.push({ step, detail }); };
 
   const x = await nativeQualityCompletionFixture();
   try {
+    const [compiledIndex, compiledRuntime, compiledTaskBootstrap, compiledServing] = await Promise.all([
+      loadCompiledServer<CompiledIndexModule>("index.js"),
+      loadCompiledServer<CompiledRuntimeModule>("runtime.js"),
+      loadCompiledServer<CompiledTaskBootstrapModule>("taskBootstrap.js"),
+      loadCompiledServer<CompiledServingModule>("serving.js"),
+    ]);
     const startup = await taskStartupFixture(x.f.assignmentFixture);
     const canonical = new CanonicalStore(startup.coordinator.client);
     // `CanonicalStore.get` returns the whole domain union, so every read below is narrowed to
@@ -59,7 +90,8 @@ export async function runReviewRevisionLineageJourney(): Promise<JourneyOutcomeV
       return found as unknown as T;
     };
     const opened: string[] = [];
-    const runtime = await createPrivateTaskBootstrap({ clock: x.f.clock, install: installPrivateApplication,
+    const runtime = await compiledTaskBootstrap.createPrivateTaskBootstrap({ clock: x.f.clock,
+      install: compiledRuntime.installPrivateApplication,
       openDatabase(config: { username: string }) {
         opened.push(config.username);
         return startup.openDatabase(config);
@@ -73,8 +105,9 @@ export async function runReviewRevisionLineageJourney(): Promise<JourneyOutcomeV
       assert.deepEqual(opened, ["web_test", "coordinator_test"], "the compiled startup must open the two restricted roles");
       record("compiled two-role startup", `opened ${opened.join(" + ")}; revision planning configured, browser assets loaded from dist-vps/client`);
 
-      const bridge = createPrivateNodeHandler({ origin, application: runtime, handler,
-        assets: await loadPrivateClientAssets(await realpath("dist-vps/client")) });
+      const bridge = compiledServing.createPrivateNodeHandler({ origin, application: runtime,
+        handler: compiledIndex.default,
+        assets: await compiledServing.loadPrivateClientAssets(await realpath("dist-vps/client")) });
       try {
         const send = async (webRequest: Request) => {
           const url = new URL(webRequest.url);
