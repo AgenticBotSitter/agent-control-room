@@ -96,5 +96,31 @@ does not exist upstream, so claiming fixture evidence for them would be false.
   this package's owned paths and is lead-owned integration.
 - **No test-lane registration.** The issue reserves `package.json` for integration, so the
   three new test files are not yet attached to a lane.
-- No change to shared authority, database, artifact storage, server composition,
-  authentication or another connector.
+- **No change to shared authority, database, artifact storage, server composition,
+  authentication or another connector.**
+
+## Addendum: upstream Hermes session result publication (#279)
+
+The upstream Hermes session result is published through the existing harness-neutral
+`publishDurableResultV1` service rather than the native/codex-specific durable result
+publication paths. A new terminal-result evidence kind — `upstream_hermes_session_result` —
+binds the completed `HermesSessionJobResultResponseV1` reply (as already pinned in
+`src/harness/hermes-gpt-v1/session-contract.ts`) to canonical lineage, the connector
+profile digest already authenticated by the caller, the upstream session/job identity
+and both truncation flags (`upstream_truncated` from upstream's own `truncated` field,
+`upstream_ceiling_truncated` from the connector's separate ceiling trim).
+
+The adapter in `src/harness/hermes-gpt-v1/result-publication.ts` accepts the
+`HermesSessionResultOutcomeV1` discriminated union produced by the upstream session
+runtime. It rejects every non-completed variant (failed, uncertain, pending, unknown_job,
+invalid) before the durable publisher is reached. It does not call upstream, start a
+process, retry, resume, cancel, or otherwise change the upstream session. It does not
+create a new table, reservation system or alternate publisher. It binds the existing
+neutral publisher through dependency injection of `DurableResultPublicationConfigurationV1`,
+exactly like the native and codex paths.
+
+Publication is inert: the resulting receipt and review target carry no canonical
+publication, quality, completion, retry, resume or execution authority. Review is
+required before any of those facts can be recorded. Exact replay returns the existing
+receipt without rewriting bytes. Storage/database uncertainty surfaces as uncertainty
+and never converts to permission to retry Hermes.
