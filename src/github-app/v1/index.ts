@@ -5,3 +5,5 @@ export * from "./postgres-wake-store";
 export * from "./private-service";
 export * from "./webhook-admission";
 export * from "./worker-broker";
+export * from "./worker-github-client";
+export * from "./worker-operations";
