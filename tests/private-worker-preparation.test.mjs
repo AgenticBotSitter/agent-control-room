@@ -198,16 +198,18 @@ test('explain CLI helps, explains a document, and refuses generically', () => {
 });
 
 const fakeHandle = (size, { regular = true, failAfter = -1 } = {}) => {
-  let position = 0, closed = false, requested = 0, reads = 0;
+  let position = 0, closed = false, requested = 0, reads = 0, lastLength = 0;
   const handle = {
-    state: () => ({ closed, requested, reads }),
+    state: () => ({ closed, requested, reads, lastLength }),
     async stat() { return { isFile: () => regular }; },
-    async read() {
+    async read(_buf, length) {
       reads++;
       if (failAfter >= 0 && reads > failAfter) throw new Error('synthetic_read_failure');
       if (position >= size) return { bytesRead: 0, buffer: Buffer.alloc(0) };
-      const n = Math.min(65536, size - position);
-      position += n; requested += n;
+      // Honor the bounded-reader contract: a length argument caps a single read.
+      const remaining = typeof length === 'number' && length > 0 ? length : 65536;
+      const n = Math.min(remaining, size - position);
+      position += n; requested += n; lastLength = length;
       return { bytesRead: n, buffer: Buffer.alloc(n, 0x61) };
     },
     async close() { closed = true; },
@@ -250,6 +252,50 @@ test('bounded reader refuses non-regular, unreadable and failing inputs', async 
   const failing = fakeHandle(100000, { failAfter: 1 });
   assert.equal(await readBoundedText('/synthetic/failing', { open: async () => failing }), null);
   assert.equal(failing.state().closed, true);
+});
+
+test('bounded reader enforces the strict limit-plus-one ceiling per read', async () => {
+  // Feed a virtual input larger than the budget; the reader must never let
+  // total bytes read exceed MAX + 1 even if a single handle.read() is asked
+  // for the full default chunk.
+  const handle = fakeHandle(5 * 1024 * 1024);
+  const result = await readBoundedText('/synthetic/ceiling.json', { open: async () => handle });
+  assert.equal(result, null);
+  const state = handle.state();
+  assert.ok(state.lastLength <= MAX_PREPARATION_INPUT_BYTES + 1,
+    `reader asked for ${state.lastLength} bytes per read; must not exceed the limit-plus-one ceiling`);
+  // The reader must consume at most one byte beyond the budget before refusing.
+  assert.ok(state.requested <= MAX_PREPARATION_INPUT_BYTES + 1,
+    `total requested ${state.requested} bytes exceeded the strict limit-plus-one ceiling`);
+  assert.equal(state.closed, true);
+
+  // Boundary: exactly MAX + 1 must refuse; exactly MAX - 1 must succeed.
+  const justOver = fakeHandle(MAX_PREPARATION_INPUT_BYTES + 1);
+  assert.equal(await readBoundedText('/synthetic/just-over.json', { open: async () => justOver }), null);
+  assert.equal(justOver.state().closed, true);
+  const justUnder = fakeHandle(MAX_PREPARATION_INPUT_BYTES - 1);
+  const accepted = await readBoundedText('/synthetic/just-under.json', { open: async () => justUnder });
+  assert.equal(accepted?.length, MAX_PREPARATION_INPUT_BYTES - 1);
+  assert.equal(justUnder.state().closed, true);
+});
+
+test('bounded reader opens with O_NONBLOCK and refuses FIFOs without blocking', async () => {
+  const { constants: fsConstants } = await import('node:fs');
+  const expectedFlags = fsConstants.O_NONBLOCK | fsConstants.O_RDONLY;
+  const calls = [];
+  const fakeOpener = async (path, flags) => {
+    calls.push({ path, flags });
+    return fakeHandle(100, { regular: false });
+  };
+  // A FIFO reports non-regular; the reader must refuse generically without
+  // blocking on the opener, and the opener must have been called with
+  // O_NONBLOCK so a blocking FIFO read is impossible.
+  const result = await readBoundedText('/synthetic/named-pipe', { open: fakeOpener });
+  assert.equal(result, null);
+  assert.equal(calls.length, 1, 'opener must be invoked exactly once');
+  assert.equal(calls[0].path, '/synthetic/named-pipe');
+  assert.equal((calls[0].flags & expectedFlags), expectedFlags,
+    `opener called without O_NONBLOCK; flags=0x${calls[0].flags?.toString(16)}`);
 });
 
 test('explain CLI refuses oversized files and directories without echoing data', () => {
