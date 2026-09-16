@@ -872,9 +872,28 @@ test("upstream Hermes: a completed session result publishes exactly once and rep
   assert.equal(first.receipt.itemId, undefined);
   // The projected evidence is frozen and bound to upstream identity.
   assert.equal(first.evidence.kind, "upstream_hermes_session_result");
-  // The projected evidence carries the independently retained identity, not
-  // the outcome's own values — assert against the retained source so this
-  // discriminates which side the evidence actually came from.
+  // The published identity is consistent with the retained binding.
+  //
+  // This is a CONSISTENCY check, not a PROVENANCE check, and it deliberately
+  // asserts nothing more. The durable publication path refuses any completed
+  // outcome whose upstream identity differs from the independently retained
+  // binding before it projects or persists anything, so on any successful
+  // publication the two sides are equal by construction. No assertion at this
+  // point can therefore distinguish which input the projection actually read:
+  // pointing it at the outcome's values instead would read the same value and
+  // pass identically. (Verified by mutation: substituting the outcome's values
+  // for the retained ones at the projection call still passes this test.)
+  //
+  // Provenance is proven where the two sides are made to differ, which is what
+  // forces the guard to fire:
+  //   - the adapter: "a complete but FOREIGN outcome fails closed against
+  //     every retained boundary" below (foreign job id, session id, and
+  //     lineage, each refused with zero durable writes);
+  //   - the projection: "refuses upstream Hermes evidence for mismatched
+  //     upstream identity and tampered digests" in
+  //     terminal-result-evidence.test.ts, whose wrong-job-id and
+  //     wrong-session-id cases supply a retained identity that differs from
+  //     the reply and would not be refused by a self-comparing projector.
   assert.equal(first.evidence.source.upstreamSessionId, retainedBindingFor(runId).upstreamSessionId);
   assert.equal(first.evidence.source.upstreamJobId, retainedBindingFor(runId).upstreamJobId);
   assert.equal(first.evidence.source.connectorProfileDigest, digest("c"));
