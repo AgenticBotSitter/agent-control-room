@@ -817,6 +817,7 @@ function upstreamHermesInput(runId: string, overrides: Parameters<typeof upstrea
     connectorProfileDigest: digest("c"),
     workflowId: "workflow:test",
     assertAuthority: () => {},
+    acceptanceProfile: { id: "profile:test:upstream-hermes", digest: digest("acceptance-profile") },
   };
 }
 
@@ -940,7 +941,9 @@ test("upstream Hermes: every non-completed outcome is refused before publication
         : { reason: "invalid reply" }),
     } as HermesSessionResultOutcomeV1;
     await assert.rejects(publishHermesSessionResultV1(configOf(f, storage),
-      { outcome, connectorProfileDigest: digest("c"), workflowId: "workflow:test", assertAuthority: () => {} }),
+      { outcome, connectorProfileDigest: digest("c"), workflowId: "workflow:test", assertAuthority: () => {},
+        receivedAt: "2026-09-15T12:00:00.000Z",
+        acceptanceProfile: { id: "profile:test:upstream-hermes", digest: digest("acceptance-profile") } }),
       /upstream_hermes_session_result_not_completed|terminal_result_evidence_unavailable/);
   }
   assert.equal(storage.putCalls, 0);
@@ -953,7 +956,7 @@ test("upstream Hermes: authority loss before each durable effect aborts the publ
   let authorityCalls = 0;
   const losing = () => { authorityCalls++; throw new Error("upstream_binding_revoked"); };
   await assert.rejects(publishHermesSessionResultV1(configOf(f, storage),
-    { ...upstreamHermesInput(runId), assertAuthority: losing }),
+    { ...upstreamHermesInput(runId), receivedAt: "2026-09-15T12:00:00.000Z", assertAuthority: losing }),
     /upstream_binding_revoked/);
   // Authority is checked before the reservation write, before byte I/O,
   // before manifest/receipt/audit appends. Zero durable writes.
@@ -993,7 +996,7 @@ test("upstream Hermes: invalid connector profile digest shape is rejected withou
   const storage = new ControlledStorage();
   const runId = "run:durable-upstream-hermes-shape";
   await assert.rejects(publishHermesSessionResultV1(configOf(f, storage),
-    { ...upstreamHermesInput(runId), connectorProfileDigest: "not-a-digest" }),
+    { ...upstreamHermesInput(runId), receivedAt: "2026-09-15T12:00:00.000Z", connectorProfileDigest: "not-a-digest" }),
     /upstream_hermes_invalid_connector_profile_digest/);
   assert.equal(storage.putCalls, 0);
 });

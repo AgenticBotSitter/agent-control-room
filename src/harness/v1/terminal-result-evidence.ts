@@ -306,8 +306,30 @@ const upstreamHermesSessionResultInputSchema = z.object({
   }).passthrough().strict(),
   /** Optional upstream-applied ceiling flag. Defaults to false. */
   upstreamCeilingTruncated: z.boolean().optional(),
-  /** Caller-pinned observed-at timestamp. Defaults to the call wall clock. */
-  observedAt: instant.optional(),
+  /**
+   * Caller-pinned observed-at timestamp. Required: the projection never
+   * invents a wall-clock value, because that would silently break
+   * replay-time determinism (a re-run must produce byte-identical
+   * evidence). The publisher carries its own `receivedAt` for the
+   * durable receipt; this field is the evidence-side anchor and the
+   * publisher supplies both together.
+   */
+  observedAt: instant,
+  /**
+   * The content hash the upstream outcome claims for its `response`
+   * text. The projection recomputes the hash from the actual text and
+   * refuses any input where the recomputed value disagrees with this
+   * claim. A connector that ships one digest and a different response
+   * is forging terminal evidence.
+   */
+  claimedContentHash: digest,
+  /**
+   * The UTF-8 byte length the upstream outcome claims for its
+   * `response` text. Mirrors `claimedContentHash`: the projection
+   * recomputes the length from the actual bytes and refuses any input
+   * where the recomputed value disagrees.
+   */
+  claimedSizeBytes: z.number().int().min(1).max(65_536),
 }).strict();
 
 /**
@@ -317,11 +339,12 @@ const upstreamHermesSessionResultInputSchema = z.object({
  * evidence.
  *
  * Recomputes the UTF-8 byte length and content hash from the actual `response`
- * text and binds the evidence digest to lineage, the retained
- * binding/profile facts, the upstream session/job identity, and both
- * truncation flags. A copied or structurally forged outcome whose text,
- * digests, sizes, lineage or upstream identifiers disagree fails closed with
- * `terminal_result_evidence_unavailable`.
+ * text and compares them against `claimedSizeBytes` / `claimedContentHash`;
+ * any disagreement fails closed with `terminal_result_evidence_unavailable`.
+ * The evidence digest is bound to lineage, the retained binding/profile
+ * facts, the upstream session/job identity, and both truncation flags. A
+ * copied or structurally forged outcome whose text, digests, sizes, lineage
+ * or upstream identifiers disagree fails closed.
  *
  * Performs no I/O. Does not call upstream, start a process, or grant
  * canonical publication, quality acceptance, completion, retry, resume, or
@@ -332,7 +355,7 @@ export function projectUpstreamHermesSessionResultEvidenceV1(value: unknown):
   try {
     const parsed = upstreamHermesSessionResultInputSchema.parse(value);
     const { lineage, retained, outcome } = parsed;
-    const observedAt = parsed.observedAt ?? new Date().toISOString();
+    const observedAt = parsed.observedAt;
     // Reject any outcome whose status is not exactly `completed`. Other
     // terminal states (`failed`, `timed_out`, `orphaned`) MUST go through
     // their own publication paths (or be refused upstream) and never reach
@@ -351,7 +374,12 @@ export function projectUpstreamHermesSessionResultEvidenceV1(value: unknown):
     if (!wellFormedUnicode(outcome.response)) unavailable();
     const bytes = Buffer.from(outcome.response, "utf8");
     if (bytes.byteLength < 1 || bytes.byteLength > 65_536) unavailable();
+    // Reject any outcome whose self-reported content hash disagrees with
+    // the hash of the actual response text. The recompute catches a
+    // connector that ships one digest and a different response.
     const contentHash = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+    if (bytes.byteLength !== parsed.claimedSizeBytes
+      || contentHash !== parsed.claimedContentHash) unavailable();
     // The upstream reply itself is recomputed as evidence so a connector
     // cannot substitute a forged `response` while keeping the same job id.
     const { response: _response, ...replyMaterial } = outcome;

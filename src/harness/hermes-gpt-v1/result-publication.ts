@@ -1,6 +1,4 @@
 import { z } from "zod";
-import { sha256Digest } from "../../security/canonical-digest";
-import { HERMES_GPT_SOURCE_REVISION_V1 } from "./connector-profile";
 import {
   HERMES_SESSION_JOB_ID_PATTERN_V1,
   hermesSessionJobResultResponseSchemaV1,
@@ -59,10 +57,21 @@ export interface PublishHermesSessionResultInputV1 {
    */
   assertAuthority: HermesResultPublicationAuthorityFenceV1;
   /**
-   * Optional override for the publication's `receivedAt` timestamp. Defaults
-   * to the outcome's `observedAt` or the call wall clock.
+   * Caller-pinned receipt timestamp. Required: the publisher never
+   * invents a wall-clock value, because that would silently break
+   * replay-time determinism (a re-run must produce a byte-identical
+   * receipt). The same value is bound into the projected evidence as
+   * `observedAt`.
    */
-  receivedAt?: string;
+  receivedAt: string;
+  /**
+   * Already-registered acceptance profile. The profile's id and digest
+   * are persisted by the completion gate; the publisher does not
+   * fabricate them per call. The completion gate's review inspectors
+   * read the profile by id and verify the digest matches what the
+   * publisher recorded, so a forged binding identity cannot survive.
+   */
+  acceptanceProfile: { id: string; digest: string };
 }
 
 /**
@@ -120,14 +129,14 @@ export async function publishHermesSessionResultV1(
   }
 
   // Project the upstream outcome into inert terminal-result evidence. The
-  // projection re-derives contentHash/sizeBytes from the actual `text`,
-  // binds the digest to lineage, the connector profile digest, the upstream
-  // session/job identity and both truncation flags, and refuses any input
-  // whose identity, digests, sizes, lineage or upstream identifiers disagree.
-  // The connector profile digest is part of the retained binding facts so a
-  // forged `connectorProfileDigest` in the durable binding cannot survive
-  // projection-time reconciliation. The caller's `receivedAt` is also bound
-  // as `observedAt` so exact replays produce identical evidence and binding.
+  // projection recomputes the contentHash and sizeBytes from the actual
+  // `text` and compares them against the values the upstream runtime
+  // recorded on the outcome; any disagreement fails closed with
+  // `terminal_result_evidence_unavailable`. The connector profile digest
+  // is part of the retained binding facts so a forged value in the
+  // durable binding cannot survive projection-time reconciliation. The
+  // caller's `receivedAt` is bound as `observedAt` so exact replays
+  // produce identical evidence and receipt.
   const evidence = projectUpstreamHermesSessionResultEvidenceV1({
     lineage: completed.binding.lineage,
     retained: {
@@ -146,12 +155,17 @@ export async function publishHermesSessionResultV1(
     },
     upstreamCeilingTruncated: completed.ceilingTruncated,
     observedAt: input.receivedAt,
+    claimedContentHash: completed.contentHash,
+    claimedSizeBytes: completed.sizeBytes,
   });
 
   // The durable binding is the harness-neutral contract. The publisher
   // records the connector profile digest; the upstream identity is encoded
   // in the evidence source; the harness tag identifies the connector family
-  // without impersonating the native or codex harnesses.
+  // without impersonating the native or codex harnesses. The acceptance
+  // profile id and digest come from a profile the caller has already
+  // registered with the completion gate, not from a digest the publisher
+  // invents per call.
   const binding: DurableResultBindingV1 = {
     tenantId: completed.binding.lineage.tenantId,
     projectId: completed.binding.lineage.projectId,
@@ -162,42 +176,18 @@ export async function publishHermesSessionResultV1(
     workflowId: input.workflowId,
     harness: "upstream-hermes",
     connectorProfileDigest: input.connectorProfileDigest,
-    acceptanceProfileId: "profile:upstream-hermes",
-    acceptanceProfileDigest: acceptanceDigestFor(input.connectorProfileDigest, evidence),
+    acceptanceProfileId: input.acceptanceProfile.id,
+    acceptanceProfileDigest: input.acceptanceProfile.digest,
   };
 
-  const receivedAt = input.receivedAt ?? evidence.observedAt;
   const result = await publishDurableResultV1(config, {
     binding,
     bytes: new TextEncoder().encode(completed.text),
-    receivedAt,
+    receivedAt: input.receivedAt,
     assertAuthority: input.assertAuthority,
   });
 
   return { receipt: result.receipt, target: result.target, evidence, replayed: result.replayed };
-}
-
-/**
- * Stable, harness-tag-free acceptance digest that binds the upstream identity
- * to the connector profile and the projected evidence digest. The neutral
- * publisher's binding identity already records the connector profile digest;
- * this function derives a deterministic acceptance profile digest so the
- * adapter can supply a binding without inventing a separate acceptance
- * registry. It is a digest, not a credential: the caller has already
- * authenticated the upstream outcome and the connector profile.
- */
-function acceptanceDigestFor(
-  connectorProfileDigest: string,
-  evidence: UpstreamHermesSessionResultEvidenceV1,
-): string {
-  return sha256Digest({
-    schema: "control-room.upstream-hermes-session-result-acceptance/v1",
-    sourceRevision: HERMES_GPT_SOURCE_REVISION_V1,
-    connectorProfileDigest,
-    upstreamSessionId: evidence.source.upstreamSessionId,
-    upstreamJobId: evidence.source.upstreamJobId,
-    evidenceDigest: evidence.evidenceDigest,
-  });
 }
 
 /**

@@ -178,6 +178,10 @@ function upstreamReply(overrides: Record<string, unknown> = {}) {
 }
 
 const upstreamConnectorProfileDigest = digest("upstream-profile");
+const upstreamResponseText = "exact upstream terminal result";
+const upstreamResponseBytes = Buffer.from(upstreamResponseText, "utf8");
+const upstreamResponseContentHash = `sha256:${createHash("sha256").update(upstreamResponseBytes).digest("hex")}`;
+const upstreamResponseSizeBytes = upstreamResponseBytes.byteLength;
 
 function upstreamInput(overrides: Record<string, unknown> = {}) {
   return {
@@ -190,6 +194,8 @@ function upstreamInput(overrides: Record<string, unknown> = {}) {
     outcome: upstreamReply(),
     upstreamCeilingTruncated: false,
     observedAt: "2026-09-15T12:00:00.000Z",
+    claimedContentHash: upstreamResponseContentHash,
+    claimedSizeBytes: upstreamResponseSizeBytes,
     ...overrides,
   };
 }
@@ -304,6 +310,43 @@ test("refuses upstream Hermes evidence for non-completed, refusal envelopes, emp
       upstreamSessionId: "session:one", upstreamJobId: "0123456789abcdef0123456789abcdef" },
     outcome: { kind: "completed", text: "exact upstream terminal result" },
   }), /terminal_result_evidence_unavailable/);
+});
+
+test("upstream Hermes projection refuses responses whose claimed content hash or size disagrees with the recomputed text", () => {
+  // Changed-text substitution with a retained old digest: the runtime
+  // claims the original digest but the actual response text differs.
+  assert.throws(() => projectUpstreamHermesSessionResultEvidenceV1(upstreamInput({
+    outcome: upstreamReply({ response: "forged different text" }),
+    claimedContentHash: upstreamResponseContentHash,
+    claimedSizeBytes: upstreamResponseSizeBytes,
+  })), /terminal_result_evidence_unavailable/);
+  // Retained old size with a tampered response: the runtime claims the
+  // original byte length but the actual UTF-8 length differs.
+  const longerText = "exact upstream terminal result (longer)";
+  assert.throws(() => projectUpstreamHermesSessionResultEvidenceV1(upstreamInput({
+    outcome: upstreamReply({ response: longerText }),
+    claimedContentHash: upstreamResponseContentHash,
+    claimedSizeBytes: upstreamResponseSizeBytes,
+  })), /terminal_result_evidence_unavailable/);
+  // Same response but a fabricated hash: the runtime claims a digest that
+  // does not match the bytes. The projection recomputes and refuses.
+  assert.throws(() => projectUpstreamHermesSessionResultEvidenceV1(upstreamInput({
+    claimedContentHash: digest("fabricated"),
+    claimedSizeBytes: upstreamResponseSizeBytes,
+  })), /terminal_result_evidence_unavailable/);
+  // A response with the matching recomputed hash/size is accepted: the
+  // claim is consistent with the bytes.
+  const baseline = projectUpstreamHermesSessionResultEvidenceV1(upstreamInput());
+  assert.equal(baseline.evidenceDigest.length > 0, true);
+});
+
+test("upstream Hermes projection rejects inputs whose observedAt is missing or malformed", () => {
+  // The projection refuses to invent a wall-clock value. A replay that
+  // omits observedAt cannot produce byte-identical evidence to one that
+  // supplies it; we require the caller to pin it explicitly.
+  const { observedAt: _omit, ...rest } = upstreamInput();
+  assert.throws(() => projectUpstreamHermesSessionResultEvidenceV1(rest),
+    /terminal_result_evidence_unavailable/);
 });
 
 test("upstream Hermes projection is order-independent across rebuilds and deeply freezes the result", () => {
