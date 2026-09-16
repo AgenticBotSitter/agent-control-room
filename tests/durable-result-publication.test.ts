@@ -872,8 +872,11 @@ test("upstream Hermes: a completed session result publishes exactly once and rep
   assert.equal(first.receipt.itemId, undefined);
   // The projected evidence is frozen and bound to upstream identity.
   assert.equal(first.evidence.kind, "upstream_hermes_session_result");
-  assert.equal(first.evidence.source.upstreamSessionId, input.outcome.kind === "completed" ? input.outcome.upstreamSessionId : "");
-  assert.equal(first.evidence.source.upstreamJobId, input.outcome.kind === "completed" ? input.outcome.upstreamJobId : "");
+  // The projected evidence carries the independently retained identity, not
+  // the outcome's own values — assert against the retained source so this
+  // discriminates which side the evidence actually came from.
+  assert.equal(first.evidence.source.upstreamSessionId, retainedBindingFor(runId).upstreamSessionId);
+  assert.equal(first.evidence.source.upstreamJobId, retainedBindingFor(runId).upstreamJobId);
   assert.equal(first.evidence.source.connectorProfileDigest, digest("c"));
   assert.equal(first.evidence.source.upstreamTruncated, false);
   assert.equal(first.evidence.source.upstreamCeilingTruncated, false);
@@ -975,8 +978,9 @@ test("upstream Hermes: a complete but FOREIGN outcome fails closed against every
     { ...upstreamHermesInput(runId, { upstreamSessionId: "session:foreign" }), receivedAt }),
     /upstream_hermes_retained_upstream_session_id_mismatch/);
 
-  // (c) Foreign lineage: the outcome carries a different run id than the
-  //     caller retained, everything else well-formed.
+  // (c) Foreign lineage: the CALLER retained a different run id than the
+  //     outcome carries, everything else well-formed. The retained side is
+  //     the trusted one, so the override goes on the retained argument.
   await assert.rejects(publishHermesSessionResultV1(configOf(f, storage),
     { ...upstreamHermesInput(runId, {}, { lineage: {
         tenantId: binding.tenantId, projectId: binding.projectId,
@@ -984,7 +988,8 @@ test("upstream Hermes: a complete but FOREIGN outcome fails closed against every
         runId: "run:some-other-run", nodeId: binding.nodeId } }), receivedAt }),
     /upstream_hermes_retained_lineage_mismatch/);
 
-  // (d) Foreign project lineage only — one field of six.
+  // (d) Foreign project lineage only — one field of six, again on the
+  //     retained side.
   await assert.rejects(publishHermesSessionResultV1(configOf(f, storage),
     { ...upstreamHermesInput(runId, {}, { lineage: {
         tenantId: binding.tenantId, projectId: "project:someone-else",
