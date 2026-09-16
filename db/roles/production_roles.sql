@@ -14,5 +14,6 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'control_room_reader') THEN CREATE ROLE control_room_reader NOLOGIN; END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'control_room_backup') THEN CREATE ROLE control_room_backup NOLOGIN; END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'control_room_schedule_admissions') THEN CREATE ROLE control_room_schedule_admissions NOLOGIN; END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'control_room_github_broker') THEN CREATE ROLE control_room_github_broker NOLOGIN; END IF;
 END;
 $$;
