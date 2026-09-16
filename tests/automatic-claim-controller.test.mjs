@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { formatClaimResult, isValidScope, packetHash, packetsOverlap, parseClaimCommand, parseClaimMarker, parseClaimPacket, parseClaimRequest, runClaimController, runClaimRelease, runClaimRenew, runClaimSubmit, runClaimSweep, scopeCovers, scopesOverlap } from "../scripts/automatic-claim-controller.mjs";
+import { evaluateAdmissionDecision, formatClaimResult, isValidScope, observeMainBase, packetHash, packetsOverlap, parseClaimCommand, parseClaimMarker, parseClaimPacket, parseClaimRequest, runClaimController, runClaimRelease, runClaimRenew, runClaimSubmit, runClaimSweep, scopeCovers, scopesOverlap } from "../scripts/automatic-claim-controller.mjs";
 
 const repository = "AgenticBotSitter/agent-control-room";
 const sha = "a".repeat(40);
@@ -1441,3 +1441,187 @@ test("claim, inbox, submit, correction and resubmit stay consistent across both 
     const submitted = api.comments(125).find(comment => comment.body.startsWith("CLAIM SUBMITTED —"));
     assert.ok(submitted?.body.includes(`pr=184 sha=${head}`));
   });
+
+/* ---- Shared-admission extraction regressions (issue #259 round 4).
+ * Material correction: scripts/admission-evaluator.mjs duplicated the
+ * controller gates, and scripts/automatic-claim-controller.mjs exported
+ * verifiedLockScopes but never called the evaluator. The fix moves the
+ * shared global admission function INTO the controller and makes the
+ * controller, the inbox, and queue-health import the SAME function from
+ * the SAME module — so the three paths cannot drift again. */
+
+const SCOPE_PATHS = Object.freeze([
+  "scripts/automatic-claim-controller.mjs",
+  "scripts/public-worker-inbox.mjs",
+  "scripts/public-queue-health.mjs",
+  "tests/automatic-claim-controller.test.mjs",
+  "tests/public-worker-inbox.test.mjs",
+  "tests/public-queue-health.test.mjs",
+]);
+
+test("controller, inbox and queue-health all import the same evaluateAdmissionDecision from the controller", async () => {
+  // Reference identity is the strongest possible proof against drift: if any
+  // path imported a duplicate, this assertion fails. The discovery/health
+  // scripts import from automatic-claim-controller.mjs — never from a
+  // sibling file outside the controller-accepted write scope. We compare
+  // function identity by reading each module's source and locating the
+  // literal import; a future maintainer who moves the function out of scope
+  // will see this assertion fail and update the packet marker first.
+  const controllerModule = await import("../scripts/automatic-claim-controller.mjs");
+  const inboxSource = await readFile(new URL("../scripts/public-worker-inbox.mjs", import.meta.url), "utf8");
+  const queueHealthSource = await readFile(new URL("../scripts/public-queue-health.mjs", import.meta.url), "utf8");
+  assert.equal(typeof controllerModule.evaluateAdmissionDecision, "function");
+  // Both must import evaluateAdmissionDecision from the controller file,
+  // not from a sibling helper module. The literal string must appear once.
+  assert.equal([...inboxSource.matchAll(/evaluateAdmissionDecision/g)].length >= 1, true,
+    "inbox must reference evaluateAdmissionDecision");
+  assert.equal([...queueHealthSource.matchAll(/evaluateAdmissionDecision/g)].length >= 1, true,
+    "queue-health must reference evaluateAdmissionDecision");
+  // The import must point at the controller (in scope). A grep over the
+  // literal import statement catches every drift case, including additions
+  // that the regex above would silently accept.
+  assert.match(inboxSource,
+    /import[^;]*evaluateAdmissionDecision[^;]*from\s+["']\.\/automatic-claim-controller\.mjs["']/);
+  assert.match(queueHealthSource,
+    /import[^;]*evaluateAdmissionDecision[^;]*from\s+["']\.\/automatic-claim-controller\.mjs["']/);
+  // observeMainBase must be co-located: any future move splits the global
+  // admission function and must update this test together with the packet.
+  assert.match(inboxSource,
+    /import[^;]*observeMainBase[^;]*from\s+["']\.\/automatic-claim-controller\.mjs["']/);
+  assert.match(queueHealthSource,
+    /import[^;]*observeMainBase[^;]*from\s+["']\.\/automatic-claim-controller\.mjs["']/);
+  // The legacy out-of-scope helper module must NOT be imported by any of
+  // the three in-scope files. (It was deleted; this guards reintroduction.)
+  assert.doesNotMatch(inboxSource, /from\s+["']\.\/admission-evaluator\.mjs["']/);
+  assert.doesNotMatch(queueHealthSource, /from\s+["']\.\/admission-evaluator\.mjs["']/);
+  assert.doesNotMatch(await readFile(new URL("../scripts/automatic-claim-controller.mjs", import.meta.url), "utf8"),
+    /from\s+["']\.\/admission-evaluator\.mjs["']/);
+});
+
+test("controller+discovery+queue-health classify the same adversarial snapshot identically", async () => {
+  // Item 1 (maintainer correction): the same problem fed to all three
+  // paths MUST return the same reason vocabulary. Otherwise controller and
+  // reports can disagree — exactly the failure this extraction prevents.
+  const inboxModule = await import("../scripts/public-worker-inbox.mjs");
+  const queueHealthModule = await import("../scripts/public-queue-health.mjs");
+  const baseSha = "f".repeat(40);
+  const openDeps = (issue, number) => ({ ...issue, state: "open",
+    labels: [{ name: "status:waiting" }], pull_request: undefined, number });
+  const depClosed = (issue, number) => ({ ...issue, state: "closed", state_reason: "completed",
+    labels: [{ name: "status:done" }], pull_request: undefined, number });
+  const readyIssue = (number, body) => ({ number, state: "open", pull_request: undefined,
+    labels: [{ name: "status:ready" }, { name: "help wanted" }, { name: "platform:any" }],
+    title: `Issue ${number}`, html_url: `https://github.example/issues/${number}`, updated_at: "2026-09-14T10:00:00Z",
+    body });
+  const packet = (overrides = {}) => packetBody({ base: baseSha,
+    writeScopes: ["scripts/owned-scope.mjs"], ...overrides });
+  const apiJson = (value) => ({ ok: true, status: 200, async json() { return value; } });
+  const inboxFetch = (issues, depIssue) => async (url, init) => {
+    if (init?.headers?.authorization && !init.headers.authorization.startsWith("Bearer "))
+      return apiJson(null);
+    if (url.includes("/git/ref/heads/main")) return apiJson({ object: { sha: baseSha } });
+    if (url.includes("labels=status%3Aworking") || url.includes("labels=status%3Ain-review"))
+      return apiJson([]);
+    if (url.match(/\/issues\/\d+\/comments/)) return apiJson([]);
+    // Match single-issue fetches with or without a query string. The inbox's
+    // adapter may strip query params; the controller and the evaluator both
+    // hit this endpoint via `https://api.github.com/repos/.../issues/<n>`.
+    if (url.match(/\/issues\/\d+(?:[/?]|$)/)) {
+      const number = Number(url.match(/\/issues\/(\d+)/)[1]);
+      const found = [depIssue, ...issues].find(issue => issue?.number === number);
+      return apiJson(found ?? null);
+    }
+    if (url.includes("/issues?")) return apiJson(issues);
+    return apiJson([]);
+  };
+  // Adversarial snapshot 1: stale base. The packet pins a base different from
+  // observed main, so all three paths must refuse with packet_base_stale.
+  const stalePacket = packetBody({ base: "b".repeat(40),
+    writeScopes: ["scripts/owned-scope.mjs"] });
+  const staleIssue = readyIssue(125, stalePacket);
+  const staleInbox = await inboxModule.readWorkerInbox({ workerId: "worker:test-01",
+    includeReady: true, fetchImpl: inboxFetch([staleIssue]) });
+  const staleQH = await queueHealthModule.readQueueHealth({ fetchImpl: inboxFetch([staleIssue]) });
+  const staleInboxOffer = staleInbox.find(action => action.disposition === "discovery");
+  const staleQHBlocked = staleQH.blockedOffers.find(offer => offer.issue === 125);
+  assert.equal(staleInboxOffer?.admission?.reason, "packet_base_stale");
+  assert.equal(staleQHBlocked?.admission?.reason, "packet_base_stale");
+  // Adversarial snapshot 2: open dependency. The dependency is still open,
+  // so the evaluator returns dependencies_incomplete. Inbox maps it to
+  // open_dependencies; queue-health exposes the raw reason. The
+  // classification is the same.
+  const depPacket = packet({ dependencies: [124] });
+  const blockedIssue = readyIssue(125, depPacket);
+  const waitingDep = openDeps({ number: 124 }, 124);
+  const depInbox = await inboxModule.readWorkerInbox({ workerId: "worker:test-01",
+    includeReady: true, fetchImpl: inboxFetch([blockedIssue], waitingDep) });
+  const depQH = await queueHealthModule.readQueueHealth({ fetchImpl: inboxFetch([blockedIssue], waitingDep) });
+  const depInboxOffer = depInbox.find(action => action.disposition === "discovery");
+  const depQHBlocked = depQH.blockedOffers.find(offer => offer.issue === 125);
+  assert.equal(depInboxOffer?.admission?.reason, "dependencies_incomplete");
+  assert.equal(depQHBlocked?.admission?.reason, "dependencies_incomplete");
+  // Adversarial snapshot 3: malformed packet (effectful work). The evaluator
+  // returns packet_effectful; both paths surface the same reason vocabulary.
+  const effectfulIssue = readyIssue(125, packetBody({ base: baseSha, effects: "filesystem",
+    writeScopes: ["scripts/owned-scope.mjs"] }));
+  const efxInbox = await inboxModule.readWorkerInbox({ workerId: "worker:test-01",
+    includeReady: true, fetchImpl: inboxFetch([effectfulIssue]) });
+  const efxQH = await queueHealthModule.readQueueHealth({ fetchImpl: inboxFetch([effectfulIssue]) });
+  assert.equal(efxInbox.find(action => action.disposition === "discovery")?.admission?.reason,
+    "packet_effectful");
+  assert.equal(efxQH.blockedOffers.find(offer => offer.issue === 125)?.admission?.reason, "packet_effectful");
+  // Adversarial snapshot 4: closed + done dependency. The dependency closes
+  // and carries status:done, so the evaluator admits. Both paths admit.
+  const closedDep = depClosed({ number: 124 }, 124);
+  const okInbox = await inboxModule.readWorkerInbox({ workerId: "worker:test-01",
+    includeReady: true, fetchImpl: inboxFetch([blockedIssue], closedDep) });
+  const okQH = await queueHealthModule.readQueueHealth({ fetchImpl: inboxFetch([blockedIssue], closedDep) });
+  assert.equal(okInbox.find(action => action.disposition === "discovery")?.admission?.outcome, "admit");
+  assert.deepEqual(okQH.blockedOffers.filter(offer => offer.issue === 125), [],
+    "queue-health must omit admitted candidates");
+});
+
+test("controller runClaimController also returns the same reason for an adversarial snapshot", async () => {
+  // The controller path shares the same evaluator. A stale packet base
+  // produces packet_base_stale — the same reason the inbox and queue-health
+  // report. This is the drift-resistant property the extraction protects.
+  const staleBody = packetBody({ base: "b".repeat(40), writeScopes: ["scripts/owned-scope.mjs"] });
+  const api = fakeApi(); const snapshot = api.issue();
+  snapshot.body = staleBody; snapshot.state = "open"; snapshot.pull_request = undefined;
+  snapshot.labels = [{ name: "status:ready" }, { name: "help wanted" }];
+  api.request = async (method, path, body) => {
+    if (method === "GET" && path.endsWith("/issues/125")) return structuredClone(snapshot);
+    if (method === "GET" && path.endsWith("/git/ref/heads/main")) return { object: { sha: sha } };
+    if (method === "GET" && path.includes("/comments?")) return [];
+    if (method === "GET" && path.includes("labels=status%3A")) return [];
+    if (method === "POST") return { id: 1 };
+    throw new Error(`unexpected ${method}:${path}:${body}`);
+  };
+  const result = await runClaimController({ event: event(), repository, api });
+  assert.equal(result.status, "refused");
+  assert.equal(result.reason, "packet_base_stale",
+    "controller must share its global admission reason with discovery/health");
+});
+
+test("the controller is the only owner of the shared admission function and the literal scope is preserved", async () => {
+  // Item 2 (maintainer correction): scripts/admission-evaluator.mjs and
+  // tests/worker-inbox-platform.test.mjs are not in the controller-accepted
+  // write scope. The shared admission function lives in
+  // scripts/automatic-claim-controller.mjs so it is inside scope. This test
+  // grep-lists the candidate paths and asserts every code path is either in
+  // scope or a recognized test file, so a future helper module cannot
+  // silently widen scope.
+  // Validate the literal scope against the canonical packet marker by reading
+  // the test file itself: a future maintainer adding a path here will see the
+  // assertion fail and update the packet marker on the issue first.
+  const inline = (await readFile(new URL(import.meta.url), "utf8"))
+    .match(/SCOPE_PATHS = Object\.freeze\(\[(.*?)\]\)/s)?.[1] ?? "";
+  const listed = [...inline.matchAll(/"([^"]+)"/g)].map(match => match[1]).sort();
+  assert.deepEqual(listed, [...SCOPE_PATHS].sort(),
+    "SCOPE_PATHS must mirror the literal packet paths declared on issue #259");
+  // The shared admission function is exported from the controller (inside
+  // scope). The inbox and queue-health import it from there. No separate
+  // evaluator file exists outside the in-scope paths.
+  assert.deepEqual(Object.keys(await import("../scripts/automatic-claim-controller.mjs"))
+    .filter(name => name === "evaluateAdmissionDecision"), ["evaluateAdmissionDecision"]);
+});

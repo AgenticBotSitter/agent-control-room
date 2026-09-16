@@ -4,6 +4,7 @@ import {
   DEFAULT_MAX_PAGES, DEFAULT_ADVISORY_LOGINS, READY_FLOOR, STATUSES,
   declaredSubmissionIssue, parseClaimMarker, readQueueHealth, renderQueueHealth, renderQueueHealthJson,
 } from "../scripts/public-queue-health.mjs";
+import { parseClaimPacket, packetHash } from "../scripts/automatic-claim-controller.mjs";
 
 const issue = (number, labels, updated_at = "2026-09-14T10:00:00Z") => ({
   number, title: `Issue ${number}`, html_url: `https://github.example/issues/${number}`,
@@ -30,6 +31,12 @@ const actionMarker = (worker, state, number) =>
 const claimMarker = (number, worker) =>
   `CLAIM ACCEPTED — reserved\n<!-- agent-control-room-claim:v2 issue=${number} request=1 actor=maintainer worker=${worker} -->\n<!-- agent-control-room-claim:v3 issue=${number} request=1 actor=maintainer worker=${worker} packet=${"a".repeat(64)} accepted=1700000000000 -->`;
 const ready = (number, updated) => issue(number, ["status:ready", "help wanted"], updated);
+const packet = (values = {}) => `<!-- acr-public-work:v1 ${JSON.stringify({ target: "main",
+  base: "a".repeat(40), writeScopes: ["src/offer/**"], dependencies: [], checks: ["pnpm check"],
+  risk: "ordinary", effects: "none", leaseHours: 24, ...values })} -->`;
+const acceptedMarker = (number, body, worker = "worker:test-01", id = 7000 + number) => ({ id,
+  ...controllerComment(
+  `CLAIM ACCEPTED — reserved\n<!-- agent-control-room-claim:v2 issue=${number} request=1 actor=maintainer worker=${worker} -->\n<!-- agent-control-room-claim:v3 issue=${number} request=1 actor=maintainer worker=${worker} packet=${packetHash(parseClaimPacket(body))} accepted=1700000000000 -->`) });
 
 test("malformed submission bindings are visible instead of disappearing from the report", async () => {
   const api = fakeFetch({ issues: [issue(214, ["status:working"])],
@@ -39,26 +46,52 @@ test("malformed submission bindings are visible instead of disappearing from the
   assert.match(renderQueueHealth(report), /PR #244 submission_issue_binding_missing_or_invalid/);
 });
 
-function fakeFetch({ issues = [], comments = {}, pulls = [] } = {}) {
+function fakeFetch({ issues = [], comments = {}, pulls = [], ref = "a".repeat(40), failRef = false,
+  workingIssues = [], singles = {}, failSingles = [], failComments = [], headersSeen = [] } = {}) {
   const calls = [];
   const ok = value => ({ ok: true, status: 200, async json() { return structuredClone(value); } });
-  const fetchImpl = async url => {
+  const fetchImpl = async (url, init) => {
     calls.push(url);
-    if (url.includes("/issues?")) return ok(issues);
+    if (init?.headers?.authorization) headersSeen.push(init.headers.authorization);
+    if (url.includes("/git/ref/heads/main")) {
+      if (failRef) return { ok: false, status: 404 };
+      return { ok: true, status: 200, async json() { return { object: { sha: ref } }; } };
+    }
     if (url.includes("/pulls?")) return ok(pulls);
+    if (url.includes("labels=status%3Aworking") || url.includes("labels=status%3Ain-review")) {
+      return ok(workingIssues);
+    }
     const commentsMatch = /\/issues\/(\d+)\/comments/.exec(url);
-    if (commentsMatch) return ok(comments[Number(commentsMatch[1])] ?? []);
+    if (commentsMatch) {
+      const number = Number(commentsMatch[1]);
+      if (failComments.includes(number)) throw new Error("offline history");
+      return ok(comments[number] ?? []);
+    }
+    const singleMatch = /\/issues\/(\d+)(?:\?|$)/.exec(url);
+    if (singleMatch && !url.includes("/comments") && !url.includes("/issues?")) {
+      const number = Number(singleMatch[1]);
+      if (failSingles.includes(number)) throw new Error("offline single");
+      if (number in singles) return ok(singles[number]);
+      return ok(issues.find(item => item.number === number) ?? null);
+    }
+    if (url.includes("/issues?")) return ok(issues);
     throw new Error(`unexpected_request:${url}`);
   };
   return { fetchImpl, calls };
 }
 
 test("a healthy queue reports counts, links, capacity and no anomalies", async () => {
+  const lockedBody = packet({ writeScopes: ["src/locked/**"] });
+  const reviewBody = packet({ writeScopes: ["src/review/**"] });
   const api = fakeFetch({
-    issues: [ready(197), ready(198), ready(199), ready(201),
-      issue(166, ["status:working", "help wanted"]),
-      issue(125, ["status:in-review", "action:reviewer"])],
-    comments: { 166: [controllerComment(claimMarker(166, "worker:test-01"))] },
+    issues: [{ ...ready(197), body: packet() }, { ...ready(198), body: packet() },
+      { ...ready(199), body: packet() }, { ...ready(201), body: packet() },
+      { ...issue(166, ["status:working", "help wanted"]), body: lockedBody },
+      { ...issue(125, ["status:in-review", "action:reviewer"]), body: reviewBody }],
+    comments: { 166: [acceptedMarker(166, lockedBody)],
+      125: [acceptedMarker(125, reviewBody, "worker:test-02")] },
+    workingIssues: [{ ...issue(166, ["status:working", "help wanted"]), body: lockedBody },
+      { ...issue(125, ["status:in-review", "action:reviewer"]), body: reviewBody }],
     // A healthy in-review state must have an open submission, so give it one.
     pulls: [pull(204, 125)],
   });
@@ -68,9 +101,10 @@ test("a healthy queue reports counts, links, capacity and no anomalies", async (
   assert.equal(report.counts.working, 1);
   assert.equal(report.counts["in-review"], 1);
   assert.equal(report.activeReviewCount, 1);
-  assert.equal(report.claimedAssignments, 1);
+  assert.equal(report.claimedAssignments, 2);
   assert.equal(report.readyFloor, 4);
   assert.deepEqual(report.anomalies, []);
+  assert.deepEqual(report.blockedOffers, []);
   assert.deepEqual(report.warnings, []);
   assert.equal(report.uncertainty.truncated, false);
   for (const status of STATUSES)
@@ -380,7 +414,7 @@ test("pagination stays bounded and the report declares its own uncertainty", asy
   assert.equal(report.counts.ready, 100);
   assert.ok(report.warnings.includes("queue_read_truncated"));
   assert.match(report.uncertainty.note, /lower bound/);
-  assert.equal(api.calls.filter(url => url.includes("/issues?")).length, 1);
+  assert.equal(api.calls.filter(url => url.includes("/issues?") && !url.includes("labels=")).length, 1);
 
   const short = await readQueueHealth({ fetchImpl: fakeFetch({ issues: full.slice(0, 3) }).fetchImpl, maxPages: 1 });
   assert.equal(short.uncertainty.truncated, false);
@@ -520,4 +554,68 @@ test("claim markers are parsed only in the exact bounded controller form", () =>
   for (const value of ["CLAIM ACCEPTED", "<!-- agent-control-room-claim:v2 issue=199 -->",
     "<!-- agent-control-room-claim:v2 issue=199 request=1 actor=a worker=b -->"])
     assert.equal(parseClaimMarker(value), undefined);
+});
+
+const qhReady = (number, body = packet({ writeScopes: [`src/offer-${number}/**`] })) => ({
+  ...issue(number, ["status:ready", "platform:any"]), body });
+
+test("blocked offers report distinct blockers and omit admitted candidates", async () => {
+  const api = fakeFetch({
+    issues: [qhReady(301), qhReady(302, packet({ writeScopes: ["src/*.ts"] })),
+      qhReady(303, packet({ dependencies: [304] })), qhReady(305, packet({ base: "b".repeat(40) })),
+      { ...issue(304, ["status:waiting"]), state: "open" }],
+  });
+  const report = await readQueueHealth({ fetchImpl: api.fetchImpl });
+  const blocked = Object.fromEntries(report.blockedOffers.map(offer => [offer.issue, offer]));
+  assert.equal(blocked[301], undefined);
+  assert.equal(blocked[302].admission.reason, "packet_invalid");
+  assert.equal(blocked[303].admission.reason, "dependencies_incomplete");
+  assert.equal(blocked[305].admission.reason, "packet_base_stale");
+  assert.equal(blocked[305].admission.packetBase, "b".repeat(40));
+  assert.ok(!report.warnings.includes("admission_observation_unavailable"));
+  assert.ok(!report.warnings.includes("admission_evaluation_incomplete"));
+});
+
+test("already-accepted ready offers keep their pinned base and leave the report", async () => {
+  const body = packet();
+  const api = fakeFetch({
+    issues: [{ ...issue(311, ["status:ready", "platform:any"]), body }],
+    comments: { 311: [acceptedMarker(311, body)] },
+  });
+  const report = await readQueueHealth({ fetchImpl: api.fetchImpl });
+  assert.deepEqual(report.blockedOffers.filter(offer => offer.issue === 311), []);
+});
+
+test("failed history, locks and evaluator observations block with errors", async () => {
+  const historyApi = fakeFetch({ issues: [qhReady(321)], failComments: [321] });
+  const historyReport = await readQueueHealth({ fetchImpl: historyApi.fetchImpl });
+  const historyOffer = historyReport.blockedOffers.find(offer => offer.issue === 321);
+  assert.equal(historyOffer.admissionError, "admission_history_incomplete");
+
+  const legacyWorking = { ...issue(322, ["status:working"]), body: "no packet here", state: "open" };
+  const legacyApi = fakeFetch({ issues: [qhReady(323), legacyWorking], workingIssues: [legacyWorking] });
+  const legacyReport = await readQueueHealth({ fetchImpl: legacyApi.fetchImpl });
+  const legacyOffer = legacyReport.blockedOffers.find(offer => offer.issue === 323);
+  assert.equal(legacyOffer.admission.reason, "admission_locks_unverifiable");
+  assert.equal(legacyOffer.admissionError, "admission_locks_unverifiable");
+
+  const lockedBody = packet({ writeScopes: ["src/shared/**"] });
+  const working = { ...issue(324, ["status:working"]), body: lockedBody, state: "open" };
+  const overlapApi = fakeFetch({
+    issues: [qhReady(325, packet({ writeScopes: ["src/shared/**"] })), working],
+    comments: { 324: [acceptedMarker(324, lockedBody)] },
+    workingIssues: [working],
+  });
+  const overlapReport = await readQueueHealth({ fetchImpl: overlapApi.fetchImpl });
+  const overlapOffer = overlapReport.blockedOffers.find(offer => offer.issue === 325);
+  assert.equal(overlapOffer.admission.reason, "scope_overlap");
+  assert.equal(overlapOffer.admission.locks, "checked");
+
+  const headersSeen = [];
+  const tokenApi = fakeFetch({ issues: [qhReady(331)], headersSeen });
+  const tokenReport = await readQueueHealth({ fetchImpl: tokenApi.fetchImpl, token: "sentinel-qh-token" });
+  assert.ok(headersSeen.length > 0);
+  assert.ok(headersSeen.every(value => value === "Bearer sentinel-qh-token"));
+  assert.ok(!JSON.stringify(tokenReport).includes("sentinel-qh-token"));
+  assert.deepEqual(tokenReport.blockedOffers.filter(offer => offer.issue === 331), []);
 });
