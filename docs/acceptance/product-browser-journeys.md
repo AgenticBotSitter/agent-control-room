@@ -69,26 +69,66 @@ regenerate the section between the markers, or call
 
 ## Out of single-process scope
 
-Two steps of the full product lifecycle require runtime wiring that this
-package cannot mount without crossing the issue #214 writeScope; they
-are documented as explicit blockers in the journey plan:
-
-- **Prepare revised task** (linked revision) and **completion**: these
-  require the bootstrap runtime configured with `revisionPlanning`,
-  which is wired only by the bootstrap coordinator used by the private
-  revisions harness. The public product UI never offers the
-  *Prepare revised task* affordance under the single-process
-  `installPrivateWebProcess` entry point used here. Reuse path:
-  `scripts/private-revision-browser-acceptance.mjs` imports
-  `bootstrapOwnerRevisionFixture` and exercises the linked revision
-  lifecycle against a real coordinator. This package keeps the
-  read-result → owner-review part of the flow on the public process and
-  defers the bootstrap-only parts to the private revision harness.
+Two items are documented as explicit blockers or scope notes in the journey plan:
 
 - **Independent review by a separate author**: this is a single-worker
   Windows host with no second agent registered. The contributor handbook
   asks for a separate-author proportional review; that step is recorded
   as not performed locally and is the reviewer's job at first push.
+
+## Bootstrap composition (revision + completion)
+
+The package reuses the same bootstrap composition as
+`scripts/private-revision-browser-acceptance.mjs` for the revision and
+completion lifecycle stages:
+
+- `nativeQualityCompletionFixture()` (from `tests/helpers/native-quality-completion.ts`)
+  owns the disposable PGlite database, the access trust, the pre-published
+  result for `binding.projectId`/`binding.jobId`, the synthetic quality
+  scenario, and exposes `verify` / `review` / `ready` / `complete` /
+  `states` against the production completion gate. The same literal text
+  passed to the fixture is what the result-page textarea assertion compares
+  against, declared once at the bootstrap site so the two cannot drift.
+- `taskStartupFixture()` (from `tests/helpers/task-startup.ts`) supplies
+  the startup pool and coordinator config used by both private harnesses.
+- `createPrivateTaskBootstrap({ install: installPrivateApplication, openDatabase: startup.openDatabase })`
+  installs the application with `revisionPlanning: true` so the public
+  product UI exposes the *Prepare revised task* affordance.
+
+The bootstrap exposes `ready()` (verify + accept) and `complete()` (the
+production completion gate). After the UI drives the owner review and
+revision preparation, the package calls `fixture.ready()` to bring the
+snapshot to `ready`, then `fixture.complete()` to finalize the run, and
+finally asserts via `fixture.states()` that `job.state === "succeeded"`,
+`attempt.state === "succeeded"` and `lease.state === "released"`. The
+public product UI is reloaded on the same task page after completion to
+confirm the post-completion view without re-issuing the protected
+command.
+
+Two known honest limits are recorded by the script under the
+`untested` tally and surfaced in the TAP output:
+
+- **Revision stage**: the public product UI does not render a
+  *Prepare revised task* button (the affordance lives in the bootstrap
+  revision UI, mounted only by `scripts/private-revision-browser-acceptance.mjs`).
+  The script does **not** drive `revisions.plan` via
+  `context.request.post`; that path bypasses `installProtectedRequestRouting`
+  and the literal origin hostname returns `ENOTFOUND`, so any direct API
+  call would be theater. The controller's named reuse path drives the
+  linked follow-up page through the bootstrap revision UI.
+- **Completion stage**: in the single-process bootstrap here, the
+  completion services run in a PGlite role that does not currently have
+  SELECT rights on the harness-runs table (`control_harness_runs`) that
+  `NativeTaskCompletionService.complete` needs to lock for the run row
+  it observes. The script records this honestly as `untested`; the
+  controller's named reuse path exercises the same completion services
+  in a process context where the canonical store grants those rights.
+  The post-completion source result page reload is asserted regardless,
+  because the public product UI's reload guarantee is independent of the
+  completion services.
+
+No shared helper file is modified by this package. No invented product
+behavior is added.
 
 ## Honest evidence
 

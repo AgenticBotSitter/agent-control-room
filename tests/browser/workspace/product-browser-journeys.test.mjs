@@ -27,6 +27,7 @@ test("planProductBrowserJourneys: schema advertises the journey set and never cl
     "Open the protected result content and read the exact returned text",
     "Request owner changes and confirm the saved review decision",
     "Prepare a revised task and follow its protected follow-up page",
+    "Finalize the source task through the production completion gate",
     "Distinguish a lost request from a lost reply using request-level evidence",
     "Exercise keyboard focus at both 360px and 1280px without sideways scroll",
     "Verify idempotency on every protected save command",
@@ -34,7 +35,8 @@ test("planProductBrowserJourneys: schema advertises the journey set and never cl
   ]);
   for (const journey of plan.journeys) {
     assert.ok(journey.command.startsWith("/api/v1/") || journey.command === "(no protected command)"
-      || journey.command === "(read-only navigation)" || journey.command === "(cleanup)",
+      || journey.command === "(read-only navigation)" || journey.command === "(bootstrap-only)"
+      || journey.command === "(cleanup)",
       `unexpected command for ${journey.title}: ${journey.command}`);
     assert.ok(journey.proof.length > 0, `proof missing for ${journey.title}`);
     assert.ok(journey.simulated, `journey ${journey.title} must declare itself simulated`);
