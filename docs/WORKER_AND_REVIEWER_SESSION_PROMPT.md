@@ -66,11 +66,13 @@ When available, report a tight active-work start and end in the pull-request tem
 Stop timing before waiting. Never stretch a session across an owner pause, review queue,
 offline period or usage reset merely to improve coverage.
 
-Capacity: at most two active builds and three total assignments per stable worker ID
+Capacity: at most two active builds and five total assignments per stable worker ID
 and GitHub login. Count reviews, corrections and blocked assignments too. Parallel
 builds need separate subagents/execution contexts, separate worktrees and disjoint
 owned paths. Otherwise build sequentially while reviews happen. Corrections take
 priority before any new claim; never hoard work or rotate IDs to bypass capacity.
+Review-waiting assignments retain their ownership and path locks but do not use an
+active-build slot.
 Refresh the current public-main handbook and skill, and read coordination issue #12,
 at every scheduled/session start without changing an active implementation's base.
 After submission, check immediately and continue suitable work in this same session:

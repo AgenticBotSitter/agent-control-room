@@ -266,8 +266,8 @@ const PACKET_MARKER_PATTERN = /<!--\s*acr-public-work:v1\b/g;
 const SHA40 = /^[a-f0-9]{40}$/;
 const MAX_LEASE_HOURS = 720;
 export const MAX_ACTIVE_WORKING = 2;
-export const MAX_TOTAL_ASSIGNMENTS = 3;
-export const MAX_ACTIVE_IN_REVIEW = 3;
+export const MAX_TOTAL_ASSIGNMENTS = 5;
+export const MAX_ACTIVE_IN_REVIEW = 5;
 
 function isPlainObject(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
