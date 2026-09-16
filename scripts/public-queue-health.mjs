@@ -10,8 +10,7 @@
 import { pathToFileURL } from "node:url";
 import { parseActionMarker } from "./public-worker-inbox.mjs";
 import { parseHandoff } from "./review-handoff-controller.mjs";
-import { parseClaimPacket, verifiedLockScopes } from "./automatic-claim-controller.mjs";
-import { evaluateAdmissionDecision, observeMainBase } from "./admission-evaluator.mjs";
+import { parseClaimPacket, verifiedLockScopes, evaluateAdmissionDecision, observeMainBase } from "./automatic-claim-controller.mjs";
 
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const CLAIM_MARKER = /<!-- agent-control-room-claim:v2 issue=(\d+) request=(\d+) actor=([A-Za-z0-9][A-Za-z0-9-]{0,38}) worker=([A-Za-z0-9][A-Za-z0-9._:-]{2,79}) -->/;

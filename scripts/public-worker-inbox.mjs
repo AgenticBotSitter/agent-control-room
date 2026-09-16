@@ -1,8 +1,7 @@
 import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import { parseClaimPacket, parseClaimMarker as parseControllerClaim, parseExpiredMarker,
-  verifiedLockScopes } from "./automatic-claim-controller.mjs";
-import { evaluateAdmissionDecision, observeMainBase } from "./admission-evaluator.mjs";
+  verifiedLockScopes, evaluateAdmissionDecision, observeMainBase } from "./automatic-claim-controller.mjs";
 
 const WORKER_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,79}$/;
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
