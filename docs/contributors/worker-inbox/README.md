@@ -222,7 +222,9 @@ name — see the note above.
 
 | Symptom | Cause and fix |
 | --- | --- |
-| `worker_inbox_api_403` | Anonymous GitHub rate limit. Set `GITHUB_TOKEN`, or pass `--token-from-gh`. |
+| `worker_inbox_rate_limited` | GitHub confirmed a request limit. Obey the next scheduled retry; do not wake an agent merely for this transient failure. |
+| `worker_inbox_credential_rejected` | GitHub rejected the supplied credential (for example, an expired token or a fine-grained token whose lifetime violates current policy). Remove the bad scheduler credential and authenticate `gh` with an allowed credential before using `--token-from-gh`; do not retry the unchanged token. |
+| `worker_inbox_api_403` | GitHub refused the request but did not identify it as a request limit or known credential-policy rejection. Inspect the account/repository permission rather than assuming an empty inbox. |
 | `worker_inbox_worker_id_invalid` | The worker ID must match the shape the inbox enforces: `[A-Za-z0-9][A-Za-z0-9._:-]{2,79}`. |
 | `worker_inbox_platform_signal_file_not_owned` | Something already exists at the extra-signal path that is not this tool's own signal for this worker. The watcher refuses to overwrite it rather than destroy a file it cannot prove it created. Point `--signal-directory` somewhere else, or move the file deliberately. |
 | `worker_inbox_platform_signal_path_is_symlink` | The extra-signal path is a symlink. It is refused whatever it points at: a link is not evidence of ownership and writing through it would replace the link rather than the file it names. Point `--signal-directory` at a directory, and let the tool create the signal file itself. |

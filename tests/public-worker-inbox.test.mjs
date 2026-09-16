@@ -297,14 +297,22 @@ test("history cap surfaces attention", async () => {
 test("global offline errors and invalid input fail visibly", async () => {
   await assert.rejects(readWorkerInbox({ workerId: "x" }), /worker_id_invalid/);
   await assert.rejects(readWorkerInbox({ workerId, repository: "bad" }), /repository_invalid/);
-  await assert.rejects(readWorkerInbox({ workerId, fetchImpl: async () => ({ ok: false, status: 403 }) }), /rate_limited/);
+  await assert.rejects(readWorkerInbox({ workerId, fetchImpl: async () => ({ ok: false, status: 403,
+    headers: { get: name => name === "x-ratelimit-remaining" ? "0" : null } }) }), /rate_limited/);
 });
 
 test("a per-issue rate limit fails the whole read instead of fabricating attention for every issue", async () => {
   const fetchImpl = async url => url.includes("/comments?")
-    ? { ok: false, status: 403 }
+    ? { ok: false, status: 403, headers: { get: name => name === "retry-after" ? "60" : null } }
     : { ok: true, async json() { return [issue()]; } };
   await assert.rejects(readWorkerInbox({ workerId, fetchImpl }), /worker_inbox_rate_limited/);
+});
+
+test("a policy-rejected fine-grained token is not misreported as a rate limit", async () => {
+  await assert.rejects(readWorkerInbox({ workerId, token: "sentinel-token",
+    fetchImpl: async () => ({ ok: false, status: 403, headers: { get: () => null },
+      text: async () => "Fine-grained personal access tokens are forbidden when their lifetime is greater than 366 days." }) }),
+  /worker_inbox_credential_rejected/);
 });
 
 test("direct inbox token resolution is explicit and never invents a credential", () => {
