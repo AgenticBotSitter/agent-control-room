@@ -24,3 +24,4 @@ node_modules/
 # The CI workflow is reviewed in docs/ci-budget-security-review.md. Anything
 # further needs its own review; this line no longer blocks the directory, so the
 # rule above is the guard.
+dist-release/
