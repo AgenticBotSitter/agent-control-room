@@ -10,7 +10,7 @@ REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM PUBLIC;
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC;
 
 GRANT USAGE ON SCHEMA public TO control_room_application, control_room_reader, control_room_backup,
-  control_room_schedule_admissions;
+  control_room_schedule_admissions, control_room_github_broker;
 GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA public TO control_room_application;
 GRANT DELETE ON projects, work_items, executions, blockers, attention_items, machine_nodes, worker_runtimes, agent_identities
   TO control_room_application;
@@ -37,9 +37,17 @@ GRANT SELECT, INSERT ON control_scheduled_task_admissions TO control_room_schedu
 GRANT SELECT ON workspaces, projects, control_schedule_occurrences, control_schedules,
   control_requests, control_workflows, control_jobs TO control_room_schedule_admissions;
 
+-- GitHub App broker: it can claim and prune only webhook replay keys. It cannot
+-- read Control Room projects, work, identities, credentials, or audit content.
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM control_room_github_broker;
+REVOKE ALL ON control_github_webhook_replays FROM control_room_application, control_room_reader,
+  control_room_backup, control_room_schedule_admissions;
+GRANT SELECT, INSERT, DELETE ON control_github_webhook_replays TO control_room_github_broker;
+
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM control_room_application, control_room_reader, control_room_backup, control_room_schedule_admissions;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM control_room_github_broker;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM control_room_application, control_room_reader, control_room_backup, control_room_schedule_admissions;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM control_room_application, control_room_reader, control_room_backup, control_room_schedule_admissions;

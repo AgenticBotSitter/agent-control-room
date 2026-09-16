@@ -9,9 +9,10 @@ short-lived installation tokens. Worker computers receive neither the app privat
 installation token. Existing contributor identities remain responsible for Git pushes until a
 separately reviewed push path exists.
 
-This repository currently contains the effect-free authentication and webhook admission core.
-It is not live. No key has been generated, no webhook has been enabled, and no listener has
-been opened.
+This repository contains the effect-free authentication and webhook admission core plus a
+PostgreSQL replay-store adapter and least-privilege database role. It is not live. No key has
+been generated, no webhook has been enabled, no database migration has been applied, and no
+listener has been opened.
 
 ## Recorded public identifiers
 
@@ -40,9 +41,10 @@ appear in GitHub, R2, logs, issue comments, worker files, or chat.
    replay, repository,
    installation, event, and action checks before it can create a wake-up hint. A wake-up hint is
    not work authority; workers still follow the repository claim and review controller.
-7. The included in-memory replay adapter is disposable-test support only. A live listener is
-   blocked until a durable store preserves replay claims across process and host restarts and
-   refuses capacity pressure rather than evicting unexpired claims.
+7. The included in-memory replay adapter is disposable-test support only. The production adapter
+   writes both replay keys atomically to PostgreSQL and survives process restarts. A live listener
+   remains blocked until this migration and its narrow database role are rehearsed on real
+   PostgreSQL and the complete private broker wrapper is reviewed.
 
 ## Activation order
 
