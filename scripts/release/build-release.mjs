@@ -94,19 +94,21 @@ export function verifyRevisionProvenance(repoRoot, revision) {
   return head;
 }
 
-// The staging layout is what actually ships. Each required member is validated
-// as present BEFORE anything is written, so a missing member cannot produce a
-// half-built archive that later looks complete.
+// The staging layout is what actually ships. `runtime` is satisfied by the
+// BUILD_TREE, so it is not required in the members map. Each other member
+// accepts either one source path or a list of them, because accepted notice
+// outputs live as several root-level files rather than one directory.
 export function planArchiveMembers({ repoRoot, members = {} }) {
   const missing = [];
   const planned = [];
   for (const name of REQUIRED_MEMBERS) {
+    if (name === "runtime") continue; // provided by BUILD_TREE
     const source = members[name];
     if (!source) { missing.push(name); continue; }
-    const abs = resolve(repoRoot, source);
-    if (!existsSync(abs)) { missing.push(name); continue; }
-    const st = statSync(abs);
-    planned.push({ member: name, source: abs, isDirectory: st.isDirectory() });
+    const list = (Array.isArray(source) ? source : [source]).map(s => resolve(repoRoot, s));
+    const absent = list.filter(p => !existsSync(p));
+    if (absent.length > 0) { missing.push(`${name}(${absent.length})`); continue; }
+    planned.push({ member: name, sources: list, isDirectory: list.every(p => statSync(p).isDirectory()) });
   }
   if (missing.length > 0) throw new Error(`release_member_missing:${missing.join(",")}`);
   return planned;
@@ -169,11 +171,15 @@ export function assembleRelease({
 
     // runtime/ <- the compiled tree
     copyTree(runtime, join(staging, "runtime"));
-    // the other required members <- their declared sources
+    // the other required members <- their declared sources; a file source keeps
+    // its basename, so root-level notice files land inside the member dir.
     for (const entry of memberPlan) {
-      const target = join(staging, entry.member);
-      if (entry.isDirectory) copyTree(entry.source, target);
-      else { mkdirSync(join(target, ".."), { recursive: true }); writeFileSync(target, readFileSync(entry.source)); }
+      const targetDir = join(staging, entry.member);
+      mkdirSync(targetDir, { recursive: true });
+      for (const src of entry.sources) {
+        if (statSync(src).isDirectory()) copyTree(src, join(targetDir, relative(resolve(repoRoot), src)));
+        else writeFileSync(join(targetDir, src.split(sep).pop()), readFileSync(src));
+      }
     }
 
     // Deterministic member list relative to the archive root.
@@ -263,8 +269,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       overwrite: args.includes("--overwrite"),
       members: {
         examples: pick("--examples") || "examples/release",
-        migrations: pick("--migrations") || "migrations",
-        notices: pick("--notices") || "notices",
+        migrations: pick("--migrations") || "db/migrations",
+        notices: ["NOTICE", "THIRD_PARTY.md", "third_party"],
         tooling: pick("--tooling") || "scripts/release",
       },
     });
