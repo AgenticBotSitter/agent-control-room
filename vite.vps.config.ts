@@ -23,6 +23,7 @@ export default defineConfig({
       nativeQueueInspection: "src/persistence/pg-boss-schema-inspection.ts", taskHost: "src/web/v1/private-task-host.ts",
       articleExtraction: "src/project-adapters/news/v1/article-extraction-runtime.mjs",
       productConfiguration: "src/config/v1/product-configuration.ts",
+      githubWorkerBroker: "src/github-app/v1/private-service.ts",
     } } } },
   },
   plugins: [vinext({ appDir: "private-app", rscOutDir: "dist-vps/server", ssrOutDir: "dist-vps/server/ssr" }), {

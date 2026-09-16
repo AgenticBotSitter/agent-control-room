@@ -18,6 +18,7 @@
     "src/node-bridge/private-node-entry.ts",
     "src/config/v1/product-configuration.ts",
     "src/web/v1/private-serving.ts",
+    "src/github-app/v1/private-service.ts",
     "src/web/v1/private-database-rehearsal.ts",
     "src/web/v1/private-fixture-preparation.ts",
     "src/web/v1/private-task-application.ts",

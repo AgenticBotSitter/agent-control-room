@@ -15,6 +15,13 @@ export type WebhookAdmissionResult =
   | Readonly<{ accepted: true; event: AcceptedGitHubWorkerEvent }>
   | Readonly<{ accepted: false; reason: string }>;
 
+export type VerifiedGitHubWorkerWebhook = Readonly<{
+  accepted: true;
+  event: AcceptedGitHubWorkerEvent;
+  replayKeys: readonly string[];
+}>;
+export type GitHubWebhookVerificationResult = VerifiedGitHubWorkerWebhook | Readonly<{ accepted: false; reason: string }>;
+
 export type GitHubWebhookReplayStore = Readonly<{
   /** Atomically records every key, or records none when any key is already live. */
   claim(keys: readonly string[], expiresAtMs: number, nowMs: number): Promise<boolean>;
@@ -88,6 +95,28 @@ export async function admitGitHubWorkerWebhook({
   maxBodyBytes?: number;
   replayTtlMs?: number;
 }): Promise<WebhookAdmissionResult> {
+  const verified = verifyGitHubWorkerWebhook({ body, headers, secret, expectedRepository, expectedInstallationId, maxBodyBytes });
+  if (!verified.accepted) return verified;
+  if (!Number.isSafeInteger(replayTtlMs) || replayTtlMs < 60_000) {
+    return { accepted: false, reason: "replay_ttl_invalid" };
+  }
+  const accepted = await replayStore.claim(verified.replayKeys, nowMs + replayTtlMs, nowMs);
+  if (!accepted) return { accepted: false, reason: "delivery_replayed" };
+  return { accepted: true, event: verified.event };
+}
+
+/** Verifies and reduces a webhook without writing state. The replay keys are safe
+ * only as inputs to the atomic admission store; they are never response data. */
+export function verifyGitHubWorkerWebhook({
+  body, headers, secret, expectedRepository, expectedInstallationId, maxBodyBytes = 1_048_576,
+}: {
+  body: Buffer;
+  headers: GitHubWebhookHeaders;
+  secret: string;
+  expectedRepository: string;
+  expectedInstallationId: number;
+  maxBodyBytes?: number;
+}): GitHubWebhookVerificationResult {
   if (body.length > maxBodyBytes) return { accepted: false, reason: "payload_too_large" };
   if (!verifyGitHubWebhookSignature(body, headers["x-hub-signature-256"], secret)) {
     return { accepted: false, reason: "signature_invalid" };
@@ -106,17 +135,6 @@ export async function admitGitHubWorkerWebhook({
   if (typeof action !== "string" || !ALLOWED_ACTIONS[eventName]?.has(action)) {
     return { accepted: false, reason: "action_not_allowed" };
   }
-  if (!Number.isSafeInteger(replayTtlMs) || replayTtlMs < 60_000) {
-    return { accepted: false, reason: "replay_ttl_invalid" };
-  }
-  // Delivery ID is not covered by GitHub's body HMAC. Claim both the ID and the verified
-  // signature so a captured request cannot be replayed by changing only that header.
-  const accepted = await replayStore.claim(
-    [`delivery:${deliveryId}`, `signature:${headers["x-hub-signature-256"]}`],
-    nowMs + replayTtlMs,
-    nowMs,
-  );
-  if (!accepted) return { accepted: false, reason: "delivery_replayed" };
   const issueNumber = (payload.issue as { number?: unknown } | undefined)?.number;
   const pullNumber = (payload.pull_request as { number?: unknown } | undefined)?.number;
   const number = Number.isSafeInteger(issueNumber) ? issueNumber as number
@@ -131,5 +149,8 @@ export async function admitGitHubWorkerWebhook({
       installationId,
       ...(number === undefined ? {} : { issueOrPullNumber: number }),
     }),
+    // Delivery ID is not covered by GitHub's body HMAC. Claim both the ID and the
+    // verified signature so a captured request cannot be replayed with a new header.
+    replayKeys: Object.freeze([`delivery:${deliveryId}`, `signature:${headers["x-hub-signature-256"]}`]),
   };
 }

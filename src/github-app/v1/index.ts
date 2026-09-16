@@ -1,4 +1,7 @@
 export * from "./installation-auth";
+export * from "./node-handler";
 export * from "./postgres-replay-store";
+export * from "./postgres-wake-store";
+export * from "./private-service";
 export * from "./webhook-admission";
 export * from "./worker-broker";
