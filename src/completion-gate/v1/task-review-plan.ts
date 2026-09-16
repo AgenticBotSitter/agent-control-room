@@ -1,14 +1,18 @@
 import type { DatabaseSession } from "../../persistence/database";
 import type { TaskResultReceipt } from "../../artifacts/v1/native-results";
+import type { DurableResultReceiptV1 } from "../../artifacts/v1/durable-result-receipt";
 import { nativeReviewPlanSchema, nativeReviewTarget, verifyNativeReviewPlan,
   type NativeReviewPlan, type NativeReviewPlanRow } from "./native-review-plan";
 import { codexReviewPlanSchemaV1, codexReviewTargetV1, verifyCodexReviewPlanV1,
   type CodexReviewPlanRowV1, type CodexReviewPlanV1 } from "./codex-review-plan";
+import { durableResultReviewPlanSchemaV1, durableReviewTargetV1, verifyDurableResultReviewPlanV1,
+  type DurableResultReviewPlanRowV1, type DurableResultReviewPlanV1 } from "./durable-result-review-plan";
 import { sha256Digest } from "../../security";
 import type { CompletionReviewTargetV1 } from "./types";
 
-export type TaskReviewPlanV1 = NativeReviewPlan | CodexReviewPlanV1;
-type Row = NativeReviewPlanRow & CodexReviewPlanRowV1;
+export type TaskReviewPlanV1 = NativeReviewPlan | CodexReviewPlanV1 | DurableResultReviewPlanV1;
+export type TaskResultReceiptV1 = TaskResultReceipt | DurableResultReceiptV1;
+type Row = NativeReviewPlanRow & CodexReviewPlanRowV1 & DurableResultReviewPlanRowV1;
 
 /** One authenticated reader for the shared review-plan table. The schema decides the harness;
  * callers never select a weaker verifier. */
@@ -19,16 +23,21 @@ export async function readTaskReviewPlanV1(tx: DatabaseSession, key: Uint8Array,
   if (!row) return undefined;
   if (nativeReviewPlanSchema.safeParse(row.plan).success) return verifyNativeReviewPlan(key, row);
   if (codexReviewPlanSchemaV1.safeParse(row.plan).success) return verifyCodexReviewPlanV1(key, row);
+  if (durableResultReviewPlanSchemaV1.safeParse(row.plan).success) return verifyDurableResultReviewPlanV1(key, row);
   throw new Error("task_review_plan_unavailable");
 }
 
-export function taskReviewTargetV1(plan: TaskReviewPlanV1, receipt: TaskResultReceipt): CompletionReviewTargetV1 {
+export function taskReviewTargetV1(plan: TaskReviewPlanV1, receipt: TaskResultReceiptV1): CompletionReviewTargetV1 {
+  if (plan.schema === "control-room.durable-result-review-plan/v1") {
+    if (receipt.schema !== "control-room.durable-result-receipt/v1") throw new Error("task_review_target_unavailable");
+    return durableReviewTargetV1(plan, receipt);
+  }
   if (plan.schema.startsWith("control-room.native-review-plan/")) {
     if (receipt.schema !== "control-room.native-result-receipt/v1") throw new Error("task_review_target_unavailable");
     return nativeReviewTarget(plan as NativeReviewPlan, receipt);
   }
   if (receipt.schema !== "control-room.codex-result-receipt/v1") throw new Error("task_review_target_unavailable");
-  return codexReviewTargetV1(plan as CodexReviewPlanV1, receipt);
+  return codexReviewTargetV1(plan as CodexReviewPlanV1, receipt as Extract<TaskResultReceipt, { schema: "control-room.codex-result-receipt/v1" }>);
 }
 
 export function verifyTaskReviewTargetV1(plan: TaskReviewPlanV1 | undefined,

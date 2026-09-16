@@ -17,7 +17,8 @@ export class WebSessionAuthority {
     private readonly resourceType = "project") {}
 
   async authenticated<T>(identity: VerifiedWebIdentity,
-    operation: (tx: DatabaseSession, actor: WebActor) => Promise<T>): Promise<T> {
+    operation: (tx: DatabaseSession, actor: WebActor) => Promise<T>,
+    options?: { repeatableReadSnapshot?: boolean }): Promise<T> {
     identity = { ...identity };
     const nowMs = this.clock();
     const assertFresh = () => {
@@ -31,6 +32,14 @@ export class WebSessionAuthority {
     const now = new Date(nowMs).toISOString();
     const grantChecks: (() => void)[] = [];
     return this.db.transactionWithPreCommitCheck(async tx => {
+      // A repeatable-read snapshot must be requested before any other
+      // statement in the transaction. Callers that compose a whole page
+      // inside the operation opt in here so the authorization locks and
+      // every later read share one snapshot; the default stays read
+      // committed for all existing callers.
+      if (options?.repeatableReadSnapshot) {
+        await tx.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
+      }
       // Serialize each identity's requests and lock its current grants through the operation.
       // Revocation committed before this lock is observed; already-running transactions may finish first.
       const row = (await tx.query<{ id: string }>(`SELECT id FROM control_identities

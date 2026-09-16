@@ -1,0 +1,14 @@
+{
+  "schema": "control-room.github-broker-settings/v1",
+  "appId": 4960037,
+  "installationId": 162066346,
+  "repository": "AgenticBotSitter/agent-control-room",
+  "port": 3211,
+  "database": {
+    "host": "127.0.0.1",
+    "port": 5432,
+    "database": "control_room",
+    "username": "control_room_github_broker",
+    "majorVersion": 17
+  }
+}

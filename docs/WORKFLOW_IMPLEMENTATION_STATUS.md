@@ -22,18 +22,20 @@ instructions are the root [Contributor Handbook](../CONTRIBUTOR_HANDBOOK.md).
 Existing contributor ownership and legacy manual reviews remain valid. Do not force
 existing in-review work through a new initial submission.
 
-The new mutation controller refuses requests until `HANDOFF_MAINTAINERS` lists separately
-controlled maintainer GitHub logins. Workers must not share those credentials. No
-identity setup, variable configuration, runner installation or live handoff is claimed
-by this source package. A different login is necessary but cannot prove separate
-credential custody; operators must actually keep the credentials separate.
+The mutation controller refuses requests unless `HANDOFF_MAINTAINERS` lists separately
+controlled maintainer GitHub logins. Workers must not share those credentials. The
+public repository now configures a Triage-only maintainer identity. Disposable issues
+#226 and #229 and pull requests #227 and #230 proved the correction/acceptance and stop
+paths; both disposable branches were deleted without merge. Pull request #228 supplied
+the narrowly required pull-request-label permission. GitHub identity separation is
+publicly observable; separate credential custody and MFA remain owner-attested.
 
-Issue #198 retains native scheduler packaging and platform verification; no background
-service was installed. The foreground watcher prints a signal, not a harness wakeup.
-Issue #199 retains the complete queue dashboard, capacity report and automatic escalation
-integration. The included health report requires worker IDs and explicit invocation.
-Issue #170 retains its contributor-owned capacity/claim work. Correction priority and
-the two-review limit remain cooperative rules until that integration passes review.
+Issues #198 and #199 are accepted on `main`: they provide cross-platform background
+scheduler source and queue-health reporting. No background service is installed merely
+by cloning the repository. Installation remains an owner-approved local machine action.
+The watcher prints a signal, not a harness wakeup, and the health report still requires
+worker IDs and explicit invocation. Capacity limits remain cooperative controls unless
+a later package explicitly enforces them.
 
 Both GitHub workflows queue up to 100 pending runs rather than replacing one pending
 request. Overflow can still cancel a run: inspect the run and rerun the original event
@@ -48,5 +50,7 @@ Focused tests exercise the actual controller and inbox together through submissi
 correction, acknowledgment, re-review and stop. They also cover lost API responses,
 partial label changes, stale commits, CRLF web input, unrelated label preservation,
 shared-actor refusal, advisory markers, incomplete history and watcher deduplication.
-These use injected GitHub responses; they do not prove authenticated hosted activation
-or installed worker notifications. Public CI verifies the committed source separately.
+These use injected GitHub responses. The disposable hosted checks above additionally
+prove the authenticated public controller paths and synchronized labels. They do not
+prove that optional worker notifications have been installed on any machine. Public CI
+verifies the committed source separately.

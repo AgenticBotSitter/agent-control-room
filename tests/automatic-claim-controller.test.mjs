@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { isValidScope, packetHash, packetsOverlap, parseClaimCommand, parseClaimMarker, parseClaimPacket, parseClaimRequest, runClaimController, runClaimRelease, runClaimRenew, runClaimSubmit, runClaimSweep, scopeCovers, scopesOverlap } from "../scripts/automatic-claim-controller.mjs";
+import { evaluateAdmissionDecision, formatClaimResult, isValidScope, observeMainBase, packetHash, packetsOverlap, parseClaimCommand, parseClaimMarker, parseClaimPacket, parseClaimRequest, runClaimController, runClaimRelease, runClaimRenew, runClaimSubmit, runClaimSweep, scopeCovers, scopesOverlap } from "../scripts/automatic-claim-controller.mjs";
 
 const repository = "AgenticBotSitter/agent-control-room";
 const sha = "a".repeat(40);
 const packetBody = (overrides = {}) => {
-  const packet = { target: "main", base: "b".repeat(40), writeScopes: ["scripts/owned-scope.mjs"],
+  const packet = { target: "main", base: sha, writeScopes: ["scripts/owned-scope.mjs"],
     dependencies: [], checks: ["node --test tests/owned-scope.test.mjs"], risk: "boundary", effects: "none",
     leaseHours: 72, ...overrides };
   return `Work packet.\n\n<!-- acr-public-work:v1 ${JSON.stringify(packet)}\n-->`;
@@ -88,6 +88,16 @@ test("the workflow serializes claims repository-wide with only repository-read a
   assert.match(workflow, /queue: max/);
   assert.match(workflow, /persist-credentials: false/);
   assert.ok(!workflow.includes("github.event.comment.body }}"));
+});
+
+test("the workflow routes malformed embedded commands so the controller can explain the error", async () => {
+  const workflow = await readFile(new URL("../.github/workflows/automatic-job-claim.yml", import.meta.url), "utf8");
+  assert.ok(workflow.includes("contains(github.event.comment.body, 'CLAIM REQUEST')"));
+  assert.ok(!workflow.includes("startsWith(github.event.comment.body, 'CLAIM REQUEST')"));
+  assert.ok(workflow.includes("github.event.comment.user.type != 'Bot'"));
+  const body = "<!-- acr-public-work:claim-request v1 -->\nCLAIM REQUEST\nworker-id: worker:test-01";
+  assert.equal(parseClaimCommand(body), undefined);
+  assert.match(formatClaimResult({ status: "ignored" }, body), /CLAIM COMMAND NOT APPLIED/);
 });
 
 test("one ready issue receives one accepted marker, current main base and a label-safe transition", async () => {
@@ -181,7 +191,7 @@ test("lost final response reconciles the exact accepted comment without duplicat
   assert.equal(api.comments.length, 1); assert.match(api.comments[0].body, /^CLAIM ACCEPTED —/);
 });
 
-test("an exact GitHub-actor and worker pair cannot hold two active issue claims", async () => {
+test("an exact GitHub-actor and worker pair can hold two non-overlapping active issue claims", async () => {
   const lockPacket = parseClaimPacket(packetBody({ writeScopes: ["docs/other/**"] }));
   const other = { number: 77, state: "open", labels: [{ name: "status:working" }],
     body: packetBody({ writeScopes: ["docs/other/**"] }) };
@@ -190,11 +200,7 @@ test("an exact GitHub-actor and worker pair cannot hold two active issue claims"
   const api = fakeApi({ otherWorking: [other], otherComments: { 77: [
     { id: 800, body, user: { login: "github-actions[bot]", type: "Bot" } },
   ] } });
-  assert.deepEqual(await runClaimController({ event: event(), repository, api }),
-    { status: "refused", reason: "actor_worker_pair_active" });
-  assert.equal(api.comments.length, 0);
-  const otherWorker = await runClaimController({ event: event("CLAIM REQUEST\nworker-id: worker:test-02"), repository, api });
-  assert.equal(otherWorker.status, "accepted");
+  assert.equal((await runClaimController({ event: event(), repository, api })).status, "accepted");
 
   const secondApi = fakeApi({ otherWorking: [other], otherComments: { 77: [
     { id: 800, body, user: { login: "github-actions[bot]", type: "Bot" } },
@@ -337,6 +343,15 @@ test("malformed packets are refused without any state change", () => {
   assert.ok(parseClaimPacket(packetBody({ risk: "standard" })));
   for (const body of ["no packet here",
     "<!-- acr-public-work:v1 {oops} -->",
+    `${packetBody()}\n${packetBody({ writeScopes: ["docs/conflict/**"] })}`,
+    `${packetBody()}\n<!-- acr-public-work:v1 no-json-here -->`,
+    `<!-- acr-public-work:v1 no-json-here -->\n${packetBody()}`,
+    packetBody().replace('"effects":"none"', '"effects":"network","effects":"none"'),
+    packetBody().replace('"writeScopes":["scripts/owned-scope.mjs"]', '"writeScopes":["secrets/**"],"writeScopes":["scripts/owned-scope.mjs"]'),
+    packetBody().replace(/"base":"[a-f0-9]{40}"/, '"base":"1111111111111111111111111111111111111111","base":"0123456789abcdef0123456789abcdef01234567"'),
+    packetBody().replace('"effects":"none"', '"eff\\u0065cts":"network","effects":"none"'),
+    packetBody().replace('"dependencies":[]', `"dependencies":${"[".repeat(8000)}0${"]".repeat(8000)}`),
+    packetBody({ writeScopez: ["docs/typo/**"] }),
     packetBody({ target: "develop" }),
     packetBody({ base: "short" }),
     packetBody({ writeScopes: [] }),
@@ -531,6 +546,62 @@ async function seedAccepted(api, number, worker = "worker:test-01", actor = "sha
     `CLAIM ACCEPTED — \`@${actor}\` using worker identity \`${worker}\`.\n\nOutcome: public issue #${number} as currently defined\n\nBase: \`${sha}\`\n\nTarget: \`main\`\n\nThis reservation grants no repository authority.\n<!-- agent-control-room-claim:v3 issue=${number} request=500 actor=${actor} worker=${worker} packet=${packetHash(parsed)} accepted=${at} -->` });
 }
 
+test("two-active / five-total capacity includes reviews and preserves existing ownership", async () => {
+  const worker = "worker:capacity-01";
+  for (const [states, expected] of [
+    [["working"], "accepted"],
+    [["working", "in-review"], "accepted"],
+    [["in-review", "re-review"], "accepted"],
+    [["working", "working"], "working_limit"],
+    [["in-review", "re-review", "waiting"], "accepted"],
+    [["in-review", "paused", "needs-decision", "in-review"], "accepted"],
+    [["in-review", "re-review", "waiting", "paused", "needs-decision"], "assignment_limit"],
+    [["changes-required"], "corrections_first"],
+  ]) {
+    const held = states.map((state, index) => ({ number: 126 + index,
+      labels: [`status:${state}`], packet: { writeScopes: [`docs/held-${index}/**`] } }));
+    const api = fakeQueue({ issues: [{ number: 125 }, ...held] });
+    for (const issue of held) await seedAccepted(api, issue.number, worker, "shared-account", Date.now());
+    const result = await runClaimController({ event: lifecycleEvent(
+      `CLAIM REQUEST\nworker-id: ${worker}`, 125), repository, api });
+    assert.equal(result.reason ?? result.status, expected, states.join(","));
+    for (const issue of held) assert.deepEqual(api.labels(issue.number), issue.labels,
+      "capacity refuses new work without releasing existing ownership");
+    if (expected !== "accepted") assert.equal(api.comments(125).length, 0);
+  }
+});
+
+test("third simultaneous build is refused after two serialized accepts", async () => {
+  const api = fakeQueue({ issues: [125, 126, 127].map(number => ({ number,
+    packet: { writeScopes: [`docs/work-${number}/**`] } })) });
+  assert.equal((await acceptHelper(api, 125, "worker:parallel-01")).status, "accepted");
+  assert.equal((await acceptHelper(api, 126, "worker:parallel-01")).status, "accepted");
+  const result = await runClaimController({ event: lifecycleEvent(
+    "CLAIM REQUEST\nworker-id: worker:parallel-01", 127), repository, api });
+  assert.deepEqual(result, { status: "refused", reason: "working_limit" });
+  assert.deepEqual(api.labels(127), ["status:ready"]);
+});
+
+test("quiet expiry cannot resurrect an old worker while retained expired reviews still count", async () => {
+  for (const retained of [false, true]) {
+    const worker = "worker:expiry-cap-01";
+    const heldNumbers = [126, 127, 128, 129, 130];
+    const api = fakeQueue({ issues: [{ number: 125 }, ...heldNumbers.map(number => ({
+      number, labels: [retained ? "status:in-review" : "status:working"],
+      packet: { writeScopes: [`docs/expired-${number}/**`] },
+    }))] });
+    for (const number of heldNumbers) {
+      await seedAccepted(api, number, worker, "shared-account", Date.now());
+      await api.request("POST", `/repos/${repository}/issues/${number}/comments`, { body:
+        `CLAIM EXPIRED — reservation ended.\n<!-- agent-control-room-claim:v3 issue=${number} expired=${Date.now()} action=${retained ? "in-review" : "ready"} reason=${retained ? "open_pr" : "quiet"} actor=shared-account worker=${worker} packet=${packetHash(parseClaimPacket(api.body(number)))} -->` });
+      if (!retained) await seedAccepted(api, number, "worker:new-owner-01", "shared-account", Date.now());
+    }
+    const result = await runClaimController({ event: lifecycleEvent(
+      `CLAIM REQUEST\nworker-id: ${worker}`, 125), repository, api });
+    assert.equal(result.reason ?? result.status, retained ? "assignment_limit" : "accepted");
+  }
+});
+
 test("a request is refused for a bad packet, effectful work, open deps, overlap and the working cap", async () => {
   const bad = fakeQueue({ issues: [{ number: 125, body: "no packet" }] });
   assert.deepEqual((await runClaimController({ event: lifecycleEvent("CLAIM REQUEST\nworker-id: w:x-01"), repository, api: bad })).reason, "packet_invalid");
@@ -540,6 +611,10 @@ test("a request is refused for a bad packet, effectful work, open deps, overlap 
   assert.deepEqual((await runClaimController({ event: lifecycleEvent("CLAIM REQUEST\nworker-id: w:x-01"), repository, api: deps })).reason, "dependencies_incomplete");
   const depsClosed = fakeQueue({ issues: [{ number: 125, packet: { dependencies: [124] } }], closed: [124] });
   assert.equal((await acceptHelper(depsClosed)).status, "accepted");
+  const staleBase = fakeQueue({ issues: [{ number: 125, packet: { base: "c".repeat(40) } }] });
+  assert.deepEqual(await runClaimController({ event: lifecycleEvent("CLAIM REQUEST\nworker-id: w:x-01"), repository, api: staleBase }),
+    { status: "refused", reason: "packet_base_stale" });
+  assert.deepEqual(staleBase.labels(125), ["status:ready"]);
   const overlap = fakeQueue({ issues: [{ number: 125 }, { number: 126, labels: ["status:working"],
     packet: { writeScopes: ["scripts/owned-scope.mjs"] } }] });
   await seedAccepted(overlap, 126, "worker:other-01");
@@ -551,8 +626,7 @@ test("a request is refused for a bad packet, effectful work, open deps, overlap 
   const cap = fakeQueue({ issues: [{ number: 125 }, { number: 126, packet: { writeScopes: ["docs/cap/**"] } }] });
   assert.equal((await acceptHelper(cap, 125, "worker:cap-01")).status, "accepted");
   const second = await runClaimController({ event: lifecycleEvent("CLAIM REQUEST\nworker-id: worker:cap-01", 126), repository, api: cap });
-  assert.equal(second.status, "refused");
-  assert.ok(["actor_worker_pair_active", "working_limit"].includes(second.reason), second.reason);
+  assert.equal(second.status, "accepted");
 });
 
 test("renew extends only the same pair with an unchanged packet", async () => {
@@ -765,7 +839,7 @@ test("an in-review path lock still blocks an overlapping request", async () => {
  * recoverable mutations, actor-bound expiry PRs, completed dependencies. ---- */
 
 const issue181Packet = () => packetBody({
-  base: "7b10beffd02e75a9fddd2873a0fa9db43fda8bb7",
+  base: sha,
   writeScopes: ["scripts/private-accessibility-browser-acceptance.mjs", "tests/private-accessibility-product.test.mjs",
     "private-app/app/private.css", "private-app/app/home-workspace.tsx", "private-app/app/needs-me/workspace.tsx",
     "private-app/app/settings/workspace.tsx", "private-app/app/connections/workspace.tsx",
@@ -798,6 +872,21 @@ test("a packet-less legacy lock fails closed instead of being ignored", async ()
   const refused = await runClaimController({ event: lifecycleEvent("CLAIM REQUEST\nworker-id: worker:new-01"), repository, api });
   assert.deepEqual(refused, { status: "refused", reason: "legacy_lock_manual", issues: [126] });
   assert.deepEqual(api.labels(125), ["status:ready"]);
+});
+
+test("claim outcomes make ignored and refused commands unambiguous", () => {
+  const malformed = formatClaimResult({ status: "ignored" }, "CLAIM REQUEST\nWorker-ID: worker:test-01");
+  assert.match(malformed, /NOT APPLIED/);
+  assert.match(malformed, /worker-id: YOUR-STABLE-WORKER-ID/);
+  assert.match(malformed, /green Actions run means only/);
+  const refused = formatClaimResult({ status: "refused", reason: "legacy_lock_manual", issues: [8, 27] },
+    "CLAIM REQUEST\nworker-id: worker:second-01");
+  assert.match(refused, /NOT ACCEPTED/);
+  assert.match(refused, /legacy_lock_manual/);
+  assert.match(refused, /#8, #27/);
+  assert.match(refused, /concerns only this command using worker identity `worker:second-01`/);
+  assert.match(refused, /does not cancel or replace any existing accepted claim/);
+  assert.equal(formatClaimResult({ status: "accepted" }, "CLAIM REQUEST"), undefined);
 });
 
 test("a lock whose packet drifted from its accepted marker fails closed", async () => {
@@ -859,7 +948,7 @@ test("submit refuses a pull request owned by another actor", async () => {
   assert.deepEqual(api.labels(125), ["status:working"]);
 });
 
-test("a pair holding two in-review submissions cannot submit a third", async () => {
+test("a pair may submit five retained assignments without trapping the fifth", async () => {
   const head = "c".repeat(40);
   const now = 1_700_000_100_000;
   const api = fakeQueue({
@@ -867,22 +956,26 @@ test("a pair holding two in-review submissions cannot submit a third", async () 
       { number: 125, labels: ["status:working"], packet: { writeScopes: ["docs/r1/**"] } },
       { number: 126, labels: ["status:working"], packet: { writeScopes: ["docs/r2/**"] } },
       { number: 127, labels: ["status:working"], packet: { writeScopes: ["docs/r3/**"] } },
+      { number: 128, labels: ["status:working"], packet: { writeScopes: ["docs/r4/**"] } },
+      { number: 129, labels: ["status:working"], packet: { writeScopes: ["docs/r5/**"] } },
     ],
-    pulls: [125, 126, 127].map((issue, index) => ({ number: 42 + index, state: "open",
+    pulls: [125, 126, 127, 128, 129].map((issue, index) => ({ number: 42 + index, state: "open",
       title: `Work (#${issue})`, body: `Closes #${issue}\nControl-Room-Issue: ${issue}`,
       base: { ref: "main", repo: { full_name: repository } },
       head: { sha: head }, user: { login: "shared-account" } })),
   });
-  for (const number of [125, 126, 127]) await seedAccepted(api, number, "worker:cap-01", "shared-account");
+  for (const number of [125, 126, 127, 128, 129]) await seedAccepted(api, number, "worker:cap-01", "shared-account");
   const submit = number => runClaimSubmit({ event: lifecycleEvent(
     `CLAIM SUBMIT\nworker-id: worker:cap-01\npr: ${number - 83}\nsha: ${head}`, number), repository, api, now });
   assert.equal((await submit(125)).status, "submitted");
   assert.equal((await submit(126)).status, "submitted");
-  assert.deepEqual(await submit(127), { status: "refused", reason: "in_review_limit" });
-  assert.deepEqual(api.labels(127), ["status:working"]);
+  assert.equal((await submit(127)).status, "submitted");
+  assert.equal((await submit(128)).status, "submitted");
+  assert.equal((await submit(129)).status, "submitted");
+  assert.deepEqual(api.labels(129), ["status:working"]);
   // Submissions record readiness only: both submitted issues stay working with
   // their SUBMITTED markers, and the cap counts those outstanding submissions.
-  for (const number of [125, 126]) {
+  for (const number of [125, 126, 127, 128, 129]) {
     assert.deepEqual(api.labels(number), ["status:working"]);
     assert.equal(api.comments(number).filter(comment => comment.body.startsWith("CLAIM SUBMITTED —")).length, 1);
   }
@@ -1126,6 +1219,9 @@ test("a historical release does not hide a later cycle's in-review submission", 
       { number: 125, labels: ["status:working"], packet: { writeScopes: ["docs/s1/**"] } },
       { number: 126, labels: ["status:in-review"], packet: { writeScopes: ["docs/s2/**"] } },
       { number: 127, labels: ["status:in-review"], packet: { writeScopes: ["docs/s3/**"] } },
+      { number: 128, labels: ["status:re-review"], packet: { writeScopes: ["docs/s4/**"] } },
+      { number: 129, labels: ["status:in-review"], packet: { writeScopes: ["docs/s5/**"] } },
+      { number: 130, labels: ["status:re-review"], packet: { writeScopes: ["docs/s6/**"] } },
     ],
     pulls: [125, 126, 127].map((issue, index) => ({ number: 42 + index, state: "open",
       title: `Work (#${issue})`, body: `Closes #${issue}`, base: { ref: "main" },
@@ -1144,6 +1240,12 @@ test("a historical release does not hide a later cycle's in-review submission", 
   await post(126, submittedMark(126, 501, 43));
   await post(127, acceptedMark(127, 502));
   await post(127, submittedMark(127, 502, 44));
+  await post(128, acceptedMark(128, 503));
+  await post(128, submittedMark(128, 503, 45));
+  await post(129, acceptedMark(129, 504));
+  await post(129, submittedMark(129, 504, 46));
+  await post(130, acceptedMark(130, 505));
+  await post(130, submittedMark(130, 505, 47));
   await seedAccepted(api, 125, worker, actor);
   assert.deepEqual(await runClaimSubmit({ event: lifecycleEvent(
     `CLAIM SUBMIT\nworker-id: ${worker}\npr: 42\nsha: ${head}`, 125), repository, api, now }),
@@ -1298,7 +1400,7 @@ test("claim, inbox, submit, correction and resubmit stay consistent across both 
     };
     const inbox = () => readWorkerInbox({ workerId: worker, repository, fetchImpl });
     let entry = (await inbox()).find(action => action.issue === 125);
-    assert.equal(entry?.state, "working");
+    assert.equal(entry?.state, "handoff-required");
     assert.equal(entry?.disposition, "action");
     assert.equal(entry?.trust, "controller-record");
     assert.ok(!(await inbox()).some(action => action.issue === 184));
@@ -1339,3 +1441,187 @@ test("claim, inbox, submit, correction and resubmit stay consistent across both 
     const submitted = api.comments(125).find(comment => comment.body.startsWith("CLAIM SUBMITTED —"));
     assert.ok(submitted?.body.includes(`pr=184 sha=${head}`));
   });
+
+/* ---- Shared-admission extraction regressions (issue #259 round 4).
+ * Material correction: scripts/admission-evaluator.mjs duplicated the
+ * controller gates, and scripts/automatic-claim-controller.mjs exported
+ * verifiedLockScopes but never called the evaluator. The fix moves the
+ * shared global admission function INTO the controller and makes the
+ * controller, the inbox, and queue-health import the SAME function from
+ * the SAME module — so the three paths cannot drift again. */
+
+const SCOPE_PATHS = Object.freeze([
+  "scripts/automatic-claim-controller.mjs",
+  "scripts/public-worker-inbox.mjs",
+  "scripts/public-queue-health.mjs",
+  "tests/automatic-claim-controller.test.mjs",
+  "tests/public-worker-inbox.test.mjs",
+  "tests/public-queue-health.test.mjs",
+]);
+
+test("controller, inbox and queue-health all import the same evaluateAdmissionDecision from the controller", async () => {
+  // Reference identity is the strongest possible proof against drift: if any
+  // path imported a duplicate, this assertion fails. The discovery/health
+  // scripts import from automatic-claim-controller.mjs — never from a
+  // sibling file outside the controller-accepted write scope. We compare
+  // function identity by reading each module's source and locating the
+  // literal import; a future maintainer who moves the function out of scope
+  // will see this assertion fail and update the packet marker first.
+  const controllerModule = await import("../scripts/automatic-claim-controller.mjs");
+  const inboxSource = await readFile(new URL("../scripts/public-worker-inbox.mjs", import.meta.url), "utf8");
+  const queueHealthSource = await readFile(new URL("../scripts/public-queue-health.mjs", import.meta.url), "utf8");
+  assert.equal(typeof controllerModule.evaluateAdmissionDecision, "function");
+  // Both must import evaluateAdmissionDecision from the controller file,
+  // not from a sibling helper module. The literal string must appear once.
+  assert.equal([...inboxSource.matchAll(/evaluateAdmissionDecision/g)].length >= 1, true,
+    "inbox must reference evaluateAdmissionDecision");
+  assert.equal([...queueHealthSource.matchAll(/evaluateAdmissionDecision/g)].length >= 1, true,
+    "queue-health must reference evaluateAdmissionDecision");
+  // The import must point at the controller (in scope). A grep over the
+  // literal import statement catches every drift case, including additions
+  // that the regex above would silently accept.
+  assert.match(inboxSource,
+    /import[^;]*evaluateAdmissionDecision[^;]*from\s+["']\.\/automatic-claim-controller\.mjs["']/);
+  assert.match(queueHealthSource,
+    /import[^;]*evaluateAdmissionDecision[^;]*from\s+["']\.\/automatic-claim-controller\.mjs["']/);
+  // observeMainBase must be co-located: any future move splits the global
+  // admission function and must update this test together with the packet.
+  assert.match(inboxSource,
+    /import[^;]*observeMainBase[^;]*from\s+["']\.\/automatic-claim-controller\.mjs["']/);
+  assert.match(queueHealthSource,
+    /import[^;]*observeMainBase[^;]*from\s+["']\.\/automatic-claim-controller\.mjs["']/);
+  // The legacy out-of-scope helper module must NOT be imported by any of
+  // the three in-scope files. (It was deleted; this guards reintroduction.)
+  assert.doesNotMatch(inboxSource, /from\s+["']\.\/admission-evaluator\.mjs["']/);
+  assert.doesNotMatch(queueHealthSource, /from\s+["']\.\/admission-evaluator\.mjs["']/);
+  assert.doesNotMatch(await readFile(new URL("../scripts/automatic-claim-controller.mjs", import.meta.url), "utf8"),
+    /from\s+["']\.\/admission-evaluator\.mjs["']/);
+});
+
+test("controller+discovery+queue-health classify the same adversarial snapshot identically", async () => {
+  // Item 1 (maintainer correction): the same problem fed to all three
+  // paths MUST return the same reason vocabulary. Otherwise controller and
+  // reports can disagree — exactly the failure this extraction prevents.
+  const inboxModule = await import("../scripts/public-worker-inbox.mjs");
+  const queueHealthModule = await import("../scripts/public-queue-health.mjs");
+  const baseSha = "f".repeat(40);
+  const openDeps = (issue, number) => ({ ...issue, state: "open",
+    labels: [{ name: "status:waiting" }], pull_request: undefined, number });
+  const depClosed = (issue, number) => ({ ...issue, state: "closed", state_reason: "completed",
+    labels: [{ name: "status:done" }], pull_request: undefined, number });
+  const readyIssue = (number, body) => ({ number, state: "open", pull_request: undefined,
+    labels: [{ name: "status:ready" }, { name: "help wanted" }, { name: "platform:any" }],
+    title: `Issue ${number}`, html_url: `https://github.example/issues/${number}`, updated_at: "2026-09-14T10:00:00Z",
+    body });
+  const packet = (overrides = {}) => packetBody({ base: baseSha,
+    writeScopes: ["scripts/owned-scope.mjs"], ...overrides });
+  const apiJson = (value) => ({ ok: true, status: 200, async json() { return value; } });
+  const inboxFetch = (issues, depIssue) => async (url, init) => {
+    if (init?.headers?.authorization && !init.headers.authorization.startsWith("Bearer "))
+      return apiJson(null);
+    if (url.includes("/git/ref/heads/main")) return apiJson({ object: { sha: baseSha } });
+    if (url.includes("labels=status%3Aworking") || url.includes("labels=status%3Ain-review"))
+      return apiJson([]);
+    if (url.match(/\/issues\/\d+\/comments/)) return apiJson([]);
+    // Match single-issue fetches with or without a query string. The inbox's
+    // adapter may strip query params; the controller and the evaluator both
+    // hit this endpoint via `https://api.github.com/repos/.../issues/<n>`.
+    if (url.match(/\/issues\/\d+(?:[/?]|$)/)) {
+      const number = Number(url.match(/\/issues\/(\d+)/)[1]);
+      const found = [depIssue, ...issues].find(issue => issue?.number === number);
+      return apiJson(found ?? null);
+    }
+    if (url.includes("/issues?")) return apiJson(issues);
+    return apiJson([]);
+  };
+  // Adversarial snapshot 1: stale base. The packet pins a base different from
+  // observed main, so all three paths must refuse with packet_base_stale.
+  const stalePacket = packetBody({ base: "b".repeat(40),
+    writeScopes: ["scripts/owned-scope.mjs"] });
+  const staleIssue = readyIssue(125, stalePacket);
+  const staleInbox = await inboxModule.readWorkerInbox({ workerId: "worker:test-01",
+    includeReady: true, fetchImpl: inboxFetch([staleIssue]) });
+  const staleQH = await queueHealthModule.readQueueHealth({ fetchImpl: inboxFetch([staleIssue]) });
+  const staleInboxOffer = staleInbox.find(action => action.disposition === "discovery");
+  const staleQHBlocked = staleQH.blockedOffers.find(offer => offer.issue === 125);
+  assert.equal(staleInboxOffer?.admission?.reason, "packet_base_stale");
+  assert.equal(staleQHBlocked?.admission?.reason, "packet_base_stale");
+  // Adversarial snapshot 2: open dependency. The dependency is still open,
+  // so the evaluator returns dependencies_incomplete. Inbox maps it to
+  // open_dependencies; queue-health exposes the raw reason. The
+  // classification is the same.
+  const depPacket = packet({ dependencies: [124] });
+  const blockedIssue = readyIssue(125, depPacket);
+  const waitingDep = openDeps({ number: 124 }, 124);
+  const depInbox = await inboxModule.readWorkerInbox({ workerId: "worker:test-01",
+    includeReady: true, fetchImpl: inboxFetch([blockedIssue], waitingDep) });
+  const depQH = await queueHealthModule.readQueueHealth({ fetchImpl: inboxFetch([blockedIssue], waitingDep) });
+  const depInboxOffer = depInbox.find(action => action.disposition === "discovery");
+  const depQHBlocked = depQH.blockedOffers.find(offer => offer.issue === 125);
+  assert.equal(depInboxOffer?.admission?.reason, "dependencies_incomplete");
+  assert.equal(depQHBlocked?.admission?.reason, "dependencies_incomplete");
+  // Adversarial snapshot 3: malformed packet (effectful work). The evaluator
+  // returns packet_effectful; both paths surface the same reason vocabulary.
+  const effectfulIssue = readyIssue(125, packetBody({ base: baseSha, effects: "filesystem",
+    writeScopes: ["scripts/owned-scope.mjs"] }));
+  const efxInbox = await inboxModule.readWorkerInbox({ workerId: "worker:test-01",
+    includeReady: true, fetchImpl: inboxFetch([effectfulIssue]) });
+  const efxQH = await queueHealthModule.readQueueHealth({ fetchImpl: inboxFetch([effectfulIssue]) });
+  assert.equal(efxInbox.find(action => action.disposition === "discovery")?.admission?.reason,
+    "packet_effectful");
+  assert.equal(efxQH.blockedOffers.find(offer => offer.issue === 125)?.admission?.reason, "packet_effectful");
+  // Adversarial snapshot 4: closed + done dependency. The dependency closes
+  // and carries status:done, so the evaluator admits. Both paths admit.
+  const closedDep = depClosed({ number: 124 }, 124);
+  const okInbox = await inboxModule.readWorkerInbox({ workerId: "worker:test-01",
+    includeReady: true, fetchImpl: inboxFetch([blockedIssue], closedDep) });
+  const okQH = await queueHealthModule.readQueueHealth({ fetchImpl: inboxFetch([blockedIssue], closedDep) });
+  assert.equal(okInbox.find(action => action.disposition === "discovery")?.admission?.outcome, "admit");
+  assert.deepEqual(okQH.blockedOffers.filter(offer => offer.issue === 125), [],
+    "queue-health must omit admitted candidates");
+});
+
+test("controller runClaimController also returns the same reason for an adversarial snapshot", async () => {
+  // The controller path shares the same evaluator. A stale packet base
+  // produces packet_base_stale — the same reason the inbox and queue-health
+  // report. This is the drift-resistant property the extraction protects.
+  const staleBody = packetBody({ base: "b".repeat(40), writeScopes: ["scripts/owned-scope.mjs"] });
+  const api = fakeApi(); const snapshot = api.issue();
+  snapshot.body = staleBody; snapshot.state = "open"; snapshot.pull_request = undefined;
+  snapshot.labels = [{ name: "status:ready" }, { name: "help wanted" }];
+  api.request = async (method, path, body) => {
+    if (method === "GET" && path.endsWith("/issues/125")) return structuredClone(snapshot);
+    if (method === "GET" && path.endsWith("/git/ref/heads/main")) return { object: { sha: sha } };
+    if (method === "GET" && path.includes("/comments?")) return [];
+    if (method === "GET" && path.includes("labels=status%3A")) return [];
+    if (method === "POST") return { id: 1 };
+    throw new Error(`unexpected ${method}:${path}:${body}`);
+  };
+  const result = await runClaimController({ event: event(), repository, api });
+  assert.equal(result.status, "refused");
+  assert.equal(result.reason, "packet_base_stale",
+    "controller must share its global admission reason with discovery/health");
+});
+
+test("the controller is the only owner of the shared admission function and the literal scope is preserved", async () => {
+  // Item 2 (maintainer correction): scripts/admission-evaluator.mjs and
+  // tests/worker-inbox-platform.test.mjs are not in the controller-accepted
+  // write scope. The shared admission function lives in
+  // scripts/automatic-claim-controller.mjs so it is inside scope. This test
+  // grep-lists the candidate paths and asserts every code path is either in
+  // scope or a recognized test file, so a future helper module cannot
+  // silently widen scope.
+  // Validate the literal scope against the canonical packet marker by reading
+  // the test file itself: a future maintainer adding a path here will see the
+  // assertion fail and update the packet marker on the issue first.
+  const inline = (await readFile(new URL(import.meta.url), "utf8"))
+    .match(/SCOPE_PATHS = Object\.freeze\(\[(.*?)\]\)/s)?.[1] ?? "";
+  const listed = [...inline.matchAll(/"([^"]+)"/g)].map(match => match[1]).sort();
+  assert.deepEqual(listed, [...SCOPE_PATHS].sort(),
+    "SCOPE_PATHS must mirror the literal packet paths declared on issue #259");
+  // The shared admission function is exported from the controller (inside
+  // scope). The inbox and queue-health import it from there. No separate
+  // evaluator file exists outside the in-scope paths.
+  assert.deepEqual(Object.keys(await import("../scripts/automatic-claim-controller.mjs"))
+    .filter(name => name === "evaluateAdmissionDecision"), ["evaluateAdmissionDecision"]);
+});

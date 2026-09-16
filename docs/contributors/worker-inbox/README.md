@@ -4,6 +4,18 @@ A small, read-only watcher that runs the accepted public worker inbox on a sched
 tells you when your assigned action changes. It exists so an operator stops re-checking the
 queue by hand while a review is pending.
 
+It now also signals when Ready offers appear or change, even if this worker has no
+assignment. `ready-candidate` means inspect and request a claim; `queue-blocked` means
+the maintainer must repair the packet, labels or open dependencies. All platforms are
+shown so missing capability information never silently hides work. The worker chooses
+based on the full assignment; the claim controller makes the reservation decision.
+
+Existing scheduler commands pick up this behavior when their checkout receives the
+merged update. Use a fast-forward update only on a clean watcher checkout. Preserve
+active implementation branches. A continuously running Node watcher must be restarted
+through its existing approved supervisor after updating; scheduled one-shot runs read
+the updated code on their next invocation. No new scheduler installation is required.
+
 It reuses [`scripts/public-worker-inbox.mjs`](../../../scripts/public-worker-inbox.mjs) as
 the only GitHub client. It does not implement a second queue client, and it never writes to
 GitHub: every request it makes is a `GET`.
@@ -117,14 +129,16 @@ It rereads the inbox on every tick — that is how it notices a change at all �
 when nothing has changed. What it deduplicates is **notifications**, not requests: an unchanged
 inbox still costs the same GitHub reads as a changed one, so the fingerprint saves you console
 noise, not rate limit. Budget for the reads accordingly, and use a token (see Requirements) if
-the anonymous limit is a concern.
+the anonymous limit is a concern. Generated scheduler definitions also pass `--scheduled`:
+a transient 403/429 remains recorded but produces no console output and exits successfully, so
+it does not wake an AI worker merely to report throttling. The next scheduled tick tries again.
 
 In loop mode the console is for you, not a transcript. It prints when there is something to
 act on, when a change has been confirmed, and once for a failure — a repeated identical
 failure is recorded in the log but not reprinted every interval. An unchanged poll is
 recorded in the bounded log and **not** printed, so a quiet hour produces no console output
-at all: no news is the point. `--once` always prints, because you asked for exactly one
-result.
+at all: no news is the point. A human-run `--once` always prints, because you asked for exactly
+one result. The generated `--once --scheduled` form keeps only transient rate limits quiet.
 
 An unchanged inbox never rewrites the signal file, so `signal.json` always shows the most
 recent *change* rather than the most recent *poll*.
@@ -143,8 +157,9 @@ No credential is generated, copied, printed, or stored by this tool.
 
 - By default it uses `GITHUB_TOKEN` from your environment if you set one.
 - Nothing is required: unauthenticated reads work for a public repository, subject to
-  GitHub's anonymous rate limit. If you hit it, the tick reports
-  `worker_inbox_api_403` and exits `2`; it never presents a partial result as a full one.
+  GitHub's anonymous rate limit. A human-run tick reports `worker_inbox_api_403` and exits `2`;
+  generated scheduler mode records it quietly and exits `0`. Neither mode presents a partial
+  result as a full one or clears the last observed assignment.
 - `--token-from-gh` reads `gh auth token` into memory for the request only. It is never
   written to a file, and any value appearing in an error message is replaced with
   `[REDACTED]` before being logged.
@@ -207,7 +222,9 @@ name — see the note above.
 
 | Symptom | Cause and fix |
 | --- | --- |
-| `worker_inbox_api_403` | Anonymous GitHub rate limit. Set `GITHUB_TOKEN`, or pass `--token-from-gh`. |
+| `worker_inbox_rate_limited` | GitHub confirmed a request limit. Obey the next scheduled retry; do not wake an agent merely for this transient failure. |
+| `worker_inbox_credential_rejected` | GitHub rejected the supplied credential (for example, an expired token or a fine-grained token whose lifetime violates current policy). Remove the bad scheduler credential and authenticate `gh` with an allowed credential before using `--token-from-gh`; do not retry the unchanged token. |
+| `worker_inbox_api_403` | GitHub refused the request but did not identify it as a request limit or known credential-policy rejection. Inspect the account/repository permission rather than assuming an empty inbox. |
 | `worker_inbox_worker_id_invalid` | The worker ID must match the shape the inbox enforces: `[A-Za-z0-9][A-Za-z0-9._:-]{2,79}`. |
 | `worker_inbox_platform_signal_file_not_owned` | Something already exists at the extra-signal path that is not this tool's own signal for this worker. The watcher refuses to overwrite it rather than destroy a file it cannot prove it created. Point `--signal-directory` somewhere else, or move the file deliberately. |
 | `worker_inbox_platform_signal_path_is_symlink` | The extra-signal path is a symlink. It is refused whatever it points at: a link is not evidence of ownership and writing through it would replace the link rather than the file it names. Point `--signal-directory` at a directory, and let the tool create the signal file itself. |

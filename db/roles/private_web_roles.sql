@@ -31,6 +31,7 @@ GRANT SELECT ON control_identities, control_role_grants, workspaces, control_web
   control_project_delegation_policies, control_project_coordination_operation_receipts,
   control_project_coordination_operation_jobs, control_work_resources,
   control_attempt_resource_admissions, control_attempt_resource_scopes TO control_room_private_web;
+GRANT SELECT ON control_durable_result_write_reservations TO control_room_private_web;
 GRANT UPDATE (web_lock) ON control_identities, control_role_grants, workspaces,
   control_connection_registry_heads, control_completion_gate_integrity, control_completion_gate_records TO control_room_private_web;
 GRANT INSERT ON control_web_sessions, adapter_registry, projects, control_manual_project_heads,
@@ -41,6 +42,18 @@ GRANT INSERT ON control_web_sessions, adapter_registry, projects, control_manual
   control_project_coordinator_heads, control_project_delegation_policies TO control_room_private_web;
 GRANT INSERT ON control_project_coordinator_heads, control_project_delegation_policies
   TO control_room_private_web;
+-- Coordinator lifecycle idempotency ledger: exact-match replay before any
+-- head mutation. SELECT plus the five inserted columns plus the completion
+-- update; INSERT is column-scoped so the role can never smuggle
+-- result/completed_at values into a fresh receipt.
+GRANT SELECT ON control_idempotency TO control_room_private_web;
+GRANT INSERT (tenant_id, operation_scope, idempotency_key, request_digest, status)
+  ON control_idempotency TO control_room_private_web;
+GRANT UPDATE (status, result, completed_at) ON control_idempotency TO control_room_private_web;
+-- Tenant existence lock for the lifecycle transaction. The web path never
+-- mutates the tenant row; SELECT covers the read, UPDATE the row lock.
+GRANT SELECT ON tenants TO control_room_private_web;
+GRANT UPDATE (coordinator_lock) ON tenants TO control_room_private_web;
 GRANT UPDATE (state, coordinator_identity_id, coordinator_actor_type, executor_id, adapter_id,
   connector_profile_digest, execution_binding_digest, assigned_by_owner_identity_id, version,
   assigned_at, updated_at, revoked_at, payload) ON control_project_coordinator_heads

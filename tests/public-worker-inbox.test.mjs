@@ -1,9 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseActionMarker, parseHandoffMarker, readWorkerInbox, renderWorkerInbox } from "../scripts/public-worker-inbox.mjs";
+import { parseActionMarker, parseHandoffMarker, readWorkerInbox, renderWorkerInbox, resolveInboxToken } from "../scripts/public-worker-inbox.mjs";
 const workerId = "worker:test-01";
+test("capacity update is discoverable even when the personal inbox is empty", () => {
+  const rendered = renderWorkerInbox(workerId, []);
+  assert.match(rendered, /2 active builds \/ 5 total assignments/);
+  assert.match(rendered, /does not consume an active-build slot/);
+  assert.match(rendered, /Corrections first/);
+  assert.match(rendered, /immediately after submission/);
+  assert.match(rendered, /Refresh public-main CONTRIBUTOR_HANDBOOK.md/);
+});
 const bot = { login: "github-actions[bot]", type: "Bot" };
-const issue = (labels = ["action:worker", "status:working"], number = 170) => ({ number, title: "Assignment", labels });
+const issue = (labels = ["action:worker", "status:working"], number = 170) => ({ number, title: "Assignment", labels, state: "open" });
 const legacy = (worker = workerId, state = "working", id = 1) => ({ id, user: { login: "MarvinAi5", type: "User" }, author_association: "OWNER",
   body: `<!-- agent-control-room-action:v1 worker=${worker} state=${state} issue=170 -->` });
 const claim = (outcome = "ACCEPTED", worker = workerId, id = 1) => ({ id, user: bot,
@@ -22,6 +30,164 @@ function fakeFetch({ issues = [issue()], comments = [claim()], failIssue, full =
   } };
 }
 const read = options => readWorkerInbox({ workerId, fetchImpl: fakeFetch(options).fetchImpl });
+const packet = values => `<!-- acr-public-work:v1 ${JSON.stringify({ target: "main", base: "a".repeat(40),
+  writeScopes: ["src/example/**"], dependencies: [], checks: ["pnpm check"], risk: "ordinary", effects: "none", leaseHours: 24, ...values })} -->`;
+const currentClaim = (outcome, extra = "", id = 3) => ({ id, user: bot, body: `CLAIM ${outcome} — record\n<!-- agent-control-room-claim:v3 issue=170 request=2 actor=MarvinAi5 worker=${workerId} packet=${"b".repeat(64)} accepted=1000${extra} -->` });
+
+test("current controller submission and renewal reach the worker", async () => {
+  for (const outcome of ["ACCEPTED", "RENEWED"]) {
+    const result = await read({ comments: [currentClaim(outcome)] });
+    assert.equal(result[0].disposition, "action");
+  }
+  const result = await read({ issues: [issue(["status:in-review"])], comments: [claim(),
+    currentClaim("SUBMITTED", ` pr=171 sha=${"c".repeat(40)}`)] });
+  assert.equal(result[0].disposition, "waiting");
+  assert.equal(result[0].pr, 171);
+  assert.equal(result[0].head, "c".repeat(40));
+  const beforeHandoff = await read({ issues: [issue(["status:working"])], comments: [claim(),
+    currentClaim("SUBMITTED", ` pr=171 sha=${"c".repeat(40)}`)] });
+  assert.equal(beforeHandoff[0].state, "handoff-required");
+  assert.match(beforeHandoff[0].instruction, /^HANDOFF submit\nworker-id: worker:test-01\npr: 171/);
+});
+
+test("release and expiry end stale ownership; later advisory cannot resurrect it", async () => {
+  for (const body of [
+    `CLAIM RELEASED — record\n<!-- agent-control-room-claim:v3 issue=170 request=2 actor=MarvinAi5 worker=${workerId} released=2000 -->`,
+    `CLAIM EXPIRED — record\n<!-- agent-control-room-claim:v3 issue=170 expired=2000 action=ready reason=lease_expired_no_pr actor=MarvinAi5 worker=${workerId} -->`,
+  ]) {
+    const result = await read({ issues: [issue(["status:ready"])], comments: [claim(), { id: 3, user: bot, body }, legacy(workerId, "working", 4)] });
+    assert.equal(result[0].disposition, "released");
+    assert.match(result[0].action, /Do not continue/);
+    const forged = await read({ issues: [issue(["status:working"])], comments: [claim(), { id: 3, user: { login: "worker", type: "User" }, body }] });
+    assert.equal(forged[0].disposition, "action");
+  }
+});
+
+test("discovery distinguishes new candidates, invalid packets and dependencies without authorizing work", async () => {
+  const issues = [
+    { ...issue(["status:ready", "platform:any"], 1), body: packet() },
+    { ...issue(["status:ready"], 2), body: packet({ writeScopes: ["src/*.ts"] }) },
+    { ...issue(["status:ready"], 3), body: packet({ dependencies: [4] }) },
+    { ...issue(["status:waiting"], 4), state: "open" },
+    { ...issue(["status:ready", "status:working"], 5), body: packet() },
+  ];
+  const result = await readWorkerInbox({ workerId, includeReady: true, fetchImpl: readyFetch({ issues }).fetchImpl });
+  const offers = result.filter(action => action.disposition === "discovery");
+  assert.deepEqual(offers.map(action => [action.issue, action.state, action.reason]), [
+    [1, "ready-candidate", undefined], [2, "queue-blocked", "packet_invalid"],
+    [3, "queue-blocked", "open_dependencies"], [5, "queue-blocked", "conflicting_ready_labels"],
+  ]);
+  assert.equal(offers[0].trust, "public-offer");
+  assert.equal(offers[0].admission?.outcome, "admit");
+  assert.equal(offers[0].admission?.locks, "checked");
+  assert.match(offers[0].action, /wait for CLAIM ACCEPTED/);
+  assert.match(renderWorkerInbox(workerId, offers), /platform:any/);
+});
+
+function readyFetch({ issues, commentsByIssue = {}, ref = "a".repeat(40), failRef = false,
+  failComments = [], failSingles = [], workingIssues = [], headersSeen = [] } = {}) {
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    calls.push(url);
+    if (init?.headers?.authorization) headersSeen.push(init.headers.authorization);
+    if (url.includes("/git/ref/heads/main")) {
+      if (failRef) return { ok: false, status: 404 };
+      return { ok: true, async json() { return { object: { sha: ref } }; } };
+    }
+    if (url.includes("labels=status%3Aworking") || url.includes("labels=status%3Ain-review")) {
+      return { ok: true, async json() { return workingIssues; } };
+    }
+    const commentMatch = /\/issues\/(\d+)\/comments/.exec(url);
+    if (commentMatch) {
+      const number = Number(commentMatch[1]);
+      if (failComments.includes(number)) throw new Error("offline history");
+      return { ok: true, async json() { return commentsByIssue[number] ?? []; } };
+    }
+    const singleMatch = /\/issues\/(\d+)(?:\?|$)/.exec(url);
+    if (singleMatch && !url.includes("/comments")) {
+      const number = Number(singleMatch[1]);
+      if (failSingles.includes(number)) throw new Error("offline single");
+      return { ok: true, async json() { return issues.find(item => item.number === number) ?? null; } };
+    }
+    return { ok: true, async json() { return issues; } };
+  };
+  return { calls, fetchImpl };
+}
+
+const readyIssues = () => ([
+  { ...issue(["status:ready", "platform:any"], 1), body: packet() },
+  { ...issue(["status:waiting"], 4), state: "open" },
+]);
+
+test("evaluator or dependency API failure never advertises pickup", async () => {
+  // Item 1: a failed observation stays unavailable/attention, never a default admit.
+  const depIssues = [
+    { ...issue(["status:ready", "platform:any"], 1), body: packet({ dependencies: [4] }) },
+    { ...issue(["status:waiting"], 4), state: "open" },
+  ];
+  const failed = await readWorkerInbox({ workerId, includeReady: true,
+    fetchImpl: readyFetch({ issues: depIssues, failSingles: [4] }).fetchImpl });
+  const blocked = failed.filter(action => action.disposition === "discovery");
+  assert.equal(blocked[0].state, "queue-blocked");
+  assert.equal(blocked[0].reason, "admission_evaluator_unavailable");
+  assert.ok(blocked[0].admissionError);
+  const noBase = await readWorkerInbox({ workerId, includeReady: true,
+    fetchImpl: readyFetch({ issues: readyIssues(), failRef: true }).fetchImpl });
+  const unobserved = noBase.filter(action => action.disposition === "discovery");
+  assert.equal(unobserved[0].state, "queue-blocked");
+  assert.equal(unobserved[0].reason, "admission_observation_unavailable");
+});
+
+test("complete fetched history gates admission; accepted history refuses", async () => {
+  // Item 2: the evaluator sees the complete issue history, not comments:[].
+  const accepted = [{ id: 50, user: bot,
+    body: `CLAIM ACCEPTED — record\n<!-- agent-control-room-claim:v2 issue=1 request=2 actor=MarvinAi5 worker=worker:other -->` }];
+  const refused = await readWorkerInbox({ workerId, includeReady: true,
+    fetchImpl: readyFetch({ issues: readyIssues(), commentsByIssue: { 1: accepted } }).fetchImpl });
+  const offer = refused.filter(action => action.disposition === "discovery")[0];
+  assert.equal(offer.state, "queue-blocked");
+  assert.equal(offer.admission?.reason, "accepted_history_requires_release");
+  const unreadable = await readWorkerInbox({ workerId, includeReady: true,
+    fetchImpl: readyFetch({ issues: readyIssues(), failComments: [1] }).fetchImpl });
+  const incomplete = unreadable.filter(action => action.disposition === "discovery")[0];
+  assert.equal(incomplete.state, "queue-blocked");
+  assert.equal(incomplete.reason, "admission_history_incomplete");
+});
+
+test("verified scope locks refuse overlapping offers; legacy locks fail closed", async () => {
+  // Item 3: knownLocks populated from verified Working/In-review scopes.
+  const { parseClaimPacket, packetHash } = await import("../scripts/automatic-claim-controller.mjs");
+  const workingPacket = packet({ writeScopes: ["src/example/**"] });
+  const parsed = parseClaimPacket(workingPacket);
+  const marker = { id: 60, user: bot,
+    body: `CLAIM ACCEPTED — record\n<!-- agent-control-room-claim:v3 issue=170 request=2 actor=MarvinAi5 worker=worker:other packet=${packetHash(parsed)} accepted=1000 -->` };
+  const working = { ...issue(["status:working"], 170), body: workingPacket };
+  const overlapped = await readWorkerInbox({ workerId, includeReady: true,
+    fetchImpl: readyFetch({ issues: [...readyIssues(), working], workingIssues: [working],
+      commentsByIssue: { 170: [marker] } }).fetchImpl });
+  const offer = overlapped.filter(action => action.disposition === "discovery")[0];
+  assert.equal(offer.state, "queue-blocked");
+  assert.equal(offer.admission?.reason, "scope_overlap");
+  assert.equal(offer.admission?.locks, "checked");
+  // A packetless legacy lock cannot prove scopes: every offer stays blocked.
+  const legacyWorking = { ...issue(["status:working"], 171), body: "no packet here" };
+  const legacy = await readWorkerInbox({ workerId, includeReady: true,
+    fetchImpl: readyFetch({ issues: [...readyIssues(), legacyWorking], workingIssues: [legacyWorking] }).fetchImpl });
+  const legacyOffer = legacy.filter(action => action.disposition === "discovery")[0];
+  assert.equal(legacyOffer.state, "queue-blocked");
+  assert.equal(legacyOffer.reason, "admission_locks_unverifiable");
+});
+
+test("the inbox token is preserved for observation requests and never logged", async () => {
+  // Item 4: observation requests carry the supplied token; errors stay generic.
+  const headersSeen = [];
+  const result = await readWorkerInbox({ workerId, includeReady: true, token: "sentinel-token-abc",
+    fetchImpl: readyFetch({ issues: readyIssues(), headersSeen }).fetchImpl });
+  assert.ok(headersSeen.length > 0);
+  assert.ok(headersSeen.every(value => value === "Bearer sentinel-token-abc"));
+  assert.equal(result.filter(action => action.disposition === "discovery")[0].state, "ready-candidate");
+  assert.ok(!JSON.stringify(result).includes("sentinel-token-abc"));
+});
 test("bounded marker parsing", () => {
   assert.equal(parseActionMarker(legacy().body).workerId, workerId);
   assert.equal(parseActionMarker("ACTION REQUIRED"), undefined);
@@ -94,12 +260,17 @@ test("advisory cannot erase earlier worker advice or authorize continuing", asyn
 test("correction acknowledgment and health metadata identify the request", async () => {
   const created_at = "2026-09-14T10:00:00Z";
   const result = await read({ issues: [issue(["status:changes-required", "action:worker"])],
-    comments: [{ ...handoff({ state: "changes-required" }, 41), created_at }] });
+    comments: [{ ...handoff({ state: "changes-required", instruction: "Fix the four recorded production failures." }, 41), created_at }] });
   assert.equal(result[0].requestedAt, created_at);
   assert.equal(result[0].workerId, workerId);
   assert.equal(result[0].head, "a".repeat(40));
   assert.equal(result[0].pr, 171);
+  assert.equal(result[0].instruction, "Fix the four recorded production failures.");
   assert.match(result[0].acknowledgment, /comment 41/);
+  const rendered = renderWorkerInbox(workerId, result);
+  assert.match(rendered, /pull\/171/);
+  assert.match(rendered, /Reviewed\/submitted commit: a{40}/);
+  assert.match(rendered, /Fix the four recorded production failures/);
   for (const values of [{ state: "working" }, { state: "changes-required", acknowledged: true }, { state: "paused", action: "reviewer" }]) {
     const item = (await read({ comments: [handoff(values)] }))[0];
     assert.equal(item.acknowledgment, undefined);
@@ -126,5 +297,30 @@ test("history cap surfaces attention", async () => {
 test("global offline errors and invalid input fail visibly", async () => {
   await assert.rejects(readWorkerInbox({ workerId: "x" }), /worker_id_invalid/);
   await assert.rejects(readWorkerInbox({ workerId, repository: "bad" }), /repository_invalid/);
-  await assert.rejects(readWorkerInbox({ workerId, fetchImpl: async () => ({ ok: false, status: 403 }) }), /api_403/);
+  await assert.rejects(readWorkerInbox({ workerId, fetchImpl: async () => ({ ok: false, status: 403,
+    headers: { get: name => name === "x-ratelimit-remaining" ? "0" : null } }) }), /rate_limited/);
+});
+
+test("a per-issue rate limit fails the whole read instead of fabricating attention for every issue", async () => {
+  const fetchImpl = async url => url.includes("/comments?")
+    ? { ok: false, status: 403, headers: { get: name => name === "retry-after" ? "60" : null } }
+    : { ok: true, async json() { return [issue()]; } };
+  await assert.rejects(readWorkerInbox({ workerId, fetchImpl }), /worker_inbox_rate_limited/);
+});
+
+test("a policy-rejected fine-grained token is not misreported as a rate limit", async () => {
+  await assert.rejects(readWorkerInbox({ workerId, token: "sentinel-token",
+    fetchImpl: async () => ({ ok: false, status: 403, headers: { get: () => null },
+      text: async () => "Fine-grained personal access tokens are forbidden when their lifetime is greater than 366 days." }) }),
+  /worker_inbox_credential_rejected/);
+});
+
+test("direct inbox token resolution is explicit and never invents a credential", () => {
+  const sentinel = "ghp_in_memory_only_0123456789";
+  assert.equal(resolveInboxToken({ environment: { GITHUB_TOKEN: sentinel } }), sentinel);
+  assert.equal(resolveInboxToken({ environment: {} }), undefined);
+  assert.equal(resolveInboxToken({ environment: {}, tokenFromGh: true,
+    runCommand: () => ({ status: 0, stdout: `${sentinel}\n` }) }), sentinel);
+  assert.throws(() => resolveInboxToken({ environment: {}, tokenFromGh: true,
+    runCommand: () => ({ status: 1, stdout: "" }) }), /gh_token_unavailable/);
 });

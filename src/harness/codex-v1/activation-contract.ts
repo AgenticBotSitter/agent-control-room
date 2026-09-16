@@ -14,6 +14,7 @@ const activationMaterialSchemaV1 = z.object({
   tenantId: localId, projectId: localId, nodeId: localId, jobId: localId,
   attemptId: localId, runId: localId, leaseId: localId, leaseEpoch: z.number().int().positive(),
   queueId: localId, connectionId: localId,
+  connection: z.object({ connectionAttemptId: localId, initializedConnectionDigest: digestSchema }).strict(),
   dispatchMessageId: localId, dispatchFrameDigest: digestSchema, dispatchBodyDigest: digestSchema,
   receiptMessageId: localId, receiptFrameDigest: digestSchema, receiptBodyDigest: digestSchema,
   permitDigest: digestSchema, inputDigest: digestSchema, operationDigest: digestSchema,
@@ -93,6 +94,10 @@ function matchActivationSources(value: CodexTaskActivationBodyV1, expected: {
     || value.jobId !== start.jobId || value.attemptId !== start.attemptId || value.runId !== start.runId
     || value.leaseId !== start.leaseId || value.leaseEpoch !== start.leaseEpoch || value.queueId !== body.queueId
     || value.connectionId !== dispatch.connectionId || value.dispatchMessageId !== dispatch.messageId
+    || value.connection.connectionAttemptId !== dispatch.connectionId
+    || value.connection.initializedConnectionDigest !== sha256Digest({ connectionId: dispatch.connectionId,
+      dispatchFrameDigest: sha256Digest(dispatch), dispatchBodyDigest: sha256Digest(body),
+      receiptFrameDigest: sha256Digest(receipt), receiptBodyDigest: sha256Digest(receiptBody) })
     || value.dispatchFrameDigest !== sha256Digest(dispatch) || value.dispatchBodyDigest !== sha256Digest(body)
     || value.receiptMessageId !== receipt.messageId || value.receiptFrameDigest !== sha256Digest(receipt)
     || value.receiptBodyDigest !== sha256Digest(receiptBody) || value.permitDigest !== body.permitDigest
@@ -107,7 +112,13 @@ function matchActivationSources(value: CodexTaskActivationBodyV1, expected: {
   return { dispatch, receipt, body, receiptBody };
 }
 
-/** Builds bounded, effect-free evidence after the dispatch receipt was authenticated. */
+/** Builds bounded, effect-free evidence after the dispatch receipt was authenticated.
+ * The activation records the server-observed connection binding: the dispatch
+ * arrived over dispatch.connectionId, so connectionAttemptId is that
+ * authenticated connection. initializedConnectionDigest binds the same
+ * handshake both sides hold (connection plus both frame/body digests); the
+ * node owner derives it identically from its received frames, so no new
+ * protocol field is needed. */
 export function buildCodexTaskActivationV1(input: {
   dispatch: CodexDispatchFrameForActivationV1;
   receipt: CodexDispatchReceiptFrameForActivationV1;
@@ -118,13 +129,18 @@ export function buildCodexTaskActivationV1(input: {
 }): CodexTaskActivationBodyV1 {
   const dispatch = input.dispatch, receipt = input.receipt;
   const start = codexTaskDispatchBodySchemaV1.parse(dispatch.body).start;
+  const dispatchFrameDigest = sha256Digest(dispatch), dispatchBodyDigest = sha256Digest(dispatch.body);
+  const receiptFrameDigest = sha256Digest(receipt), receiptBodyDigest = sha256Digest(receipt.body);
   const material = activationMaterialSchemaV1.parse({
     schema: 'control-room.codex-task-activation/v1',
     tenantId: start.tenantId, projectId: start.projectId, nodeId: start.nodeId, jobId: start.jobId,
     attemptId: start.attemptId, runId: start.runId, leaseId: start.leaseId, leaseEpoch: start.leaseEpoch,
     queueId: dispatch.body.queueId, connectionId: dispatch.connectionId,
-    dispatchMessageId: dispatch.messageId, dispatchFrameDigest: sha256Digest(dispatch), dispatchBodyDigest: sha256Digest(dispatch.body),
-    receiptMessageId: receipt.messageId, receiptFrameDigest: sha256Digest(receipt), receiptBodyDigest: sha256Digest(receipt.body),
+    connection: { connectionAttemptId: dispatch.connectionId,
+      initializedConnectionDigest: sha256Digest({ connectionId: dispatch.connectionId,
+        dispatchFrameDigest, dispatchBodyDigest, receiptFrameDigest, receiptBodyDigest }) },
+    dispatchMessageId: dispatch.messageId, dispatchFrameDigest, dispatchBodyDigest,
+    receiptMessageId: receipt.messageId, receiptFrameDigest, receiptBodyDigest,
     permitDigest: dispatch.body.permitDigest, inputDigest: start.inputDigest, operationDigest: start.operationDigest,
     effectClaimKey: start.effectClaimKey, enrollmentDigest: start.enrollmentDigest,
     connectorProfileDigest: start.connectorProfileDigest, workspaceIntentDigest: start.workspaceIntentDigest,

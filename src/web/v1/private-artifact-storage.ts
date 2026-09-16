@@ -2,11 +2,13 @@ import { z } from "zod";
 import { timingSafeEqual } from "node:crypto";
 import type { DatabaseClient } from "../../persistence/database";
 import { artifactManifestRecordSchema } from "../../domain/v1";
-import { checkedResultBytes, nativeResultReceiptSchema, type NativeResultConfiguration,
-  type NativeResultReadConfiguration } from "../../artifacts/v1/native-results";
+import { checkedResultBytes, nativeResultReceiptSchema, type NativeResultReadConfiguration,
+  type NativeResultConfiguration } from "../../artifacts/v1/native-results";
 import { codexResultReceiptSchemaV1 } from "../../artifacts/v1/codex-result-receipt";
+import { durableResultReceiptSchemaV1, durableResultReceiptTagV1 } from "../../artifacts/v1/durable-result-receipt";
 import { nativeResultReservationSchemaV1 } from "../../artifacts/v1/native-result-reservation";
 import { codexResultReservationSchemaV1 } from "../../artifacts/v1/codex-result-reservation";
+import { durableResultReservationSchemaV1 } from "../../artifacts/v1/durable-result-publication";
 import {
   createArtifactBackupInventoryV1,
   type ArtifactBackupInventoryV1,
@@ -16,6 +18,9 @@ import {
   type PersistentLocalArtifactStorageConfigurationV1,
 } from "../../artifacts/v1/persistent-local-storage";
 import type { ArtifactReadPortV1, ArtifactStoragePortV1 } from "../../node-executor/artifact-storage";
+import type { NeutralReservationPort } from "../../artifacts/v1/neutral-reservation-port";
+import { ARTIFACT_STORAGE_SETTINGS_SCHEMA_V1, artifactStorageNamespaceDigestV1,
+  captureArtifactStorageSettingsV1 } from "../../config/v1/artifact-storage";
 import { digestSchema, localId } from "../../harness/v1/native-run-identifiers";
 import { hmacSha256Tag, sha256Digest } from "../../security";
 
@@ -28,7 +33,8 @@ const inventoryHeaderSchema = z.object({
   storageNamespaceDigest: digestSchema,
 }).strict();
 
-const receiptSchema = z.discriminatedUnion("schema", [nativeResultReceiptSchema, codexResultReceiptSchemaV1]);
+const receiptSchema = z.discriminatedUnion("schema", [nativeResultReceiptSchema, codexResultReceiptSchemaV1,
+  durableResultReceiptSchemaV1]);
 
 type InventoryRow = {
   tenant_id: string | null;
@@ -52,7 +58,8 @@ export type PrivateArtifactStorageConfigurationV1 = Readonly<{
 export type PrivateArtifactStorageV1 = Readonly<{
   storage: ArtifactStoragePortV1 & ArtifactReadPortV1;
   captureInventory(database: Pick<DatabaseClient, "query">, tenantId: string,
-    integrityKey: Uint8Array, signal?: AbortSignal): Promise<ArtifactBackupInventoryV1>;
+    integrityKey: Uint8Array, signal?: AbortSignal,
+    reservations?: NeutralReservationPort): Promise<ArtifactBackupInventoryV1>;
 }>;
 
 export type OpenPrivateArtifactStorageV1 = (
@@ -68,24 +75,42 @@ type ArtifactConsumers = {
 
 function unavailable(): never { throw new Error("private_artifact_storage_unavailable"); }
 
-/** Binds a public namespace identity to one trusted canonical operator path without returning that path. */
-export function privateArtifactStorageNamespaceDigestV1(storageNamespace: string, rootPath: string): string {
-  return sha256Digest({ purpose: "private-artifact-storage-namespace/v1", storageNamespace, rootPath });
-}
+/**
+ * Binds a public namespace identity to one trusted canonical operator path without returning that path.
+ *
+ * The derivation is owned by the operator-configuration module so one rule
+ * governs both the operator file and this startup boundary; the original name
+ * is retained for existing callers.
+ */
+export const privateArtifactStorageNamespaceDigestV1 = artifactStorageNamespaceDigestV1;
 
 export function capturePrivateArtifactStorageConfigurationV1(
   input: PrivateArtifactStorageConfigurationV1,
 ): PrivateArtifactStorageConfigurationV1 {
   try {
     if (!input || typeof input !== "object" || !input.local || typeof input.local !== "object") return unavailable();
-    const local = Object.freeze({
-      rootPath: z.string().min(1).max(4096).parse(input.local.rootPath),
-      maximumArtifacts: z.number().int().min(1).max(10_000).parse(input.local.maximumArtifacts),
-      maximumFileBytes: z.number().int().min(1).max(65_536).parse(input.local.maximumFileBytes),
-      maximumTotalBytes: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).parse(input.local.maximumTotalBytes),
-      operationTimeoutMs: z.number().int().min(1).max(2_000).parse(input.local.operationTimeoutMs),
-    });
     const inventory = Object.freeze(inventoryHeaderSchema.parse(input.inventory));
+    // Delegate the byte-store bounds and the one explicit persistent directory
+    // to the operator-configuration owner. A non-canonical root or a total
+    // below one file is refused here instead of surfacing later as an opaque
+    // storage error at first write.
+    const captured = captureArtifactStorageSettingsV1({
+      schema: ARTIFACT_STORAGE_SETTINGS_SCHEMA_V1,
+      storageClass: "local",
+      storageNamespace: inventory.storageNamespace,
+      rootPath: input.local.rootPath,
+      maximumArtifacts: input.local.maximumArtifacts,
+      maximumFileBytes: input.local.maximumFileBytes,
+      maximumTotalBytes: input.local.maximumTotalBytes,
+      operationTimeoutMs: input.local.operationTimeoutMs,
+    });
+    const local = Object.freeze({
+      rootPath: captured.rootPath,
+      maximumArtifacts: captured.maximumArtifacts,
+      maximumFileBytes: captured.maximumFileBytes,
+      maximumTotalBytes: captured.maximumTotalBytes,
+      operationTimeoutMs: captured.operationTimeoutMs,
+    });
     if (inventory.storageNamespaceDigest !== privateArtifactStorageNamespaceDigestV1(
       inventory.storageNamespace, local.rootPath)) return unavailable();
     return Object.freeze({ local, inventory });
@@ -109,11 +134,19 @@ export function bindPrivateArtifactStorageV1<T extends ArtifactConsumers>(
   return result as T;
 }
 
-function reservation(value: unknown) {
+type InventoryReservation = { identity: { tenantId: string; projectId: string; jobId: string; attemptId: string;
+  runId: string; artifactId: string; contentHash: string; sizeBytes: number };
+  state: string; manifestDigest: string | null; receiptDigest: string | null };
+type InventoryReservationTag = "native-result-write-reservation/v1" | "durable-result-write-reservation/v1";
+
+function reservation(value: unknown): { reserved: InventoryReservation; tagPurpose: InventoryReservationTag } {
   const native = nativeResultReservationSchemaV1.safeParse(value);
-  if (native.success) return native.data;
+  if (native.success) return { reserved: native.data, tagPurpose: "native-result-write-reservation/v1" };
   const codex = codexResultReservationSchemaV1.safeParse(value);
-  return codex.success ? codex.data : unavailable();
+  if (codex.success) return { reserved: codex.data, tagPurpose: "native-result-write-reservation/v1" };
+  const durable = durableResultReservationSchemaV1.safeParse(value);
+  if (durable.success) return { reserved: durable.data, tagPurpose: "durable-result-write-reservation/v1" };
+  return unavailable();
 }
 
 /**
@@ -130,7 +163,7 @@ export async function openPrivateArtifactStorageV1(
   if (!raw || typeof raw.put !== "function" || typeof raw.read !== "function") return unavailable();
   // Keep one exact object behind every bound reader and writer.
   const storage = Object.freeze({ put: raw.put.bind(raw), read: raw.read.bind(raw) });
-  return Object.freeze({ storage, async captureInventory(database, tenantId, integrityKey, signal) {
+  return Object.freeze({ storage, async captureInventory(database, tenantId, integrityKey, signal, reservations) {
     localId.parse(tenantId);
     if (!database || typeof database.query !== "function" || !(integrityKey instanceof Uint8Array)
       || integrityKey.length !== 32 || signal?.aborted) return unavailable();
@@ -157,23 +190,39 @@ export async function openPrivateArtifactStorageV1(
     const entries = [];
     const seen = new Set<string>();
     for (const row of rows) {
-      if (signal?.aborted || !row.receipt || !row.receipt_auth_tag || !row.manifest
-        || !row.reservation || !row.reservation_auth_tag) return unavailable();
+      if (signal?.aborted || !row.receipt || !row.receipt_auth_tag || !row.manifest) return unavailable();
       const parsedReceipt = receiptSchema.safeParse(row.receipt);
       if (!parsedReceipt.success) return unavailable();
       const receipt = parsedReceipt.data;
+      // Neutral reservations live behind the injected reservation boundary,
+      // not the native table, so the SQL join yields no reservation columns
+      // for them. Consult the boundary port when supplied and verify the
+      // returned row with the exact same checks below. Without the port the
+      // reader still fails closed; production server composition passes the
+      // lead-owned PostgreSQL adapter once it lands after #63.
+      let reservationValue = row.reservation, reservationAuthTag = row.reservation_auth_tag;
+      if (reservationValue == null || reservationAuthTag == null) {
+        if (!reservations || typeof reservations.findForUpdate !== "function") return unavailable();
+        const portRow = await reservations.findForUpdate(database, tenantId, receipt.runId);
+        if (!portRow || portRow.tenant_id !== tenantId || portRow.run_id !== receipt.runId
+          || portRow.artifact_id !== receipt.artifactId) return unavailable();
+        reservationValue = portRow.reservation; reservationAuthTag = portRow.auth_tag;
+      }
+      if (typeof reservationAuthTag !== "string") return unavailable();
       const manifest = artifactManifestRecordSchema.parse(row.manifest);
-      const reserved = reservation(row.reservation);
+      const { reserved, tagPurpose } = reservation(reservationValue);
       const identity = reserved.identity;
-      const receiptTag = hmacSha256Tag(key, { purpose: receipt.schema === "control-room.codex-result-receipt/v1"
-        ? "codex-result-receipt/v1" : "native-result-receipt/v1", receipt });
-      const reservationTag = hmacSha256Tag(key, { purpose: "native-result-write-reservation/v1", reservation: reserved });
+      const receiptTag = receipt.schema === "control-room.durable-result-receipt/v1"
+        ? durableResultReceiptTagV1(key, receipt)
+        : hmacSha256Tag(key, { purpose: receipt.schema === "control-room.codex-result-receipt/v1"
+          ? "codex-result-receipt/v1" : "native-result-receipt/v1", receipt });
+      const reservationTag = hmacSha256Tag(key, { purpose: tagPurpose, reservation: reserved });
       const equalTag = (expected: string, actual: string) => {
         const left = Buffer.from(expected), right = Buffer.from(actual);
         return left.length === right.length && timingSafeEqual(left, right);
       };
       if (reserved.state !== "metadata_committed" || row.tenant_id !== tenantId || receipt.tenantId !== tenantId
-        || !equalTag(receiptTag, row.receipt_auth_tag) || !equalTag(reservationTag, row.reservation_auth_tag)
+        || !equalTag(receiptTag, row.receipt_auth_tag) || !equalTag(reservationTag, reservationAuthTag)
         || row.project_id !== receipt.projectId || row.job_id !== receipt.jobId
         || row.attempt_id !== receipt.attemptId || row.run_id !== receipt.runId
         || row.artifact_id !== receipt.artifactId || seen.has(receipt.artifactId)

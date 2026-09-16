@@ -10,6 +10,7 @@
 import { pathToFileURL } from "node:url";
 import { parseActionMarker } from "./public-worker-inbox.mjs";
 import { parseHandoff } from "./review-handoff-controller.mjs";
+import { parseClaimPacket, verifiedLockScopes, evaluateAdmissionDecision, observeMainBase } from "./automatic-claim-controller.mjs";
 
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const CLAIM_MARKER = /<!-- agent-control-room-claim:v2 issue=(\d+) request=(\d+) actor=([A-Za-z0-9][A-Za-z0-9-]{0,38}) worker=([A-Za-z0-9][A-Za-z0-9._:-]{2,79}) -->/;
@@ -104,6 +105,15 @@ export function parseClaimMarker(body) {
 /** The issue a submitted pull request declares it delivers, if any. */
 export function declaredSubmissionIssue(body, window = PR_DECLARATION_WINDOW) {
   if (typeof body !== "string") return undefined;
+  const normalized = body.replace(/\r\n/g, "\n");
+  const bindings = [...normalized.matchAll(/^Control-Room-Issue: ([1-9][0-9]*)$/gm)];
+  // Match the handoff controller's single canonical binding across the whole body.
+  // Do not fall back to prose when a malformed or duplicate canonical field exists.
+  if (/^Control-Room-Issue:/m.test(normalized)) {
+    if (bindings.length !== 1 || (normalized.match(/^Control-Room-Issue:/gm) ?? []).length !== 1) return undefined;
+    const issue = Number(bindings[0][1]);
+    return Number.isSafeInteger(issue) ? issue : undefined;
+  }
   const header = body.slice(0, window);
   for (const pattern of PR_DECLARATION) {
     const match = pattern.exec(header);
@@ -150,10 +160,16 @@ async function pages(fetchImpl, url, token, maxPages) {
 async function readDeclaredSubmissions({ fetchImpl, root, token, maxPages = DEFAULT_MAX_PULL_PAGES }) {
   const list = await pages(fetchImpl, `${root}/pulls?state=all&sort=created&direction=desc`, token, maxPages);
   const byIssue = new Map();
+  const bindingProblems = [];
   for (const pull of list.values) {
     if (!Number.isSafeInteger(pull?.number)) continue;
     const issue = declaredSubmissionIssue(pull.body);
-    if (issue === undefined) continue;
+    if (issue === undefined) {
+      if (pull.state === "open") bindingProblems.push({ pr: pull.number,
+        url: typeof pull.html_url === "string" ? pull.html_url : "",
+        reason: "submission_issue_binding_missing_or_invalid" });
+      continue;
+    }
     const existing = byIssue.get(issue) ?? [];
     existing.push(Object.freeze({
       number: pull.number,
@@ -163,7 +179,7 @@ async function readDeclaredSubmissions({ fetchImpl, root, token, maxPages = DEFA
     }));
     byIssue.set(issue, existing);
   }
-  return { byIssue, truncated: list.truncated };
+  return { byIssue, truncated: list.truncated, bindingProblems };
 }
 
 /**
@@ -213,6 +229,29 @@ function latestClaim(comments, issueNumber, advisoryLogins) {
     return trusted(marker, comment, advisoryLogins) && marker.issue === issueNumber ? [marker] : [];
   });
   return matches.at(-1);
+}
+
+function currentClaim(comments, issueNumber, advisoryLogins) {
+  let authoritativeSeen = false;
+  let active;
+  const v3 = new RegExp(`<!--\\s*agent-control-room-claim:v3\\s+issue=${issueNumber}\\s+request=(\\d+)\\s+actor=([^\\s]+)\\s+worker=([^\\s]+)\\s+packet=([a-f0-9]{64})\\s+accepted=(\\d+)`);
+  for (const comment of comments) {
+    if (!CONTROLLER(comment) || typeof comment.body !== "string") continue;
+    const accepted = /^(CLAIM ACCEPTED|CLAIM RENEWED) —/.test(comment.body);
+    const cleared = /^(CLAIM RELEASED|CLAIM EXPIRED) —/.test(comment.body)
+      && comment.body.includes(`issue=${issueNumber} `);
+    if (!accepted && !cleared) continue;
+    authoritativeSeen = true;
+    if (cleared) { active = undefined; continue; }
+    const current = v3.exec(comment.body);
+    const legacy = parseClaimMarker(comment.body);
+    if (current) active = { issue: issueNumber, request: Number(current[1]), actor: current[2],
+      workerId: current[3], packetBound: true };
+    else if (legacy?.issue === issueNumber) active = { ...legacy, packetBound: false };
+  }
+  if (authoritativeSeen) return { claim: active, packetBound: active?.packetBound === true };
+  const advisory = latestClaim(comments, issueNumber, advisoryLogins);
+  return { claim: advisory, packetBound: false };
 }
 
 function oldest(records) {
@@ -292,15 +331,23 @@ export async function readQueueHealth({
     // Comment-level records carry correction ownership and claim provenance.
     const needsComments = status !== undefined && (SUBMITTED_STATES.has(status) || status === "changes-required");
     let comments = [];
+    let commentHistoryTruncated = false;
     if (needsComments) {
       const history = await pages(fetchImpl, `${root}/issues/${issue.number}/comments?direction=asc`, token, maxPages);
       comments = history.values;
+      commentHistoryTruncated = history.truncated;
       truncated = truncated || history.truncated;
     }
 
     const record = latestWorkflowRecord(comments, issue.number, advisoryLogins);
-    const claim = latestClaim(comments, issue.number, advisoryLogins);
+    const claimState = currentClaim(comments, issue.number, advisoryLogins);
+    const claim = claimState.claim;
     if (claim) claimed += 1;
+
+    if (status === "working" && commentHistoryTruncated) codes.push("claim_history_indeterminate");
+    else if (status === "working" && !claim) codes.push("working_claim_missing");
+    else if (status === "working" && !claimState.packetBound)
+      codes.push("legacy_claim_blocks_queue");
 
     if (status === "changes-required" && !record) codes.push("worker_action_marker_missing");
     // A record exists but carries no authority. A legacy shared-account marker cannot
@@ -348,9 +395,123 @@ export async function readQueueHealth({
     }));
   }
 
+  // Admission offers: the shared evaluator classifies every Ready issue that is
+  // not currently accepted, with the complete fetched history and verified
+  // Working/In-review scope locks. Admitted offers are omitted; every other
+  // offer is reported with its distinct blocker. Any failed observation (base,
+  // history, locks, evaluator) blocks the offer — never advertised pickup.
+  // Already-accepted work retains its pinned base and is never reclassified.
+  const readyIssues = workIssues.filter(issue => labelsOf(issue).includes("status:ready"));
+  const qhHeaders = { accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28",
+    "user-agent": "agent-control-room-queue-health", ...(token ? { authorization: `Bearer ${token}` } : {}) };
+  const qhAdapter = { request: async (method, requestedPath) => {
+    if (method !== "GET" || typeof requestedPath !== "string"
+      || !requestedPath.startsWith(`/repos/${repository}/`)) throw new Error("admission_evaluator_observation_invalid");
+    const response = await fetchImpl(`https://api.github.com${requestedPath}`, { headers: qhHeaders });
+    if (!response?.ok) throw new Error("admission_evaluator_observation_invalid");
+    return await response.json();
+  } };
+  let qhObservation;
+  let qhObservationError;
+  try {
+    qhObservation = await observeMainBase({ api: qhAdapter, repository });
+  } catch (error) {
+    qhObservation = undefined;
+    qhObservationError = error?.message ?? "admission_evaluator_base_unavailable";
+  }
+  const qhBaseSha = qhObservation?.baseSha;
+  let qhLockScopes;
+  let qhLocksError;
+  try {
+    const qhLocks = await verifiedLockScopes(qhAdapter, repository, undefined);
+    if (qhLocks.legacy.length > 0 || qhLocks.mismatched.length > 0) {
+      qhLocksError = "admission_locks_unverifiable";
+    } else {
+      qhLockScopes = qhLocks.scopes;
+    }
+  } catch {
+    qhLocksError = "admission_locks_unverifiable";
+  }
+  const qhOpenNumbers = new Set(workIssues.map(issue => issue.number));
+  const blockedOffers = [];
+  for (const issue of readyIssues) {
+    const readyLabels = labelsOf(issue);
+    const readyConflicts = readyLabels.filter(label => label.startsWith("status:")).length !== 1
+      || readyLabels.some(label => label.startsWith("action:"));
+    const readyPacket = parseClaimPacket(issue.body);
+    let issueComments = [];
+    let issueHistoryIncomplete = false;
+    try {
+      const history = await pages(fetchImpl, `${root}/issues/${issue.number}/comments?direction=asc`, token, maxPages);
+      issueComments = history.values;
+      issueHistoryIncomplete = history.truncated;
+      truncated = truncated || history.truncated;
+    } catch {
+      issueHistoryIncomplete = true;
+    }
+    if (issueHistoryIncomplete) {
+      blockedOffers.push(Object.freeze({ issue: issue.number, title: sanitize(issue.title),
+        url: issueUrlOf(repository, issue.number), admissionError: "admission_history_incomplete" }));
+      continue;
+    }
+    if (latestClaim(issueComments, issue.number, advisoryLogins)) continue;
+    let offerAdmission;
+    let offerAdmissionError;
+    if (readyConflicts) {
+      offerAdmission = Object.freeze({ outcome: "refuse", reason: "conflicting_ready_labels",
+        observedAt: qhObservation?.observedAt ?? "", observedBase: qhBaseSha ?? "" });
+    } else if (!readyPacket) {
+      offerAdmission = Object.freeze({ outcome: "refuse", reason: "packet_invalid",
+        observedAt: qhObservation?.observedAt ?? "", observedBase: qhBaseSha ?? "" });
+    } else if (qhBaseSha === undefined) {
+      const qhOpenDeps = readyPacket.dependencies.filter(number => qhOpenNumbers.has(number));
+      if (qhOpenDeps.length > 0) {
+        offerAdmission = Object.freeze({ outcome: "refuse", reason: "dependencies_incomplete",
+          observedAt: qhObservation?.observedAt ?? "", observedBase: qhBaseSha ?? "" });
+      } else {
+        offerAdmission = Object.freeze({ outcome: "refuse", reason: "admission_observation_unavailable",
+          observedAt: qhObservation?.observedAt ?? "", observedBase: qhBaseSha ?? "" });
+        offerAdmissionError = qhObservationError;
+      }
+    } else if (qhLocksError) {
+      offerAdmission = Object.freeze({ outcome: "refuse", reason: "admission_locks_unverifiable",
+        observedAt: qhObservation?.observedAt ?? "", observedBase: qhBaseSha ?? "" });
+      offerAdmissionError = qhLocksError;
+    } else {
+      try {
+        offerAdmission = await evaluateAdmissionDecision({ issue, comments: issueComments,
+          packet: readyPacket, api: qhAdapter, repository, openNumbers: qhOpenNumbers,
+          baseSha: qhBaseSha, observedAt: qhObservation.observedAt, knownLocks: qhLockScopes });
+      } catch (error) {
+        offerAdmissionError = /^(admission_evaluator_|claim_controller_)/.test(error?.message ?? "")
+          ? error.message : "admission_evaluator_unavailable";
+      }
+    }
+    if (offerAdmission?.outcome === "admit") continue;
+    blockedOffers.push(Object.freeze({ issue: issue.number, title: sanitize(issue.title),
+      url: issueUrlOf(repository, issue.number),
+      ...(offerAdmission ? {
+        admission: Object.freeze({
+          outcome: offerAdmission.outcome, reason: offerAdmission.reason,
+          observedBase: offerAdmission.observedBase,
+          ...(offerAdmission.packetBase ? { packetBase: offerAdmission.packetBase } : {}),
+          capacity: offerAdmission.capacity ?? "unknown", pair: offerAdmission.pair ?? "unknown", locks: offerAdmission.locks ?? "unknown",
+        }),
+      } : {}),
+      ...(offerAdmissionError ? { admissionError: offerAdmissionError } : {}),
+    }));
+  }
+
   const warnings = [];
   if (counts.ready < READY_FLOOR) warnings.push("ready_floor_below_minimum");
   if (truncated) warnings.push("queue_read_truncated");
+  const offersNeedingBaseObservation = blockedOffers.filter(offer =>
+    offer.admission?.reason === "admission_observation_unavailable"
+    || offer.admission?.reason === "packet_base_stale"
+    || offer.admissionError).length;
+  if (qhObservation === undefined && offersNeedingBaseObservation > 0)
+    warnings.push("admission_observation_unavailable");
+  if (blockedOffers.some(offer => offer.admissionError)) warnings.push("admission_evaluation_incomplete");
 
   return Object.freeze({
     repository,
@@ -362,6 +523,8 @@ export async function readQueueHealth({
     oldestReview: oldest(reviewRecords),
     oldestCorrection: oldest(correctionRecords),
     anomalies: Object.freeze(anomalies.sort((a, b) => a.issue - b.issue)),
+    blockedOffers: Object.freeze(blockedOffers.sort((a, b) => a.issue - b.issue)),
+    submissionBindingProblems: Object.freeze(submissions?.bindingProblems ?? []),
     warnings: Object.freeze(warnings),
     uncertainty: Object.freeze({
       truncated,
@@ -407,6 +570,8 @@ export function renderQueueHealth(report) {
     lines.push(`    ${anomaly.url}`);
   }
   lines.push("", "Links");
+  for (const problem of report.submissionBindingProblems ?? [])
+    lines.push(`Submission needs maintainer reconciliation: PR #${problem.pr} ${problem.reason} ${problem.url}`);
   for (const status of STATUSES) lines.push(`  ${status}: ${report.links[status]}`);
   return lines.join("\n");
 }

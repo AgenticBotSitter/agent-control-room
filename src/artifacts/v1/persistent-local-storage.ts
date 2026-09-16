@@ -57,7 +57,7 @@ export interface PersistentLocalArtifactStorageTestIoV1 {
   run<T>(boundary: PersistentLocalArtifactStorageIoBoundaryV1, operation: () => Promise<T>): Promise<T>;
 }
 
-const artifactIdPattern = /^artifact:native:[a-f0-9]{64}$/u;
+const artifactIdPattern = /^artifact:(native|result):[a-f0-9]{64}$/u;
 const artifactNamePattern = /^[a-f0-9]{64}\.artifact$/u;
 const digestPattern = /^sha256:[a-f0-9]{64}$/u;
 const lockName = ".control-room-persistent-artifact.lock";

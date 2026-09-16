@@ -204,7 +204,8 @@ rules are in [PUBLIC_CONTRIBUTION_FLOW.md](docs/PUBLIC_CONTRIBUTION_FLOW.md).
 
 The automatic claim controller confirms ready reservations using a GitHub-login plus
 unique-worker identifier in one short repository-wide serialized workflow. Each exact
-pair may hold one active implementation; a request comment, pending marker or shared
+pair may hold two active builds and three total assignments under the handbook's
+parallel-isolation and corrections-first rules; a request comment, pending marker or shared
 GitHub login alone is not an atomic claim. Mark In review when its PR/evidence is submitted, and
 Done/closed after the whole assigned outcome is accepted. Partial merges are not
 completion. Transfer ownership only after an explicit stop/handoff, not a timer.

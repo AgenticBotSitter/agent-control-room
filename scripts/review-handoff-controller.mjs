@@ -6,22 +6,27 @@ const LOGIN = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/;
 const WORKER = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,79}$/;
 const SHA = /^[a-f0-9]{40}$/;
 const BOT = comment => comment?.user?.login === 'github-actions[bot]' && comment.user.type === 'Bot';
-const COMMANDS = new Set(['submit', 'changes', 'acknowledge', 'resubmit', 'accept', 'stop', 'stopped']);
+const COMMANDS = new Set(['submit', 'changes', 'adopt-changes', 'acknowledge', 'resubmit', 'accept', 'stop', 'stopped']);
 const labels = issue => issue.labels.map(label => typeof label === 'string' ? label : label.name);
-const bodyFor = record => `Workflow handoff: ${record.phase}\n\nWorker: ${record.workerId}\nState: ${record.state}\nNext: ${record.action}\nReviewed/submitted commit: ${record.head}\nInstructions: ${record.reviewUrl}\n\n<!-- agent-control-room-handoff:v1 ${JSON.stringify(record)} -->`;
+const bodyFor = record => `Workflow handoff: ${record.phase}\n\nWorker: ${record.workerId}\nState: ${record.state}\nNext: ${record.action}\nReviewed/submitted commit: ${record.head}\nInstructions: ${record.reviewUrl}${record.instruction ? `\n\nCorrection details:\n${record.instruction}` : ''}\n\n<!-- agent-control-room-handoff:v1 ${JSON.stringify(record)} -->`;
 
 export function parseHandoff(comment) {
   if (!BOT(comment)) return undefined;
   try {
     const value = JSON.parse(MARKER.exec(comment.body ?? '')?.[1] ?? 'null');
     return value && Number.isSafeInteger(value.issue) && Number.isSafeInteger(value.requestId)
-      && WORKER.test(value.workerId) && SHA.test(value.head) ? value : undefined;
+      && WORKER.test(value.workerId) && (value.claimWorkerId === undefined || WORKER.test(value.claimWorkerId))
+      && SHA.test(value.head) ? value : undefined;
   } catch { return undefined; }
 }
 
 export function parseHandoffCommand(body) {
-  const match = /^HANDOFF (submit|changes|acknowledge|resubmit|accept|stop|stopped)\nworker-id: ([A-Za-z0-9][A-Za-z0-9._:-]{2,79})\npr: ([1-9][0-9]*)\nhead: ([a-f0-9]{40})\nprevious: (0|[1-9][0-9]*)(?:\n\n[\s\S]*)?\n?$/.exec((body ?? '').replace(/\r\n/g, '\n'));
-  return match ? { command: match[1], workerId: match[2], pr: Number(match[3]), head: match[4], previousId: Number(match[5]) } : undefined;
+  const match = /^HANDOFF (submit|changes|adopt-changes|acknowledge|resubmit|accept|stop|stopped)\nworker-id: ([A-Za-z0-9][A-Za-z0-9._:-]{2,79})\n(?:claim-worker-id: ([A-Za-z0-9][A-Za-z0-9._:-]{2,79})\n)?pr: ([1-9][0-9]*)\nhead: ([a-f0-9]{40})\nprevious: (0|[1-9][0-9]*)(?:\n\n([\s\S]*?))?\n?$/.exec((body ?? '').replace(/\r\n/g, '\n'));
+  if (!match) return undefined;
+  if ((match[1] === 'adopt-changes') !== Boolean(match[3])) return undefined;
+  const instruction = match[7]?.trim();
+  if (instruction && (instruction.length > 12000 || instruction.includes('<!-- agent-control-room-handoff:v1'))) return undefined;
+  return { command: match[1], workerId: match[2], claimWorkerId: match[3], pr: Number(match[4]), head: match[5], previousId: Number(match[6]), instruction };
 }
 
 async function commentsFor(api, repository, issue) {
@@ -46,9 +51,14 @@ function acceptedClaim(comments, issue, workerId) {
 
 function nextState(command, previous) {
   if (command === 'submit' && !previous) return ['in-review', 'reviewer', false];
+  if (command === 'adopt-changes' && !previous) return ['changes-required', 'worker', false];
   if (command === 'changes' && ['in-review', 're-review'].includes(previous?.state)) return ['changes-required', 'worker', false];
   if (command === 'acknowledge' && previous?.state === 'changes-required' && !previous.acknowledged) return ['changes-required', 'worker', true];
   if (command === 'resubmit' && previous?.state === 'changes-required' && previous.acknowledged) return ['re-review', 'reviewer', false];
+  // A worker may refresh an already submitted head while it still awaits
+  // review. This is a new review request, never acceptance of the new code.
+  if (command === 'resubmit' && ['in-review', 're-review'].includes(previous?.state)
+    && previous.action === 'reviewer') return ['re-review', 'reviewer', false];
   if (command === 'accept' && ['in-review', 're-review'].includes(previous?.state)) return [previous.state, 'integrator', false];
   if (command === 'stop' && (previous?.state !== 'paused' || previous?.phase === 'pending')) return ['paused', 'worker', false];
   if (command === 'stopped' && previous?.state === 'paused' && !previous.acknowledged) return ['paused', 'integrator', true];
@@ -75,20 +85,47 @@ export async function runHandoff({ event, repository, api, maintainers = [] }) {
   ]);
   if (savedRequest.body !== event.comment.body || savedRequest.user?.login !== actor
     || savedRequest.issue_url !== `https://api.github.com/repos/${repository}/issues/${issueNumber}`) throw new Error('handoff_request_changed');
-  if (issue.state !== 'open' || pr.state !== 'open' || pr.head.sha !== request.head
+  // Acknowledgment records receipt of the predecessor's review, even when the
+  // worker has already pushed a correction. Every other command targets HEAD.
+  const acknowledgingReview = request.command === 'acknowledge';
+  if (issue.state !== 'open' || pr.state !== 'open' || (!acknowledgingReview && pr.head.sha !== request.head)
     || pr.base.repo.full_name !== repository) throw new Error('handoff_target_changed');
   const issueBindings = [...(pr.body ?? '').replace(/\r\n/g, '\n').matchAll(/^Control-Room-Issue: ([1-9][0-9]*)$/gm)];
-  if (issueBindings.length !== 1 || Number(issueBindings[0][1]) !== issueNumber) throw new Error('handoff_pr_issue_mismatch');
-  const claim = acceptedClaim(comments, issueNumber, request.workerId);
-  if (pr.user.login !== claim.actor) throw new Error('handoff_pr_owner_mismatch');
-  const maintainerAction = ['changes', 'accept', 'stop'].includes(request.command);
-  if (maintainerAction ? (!maintainers.includes(actor) || actor === claim.actor) : actor !== claim.actor)
-    throw new Error('handoff_authority_denied');
+  const adoptingChanges = request.command === 'adopt-changes';
+  const exactIssueBinding = issueBindings.length === 1 && Number(issueBindings[0][1]) === issueNumber;
+  const normalizedPrBody = (pr.body ?? '').replace(/\r\n/g, '\n');
+  const legacyBindings = [...normalizedPrBody.matchAll(/\b(?:Closes|Fixes|Resolves)\s*#([1-9][0-9]*)\b/gi)]
+    .map(match => Number(match[1]));
+  // Older contributors sometimes described the parent issue later on the same
+  // line. Only the first issue immediately after this explicit field labels the
+  // PR; closing keywords elsewhere are still collected above and must agree.
+  legacyBindings.push(...[...normalizedPrBody.matchAll(/^Outcome\s*\/\s*issue\s*:\s*#([1-9][0-9]*)\b/gim)]
+    .map(match => Number(match[1])));
+  legacyBindings.push(...[...(pr.title ?? '').matchAll(/\(issue\s+#([1-9][0-9]*)\)/gi)]
+    .map(match => Number(match[1])));
+  const uniqueLegacyBindings = [...new Set(legacyBindings)];
+  const exactLegacyIssueBinding = uniqueLegacyBindings.length === 1 && uniqueLegacyBindings[0] === issueNumber;
+  // Legacy correction adoption exists partly to repair older PRs that predate the
+  // mandatory Control-Room-Issue line. During that single maintainer-only
+  // transition, bind the PR to the issue through the existing exact review
+  // evidence below. Every later worker transition still requires the PR body
+  // to contain the one exact issue line.
   const records = comments.map(comment => ({ comment, record: parseHandoff(comment) }))
     .filter(item => item.record?.issue === issueNumber);
   const latest = records.at(-1);
   const replay = latest?.record.requestId === requestId ? latest : undefined;
   const predecessor = replay ? records.at(-2) : latest;
+  const continuingAdoptedLegacy = ['acknowledge', 'stop', 'stopped'].includes(request.command)
+    && issueBindings.length === 0 && predecessor?.record.requiresPrIssueBinding === true;
+  if (!exactIssueBinding && ((!adoptingChanges && !continuingAdoptedLegacy) || issueBindings.length !== 0))
+    throw new Error('handoff_pr_issue_mismatch');
+  const claimWorkerId = request.command === 'adopt-changes'
+    ? request.claimWorkerId : predecessor?.record.claimWorkerId ?? request.workerId;
+  const claim = acceptedClaim(comments, issueNumber, claimWorkerId);
+  if (pr.user.login !== claim.actor) throw new Error('handoff_pr_owner_mismatch');
+  const maintainerAction = ['changes', 'adopt-changes', 'accept', 'stop'].includes(request.command);
+  if (maintainerAction ? (!maintainers.includes(actor) || actor === claim.actor) : actor !== claim.actor)
+    throw new Error('handoff_authority_denied');
   if ((predecessor?.comment.id ?? 0) !== request.previousId || (predecessor?.record.phase === 'pending' && request.command !== 'stop')) throw new Error('handoff_predecessor_changed');
   if (predecessor && (predecessor.record.workerId !== request.workerId || predecessor.record.pr !== request.pr
     || predecessor.record.claimId !== claim.id)) throw new Error('handoff_assignment_changed');
@@ -103,12 +140,28 @@ export async function runHandoff({ event, repository, api, maintainers = [] }) {
     || (!predecessor && equal(workflowLabels(value), ['status:working', 'action:worker']));
   const prIssue = await getIssue(request.pr);
   const stoppingPending = request.command === 'stop' && predecessor?.record.phase === 'pending';
-  if (!replay && !stoppingPending && (!sourceMatches(issue) || (predecessor ? !sourceMatches(prIssue) : workflowLabels(prIssue).length !== 0))) throw new Error('handoff_labels_conflict');
+  if (adoptingChanges && (!request.instruction || request.previousId !== 0 || predecessor))
+    throw new Error('handoff_adoption_invalid');
+  if (adoptingChanges) {
+    const legacy = comments.some(comment => Number.isSafeInteger(comment?.id) && comment.id > claim.id && comment.id < requestId
+      && typeof comment.body === 'string'
+      && comment.body.includes(`<!-- agent-control-room-action:v1 worker=${claimWorkerId} state=changes-required issue=${issueNumber} -->`));
+    const issueReady = equal(workflowLabels(issue), ['status:changes-required', 'action:worker']);
+    const prLabels = workflowLabels(prIssue);
+    if (!legacy || (!exactIssueBinding && !exactLegacyIssueBinding) || !issueReady
+      || !(prLabels.length === 0 || equal(prLabels, ['status:changes-required', 'action:worker'])))
+      throw new Error('handoff_adoption_source_invalid');
+  }
+  if (!replay && !stoppingPending && !adoptingChanges
+    && (!sourceMatches(issue) || (predecessor ? !sourceMatches(prIssue) : workflowLabels(prIssue).length !== 0)))
+    throw new Error('handoff_labels_conflict');
   const record = replay?.record ?? {
-    issue: issueNumber, pr: request.pr, workerId: request.workerId, actor, head: request.head,
+    issue: issueNumber, pr: request.pr, workerId: request.workerId, claimWorkerId, actor, head: request.head,
     state, action, acknowledged, requestId, previousId: request.previousId, claimId: claim.id,
-    phase: 'pending', reviewUrl: ['acknowledge', 'resubmit', 'stopped'].includes(request.command)
+    phase: 'pending', instruction: request.instruction, reviewUrl: ['acknowledge', 'resubmit', 'stopped'].includes(request.command)
       ? predecessor.record.reviewUrl : savedRequest.html_url,
+    requiresPrIssueBinding: !exactIssueBinding
+      && (adoptingChanges || predecessor?.record.requiresPrIssueBinding === true),
     sourceIssueLabels: workflowLabels(issue), sourcePrLabels: workflowLabels(prIssue),
   };
   if (replay && record.phase === 'complete') return { status: 'already-recorded', commentId: replay.comment.id };
@@ -124,10 +177,11 @@ export async function runHandoff({ event, repository, api, maintainers = [] }) {
   async function fresh() {
     const history = await commentsFor(api, repository, issueNumber);
     const current = history.filter(c => parseHandoff(c)?.issue === issueNumber).at(-1);
-    const currentClaim = acceptedClaim(history, issueNumber, request.workerId);
+    const currentClaim = acceptedClaim(history, issueNumber, claimWorkerId);
     const currentPr = await api('GET', `${root}/pulls/${request.pr}`);
     if (current?.id !== journalId || currentClaim.id !== claim.id || currentClaim.actor !== claim.actor
-      || currentPr.head.sha !== request.head || currentPr.state !== 'open' || currentPr.body !== pr.body) throw new Error('handoff_concurrent_change');
+      || currentPr.head.sha !== (acknowledgingReview ? pr.head.sha : request.head)
+      || currentPr.state !== 'open' || currentPr.body !== pr.body) throw new Error('handoff_concurrent_change');
   }
   for (const [number, source] of [[issueNumber, record.sourceIssueLabels], [request.pr, record.sourcePrLabels]]) {
     await fresh();

@@ -6,6 +6,7 @@ import { ideaParticipantSchemaV1 } from "../../idea-lab/v1/schemas";
 import { validatePrivateStartupConfiguration, type PrivateStartupConfiguration } from "./private-startup";
 import { installPrivateApplication } from "./private-process";
 import { createPrivateTaskApplication } from "./private-task-application";
+import { createProjectCoordinationCanonicalStoreAdapterV1 } from "./project-coordination-http";
 import { captureNativeTaskTemplates } from "./task-execution-planner";
 import { validateTaskAssignmentRoutes, validateNativeApprovalEnrollments, type CodexPermitConfiguration } from "./task-assignment-coordinator";
 import type { TaskCoordinatorConfiguration, TaskCoordinatorDatabase } from "./task-coordinator-lifecycle";
@@ -371,7 +372,16 @@ export function createPrivateTaskBootstrap(dependencies: {
         })]); } finally { clearTimeout(timer); }
       }
       requireActive();
+      // Project coordination reads run against the accepted canonical tables
+      // through the production adapter: the web database client is the same
+      // pool the other web services use, the tenant scope is the configured
+      // web tenant, and CanonicalStore inside the adapter is the durable
+      // coordinator port. No fakes, no empty hooks.
+      const coordinationStore = createProjectCoordinationCanonicalStoreAdapterV1({
+        database: web.client, tenantId: config.web.tenantId, now: () => clock(),
+      });
       application = await createPrivateTaskApplication({ ...config.web, database: web, clock,
+        coordination: { store: coordinationStore },
         ...(newsIntegration ? { newsCollections: newsIntegration.web } : {}) }, {
         scope: { tenantId: config.web.tenantId, workspaceId: config.web.workspaceId }, database: coordinator,
         planning: config.planning, routes: config.routes, approvals: config.approvals, quality: config.quality,

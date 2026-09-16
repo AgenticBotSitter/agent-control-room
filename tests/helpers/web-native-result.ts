@@ -1,5 +1,6 @@
-import { nativeTaskFixture, at, observation, registration } from "../native-task-fixture";
+import { nativeTaskFixture, at, observation, registration, inputDigest } from "../native-task-fixture";
 import { instant, binding } from "../hermes-native-fixture";
+import { createHash } from "node:crypto";
 import { SecurityStore, sha256Digest, InMemoryRollbackCheckpointStoreV1 } from "../../src/security";
 import { createAccessVerifier } from "../../src/web/v1/access-verifier";
 import { WebTaskService, type WebTaskKeys } from "../../src/web/v1/task-service";
@@ -8,6 +9,21 @@ import { NativeTaskResultService } from "../../src/node-control/native-task-resu
 import { InMemoryArtifactStorage } from "../../src/node-executor/artifact-storage";
 import { CompletionGateStoreV1, type CompletionAcceptanceProfileV1, type CompletionReviewTargetV1 } from "../../src/completion-gate/v1";
 import { token, request, trust } from "./web-foundation";
+
+const digest = (seed = "a") => `sha256:${createHash("sha256").update(`durable-test:${seed}`).digest("hex")}`;
+
+function runRunKey(runId: string): string {
+  let h = 0;
+  for (const ch of runId) h = ((h * 31) + ch.charCodeAt(0)) >>> 0;
+  const hex = h.toString(16).padStart(8, "0").repeat(8);
+  return `sha256:${hex}`;
+}
+function runRunDigest(runId: string, tag: string, prefix: "sha256" | "hmac-sha256"): string {
+  let h = 5381;
+  for (const ch of runId + tag) h = (((h << 5) + h) ^ ch.charCodeAt(0)) >>> 0;
+  const hex = h.toString(16).padStart(8, "0").repeat(8);
+  return `${prefix}:${hex}`;
+}
 
 export async function webNativeResultFixture() {
   const f = await nativeTaskFixture(), scope = { tenantId: binding.tenantId, workspaceId: "workspace:test" };
@@ -53,6 +69,41 @@ export async function webNativeResultFixture() {
     await reviewStore.registerProfile(profile); await reviewStore.registerTarget(target);
     return { profile, target };
   }
+  async function provisionRun(runId: string, jobId: string, attemptId: string, authorityDigest = digest("s")) {
+    const keyDigest = runRunKey(runId), runDigest = runRunDigest(runId, "run-digest-", "sha256"),
+      runTag = runRunDigest(runId, "run-tag-", "hmac-sha256");
+    await f.db.query(`INSERT INTO control_jobs(id,tenant_id,workflow_id,project_id,state,version,priority,required_capability,authority_digest,payload,created_at,updated_at)
+      VALUES ($1,'tenant:test','workflow:test',$2,'leased',2,50,'capability:fixture',$3,$4,$5,$5)`,
+      [jobId, binding.projectId, keyDigest, JSON.stringify({
+        id: jobId, kind: "job", state: "leased", jobType: "hermes-native-evidence-fixture", version: 2,
+        priority: 50, tenantId: binding.tenantId, authority: { digest: keyDigest, maxRisk: "low",
+          expiresAt: at(600_000), projectId: binding.projectId, effectPolicy: "none", networkPolicy: "none",
+          credentialRefs: [], allowedExecutor: "executor:fixture", filesystemRoots: [], allowedOperations: ["operation:fixture"],
+          maxDurationSeconds: 600, maxConcurrentEffects: 0, allowedNetworkDestinations: [] },
+        createdAt: at(-60_000), projectId: binding.projectId, updatedAt: at(-60_000), workflowId: "workflow:test",
+        inputDigest: inputDigest, retryPolicy: { maxAttempts: 1, backoffSeconds: 1, retryAfterOrphan: false,
+          ambiguousEffectPolicy: "attention", retryableFailureCodes: [] }, specVersion: "1.0.0",
+        contractVersion: "control-room-domain/v1", dependsOnJobIds: [], requiredCapability: "capability:fixture"
+      }), at(-60_000)]);
+    await f.db.query(`INSERT INTO control_attempts(id,tenant_id,job_id,attempt_number,state,version,worker_id,node_id,lease_epoch,payload,created_at,updated_at)
+      VALUES ($1,'tenant:test',$2,1,'leased',1,NULL,'node:test',1,$3,$4,$4)`,
+      [attemptId, jobId, JSON.stringify({
+        id: attemptId, kind: "attempt", jobId, state: "leased", nodeId: binding.nodeId, version: 1,
+        tenantId: binding.tenantId, createdAt: at(-60_000), offeredAt: at(-60_000), updatedAt: at(-60_000),
+        leaseEpoch: 1, attemptNumber: 1, contractVersion: "control-room-domain/v1"
+      }), at(-60_000)]);
+    await f.db.query(`INSERT INTO control_harness_runs(id,tenant_id,project_id,job_id,attempt_id,node_id,adapter_id,harness,native_session_key_digest,parent_run_id,revision_of_run_id,state,last_sequence,run_digest,run_auth_tag,payload,created_at,updated_at,last_observed_at)
+      VALUES ($1,'tenant:test',$2,$3,$4,'node:test',$6,'hermes',$5,NULL,NULL,'discovered',0,$7,$8,$9,$10,$10,$10)`,
+      [runId, binding.projectId, jobId, attemptId, keyDigest, adapterId, runDigest, runTag, JSON.stringify({
+        id: runId, jobId, state: "discovered", nodeId: binding.nodeId, harness: "hermes",
+        tenantId: binding.tenantId, adapterId, attemptId,
+        createdAt: at(-60_000), projectId: binding.projectId, resumable: false, updatedAt: at(-60_000),
+        cancelState: "not_requested", schemaVersion: "control-room-harness/v1", adapterVersion: "1.0.0",
+        harnessVersion: "2026.8.31", lastObservedAt: at(-60_000), nativeSessionKeyDigest: keyDigest,
+        connectorProfileDigest: digest("c"), authorityDigest
+      }), at(-60_000)]);
+  }
+  async function provisionRuns(runIds: string[]) { for (const r of runIds) await provisionRun(r, `job:${r}`, `attempt:${r}`); }
   return { ...f, storage, results, resultService, config, harnessKey, resultKey, taskKeys, tasks, scope, identity, jwt,
-    accessTrust, checkpoints, reviewKey, reviewStore, complete, reviewTarget };
+    accessTrust, checkpoints, reviewKey, reviewStore, complete, reviewTarget, provisionRun, provisionRuns };
 }

@@ -23,7 +23,11 @@ concurrency:
 
 jobs:
   claim:
-    if: ${{ github.event_name == 'issue_comment' && !github.event.issue.pull_request && (startsWith(github.event.comment.body, 'CLAIM REQUEST') || startsWith(github.event.comment.body, 'CLAIM RENEW') || startsWith(github.event.comment.body, 'CLAIM SUBMIT') || startsWith(github.event.comment.body, 'CLAIM RELEASE')) }}
+    # Run for any comment that contains a lifecycle command. The controller
+    # still accepts only the exact two/four-line grammar; broader routing lets
+    # it post an immediate format error instead of silently skipping a command
+    # hidden below prose or an HTML marker.
+    if: ${{ github.event_name == 'issue_comment' && !github.event.issue.pull_request && github.event.comment.user.type != 'Bot' && (contains(github.event.comment.body, 'CLAIM REQUEST') || contains(github.event.comment.body, 'CLAIM RENEW') || contains(github.event.comment.body, 'CLAIM SUBMIT') || contains(github.event.comment.body, 'CLAIM RELEASE')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:

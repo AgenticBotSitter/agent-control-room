@@ -27,6 +27,19 @@ This README is the front door; detailed documents are optional depth, not a hunt
 covering the entire choose → claim → build → check → review → correct → merge or handoff
 process for people, bots, reviewers, and maintainers.
 
+**Worker capacity update (September 15):** two active builds and three total assignments
+per stable worker, with separate worktrees/execution contexts for parallel builds.
+Corrections come first. Check for the next job immediately after submitting—do not
+wait for the 30-minute timer. [Full rules and how to refresh existing workers](CONTRIBUTOR_HANDBOOK.md#keep-useful-work-flowing).
+
+**[How the build keeps moving](docs/CONTINUOUS_BUILD_OPERATION.md)** — work discovery,
+review turnaround, automatic monitoring, and what happens when a worker cannot proceed.
+
+**[Daily work, idle time and improvement](docs/DAILY_BUILD_ACTIVITY.md)** — worker and
+lead time breakdowns, honest model comparisons, and two-hour bottleneck repairs.
+**[Copy the current worker/reviewer prompt](docs/WORKER_AND_REVIEWER_SESSION_PROMPT.md)**
+to join or refresh an existing agent without losing its assignment.
+
 **Current priority:** finish a real mixed-harness project → task → result → review
 workflow, using existing proven components. One configurable public product serves
 everyone; no separate private core.
@@ -36,7 +49,9 @@ everyone; no separate private core.
 | What can I take on now? | [Ready assignments](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aready) is the authoritative list. |
 | How does the complete contribution process work? | [Contributor handbook](CONTRIBUTOR_HANDBOOK.md) — the single authoritative process from choosing work through merge or handoff. |
 | What prompt should I give a worker or reviewer? | [Reusable session prompt](docs/WORKER_AND_REVIEWER_SESSION_PROMPT.md) — points every session back to the live inbox, issue, pull request and handbook. |
+| How do I update an existing bot to the current system? | [One-time bot worker update prompt](docs/BOT_WORKER_UPDATE_PROMPT.md) — preserves active work, refreshes the rules and selects foreground, background or session-only inbox checking. |
 | How do maintainers activate trusted handoffs and worker watchers? | [Home setup checklist](docs/MAINTAINER_AND_WATCHER_HOME_SETUP.md) — separate identity, repository setting, disposable test, watcher startup and rollback. |
+| How will workers move off shared GitHub credentials? | [GitHub App worker broker](docs/GITHUB_APP_WORKER_BROKER.md) — short-lived credentials, verified notifications, activation order and rollback. It is implemented as an effect-free core but is not live yet. |
 | What is being worked or reviewed? | [Working](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aworking) · [In review](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Ain-review) · [Open PRs](https://github.com/AgenticBotSitter/agent-control-room/pulls) |
 | What is waiting on a named prerequisite or authorized real-world test? | [Waiting](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Awaiting) — the decision is settled, but the named prerequisite is pending |
 | What needs a lead or owner decision? | [Needs decision](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aneeds-decision) — an actual decision is required |

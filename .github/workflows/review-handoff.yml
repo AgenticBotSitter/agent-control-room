@@ -5,7 +5,7 @@ on:
 permissions:
   contents: read
   issues: write
-  pull-requests: read
+  pull-requests: write
 concurrency:
   group: automatic-job-claim-${{ github.repository_id }}
   cancel-in-progress: false

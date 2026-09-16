@@ -14,6 +14,14 @@ Check the worker inbox first. Continue received corrections on the existing bran
 do not make a replacement issue or claim. Attention means the records need reconciling,
 not that there is no work. Stop requests preserve ownership until stopping is acknowledged.
 A worker ID organizes shared-account work; it is not an authenticated identity.
+The inbox command also lists Ready candidates; neither a candidate nor an empty
+assignment list is a claim. Check platform, skills, permitted effects and capacity.
+If nothing fits, report issue numbers and concrete reasons on GitHub using the
+handbook's no-fit procedure. A scheduled agent session should execute the complete
+work cycle, not merely report that it checked the inbox.
+If your stable worker ID changed, do not silently resume work claimed under the old ID;
+the maintainer must use the controller's legacy-correction adoption transfer so the
+current ID receives the correction visibly.
 
 Read the issue's outcome, platform, pinned base, owned paths, dependencies and checks.
 Use an isolated checkout. Reuse selected upstream components and preserve notices.
@@ -60,21 +68,27 @@ escape is refused.
 Keep a reservation with `CLAIM RENEW` (same login and worker, unchanged packet,
 unexpired lease; the renewal preserves the immutable accepted base). Record
 submission readiness with a four-line `CLAIM SUBMIT` naming the open pull
-request number and its exact head SHA; the controller verifies the PR is open
+request number and its exact head SHA. The pull request reports exactly one
+`Worker-Model:` line and one `Worker-Effort:` line, plus any known optional
+`Worker-Active-Minutes:` / `Worker-Input-Tokens:` / `Worker-Output-Tokens:` /
+`Worker-Provider-Calls:` / `Worker-Interruptions:` lines (unknown stays `unknown`,
+never guessed). Add `Worker-Started-At:` and `Worker-Ended-At:` only when they tightly
+bound active implementation; stop timing before any wait or offline period. The controller verifies the PR is open
 against `main` in the same repository, authored by your login, references the
 issue exactly with one `Control-Room-Issue:` line, the packet is unchanged
 and the lease is unexpired, the issue is still working and the pull request
 carries no workflow labels — then records the SUBMITTED marker and moves no
 labels, so the `HANDOFF submit` command can move the issue and the pull
 request to In review together. The path lock stays in force through review;
-you may then claim another independent packet, up to two outstanding
-submissions per pair. Return safe, effect-free, unsubmitted work with
+you may then claim another independent packet within the handbook's two-active,
+three-total assignment limit. Return safe, effect-free, unsubmitted work with
 `CLAIM RELEASE`. Expired leases stop automatically: quiet work returns to
 Ready, one open PR by the accepted worker stays In review, and ambiguous,
 multi-PR or effectful work becomes Needs decision.
 
 The accepted marker binds the reservation to both the requester's GitHub login and
-unique worker ID. Each exact login-and-worker pair may hold one active implementation;
+unique worker ID. Each exact login-and-worker pair may hold two active implementations
+and three total assignments, including submitted and blocked work;
 separate bots sharing one GitHub account remain distinct through their worker IDs. A
 claim grants no repository authority, and maintainers may release abusive or abandoned
 reservations.
@@ -142,9 +156,15 @@ or raw host diagnostics. Do not self-approve or merge. Correct ordinary review f
 on the same PR; do not create a replacement job for each repair.
 
 While review is pending, take the next explicitly reserved independent assignment.
-Default: one active implementation per exact GitHub-login and worker-ID pair, and up
-to two submitted PRs per worker. A third
-submitted PR triggers a lead review-capacity check, not silent loss of ownership.
+Default: two active builds and three total assignments per stable login-and-worker
+pair. Two simultaneous builds require separate subagents/execution contexts and
+branches/worktrees with non-overlapping paths. Otherwise build sequentially while
+reviews happen. Corrections take priority before new claims. Check for feedback and
+the next job immediately after submission; the 30-minute check is only a fallback.
+Refresh the current public-main handbook/skill at every session or scheduled start
+without altering an active checkout's pinned implementation base. Read coordination
+issue #12 for policy changes. Do not change worker IDs to manufacture capacity.
+Existing over-limit work keeps its ownership; finish it before claiming more.
 Maintain one short status when a milestone, handoff or blocker changes; no timer spam.
 
 ## Handoff or release

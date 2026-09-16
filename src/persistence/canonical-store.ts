@@ -39,6 +39,10 @@ import {
   acquireProcessRetirementAuthorizationV1,
   coordinationOperationRequestSchemaV1,
   coordinatorAppointmentSchemaV1,
+  coordinatorLifecycleRequestDigestV1,
+  coordinatorLifecycleReceiptSchemaV1,
+  delegationPolicyLifecycleRequestDigestV1,
+  delegationPolicyLifecycleReceiptSchemaV1,
   failProjectCoordinationV1,
   findResourceConflictsV1,
   narrowWriteResourcesV1,
@@ -54,6 +58,8 @@ import {
   type CoordinationOperationRequestV1,
   type CoordinationProposalValidationV1,
   type CoordinatorAppointmentV1,
+  type CoordinatorLifecycleReceiptV1,
+  type DelegationPolicyLifecycleReceiptV1,
   type HeldScopeV1,
   type ProjectCoordinationProposalV1,
   type ProjectWorkAdmissionResultV1,
@@ -1373,16 +1379,54 @@ export class CanonicalStore {
    * or an execution authorization.
    */
   async assignProjectCoordinatorV1(input: {
-    operation: "assign" | "revoke";
+    operation: "appoint" | "replace" | "revoke";
     appointment: CoordinatorAppointmentV1;
+    idempotencyKey: string;
+    requestDigest: string;
+    expectedVersion: number;
     executionBindingDigest?: string;
-  }): Promise<{ version: number; state: "active" | "revoked"; executionBindingDigest?: string }> {
+  }): Promise<CoordinatorLifecycleReceiptV1 & { replayed: boolean }> {
     const appointment = coordinatorAppointmentSchemaV1.parse(input.appointment);
-    if (input.operation === "assign"
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{11,179}$/.test(input.idempotencyKey)
+      || !/^sha256:[a-f0-9]{64}$/.test(input.requestDigest)) failProjectCoordinationV1("invalid_input");
+    if (input.operation !== "revoke"
       && (appointment.coordinatorActorType === "agent") !== (input.executionBindingDigest !== undefined)) {
       failProjectCoordinationV1("invalid_input");
     }
+    if (input.requestDigest !== coordinatorLifecycleRequestDigestV1({ operation: input.operation, appointment,
+      expectedVersion: input.expectedVersion,
+      ...(input.operation !== "revoke" && input.executionBindingDigest
+        ? { executionBindingDigest: input.executionBindingDigest } : {}) })) {
+      failProjectCoordinationV1("invalid_input");
+    }
     return this.#transaction(async (tx) => {
+      const inserted = await tx.query<{ idempotency_key: string }>(`INSERT INTO control_idempotency
+        (tenant_id,operation_scope,idempotency_key,request_digest,status)
+        VALUES($1,'project-coordinator-lifecycle',$2,$3,'processing')
+        ON CONFLICT(tenant_id,operation_scope,idempotency_key) DO NOTHING
+        RETURNING idempotency_key`, [appointment.tenantId, input.idempotencyKey, input.requestDigest]);
+      const replay = inserted.rows.length === 0;
+      const durable = (await tx.query<{ request_digest: string; status: string; result: unknown }>(
+        `SELECT request_digest,status,result FROM control_idempotency
+         WHERE tenant_id=$1 AND operation_scope='project-coordinator-lifecycle' AND idempotency_key=$2 FOR UPDATE`,
+        [appointment.tenantId, input.idempotencyKey])).rows[0];
+      if (!durable || durable.request_digest !== input.requestDigest) {
+        failProjectCoordinationV1("coordinator_replay_conflict");
+      }
+      if (replay) {
+        if (durable.status !== "completed") failProjectCoordinationV1("coordinator_replay_conflict");
+        const receipt = coordinatorLifecycleReceiptSchemaV1.safeParse(durable.result);
+        if (!receipt.success) failProjectCoordinationV1("coordinator_replay_conflict");
+        const { receiptDigest, ...receiptBody } = receipt.data;
+        if (receipt.data.operation !== input.operation
+          || receipt.data.tenantId !== appointment.tenantId || receipt.data.projectId !== appointment.projectId
+          || receipt.data.idempotencyKey !== input.idempotencyKey
+          || receipt.data.requestDigest !== input.requestDigest
+          || sha256Digest(receiptBody) !== receiptDigest) {
+          failProjectCoordinationV1("coordinator_replay_conflict");
+        }
+        return { ...receipt.data, replayed: true };
+      }
       await this.#lockOwnerAuthorityV1(tx, { tenantId: appointment.tenantId, identityId: appointment.ownerIdentityId,
         projectId: appointment.projectId, occurredAt: appointment.occurredAt,
         action: input.operation === "revoke" ? "coordinator.revoke" : "coordinator.assign" });
@@ -1395,6 +1439,10 @@ export class CanonicalStore {
         failProjectCoordinationV1("invalid_input");
       }
       const head = await this.#lockCoordinatorHeadV1(tx, appointment.tenantId, appointment.projectId);
+      if (Number(head?.version ?? 0) !== input.expectedVersion) {
+        failProjectCoordinationV1("coordinator_version_stale");
+      }
+      let outcome: { version: number; state: "active" | "revoked"; executionBindingDigest?: string };
       if (input.operation === "revoke") {
         if (!head) failProjectCoordinationV1("coordinator_absent");
         if (head.state !== "active") failProjectCoordinationV1("coordinator_revoked");
@@ -1403,11 +1451,11 @@ export class CanonicalStore {
           SET state='revoked',version=$1,revoked_at=$2,updated_at=$2
           WHERE tenant_id=$3 AND project_id=$4`,
         [version, appointment.occurredAt, appointment.tenantId, appointment.projectId]);
-        return { version, state: "revoked" as const };
-      }
-      const payload = json({ appointedBy: appointment.ownerIdentityId, grantsHumanLogin: false,
-        grantsExecutionAuthority: false, permitsSelfApproval: false });
-      if (!head) {
+        outcome = { version, state: "revoked" as const };
+      } else {
+        const payload = json({ appointedBy: appointment.ownerIdentityId, grantsHumanLogin: false,
+          grantsExecutionAuthority: false, permitsSelfApproval: false });
+        if (!head) {
         await tx.query(`INSERT INTO control_project_coordinator_heads
           (tenant_id,project_id,state,coordinator_identity_id,coordinator_actor_type,executor_id,adapter_id,
            connector_profile_digest,execution_binding_digest,assigned_by_owner_identity_id,version,
@@ -1417,11 +1465,11 @@ export class CanonicalStore {
           appointment.coordinatorActorType, appointment.executorId ?? null, appointment.adapterId ?? null,
           appointment.connectorProfileDigest ?? null, input.executionBindingDigest ?? null,
           appointment.ownerIdentityId, appointment.occurredAt, payload]);
-        return { version: 1, state: "active" as const, ...(input.executionBindingDigest
+          outcome = { version: 1, state: "active" as const, ...(input.executionBindingDigest
           ? { executionBindingDigest: input.executionBindingDigest } : {}) };
-      }
-      const version = Number(head.version) + 1;
-      await tx.query(`UPDATE control_project_coordinator_heads
+        } else {
+          const version = Number(head.version) + 1;
+          await tx.query(`UPDATE control_project_coordinator_heads
         SET state='active',coordinator_identity_id=$1,coordinator_actor_type=$2,executor_id=$3,adapter_id=$4,
           connector_profile_digest=$5,execution_binding_digest=$6,assigned_by_owner_identity_id=$7,
           version=$8,revoked_at=NULL,updated_at=$9,payload=$10::jsonb
@@ -1430,29 +1478,157 @@ export class CanonicalStore {
         appointment.adapterId ?? null, appointment.connectorProfileDigest ?? null,
         input.executionBindingDigest ?? null, appointment.ownerIdentityId, version, appointment.occurredAt,
         payload, appointment.tenantId, appointment.projectId]);
-      return { version, state: "active" as const, ...(input.executionBindingDigest
-        ? { executionBindingDigest: input.executionBindingDigest } : {}) };
+          outcome = { version, state: "active" as const, ...(input.executionBindingDigest
+            ? { executionBindingDigest: input.executionBindingDigest } : {}) };
+        }
+      }
+      const receiptWithoutDigest = {
+        schema: "control-room.project-coordinator-lifecycle-receipt/v1" as const,
+        operation: input.operation, tenantId: appointment.tenantId, projectId: appointment.projectId,
+        idempotencyKey: input.idempotencyKey, requestDigest: input.requestDigest,
+        expectedVersion: input.expectedVersion, ...outcome,
+      };
+      const receipt = coordinatorLifecycleReceiptSchemaV1.parse({ ...receiptWithoutDigest,
+        receiptDigest: sha256Digest(receiptWithoutDigest) });
+      await tx.query(`UPDATE control_idempotency SET status='completed',result=$1::jsonb,completed_at=now()
+        WHERE tenant_id=$2 AND operation_scope='project-coordinator-lifecycle' AND idempotency_key=$3
+          AND request_digest=$4 AND status='processing'`,
+      [json(receipt), appointment.tenantId, input.idempotencyKey, input.requestDigest]);
+      return { ...receipt, replayed: false };
     });
   }
 
-  /** Pauses or revokes an owner-authored bounded policy. Every other bound requires a new policy. */
-  async setProjectDelegationPolicyStateV1(input: {
-    tenantId: string; projectId: string; policyId: string; ownerIdentityId: string;
-    toState: "paused" | "active" | "revoked"; occurredAt: string;
-  }): Promise<{ version: number; state: string }> {
+  async findDelegationPolicyLifecycleReceiptV1(input: {
+    tenantId: string; idempotencyKey: string; requestDigest: string;
+  }): Promise<(DelegationPolicyLifecycleReceiptV1 & { replayed: true }) | undefined> {
     return this.#transaction(async (tx) => {
+      const durable = (await tx.query<{ request_digest: string; status: string; result: unknown }>(
+        `SELECT request_digest,status,result FROM control_idempotency
+         WHERE tenant_id=$1 AND operation_scope='project-delegation-policy-lifecycle' AND idempotency_key=$2 FOR UPDATE`,
+        [input.tenantId, input.idempotencyKey])).rows[0];
+      if (!durable) return undefined;
+      if (durable.request_digest !== input.requestDigest || durable.status !== "completed") {
+        failProjectCoordinationV1("policy_replay_conflict");
+      }
+      const receipt = delegationPolicyLifecycleReceiptSchemaV1.safeParse(durable.result);
+      if (!receipt.success) failProjectCoordinationV1("policy_replay_conflict");
+      const { receiptDigest, ...body } = receipt.data;
+      if (receipt.data.tenantId !== input.tenantId || receipt.data.idempotencyKey !== input.idempotencyKey
+        || receipt.data.requestDigest !== input.requestDigest || sha256Digest(body) !== receiptDigest) {
+        failProjectCoordinationV1("policy_replay_conflict");
+      }
+      return { ...receipt.data, replayed: true };
+    });
+  }
+
+  /**
+   * Durably pauses, resumes, or revokes an owner-authored bounded policy. This
+   * is the sibling of the coordinator lifecycle operation on the distinct
+   * `project-delegation-policy-lifecycle` scope of the existing
+   * control_idempotency ledger: atomic claim, locked replay probe, mutation,
+   * completed receipt. An exact retry returns the saved receipt without a
+   * second mutation; a same-key/changed-content retry is refused with
+   * policy_replay_conflict. The already-state outcomes originate here in
+   * PostgreSQL; HTTP code maps them and never invents them.
+   */
+  async setProjectDelegationPolicyStateDurableV1(input: {
+    action: "pause" | "resume" | "revoke";
+    tenantId: string; projectId: string; policyId: string; ownerIdentityId: string;
+    idempotencyKey: string; requestDigest: string; expectedVersion: number;
+    expectedCoordinatorVersion: number; expectedConflictsVersion: number; expectedAttentionVersion: number;
+    occurredAt: string;
+  }): Promise<DelegationPolicyLifecycleReceiptV1 & { replayed: boolean }> {
+    const toState = input.action === "pause" ? "paused" : input.action === "resume" ? "active" : "revoked";
+    const alreadyState = toState === "paused" ? "policy_already_paused"
+      : toState === "active" ? "policy_already_active" : "policy_already_revoked";
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{11,179}$/.test(input.idempotencyKey)
+      || !/^sha256:[a-f0-9]{64}$/.test(input.requestDigest)) failProjectCoordinationV1("invalid_input");
+    if (input.requestDigest !== delegationPolicyLifecycleRequestDigestV1({ action: input.action,
+      tenantId: input.tenantId, projectId: input.projectId, policyId: input.policyId,
+      ownerIdentityId: input.ownerIdentityId, expectedVersion: input.expectedVersion,
+      expectedCoordinatorVersion: input.expectedCoordinatorVersion,
+      expectedConflictsVersion: input.expectedConflictsVersion,
+      expectedAttentionVersion: input.expectedAttentionVersion })) {
+      failProjectCoordinationV1("invalid_input");
+    }
+    return this.#transaction(async (tx) => {
+      const inserted = await tx.query<{ idempotency_key: string }>(`INSERT INTO control_idempotency
+        (tenant_id,operation_scope,idempotency_key,request_digest,status)
+        VALUES($1,'project-delegation-policy-lifecycle',$2,$3,'processing')
+        ON CONFLICT(tenant_id,operation_scope,idempotency_key) DO NOTHING
+        RETURNING idempotency_key`, [input.tenantId, input.idempotencyKey, input.requestDigest]);
+      const replay = inserted.rows.length === 0;
+      const durable = (await tx.query<{ request_digest: string; status: string; result: unknown }>(
+        `SELECT request_digest,status,result FROM control_idempotency
+         WHERE tenant_id=$1 AND operation_scope='project-delegation-policy-lifecycle' AND idempotency_key=$2 FOR UPDATE`,
+        [input.tenantId, input.idempotencyKey])).rows[0];
+      if (!durable || durable.request_digest !== input.requestDigest) {
+        failProjectCoordinationV1("policy_replay_conflict");
+      }
+      if (replay) {
+        // Exact replay answers from the saved receipt before any version
+        // gate: a retry must collect its recorded result even when the
+        // policy has since moved on.
+        if (durable.status !== "completed") failProjectCoordinationV1("policy_replay_conflict");
+        const receipt = delegationPolicyLifecycleReceiptSchemaV1.safeParse(durable.result);
+        if (!receipt.success) failProjectCoordinationV1("policy_replay_conflict");
+        const { receiptDigest, ...receiptBody } = receipt.data;
+        if (receipt.data.action !== input.action || receipt.data.tenantId !== input.tenantId
+          || receipt.data.projectId !== input.projectId || receipt.data.policyId !== input.policyId
+          || receipt.data.ownerIdentityId !== input.ownerIdentityId
+          || receipt.data.idempotencyKey !== input.idempotencyKey
+          || receipt.data.requestDigest !== input.requestDigest
+          || sha256Digest(receiptBody) !== receiptDigest) {
+          failProjectCoordinationV1("policy_replay_conflict");
+        }
+        return { ...receipt.data, replayed: true };
+      }
       await this.#lockOwnerAuthorityV1(tx, { tenantId: input.tenantId, identityId: input.ownerIdentityId,
         projectId: input.projectId, occurredAt: input.occurredAt, action: "policy.set_state" });
       await this.#lockTenantProjectV1(tx, input.tenantId, input.projectId);
-      const policy = (await tx.query<{ state: string; version: string; project_id: string }>(
-        `SELECT state,version::text AS version,project_id FROM control_project_delegation_policies
-         WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, [input.tenantId, input.policyId])).rows[0];
-      if (!policy || policy.project_id !== input.projectId) failProjectCoordinationV1("invalid_input");
+      const policy = (await tx.query<{ state: string; version: string }>(
+        `SELECT state,version::text AS version FROM control_project_delegation_policies
+         WHERE tenant_id=$1 AND id=$2 AND project_id=$3 FOR UPDATE`,
+        [input.tenantId, input.policyId, input.projectId])).rows[0];
+      if (!policy) failProjectCoordinationV1("invalid_input");
+      const complete = async (version: number, state: "active" | "paused" | "revoked",
+        already: typeof alreadyState | undefined) => {
+        const receiptWithoutDigest = {
+          schema: "control-room.project-delegation-policy-lifecycle-receipt/v1" as const,
+          action: input.action, tenantId: input.tenantId, projectId: input.projectId,
+          policyId: input.policyId, ownerIdentityId: input.ownerIdentityId,
+          idempotencyKey: input.idempotencyKey, requestDigest: input.requestDigest,
+          expectedVersion: input.expectedVersion, version, state,
+          ...(already ? { alreadyState: already } : {}),
+        };
+        const receipt = delegationPolicyLifecycleReceiptSchemaV1.parse({ ...receiptWithoutDigest,
+          receiptDigest: sha256Digest(receiptWithoutDigest) });
+        await tx.query(`UPDATE control_idempotency SET status='completed',result=$1::jsonb,completed_at=now()
+          WHERE tenant_id=$2 AND operation_scope='project-delegation-policy-lifecycle' AND idempotency_key=$3
+            AND request_digest=$4 AND status='processing'`,
+        [json(receipt), input.tenantId, input.idempotencyKey, input.requestDigest]);
+        return { ...receipt, replayed: false as const };
+      };
+      // Only an exact saved-receipt replay (handled above) may bypass the
+      // version guard: a fresh key with a stale expected version is refused
+      // even when the policy already names the target state. The
+      // already-state outcome is for a caller whose view is current.
+      if (policy.state === toState && Number(policy.version) !== input.expectedVersion) {
+        failProjectCoordinationV1("policy_version_stale");
+      }
+      if (policy.state === toState) {
+        // Already in the target state on first execution: no mutation, the
+        // recorded receipt carries the canonical already-state outcome.
+        return complete(Number(policy.version), toState, alreadyState);
+      }
       if (policy.state === "revoked") failProjectCoordinationV1("policy_revoked");
+      if (Number(policy.version) !== input.expectedVersion) {
+        failProjectCoordinationV1("policy_version_stale");
+      }
       const version = Number(policy.version) + 1;
       await tx.query(`UPDATE control_project_delegation_policies SET state=$1,version=$2,updated_at=$3
-        WHERE tenant_id=$4 AND id=$5`, [input.toState, version, input.occurredAt, input.tenantId, input.policyId]);
-      return { version, state: input.toState };
+        WHERE tenant_id=$4 AND id=$5`, [toState, version, input.occurredAt, input.tenantId, input.policyId]);
+      return complete(version, toState, undefined);
     });
   }
 

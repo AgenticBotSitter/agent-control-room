@@ -15,10 +15,11 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations 0001-0076, including generic external-content
+// Generated from public migrations 0001-0079, including generic external-content
 // migrations 0025/0026. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "bae881d90c8081cdc3e56062b8228bf623258a8057e902b5cb74e739dabce682";
+export const privateWebSchemaDigest = "8afef984bba796f041d4ae69555807d9853fa0970a2b98f531eb182b3abfbe17";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
+  "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
   "control_news_story_versions", "control_news_source_observations", "control_news_source_settings", "control_news_story_archives", "control_news_article_details",
   "control_idea_sessions", "control_idea_contributions", "control_idea_syntheses", "control_idea_decisions", "control_idea_bot_run_events",
@@ -29,12 +30,20 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_artifact_manifests", "control_native_artifact_receipts", "control_completion_gate_records", "control_completion_gate_integrity", "control_web_task_review_commands", "control_native_review_plans",
   "control_project_coordinator_heads", "control_project_coordination_proposals", "control_project_delegation_policies",
   "control_project_coordination_operation_receipts", "control_project_coordination_operation_jobs",
-  "control_work_resources", "control_attempt_resource_admissions", "control_attempt_resource_scopes"] as const;
+  "control_work_resources", "control_attempt_resource_admissions", "control_attempt_resource_scopes",
+  "control_durable_result_write_reservations"] as const;
 const inserts = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
   "control_jobs", "control_web_task_commands", "control_completion_gate_records", "control_web_task_review_commands", "control_news_source_settings", "control_news_story_archives",
   "control_policy_decisions", "control_project_lifecycle_events", "control_project_coordinator_heads",
   "control_project_delegation_policies"]);
+
+/** Tables whose INSERT grant is column-scoped rather than table-wide. Every
+ * listed column must carry INSERT and every unlisted column must not — a
+ * table-wide INSERT grant on one of these tables fails the check. */
+export const privateWebInsertColumns: Record<string, readonly string[]> = {
+  control_idempotency: ["tenant_id", "operation_scope", "idempotency_key", "request_digest", "status"],
+};
 const updates: Record<string, readonly string[]> = {
   control_identities: ["web_lock"], control_role_grants: ["web_lock"], workspaces: ["web_lock"],
   control_connection_registry_heads: ["web_lock"], control_web_sessions: ["revoked_at"],
@@ -47,6 +56,8 @@ const updates: Record<string, readonly string[]> = {
     "connector_profile_digest", "execution_binding_digest", "assigned_by_owner_identity_id", "version",
     "assigned_at", "updated_at", "revoked_at", "payload"],
   control_project_delegation_policies: ["state", "version", "updated_at"],
+  control_idempotency: ["status", "result", "completed_at"],
+  tenants: ["coordinator_lock"],
 };
 const fail = () => { throw new Error("private_database_preflight_failed"); };
 const ideaCreationReads = ["workspaces", "control_identities", "control_role_grants", "control_web_sessions",
@@ -131,15 +142,18 @@ const evidenceReads = ["workspaces", "control_identities", "control_role_grants"
   "control_native_delivery_envelopes", "control_native_transmission_intents", "control_native_delivery_receipts",
   "control_task_execution_plans", "control_codex_activation_transmission_intents", "control_codex_result_publications",
   "control_artifact_manifests", "control_native_artifact_receipts", "control_native_result_write_reservations",
+  "control_durable_result_write_reservations",
   "audit_events", "control_audit_chain_heads"];
 const evidenceInserts = new Set(["control_harness_runs", "control_harness_run_events", "control_codex_result_publications", "control_artifact_manifests",
-  "control_native_artifact_receipts", "control_native_result_write_reservations", "audit_events", "control_audit_chain_heads"]);
+  "control_native_artifact_receipts", "control_native_result_write_reservations",
+  "control_durable_result_write_reservations", "audit_events", "control_audit_chain_heads"]);
 const evidenceUpdates: Record<string, readonly string[]> = {
   control_jobs: ["result_lock"], control_attempts: ["evidence_lock"], control_leases: ["evidence_lock"],
   projects: ["coordinator_lock"], control_manual_project_heads: ["coordinator_lock"],
   control_nodes: ["coordinator_lock"], control_node_keys: ["coordinator_lock"],
   control_harness_runs: ["state", "last_sequence", "run_digest", "run_auth_tag", "payload", "updated_at", "last_observed_at"],
   control_native_result_write_reservations: ["state", "contract_digest", "reservation", "auth_tag", "updated_at"],
+  control_durable_result_write_reservations: ["state", "contract_digest", "reservation", "auth_tag", "updated_at"],
   control_audit_chain_heads: ["head_hash", "event_count", "updated_at"],
 };
 const sessionReads = ["workspaces", "control_identities", "control_role_grants", "control_nodes", "control_node_keys",
@@ -319,8 +333,12 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
         FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid
         WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','f') AND a.attnum>0 AND NOT a.attisdropped`)).rows;
       const reads: ReadonlySet<string> = new Set(allowedReads);
+      // Column-scoped INSERT grants (currently the web role's idempotency
+      // ledger): listed columns must carry INSERT, unlisted must not.
+      const scopedInserts = kind === "web" ? privateWebInsertColumns : {};
       if (!columns.length || columns.some(c => c.extra || c.read !== reads.has(c.table_name)
-        || c.insert !== allowedInserts.has(c.table_name) || c.update !== !!allowedUpdates[c.table_name]?.includes(c.column_name))) fail();
+        || c.insert !== (allowedInserts.has(c.table_name) || !!scopedInserts[c.table_name]?.includes(c.column_name))
+        || c.update !== !!allowedUpdates[c.table_name]?.includes(c.column_name))) fail();
       if (await readPrivateWebSchemaDigest(tx) !== privateWebSchemaDigest) fail();
       const binding = (await tx.query<{ valid: boolean }>(`SELECT EXISTS(SELECT 1 FROM workspaces w
         JOIN control_identities i ON i.tenant_id=w.tenant_id JOIN control_role_grants g ON g.tenant_id=i.tenant_id AND g.identity_id=i.id

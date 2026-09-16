@@ -53,21 +53,12 @@ async function issueFor(api, repository, number) {
 }
 
 async function activePairExists(api, repository, value, excludeIssue) {
-  for (let page = 1; page <= 10; page++) {
-    const issues = await api.request("GET", `/repos/${repository}/issues?state=open&labels=status%3Aworking&per_page=100&page=${page}`);
-    if (!Array.isArray(issues)) throw new Error("claim_controller_api_invalid");
-    for (const issue of issues) {
-      if (issue?.pull_request || !Number.isSafeInteger(issue?.number) || issue.number === excludeIssue) continue;
-      const pair = ` actor=${value.actor} worker=${value.workerId} `;
-      if ((await commentsFor(api, repository, issue.number)).some(comment => comment?.user?.login === "github-actions[bot]"
-        && comment?.user?.type === "Bot" && typeof comment.body === "string"
-        && comment.body.startsWith("CLAIM ACCEPTED —")
-        && (comment.body.includes(MARKER_PREFIX) || comment.body.includes(MARKER_PREFIX.replace(":v2", ":v3")))
-        && comment.body.includes(pair))) return true;
-    }
-    if (issues.length < 100) return false;
-  }
-  throw new Error("claim_controller_working_set_ambiguous");
+  const held = (await pairClaims(api, repository, value.actor, value.workerId))
+    .filter(entry => entry.issue !== excludeIssue);
+  if (held.some(entry => entry.status === "changes-required")) return "corrections_first";
+  if (held.length >= MAX_TOTAL_ASSIGNMENTS) return "assignment_limit";
+  if (held.filter(entry => entry.status === "working").length >= MAX_ACTIVE_WORKING) return "working_limit";
+  return undefined;
 }
 
 function isReady(issue) {
@@ -140,29 +131,56 @@ export async function runClaimController({ event, repository, api }) {
 
   const value = { issueNumber: event.issue.number, requestId, actor, workerId: request.workerId };
   const current = await issueFor(api, repository, value.issueNumber);
-  if (!isReady(current)) return Object.freeze({ status: "refused", reason: "issue_not_ready" });
-  if (liveAcceptedHistory(await commentsFor(api, repository, value.issueNumber), value.issueNumber))
-    return Object.freeze({ status: "refused", reason: "accepted_history_requires_release" });
-  if (await activePairExists(api, repository, value)) return Object.freeze({ status: "refused", reason: "actor_worker_pair_active" });
-  const now = Date.now();
-  const packet = parseClaimPacket(current.body);
-  if (!packet) return Object.freeze({ status: "refused", reason: "packet_invalid" });
-  if (packet.effects !== "none") return Object.freeze({ status: "refused", reason: "packet_effectful" });
-  if (!(await dependenciesComplete(api, repository, packet)))
-    return Object.freeze({ status: "refused", reason: "dependencies_incomplete" });
-  const held = await pairClaims(api, repository, actor, request.workerId);
-  if (held.filter(entry => entry.status === "working").length >= MAX_ACTIVE_WORKING)
-    return Object.freeze({ status: "refused", reason: "working_limit" });
+  // Cheap ready check first (mirrors the controller pre-extraction gate order:
+  // a non-ready issue must refuse before any further GETs, so callers can
+  // wire minimal mocks). The same predicate is exported for discovery/health,
+  // so no admission decision here can diverge from the evaluator's.
+  if (!sharedIsReady(current)) return Object.freeze({ status: "refused", reason: "issue_not_ready" });
+  const comments = await commentsFor(api, repository, value.issueNumber);
+  // Per-worker capacity/pair gate (controller-specific). Computed before the
+  // shared global admission verdict because the controller treats it as a
+  // pre-reservation precondition; discovery/health have no worker context.
+  const capacityRefusal = await activePairExists(api, repository, value);
+  if (capacityRefusal) return Object.freeze({ status: "refused", reason: capacityRefusal });
+  // Verified Working/In-review scope locks. Read once per run. legacy and
+  // mismatched fail closed here so the shared evaluator only ever sees scopes
+  // it can prove; the verified scopes feed the shared scope_overlap check.
   const locks = await verifiedLockScopes(api, repository, value.issueNumber);
   if (locks.legacy.length > 0)
     return Object.freeze({ status: "refused", reason: "legacy_lock_manual", issues: locks.legacy });
   if (locks.mismatched.length > 0)
     return Object.freeze({ status: "refused", reason: "lock_packet_changed", issues: locks.mismatched });
-  if (locks.scopes.some(scope => packet.writeScopes.some(own => scopesOverlap(own, scope))))
-    return Object.freeze({ status: "refused", reason: "scope_overlap" });
-  const ref = await api.request("GET", `/repos/${repository}/git/ref/heads/main`);
-  const baseSha = ref?.object?.sha;
-  if (typeof baseSha !== "string" || !/^[a-f0-9]{40}$/.test(baseSha)) throw new Error("claim_controller_api_invalid");
+  // Observe main before calling the shared evaluator so the verdict can verify base.
+  const observed = await observeMainBase({ api, repository });
+  const baseSha = observed.baseSha;
+  const packet = parseClaimPacket(current.body);
+  // Shared global admission verdict (the ONE function used by both the
+  // controller and the discovery/health scripts). The function performs only
+  // HTTP GETs (no POST/PATCH/DELETE, no label or comment mutations) and
+  // mirrors the controller's gate order for ready → history → packet →
+  // effects → dependencies → scope → base. Pair/capacity/locks stay in the
+  // controller; the verdict surfaces them as explicit "unknown" markers so
+  // no report can present global admission as proof of fit.
+  const verdict = await evaluateAdmissionDecision({
+    issue: current, comments, packet, api, repository,
+    baseSha, knownLocks: locks.scopes, observedAt: observed.observedAt,
+  });
+  if (verdict.outcome === "refuse") {
+    // Map the shared verdict reason back to the controller's refusal shape.
+    // The base_unknown outcome means the main ref itself is unreadable — the
+    // controller surfaces that as a hard API invalid (the same shape the
+    // pre-extraction code threw), so callers see identical behavior.
+    if (verdict.reason === "base_unknown") throw new Error("claim_controller_api_invalid");
+    return Object.freeze({ status: "refused", reason: verdict.reason });
+  }
+  // Per-worker working-cap recheck (controller-specific). Discovery/health
+  // do not call this. Runs after the shared global verdict because the
+  // controller's gate ordering treats global admission as a precondition
+  // and only then re-verifies the working-state cap.
+  const held = await pairClaims(api, repository, actor, request.workerId);
+  if (held.filter(entry => entry.status === "working").length >= MAX_ACTIVE_WORKING)
+    return Object.freeze({ status: "refused", reason: "working_limit" });
+  const now = Date.now();
   const originalLabels = normalizedLabels(current);
   const nextLabels = workingLabels(originalLabels);
   let transitionLabels = nextLabels;
@@ -268,11 +286,13 @@ export async function runClaimController({ event, repository, api }) {
  * with an exact issue reference. */
 
 export const PACKET_PREFIX = "<!-- acr-public-work:v1";
-const PACKET_PATTERN = /<!--\s*acr-public-work:v1\s*(\{.*?\})\s*-->/s;
+const PACKET_PATTERN = /<!--\s*acr-public-work:v1\s*(\{.*?\})\s*-->/gs;
+const PACKET_MARKER_PATTERN = /<!--\s*acr-public-work:v1\b/g;
 const SHA40 = /^[a-f0-9]{40}$/;
 const MAX_LEASE_HOURS = 720;
-export const MAX_ACTIVE_WORKING = 1;
-export const MAX_ACTIVE_IN_REVIEW = 2;
+export const MAX_ACTIVE_WORKING = 2;
+export const MAX_TOTAL_ASSIGNMENTS = 5;
+export const MAX_ACTIVE_IN_REVIEW = 5;
 
 function isPlainObject(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -319,14 +339,76 @@ export function packetsOverlap(pa, pb) {
 
 const PACKET_EFFECTS = new Set(["none", "filesystem", "network"]);
 
+// JSON.parse silently keeps the last value for a duplicate object key. That
+// is unsafe for an authority packet because the text a reviewer reads can
+// disagree with the value the controller uses. This scanner runs only after
+// JSON.parse has established valid JSON and compares decoded key names, so
+// escaped spellings such as "eff\u0065cts" cannot bypass the duplicate check.
+function hasDuplicateJsonObjectKeys(source) {
+  let index = 0;
+  const whitespace = () => { while (/\s/.test(source[index] ?? "")) index += 1; };
+  const string = () => {
+    const start = index++;
+    while (index < source.length) {
+      if (source[index] === "\\") { index += 2; continue; }
+      if (source[index++] === '"') return JSON.parse(source.slice(start, index));
+    }
+    return undefined;
+  };
+  const value = (depth = 0) => {
+    if (depth > 32) return true;
+    whitespace();
+    if (source[index] === "{") return object(depth + 1);
+    if (source[index] === "[") {
+      index += 1; whitespace();
+      if (source[index] === "]") { index += 1; return false; }
+      while (index < source.length) {
+        if (value(depth + 1)) return true;
+        whitespace();
+        if (source[index] === "]") { index += 1; return false; }
+        index += 1;
+      }
+      return false;
+    }
+    if (source[index] === '"') { string(); return false; }
+    while (index < source.length && !/[\s,\]}]/.test(source[index])) index += 1;
+    return false;
+  };
+  const object = depth => {
+    index += 1; whitespace();
+    const keys = new Set();
+    if (source[index] === "}") { index += 1; return false; }
+    while (index < source.length) {
+      whitespace();
+      const key = string();
+      if (keys.has(key)) return true;
+      keys.add(key);
+      whitespace(); index += 1;
+      if (value(depth)) return true;
+      whitespace();
+      if (source[index] === "}") { index += 1; return false; }
+      index += 1;
+    }
+    return false;
+  };
+  return value(0);
+}
+
 /** Parse and strictly validate the work packet; undefined means unusable. */
 export function parseClaimPacket(body) {
   if (typeof body !== "string" || body.length > 65536) return undefined;
-  const match = PACKET_PATTERN.exec(body);
-  if (!match) return undefined;
+  if ([...body.matchAll(PACKET_MARKER_PATTERN)].length !== 1) return undefined;
+  const matches = [...body.matchAll(PACKET_PATTERN)];
+  if (matches.length !== 1) return undefined;
+  const match = matches[0];
   let raw;
   try { raw = JSON.parse(match[1]); } catch { return undefined; }
+  try {
+    if (hasDuplicateJsonObjectKeys(match[1])) return undefined;
+  } catch { return undefined; }
   if (!isPlainObject(raw)) return undefined;
+  const allowedKeys = ["base", "checks", "dependencies", "effects", "leaseHours", "risk", "target", "writeScopes"];
+  if (Object.keys(raw).sort().join("\n") !== allowedKeys.join("\n")) return undefined;
   const { target, base, writeScopes, dependencies, checks, risk, effects, leaseHours } = raw;
   if (target !== "main" || typeof base !== "string" || !SHA40.test(base)) return undefined;
   if (!Array.isArray(writeScopes) || writeScopes.length === 0
@@ -369,6 +451,39 @@ export function parseClaimCommand(body) {
   const sha = SUBMIT_SHA_LINE.exec(lines[3]);
   if (!pr || !sha) return undefined;
   return Object.freeze({ command, workerId: worker[1], pr: Number(pr[1]), sha: sha[1] });
+}
+
+const COMMAND_EXAMPLES = Object.freeze({
+  "CLAIM REQUEST": "CLAIM REQUEST\nworker-id: YOUR-STABLE-WORKER-ID",
+  "CLAIM RENEW": "CLAIM RENEW\nworker-id: YOUR-STABLE-WORKER-ID",
+  "CLAIM RELEASE": "CLAIM RELEASE\nworker-id: YOUR-STABLE-WORKER-ID",
+  "CLAIM SUBMIT": `CLAIM SUBMIT\nworker-id: YOUR-STABLE-WORKER-ID\npr: PULL-REQUEST-NUMBER\nsha: EXACT-40-CHARACTER-COMMIT`,
+});
+
+/** A completed workflow is not the same thing as an accepted command. */
+export function formatClaimResult(result, attemptedBody) {
+  if (!result || result.status === "accepted" || result.status === "renewed"
+    || result.status === "submitted" || result.status === "released") return undefined;
+  const header = typeof attemptedBody === "string" ? attemptedBody.replace(/\r\n/g, "\n").split("\n")[0] : "";
+  if (result.status === "ignored") {
+    const example = COMMAND_EXAMPLES[header] ?? COMMAND_EXAMPLES["CLAIM REQUEST"];
+    return ["CLAIM COMMAND NOT APPLIED — the command format is invalid.", "",
+      "Copy the exact format below. Field names are lowercase and extra lines are not allowed:", "",
+      "```text", example, "```", "",
+      "A green Actions run means only that the controller completed safely. Work may begin only after a separate `CLAIM ACCEPTED` comment appears and the issue says `status:working`."].join("\n");
+  }
+  if (result.status !== "refused") return undefined;
+  const attempted = parseClaimCommand(attemptedBody);
+  const requestOwner = attempted?.workerId
+    ? `This refusal concerns only this command using worker identity \`${attempted.workerId}\`; it does not cancel or replace any existing accepted claim.`
+    : "This refusal concerns only this command; it does not cancel or replace any existing accepted claim.";
+  const affected = Array.isArray(result.issues) && result.issues.length
+    ? ` Affected issues: ${result.issues.map(number => `#${number}`).join(", ")}.` : "";
+  return ["CLAIM NOT ACCEPTED — no work reservation was created.", "",
+    `Reason: \`${result.reason ?? "unspecified"}\`.${affected}`, "",
+    requestOwner, "",
+    "Do not start work or retry unchanged. Read the issue's latest controller comment or ask the maintainer to correct the named blocker.",
+    "A green Actions run means only that the controller completed safely; it does not mean this claim was accepted."].join("\n");
 }
 
 const MARKER_V2 = "<!-- agent-control-room-claim:v2";
@@ -479,7 +594,7 @@ const liveAcceptedMarkers = (comments, issueNumber) => {
 /** Locked path scopes from other Working and In-review packets with verified marker identity.
  * Packet-less legacy locks and locks whose current packet drifted from the accepted
  * marker fail closed instead of being collected and ignored. */
-async function verifiedLockScopes(api, repository, excludeIssue) {
+export async function verifiedLockScopes(api, repository, excludeIssue) {
   const scopes = [];
   const legacy = [];
   const mismatched = [];
@@ -527,19 +642,29 @@ async function verifiedLockScopes(api, repository, excludeIssue) {
   return Object.freeze({ scopes, legacy: sorted(legacy), mismatched: sorted(mismatched) });
 }
 
-/** Active reservations held by one login-and-worker pair across Working and In-review. */
+/** Count retained ownership, not just builds: review/corrections cannot hide capacity. */
 async function pairClaims(api, repository, actor, workerId) {
   const active = [];
-  for (const status of ["working", "in-review"]) {
+  const seen = new Set();
+  for (const status of ["working", "in-review", "re-review", "changes-required", "waiting", "paused", "needs-decision"]) {
     for (const issue of await issuesByStatus(api, repository, status)) {
+      if (seen.has(issue.number)) continue;
       const comments = await commentsFor(api, repository, issue.number);
       let held = false;
       let submitted = false;
       for (const comment of comments) {
+        if (comment?.user?.login !== "github-actions[bot]" || comment?.user?.type !== "Bot") continue;
         const parsed = parseClaimMarker(comment.body);
-        if (!parsed || parsed.actor !== actor || parsed.worker !== workerId) continue;
+        if (!parsed || parsed.issue !== issue.number || parsed.actor !== actor || parsed.worker !== workerId) continue;
         if (comment.body.startsWith("CLAIM RELEASED —")) continue;
-        if (clearedByReleaseOrExpiry(comments, issue.number, actor, workerId, comment.id)) continue;
+        // Expiry stops execution but does not free capacity when an open PR or
+        // ambiguous work is retained. Quiet expiry returns Ready (not enumerated).
+        if (comments.some(other => other.id > comment.id
+          && other?.user?.login === "github-actions[bot]" && other?.user?.type === "Bot"
+          && (other.body?.startsWith("CLAIM RELEASED —") ||
+            (other.body?.startsWith("CLAIM EXPIRED —") && parseExpiredMarker(other.body)?.action === "ready"))
+          && other.body.includes(`issue=${issue.number} `)
+          && other.body.includes(`actor=${actor} worker=${workerId} `))) continue;
         if (comment.body.startsWith("CLAIM SUBMITTED —")) {
           submitted = true;
           continue;
@@ -548,6 +673,7 @@ async function pairClaims(api, repository, actor, workerId) {
           held = true;
       }
       if (held) {
+        seen.add(issue.number);
         active.push({ issue: issue.number, status, submitted });
       }
     }
@@ -816,7 +942,8 @@ export async function runClaimSubmit({ event, repository, api, now = Date.now() 
   const lease = leaseStatus(record, packet, now);
   if (lease !== "active") return Object.freeze({ status: "refused", reason: lease });
   const claims = await pairClaims(api, repository, actor, command.workerId);
-  if (claims.filter(entry => entry.status === "in-review" || entry.submitted).length >= MAX_ACTIVE_IN_REVIEW)
+  if (claims.filter(entry => entry.issue !== value.issueNumber &&
+    (entry.status === "in-review" || entry.status === "re-review" || entry.submitted)).length >= MAX_ACTIVE_IN_REVIEW)
     return Object.freeze({ status: "refused", reason: "in_review_limit" });
   const bound = await prMatches(packetHash(packet), record.marker.accepted ?? now);
   if (!bound) return Object.freeze({ status: "refused", reason: "pr_binding_invalid" });
@@ -1044,7 +1171,7 @@ const parsePair = pair => {
 const EXPIRED_MARKER_PATTERN = /<!--\s*agent-control-room-claim:v3\s+issue=(\d+)\s+expired=(\d+)\s+action=([a-z-]+)(?:\s+reason=([a-z_]+))?(?:\s+actor=([^\s]+)\s+worker=([^\s]+))?(?:\s+packet=([a-f0-9]{64}))?\s*-->/;
 
 /** Read-only parse of expiry markers; only open-PR expiries carry a packet hash. */
-const parseExpiredMarker = body => {
+export const parseExpiredMarker = body => {
   if (typeof body !== "string") return undefined;
   const match = EXPIRED_MARKER_PATTERN.exec(body);
   if (!match) return undefined;
@@ -1153,6 +1280,148 @@ const clearedByReleaseOrExpiry = (comments, issueNumber, actor, worker, afterId 
   && other.body.includes(`issue=${issueNumber} `)
   && other.body.includes(`actor=${actor} worker=${worker} `));
 
+/* ---- Shared admission function (global pre-reservation gates).
+ *
+ * Both the controller (runClaimController) and the discovery/health scripts
+ * (scripts/public-worker-inbox.mjs, scripts/public-queue-health.mjs) MUST call
+ * this same function so their classification cannot drift. Per-worker fit
+ * (pair/capacity) stays in the controller — the shared verdict reports fit as
+ * explicit "unknown" markers so no global admission can be misread as proof
+ * of fit. Scope locks are supplied by the caller from the controller's
+ * verified Working/In-review lock reader.
+ *
+ * Performs ONLY HTTP GETs through the caller's `api.request` adapter.
+ * No POSTs, no label mutations, no comment writes — discovery never assigns. */
+
+const SHARED_MARKER_V2 = "<!-- agent-control-room-claim:v2";
+const SHARED_MARKER_V3 = "<!-- agent-control-room-claim:v3";
+
+/** Mirrors the controller's exact label extraction; same name to keep call sites aligned. */
+export function sharedLabelNames(issue) {
+  return Array.isArray(issue?.labels) ? issue.labels.map(label =>
+    typeof label === "string" ? label : label?.name).filter(value => typeof value === "string") : [];
+}
+
+/** Exact controller Ready predicate. */
+export function sharedIsReady(issue) {
+  const statuses = sharedLabelNames(issue).filter(label => label.startsWith("status:"));
+  return issue?.state === "open" && !issue?.pull_request && statuses.length === 1 && statuses[0] === "status:ready";
+}
+
+/** Mirrors the controller's `liveAcceptedHistory` so discovery sees the same definition. */
+export function sharedLiveAcceptedHistory(comments, issueNumber) {
+  let latest = 0;
+  let live = false;
+  for (const comment of (Array.isArray(comments) ? comments : [])) {
+    if (comment?.user?.login !== "github-actions[bot]" || comment?.user?.type !== "Bot"
+      || typeof comment.body !== "string" || !Number.isSafeInteger(comment?.id)) continue;
+    const clearing = (comment.body.startsWith("CLAIM RELEASED —") || comment.body.startsWith("CLAIM EXPIRED —"))
+      && comment.body.includes(`issue=${issueNumber} `);
+    const accepting = (comment.body.startsWith("CLAIM ACCEPTED —") || comment.body.startsWith("CLAIM RENEWED —"))
+      && (comment.body.includes(`${SHARED_MARKER_V2} issue=${issueNumber} `)
+        || comment.body.includes(`${SHARED_MARKER_V3} issue=${issueNumber} `));
+    if ((clearing || accepting) && comment.id > latest) {
+      latest = comment.id;
+      live = accepting;
+    }
+  }
+  return live;
+}
+
+/** Exact controller dependency predicate: closed + not not_planned + status:done. */
+export async function sharedDependencyIssueComplete({ api, repository, number }) {
+  if (!api || typeof api.request !== "function" || typeof repository !== "string"
+    || !Number.isSafeInteger(number)) return false;
+  const issue = await api.request("GET", `/repos/${repository}/issues/${number}`);
+  if (!issue || issue.pull_request || issue.state !== "closed") return false;
+  if (issue.state_reason === "not_planned") return false;
+  if (!sharedLabelNames(issue).includes("status:done")) return false;
+  return true;
+}
+
+export async function sharedDependenciesCompleteDetailed({ api, repository, packet }) {
+  if (!packet || !Array.isArray(packet.dependencies)) return false;
+  for (const dep of packet.dependencies) {
+    if (!(await sharedDependencyIssueComplete({ api, repository, number: dep }))) return false;
+  }
+  return true;
+}
+
+/**
+ * Global admission verdict for one Ready issue, in the controller's gate order:
+ * ready → accepted-history → packet → effects → dependencies → scope → base.
+ * Pair/capacity/locks are per-worker fit and are NOT decided here; when the
+ * caller cannot supply them they are returned as explicit "unknown" markers so
+ * no report can present global admission as proof of fit.
+ *
+ * NOTE: This is the ONE shared admission function. Both the controller and
+ * the discovery/health scripts MUST call this. It performs only HTTP GETs.
+ */
+export async function evaluateAdmissionDecision({
+  issue, comments = [], api, repository, packet, baseSha, knownLocks,
+  observedAt = new Date().toISOString(),
+}) {
+  const base = { observedAt, observedBase: typeof baseSha === "string" ? baseSha : "" };
+  const unknownFit = { capacity: "unknown", pair: "unknown",
+    locks: knownLocks === undefined ? "unknown" : "checked" };
+  if (!issue || !Number.isSafeInteger(issue?.number)) {
+    return Object.freeze({ outcome: "refuse", reason: "issue_unknown", ...base, ...unknownFit });
+  }
+  if (!sharedIsReady(issue)) {
+    return Object.freeze({ outcome: "refuse", reason: "issue_not_ready", issue: issue.number, ...base, ...unknownFit });
+  }
+  if (sharedLiveAcceptedHistory(comments, issue.number)) {
+    return Object.freeze({ outcome: "refuse", reason: "accepted_history_requires_release",
+      issue: issue.number, ...base, ...unknownFit });
+  }
+  if (!packet) {
+    return Object.freeze({ outcome: "refuse", reason: "packet_invalid", issue: issue.number, ...base, ...unknownFit });
+  }
+  if (packet.effects !== "none") {
+    return Object.freeze({ outcome: "refuse", reason: "packet_effectful", issue: issue.number, ...base, ...unknownFit });
+  }
+  const depsOk = (api && typeof api.request === "function" && typeof repository === "string")
+    ? await sharedDependenciesCompleteDetailed({ api, repository, packet })
+    : false;
+  if (!depsOk) {
+    return Object.freeze({ outcome: "refuse", reason: "dependencies_incomplete",
+      issue: issue.number, ...base, ...unknownFit });
+  }
+  if (knownLocks !== undefined) {
+    const locks = Array.isArray(knownLocks) ? knownLocks : [];
+    if (locks.some(scope => (packet.writeScopes ?? []).some(own => scopesOverlap(own, scope)))) {
+      return Object.freeze({ outcome: "refuse", reason: "scope_overlap",
+        issue: issue.number, ...base, ...unknownFit });
+    }
+  }
+  if (typeof baseSha !== "string" || !/^[a-f0-9]{40}$/.test(baseSha)) {
+    return Object.freeze({ outcome: "refuse", reason: "base_unknown", issue: issue.number, ...base, ...unknownFit });
+  }
+  if (packet.base !== baseSha) {
+    return Object.freeze({ outcome: "refuse", reason: "packet_base_stale", issue: issue.number, ...base,
+      packetBase: packet.base, ...unknownFit });
+  }
+  return Object.freeze({ outcome: "admit", issue: issue.number, ...base, globalOnly: true,
+    packet, ...unknownFit });
+}
+
+/** Bounded observation helper: returns the current `main` SHA. Throws on missing base. */
+export async function observeMainBase({ api, repository, observedAt = new Date().toISOString() }) {
+  if (!api || typeof api.request !== "function" || typeof repository !== "string") {
+    throw new Error("admission_evaluator_observation_invalid");
+  }
+  const ref = await api.request("GET", `/repos/${repository}/git/ref/heads/main`);
+  const sha = ref?.object?.sha;
+  if (typeof sha !== "string" || !/^[a-f0-9]{40}$/.test(sha)) {
+    throw new Error("admission_evaluator_base_unavailable");
+  }
+  return Object.freeze({ baseSha: sha, observedAt });
+}
+
+export const __sharedAdmissionTest = Object.freeze({
+  SHARED_MARKER_V2, SHARED_MARKER_V3,
+});
+
 function githubApi(token) {
   return Object.freeze({ async request(method, path, body) {
     const response = await fetch(`https://api.github.com${path}`, { method,
@@ -1174,10 +1443,14 @@ if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).
     process.stdout.write(`${JSON.stringify(result)}\n`);
   } else {
     const event = JSON.parse(await readFile(eventPath, "utf8"));
+    const api = githubApi(token);
     const command = parseClaimCommand(event?.comment?.body)?.command ?? "";
     const runner = { "CLAIM REQUEST": runClaimController, "CLAIM RENEW": runClaimRenew,
       "CLAIM SUBMIT": runClaimSubmit, "CLAIM RELEASE": runClaimRelease }[command] ?? runClaimController;
-    const result = await runner({ event, repository, api: githubApi(token) });
+    const result = await runner({ event, repository, api });
+    const notice = formatClaimResult(result, event?.comment?.body);
+    if (notice && Number.isSafeInteger(event?.issue?.number) && event.issue.number > 0)
+      await api.request("POST", `/repos/${repository}/issues/${event.issue.number}/comments`, { body: notice });
     process.stdout.write(`${JSON.stringify(result)}\n`);
   }
 }

@@ -188,8 +188,11 @@ test("an owner appoints, replaces and revokes a coordinator without granting log
   const f = await fixture();
   try {
     const coordinators = new ProjectCoordinatorServiceV1(f.canonical);
-    assert.deepEqual(await coordinators.appoint(appointment()),
-      { version: 1, state: "active", executionBindingDigest: projectCoordinatorExecutionBindingDigestV1(agentBinding()) });
+    const appointed = await coordinators.appoint(appointment(), "coordinator-appoint-one", 0);
+    assert.equal(appointed.version, 1);
+    assert.equal(appointed.state, "active");
+    assert.equal(appointed.replayed, false);
+    assert.equal(appointed.executionBindingDigest, projectCoordinatorExecutionBindingDigestV1(agentBinding()));
 
     // The appointment creates no identity, session, role grant or policy decision
     // for the coordinator: it can propose and plan, never log in.
@@ -200,12 +203,15 @@ test("an owner appoints, replaces and revokes a coordinator without granting log
       assert.equal(rows.rows[0]?.count, "0", table);
     }
 
-    const replaced = await coordinators.replace(appointment({ coordinatorIdentityId: "identity:agent-two" }));
+    const replaced = await coordinators.replace(appointment({ coordinatorIdentityId: "identity:agent-two" }),
+      "coordinator-replace-two", 1);
     assert.equal(replaced.version, 2);
-    const revoked = await coordinators.revoke(appointment({ coordinatorIdentityId: "identity:agent-two" }));
-    assert.deepEqual(revoked, { version: 3, state: "revoked" });
+    const revoked = await coordinators.revoke(appointment({ coordinatorIdentityId: "identity:agent-two" }),
+      "coordinator-revoke-three", 2);
+    assert.equal(revoked.version, 3);
+    assert.equal(revoked.state, "revoked");
     // A revoked row remains and its next assignment increments the same head version.
-    assert.equal((await coordinators.appoint(appointment())).version, 4);
+    assert.equal((await coordinators.appoint(appointment(), "coordinator-reappoint-four", 3)).version, 4);
     const head = await f.raw.query<{ state: string; version: string; coordinator_identity_id: string }>(
       "SELECT state,version::text AS version,coordinator_identity_id FROM control_project_coordinator_heads");
     assert.deepEqual(head.rows, [{ state: "active", version: "4", coordinator_identity_id: "identity:agent" }]);
@@ -213,25 +219,88 @@ test("an owner appoints, replaces and revokes a coordinator without granting log
     // A human coordinator has no execution binding at all.
     await coordinators.appoint(appointment({ coordinatorIdentityId: "identity:human-coordinator",
       coordinatorActorType: "human", executorId: undefined, adapterId: undefined,
-      connectorProfileDigest: undefined }));
+      connectorProfileDigest: undefined }), "coordinator-human-five", 4);
     const human = await f.raw.query<{ execution_binding_digest: string | null }>(
       "SELECT execution_binding_digest FROM control_project_coordinator_heads");
     assert.equal(human.rows[0]?.execution_binding_digest, null);
 
     // The coordinator cannot appoint, replace or revoke itself.
-    await assert.rejects(coordinators.appoint(appointment({ ownerIdentityId: "identity:agent" })),
+    await assert.rejects(coordinators.appoint(appointment({ ownerIdentityId: "identity:agent" }),
+      "coordinator-invalid-owner", 5),
       /owner_authority_missing/);
-    await assert.rejects(coordinators.revoke(appointment({ ownerIdentityId: "identity:agent" })),
+    await assert.rejects(coordinators.revoke(appointment({ ownerIdentityId: "identity:agent" }),
+      "coordinator-invalid-revoker", 5),
       /owner_authority_missing/);
     // An identity that is not the coordinator's own executor is required.
-    await assert.rejects(coordinators.appoint(appointment({ executorId: "identity:agent" })), /invalid_input/);
+    await assert.rejects(coordinators.appoint(appointment({ executorId: "identity:agent" }),
+      "coordinator-invalid-executor", 5), /invalid_input/);
+  } finally { await f.close(); }
+});
+
+test("coordinator lifecycle retries return one durable receipt across service reconstruction", async () => {
+  const f = await fixture();
+  try {
+    const firstService = new ProjectCoordinatorServiceV1(f.canonical);
+    const first = await firstService.appoint(appointment(), "durable-coordinator-appoint", 0);
+    assert.equal(first.replayed, false);
+    assert.equal(first.version, 1);
+
+    // Reconstruct both the canonical store and service to prove the answer is
+    // read from PostgreSQL rather than retained in a process-local cache.
+    const reconstructed = new ProjectCoordinatorServiceV1(new CanonicalStore(f.db));
+    const replay = await reconstructed.appoint(appointment(), "durable-coordinator-appoint", 0);
+    assert.deepEqual(replay, { ...first, replayed: true });
+    const head = await f.raw.query<{ version: string }>(
+      "SELECT version::text AS version FROM control_project_coordinator_heads WHERE tenant_id='tenant:test'");
+    assert.equal(head.rows[0]?.version, "1");
+    const ledger = await f.raw.query<{ status: string; request_digest: string; result: unknown }>(`SELECT
+      status,request_digest,result FROM control_idempotency
+      WHERE tenant_id='tenant:test' AND operation_scope='project-coordinator-lifecycle'`);
+    assert.equal(ledger.rows.length, 1);
+    assert.equal(ledger.rows[0]?.status, "completed");
+    assert.equal(ledger.rows[0]?.request_digest, first.requestDigest);
+    const { replayed: _replayed, ...storedReceipt } = first;
+    assert.deepEqual(ledger.rows[0]?.result, storedReceipt);
+
+    // Reusing the key for different content must never repeat or replace the
+    // original owner command.
+    await assert.rejects(reconstructed.replace(appointment({ coordinatorIdentityId: "identity:agent-two" }),
+      "durable-coordinator-appoint", 1), /coordinator_replay_conflict/);
+    const unchanged = await f.raw.query<{ version: string; coordinator_identity_id: string }>(
+      `SELECT version::text AS version,coordinator_identity_id FROM control_project_coordinator_heads
+       WHERE tenant_id='tenant:test' AND project_id='project:test'`);
+    assert.deepEqual(unchanged.rows, [{ version: "1", coordinator_identity_id: "identity:agent" }]);
+  } finally { await f.close(); }
+});
+
+test("two service instances submit one coordinator lifecycle command for the same key", async () => {
+  const f = await fixture();
+  try {
+    const firstService = new ProjectCoordinatorServiceV1(new CanonicalStore(f.db));
+    const secondService = new ProjectCoordinatorServiceV1(new CanonicalStore(f.db));
+    const [first, second] = await Promise.all([
+      firstService.appoint(appointment(), "concurrent-coordinator-appoint", 0),
+      secondService.appoint(appointment(), "concurrent-coordinator-appoint", 0),
+    ]);
+    assert.deepEqual([first.replayed, second.replayed].sort(), [false, true]);
+    const { replayed: _firstReplay, ...firstReceipt } = first;
+    const { replayed: _secondReplay, ...secondReceipt } = second;
+    assert.deepEqual(secondReceipt, firstReceipt);
+    const head = await f.raw.query<{ version: string }>(
+      "SELECT version::text AS version FROM control_project_coordinator_heads WHERE tenant_id='tenant:test'");
+    assert.deepEqual(head.rows, [{ version: "1" }]);
+    const ledger = await f.raw.query<{ count: string; completed: string }>(`SELECT
+      count(*)::text AS count,count(*) FILTER (WHERE status='completed')::text AS completed
+      FROM control_idempotency WHERE tenant_id='tenant:test'
+        AND operation_scope='project-coordinator-lifecycle'`);
+    assert.deepEqual(ledger.rows, [{ count: "1", completed: "1" }]);
   } finally { await f.close(); }
 });
 
 test("valid exact retained results become accepted proposals", async () => {
   const f = await fixture();
   try {
-    await new ProjectCoordinatorServiceV1(f.canonical).appoint(appointment());
+    await new ProjectCoordinatorServiceV1(f.canonical).appoint(appointment(), "proposal-coordinator-one", 0);
     const plan = await f.planningJob("one");
     const artifact = await f.retainedArtifact(plan, "one");
     const proposals = new ProjectCoordinationProposalServiceV1(f.canonical);
@@ -265,7 +334,7 @@ test("valid exact retained results become accepted proposals", async () => {
 test("malformed, over-limit, mismatched and cross-project results are safely rejected", async () => {
   const f = await fixture();
   try {
-    await new ProjectCoordinatorServiceV1(f.canonical).appoint(appointment());
+    await new ProjectCoordinatorServiceV1(f.canonical).appoint(appointment(), "proposal-coordinator-two", 0);
     const plan = await f.planningJob("two");
     const proposals = new ProjectCoordinationProposalServiceV1(f.canonical);
     const secret = "sk_live_notarealsecretvalue0001";
@@ -318,7 +387,7 @@ test("stale, revoked and tampered evidence cannot attribute a proposal to a coor
   const f = await fixture();
   try {
     const coordinators = new ProjectCoordinatorServiceV1(f.canonical);
-    await coordinators.appoint(appointment());
+    await coordinators.appoint(appointment(), "coordination-policy-appoint", 0);
     const plan = await f.planningJob("three");
     const proposals = new ProjectCoordinationProposalServiceV1(f.canonical);
 
@@ -359,7 +428,7 @@ test("stale, revoked and tampered evidence cannot attribute a proposal to a coor
     /proposal_evidence_mismatch/);
 
     // After revocation, results from the former coordinator stop being adoptable.
-    await coordinators.revoke(appointment());
+    await coordinators.revoke(appointment(), "coordination-policy-revoke", 1);
     const late = await f.retainedArtifact(plan, "three-late");
     assert.equal((await proposals.ingestVerifiedResult({ proposalId: "proposal:late", ingestedAt: at(4_000),
       evidence: evidence({ marker: marker({ planningJobId: plan.jobId, attemptId: plan.attemptId,
@@ -398,7 +467,7 @@ function operationRequest(overrides: Partial<CoordinationOperationRequestV1> = {
 
 /** Appoints one coordinator and records one accepted proposal per requested suffix. */
 async function acceptedProposals(f: Awaited<ReturnType<typeof fixture>>, suffixes: string[]) {
-  await new ProjectCoordinatorServiceV1(f.canonical).appoint(appointment());
+  await new ProjectCoordinatorServiceV1(f.canonical).appoint(appointment(), "coordination-fixture-appoint", 0);
   const proposals = new ProjectCoordinationProposalServiceV1(f.canonical);
   for (const suffix of suffixes) {
     const plan = await f.planningJob(suffix);
@@ -578,13 +647,15 @@ test("policy expiry, revocation, exhaustion, unknown cost and route mismatch all
 
     const pausable = await insertPolicy(f, { id: "policy:pausable" });
     await coordinators.pauseDelegation({ tenantId: "tenant:test", projectId: "project:test",
-      policyId: pausable, ownerIdentityId: "identity:owner", occurredAt: at(5_000) });
+      policyId: pausable, ownerIdentityId: "identity:owner",
+      idempotencyKey: "backend-pause-1", expectedVersion: 1, occurredAt: at(5_000) });
     await assert.rejects(new ProjectCoordinationAdoptionServiceV1(f.canonical, routes, knownCost(1))
       .adopt({ proposal, request: policyRequest(pausable, { proposalId: "proposal:three",
         operationId: "operation:paused", idempotencyKey: "coordination-adopt-paused",
         requestId: "request:adopt:paused", workflowId: "workflow:adopt:paused" }) }), /policy_inactive/);
     await coordinators.revokeDelegation({ tenantId: "tenant:test", projectId: "project:test",
-      policyId: pausable, ownerIdentityId: "identity:owner", occurredAt: at(6_000) });
+      policyId: pausable, ownerIdentityId: "identity:owner",
+      idempotencyKey: "backend-revoke-1", expectedVersion: 2, occurredAt: at(6_000) });
     await assert.rejects(new ProjectCoordinationAdoptionServiceV1(f.canonical, routes, knownCost(1))
       .adopt({ proposal, request: policyRequest(pausable, { proposalId: "proposal:three",
         operationId: "operation:revoked", idempotencyKey: "coordination-adopt-revoked",
@@ -592,14 +663,16 @@ test("policy expiry, revocation, exhaustion, unknown cost and route mismatch all
 
     // Replacing the coordinator invalidates its outstanding policies.
     const stalePolicy = await insertPolicy(f, { id: "policy:stale", coordinatorVersion: 1 });
-    await coordinators.replace(appointment({ coordinatorIdentityId: "identity:agent-two" }));
+    await coordinators.replace(appointment({ coordinatorIdentityId: "identity:agent-two" }),
+      "coordination-replace-two", 1);
     await assert.rejects(new ProjectCoordinationAdoptionServiceV1(f.canonical, routes, knownCost(1))
       .adopt({ proposal, request: policyRequest(stalePolicy, { proposalId: "proposal:three",
         operationId: "operation:stale", idempotencyKey: "coordination-adopt-stale",
         requestId: "request:adopt:stale", workflowId: "workflow:adopt:stale" }) }), /coordinator_version_stale/);
 
     // A revoked coordinator blocks owner adoption of its proposals too.
-    await coordinators.revoke(appointment({ coordinatorIdentityId: "identity:agent-two" }));
+    await coordinators.revoke(appointment({ coordinatorIdentityId: "identity:agent-two" }),
+      "coordination-revoke-two", 2);
     await assert.rejects(new ProjectCoordinationAdoptionServiceV1(f.canonical, routes, knownCost(1))
       .adopt({ proposal, request: operationRequest({ proposalId: "proposal:four",
         operationId: "operation:after-revoke", idempotencyKey: "coordination-adopt-after",
@@ -797,7 +870,7 @@ test("exact replay returns the original receipt even after the coordinator is re
     assert.equal(adopted.replayed, false);
 
     // The owner revokes the coordinator after the work was legitimately adopted.
-    await coordinators.revoke(appointment());
+    await coordinators.revoke(appointment(), "coordination-final-revoke", 1);
 
     // Exact replay is verified before any current-authority check, so it still
     // returns the original receipt and consumes nothing again.
@@ -824,5 +897,150 @@ test("exact replay returns the original receipt even after the coordinator is re
       proposalId: "proposal:two", idempotencyKey: "coordination-adopt-0002",
       operationId: "operation:two", requestId: "request:adopt:two",
       workflowId: "workflow:adopt:two" }) }), /coordinator_revoked/);
+  } finally { await f.close(); }
+});
+
+test("delegation-policy pause, resume, and revoke are durable per idempotency key", async () => {
+  const f = await fixture();
+  try {
+    const service = () => new ProjectCoordinatorServiceV1(f.canonical);
+    const base = { tenantId: "tenant:test", projectId: "project:test",
+      ownerIdentityId: "identity:owner" };
+    const op = { pause: "pauseDelegation", resume: "resumeDelegation",
+      revoke: "revokeDelegation" } as const;
+    const policyId = await insertPolicy(f, { id: "policy:durable" });
+
+    // Table: each action records one receipt and increments the version
+    // exactly once; the exact retry returns the recorded receipt.
+    const plan = [
+      { action: "pause", key: "policy-durable-pause", expectedVersion: 1, version: 2, state: "paused" },
+      { action: "resume", key: "policy-durable-resume", expectedVersion: 2, version: 3, state: "active" },
+      { action: "revoke", key: "policy-durable-revoke", expectedVersion: 3, version: 4, state: "revoked" },
+    ] as const;
+    for (const row of plan) {
+      const call = (occurredAt: string) => service()[op[row.action]]({ ...base, policyId,
+        idempotencyKey: row.key, expectedVersion: row.expectedVersion, occurredAt });
+      const first = await call(at());
+      assert.equal(first.replayed, false);
+      assert.equal(first.version, row.version);
+      assert.equal(first.state, row.state);
+      assert.equal(first.alreadyState, undefined);
+      const retry = await call(at(1_000));
+      assert.equal(retry.replayed, true);
+      assert.deepEqual(
+        { version: retry.version, state: retry.state, receiptDigest: retry.receiptDigest },
+        { version: first.version, state: first.state, receiptDigest: first.receiptDigest });
+    }
+
+    // Changed content under a recorded key conflicts instead of mutating.
+    await assert.rejects(service().pauseDelegation({ ...base, policyId,
+      idempotencyKey: "policy-durable-pause", expectedVersion: 99, occurredAt: at() }),
+    /policy_replay_conflict/);
+    await assert.rejects(service().pauseDelegation({ ...base, policyId,
+      ownerIdentityId: "identity:agent", idempotencyKey: "policy-durable-pause",
+      expectedVersion: 1, occurredAt: at() }), /policy_replay_conflict/);
+
+    // A rebuilt key with a wrong expected version is stale, not a silent
+    // second write. (A fresh policy keeps the version gate ahead of the
+    // revoked-terminal refusal.)
+    const stalePolicy = await insertPolicy(f, { id: "policy:stale-version" });
+    await assert.rejects(service().pauseDelegation({ ...base, policyId: stalePolicy,
+      idempotencyKey: "policy-durable-rebuilt", expectedVersion: 99, occurredAt: at() }),
+    /policy_version_stale/);
+
+    // A fresh key with a stale expected version never sneaks past the
+    // version guard through the already-state path: revoking the revoked
+    // policy (version 4) with a stale version is stale, not already-revoked.
+    // Pause/resume against the revoked policy keep the retained terminal
+    // refusal regardless of version — a revoked policy is terminal.
+    await assert.rejects(service().revokeDelegation({ ...base, policyId,
+      idempotencyKey: "policy-durable-stale-revoke", expectedVersion: 1, occurredAt: at() }),
+    /policy_version_stale/);
+    await assert.rejects(service().pauseDelegation({ ...base, policyId,
+      idempotencyKey: "policy-durable-stale-pause", expectedVersion: 1, occurredAt: at() }),
+    /policy_revoked/);
+    await assert.rejects(service().resumeDelegation({ ...base, policyId,
+      idempotencyKey: "policy-durable-stale-resume", expectedVersion: 1, occurredAt: at() }),
+    /policy_revoked/);
+
+    // The ledger holds one completed receipt per key: three mutations.
+    const receipts = await f.raw.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM control_idempotency
+       WHERE tenant_id='tenant:test' AND operation_scope='project-delegation-policy-lifecycle'
+         AND status='completed'`);
+    assert.equal(receipts.rows[0]?.count, "3");
+
+    // A rebuilt service over the same rows collects the saved receipt: a
+    // restart loses no retry safety.
+    const rebuilt = await service().revokeDelegation({ ...base, policyId,
+      idempotencyKey: "policy-durable-revoke", expectedVersion: 3, occurredAt: at(2_000) });
+    assert.equal(rebuilt.replayed, true);
+    assert.equal(rebuilt.version, 4);
+
+    // Already-state outcomes originate in the canonical layer and mutate
+    // nothing: resuming an active policy records its outcome, version held.
+    const fresh = await insertPolicy(f, { id: "policy:already" });
+    const already = await service().resumeDelegation({ ...base, policyId: fresh,
+      idempotencyKey: "policy-durable-already", expectedVersion: 1, occurredAt: at() });
+    assert.equal(already.replayed, false);
+    assert.equal(already.alreadyState, "policy_already_active");
+    assert.equal(already.version, 1);
+    const alreadyRetry = await service().resumeDelegation({ ...base, policyId: fresh,
+      idempotencyKey: "policy-durable-already", expectedVersion: 1, occurredAt: at(1_000) });
+    assert.equal(alreadyRetry.replayed, true);
+    assert.equal(alreadyRetry.alreadyState, "policy_already_active");
+
+    // Resuming the still-active fresh policy with a stale version is stale,
+    // not already-active: the version guard runs before the already-state
+    // outcome for every action.
+    await assert.rejects(service().resumeDelegation({ ...base, policyId: fresh,
+      idempotencyKey: "policy-durable-stale-active", expectedVersion: 99, occurredAt: at() }),
+    /policy_version_stale/);
+
+    // A caller whose view is current still gets the already-state outcome on
+    // a revoked policy: revoking the revoked policy at version 4 records
+    // policy_already_revoked and holds the version.
+    const alreadyRevoked = await service().revokeDelegation({ ...base, policyId,
+      idempotencyKey: "policy-durable-already-revoked", expectedVersion: 4, occurredAt: at() });
+    assert.equal(alreadyRevoked.replayed, false);
+    assert.equal(alreadyRevoked.alreadyState, "policy_already_revoked");
+    assert.equal(alreadyRevoked.version, 4);
+
+    // Pausing a paused policy with a stale version is stale, not
+    // already-paused — and resuming at the current version then succeeds,
+    // proving the version (not the state) was the blocker.
+    const pausedPolicy = await insertPolicy(f, { id: "policy:stale-paused" });
+    const paused = await service().pauseDelegation({ ...base, policyId: pausedPolicy,
+      idempotencyKey: "policy-durable-pause-twice", expectedVersion: 1, occurredAt: at() });
+    assert.equal(paused.version, 2);
+    await assert.rejects(service().pauseDelegation({ ...base, policyId: pausedPolicy,
+      idempotencyKey: "policy-durable-pause-stale", expectedVersion: 1, occurredAt: at() }),
+    /policy_version_stale/);
+    const unpaused = await service().resumeDelegation({ ...base, policyId: pausedPolicy,
+      idempotencyKey: "policy-durable-resume-current", expectedVersion: 2, occurredAt: at() });
+    assert.equal(unpaused.version, 3);
+    assert.equal(unpaused.state, "active");
+
+    // Simultaneous duplicates mutate once: one caller wins, the loser either
+    // replays the saved receipt or conflicts mid-flight, and the exact retry
+    // afterwards always collects the recorded receipt.
+    const racing = await insertPolicy(f, { id: "policy:racing" });
+    const racers = await Promise.allSettled([
+      service().pauseDelegation({ ...base, policyId: racing,
+        idempotencyKey: "policy-durable-race", expectedVersion: 1, occurredAt: at() }),
+      service().pauseDelegation({ ...base, policyId: racing,
+        idempotencyKey: "policy-durable-race", expectedVersion: 1, occurredAt: at() }),
+    ]);
+    for (const racer of racers) {
+      if (racer.status === "rejected") assert.match(String(racer.reason), /policy_replay_conflict/);
+    }
+    const collected = await service().pauseDelegation({ ...base, policyId: racing,
+      idempotencyKey: "policy-durable-race", expectedVersion: 1, occurredAt: at(2_000) });
+    assert.equal(collected.replayed, true);
+    assert.equal(collected.version, 2);
+    const racingRows = await f.raw.query<{ version: string }>(
+      `SELECT version::text AS version FROM control_project_delegation_policies
+       WHERE tenant_id='tenant:test' AND id='policy:racing'`);
+    assert.equal(racingRows.rows[0]?.version, "2");
   } finally { await f.close(); }
 });

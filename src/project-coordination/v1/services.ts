@@ -3,13 +3,19 @@ import { sha256Digest } from "../../security";
 import { failProjectCoordinationV1 } from "./errors";
 import {
   coordinatorAppointmentSchemaV1,
+  coordinatorLifecycleRequestDigestV1,
+  coordinatorLifecycleReceiptSchemaV1,
   coordinationOperationRequestSchemaV1,
+  delegationPolicyLifecycleRequestDigestV1,
+  delegationPolicyLifecycleReceiptSchemaV1,
   projectCoordinationProposalDigestV1,
   type CoordinationCostEvidencePortV1,
   type CoordinationCostEvidenceV1,
   type CoordinationOperationRequestV1,
   type CoordinationRouteResolverPortV1,
   type CoordinatorAppointmentV1,
+  type CoordinatorLifecycleReceiptV1,
+  type DelegationPolicyLifecycleReceiptV1,
   type ProjectCoordinationProposalV1,
 } from "./schemas";
 import {
@@ -33,14 +39,23 @@ import {
  */
 export interface ProjectCoordinationCanonicalPortV1 {
   assignProjectCoordinatorV1(input: {
-    operation: "assign" | "revoke";
+    operation: "appoint" | "replace" | "revoke";
     appointment: CoordinatorAppointmentV1;
+    idempotencyKey: string;
+    requestDigest: string;
+    expectedVersion: number;
     executionBindingDigest?: string;
-  }): Promise<{ version: number; state: "active" | "revoked"; executionBindingDigest?: string }>;
-  setProjectDelegationPolicyStateV1(input: {
+  }): Promise<CoordinatorLifecycleReceiptV1 & { replayed: boolean }>;
+  setProjectDelegationPolicyStateDurableV1(input: {
+    action: "pause" | "resume" | "revoke";
     tenantId: string; projectId: string; policyId: string; ownerIdentityId: string;
-    toState: "paused" | "active" | "revoked"; occurredAt: string;
-  }): Promise<{ version: number; state: string }>;
+    idempotencyKey: string; requestDigest: string; expectedVersion: number;
+    expectedCoordinatorVersion: number; expectedConflictsVersion: number; expectedAttentionVersion: number;
+    occurredAt: string;
+  }): Promise<DelegationPolicyLifecycleReceiptV1 & { replayed: boolean }>;
+  findDelegationPolicyLifecycleReceiptV1(input: {
+    tenantId: string; idempotencyKey: string; requestDigest: string;
+  }): Promise<(DelegationPolicyLifecycleReceiptV1 & { replayed: true }) | undefined>;
   recordProjectCoordinationProposalV1(input: {
     proposalId: string; validation: CoordinationProposalValidationV1; ingestedAt: string;
   }): Promise<{ proposalId: string; validationState: "accepted" | "rejected"; safeReasonCode?: string;
@@ -97,41 +112,99 @@ export class ProjectCoordinatorServiceV1 {
   }
 
   /** First appointment for a project. */
-  async appoint(appointment: CoordinatorAppointmentV1) {
+  #request(operation: "appoint" | "replace" | "revoke", appointment: CoordinatorAppointmentV1, idempotencyKey: string,
+    expectedVersion: number) {
     const { appointment: parsed, executionBindingDigest } = this.#withBinding(appointment);
-    return this.canonical.assignProjectCoordinatorV1({ operation: "assign", appointment: parsed,
-      ...(executionBindingDigest ? { executionBindingDigest } : {}) });
+    const requestDigest = coordinatorLifecycleRequestDigestV1({ operation, appointment: parsed, expectedVersion,
+      ...(operation !== "revoke" && executionBindingDigest ? { executionBindingDigest } : {}) });
+    return { parsed, executionBindingDigest, idempotencyKey, requestDigest, expectedVersion };
+  }
+
+  async appoint(appointment: CoordinatorAppointmentV1, idempotencyKey: string, expectedVersion: number) {
+    const request = this.#request("appoint", appointment, idempotencyKey, expectedVersion);
+    const receipt = await this.canonical.assignProjectCoordinatorV1({ operation: "appoint",
+      appointment: request.parsed, idempotencyKey: request.idempotencyKey, requestDigest: request.requestDigest,
+      expectedVersion: request.expectedVersion,
+      ...(request.executionBindingDigest ? { executionBindingDigest: request.executionBindingDigest } : {}) });
+    const { replayed, ...durable } = receipt;
+    return { ...coordinatorLifecycleReceiptSchemaV1.parse(durable), replayed };
   }
 
   /** Replaces the current coordinator; the same head version line continues. */
-  async replace(appointment: CoordinatorAppointmentV1) {
-    return this.appoint(appointment);
+  async replace(appointment: CoordinatorAppointmentV1, idempotencyKey: string, expectedVersion: number) {
+    const request = this.#request("replace", appointment, idempotencyKey, expectedVersion);
+    const receipt = await this.canonical.assignProjectCoordinatorV1({ operation: "replace",
+      appointment: request.parsed, idempotencyKey: request.idempotencyKey, requestDigest: request.requestDigest,
+      expectedVersion: request.expectedVersion,
+      ...(request.executionBindingDigest ? { executionBindingDigest: request.executionBindingDigest } : {}) });
+    const { replayed, ...durable } = receipt;
+    return { ...coordinatorLifecycleReceiptSchemaV1.parse(durable), replayed };
   }
 
   /**
    * Pauses delegated autonomy. The coordinator head reserves only `active` and
    * `revoked`, and pause/revoke are the only in-place policy changes, so a pause
    * is expressed by pausing the bounded policy: automatic adoption stops at once
-   * while owner-reviewed adoption stays available.
+   * while owner-reviewed adoption stays available. The exact Idempotency-Key
+   * flows into the durable canonical operation; a retry collects the saved
+   * receipt instead of repeating the mutation.
    */
   async pauseDelegation(input: { tenantId: string; projectId: string; policyId: string;
-    ownerIdentityId: string; occurredAt: string }) {
-    return this.canonical.setProjectDelegationPolicyStateV1({ ...input, toState: "paused" });
+    ownerIdentityId: string; idempotencyKey: string; expectedVersion: number; occurredAt: string;
+    expectedCoordinatorVersion?: number; expectedConflictsVersion?: number; expectedAttentionVersion?: number }) {
+    return this.#policyLifecycle("pause", input);
   }
 
   async resumeDelegation(input: { tenantId: string; projectId: string; policyId: string;
-    ownerIdentityId: string; occurredAt: string }) {
-    return this.canonical.setProjectDelegationPolicyStateV1({ ...input, toState: "active" });
+    ownerIdentityId: string; idempotencyKey: string; expectedVersion: number; occurredAt: string;
+    expectedCoordinatorVersion?: number; expectedConflictsVersion?: number; expectedAttentionVersion?: number }) {
+    return this.#policyLifecycle("resume", input);
   }
 
   async revokeDelegation(input: { tenantId: string; projectId: string; policyId: string;
-    ownerIdentityId: string; occurredAt: string }) {
-    return this.canonical.setProjectDelegationPolicyStateV1({ ...input, toState: "revoked" });
+    ownerIdentityId: string; idempotencyKey: string; expectedVersion: number; occurredAt: string;
+    expectedCoordinatorVersion?: number; expectedConflictsVersion?: number; expectedAttentionVersion?: number }) {
+    return this.#policyLifecycle("revoke", input);
   }
 
-  async revoke(appointment: CoordinatorAppointmentV1) {
-    const { appointment: parsed } = this.#withBinding(appointment);
-    return this.canonical.assignProjectCoordinatorV1({ operation: "revoke", appointment: parsed });
+  async findDelegationPolicyReceipt(input: { action: "pause" | "resume" | "revoke"; tenantId: string;
+    projectId: string; policyId: string; ownerIdentityId: string; idempotencyKey: string; expectedVersion: number;
+    expectedCoordinatorVersion: number; expectedConflictsVersion: number; expectedAttentionVersion: number }) {
+    const requestDigest = delegationPolicyLifecycleRequestDigestV1(input);
+    return this.canonical.findDelegationPolicyLifecycleReceiptV1({ tenantId: input.tenantId,
+      idempotencyKey: input.idempotencyKey, requestDigest });
+  }
+
+  #policyLifecycle(action: "pause" | "resume" | "revoke", input: { tenantId: string;
+    projectId: string; policyId: string; ownerIdentityId: string; idempotencyKey: string;
+    expectedVersion: number; occurredAt: string; expectedCoordinatorVersion?: number;
+    expectedConflictsVersion?: number; expectedAttentionVersion?: number }) {
+    const requestDigest = delegationPolicyLifecycleRequestDigestV1({ action,
+      tenantId: input.tenantId, projectId: input.projectId, policyId: input.policyId,
+      ownerIdentityId: input.ownerIdentityId, expectedVersion: input.expectedVersion,
+      expectedCoordinatorVersion: input.expectedCoordinatorVersion,
+      expectedConflictsVersion: input.expectedConflictsVersion,
+      expectedAttentionVersion: input.expectedAttentionVersion });
+    return this.canonical.setProjectDelegationPolicyStateDurableV1({ action,
+      tenantId: input.tenantId, projectId: input.projectId, policyId: input.policyId,
+      ownerIdentityId: input.ownerIdentityId, idempotencyKey: input.idempotencyKey,
+      requestDigest, expectedVersion: input.expectedVersion,
+      expectedCoordinatorVersion: input.expectedCoordinatorVersion ?? 0,
+      expectedConflictsVersion: input.expectedConflictsVersion ?? 0,
+      expectedAttentionVersion: input.expectedAttentionVersion ?? 0, occurredAt: input.occurredAt })
+      .then((receipt) => {
+        const { replayed, ...durable } = receipt;
+        return { ...delegationPolicyLifecycleReceiptSchemaV1.parse(durable), replayed };
+      });
+  }
+
+  async revoke(appointment: CoordinatorAppointmentV1, idempotencyKey: string, expectedVersion: number) {
+    const request = this.#request("revoke", appointment, idempotencyKey, expectedVersion);
+    const receipt = await this.canonical.assignProjectCoordinatorV1({ operation: "revoke",
+      appointment: request.parsed, idempotencyKey: request.idempotencyKey, requestDigest: request.requestDigest,
+      expectedVersion: request.expectedVersion });
+    const { replayed, ...durable } = receipt;
+    return { ...coordinatorLifecycleReceiptSchemaV1.parse(durable), replayed };
   }
 }
 

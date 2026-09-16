@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createHash } from "node:crypto";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import Home from "../private-app/app/page";
@@ -10,6 +11,7 @@ import { ProjectCatalogNavigation } from "../app/components/project-catalog-navi
 import { createProjectBrowserClient } from "../src/web/v1/browser-client";
 import { readTaskHomeActivity } from "../src/web/v1/task-home-browser-client";
 import { ProjectOverviewActivityView } from "../private-app/app/project-overview-activity";
+import { PrivateTaskResults, readTaskResultSelectionV1, taskResultHrefV1 } from "../private-app/app/task-results";
 import { readTaskProjectOverview } from "../src/web/v1/task-project-overview-browser-client";
 import { ProjectFilesView } from "../private-app/app/project-files-workspace";
 import { readTaskProjectFiles } from "../src/web/v1/task-project-files-browser-client";
@@ -191,7 +193,15 @@ test("project files link verified metadata to the exact protected task result", 
   const html = renderToStaticMarkup(createElement(ProjectFilesView, { projectId: task.projectId,
     data: { state: "ready", value } }));
   assert.match(html, /Research result/); assert.match(html, /42 bytes/);
-  assert.match(html, /projects\/project%3Aalpha\/tasks\/job%3Adone#task-results/);
+  // The link now names the exact artifact, not just the task's results anchor,
+  // so opening a file from Files lands on that file rather than a generic list.
+  assert.match(html,
+    /projects\/project%3Aalpha\/tasks\/job%3Adone\?result=artifact%3Aone#task-results/);
+  assert.equal(taskResultHrefV1("project:alpha", "job:done", "artifact:one"),
+    "/projects/project%3Aalpha/tasks/job%3Adone?result=artifact%3Aone#task-results");
+  // Without an artifact the anchor-only form is preserved for plain navigation.
+  assert.equal(taskResultHrefV1("project:alpha", "job:done"),
+    "/projects/project%3Aalpha/tasks/job%3Adone#task-results");
   assert.doesNotMatch(html, /filesystem|storage locator|download/i);
   let requested = "", method = "";
   const transport = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -253,4 +263,267 @@ test("settings links to the real session surface without credential controls", (
   assert.match(html, /href="\/session"/);
   assert.match(html, /does not expose credentials/);
   assert.doesNotMatch(html, /password|api key|secret key/i);
+});
+
+test("home links each recent result to its exact file, not a generic results anchor", () => {
+  const task = { projectId: "project:alpha", requestId: "request:alpha", jobId: "job:done", title: "Research result",
+    state: "succeeded" as const, version: 3, createdAt: "2026-09-04T10:00:00.000Z", updatedAt: "2026-09-04T12:00:00.000Z" };
+  const artifact = { artifactId: "artifact:one", attemptId: "attempt:one", runId: "run:one",
+    contentHash: `sha256:${"a".repeat(64)}`, sizeBytes: 42, receivedAt: "2026-09-04T12:00:00.000Z",
+    byteCheck: "matched_recorded_claim" as const, qualityAccepted: false as const };
+  const second = { ...artifact, artifactId: "artifact:two", contentHash: `sha256:${"b".repeat(64)}` };
+  const state = {
+    projects: { state: "unavailable", code: "unavailable" },
+    attention: { state: "unavailable", code: "unavailable" },
+    connections: { state: "unavailable", code: "unavailable" },
+    activity: { state: "ready", value: { projectId: task.projectId, active: [], recentTasks: [],
+      recentResults: [{ task, artifact }, { task, artifact: second }], additionalResultsOmitted: false,
+      resultSource: "configured", observedAt: "2026-09-04T12:00:00.000Z", startsWork: false } },
+  } as unknown as HomeDashboardState;
+  const html = renderToStaticMarkup(createElement(HomeDashboard, { data: state }));
+  // Two artifacts in one task must produce two distinct exact links.
+  assert.match(html, /tasks\/job%3Adone\?result=artifact%3Aone#task-results/);
+  assert.match(html, /tasks\/job%3Adone\?result=artifact%3Atwo#task-results/);
+});
+
+test("a result selection is read from the URL only when it is a usable identifier", () => {
+  assert.equal(readTaskResultSelectionV1("?result=artifact%3Aone"), "artifact:one");
+  assert.equal(readTaskResultSelectionV1("result=artifact%3Aone"), "artifact:one");
+  // Absent, empty and malformed selections are simply "no selection"; they are
+  // never turned into a request.
+  assert.equal(readTaskResultSelectionV1(""), undefined);
+  assert.equal(readTaskResultSelectionV1("?other=artifact%3Aone"), undefined);
+  assert.equal(readTaskResultSelectionV1("?result="), undefined);
+  // Control characters and oversized values are refused before reaching the DOM
+  // or a request path.
+  assert.equal(readTaskResultSelectionV1(`?result=${encodeURIComponent(`bad${String.fromCharCode(0)}id`)}`), undefined);
+  assert.equal(readTaskResultSelectionV1(`?result=${"x".repeat(257)}`), undefined);
+  assert.equal(readTaskResultSelectionV1(`?result=${"x".repeat(256)}`), "x".repeat(256));
+  // A selection is carried verbatim; it is validated against the authorized
+  // list by the reader, not trusted here.
+  assert.equal(readTaskResultSelectionV1(`?result=${encodeURIComponent("../other-project")}`), "../other-project");
+});
+
+test("the exact-result link encodes each segment separately", () => {
+  // A project or job containing a separator must not be able to forge a path.
+  assert.equal(taskResultHrefV1("project:a/b", "job:c?d", "artifact:e#f"),
+    "/projects/project%3Aa%2Fb/tasks/job%3Ac%3Fd?result=artifact%3Ae%23f#task-results");
+});
+
+/**
+ * Mounted coverage for URL-addressable result selection.
+ *
+ * These use the repository's existing jsdom + react-dom/client + act pattern
+ * (see tests/task-results-lifecycle.test.mjs). Playwright is not available
+ * here, so these are not browser evidence — but the validation, history and
+ * focus behaviour are component behaviour and must not rest on pure-function
+ * tests alone.
+ */
+async function mountTaskResults(options: { search?: string; canReadContent?: boolean; items?: string[] } = {}) {
+  // jsdom ships no type declarations and cannot be augmented. Import it once
+  // and bind exactly the surface these tests use, rather than widening the
+  // module to `any`.
+  // @ts-expect-error untyped module
+  const jsdomModule = await import("jsdom");
+  const JSDOM = (jsdomModule as { JSDOM: unknown }).JSDOM as new (
+    html: string, options?: { url?: string; pretendToBeVisual?: boolean },
+  ) => { window: Window & typeof globalThis };
+  const React = await import("react");
+  const { createRoot } = await import("react-dom/client");
+  const dom = new JSDOM('<div id="root"></div>',
+    { url: `https://control.invalid/projects/project%3Atest/tasks/job%3Atest${options.search ?? ""}#task-results`,
+      pretendToBeVisual: true });
+  const saved = Object.fromEntries(["window", "document", "IS_REACT_ACT_ENVIRONMENT", "fetch"]
+    .map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true });
+  const requests: string[] = [];
+  const ids = options.items ?? ["artifact:one", "artifact:two"];
+  // Each file's fingerprint must match the exact bytes the reader returns, or
+  // the protected reader correctly refuses the content.
+  const textFor = (artifactId: string) => `${artifactId} PROTECTED RESULT TEXT`;
+  const artifacts = ids.map(artifactId => ({ artifactId, attemptId: "attempt:one", runId: "run:one",
+    contentHash: `sha256:${createHash("sha256").update(textFor(artifactId)).digest("hex")}`,
+    sizeBytes: Buffer.byteLength(textFor(artifactId)), receivedAt: "2026-09-08T12:00:00.000Z",
+    byteCheck: "matched_recorded_claim", qualityAccepted: false }));
+  globalThis.fetch = (async (url: string) => {
+    requests.push(String(url));
+    const path = String(url);
+    const match = /\/results\/([^/?]+)$/.exec(path);
+    if (match) {
+      const artifact = artifacts.find(item => item.artifactId === decodeURIComponent(match[1]));
+      if (!artifact) return new Response("no", { status: 404 });
+      return Response.json({ projectId: "project:test", jobId: "job:test", artifact,
+        text: textFor(artifact.artifactId), contentVerifiedAt: artifact.receivedAt, untrustedContent: true });
+    }
+    return Response.json({ projectId: "project:test", jobId: "job:test", observedAt: "2026-09-08T12:00:00.000Z",
+      resultSource: "configured", reviewSource: "configured", items: artifacts, reviews: [],
+      additionalResultsOmitted: false, additionalTargetsOmitted: false,
+      canReadContent: options.canReadContent ?? true, reviewCommands: "not_connected" });
+  }) as typeof fetch;
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  const { act } = React;
+  // `act` flushes React's own queued work, but the panel's load is a chain of
+  // protected reads it never hands back to the caller: the authorized list,
+  // then -- when a file is selected -- that file's content. A single flush can
+  // return while a read is still in flight, leaving the panel on "Loading
+  // protected results and review…" or "Reading protected result…". Flush
+  // repeatedly until the panel has settled into the state an assertion is
+  // about, so no assertion races those reads on a slower or loaded machine.
+  const settle = async (ready: () => boolean, perform?: () => void) => {
+    if (perform) await act(async () => { perform(); });
+    for (let attempt = 0; attempt < 200 && !ready(); attempt += 1) {
+      // jsdom queues real history.back()/forward() traversal -- and the
+      // popstate it dispatches -- as its own task, not a microtask, so a
+      // plain act() flush can miss it. Give the event loop a tick too.
+      await act(async () => { await new Promise(resolve => dom.window.setTimeout(resolve, 0)); });
+    }
+  };
+  const idle = () => {
+    const text = dom.window.document.body.textContent ?? "";
+    return !text.includes("Loading protected results and review…") && !text.includes("Reading protected result…");
+  };
+  await act(async () => { root.render(React.createElement(PrivateTaskResults,
+    { projectId: "project:test", jobId: "job:test", reviewWorkspace: {} as never })); });
+  await settle(idle);
+  const restore = async () => {
+    // The panel installs a 30s poll, a window listener and in-flight fetches.
+    // Unmount inside act so its cleanup aborts them, then let the aborted
+    // promises settle before the globals disappear -- otherwise a late
+    // continuation dereferences a `window` that no longer exists.
+    try { await act(async () => { root.unmount(); }); } catch { /* already torn down */ }
+    await new Promise(resolve => setImmediate(resolve));
+    dom.window.close();
+    for (const [key, descriptor] of Object.entries(saved)) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete (globalThis as Record<string, unknown>)[key];
+    }
+  };
+  return { dom, root, act, requests, artifacts, restore, settle, idle,
+    contentRequests: () => requests.filter(url => /\/results\/[^/?]+$/.test(url)) };
+}
+
+test("an unlisted URL selection is refused without any content request", async () => {
+  const mounted = await mountTaskResults({ search: "?result=artifact%3Anot-in-this-task" });
+  try {
+    // The authorized list is fetched; the unlisted file is never read.
+    assert.equal(mounted.contentRequests().length, 0);
+    assert.match(mounted.dom.window.document.body.textContent ?? "",
+      /is not in this task’s authorized file list/);
+    // The unusable selection is dropped so a reload does not repeat it.
+    assert.equal(new URL(mounted.dom.window.location.href).searchParams.get("result"), null);
+  } finally { await mounted.restore(); }
+});
+
+test("a listed URL selection opens that exact file and moves focus into it", async () => {
+  const mounted = await mountTaskResults({ search: "?result=artifact%3Atwo" });
+  try {
+    assert.deepEqual(mounted.contentRequests().map(url => decodeURIComponent(url).split("/").pop()),
+      ["artifact:two"]);
+    const body = mounted.dom.window.document.body;
+    assert.match(body.textContent ?? "", /artifact:two PROTECTED RESULT TEXT/);
+    const region = mounted.dom.window.document.querySelector(".private-result-content");
+    assert.equal(mounted.dom.window.document.activeElement, region);
+  } finally { await mounted.restore(); }
+});
+
+test("a background refresh does not move focus into the open result", async () => {
+  const mounted = await mountTaskResults({ search: "?result=artifact%3Aone" });
+  try {
+    const region = mounted.dom.window.document.querySelector(".private-result-content");
+    assert.equal(mounted.dom.window.document.activeElement, region);
+    // The panel reloads on window focus and on a 30-second poll. Focus must be
+    // moved once, when the file is opened -- never again on a reload, or a
+    // keyboard user would be yanked back to the top of the result every poll.
+    (region as HTMLElement).blur();
+    await mounted.act(async () => { mounted.dom.window.dispatchEvent(new mounted.dom.window.Event("focus")); });
+    // The reload clears content before re-reading it, so wait for the reread to
+    // finish rather than inspecting the panel mid-refresh.
+    await mounted.settle(() => mounted.idle()
+      && Boolean(mounted.dom.window.document.querySelector(".private-result-content")));
+    const reopened = mounted.dom.window.document.querySelector(".private-result-content");
+    assert.ok(reopened);
+    assert.notEqual(mounted.dom.window.document.activeElement, reopened);
+  } finally { await mounted.restore(); }
+});
+
+test("closing returns focus to the button that opened the file", async () => {
+  const mounted = await mountTaskResults({ search: "?result=artifact%3Aone" });
+  try {
+    const close = [...mounted.dom.window.document.querySelectorAll("button")]
+      .find(button => button.textContent === "Close result");
+    assert.ok(close);
+    await mounted.act(async () => { close!.click(); });
+    const openers = [...mounted.dom.window.document.querySelectorAll("button")]
+      .filter(button => button.textContent === "Read result");
+    assert.equal(mounted.dom.window.document.activeElement, openers[0]);
+    assert.equal(new URL(mounted.dom.window.location.href).searchParams.get("result"), null);
+    // The anchor is preserved so the panel stays addressable.
+    assert.equal(new URL(mounted.dom.window.location.href).hash, "#task-results");
+  } finally { await mounted.restore(); }
+});
+
+test("back and forward move the open file, not just the scroll position", async () => {
+  const mounted = await mountTaskResults();
+  try {
+    const openers = [...mounted.dom.window.document.querySelectorAll("button")]
+      .filter(button => button.textContent === "Read result");
+    const body = () => mounted.dom.window.document.body.textContent ?? "";
+    const selected = () => new URL(mounted.dom.window.location.href).searchParams.get("result");
+
+    // Real pushState navigation, exactly as the panel performs it, so jsdom's
+    // own history stack (not a hand-built URL) drives back()/forward().
+    await mounted.settle(() => selected() === "artifact:one",
+      () => { openers[0]!.click(); });
+    assert.equal(selected(), "artifact:one");
+    await mounted.settle(() => /artifact:one PROTECTED RESULT TEXT/.test(body()));
+    assert.match(body(), /artifact:one PROTECTED RESULT TEXT/);
+    assert.doesNotMatch(body(), /artifact:two PROTECTED RESULT TEXT/);
+
+    // Open a second, distinct file so Back/Forward has two real positions to
+    // move between rather than a selection and an absence of one.
+    await mounted.settle(() => selected() === "artifact:two",
+      () => { openers[1]!.click(); });
+    assert.equal(selected(), "artifact:two");
+    await mounted.settle(() => /artifact:two PROTECTED RESULT TEXT/.test(body()));
+    assert.match(body(), /artifact:two PROTECTED RESULT TEXT/);
+    assert.doesNotMatch(body(), /artifact:one PROTECTED RESULT TEXT/);
+
+    // Back: real browser history navigation, not a synthesized popstate.
+    await mounted.settle(() => selected() === "artifact:one",
+      () => { mounted.dom.window.history.back(); });
+    await mounted.settle(() => /artifact:one PROTECTED RESULT TEXT/.test(body()));
+    assert.equal(selected(), "artifact:one");
+    assert.match(body(), /artifact:one PROTECTED RESULT TEXT/);
+    // The exact prior artifact wins outright: no stale artifact:two response,
+    // requested moments earlier, is left showing once Back settles.
+    assert.doesNotMatch(body(), /artifact:two PROTECTED RESULT TEXT/);
+
+    // Forward: returns to the second exact artifact, again by real navigation.
+    await mounted.settle(() => selected() === "artifact:two",
+      () => { mounted.dom.window.history.forward(); });
+    await mounted.settle(() => /artifact:two PROTECTED RESULT TEXT/.test(body()));
+    assert.equal(selected(), "artifact:two");
+    assert.match(body(), /artifact:two PROTECTED RESULT TEXT/);
+    assert.doesNotMatch(body(), /artifact:one PROTECTED RESULT TEXT/);
+
+    // Back twice more: returns to no selection, and closing still fires from
+    // real navigation, not only from an in-page Close click.
+    await mounted.settle(() => selected() === "artifact:one",
+      () => { mounted.dom.window.history.back(); });
+    await mounted.settle(() => selected() === null,
+      () => { mounted.dom.window.history.back(); });
+    await mounted.settle(() => !/PROTECTED RESULT TEXT/.test(body()));
+    assert.equal(selected(), null);
+    assert.doesNotMatch(body(), /PROTECTED RESULT TEXT/);
+  } finally { await mounted.restore(); }
+});
+
+test("metadata-only access is reported as denied, not as a missing file", async () => {
+  const mounted = await mountTaskResults({ search: "?result=artifact%3Aone", canReadContent: false });
+  try {
+    assert.equal(mounted.contentRequests().length, 0);
+    const body = mounted.dom.window.document.body.textContent ?? "";
+    assert.doesNotMatch(body, /is not in this task’s authorized file list/);
+    assert.match(body, /Your access permits metadata, not reading this file/);
+  } finally { await mounted.restore(); }
 });

@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 
 import { readWorkerInbox, renderWorkerInbox } from "../scripts/public-worker-inbox.mjs";
 import { actionsFingerprint } from "../scripts/worker-inbox-platform/lib/inbox-fingerprint.mjs";
-import { artifactsFor, iso8601Duration, systemdQuote, xmlEscape } from "../scripts/worker-inbox-platform/lib/artifacts.mjs";
+import { artifactsFor, iso8601Duration, systemdQuote, windowCommandLine, xmlEscape } from "../scripts/worker-inbox-platform/lib/artifacts.mjs";
 import { instructionsFor } from "../scripts/worker-inbox-platform/lib/instructions.mjs";
 import {
   RUNTIME_VERSION, appendBoundedLog, ensureWorkerDirectory, isOwnedDirectory, logFile, markerFile,
@@ -53,6 +53,7 @@ function actionMarker(workerId, state, issue) {
 function githubIssue(number, labels) {
   return {
     number,
+    state: "open",
     title: `Issue ${number}`,
     html_url: `https://github.com/${REPOSITORY_NAME}/issues/${number}`,
     labels: labels.map(name => ({ name })),
@@ -74,6 +75,12 @@ function fakeGithub(initial = {}) {
   const calls = [];
   const fetchImpl = async (url, init) => {
     calls.push({ url, method: init?.method ?? "GET" });
+    if (url.endsWith("/git/ref/heads/main")) {
+      return jsonResponse({ object: { sha: "a".repeat(40) } });
+    }
+    if (url.includes("labels=status%3Aworking") || url.includes("labels=status%3Ain-review")) {
+      return jsonResponse([]);
+    }
     const commentMatch = /\/issues\/(\d+)\/comments/u.exec(url);
     if (commentMatch) return jsonResponse(holder.comments[Number(commentMatch[1])] ?? []);
     return jsonResponse(holder.issues);
@@ -92,6 +99,20 @@ function assignment({ state = "changes-required", number = 199, workerId = WORKE
 function emptyAssignment() {
   return { issues: [], comments: {} };
 }
+
+test("installed watcher signals newly ready work even when the worker owns nothing", async t => {
+  const runtimeRoot = scratch(t);
+  const api = fakeGithub();
+  const options = { workerId: WORKER_ID, repository: REPOSITORY_NAME, runtimeRoot, fetchImpl: api.fetchImpl };
+  assert.equal((await runTick({ options, now: CLOCK })).notified, false);
+  api.holder.issues = [{ ...githubIssue(208, ["status:ready", "platform:any"]), body:
+    `<!-- acr-public-work:v1 ${JSON.stringify({ target: "main", base: "a".repeat(40), writeScopes: ["src/ideas/**"], dependencies: [], checks: ["pnpm check"], risk: "ordinary", effects: "none", leaseHours: 24 })} -->` }];
+  const discovered = await runTick({ options, now: CLOCK });
+  assert.equal(discovered.notified, true);
+  assert.deepEqual(discovered.observed.states, ["208:ready-candidate"]);
+  assert.equal((await runTick({ options, now: CLOCK })).notified, false);
+  assert.ok(api.calls.every(call => call.method === "GET"));
+});
 
 // A controller record in the shape the accepted client treats as authoritative. Trust comes
 // from the controller bot identity, never from repository membership.
@@ -211,6 +232,7 @@ test("a rate-limited read is reported, never masked as an empty inbox", async (t
 
   const result = await runTick({ options, reader: limited, now: CLOCK });
   assert.equal(result.outcome, "failure");
+  assert.equal(result.quiet, true, "a scheduled rate-limit tick must not wake the AI worker");
   assert.match(readState(stateFile(result.directory)).lastError, /worker_inbox_api_403/u,
     "the failure code must be persisted, not swallowed");
   assert.match(readFileSync(logFile(result.directory), "utf8"), /worker_inbox_api_403/u,
@@ -245,6 +267,14 @@ test("console output is quiet in a loop and reports a repeated failure only once
   assert.match(reportedFailure.line, /worker_inbox_api_403/u);
   assert.equal(consoleDecision({ result: failure, options: loop, lastReported: reportedFailure.signature }).print, false,
     "a repeated identical failure must not spam the operator");
+
+  const rateLimit = { ...failure, quiet: true };
+  assert.equal(consoleDecision({ result: rateLimit, options: loop, lastReported: undefined }).print, false,
+    "a transient scheduled rate limit must stay silent rather than waking the worker");
+  assert.equal(consoleDecision({ result: rateLimit, options: { once: true, scheduled: false, json: false }, lastReported: undefined }).print, true,
+    "an operator-requested one-shot read still reports the rate limit");
+  assert.equal(consoleDecision({ result: rateLimit, options: { once: true, scheduled: true, json: false }, lastReported: undefined }).print, false,
+    "a scheduler one-shot keeps a transient rate limit silent");
 
   // --once always reports, because the operator asked for exactly one result.
   assert.equal(consoleDecision({ result: unchanged, options: { once: true, json: false }, lastReported: "unchanged" }).print, true);
@@ -304,6 +334,8 @@ test("a read failure exits 2 while a configuration error exits 1", async (t) => 
   const base = ["--once", "--worker-id", WORKER_ID, "--repository", REPOSITORY_NAME, "--runtime-root", root];
 
   assert.equal(await watchMain(base, { reader: failing, environment: {} }), EXIT_TRANSIENT);
+  assert.equal(await watchMain([...base, "--scheduled"], { reader: failing, environment: {} }), EXIT_OK,
+    "scheduled rate limiting is recorded but must not wake a worker through failure output");
   assert.equal(await watchMain(["--help"], { environment: {} }), EXIT_OK);
   assert.equal(await watchMain(["--worker-id", "x", "--once"], { environment: {} }), EXIT_CONFIG);
   assert.equal(await watchMain(["--worker-id", WORKER_ID, "--repository", "not-a-repository", "--once"], { environment: {} }), EXIT_CONFIG);
@@ -318,6 +350,7 @@ test("the CLI refuses an invalid worker ID before any read", () => {
   assert.throws(() => watchArguments(["--worker-id", "ab"]), /worker_inbox_platform_worker_id_invalid/u);
   assert.throws(() => watchArguments(["--worker-id", WORKER_ID, "--repository", "nope"]), /worker_inbox_platform_repository_invalid/u);
   assert.throws(() => watchArguments(["--worker-id", WORKER_ID, "--interval", "0"]), /worker_inbox_platform_interval_invalid/u);
+  assert.throws(() => watchArguments(["--worker-id", WORKER_ID, "--scheduled"]), /scheduled_requires_once/u);
 });
 
 test("a restart reuses persisted state instead of re-notifying", async (t) => {
@@ -1242,4 +1275,129 @@ test("the generated uninstall command names the signal directory when one was co
   const plain = instructionsFor(base);
   assert.doesNotMatch(plain, /--signal-directory/u,
     "and must not invent a flag for an install that has no extra signal");
+});
+
+// Portable scheduling follow-up: what lands on disk must be byte-exact,
+// encoding-consistent, and repeatable on every platform — the importer
+// evidence starts from bytes, not from strings in memory.
+test("emitted artifacts are byte-exact UTF-8 with a matching declaration and no BOM", (t) => {
+  const root = scratch(t);
+  const generated = generate({
+    options: {
+      workerId: WORKER_ID, repository: REPOSITORY_NAME, runtimeRoot: root, all: true,
+      workingDirectory: root, intervalSeconds: 1800,
+    },
+    scriptPath: join(root, "scripts", "worker-inbox-watch.mjs"),
+    nodePath: join(root, "bin", "node"),
+    now: CLOCK,
+  });
+  assert.ok(generated.written.length >= 4, "launchd + systemd pair + windows task");
+  for (const artifact of generated.written) {
+    const bytes = readFileSync(artifact.path);
+    // written[].content is the emitted string the generator handed to the
+    // writer: the bytes on disk must equal it exactly, so a changed,
+    // truncated, or replaced payload fails here instead of passing.
+    assert.deepEqual(bytes, Buffer.from(artifact.content, "utf8"), `${artifact.name} on-disk bytes must equal its content`);
+    assert.equal(bytes.length, artifact.bytes, "the reported byte count must be the on-disk size");
+    assert.equal(bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF, false,
+      `${artifact.name} must not carry a BOM the declaration does not announce`);
+    assert.equal(bytes.includes(0x0D), false, `${artifact.name} must use LF line endings, not CRLF`);
+  }
+  const byName = Object.fromEntries(generated.written.map((entry) => [entry.name, entry.content]));
+  const plist = byName[`${generated.written.find((entry) => entry.name.endsWith(".plist")).name}`];
+  const task = byName[`${generated.written.find((entry) => entry.name.endsWith(".xml")).name}`];
+  assert.match(plist, /<\?xml version="1\.0" encoding="UTF-8"\?>/u, "plist declaration must match its UTF-8 bytes");
+  assert.match(task, /<\?xml version="1\.0" encoding="UTF-8"\?>/u, "task declaration must match its UTF-8 bytes");
+  assert.ok(isWellFormedXml(plist) && isWellFormedXml(task));
+});
+
+test("an explicit 1800-second schedule lands in all three definitions", (t) => {
+  const root = scratch(t);
+  const generated = generate({
+    options: {
+      workerId: WORKER_ID, repository: REPOSITORY_NAME, runtimeRoot: root, all: true,
+      workingDirectory: root, intervalSeconds: 1800,
+    },
+    scriptPath: join(root, "scripts", "worker-inbox-watch.mjs"),
+    nodePath: join(root, "bin", "node"),
+    now: CLOCK,
+  });
+  const read = (suffix) => readFileSync(
+    generated.written.find((entry) => entry.name.endsWith(suffix)).path, "utf8");
+  assert.match(read(".plist"), /<key>StartInterval<\/key>\s*<integer>1800<\/integer>/u);
+  assert.match(read(".timer"), /OnUnitActiveSec=1800s/u);
+  assert.match(read(".xml"), /<Interval>PT30M<\/Interval>/u);
+});
+
+test("repeated generation with the same clock is byte-identical", (t) => {
+  const root = scratch(t);
+  const base = {
+    workerId: WORKER_ID, repository: REPOSITORY_NAME, platform: "windows",
+    runtimeRoot: root, workingDirectory: root, intervalSeconds: 1800,
+  };
+  const invoke = () => generate({
+    options: { ...base }, scriptPath: join(root, "watch.mjs"),
+    nodePath: join(root, "node"), now: CLOCK,
+  });
+  const before = Buffer.from(readFileSync(invoke().written[0].path));
+  // startBoundary embeds the clock, so a fixed clock must yield identical bytes:
+  // an operator re-running the generator sees no phantom diff.
+  assert.deepEqual(Buffer.from(readFileSync(invoke().written[0].path)), before);
+});
+
+test("unicode, spaces, and metacharacters survive every platform renderer", (t) => {
+  const root = scratch(t);
+  const awkward = join(root, "tâches & 50% ünïcode \"quoted\"");
+  const nodePath = join(awkward, "bin", "node");
+  const scriptPath = join(awkward, "watch.mjs");
+  for (const platform of ["launchd", "systemd", "windows"]) {
+    const artifacts = artifactsFor({
+      platform, workerId: WORKER_ID, repository: REPOSITORY_NAME, runtimeDirectory: awkward,
+      nodePath, scriptPath, workingDirectory: awkward, intervalSeconds: 1800,
+      standardOut: join(awkward, "out.log"), standardError: join(awkward, "err.log"),
+    });
+    for (const artifact of artifacts) {
+      const bytes = Buffer.from(artifact.content, "utf8");
+      assert.deepEqual(Buffer.from(bytes.toString("utf8"), "utf8"), bytes, `${artifact.name} must round-trip as UTF-8`);
+      if (/\.(?:xml|plist)$/u.test(artifact.name)) {
+        assert.ok(isWellFormedXml(artifact.content), `${artifact.name} must stay well-formed with awkward paths`);
+        assert.equal(artifact.content.includes(awkward), false, "raw awkward paths must be escaped, never inline");
+      }
+    }
+    // A renderer that drops a path would still pass the checks above: every
+    // rendered artifact must carry the escaped path it was given.
+    const joined = artifacts.map((entry) => entry.content).join("\n");
+    if (platform === "launchd") {
+      assert.ok(joined.includes(`<string>${xmlEscape(scriptPath)}</string>`), "plist must carry the escaped script path");
+      assert.ok(joined.includes(`<string>${xmlEscape(awkward)}</string>`), "plist must carry the escaped working directory");
+    }
+    if (platform === "systemd") {
+      assert.ok(joined.includes(systemdQuote(scriptPath)), "service must carry the quoted script path");
+      assert.ok(joined.includes("%%"), "systemd must double the % in awkward paths");
+    }
+    if (platform === "windows") {
+      // The task must quote every argument so CreateProcess reconstructs them:
+      // re-quote the same values and require the exact rendered sequence.
+      const expected = [scriptPath, "--once", "--scheduled", "--worker-id", WORKER_ID, "--repository", REPOSITORY_NAME,
+        "--runtime-root", awkward].map(windowCommandLine).join(" ");
+      assert.ok(joined.includes(`<Arguments>${xmlEscape(expected)}</Arguments>`),
+        "task Arguments must carry the fully quoted command line");
+      assert.ok(joined.includes(`<Command>${xmlEscape(nodePath)}</Command>`), "task must carry the escaped node path");
+    }
+  }
+});
+
+test("instructions name the last-run and last-result check on every platform", () => {
+  const forPlatform = (platform) => instructionsFor({
+    platform, workerId: WORKER_ID, artifactDirectory: "/tmp/a b/c",
+    runtimeDirectory: "/tmp/a b/rt", repository: REPOSITORY_NAME,
+  });
+  assert.match(forPlatform("launchd"), /last exit code/u, "macOS names the last exit code check");
+  assert.match(forPlatform("systemd"), /list-timers/u, "systemd names the last/next run check");
+  assert.match(forPlatform("systemd"), /status \S+\.service/u, "systemd names the last result check");
+  const windows = forPlatform("windows");
+  assert.match(windows, /Get-ScheduledTaskInfo/u, "windows names the object-based last-result check");
+  assert.match(windows, /LastTaskResult/u, "windows names the last result property");
+  assert.match(windows, /-Encoding UTF8/u, "windows names the conversion input encoding explicitly");
+  assert.match(windows, /does not diagnose the rejection/u, "windows states what the fixture does not prove");
 });
