@@ -161,7 +161,12 @@ export function assembleRelease({
   const archiveName = `${ARCHIVE_PREFIX}-${resolvedVersion}.tar.gz`;
   const archivePath = join(out, archiveName);
   const manifestPath = join(out, MANIFEST_NAME);
-  if (existsSync(out) && !overwrite) throw new Error("release_output_exists");
+  if (existsSync(out) && !overwrite) {
+    // Refuse only when a previous *release* would actually be overwritten. A
+    // leftover empty output directory is not a release and must not block a
+    // rebuild after an earlier refusal.
+    if (existsSync(archivePath) || existsSync(manifestPath)) throw new Error("release_output_exists");
+  }
 
   // Stage into a temporary directory so the archive root is exactly the
   // documented layout and nothing from the checkout leaks in.
