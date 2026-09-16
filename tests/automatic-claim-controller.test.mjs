@@ -90,6 +90,16 @@ test("the workflow serializes claims repository-wide with only repository-read a
   assert.ok(!workflow.includes("github.event.comment.body }}"));
 });
 
+test("the workflow routes malformed embedded commands so the controller can explain the error", async () => {
+  const workflow = await readFile(new URL("../.github/workflows/automatic-job-claim.yml", import.meta.url), "utf8");
+  assert.ok(workflow.includes("contains(github.event.comment.body, 'CLAIM REQUEST')"));
+  assert.ok(!workflow.includes("startsWith(github.event.comment.body, 'CLAIM REQUEST')"));
+  assert.ok(workflow.includes("github.event.comment.user.type != 'Bot'"));
+  const body = "<!-- acr-public-work:claim-request v1 -->\nCLAIM REQUEST\nworker-id: worker:test-01";
+  assert.equal(parseClaimCommand(body), undefined);
+  assert.match(formatClaimResult({ status: "ignored" }, body), /CLAIM COMMAND NOT APPLIED/);
+});
+
 test("one ready issue receives one accepted marker, current main base and a label-safe transition", async () => {
   const api = fakeApi();
   const result = await runClaimController({ event: event(), repository, api });
