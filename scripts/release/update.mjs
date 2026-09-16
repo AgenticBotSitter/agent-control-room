@@ -25,7 +25,7 @@
 // stdlib only. Every refusal is a named release_* error, never a silent pass.
 
 import {
-  existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, lstatSync,
+  existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, writeFileSync, lstatSync,
   symlinkSync, rmSync, renameSync, appendFileSync, statSync,
 } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -64,8 +64,11 @@ export function currentRelease(root) {
   if (!existsSync(link)) return null;
   const st = lstatSync(link);
   if (!st.isSymbolicLink()) throw new Error("release_current_not_symlink");
-  const target = resolve(root, readFileSync(link, "utf8").trim() || ".");
-  return existsSync(target) ? target : null;
+  // readlinkSync returns the LINK TEXT. readFileSync would follow the link and
+  // try to read the directory it points at.
+  const text = readlinkSync(link);
+  if (typeof text !== "string" || text.trim() === "") throw new Error("release_current_unreadable");
+  return resolve(root, text.trim());
 }
 
 /** The version of a release dir, taken from its manifest. */
@@ -175,10 +178,17 @@ export function rollback({ root, to = "", now = new Date().toISOString() } = {})
 
   const dir = join(root, "releases", targetVersion);
   if (!existsSync(dir)) throw new Error(`release_rollback_refused_target_missing:${targetVersion}`);
-  // Unsafe rollback: a target whose own tree does not match its manifest would
-  // put an unverifiable release live, so it is refused rather than attempted.
+  // Unsafe rollback: the target release is genuinely verified before it is
+  // activated, not merely checked for a manifest. Rolling back onto a release
+  // whose tree no longer matches its own integrity metadata would put
+  // unverifiable bytes live, so it is refused rather than attempted.
   if (!existsSync(join(dir, MANIFEST_NAME))) {
-    logLine(root, `rollback refused unsafe=${targetVersion}`);
+    logLine(root, `rollback refused unsafe=${targetVersion} reason=manifest_missing`);
+    throw new Error(`release_rollback_refused_unsafe:${targetVersion}`);
+  }
+  const verified = verifyUnpacked({ unpackedRoot: dir, manifestPath: join(dir, MANIFEST_NAME) });
+  if (!verified.ok) {
+    logLine(root, `rollback refused unsafe=${targetVersion} reason=${verified.problems.slice(0, 3).join(",")}`);
     throw new Error(`release_rollback_refused_unsafe:${targetVersion}`);
   }
 
