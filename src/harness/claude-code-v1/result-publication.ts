@@ -54,7 +54,12 @@ export interface ClaudeRetainedSessionEvidenceV1 {
   processAttemptId: string;
   /** Retained expected session ID, bound to `processAttemptId`. */
   sessionId: string;
-  /** Independently observed digest of the terminal frame, retained by the caller. */
+  /**
+   * Independently observed canonical digest of the terminal frame, retained by
+   * the caller. It is satisfied here only by re-deriving it from the exact raw
+   * terminal material supplied as `terminalFrameRawLine`, never by trusting a
+   * digest carried on a caller-supplied decoded frame object.
+   */
   terminalFrameDigest: string;
 }
 
@@ -67,7 +72,21 @@ export interface ClaudeTerminalResultPublicationInputV1 {
   retainedSession: ClaudeRetainedSessionEvidenceV1;
   /** The owned session's own disposition. A disposition alone never grants publication. */
   disposition: ClaudeCodeSessionDispositionV1;
-  /** Independently decoded terminal frame and the decoder state that produced it. */
+  /**
+   * The EXACT raw terminal line the decoder was given — the same string that
+   * produced `terminalFrame`. This, not the decoded frame object, is the
+   * evidence this bridge binds published bytes to: its canonical digest is
+   * recomputed here with the decoder's own digest function and must re-derive
+   * the retained `terminalFrameDigest`. Every security-relevant field the
+   * bridge acts on is then read back out of this verified material.
+   */
+  terminalFrameRawLine: string;
+  /**
+   * The independently decoded terminal frame and the decoder state that
+   * produced it. The frame is a convenience input for the decoder's own
+   * classification; it is never the evidence boundary, and it may not disagree
+   * with the verified raw material about the bytes that get published.
+   */
   terminalFrame: ClaudeCodeResultFrameV1;
   decoderState: ClaudeCodeStreamDecoderStateV1;
   /** The accepted connector profile digest recorded for this run at admission. */
@@ -95,6 +114,13 @@ function profileMismatch(): never { throw new Error("claude_code_result_publicat
 function evidenceMismatch(): never { throw new Error("claude_code_result_publication_evidence_digest_mismatch"); }
 function notTerminal(): never { throw new Error("claude_code_result_publication_session_not_terminal"); }
 function unusableResult(): never { throw new Error("claude_code_result_publication_result_unusable"); }
+function unusableMaterial(): never {
+  throw new Error("claude_code_result_publication_terminal_material_unusable");
+}
+
+function plainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 /**
  * Retained identity is captured field by field at entry and frozen, so a
@@ -122,6 +148,12 @@ const textDigest = (value: string): string =>
  * redispatch, no approval and no capacity release, and it opens no new table,
  * storage authority or result schema: every durable effect is the shared
  * `publishDurableResultV1` path, called once.
+ *
+ * The published bytes are bound to independently re-derivable evidence: the
+ * caller supplies the exact raw terminal line, this function recomputes its
+ * canonical digest with the decoder's own digest function, requires that to
+ * equal the retained terminal-frame digest, and then reads the published text
+ * out of that verified material rather than out of the decoded frame object.
  *
  * Identity is retained authority, supplied whole by the trusted caller. The
  * decoded terminal JSON may supply content and observed session evidence and
@@ -191,24 +223,67 @@ export async function publishClaudeTerminalResultV1(
   // Retained expected session versus the independently decoded terminal
   // observation. Both sides never come from the terminal frame.
   if (session.sessionId !== frame.sessionId) sessionMismatch();
+
+  // ------------------------------------------------------------------
+  // Evidence binding. The retained terminal-frame digest is satisfied only by
+  // the exact raw terminal material, re-derived here.
+  //
+  // The decoded frame is a caller-supplied structural object: TypeScript
+  // `readonly` and the decoder's own `Object.freeze` constrain nothing about a
+  // separately constructed object, so `frame.frameDigest` proves nothing about
+  // `frame.resultText`. The raw line does: the decoder computes its digest as
+  // `sha256Digest(JSON.parse(line))`, and the same function over the same
+  // material is recomputed here. Altering the published text necessarily
+  // alters this recomputed digest, so it can no longer satisfy the retained
+  // one.
+  // ------------------------------------------------------------------
+  const rawLine = input.terminalFrameRawLine;
+  if (typeof rawLine !== "string" || rawLine.length === 0) unavailable();
+  let material: unknown;
+  try {
+    material = JSON.parse(rawLine);
+  } catch {
+    unusableMaterial();
+  }
+  if (!plainObject(material)) unusableMaterial();
+  let materialDigest: string;
+  try {
+    materialDigest = sha256Digest(material);
+  } catch {
+    unusableMaterial();
+  }
+  // THE security boundary: the retained digest against material the caller
+  // cannot have altered without breaking the match.
+  if (session.terminalFrameDigest !== materialDigest) evidenceMismatch();
+  // Defence in depth only, and no longer load bearing on its own.
   if (session.terminalFrameDigest !== frame.frameDigest) evidenceMismatch();
+
+  // Everything security relevant is now read back out of the VERIFIED
+  // material, never out of the separately supplied frame object. Reading it
+  // from the frame after checking a digest would reinstate the same gap one
+  // level down.
+  if (material.type !== "result") unusableMaterial();
+  if (typeof material.session_id !== "string" || material.session_id !== session.sessionId) sessionMismatch();
+  if (material.is_error !== false || material.terminal_reason !== undefined) notTerminal();
 
   // Outcome classification stays the decoder's: a failed, errored or
   // terminal-reason-bearing result publishes nothing.
   if (frame.outcome !== "succeeded" || frame.isError !== false
     || frame.terminalReasonPresent !== false) notTerminal();
 
-  // Bounded text bytes. The ceiling is the connector profile's existing result
-  // contract, re-checked here so an oversized result is refused before any
-  // reservation exists; the shared publisher enforces its own ceiling too.
-  const resultText = frame.resultText;
+  // Bounded text bytes, taken from the verified material. The ceiling is the
+  // connector profile's existing result contract, re-checked here so an
+  // oversized result is refused before any reservation exists; the shared
+  // publisher enforces its own ceiling too.
+  const resultText = material.result;
   if (typeof resultText !== "string" || resultText.length === 0) unusableResult();
   const bytes = new TextEncoder().encode(resultText);
-  if (bytes.byteLength === 0 || bytes.byteLength !== frame.resultBytes
-    || bytes.byteLength > CLAUDE_CODE_MAX_RESULT_BYTES_V1) unusableResult();
-  // Independent recomputation of the content digest the decoder reported. A
-  // frame whose text and digest disagree is not usable evidence.
-  if (frame.resultTextDigest !== textDigest(resultText)) unusableResult();
+  if (bytes.byteLength === 0 || bytes.byteLength > CLAUDE_CODE_MAX_RESULT_BYTES_V1) unusableResult();
+  // The decoded frame may not contradict the verified material about the exact
+  // bytes that are about to be published, nor about the content digest the
+  // decoder reported for them.
+  if (frame.resultText !== resultText || frame.resultBytes !== bytes.byteLength
+    || frame.resultTextDigest !== textDigest(resultText)) unusableResult();
 
   const binding: DurableResultBindingV1 = {
     tenantId: retained.tenantId, projectId: retained.projectId, jobId: retained.jobId,
@@ -218,8 +293,8 @@ export async function publishClaudeTerminalResultV1(
     // and never from the decoded frame.
     harness: claudeCodeConnectorProfileV1.harness,
     connectorProfileDigest: CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1,
-    // The terminal frame's digest is observed evidence, which the frame may
-    // supply. Its identity fields are not, and none are read here.
+    // The retained digest, now proven to be the canonical digest of the exact
+    // raw terminal material whose text is being published.
     terminalEvidenceDigest: session.terminalFrameDigest,
     acceptanceProfileId: retained.acceptanceProfileId,
     acceptanceProfileDigest: retained.acceptanceProfileDigest,

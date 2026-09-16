@@ -97,6 +97,8 @@ entry so later caller mutation cannot change what was verified or published:
 - `retainedSession` — `processAttemptId`, the retained expected `sessionId` bound to it,
   and the independently observed `terminalFrameDigest`.
 - `disposition` — that session's own `ClaudeCodeSessionDispositionV1`.
+- `terminalFrameRawLine` — the **exact raw terminal line** the decoder classified. This
+  is the evidence the published bytes are bound to; see below.
 - `terminalFrame` and `decoderState` — the independent decode of the same stream.
 - `acceptedConnectorProfileDigest`, `receivedAt`, `assertAuthority`.
 
@@ -104,8 +106,43 @@ The harness tag (`claude`) and the connector profile digest are **not** caller i
 both come from the accepted connector profile, and a supplied digest that differs from
 `CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1` is refused. Terminal JSON may supply content
 and observed session evidence only — never tenant, project, job, attempt, run, node,
-workflow or acceptance-profile identity, and never a grant or key. The terminal frame's
-digest is published as `terminalEvidenceDigest`; its fields are not.
+workflow or acceptance-profile identity, and never a grant or key. The verified terminal
+material's digest is published as `terminalEvidenceDigest`; no identity field is read
+from the material.
+
+### Evidence binding: raw material, not the decoded frame
+
+**The bridge does not trust `terminalFrame.frameDigest`.** A decoded
+`ClaudeCodeResultFrameV1` reaching this public function is a caller-supplied structural
+object: TypeScript `readonly` and the decoder's own `Object.freeze` constrain nothing
+about an object that was never produced by the decoder. A caller could otherwise copy a
+genuine decoded frame, substitute `resultText`/`resultBytes`/`resultTextDigest`, leave the
+original `frameDigest` in place, and publish bytes the retained digest never covered.
+
+Instead the bridge re-derives the evidence itself:
+
+1. `terminalFrameRawLine` is `JSON.parse`d. A non-string, empty, malformed or non-object
+   line refuses (`..._unavailable` / `..._terminal_material_unusable`).
+2. `sha256Digest(parsed)` is recomputed with the **same** function
+   (`src/security/canonical-digest.ts`) the decoder uses for `frameDigest`, which the
+   decoder computes over exactly this parsed object.
+3. That recomputed digest — not `frame.frameDigest` — must equal the retained
+   `terminalFrameDigest`. This is the security boundary: altering the material alters the
+   recomputed digest, so substituted content can no longer satisfy the retained one. The
+   original `frame.frameDigest` comparison is kept as defence in depth and is no longer
+   load bearing on its own.
+4. Every security-relevant field is then read **out of the verified material**, never out
+   of the separately supplied frame: `type`, `session_id`, `is_error`, `terminal_reason`
+   and `result`. Checking a digest and then continuing to read the frame would reinstate
+   the same gap one level down.
+5. The decoded frame remains a convenience input for the decoder's own classification
+   (`subtypeCode`, `terminalReasonCode`, `outcome`), and it may not contradict the
+   verified material about the bytes that get published: a disagreeing `resultText`,
+   `resultBytes` or `resultTextDigest` refuses with
+   `claude_code_result_publication_result_unusable`.
+
+The published bytes are therefore always the `result` string of material whose canonical
+digest equals the independently retained terminal-frame digest.
 
 **Retained state this connector does not yet expose.** The retained expected session ID
 and the observed terminal-frame digest are explicit bridge inputs because
@@ -130,13 +167,19 @@ tests assert the injected database, storage and reservation ports were never tou
   process attempt.
 - `claude_code_result_publication_session_mismatch` — the retained expected session ID
   does not match the independently decoded terminal session.
-- `claude_code_result_publication_evidence_digest_mismatch` — the retained observed
-  terminal-frame digest does not match the decoded frame.
+- `claude_code_result_publication_evidence_digest_mismatch` — the digest recomputed from
+  the supplied raw terminal material does not equal the retained terminal-frame digest
+  (or, as defence in depth, the decoded frame's own digest does not either).
+- `claude_code_result_publication_terminal_material_unusable` — the raw terminal line is
+  not parseable JSON, is not an object, is not canonically digestible, or is not a
+  `result` frame.
 - `claude_code_result_publication_session_not_terminal` — the session is open, cleanup is
   uncertain, the exit was unobserved or malformed, no terminal result was confirmed, the
   decode failed or never reached a terminal frame, or the decoded outcome is `failed`.
-- `claude_code_result_publication_result_unusable` — absent, empty, oversized (over the
-  profile's existing 65,536-byte result ceiling) or self-contradicting result text.
+- `claude_code_result_publication_result_unusable` — result text in the verified material
+  that is absent, empty or oversized (over the profile's existing 65,536-byte result
+  ceiling), or a decoded frame whose `resultText`, `resultBytes` or `resultTextDigest`
+  contradicts that material.
 
 The shared publisher's own refusals — `durable_result_identity_mismatch`,
 `durable_result_reservation_conflict`, `durable_result_storage_uncertain`,

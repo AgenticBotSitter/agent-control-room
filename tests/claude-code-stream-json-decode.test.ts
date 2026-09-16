@@ -20,6 +20,7 @@ import {
   type ClaudeCodeSessionDispositionV1,
 } from "../src/harness/claude-code-v1/owned-process-session";
 import type { DurableResultPublicationConfigurationV1 } from "../src/artifacts/v1/durable-result-publication";
+import { sha256Digest } from "../src/security/canonical-digest";
 
 // Every value here is freshly authored and synthetic. No host path, real session
 // identifier or captured transcript appears in this file.
@@ -315,6 +316,8 @@ function bridgeInput(overrides: Partial<ClaudeTerminalResultPublicationInputV1> 
     retainedSession: { processAttemptId: PROCESS_BINDING.processAttemptId, sessionId: SESSION,
       terminalFrameDigest: frame.frameDigest },
     disposition: dispositionFor(),
+    // The exact raw line the decoder classified into `frame`.
+    terminalFrameRawLine: lines[lines.length - 1],
     terminalFrame: frame,
     decoderState: state,
     acceptedConnectorProfileDigest: CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1,
@@ -324,12 +327,49 @@ function bridgeInput(overrides: Partial<ClaudeTerminalResultPublicationInputV1> 
   };
 }
 
-async function refuses(input: ClaudeTerminalResultPublicationInputV1, pattern: RegExp) {
+/**
+ * Raw terminal material the real decoder would itself refuse (an oversized or
+ * absent result), paired with a frame that honestly describes it. Used only to
+ * prove the bridge applies its own ceilings to the verified material rather
+ * than relying on the decoder having run first.
+ */
+function syntheticMaterial(result: string | undefined) {
+  const base = decodedTerminal([initLine(), resultLine()]);
+  const payload: Record<string, unknown> = { type: "result", subtype: "success", is_error: false,
+    session_id: SESSION, total_cost_usd: 0, usage: {} };
+  if (result !== undefined) payload.result = result;
+  const rawLine = JSON.stringify(payload);
+  const digest = sha256Digest(JSON.parse(rawLine));
+  return {
+    terminalFrameRawLine: rawLine,
+    retainedSession: { processAttemptId: PROCESS_BINDING.processAttemptId, sessionId: SESSION,
+      terminalFrameDigest: digest },
+    terminalFrame: { ...base.frame, frameDigest: digest, resultText: result,
+      resultBytes: result === undefined ? 0 : Buffer.byteLength(result, "utf8"),
+      resultTextDigest: result === undefined ? undefined : contentDigest(result) },
+  } satisfies Partial<ClaudeTerminalResultPublicationInputV1>;
+}
+
+const contentDigest = (value: string) =>
+  `sha256:${createHash("sha256").update(Buffer.from(value, "utf8")).digest("hex")}`;
+
+type RefusalMatcher = RegExp | ((error: unknown) => boolean);
+
+async function refuses(input: ClaudeTerminalResultPublicationInputV1, pattern: RefusalMatcher) {
   const { config, calls } = forbiddenPublication();
-  await assert.rejects(() => publishClaudeTerminalResultV1(config, input), pattern);
+  await assert.rejects(() => publishClaudeTerminalResultV1(config, input), pattern as RegExp);
   assert.deepEqual(calls, { db: 0, storage: 0, reservations: 0 },
     "a bridge-local refusal must never reach the shared publisher, its database or its storage");
 }
+
+/** A retained-identity refusal must be the schema rejecting that exact field. */
+const retainedIdentityRejected = (field: string) => (error: unknown) => {
+  assert.equal((error as { name?: string }).name, "ZodError",
+    "retained identity must be refused by the retained-identity schema, not by a later check");
+  const issues = JSON.parse((error as Error).message) as { path: (string | number)[] }[];
+  assert.deepEqual(issues.map(issue => issue.path.join(".")), [field]);
+  return true;
+};
 
 test("the bridge fixes the harness tag and connector profile digest from the accepted profile", () => {
   assert.equal(claudeCodeConnectorProfileV1.harness, "claude");
@@ -349,6 +389,108 @@ test("a retained terminal-frame digest that differs from the decoded frame refus
   await refuses(bridgeInput({ retainedSession: { processAttemptId: PROCESS_BINDING.processAttemptId,
     sessionId: SESSION, terminalFrameDigest: bridgeDigest("some-other-frame") } }),
   /claude_code_result_publication_evidence_digest_mismatch/);
+});
+
+/* ------------------------------------------------------------------ */
+/* Evidence binding regression.                                        */
+/*                                                                     */
+/* The retained terminal-frame digest must be satisfied only by raw    */
+/* terminal material whose canonical digest re-derives to it here. A   */
+/* decoded frame object is caller-supplied structure: a valid          */
+/* `frameDigest` copied onto substituted result text proves nothing,   */
+/* and `readonly`/`Object.freeze` constrain nothing about a separately */
+/* constructed object. Every case below must refuse with zero database,*/
+/* storage and reservation touches.                                    */
+/* ------------------------------------------------------------------ */
+
+test("substituted result text under a preserved frame digest publishes nothing", async () => {
+  const honest = decodedTerminal([initLine(), resultLine()]);
+  const rawLine = resultLine();
+  const substituted = "Substituted result text that was never in the terminal material.";
+  assert.notEqual(substituted, honest.frame.resultText);
+
+  // The attack: a hand-built object shaped exactly like a decoded terminal
+  // frame, carrying the genuine frame digest of the honest material but
+  // different result text, with its own self-consistent byte count and content
+  // digest so every frame-local check still agrees.
+  const forgedFrame: ClaudeCodeResultFrameV1 = { ...honest.frame,
+    resultText: substituted,
+    resultBytes: Buffer.byteLength(substituted, "utf8"),
+    resultTextDigest: contentDigest(substituted),
+    frameDigest: honest.frame.frameDigest };
+  assert.equal(forgedFrame.frameDigest, honest.frame.frameDigest,
+    "the forgery keeps the original, genuinely valid frame digest");
+  assert.equal(Object.isFrozen(forgedFrame), false,
+    "a caller can construct this object outside the decoder entirely");
+
+  // Refused: the raw material re-derives the retained digest, and the bytes
+  // that would be published are read from that material, not from the frame.
+  await refuses(bridgeInput({ terminalFrameRawLine: rawLine, terminalFrame: forgedFrame }),
+    /claude_code_result_publication_result_unusable/);
+
+  // The mirror-image attack against the new contract: tamper the raw material
+  // instead, and keep asserting the old digest. The recomputed digest no longer
+  // matches, so the material is refused before any field of it is read.
+  const tamperedLine = resultLine({ result: substituted });
+  assert.notEqual(sha256Digest(JSON.parse(tamperedLine)), honest.frame.frameDigest);
+  await refuses(bridgeInput({ terminalFrameRawLine: tamperedLine, terminalFrame: forgedFrame }),
+    /claude_code_result_publication_evidence_digest_mismatch/);
+
+  // And tampering the material while updating the retained digest to match it
+  // is not a bypass either: the digest is retained authority, checked against
+  // what the caller independently observed, so a freshly minted one no longer
+  // equals the frame's, and the frame-level defence in depth also refuses.
+  await refuses(bridgeInput({ terminalFrameRawLine: tamperedLine,
+    terminalFrame: forgedFrame,
+    retainedSession: { processAttemptId: PROCESS_BINDING.processAttemptId, sessionId: SESSION,
+      terminalFrameDigest: sha256Digest(JSON.parse(tamperedLine)) } }),
+  /claude_code_result_publication_evidence_digest_mismatch/);
+});
+
+test("raw terminal material that is absent, malformed or not a result frame publishes nothing", async () => {
+  await refuses(bridgeInput({ terminalFrameRawLine: undefined as unknown as string }),
+    /claude_code_result_publication_unavailable/);
+  await refuses(bridgeInput({ terminalFrameRawLine: "" }),
+    /claude_code_result_publication_unavailable/);
+  await refuses(bridgeInput({ terminalFrameRawLine: "{not json" }),
+    /claude_code_result_publication_terminal_material_unusable/);
+  // Valid JSON, but not an object: there is no frame material to verify.
+  await refuses(bridgeInput({ terminalFrameRawLine: "[]" }),
+    /claude_code_result_publication_terminal_material_unusable/);
+  // A well formed non-terminal line cannot stand in for the terminal one, even
+  // when its own digest is retained honestly.
+  const init = initLine();
+  await refuses(bridgeInput({ terminalFrameRawLine: init,
+    retainedSession: { processAttemptId: PROCESS_BINDING.processAttemptId, sessionId: SESSION,
+      terminalFrameDigest: sha256Digest(JSON.parse(init)) } }),
+  /claude_code_result_publication_evidence_digest_mismatch/);
+});
+
+test("the verified material, not the frame, decides outcome and session identity", async () => {
+  const honest = decodedTerminal([initLine(), resultLine()]);
+  // Material that failed, dressed in a frame that claims success. The frame's
+  // claim is never reached: the verified material classifies.
+  const failedLine = resultLine({ is_error: true });
+  await refuses(bridgeInput({ terminalFrameRawLine: failedLine,
+    terminalFrame: { ...honest.frame, frameDigest: sha256Digest(JSON.parse(failedLine)) },
+    retainedSession: { processAttemptId: PROCESS_BINDING.processAttemptId, sessionId: SESSION,
+      terminalFrameDigest: sha256Digest(JSON.parse(failedLine)) } }),
+  /claude_code_result_publication_session_not_terminal/);
+  // Material carrying a terminal reason, same shape.
+  const cancelledLine = resultLine({ terminal_reason: "cancelled" });
+  await refuses(bridgeInput({ terminalFrameRawLine: cancelledLine,
+    terminalFrame: { ...honest.frame, frameDigest: sha256Digest(JSON.parse(cancelledLine)) },
+    retainedSession: { processAttemptId: PROCESS_BINDING.processAttemptId, sessionId: SESSION,
+      terminalFrameDigest: sha256Digest(JSON.parse(cancelledLine)) } }),
+  /claude_code_result_publication_session_not_terminal/);
+  // Material observed on another session, dressed in a frame naming the
+  // retained one.
+  const otherLine = resultLine({}, OTHER_SESSION);
+  await refuses(bridgeInput({ terminalFrameRawLine: otherLine,
+    terminalFrame: { ...honest.frame, frameDigest: sha256Digest(JSON.parse(otherLine)) },
+    retainedSession: { processAttemptId: PROCESS_BINDING.processAttemptId, sessionId: SESSION,
+      terminalFrameDigest: sha256Digest(JSON.parse(otherLine)) } }),
+  /claude_code_result_publication_session_mismatch/);
 });
 
 test("a connector profile digest other than the accepted Claude profile refuses", async () => {
@@ -419,6 +561,15 @@ test("oversized or invalid terminal result bytes are rejected before any publish
   // A reported byte count that disagrees with the actual text is refused too.
   await refuses(bridgeInput({ terminalFrame: { ...base.frame, resultBytes: base.frame.resultBytes + 1 } }),
     /claude_code_result_publication_result_unusable/);
+  // The same two ceilings applied to the VERIFIED raw material itself, with a
+  // frame that honestly describes it, so the refusal cannot be coming from the
+  // frame-versus-material agreement check above.
+  await refuses(bridgeInput(syntheticMaterial(oversized)),
+    /claude_code_result_publication_result_unusable/);
+  await refuses(bridgeInput(syntheticMaterial(undefined)),
+    /claude_code_result_publication_result_unusable/);
+  await refuses(bridgeInput(syntheticMaterial("")),
+    /claude_code_result_publication_result_unusable/);
 });
 
 test("missing retained authority or retained identity refuses rather than being invented", async () => {
@@ -427,11 +578,13 @@ test("missing retained authority or retained identity refuses rather than being 
   // Retained identity is parsed whole: a missing or malformed field is a
   // refusal, never a value this bridge fills in from transport output.
   for (const field of ["tenantId", "projectId", "jobId", "attemptId", "runId", "nodeId", "workflowId"] as const) {
-    await refuses(bridgeInput({ retainedBinding: { ...RETAINED_BINDING, [field]: "" } }), /./);
+    await refuses(bridgeInput({ retainedBinding: { ...RETAINED_BINDING, [field]: "" } }),
+      retainedIdentityRejected(field));
   }
   await refuses(bridgeInput({ retainedSession: { processAttemptId: PROCESS_BINDING.processAttemptId,
     sessionId: "not-a-session-id",
-    terminalFrameDigest: decodedTerminal([initLine(), resultLine()]).frame.frameDigest } }), /./);
+    terminalFrameDigest: decodedTerminal([initLine(), resultLine()]).frame.frameDigest } }),
+  retainedIdentityRejected("sessionId"));
 });
 
 test("the decoded terminal frame carries no publication identity for the bridge to read", () => {

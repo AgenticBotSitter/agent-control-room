@@ -444,6 +444,7 @@ async function terminalEvidence(runId: string, sessionId: string, resultText: st
   const decoder = createClaudeCodeStreamDecoderV1();
   let retainedSessionId: string | undefined;
   let terminal: ClaudeCodeResultFrameV1 | undefined;
+  let terminalRawLine: string | undefined;
   for (;;) {
     const line = await wire.readLine(new AbortController().signal);
     if (line === undefined) break;
@@ -451,14 +452,17 @@ async function terminalEvidence(runId: string, sessionId: string, resultText: st
     // The init observation is the retained expected identity. It is captured
     // here, before the terminal frame is decoded at all.
     if (frame.kind === "init") retainedSessionId = frame.sessionId;
-    if (frame.kind === "result") terminal = frame;
+    // The exact raw terminal line is retained alongside the decode; it is the
+    // material the bridge re-derives the retained digest from.
+    if (frame.kind === "result") { terminal = frame; terminalRawLine = line; }
   }
-  assert.ok(retainedSessionId && terminal);
+  assert.ok(retainedSessionId && terminal && terminalRawLine);
   session.recordTerminalResultObserved();
   await session.close();
   const disposition = session.disposition();
   assert.equal(disposition.reasonCode, "closed_with_decoded_terminal_result");
   return { processBinding, disposition, frame: terminal!, state: decoder.state(),
+    terminalRawLine: terminalRawLine!,
     retainedSession: { processAttemptId: processBinding.processAttemptId, sessionId: retainedSessionId!,
       terminalFrameDigest: terminal!.frameDigest } };
 }
@@ -498,6 +502,7 @@ const bridgeInputFor = (evidence: Awaited<ReturnType<typeof terminalEvidence>>, 
   processBinding: evidence.processBinding,
   retainedSession: evidence.retainedSession,
   disposition: evidence.disposition,
+  terminalFrameRawLine: evidence.terminalRawLine,
   terminalFrame: evidence.frame,
   decoderState: evidence.state,
   acceptedConnectorProfileDigest: CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1,
@@ -579,7 +584,7 @@ test("exact publication retry replays the same receipt and starts no new process
   assert.equal(receipts.length, 1);
 });
 
-test("changed content or changed identity over the same run is refused, not republished", async t => {
+test("changed content over the same run is refused, not republished", async t => {
   const runId = "run:claude-bridge-conflict";
   const evidence = await terminalEvidence(runId, bridgeSession(3), "Original Claude terminal result.");
   const f = await bridgeFixture(runId, evidence.frame.frameDigest); t.after(f.close);
@@ -592,13 +597,75 @@ test("changed content or changed identity over the same run is refused, not repu
     [nativeFixtureBinding.tenantId, runId, JSON.stringify({ authorityDigest: changed.frame.frameDigest })]);
   await assert.rejects(() => publishClaudeTerminalResultV1(f.config, bridgeInputFor(changed, runId)),
     /durable_result_reservation_conflict/);
+  assert.equal(f.storage.putCalls, 1);
+});
 
-  // A changed identity field is refused by the publisher's recorded-identity
-  // verification before any reservation or byte write.
+test("a changed retained identity field is refused by the publisher's recorded identity", async t => {
+  // Its own fixture, whose recorded authority anchor still matches this
+  // evidence exactly. The only thing that differs from a publishable call is
+  // the retained `nodeId`, so the refusal is load bearing for that field
+  // rather than for a stale evidence anchor left behind by an earlier case.
+  const runId = "run:claude-bridge-identity";
+  const evidence = await terminalEvidence(runId, bridgeSession(8), "Claude result under a drifted node.");
+  const f = await bridgeFixture(runId, evidence.frame.frameDigest); t.after(f.close);
+
   await assert.rejects(() => publishClaudeTerminalResultV1(f.config, bridgeInputFor(evidence, runId,
     { retainedBinding: { ...retainedBindingFor(runId), nodeId: "node:other" } })),
   /durable_result_identity_mismatch/);
+  assert.equal(f.storage.putCalls, 0);
+  assert.equal((await f.db.query("SELECT artifact_id FROM control_native_artifact_receipts WHERE run_id=$1",
+    [runId])).rows.length, 0);
+
+  // The identical call with the retained node restored publishes normally, so
+  // nothing else about this fixture was refusing.
+  const published = await publishClaudeTerminalResultV1(f.config, bridgeInputFor(evidence, runId));
+  assert.equal(published.replayed, false);
   assert.equal(f.storage.putCalls, 1);
+});
+
+test("substituted result text under a preserved frame digest writes nothing to the real database", async t => {
+  const runId = "run:claude-bridge-substitution";
+  const text = "Genuine Claude terminal result.";
+  const evidence = await terminalEvidence(runId, bridgeSession(9), text);
+  const f = await bridgeFixture(runId, evidence.frame.frameDigest); t.after(f.close);
+
+  // A hand-built frame object carrying the genuine frame digest of the real
+  // terminal material, but different result text with a self-consistent byte
+  // count and content digest. Nothing the decoder froze constrains this
+  // object: it never came from the decoder.
+  const substituted = "Substituted Claude terminal result that was never observed.";
+  const forgedFrame: ClaudeCodeResultFrameV1 = { ...evidence.frame, resultText: substituted,
+    resultBytes: Buffer.byteLength(substituted, "utf8"),
+    resultTextDigest: digestOf(substituted) };
+  assert.equal(forgedFrame.frameDigest, evidence.frame.frameDigest);
+
+  await assert.rejects(() => publishClaudeTerminalResultV1(f.config,
+    bridgeInputFor(evidence, runId, { terminalFrame: forgedFrame })),
+  /claude_code_result_publication_result_unusable/);
+
+  // And the same substitution made in the raw material itself, with the old
+  // retained digest kept in place.
+  const tamperedLine = JSON.stringify({ ...JSON.parse(evidence.terminalRawLine), result: substituted });
+  await assert.rejects(() => publishClaudeTerminalResultV1(f.config,
+    bridgeInputFor(evidence, runId, { terminalFrameRawLine: tamperedLine, terminalFrame: forgedFrame })),
+  /claude_code_result_publication_evidence_digest_mismatch/);
+
+  // Zero database, storage and reservation writes from either attempt.
+  assert.equal(f.storage.putCalls, 0);
+  assert.equal(f.storage.artifacts.size, 0);
+  assert.ok(!createPersistentNeutralReservationPort(f.store).peek(nativeFixtureBinding.tenantId, runId),
+    "a refused substitution may leave no reservation behind");
+  assert.equal((await f.db.query("SELECT artifact_id FROM control_native_artifact_receipts WHERE run_id=$1",
+    [runId])).rows.length, 0);
+  assert.equal((await f.db.query("SELECT plan FROM control_native_review_plans WHERE run_id=$1",
+    [runId])).rows.length, 0);
+
+  // The honest call over the same evidence still publishes the REAL text, so
+  // the refusals above are the substitution being caught, not the fixture
+  // being unpublishable.
+  const published = await publishClaudeTerminalResultV1(f.config, bridgeInputFor(evidence, runId));
+  const stored = await f.storage.read(published.receipt.artifactId);
+  assert.equal(new TextDecoder().decode(stored!), text);
 });
 
 test("stale authority refuses before any reservation, byte or metadata write", async t => {
