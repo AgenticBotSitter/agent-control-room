@@ -164,9 +164,11 @@ test("the worker operation route authorizes, bounds, and projects its input", as
     installationId: 162066346, replayStore: new InMemoryGitHubWebhookReplayStore(),
     wakeSink: { publish: async () => {} }, now: () => NOW });
   const bridge = createGitHubWorkerBrokerNodeBridge({ broker, wakeStore, operations,
-    authorizeWorker: request => request.headers.authorization === "Bearer worker-token" });
+    authorizeWorker: request => request.headers.authorization === "Bearer worker-token"
+      ? { workerId: WORKER } : false });
   const bare = createGitHubWorkerBrokerNodeBridge({ broker, wakeStore,
-    authorizeWorker: request => request.headers.authorization === "Bearer worker-token" });
+    authorizeWorker: request => request.headers.authorization === "Bearer worker-token"
+      ? { workerId: WORKER } : false });
 
   async function call({ raw, authorized = true }: { raw?: string; authorized?: boolean } = {}) {
     const captured: { status?: number; body?: string } = {};
@@ -227,6 +229,68 @@ test("the worker operation route authorizes, bounds, and projects its input", as
   await bare.handle(request, response);
   assert.deepEqual({ status: captured.status, body: JSON.parse(captured.body ?? "{}") },
     { status: 503, body: { ok: false, code: "worker_operations_unavailable" } });
+});
+
+test("the worker operation route binds an operation to the authenticated identity", async () => {
+  const state = brokerState();
+  const { operations, requests } = workingBroker(state);
+  type BridgeOptions = Parameters<typeof createGitHubWorkerBrokerNodeBridge>[0];
+  const wakeStore = { probe: async () => {} } as unknown as BridgeOptions["wakeStore"];
+  const broker = new GitHubWorkerBroker({ secret: SECRET, repository: BROKER_REPOSITORY,
+    installationId: 162066346, replayStore: new InMemoryGitHubWebhookReplayStore(),
+    wakeSink: { publish: async () => {} }, now: () => NOW });
+  let executed = 0;
+  const counted = { ...operations,
+    run: async (...args: Parameters<typeof operations.run>) => { executed += 1; return operations.run(...args); } };
+  const bridgeFor = (authorization: boolean | { workerId: string }) => createGitHubWorkerBrokerNodeBridge({
+    broker, wakeStore, operations: counted, authorizeWorker: () => authorization });
+
+  async function call(bridge: ReturnType<typeof createGitHubWorkerBrokerNodeBridge>, raw: string) {
+    const captured: { status?: number; body?: string } = {};
+    const response = { writeHead(status: number) { captured.status = status; return this; },
+      end(body?: string) { captured.body = String(body ?? ""); } } as unknown as ServerResponse;
+    const request = { method: "POST", url: "/v1/worker-operations",
+      headers: { authorization: "Bearer worker-token", "content-length": String(Buffer.byteLength(raw, "utf8")) },
+      async *[Symbol.asyncIterator]() { yield Buffer.from(raw, "utf8"); } } as unknown as IncomingMessage;
+    await bridge.handle(request, response);
+    return { status: captured.status, body: JSON.parse(captured.body ?? "{}") };
+  }
+
+  // A boolean authorizer proves the caller is authenticated but names no worker, so the
+  // caller-supplied workerId is not evidence and no operation may run.
+  assert.deepEqual(await call(bridgeFor(true),
+    JSON.stringify({ operation: "worker-inbox-read", workerId: WORKER })),
+    { status: 403, body: { ok: false, code: "worker_identity_unbound" } });
+  assert.deepEqual(await call(bridgeFor({ workerId: "" }),
+    JSON.stringify({ operation: "worker-inbox-read", workerId: WORKER })),
+    { status: 403, body: { ok: false, code: "worker_identity_unbound" } });
+
+  // An authenticated caller bound to one worker identity cannot act as another valid worker.
+  assert.deepEqual(await call(bridgeFor({ workerId: OTHER_WORKER }),
+    JSON.stringify({ operation: "worker-inbox-read", workerId: WORKER })),
+    { status: 403, body: { ok: false, code: "worker_identity_mismatch" } });
+
+  // Neither refusal reached the operation layer, so neither could have reached GitHub.
+  assert.equal(executed, 0);
+  assert.equal(requests.length, 0);
+
+  // The same operation succeeds for the identity it is bound to, and only then executes.
+  const matched = await call(bridgeFor({ workerId: WORKER }),
+    JSON.stringify({ operation: "worker-inbox-read", workerId: WORKER }));
+  assert.equal(matched.status, 200);
+  assert.equal(matched.body.ok, true);
+  assert.equal(matched.body.workerId, WORKER);
+  assert.equal(executed, 1);
+  assert.equal(requests.length > 0, true);
+
+  // A body that names no worker keeps its own refusal: identity-shape validation belongs to the
+  // operation layer, and its refusal precedes any repository read.
+  const afterMatch = requests.length;
+  const malformed = await call(bridgeFor({ workerId: WORKER }), JSON.stringify({ operation: "worker-inbox-read" }));
+  assert.equal(malformed.status, 400);
+  assert.equal(malformed.body.code, "worker_identity_invalid");
+  assert.equal(executed, 2);
+  assert.equal(requests.length, afterMatch);
 });
 
 const BROKER_LOGIN = "agent-control-room-broker[bot]";

@@ -3,7 +3,7 @@ import type { DatabaseClient } from "../../persistence/database";
 import { createPrivatePostgresDatabase, validatePrivatePostgresConfiguration,
   type PrivatePostgresConfiguration } from "../../web/v1/private-postgres";
 import { createGitHubBrokerLoopbackService } from "../../web/v1/private-serving";
-import { createGitHubWorkerBrokerNodeBridge } from "./node-handler";
+import { createGitHubWorkerBrokerNodeBridge, type WorkerAuthorizer } from "./node-handler";
 import { PostgresGitHubWorkerWakeStore } from "./postgres-wake-store";
 import { GitHubWorkerBroker } from "./worker-broker";
 import { prepareGitHubWorkerOperations } from "./worker-operations";
@@ -20,7 +20,12 @@ export type GitHubBrokerPrivateServiceConfiguration = Readonly<{
   webhookSecret: string;
   database: PrivatePostgresConfiguration;
   port: number;
-  authorizeWorker(request: IncomingMessage): boolean | Promise<boolean>;
+  /**
+   * Vouches for the caller and, for worker operations, for the stable worker identity that the
+   * operation is bound to. An authorizer that only answers true/false proves authentication but
+   * names no identity, so the operation route refuses every operation it authorized.
+   */
+  authorizeWorker: WorkerAuthorizer;
   /**
    * Optional GitHub App credentials. When present the broker also serves the versioned
    * worker operations. When absent the wake routes are unchanged and the operation route
