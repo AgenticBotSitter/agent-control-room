@@ -1,0 +1,43 @@
+[Unit]
+Description=Agent Control Room GitHub worker broker
+After=network-online.target postgresql.service
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=control-room
+Group=control-room
+WorkingDirectory=/opt/control-room/current
+EnvironmentFile=/etc/control-room/github-worker-broker.env
+ExecStart=/usr/bin/node /opt/control-room/current/scripts/run-github-worker-broker.mjs --configuration /etc/control-room/github-worker-broker.operator.mjs
+Restart=on-failure
+RestartSec=10s
+TimeoutStartSec=30
+TimeoutStopSec=40
+UMask=0077
+LimitCORE=0
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

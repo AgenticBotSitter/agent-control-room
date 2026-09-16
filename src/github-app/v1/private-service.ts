@@ -7,6 +7,8 @@ import { createGitHubWorkerBrokerNodeBridge } from "./node-handler";
 import { PostgresGitHubWorkerWakeStore } from "./postgres-wake-store";
 import { GitHubWorkerBroker } from "./worker-broker";
 
+export { createGitHubAppJwt } from "./installation-auth";
+
 export const GITHUB_BROKER_DATABASE_ROLE = "control_room_github_broker";
 
 export type GitHubBrokerPrivateServiceConfiguration = Readonly<{
