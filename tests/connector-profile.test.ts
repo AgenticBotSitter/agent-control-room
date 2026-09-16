@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { connectorOperationAdmissibleV1, connectorOperationNamesV1, parseConnectorProfileV1 } from "../src/harness/v1/connector-profile";
+import { runConnectorConformanceV1 } from "../src/connector-conformance/v1";
+import { sha256Digest } from "../src/security/canonical-digest";
 
 const operation = (status: "supported" | "unsupported" | "unknown", evidence: "source_inspected" | "fixture_tested" | "actual_interface_tested" | "native_qualified", reasonCode: string) =>
   ({ status, evidence, reasonCode });
@@ -147,4 +149,71 @@ test("observation profiles cannot grant execution and submit needs credential is
   const noCredentials = profile();
   noCredentials.credentialResolution = "unsupported";
   assert.throws(() => parseConnectorProfileV1(noCredentials));
+});
+
+test("conformance runner reports profile rules for two distinct synthetic harness profiles", () => {
+  const report = runConnectorConformanceV1({
+    profiles: { hermesSynthetic: profile(), claudeSynthetic: packageProfile() },
+    scenarios: [
+      { scenarioId: "hermes-source-identity", rule: "source_identity", profileId: "hermesSynthetic", expect: "admitted" },
+      { scenarioId: "claude-source-identity", rule: "source_identity", profileId: "claudeSynthetic", expect: "admitted" },
+      { scenarioId: "hermes-submit-declared-only", rule: "operation_availability", profileId: "hermesSynthetic", operation: "submit", expect: "refused" },
+      { scenarioId: "claude-submit-declared-only", rule: "insufficient_evidence", profileId: "claudeSynthetic", operation: "submit", expect: "refused" },
+      { scenarioId: "claude-cancel-unavailable", rule: "operation_availability", profileId: "claudeSynthetic", operation: "cancel", expect: "refused" },
+    ],
+  });
+
+  assert.deepEqual(report.counts, { pass: 5, fail: 0, unsupported: 0 });
+  assert.equal(report.schema, "control-room.connector-conformance-report/v1");
+  assert.equal(report.nativeQualification, false);
+  assert.deepEqual(report.enabledOperations, []);
+  assert.deepEqual(report.profilesEvaluated, ["claudeSynthetic", "hermesSynthetic"]);
+  const evidence = new Map(report.scenarios.map(scenario => [scenario.scenarioId, scenario]));
+  assert.equal(evidence.get("hermes-source-identity")?.reasonCode, "source_revision_identity");
+  assert.equal(evidence.get("claude-source-identity")?.reasonCode, "source_package_identity");
+  assert.equal(evidence.get("hermes-submit-declared-only")?.reasonCode, "evidence_insufficient_source_inspected");
+  assert.equal(evidence.get("claude-submit-declared-only")?.reasonCode, "evidence_insufficient_source_inspected");
+  assert.equal(evidence.get("claude-cancel-unavailable")?.reasonCode, "operation_unsupported");
+  assert.equal(evidence.get("hermes-source-identity")?.profileDigest, sha256Digest(parseConnectorProfileV1(profile())));
+  assert.equal(evidence.get("hermes-source-identity")?.profileDigest, evidence.get("hermes-submit-declared-only")?.profileDigest);
+  assert.ok(Object.isFrozen(report) && Object.isFrozen(report.scenarios));
+});
+
+test("conformance evidence fails a wrong declaration and refuses malformed scenarios", () => {
+  const wrong = runConnectorConformanceV1({
+    profiles: { hermesSynthetic: profile() },
+    scenarios: [{ scenarioId: "wrong-expectation", rule: "operation_availability", profileId: "hermesSynthetic", operation: "submit", expect: "admitted" }],
+  });
+  assert.deepEqual(wrong.counts, { pass: 0, fail: 1, unsupported: 0 });
+  assert.equal(wrong.scenarios[0].outcome, "fail");
+  assert.equal(wrong.scenarios[0].reasonCode, "evidence_insufficient_source_inspected");
+
+  assert.throws(() => runConnectorConformanceV1({
+    profiles: { hermesSynthetic: profile() },
+    scenarios: [{ scenarioId: "unknown-rule", rule: "brand_new_rule" as never, profileId: "hermesSynthetic", expect: "admitted" }],
+  }), /connector_conformance_scenario_invalid:unknown-rule:rule/);
+  assert.throws(() => runConnectorConformanceV1({
+    profiles: { hermesSynthetic: profile() },
+    scenarios: [{ scenarioId: "missing-profile", rule: "source_identity", profileId: "absent", expect: "admitted" }],
+  }), /connector_conformance_scenario_invalid:missing-profile:profile_id/);
+  assert.throws(() => runConnectorConformanceV1({
+    profiles: { hermesSynthetic: profile() },
+    scenarios: [{ scenarioId: "missing-operation", rule: "insufficient_evidence", profileId: "hermesSynthetic", expect: "refused" }],
+  }), /connector_conformance_scenario_invalid:missing-operation:operation/);
+});
+
+test("conformance scenarios cannot widen the synthetic profile they evaluate", () => {
+  const synthetic = profile();
+  const before = connectorOperationNamesV1.map(name => connectorOperationAdmissibleV1(synthetic, name));
+  const report = runConnectorConformanceV1({
+    profiles: { hermesSynthetic: synthetic },
+    scenarios: [
+      { scenarioId: "submit-source-evidence", rule: "insufficient_evidence", profileId: "hermesSynthetic", operation: "submit", expect: "refused" },
+      { scenarioId: "submit-after-conformance", rule: "operation_availability", profileId: "hermesSynthetic", operation: "submit", expect: "refused" },
+    ],
+  });
+  assert.deepEqual(report.enabledOperations, []);
+  assert.equal(report.nativeQualification, false);
+  assert.deepEqual(connectorOperationNamesV1.map(name => connectorOperationAdmissibleV1(synthetic, name)), before);
+  assert.ok(before.every(admissible => admissible === false));
 });

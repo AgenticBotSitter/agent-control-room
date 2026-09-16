@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 import { createCanonicalTextResultV1 } from "../src/harness/v1/canonical-text-result";
 import { connectorOperationNamesV1 } from "../src/harness/v1/connector-profile";
+import { runConnectorConformanceV1, type ConnectorConformanceObservationV1, type ConnectorConformanceRunInputV1, type ConnectorConformanceScenarioV1 } from "../src/connector-conformance/v1";
 
 const operation = (status: "supported" | "unsupported" | "unknown",
   evidence: "source_inspected" | "fixture_tested" | "actual_interface_tested" | "native_qualified") =>
@@ -96,4 +97,77 @@ test("connector identity is derived from the exact validated profile", () => {
   const second = make({ connectorProfile: changed });
   assert.notEqual(first.connector.profileDigest, second.connector.profileDigest);
   assert.notEqual(first.resultDigest, second.resultDigest);
+});
+
+const multibyteText = "café ✅ 漢字";
+
+test("conformance runner exercises result envelope, bytes and encoding rules for two harnesses", () => {
+  const observations: Record<string, ConnectorConformanceObservationV1> = {
+    plain: { form: "utf8_text", text: " exact result\n" },
+    multibyte: { form: "utf8_text", text: multibyteText },
+    overLimit: { form: "utf8_text", text: "x".repeat(65_537) },
+    empty: { form: "utf8_text", text: "" },
+    loneSurrogate: { form: "utf8_text", text: "\ud800" },
+    invalidBytes: { form: "raw_bytes", bytes: [0x66, 0x80, 0x6f] },
+  };
+  const report = runConnectorConformanceV1({
+    profiles: { nativeSynthetic: profile(), interfaceSynthetic: profile("actual_interface_tested") },
+    observations,
+    scenarios: [
+      { scenarioId: "native-envelope", rule: "result_envelope", profileId: "nativeSynthetic", operation: "result", observationId: "plain", expect: "admitted" },
+      { scenarioId: "interface-envelope", rule: "result_envelope", profileId: "interfaceSynthetic", operation: "result", observationId: "plain", expect: "admitted" },
+      { scenarioId: "native-read-unavailable", rule: "result_envelope", profileId: "nativeSynthetic", operation: "read", observationId: "plain", expect: "refused" },
+      { scenarioId: "multibyte-bytes", rule: "content_bytes", profileId: "nativeSynthetic", operation: "result", observationId: "multibyte", expect: "admitted" },
+      { scenarioId: "over-limit-bytes", rule: "content_bytes", profileId: "nativeSynthetic", operation: "result", observationId: "overLimit", expect: "refused" },
+      { scenarioId: "empty-bytes", rule: "content_bytes", profileId: "interfaceSynthetic", operation: "result", observationId: "empty", expect: "refused" },
+      { scenarioId: "lone-surrogate-encoding", rule: "content_encoding", profileId: "nativeSynthetic", operation: "result", observationId: "loneSurrogate", expect: "refused" },
+      { scenarioId: "raw-byte-encoding", rule: "content_encoding", profileId: "nativeSynthetic", operation: "result", observationId: "invalidBytes", expect: "unsupported" },
+    ],
+  });
+
+  assert.deepEqual(report.counts, { pass: 7, fail: 0, unsupported: 1 });
+  const evidence = new Map(report.scenarios.map(scenario => [scenario.scenarioId, scenario]));
+  assert.equal(evidence.get("interface-envelope")?.reasonCode, "result_envelope_admitted");
+  assert.equal(evidence.get("native-read-unavailable")?.reasonCode, "operation_unavailable");
+  assert.equal(evidence.get("multibyte-bytes")?.sizeBytes, Buffer.byteLength(multibyteText));
+  assert.equal(evidence.get("multibyte-bytes")?.contentHash,
+    `sha256:${createHash("sha256").update(Buffer.from(multibyteText)).digest("hex")}`);
+  assert.equal(evidence.get("over-limit-bytes")?.reasonCode, "content_unavailable");
+  assert.equal(evidence.get("empty-bytes")?.reasonCode, "content_unavailable");
+  assert.equal(evidence.get("lone-surrogate-encoding")?.reasonCode, "content_unavailable");
+  assert.equal(evidence.get("raw-byte-encoding")?.outcome, "unsupported");
+  assert.equal(evidence.get("raw-byte-encoding")?.reasonCode, "utf8_text_boundary_required");
+});
+
+test("conformance evidence keeps exact identity, stays immutable and repeats reproducibly", () => {
+  const identity = { lineage, source };
+  const scenarios: ConnectorConformanceScenarioV1[] = [
+    { scenarioId: "identity-one", rule: "lineage_identity", profileId: "nativeSynthetic", operation: "result", observationId: "plain", identity, expect: "admitted" },
+    { scenarioId: "identity-two", rule: "lineage_identity", profileId: "nativeSynthetic", operation: "result", observationId: "plain", identity: { lineage: { ...lineage, attemptId: "attempt:two" }, source }, expect: "admitted" },
+    { scenarioId: "determinism", rule: "result_determinism", profileId: "nativeSynthetic", operation: "result", observationId: "plain", identity, expect: "admitted" },
+    { scenarioId: "immutability", rule: "input_immutability", profileId: "nativeSynthetic", operation: "result", observationId: "plain", identity, expect: "admitted" },
+    { scenarioId: "review-flags", rule: "review_flags", profileId: "nativeSynthetic", operation: "result", observationId: "plain", identity, expect: "admitted" },
+  ];
+  const observations: Record<string, ConnectorConformanceObservationV1> = {
+    plain: { form: "utf8_text", text: " exact result\n" },
+  };
+  const input: ConnectorConformanceRunInputV1 = {
+    profiles: { nativeSynthetic: profile() },
+    observations,
+    scenarios,
+  };
+  const report = runConnectorConformanceV1(input);
+
+  assert.deepEqual(report.counts, { pass: 5, fail: 0, unsupported: 0 });
+  const evidence = new Map(report.scenarios.map(scenario => [scenario.scenarioId, scenario]));
+  assert.equal(evidence.get("identity-one")?.resultDigest, evidence.get("determinism")?.resultDigest);
+  assert.notEqual(evidence.get("identity-two")?.resultDigest, evidence.get("identity-one")?.resultDigest);
+  assert.equal(evidence.get("identity-one")?.contentHash,
+    `sha256:${createHash("sha256").update(Buffer.from(" exact result\n")).digest("hex")}`);
+  assert.equal(evidence.get("immutability")?.resultFrozen, true);
+  assert.equal(evidence.get("immutability")?.reasonCode, "caller_input_and_admission_unchanged");
+  assert.equal(evidence.get("review-flags")?.reasonCode, "review_still_required");
+  assert.equal(report.nativeQualification, false);
+  assert.deepEqual(report.enabledOperations, []);
+  assert.deepEqual(runConnectorConformanceV1(input), report);
 });
