@@ -63,20 +63,7 @@
 .private-state { text-transform: capitalize; font-size: .875rem; background: var(--surface-3); border-radius: 2rem; padding: .2rem .65rem; display: inline-block; }
 .private-open { font-weight: 650; color: var(--green); }
 .private-create, .private-panel { padding: 1.5rem; }
-.private-panel--warning { border-color: var(--amber); }
 .private-create { display: grid; gap: .7rem; }
-.private-schedule-card { border-top: 1px solid var(--border); margin-top: 1rem; padding-top: 1rem; }
-.private-schedule-card:first-of-type { border-top: 0; margin-top: 0; padding-top: 0; }
-.private-schedule-state { display: flex; gap: .4rem; align-items: center; }
-.private-state.private-state--active { background: var(--green-soft, var(--surface-3)); }
-.private-state.private-state--paused { background: var(--amber-soft, var(--surface-3)); }
-.private-state.private-state--disabled { background: var(--surface-3); }
-.private-schedule-failure-heading { font-weight: 650; }
-.private-schedule-freshness { color: var(--muted); }
-.private-schedule-card details { margin-top: .6rem; }
-.private-schedule-card summary { cursor: pointer; min-height: 44px; padding: .35rem 0; }
-.private-schedule-card ul { list-style: disc; padding-left: 1.5rem; margin-top: .35rem; }
-.private-schedule-card ul li { padding: .15rem 0; }
 .private-create h2 { margin: 0 0 .5rem; }
 .private-create label { font-size: .875rem; font-weight: 650; }
 .private-create input, .private-create textarea { width: 100%; font: inherit; color: var(--text); border: 1px solid var(--border-strong); border-radius: .5rem; padding: .6rem; background: var(--surface); }

@@ -58,10 +58,27 @@ const requestFailureCopy = (code: string): { heading: string; detail: string; ac
   };
 };
 
-function ScheduleDisplayLabel({ value, timezone, prefix }: { value: string; timezone: string; prefix?: string }) {
+function renderInTimezone(value: string, timezone: string) {
+  const instant = new Date(value);
+  if (Number.isNaN(instant.getTime())) return "Time unavailable";
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short", timeZone: timezone }).format(instant);
+}
+
+/**
+ * Render an instant formatted in the *saved* schedule timezone, with the
+ * product display timezone disclosed separately when the two differ. This
+ * keeps each label truthful — the saved-tz string never describes a wall-clock
+ * value rendered in a different zone.
+ */
+function SavedTimezoneTimestamp({ value, timezone, prefix }: { value: string; timezone: string; prefix?: string }) {
   const configured = useProductConfiguration()?.defaultTimezone ?? fallbackTimezone;
-  const display = timezone === configured ? timezone : `${timezone} (displayed in ${configured})`;
-  return <ConfiguredTimestamp value={value} prefix={prefix ? `${prefix} ${display}` : display} />;
+  const formattedInSaved = renderInTimezone(value, timezone);
+  const formattedInDisplay = timezone === configured ? null : renderInTimezone(value, configured);
+  const headerLabel = `${timezone} · ${formattedInSaved}`;
+  const displayNote = formattedInDisplay ? <span className="private-note"> ({configured}: {formattedInDisplay})</span> : null;
+  return <time dateTime={value} title={`${headerLabel}${formattedInDisplay ? ` | ${configured} ${formattedInDisplay}` : ""}`} suppressHydrationWarning>
+    {prefix ? `${prefix} ` : ""}{headerLabel}{displayNote}
+  </time>;
 }
 
 function OccurrenceLine({ scheduledFor, timezone, occurrenceState, pastDue }: {
@@ -75,7 +92,7 @@ function OccurrenceLine({ scheduledFor, timezone, occurrenceState, pastDue }: {
         ? "Pending past its scheduled time — execution unknown"
         : "Pending occurrence";
   return <li>
-    <ConfiguredTimestamp value={scheduledFor} prefix={timezone} /> — {label}
+    <SavedTimezoneTimestamp value={scheduledFor} timezone={timezone} prefix="saved" /> — {label}
   </li>;
 }
 
@@ -91,7 +108,7 @@ function ScheduleCard({ schedule }: { schedule: ProjectScheduleStatus["schedules
     </p>
     <p data-field="timezone">Saved timezone: <code>{schedule.timezone}</code></p>
     <p data-field="next-reason">{nextReasonCopy[schedule.nextReason]}{
-      schedule.nextOccurrenceAt ? <>: <ScheduleDisplayLabel value={schedule.nextOccurrenceAt} timezone={schedule.timezone} /></> : null
+      schedule.nextOccurrenceAt ? <>: <SavedTimezoneTimestamp value={schedule.nextOccurrenceAt} timezone={schedule.timezone} /></> : null
     }</p>
     {hasOccurrences
       ? <details open={open} onToggle={event => setOpen((event.target as HTMLDetailsElement).open)}>
