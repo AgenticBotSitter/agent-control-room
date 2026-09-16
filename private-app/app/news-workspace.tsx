@@ -90,7 +90,7 @@ export function PrivateNewsWorkspace({ projectId, after, sourceAfter, view = "hi
     void load();
     return () => { active = false; abort.abort(); };
   }, [projectId, after, sourceAfter, view, order, refresh]);
-  return <><PrivateHeader /><main id="private-main" className="private-main" tabIndex={-1}>
+  return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1}>
     <h1>{page ? `${page.project.title} · News` : "Project news"}</h1>
     <ProjectNavigation projectId={projectId} current="news" />
     <NewsSourceSettings key={projectId} projectId={projectId} />
@@ -126,5 +126,5 @@ export function PrivateNewsWorkspace({ projectId, after, sourceAfter, view = "hi
         </article>)}
         {page.nextCursor ? <a href={`${base}/news?${new URLSearchParams({ view, order, after: page.nextCursor, ...(sourceAfter ? { sourceAfter } : {}) })}`}>Next saved stories</a> : null}
       </>}
-  </main></>;
+  </main></div>;
 }

@@ -83,8 +83,9 @@ export function PrivateIdeaWorkspace({ sessionId, after }: { sessionId?: string;
     })();
     return () => { active = false; abort.abort(); };
   }, [client, sessionId, after, refresh]);
-  return <><PrivateHeader /><main id="private-main" className="private-main" tabIndex={-1}>
-    <nav aria-label="Idea pages"><a href="/ideas">All saved ideas</a></nav>
+  return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1}>
+    <nav aria-label="Idea pages"><a href="/ideas" aria-current={sessionId ? undefined : "page"}
+      style={{ display: "inline-flex", minHeight: 24, alignItems: "center" }}>All saved ideas</a></nav>
     <button type="button" disabled={creating || decisionPending} onClick={() => { if (observer.current) void observer.current.read(); else { setPage(undefined); setError(undefined); setRefresh(v => v + 1); } }}>Refresh saved discussion</button>
     {creating ? <IdeaCreateForm close={() => { setCreating(false); setPage(undefined); setRefresh(v => v + 1); }} /> : null}
     {error ? <p role="alert">{error} Previously loaded discussion content is not a fresh status check.</p> : null}
@@ -100,5 +101,5 @@ export function PrivateIdeaWorkspace({ sessionId, after }: { sessionId?: string;
             <p>{session.ideaSummary}</p><p>{session.participantCount} participants · Up to {session.maxRounds} rounds</p>
           </article>)}{page.nextCursor ? <a href={`/ideas?after=${encodeURIComponent(page.nextCursor)}`}>Next saved ideas</a> : null}</>}
     </> : !error ? <p role="status">Loading saved ideas…</p> : null}
-  </main></>;
+  </main></div>;
 }
