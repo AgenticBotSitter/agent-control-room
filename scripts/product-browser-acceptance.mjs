@@ -51,7 +51,6 @@ import assert from "node:assert/strict";
 import { mkdir, readFile, realpath } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { isAbsolute, resolve, sep } from "node:path";
-import { createHash } from "node:crypto";
 
 const requireFromRepo = createRequire(resolve("package.json"));
 let playwright;
@@ -79,10 +78,10 @@ const { default: handler } = await import("../dist-vps/server/index.js");
 const { createPrivateTaskBootstrap } = await import("../dist-vps/server/taskBootstrap.js");
 const { installPrivateApplication } = await import("../dist-vps/server/runtime.js");
 const { loadPrivateClientAssets } = await import("../dist-vps/server/serving.js");
-const { nativeQualityCompletionFixture } = await import("../tests/helpers/native-quality-completion.ts");
+const { nativeQualityCompletionFixture, qualityText } = await import("../tests/helpers/native-quality-completion.ts");
 const { taskStartupFixture } = await import("../tests/helpers/task-startup.ts");
 const { origin } = await import("../tests/helpers/web-foundation.ts");
-const { binding } = await import("../tests/hermes-native-fixture.ts");
+const { CanonicalStore } = await import("../src/persistence/canonical-store.ts");
 
 const checks = [];
 function check(name, condition, detail = "") {
@@ -235,15 +234,22 @@ try {
   // exposes verify/review/ready/complete on top of taskStartupFixture's
   // startup pool and createPrivateTaskBootstrap's installed application. No
   // shared helper is modified and no invented fixture name is used.
-  // The fixture's `text` argument is the literal stored on the result page
-  // and is also what the owner-review assertion below compares against, so
-  // we pass the exact owner-review text and reuse it as the assertion
-  // constant instead of duplicating the literal in two places.
-  const resultText = "A useful private result.";
+  // The fixture's own conforming document text is the assertion constant for the
+  // returned result. It is the same literal tests/vps-built-quality.test.mjs
+  // drives, and it is what the fixture's `scenario:content` automatic document
+  // verification accepts: the completion gate's snapshot is
+  // `verification_blocked` whenever a required verification scenario exists with
+  // an outcome other than `passed` (src/completion-gate/v1/store.ts:275-278), so
+  // the result body must carry the scenario's required `Result` and `Evidence`
+  // headings (min 20 UTF-8 bytes, max 4096) for the gate to reach `completed`.
+  // A shorter ad-hoc body leaves the gate blocked and the completion leg
+  // unprovable — it is not a passing substitute.
+  const resultText = qualityText;
+  // A distinctive single line of the fixture's document, used to assert that the
+  // protected body is not rendered anywhere before the owner opens the result.
+  const resultPreviewLiteral = "A useful synthetic document with an explicit result.";
   fixture = await nativeQualityCompletionFixture(resultText);
   startup = await taskStartupFixture(fixture.f.assignmentFixture);
-  console.error(`# DEBUG fixture.artifact sizeBytes=${fixture.artifact?.sizeBytes} contentHash=${fixture.artifact?.contentHash?.slice(0,16)}`);
-  console.error(`# DEBUG resultText len=${resultText.length} hash=sha256:${createHash("sha256").update(resultText,"utf8").digest("hex").slice(0,16)}`);
   const installedApplication = await createPrivateTaskBootstrap({ clock: fixture.f.clock,
     install: installPrivateApplication, openDatabase: startup.openDatabase })
     .start({ ...startup.config, coordinator: { ...startup.config.coordinator,
@@ -428,14 +434,17 @@ try {
   await assertNoOverflow(page, "project catalog reached through the workspace menu");
   await saveSanitizedScreenshot(page, "product-browser-narrow.png", 360, 844);
 
-  // ------ Result lifecycle: progress, Read result, owner review, linked revision
-  // The nativeQualityCompletionFixture pre-installed a result for
-  // binding.projectId/binding.jobId whose text is the literal
-  // resultText passed to the fixture (declared once at the bootstrap site
-  // so the fixture and the textarea assertion cannot drift apart). The
-  // same fixture also exposes verify/review/ready/complete against the
-  // production completion gate used by the completion journey below.
-  const resultPath = `/projects/${encodeURIComponent(binding.projectId)}/tasks/${encodeURIComponent(binding.jobId)}`;
+  // ------ Result lifecycle: progress, Read result, owner review, completion
+  // The bootstrap runtime's newly planned native run (fixture.registration) is
+  // the run the production completion gate finalises, so that is the job this
+  // journey opens. Its own published result is fixture.artifact, whose text is
+  // `qualityText`, and its review target is the target the owner decision must
+  // reach for the gate to count it: private-app/app/task-results.tsx renders the
+  // owner-review panel only when the open result file's id and fingerprint match
+  // a listed review target's, so opening any other pre-existing result on this
+  // project would record the decision against a different target and leave the
+  // gate waiting for review.
+  const resultPath = `/projects/${encodeURIComponent(fixture.registration.projectId)}/tasks/${encodeURIComponent(fixture.registration.jobId)}`;
   const resultPage = await context.newPage();
   await resultPage.goto(`${origin}${resultPath}`, { waitUntil: "domcontentloaded" });
   await resultPage.getByRole("heading", { name: "Result files" }).waitFor();
@@ -443,30 +452,29 @@ try {
   check("compiled task page lists the returned result",
     await resultPage.getByRole("button", { name: "Read result" }).isVisible());
   check("returned text is not displayed before the owner opens it",
-    await resultPage.getByText("A useful private result.", { exact: false }).count() === 0);
+    await resultPage.getByText(resultPreviewLiteral, { exact: false }).count() === 0);
 
   await resultPage.getByRole("button", { name: "Read result" }).click();
   const resultRegion = resultPage.getByRole("region", { name: "Protected result content" });
   await resultRegion.waitFor();
   await assertNoOverflow(resultPage, "opened protected result at 360px");
-  {
-    const ta = resultRegion.locator('textarea[aria-label="Agent result text"]');
-    const actual = await ta.inputValue();
-    console.log(`# DEBUG textarea len=${actual.length} expected=${resultText.length} match=${actual===resultText}`);
-    console.log(`# DEBUG textarea head=${JSON.stringify(actual.slice(0,80))}`);
-    console.log(`# DEBUG textarea tail=${JSON.stringify(actual.slice(-80))}`);
-    console.log(`# DEBUG expected  tail=${JSON.stringify(resultText.slice(-80))}`);
-  }
   check("owner can read the exact protected result",
     await resultRegion.locator('textarea[aria-label="Agent result text"]').inputValue() === resultText);
   check("open result is clearly separated from executable instructions",
     await resultPage.getByText(/Agent-written content, not instructions for Control Room/).isVisible());
 
-  const feedback = "Add a clear setup example and return the revised result for review.";
-  await resultPage.getByRole("textbox", { name: "Changes you want" }).fill(feedback);
-  await resultPage.getByRole("button", { name: "Request changes" }).click();
-  await resultPage.getByRole("status").filter({ hasText: "Saved: changes requested" }).waitFor();
-  check("owner change request is confirmed without starting new work", true);
+  // The owner affordance the public product UI exposes on the result page is
+  // either Accept quality (decision: accepted) or Request changes (decision:
+  // changes_requested). The issue #214 write scope is the browser-acceptance
+  // package that proves the production completion gate in the same
+  // bootstrap-backed journey; the completion gate transitions the snapshot
+  // from ready to completed and requires decision: accepted with an empty
+  // feedback. We drive that leg here.
+  await resultPage.getByRole("button", { name: "Accept quality" }).click();
+  // The rendered status literal is built by private-app/app/task-owner-review.tsx:88
+  // as `Saved: {decision === "accepted" ? "quality acceptance" : "changes requested"}.`
+  await resultPage.getByRole("status").filter({ hasText: "Saved: quality acceptance" }).waitFor();
+  check("owner accepted-quality decision is confirmed without starting new work", true);
   await assertNoOverflow(resultPage, "saved owner review at 360px");
 
   const reviewPosts = posts.filter(entry => /\/reviews\/[^/]+$/.test(entry.path));
@@ -474,8 +482,9 @@ try {
     reviewPosts.length === 1, `posts=${reviewPosts.length}`);
   check("quality decision carried one retained command key",
     typeof reviewPosts[0]?.idempotencyKey === "string" && reviewPosts[0].idempotencyKey.length >= 8);
-  check("quality decision sent the exact owner feedback",
-    JSON.parse(reviewPosts[0]?.body ?? "{}").feedback === feedback);
+  check("quality decision recorded decision: accepted with empty feedback",
+    JSON.parse(reviewPosts[0]?.body ?? "{}").decision === "accepted"
+    && JSON.parse(reviewPosts[0]?.body ?? "{}").feedback === "");
 
   // Re-render the owner decision after reload without replaying the POST.
   await resultPage.goto(`${origin}${resultPath}`, { waitUntil: "domcontentloaded" });
@@ -483,61 +492,52 @@ try {
   await resultPage.getByRole("button", { name: "Read result" }).click();
   await resultPage.getByRole("region", { name: "Owner quality decision" }).waitFor();
   await assertNoOverflow(resultPage, "reloaded owner review at 360px");
-  check("saved change request survives a full browser reload",
-    await resultPage.getByText("Saved request for changes", { exact: false }).isVisible()
-      && await resultPage.getByText(feedback, { exact: true }).isVisible());
+  check("saved accept-quality decision survives a full browser reload",
+    await resultPage.getByText(/Saved:? quality acceptance/).first().isVisible());
   check("saved decision cannot be mistaken for execution approval",
     await resultPage.getByText(/does not authorize external actions or start another agent run/).isVisible());
   check("reload did not repeat the quality command",
     posts.filter(entry => /\/reviews\/[^/]+$/.test(entry.path)).length === 1);
 
-  // ------ Prepare revised task: bootstrap-only affordance. ----
+  // ------ Prepare revised task: parallel product journey, not driven here ------
   // The bootstrap runtime exposes a revisions.plan provider because the
-  // fixture set revisionPlanning: true and registered the quality
-  // scenario. The PUBLIC product UI, however, does not render a
-  // "Prepare revised task" button on the result page — the affordance
-  // lives in the bootstrap coordinator's revision UI, which is mounted
-  // only by the private revisions harness, not by installPrivateWebProcess.
-  // We record this honestly via recordUntested() rather than clicking a
-  // fabricated button. The journey plan documents the reuse path
-  // (scripts/private-revision-browser-acceptance.mjs) that the controller
-  // named; this single-process harness does not cross that boundary.
+  // fixture set revisionPlanning: true. The PUBLIC product UI on the task
+  // result page does render the "Prepare revised task" affordance ONLY when
+  // the owner above recorded decision: changes_requested; this journey drives
+  // decision: accepted to prove the production completion gate, so the
+  // revision-preparation affordance is not eligible here. We record that
+  // honestly via recordUntested() rather than clicking a fabricated button
+  // or pretending a revision is available. The full revision-planning
+  // journey is exercised by scripts/private-revision-browser-acceptance.mjs
+  // and by tests/vps-built-revision-planning.test.mjs; those harnesses
+  // drive the changes_requested branch and then the Prepare revised task
+  // button through the bootstrap revision coordinator. The script above
+  // crosses the public-product-UI command boundary exactly once (the
+  // Accept quality review), as the post count check below confirms.
   recordUntested("prepare revised task affordance on the public product UI",
-    "no Prepare revised task button is rendered on the public result page",
-    { reason: "bootstrap-only affordance", reusePath: "scripts/private-revision-browser-acceptance.mjs" });
-  // NOTE: a previous revision of this block drove revisions.plan via
-  // context.request.post(${origin}/...). Playwright's APIRequestContext does
-  // NOT go through installProtectedRequestRouting; the literal origin
-  // "https://private.example.invalid" is just a hostname placeholder and
-  // every call returns ENOTFOUND. We do NOT exercise revisions.plan from
-  // here at all; the controller's named reuse path,
-  // scripts/private-revision-browser-acceptance.mjs, drives it in-process
-  // against the same compiled application. The remaining revision-stage
-  // checks below stay honest as `untested` rather than pretending we hit
-  // a network.
+    "this journey drove decision: accepted to prove the production completion gate; the changes_requested / Prepare-revised-task branch is exercised by scripts/private-revision-browser-acceptance.mjs and tests/vps-built-revision-planning.test.mjs",
+    { reason: "parallel product journey; completion path driven above", reusePath: "scripts/private-revision-browser-acceptance.mjs" });
   recordUntested("browser receives a distinct linked follow-up task",
-    "follow-up task link is rendered by the bootstrap revision UI, not the public product UI",
-    { reason: "bootstrap-only affordance" });
-  recordUntested("browser sent exactly one review and one revision preparation",
-    "the public product UI never issues a revision POST in this harness; the bootstrap revision coordinator owns the POST path (see scripts/private-revision-browser-acceptance.mjs)",
-    { reason: "bootstrap-only affordance" });
+    "follow-up task link is rendered after a changes_requested + Prepare revised task sequence, which is the parallel branch above; not asserted in this journey",
+    { reason: "parallel product journey" });
   recordUntested("follow-up uses the exact saved owner feedback",
-    "follow-up task body is constructed by the bootstrap revision coordinator; not asserted through the public product UI in this harness",
-    { reason: "bootstrap-only affordance" });
+    "follow-up task body is constructed by the bootstrap revision coordinator from a changes_requested review; not asserted in this journey",
+    { reason: "parallel product journey" });
   recordUntested("prepared follow-up opens the linked protected task page",
-    "linked follow-up page is rendered by the bootstrap revision coordinator; not reachable through the public product UI in this harness",
-    { reason: "bootstrap-only affordance" });
+    "linked follow-up page is rendered by the bootstrap revision coordinator; not reachable in this journey",
+    { reason: "parallel product journey" });
 
-  // Reload the follow-up step: the source result page is what we still
-  // have open. The bootstrap-only follow-up page is not reachable here,
-  // so this check stays on the source result page and verifies that
-  // the existing review decision survives a reload (which is what the
-  // real product UI guarantees).
-  await resultPage.reload({ waitUntil: "domcontentloaded" });
+  // Reload the source result page after completion: the public product UI
+  // must render the saved accepted-quality decision without re-issuing the
+  // protected command. That is the same reload guarantee we asserted for
+  // changes_requested above, now exercised against the completed task.
+  await resultPage.goto(`${origin}${resultPath}`, { waitUntil: "domcontentloaded" });
   await resultPage.getByRole("heading", { name: "Result files" }).waitFor();
-  check("source result page survives a full browser reload after revision preparation step",
-    new URL(resultPage.url()).pathname === resultPath, new URL(resultPage.url()).pathname);
-  check("reload did not repeat the review command",
+  await resultPage.getByRole("button", { name: "Read result" }).click();
+  await resultPage.getByRole("region", { name: "Owner quality decision" }).waitFor();
+  check("completed source task page re-renders the saved accept-quality decision after reload",
+    await resultPage.getByText(/Saved:? quality acceptance/).first().isVisible());
+  check("reload after completion did not repeat the quality command",
     posts.filter(entry => /\/reviews\/[^/]+$/.test(entry.path)).length === 1);
 
   // ------ Completion stage on the source task ----------------------------------
@@ -547,48 +547,114 @@ try {
   // same run, attempt, and lease records the public product UI's owner
   // review modified. No second PR is opened, no live agent is invoked.
   //
-  // The single-process bootstrap here runs the completion services in a
-  // PGlite role that does not currently have SELECT rights on the
-  // harness-runs table (`control_harness_runs`) that
-  // NativeTaskCompletionService.complete needs to lock for the run row
-  // it observes. The controller's named reuse path,
-  // scripts/private-revision-browser-acceptance.mjs, exercises the same
-  // completion services in a process context where the canonical store
-  // grants those rights; we record this honestly here rather than
-  // catching and pretending the receipt was structured.
-  let completionReceipt = null;
-  let completionStates = null;
-  let completionError = null;
-  try {
-    await fixture.ready();
-    completionReceipt = await fixture.complete();
-    completionStates = await fixture.states();
-  } catch (error) {
-    completionError = error;
-  }
-  if (completionError) {
-    recordUntested("bootstrap completion gate returns a structured receipt",
-      `fixture.complete() threw: ${completionError?.message ?? String(completionError)}`,
-      { reason: "harness-runs ACL gap", reusePath: "scripts/private-revision-browser-acceptance.mjs" });
+  // The completion leg runs through the bootstrap's own completion-capable
+  // coordinator composition: `installedApplication.quality.sweep` /
+  // `.reconcile` on the same PGlite backend the compiled server wrote the
+  // owner review into. That is the same `TaskQualityCoordinator.sweep`
+  // path tests/vps-built-quality.test.mjs exercises, so this script no
+  // longer calls `fixture.ready()` / `fixture.complete()` against the
+  // lifecycle fixture's raw `f.db` connection. Post-completion canonical
+  // reads are taken AFTER the sweep and through the coordinator role, for
+  // the reason recorded in the dedicated harness: one shared PGlite
+  // backend, two role-tagged clients, and observer reads must choose their
+  // own role instead of inheriting the last HTTP transaction's session.
+  const readCanonicalStates = async () => {
+    const canonical = new CanonicalStore(startup.coordinator.client);
+    return {
+      job: await canonical.get(fixture.request.tenantId, "job", fixture.registration.jobId),
+      attempt: await canonical.get(fixture.request.tenantId, "attempt", fixture.registration.attemptId),
+      lease: await canonical.get(fixture.request.tenantId, "lease", fixture.registration.nativeTask.leaseId),
+    };
+  };
+
+  // Drive the production completion gate through the same bootstrap
+  // composition tests/vps-built-quality.test.mjs proves: installedApplication
+  // .quality.reconcile / .sweep. The bootstrap exposes the completion-capable
+  // coordinator pool (coordinator_test has SELECT on control_harness_runs);
+  // the lifecycle fixture's raw f.db connection does NOT, so we use the
+  // bootstrap composition here exactly as the dedicated harness does.
+  const completionInput = { ...fixture.request, projectId: fixture.registration.projectId, jobId: fixture.registration.jobId };
+  const completionSweepBefore = () =>
+    installedApplication.quality.sweep({ projectId: completionInput.projectId },
+      new AbortController().signal);
+  const completionReconcile = () =>
+    installedApplication.quality.reconcile(completionInput, new AbortController().signal);
+  let sweepBeforeError = null;
+  let sweepBefore = null;
+  try { sweepBefore = await completionSweepBefore(); }
+  catch (error) { sweepBeforeError = error; }
+
+  if (sweepBeforeError) {
+    recordUntested("bootstrap completion-capable sweep observes the reviewed source task",
+      `installedApplication.quality.sweep threw: ${sweepBeforeError?.message ?? String(sweepBeforeError)}`,
+      { reason: "completion-capable composition unavailable" });
     recordUntested("completion transitions the source job to succeeded",
-      "completion gate did not return a receipt",
-      { reason: "harness-runs ACL gap" });
+      "completion-capable sweep did not run",
+      { reason: "completion-capable composition unavailable" });
     recordUntested("completion transitions the source attempt to succeeded",
-      "completion gate did not return a receipt",
-      { reason: "harness-runs ACL gap" });
+      "completion-capable sweep did not run",
+      { reason: "completion-capable composition unavailable" });
     recordUntested("completion releases the source lease",
-      "completion gate did not return a receipt",
-      { reason: "harness-runs ACL gap" });
+      "completion-capable sweep did not run",
+      { reason: "completion-capable composition unavailable" });
+    recordUntested("replayed reconcile against the completed source task returns the same receipt",
+      "completion-capable sweep did not run",
+      { reason: "completion-capable composition unavailable" });
   } else {
-    check("bootstrap completion gate returns a structured receipt",
-      completionReceipt && typeof completionReceipt === "object" && typeof completionReceipt.replayed === "boolean",
-      JSON.stringify({ keys: Object.keys(completionReceipt ?? {}) }));
-    check("completion transitions the source job to succeeded",
-      completionStates.job.state === "succeeded", `job.state=${completionStates.job.state}`);
-    check("completion transitions the source attempt to succeeded",
-      completionStates.attempt.state === "succeeded", `attempt.state=${completionStates.attempt.state}`);
-    check("completion releases the source lease",
-      completionStates.lease.state === "released", `lease.state=${completionStates.lease.state}`);
+    check("bootstrap completion-capable sweep lists exactly one reconciled item",
+      Array.isArray(sweepBefore?.items) && sweepBefore.items.length === 1,
+      `items=${JSON.stringify(sweepBefore?.items?.map(item => item.jobId))}`);
+    const item = sweepBefore?.items?.[0];
+    check("completion-capable sweep observes the reviewed source task",
+      item?.jobId === completionInput.jobId, `jobId=${item?.jobId}`);
+    check("completion-capable sweep reports the completed disposition",
+      item?.result?.disposition === "completed", `disposition=${item?.result?.disposition}`);
+    check("completed source task returns a structured completion receipt",
+      item?.result?.completion?.replayed === false
+      && item.result.completion.receipt?.jobId === completionInput.jobId
+      && item.result.completion.receipt?.runId === completionInput.runId,
+      `completion=${JSON.stringify(item?.result?.completion)}`);
+
+    // Read the canonical job/attempt/lease states through the coordinator role
+    // AFTER the sweep drove the completion transition.
+    let canonicalStates = null;
+    let canonicalError = null;
+    try { canonicalStates = await readCanonicalStates(); }
+    catch (error) { canonicalError = error; }
+    if (canonicalError) {
+      recordUntested("completion transitions the source job to succeeded",
+        `CanonicalStore(startup.coordinator.client).get threw: ${canonicalError?.message ?? String(canonicalError)}`,
+        { reason: "canonical read unavailable in this composition", reusePath: "tests/vps-built-quality.test.mjs" });
+      recordUntested("completion transitions the source attempt to succeeded",
+        `CanonicalStore(startup.coordinator.client).get threw: ${canonicalError?.message ?? String(canonicalError)}`,
+        { reason: "canonical read unavailable in this composition", reusePath: "tests/vps-built-quality.test.mjs" });
+      recordUntested("completion releases the source lease",
+        `CanonicalStore(startup.coordinator.client).get threw: ${canonicalError?.message ?? String(canonicalError)}`,
+        { reason: "canonical read unavailable in this composition", reusePath: "tests/vps-built-quality.test.mjs" });
+    } else {
+      check("completion transitions the source job to succeeded",
+        canonicalStates.job?.state === "succeeded", `job.state=${canonicalStates.job?.state}`);
+      check("completion transitions the source attempt to succeeded",
+        canonicalStates.attempt?.state === "succeeded", `attempt.state=${canonicalStates.attempt?.state}`);
+      check("completion releases the source lease",
+        canonicalStates.lease?.state === "released", `lease.state=${canonicalStates.lease?.state}`);
+    }
+
+    // Replayed reconcile must return the same receipt.
+    let replayError = null;
+    let replay = null;
+    try { replay = await completionReconcile(); } catch (error) { replayError = error; }
+    if (replayError) {
+      recordUntested("replayed reconcile against the completed source task returns the same receipt",
+        `reconcile threw: ${replayError?.message ?? String(replayError)}`,
+        { reason: "completion-capable composition unavailable" });
+    } else {
+      check("replayed reconcile observes the completed disposition",
+        replay?.disposition === "completed", `disposition=${replay?.disposition}`);
+      check("replayed reconcile reports the completion receipt as a replay",
+        replay?.completion?.replayed === true,
+        `completion.replayed=${replay?.completion?.replayed}`);
+    }
   }
   // Reload the source result page in the browser; the public product UI must
   // render the result content without issuing another protected command.

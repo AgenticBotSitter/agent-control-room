@@ -25,7 +25,7 @@ test("planProductBrowserJourneys: schema advertises the journey set and never cl
     "Reload, back/forward, and the narrow workspace menu",
     "Open the agent progress page that the result lifecycle publishes",
     "Open the protected result content and read the exact returned text",
-    "Request owner changes and confirm the saved review decision",
+    "Accept the owner quality decision and confirm the saved review decision",
     "Prepare a revised task and follow its protected follow-up page",
     "Finalize the source task through the production completion gate",
     "Distinguish a lost request from a lost reply using request-level evidence",

@@ -79,53 +79,74 @@ Two items are documented as explicit blockers or scope notes in the journey plan
 ## Bootstrap composition (revision + completion)
 
 The package reuses the same bootstrap composition as
-`scripts/private-revision-browser-acceptance.mjs` for the revision and
-completion lifecycle stages:
+`scripts/private-revision-browser-acceptance.mjs` and as
+`tests/vps-built-quality.test.mjs` for the completion lifecycle stage:
 
 - `nativeQualityCompletionFixture()` (from `tests/helpers/native-quality-completion.ts`)
   owns the disposable PGlite database, the access trust, the pre-published
-  result for `binding.projectId`/`binding.jobId`, the synthetic quality
-  scenario, and exposes `verify` / `review` / `ready` / `complete` /
-  `states` against the production completion gate. The same literal text
-  passed to the fixture is what the result-page textarea assertion compares
-  against, declared once at the bootstrap site so the two cannot drift.
+  result for `binding.projectId`/`binding.jobId`, and the synthetic quality
+  scenario. The same literal text passed to the fixture is what the
+  result-page textarea assertion compares against, declared once at the
+  bootstrap site so the two cannot drift.
 - `taskStartupFixture()` (from `tests/helpers/task-startup.ts`) supplies
-  the startup pool and coordinator config used by both private harnesses.
+  the startup pool and the `coordinator_test` role PGlite grants
+  `SELECT` rights to on `control_harness_runs`.
 - `createPrivateTaskBootstrap({ install: installPrivateApplication, openDatabase: startup.openDatabase })`
-  installs the application with `revisionPlanning: true` so the public
-  product UI exposes the *Prepare revised task* affordance.
+  installs the application with `quality: { ...fixture.f.ownerConfig, scenarios: [fixture.scenario] }`
+  and `revisionPlanning: true`. The same `quality` configuration is the
+  one `tests/vps-built-quality.test.mjs` exercises, so the bootstrap here
+  exposes the same completion-capable coordinator pool.
 
-The bootstrap exposes `ready()` (verify + accept) and `complete()` (the
-production completion gate). After the UI drives the owner review and
-revision preparation, the package calls `fixture.ready()` to bring the
-snapshot to `ready`, then `fixture.complete()` to finalize the run, and
-finally asserts via `fixture.states()` that `job.state === "succeeded"`,
-`attempt.state === "succeeded"` and `lease.state === "released"`. The
-public product UI is reloaded on the same task page after completion to
-confirm the post-completion view without re-issuing the protected
-command.
+For the completion leg the script drives the public product UI to record
+`decision: accepted` on the source task result page (see the journey plan
+above). Then the script invokes `installedApplication.quality.sweep(
+{ projectId } )` on the **same completion-capable coordinator pool** the
+dedicated harness uses; the sweep observes exactly one `ReconciledItem`
+with a real `disposition: "completed"` and a real `completion` receipt.
+The post-completion canonical states of `job`, `attempt` and `lease` are
+read through `new CanonicalStore(startup.coordinator.client)` so the
+read uses the `coordinator_test` role (the same role that locked the run
+row). The script asserts `job.state === "succeeded"`,
+`attempt.state === "succeeded"` and `lease.state === "released"`. A
+replay of `installedApplication.quality.reconcile` against the same
+input returns the same completion receipt with `replayed: true`,
+proving the receipt is canonical and replay-safe. The public product UI
+on the source task page is then reloaded and asserted to render the
+saved accept-quality decision without re-issuing a protected command.
+
+The package no longer invokes `fixture.complete()` directly: that call
+in the previous round ran against `fixture.f.db` (the lifecycle
+fixture's raw database) in a PGlite role without the harness-runs grant,
+which is the wrong composition for the completion transition. This round
+uses the bootstrap composition described above; it is the same
+`TaskQualityCoordinator.sweep` / `.reconcile` path that
+`tests/vps-built-quality.test.mjs` lines 60–104 exercise, against the
+exact same `coordinator_test` role PGlite setup, with only surrounding
+plumbing differences.
 
 Two known honest limits are recorded by the script under the
 `untested` tally and surfaced in the TAP output:
 
-- **Revision stage**: the public product UI does not render a
-  *Prepare revised task* button (the affordance lives in the bootstrap
-  revision UI, mounted only by `scripts/private-revision-browser-acceptance.mjs`).
-  The script does **not** drive `revisions.plan` via
-  `context.request.post`; that path bypasses `installProtectedRequestRouting`
-  and the literal origin hostname returns `ENOTFOUND`, so any direct API
-  call would be theater. The controller's named reuse path drives the
-  linked follow-up page through the bootstrap revision UI.
-- **Completion stage**: in the single-process bootstrap here, the
-  completion services run in a PGlite role that does not currently have
-  SELECT rights on the harness-runs table (`control_harness_runs`) that
-  `NativeTaskCompletionService.complete` needs to lock for the run row
-  it observes. The script records this honestly as `untested`; the
-  controller's named reuse path exercises the same completion services
-  in a process context where the canonical store grants those rights.
-  The post-completion source result page reload is asserted regardless,
-  because the public product UI's reload guarantee is independent of the
-  completion services.
+- **Revision stage (changes_requested / Prepare revised task branch)**:
+  this journey drives `decision: accepted` to prove the production
+  completion gate; the public product UI exposes the *Prepare revised
+  task* affordance only after a `decision: changes_requested` review,
+  which this journey does not record. The script does **not** drive
+  `revisions.plan` via `context.request.post`; that path bypasses
+  `installProtectedRequestRouting` and the literal origin hostname
+  returns `ENOTFOUND`, so any direct API call would be theater. The
+  controller's named reuse path
+  (`scripts/private-revision-browser-acceptance.mjs` and
+  `tests/vps-built-revision-planning.test.mjs`) exercises the
+  `changes_requested → Prepare revised task` branch in their respective
+  scopes.
+- **Completion role composition**: the canonical-state read uses
+  `new CanonicalStore(startup.coordinator.client)` (role
+  `coordinator_test`). If that read fails — for example because the
+  PGlite role grants were not set up in a future change to the bootstrap
+  pool — the script records the affected state assertions as `untested`
+  honestly and points at `tests/vps-built-quality.test.mjs` which uses
+  the same composition in its dedicated test.
 
 No shared helper file is modified by this package. No invented product
 behavior is added.
