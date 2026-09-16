@@ -135,18 +135,18 @@ export class ScheduledTaskDispatchServiceV1 {
     )).rows[0];
     if (!occurrence) throw refuse("occurrence_unknown");
     if (occurrence.state === "cancelled") throw refuse("occurrence_cancelled");
-    if (occurrence.state === "dispatched") {
-      const prior = await this.db.query<{ occurrence_key: string }>(
-        "SELECT occurrence_key FROM control_scheduled_task_admissions WHERE tenant_id=$1 AND schedule_id=$2 AND occurrence_key=$3",
-        [tenantId, scheduleId, occurrenceKey],
-      );
-      if (!prior.rows[0]) throw refuse("occurrence_conflict");
-    }
+    const prior = await this.db.query<{ occurrence_key: string }>(
+      "SELECT occurrence_key FROM control_scheduled_task_admissions WHERE tenant_id=$1 AND schedule_id=$2 AND occurrence_key=$3",
+      [tenantId, scheduleId, occurrenceKey],
+    );
+    if (occurrence.state === "dispatched" && !prior.rows[0]) throw refuse("occurrence_conflict");
     const now = this.now();
     if (!Number.isFinite(now)) throw refuse("invalid_dispatch");
     if (Date.parse(instant(occurrence.scheduled_for)) > now) throw refuse("occurrence_not_due");
     if (occurrence.target_type !== "job" || schedule.targetType !== "job") throw refuse("target_not_admissible");
-    if (schedule.state !== "active") throw refuse("schedule_not_active");
+    // Pause prevents new proposals; canonical admission still verifies exact replay.
+    if (schedule.state !== "active" && !prior.rows[0]) throw refuse("schedule_not_active");
+    if (occurrence.target_id !== schedule.targetId) throw refuse("occurrence_conflict");
 
     // Stable occurrence identity: the recorded definition digest is the authority. If the
     // schedule now digests differently the occurrence is stale and must not be dispatched.

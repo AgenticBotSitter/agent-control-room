@@ -16,7 +16,9 @@ A refusal maps onto one vocabulary (`invalid_dispatch`, `occurrence_unknown`, `o
 
 ## Replay boundary
 
-A `dispatched` occurrence with an existing admission replays: admission returns the same immutable receipt and the outcome is reported with `replayed: true`. Replay works both for concurrent racing callers (admission serializes on the occurrence row inside its transaction) and for the crash window after a receipt commit but before delivery acknowledgement, which `ScheduleOccurrenceStore.acknowledgeDelivery` settles on replay. One admission, one canonical task — concurrent or repeated dispatch cannot create a second task.
+A paused schedule permits acknowledgement replay of a prior admission, but not a new proposal. Changed definitions, source content or context still refuse: the packet requires stale/changed-content refusal, so dispatch does not manufacture an old input from a receipt to bypass that requirement. Such drift requires operator reconciliation; the wrapper does not promise recovery across changed content.
+
+A `dispatched` occurrence with an existing admission and unchanged definition/source/context replays: admission returns the same immutable receipt and the outcome is reported with `replayed: true`. Replay works both for concurrent racing callers (admission serializes on the occurrence row inside its transaction) and for the crash window after a receipt commit but before delivery acknowledgement, which `ScheduleOccurrenceStore.acknowledgeDelivery` settles on replay. One admission, one canonical task — concurrent or repeated dispatch cannot create a second task.
 
 ## Batch dispatch
 

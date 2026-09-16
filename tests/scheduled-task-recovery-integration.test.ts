@@ -184,9 +184,13 @@ test("restart after receipt commit but before acknowledgement replays without a 
       .dispatchOne({ tenantId, scheduleId, occurrenceKey }), /simulated acknowledgement crash/);
     assert.equal(await count(f.db, "control_scheduled_task_admissions"), 1);
     assert.equal((await f.db.query<{ state: string }>("SELECT state FROM control_schedule_occurrences WHERE occurrence_key=$1", [occurrenceKey])).rows[0].state, "pending");
+    // Pausing stops NEW admissions, not acknowledgement of an already committed one.
+    await f.db.query(`UPDATE control_schedules SET state='paused',
+      payload=jsonb_set(payload,'{state}','"paused"'::jsonb) WHERE id=$1`, [scheduleId]);
     const report = await f.recovery.reconcileOnRestart({ tenantId, scheduleId });
     assert.equal(report.recovered.length, 1);
     assert.equal(report.recovered[0].replayed, true);
+    assert.equal((await f.db.query<{ state: string }>("SELECT state FROM control_schedule_occurrences WHERE occurrence_key=$1", [occurrenceKey])).rows[0].state, "dispatched");
     assert.equal(await count(f.db, "control_scheduled_task_admissions"), 1);
     assert.equal(await count(f.db, "control_jobs", "WHERE id LIKE 'job:schedule:%'"), 1);
   } finally { await f.raw.close(); }
