@@ -1172,3 +1172,24 @@ test("a forged Claude evidence digest is refused by the shared union", () => {
   const tampered = claudeTerminalLine({ result: "text that was never observed" });
   assert.notEqual(claudeEvidenceFor(tampered).evidenceDigest, claude.evidenceDigest);
 });
+
+test("a claimed resultSubtypeCode that disagrees with the raw material is refused", () => {
+  // The raw line, and the digest that binds it, genuinely say error_max_turns.
+  // A caller cannot make that appear as "success" in shared evidence merely
+  // by claiming a different resultSubtypeCode alongside the same raw line.
+  const genuineFailureLine = claudeTerminalLine({ subtype: "error_max_turns" });
+  assert.throws(() => projectClaudeTerminalResultEvidenceV1({
+    lineage: { tenantId: binding.tenantId, projectId: binding.projectId, jobId: "job:claude-union",
+      attemptId: "attempt:claude-union", runId: "run:claude-union", nodeId: binding.nodeId },
+    retained: { processAttemptId: "attempt.process.claude-union", sessionId: CLAUDE_EVIDENCE_SESSION,
+      connectorProfileDigest: digest("claude-profile"),
+      terminalFrameDigest: sha256Digest(JSON.parse(genuineFailureLine)) },
+    terminalFrameRawLine: genuineFailureLine,
+    resultSubtypeCode: "success",
+    decoderFramesAccepted: 2,
+    observedAt: at(9902),
+  }), /terminal_result_evidence_unavailable/);
+
+  // The honest pairing (raw subtype and claimed code agree) is unaffected.
+  assert.equal(claudeEvidenceFor().kind, "claude_terminal_result");
+});

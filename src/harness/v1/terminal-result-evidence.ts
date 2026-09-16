@@ -113,6 +113,22 @@ const upstreamHermesSessionResultEvidenceSchema = z.object({
 const claudeResultSubtypeCodes = ["success", "error_max_turns", "error_during_execution", "unrecognized"] as const;
 
 /**
+ * Exactly the decoder's `KNOWN_RESULT_SUBTYPES`, restated rather than imported
+ * for the same harness-neutrality reason as `terminalFrameRawLine` above. Used
+ * only to re-derive `resultSubtypeCode` from the verified raw line itself, so
+ * a caller cannot claim a `resultSubtypeCode` the raw material disagrees with.
+ */
+const knownClaudeRawResultSubtypes: ReadonlySet<string> = new Set([
+  "success", "error_max_turns", "error_during_execution",
+]);
+
+function claudeRawSubtypeCode(raw: unknown): (typeof claudeResultSubtypeCodes)[number] {
+  return typeof raw === "string" && knownClaudeRawResultSubtypes.has(raw)
+    ? (raw as (typeof claudeResultSubtypeCodes)[number])
+    : "unrecognized";
+}
+
+/**
  * Claude terminal-result evidence binds one decoded Claude Code CLI `result`
  * frame to canonical lineage and the retained, already-authenticated owned
  * process session / connector profile facts.
@@ -521,9 +537,11 @@ function plainJsonObject(value: unknown): value is Record<string, unknown> {
  * not parseable JSON or not an object, a recomputed digest that does not equal
  * the retained one, material that is not a `result` frame, a `session_id` that
  * is not the retained expected session, `is_error` other than exactly `false`,
- * any `terminal_reason` at all, and result text that is absent, empty,
- * whitespace-only, not well-formed Unicode, outside 1..65,536 UTF-8 bytes, or
- * carrying secret material.
+ * any `terminal_reason` at all, a claimed `resultSubtypeCode` that does not
+ * match the subtype re-derived from the verified material's own `subtype`
+ * field, and result text that is absent, empty, whitespace-only, not
+ * well-formed Unicode, outside 1..65,536 UTF-8 bytes, or carrying secret
+ * material.
  *
  * Performs no I/O. Starts no process, calls no provider, reads no credential,
  * and grants no publication, quality, completion, retry, resume or execution
@@ -549,6 +567,10 @@ export function projectClaudeTerminalResultEvidenceV1(value: unknown): ClaudeTer
     // publishable terminal result. Every other shape goes through its own
     // refusal surface and never becomes successful terminal evidence.
     if (material.is_error !== false || material.terminal_reason !== undefined) unavailable();
+    // The recorded subtype is derived from the verified material itself, never trusted from
+    // the caller's separate claim: otherwise a caller could pin a real error_max_turns raw
+    // line (matching digest) alongside a claimed resultSubtypeCode of "success".
+    if (claudeRawSubtypeCode(material.subtype) !== parsed.resultSubtypeCode) unavailable();
     const text = material.result;
     if (typeof text !== "string" || text.length === 0 || text.trim().length === 0) return unavailable();
     if (!wellFormedUnicode(text)) unavailable();
