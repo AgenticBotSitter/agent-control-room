@@ -140,12 +140,14 @@ test("reviewed HTTP listener and outbound request imports stay separate; legacy 
     visit(tree); if (ownsHttp) owners.push(path.replaceAll("\\", "/"));
   }
   assert.deepEqual(owners.sort(), ["src/vendor/control-center/pinned-fetch.ts", "src/web/v1/private-serving.ts"]);
-  // E60/E63 explicitly compose serving in the supplied-resource host. No other
-  // consumer or additional native HTTP owner is admitted by this inventory.
+  // E60/E63 and the separately reviewed GitHub broker explicitly compose serving.
+  // No other consumer or additional native HTTP owner is admitted by this inventory.
   // The adopted news client is separately restricted above to the request API.
-  assert.deepEqual(consumers, ["src/web/v1/private-task-host.ts"]);
+  assert.deepEqual(consumers, ["src/github-app/v1/private-service.ts", "src/web/v1/private-task-host.ts"]);
   const host = await readFile("src/web/v1/private-task-host.ts", "utf8");
   assert.doesNotMatch(host, /from ["']node:(?:http|net)["']|process\.env|process\.on\(|private-loopback-physical-native-driver/);
+  const broker = await readFile("src/github-app/v1/private-service.ts", "utf8");
+  assert.doesNotMatch(broker, /from ["']node:net["']|process\.env|process\.on\(|private-loopback-physical-native-driver/);
   const service = await readFile("src/web/v1/private-serving.ts", "utf8");
   assert.doesNotMatch(service, /from ["']node:net["']|process\.env|process\.on\(|private-loopback-physical-native-driver/);
   assert.match(service, /host: "127\.0\.0\.1"/);
