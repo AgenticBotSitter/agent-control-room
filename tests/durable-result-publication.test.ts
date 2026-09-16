@@ -811,10 +811,37 @@ function upstreamHermesOutcome(runId: string, overrides: Partial<{
   };
 }
 
-function upstreamHermesInput(runId: string, overrides: Parameters<typeof upstreamHermesOutcome>[1] = {}) {
+/**
+ * Independently retained, already-authenticated upstream binding for a run.
+ * Deliberately a SEPARATE source from the outcome: the adapter must compare
+ * the two, so the retained side is built here from the caller's own record
+ * of the run, not from anything the outcome produced.
+ */
+function retainedBindingFor(runId: string, overrides: Partial<{
+  upstreamJobId: string; upstreamSessionId: string; connectorProfileDigest: string;
+  lineage: { tenantId: string; projectId: string; jobId: string; attemptId: string;
+             runId: string; nodeId: string };
+}> = {}) {
+  return {
+    lineage: overrides.lineage ?? {
+      tenantId: binding.tenantId, projectId: binding.projectId,
+      jobId: `job:${runId}`, attemptId: `attempt:${runId}`,
+      runId, nodeId: binding.nodeId,
+    },
+    upstreamSessionId: overrides.upstreamSessionId ?? `session:${runId}`,
+    upstreamJobId: overrides.upstreamJobId ?? "0123456789abcdef0123456789abcdef",
+    connectorProfileDigest: overrides.connectorProfileDigest ?? digest("c"),
+  };
+}
+
+function upstreamHermesInput(
+  runId: string,
+  overrides: Parameters<typeof upstreamHermesOutcome>[1] = {},
+  retainedOverrides: Parameters<typeof retainedBindingFor>[1] = {},
+) {
   return {
     outcome: upstreamHermesOutcome(runId, overrides),
-    connectorProfileDigest: digest("c"),
+    retainedBinding: retainedBindingFor(runId, retainedOverrides),
     workflowId: "workflow:test",
     assertAuthority: () => {},
     acceptanceProfile: { id: "profile:test:upstream-hermes", digest: digest("acceptance-profile") },
@@ -912,20 +939,60 @@ test("upstream Hermes: wrong upstream job id / wrong connector profile digest fa
   const storage = new ControlledStorage();
   const runId = "run:durable-upstream-hermes-id";
   const receivedAt = at(9500);
-  // Wrong upstream job id: the adapter's pre-projection guard rejects the
-  // job id pattern before the durable publisher is reached. The wrong
-  // upstream session id case is structurally impossible through the
-  // adapter (the outcome supplies the only session id the adapter ever
-  // sees), so the projection-level guard is exercised in
-  // `terminal-result-evidence.test.ts` instead.
+  // Malformed retained job id: rejected on shape before any comparison.
   await assert.rejects(publishHermesSessionResultV1(configOf(f, storage),
-    { ...upstreamHermesInput(runId, { upstreamJobId: "not-hex-job-id" }), receivedAt }),
+    { ...upstreamHermesInput(runId, {}, { upstreamJobId: "not-hex-job-id" }), receivedAt }),
     /upstream_hermes_invalid_upstream_job_id/);
   // Wrong connector profile digest: the durable publisher's
   // `verifyRecordedIdentity` rejects the binding before any write.
   await assert.rejects(publishHermesSessionResultV1(configOf(f, storage),
-    { ...upstreamHermesInput(runId), connectorProfileDigest: digest("wrong-profile"), receivedAt }),
+    { ...upstreamHermesInput(runId, {}, { connectorProfileDigest: digest("wrong-profile") }), receivedAt }),
     /durable_result_identity_mismatch/);
+  assert.equal(storage.putCalls, 0);
+});
+
+test("upstream Hermes: a complete but FOREIGN outcome fails closed against every retained boundary", async t => {
+  const f = await setupWithProvision("run:durable-upstream-hermes-foreign"); t.after(f.close);
+  const storage = new ControlledStorage();
+  const runId = "run:durable-upstream-hermes-foreign";
+  const receivedAt = at(9550);
+
+  // Each case below submits a structurally valid, fully self-consistent
+  // outcome: real text, and a contentHash/sizeBytes pair recomputed from
+  // that text by the same builder the adapter uses. Nothing inside the
+  // outcome is wrong on its own terms — it is simply not the result the
+  // caller authenticated. Only the retained binding can tell.
+
+  // (a) Foreign upstream job id, valid retained job id.
+  await assert.rejects(publishHermesSessionResultV1(configOf(f, storage),
+    { ...upstreamHermesInput(runId, { upstreamJobId: "fedcba9876543210fedcba9876543210" }), receivedAt }),
+    /upstream_hermes_retained_upstream_job_id_mismatch/);
+
+  // (b) Foreign upstream session id — the case the previous round wrongly
+  //     dismissed as impossible. The outcome is complete and correctly
+  //     hashed; only the retained session id disagrees.
+  await assert.rejects(publishHermesSessionResultV1(configOf(f, storage),
+    { ...upstreamHermesInput(runId, { upstreamSessionId: "session:foreign" }), receivedAt }),
+    /upstream_hermes_retained_upstream_session_id_mismatch/);
+
+  // (c) Foreign lineage: the outcome carries a different run id than the
+  //     caller retained, everything else well-formed.
+  await assert.rejects(publishHermesSessionResultV1(configOf(f, storage),
+    { ...upstreamHermesInput(runId, {}, { lineage: {
+        tenantId: binding.tenantId, projectId: binding.projectId,
+        jobId: `job:${runId}`, attemptId: `attempt:${runId}`,
+        runId: "run:some-other-run", nodeId: binding.nodeId } }), receivedAt }),
+    /upstream_hermes_retained_lineage_mismatch/);
+
+  // (d) Foreign project lineage only — one field of six.
+  await assert.rejects(publishHermesSessionResultV1(configOf(f, storage),
+    { ...upstreamHermesInput(runId, {}, { lineage: {
+        tenantId: binding.tenantId, projectId: "project:someone-else",
+        jobId: `job:${runId}`, attemptId: `attempt:${runId}`,
+        runId, nodeId: binding.nodeId } }), receivedAt }),
+    /upstream_hermes_retained_lineage_mismatch/);
+
+  // Not one byte reached storage across all four foreign outcomes.
   assert.equal(storage.putCalls, 0);
 });
 
@@ -941,7 +1008,8 @@ test("upstream Hermes: every non-completed outcome is refused before publication
         : { reason: "invalid reply" }),
     } as HermesSessionResultOutcomeV1;
     await assert.rejects(publishHermesSessionResultV1(configOf(f, storage),
-      { outcome, connectorProfileDigest: digest("c"), workflowId: "workflow:test", assertAuthority: () => {},
+      { outcome, retainedBinding: retainedBindingFor("run:durable-upstream-hermes-states"),
+        workflowId: "workflow:test", assertAuthority: () => {},
         receivedAt: "2026-09-15T12:00:00.000Z",
         acceptanceProfile: { id: "profile:test:upstream-hermes", digest: digest("acceptance-profile") } }),
       /upstream_hermes_session_result_not_completed|terminal_result_evidence_unavailable/);
@@ -996,7 +1064,8 @@ test("upstream Hermes: invalid connector profile digest shape is rejected withou
   const storage = new ControlledStorage();
   const runId = "run:durable-upstream-hermes-shape";
   await assert.rejects(publishHermesSessionResultV1(configOf(f, storage),
-    { ...upstreamHermesInput(runId), receivedAt: "2026-09-15T12:00:00.000Z", connectorProfileDigest: "not-a-digest" }),
+    { ...upstreamHermesInput(runId, {}, { connectorProfileDigest: "not-a-digest" }),
+      receivedAt: "2026-09-15T12:00:00.000Z" }),
     /upstream_hermes_invalid_connector_profile_digest/);
   assert.equal(storage.putCalls, 0);
 });

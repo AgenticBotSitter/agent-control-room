@@ -29,6 +29,41 @@ import type { CompletionReviewTargetV1 } from "../../completion-gate/v1/types";
  */
 export type HermesResultPublicationAuthorityFenceV1 = () => void;
 
+/**
+ * Independently retained, already-authenticated upstream binding facts.
+ *
+ * These values must come from the caller's own record of the upstream
+ * session it authenticated — NOT from the outcome being published. The
+ * adapter compares the completed outcome against this binding before it
+ * projects evidence or touches the durable publisher, and derives the
+ * durable binding from these facts alone. A caller that supplies the
+ * outcome's own values here proves nothing: a foreign, well-formed,
+ * internally hashed outcome would remain self-consistent through
+ * projection.
+ */
+export interface HermesRetainedUpstreamBindingV1 {
+  /** Canonical lineage retained before the result was collected. */
+  lineage: {
+    tenantId: string;
+    projectId: string;
+    jobId: string;
+    attemptId: string;
+    runId: string;
+    nodeId: string;
+  };
+  /** Upstream session id retained from the authenticated reply. */
+  upstreamSessionId: string;
+  /** Upstream job id retained from the authenticated reply. */
+  upstreamJobId: string;
+  /**
+   * Digest of the connector profile the upstream adapter was loaded with
+   * at the moment the result was collected. The durable publisher rejects
+   * any value that does not match the recorded payload's connector
+   * profile digest.
+   */
+  connectorProfileDigest: string;
+}
+
 export interface PublishHermesSessionResultInputV1 {
   /**
    * The completed outcome already produced by the upstream session runtime.
@@ -37,13 +72,12 @@ export interface PublishHermesSessionResultInputV1 {
    */
   outcome: HermesSessionResultOutcomeV1;
   /**
-   * Already-authenticated connector profile digest. The caller supplies the
-   * digest of the connector profile the upstream adapter was loaded with at
-   * the moment the result was collected; the durable publisher will reject
-   * any value that does not match the recorded payload's connector profile
-   * digest.
+   * Independently retained authenticated upstream binding. Required, and
+   * deliberately separate from `outcome`: the adapter compares the two and
+   * derives the durable binding only from this side, so a foreign outcome
+   * cannot validate against itself.
    */
-  connectorProfileDigest: string;
+  retainedBinding: HermesRetainedUpstreamBindingV1;
   /**
    * Canonical workflow id for the local run this upstream result belongs
    * to. The session binding carries the lineage; workflowId is the only
@@ -119,30 +153,52 @@ export async function publishHermesSessionResultV1(
   }
   const completed = input.outcome;
 
-  // Reject obviously bad inputs before projection: digest shape, profile
-  // digest shape, upstream job id pattern.
-  if (!/^sha256:[a-f0-9]{64}$/.test(input.connectorProfileDigest)) {
+  const retained = input.retainedBinding;
+
+  // Validate the retained facts before trusting them: a malformed retained
+  // binding is a caller error and must not be papered over as a mismatch.
+  if (!/^sha256:[a-f0-9]{64}$/.test(retained.connectorProfileDigest)) {
     throw new Error("upstream_hermes_invalid_connector_profile_digest");
   }
-  if (!HERMES_SESSION_JOB_ID_PATTERN_V1.test(completed.upstreamJobId)) {
+  if (!HERMES_SESSION_JOB_ID_PATTERN_V1.test(retained.upstreamJobId)
+    || !HERMES_SESSION_JOB_ID_PATTERN_V1.test(completed.upstreamJobId)) {
     throw new Error("upstream_hermes_invalid_upstream_job_id");
+  }
+
+  // Compare the completed outcome against the independently retained,
+  // already-authenticated binding BEFORE projecting evidence or touching the
+  // durable publisher. The trusted side is `retained`; the untrusted side is
+  // the outcome. Because the two sides come from different sources, a
+  // foreign but well-formed and internally hashed outcome cannot validate
+  // against itself.
+  const outcomeLineage = completed.binding.lineage;
+  for (const field of ["tenantId", "projectId", "jobId", "attemptId", "runId", "nodeId"] as const) {
+    if (outcomeLineage[field] !== retained.lineage[field]) {
+      throw new Error("upstream_hermes_retained_lineage_mismatch");
+    }
+  }
+  if (completed.upstreamJobId !== retained.upstreamJobId) {
+    throw new Error("upstream_hermes_retained_upstream_job_id_mismatch");
+  }
+  if (completed.upstreamSessionId !== retained.upstreamSessionId) {
+    throw new Error("upstream_hermes_retained_upstream_session_id_mismatch");
   }
 
   // Project the upstream outcome into inert terminal-result evidence. The
   // projection recomputes the contentHash and sizeBytes from the actual
   // `text` and compares them against the values the upstream runtime
   // recorded on the outcome; any disagreement fails closed with
-  // `terminal_result_evidence_unavailable`. The connector profile digest
-  // is part of the retained binding facts so a forged value in the
-  // durable binding cannot survive projection-time reconciliation. The
-  // caller's `receivedAt` is bound as `observedAt` so exact replays
-  // produce identical evidence and receipt.
+  // `terminal_result_evidence_unavailable`. Lineage and the retained
+  // identity/profile facts come from `retained`, never from the outcome, so
+  // the projection's own identity guard is not defeated from here. The
+  // caller's `receivedAt` is bound as `observedAt` so exact replays produce
+  // identical evidence and receipt.
   const evidence = projectUpstreamHermesSessionResultEvidenceV1({
-    lineage: completed.binding.lineage,
+    lineage: retained.lineage,
     retained: {
-      connectorProfileDigest: input.connectorProfileDigest,
-      upstreamSessionId: completed.upstreamSessionId,
-      upstreamJobId: completed.upstreamJobId,
+      connectorProfileDigest: retained.connectorProfileDigest,
+      upstreamSessionId: retained.upstreamSessionId,
+      upstreamJobId: retained.upstreamJobId,
     },
     outcome: {
       success: true,
@@ -159,23 +215,23 @@ export async function publishHermesSessionResultV1(
     claimedSizeBytes: completed.sizeBytes,
   });
 
-  // The durable binding is the harness-neutral contract. The publisher
-  // records the connector profile digest; the upstream identity is encoded
-  // in the evidence source; the harness tag identifies the connector family
-  // without impersonating the native or codex harnesses. The acceptance
-  // profile id and digest come from a profile the caller has already
-  // registered with the completion gate, not from a digest the publisher
-  // invents per call.
+  // The durable binding is the harness-neutral contract, derived ONLY from
+  // the independently retained facts — never from the outcome under
+  // publication. The upstream identity is encoded in the evidence source;
+  // the harness tag identifies the connector family without impersonating
+  // the native or codex harnesses. The acceptance profile id and digest come
+  // from a profile the caller has already registered with the completion
+  // gate, not from a digest the publisher invents per call.
   const binding: DurableResultBindingV1 = {
-    tenantId: completed.binding.lineage.tenantId,
-    projectId: completed.binding.lineage.projectId,
-    jobId: completed.binding.lineage.jobId,
-    attemptId: completed.binding.lineage.attemptId,
-    runId: completed.binding.lineage.runId,
-    nodeId: completed.binding.lineage.nodeId,
+    tenantId: retained.lineage.tenantId,
+    projectId: retained.lineage.projectId,
+    jobId: retained.lineage.jobId,
+    attemptId: retained.lineage.attemptId,
+    runId: retained.lineage.runId,
+    nodeId: retained.lineage.nodeId,
     workflowId: input.workflowId,
     harness: "upstream-hermes",
-    connectorProfileDigest: input.connectorProfileDigest,
+    connectorProfileDigest: retained.connectorProfileDigest,
     acceptanceProfileId: input.acceptanceProfile.id,
     acceptanceProfileDigest: input.acceptanceProfile.digest,
   };
