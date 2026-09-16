@@ -15,6 +15,7 @@ import { createPrivateNodeHandler, loadPrivateClientAssets } from "../dist-vps/s
 import { nodeExchange } from "./helpers/web-node.ts";
 import { EventEmitter, once } from "node:events";
 import { startPrivateHostLifecycle, createPrivateTaskHost, createInstalledPrivateTaskHost } from "../dist-vps/server/taskHost.js";
+import { privateAgentTaskCompositionFixture } from "./helpers/private-agent-task-composition.ts";
 
 test("compiled host retains the captured secondary address across asynchronous bootstrap", async t => {
   const f = await taskStartupFixture(); t.after(f.close);
@@ -156,4 +157,73 @@ test("task startup and database role material never enter browser assets", () =>
   const files = dir => readdirSync(dir, { withFileTypes: true }).flatMap(entry => entry.isDirectory() ? files(join(dir, entry.name)) : [join(dir, entry.name)]);
   for (const file of files("dist-vps/client").filter(path => path.endsWith(".js")))
     assert.doesNotMatch(readFileSync(file, "utf8"), /private_task_startup_|control_room_task_coordinator|startPrivateTaskApplication/);
+});
+
+test("compiled composition wires the full agent-task lifecycle, survives a pool disconnect and refuses duplicate execution after restart", async t => {
+  // Same composition as tests/private-agent-task-composition.test.ts, driven
+  // through the COMPILED startup/host bundle rather than the TypeScript source.
+  const fixture = await privateAgentTaskCompositionFixture(); t.after(fixture.close);
+  const assets = { count: 0, digest: "synthetic", respond: () => undefined };
+  const before = await fixture.scenario().durableEvidence();
+  assert.deepEqual(before, { envelopes: 1, intents: 1, receipts: 1, runs: 0, recoveries: 0 });
+  const compose = async label => {
+    const f = fixture.scenario();
+    let installs = 0, installedApplication;
+    const host = createPrivateTaskHost({ clock: f.lifecycle.f.clock, openDatabase: f.openDatabase,
+      install(application) { installs++; installedApplication = application; },
+      prepareNativeSubmission: async () => ({ async enqueueInSession() { throw new Error("synthetic_inert_submission"); },
+        async recoverUnsentInSession() { return true; }, async close() {} }),
+      startNativeWorker: f.startNativeWorker,
+      createNativeServer: () => f.makeServer("native"),
+      createServer: () => f.makeServer("web") });
+    const runtime = await host.start({ configuration: f.configuration, port: 3210,
+      nativeHttps: f.tls, handler, assets });
+    assert.equal(installs, 1, label);
+    assert.equal(runtime.isReady(), true, label);
+    // Every composed component is present in the compiled bundle's surface.
+    assert.deepEqual(f.workerStatus(), { state: "running", faulted: false, accepting: true }, label);
+    for (const name of ["queueDelivery", "queueRecovery", "submission", "quality", "results", "evidence", "nativeHttp",
+      "connections"]) assert.ok(runtime[name], `${label}: ${name}`);
+    assert.deepEqual(f.servers.map(server => [server.boundHost, server.boundPort]),
+      [["127.0.0.1", 443], ["127.0.0.1", 3210]], label);
+    return { f, runtime, application: () => installedApplication };
+  };
+
+  const signal = new AbortController().signal;
+  const first = await compose("compiled first start");
+  // A lost pool fails closed for new browser work; restoring the same pool
+  // makes the compiled composition serve again without a restart.
+  const probe = () => first.application().handle(new Request(`${first.f.configuration.web.origin}/`),
+    () => new Response("rendered"));
+  assert.notEqual((await probe()).status, 503);
+  first.f.disconnect("session_test");
+  assert.equal(first.runtime.isReady(), false);
+  assert.equal((await probe()).status, 503);
+  first.f.reconnect("session_test");
+  assert.equal(first.runtime.isReady(), true);
+  assert.notEqual((await probe()).status, 503);
+  await assert.rejects(first.runtime.queueRecovery.recover(first.f.reference, signal), /access_denied/);
+  await assert.rejects(first.runtime.queueRecovery.recover(first.f.approvedReference, signal), /conflict/);
+  await assert.rejects(first.f.poll({ retryCount: 1, canonical: true }), /native_task_delivery_unresolved/);
+  await first.runtime.close();
+  assert.equal(first.runtime.isReady(), false);
+  for (const [name, pool] of first.f.pools) assert.equal(pool.closes(), 1, `compiled first ${name}`);
+  assert.equal(first.f.workerPool.closes(), 1);
+  assert.ok(first.f.servers.every(server => server.bindCount === 1 && server.closeCount === 1));
+  assert.deepEqual(await first.f.durableEvidence(), before);
+
+  const second = await compose("compiled restart");
+  await assert.rejects(second.runtime.queueRecovery.recover(second.f.reference, signal), /access_denied/);
+  await assert.rejects(second.runtime.queueRecovery.verify(second.f.reference, 1, signal), /access_denied/);
+  // Admitted by queue authorization, refused by the canonical never-staged fence.
+  await assert.rejects(second.runtime.queueRecovery.recover(second.f.approvedReference, signal), /conflict/);
+  await assert.rejects(second.runtime.queueRecovery.verify(second.f.approvedReference, 1, signal), /conflict/);
+  await assert.rejects(second.f.poll({ retryCount: 1, canonical: true }), /native_task_delivery_unresolved/);
+  await assert.rejects(second.f.poll({ canonical: true }), /native_task_delivery_unresolved/);
+  await assert.rejects(second.f.poll({ retryCount: 1 }), /native_task_delivery_unresolved/);
+  await assert.rejects(second.f.poll(), /native_task_delivery_unresolved/);
+  await second.runtime.close();
+  for (const [name, pool] of second.f.pools) assert.equal(pool.closes(), 1, `compiled restart ${name}`);
+  assert.deepEqual(await second.f.durableEvidence(), before,
+    "a compiled restart must not duplicate execution of an already delivered attempt");
 });
