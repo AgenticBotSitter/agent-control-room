@@ -108,6 +108,107 @@ test("agent-tasks composition acquires, becomes ready, drains and closes every o
     assert.equal(f.pools.get(name)?.closes(), 1, name);
 });
 
+test("a disconnect on any owned pool closes the composition to new work and a reconnect restores it", async t => {
+  const fixture = await privateAgentTaskCompositionFixture(); t.after(fixture.close);
+  const f = fixture.scenario();
+  let installedApplication: { handle(request: Request, render: () => Response | Promise<Response>): Promise<Response> } | undefined;
+  const host = createPrivateTaskHost({
+    clock: f.lifecycle.f.clock, openDatabase: f.openDatabase,
+    install(application) { installedApplication = application as unknown as typeof installedApplication; },
+    prepareNativeSubmission: async () => ({ async enqueueInSession() { throw new Error("synthetic_inert_submission"); },
+      async recoverUnsentInSession() { return false; }, async close() {} }),
+    startNativeWorker: f.startNativeWorker,
+    createNativeServer: (() => f.makeServer("native")) as never,
+    createServer: (() => f.makeServer("web")) as never,
+  });
+  const runtime = await host.start({ configuration: f.configuration, port: 3210, nativeHttps: f.tls, handler, assets });
+  assert.equal(runtime.isReady(), true);
+  const probe = () => installedApplication!.handle(new Request(`${f.configuration.web.origin}/`),
+    () => new Response("rendered"));
+  assert.notEqual((await probe()).status, 503);
+  // Every pool the composition acquired participates in readiness. Losing any
+  // one of them must fail closed for new browser work without tearing the
+  // composition down, and restoring the same pool must make it serve again.
+  for (const login of ["web_test", "coordinator_test", "result_test", "evidence_test", "session_test"]) {
+    f.disconnect(login);
+    assert.equal(runtime.isReady(), false, `${login} disconnected`);
+    assert.equal((await probe()).status, 503, `${login} disconnected`);
+    f.reconnect(login);
+    assert.equal(runtime.isReady(), true, `${login} reconnected`);
+    assert.notEqual((await probe()).status, 503, `${login} reconnected`);
+  }
+  // A disconnect is not a close: nothing was drained while the pool was away.
+  for (const [name, pool] of f.pools) assert.equal(pool.closes(), 0, name);
+  assert.equal(f.workerPool.closes(), 0);
+  await runtime.close();
+  assert.equal(runtime.isReady(), false);
+  for (const [name, pool] of f.pools) assert.equal(pool.closes(), 1, name);
+  assert.equal(f.workerPool.closes(), 1);
+});
+
+test("a restarted composition restores durable delivery state and refuses to execute the same attempt twice", async t => {
+  const fixture = await privateAgentTaskCompositionFixture(); t.after(fixture.close);
+  // The lifecycle fixture already staged, transmitted and receipted this
+  // attempt, so the durable record proves the work was executed once.
+  const before = await fixture.scenario().durableEvidence();
+  assert.deepEqual(before, { envelopes: 1, intents: 1, receipts: 1, runs: 0, recoveries: 0 });
+
+  const compose = async (label: string) => {
+    const f = fixture.scenario();
+    const host = createPrivateTaskHost({
+      clock: f.lifecycle.f.clock, openDatabase: f.openDatabase, install() {},
+      prepareNativeSubmission: async () => ({ async enqueueInSession() { throw new Error("synthetic_inert_submission"); },
+        // A recovering producer that would happily re-send. The canonical fence,
+        // not the producer, is what must refuse the second execution.
+        async recoverUnsentInSession() { return true; }, async close() {} }),
+      startNativeWorker: f.startNativeWorker,
+      createNativeServer: (() => f.makeServer("native")) as never,
+      createServer: (() => f.makeServer("web")) as never,
+    });
+    const runtime = await host.start({ configuration: f.configuration, port: 3210, nativeHttps: f.tls, handler, assets });
+    assert.equal(runtime.isReady(), true, label);
+    assert.equal(typeof runtime.queueRecovery?.verify, "function", label);
+    assert.equal(typeof runtime.queueRecovery?.recover, "function", label);
+    assert.equal(typeof runtime.queueDelivery, "function", label);
+    return { f, runtime };
+  };
+
+  const signal = new AbortController().signal;
+  const first = await compose("first start");
+  // A locator whose packet digest does not match the durable queue intent never
+  // reaches the canonical fence: queue authorization refuses it outright.
+  await assert.rejects(first.runtime.queueRecovery!.recover(first.f.reference, signal), /access_denied/);
+  await assert.rejects(first.runtime.queueRecovery!.verify(first.f.reference, 1, signal), /access_denied/);
+  // The canonical locator is admitted by queue authorization, so the refusal
+  // below is the never-staged fence: this attempt already has a delivery
+  // envelope, transmission intent and receipt.
+  await assert.rejects(first.runtime.queueRecovery!.recover(first.f.approvedReference, signal), /conflict/);
+  await assert.rejects(first.runtime.queueRecovery!.verify(first.f.approvedReference, 1, signal), /conflict/);
+  await assert.rejects(first.f.poll({ retryCount: 1, canonical: true }), /native_task_delivery_unresolved/);
+  await assert.rejects(first.f.poll({ retryCount: 1 }), /native_task_delivery_unresolved/);
+  await first.runtime.close();
+  assert.equal(first.runtime.isReady(), false);
+  for (const [name, pool] of first.f.pools) assert.equal(pool.closes(), 1, `first ${name}`);
+  assert.deepEqual(await first.f.durableEvidence(), before, "first start must not add durable execution evidence");
+
+  // Restart: an entirely new composition over the same durable database, with
+  // new pools, a new producer and a new worker. No process state is shared, so
+  // every refusal below is derived from rows the previous run left behind.
+  const second = await compose("restart");
+  assert.notEqual(second.f.pools.get("web_test"), first.f.pools.get("web_test"));
+  await assert.rejects(second.runtime.queueRecovery!.recover(second.f.reference, signal), /access_denied/);
+  await assert.rejects(second.runtime.queueRecovery!.verify(second.f.reference, 1, signal), /access_denied/);
+  await assert.rejects(second.runtime.queueRecovery!.recover(second.f.approvedReference, signal), /conflict/);
+  await assert.rejects(second.runtime.queueRecovery!.verify(second.f.approvedReference, 1, signal), /conflict/);
+  await assert.rejects(second.f.poll({ retryCount: 1, canonical: true }), /native_task_delivery_unresolved/);
+  await assert.rejects(second.f.poll({ canonical: true }), /native_task_delivery_unresolved/);
+  await assert.rejects(second.f.poll({ retryCount: 1 }), /native_task_delivery_unresolved/);
+  await assert.rejects(second.f.poll(), /native_task_delivery_unresolved/);
+  await second.runtime.close();
+  for (const [name, pool] of second.f.pools) assert.equal(pool.closes(), 1, `restart ${name}`);
+  assert.deepEqual(await second.f.durableEvidence(), before, "restart must not duplicate execution");
+});
+
 test("configuration and host mismatches refuse before any resource or listener opens", async t => {
   const fixture = await privateAgentTaskCompositionFixture(); t.after(fixture.close);
   for (const mode of ["invalid-port", "database-host", "native-port", "worker-profile"] as const) await t.test(mode, async () => {

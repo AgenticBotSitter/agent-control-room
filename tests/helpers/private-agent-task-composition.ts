@@ -59,6 +59,10 @@ export async function privateAgentTaskCompositionFixture() {
   const scenario = () => {
     const trace: string[] = [];
     const pools = new Map<string, Pool>();
+    // Synthetic transport interruption. The pool object stays owned by the
+    // composition; only its liveness probe reports the loss, exactly as a real
+    // pool reports a dropped backend. Reconnection restores the same pool.
+    const offline = new Set<string>();
     const restrictedPool = (login: "result_test" | "evidence_test" | "session_test") => {
       let closeCount = 0, available = true;
       const client: DatabaseClient = {
@@ -99,11 +103,14 @@ export async function privateAgentTaskCompositionFixture() {
         transaction: work => pool.client.transaction(session => work(wrap(session))),
         transactionWithPreCommitCheck: (work, check) => pool.client.transactionWithPreCommitCheck(session => work(wrap(session)), check),
       };
-      return { ...pool, client, async close() {
-        if (["web_test", "coordinator_test"].includes(database.username)) trace.push(`pool-close:${database.username}`);
-        await originalClose();
-      } };
+      return { ...pool, client, isAvailable: () => !offline.has(database.username) && pool.isAvailable(),
+        async close() {
+          if (["web_test", "coordinator_test"].includes(database.username)) trace.push(`pool-close:${database.username}`);
+          await originalClose();
+        } };
     };
+    const disconnect = (login: string) => { offline.add(login); trace.push(`pool-disconnect:${login}`); };
+    const reconnect = (login: string) => { offline.delete(login); trace.push(`pool-reconnect:${login}`); };
     const servers: SyntheticServer[] = [];
     const makeServer = (kind: "native" | "web", mode: "success" | "bind-failure" | "bind-timeout" = "success") => {
       const server = new EventEmitter() as SyntheticServer;
@@ -170,11 +177,32 @@ export async function privateAgentTaskCompositionFixture() {
       inputDigest: lifecycle.registration.nativeTask!.inputDigest,
       packetDigest: sha256Digest("synthetic-composition-packet"),
     };
-    const poll = async () => {
+    // The same locator carrying the packet digest the durable queue intent was
+    // actually enqueued with, so canonical queue authorization admits it and the
+    // canonical never-staged fence — not the digest mismatch — decides.
+    const approvedReference = { ...reference, packetDigest: sha256Digest(lifecycle.f.packet) };
+    const poll = async (options: { retryCount?: number; canonical?: boolean } = {}) => {
       if (!queueHandler) throw new Error("synthetic_poller_not_started");
-      return queueHandler([{ id: nativeTaskSubmissionId(reference), name: queue.name, data: reference,
-        retryCount: 0, retryLimit: 0, state: "active", policy: "standard", deadLetter: null,
+      const data = options.canonical ? approvedReference : reference;
+      return queueHandler([{ id: nativeTaskSubmissionId(data), name: queue.name, data,
+        retryCount: options.retryCount ?? 0, retryLimit: 0, state: "active", policy: "standard", deadLetter: null,
         signal: new AbortController().signal }]);
+    };
+    // Read-only durable evidence for this exact attempt, through the fixture's
+    // superuser client. These are the rows `requireNeverStaged` consults, so a
+    // restart that re-executed the attempt would change these counts.
+    const durableEvidence = async () => {
+      const row = (await startup.raw.query<Record<string, string | number>>(
+        `SELECT
+           (SELECT count(*) FROM control_native_delivery_envelopes WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3) AS envelopes,
+           (SELECT count(*) FROM control_native_transmission_intents WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3) AS intents,
+           (SELECT count(*) FROM control_native_delivery_receipts WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3) AS receipts,
+           (SELECT count(*) FROM control_harness_runs WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3) AS runs,
+           (SELECT count(*) FROM audit_events WHERE tenant_id=$1 AND action='native.queue.unsent_recovered'
+              AND correlation_id=$4) AS recoveries`,
+        [reference.tenantId, reference.jobId, reference.attemptId, reference.queueId])).rows[0]!;
+      return Object.fromEntries(Object.entries(row).map(([name, value]) => [name, Number(value)])) as Record<
+        "envelopes" | "intents" | "receipts" | "runs" | "recoveries", number>;
     };
     const configuration: PrivateTaskStartupConfiguration = {
       ...startup.config,
@@ -211,6 +239,7 @@ export async function privateAgentTaskCompositionFixture() {
     };
     return { trace, pools, openDatabase, servers, makeServer, configuration, startup, lifecycle,
       startNativeWorker, workerPool, workerStatus: () => workerRuntime?.status(), poll,
+      disconnect, reconnect, reference, approvedReference, durableEvidence,
       tls: { host: "127.0.0.1", port: 443, key: new Uint8Array([1]), cert: new Uint8Array([2]), ca: new Uint8Array([3]) } };
   };
   return { scenario, close: lifecycle.close };
