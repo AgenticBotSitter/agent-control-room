@@ -11,9 +11,9 @@ separately reviewed push path exists.
 
 This repository contains the effect-free authentication and webhook admission core, a
 PostgreSQL replay-store adapter and least-privilege database role, and the private broker
-composition that converts verified events into content-free wake-up hints. It is not live. No
-key has been generated, no webhook has been enabled, no database migration has been applied,
-and no listener has been opened.
+composition that converts verified events into content-free wake-up hints, a durable PostgreSQL
+wake store, and an inert loopback-only listener. It is not live. No key has been generated, no
+webhook has been enabled, no database migration has been applied, and no listener has been opened.
 
 ## Recorded public identifiers
 
@@ -38,25 +38,32 @@ appear in GitHub, R2, logs, issue comments, worker files, or chat.
 5. The app's Pull requests write permission is needed for worker PRs but also permits merges at
    GitHub's permission layer. The broker must therefore never implement a merge operation.
    Final merge remains a separate maintainer action.
-6. Every webhook must pass body-size, HMAC signature, durable atomic delivery-ID and signed-body
-   replay, repository,
-   installation, event, and action checks before it can create a wake-up hint. A wake-up hint is
+6. Every webhook must pass body-size, HMAC signature, repository, installation, event, and action
+   checks before it can create a wake-up hint. Production then commits both replay keys and the
+   content-free wake-up hint in one PostgreSQL transaction: either all three records become
+   durable or none do. A wake-up hint is
    not work authority; workers still follow the repository claim and review controller.
 7. Wake-up hints contain only event type, action, repository, issue or pull-request number,
    delivery sequence, and observation time. Issue titles, comments, PR bodies, and other
    repository-controlled text never enter the notification channel. A sink failure falls back
    to the staggered read-only watcher; it never causes unverified work to run.
-8. The included in-memory replay adapter is disposable-test support only. The production adapter
-   writes both replay keys atomically to PostgreSQL and survives process restarts. A live listener
-   remains blocked until this migration and its narrow database role are rehearsed on real
-   PostgreSQL and the complete private broker wrapper is reviewed.
+8. The included in-memory replay adapter and separate replay-store/wake-sink route are
+   disposable-test compatibility only. The packaged production composition permits only the
+   combined PostgreSQL admission store and survives process restarts. A live listener remains
+   blocked until the migrations and narrow database role are rehearsed on real PostgreSQL and an
+   operator-owned secret/supervisor package is reviewed.
+9. The worker-hint read route requires an injected private authorizer. The public package does not
+   invent or embed shared credentials. Failed authorization reveals no hint metadata. A physical
+   listener binds only to loopback, starts only through an explicit effectful call, and has the
+   same bounded shutdown behavior as the existing private Control Room listener.
 
 ## Activation order
 
-1. Review and merge the effect-free authentication and webhook admission core.
+1. Review and merge the effect-free authentication and webhook admission core. **Complete.**
 2. Build the private VPS broker around narrow, allowlisted worker operations and bounded audits.
-3. Add a private durable notification sink from verified webhook events to the existing Control Room
-   worker queue. Retain staggered polling as a quiet fallback.
+   **Complete in source; not activated.**
+3. Add a private durable notification sink and package the inert loopback service in the VPS build.
+   Retain staggered polling as a quiet fallback. **Complete in source; not migrated or started.**
 4. Rehearse with fake credentials and injected GitHub responses.
 5. Prepare a persistent supervisor, owner-only secret files, rollback, and health checks.
 6. With fresh owner approval, generate one private key and place it directly on the VPS.

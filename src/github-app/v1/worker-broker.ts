@@ -1,5 +1,5 @@
 import {
-  admitGitHubWorkerWebhook,
+  verifyGitHubWorkerWebhook,
   type AcceptedGitHubWorkerEvent,
   type GitHubWebhookHeaders,
   type GitHubWebhookReplayStore,
@@ -18,6 +18,15 @@ export type GitHubWorkerWakeHint = Readonly<{
 export type GitHubWorkerWakeSink = Readonly<{
   /** Persist the hint before resolving. The sink must never execute repository-supplied content. */
   publish(hint: GitHubWorkerWakeHint): Promise<void>;
+}>;
+
+export type GitHubWorkerAtomicAdmissionStore = Readonly<{
+  acceptVerified(input: Readonly<{
+    event: AcceptedGitHubWorkerEvent;
+    replayKeys: readonly string[];
+    nowMs: number;
+    replayExpiresAtMs: number;
+  }>): Promise<boolean>;
 }>;
 
 export type GitHubWorkerBrokerAudit = Readonly<{
@@ -61,17 +70,19 @@ export class GitHubWorkerBroker {
   readonly #secret: string;
   readonly #repository: string;
   readonly #installationId: number;
-  readonly #replayStore: GitHubWebhookReplayStore;
-  readonly #wakeSink: GitHubWorkerWakeSink;
+  readonly #atomicStore?: GitHubWorkerAtomicAdmissionStore;
+  readonly #replayStore?: GitHubWebhookReplayStore;
+  readonly #wakeSink?: GitHubWorkerWakeSink;
   readonly #now: () => number;
   readonly #audit?: (entry: GitHubWorkerBrokerAudit) => void;
 
-  constructor({ secret, repository, installationId, replayStore, wakeSink, now = Date.now, audit }: {
+  constructor({ secret, repository, installationId, atomicStore, replayStore, wakeSink, now = Date.now, audit }: {
     secret: string;
     repository: string;
     installationId: number;
-    replayStore: GitHubWebhookReplayStore;
-    wakeSink: GitHubWorkerWakeSink;
+    atomicStore?: GitHubWorkerAtomicAdmissionStore;
+    replayStore?: GitHubWebhookReplayStore;
+    wakeSink?: GitHubWorkerWakeSink;
     now?: () => number;
     audit?: (entry: GitHubWorkerBrokerAudit) => void;
   }) {
@@ -82,9 +93,13 @@ export class GitHubWorkerBroker {
     if (!Number.isSafeInteger(installationId) || installationId < 1) {
       throw new Error("github_worker_broker_installation_invalid");
     }
+    if (!!atomicStore === !!(replayStore && wakeSink) || (!!replayStore !== !!wakeSink)) {
+      throw new Error("github_worker_broker_store_invalid");
+    }
     this.#secret = secret;
     this.#repository = repository;
     this.#installationId = installationId;
+    this.#atomicStore = atomicStore;
     this.#replayStore = replayStore;
     this.#wakeSink = wakeSink;
     this.#now = now;
@@ -97,32 +112,45 @@ export class GitHubWorkerBroker {
 
   async receive({ body, headers }: { body: Buffer; headers: GitHubWebhookHeaders }): Promise<GitHubWorkerBrokerResult> {
     const nowMs = this.#now();
-    const admission = await admitGitHubWorkerWebhook({
+    const verified = verifyGitHubWorkerWebhook({
       body,
       headers,
       secret: this.#secret,
       expectedRepository: this.#repository,
       expectedInstallationId: this.#installationId,
-      replayStore: this.#replayStore,
-      nowMs,
     });
-    if (!admission.accepted) {
+    if (!verified.accepted) {
       // A duplicate has already passed all security checks and been recorded. Acknowledge it
       // without publishing twice; every other refusal remains a rejected request.
-      if (admission.reason === "delivery_replayed") {
-        this.#record(Object.freeze({ outcome: "rejected", reason: admission.reason }));
-        return Object.freeze({ accepted: true, wake: "fallback" });
-      }
-      this.#record(Object.freeze({ outcome: "rejected", reason: admission.reason }));
+      this.#record(Object.freeze({ outcome: "rejected", reason: verified.reason }));
       return Object.freeze({
         accepted: false,
-        status: REJECTION_STATUS[admission.reason] ?? 400,
-        reason: admission.reason,
+        status: REJECTION_STATUS[verified.reason] ?? 400,
+        reason: verified.reason,
       });
     }
 
-    const hint = wakeHint(admission.event, nowMs);
-    try { await this.#wakeSink.publish(hint); } catch {
+    if (this.#atomicStore) {
+      const accepted = await this.#atomicStore.acceptVerified({ event: verified.event,
+        replayKeys: verified.replayKeys, nowMs, replayExpiresAtMs: nowMs + 24 * 60 * 60_000 });
+      if (!accepted) {
+        this.#record(Object.freeze({ outcome: "rejected", reason: "delivery_replayed" }));
+        return Object.freeze({ accepted: true, wake: "fallback" });
+      }
+      const hint = wakeHint(verified.event, nowMs);
+      this.#record(Object.freeze({ outcome: "queued", event: hint.event, action: hint.action,
+        ...(hint.issueOrPullNumber === undefined ? {} : { issueOrPullNumber: hint.issueOrPullNumber }) }));
+      return Object.freeze({ accepted: true, wake: "queued" });
+    }
+
+    const replayed = !(await this.#replayStore!.claim(verified.replayKeys, nowMs + 24 * 60 * 60_000, nowMs));
+    if (replayed) {
+      this.#record(Object.freeze({ outcome: "rejected", reason: "delivery_replayed" }));
+      return Object.freeze({ accepted: true, wake: "fallback" });
+    }
+
+    const hint = wakeHint(verified.event, nowMs);
+    try { await this.#wakeSink!.publish(hint); } catch {
       // The verified event is already durable at GitHub. Quiet fallback polling recovers the
       // current state, so do not leak sink errors or ask GitHub to replay an already claimed ID.
       this.#record(Object.freeze({

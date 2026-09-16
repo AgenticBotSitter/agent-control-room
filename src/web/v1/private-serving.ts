@@ -19,6 +19,11 @@ type ListenerOptions = {
   listenerTiming?: { bindMs?: number; closeMs?: number };
 };
 type RequestBridge = ReturnType<typeof createPrivateNodeHandler>;
+type GitHubBrokerBridge = Readonly<{
+  isReady(): boolean;
+  handle(request: IncomingMessage, response: ServerResponse): Promise<void>;
+  close(): Promise<void>;
+}>;
 
 /** Inert until explicit start(). Tests inject a server with no sockets.
  * Start is a physical effect and requires the separate approved deployment/rehearsal packet.
@@ -38,6 +43,12 @@ export function createContributorDemoService(bridge: RequestBridge & { origin: s
   options: Omit<ListenerOptions, "port"> = {}) {
   if (bridge.origin !== "http://127.0.0.1:3000") throw new Error("contributor_listener_config_invalid");
   return createLoopbackService({ ...options, port: 3000 }, () => bridge);
+}
+
+/** Inert private GitHub broker listener. It shares the reviewed loopback-only
+ * lifecycle but is never started by importing or constructing it. */
+export function createGitHubBrokerLoopbackService(bridge: GitHubBrokerBridge, options: ListenerOptions) {
+  return createLoopbackService(options, () => bridge as RequestBridge);
 }
 
 function createLoopbackService(options: ListenerOptions, makeBridge: () => RequestBridge) {
