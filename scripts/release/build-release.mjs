@@ -234,20 +234,40 @@ function copyTree(from, to) {
   }
 }
 
-// Deterministic tar.gz. `--sort=name` plus fixed owner/mtime makes members
-// ordered and metadata-stable, so identical inputs give identical archives.
+// Pack to a deterministic tar.gz where the platform tar allows it.
+//
+// GNU tar supports fixed owner/mtime and member sorting, which makes identical
+// inputs produce identical archives. BSD/macOS tar does not, so we fall back to
+// a sorted explicit member list with recursion disabled, which keeps ordering
+// stable even though ownership/mtime are inherited from the filesystem. The
+// manifest records the archive's own digest either way, so integrity never
+// depends on reproducibility.
 function defaultPacker({ staging, archivePath }) {
-  const result = spawnSync("tar", [
-    "--create", "--gzip", "--file", archivePath,
-    "--directory", staging,
-    "--sort=name",
-    "--owner=0", "--group=0", "--numeric-owner",
-    "--mtime=@0",
-    ".",
-  ], { encoding: "utf8" });
+  const files = listTreeFiles(staging).map(f => relative(staging, f).split(sep).join("/")).sort();
+  const gnu = isGnuTar();
+  const args = gnu
+    ? ["--create", "--gzip", "--file", archivePath, "--directory", staging,
+       "--sort=name", "--owner=0", "--group=0", "--numeric-owner", "--mtime=@0", "."]
+    : ["--create", "--gzip", "--file", archivePath, "--directory", staging,
+       "--no-recursion", ...files];
+  const env = gnu ? process.env : { ...process.env, COPYFILE_DISABLE: "1" };
+  const result = spawnSync("tar", args, { encoding: "utf8", env });
   if (result.status !== 0) {
     throw new Error(`release_pack_failed:${(result.stderr || "").trim().split("\n")[0] || "unknown"}`);
   }
+}
+
+let gnuTarCache = null;
+function isGnuTar() {
+  if (gnuTarCache !== null) return gnuTarCache;
+  const probe = spawnSync("tar", ["--version"], { encoding: "utf8" });
+  gnuTarCache = `${probe.stdout || ""}${probe.stderr || ""}`.includes("GNU tar");
+  return gnuTarCache;
+}
+
+/** True when this platform's tar supports GNU determinism flags. */
+export function supportsDeterministicTar() {
+  return isGnuTar();
 }
 
 function printUsage() {
