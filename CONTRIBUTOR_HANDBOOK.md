@@ -576,11 +576,17 @@ source of process truth.
 
 ## Keep useful work flowing
 
-**Capacity policy, updated 2026-09-15: two active builds, three total assignments**
+**Capacity policy, updated 2026-09-16: two active builds, five total assignments**
 for each stable GitHub-login and worker-ID pair. Submitted, re-review, correction,
 paused and blocked assignments still count toward the total until completed or
 explicitly released. Existing over-limit ownership is preserved: finish it without
 claiming more. Do not rotate worker IDs to bypass limits.
+
+Review-waiting assignments retain ownership and all path locks, but they do not consume
+one of the two active-build slots. This lets a qualified worker continue on separate,
+non-overlapping work while reviewers process earlier submissions. Five retained
+assignments is a hard backpressure limit, not a target; workers must not reserve work
+merely to fill it.
 
 Two simultaneous builds require two independent execution contexts (for example,
 separate subagents), separate branches/worktrees, non-overlapping owned paths and
@@ -593,7 +599,7 @@ paused and blocked assignments before claiming. Those paths are not free. If an 
 assignment does not identify its paths, ask the maintainer about that specific overlap;
 do not assume a successful automatic claim settles it. The separate admission-system
 work addresses this existing limitation without converting legacy work into a global
-queue block. Three submitted PRs are allowed, but leave no fourth assignment slot.
+queue block. Five retained assignments leave no sixth assignment slot.
 
 Check the live inbox immediately after a push/submission, at a safe work boundary,
 and before picking the next package. A 30-minute scheduler is a fallback, not a sleep

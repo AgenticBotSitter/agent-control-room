@@ -546,15 +546,16 @@ async function seedAccepted(api, number, worker = "worker:test-01", actor = "sha
     `CLAIM ACCEPTED — \`@${actor}\` using worker identity \`${worker}\`.\n\nOutcome: public issue #${number} as currently defined\n\nBase: \`${sha}\`\n\nTarget: \`main\`\n\nThis reservation grants no repository authority.\n<!-- agent-control-room-claim:v3 issue=${number} request=500 actor=${actor} worker=${worker} packet=${packetHash(parsed)} accepted=${at} -->` });
 }
 
-test("two-active / three-total capacity includes reviews and preserves existing ownership", async () => {
+test("two-active / five-total capacity includes reviews and preserves existing ownership", async () => {
   const worker = "worker:capacity-01";
   for (const [states, expected] of [
     [["working"], "accepted"],
     [["working", "in-review"], "accepted"],
     [["in-review", "re-review"], "accepted"],
     [["working", "working"], "working_limit"],
-    [["in-review", "re-review", "waiting"], "assignment_limit"],
-    [["in-review", "paused", "needs-decision"], "assignment_limit"],
+    [["in-review", "re-review", "waiting"], "accepted"],
+    [["in-review", "paused", "needs-decision", "in-review"], "accepted"],
+    [["in-review", "re-review", "waiting", "paused", "needs-decision"], "assignment_limit"],
     [["changes-required"], "corrections_first"],
   ]) {
     const held = states.map((state, index) => ({ number: 126 + index,
@@ -584,11 +585,12 @@ test("third simultaneous build is refused after two serialized accepts", async (
 test("quiet expiry cannot resurrect an old worker while retained expired reviews still count", async () => {
   for (const retained of [false, true]) {
     const worker = "worker:expiry-cap-01";
-    const api = fakeQueue({ issues: [{ number: 125 }, ...[126, 127, 128].map(number => ({
+    const heldNumbers = [126, 127, 128, 129, 130];
+    const api = fakeQueue({ issues: [{ number: 125 }, ...heldNumbers.map(number => ({
       number, labels: [retained ? "status:in-review" : "status:working"],
       packet: { writeScopes: [`docs/expired-${number}/**`] },
     }))] });
-    for (const number of [126, 127, 128]) {
+    for (const number of heldNumbers) {
       await seedAccepted(api, number, worker, "shared-account", Date.now());
       await api.request("POST", `/repos/${repository}/issues/${number}/comments`, { body:
         `CLAIM EXPIRED — reservation ended.\n<!-- agent-control-room-claim:v3 issue=${number} expired=${Date.now()} action=${retained ? "in-review" : "ready"} reason=${retained ? "open_pr" : "quiet"} actor=shared-account worker=${worker} packet=${packetHash(parseClaimPacket(api.body(number)))} -->` });
@@ -946,7 +948,7 @@ test("submit refuses a pull request owned by another actor", async () => {
   assert.deepEqual(api.labels(125), ["status:working"]);
 });
 
-test("a pair may submit three retained assignments without trapping the third", async () => {
+test("a pair may submit five retained assignments without trapping the fifth", async () => {
   const head = "c".repeat(40);
   const now = 1_700_000_100_000;
   const api = fakeQueue({
@@ -954,22 +956,26 @@ test("a pair may submit three retained assignments without trapping the third", 
       { number: 125, labels: ["status:working"], packet: { writeScopes: ["docs/r1/**"] } },
       { number: 126, labels: ["status:working"], packet: { writeScopes: ["docs/r2/**"] } },
       { number: 127, labels: ["status:working"], packet: { writeScopes: ["docs/r3/**"] } },
+      { number: 128, labels: ["status:working"], packet: { writeScopes: ["docs/r4/**"] } },
+      { number: 129, labels: ["status:working"], packet: { writeScopes: ["docs/r5/**"] } },
     ],
-    pulls: [125, 126, 127].map((issue, index) => ({ number: 42 + index, state: "open",
+    pulls: [125, 126, 127, 128, 129].map((issue, index) => ({ number: 42 + index, state: "open",
       title: `Work (#${issue})`, body: `Closes #${issue}\nControl-Room-Issue: ${issue}`,
       base: { ref: "main", repo: { full_name: repository } },
       head: { sha: head }, user: { login: "shared-account" } })),
   });
-  for (const number of [125, 126, 127]) await seedAccepted(api, number, "worker:cap-01", "shared-account");
+  for (const number of [125, 126, 127, 128, 129]) await seedAccepted(api, number, "worker:cap-01", "shared-account");
   const submit = number => runClaimSubmit({ event: lifecycleEvent(
     `CLAIM SUBMIT\nworker-id: worker:cap-01\npr: ${number - 83}\nsha: ${head}`, number), repository, api, now });
   assert.equal((await submit(125)).status, "submitted");
   assert.equal((await submit(126)).status, "submitted");
   assert.equal((await submit(127)).status, "submitted");
-  assert.deepEqual(api.labels(127), ["status:working"]);
+  assert.equal((await submit(128)).status, "submitted");
+  assert.equal((await submit(129)).status, "submitted");
+  assert.deepEqual(api.labels(129), ["status:working"]);
   // Submissions record readiness only: both submitted issues stay working with
   // their SUBMITTED markers, and the cap counts those outstanding submissions.
-  for (const number of [125, 126, 127]) {
+  for (const number of [125, 126, 127, 128, 129]) {
     assert.deepEqual(api.labels(number), ["status:working"]);
     assert.equal(api.comments(number).filter(comment => comment.body.startsWith("CLAIM SUBMITTED —")).length, 1);
   }
@@ -1214,6 +1220,8 @@ test("a historical release does not hide a later cycle's in-review submission", 
       { number: 126, labels: ["status:in-review"], packet: { writeScopes: ["docs/s2/**"] } },
       { number: 127, labels: ["status:in-review"], packet: { writeScopes: ["docs/s3/**"] } },
       { number: 128, labels: ["status:re-review"], packet: { writeScopes: ["docs/s4/**"] } },
+      { number: 129, labels: ["status:in-review"], packet: { writeScopes: ["docs/s5/**"] } },
+      { number: 130, labels: ["status:re-review"], packet: { writeScopes: ["docs/s6/**"] } },
     ],
     pulls: [125, 126, 127].map((issue, index) => ({ number: 42 + index, state: "open",
       title: `Work (#${issue})`, body: `Closes #${issue}`, base: { ref: "main" },
@@ -1234,6 +1242,10 @@ test("a historical release does not hide a later cycle's in-review submission", 
   await post(127, submittedMark(127, 502, 44));
   await post(128, acceptedMark(128, 503));
   await post(128, submittedMark(128, 503, 45));
+  await post(129, acceptedMark(129, 504));
+  await post(129, submittedMark(129, 504, 46));
+  await post(130, acceptedMark(130, 505));
+  await post(130, submittedMark(130, 505, 47));
   await seedAccepted(api, 125, worker, actor);
   assert.deepEqual(await runClaimSubmit({ event: lifecycleEvent(
     `CLAIM SUBMIT\nworker-id: ${worker}\npr: 42\nsha: ${head}`, 125), repository, api, now }),
