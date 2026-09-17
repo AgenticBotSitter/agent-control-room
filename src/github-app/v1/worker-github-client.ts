@@ -230,7 +230,9 @@ export function createBoundedGitHubClient(options: BoundedGitHubClientOptions) {
         });
       } catch {
         options.audit?.({ shape: input.shape, code: "github_request_failed", attempt });
-        if (attempt === 1) { await sleep(250); continue; }
+        // A command may already have been committed upstream. Return to the
+        // operation boundary so a later attempt re-reads comment history first.
+        if (shape.method === "GET" && attempt === 1) { await sleep(250); continue; }
         return Object.freeze({ ok: false, code: "github_request_failed" });
       }
 
@@ -264,7 +266,7 @@ export function createBoundedGitHubClient(options: BoundedGitHubClientOptions) {
       }
       if (status >= 500) {
         options.audit?.({ shape: input.shape, status, code: "github_request_failed", attempt });
-        if (attempt === 1) { await sleep(500); continue; }
+        if (shape.method === "GET" && attempt === 1) { await sleep(500); continue; }
         return Object.freeze({ ok: false, code: "github_request_failed", status });
       }
       if (status < 200 || status >= 300) {

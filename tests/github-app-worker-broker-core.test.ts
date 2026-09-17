@@ -539,6 +539,55 @@ test("broker dependency projection retains incomplete and not-planned dispositio
   }
 });
 
+test("uncertain command responses are not replayed before restart history reconciliation", async () => {
+  for (const failure of ["connection", "server"] as const) {
+    const state = brokerState();
+    const first = workingBroker(state, { handle: (request, current) => {
+      if (request.method !== "POST" || !ISSUE_COMMENT_POST.test(request.url)) return undefined;
+      // Disposable upstream state survives the broker instance; the response does not.
+      current.posts += 1;
+      current.comments.push({ id: current.nextCommentId++,
+        body: JSON.parse(request.body!).body,
+        user: { login: BROKER_LOGIN, type: "Bot" } });
+      if (failure === "connection") throw new Error("disposable connection lost");
+      return jsonResponse({ message: "disposable server failure" }, 503);
+    } });
+    const command = { operation: "claim-request", workerId: WORKER, issue: 300 };
+    const result = await first.operations.run(command);
+    assert.equal(result.ok, false);
+    assert.equal(result.code, "github_request_failed");
+    assert.equal(state.posts, 1, failure);
+    assert.deepEqual(first.sleeps, []);
+
+    const restarted = workingBroker(state);
+    const recovered = await restarted.operations.run(command);
+    assert.equal(recovered.ok, true);
+    assert.equal(recovered.idempotent, true);
+    assert.equal(recovered.posted, false);
+    assert.equal(recovered.commentId, state.comments[0].id);
+    assert.equal(state.posts, 1);
+    assert.equal(restarted.requests.filter(request =>
+      request.method === "POST" && ISSUE_COMMENT_POST.test(request.url)).length, 0);
+  }
+});
+
+test("read retries remain bounded after uncertain transport responses", async () => {
+  for (const failure of ["connection", "server"] as const) {
+    let attempts = 0;
+    const broker = workingBroker(brokerState(), { handle: request => {
+      if (!ISSUES_LIST.test(request.url)) return undefined;
+      attempts += 1;
+      if (attempts !== 1) return undefined;
+      if (failure === "connection") throw new Error("disposable connection lost");
+      return jsonResponse({ message: "disposable server failure" }, 503);
+    } });
+    const result = await broker.operations.run({ operation: "worker-inbox-read", workerId: WORKER });
+    assert.equal(result.ok, true);
+    assert.equal(attempts, 2);
+    assert.deepEqual(broker.sleeps, [failure === "connection" ? 250 : 500]);
+  }
+});
+
 test("an expired installation token is refreshed once and the retried read succeeds", async () => {
   const state = brokerState({ issues: [] });
   let rejections = 0;

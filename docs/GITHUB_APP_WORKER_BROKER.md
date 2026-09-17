@@ -170,8 +170,13 @@ This correction is not ready for handoff yet. Streaming responses are bounded wh
 reading, and injected scheduled-entry-point tests cover explicit broker configuration,
 credential separation, unchanged observations, invalid configuration and the direct-only
 path. These tests do not install a scheduler or prove its environment inheritance.
-Remaining qualification includes generated-scheduler environment configuration, broader
-broker-to-parser integration coverage, and uncertain command-response retry safety.
+Command POSTs are not automatically replayed after a connection failure or 5xx response:
+the command may already have reached GitHub. A later operation attempt reads comment
+history again before posting. Injected tests preserve upstream comments across a fresh
+broker instance and verify this recovery sends no second POST; GET retries remain bounded.
+This does not prove concurrency exclusion or visibility guarantees from live GitHub.
+Remaining qualification includes generated-scheduler environment configuration and broader
+broker-to-parser integration coverage.
 The original bounded operation
 allowlist and authenticated worker binding remain in place. No live broker or scheduler
 activation was performed.
