@@ -3,6 +3,7 @@
 import { PrivateHeader } from "../private-header";
 import { useProductConfiguration } from "../product-configuration";
 import { ProductConfigurationSummary } from "../product-configuration-summary";
+import { OwnerNotificationsWorkspace } from "../owner-notifications-workspace";
 
 export function PrivateSettingsWorkspace() {
   const configuration = useProductConfiguration();
@@ -26,5 +27,6 @@ export function PrivateSettingsWorkspace() {
       </section>
     </div>
     <ProductConfigurationSummary configuration={configuration} />
+    <OwnerNotificationsWorkspace />
   </main></div>;
 }
