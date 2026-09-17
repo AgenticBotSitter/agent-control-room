@@ -36,6 +36,26 @@ const REPOSITORY_NAME = "AgenticBotSitter/agent-control-room";
 const WORKER_ID = "worker-inbox-test-01";
 const CLOCK = () => new Date("2026-09-14T12:00:00Z");
 
+test("broker backoff survives scheduled ticks without clearing observation or emitting a wake", async t => {
+  const runtimeRoot = scratch(t);
+  const broker = { url: "http://127.0.0.1:9999/v1/worker-operations", token: "synthetic-private-secret" };
+  const options = { workerId: WORKER_ID, repository: REPOSITORY_NAME, runtimeRoot, once: true, scheduled: true, broker };
+  const good = await runTick({ options, now: CLOCK, reader: async () => [] });
+  let reads = 0;
+  options.fetchImpl = async () => { reads++; return new Response("{}", { status: 503 }); };
+  const bad = await runTick({ options, now: CLOCK });
+  assert.equal(bad.notified, false);
+  assert.equal(bad.changed, false);
+  assert.equal(consoleDecision({ result: bad, options }).print, false);
+  const saved = readState(bad.statePath);
+  assert.deepEqual(saved.observed, good.observed);
+  assert.ok(saved.brokerState.nextBrokerAt > CLOCK().getTime());
+  assert.doesNotMatch(JSON.stringify(saved), /synthetic-private-secret/);
+  const restarted = await runTick({ options, now: CLOCK });
+  assert.equal(restarted.changed, false);
+  assert.equal(reads, 1);
+});
+
 function scratch(t) {
   const directory = mkdtempSync(join(tmpdir(), "worker-inbox-platform-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));

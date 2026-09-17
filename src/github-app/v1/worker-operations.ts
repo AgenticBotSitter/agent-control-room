@@ -195,7 +195,7 @@ export function createGitHubWorkerOperations(options: GitHubWorkerOperationsOpti
     const projected: unknown[] = [];
     for (const entry of issues.items) {
       if (!entry || typeof entry !== "object") continue;
-      const issue = entry as { number?: unknown; title?: unknown; state?: unknown; labels?: unknown;
+      const issue = entry as { number?: unknown; title?: unknown; body?: unknown; state?: unknown; labels?: unknown;
         pull_request?: unknown; user?: { login?: unknown; type?: unknown } };
       const number = issueNumber(issue.number);
       if (number === undefined) continue;
@@ -204,6 +204,7 @@ export function createGitHubWorkerOperations(options: GitHubWorkerOperationsOpti
         // Titles and bodies are untrusted repository text. They travel to the requesting
         // worker as data and are never written to the broker's own logs or audit records.
         title: typeof issue.title === "string" ? issue.title : "",
+        body: typeof issue.body === "string" ? issue.body : "",
         state: typeof issue.state === "string" ? issue.state : "",
         isPullRequest: issue.pull_request !== undefined,
         author: typeof issue.user?.login === "string" ? issue.user.login : "",
