@@ -4,6 +4,9 @@ import { readFile } from "node:fs/promises";
 import { readFileSync, readdirSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { renderToStaticMarkup } from "react-dom/server";
+import { createElement } from "react";
+import { AssignmentRecommendationPanel } from "../private-app/app/assignment-recommendation.tsx";
 import handler from "../dist-vps/server/index.js";
 import { evaluateAssignmentRecommendationV1, evaluateConfiguredRouteRecommendationV1, recommendationScopeMatchesV1,
   reportedEffortVocabularyV1, harnessByProbeIdV1, assignmentRecommendationProjectionSchemaV1 } from "../src/assignment-recommendation/v1/index.ts";
@@ -116,6 +119,18 @@ test("pre-assignment recommendation reuses canonical eligibility and leaves unre
   assert.deepEqual(assignmentRecommendationProjectionSchemaV1.parse(projection), projection);
 });
 
+test("recommendation eligibility honors the task policy scratch floor, not the candidate hint", async t => {
+  const f = await taskAssignmentFixture(); t.after(f.close);
+  const input = recommendationInput(f);
+  input.policy.requiredScratchBytes = Number.MAX_SAFE_INTEGER;
+  input.candidates[0].requiredScratchBytes = 0;
+  const projection = evaluateAssignmentRecommendationV1(input);
+  assert.equal(projection.state, "unavailable");
+  assert.equal(projection.recommendation, null);
+  assert.ok(projection.alternatives[0].basis.includes("scratch_insufficient"));
+  assert.deepEqual(assignmentRecommendationProjectionSchemaV1.parse(projection), projection);
+});
+
 test("stale fleet evidence produces an unavailable recommendation rather than a guess", async t => {
   const f = await taskAssignmentFixture(); t.after(f.close);
   const projection = evaluateAssignmentRecommendationV1(recommendationInput(f, { now: at(500_000) }));
@@ -161,14 +176,26 @@ test("a historical effort class is recommended only when comparable outcomes agr
   assert.ok(thin.recommendation.basis.includes("historical_outcome_insufficient"));
 });
 
+test("unsuccessful history never supplies an accepted model recommendation", async t => {
+  const f = await taskAssignmentFixture(); t.after(f.close);
+  const history = [1000, 2000].map(ms => ({ capabilityProbeId: f.route.capabilityProbeId,
+    modelClass: "blocked-class", effort: "high", outcome: "blocked", recordedAt: at(ms) }));
+  const projection = evaluateAssignmentRecommendationV1(recommendationInput(f, { history }));
+  assert.equal(projection.recommendation.modelClass, "unreported");
+  assert.equal(projection.recommendation.effort, "unknown");
+  assert.ok(!projection.recommendation.basis.includes("historical_outcome_accepted"));
+});
+
 test("the configured-route presentation states the evidence it cannot read, and is project-scoped", async () => {
   const scope = { projectId: "project-alpha", jobId: "job-alpha", inputDigest: sha256Digest("alpha") };
   const projection = evaluateConfiguredRouteRecommendationV1({ now: at(9000), ...scope, requiredCapability: "harness.hermes.native.runs.v1",
     candidates: [{ nodeId: "node-alpha", label: "Alpha machine", platform: "windows" },
       { nodeId: "node-beta", label: "Beta machine", platform: "linux" }] });
-  assert.equal(projection.state, "limited"); assert.equal(projection.recommendation.nodeId, "node-alpha");
-  assert.equal(projection.recommendation.harness, "hermes-native"); assert.equal(projection.recommendation.effort, "unknown");
-  assert.deepEqual(projection.recommendation.costTradeoff, { cost: "unknown", usage: "unknown", sampleSize: 0 });
+  assert.equal(projection.state, "unavailable"); assert.equal(projection.recommendation, null);
+  for (const candidate of projection.alternatives) {
+    assert.equal(candidate.eligible, null, "configuration is not eligibility evidence");
+    assert.deepEqual(candidate.capacity, { available: null, activeTaskCount: null, maxConcurrentTasks: null });
+  }
   for (const limit of ["capacity_evidence_missing", "effort_unreported", "eligibility_incomplete", "cost_unreported", "usage_unreported"])
     assert.ok(projection.limits.includes(limit), `${limit} must be declared`);
   assert.deepEqual(projection.alternatives.map(item => item.nodeId), ["node-alpha", "node-beta"]);
@@ -180,6 +207,22 @@ test("the configured-route presentation states the evidence it cannot read, and 
   assert.equal(none.state, "unavailable"); assert.equal(none.recommendation, null); assert.deepEqual(none.limits, ["no_eligible_candidate"]);
   assert.deepEqual(assignmentRecommendationProjectionSchemaV1.parse(projection), projection);
   assert.deepEqual(assignmentRecommendationProjectionSchemaV1.parse(none), none);
+});
+
+test("the rendered panel preserves unknown eligibility and withholds cross-project evidence", () => {
+  const scope = { projectId: "project-alpha", jobId: "job-alpha", inputDigest: sha256Digest("alpha") };
+  const projection = evaluateConfiguredRouteRecommendationV1({ now: at(9000), ...scope,
+    candidates: [{ nodeId: "node-alpha", label: "Alpha machine", platform: "windows" }] });
+  let preferences = 0;
+  const html = renderToStaticMarkup(createElement(AssignmentRecommendationPanel,
+    { recommendation: projection, scope, onPrefer: () => { preferences += 1; } }));
+  assert.match(html, /eligibility not readable here/);
+  assert.doesNotMatch(html, /not currently eligible|Recommended machine:|<button/);
+  assert.equal(preferences, 0);
+  const mismatched = renderToStaticMarkup(createElement(AssignmentRecommendationPanel,
+    { recommendation: projection, scope: { ...scope, projectId: "project-beta" } }));
+  assert.match(mismatched, /different project, task or draft was withheld/);
+  assert.doesNotMatch(mismatched, /Alpha machine/);
 });
 
 test("the recommendation surface has no server importer, no write path and no clock of its own", async () => {

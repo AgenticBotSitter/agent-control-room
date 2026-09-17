@@ -35,8 +35,9 @@ export function AssignmentRecommendationPanel({ recommendation, scope, onPrefer 
     </div>}
     {recommendation.limits.length > 0 && <p role="status">Limited: {recommendation.limits.join(", ")}. Unknown evidence stays unknown here.</p>}
     {others.length > 0 && <div><p>Other configured machines:</p>
-      <ul>{others.map(candidate => <li key={candidate.nodeId}>{candidate.label} · {candidate.platform} · {candidate.eligible
-        ? "configured for this task" : "not currently eligible"}{onPrefer && candidate.eligible
+      <ul>{others.map(candidate => <li key={candidate.nodeId}>{candidate.label} · {candidate.platform} · {candidate.eligible === null
+        ? "eligibility not readable here" : candidate.eligible
+        ? "eligible for this task" : "not currently eligible"}{onPrefer && candidate.eligible
         ? <button type="button" onClick={() => onPrefer(candidate.nodeId)}>Prefer this machine</button> : null}</li>)}</ul>
       <p>Preferring a machine only changes which machine the assignment command will ask for. It reserves nothing and starts no agent.</p></div>}
     <p>This recommendation is advice. It assigns no work, reserves no capacity and grants no execution authority.</p>

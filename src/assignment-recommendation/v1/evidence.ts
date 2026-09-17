@@ -72,7 +72,7 @@ export function evaluateCandidateEvidenceV1(candidate: AssignmentRecommendationC
   const result = evaluateFleetEligibility({
     now,
     signals: signals.filter((signal) => signal.nodeId === candidate.nodeId),
-    requiredScratchBytes: candidate.requiredScratchBytes,
+    requiredScratchBytes: policy.requiredScratchBytes,
     requiredCapabilityProbeId: candidate.capabilityProbeId,
     requireVerifiedCapability: policy.requireVerifiedCapability,
     ...(policy.requiredBenchmarkId ? { requiredBenchmarkId: policy.requiredBenchmarkId } : {}),
@@ -137,6 +137,10 @@ export function evaluateHistoryEvidenceV1(candidate: AssignmentRecommendationCan
   }
   const ranked = [...groups.values()].filter((group) => group.total >= MIN_HISTORY_SAMPLE_V1)
     .sort((left, right) => (right.accepted / right.total) - (left.accepted / left.total) || right.total - left.total || left.key.localeCompare(right.key));
+  // A group with no accepted outcome is evidence against that class, never a recommendation
+  // for it: ranking only decides among classes with at least one accepted result.
+  const viable = ranked.filter((group) => group.accepted > 0);
+  const [winner, runnerUp] = viable;
   const unknown: HistoryEvidenceV1 = {
     sampleSize: 0,
     modelClass: "unreported",
@@ -147,7 +151,7 @@ export function evaluateHistoryEvidenceV1(candidate: AssignmentRecommendationCan
   };
   const unreportedBasis: AssignmentRecommendationBasisV1[] = ["cost_unreported", "usage_unreported"];
   const unreportedLimits: AssignmentRecommendationLimitV1[] = ["cost_unreported", "usage_unreported"];
-  if (!ranked.length) {
+  if (!winner) {
     // No comparable group is a statement about history, never a licence to guess a class.
     return comparable.length ? {
       ...unknown,
@@ -159,7 +163,6 @@ export function evaluateHistoryEvidenceV1(candidate: AssignmentRecommendationCan
       limits: [all.length ? "historical_outcome_incomparable" : "historical_sample_insufficient", ...unreportedLimits],
     };
   }
-  const [winner, runnerUp] = ranked;
   if (runnerUp && runnerUp.accepted / runnerUp.total === winner.accepted / winner.total) {
     return {
       ...unknown,

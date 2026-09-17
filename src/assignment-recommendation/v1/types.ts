@@ -109,9 +109,9 @@ export interface AssignmentRecommendationInputV1 {
 }
 
 export interface AssignmentRecommendationCapacityV1 {
-  available: boolean;
-  activeTaskCount: number;
-  maxConcurrentTasks: number;
+  available: boolean | null;
+  activeTaskCount: number | null;
+  maxConcurrentTasks: number | null;
 }
 
 export interface AssignmentRecommendationAlternativeV1 {
@@ -120,7 +120,7 @@ export interface AssignmentRecommendationAlternativeV1 {
   platform: AssignmentPlatformV1;
   executorId: string;
   capabilityProbeId: string;
-  eligible: boolean;
+  eligible: boolean | null;
   capacity: AssignmentRecommendationCapacityV1;
   basis: AssignmentRecommendationBasisV1[];
 }

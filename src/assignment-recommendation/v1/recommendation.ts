@@ -130,10 +130,17 @@ export function evaluateConfiguredRouteRecommendationV1(input: {
   requiredCapability?: string; allowedPlatforms?: AssignmentRecommendationCandidateV1["platform"][];
 }): AssignmentRecommendationProjectionV1 {
   const allowed = input.allowedPlatforms ?? ["windows", "macos", "linux", "cloud"];
+  // Configuration is the only fact this surface holds. Eligibility, capacity and capability
+  // matching are fleet evidence it cannot read, so they stay unknown instead of being
+  // projected: unknown capacity must not render as a real slot count.
   const candidates: AssignmentRecommendationCandidateV1[] = input.candidates.filter((candidate) => allowed.includes(candidate.platform))
     .map((candidate) => ({ ...candidate, executorId: "executor:unreported", capabilityProbeId: input.requiredCapability ?? "unreported",
       maxConcurrentTasks: 1, activeTaskCount: 0, leaseSeconds: 1, requiredScratchBytes: 0 }));
   const limits: AssignmentRecommendationLimitV1[] = ["capacity_evidence_missing", "effort_unreported", "cost_unreported", "usage_unreported", "eligibility_incomplete"];
+  const alternatives = candidates.map((candidate) => ({ nodeId: candidate.nodeId, label: candidate.label, platform: candidate.platform,
+    executorId: candidate.executorId, capabilityProbeId: candidate.capabilityProbeId, eligible: null,
+    capacity: { available: null, activeTaskCount: null, maxConcurrentTasks: null },
+    basis: ["platform_allowed_by_policy"] as AssignmentRecommendationBasisV1[] }));
   if (!candidates.length) return { contractVersion: ASSIGNMENT_RECOMMENDATION_CONTRACT_V1, projectId: input.projectId, jobId: input.jobId,
     inputDigest: input.inputDigest, generatedAt: input.now, state: "unavailable", recommendation: null, alternatives: [],
     limits: ["no_eligible_candidate"], explanation: "No configured machine matches this task's platform. Nothing is reserved and no work is started.",
@@ -142,21 +149,13 @@ export function evaluateConfiguredRouteRecommendationV1(input: {
   return {
     contractVersion: ASSIGNMENT_RECOMMENDATION_CONTRACT_V1,
     projectId: input.projectId, jobId: input.jobId, inputDigest: input.inputDigest, generatedAt: input.now,
-    state: "limited",
-    recommendation: {
-      nodeId: chosen.nodeId, label: chosen.label, platform: chosen.platform, executorId: chosen.executorId,
-      capabilityProbeId: chosen.capabilityProbeId, harness: harnessForProbeV1(chosen.capabilityProbeId),
-      effort: "unknown", modelClass: "unreported",
-      costTradeoff: { cost: "unknown", usage: "unknown", sampleSize: 0 },
-      capacity: { available: true, activeTaskCount: 0, maxConcurrentTasks: 1 },
-      basis: ["platform_allowed_by_policy"],
-    },
-    alternatives: candidates.map((candidate) => ({ nodeId: candidate.nodeId, label: candidate.label, platform: candidate.platform,
-      executorId: candidate.executorId, capabilityProbeId: candidate.capabilityProbeId, eligible: true,
-      capacity: { available: true, activeTaskCount: 0, maxConcurrentTasks: 1 }, basis: ["platform_allowed_by_policy"] as AssignmentRecommendationBasisV1[] })),
+    state: "unavailable",
+    recommendation: null,
+    alternatives,
     limits,
-    explanation: `${chosen.label} (${chosen.platform}) is a configured machine for this task. Capability, capacity, effort, cost and usage evidence is not readable here and stays unknown; `
-      + "it is verified by the protected assignment check, and choosing any other configured machine goes through that same check. This recommendation assigns nothing.",
+    explanation: `${candidates.length} configured machine(s) match this task's platform (for example ${chosen.label} on ${chosen.platform}). `
+      + "Capability, capacity, eligibility, effort, cost and usage evidence is not readable here and stays unknown: the surface offers no recommendation. "
+      + "It is all verified by the protected assignment check, and choosing any configured machine goes through that same check. This recommendation assigns nothing.",
     authority: { startsWork: false, assignsWork: false, grantsExecutionAuthority: false },
   };
 }

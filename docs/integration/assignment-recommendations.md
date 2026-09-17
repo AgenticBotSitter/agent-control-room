@@ -1,9 +1,11 @@
 # Assignment recommendations (WORK-014)
 
-A recommendation is shown **before** an assignment is made. It explains why one configured
-machine is a reasonable choice for one task, states the capability, platform, capacity and
-policy basis for that judgement, and reports what it does not know as unknown. It reserves
-nothing, starts nothing and grants nothing.
+A read-only panel is shown **before** an assignment is made. The current browser path
+has configured routes only and displays **no recommendation**: eligibility and capacity
+remain unknown. The separate evidence evaluator can recommend a machine when supplied
+with fleet, capacity and history evidence, but that evidence is not yet wired into the
+browser path. This is a partial WORK-014 implementation, not the completed outcome.
+It reserves nothing, starts nothing and grants nothing.
 
 Contract version: `control-room-assignment-recommendation/v1`.
 

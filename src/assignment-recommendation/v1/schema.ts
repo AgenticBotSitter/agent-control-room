@@ -15,11 +15,11 @@ const basis = z.enum(["platform_allowed_by_policy", "platform_outside_policy", "
   "cost_unreported", "usage_reported_historical", "usage_unreported"]);
 const limit = z.enum(["capacity_evidence_missing", "effort_unreported", "historical_sample_insufficient", "historical_outcome_conflicting",
   "historical_outcome_incomparable", "cost_unreported", "usage_unreported", "capability_unverified", "eligibility_incomplete", "no_eligible_candidate"]);
-const capacity = z.object({ available: z.boolean(), activeTaskCount: z.number().int().nonnegative(),
-  maxConcurrentTasks: z.number().int().min(1).max(8) }).strict();
+const capacity = z.object({ available: z.boolean().nullable(), activeTaskCount: z.number().int().nonnegative().nullable(),
+  maxConcurrentTasks: z.number().int().min(1).max(8).nullable() }).strict();
 
 export const assignmentRecommendationAlternativeSchemaV1 = z.object({ nodeId: safeId, label, platform, executorId: safeId,
-  capabilityProbeId: safeId, eligible: z.boolean(), capacity, basis: z.array(basis).max(24) }).strict();
+  capabilityProbeId: safeId, eligible: z.boolean().nullable(), capacity, basis: z.array(basis).max(24) }).strict();
 
 export const assignmentRecommendationProjectionSchemaV1 = z.object({
   contractVersion: z.literal("control-room-assignment-recommendation/v1"),
