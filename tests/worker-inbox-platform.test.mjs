@@ -56,6 +56,61 @@ test("broker backoff survives scheduled ticks without clearing observation or em
   assert.equal(reads, 1);
 });
 
+test("scheduled entry point passes explicit broker configuration without persisting credentials", async t => {
+  const root = scratch(t);
+  const environment = {
+    ACR_WORKER_BROKER_URL: "https://broker.example/v1/worker-operations",
+    ACR_WORKER_BROKER_TOKEN: "synthetic-worker-token",
+    GITHUB_TOKEN: "synthetic-fallback-token",
+  };
+  const calls = [];
+  const argv = ["--once", "--scheduled", "--worker-id", WORKER_ID,
+    "--repository", REPOSITORY_NAME, "--runtime-root", root];
+  const reader = async input => { calls.push(input); return []; };
+  assert.equal(await watchMain(argv, { environment, reader, now: CLOCK }), EXIT_OK);
+  assert.equal(await watchMain(argv, { environment, reader, now: CLOCK }), EXIT_OK);
+  assert.equal(calls.length, 2);
+  for (const input of calls) {
+    assert.deepEqual(input.broker, {
+      url: environment.ACR_WORKER_BROKER_URL, token: environment.ACR_WORKER_BROKER_TOKEN,
+    });
+    assert.equal(input.token, environment.GITHUB_TOKEN);
+    assert.equal(input.includeReady, true);
+    assert.equal(input.workerId, WORKER_ID);
+  }
+  const directory = workerDirectory({ workerId: WORKER_ID, runtimeRoot: root });
+  const state = readState(stateFile(directory));
+  assert.equal(state.lastOutcome, "ok");
+  assert.equal(state.lastChange.changed, false);
+  assert.doesNotMatch(JSON.stringify(state), /synthetic-worker-token|synthetic-fallback-token/);
+  assert.doesNotMatch(readFileSync(logFile(directory), "utf8"), /synthetic-worker-token|synthetic-fallback-token/);
+});
+
+test("scheduled entry point rejects incomplete broker configuration before reading", async t => {
+  const root = scratch(t);
+  let reads = 0;
+  const argv = ["--once", "--scheduled", "--worker-id", WORKER_ID, "--runtime-root", root];
+  assert.equal(await watchMain(argv, {
+    environment: { ACR_WORKER_BROKER_URL: "https://broker.example/v1/worker-operations" },
+    reader: async () => { reads++; return []; }, now: CLOCK,
+  }), EXIT_CONFIG);
+  assert.equal(reads, 0);
+});
+
+test("scheduled entry point retains direct reads when no broker is configured", async t => {
+  const root = scratch(t);
+  let reads = 0;
+  assert.equal(await watchMain(["--once", "--scheduled", "--worker-id", WORKER_ID, "--runtime-root", root], {
+    environment: {}, now: CLOCK,
+    reader: async input => {
+      reads++;
+      assert.equal(input.broker, undefined);
+      return [];
+    },
+  }), EXIT_OK);
+  assert.equal(reads, 1);
+});
+
 function scratch(t) {
   const directory = mkdtempSync(join(tmpdir(), "worker-inbox-platform-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));

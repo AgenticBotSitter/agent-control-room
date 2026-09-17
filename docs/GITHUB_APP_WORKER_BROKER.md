@@ -166,8 +166,11 @@ records fetched only for valid Ready packets. The existing controller parser val
 those records: open, not-planned, missing-done and pull-request dependencies remain
 blocked. Injected end-to-end tests drive the actual broker result into the inbox parser.
 
-This correction is not ready for handoff yet. Remaining qualification includes bounded
-streaming response validation, generated-scheduler configuration coverage, broader
+This correction is not ready for handoff yet. Streaming responses are bounded while
+reading, and injected scheduled-entry-point tests cover explicit broker configuration,
+credential separation, unchanged observations, invalid configuration and the direct-only
+path. These tests do not install a scheduler or prove its environment inheritance.
+Remaining qualification includes generated-scheduler environment configuration, broader
 broker-to-parser integration coverage, and uncertain command-response retry safety.
 The original bounded operation
 allowlist and authenticated worker binding remain in place. No live broker or scheduler
