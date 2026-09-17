@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { ConnectionCenterPanel } from "../../../app/components/connection-center";
 import { ConnectionBrowserError, readPrivateConnections, type PrivateConnectionSnapshot } from "../../../src/web/v1/connection-browser-client";
 import { PrivateHeader } from "../private-header";
+import { PrivateOperatorCapacityWorkspace } from "../operator-capacity-workspace";
 
 export type PrivateConnectionViewState = { state: "loading" } | { state: "ready"; snapshot: PrivateConnectionSnapshot }
   | { state: "unavailable"; code: ConnectionBrowserError["code"] };
@@ -13,8 +14,8 @@ export function PrivateConnectionView({ data, onRefresh }: { data: PrivateConnec
       <p>This inventory covers all workspaces in this Control Room account.</p></div>
     <p className="private-note">This is the existing Hermes 0.21 enrollment inventory, not a live fleet monitor.
       The new cross-machine agent connection and task runner are not connected here yet.</p>
-    <p className="private-note">Worker platform details, eligible capabilities, available slots, current work and usage are unavailable in this view.
-      Cancel and resume are unsupported here. Open a prepared task to see only the assignment choices that its configured service can actually verify.</p>
+    <p className="private-note">Worker platform details, eligible capabilities, available slots, current work and usage are not part of this inventory.
+      The operator capacity panel below shows the recorded capacity and outcome evidence, read separately and read-only. Cancel and resume are unsupported here. Open a prepared task to see only the assignment choices that its configured service can actually verify.</p>
     <div className="private-actions"><button type="button" onClick={onRefresh} disabled={data.state === "loading"}>Refresh connections</button></div>
     {data.state === "unavailable" ? <section className="private-notice" role="alert">
       <h2>{data.code === "authentication_required" ? "Your session has ended" : data.code === "access_denied" ? "Owner access is required" : "Connection inventory unavailable"}</h2>
@@ -26,6 +27,12 @@ export function PrivateConnectionView({ data, onRefresh }: { data: PrivateConnec
         {data.snapshot.telemetry === "not_configured" && " Signal verification is not configured; no current signal is claimed."}</p>}
       <ConnectionCenterPanel data={data.state === "loading" ? { state: "loading" } : { state: "available", projection: data.snapshot.projection }} />
     </>}
+    {/* Operator capacity, mounted read-only under the inventory. A single mount
+        point here covers both render paths: PrivateConnections renders this
+        view, so /workers and /connections both show the panel exactly once.
+        The panel runs its own independent read with its own loading and
+        unavailable states; this inventory's state never gates it. */}
+    <PrivateOperatorCapacityWorkspace />
   </main></div>;
 }
 
