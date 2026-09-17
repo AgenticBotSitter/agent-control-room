@@ -531,7 +531,7 @@ test("RES-007 refuses changed content under the same identity as a conflict", ()
   const otherText = "different terminal result";
   const otherHash = `sha256:${createHash("sha256").update(otherText, "utf8").digest("hex")}`;
   const conflict = acceptRemoteArtifactReturnV1({
-    transport: remoteTransport(), 
+    transport: remoteTransport(),
     reservation: remoteReservation({ expectedContentDigest: otherHash, expectedSizeBytes: Buffer.byteLength(otherText) }),
     delivery: remoteDelivery({
       declaredSizeBytes: Buffer.byteLength(otherText), declaredContentDigest: otherHash,
