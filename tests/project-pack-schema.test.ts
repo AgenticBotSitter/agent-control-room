@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { PROJECT_PACK_SCHEMA_V1, buildProjectPackV1, parseProjectPackV1, projectPackDigestV1 } from "../src/project-packs/v1/project-pack";
+import { PROJECT_PACK_SCHEMA_V1, buildProjectPackV1, exportProjectPackV1, parseProjectPackV1, projectPackDigestV1 } from "../src/project-packs/v1/project-pack";
 
 function validInput() {
   return {
@@ -91,5 +91,80 @@ describe("project-pack schema", () => {
     const second = projectPackDigestV1(buildProjectPackV1({ ...validInput(), summary: "A different summary." }));
     assert.match(first, /^sha256:[0-9a-f]{64}$/);
     assert.notEqual(first, second);
+  });
+});
+
+describe("project-pack attribution and license metadata", () => {
+  function validInput() {
+    return {
+      title: "Neighborhood garden planner",
+      summary: "Plan shared garden beds, rotations, and watering duties.",
+      optionalModules: ["news", "ideaLab"],
+      setupGuidance: ["Enable the modules you need locally."],
+    };
+  }
+
+  it("carries bounded metadata through build, export, and parse", () => {
+    const built = buildProjectPackV1({ ...validInput(), attribution: "Garden Club", license: "CC-BY-4.0" });
+    assert.equal(built.attribution, "Garden Club");
+    assert.equal(built.license, "CC-BY-4.0");
+    const reparsed = parseProjectPackV1(JSON.parse(exportProjectPackV1(built)));
+    assert.equal(reparsed.attribution, "Garden Club");
+    assert.equal(reparsed.license, "CC-BY-4.0");
+    assert.equal(projectPackDigestV1(reparsed), projectPackDigestV1(built));
+  });
+
+  it("metadata changes the digest; absence stays valid", () => {
+    const bare = buildProjectPackV1({
+      title: "Neighborhood garden planner",
+      summary: "Plan shared garden beds, rotations, and watering duties.",
+      optionalModules: ["news", "ideaLab"],
+      setupGuidance: ["Enable the modules you need locally."],
+    });
+    assert.equal(bare.attribution, undefined);
+    assert.equal(bare.license, undefined);
+    const marked = buildProjectPackV1({
+      title: "Neighborhood garden planner",
+      summary: "Plan shared garden beds, rotations, and watering duties.",
+      optionalModules: ["news", "ideaLab"],
+      setupGuidance: ["Enable the modules you need locally."],
+      attribution: "Garden Club",
+      license: "CC-BY-4.0",
+    });
+    assert.notEqual(projectPackDigestV1(marked), projectPackDigestV1(bare));
+  });
+
+  it("rejects overlong or misshapen metadata", () => {
+    assert.throws(() => buildProjectPackV1({ ...validInput(), attribution: "a".repeat(121) }), /./);
+    assert.throws(() => buildProjectPackV1({ ...validInput(), license: "MIT License, version 2 (see COPYING file for details)" }), /project_pack_license_not_spdx_shaped/);
+    assert.throws(() => buildProjectPackV1({ ...validInput(), license: "has spaces" }), /project_pack_license_not_spdx_shaped/);
+    assert.throws(() => buildProjectPackV1({ ...validInput(), attribution: "set api_key: abc123" }), /credential_shaped/);
+    assert.throws(() => buildProjectPackV1({ ...validInput(), attribution: "Click <script>alert(1)</script>" }), /executable_content/);
+    assert.throws(() => buildProjectPackV1({ ...validInput(), attribution: "grant access to admins" }), /authority_shaped/);
+  });
+
+  it("rejects oversized raw input before any other check", () => {
+    const junk: Record<string, unknown> = { schema: PROJECT_PACK_SCHEMA_V1 };
+    for (let index = 0; index < 2000; index += 1) junk[`padding_${index}`] = "x".repeat(64);
+    assert.ok(JSON.stringify(junk).length > 65536);
+    assert.throws(() => parseProjectPackV1(junk), /project_pack_input_oversized/);
+    const wrongVersion = { ...junk, schema: "control-room.project-pack/v2" };
+    assert.throws(() => parseProjectPackV1(wrongVersion), /project_pack_input_oversized/);
+  });
+});
+
+describe("project-pack input ceiling units", () => {
+  it("measures the ceiling in UTF-8 bytes, not UTF-16 units", () => {
+    const multibyte = {
+      schema: PROJECT_PACK_SCHEMA_V1,
+      title: "T",
+      summary: "S",
+      optionalModules: [],
+      setupGuidance: [],
+      padding: "é".repeat(40000),
+    };
+    assert.ok(JSON.stringify(multibyte).length < 65536);
+    assert.ok(Buffer.byteLength(JSON.stringify(multibyte), "utf8") > 65536);
+    assert.throws(() => parseProjectPackV1(multibyte), /project_pack_input_oversized/);
   });
 });

@@ -57,3 +57,24 @@ describe("project-pack roundtrip", () => {
     assert.throws(() => previewProjectPackV1(pack, { modules: { ideaLab: true, news: false, sessionObservations: false, extra: true } }), /./);
   });
 });
+
+describe("project-pack preview metadata", () => {
+  it("surfaces attribution and license alongside module warnings", () => {
+    const pack = buildProjectPackV1({
+      title: "T",
+      summary: "S",
+      optionalModules: ["ideaLab", "news"],
+      setupGuidance: ["Read the preview first."],
+      attribution: "Friends of the Library",
+      license: "MIT",
+    });
+    const partial = previewProjectPackV1(pack, PARTIAL_LOCAL.modules);
+    assert.equal(partial.attribution, "Friends of the Library");
+    assert.equal(partial.license, "MIT");
+    assert.deepEqual([...partial.warnings], ["module_not_supported_locally:news"]);
+    const bare = buildProjectPackV1({ title: "T", summary: "S" });
+    const barePreview = previewProjectPackV1(bare, FULL_LOCAL.modules);
+    assert.equal(barePreview.attribution, null);
+    assert.equal(barePreview.license, null);
+  });
+});

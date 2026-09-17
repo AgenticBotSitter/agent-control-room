@@ -27,6 +27,12 @@ const SUMMARY_MAX = 2000;
 const GUIDANCE_ITEMS_MAX = 10;
 const GUIDANCE_ITEM_MIN = 1;
 const GUIDANCE_ITEM_MAX = 1000;
+/** Raw-input ceiling: the field ceilings bound legitimate packs near ~13KB. */
+const MAX_PACK_BYTES = 65536;
+/** SPDX-expression shape: starts alnum, then alnum and . + - : markers. */
+const LICENSE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9.+:-]{0,39}$/;
+const ATTRIBUTION_MIN = 1;
+const ATTRIBUTION_MAX = 120;
 
 const moduleName = z.enum(PRODUCT_CONFIGURATION_MODULES_V1);
 
@@ -92,6 +98,18 @@ const projectPackSchemaV1 = z
     setupGuidance: z
       .array(z.string().min(GUIDANCE_ITEM_MIN).max(GUIDANCE_ITEM_MAX).refine((value) => PRINTABLE_TEXT.test(value), "project_pack_guidance_not_printable"))
       .max(GUIDANCE_ITEMS_MAX),
+    attribution: z
+      .string()
+      .min(ATTRIBUTION_MIN)
+      .max(ATTRIBUTION_MAX)
+      .refine((value) => PRINTABLE_TEXT.test(value), "project_pack_attribution_not_printable")
+      .optional(),
+    license: z
+      .string()
+      .min(1)
+      .max(40)
+      .refine((value) => LICENSE_PATTERN.test(value), "project_pack_license_not_spdx_shaped")
+      .optional(),
   })
   .strict()
   .superRefine((pack, context) => {
@@ -118,6 +136,19 @@ function guardAllText(pack: ProjectPackV1): void {
   assertGuardedText("title", pack.title);
   assertGuardedText("summary", pack.summary);
   for (const item of pack.setupGuidance) assertGuardedText("guidance", item);
+  if (pack.attribution !== undefined) assertGuardedText("attribution", pack.attribution);
+  if (pack.license !== undefined) assertGuardedText("license", pack.license);
+}
+
+/** Visible refusal for raw inputs over the byte ceiling (a DoS guard at the door). */
+function assertInputSize(value: unknown): void {
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(value) ?? "";
+  } catch {
+    throw new Error("project_pack_malformed");
+  }
+  if (Buffer.byteLength(serialized, "utf8") > MAX_PACK_BYTES) throw new Error("project_pack_input_oversized");
 }
 
 /**
@@ -126,6 +157,7 @@ function guardAllText(pack: ProjectPackV1): void {
  */
 export function parseProjectPackV1(value: unknown): Readonly<ProjectPackV1> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("project_pack_malformed");
+  assertInputSize(value);
   const schema = (value as Record<string, unknown>)["schema"];
   if (schema !== PROJECT_PACK_SCHEMA_V1) throw new Error("project_pack_unknown_version");
   assertNoPrototypePollutionKeys(value, 0);
@@ -140,6 +172,8 @@ export interface ProjectPackBuildInputV1 {
   summary: string;
   optionalModules?: readonly string[];
   setupGuidance?: readonly string[];
+  attribution?: string;
+  license?: string;
 }
 
 /**
@@ -150,7 +184,7 @@ export function buildProjectPackV1(input: ProjectPackBuildInputV1): Readonly<Pro
   if (input === null || typeof input !== "object" || Array.isArray(input)) throw new Error("project_pack_malformed");
   const keys = new Set(Object.keys(input));
   for (const key of keys) {
-    if (key !== "title" && key !== "summary" && key !== "optionalModules" && key !== "setupGuidance") {
+    if (key !== "title" && key !== "summary" && key !== "optionalModules" && key !== "setupGuidance" && key !== "attribution" && key !== "license") {
       throw new Error("project_pack_unknown_key");
     }
   }
@@ -166,6 +200,8 @@ export function buildProjectPackV1(input: ProjectPackBuildInputV1): Readonly<Pro
     summary: input.summary,
     optionalModules: canonicalModules,
     setupGuidance: [...(input.setupGuidance ?? [])],
+    ...(input.attribution === undefined ? {} : { attribution: input.attribution }),
+    ...(input.license === undefined ? {} : { license: input.license }),
   };
   return parseProjectPackV1(candidate);
 }
@@ -195,6 +231,8 @@ export interface ProjectPackPreviewV1 {
   title: string;
   summary: string;
   setupGuidance: readonly string[];
+  attribution: string | null;
+  license: string | null;
   supportedModules: readonly ProjectPackModuleV1[];
   unsupportedModules: readonly ProjectPackModuleV1[];
   warnings: readonly string[];
@@ -217,6 +255,8 @@ export function previewProjectPackV1(
     title: parsed.title,
     summary: parsed.summary,
     setupGuidance: [...parsed.setupGuidance],
+    attribution: parsed.attribution ?? null,
+    license: parsed.license ?? null,
     supportedModules: [...supported],
     unsupportedModules: [...unsupported],
     warnings,

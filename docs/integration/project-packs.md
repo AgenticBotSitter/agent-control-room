@@ -15,6 +15,10 @@ Schema id: `control-room.project-pack/v1`. Fields:
   (`ideaLab`, `news`, `sessionObservations`), in that canonical order.
 - `setupGuidance` — up to 10 human-readable setup hints, each up to
   1000 chars.
+- `attribution` (optional, up to 120 chars) — printable descriptive credit for
+  the pack's source or author; it grants no identity or authority.
+- `license` (optional, up to 40 chars) — an SPDX-shaped license expression for
+  the pack's descriptive content.
 
 Serialization is deterministic canonical JSON; identity is a domain-separated
 SHA-256 digest (`sha256:` + hex) over `{namespace, value}` using the shared
@@ -41,6 +45,7 @@ changes the digest; key-ordering differences do not.
 
 ## Future catalog
 
-A future catalog may store only these inert packs plus attribution/license
-metadata, after separate review. Packs themselves carry no attribution,
-identity, or executable material by design.
+A future catalog may store only these inert packs, including their bounded
+attribution and license metadata, after separate review. Attribution is
+descriptive only: it is not an authenticated identity, permission, executable
+material, or proof of provenance.
