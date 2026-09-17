@@ -18,6 +18,36 @@ export function brokerConfiguration({ url, environment = process.env } = {}) {
 
 // Mutable scheduling data contains only times/counters. The platform watcher persists
 // it alongside (not inside) the last successful observation so restarts obey backoff.
+const MAX_BROKER_RESPONSE_BYTES = 4 * 1024 * 1024;
+
+// A hostile broker must not be able to OOM the watcher by streaming an unbounded body:
+// bytes are counted while reading and the stream is cancelled the moment the ceiling
+// is crossed, so memory never exceeds the cap plus one chunk.
+async function readBoundedBrokerText(response) {
+  if (!response.body?.getReader) {
+    const text = await response.text();
+    if (Buffer.byteLength(text) > MAX_BROKER_RESPONSE_BYTES) throw new Error("oversized");
+    return text;
+  }
+  const reader = response.body.getReader();
+  const chunks = [];
+  let bytes = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > MAX_BROKER_RESPONSE_BYTES) throw new Error("oversized");
+      chunks.push(value);
+    }
+  } catch (error) {
+    try { await reader.cancel(); } catch { /* The ceiling is enforced; release the stream. */ }
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
 export async function brokerSnapshot({ broker, workerId, repository, includeReady, fetchImpl,
   state, now = Date.now }) {
   const at = now();
@@ -29,9 +59,7 @@ export async function brokerSnapshot({ broker, workerId, repository, includeRead
       signal: AbortSignal.timeout(10000), headers: { "content-type": "application/json", authorization: `Bearer ${broker.token}` },
       body: JSON.stringify({ operation, workerId }) });
     if (!response.ok) throw new Error("unavailable");
-    const text = await response.text();
-    if (Buffer.byteLength(text) > 4 * 1024 * 1024) throw new Error("oversized");
-    const result = JSON.parse(text);
+    const result = JSON.parse(await readBoundedBrokerText(response));
     const snapshot = result.snapshot;
     if (result.version !== BROKER_VERSION || result.operation !== operation || result.ok !== true
       || result.workerId !== workerId || snapshot?.repository !== repository || snapshot.complete !== true

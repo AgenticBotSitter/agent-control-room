@@ -63,6 +63,29 @@ test("incomplete or foreign broker data cannot clear the inbox", async () => {
       fetchImpl: async () => brokerReply(extra) }), /worker_inbox_broker_unavailable/);
   }
 });
+
+test("an unbounded broker stream is cancelled at the ceiling, never drained", async () => {
+  const chunk = new Uint8Array(64 * 1024);
+  let pulled = 0;
+  const endless = new ReadableStream({
+    pull(controller) { pulled++; controller.enqueue(chunk); },
+    cancel() { pulled = -Math.abs(pulled); },
+  });
+  const state = {};
+  await assert.rejects(readWorkerInbox({ workerId, repository, broker, brokerState: state,
+    fetchImpl: async () => new Response(endless) }), /worker_inbox_broker_unavailable/);
+  // Only the ceiling plus one chunk was ever pulled, and the stream was cancelled.
+  assert.ok(pulled < 0, "stream was cancelled");
+  assert.ok(-pulled <= 4 * 1024 * 1024 / chunk.length + 2, `pulled ${-pulled} chunks`);
+  assert.ok(state.nextBrokerAt > 0, "backoff scheduled");
+});
+
+test("a broker body at the ceiling still parses", async () => {
+  const padding = "p".repeat(4 * 1024 * 1024 - 1500);
+  const actions = await readWorkerInbox({ workerId, repository, broker,
+    fetchImpl: async () => brokerReply({ comments: [claim()], issues: [{ ...issue(), note: padding }] }) });
+  assert.ok(actions.length > 0);
+});
 test("capacity update is discoverable even when the personal inbox is empty", () => {
   const rendered = renderWorkerInbox(workerId, []);
   assert.match(rendered, /2 active builds \/ 5 total assignments/);
