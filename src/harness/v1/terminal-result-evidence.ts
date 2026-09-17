@@ -105,10 +105,68 @@ const upstreamHermesSessionResultEvidenceSchema = z.object({
   evidenceDigest: digest,
 }).strict();
 
+/**
+ * Exactly the Claude Code decoder's fixed `subtype` vocabulary. The raw
+ * upstream `subtype` text is never retained here either: the decoder has
+ * already mapped it to one of these values and discarded the original.
+ */
+const claudeResultSubtypeCodes = ["success", "error_max_turns", "error_during_execution", "unrecognized"] as const;
+
+/**
+ * Exactly the decoder's `KNOWN_RESULT_SUBTYPES`, restated rather than imported
+ * for the same harness-neutrality reason as `terminalFrameRawLine` above. Used
+ * only to re-derive `resultSubtypeCode` from the verified raw line itself, so
+ * a caller cannot claim a `resultSubtypeCode` the raw material disagrees with.
+ */
+const knownClaudeRawResultSubtypes: ReadonlySet<string> = new Set([
+  "success", "error_max_turns", "error_during_execution",
+]);
+
+function claudeRawSubtypeCode(raw: unknown): (typeof claudeResultSubtypeCodes)[number] {
+  return typeof raw === "string" && knownClaudeRawResultSubtypes.has(raw)
+    ? (raw as (typeof claudeResultSubtypeCodes)[number])
+    : "unrecognized";
+}
+
+/**
+ * Claude terminal-result evidence binds one decoded Claude Code CLI `result`
+ * frame to canonical lineage and the retained, already-authenticated owned
+ * process session / connector profile facts.
+ *
+ * The evidence source carries the canonical digest of the exact raw terminal
+ * line the result text was read out of, so a later reader can re-derive the
+ * same binding from the same material. It does NOT represent the result as a
+ * native snapshot, and it fabricates no lease, native-run-key, snapshot,
+ * thread/turn or provider evidence. Like every other member, it is inert:
+ * publication, quality, completion, retry, resume and execution authority are
+ * all false.
+ */
+const claudeTerminalResultEvidenceSchema = z.object({
+  schema: z.literal(TERMINAL_RESULT_EVIDENCE_SCHEMA_V1),
+  kind: z.literal("claude_terminal_result"),
+  lineage: lineageSchema,
+  terminalState: z.literal("completed"),
+  observedAt: instant,
+  content: contentSchema,
+  source: z.object({
+    processAttemptId: id,
+    sessionId: id,
+    connectorProfileDigest: digest,
+    terminalFrameDigest: digest,
+    resultSubtypeCode: z.enum(claudeResultSubtypeCodes),
+    /** A publishable Claude terminal frame never carries a `terminal_reason`. */
+    terminalReasonPresent: z.literal(false),
+    decoderFramesAccepted: count,
+  }).strict(),
+  ...inertFlags,
+  evidenceDigest: digest,
+}).strict();
+
 export const terminalResultEvidenceSchemaV1 = z.discriminatedUnion("kind", [
   hermesEvidenceSchema,
   codexEvidenceSchema,
   upstreamHermesSessionResultEvidenceSchema,
+  claudeTerminalResultEvidenceSchema,
 ]).superRefine((value, context) => {
   const { evidenceDigest, ...material } = value;
   if (evidenceDigest !== sha256Digest(material)) {
@@ -119,6 +177,7 @@ export type TerminalResultEvidenceV1 = z.infer<typeof terminalResultEvidenceSche
 export type HermesTerminalResultEvidenceV1 = z.infer<typeof hermesEvidenceSchema>;
 export type CodexTerminalResultEvidenceV1 = z.infer<typeof codexEvidenceSchema>;
 export type UpstreamHermesSessionResultEvidenceV1 = z.infer<typeof upstreamHermesSessionResultEvidenceSchema>;
+export type ClaudeTerminalResultEvidenceV1 = z.infer<typeof claudeTerminalResultEvidenceSchema>;
 
 const hermesInputSchema = z.object({
   expected: z.object({
@@ -408,5 +467,139 @@ export function projectUpstreamHermesSessionResultEvidenceV1(value: unknown):
       permitsRetry: false,
       permitsResume: false,
     }) as UpstreamHermesSessionResultEvidenceV1;
+  } catch { return unavailable(); }
+}
+
+/**
+ * Input shape for a Claude terminal-result projection.
+ *
+ * Everything under `retained` is identity the caller authenticated and held
+ * BEFORE the terminal frame arrived. Nothing in the raw terminal line may
+ * supply it: the line carries content and observed session evidence only.
+ */
+const claudeTerminalResultInputSchema = z.object({
+  lineage: lineageSchema,
+  /** The retained, already-authenticated owned-session and profile facts. */
+  retained: z.object({
+    processAttemptId: id,
+    /** Retained expected session id, observed on the validated `init` frame. */
+    sessionId: id,
+    /** Digest of the connector profile the run was admitted with. */
+    connectorProfileDigest: digest,
+    /**
+     * The canonical digest of the terminal frame, observed and retained
+     * independently of this call. It is satisfied only by re-deriving it from
+     * `terminalFrameRawLine` below; no digest carried on a decoded frame
+     * object is ever accepted in its place.
+     */
+    terminalFrameDigest: digest,
+  }).strict(),
+  /**
+   * The EXACT raw terminal line the Claude decoder classified. This is the
+   * only material the projection reads content or observed session evidence
+   * from. The outer bound mirrors the decoder's own line ceiling
+   * (`CLAUDE_CODE_MAX_LINE_BYTES_V1`); it is restated rather than imported so
+   * this harness-neutral module keeps no dependency on a connector package.
+   */
+  terminalFrameRawLine: z.string().min(1).max(262_144),
+  /** The decoder's fixed subtype classification. Retained as evidence only. */
+  resultSubtypeCode: z.enum(claudeResultSubtypeCodes),
+  /** The decoder's accepted-frame count for the stream that produced this frame. */
+  decoderFramesAccepted: count,
+  /**
+   * Caller-pinned observed-at timestamp. Required for the same reason the
+   * upstream-Hermes projection requires one: a replay must produce
+   * byte-identical evidence, so the projection never invents a clock value.
+   */
+  observedAt: instant,
+}).strict();
+
+function plainJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Projects one Claude Code CLI terminal `result` line into inert
+ * terminal-result evidence.
+ *
+ * The security boundary is the raw material, never a structural object the
+ * caller built: the line is parsed here, its canonical digest is recomputed
+ * here with the same `sha256Digest` the decoder uses for `frameDigest`, and
+ * that recomputed value — not any supplied digest field — must equal the
+ * independently retained `terminalFrameDigest`. Every security-relevant field
+ * (`type`, `session_id`, `is_error`, `terminal_reason`, `result`) is then read
+ * out of that verified material, and the content hash and byte length are
+ * recomputed from the actual result bytes rather than read from any claim.
+ * Altering the published text necessarily alters the recomputed digest, so it
+ * can no longer satisfy the retained one.
+ *
+ * Refuses (always as `terminal_result_evidence_unavailable`): a line that is
+ * not parseable JSON or not an object, a recomputed digest that does not equal
+ * the retained one, material that is not a `result` frame, a `session_id` that
+ * is not the retained expected session, `is_error` other than exactly `false`,
+ * any `terminal_reason` at all, a claimed `resultSubtypeCode` that does not
+ * match the subtype re-derived from the verified material's own `subtype`
+ * field, and result text that is absent, empty, whitespace-only, not
+ * well-formed Unicode, outside 1..65,536 UTF-8 bytes, or carrying secret
+ * material.
+ *
+ * Performs no I/O. Starts no process, calls no provider, reads no credential,
+ * and grants no publication, quality, completion, retry, resume or execution
+ * authority.
+ */
+export function projectClaudeTerminalResultEvidenceV1(value: unknown): ClaudeTerminalResultEvidenceV1 {
+  try {
+    const parsed = claudeTerminalResultInputSchema.parse(value);
+    const { lineage, retained } = parsed;
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(parsed.terminalFrameRawLine);
+    } catch { return unavailable(); }
+    if (!plainJsonObject(decoded)) return unavailable();
+    const material: Record<string, unknown> = decoded;
+    // THE boundary: the retained digest against material the caller cannot
+    // have altered without breaking the match.
+    if (sha256Digest(material) !== retained.terminalFrameDigest) unavailable();
+    // Everything below is read out of the VERIFIED material only.
+    if (material.type !== "result") unavailable();
+    if (typeof material.session_id !== "string" || material.session_id !== retained.sessionId) unavailable();
+    // Only an exactly non-errored frame with no terminal reason is a
+    // publishable terminal result. Every other shape goes through its own
+    // refusal surface and never becomes successful terminal evidence.
+    if (material.is_error !== false || material.terminal_reason !== undefined) unavailable();
+    // The recorded subtype is derived from the verified material itself, never trusted from
+    // the caller's separate claim: otherwise a caller could pin a real error_max_turns raw
+    // line (matching digest) alongside a claimed resultSubtypeCode of "success".
+    if (claudeRawSubtypeCode(material.subtype) !== parsed.resultSubtypeCode) unavailable();
+    const text = material.result;
+    if (typeof text !== "string" || text.length === 0 || text.trim().length === 0) return unavailable();
+    if (!wellFormedUnicode(text)) unavailable();
+    const bytes = Buffer.from(text, "utf8");
+    if (bytes.byteLength < 1 || bytes.byteLength > 65_536) unavailable();
+    const contentHash = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+    assertNoSecretMaterial(text, "Claude terminal result evidence");
+    return finalized({
+      schema: TERMINAL_RESULT_EVIDENCE_SCHEMA_V1,
+      kind: "claude_terminal_result",
+      lineage,
+      terminalState: "completed",
+      observedAt: parsed.observedAt,
+      content: { contentHash, sizeBytes: bytes.byteLength },
+      source: {
+        processAttemptId: retained.processAttemptId,
+        sessionId: retained.sessionId,
+        connectorProfileDigest: retained.connectorProfileDigest,
+        terminalFrameDigest: retained.terminalFrameDigest,
+        resultSubtypeCode: parsed.resultSubtypeCode,
+        terminalReasonPresent: false,
+        decoderFramesAccepted: parsed.decoderFramesAccepted,
+      },
+      canonicalPublicationAllowed: false,
+      qualityAccepted: false,
+      completionRecorded: false,
+      grantsExecutionAuthority: false,
+      permitsRetry: false,
+      permitsResume: false,
+    }) as ClaudeTerminalResultEvidenceV1;
   } catch { return unavailable(); }
 }
