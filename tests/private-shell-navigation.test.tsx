@@ -54,9 +54,10 @@ test("task proposal and worker inventory disclose unavailable operational facts"
     assert.match(proposal, new RegExp(text));
   const connections = renderToStaticMarkup(createElement(PrivateConnectionView,
     { data: { state: "loading" }, onRefresh: () => {} }));
-  for (const text of ["platform details", "eligible capabilities", "available slots", "current work", "usage are unavailable",
+  for (const text of ["platform details", "eligible capabilities", "available slots", "current work", "not part of this inventory",
     "Cancel and resume are unsupported"])
     assert.match(connections, new RegExp(text));
+  assert.doesNotMatch(connections, /usage are unavailable in this view/);
 });
 
 test("needs-attention items expose owner questions and sort urgent work first", () => {
@@ -526,4 +527,37 @@ test("metadata-only access is reported as denied, not as a missing file", async 
     assert.doesNotMatch(body, /is not in this task’s authorized file list/);
     assert.match(body, /Your access permits metadata, not reading this file/);
   } finally { await mounted.restore(); }
+});
+
+test("workers view mounts the operator capacity panel below the inventory", () => {
+  // Issue #327: the existing unmodified PrivateOperatorCapacityWorkspace is
+  // mounted read-only under the connection inventory. SSR never runs effects,
+  // so the panel renders its deterministic loading state — no network, and
+  // the same markup regardless of the inventory's own state.
+  for (const data of [{ state: "loading" }, { state: "unavailable", code: "unavailable" }] as const) {
+    const html = renderToStaticMarkup(createElement(PrivateConnectionView, { data, onRefresh: () => {} }));
+    assert.match(html, /Operator capacity/, `panel heading with inventory ${data.state}`);
+    assert.match(html, /Reading the recorded capacity and outcome evidence/, `panel loading with inventory ${data.state}`);
+  }
+});
+
+test("capacity panel states stay independent of the connection inventory", () => {
+  // The inventory's unavailable branch must not hide or replace the capacity
+  // panel: both render side by side, each carrying its own unavailable state.
+  const html = renderToStaticMarkup(createElement(PrivateConnectionView,
+    { data: { state: "unavailable", code: "unavailable" }, onRefresh: () => {} }));
+  assert.match(html, /Connection inventory unavailable/);
+  assert.match(html, /Operator capacity/);
+  assert.match(html, /Reading the recorded capacity and outcome evidence/);
+  // Exactly one capacity mount: the panel is not duplicated.
+  assert.equal((html.match(/operator-capacity-title/g) ?? []).length, 2);
+});
+
+test("workers boundary text no longer claims capacity data is unavailable", () => {
+  const html = renderToStaticMarkup(createElement(PrivateConnectionView,
+    { data: { state: "loading" }, onRefresh: () => {} }));
+  assert.doesNotMatch(html, /usage are unavailable in this view/);
+  assert.match(html, /not part of this inventory/);
+  assert.match(html, /operator capacity panel below shows the recorded capacity/);
+  assert.match(html, /read-only/);
 });

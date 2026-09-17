@@ -110,3 +110,21 @@ model under a guessed effort.
 - The source projection carries no shared-account or interrupted-session field. The rule
   above is therefore about what the projection counts (only a row's own report), not
   about detecting those conditions in the source.
+## Mounted on the Workers page (issue #327)
+
+The existing, unmodified `PrivateOperatorCapacityWorkspace` is mounted
+read-only under the connection inventory in
+`private-app/app/connections/workspace.tsx`, inside `PrivateConnectionView`.
+A single mount point covers both render paths: `PrivateConnections` renders
+that view, so `/workers` and `/connections` each show the panel exactly once
+— it is deliberately not added to the wrapper separately, which would mount
+it twice.
+
+The two reads are independent: the inventory reads through
+`readPrivateConnections`, the panel through `readOperatorCapacityViewV1`.
+One panel's unavailable state never blocks or hides the other — each renders
+its own loading and unavailable branches side by side. The old inventory
+sentence claiming capacity data is "unavailable in this view" is corrected to
+say that data is not part of the inventory and lives in the panel below,
+without overstating it (read-only, evidence-labelled, own unavailable
+states). No route, schema, write, or authorization capability was added.
