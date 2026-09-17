@@ -235,7 +235,7 @@ export class ProjectCoordinationMcpActions {
   ): Promise<ControlRoomMcpWriteResult> {
     const boundary = coordinatorInputError(input);
     if (boundary) {
-      return { ...boundary, revision: input?.revision ?? { projectId: input?.projectId ?? "" } } as ControlRoomMcpWriteResult;
+      return { ...boundary, revision: input?.revision } as ControlRoomMcpWriteResult;
     }
     return this.service.appointCoordinator(identity, input);
   }
