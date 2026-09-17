@@ -25,6 +25,18 @@ import type {
 } from "../src/notifications/v1/index.ts";
 import { NotificationDecisionList, NotificationSettingsSurface } from "../private-app/app/notification-settings.tsx";
 import { TaskStateGuidance, taskStateGuidance } from "../private-app/app/task-panels.tsx";
+import { PrivateSettingsWorkspace } from "../private-app/app/settings/workspace.tsx";
+import { readOwnerNotificationsV1, unavailableOwnerNotificationsV1 } from "../src/web/v1/owner-notifications-browser-client.ts";
+import { OwnerNotificationsPanel } from "../private-app/app/owner-notifications-workspace.tsx";
+import { OPERATOR_SURFACES_CONTRACT_V1, type OperatorSurfaceSnapshotV1 } from "../src/operator-surfaces/v1/types.ts";
+
+test("Settings mounts the read-only owner notifications boundary", () => {
+  const html = renderToStaticMarkup(<PrivateSettingsWorkspace />);
+  assert.match(html, /Owner notifications/);
+  assert.match(html, /fixed read-only default/i);
+  assert.match(html, /completion\/failure job-outcome notifications are not shown/i);
+  assert.doesNotMatch(html, /Save notification policy/);
+});
 
 const at = "2026-09-13T00:00:00.000Z";
 const digest = `sha256:${"a".repeat(64)}`;
@@ -92,6 +104,77 @@ test("a running task never claims current work when agent evidence is absent or 
     assert.doesNotMatch(guidance.explanation, /current progress|work is in progress/i);
     assert.match(guidance.explanation, /does not retry/);
   }
+});
+
+function notificationSnapshot(): OperatorSurfaceSnapshotV1 {
+  return { contractVersion: OPERATOR_SURFACES_CONTRACT_V1, tenantId: "tenant:test", generatedAt: at,
+    fleet: [], bottlenecks: [], activeWork: [], portfolio: [], services: [], schedules: [], ownerFocus: [],
+    actionInbox: [attentionItem("approval", "open"), attentionItem("review", "resolved")],
+    serviceIncidents: [{ id: "incident:test", serviceId: "service:test", severity: "critical", state: "open",
+      reasonCode: "check_failed", remedyCode: "inspect_logs", openedAt: at, lastObservedAt: at }] };
+}
+
+test("notification reader maps only attention and incidents using the fixed default", async () => {
+  const snapshot = notificationSnapshot();
+  snapshot.activeWork.push({ jobId: "job:active", projectId: "project:other", state: "waiting_approval",
+    jobType: "test", priority: 1, requiredCapability: "test", updatedAt: at });
+  const calls: unknown[] = [];
+  const view = await readOwnerNotificationsV1(async (url, init) => {
+    calls.push([url, init]);
+    return Response.json({ snapshot });
+  });
+  assert.deepEqual(calls, [["/api/v1/operator-surface", { credentials: "same-origin", cache: "no-store" }]]);
+  assert.equal(view.state, "available");
+  assert.equal(ownerNotificationSettingsSchemaV1.safeParse(view.settings).success, true);
+  assert.equal(view.settings.tenantId, snapshot.tenantId);
+  assert.equal(view.settings.quietHours, null);
+  assert.ok(view.settings.projectScopes.every(scope => scope.enabled && scope.severityFloor === "routine"));
+  assert.deepEqual(view.plan.decisions.map(d => [d.recordId, d.recordKind, d.state]), [
+    ["attention:approval:open", "attention", "notify"], ["attention:review:resolved", "attention", "suppressed"],
+    ["incident:test", "service_incident", "notify"],
+  ]);
+  assert.equal(view.plan.decisions[0].projectId, "project:test");
+  assert.equal(view.plan.decisions[2].severity, "urgent");
+  assert.ok(view.plan.decisions.every(d => !d.mayAct));
+  assert.doesNotMatch(JSON.stringify(view.plan), /approve_exact_operation|legalResponses/);
+  const html = renderToStaticMarkup(<OwnerNotificationsPanel view={view} />);
+  assert.match(html, /Decide the waiting item is waiting on a decision/);
+  assert.equal((html.match(/<fieldset disabled="">/g) ?? []).length, 3);
+  assert.doesNotMatch(html, /Save notification policy/);
+});
+
+test("failed notification source reads render missing observation, never an empty healthy panel", async () => {
+  const invalid = { ...notificationSnapshot(), actionInbox: [{}] };
+  const fetchers = [
+    async () => new Response(null, { status: 401 }),
+    async () => new Response(null, { status: 503 }),
+    async () => Response.json({ snapshot: invalid }),
+    async () => new Response("not json"),
+    async () => { throw new Error("private diagnostic must not escape"); },
+  ];
+  for (const fetcher of fetchers) {
+    const view = await readOwnerNotificationsV1(fetcher);
+    assert.equal(view.state, "unavailable");
+    assert.deepEqual(view.plan.decisions.map(d => [d.state, d.reasonCode]), [["unavailable", "missing_observation"]]);
+    assert.deepEqual(view.plan.deliverableKeys, []);
+    const html = renderToStaticMarkup(<OwnerNotificationsPanel view={view} />);
+    assert.match(html, /Notification source unavailable/);
+    assert.match(html, /missing data is not healthy state/);
+    assert.doesNotMatch(html, /No saved record is in|private diagnostic|Save notification policy/);
+  }
+  const loading = renderToStaticMarkup(<OwnerNotificationsPanel view={unavailableOwnerNotificationsV1()} loading />);
+  assert.match(loading, /Loading saved notification sources/);
+  assert.match(loading, /Notification source unavailable/);
+});
+
+test("an observed empty notification source is distinct from an unavailable read", async () => {
+  const snapshot = { ...notificationSnapshot(), actionInbox: [], serviceIncidents: [] };
+  const view = await readOwnerNotificationsV1(async () => Response.json({ snapshot }));
+  assert.equal(view.state, "available");
+  assert.deepEqual(view.plan.decisions, []);
+  const html = renderToStaticMarkup(<OwnerNotificationsPanel view={view} />);
+  assert.match(html, /No saved record is in the notification scope/);
+  assert.doesNotMatch(html, /Notification source unavailable/);
 });
 
 // --- Owner notification policy (issue #298) ---

@@ -88,10 +88,41 @@ drag or pointer interaction. The component is a pure function of its props
 `renderToStaticMarkup` in the product-shell lane; with no callbacks it renders
 read-only and says so.
 
-Not wired: this file is the surface only. The settings page
-(`private-app/app/settings/`) and an owner policy endpoint are outside this
-packet's write scope, so nothing is mounted and no policy is saved yet. Until a
-follow-up packet mounts it, the panel's status text says that plainly.
+### Mounted read-only composition
+
+Settings now mounts `private-app/app/owner-notifications-workspace.tsx`. It reads
+`/api/v1/operator-surface` through the existing authenticated
+`fetchOperatorSurfaceSnapshotV1` reader and
+`src/web/v1/owner-notifications-browser-client.ts`. The reader preserves same-origin
+credentials, no-store caching and source schema validation; no tenant identifier
+is sent by the browser.
+
+Only `actionInbox` and `serviceIncidents` become notification records. Attention
+uses the canonical id, project, requested action and created time. Incidents use
+the canonical id, service id and last-observed time, with no guessed project
+(the incident projection has none). Active jobs and portfolio outcome counts
+are not job-outcome history and do not become notification records.
+Completion/failure job-outcome notifications are **not shown** by this panel.
+
+The existing planner and `NotificationSettingsSurface` are unmodified. Each read
+uses a fixed presentation default: all projects, routine severity and above,
+no quiet hours, in-app available and external channels unavailable. Project scopes
+include every portfolio project and every project named by an attention record;
+incident records remain tenant-wide. Revision zero denotes this unsaved default,
+not a persisted policy. The planner receives no acknowledgements, and nothing
+calls a sink or delivery ledger: rows preview policy decisions, not delivery.
+
+No change/save callbacks are supplied. Unauthenticated, unavailable, invalid or
+failed reads produce the planner's `unavailable` / `missing_observation` decision,
+including before the first read completes. A successful empty snapshot instead
+shows the existing empty-record message. Unmounting ignores a pending read.
+No policy persistence, endpoint, schema, authority or external message is added.
+
+The reused surface still contains its original standalone “not yet mounted”
+status wording because that file is outside this packet's owned paths. The
+composition explicitly clarifies immediately above it that the panel is mounted
+here in Settings and no owner policy endpoint is called. A future separately
+scoped wording cleanup can retire the inherited sentence.
 
 ## Tests
 
