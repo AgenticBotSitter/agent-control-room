@@ -148,7 +148,7 @@ function assertInputSize(value: unknown): void {
   } catch {
     throw new Error("project_pack_malformed");
   }
-  if (serialized.length > MAX_PACK_BYTES) throw new Error("project_pack_input_oversized");
+  if (Buffer.byteLength(serialized, "utf8") > MAX_PACK_BYTES) throw new Error("project_pack_input_oversized");
 }
 
 /**

@@ -152,3 +152,19 @@ describe("project-pack attribution and license metadata", () => {
     assert.throws(() => parseProjectPackV1(wrongVersion), /project_pack_input_oversized/);
   });
 });
+
+describe("project-pack input ceiling units", () => {
+  it("measures the ceiling in UTF-8 bytes, not UTF-16 units", () => {
+    const multibyte = {
+      schema: PROJECT_PACK_SCHEMA_V1,
+      title: "T",
+      summary: "S",
+      optionalModules: [],
+      setupGuidance: [],
+      padding: "é".repeat(40000),
+    };
+    assert.ok(JSON.stringify(multibyte).length < 65536);
+    assert.ok(Buffer.byteLength(JSON.stringify(multibyte), "utf8") > 65536);
+    assert.throws(() => parseProjectPackV1(multibyte), /project_pack_input_oversized/);
+  });
+});
