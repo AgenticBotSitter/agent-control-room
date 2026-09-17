@@ -2,6 +2,28 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { TaskDetail } from "../src/web/v1/task-wire.ts";
+import type { ActionInboxItemV1 } from "../src/operator-surfaces/v1/types.ts";
+import type { JobState } from "../src/domain/v1/types.ts";
+import {
+  OWNER_NOTIFICATIONS_CONTRACT_V1,
+  createNotificationLedgerV1,
+  deliverOwnerNotificationV1,
+  notificationEnvelopeFromDecisionV1,
+  notificationEnvelopeHasNoAuthorityV1,
+  notificationEnvelopeSchemaV1,
+  notificationKeyV1,
+  ownerNotificationSettingsSchemaV1,
+  planOwnerNotificationsV1,
+} from "../src/notifications/v1/index.ts";
+import type {
+  NotificationAcknowledgementV1,
+  NotificationDecisionV1,
+  NotificationEnvelopeV1,
+  NotificationPlanV1,
+  NotificationSourceRecordV1,
+  OwnerNotificationSettingsV1,
+} from "../src/notifications/v1/index.ts";
+import { NotificationDecisionList, NotificationSettingsSurface } from "../private-app/app/notification-settings.tsx";
 import { TaskStateGuidance, taskStateGuidance } from "../private-app/app/task-panels.tsx";
 
 const at = "2026-09-13T00:00:00.000Z";
@@ -70,4 +92,237 @@ test("a running task never claims current work when agent evidence is absent or 
     assert.doesNotMatch(guidance.explanation, /current progress|work is in progress/i);
     assert.match(guidance.explanation, /does not retry/);
   }
+});
+
+// --- Owner notification policy (issue #298) ---
+
+const notificationNow = "2026-09-17T03:00:00.000Z";
+
+function attentionItem(kind: ActionInboxItemV1["kind"], state: ActionInboxItemV1["state"]): ActionInboxItemV1 {
+  return { id: `attention:${kind}:${state}`, tenantId: "tenant:test", projectId: "project:test", kind, state,
+    requestedAction: "Decide the waiting item", reasonCode: "owner_decision_needed", blockedWorkItemIds: [],
+    legalResponses: [
+      { id: "response:approve", kind: "approve_exact_operation", label: "Approve the exact operation", requiresConfirmation: true, available: true },
+      { id: "response:decline", kind: "decline", label: "Decline", requiresConfirmation: false, available: true },
+    ], evidence: [], createdAt: notificationNow, deliveryState: "not_requested" };
+}
+
+function attentionRecord(kind: ActionInboxItemV1["kind"], state: ActionInboxItemV1["state"], projectId = "project:test"): NotificationSourceRecordV1 {
+  const item = attentionItem(kind, state);
+  return { recordId: item.id, recordKind: "attention", projectId, title: "Waiting item", observedAt: notificationNow, item };
+}
+
+function outcomeRecord(state: JobState, projectId = "project:test"): NotificationSourceRecordV1 {
+  return { recordId: `outcome:${state}`, recordKind: "work_outcome", projectId, title: `Delivery ${state}`,
+    observedAt: notificationNow, jobId: `job:${state}`, state };
+}
+
+function incidentRecord(state: "open" | "resolved", severity: "warning" | "critical"): NotificationSourceRecordV1 {
+  return { recordId: `incident:guard:${state}`, recordKind: "service_incident", projectId: "project:test",
+    title: "Watchdog incident", observedAt: notificationNow,
+    incident: { id: `incident:guard:${state}`, serviceId: "service:guard", severity, state, reasonCode: "check_failed",
+      remedyCode: "inspect_logs", openedAt: notificationNow, lastObservedAt: notificationNow } };
+}
+
+function missingRecord(sourceLabel = "task result index"): NotificationSourceRecordV1 {
+  return { recordId: `missing:${sourceLabel}`, recordKind: "missing", projectId: "project:test",
+    title: `Missing ${sourceLabel}`, observedAt: notificationNow, sourceLabel };
+}
+
+function notificationSettings(patch: Partial<OwnerNotificationSettingsV1> = {}): OwnerNotificationSettingsV1 {
+  return { contractVersion: OWNER_NOTIFICATIONS_CONTRACT_V1, tenantId: "tenant:test", revision: 3, updatedAt: notificationNow,
+    projectScopes: [{ projectId: "project:test", enabled: true, severityFloor: "routine" }], quietHours: null,
+    channels: [{ channel: "in_app", available: true },
+      { channel: "email", available: false, unavailableReasonCode: "external_not_sent", unavailableReasonText: "Declared only; no message is sent." },
+      { channel: "push", available: false, unavailableReasonCode: "external_not_sent" }],
+    ...patch };
+}
+
+function planOf(records: NotificationSourceRecordV1[], patch: Partial<OwnerNotificationSettingsV1> = {},
+  acknowledgements: NotificationAcknowledgementV1[] = [], now = notificationNow): NotificationPlanV1 {
+  return planOwnerNotificationsV1({ settings: notificationSettings(patch), records, acknowledgements, now });
+}
+
+const decisionFor = (plan: NotificationPlanV1, record: NotificationSourceRecordV1): NotificationDecisionV1 | undefined =>
+  plan.decisions.find(decision => decision.key === notificationKeyV1(record));
+
+function recordingSink() {
+  const envelopes: NotificationEnvelopeV1[] = [];
+  return { envelopes, sink: { channel: "in_app" as const,
+    async record(envelope: NotificationEnvelopeV1) { envelopes.push(envelope); return { acknowledged: true }; } } };
+}
+
+test("each meaningful saved state produces exactly one deduplicated notification", () => {
+  const completion = outcomeRecord("succeeded");
+  const plan = planOf([completion, completion, outcomeRecord("failed"), attentionRecord("approval", "open"),
+    attentionRecord("ambiguity", "open")]);
+  assert.equal(plan.counts.notify, 4);
+  assert.equal(plan.counts.deduplicated, 1);
+  assert.equal(new Set(plan.decisions.map(decision => decision.key)).size, 4);
+  assert.deepEqual(plan.deliverableKeys, [completion, outcomeRecord("failed"), attentionRecord("approval", "open"),
+    attentionRecord("ambiguity", "open")].map(notificationKeyV1));
+  const duplicate = plan.decisions[1];
+  assert.equal(duplicate.state, "deduplicated");
+  assert.equal(duplicate.reasonCode, "duplicate_record");
+  assert.equal(plan.decisions.find(decision => decision.key === notificationKeyV1(completion))?.state, "notify");
+  assert.equal(decisionFor(plan, outcomeRecord("failed"))?.needKind, "failure");
+  assert.equal(decisionFor(plan, attentionRecord("approval", "open"))?.needKind, "owner_decision");
+  assert.equal(decisionFor(plan, attentionRecord("ambiguity", "open"))?.needKind, "uncertainty");
+});
+
+test("healthy and idle states stay quiet and a decision can never act", () => {
+  const plan = planOf([outcomeRecord("running"), outcomeRecord("leased"), outcomeRecord("cancelled"), outcomeRecord("rejected"),
+    attentionRecord("native_session", "open"), attentionRecord("review", "resolved"), incidentRecord("resolved", "critical")]);
+  assert.equal(plan.counts.notify, 0);
+  assert.equal(plan.counts.suppressed, 7);
+  assert.deepEqual(plan.deliverableKeys, []);
+  for (const decision of plan.decisions) {
+    assert.equal(decision.reasonCode, "unchanged_healthy_state");
+    assert.equal(decision.mayAct, false);
+  }
+});
+
+test("repeated reads and restart re-derive the same keys and notify once", async () => {
+  const record = outcomeRecord("succeeded");
+  const first = planOf([record]);
+  const { envelopes, sink } = recordingSink();
+  const ledger = createNotificationLedgerV1();
+  const delivered = await deliverOwnerNotificationV1({ decision: first.decisions[0], sink, ledger, now: notificationNow });
+  assert.equal(delivered.state, "delivered");
+  assert.equal(envelopes.length, 1);
+  const second = planOf([record], {}, ledger.entries());
+  assert.equal(second.counts.notify, 0);
+  assert.equal(second.counts.deduplicated, 1);
+  assert.equal(second.decisions[0].reasonCode, "restart_replay");
+  assert.deepEqual(second.decisions.map(decision => decision.key), first.decisions.map(decision => decision.key));
+  const again = await deliverOwnerNotificationV1({ decision: second.decisions[0], sink, ledger, now: notificationNow });
+  assert.equal(again.state, "refused");
+  assert.equal(again.reasonCode, "restart_replay");
+  assert.equal(envelopes.length, 1);
+});
+
+test("a lost acknowledgement reserves the key and never sends a second notification", async () => {
+  const record = attentionRecord("approval", "open");
+  const ledger = createNotificationLedgerV1();
+  const key = notificationKeyV1(record);
+  assert.equal(await ledger.reserve(key, notificationNow), true);
+  const plan = planOf([record], {}, ledger.entries());
+  assert.equal(plan.counts.notify, 0);
+  assert.equal(plan.decisions[0].state, "deduplicated");
+  assert.equal(plan.decisions[0].reasonCode, "delivery_attempt_unknown");
+  const { envelopes, sink } = recordingSink();
+  const result = await deliverOwnerNotificationV1({ decision: plan.decisions[0], sink, ledger, now: notificationNow });
+  assert.equal(result.state, "refused");
+  assert.equal(result.reasonCode, "delivery_attempt_unknown");
+  assert.equal(envelopes.length, 0);
+});
+
+test("quiet hours suppress only the saved severities, in the saved timezone", () => {
+  const quietHours = { timezone: "UTC", startLocalTime: "22:00", endLocalTime: "07:00", appliesTo: ["routine", "notable"] as const };
+  const patch = { quietHours: { ...quietHours, appliesTo: [...quietHours.appliesTo] } };
+  const inside = planOf([outcomeRecord("succeeded"), attentionRecord("approval", "open"), missingRecord()], patch);
+  assert.equal(inside.quietHoursActive, true);
+  assert.equal(decisionFor(inside, outcomeRecord("succeeded"))?.reasonCode, "quiet_hours");
+  assert.equal(decisionFor(inside, outcomeRecord("succeeded"))?.state, "suppressed");
+  assert.equal(decisionFor(inside, attentionRecord("approval", "open"))?.state, "notify");
+  assert.equal(decisionFor(inside, missingRecord())?.reasonCode, "missing_observation");
+  const outside = planOf([outcomeRecord("succeeded")], patch, [], "2026-09-17T12:00:00.000Z");
+  assert.equal(outside.quietHoursActive, false);
+  assert.equal(outside.decisions[0].state, "notify");
+  const otherZone = planOf([outcomeRecord("succeeded")], { quietHours: { ...patch.quietHours, timezone: "Pacific/Auckland" } }, [],
+    "2026-09-17T03:00:00.000Z");
+  assert.equal(otherZone.decisions[0].state, "notify");
+});
+
+test("project scope and severity floor are explicit, and missing data is unavailable rather than healthy", () => {
+  const scopes = { projectScopes: [{ projectId: "project:test", enabled: true, severityFloor: "urgent" as const },
+    { projectId: "project:other", enabled: false, severityFloor: "routine" as const }] };
+  const plan = planOf([outcomeRecord("succeeded"), outcomeRecord("failed", "project:other"), outcomeRecord("failed", "project:unknown"),
+    attentionRecord("approval", "open"), missingRecord()], scopes);
+  assert.equal(decisionFor(plan, outcomeRecord("succeeded"))?.reasonCode, "below_project_severity_floor");
+  assert.equal(decisionFor(plan, outcomeRecord("failed", "project:other"))?.reasonCode, "project_not_in_scope");
+  assert.equal(decisionFor(plan, outcomeRecord("failed", "project:unknown"))?.reasonCode, "project_not_in_scope");
+  assert.equal(decisionFor(plan, attentionRecord("approval", "open"))?.state, "notify");
+  const missing = decisionFor(plan, missingRecord());
+  assert.equal(missing?.state, "unavailable");
+  assert.equal(missing?.reasonCode, "missing_observation");
+  assert.match(missing?.summary ?? "", /unavailable rather than healthy/i);
+});
+
+test("an unavailable in-product channel is reported unavailable, and external channels are never sent", async () => {
+  const record = outcomeRecord("succeeded");
+  const unavailable = planOf([record], { channels: [{ channel: "in_app", available: false, unavailableReasonCode: "collector_offline",
+    unavailableReasonText: "The in-product inbox collector is offline." }, { channel: "email", available: false, unavailableReasonCode: "external_not_sent" }] });
+  assert.equal(unavailable.decisions[0].state, "unavailable");
+  assert.equal(unavailable.decisions[0].reasonCode, "channel_unavailable");
+  assert.deepEqual(unavailable.deliverableKeys, []);
+  const { envelopes, sink } = recordingSink();
+  const ledger = createNotificationLedgerV1();
+  const external = await deliverOwnerNotificationV1({ decision: { ...unavailable.decisions[0], state: "notify", channel: "email" },
+    sink, ledger, now: notificationNow });
+  assert.equal(external.state, "refused");
+  assert.equal(external.reasonCode, "external_channel_not_permitted");
+  assert.equal(envelopes.length, 0);
+});
+
+test("the envelope carries description only and parses as an authority-free record", () => {
+  const decision = decisionFor(planOf([attentionRecord("approval", "open")]), attentionRecord("approval", "open"));
+  assert.ok(decision);
+  const envelope = notificationEnvelopeFromDecisionV1(decision);
+  assert.equal(envelope.authority, "none");
+  assert.deepEqual(envelope.actions, []);
+  assert.equal("legalResponses" in envelope, false);
+  assert.equal("command" in envelope, false);
+  assert.equal(notificationEnvelopeHasNoAuthorityV1(envelope), true);
+  assert.equal(notificationEnvelopeSchemaV1.safeParse(envelope).success, true);
+  assert.doesNotMatch(JSON.stringify(envelope), /legalResponses|record_decision|approve_exact_operation/);
+  const smuggled: Record<string, unknown> = { ...envelope, legalResponses: [] };
+  assert.equal(notificationEnvelopeSchemaV1.safeParse(smuggled).success, false);
+});
+
+test("settings validation refuses an unusable notification policy", () => {
+  assert.equal(ownerNotificationSettingsSchemaV1.safeParse(notificationSettings()).success, true);
+  const cases: Record<string, unknown>[] = [
+    { ...notificationSettings(), quietHours: { timezone: "UTC", startLocalTime: "07:00", endLocalTime: "07:00", appliesTo: ["routine"] } },
+    { ...notificationSettings(), projectScopes: [{ projectId: "project:test", enabled: true, severityFloor: "routine" },
+      { projectId: "project:test", enabled: false, severityFloor: "urgent" }] },
+    { ...notificationSettings(), channels: [{ channel: "in_app", available: true }, { channel: "email", available: true }] },
+    { ...notificationSettings(), channels: [{ channel: "in_app", available: true }, { channel: "email", available: false }] },
+    { ...notificationSettings(), channels: [{ channel: "email", available: false, unavailableReasonCode: "external_not_sent" }] },
+    { ...notificationSettings(), quietHours: { timezone: "UTC", startLocalTime: "7:00", endLocalTime: "07:00", appliesTo: ["routine"] } },
+  ];
+  for (const value of cases) assert.equal(ownerNotificationSettingsSchemaV1.safeParse(value).success, false, JSON.stringify(value));
+});
+
+test("the settings surface renders labelled keyboard and text controls, never pointer-only ones", () => {
+  const plan = planOf([outcomeRecord("succeeded"), attentionRecord("approval", "open")]);
+  const settings = notificationSettings();
+  const html = renderToStaticMarkup(<NotificationSettingsSurface settings={settings} decisions={plan.decisions} onChange={() => {}} onSave={() => {}} />);
+  const control = (id: string, selector = "input") => new RegExp(`<${selector}[^>]*id="${id}"[^>]*>`).exec(html)?.[0] ?? "";
+  assert.match(html, /<label for="quiet-hours-start">/);
+  assert.match(html, /<label for="quiet-hours-start-text">/);
+  assert.match(html, /<label for="quiet-hours-timezone">/);
+  assert.equal((html.match(/type="time"/g) ?? []).length, 2);
+  assert.equal((html.match(/inputMode="numeric"/g) ?? []).length, 2);
+  assert.match(control("quiet-hours-start-text"), /pattern="\(\[01\]\[0-9\]\|2\[0-3\]\):\[0-5\]\[0-9\]"/);
+  assert.equal((html.match(/type="radio"/g) ?? []).length, 3);
+  assert.match(control("project-project:test-floor-urgent"), /name="project-project:test-floor"/);
+  assert.match(control("project-project:test-enabled"), /type="checkbox"/);
+  assert.ok(control("channel-email").includes("disabled"));
+  assert.match(control("channel-email"), /aria-describedby="channel-email-reason"/);
+  assert.match(html, /data-field="policy-summary"/);
+  assert.match(html, /Quiet hours: no quiet hours saved/);
+  assert.match(html, /data-field="keyboard-alternatives"/);
+  assert.match(html, /<caption>Saved records considered under this policy<\/caption>/);
+  assert.match(html, /<th scope="col">Reason<\/th>/);
+  assert.match(html, /A notification describes a saved completion, failure, uncertainty or waiting decision/);
+  assert.doesNotMatch(html, /onmousedown|ondrag|role="slider"|tabindex="-1"|aria-hidden="true"/i);
+  const readOnly = renderToStaticMarkup(<NotificationSettingsSurface settings={settings} decisions={plan.decisions} />);
+  assert.match(readOnly, /Read-only/);
+  assert.equal((readOnly.match(/<fieldset disabled="">/g) ?? []).length, 3);
+  const empty = renderToStaticMarkup(<NotificationDecisionList decisions={[]} />);
+  assert.match(empty, /No saved record is in the notification scope right now/);
+  assert.equal((empty.match(/<tr>/g) ?? []).length, 3);
+  assert.equal((html.match(/<td>Delivery succeeded recorded complete<\/td>/g) ?? []).length, 1);
+  assert.equal((html.match(/<tr>/g) ?? []).length, 4);
 });
