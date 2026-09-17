@@ -38,11 +38,13 @@ function utf8ByteLengthV1(text: string): number {
 
 /**
  * Run `body` with a `Buffer`-shaped byteLength available, then restore the
- * prior global value (whether absent, undefined, or a real Buffer) in a
- * `finally` block. Call-scoped and synchronous: nothing is installed for the
- * lifetime of the page and nothing is left modified on any exit path.
+ * prior global value (whether absent, undefined, a data property, or the
+ * Node lazy accessor) in a `finally` block. Call-scoped and synchronous:
+ * nothing is installed for the lifetime of the page and nothing is left
+ * modified on any exit path. Exported so tests can prove the canonical
+ * parser runs unmodified through the same bridge the panel uses.
  */
-function withParserByteLengthV1<T>(body: () => T): T {
+export function withParserByteLengthV1<T>(body: () => T): T {
   const prior = Object.getOwnPropertyDescriptor(globalThis, "Buffer");
   const needsBridge = typeof globalThis.Buffer !== "function";
   if (!needsBridge) return body();

@@ -3,7 +3,7 @@
 // browser reality) end-to-end: one valid pack and one refused pack, plus the
 // panel's distinct rendering of every refusal class and its inert preview.
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { after } from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -16,6 +16,7 @@ import { parseProjectPackV1, previewProjectPackV1 } from "../src/project-packs/v
 import {
   browseProjectPackV1,
   refusalTextV1,
+  withParserByteLengthV1,
   PROJECT_PACK_SCHEMA_V1,
 } from "../src/project-packs/v1/browse-preview";
 import {
@@ -45,10 +46,13 @@ test("valid pack: canonical parser runs unmodified without Buffer, end to end", 
   assert.deepEqual(outcome.preview.supportedModules, ["ideaLab"]);
   assert.deepEqual(outcome.preview.unsupportedModules, []);
   assert.deepEqual(outcome.preview.warnings, []);
-  // Canonical functions used directly, unmodified, under the same Buffer-free
-  // global: the bridge is transparent to the parser's own contract.
-  const pack = parseProjectPackV1(JSON.parse(VALID_PACK_TEXT));
-  const preview = previewProjectPackV1(pack, LOCAL_CONFIG);
+  // Canonical functions used directly, unmodified, through the same exported
+  // bridge the panel uses: the bridge is transparent to the parser's own
+  // contract. (Without the bridge these calls throw: Buffer is absent here,
+  // which is exactly what makes the bridge load-bearing rather than
+  // decorative — see the zz-buffer-absent proof below.)
+  const pack = withParserByteLengthV1(() => parseProjectPackV1(JSON.parse(VALID_PACK_TEXT)));
+  const preview = withParserByteLengthV1(() => previewProjectPackV1(pack, LOCAL_CONFIG));
   assert.equal(preview.title, "Book club kit");
 });
 
@@ -147,15 +151,27 @@ test("empty input is refused visibly before any parse", () => {
 });
 
 test("the global Buffer restoration survives a refusal path exactly", () => {
-  // Refuse (throws inside the bridge) and confirm the descriptor is the
-  // undefined-valued property this file installed, not a leaked bridge.
+  // Refuse (throws inside the bridge) and confirm Buffer is still absent —
+  // checked via typeof, because Node defines Buffer as a lazy accessor and a
+  // descriptor-value check cannot tell the restored accessor apart from the
+  // undefined-valued test property.
   const refused = browseProjectPackV1({ rawText: "{not json" }, LOCAL_CONFIG);
   assert.equal(refused.status, "refused");
-  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "Buffer");
-  assert.ok(descriptor !== undefined);
-  assert.equal(descriptor!.value, undefined);
-  assert.equal(descriptor!.configurable, true);
+  assert.equal(typeof globalThis.Buffer, "undefined");
 });
 
-// Restore the real Node Buffer for any subsequent test file in this lane.
-Object.defineProperty(globalThis, "Buffer", savedBuffer);
+test("buffer-absent proof: the bridge is load-bearing, not decorative", () => {
+  // Buffer is genuinely absent in this file (typeof check, accessor-proof).
+  assert.equal(typeof globalThis.Buffer, "undefined");
+  // The canonical parser cannot run here without the bridge: direct call
+  // throws a bare TypeError, never a pack reason.
+  assert.throws(() => parseProjectPackV1(JSON.parse(VALID_PACK_TEXT)), TypeError);
+});
+
+// Restore the real Node Buffer AFTER every test in this file. This must be
+// an after() hook: a module-bottom statement would run at import time,
+// before any test executes, and silently hand every test the real Buffer.
+after(() => {
+  Object.defineProperty(globalThis, "Buffer", savedBuffer);
+  assert.equal(typeof globalThis.Buffer, "function");
+});
