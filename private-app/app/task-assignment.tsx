@@ -1,17 +1,21 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import { evaluateConfiguredRouteRecommendationV1, type AssignmentRecommendationProjectionV1, type AssignmentRecommendationScopeV1 } from "../../src/assignment-recommendation/v1";
+import { AssignmentRecommendationPanel } from "./assignment-recommendation";
 import { BrowserRequestError } from "../../src/web/v1/browser-client";
 import { createTaskAssignmentBrowserClient, assignmentErrorMessage, reconcileAssignmentReceipt } from "../../src/web/v1/task-assignment-browser-client";
 import type { TaskAssignmentOptions, TaskAssignmentReceipt } from "../../src/web/v1/task-assignment-wire";
 import type { TaskDetail } from "../../src/web/v1/task-wire";
 
-export function TaskAssignmentPanel({ options, receipt = options?.receipt, error, nodeId, setNodeId, pending, uncertain, onChange, onRetry }: {
+export function TaskAssignmentPanel({ options, receipt = options?.receipt, error, nodeId, setNodeId, pending, uncertain, onChange, onRetry, recommendation, scope }: {
   options?: TaskAssignmentOptions; receipt?: TaskAssignmentReceipt | null; error?: BrowserRequestError;
   nodeId: string; setNodeId: (value: string) => void; pending: boolean; uncertain: boolean;
   onChange: (action: "assign" | "expire") => void; onRetry: () => void;
+  recommendation?: AssignmentRecommendationProjectionV1; scope: AssignmentRecommendationScopeV1;
 }) {
   return <section id="task-assignment" className="private-panel" aria-label="Task assignment"><h2>Task assignment</h2>
     <p>Assignment reserves time on a machine. It does not start an agent. Execution approval and local checks are still required.</p>
+    <AssignmentRecommendationPanel recommendation={recommendation} scope={scope} onPrefer={setNodeId} />
     {error && <p role="alert">{assignmentErrorMessage[error.code]}</p>}
     {receipt && <div><p>Recorded reservation: {receipt.leaseState}. Ends {receipt.expiresAt}.</p>
       <p>{receipt.leaseCurrent ? "The reservation was current at the last check." : "The reservation is not current."} This is not proof that an agent started or stopped.</p></div>}
@@ -33,6 +37,7 @@ export function PrivateTaskAssignment({ detail, onRecorded, client: suppliedClie
   const [client] = useState(() => suppliedClient ?? createTaskAssignmentBrowserClient());
   const [options, setOptions] = useState<TaskAssignmentOptions>(), [checkedDetail, setCheckedDetail] = useState<TaskDetail>();
   const [receipt, setReceipt] = useState<TaskAssignmentReceipt>();
+  const [recommendation, setRecommendation] = useState<AssignmentRecommendationProjectionV1>();
   const [nodeId, setNodeId] = useState(""), [error, setError] = useState<BrowserRequestError>(), [pending, setPending] = useState(false);
   const generation = useRef(0), busy = useRef(false), alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
@@ -40,8 +45,11 @@ export function PrivateTaskAssignment({ detail, onRecorded, client: suppliedClie
     const current = ++generation.current; let live = true;
     if (detail) void client.options(detail.task.projectId, detail.task.jobId, detail.inputDigest).then(value => {
       if (live && current === generation.current) { setCheckedDetail(detail); setOptions(value); setReceipt(previous => reconcileAssignmentReceipt(previous, value.receipt));
+        setRecommendation(evaluateConfiguredRouteRecommendationV1({ now: new Date().toISOString(), projectId: detail.task.projectId,
+          jobId: detail.task.jobId, inputDigest: detail.inputDigest,
+          candidates: value.candidates.map(candidate => ({ nodeId: candidate.nodeId, label: candidate.label, platform: candidate.platform })) }));
         setError(client.hasPending() ? new BrowserRequestError("uncertain") : undefined); }
-    }).catch(reason => { if (live && current === generation.current) { setCheckedDetail(detail); setOptions(undefined);
+    }).catch(reason => { if (live && current === generation.current) { setCheckedDetail(detail); setOptions(undefined); setRecommendation(undefined);
       setError(reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable")); } });
     return () => { live = false; };
   }, [client, detail]);
@@ -64,6 +72,8 @@ export function PrivateTaskAssignment({ detail, onRecorded, client: suppliedClie
   const visibleReceipt = current && options && receipt?.projectId === detail.task.projectId && receipt.jobId === detail.task.jobId
     && receipt.inputDigest === detail.inputDigest ? receipt : undefined;
   return <TaskAssignmentPanel options={current ? options : undefined} receipt={visibleReceipt} error={current ? error : undefined}
+    recommendation={current ? recommendation : undefined}
+    scope={{ projectId: detail.task.projectId, jobId: detail.task.jobId, inputDigest: detail.inputDigest }}
     nodeId={nodeId} setNodeId={setNodeId} pending={pending} uncertain={current && !!options && client.hasPending()}
     onChange={action => { void change(action); }} onRetry={() => { void change("assign", true); }} />;
 }
