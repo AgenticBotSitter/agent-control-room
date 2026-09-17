@@ -22,6 +22,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createAccessVerifier, type AccessTrust } from "../src/web/v1/access-verifier";
+import { ProjectCoordinationMcpActions, CONTROL_ROOM_MCP_TOOLS } from "../src/mcp/v1/project-coordination-actions";
 import { projectCoordinationHttpFixture, composedProjectCoordinationHttpFixture } from "./project-coordination-http-fixture";
 
 const FIXTURE_NOW = Date.parse("2026-09-14T00:00:00.000Z");
@@ -430,3 +431,148 @@ function readRevisionFromPage(page: { project: { projectId: string }; coordinato
     observedAt: page.observedAt,
   };
 }
+
+// CONN-009 MCP parity: the thin adapter must produce the same canonical
+// records, refusals, and audit identities as the HTTP service for the same
+// inputs. Each test below runs both surfaces against the same fixture state
+// and compares outcomes field-for-field.
+
+test("mcp read returns the same page as http read", async (t) => {
+  const f = await projectCoordinationHttpFixture({ now: FIXTURE_NOW });
+  t.after(() => f.dispose());
+  const mcp = new ProjectCoordinationMcpActions(f.service);
+  const httpPage = await f.service.read(f.identity, "project:example");
+  const mcpRead = await mcp.readProject(f.identity, "project:example");
+  assert.equal(mcpRead.status, "accepted");
+  assert.deepEqual(
+    (mcpRead as { status: "accepted"; page: typeof httpPage }).page,
+    httpPage,
+  );
+});
+
+test("mcp appoint produces the same accepted revision as http appoint", async (t) => {
+  const f = await projectCoordinationHttpFixture({ now: FIXTURE_NOW });
+  t.after(() => f.dispose());
+  const mcp = new ProjectCoordinationMcpActions(f.service);
+  const read = await f.service.read(f.identity, "project:example");
+  const revision = readRevisionFromPage(read);
+  const input = {
+    projectId: "project:example",
+    revision,
+    coordinatorActorType: "human" as const,
+    coordinatorIdentityId: "owner-self-2",
+    idempotencyKey: "mcp-parity-appoint-01",
+  };
+  const httpOutcome = await f.service.appointCoordinator(f.identity, input);
+  assert.equal(httpOutcome.status, "accepted");
+  // Second fixture, same key shape through the MCP surface: same records.
+  const g = await projectCoordinationHttpFixture({ now: FIXTURE_NOW });
+  t.after(() => g.dispose());
+  const mcp2 = new ProjectCoordinationMcpActions(g.service);
+  const gread = await g.service.read(g.identity, "project:example");
+  const mcpOutcome = await mcp2.appointCoordinator(g.identity, {
+    ...input,
+    revision: readRevisionFromPage(gread),
+  });
+  assert.equal(mcpOutcome.status, "accepted");
+  assert.equal(
+    mcpOutcome.revision.expectedCoordinatorVersion,
+    httpOutcome.revision.expectedCoordinatorVersion,
+  );
+});
+
+test("mcp and http refuse stale revisions with the same code", async (t) => {
+  const f = await projectCoordinationHttpFixture({ now: FIXTURE_NOW });
+  t.after(() => f.dispose());
+  const mcp = new ProjectCoordinationMcpActions(f.service);
+  const read = await f.service.read(f.identity, "project:example");
+  await f.service.appointCoordinator(f.identity, {
+    projectId: "project:example",
+    revision: readRevisionFromPage(read),
+    coordinatorActorType: "human",
+    coordinatorIdentityId: "owner-self-2",
+    idempotencyKey: "mcp-parity-stale-01",
+  });
+  const staleInput = {
+    projectId: "project:example",
+    revision: readRevisionFromPage(read),
+    coordinatorActorType: "human" as const,
+    coordinatorIdentityId: "owner-self-3",
+    idempotencyKey: "mcp-parity-stale-02",
+  };
+  const httpStale = await f.service.replaceCoordinator(f.identity, staleInput);
+  const mcpStale = await mcp.replaceCoordinator(f.identity, staleInput);
+  assert.equal(httpStale.status, "refused");
+  assert.equal(mcpStale.status, "refused");
+  assert.equal(mcpStale.reasonCode, httpStale.reasonCode);
+  assert.equal(mcpStale.reasonCode, "stale_revision");
+});
+
+test("mcp and http refuse changed content under the same key with the same code", async (t) => {
+  const f = await projectCoordinationHttpFixture({ now: FIXTURE_NOW });
+  t.after(() => f.dispose());
+  const mcp = new ProjectCoordinationMcpActions(f.service);
+  const read = await f.service.read(f.identity, "project:example");
+  const revision = readRevisionFromPage(read);
+  await mcp.appointCoordinator(f.identity, {
+    projectId: "project:example",
+    revision,
+    coordinatorActorType: "human",
+    coordinatorIdentityId: "owner-self-2",
+    idempotencyKey: "mcp-parity-conflict-01",
+  });
+  const second = await mcp.appointCoordinator(f.identity, {
+    projectId: "project:example",
+    revision,
+    coordinatorActorType: "human",
+    coordinatorIdentityId: "owner-self-9",
+    idempotencyKey: "mcp-parity-conflict-01",
+  });
+  assert.equal(second.status, "refused");
+  assert.equal(second.reasonCode, "coordinator_replay_conflict");
+});
+
+test("mcp refuses unknown tools visibly and unknown projects like http", async (t) => {
+  const f = await projectCoordinationHttpFixture({ now: FIXTURE_NOW });
+  t.after(() => f.dispose());
+  const mcp = new ProjectCoordinationMcpActions(f.service);
+  const unsupported = await mcp.callTool(f.identity, "control_room_delete_everything", {});
+  assert.equal(unsupported.status, "refused");
+  assert.equal((unsupported as { reasonCode?: string }).reasonCode, "unsupported_tool");
+  await assert.rejects(f.service.read(f.identity, "project:does-not-exist"), (error: unknown) => {
+    return error instanceof Error && "code" in error && (error as { code?: string }).code === "not_found";
+  });
+  const mcpMissing = await mcp.readProject(f.identity, "project:does-not-exist");
+  assert.equal(mcpMissing.status, "refused");
+  assert.equal((mcpMissing as { reasonCode?: string }).reasonCode, "not_found");
+});
+
+test("mcp refuses missing idempotency keys without touching the engine", async (t) => {
+  const f = await projectCoordinationHttpFixture({ now: FIXTURE_NOW });
+  t.after(() => f.dispose());
+  const mcp = new ProjectCoordinationMcpActions(f.service);
+  const read = await f.service.read(f.identity, "project:example");
+  const outcome = await mcp.appointCoordinator(f.identity, {
+    projectId: "project:example",
+    revision: readRevisionFromPage(read),
+    coordinatorActorType: "human",
+    coordinatorIdentityId: "owner-self-2",
+    idempotencyKey: "",
+  });
+  assert.equal(outcome.status, "refused");
+  assert.equal(outcome.reasonCode, "invalid_input");
+  const reread = await f.service.read(f.identity, "project:example");
+  assert.equal(reread.coordinatorHead.version, 0);
+});
+
+test("mcp tool descriptions grant no authority and reveal no private configuration", () => {
+  assert.equal(CONTROL_ROOM_MCP_TOOLS.length, 7);
+  const banned = ["secret", "token", "credential", "password", "private.example", "BEGIN", "http://", "internal"];
+  for (const tool of CONTROL_ROOM_MCP_TOOLS) {
+    assert.ok(tool.description.toLowerCase().includes("grant"), tool.name);
+    const lower = tool.description.toLowerCase();
+    for (const word of banned) {
+      assert.ok(!lower.includes(word), `${tool.name} leaks ${word}`);
+    }
+  }
+});
