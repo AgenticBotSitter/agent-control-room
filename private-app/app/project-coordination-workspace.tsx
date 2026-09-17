@@ -181,6 +181,7 @@ function CoordinationReadyView({
         </p>
       )}
       <CoordinatorHeadSummary projectId={projectId} page={page} revision={revision} />
+      <NextActionHint nextAction={page.nextAction} />
       <DelegationPolicySummary projectId={projectId} page={page} revision={revision} />
       <ActiveWorkSection projectId={projectId} page={page} />
       <DependenciesSection page={page} />
@@ -261,6 +262,85 @@ function CoordinatorHeadSummary({ projectId, page, revision }: {
         Head version {head.version}; checked at <ConfiguredTimestamp value={revision.observedAt} prefix="" />.{" "}
         Owner-only controls below require the head version the page was loaded with. A stale page
         refuses the action; refresh first.
+      </p>
+    </section>
+  );
+}
+
+// The canonical safe next action, rendered as a read-only hint. It never
+// authorises anything: lifecycle steps point at the controls below, ledger
+// steps point at their section, and policy steps name the deferral instead
+// of offering a control that cannot run retry-safe yet.
+const NEXT_ACTION_COPY: Record<
+  ProjectCoordinationPage["nextAction"],
+  { heading: string; detail: string; anchor: string | null }
+> = {
+  "appoint-coordinator": {
+    heading: "Suggested next step: appoint a coordinator",
+    detail: "No coordinator head is saved. Name one explicitly in Lifecycle controls below.",
+    anchor: "coord-lifecycle-heading",
+  },
+  "replace-coordinator": {
+    heading: "Suggested next step: replace the coordinator",
+    detail: "The saved head can be replaced from Lifecycle controls below.",
+    anchor: "coord-lifecycle-heading",
+  },
+  "revoke-coordinator": {
+    heading: "Suggested next step: revoke the coordinator",
+    detail: "The saved head can be revoked from Lifecycle controls below.",
+    anchor: "coord-lifecycle-heading",
+  },
+  "pause-policy": {
+    heading: "Suggested next step: pause the delegation policy",
+    detail: "Policy pause controls return with the retry-safe policy package and are not offered on this page.",
+    anchor: null,
+  },
+  "resume-policy": {
+    heading: "Suggested next step: resume the delegation policy",
+    detail: "Policy resume controls return with the retry-safe policy package and are not offered on this page.",
+    anchor: null,
+  },
+  "revoke-policy": {
+    heading: "Suggested next step: revoke the delegation policy",
+    detail: "Policy revoke controls return with the retry-safe policy package and are not offered on this page.",
+    anchor: null,
+  },
+  "review-attention": {
+    heading: "Suggested next step: review owner attention",
+    detail: "Open items are listed under Owner attention below.",
+    anchor: "coord-attention-heading",
+  },
+  "resolve-conflict": {
+    heading: "Suggested next step: resolve a resource conflict",
+    detail: "Open conflicts are listed under Resource conflicts below.",
+    anchor: "coord-conflicts-heading",
+  },
+  "view-active-work": {
+    heading: "Suggested next step: view active work",
+    detail: "Adopted tasks are listed under Active work below.",
+    anchor: "coord-active-heading",
+  },
+  none: {
+    heading: "No pending coordination step",
+    detail: "The saved page names no next action. This is not an all-clear for the fleet.",
+    anchor: null,
+  },
+};
+
+export function NextActionHint({
+  nextAction,
+}: {
+  nextAction: ProjectCoordinationPage["nextAction"];
+}) {
+  const copy = NEXT_ACTION_COPY[nextAction];
+  return (
+    <section aria-labelledby="coord-next-action-heading">
+      <h3 id="coord-next-action-heading">{copy.heading}</h3>
+      <p>
+        {copy.detail}
+        {copy.anchor && (
+          <> See <a href={`#${copy.anchor}`}>the section below</a>.</>
+        )}
       </p>
     </section>
   );
@@ -385,7 +465,7 @@ function ConflictsSection({ projectId, page }: { projectId: string; page: Projec
   );
 }
 
-function AttentionSection({ page }: { page: ProjectCoordinationPage }) {
+export function AttentionSection({ page }: { page: ProjectCoordinationPage }) {
   if (page.attention.length === 0) {
     return (
       <section aria-labelledby="coord-attention-heading">
@@ -402,8 +482,9 @@ function AttentionSection({ page }: { page: ProjectCoordinationPage }) {
           <li key={item.attentionId}>
             <strong>{item.severity}</strong> · {item.category.replaceAll("_", " ")}
             <p>
-              <strong>Question for you:</strong> {describeAttention(item.category)}
+              <strong>Saved question:</strong> {item.ownerQuestion}
             </p>
+            <p className="private-note">{describeAttention(item.category)}</p>
             {item.referencedJobId && (
               <p>
                 Task <code>{item.referencedJobId}</code> observed at{" "}

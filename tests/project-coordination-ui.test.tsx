@@ -23,10 +23,15 @@ import {
 } from "../src/web/v1/project-coordination-http";
 import { ProjectNavigation } from "../private-app/app/project-navigation";
 import {
+  AttentionSection,
   LifecycleControls,
+  NextActionHint,
+  ProjectCoordinationWorkspace,
   parseCoordinatorSelection,
 } from "../private-app/app/project-coordination-workspace";
-import type { ProjectCoordinationPage } from "../src/web/v1/project-coordination-wire";
+import type {
+  ProjectCoordinationPage,
+} from "../src/web/v1/project-coordination-wire";
 
 const NOW = Date.parse("2026-09-10T12:00:00.000Z");
 const ORIGIN = "https://private.example.invalid";
@@ -624,4 +629,90 @@ test("a concurrent attention insert cannot pair old content with a new accepting
     idempotencyKey: `snapshot-fresh-${NOW}`,
   });
   assert.equal(fresh.status, "accepted");
+});
+
+test("the suggested next step names the saved next action without inventing authority", () => {
+  const cases: Array<{
+    nextAction: ProjectCoordinationPage["nextAction"];
+    heading: RegExp;
+    anchor: string | null;
+  }> = [
+    { nextAction: "appoint-coordinator", heading: /appoint a coordinator/, anchor: "coord-lifecycle-heading" },
+    { nextAction: "replace-coordinator", heading: /replace the coordinator/, anchor: "coord-lifecycle-heading" },
+    { nextAction: "revoke-coordinator", heading: /revoke the coordinator/, anchor: "coord-lifecycle-heading" },
+    { nextAction: "pause-policy", heading: /pause the delegation policy/, anchor: null },
+    { nextAction: "resume-policy", heading: /resume the delegation policy/, anchor: null },
+    { nextAction: "revoke-policy", heading: /revoke the delegation policy/, anchor: null },
+    { nextAction: "review-attention", heading: /review owner attention/, anchor: "coord-attention-heading" },
+    { nextAction: "resolve-conflict", heading: /resolve a resource conflict/, anchor: "coord-conflicts-heading" },
+    { nextAction: "view-active-work", heading: /view active work/, anchor: "coord-active-heading" },
+    { nextAction: "none", heading: /No pending coordination step/, anchor: null },
+  ];
+  for (const entry of cases) {
+    const html = renderToStaticMarkup(createElement(NextActionHint, { nextAction: entry.nextAction }));
+    assert.match(html, entry.heading, entry.nextAction);
+    assert.match(html, /aria-labelledby="coord-next-action-heading"/, entry.nextAction);
+    if (entry.anchor) {
+      assert.match(html, new RegExp(`href="#${entry.anchor}"`), entry.nextAction);
+    } else {
+      assert.doesNotMatch(html, /href="#coord-/, entry.nextAction);
+    }
+  }
+  // Policy steps name the deferral instead of offering a control.
+  const paused = renderToStaticMarkup(createElement(NextActionHint, { nextAction: "pause-policy" }));
+  assert.match(paused, /not offered on this page/);
+});
+
+test("lifecycle controls stay keyboard-operable, labelled, and layout-neutral", () => {
+  const page = makeControlPage();
+  const html = renderToStaticMarkup(createElement(LifecycleControls, {
+    projectId: "project:alpha",
+    page,
+    revision: {
+      projectId: "project:alpha",
+      expectedCoordinatorVersion: 3, expectedPolicyVersion: 2,
+      expectedConflictsVersion: 0, expectedAttentionVersion: 0,
+      observedAt: page.observedAt,
+    },
+    busy: false,
+    disabled: false,
+    onAction: async () => ({ ok: true as const }),
+  }));
+  // Every action is a native button: keyboard-activatable by construction.
+  const buttons = html.match(/<button type="button"/g) ?? [];
+  assert.ok(buttons.length >= 3, `expected appoint/replace/revoke buttons, saw ${buttons.length}`);
+  // Every field is explicitly labelled; feedback is a live region.
+  assert.match(html, /<label for="coord-actor-type">/);
+  assert.match(html, /<select[^>]*id="coord-actor-type"/);
+  assert.match(html, /<label for="coord-identity">/);
+  assert.match(html, /<input[^>]*id="coord-identity"/);
+  assert.match(html, /aria-labelledby="coord-lifecycle-heading"/);
+  assert.match(html, /id="coord-lifecycle-heading"/);
+  // Disabled controls explain themselves in line; the reason is visible text.
+  assert.match(html, /Replace or revoke instead/);
+  // No fixed pixel widths: the panel reflows instead of clipping narrow layouts.
+  assert.doesNotMatch(html, /style="[^"]*width:/);
+  // Loading and feedback states announce through a live region.
+  const loading = renderToStaticMarkup(
+    createElement(ProjectCoordinationWorkspace, { projectId: "project:alpha" }),
+  );
+  assert.match(loading, /aria-label="Project coordination"/);
+  assert.match(loading, /role="status"/);
+});
+
+test("owner attention renders the saved question, not a generic substitute", () => {
+  const page = makeControlPage();
+  page.attention = [{
+    attentionId: "attention:test-1",
+    projectId: "project:alpha",
+    severity: "urgent",
+    category: "approval",
+    ownerQuestion: "Approve the Alpha plan before Friday?",
+    observedAt: page.observedAt,
+    referencedJobId: "job:a1",
+    referencedAdmissionId: null,
+  }];
+  const html = renderToStaticMarkup(createElement(AttentionSection, { page }));
+  assert.match(html, /Approve the Alpha plan before Friday\?/);
+  assert.match(html, /aria-labelledby="coord-attention-heading"/);
 });
