@@ -464,9 +464,13 @@ const COMMAND_EXAMPLES = Object.freeze({
 export function formatClaimResult(result, attemptedBody) {
   if (!result || result.status === "accepted" || result.status === "renewed"
     || result.status === "submitted" || result.status === "released") return undefined;
-  const header = typeof attemptedBody === "string" ? attemptedBody.replace(/\r\n/g, "\n").split("\n")[0] : "";
   if (result.status === "ignored") {
-    const example = COMMAND_EXAMPLES[header] ?? COMMAND_EXAMPLES["CLAIM REQUEST"];
+    // Workflow routing is deliberately broad; only command-line attempts need help.
+    const header = typeof attemptedBody === "string"
+      ? attemptedBody.replace(/\r\n/g, "\n").match(/^(CLAIM (?:REQUEST|RENEW|SUBMIT|RELEASE))\b/m)?.[1]
+      : undefined;
+    if (!header) return undefined;
+    const example = COMMAND_EXAMPLES[header];
     return ["CLAIM COMMAND NOT APPLIED — the command format is invalid.", "",
       "Copy the exact format below. Field names are lowercase and extra lines are not allowed:", "",
       "```text", example, "```", "",
