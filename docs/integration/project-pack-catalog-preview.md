@@ -19,7 +19,7 @@ is contacted, and no executable content is evaluated.
   summary, guidance, attribution, license, and supported/unsupported module
   splits; refusals render a human sentence plus the canonical reason code.
   Inert by construction: no buttons create anything, nothing executes.
-- `tests/project-pack-catalog-preview.test.tsx` — 8 tests, lane-registered
+- `tests/project-pack-catalog-preview.test.tsx` — 9 tests, lane-registered
   in `test:contracts`. The canonical parser is exercised end to end with
   `Buffer` absent (the browser reality): valid pack, oversized refusal,
   executable-content refusal, distinct refusal rendering, inert preview.
