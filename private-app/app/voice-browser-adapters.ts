@@ -95,6 +95,7 @@ let recognitionInstanceCounter = 0;
 class RecognitionSession {
   private readonly instanceId: number;
   private started = false;
+  private activeEngine: InstanceType<SpeechRecognitionCtor> | null = null;
 
   constructor() {
     this.instanceId = recognitionInstanceCounter;
@@ -144,19 +145,39 @@ class RecognitionSession {
         callbacks.onError(mapped.kind, mapped.message);
       };
       engine.onend = () => {
+        if (this.activeEngine !== engine) return;
+        this.activeEngine = null;
+        this.started = false;
+        engine.onresult = null;
+        engine.onerror = null;
+        engine.onend = null;
         if (reportedError) return;
         callbacks.onError("cancelled", "Recognition ended without a final result.");
       };
+      this.activeEngine = engine;
       this.started = true;
       try {
         engine.start();
       } catch {
+        if (this.activeEngine !== engine) return;
+        this.activeEngine = null;
+        this.started = false;
+        engine.onresult = null;
+        engine.onerror = null;
+        engine.onend = null;
         callbacks.onError("error", "Speech recognition could not be started.");
       }
     },
     stop: (): void => {
-      // Idempotent by contract: stopping an adapter that never started or
-      // already stopped must stay a safe no-op.
+      const engine = this.activeEngine;
+      this.activeEngine = null;
+      this.started = false;
+      if (!engine) return;
+      // Detach before stopping: browser stop may synchronously dispatch end.
+      engine.onresult = null;
+      engine.onerror = null;
+      engine.onend = null;
+      try { engine.stop(); } catch { /* Already stopped by the browser. */ }
     },
   };
 }

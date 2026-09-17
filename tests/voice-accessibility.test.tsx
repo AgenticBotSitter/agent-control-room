@@ -406,6 +406,61 @@ test("recognition adapter maps browser error codes to the safe error kinds", asy
   }
 });
 
+test("recognition stop reaches the active engine exactly once and allows restart", async () => {
+  const fake = makeFakeRecognitionCtor();
+  const restore = withBrowserGlobals({ SpeechRecognition: fake.ctor });
+  try {
+    const { voiceBrowserAdaptersV1 } = await import("../private-app/app/voice-browser-adapters.ts");
+    const { recognition } = voiceBrowserAdaptersV1();
+    const errors: VoiceRecognitionErrorV1[] = [];
+    const callbacks = { onEvent: () => {}, onError: (kind: VoiceRecognitionErrorV1) => errors.push(kind) };
+    recognition.stop();
+    recognition.stop();
+    assert.equal(fake.instances.length, 0);
+    recognition.start(callbacks);
+    recognition.start(callbacks);
+    assert.equal(fake.instances.length, 1, "duplicate start while active is ignored");
+    const first = fake.instances[0] as FakeRecognitionInstance & { stop: () => void };
+    let stops = 0;
+    first.stop = () => { stops += 1; };
+    const oldEnd = first.onend;
+    recognition.stop();
+    recognition.stop();
+    assert.equal(stops, 1);
+    recognition.start(callbacks);
+    assert.equal(fake.instances.length, 2);
+    assert.equal(fake.instances[1].started, true);
+    oldEnd?.(); // A late event from the stopped run must not clear the new run.
+    assert.deepEqual(errors, []);
+    const second = fake.instances[1] as FakeRecognitionInstance & { stop: () => void };
+    second.stop = () => { stops += 1; };
+    recognition.stop();
+    assert.equal(stops, 2);
+  } finally { restore(); }
+});
+
+test("recognition restarts after natural end and after an errored end", async () => {
+  const fake = makeFakeRecognitionCtor();
+  const restore = withBrowserGlobals({ SpeechRecognition: fake.ctor });
+  try {
+    const { voiceBrowserAdaptersV1 } = await import("../private-app/app/voice-browser-adapters.ts");
+    const { recognition } = voiceBrowserAdaptersV1();
+    const errors: VoiceRecognitionErrorV1[] = [];
+    const callbacks = { onEvent: () => {}, onError: (kind: VoiceRecognitionErrorV1) => errors.push(kind) };
+    recognition.start(callbacks);
+    fake.instances[0].onend?.();
+    recognition.start(callbacks);
+    assert.equal(fake.instances.length, 2);
+    assert.equal(fake.instances[1].started, true);
+    fake.instances[1].onerror?.({ error: "not-allowed" });
+    fake.instances[1].onend?.();
+    recognition.start(callbacks);
+    assert.equal(fake.instances.length, 3);
+    assert.deepEqual(errors, ["cancelled", "denied"]);
+    recognition.stop();
+  } finally { restore(); }
+});
+
 test("recognition adapter start failure path stays honest, and stop is always safe", async () => {
   const fake = makeFakeRecognitionCtor({ startThrows: true });
   const restore = withBrowserGlobals({ SpeechRecognition: fake.ctor });
@@ -418,7 +473,15 @@ test("recognition adapter start failure path stays honest, and stop is always sa
     assert.equal(fake.instances.length, 1);
     assert.equal(errors.length, 1);
     assert.equal(errors[0]?.kind, "error");
-    recognition.stop(); // still safe after a failed start
+    const retry = makeFakeRecognitionCtor();
+    const restoreRetry = withBrowserGlobals({ SpeechRecognition: retry.ctor });
+    try {
+      recognition.start({ onEvent: () => {}, onError: (kind) => errors.push({ kind }) });
+      assert.equal(retry.instances.length, 1, "failed start must release the active run");
+      assert.equal(retry.instances[0].started, true);
+      recognition.stop();
+    } finally { restoreRetry(); }
+    recognition.stop(); // still safe after a failed start/retry
   } finally {
     restore();
   }

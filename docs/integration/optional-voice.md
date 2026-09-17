@@ -46,8 +46,12 @@ implementations of both boundaries via `voiceBrowserAdaptersV1()`:
   remains the surface's job (`dedupeTranscriptEventsV1`). Browser error codes
   map onto the safe kinds only (`not-allowed` / `service-not-allowed` →
   `denied`; `not-supported` / `audio-capture` → `unsupported`; `aborted` /
-  `no-speech` → `cancelled`; anything else → `error`), and `stop()` is an
-  idempotent safe no-op even when `start()` never engaged an engine.
+  `no-speech` → `cancelled`; anything else → `error`), and `stop()` is
+  safe before start and after stop. During a run it calls the active engine's
+  `stop()` once and releases its callbacks/state; repeated stops do nothing.
+  Natural end (including an end after an error) and synchronous start failure
+  also release the run, allowing the same adapter to start again. A late end
+  from a stopped run cannot clear a newer active engine.
 - **Synthesis** feature-detects `speechSynthesis`, creates a
   `SpeechSynthesisUtterance` only on explicit caller use of `speak()`, refuses
   blank text, and `cancel()` is idempotent and safe before anything was spoken.
