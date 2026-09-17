@@ -47,7 +47,8 @@ export function IdeaDiscussion({ detail, refresh, pendingChanged, observeStart }
         : <p>No recap saved yet. Preparing one requires a completed discussion and current owner access.</p>}</section>
     <section className="private-panel"><h2>Your decision</h2>{decision ? <>
       <p>{decision.decision === "create_project" ? "Promoted to a project" : decision.decision === "save" ? "Saved for later" : "Rejected"}</p>
-      {decision.project ? <a href={`/projects/${encodeURIComponent(decision.project.projectId)}`}>Open project workspace</a> : null}
+      {decision.project ? <a href={`/projects/${encodeURIComponent(decision.project.projectId)}`}
+        style={{ display: "inline-flex", minHeight: 24, alignItems: "center" }}>Open project workspace</a> : null}
     </> : detail.canDecide ? <IdeaDecisionForm key={session.sessionId} detail={detail} pendingChanged={pendingChanged} />
       : <p>No owner decision saved yet. Decision controls require a saved synthesis, eligible discussion and current owner access.</p>}</section></>;
 }
@@ -83,8 +84,9 @@ export function PrivateIdeaWorkspace({ sessionId, after }: { sessionId?: string;
     })();
     return () => { active = false; abort.abort(); };
   }, [client, sessionId, after, refresh]);
-  return <><PrivateHeader /><main id="private-main" className="private-main" tabIndex={-1}>
-    <nav aria-label="Idea pages"><a href="/ideas">All saved ideas</a></nav>
+  return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1}>
+    <nav aria-label="Idea pages"><a href="/ideas" aria-current={sessionId ? undefined : "page"}
+      style={{ display: "inline-flex", minHeight: 24, alignItems: "center" }}>All saved ideas</a></nav>
     <button type="button" disabled={creating || decisionPending} onClick={() => { if (observer.current) void observer.current.read(); else { setPage(undefined); setError(undefined); setRefresh(v => v + 1); } }}>Refresh saved discussion</button>
     {creating ? <IdeaCreateForm close={() => { setCreating(false); setPage(undefined); setRefresh(v => v + 1); }} /> : null}
     {error ? <p role="alert">{error} Previously loaded discussion content is not a fresh status check.</p> : null}
@@ -96,9 +98,11 @@ export function PrivateIdeaWorkspace({ sessionId, after }: { sessionId?: string;
           : <p>Idea creation is not available with the current configuration and access.</p>}<p>{page.execution === "not_configured"
             ? "Running new panels is not connected yet." : "Open an idea to request a discussion. Current authorization is required."}</p>
           {!page.sessions.length ? <p>No saved ideas on this page.</p> : page.sessions.map(session => <article className="private-panel" key={session.sessionId}>
-            <h2><a href={`/ideas/${encodeURIComponent(session.sessionId)}`}>{session.title}</a></h2>
+            <h2><a href={`/ideas/${encodeURIComponent(session.sessionId)}`}
+              style={{ display: "inline-flex", minHeight: 24, alignItems: "center" }}>{session.title}</a></h2>
             <p>{session.ideaSummary}</p><p>{session.participantCount} participants · Up to {session.maxRounds} rounds</p>
-          </article>)}{page.nextCursor ? <a href={`/ideas?after=${encodeURIComponent(page.nextCursor)}`}>Next saved ideas</a> : null}</>}
+          </article>)}{page.nextCursor ? <a href={`/ideas?after=${encodeURIComponent(page.nextCursor)}`}
+            style={{ display: "inline-flex", minHeight: 24, alignItems: "center" }}>Next saved ideas</a> : null}</>}
     </> : !error ? <p role="status">Loading saved ideas…</p> : null}
-  </main></>;
+  </main></div>;
 }
