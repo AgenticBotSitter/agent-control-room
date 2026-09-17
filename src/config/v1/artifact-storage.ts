@@ -1,6 +1,7 @@
 import { isAbsolute, posix, resolve, win32 } from "node:path";
 import { z } from "zod";
 import { sha256Digest } from "../../security/canonical-digest";
+import { containsSecretMaterial } from "../../security/redaction";
 
 /**
  * Operator-supplied durable result-storage settings.
@@ -17,9 +18,12 @@ import { sha256Digest } from "../../security/canonical-digest";
  * digest instead. The digest binds the public namespace to one canonical path
  * without publishing that path.
  *
- * Local filesystem storage is the first public-release mode. `r2` is refused
- * here with a named reason so an operator cannot advertise object storage as
- * supported before a separately tested bounded adapter exists.
+ * Local filesystem storage is the first public-release mode. Provider-neutral
+ * object storage is the second: one `s3-compatible` class whose store is
+ * selected by the captured deployment identity, never by a provider brand.
+ * `r2` stays refused as a class name, so an operator file cannot advertise
+ * provider support this contract does not qualify; R2 is reached through the
+ * neutral class instead.
  */
 export const ARTIFACT_STORAGE_SETTINGS_SCHEMA_V1 = "control-room.artifact-storage-settings/v1" as const;
 
@@ -41,6 +45,30 @@ export class ArtifactStorageSettingsError extends Error {
 
 function refuse(reason: string): never {
   throw new ArtifactStorageSettingsError(reason);
+}
+
+/**
+ * Credential material is refused by name wherever it appears in an operator
+ * file, before any other rule, so a settings document that carries a password,
+ * an access key, a signed URL or a personal-access token is reported as
+ * credential material rather than as an anonymous schema violation. The
+ * captured configuration and the portable export therefore cannot carry a
+ * credential even by accident.
+ *
+ * The detection itself is the shared redaction primitive: this module owns the
+ * refusal, not a second pattern list. Note the deliberate limit — an operator
+ * file legitimately names a *reference* (`...Ref`, `...Id`, `...Digest`) and
+ * that is not a credential.
+ */
+function refuseCredentialMaterial(value: unknown): void {
+  if (containsSecretMaterial(value).length) refuse("artifact_storage_credential_material_refused");
+}
+
+/** The storage class a raw, untrusted value advertises, or an empty string. */
+function advertisedStorageClass(value: unknown): string {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "";
+  const candidate = (value as { storageClass?: unknown }).storageClass;
+  return typeof candidate === "string" ? candidate : "";
 }
 
 /**
@@ -139,11 +167,16 @@ export function artifactStorageNamespaceDigestV1(storageNamespace: string, rootP
  * authority and opens nothing.
  */
 export function captureArtifactStorageSettingsV1(value: unknown): Readonly<ArtifactStorageSettingsV1> {
+  refuseCredentialMaterial(value);
+  const advertised = advertisedStorageClass(value);
+  // Named refusal before the local schema: object settings are a different
+  // variant, and reporting them as an unknown key would hide the real cause.
+  if (advertised === ARTIFACT_STORAGE_S3_COMPATIBLE_CLASS_V1) refuse("artifact_storage_object_configuration_required");
   const parsed = settingsSchema.safeParse(value);
   if (!parsed.success) refuse("artifact_storage_settings_invalid");
   const settings = parsed.data;
-  // Named refusal: an operator must not be able to advertise object storage
-  // before a separately tested bounded adapter exists.
+  // Named refusal: an operator must not be able to advertise a provider brand
+  // as a supported class.
   if (settings.storageClass === "r2") refuse("artifact_storage_r2_unsupported");
   if (settings.storageClass !== "local") refuse("artifact_storage_class_unsupported");
   const rootPath = canonicalPersistentDirectory(settings.rootPath);
@@ -193,6 +226,209 @@ export function exportArtifactStorageSettingsV1(value: unknown): string {
     storageClass: captured.storageClass,
     storageNamespace: captured.storageNamespace,
     storageNamespaceDigest: artifactStorageNamespaceDigestV1(captured.storageNamespace, captured.rootPath),
+    maximumArtifacts: captured.maximumArtifacts,
+    maximumFileBytes: captured.maximumFileBytes,
+    maximumTotalBytes: captured.maximumTotalBytes,
+    operationTimeoutMs: captured.operationTimeoutMs,
+  });
+}
+
+/**
+ * Provider-neutral object storage.
+ *
+ * One class, `s3-compatible`, covers every S3-compatible service. What selects
+ * a store is the captured deployment identity — endpoint, region, bucket and
+ * namespace — and what authenticates it is the injected client's own
+ * credential. This module never sees, carries or exports a credential: the
+ * contract has no credential field at all, so an operator file cannot smuggle
+ * one in, and `artifact_storage_credential_material_refused` is raised when a
+ * document tries.
+ *
+ * The endpoint policy is the deployment half of the "no public store" rule. An
+ * anonymous object host (an R2 public bucket domain, an S3 static-website
+ * endpoint) is refused by name, a non-TLS origin is refused as insecure, and
+ * embedded credentials are refused as credentials. Only the account API origin
+ * of a private store survives, and the bucket must be a DNS-style S3 bucket
+ * name: no IP address, no empty or dotted-out name.
+ */
+export const ARTIFACT_STORAGE_S3_COMPATIBLE_CLASS_V1 = "s3-compatible" as const;
+
+/** The one bounded private result media type an artifact store may hold. */
+export const ARTIFACT_STORAGE_RESULT_CONTENT_TYPE_V1 = "text/plain; charset=utf-8" as const;
+
+const bucketSchema = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/u;
+const ipv4Schema = /^\d{1,3}(?:\.\d{1,3}){3}$/u;
+
+/**
+ * Anonymous, publicly readable object hosts. Reaching one of these means the
+ * store is readable by anyone who knows the bucket name, which is not a
+ * Control Room private artifact store.
+ */
+const publicObjectHosts = [
+  /(?:^|\.)r2\.dev$/u,
+  /\.s3-website[.-][a-z0-9-]+\.amazonaws\.com(?:\.cn)?$/u,
+] as const;
+
+const objectSettingsSchema = z.object({
+  schema: z.literal(ARTIFACT_STORAGE_SETTINGS_SCHEMA_V1),
+  storageClass: z.string(),
+  storageNamespace: localId,
+  endpoint: z.string(),
+  region: localId,
+  bucket: z.string(),
+  contentType: z.string(),
+}).merge(boundsSchema).strict();
+
+export type ArtifactObjectStorageSettingsV1 = z.infer<typeof objectSettingsSchema>;
+
+export type CapturedArtifactObjectStorageConfigurationV1 = Readonly<{
+  object: Readonly<{
+    endpoint: string;
+    region: string;
+    bucket: string;
+    contentType: string;
+    maximumArtifacts: number;
+    maximumFileBytes: number;
+    maximumTotalBytes: number;
+    operationTimeoutMs: number;
+  }>;
+  inventory: Readonly<{
+    releaseId: string;
+    releaseDigest: string;
+    databaseSchemaVersion: string;
+    databaseSchemaDigest: string;
+    storageNamespace: string;
+    storageNamespaceDigest: string;
+  }>;
+}>;
+
+/**
+ * One private, credential-free account API origin.
+ *
+ * The origin must already be canonical: `new URL` is used to detect a trailing
+ * separator, mixed case, a default port, a path, a query or a fragment, never
+ * to repair one, because the captured deployment identity and the origin the
+ * client dials must not be able to differ.
+ */
+export function captureS3CompatibleEndpointV1(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0 || value.length > 2048) refuse("artifact_storage_endpoint_invalid");
+  if (/\s/u.test(value) || value.includes("\0")) refuse("artifact_storage_endpoint_invalid");
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return refuse("artifact_storage_endpoint_invalid");
+  }
+  if (parsed.protocol !== "https:") refuse("artifact_storage_endpoint_insecure");
+  // Credentials are named before shape: an origin that carries a key must be
+  // reported as credential material, not as a malformed URL.
+  if (parsed.username !== "" || parsed.password !== "") refuse("artifact_storage_endpoint_credentials");
+  if (parsed.port !== "" || parsed.pathname !== "/" || parsed.search !== "" || parsed.hash !== "") {
+    refuse("artifact_storage_endpoint_not_canonical");
+  }
+  const host = parsed.hostname.toLowerCase();
+  if (value !== `https://${host}`) refuse("artifact_storage_endpoint_not_canonical");
+  for (const pattern of publicObjectHosts) if (pattern.test(host)) refuse("artifact_storage_endpoint_public");
+  return `https://${host}`;
+}
+
+/** One DNS-style S3 bucket name. IP-addressed and dotted-out names are refused. */
+export function captureS3CompatibleBucketV1(value: unknown): string {
+  if (typeof value !== "string" || !bucketSchema.test(value) || value.includes("..") || ipv4Schema.test(value)) {
+    refuse("artifact_storage_bucket_invalid");
+  }
+  return value;
+}
+
+/**
+ * Binds the public namespace identity to one exact private deployment without
+ * publishing it. Two installations compare the digest; neither learns the
+ * other's endpoint or bucket from it.
+ */
+export function objectArtifactStorageNamespaceDigestV1(
+  storageNamespace: string,
+  endpoint: string,
+  region: string,
+  bucket: string,
+): string {
+  return sha256Digest({
+    purpose: "private-artifact-storage-object-namespace/v1",
+    storageNamespace,
+    endpoint,
+    region,
+    bucket,
+  });
+}
+
+/**
+ * Parses untrusted operator object-storage settings. The returned value is
+ * frozen, carries no credential field and opens nothing.
+ */
+export function captureS3CompatibleArtifactStorageSettingsV1(value: unknown): Readonly<ArtifactObjectStorageSettingsV1> {
+  refuseCredentialMaterial(value);
+  const advertised = advertisedStorageClass(value);
+  if (advertised === "r2") refuse("artifact_storage_r2_unsupported");
+  if (advertised === "local") refuse("artifact_storage_local_configuration_required");
+  const parsed = objectSettingsSchema.safeParse(value);
+  if (!parsed.success) refuse("artifact_storage_settings_invalid");
+  const settings = parsed.data;
+  if (settings.storageClass !== ARTIFACT_STORAGE_S3_COMPATIBLE_CLASS_V1) refuse("artifact_storage_class_unsupported");
+  const endpoint = captureS3CompatibleEndpointV1(settings.endpoint);
+  const bucket = captureS3CompatibleBucketV1(settings.bucket);
+  if (settings.contentType !== ARTIFACT_STORAGE_RESULT_CONTENT_TYPE_V1) refuse("artifact_storage_content_type_unsupported");
+  if (settings.maximumTotalBytes < settings.maximumFileBytes) refuse("artifact_storage_total_below_file");
+  return Object.freeze({ ...settings, endpoint, bucket });
+}
+
+/**
+ * The captured object-storage configuration the private server binds. The
+ * namespace digest is derived from the settings actually captured, so a
+ * supplied, stale or forged digest cannot bind this namespace to another store.
+ */
+export function captureS3CompatibleArtifactStorageConfigurationV1(
+  settings: unknown,
+  release: unknown,
+): CapturedArtifactObjectStorageConfigurationV1 {
+  const captured = captureS3CompatibleArtifactStorageSettingsV1(settings);
+  const parsedRelease = releaseSchema.safeParse(release);
+  if (!parsedRelease.success) refuse("artifact_storage_release_invalid");
+  return Object.freeze({
+    object: Object.freeze({
+      endpoint: captured.endpoint,
+      region: captured.region,
+      bucket: captured.bucket,
+      contentType: captured.contentType,
+      maximumArtifacts: captured.maximumArtifacts,
+      maximumFileBytes: captured.maximumFileBytes,
+      maximumTotalBytes: captured.maximumTotalBytes,
+      operationTimeoutMs: captured.operationTimeoutMs,
+    }),
+    inventory: Object.freeze({
+      ...parsedRelease.data,
+      storageNamespace: captured.storageNamespace,
+      storageNamespaceDigest: objectArtifactStorageNamespaceDigestV1(
+        captured.storageNamespace, captured.endpoint, captured.region, captured.bucket,
+      ),
+    }),
+  });
+}
+
+/**
+ * Portable, non-secret object-storage export. The endpoint, region and bucket
+ * are deployment data and are deliberately omitted; the namespace and its
+ * digest travel instead. A settings document carrying credential material is
+ * refused rather than exported.
+ */
+export function exportS3CompatibleArtifactStorageSettingsV1(value: unknown): string {
+  const captured = captureS3CompatibleArtifactStorageSettingsV1(value);
+  return JSON.stringify({
+    schema: ARTIFACT_STORAGE_SETTINGS_SCHEMA_V1,
+    storageClass: captured.storageClass,
+    storageNamespace: captured.storageNamespace,
+    storageNamespaceDigest: objectArtifactStorageNamespaceDigestV1(
+      captured.storageNamespace, captured.endpoint, captured.region, captured.bucket,
+    ),
+    contentType: captured.contentType,
     maximumArtifacts: captured.maximumArtifacts,
     maximumFileBytes: captured.maximumFileBytes,
     maximumTotalBytes: captured.maximumTotalBytes,
