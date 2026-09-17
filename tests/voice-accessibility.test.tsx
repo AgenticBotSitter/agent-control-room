@@ -238,3 +238,253 @@ test("unmount stops recognition and cancels synthesis; controls stay keyboard-na
     for (const key of ["window", "document", "IS_REACT_ACT_ENVIRONMENT"]) delete (globalThis as Record<string, unknown>)[key];
   }
 });
+
+/* ---------------------------------------------------------------------------
+ * Real browser voice adapters (private-app/app/voice-browser-adapters.ts).
+ * These tests exercise the production adapters against browser-global fakes:
+ * unsupported detection, final transcript mapping, every safe error mapping,
+ * and idempotent stop/cancel before start/speak.
+ * ------------------------------------------------------------------------- */
+
+interface FakeRecognitionInstance {
+  started: boolean;
+  startError: Error | null;
+  onresult: ((event: unknown) => void) | null;
+  onerror: ((event: { error?: string }) => void) | null;
+  onend: (() => void) | null;
+}
+
+type BrowserGlobals = Partial<{
+  SpeechRecognition: unknown;
+  webkitSpeechRecognition: unknown;
+  SpeechSynthesisUtterance: unknown;
+  speechSynthesis: unknown;
+}>;
+
+function withBrowserGlobals(globals: BrowserGlobals): () => void {
+  const saved = new Map<string, PropertyDescriptor | undefined>();
+  for (const key of Object.keys(globals) as (keyof BrowserGlobals & string)[]) {
+    saved.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+    if (globals[key] === undefined) delete (globalThis as Record<string, unknown>)[key];
+    else Object.defineProperty(globalThis, key, { value: globals[key], configurable: true, writable: true });
+  }
+  return () => {
+    for (const key of Object.keys(globals)) {
+      const descriptor = saved.get(key);
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete (globalThis as Record<string, unknown>)[key];
+    }
+  };
+}
+
+function makeFakeRecognitionCtor(options?: { startThrows?: boolean }) {
+  const instances: FakeRecognitionInstance[] = [];
+  class FakeSpeechRecognition {
+    started = false;
+    startError: Error | null = null;
+    onresult: ((event: unknown) => void) | null = null;
+    onerror: ((event: { error?: string }) => void) | null = null;
+    onend: (() => void) | null = null;
+    constructor() {
+      instances.push(this);
+    }
+    start(): void {
+      if (options?.startThrows) throw new Error("start refused");
+      this.started = true;
+    }
+    stop(): void {}
+    abort(): void {}
+  }
+  return { instances, ctor: FakeSpeechRecognition as unknown };
+}
+
+test("recognition adapter reports unsupported without throwing when the API is missing", async () => {
+  const restore = withBrowserGlobals({}); // no SpeechRecognition globals at all
+  try {
+    const { voiceBrowserAdaptersV1 } = await import("../private-app/app/voice-browser-adapters.ts");
+    const { recognition } = voiceBrowserAdaptersV1();
+    assert.equal(recognition.isSupported(), false);
+    const errors: Array<{ kind: VoiceRecognitionErrorV1; message: string }> = [];
+    recognition.start({ onEvent: () => {}, onError: (kind, message) => errors.push({ kind, message }) });
+    recognition.stop(); // idempotent no-op even though start never engaged an engine
+    assert.equal(errors.length, 1);
+    assert.equal(errors[0]?.kind, "unsupported");
+  } finally {
+    restore();
+  }
+});
+
+test("recognition adapter maps final results into transcript records with stable ids", async () => {
+  const fake = makeFakeRecognitionCtor();
+  const restore = withBrowserGlobals({ webkitSpeechRecognition: fake.ctor });
+  try {
+    const { voiceBrowserAdaptersV1 } = await import("../private-app/app/voice-browser-adapters.ts");
+    const { recognition } = voiceBrowserAdaptersV1();
+    assert.equal(recognition.isSupported(), true);
+    const events: VoiceTranscriptEventV1[] = [];
+    const errors: Array<{ kind: VoiceRecognitionErrorV1 }> = [];
+    recognition.start({
+      onEvent: (event) => events.push(event),
+      onError: (kind) => errors.push({ kind }),
+    });
+    const engine = fake.instances[0];
+    assert.ok(engine, "adapter must construct the browser recognition engine");
+    assert.equal(engine.started, true);
+    await act(async () => {
+      engine.onresult?.({
+        results: [
+          [{ transcript: "deploy the staging build" }],
+          [{ transcript: "and tag it rc1" }],
+        ],
+      });
+    });
+    assert.equal(events.length, 2);
+    assert.ok(events.every((event) => event.isFinal));
+    assert.deepEqual(events.map((event) => event.transcript), [
+      "deploy the staging build",
+      "and tag it rc1",
+    ]);
+    // Ids are stable within a session and unique per result index: repeated
+    // delivery of the same result must reproduce identical eventIds so the
+    // surface's eventId suppression can drop duplicates.
+    const instancePrefix = /^recognition-(\d+)-/.exec(events[0]?.eventId ?? "")?.[0];
+    assert.ok(instancePrefix, `eventId format: ${events[0]?.eventId}`);
+    assert.ok(events.every((event) => event.eventId.startsWith(instancePrefix!)));
+    assert.notEqual(events[0]?.eventId, events[1]?.eventId);
+    const firstIds = events.map((event) => event.eventId);
+    await act(async () => {
+      engine.onresult?.({
+        results: [
+          [{ transcript: "deploy the staging build" }],
+          [{ transcript: "and tag it rc1" }],
+        ],
+      });
+    });
+    assert.deepEqual(events.slice(2).map((event) => event.eventId), firstIds);
+  } finally {
+    restore();
+  }
+});
+
+test("recognition adapter maps browser error codes to the safe error kinds", async () => {
+  const fake = makeFakeRecognitionCtor();
+  const restore = withBrowserGlobals({ SpeechRecognition: fake.ctor });
+  try {
+    const { voiceBrowserAdaptersV1 } = await import("../private-app/app/voice-browser-adapters.ts");
+    const { recognition } = voiceBrowserAdaptersV1();
+    const seen: Array<{ kind: VoiceRecognitionErrorV1; message: string }> = [];
+    recognition.start({
+      onEvent: () => {},
+      onError: (kind, message) => seen.push({ kind, message }),
+    });
+    const engine = fake.instances[0];
+    for (const raw of ["not-allowed", "service-not-allowed"]) {
+      await act(async () => { engine.onerror?.({ error: raw }); });
+    }
+    for (const raw of ["not-supported", "audio-capture"]) {
+      await act(async () => { engine.onerror?.({ error: raw }); });
+    }
+    for (const raw of ["aborted", "no-speech"]) {
+      await act(async () => { engine.onerror?.({ error: raw }); });
+    }
+    await act(async () => { engine.onerror?.({ error: "network" }); });
+    assert.deepEqual(seen.map((entry) => entry.kind), [
+      "denied", "denied", "unsupported", "unsupported", "cancelled", "cancelled", "error",
+    ]);
+    assert.ok(seen.every((entry) => entry.message.length > 0));
+    // A final end after a reported error adds no duplicate cancellation.
+    await act(async () => { engine.onend?.(); });
+    assert.equal(seen.length, 7);
+    // Malformed result payloads never throw and never fabricate events.
+    await act(async () => {
+      engine.onresult?.({});
+      engine.onresult?.({ results: [[{}], [{ transcript: "" }]] });
+    });
+    assert.ok(!seen.some((entry) => entry.kind === undefined));
+  } finally {
+    restore();
+  }
+});
+
+test("recognition adapter start failure path stays honest, and stop is always safe", async () => {
+  const fake = makeFakeRecognitionCtor({ startThrows: true });
+  const restore = withBrowserGlobals({ SpeechRecognition: fake.ctor });
+  try {
+    const { voiceBrowserAdaptersV1 } = await import("../private-app/app/voice-browser-adapters.ts");
+    const { recognition } = voiceBrowserAdaptersV1();
+    recognition.stop(); // safe before any start
+    const errors: Array<{ kind: VoiceRecognitionErrorV1 }> = [];
+    recognition.start({ onEvent: () => {}, onError: (kind) => errors.push({ kind }) });
+    assert.equal(fake.instances.length, 1);
+    assert.equal(errors.length, 1);
+    assert.equal(errors[0]?.kind, "error");
+    recognition.stop(); // still safe after a failed start
+  } finally {
+    restore();
+  }
+});
+
+test("synthesis adapter refuses to speak when unsupported and stays silent on empty text", async () => {
+  const restore = withBrowserGlobals({});
+  try {
+    const { voiceBrowserAdaptersV1 } = await import("../private-app/app/voice-browser-adapters.ts");
+    const { synthesis } = voiceBrowserAdaptersV1();
+    assert.equal(synthesis.isSupported(), false);
+    synthesis.speak("hello"); // no speechSynthesis global — must be a no-op
+    synthesis.cancel(); // idempotent cancel before anything was spoken
+    const after = { spoke: (globalThis as { speechSynthesis?: unknown }).speechSynthesis };
+    assert.equal(after.spoke, undefined);
+  } finally {
+    restore();
+  }
+});
+
+test("synthesis adapter speaks only on explicit caller use and cancels idempotently", async () => {
+  const spoken: string[] = [];
+  const restore = withBrowserGlobals({
+    speechSynthesis: {
+      speak: (utterance: unknown) => spoken.push(String((utterance as { text?: string }).text ?? "")),
+      cancel: () => { spoken.push("<cancel>"); },
+    },
+    SpeechSynthesisUtterance: class {
+      text: string;
+      constructor(text: string) { this.text = text; }
+    },
+  });
+  try {
+    const { voiceBrowserAdaptersV1 } = await import("../private-app/app/voice-browser-adapters.ts");
+    const { synthesis } = voiceBrowserAdaptersV1();
+    assert.equal(synthesis.isSupported(), true);
+    synthesis.cancel(); // idempotent cancel before any speak
+    assert.deepEqual(spoken, ["<cancel>"]);
+    synthesis.speak("read this aloud");
+    assert.deepEqual(spoken, ["<cancel>", "read this aloud"]);
+    synthesis.speak("   "); // blank text is refused rather than spoken
+    assert.deepEqual(spoken, ["<cancel>", "read this aloud"]);
+    synthesis.cancel(); // idempotent by contract; safe to call repeatedly
+    assert.deepEqual(spoken, ["<cancel>", "read this aloud", "<cancel>"]);
+  } finally {
+    restore();
+  }
+});
+
+test("unsupported detection is read lazily at call time, not at adapter creation", async () => {
+  const fake = makeFakeRecognitionCtor();
+  const restore = withBrowserGlobals({ webkitSpeechRecognition: fake.ctor });
+  try {
+    const { voiceBrowserAdaptersV1 } = await import("../private-app/app/voice-browser-adapters.ts");
+    const { recognition, synthesis } = voiceBrowserAdaptersV1();
+    assert.equal(recognition.isSupported(), true);
+    assert.equal(synthesis.isSupported(), false);
+    restore(); // globals removed between adapter creation and use
+    assert.equal(recognition.isSupported(), false);
+    assert.equal(synthesis.isSupported(), false);
+    const errors: Array<{ kind: VoiceRecognitionErrorV1 }> = [];
+    recognition.start({ onEvent: () => {}, onError: (kind) => errors.push({ kind }) });
+    assert.equal(errors[0]?.kind, "unsupported");
+    recognition.stop();
+    synthesis.cancel();
+  } finally {
+    restore();
+  }
+});
