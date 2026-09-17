@@ -112,6 +112,32 @@ test('a changed submission can refresh review but cannot bypass authority or an 
   assert.equal(f.mutations.length, acceptedMutations);
 });
 
+test('a separate maintainer can accept an exact amended head with an explicit evidence note', async () => {
+  const f = fixture();
+  const submitted = await f.run(f.eventFor('submit'));
+  f.pr.head.sha = 'b'.repeat(40);
+
+  await assert.rejects(
+    f.run(f.eventFor('accept', 'reviewer', submitted.commentId)),
+    /review_head_changed/,
+  );
+  await assert.rejects(
+    f.run(f.eventFor('accept-amendment', 'builder', submitted.commentId,
+      'Documentation-only maintainer amendment reviewed at the exact new head.')),
+    /authority_denied/,
+  );
+  assert.equal(parseHandoffCommand(
+    `HANDOFF accept-amendment\nworker-id: worker-01\npr: 2\nhead: ${'b'.repeat(40)}\nprevious: ${submitted.commentId}`,
+  ), undefined);
+
+  const accepted = await f.run(f.eventFor('accept-amendment', 'reviewer', submitted.commentId,
+    'Documentation-only maintainer amendment reviewed at the exact new head.'));
+  assert.equal(accepted.action, 'integrator');
+  const record = parseHandoff(f.comments.find(comment => comment.id === accepted.commentId));
+  assert.equal(record.head, 'b'.repeat(40));
+  assert.match(record.instruction, /exact new head/);
+});
+
 test('shared author cannot approve itself, even if configured maintainer', async () => {
   const f = fixture();
   const first = await f.run(f.eventFor('submit'));

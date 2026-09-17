@@ -6,7 +6,7 @@ const LOGIN = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/;
 const WORKER = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,79}$/;
 const SHA = /^[a-f0-9]{40}$/;
 const BOT = comment => comment?.user?.login === 'github-actions[bot]' && comment.user.type === 'Bot';
-const COMMANDS = new Set(['submit', 'changes', 'adopt-changes', 'acknowledge', 'resubmit', 'accept', 'stop', 'stopped']);
+const COMMANDS = new Set(['submit', 'changes', 'adopt-changes', 'acknowledge', 'resubmit', 'accept', 'accept-amendment', 'stop', 'stopped']);
 const labels = issue => issue.labels.map(label => typeof label === 'string' ? label : label.name);
 const bodyFor = record => `Workflow handoff: ${record.phase}\n\nWorker: ${record.workerId}\nState: ${record.state}\nNext: ${record.action}\nReviewed/submitted commit: ${record.head}\nInstructions: ${record.reviewUrl}${record.instruction ? `\n\nCorrection details:\n${record.instruction}` : ''}\n\n<!-- agent-control-room-handoff:v1 ${JSON.stringify(record)} -->`;
 
@@ -21,11 +21,12 @@ export function parseHandoff(comment) {
 }
 
 export function parseHandoffCommand(body) {
-  const match = /^HANDOFF (submit|changes|adopt-changes|acknowledge|resubmit|accept|stop|stopped)\nworker-id: ([A-Za-z0-9][A-Za-z0-9._:-]{2,79})\n(?:claim-worker-id: ([A-Za-z0-9][A-Za-z0-9._:-]{2,79})\n)?pr: ([1-9][0-9]*)\nhead: ([a-f0-9]{40})\nprevious: (0|[1-9][0-9]*)(?:\n\n([\s\S]*?))?\n?$/.exec((body ?? '').replace(/\r\n/g, '\n'));
+  const match = /^HANDOFF (submit|changes|adopt-changes|acknowledge|resubmit|accept|accept-amendment|stop|stopped)\nworker-id: ([A-Za-z0-9][A-Za-z0-9._:-]{2,79})\n(?:claim-worker-id: ([A-Za-z0-9][A-Za-z0-9._:-]{2,79})\n)?pr: ([1-9][0-9]*)\nhead: ([a-f0-9]{40})\nprevious: (0|[1-9][0-9]*)(?:\n\n([\s\S]*?))?\n?$/.exec((body ?? '').replace(/\r\n/g, '\n'));
   if (!match) return undefined;
   if ((match[1] === 'adopt-changes') !== Boolean(match[3])) return undefined;
   const instruction = match[7]?.trim();
   if (instruction && (instruction.length > 12000 || instruction.includes('<!-- agent-control-room-handoff:v1'))) return undefined;
+  if (match[1] === 'accept-amendment' && !instruction) return undefined;
   return { command: match[1], workerId: match[2], claimWorkerId: match[3], pr: Number(match[4]), head: match[5], previousId: Number(match[6]), instruction };
 }
 
@@ -60,6 +61,7 @@ function nextState(command, previous) {
   if (command === 'resubmit' && ['in-review', 're-review'].includes(previous?.state)
     && previous.action === 'reviewer') return ['re-review', 'reviewer', false];
   if (command === 'accept' && ['in-review', 're-review'].includes(previous?.state)) return [previous.state, 'integrator', false];
+  if (command === 'accept-amendment' && ['in-review', 're-review'].includes(previous?.state)) return [previous.state, 'integrator', false];
   if (command === 'stop' && (previous?.state !== 'paused' || previous?.phase === 'pending')) return ['paused', 'worker', false];
   if (command === 'stopped' && previous?.state === 'paused' && !previous.acknowledged) return ['paused', 'integrator', true];
   throw new Error('handoff_transition_invalid');
@@ -123,13 +125,13 @@ export async function runHandoff({ event, repository, api, maintainers = [] }) {
     ? request.claimWorkerId : predecessor?.record.claimWorkerId ?? request.workerId;
   const claim = acceptedClaim(comments, issueNumber, claimWorkerId);
   if (pr.user.login !== claim.actor) throw new Error('handoff_pr_owner_mismatch');
-  const maintainerAction = ['changes', 'adopt-changes', 'accept', 'stop'].includes(request.command);
+  const maintainerAction = ['changes', 'adopt-changes', 'accept', 'accept-amendment', 'stop'].includes(request.command);
   if (maintainerAction ? (!maintainers.includes(actor) || actor === claim.actor) : actor !== claim.actor)
     throw new Error('handoff_authority_denied');
   if ((predecessor?.comment.id ?? 0) !== request.previousId || (predecessor?.record.phase === 'pending' && request.command !== 'stop')) throw new Error('handoff_predecessor_changed');
   if (predecessor && (predecessor.record.workerId !== request.workerId || predecessor.record.pr !== request.pr
     || predecessor.record.claimId !== claim.id)) throw new Error('handoff_assignment_changed');
-  if (predecessor && !['resubmit', 'stop', 'stopped'].includes(request.command) && predecessor.record.head !== request.head)
+  if (predecessor && !['resubmit', 'accept-amendment', 'stop', 'stopped'].includes(request.command) && predecessor.record.head !== request.head)
     throw new Error('handoff_review_head_changed');
   const [state, action, acknowledged] = nextState(request.command, predecessor?.record);
   const target = [`status:${state}`, `action:${action}`];
