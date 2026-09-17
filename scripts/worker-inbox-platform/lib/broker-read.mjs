@@ -82,7 +82,7 @@ export function snapshotFetch(snapshot, repository) {
       value = snapshot.comments[comments[1]]?.map(comment => ({ ...comment,
         user: { login: comment.author, type: comment.bot ? "Bot" : "User" },
         html_url: `https://github.com/${repository}/issues/${comments[1]}#issuecomment-${comment.id}` }));
-    } else if (single) value = issues.find(issue => issue.number === Number(single[1]));
+    } else if (single) value = snapshot.dependencies?.[single[1]] ?? issues.find(issue => issue.number === Number(single[1]));
     else if (path === "/git/ref/heads/main") value = { object: { sha: snapshot.base?.sha } };
     if (value === undefined) throw new Error("worker_inbox_broker_snapshot_incomplete");
     if (Array.isArray(value)) {

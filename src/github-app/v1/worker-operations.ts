@@ -1,4 +1,5 @@
 import { GitHubAppInstallationAuth } from "./installation-auth";
+import { parseClaimPacket } from "../../../scripts/automatic-claim-controller.mjs";
 import {
   createBoundedGitHubClient,
   type BoundedGitHubClient,
@@ -105,20 +106,21 @@ function commandBody(operation: string, input: GitHubWorkerOperationInput): stri
   return `HANDOFF submit\nworker-id: ${workerId}\npr: ${pr}\nhead: ${head}\nprevious: ${previous}`;
 }
 
-type CommentRecord = Readonly<{ id: number; author: string; bot: boolean; body: string }>;
+type CommentRecord = Readonly<{ id: number; author: string; bot: boolean; body: string; created_at?: string }>;
 
 function commentRecords(value: unknown): CommentRecord[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const records: CommentRecord[] = [];
   for (const entry of value) {
     if (!entry || typeof entry !== "object") continue;
-    const candidate = entry as { id?: unknown; body?: unknown; user?: { login?: unknown; type?: unknown } };
+    const candidate = entry as { id?: unknown; body?: unknown; created_at?: unknown; user?: { login?: unknown; type?: unknown } };
     if (!Number.isSafeInteger(candidate.id) || typeof candidate.body !== "string") continue;
     records.push(Object.freeze({
       id: candidate.id as number,
       author: typeof candidate.user?.login === "string" ? candidate.user.login : "",
       bot: candidate.user?.type === "Bot",
       body: candidate.body,
+      ...(typeof candidate.created_at === "string" ? { created_at: candidate.created_at } : {}),
     }));
   }
   return records;
@@ -217,8 +219,35 @@ export function createGitHubWorkerOperations(options: GitHubWorkerOperationsOpti
       if (issueComments.ok) comments[String(number)] = issueComments.comments;
       else commentErrors[String(number)] = issueComments.code;
     }
+    // Fetch only dependencies named by valid Ready packets. Keep them separate
+    // from open issues so closed records cannot become assignments or offers.
+    const dependencies: Record<string, unknown> = {};
+    if (includeQueue) {
+      const wanted = new Set<number>();
+      for (const entry of projected) {
+        const issue = entry as { body: string; labels: string[]; isPullRequest: boolean };
+        if (issue.isPullRequest || !issue.labels.includes("status:ready")) continue;
+        const packet = parseClaimPacket(issue.body);
+        for (const number of packet?.dependencies ?? []) wanted.add(number);
+      }
+      if (wanted.size > MAX_ISSUES) return Object.freeze({ ok: false, code: "github_snapshot_incomplete" });
+      for (const number of wanted) {
+        const result = await client.request<unknown>({ shape: "issue-read", params: { number } });
+        if (!result.ok) return Object.freeze({ ok: false, code: result.code });
+        const value = result.value as { number?: unknown; state?: unknown; state_reason?: unknown;
+          labels?: unknown; pull_request?: unknown } | null;
+        if (!value || value.number !== number || !["open", "closed"].includes(String(value.state))
+          || !Array.isArray(value.labels)) return Object.freeze({ ok: false, code: "github_response_invalid" });
+        dependencies[String(number)] = Object.freeze({ number, state: value.state,
+          state_reason: typeof value.state_reason === "string" ? value.state_reason : null,
+          ...(value.pull_request !== undefined ? { pull_request: {} } : {}),
+          labels: value.labels.map(label => typeof label === "string" ? label : label?.name)
+            .filter((label): label is string => typeof label === "string") });
+      }
+    }
     const snapshot: Record<string, unknown> = {
       repository: options.repository,
+      dependencies: Object.freeze(dependencies),
       observedAt: new Date(now()).toISOString(),
       issues: Object.freeze(projected),
       comments: Object.freeze(comments),

@@ -472,6 +472,73 @@ test("worker inbox read returns a bounded snapshot and keeps the token inside th
   assert.doesNotMatch(JSON.stringify(audits), /ignore all previous instructions|attacker/u);
 });
 
+test("broker snapshot preserves correction metadata through the real inbox parser", async () => {
+  const { readWorkerInbox } = await import("../scripts/public-worker-inbox.mjs");
+  const created_at = "2026-09-16T01:00:00Z";
+  const marker = { issue: 300, workerId: WORKER, state: "changes-required", action: "worker",
+    phase: "complete", acknowledged: false, pr: 301, head: HEAD };
+  const comment = { id: 901, created_at,
+    body: `<!-- agent-control-room-handoff:v1 ${JSON.stringify(marker)} -->`,
+    user: { login: "github-actions[bot]", type: "Bot" } };
+  const state = brokerState({ issues: [{ ...issueRecord(300),
+    labels: ["status:changes-required", "action:worker"] }], comments: [comment] });
+  const { operations } = workingBroker(state);
+  const actions = await readWorkerInbox({ workerId: WORKER, repository: BROKER_REPOSITORY, token: undefined,
+    broker: { url: "https://broker.example/v1/worker-operations", token: "disposable-worker-token" },
+    fetchImpl: async (_url: unknown, init?: RequestInit) =>
+      jsonResponse(await operations.run(JSON.parse(String(init?.body)))) });
+  assert.equal(actions.length, 1);
+  assert.equal(actions[0].state, "changes-required");
+  assert.equal(actions[0].requestedAt, created_at);
+  assert.equal(actions[0].markerCommentId, 901);
+  assert.equal(actions[0].instructionUrl, `https://github.com/${BROKER_REPOSITORY}/issues/300#issuecomment-901`);
+});
+
+test("ready discovery carries closed dependencies through the real inbox parser", async () => {
+  const { readWorkerInbox } = await import("../scripts/public-worker-inbox.mjs");
+  const packet = { target: "main", base: "b".repeat(40), writeScopes: ["src/example/**"],
+    dependencies: [299], checks: ["pnpm check"], risk: "ordinary", effects: "none", leaseHours: 24 };
+  const state = brokerState({ issues: [{ ...issueRecord(300), labels: ["status:ready"],
+    body: `<!-- acr-public-work:v1 ${JSON.stringify(packet)} -->` }] });
+  const { operations, requests } = workingBroker(state, { handle: request =>
+    request.url.endsWith("/issues/299") ? jsonResponse({ ...issueRecord(299), state: "closed",
+      labels: ["status:done"] }) : undefined });
+  const actions = await readWorkerInbox({ workerId: WORKER, repository: BROKER_REPOSITORY, token: undefined,
+    includeReady: true,
+    broker: { url: "https://broker.example/v1/worker-operations", token: "disposable-worker-token" },
+    fetchImpl: async (_url: unknown, init?: RequestInit) =>
+      jsonResponse(await operations.run(JSON.parse(String(init?.body)))) });
+  assert.equal(actions.length, 1);
+  assert.equal(actions[0].state, "ready-candidate");
+  assert.equal(actions[0].admission.outcome, "admit");
+  assert.equal(requests.filter(request => request.url.endsWith("/issues/299")).length, 1);
+});
+
+test("broker dependency projection retains incomplete and not-planned dispositions", async () => {
+  const { readWorkerInbox } = await import("../scripts/public-worker-inbox.mjs");
+  const packet = { target: "main", base: "b".repeat(40), writeScopes: ["src/example/**"],
+    dependencies: [299], checks: ["pnpm check"], risk: "ordinary", effects: "none", leaseHours: 24 };
+  for (const dependency of [
+    { state: "open", labels: ["status:done"] },
+    { state: "closed", labels: [] },
+    { state: "closed", labels: ["status:done"], state_reason: "not_planned" },
+    { state: "closed", labels: ["status:done"], pull_request: {} },
+  ]) {
+    const state = brokerState({ issues: [{ ...issueRecord(300), labels: ["status:ready"],
+      body: `<!-- acr-public-work:v1 ${JSON.stringify(packet)} -->` }] });
+    const { operations } = workingBroker(state, { handle: request =>
+      request.url.endsWith("/issues/299") ? jsonResponse({ ...issueRecord(299), ...dependency }) : undefined });
+    const actions = await readWorkerInbox({ workerId: WORKER, repository: BROKER_REPOSITORY, token: undefined,
+      includeReady: true,
+      broker: { url: "https://broker.example/v1/worker-operations", token: "disposable-worker-token" },
+      fetchImpl: async (_url: unknown, init?: RequestInit) =>
+        jsonResponse(await operations.run(JSON.parse(String(init?.body)))) });
+    assert.equal(actions.length, 1);
+    assert.equal(actions[0].state, "queue-blocked");
+    assert.equal(actions[0].admission.reason, "dependencies_incomplete");
+  }
+});
+
 test("an expired installation token is refreshed once and the retried read succeeds", async () => {
   const state = brokerState({ issues: [] });
   let rejections = 0;

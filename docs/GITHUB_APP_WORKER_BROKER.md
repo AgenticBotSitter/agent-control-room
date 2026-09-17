@@ -161,10 +161,15 @@ retain exponential backoff and deterministic per-worker staggering. Direct fallb
 eligible only after the first delay; it uses the existing GitHub read path. Broker and
 GitHub credentials are kept separate. Broker failures do not write a change signal.
 
-This correction is not ready for handoff yet. Remaining qualification includes complete
-snapshot parity (closed dependencies and comment metadata), bounded streaming response
-validation, generated-scheduler configuration coverage, full broker-to-parser integration
-coverage, and uncertain command-response retry safety. The original bounded operation
+Snapshots now preserve correction timestamps and carry separately bounded dependency
+records fetched only for valid Ready packets. The existing controller parser validates
+those records: open, not-planned, missing-done and pull-request dependencies remain
+blocked. Injected end-to-end tests drive the actual broker result into the inbox parser.
+
+This correction is not ready for handoff yet. Remaining qualification includes bounded
+streaming response validation, generated-scheduler configuration coverage, broader
+broker-to-parser integration coverage, and uncertain command-response retry safety.
+The original bounded operation
 allowlist and authenticated worker binding remain in place. No live broker or scheduler
 activation was performed.
 
