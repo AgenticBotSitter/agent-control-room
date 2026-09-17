@@ -1,8 +1,10 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { GitHubWorkerBroker } from "./worker-broker";
 import type { PostgresGitHubWorkerWakeStore } from "./postgres-wake-store";
+import type { GitHubWorkerOperationInput, GitHubWorkerOperations } from "./worker-operations";
 
 const MAX_BODY_BYTES = 1_048_576;
+const MAX_OPERATION_BODY_BYTES = 8_192;
 const RESPONSE_HEADERS = Object.freeze({
   "cache-control": "no-store",
   "content-type": "application/json; charset=utf-8",
@@ -11,7 +13,10 @@ const RESPONSE_HEADERS = Object.freeze({
   "referrer-policy": "no-referrer",
 });
 
-type WorkerAuthorizer = (request: IncomingMessage) => boolean | Promise<boolean>;
+/** What an authorizer answers: refuse, vouch for the caller without binding an identity, or
+ *  vouch for one stable worker identity. Only a bound identity can authorize an operation. */
+export type WorkerAuthorization = boolean | Readonly<{ workerId: string }> | null | undefined;
+export type WorkerAuthorizer = (request: IncomingMessage) => WorkerAuthorization | Promise<WorkerAuthorization>;
 
 function send(response: ServerResponse, status: number, body: object): void {
   response.writeHead(status, { ...RESPONSE_HEADERS, connection: "close" });
@@ -23,24 +28,62 @@ function header(request: IncomingMessage, name: string): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-async function bodyOf(request: IncomingMessage): Promise<Buffer | undefined> {
+/** The authenticated stable worker identity, when the authorizer binds one. */
+function authorizedWorkerId(authorization: WorkerAuthorization): string | undefined {
+  if (!authorization || typeof authorization !== "object") return undefined;
+  const workerId = (authorization as { workerId?: unknown }).workerId;
+  return typeof workerId === "string" && workerId ? workerId : undefined;
+}
+
+async function bodyOf(request: IncomingMessage, limit: number = MAX_BODY_BYTES): Promise<Buffer | undefined> {
   const chunks: Buffer[] = [];
   let length = 0;
   for await (const chunk of request) {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     length += bytes.length;
-    if (length > MAX_BODY_BYTES) return undefined;
+    if (length > limit) return undefined;
     chunks.push(bytes);
   }
   return Buffer.concat(chunks, length);
 }
 
+/** Projects a caller's JSON onto the finite operation input surface. Unknown fields never travel. */
+function operationInput(raw: unknown): GitHubWorkerOperationInput | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const value = raw as Record<string, unknown>;
+  if (typeof value.operation !== "string" || !value.operation) return undefined;
+  const input: Record<string, unknown> = { operation: value.operation };
+  for (const key of ["workerId", "head"] as const) {
+    if (typeof value[key] === "string") input[key] = value[key];
+  }
+  for (const key of ["issue", "pr", "previous"] as const) {
+    if (Number.isSafeInteger(value[key])) input[key] = value[key];
+  }
+  return Object.freeze(input) as GitHubWorkerOperationInput;
+}
+
+const REFUSAL_STATUS: Readonly<Record<string, number>> = Object.freeze({
+  worker_operation_forbidden: 403,
+  worker_identity_invalid: 400,
+  worker_command_invalid: 400,
+  worker_command_too_large: 413,
+  worker_claim_conflict: 409,
+  worker_claim_mismatch: 409,
+});
+
+function statusFor(result: Readonly<{ ok: boolean; code?: unknown }>): number {
+  if (result.ok) return 200;
+  return typeof result.code === "string" ? (REFUSAL_STATUS[result.code] ?? 502) : 502;
+}
+
 /** Inert Node request bridge. The loopback service owns the physical listener. */
-export function createGitHubWorkerBrokerNodeBridge({ broker, wakeStore, authorizeWorker, close = async () => {},
-  isReady = () => true }: {
+export function createGitHubWorkerBrokerNodeBridge({ broker, wakeStore, authorizeWorker, operations,
+  close = async () => {}, isReady = () => true }: {
   broker: GitHubWorkerBroker;
   wakeStore: PostgresGitHubWorkerWakeStore;
   authorizeWorker: WorkerAuthorizer;
+  /** Worker-facing operations. Absent means the routes answer 503 rather than 404. */
+  operations?: GitHubWorkerOperations;
   close?: () => Promise<void>;
   isReady?: () => boolean;
 }) {
@@ -77,7 +120,7 @@ export function createGitHubWorkerBrokerNodeBridge({ broker, wakeStore, authoriz
         send(response, 202, { ok: true, wake: result.wake }); return;
       }
       if (request.method === "GET" && url.pathname === "/v1/worker-wake-hints") {
-        let authorized = false;
+        let authorized: WorkerAuthorization = false;
         try { authorized = await authorizeWorker(request); } catch { authorized = false; }
         if (!authorized) { send(response, 401, { ok: false }); return; }
         const cursor = url.searchParams.get("after") ?? "0";
@@ -89,6 +132,34 @@ export function createGitHubWorkerBrokerNodeBridge({ broker, wakeStore, authoriz
             { ok: false });
         }
         return;
+      }
+      if (request.method === "POST" && url.pathname === "/v1/worker-operations") {
+        let authorized: WorkerAuthorization = false;
+        try { authorized = await authorizeWorker(request); } catch { authorized = false; }
+        if (!authorized) { send(response, 401, { ok: false }); return; }
+        if (!operations) { send(response, 503, { ok: false, code: "worker_operations_unavailable" }); return; }
+        const contentLength = header(request, "content-length");
+        if (contentLength && (!/^\d+$/u.test(contentLength) || Number(contentLength) > MAX_OPERATION_BODY_BYTES)) {
+          send(response, 413, { ok: false }); return;
+        }
+        const body = await bodyOf(request, MAX_OPERATION_BODY_BYTES);
+        if (!body) { send(response, 413, { ok: false }); return; }
+        let input: GitHubWorkerOperationInput | undefined;
+        try { input = operationInput(JSON.parse(body.toString("utf8"))); } catch { input = undefined; }
+        if (!input) { send(response, 400, { ok: false, code: "worker_operation_request_invalid" }); return; }
+        // Security boundary: an operation runs only for the identity the authorizer vouches for.
+        // An authorizer that answers true/false binds no identity, so it authorizes no operation,
+        // and one worker's credential can never act as another worker. Both refusals precede the
+        // operation layer, so no GitHub request is made for an unbound or mismatched caller.
+        const identity = authorizedWorkerId(authorized);
+        if (identity === undefined) { send(response, 403, { ok: false, code: "worker_identity_unbound" }); return; }
+        if (input.workerId !== undefined && input.workerId !== identity) {
+          send(response, 403, { ok: false, code: "worker_identity_mismatch" }); return;
+        }
+        let result;
+        try { result = await operations.run(input); }
+        catch { send(response, 502, { ok: false, code: "worker_operations_failed" }); return; }
+        send(response, statusFor(result), result); return;
       }
       send(response, 404, { ok: false });
     },

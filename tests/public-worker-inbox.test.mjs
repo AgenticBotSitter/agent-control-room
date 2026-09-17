@@ -2,6 +2,90 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { parseActionMarker, parseHandoffMarker, readWorkerInbox, renderWorkerInbox, resolveInboxToken } from "../scripts/public-worker-inbox.mjs";
 const workerId = "worker:test-01";
+const repository = "AgenticBotSitter/agent-control-room";
+const broker = { url: "http://127.0.0.1:9999/v1/worker-operations", token: "synthetic-worker-token" };
+function brokerReply({ includeReady = false, issues = [issue()], comments = [claim()], ...extra } = {}) {
+  return new Response(JSON.stringify({ version: "acr-worker-broker-operations:v1", ok: true,
+    operation: includeReady ? "ready-queue-discovery" : "worker-inbox-read", workerId,
+    snapshot: { repository, complete: true, commentErrors: {}, base: { sha: "a".repeat(40) },
+      issues: issues.map(item => ({ ...item, isPullRequest: false })),
+      comments: Object.fromEntries(issues.map(item => [item.number, comments.map(c => ({ ...c, author: c.user.login, bot: c.user.type === "Bot" }))])), ...extra } }));
+}
+
+test("broker-first reads reuse controller parsing without any direct request", async () => {
+  const calls = [];
+  const actions = await readWorkerInbox({ workerId, repository, broker, fetchImpl: async (url, init) => {
+    calls.push(url);
+    assert.equal(init.redirect, "error");
+    assert.equal(init.headers.authorization, `Bearer ${broker.token}`);
+    assert.deepEqual(JSON.parse(init.body), { operation: "worker-inbox-read", workerId });
+    return brokerReply({ comments: [claim(), handoff({ state: "changes-required" })], issues: [issue(["status:changes-required", "action:worker"])] });
+  } });
+  assert.equal(actions[0].state, "changes-required");
+  assert.equal(actions[0].trust, "controller-record");
+  assert.deepEqual(calls, [broker.url]);
+});
+
+test("broker ready snapshot retains packet and uses the existing admission evaluator", async () => {
+  const actions = await readWorkerInbox({ workerId, repository, broker, includeReady: true,
+    fetchImpl: async () => brokerReply({ includeReady: true, issues: [{ ...issue(["status:ready"], 1), body: packet() }], comments: [] }) });
+  assert.equal(actions[0].state, "ready-candidate");
+  assert.equal(actions[0].admission.outcome, "admit");
+});
+
+test("broker failures defer fallback, honor Retry-After and retain backoff after restart", async () => {
+  let clock = 1000;
+  let direct = 0, privateReads = 0;
+  const state = {};
+  const fetchImpl = async (url, init) => {
+    if (url === broker.url) { privateReads++; return new Response("{}", { status: 429, headers: { "retry-after": "600" } }); }
+    direct++;
+    assert.equal(init.headers.authorization, "Bearer synthetic-github-token");
+    return fakeFetch().fetchImpl(url);
+  };
+  const options = { workerId, repository, broker, token: "synthetic-github-token", fetchImpl, now: () => clock };
+  await assert.rejects(readWorkerInbox({ ...options, brokerState: state }), /worker_inbox_broker_unavailable/);
+  assert.equal(direct, 0);
+  assert.equal(state.nextBrokerAt, 601000);
+  const restarted = JSON.parse(JSON.stringify(state));
+  clock = 500000;
+  await assert.rejects(readWorkerInbox({ ...options, brokerState: restarted }), /worker_inbox_broker_unavailable/);
+  assert.equal(privateReads, 1);
+  clock = 601000;
+  const actions = await readWorkerInbox({ ...options, brokerState: restarted });
+  assert.equal(actions[0].state, "working");
+  assert.equal(direct, 2);
+});
+
+test("incomplete or foreign broker data cannot clear the inbox", async () => {
+  for (const extra of [{ complete: false }, { repository: "other/repo" }, { comments: {} }]) {
+    await assert.rejects(readWorkerInbox({ workerId, repository, broker,
+      fetchImpl: async () => brokerReply(extra) }), /worker_inbox_broker_unavailable/);
+  }
+});
+
+test("an unbounded broker stream is cancelled at the ceiling, never drained", async () => {
+  const chunk = new Uint8Array(64 * 1024);
+  let pulled = 0;
+  const endless = new ReadableStream({
+    pull(controller) { pulled++; controller.enqueue(chunk); },
+    cancel() { pulled = -Math.abs(pulled); },
+  });
+  const state = {};
+  await assert.rejects(readWorkerInbox({ workerId, repository, broker, brokerState: state,
+    fetchImpl: async () => new Response(endless) }), /worker_inbox_broker_unavailable/);
+  // Only the ceiling plus one chunk was ever pulled, and the stream was cancelled.
+  assert.ok(pulled < 0, "stream was cancelled");
+  assert.ok(-pulled <= 4 * 1024 * 1024 / chunk.length + 2, `pulled ${-pulled} chunks`);
+  assert.ok(state.nextBrokerAt > 0, "backoff scheduled");
+});
+
+test("a broker body at the ceiling still parses", async () => {
+  const padding = "p".repeat(4 * 1024 * 1024 - 1500);
+  const actions = await readWorkerInbox({ workerId, repository, broker,
+    fetchImpl: async () => brokerReply({ comments: [claim()], issues: [{ ...issue(), note: padding }] }) });
+  assert.ok(actions.length > 0);
+});
 test("capacity update is discoverable even when the personal inbox is empty", () => {
   const rendered = renderWorkerInbox(workerId, []);
   assert.match(rendered, /2 active builds \/ 5 total assignments/);

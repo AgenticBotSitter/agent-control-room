@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { readWorkerInbox } from "../public-worker-inbox.mjs";
+import { brokerConfiguration } from "./lib/broker-read.mjs";
 import { actionsFingerprint, describeChange } from "./lib/inbox-fingerprint.mjs";
 import {
   RUNTIME_VERSION, appendBoundedLog, assertRepository, assertWorkerId, ensureWorkerDirectory,
@@ -128,17 +129,19 @@ export async function runTick({ options, reader = readWorkerInbox, token, now = 
   const directory = workerDirectory({ workerId: options.workerId, runtimeRoot: options.runtimeRoot });
   ensureWorkerDirectory(directory, { workerId: options.workerId });
   const statePath = stateFile(directory), logPath = logFile(directory), signalPath = signalFile(directory);
-  const secrets = [token];
+  const secrets = [token, options.broker?.token];
   const previous = readState(statePath);
+  const brokerState = { ...(previous?.brokerState ?? {}) };
 
   let actions;
   try {
     actions = await reader({
       workerId: options.workerId, repository: options.repository, token, fetchImpl: options.fetchImpl, includeReady: true,
+      broker: options.broker, brokerState, now: () => now().getTime(),
     });
   } catch (error) {
     const message = redactSecrets(error?.message ?? "worker_inbox_platform_failure", secrets);
-    const rateLimited = isRateLimitFailure(message);
+    const rateLimited = isRateLimitFailure(message) || message === "worker_inbox_broker_unavailable";
     appendBoundedLog(logPath, `${at} outcome=failure error=${message}`, { maxBytes: options.maxLogBytes });
     writeJsonAtomic(statePath, {
       ...(previous ?? {}),
@@ -147,6 +150,7 @@ export async function runTick({ options, reader = readWorkerInbox, token, now = 
       repository: options.repository,
       updatedAt: at,
       lastOutcome: "failure",
+      ...(options.broker ? { brokerState } : {}),
       lastError: message,
     });
     return {
@@ -216,6 +220,7 @@ export async function runTick({ options, reader = readWorkerInbox, token, now = 
     repository: options.repository,
     updatedAt: at,
     lastOutcome: "ok",
+    ...(options.broker ? { brokerState } : {}),
     observed,
     lastChange: { kind: change.kind, changed: change.changed, at },
   });
@@ -268,6 +273,7 @@ export async function main(argv = process.argv.slice(2), { reader, environment =
   }
   let token;
   try {
+    options.broker = brokerConfiguration({ environment });
     token = resolveToken({ environment, tokenFromGh: options.tokenFromGh, runCommand });
   } catch (error) {
     console.error(`worker-inbox-watch: ${error.message}`);

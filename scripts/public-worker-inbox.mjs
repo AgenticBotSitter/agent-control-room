@@ -1,5 +1,6 @@
 import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
+import { brokerConfiguration, brokerSnapshot, snapshotFetch } from "./worker-inbox-platform/lib/broker-read.mjs";
 import { parseClaimPacket, parseClaimMarker as parseControllerClaim, parseExpiredMarker,
   verifiedLockScopes, evaluateAdmissionDecision, observeMainBase } from "./automatic-claim-controller.mjs";
 
@@ -72,9 +73,23 @@ async function pages(fetchImpl, url, token, maxPages = 10) {
 }
 
 export async function readWorkerInbox({ workerId, repository = "AgenticBotSitter/agent-control-room",
-  token, fetchImpl = fetch, includeReady = false }) {
+  token, fetchImpl = fetch, includeReady = false, broker, brokerState = {}, now = Date.now }) {
   if (!WORKER_ID.test(workerId ?? "")) throw new Error("worker_inbox_worker_id_invalid");
   if (!REPOSITORY.test(repository)) throw new Error("worker_inbox_repository_invalid");
+  if (broker) {
+    let snapshot;
+    try { snapshot = await brokerSnapshot({ broker, workerId, repository, includeReady, fetchImpl, state: brokerState, now }); }
+    catch {
+      if (!(brokerState.nextFallbackAt <= now())) throw new Error("worker_inbox_broker_unavailable");
+      brokerState.nextFallbackAt = now() + 300000;
+      try {
+        const fallback = await readWorkerInbox({ workerId, repository, token, fetchImpl, includeReady });
+        if (fallback.some(item => item.state === "attention" || item.admissionError)) throw new Error("incomplete");
+        return fallback;
+      } catch { throw new Error("worker_inbox_broker_unavailable"); }
+    }
+    return readWorkerInbox({ workerId, repository, includeReady, fetchImpl: snapshotFetch(snapshot, repository) });
+  }
   const root = `https://api.github.com/repos/${repository}`;
   const issues = await pages(fetchImpl, `${root}/issues?state=open`, token);
   const actions = [];
@@ -359,7 +374,8 @@ export function resolveInboxToken({ environment = process.env, tokenFromGh = fal
 async function main() {
   const options = argumentsFor(process.argv.slice(2));
   const token = resolveInboxToken({ tokenFromGh: options.tokenFromGh });
-  const actions = await readWorkerInbox({ ...options, token });
+  const broker = brokerConfiguration();
+  const actions = await readWorkerInbox({ ...options, token, broker });
   console.log(options.json ? JSON.stringify({ workerId: options.workerId, actions }, null, 2)
     : renderWorkerInbox(options.workerId, actions));
 }

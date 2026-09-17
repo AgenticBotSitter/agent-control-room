@@ -145,6 +145,42 @@ delete wake or replay rows during incident response. If a migration rollback is 
 the verified pre-change database backup into the approved recovery target; do not hand-edit the
 production schema.
 
+## Worker read integration (source-only, qualification in progress)
+
+The inbox CLI and both watcher entry points accept explicit private-broker configuration
+from the operator-controlled environment: `ACR_WORKER_BROKER_URL` must name the exact
+`/v1/worker-operations` endpoint, and `ACR_WORKER_BROKER_TOKEN` is a separate worker
+credential, never a GitHub installation token. No URL means the existing direct read
+path. Configuration does not install a service or authorize activation. Generated
+scheduler definitions inherit configuration; they do not embed credential values.
+
+The client requests the named inbox or ready-discovery operation and routes its snapshot
+through the existing inbox parser. Failed/incomplete reads preserve the last observation.
+The platform watcher saves only retry times and failure counters, so scheduled restarts
+retain exponential backoff and deterministic per-worker staggering. Direct fallback is
+eligible only after the first delay; it uses the existing GitHub read path. Broker and
+GitHub credentials are kept separate. Broker failures do not write a change signal.
+
+Snapshots now preserve correction timestamps and carry separately bounded dependency
+records fetched only for valid Ready packets. The existing controller parser validates
+those records: open, not-planned, missing-done and pull-request dependencies remain
+blocked. Injected end-to-end tests drive the actual broker result into the inbox parser.
+
+This correction is not ready for handoff yet. Streaming responses are bounded while
+reading, and injected scheduled-entry-point tests cover explicit broker configuration,
+credential separation, unchanged observations, invalid configuration and the direct-only
+path. These tests do not install a scheduler or prove its environment inheritance.
+Command POSTs are not automatically replayed after a connection failure or 5xx response:
+the command may already have reached GitHub. A later operation attempt reads comment
+history again before posting. Injected tests preserve upstream comments across a fresh
+broker instance and verify this recovery sends no second POST; GET retries remain bounded.
+This does not prove concurrency exclusion or visibility guarantees from live GitHub.
+Remaining qualification includes generated-scheduler environment configuration and broader
+broker-to-parser integration coverage.
+The original bounded operation
+allowlist and authenticated worker binding remain in place. No live broker or scheduler
+activation was performed.
+
 ## Rate limits and Actions
 
 The GitHub App gives automation a separate installation rate bucket, but it does not make wasteful

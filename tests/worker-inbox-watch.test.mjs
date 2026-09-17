@@ -26,6 +26,23 @@ test('watcher deduplicates, reports outage once, recovers and emits new correcti
   assert.equal(await poll(), true);
 });
 
+test('configured broker failure does not emit or replace the last good fingerprint', async () => {
+  const output = [];
+  let fail = false;
+  const broker = { url: 'http://127.0.0.1:9999/v1/worker-operations', token: 'synthetic-token' };
+  const poll = createInboxPoller({ workerId: 'worker-01', broker, emit: text => output.push(text), read: async options => {
+    assert.equal(options.broker, broker);
+    if (fail) throw new Error('worker_inbox_broker_unavailable');
+    return [];
+  } });
+  assert.equal(await poll(), true);
+  fail = true;
+  assert.equal(await poll(), false);
+  fail = false;
+  assert.equal(await poll(), false);
+  assert.equal(output.length, 1);
+});
+
 test('health distinguishes stalled correction, review, stop, conflict and fresh work', () => {
   const old = { requestedAt: '2026-01-01T00:00:00Z', workerId: 'worker-01' };
   const alerts = queueHealth([
