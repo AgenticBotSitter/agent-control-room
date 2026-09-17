@@ -32,6 +32,34 @@ adapters in `src/voice/v1/types.ts`:
 Tests inject fakes. No real microphone attempt, permission prompt, provider
 call, credential or deployment effect exists anywhere in this module.
 
+## Browser adapters (not yet mounted)
+
+`private-app/app/voice-browser-adapters.ts` provides the real Web Speech API
+implementations of both boundaries via `voiceBrowserAdaptersV1()`:
+
+- **Recognition** feature-detects `SpeechRecognition` / `webkitSpeechRecognition`
+  lazily at call time — never at import or adapter creation — so an unsupported
+  browser imports cleanly, reports `isSupported() === false`, and `start()`
+  reports the safe `unsupported` error kind instead of throwing. Final results
+  are mapped into the existing `VoiceTranscriptEventV1` transcript records with
+  stable `eventId`s (`recognition-<instance>-<index>`); duplicate suppression
+  remains the surface's job (`dedupeTranscriptEventsV1`). Browser error codes
+  map onto the safe kinds only (`not-allowed` / `service-not-allowed` →
+  `denied`; `not-supported` / `audio-capture` → `unsupported`; `aborted` /
+  `no-speech` → `cancelled`; anything else → `error`), and `stop()` is
+  safe before start and after stop. During a run it calls the active engine's
+  `stop()` once and releases its callbacks/state; repeated stops do nothing.
+  Natural end (including an end after an error) and synchronous start failure
+  also release the run, allowing the same adapter to start again. A late end
+  from a stopped run cannot clear a newer active engine.
+- **Synthesis** feature-detects `speechSynthesis`, creates a
+  `SpeechSynthesisUtterance` only on explicit caller use of `speak()`, refuses
+  blank text, and `cancel()` is idempotent and safe before anything was spoken.
+
+The adapters are **not mounted in any page yet** — `VoiceControlsSurface`
+still receives its adapters by injection, and no page composition, permission
+attempt or policy change happens here.
+
 ## Keyboard and text-only
 
 Every control is a native labelled `<button>` / `<input type="checkbox">`.
@@ -44,4 +72,5 @@ Typing always works; voice never replaces it.
 - `src/voice/v1/policy.ts` — default-off settings, read-aloud gate, dedupe, cleanup
 - `src/voice/v1/presentation.ts` — owner-visible wording for every state
 - `private-app/app/voice-controls.tsx` — `VoiceControlsSurface`
+- `private-app/app/voice-browser-adapters.ts` — real browser adapters (not yet mounted)
 - `tests/voice-accessibility.test.tsx` — lane `test:voice`
