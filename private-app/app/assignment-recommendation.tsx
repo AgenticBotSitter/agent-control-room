@@ -24,7 +24,8 @@ export function AssignmentRecommendationPanel({ recommendation, scope, onPrefer 
     <h2>Assignment recommendation</h2>
     <p>{recommendation.explanation}</p>
     {chosen && <div>
-      <p role="status">Recommended machine: {chosen.label} · {chosen.platform}. Harness or model class: {chosen.harness}. Recommended effort: {chosen.effort}.</p>
+      <p role="status">Recommended machine: {chosen.label} · {chosen.platform}. Harness: {chosen.harness}. Model class: {chosen.modelClass === "unreported"
+        ? "unreported — no comparable historical evidence" : chosen.modelClass}. Recommended effort: {chosen.effort}.</p>
       <p>Capability basis: {chosen.capabilityProbeId}; {chosen.capacity.activeTaskCount} of {chosen.capacity.maxConcurrentTasks} slot(s) in use.</p>
       <p>{chosen.costTradeoff.cost === "reported_historical"
         ? `Reported historical duration median: ${chosen.costTradeoff.reportedMinutesMedian} minutes across ${chosen.costTradeoff.sampleSize} reported outcome(s).`

@@ -176,6 +176,25 @@ test("a historical effort class is recommended only when comparable outcomes agr
   assert.ok(thin.recommendation.basis.includes("historical_outcome_insufficient"));
 });
 
+test("a fractional token median survives the wire schema and the panel renders the model class", async t => {
+  const f = await taskAssignmentFixture(); t.after(f.close);
+  const row = (modelClass, effort, outcome, at_, reportedMinutes, reportedTokens) => ({ capabilityProbeId: f.route.capabilityProbeId,
+    modelClass, effort, outcome, recordedAt: at_, ...(reportedMinutes === undefined ? {} : { reportedMinutes }),
+    ...(reportedTokens === undefined ? {} : { reportedTokens }) });
+  const evenSample = [row("reported-class-a", "high", "accepted", at(1000), 40, 10),
+    row("reported-class-a", "high", "accepted", at(2000), 60, 11)];
+  const projection = evaluateAssignmentRecommendationV1(recommendationInput(f, { history: evenSample }));
+  assert.deepEqual(projection.recommendation.costTradeoff, { cost: "reported_historical", usage: "reported_historical",
+    sampleSize: 2, reportedMinutesMedian: 50, reportedTokensMedian: 10.5 });
+  assert.deepEqual(assignmentRecommendationProjectionSchemaV1.parse(projection), projection);
+  const scope = { projectId: binding.projectId, jobId: f.prepared.receipt.jobId, inputDigest: f.prepared.receipt.inputDigest };
+  const html = renderToStaticMarkup(createElement(AssignmentRecommendationPanel, { recommendation: projection, scope }));
+  assert.match(html, /Harness: hermes-native/);
+  assert.match(html, /Model class: reported-class-a/);
+  assert.doesNotMatch(html, /Harness or model class:/);
+  assert.match(html, /10\.5 tokens/);
+});
+
 test("unsuccessful history never supplies an accepted model recommendation", async t => {
   const f = await taskAssignmentFixture(); t.after(f.close);
   const history = [1000, 2000].map(ms => ({ capabilityProbeId: f.route.capabilityProbeId,

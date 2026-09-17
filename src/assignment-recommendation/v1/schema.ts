@@ -28,7 +28,10 @@ export const assignmentRecommendationProjectionSchemaV1 = z.object({
   recommendation: z.object({ nodeId: safeId, label, platform, executorId: safeId, capabilityProbeId: safeId, harness: label,
     effort, modelClass: z.string().min(1).max(80), costTradeoff: z.object({ cost: z.enum(["reported_historical", "unknown"]),
       usage: z.enum(["reported_historical", "unknown"]), sampleSize: z.number().int().nonnegative(),
-      reportedMinutesMedian: z.number().nonnegative().optional(), reportedTokensMedian: z.number().int().nonnegative().optional() }).strict(),
+      reportedMinutesMedian: z.number().nonnegative().optional(),
+      // A median over an even sample is fractional (10 and 11 reported tokens -> 10.5), so a
+      // reported median is any nonnegative number; only the underlying observations are counts.
+      reportedTokensMedian: z.number().nonnegative().optional() }).strict(),
     capacity, basis: z.array(basis).max(24) }).strict().nullable(),
   alternatives: z.array(assignmentRecommendationAlternativeSchemaV1).max(64),
   limits: z.array(limit).max(16),
