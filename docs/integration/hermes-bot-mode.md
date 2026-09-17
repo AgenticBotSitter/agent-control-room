@@ -25,7 +25,10 @@ but marked `contested` with the disagreement digests attached.
 A reconnect replays the stream. Events already seen drop as duplicates,
 late gap-fills (new ids below the cursor) merge without moving the cursor,
 and sequence gaps are listed in `missingSequences` and carried forward
-across batches via `nextCursor` until filled. Nothing is reprocessed.
+across batches via `nextCursor` until filled. Disagreement digests and known
+result lookups accumulate the same way, so a post-reconnect view still
+contests and proposes from everything it has ever seen. Nothing is
+reprocessed.
 
 ## Fail-closed gates
 

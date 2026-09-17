@@ -325,3 +325,65 @@ describe("hermes bot-mode room bridge", () => {
     assert.throws(() => proposeBotModeResultV1(view, "evt-unknown", { kind: "task", summary: "S" }), /bot_mode_result_unknown/);
   });
 });
+
+describe("hermes bot-mode reconcile across batches", () => {
+  const D = (char: string) => `sha256:${char.repeat(64)}`;
+  const event = (overrides: Partial<BotModeEventV1> = {}): BotModeEventV1 => ({
+    eventId: "evt-alpha-1",
+    sequence: 1,
+    round: 1,
+    authorParticipantId: "participant:ann",
+    kind: "message",
+    text: "Should we rotate the garden beds?",
+    digest: D("a"),
+    ...overrides,
+  });
+  const base = () => parseBotModeRoomV1({
+    contractVersion: "control-room-hermes-bot-mode-bridge/v1",
+    roomId: "room:alpha",
+    version: "1.0",
+    capabilities: { toolsEnabled: false, liveProviderCalls: 0, discussionOnly: true },
+    participants: [
+      { participantId: "participant:ann", identityDigest: D("1"), state: "selected" },
+      { participantId: "participant:bob", identityDigest: D("3"), state: "selected" },
+    ],
+    rounds: [{ round: 1, messageLimit: 10, messagesUsed: 2 }],
+    events: [],
+  });
+
+  it("unfilled gaps survive batches until their sequences arrive", () => {
+    const room = base();
+    const first = reconcileBotModeRoomV1(room, [event({ eventId: "evt-1", sequence: 1 })]);
+    assert.deepEqual([...first.missingSequences], []);
+    const second = reconcileBotModeRoomV1(room, [event({ eventId: "evt-4", sequence: 4 })], first.nextCursor);
+    assert.deepEqual([...second.missingSequences], [2, 3]);
+    // An empty reconnect batch does not clear the outstanding gaps.
+    const third = reconcileBotModeRoomV1(room, [], second.nextCursor);
+    assert.deepEqual([...third.missingSequences], [2, 3]);
+    // The late fill resolves exactly its own sequence.
+    const fourth = reconcileBotModeRoomV1(room, [
+      event({ eventId: "evt-2", sequence: 2 }),
+      event({ eventId: "evt-3", sequence: 3 }),
+    ], third.nextCursor);
+    assert.deepEqual([...fourth.missingSequences], []);
+    assert.equal(fourth.lateCount, 2);
+  });
+
+  it("a replayed disagreement still contests the proposal", () => {
+    const room = base();
+    const first = reconcileBotModeRoomV1(room, [
+      event({ eventId: "evt-1", sequence: 1 }),
+      event({ eventId: "evt-d", sequence: 2, kind: "disagreement", text: "Rotation disturbs the soil." }),
+      event({ eventId: "evt-r", sequence: 3, kind: "result", text: "Rotate beds B and C in spring." }),
+    ]);
+    // Reconnect carries no disagreements and replays the known result id.
+    const second = reconcileBotModeRoomV1(room, [
+      event({ eventId: "evt-r", sequence: 3, kind: "result", text: "Rotate beds B and C in spring." }),
+    ], first.nextCursor);
+    assert.equal(second.duplicateCount, 1);
+    assert.equal(second.disagreements.length, 0);
+    const proposal = proposeBotModeResultV1(second, "evt-r", { kind: "decision", summary: "Spring rotation plan." });
+    assert.equal(proposal.contested, true);
+    assert.deepEqual([...proposal.disagreementDigests], [D("a")]);
+  });
+});

@@ -15,6 +15,8 @@ export interface BotModeReconcileCursorV1 {
   readonly seenEventIds: readonly string[];
   readonly cursor: number;
   readonly missingSequences: readonly number[];
+  readonly disagreementDigests: readonly string[];
+  readonly knownResults: Readonly<Record<string, string>>;
 }
 
 export interface BotModeRoomViewV1 {
@@ -29,7 +31,9 @@ export interface BotModeRoomViewV1 {
   readonly absentParticipants: readonly BotModeParticipantV1[];
   readonly failedParticipants: readonly BotModeParticipantV1[];
   readonly disagreements: readonly BotModeEventV1[];
+  readonly accumulatedDisagreementDigests: readonly string[];
   readonly results: readonly BotModeEventV1[];
+  readonly knownResults: Readonly<Record<string, string>>;
   readonly cursor: number;
   readonly viewDigest: string;
   readonly nextCursor: BotModeReconcileCursorV1;
@@ -39,6 +43,8 @@ export const EMPTY_BOT_MODE_CURSOR_V1: BotModeReconcileCursorV1 = Object.freeze(
   seenEventIds: [],
   cursor: 0,
   missingSequences: [],
+  disagreementDigests: [],
+  knownResults: {},
 });
 
 export function reconcileBotModeRoomV1(
@@ -75,12 +81,23 @@ export function reconcileBotModeRoomV1(
   for (let sequence = previous.cursor + 1; sequence <= high; sequence += 1) {
     if (!present.has(sequence)) missing.add(sequence);
   }
+  // Previously reported gaps stay outstanding until their sequences arrive,
+  // however far below the cursor they sit.
   for (const carried of previous.missingSequences) {
-    if (carried > high && !present.has(carried)) missing.add(carried);
+    if (!present.has(carried)) missing.add(carried);
   }
   const missingSequences = [...missing].sort((left, right) => left - right);
   const disagreements = merged.filter((event) => event.kind === "disagreement");
+  // Disagreement evidence accumulates across batches: a reconnect that
+  // replays no disagreements must not clear a contest already observed.
+  const accumulated = new Set(previous.disagreementDigests);
+  for (const event of disagreements) accumulated.add(event.digest);
+  const accumulatedDisagreementDigests = [...accumulated];
   const results = merged.filter((event) => event.kind === "result");
+  // Result lookup accumulates the same way: a post-reconnect view can only
+  // propose a result it (or an earlier batch) has seen.
+  const knownResults: Record<string, string> = { ...previous.knownResults };
+  for (const event of results) knownResults[event.eventId] = event.digest;
   const view = {
     roomId: room.roomId,
     version: room.version,
@@ -93,7 +110,9 @@ export function reconcileBotModeRoomV1(
     absentParticipants: room.participants.filter((participant) => participant.state === "missing"),
     failedParticipants: room.participants.filter((participant) => participant.state === "failed"),
     disagreements,
+    accumulatedDisagreementDigests: Object.freeze(accumulatedDisagreementDigests),
     results,
+    knownResults: Object.freeze(knownResults),
     cursor: high,
   };
   return Object.freeze({
@@ -103,6 +122,8 @@ export function reconcileBotModeRoomV1(
       seenEventIds: Object.freeze([...previous.seenEventIds, ...batchIds]),
       cursor: high,
       missingSequences: Object.freeze(missingSequences),
+      disagreementDigests: Object.freeze(accumulatedDisagreementDigests),
+      knownResults: Object.freeze({ ...knownResults }),
     }),
   });
 }

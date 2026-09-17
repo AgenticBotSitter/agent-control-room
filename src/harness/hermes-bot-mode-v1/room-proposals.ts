@@ -39,8 +39,8 @@ export function proposeBotModeResultV1(
   resultEventId: string,
   request: Readonly<{ kind: "decision" | "task"; summary: string }>,
 ): Readonly<BotModeResultProposalV1> {
-  const result = view.results.find((event) => event.eventId === resultEventId);
-  if (!result) throw new Error("bot_mode_result_unknown");
+  const resultDigest = view.knownResults[resultEventId];
+  if (!resultDigest) throw new Error("bot_mode_result_unknown");
   const identities = view.participants
     .filter((participant) => participant.state === "selected")
     .map((participant) => participant.identityDigest);
@@ -48,13 +48,13 @@ export function proposeBotModeResultV1(
   const material = {
     contractVersion: BOT_MODE_RESULT_PROPOSAL_V1,
     roomId: view.roomId,
-    resultEventId: result.eventId,
-    resultEventDigest: result.digest,
+    resultEventId,
+    resultEventDigest: resultDigest,
     kind: request.kind,
     summary: request.summary,
     participantIdentityDigests: identities,
-    contested: view.disagreements.length > 0,
-    disagreementDigests: view.disagreements.map((event) => event.digest),
+    contested: view.accumulatedDisagreementDigests.length > 0,
+    disagreementDigests: [...view.accumulatedDisagreementDigests],
     grantsApproval: false as const,
     grantsDispatch: false as const,
     grantsPublish: false as const,
