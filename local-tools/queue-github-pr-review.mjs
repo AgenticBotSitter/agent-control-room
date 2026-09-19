@@ -18,8 +18,10 @@ function option(name, fallback) {
 const repository = option("--repo", "AgenticBotSitter/agent-control-room");
 const pr = option("--pr");
 const mode = option("--mode", "deliberate");
+const retry = option("--retry", "0");
 if (!/^\d+$/.test(pr ?? "")) throw new Error("--pr must be a pull-request number");
 if (mode !== "direct" && mode !== "deliberate") throw new Error("--mode must be direct or deliberate");
+if (!/^\d+$/.test(retry) || Number(retry) > 99) throw new Error("--retry must be an integer from 0 through 99");
 
 const fields = "number,title,body,baseRefOid,headRefOid,files,additions,deletions,changedFiles,mergeable";
 const { stdout: metadataText } = await exec("gh", ["pr", "view", pr, "--repo", repository, "--json", fields], {
@@ -41,7 +43,9 @@ if (Buffer.byteLength(material) > MAX_MATERIAL_BYTES) {
 }
 
 const shortHead = metadata.headRefOid.slice(0, 10);
-const id = `pr-${metadata.number}-${shortHead}-review`;
+// A visible retry number preserves the original exact review target while
+// allowing a failed local run to be retried without overwriting its evidence.
+const id = `pr-${metadata.number}-${shortHead}-review${retry === "0" ? "" : `-retry-${retry}`}`;
 const materialDirectory = path.join(BOARD, "material");
 await mkdir(materialDirectory, { recursive: true });
 const materialFile = path.join(materialDirectory, `${id}.txt`);

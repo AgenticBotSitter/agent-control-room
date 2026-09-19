@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { appendFile, mkdir } from "node:fs/promises";
+import { appendFile, mkdir, open, readFile, unlink } from "node:fs/promises";
 import { watch } from "node:fs";
 import { spawn } from "node:child_process";
 import path from "node:path";
@@ -10,6 +10,33 @@ const REPO = process.cwd();
 const BOARD = path.resolve(process.env.ACR_LOCAL_WORKBOARD ?? ".local-workboard");
 const INBOX = path.join(BOARD, "inbox", "qwen");
 const LOG = path.join(BOARD, "logs", "qwen-watcher.jsonl");
+const LOCK = path.join(BOARD, "locks", "qwen-watcher.lock");
+
+async function acquireWatcherLock() {
+  await mkdir(path.dirname(LOCK), { recursive: true });
+  try {
+    return await open(LOCK, "wx", 0o600);
+  } catch (error) {
+    if (error?.code !== "EEXIST") throw error;
+    let prior;
+    try {
+      prior = JSON.parse(await readFile(LOCK, "utf8"));
+    } catch {
+      throw new Error("another Qwen watcher lock exists and cannot be verified safely");
+    }
+    if (!Number.isSafeInteger(prior?.pid) || prior.pid <= 0) {
+      throw new Error("another Qwen watcher lock exists with an invalid owner record");
+    }
+    try {
+      process.kill(prior.pid, 0);
+      throw new Error(`Qwen watcher already running (PID ${prior.pid})`);
+    } catch (probeError) {
+      if (probeError?.code !== "ESRCH") throw probeError;
+    }
+    await unlink(LOCK);
+    return acquireWatcherLock();
+  }
+}
 
 function run(args) {
   return new Promise((resolve, reject) => {
@@ -65,6 +92,8 @@ async function drain() {
 
 await run(["local-tools/local-workboard.mjs", "init"]);
 await mkdir(path.dirname(LOG), { recursive: true });
+const lock = await acquireWatcherLock();
+await lock.writeFile(`${JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() })}\n`);
 await record("watcher-started", { pid: process.pid });
 
 const watcher = watch(INBOX, () => void drain());
@@ -73,6 +102,10 @@ await drain();
 async function stop(signal) {
   watcher.close();
   await record("watcher-stopped", { signal });
+  await lock.close();
+  await unlink(LOCK).catch(error => {
+    if (error?.code !== "ENOENT") throw error;
+  });
   process.exit(0);
 }
 

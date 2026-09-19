@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readFile, realpath, stat, unlink, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, realpath, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { spawn } from "node:child_process";
@@ -8,6 +8,30 @@ import { spawn } from "node:child_process";
 const REPO = await realpath(process.cwd());
 const BOARD = path.resolve(process.env.ACR_LOCAL_WORKBOARD ?? ".local-workboard");
 const MAX_MATERIAL_BYTES = 128 * 1024;
+const METRICS = path.join(BOARD, "metrics", "qwen-events.jsonl");
+
+async function recordMetrics(packet, startedAt, output) {
+  const parsed = JSON.parse(output);
+  if (parsed?.schema !== "agent-control-room.qwen-worker-result/v1") {
+    throw new Error("Qwen worker returned an unexpected metrics envelope");
+  }
+  await mkdir(path.dirname(METRICS), { recursive: true });
+  const record = {
+    schema: "agent-control-room.local-model-event/v1",
+    worker: "qwen",
+    model: parsed.model,
+    role: "first-pass-review-or-analysis",
+    jobId: packet.id,
+    mode: parsed.mode,
+    startedAt,
+    completedAt: new Date().toISOString(),
+    wallMs: parsed.metrics?.wallMs ?? null,
+    inputTokens: parsed.metrics?.promptTokens ?? null,
+    outputTokens: parsed.metrics?.outputTokens ?? null,
+    outputTokensPerSecond: parsed.metrics?.passes?.at(-1)?.outputTokensPerSecond ?? null,
+  };
+  await appendFile(METRICS, `${JSON.stringify(record)}\n`, { mode: 0o600 });
+}
 
 function runNode(args, input = "") {
   return new Promise((resolve, reject) => {
@@ -58,6 +82,7 @@ const packet = claim.packet;
 const temporaryResult = path.join(BOARD, "logs", `${packet.id}.${process.pid}.result.json`);
 try {
   const material = await materialFor(packet);
+  const startedAt = new Date().toISOString();
   const output = await runNode(
     [
       "local-tools/qwen-worker.mjs",
@@ -78,6 +103,9 @@ try {
     ],
     material,
   );
+  await recordMetrics(packet, startedAt, output).catch(error => {
+    console.error(`qwen-workboard: unable to record metrics: ${error?.message ?? String(error)}`);
+  });
   await writeFile(temporaryResult, output, { flag: "wx", mode: 0o600 });
   const finished = await runNode([
     "local-tools/local-workboard.mjs",
