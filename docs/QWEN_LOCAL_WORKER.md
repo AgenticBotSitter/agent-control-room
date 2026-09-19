@@ -52,6 +52,9 @@ counts, pass metrics and measured generation speed. `direct` makes one pass. `de
 second pass that audits and corrects the first answer. It makes no repository, GitHub, credential
 or production change.
 
+The deliberate pass must return a `<final>` envelope. The helper delivers only that envelope and
+fails the job if it is absent, preventing exploratory self-dialogue from becoming review evidence.
+
 Do not enlarge the current 131,072-token context for this worker. Focused inputs are capped near
 32,000 tokens, and the installed model already occupies about 28 GB while loaded. More context
 would reduce the Mac's safety margin without improving these bounded jobs. Do not use the model's

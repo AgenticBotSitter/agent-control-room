@@ -66,6 +66,7 @@ does not enable the model's unreliable unbounded hidden-thinking route.
 node local-tools/local-workboard.mjs init
 node local-tools/local-workboard.mjs enqueue --packet /path/to/packet.json
 node local-tools/local-workboard.mjs status
+node local-tools/queue-github-pr-review.mjs --pr 340 --mode deliberate
 node local-tools/qwen-workboard-once.mjs
 node local-tools/qwen-workboard-watch.mjs
 node local-tools/local-workboard.mjs ack --worker qwen --id review-pr-340-01
@@ -76,6 +77,12 @@ The Qwen consumer performs one job and exits. This is deliberate: a foreground
 Codex run, a bounded scheduler or a later filesystem trigger can invoke it without
 installing an always-running service. Qwen receives only the declared material
 and has no tools, credentials or write access.
+
+`queue-github-pr-review.mjs` reads one exact public pull-request head through the
+GitHub CLI, stores a size-bounded untrusted diff under `material/`, and queues a
+read-only Qwen review. It refuses oversized reviews instead of silently truncating
+them. GitHub text is explicitly labeled untrusted and cannot grant the model tools
+or authority.
 
 `qwen-workboard-watch.mjs` is the optional foreground event watcher. It processes
 queued Qwen jobs serially as files arrive and writes a bounded machine-readable

@@ -174,13 +174,16 @@ async function main() {
       "Audit the candidate answer below against the original material.",
       "Reject unsupported claims, recover important misses, and return one corrected final deliverable.",
       "Do not mention the candidate or this audit process. Do not expose hidden reasoning.",
+      "Put the entire deliverable between <final> and </final>. Write nothing outside that envelope.",
       material ? `\nORIGINAL MATERIAL:\n${material}` : "",
       `\nCANDIDATE ANSWER:\n${first.answer}`,
       "/no_think",
     ].join("\n");
     const second = await requestModel(options, criticPrompt);
     passes.push(second.metrics);
-    answer = second.answer;
+    const final = second.answer.match(/<final>\s*([\s\S]*?)\s*<\/final>/i);
+    if (!final?.[1]?.trim()) throw new Error("Qwen deliberate pass omitted the required final envelope");
+    answer = final[1].trim();
   }
 
   const sum = key => {
