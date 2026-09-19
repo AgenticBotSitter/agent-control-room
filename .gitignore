@@ -40,6 +40,7 @@ yarn-error.log*
 /.wrangler/
 /outputs/
 /work/
+/.local-workboard/
 *.tsbuildinfo
 dist-vps/
 dist-contributor/
