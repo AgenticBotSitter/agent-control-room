@@ -12,13 +12,17 @@ while the local three-worker sprint is active.
 >
 > `node local-tools/local-workboard.mjs claim --worker claude`
 >
-> If it returns `status: empty`, report only `LOCAL BOARD EMPTY` and stop. Do not
+> If it returns `status: empty`, translate that controller response to the human
+> status `LOCAL BOARD EMPTY`, report only that phrase and stop. Do not
 > inspect GitHub, invent work, edit files or consume the remainder of the turn.
 >
 > If it returns a claimed packet, treat the packet as the complete assignment.
-> Verify the named base commit and paths. Never work in the dirty shared checkout;
-> create or reuse a job-specific Git worktree and branch beneath the repository's
-> ignored `work/` area. Do not widen owned paths. Stop and report a specific
+> Verify the named base commit and paths. For a `read-only` job, it is acceptable
+> to run the claim and finish commands from the shared checkout and inspect only
+> the packet's declared inputs there; do not edit repository files. For a
+> `repository-write` job, never work in the dirty shared checkout: create or reuse
+> a job-specific Git worktree and branch beneath the repository's ignored `work/`
+> area. Do not widen owned paths. Stop and report a specific
 > blocker for credentials, installs, production effects, destructive actions,
 > missing authority, a stale base that changes the contract, or overlapping work.
 >
@@ -28,10 +32,35 @@ while the local three-worker sprint is active.
 > deploy or change GitHub state; Codex is the final integrator during this local
 > sprint.
 >
-> Write one JSON result file with: job id, model, elapsed time, token counts when
-> available, exact worktree/branch/head, changed paths, checks and results,
-> findings or completed outcome, blockers, and whether the result is ready for
-> Codex review. Do not include secrets, raw private logs or personal data.
+> Write one JSON result file using this shape. The relay checks that the file is
+> valid JSON; these keys are the shared handoff convention that Codex expects:
+>
+> ```json
+> {
+>   "schema": "agent-control-room.local-result/v1",
+>   "id": "<job-id>",
+>   "worker": "claude",
+>   "outcome": "completed",
+>   "baseCommit": "<packet base commit>",
+>   "completedAt": "<ISO-8601 timestamp>",
+>   "result": {
+>     "model": "<exact model name>",
+>     "elapsedTime": "<measured duration>",
+>     "tokenCounts": "<counts or not available>",
+>     "worktree": "<absolute path or none for read-only>",
+>     "branch": "<branch or none for read-only>",
+>     "head": "<exact commit or none for read-only>",
+>     "changedPaths": [],
+>     "checks": [],
+>     "findings": [],
+>     "blockers": [],
+>     "readyForCodexReview": true
+>   }
+> }
+> ```
+>
+> Do not include secrets, raw private logs or personal data. Use `outcome: failed`
+> and `readyForCodexReview: false` when the package is blocked or failed.
 >
 > Complete the handoff atomically with:
 >
@@ -45,6 +74,10 @@ while the local three-worker sprint is active.
 Thirty minutes is acceptable only while Claude has an active local package or
 while Codex expects to enqueue one soon. Pause the schedule when the Claude inbox
 and working directory are both empty. A permanent empty poll wastes Claude usage.
+
+An already-open interactive Claude session is also a supported manual activation
+route: tell it once to check this relay, then it follows the same claim, work and
+finish contract above. This is the preferred route while Claude usage is scarce.
 
 The preferred later replacement is a qualified Claude Code CLI consumer triggered
 by a filesystem event. That consumer is not installed or claimed working by this

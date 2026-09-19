@@ -99,18 +99,31 @@ Claude uses the same packet and state transitions, but no Claude command is
 currently available in Codex's terminal. Do not pretend the folder alone wakes
 Claude. Activate one of these routes separately:
 
-1. Claude's own scheduled task checks `inbox/claude`, atomically moves one packet
+1. an already-open interactive Claude session is told to check the relay, then
+   claims and finishes the job through the controller;
+2. Claude's own scheduled task checks `inbox/claude`, atomically moves one packet
    into `working/claude`, works only in its separately named Git worktree, and
    writes a structured result to `outbox/claude`; or
-2. install and qualify the Claude Code command, then add a bounded consumer using
+3. install and qualify the Claude Code command, then add a bounded consumer using
    its documented non-interactive JSON interface.
+
+A read-only Claude job does not need a separate worktree: it may claim and finish
+from the shared checkout and inspect only the packet's declared inputs, provided
+it makes no repository changes. Any repository-writing job must use its own
+worktree and branch.
 
 The one-time scheduled-worker instruction is saved at
 `docs/claude/LOCAL_WORKBOARD_SCHEDULER_PROMPT.md`.
 
-A blind 30-minute model poll spends Claude usage when there is no job. Prefer a
-scheduled task only during an active Claude package, or a filesystem-triggered
-CLI consumer after that interface is qualified.
+A blind 30-minute model poll spends Claude usage when there is no job. With a
+small Claude allowance, prefer the interactive route for occasional high-value
+independent reviews. Use a scheduled task only during an active Claude package,
+or a filesystem-triggered CLI consumer after that interface is qualified.
+
+The controller's machine response `{ "status": "empty" }` maps to the human
+status `LOCAL BOARD EMPTY`. A completed result follows the exact shared shape in
+`docs/claude/LOCAL_WORKBOARD_SCHEDULER_PROMPT.md`; the controller validates JSON
+syntax and state transitions, while Codex validates the result's meaning.
 
 ## Review and publication
 
