@@ -1,6 +1,6 @@
-# Claude local-workboard worker prompt
+# Claude Control Room Local Relay worker prompt
 
-Use this as the standing instruction for Claude's scheduled Control Room worker
+Use this as the standing instruction for Claude's scheduled Control Room Local Relay worker
 while the local three-worker sprint is active.
 
 > Work as the Claude implementation/review worker for Agent Control Room on this

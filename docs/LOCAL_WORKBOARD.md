@@ -1,10 +1,11 @@
-# Local Mac workboard
+# Control Room Local Relay
 
-The local workboard lets Codex, Qwen and Claude exchange bounded jobs on the Mac
+The Control Room Local Relay lets Codex, Qwen and Claude exchange bounded jobs on the Mac
 without using GitHub for every intermediate handoff. GitHub remains the public
 source, review and recovery record for completed or meaningfully blocked packages.
 
-Runtime files live under `.local-workboard/` and are ignored by Git. Do not put
+The internal folder and command names retain `local-workboard` so existing jobs
+remain compatible. Runtime files live under `.local-workboard/` and are ignored by Git. Do not put
 credentials, raw private logs, production data or personal records in a packet or
 result.
 
@@ -68,6 +69,7 @@ node local-tools/local-workboard.mjs status
 node local-tools/qwen-workboard-once.mjs
 node local-tools/qwen-workboard-watch.mjs
 node local-tools/local-workboard.mjs ack --worker qwen --id review-pr-340-01
+node local-tools/local-workboard.mjs cancel --worker claude --id queued-job --reason "base changed before claim"
 ```
 
 The Qwen consumer performs one job and exits. This is deliberate: a foreground
@@ -79,6 +81,10 @@ and has no tools, credentials or write access.
 queued Qwen jobs serially as files arrive and writes a bounded machine-readable
 log. It does not install itself, survive a restart or become a background service.
 Installing a persistent launcher remains a separately reviewed action.
+
+Only an unclaimed inbox job can be cancelled. Cancellation moves its original
+packet into the archive with an explicit reason; a working job must instead be
+stopped and reconciled deliberately.
 
 ## Claude
 

@@ -150,6 +150,24 @@ async function acknowledge(worker, id) {
   return { status: "acknowledged", worker, id };
 }
 
+async function cancel(worker, id, reason) {
+  if (!WORKERS.has(worker) || !safeId(id)) fail("invalid worker or id");
+  if (typeof reason !== "string" || !reason.trim()) fail("--reason is required");
+  const source = path.join(ROOT, "inbox", worker, `${id}.json`);
+  const destination = path.join(ROOT, "archive", worker, `${id}.json`);
+  const packet = await readPacket(source);
+  await rename(source, destination);
+  await atomicJson(destination, {
+    schema: "agent-control-room.local-cancellation/v1",
+    id,
+    worker,
+    cancelledAt: new Date().toISOString(),
+    reason: reason.trim(),
+    packet,
+  });
+  return { status: "cancelled", worker, id };
+}
+
 async function statusBoard() {
   const summary = {};
   for (const worker of WORKERS) {
@@ -188,7 +206,13 @@ else if (command === "finish") {
   );
 } else if (command === "ack") {
   result = await acknowledge(option("--worker") ?? fail("--worker is required"), option("--id") ?? fail("--id is required"));
+} else if (command === "cancel") {
+  result = await cancel(
+    option("--worker") ?? fail("--worker is required"),
+    option("--id") ?? fail("--id is required"),
+    option("--reason") ?? fail("--reason is required"),
+  );
 } else if (command === "status") result = await statusBoard();
-else fail("command must be init, enqueue, claim, finish, ack, or status");
+else fail("command must be init, enqueue, claim, finish, ack, cancel, or status");
 
 console.log(JSON.stringify(result, null, 2));

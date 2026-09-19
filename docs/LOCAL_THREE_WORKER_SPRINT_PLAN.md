@@ -7,6 +7,9 @@ Hermes workers are unavailable and conserve paid Codex and Claude usage.
 and Claude is the selectively used second implementer/reviewer. GitHub remains
 the public record, but it is not the transport for every local intermediate step.
 
+Local coordination uses the **Control Room Local Relay**, documented in
+`docs/LOCAL_WORKBOARD.md`.
+
 ## Operating outcome
 
 Finish substantial, independently reviewable packages on the Mac. Use local
