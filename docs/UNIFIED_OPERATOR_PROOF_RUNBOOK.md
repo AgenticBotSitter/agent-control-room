@@ -116,6 +116,23 @@ Using disposable work only:
 An absent or ambiguous terminal result remains unresolved. It is not safe to
 infer success or restart the task.
 
+Before the first disposable task, the owner may separately qualify the exact
+fixed-argument subprocess bridge. This is one text-only nonce check; it does
+not create a task, start the worker service, or save the selected executable,
+profile, model, provider, or working directory in Control Room. It requires a
+fresh owner authorization because it calls the existing Hermes installation:
+
+```sh
+npx --yes pnpm@11.19.0 run qualify:hermes:local-runner -- --owner-attended \
+  --executable OWNER_ABSOLUTE_HERMES_PATH --profile OWNER_PROFILE \
+  --model OWNER_MODEL --provider OWNER_PROVIDER --workdir OWNER_ABSOLUTE_WORKDIR
+```
+
+Its `--dry-run` form validates only the command shape and redaction behavior.
+The success report contains only bounded token/time counts and a one-way
+session fingerprint. It is still a qualification record, not authorization to
+enable automatic work.
+
 ### A4. Prove backup and recovery
 
 Create a disposable backup, restore it into a separately disposable target,
