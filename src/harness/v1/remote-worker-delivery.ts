@@ -96,3 +96,41 @@ export function observeRemoteWorkerDeliveryV1(value: { result: unknown; failure?
   const receipt = controllerWorkerDeliveryReceiptSchemaV1.parse(value.result);
   return Object.freeze({ kind: "receipt", receipt, permitsRetry: false });
 }
+
+export type RemoteReconnectReconciliationV1 =
+  | Readonly<{ kind: "receipt"; receipt: ControllerWorkerDeliveryReceiptV1; reconciled: true;
+      startsWork: false; grantsExecutionAuthority: false; permitsRetry: false }>
+  | Readonly<{ kind: "uncertain"; reason: "remote_reconnect_no_receipt" | "remote_reconnect_receipt_invalid";
+      reconciled: false; startsWork: false; grantsExecutionAuthority: false; permitsRetry: false }>;
+
+/**
+ * Reconciles a lost remote-delivery reply after the already-enrolled worker
+ * reconnects. It never resends the packet. The only acceptable recovery
+ * evidence is a receipt for the exact original delivery and route, inside its
+ * original delivery window. A connection without that evidence remains
+ * uncertain for the normal task/review records to resolve.
+ */
+export function reconcileRemoteWorkerDeliveryAfterReconnectV1(input: {
+  prior: RemoteDeliveryObservationV1; delivery: unknown; route: unknown; enrollment: unknown;
+  supportedAdapterRevisions: readonly string[]; receipt?: unknown;
+}): RemoteReconnectReconciliationV1 {
+  if (input.prior.kind !== "uncertain") return Object.freeze({ kind: "uncertain", reason: "remote_reconnect_receipt_invalid",
+    reconciled: false, startsWork: false, grantsExecutionAuthority: false, permitsRetry: false });
+  const admission = admitRemoteWorkerDeliveryV1({ delivery: input.delivery, route: input.route,
+    enrollment: input.enrollment, supportedAdapterRevisions: input.supportedAdapterRevisions });
+  if (!admission.accepted || input.receipt === undefined) return Object.freeze({ kind: "uncertain", reason: "remote_reconnect_no_receipt",
+    reconciled: false, startsWork: false, grantsExecutionAuthority: false, permitsRetry: false });
+  try {
+    const receipt = controllerWorkerDeliveryReceiptSchemaV1.parse(input.receipt);
+    if (receipt.deliveryId !== admission.delivery.deliveryId || receipt.deliveryDigest !== admission.delivery.deliveryDigest
+      || receipt.workerId !== admission.delivery.worker.workerId || receipt.route.kind !== "remote"
+      || receipt.route.workerId !== admission.route.workerId
+      || Date.parse(receipt.receivedAt) < Date.parse(admission.delivery.issuedAt)
+      || Date.parse(receipt.receivedAt) > Date.parse(admission.delivery.expiresAt)) throw new Error("invalid");
+    return Object.freeze({ kind: "receipt", receipt, reconciled: true, startsWork: false,
+      grantsExecutionAuthority: false, permitsRetry: false });
+  } catch {
+    return Object.freeze({ kind: "uncertain", reason: "remote_reconnect_receipt_invalid",
+      reconciled: false, startsWork: false, grantsExecutionAuthority: false, permitsRetry: false });
+  }
+}

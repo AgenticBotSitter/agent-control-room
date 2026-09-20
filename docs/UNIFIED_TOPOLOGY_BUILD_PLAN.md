@@ -97,11 +97,11 @@ Completed in source:
 - explicit refusal of revoked workers; and
 - disconnect and timeout outcomes that remain uncertain and never retry on
   their own.
+- controlled reconnect reconciliation that accepts only a receipt for the
+  original packet and never retransmits it.
 
 Remaining:
 
-- controlled reconnect evidence for an enrolled worker without creating a new
-  task identity;
 - delivery acknowledgement through the real enrolled transport;
 - a two-computer proof using the same shared delivery packet and result path;
 - a compatibility rule that refuses a worker whose verified adapter version is

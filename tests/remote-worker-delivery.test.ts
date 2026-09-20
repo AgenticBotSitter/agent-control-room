@@ -3,7 +3,8 @@ import test from "node:test";
 import { sha256Digest } from "../src/security/canonical-digest";
 import { createControllerWorkerDeliveryV1 } from "../src/harness/v1/controller-worker-delivery";
 import { admitRemoteWorkerDeliveryV1, createRemoteWorkerEnrollmentV1,
-  deliverAdmittedRemoteWorkerPacketV1, observeRemoteWorkerDeliveryV1 } from "../src/harness/v1/remote-worker-delivery";
+  deliverAdmittedRemoteWorkerPacketV1, observeRemoteWorkerDeliveryV1,
+  reconcileRemoteWorkerDeliveryAfterReconnectV1 } from "../src/harness/v1/remote-worker-delivery";
 
 const digest = (value: string) => sha256Digest(value);
 const delivery = () => createControllerWorkerDeliveryV1({
@@ -18,6 +19,13 @@ const enrollment = (state: "enrolled" | "revoked" = "enrolled") => createRemoteW
   workerId: "worker:remote", adapterId: "connector:hermes-021", adapterRevision: "00570550", enrollmentId: "enrollment:remote",
   state, enrolledAt: "2026-09-19T11:00:00.000Z", revokedAt: state === "revoked" ? "2026-09-19T11:30:00.000Z" : null,
 });
+const receipt = (packet: ReturnType<typeof delivery>) => {
+  const material = { schema: "control-room.controller-worker-delivery-receipt/v1" as const,
+    deliveryId: packet.deliveryId, deliveryDigest: packet.deliveryDigest, workerId: packet.worker.workerId,
+    route: { kind: "remote" as const, workerId: packet.worker.workerId }, receivedAt: "2026-09-19T12:00:01.000Z",
+    disposition: "accepted" as const, startsWork: false as const, grantsExecutionAuthority: false as const };
+  return { ...material, receiptDigest: sha256Digest(material) };
+};
 
 test("remote enrollment accepts the shared packet without creating a second task identity", () => {
   const packet = delivery();
@@ -63,4 +71,20 @@ test("a disconnect or timeout stays uncertain and never authorizes a retry", () 
     { kind: "uncertain", reason: "remote_disconnect", permitsRetry: false });
   assert.deepEqual(observeRemoteWorkerDeliveryV1({ result: null, failure: "timeout" }),
     { kind: "uncertain", reason: "remote_timeout", permitsRetry: false });
+});
+
+test("a remote reconnect reconciles only the exact original receipt and never resends work", () => {
+  const packet = delivery(), prior = observeRemoteWorkerDeliveryV1({ result: undefined, failure: "disconnect" });
+  const recovered = reconcileRemoteWorkerDeliveryAfterReconnectV1({ prior, delivery: packet, enrollment: enrollment(),
+    route: { kind: "remote", workerId: packet.worker.workerId }, supportedAdapterRevisions: [packet.worker.adapterRevision],
+    receipt: receipt(packet) });
+  assert.equal(recovered.kind, "receipt");
+  assert.equal(recovered.permitsRetry, false);
+  assert.equal(recovered.startsWork, false);
+
+  const changed = { ...receipt(packet), deliveryDigest: sha256Digest("foreign") };
+  const invalid = reconcileRemoteWorkerDeliveryAfterReconnectV1({ prior, delivery: packet, enrollment: enrollment(),
+    route: { kind: "remote", workerId: packet.worker.workerId }, supportedAdapterRevisions: [packet.worker.adapterRevision], receipt: changed });
+  assert.deepEqual(invalid, { kind: "uncertain", reason: "remote_reconnect_receipt_invalid",
+    reconciled: false, startsWork: false, grantsExecutionAuthority: false, permitsRetry: false });
 });
