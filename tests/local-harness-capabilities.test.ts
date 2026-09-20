@@ -9,6 +9,8 @@ test("local harness capabilities are truthful, bounded and installation-safe", (
   const codex = localHarnessCapabilitiesV1.find(value => value.id === "codex")!;
   assert.equal(hermes.state, "setup_required");
   assert.equal(hermes.operations.submit, "unknown");
+  assert.match(hermes.firstSupportedWork, /plain-text review/);
+  assert.match(hermes.firstSupportedWork, /cannot edit a project yet/);
   assert.equal(claude.state, "setup_required");
   assert.equal(claude.operations.submit, "unsupported");
   assert.equal(codex.state, "not_available");

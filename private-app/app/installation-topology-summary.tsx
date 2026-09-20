@@ -46,7 +46,7 @@ export function InstallationTopologySummary({ plan, readiness }: { plan?: Readon
       <h3 id="local-agent-capabilities-title">Local agent capabilities</h3>
       <p>These are product capabilities, not a scan of this computer. They do not reveal private settings or mean an agent is running.</p>
       <ul>{localHarnessCapabilitiesV1.map(agent => <li key={agent.id}>
-        <strong>{agent.label}: {agent.stateLabel}.</strong> {agent.summary} <span>Next: {agent.nextStep}</span>
+        <strong>{agent.label}: {agent.stateLabel}.</strong> {agent.summary} <span> First useful work after setup: {agent.firstSupportedWork}</span> <span>Next: {agent.nextStep}</span>
       </li>)}</ul>
     </section>}
     <h3>Setup proof status</h3>
