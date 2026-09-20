@@ -53,6 +53,8 @@ and the local/remote common foundation is in
 Before custom code is added for a substantial component, use
 [REUSE_DECISION_GATE.md](REUSE_DECISION_GATE.md). A repository's README, a
 similar screen, or "faster to write" is not enough to skip this decision.
+The current file-level donor decisions are recorded in
+[SINGLE_MACHINE_REUSE_AUDIT.md](SINGLE_MACHINE_REUSE_AUDIT.md).
 
 ## Capability truth today
 
@@ -183,4 +185,3 @@ review → correction journey. A changed packet, changed receipt, lost reply,
 wrong worker, denied action, cancel, restart and duplicated terminal result
 must each remain truthful. The remote release repeats the delivery leg with a
 real enrolled remote worker; it does not fork the data model or application.
-
