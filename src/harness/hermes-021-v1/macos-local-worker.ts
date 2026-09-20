@@ -1,5 +1,9 @@
 import { z } from "zod";
 import { sha256Digest } from "../../security/canonical-digest";
+import {
+  controllerWorkerDeliverySchemaV1,
+  controllerWorkerRouteSchemaV1,
+} from "../v1/controller-worker-delivery";
 
 /** Source revision observed from the locally installed Hermes Agent 0.21.3. */
 export const HERMES_021_MACOS_LOCAL_WORKER_CONTRACT_V1 = "control-room.hermes-021-macos-local-worker/v1" as const;
@@ -19,8 +23,11 @@ const resultLineSchema = z.object({
   timestamp: count,
 }).strict();
 
+export const HERMES_021_MACOS_LOCAL_ADAPTER_V1 = "connector:hermes-021-macos-local-v1" as const;
+
 export const hermes021MacosLocalBindingSchemaV1 = z.object({
   localServiceId: id,
+  workerId: id,
   expectedVersion: z.literal("0.21.3"),
   sourceRevision: z.string().regex(/^[a-f0-9]{8,64}$/),
 }).strict();
@@ -29,6 +36,7 @@ export type Hermes021MacosLocalBindingV1 = z.infer<typeof hermes021MacosLocalBin
 export const hermes021MacosTaskSchemaV1 = z.object({
   tenantId: id, projectId: id, jobId: id, attemptId: id, runId: id, nodeId: id,
   prompt: z.string().min(1).max(32_768).refine(value => Buffer.byteLength(value, "utf8") <= 32_768),
+  instructions: z.string().max(8192).refine(value => Buffer.byteLength(value, "utf8") <= 8192),
   deadline: count,
 }).strict();
 export type Hermes021MacosTaskV1 = z.infer<typeof hermes021MacosTaskSchemaV1>;
@@ -54,6 +62,25 @@ export type Hermes021MacosTaskOutcomeV1 =
   | Readonly<{ kind: "uncertain"; reason: "hermes_local_transport_unavailable" | "hermes_local_result_invalid" }>;
 
 function unavailable(): never { throw new Error("hermes_local_worker_unavailable"); }
+
+/**
+ * Converts the shared controller packet into the exact local Hermes task
+ * shape. The route is intentionally checked here, not trusted from a browser
+ * or task payload. A remote route must use the same packet through an
+ * enrolled remote bridge; it cannot accidentally invoke a Mac-local Hermes.
+ */
+export function prepareHermes021MacosTaskV1(deliveryValue: unknown, routeValue: unknown,
+  bindingValue: unknown): Hermes021MacosTaskV1 {
+  const delivery = controllerWorkerDeliverySchemaV1.parse(deliveryValue);
+  const route = controllerWorkerRouteSchemaV1.parse(routeValue);
+  const binding = hermes021MacosLocalBindingSchemaV1.parse(bindingValue);
+  if (route.kind !== "local" || route.workerId !== binding.workerId || delivery.worker.workerId !== binding.workerId
+    || delivery.worker.adapterId !== HERMES_021_MACOS_LOCAL_ADAPTER_V1
+    || delivery.worker.adapterRevision !== binding.sourceRevision) unavailable();
+  return Object.freeze(hermes021MacosTaskSchemaV1.parse({ ...delivery.identity,
+    prompt: delivery.input.prompt, instructions: delivery.input.instructions,
+    deadline: Date.parse(delivery.expiresAt) }));
+}
 
 /**
  * Selects exactly one terminal Hermes 0.21 stream-json result line. Status
