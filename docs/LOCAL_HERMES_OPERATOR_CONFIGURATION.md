@@ -31,6 +31,12 @@ item while preserving the plan's other requirements, such as backup/restore.
 It is a pure server-side helper; it does not write settings, enable the worker,
 or accept a browser upload.
 
+For an installer that already holds only the sanitized report and its reviewed
+setup plan, `record:hermes:local-readiness` provides the same pure conversion.
+It reads JSON files and prints an opaque readiness record; it never writes the
+record, starts Hermes, or prints the file names or their private contents.
+The protected installer decides whether and where to retain that record.
+
 That first check is intentionally not treated as proof of the automatic route.
 After it passes, the owner separately runs the fixed-runner bridge check. Its
 report is reduced to another opaque fingerprint through
