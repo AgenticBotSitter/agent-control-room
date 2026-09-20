@@ -92,6 +92,10 @@ Completed in source:
 - a separate owner-run qualification launcher for the exact fixed-argument
   local runner bridge. It produces only a bounded, plan-bindable evidence
   fingerprint and cannot create a task, configure a worker, or enable work.
+- an effect-free preflight for that runner. It checks only that the
+  installation-selected program and working directory are usable and redacts
+  those values from its result, so it cannot spend a real qualification on an
+  avoidable local configuration error.
 - composition that sends a verified local Hermes terminal result through the
   existing durable-result receipt and pending-review services, including
   restart-safe exact replay.
