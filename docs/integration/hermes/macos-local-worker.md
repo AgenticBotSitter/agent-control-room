@@ -111,7 +111,14 @@ the normal result and review records.
 
 The completed-record publisher accepts only a schema-checked terminal record
 with its matching fingerprint and then creates Control Room's ordinary
-pending-review item. Wiring that publisher into the permanent host remains a
-separate final composition step. A completed Marvin record is evidence, not
-an approval: it cannot release a task slot, retry an uncertain run, or accept
-the work on its own.
+pending-review item. The normal in-process handoff now wires that publisher to
+the controlled runner. Its project, task, authority, review profile and
+workflow details come from the controller-prepared packet—not from terminal
+text or the browser. A completed Marvin record is evidence, not an approval:
+it cannot release a task slot, retry an uncertain run, or accept the work on
+its own.
+
+If the computer stops after Hermes returns but before the result is saved,
+Control Room keeps the delivery unresolved. It does not run Hermes again and
+does not pretend that the terminal result was recovered. Durable recovery of
+those in-between terminal bytes is still a separate future safeguard.
