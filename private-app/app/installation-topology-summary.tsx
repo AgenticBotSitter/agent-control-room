@@ -18,6 +18,11 @@ export function InstallationTopologySummary({ plan }: { plan?: Readonly<Installa
     <h2 id="installation-title">Installation setup</h2>
     <p><strong>Selected setup:</strong> {mode}</p>
     <p>This is one Control Room installation. It keeps one database and one scheduler as the authority whether workers are on this computer or elsewhere.</p>
+    {plan.mode === "this_computer" && <section className="private-note" aria-labelledby="local-worker-path-title">
+      <h3 id="local-worker-path-title">Local agent delivery</h3>
+      <p><strong>Prepared, not enabled.</strong> Control Room can prepare a checked task for a local agent, but no agent is started from this screen.</p>
+      <p>Before a local agent can receive real work, the owner completes its short connection check and the installation verifies protected data and recovery. Until then, the page shows setup status only—not a live agent.</p>
+    </section>}
     <h3>Before workers can be enabled</h3>
     <ul>{plan.requiredProofs.map(proof => <li key={proof}>{proofLabels[proof]}</li>)}</ul>
     <p className="private-note">This page is read-only. It cannot start an agent, connect another computer, change credentials, or approve work.</p>
