@@ -179,13 +179,19 @@ test("a Marvin Hermes 0.21 template creates a pinned v5 plan, not an older gener
   assert.equal(launches, 1);
 
   // The runner performs the same canonical recheck immediately before launch.
-  // Once the lease is revoked, the already prepared packet cannot be used to
-  // start another native Hermes task.
-  await f.db.query(`UPDATE control_leases SET state='released', payload=jsonb_set(payload,'{state}',to_jsonb('released'::text))
-    WHERE tenant_id=$1 AND id=$2`,
-    [binding.tenantId, assigned.receipt.leaseId]);
-  await assert.rejects(() => dispatcher.assertCurrent({ tenantId: binding.tenantId, projectId: binding.projectId,
-    jobId: planned.receipt.jobId, attemptId: assigned.receipt.attemptId, leaseId: assigned.receipt.leaseId,
-    inputDigest: planned.receipt.inputDigest }, dispatch), /hermes_021_macos_dispatch_preparation_unavailable/);
+  // Simulate a revocation after packaging but before the executor reaches its
+  // local runner. The process must stop before it can create another run or
+  // call Hermes.
+  const originalPrepare = dispatcher.prepare.bind(dispatcher);
+  dispatcher.prepare = async reference => {
+    const prepared = await originalPrepare(reference);
+    await f.db.query(`UPDATE control_leases SET state='released', payload=jsonb_set(payload,'{state}',to_jsonb('released'::text))
+      WHERE tenant_id=$1 AND id=$2`, [binding.tenantId, assigned.receipt.leaseId]);
+    return prepared;
+  };
+  await assert.rejects(() => executeAssignedHermes021MacosTaskV1(localExecutor.execution, { tenantId: binding.tenantId,
+    projectId: binding.projectId, jobId: planned.receipt.jobId, attemptId: assigned.receipt.attemptId,
+    leaseId: assigned.receipt.leaseId, inputDigest: planned.receipt.inputDigest }), /hermes_021_macos_dispatch_preparation_unavailable/);
+  assert.equal(launches, 1, "a late revoke never reaches the local Hermes runner");
 
 });
