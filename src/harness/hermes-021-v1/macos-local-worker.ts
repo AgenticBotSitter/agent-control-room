@@ -16,7 +16,7 @@ const id = z.string().min(3).max(180).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
 const boundedText = z.string().max(65_536).refine(value => Buffer.byteLength(value, "utf8") <= 65_536);
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 
-const resultLineSchema = z.object({
+export const hermes021MacosTerminalResultSchemaV1 = z.object({
   type: z.literal("result"),
   session_id: z.string(),
   exit_code: z.number().int(),
@@ -26,6 +26,7 @@ const resultLineSchema = z.object({
   error: z.string().optional(),
   timestamp: count,
 }).strict();
+export type Hermes021MacosTerminalResultV1 = z.infer<typeof hermes021MacosTerminalResultSchemaV1>;
 
 export const HERMES_021_MACOS_LOCAL_ADAPTER_V1 = "connector:hermes-021-macos-local-v1" as const;
 export const HERMES_021_MACOS_LOCAL_CAPABILITY_V1 = "harness.hermes.021.macos.local.v1" as const;
@@ -79,7 +80,9 @@ export interface Hermes021MacosTaskPolicyPortV1 {
 
 export type Hermes021MacosTaskOutcomeV1 =
   | Readonly<{ kind: "completed"; text: string; contentHash: string; sizeBytes: number;
-    inputTokens: number; outputTokens: number; totalTokens: number; durationMs: number; sessionId: string }>
+    inputTokens: number; outputTokens: number; totalTokens: number; durationMs: number; sessionId: string;
+    /** Canonical terminal record retained only after the private runner returned it. */
+    terminalResult: Hermes021MacosTerminalResultV1; terminalResultDigest: string }>
   | Readonly<{ kind: "failed"; reason: "hermes_local_exit_nonzero" | "hermes_local_result_missing" }>
   | Readonly<{ kind: "uncertain"; reason: "hermes_local_transport_unavailable" | "hermes_local_result_invalid" }>;
 
@@ -134,7 +137,7 @@ export function acceptHermes021MacosLocalDeliveryV1(deliveryValue: unknown, rout
  * because Hermes may already have received it.
  */
 export function classifyHermes021MacosResultV1(lines: readonly unknown[]): Hermes021MacosTaskOutcomeV1 {
-  const results = lines.map(value => resultLineSchema.safeParse(value)).filter(value => value.success).map(value => value.data);
+  const results = lines.map(value => hermes021MacosTerminalResultSchemaV1.safeParse(value)).filter(value => value.success).map(value => value.data);
   if (results.length === 0) return Object.freeze({ kind: "failed", reason: "hermes_local_result_missing" });
   if (results.length !== 1) return Object.freeze({ kind: "uncertain", reason: "hermes_local_result_invalid" });
   const result = results[0];
@@ -146,7 +149,8 @@ export function classifyHermes021MacosResultV1(lines: readonly unknown[]): Herme
   const text = parsed.data, bytes = Buffer.byteLength(text, "utf8");
   return Object.freeze({ kind: "completed", text, contentHash: sha256Digest(text), sizeBytes: bytes,
     inputTokens: result.tokens.input, outputTokens: result.tokens.output, totalTokens: result.tokens.total,
-    durationMs: result.duration_ms, sessionId: result.session_id });
+    durationMs: result.duration_ms, sessionId: result.session_id, terminalResult: Object.freeze(result),
+    terminalResultDigest: sha256Digest(result) });
 }
 
 /** Performs one caller-authorized local invocation. It does not start a process itself. */

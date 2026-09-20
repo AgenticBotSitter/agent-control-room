@@ -95,6 +95,10 @@ Completed in source:
   Marvin's controlled local delivery seam. The first accepted handoff invokes
   the injected local runner once; an exact restart replay reports the earlier
   delivery and never invokes Marvin twice.
+- the completed-record publisher now accepts only a verified terminal record
+  from the local runner and creates the normal pending-review item with exact
+  replay protection. The permanent host still needs to compose this final
+  result handoff; Marvin cannot accept its own result.
 
 Remaining before an automatic local worker is enabled:
 

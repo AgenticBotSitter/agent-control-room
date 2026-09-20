@@ -9,6 +9,7 @@ import { digestSchema, localId } from "../v1/native-run-identifiers";
 import { projectHermes021MacosTerminalResultEvidenceV1,
   type Hermes021MacosTerminalResultEvidenceV1 } from "../v1/terminal-result-evidence";
 import { HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1 } from "./connector-profile";
+import { hermes021MacosTerminalResultSchemaV1, type Hermes021MacosTaskOutcomeV1 } from "./macos-local-worker";
 
 const retainedBindingSchema = z.object({
   tenantId: localId, projectId: localId, jobId: localId, attemptId: localId, runId: localId, nodeId: localId,
@@ -84,4 +85,26 @@ export async function publishHermes021MacosTerminalResultV1(
   });
   return Object.freeze({ ...published, evidence, qualityAccepted: false, releasesCapacity: false,
     permitsRetry: false, permitsRedispatch: false });
+}
+
+/**
+ * Publishes a completed record returned by the controlled local runner. This
+ * is intentionally a separate entry point from arbitrary terminal text: the
+ * terminal record is schema-checked and its retained digest must agree before
+ * the existing durable publisher is reached.
+ */
+export async function publishCompletedHermes021MacosOutcomeV1(
+  config: DurableResultPublicationConfigurationV1,
+  input: Omit<Hermes021MacosTerminalResultPublicationInputV1, "retainedTerminal" | "terminalResultRawLine"> & {
+    outcome: Hermes021MacosTaskOutcomeV1;
+  },
+): Promise<Hermes021MacosTerminalResultPublicationV1> {
+  if (!input || input.outcome?.kind !== "completed") unavailable();
+  const record = hermes021MacosTerminalResultSchemaV1.parse(input.outcome.terminalResult);
+  if (input.outcome.sessionId !== record.session_id || input.outcome.terminalResultDigest !== sha256Digest(record)) unavailable();
+  return publishHermes021MacosTerminalResultV1(config, {
+    ...input,
+    retainedTerminal: { sessionId: record.session_id, terminalResultDigest: input.outcome.terminalResultDigest },
+    terminalResultRawLine: JSON.stringify(record),
+  });
 }

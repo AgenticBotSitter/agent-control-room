@@ -9,8 +9,8 @@ import { publishDurableResultV1, readDurableResultV1, reconcileDurableResultRese
 import { durableReceiptFromCodexV1, durableReceiptFromNativeV1 } from "../src/artifacts/v1/durable-result-receipt";
 import { publishHermesSessionResultV1,
   type HermesSessionResultOutcomeV1 } from "../src/harness/hermes-gpt-v1/result-publication";
-import { publishHermes021MacosTerminalResultV1,
-  HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1 } from "../src/harness/hermes-021-v1";
+import { publishHermes021MacosTerminalResultV1, publishCompletedHermes021MacosOutcomeV1,
+  classifyHermes021MacosResultV1, HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1 } from "../src/harness/hermes-021-v1";
 import { projectClaudeTerminalResultEvidenceV1,
   terminalResultEvidenceSchemaV1 } from "../src/harness/v1/terminal-result-evidence";
 import { projectHermes021MacosTerminalResultEvidenceV1 } from "../src/harness/v1/terminal-result-evidence";
@@ -889,13 +889,20 @@ test("Mac-local Hermes 0.21 result publishes once, survives replay, and remains 
   const storage = new ControlledStorage(); const runId = "run:durable-hermes-021"; const receivedAt = at(9200);
   const input = hermes021PublicationInput(runId);
   const f = await setupHermes021Provision(runId, input, receivedAt); t.after(f.close);
-  const first = await publishHermes021MacosTerminalResultV1(configOf(f, storage), { ...input, receivedAt });
+  const outcome = classifyHermes021MacosResultV1([JSON.parse(input.terminalResultRawLine)]);
+  const first = await publishCompletedHermes021MacosOutcomeV1(configOf(f, storage), {
+    retainedBinding: input.retainedBinding, outcome, acceptedConnectorProfileDigest: input.acceptedConnectorProfileDigest,
+    receivedAt, assertAuthority: input.assertAuthority,
+  });
   assert.equal(first.replayed, false);
   assert.equal(first.receipt.harness, "hermes");
   assert.equal(first.evidence.kind, "hermes_021_macos_terminal_result");
   assert.equal(first.qualityAccepted, false);
   assert.equal(first.target.subjectId, `job:${runId}`);
-  const replay = await publishHermes021MacosTerminalResultV1(configOf(f, storage), { ...input, receivedAt });
+  const replay = await publishCompletedHermes021MacosOutcomeV1(configOf(f, storage), {
+    retainedBinding: input.retainedBinding, outcome, acceptedConnectorProfileDigest: input.acceptedConnectorProfileDigest,
+    receivedAt, assertAuthority: input.assertAuthority,
+  });
   assert.equal(replay.replayed, true);
   assert.deepEqual(replay.receipt, first.receipt);
   assert.equal(storage.putCalls, 1);

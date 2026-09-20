@@ -103,3 +103,10 @@ the controller restarts after that point, it reports the task as already
 delivered instead of silently starting Hermes again. That protects against
 duplicate work; a person can later reconcile an uncertain prior result through
 the normal result and review records.
+
+The completed-record publisher accepts only a schema-checked terminal record
+with its matching fingerprint and then creates Control Room's ordinary
+pending-review item. Wiring that publisher into the permanent host remains a
+separate final composition step. A completed Marvin record is evidence, not
+an approval: it cannot release a task slot, retry an uncertain run, or accept
+the work on its own.
