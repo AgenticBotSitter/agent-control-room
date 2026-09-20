@@ -68,10 +68,22 @@ export async function persistControllerWorkerDeliveryReceiptV1(tx: DatabaseSessi
     return Object.freeze({ receipt: prior.receipt, replayed: true as const, startsWork: false as const,
       grantsExecutionAuthority: false as const });
   }
-  await tx.query(`INSERT INTO control_worker_delivery_receipts
-    (tenant_id,project_id,job_id,attempt_id,record,auth_tag) VALUES($1,$2,$3,$4,$5::jsonb,$6)`,
+  const inserted = await tx.query<{ attempt_id: string }>(`INSERT INTO control_worker_delivery_receipts
+    (tenant_id,project_id,job_id,attempt_id,record,auth_tag) VALUES($1,$2,$3,$4,$5::jsonb,$6)
+    ON CONFLICT (tenant_id,job_id,attempt_id) DO NOTHING RETURNING attempt_id`,
   [scope.tenantId, scope.projectId, scope.jobId, scope.attemptId, JSON.stringify(record), tag(integrityKey, record)]);
-  return Object.freeze({ receipt, replayed: false as const, startsWork: false as const,
+  if (inserted.rows.length === 1) return Object.freeze({ receipt, replayed: false as const, startsWork: false as const,
+    grantsExecutionAuthority: false as const });
+  // A competing controller recorded this acknowledgement while this request
+  // was in flight. Re-read it under the same row lock: an exact packet is a
+  // harmless replay, while a changed packet or route fails closed.
+  const raced = (await tx.query<Row>(`SELECT tenant_id,project_id,job_id,attempt_id,record,auth_tag
+    FROM control_worker_delivery_receipts WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3 FOR UPDATE`,
+  [scope.tenantId, scope.jobId, scope.attemptId])).rows[0];
+  if (!raced) fail();
+  const prior = verify(integrityKey, raced);
+  if (sha256Digest(prior) !== sha256Digest(record)) fail();
+  return Object.freeze({ receipt: prior.receipt, replayed: true as const, startsWork: false as const,
     grantsExecutionAuthority: false as const });
 }
 

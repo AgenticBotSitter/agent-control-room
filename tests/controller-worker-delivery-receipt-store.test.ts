@@ -24,7 +24,7 @@ const receipt = (packet: ControllerWorkerDeliveryV1, kind: "local" | "remote" = 
   return { ...material, receiptDigest: sha256Digest(material) };
 };
 
-test("the one PostgreSQL authority retains an exact local or remote worker receipt across restart", async t => {
+test("the one PostgreSQL authority retains an exact local worker receipt across restart", async t => {
   const f = await nativeTaskFixture(); t.after(f.close);
   const packet = delivery(), local = receipt(packet);
   const first = await f.db.transaction(tx => persistControllerWorkerDeliveryReceiptV1(tx, key, packet, local, at(3000)));
@@ -38,6 +38,17 @@ test("the one PostgreSQL authority retains an exact local or remote worker recei
   assert.equal(saved?.delivery.deliveryDigest, packet.deliveryDigest);
   assert.equal(saved?.receipt.route.kind, "local");
   assert.equal(saved?.startsWork, false);
+});
+
+test("the same PostgreSQL receipt store retains a remote acknowledgement without a second authority", async t => {
+  const f = await nativeTaskFixture(); t.after(f.close);
+  const packet = delivery(), remote = receipt(packet, "remote");
+  const first = await f.db.transaction(tx => persistControllerWorkerDeliveryReceiptV1(tx, key, packet, remote, at(3000)));
+  assert.equal(first.replayed, false);
+  const saved = await f.db.transaction(tx => readControllerWorkerDeliveryReceiptV1(tx, key, {
+    tenantId: binding.tenantId, projectId: binding.projectId, jobId: binding.jobId, attemptId: binding.attemptId }));
+  assert.equal(saved?.receipt.route.kind, "remote");
+  assert.equal(saved?.delivery.deliveryDigest, packet.deliveryDigest);
 });
 
 test("a second route or changed receipt cannot turn one task attempt into duplicate work", async t => {
