@@ -76,6 +76,12 @@ private Hermes runner. The policy keeps the local workspace, model selection,
 login, and provider details private; a browser request or task prompt cannot
 provide or widen them.
 
+`createHermes021MacosLocalTaskPolicyV1` creates the policy record from an
+already-authoritative task decision. It checks the selected Marvin worker,
+the pinned Hermes revision, the controller's existing authority digest, and
+the expiry. It is not a second approval system: it cannot authorize a task
+that Control Room did not already authorize.
+
 This is a controlled launch seam, not a background service. A real automatic
 host still needs the operator to configure its restricted task policy and
 complete the text-only qualification first. A policy refusal starts no Hermes

@@ -78,7 +78,8 @@ Completed in source:
 
 Remaining before an automatic local worker is enabled:
 
-- an owner-configured restricted task policy for the local runner;
+- wiring the reviewed local task-policy record from the authoritative task
+  dispatcher into the local runner;
 - one owner-attended, text-only qualification using the existing Hermes login;
 - a controlled local data directory, restart procedure, and backup/restore
   proof.
