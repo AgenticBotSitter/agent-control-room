@@ -92,11 +92,15 @@ test("a Marvin Hermes 0.21 template creates a pinned v5 plan, not an older gener
   assert.equal(executed.registered.run.connectorProfileDigest, HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1);
   assert.equal(executed.registered.run.authorityDigest, saved.job.authority.digest);
   assert.equal(launches, 1);
+  assert.deepEqual(executed.lifecycle.map(event => event.payload.category === "lifecycle" ? event.payload.state : event.payload.category),
+    ["starting", "running", "usage", "succeeded"]);
+  assert.equal((await execution.runs.get(binding.tenantId, executed.registered.run.id))?.state, "succeeded");
 
   const replay = await executeAssignedHermes021MacosTaskV1(execution, { tenantId: binding.tenantId,
     projectId: binding.projectId, jobId: planned.receipt.jobId, attemptId: assigned.receipt.attemptId,
     leaseId: assigned.receipt.leaseId, inputDigest: planned.receipt.inputDigest });
   assert.equal(replay.delivered.state, "already_delivered");
   assert.equal(replay.registered.replayed, true);
+  assert.equal(replay.lifecycle.length, 0);
   assert.equal(launches, 1);
 });

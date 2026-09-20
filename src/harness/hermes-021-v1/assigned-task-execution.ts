@@ -3,6 +3,8 @@ import { deliverHermes021MacosLocalTaskV1, type Hermes021MacosLocalDeliveryCompo
 import { Hermes021MacosDispatchPreparationV1, type Hermes021MacosDispatchReferenceV1 } from "./dispatch-preparation";
 import { Hermes021MacosLocalRunRegistrationV1 } from "./local-run-registration";
 import { HarnessRunStoreV1 } from "../v1/store";
+import type { HarnessEventPayloadV1, HarnessRunEventV1 } from "../v1/types";
+import { sha256Digest } from "../../security/canonical-digest";
 
 const unavailable = (): never => { throw new Error("hermes_021_macos_assigned_task_execution_unavailable"); };
 
@@ -31,9 +33,48 @@ export async function executeAssignedHermes021MacosTaskV1(config: Hermes021Macos
   const prepared = await config.preparation.prepare(referenceValue);
   const receivedAt = new Date(clock()).toISOString();
   if (!z.string().datetime().safeParse(receivedAt).success || Date.parse(receivedAt) > Date.parse(prepared.delivery.expiresAt)) unavailable();
-  const registered = await config.runs.create(Hermes021MacosLocalRunRegistrationV1(prepared.delivery, receivedAt));
+  const candidate = Hermes021MacosLocalRunRegistrationV1(prepared.delivery, receivedAt);
+  const existing = await config.runs.get(candidate.tenantId, candidate.id);
+  // A restart after a completed delivery must reach the durable receipt
+  // without trying to recreate the now-terminal run. Compare every stable
+  // controller binding before accepting that historical run as the replay.
+  if (existing && (existing.projectId !== candidate.projectId || existing.jobId !== candidate.jobId
+    || existing.attemptId !== candidate.attemptId || existing.nodeId !== candidate.nodeId
+    || existing.adapterId !== candidate.adapterId || existing.harness !== candidate.harness
+    || existing.nativeSessionKeyDigest !== candidate.nativeSessionKeyDigest
+    || existing.connectorProfileDigest !== candidate.connectorProfileDigest
+    || existing.authorityDigest !== candidate.authorityDigest)) unavailable();
+  const registered = existing ? { run: existing, replayed: true } : await config.runs.create(candidate);
+  let nextSequence = (await config.runs.inspect(candidate.tenantId, candidate.id))?.events.length ?? 0;
+  // The ordinary harness history—not a separate local queue—is the visible
+  // record of this controlled invocation. An exact delivery replay leaves the
+  // original history untouched because it must not start Hermes a second time.
+  const lifecycle: HarnessRunEventV1[] = [];
+  const append = async (payload: HarnessEventPayloadV1) => {
+    const sequence = ++nextSequence;
+    const event: HarnessRunEventV1 = { schemaVersion: "control-room-harness-event/v1",
+      tenantId: prepared.delivery.identity.tenantId, runId: registered.run.id, sequence, occurredAt: receivedAt,
+      source: "control_room", sourceEventKeyDigest: sha256Digest({ purpose: "hermes-021-macos-local-lifecycle/v1",
+        deliveryDigest: prepared.delivery.deliveryDigest, sequence, payload }), payload };
+    await config.runs.append(event);
+    lifecycle.push(event);
+  };
+  if (registered.run.state === "discovered") await append({ category: "lifecycle", state: "starting" });
   const delivered = await deliverHermes021MacosLocalTaskV1(config.delivery, prepared.delivery,
     prepared.route, receivedAt, signal);
+  if (delivered.state === "completed_delivery") {
+    const outcome = delivered.outcome;
+    if (outcome?.kind === "completed") {
+      await append({ category: "lifecycle", state: "running" });
+      await append({ category: "usage", inputTokens: outcome.inputTokens, outputTokens: outcome.outputTokens,
+        cachedInputTokens: 0, reasoningTokens: 0 });
+      await append({ category: "lifecycle", state: "succeeded" });
+    } else if (outcome?.kind === "failed") {
+      await append({ category: "lifecycle", state: "failed", reasonCode: outcome.reason });
+    } else {
+      await append({ category: "transport", state: "disconnected", reasonCode: outcome?.reason ?? "hermes_local_outcome_missing" });
+    }
+  }
   return Object.freeze({ schema: HERMES_021_MACOS_ASSIGNED_TASK_EXECUTION_V1, prepared, registered, delivered,
-    startsWork: false as const, grantsExecutionAuthority: false as const });
+    lifecycle: Object.freeze(lifecycle), startsWork: false as const, grantsExecutionAuthority: false as const });
 }
