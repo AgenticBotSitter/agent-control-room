@@ -161,11 +161,15 @@ Completed in source:
 
 Remaining:
 
-- delivery acknowledgement through the real enrolled transport;
-- an end-to-end two-computer proof using the same shared delivery packet,
-  result, review, and correction path; and
+- a controlled two-worker result-return fixture: the present two-worker proof
+  covers enrollment, assignment, delivery, reconnect, incompatibility, and
+  revocation, while the existing result/review/correction journeys cover each
+  route separately. It does not yet expose both together through one managed
+  result-receiver channel, so it must not be described as that end-to-end
+  proof; and
 - delivery acknowledgement through a real enrolled transport, including its
-  verified adapter-version compatibility boundary.
+  verified adapter-version compatibility boundary and the same result, review,
+  and correction path.
 
 ## Acceptance checks
 
