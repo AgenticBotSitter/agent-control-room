@@ -28,6 +28,16 @@ const configurationSchema = z.object({
 }).strict();
 export type Hermes021MacosSubprocessHostConfigurationV1 = z.input<typeof configurationSchema>;
 
+/**
+ * Parses only the installation-owned runner settings. This does not touch the
+ * executable, working directory, credentials, or network. The no-run
+ * preflight and the real subprocess host share this parser so a preflight
+ * cannot approve a shape the runner would later reject.
+ */
+export function captureHermes021MacosSubprocessHostConfigurationV1(value: unknown) {
+  return Object.freeze(configurationSchema.parse(value));
+}
+
 type LaunchOptions = SpawnOptions & Readonly<{ stdio: ["pipe", "pipe", "pipe"] }>;
 type Launch = (file: string, args: readonly string[], options: LaunchOptions) => ChildProcessWithoutNullStreams;
 type MakeDirectory = (prefix: string) => Promise<string>;
@@ -54,7 +64,7 @@ export function createHermes021MacosSubprocessStreamJsonHostV1(configurationValu
   removeDirectory: RemoveDirectory = rm,
   saveFile: SaveFile = writeFile,
   now: () => number = Date.now): Hermes021MacosStreamJsonHostV1 {
-  const configuration = Object.freeze(configurationSchema.parse(configurationValue));
+  const configuration = captureHermes021MacosSubprocessHostConfigurationV1(configurationValue);
   if (typeof launch !== "function" || typeof makeDirectory !== "function" || typeof removeDirectory !== "function"
     || typeof saveFile !== "function" || typeof now !== "function") unavailable();
   return Object.freeze({ async execute(input: Readonly<{

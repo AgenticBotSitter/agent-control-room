@@ -12,6 +12,7 @@ export * from "./completed-task-publication";
 export * from "./terminal-result-staging";
 export * from "./stream-json-private-port";
 export * from "./subprocess-stream-json-host";
+export * from "./subprocess-preflight";
 export * from "./qualification-evidence";
 export * from "./runner-qualification-evidence";
 export * from "./installation-readiness-record";

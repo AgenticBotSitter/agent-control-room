@@ -39,6 +39,12 @@ same controlled runner that would receive a Control Room task can reach the
 existing Hermes installation, without keeping the selected path, profile,
 model, provider, task text, or response.
 
+Before that owner-attended check, the effect-free
+`preflight:hermes:local-runner` command can verify the selected program and
+work folder without starting Hermes or contacting a model. It uses the exact
+same settings shape as the bridge, so it catches an unusable local path before
+the one permitted live check is spent.
+
 ## What still needs an owner decision
 
 Before a real automatic task can be enabled, the owner chooses:

@@ -106,6 +106,20 @@ not create a task, start the worker service, or save the selected executable,
 profile, model, provider, or working directory in Control Room. It requires a
 fresh owner authorization because it calls the existing Hermes installation:
 
+First, an owner may run the **no-agent preflight** with the same values. It
+only checks that the selected program is executable and the selected work
+folder exists; it does not start Hermes, contact a model, create a task, or
+retain the values. Its output intentionally says only ready/not ready:
+
+```sh
+npx --yes pnpm@11.19.0 run preflight:hermes:local-runner -- --owner-attended \
+  --executable OWNER_ABSOLUTE_HERMES_PATH --profile OWNER_PROFILE \
+  --model OWNER_MODEL --provider OWNER_PROVIDER --workdir OWNER_ABSOLUTE_WORKDIR
+```
+
+Only after that reports ready, the owner can run the actual one-shot bridge
+qualification:
+
 ```sh
 npx --yes pnpm@11.19.0 run qualify:hermes:local-runner -- --owner-attended \
   --executable OWNER_ABSOLUTE_HERMES_PATH --profile OWNER_PROFILE \
