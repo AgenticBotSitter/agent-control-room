@@ -83,6 +83,7 @@ test("Marvin's local policy accepts only its configured canonical authority", as
   const policy = createHermes021MacosLocalTaskPolicyV1({ policyId: "policy:marvin-local", binding,
     authorityDigest: packet.authorityDigest,
     taskInputDigest: sha256Digest({ prompt: packet.input.prompt, instructions: packet.input.instructions }),
+    deliveryDigest: packet.deliveryDigest,
     expiresAt: "2026-09-19T13:00:00.000Z" });
   const port = createHermes021MacosLocalTaskPolicyPortV1(policy, () => Date.parse("2026-09-19T12:02:00.000Z"));
   let runs = 0;
@@ -95,6 +96,16 @@ test("Marvin's local policy accepts only its configured canonical authority", as
     issuedAt: packet.issuedAt, expiresAt: packet.expiresAt });
   await assert.rejects(runAdmittedHermes021MacosLocalTaskV1(foreign, { kind: "local", workerId: "worker:marvin" }, binding,
     port, { async run() { runs++; return [result()]; } }), /hermes_021_macos_task_policy_refused/);
+  assert.equal(runs, 1);
+
+  const sameTextDifferentTask = createControllerWorkerDeliveryV1({ identity: { ...packet.identity,
+    jobId: "job:another", attemptId: "attempt:another", runId: "run:another" }, worker: packet.worker,
+    input: packet.input, authorityDigest: packet.authorityDigest, connectorProfileDigest: packet.connectorProfileDigest,
+    acceptanceProfileId: packet.acceptanceProfileId, acceptanceProfileDigest: packet.acceptanceProfileDigest,
+    issuedAt: packet.issuedAt, expiresAt: packet.expiresAt });
+  await assert.rejects(runAdmittedHermes021MacosLocalTaskV1(sameTextDifferentTask,
+    { kind: "local", workerId: "worker:marvin" }, binding, port,
+    { async run() { runs++; return [result()]; } }), /hermes_021_macos_task_policy_refused/);
   assert.equal(runs, 1);
 
   const changedInput = createControllerWorkerDeliveryV1({ identity: packet.identity, worker: packet.worker,

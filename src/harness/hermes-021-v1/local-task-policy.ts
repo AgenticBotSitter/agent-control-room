@@ -18,6 +18,8 @@ const policySchema = z.object({
   authorityDigest: digest,
   /** Exact approved prompt/instruction pair, never a browser or worker claim. */
   taskInputDigest: digest,
+  /** Exact controller packet: identical text or authority never substitutes another task. */
+  deliveryDigest: digest,
   expiresAt: instant,
   policyDigest: digest,
 }).strict().superRefine((value, context) => {
@@ -28,7 +30,7 @@ export type Hermes021MacosLocalTaskPolicyV1 = z.infer<typeof policySchema>;
 
 export function createHermes021MacosLocalTaskPolicyV1(value: Omit<Hermes021MacosLocalTaskPolicyV1, "schema" | "policyDigest">): Hermes021MacosLocalTaskPolicyV1 {
   const material = z.object({ policyId: policySchema.shape.policyId, binding: hermes021MacosLocalBindingSchemaV1,
-    authorityDigest: digest, taskInputDigest: digest, expiresAt: instant }).strict().parse(value);
+    authorityDigest: digest, taskInputDigest: digest, deliveryDigest: digest, expiresAt: instant }).strict().parse(value);
   return Object.freeze(policySchema.parse({ schema: HERMES_021_MACOS_LOCAL_TASK_POLICY_V1, ...material,
     policyDigest: sha256Digest({ schema: HERMES_021_MACOS_LOCAL_TASK_POLICY_V1, ...material }) }));
 }
@@ -60,6 +62,7 @@ export function createHermes021MacosLocalTaskPolicyPortV1(policyValue: unknown,
       || input.delivery.worker.adapterRevision !== policy.binding.sourceRevision
       || input.delivery.authorityDigest !== policy.authorityDigest
       || sha256Digest({ prompt: input.delivery.input.prompt, instructions: input.delivery.input.instructions }) !== policy.taskInputDigest
+      || input.delivery.deliveryDigest !== policy.deliveryDigest
       || Date.parse(input.delivery.expiresAt) > deadline) throw new Error("hermes_021_macos_task_policy_refused");
   } });
 }
@@ -93,6 +96,7 @@ export function deriveHermes021MacosLocalTaskPolicyPortV1(preparedValue: unknown
   return createHermes021MacosLocalTaskPolicyPortV1(createHermes021MacosLocalTaskPolicyV1({
     policyId, binding, authorityDigest: delivery.authorityDigest,
     taskInputDigest: sha256Digest({ prompt: delivery.input.prompt, instructions: delivery.input.instructions }),
+    deliveryDigest: delivery.deliveryDigest,
     expiresAt: delivery.expiresAt,
   }), clock);
 }

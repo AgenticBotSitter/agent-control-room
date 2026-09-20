@@ -24,6 +24,11 @@ separate host qualifications are complete.
   can be called.
 - A restart can recover the exact staged Hermes result without launching a
   second task or adding a duplicate completion history.
+- A delayed restart retains the original authenticated Hermes delivery packet,
+  rather than accidentally treating a recovered task as new work merely
+  because the clock moved forward. A long-running local installation also
+  derives a fresh permission gate for every prepared task, so one task's
+  permission can never authorize the next task.
 - Claude Code can save the same bounded text-review task plan as the other
   local harnesses, then decode and prepare one clean terminal result for the
   existing review path. Planning does not assign, start or enable Claude; it
@@ -31,6 +36,11 @@ separate host qualifications are complete.
 - The Mac Codex path records only two opaque safety prerequisites: suspended
   executable identity and protected private-state custody. Neither record can
   enable or launch Codex.
+- Codex now has a source-only local delivery bridge that records the ordinary
+  shared receipt before it can ask the existing injected host for one start
+  observation. A replay, changed task, expired task or revoked authority never
+  asks the host a second time. This is disposable-test evidence, not proof
+  that Codex is running locally.
 - The protected local setup page presents Hermes Agent, Claude Code and Codex
   separately, including what each could do after setup and what blocks it now.
   It never treats a source contract or setup proof as a live agent.

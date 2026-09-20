@@ -37,10 +37,6 @@ export async function executeAssignedHermes021MacosTaskV1(config: Hermes021Macos
   // Recheck that same binding directly before we create a run record or contact
   // the private launcher so a late revoke cannot start Marvin in the gap.
   await config.preparation.assertCurrent(referenceValue, prepared);
-  // The queue executor is long-lived.  Never retain an installation policy
-  // from a prior pickup: derive this synchronous gate solely from the freshly
-  // prepared-and-rechecked canonical packet.
-  const perTaskPolicy = config.preparation.policyForPrepared(prepared, clock);
   const now = new Date(clock()).toISOString();
   if (!z.string().datetime().safeParse(now).success || Date.parse(now) > Date.parse(prepared.delivery.expiresAt)) unavailable();
   // A later pickup prepares fresh issuance timestamps. Recover the authenticated
@@ -54,6 +50,10 @@ export async function executeAssignedHermes021MacosTaskV1(config: Hermes021Macos
     await config.preparation.assertCurrent(referenceValue, recovered);
     prepared = recovered;
   }
+  // The queue executor is long-lived. Never retain an installation policy
+  // from a prior pickup. Derive this synchronous gate only after recovery has
+  // selected the exact authenticated packet that will be delivered.
+  const perTaskPolicy = config.preparation.policyForPrepared(prepared, clock);
   const receivedAt = retained?.receipt.receivedAt ?? now;
   const candidate = Hermes021MacosLocalRunRegistrationV1(prepared.delivery, receivedAt);
   const existing = await config.runs.get(candidate.tenantId, candidate.id);
