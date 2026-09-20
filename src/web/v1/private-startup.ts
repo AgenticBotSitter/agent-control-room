@@ -5,6 +5,7 @@ import { installPrivateWebProcess, type PrivateWebProcessOptions } from "./priva
 import { captureGatewayAssertionProviderProfileV1, captureWebOrigins } from "./access-verifier";
 import { captureHerdrReaders } from "./herdr-service";
 import { parseProductConfigurationV1 } from "../../config/v1/product-configuration";
+import { verifyInstallationTopologyPlanV1 } from "../../harness/v1/installation-topology";
 export { createAccessKeyLoader, createStaticAccessKeyLoader } from "./access-key-cache";
 export { createOwnerBootstrapCeremonyV1 } from "./owner-bootstrap-ceremony";
 
@@ -36,6 +37,8 @@ export function validatePrivateStartupConfiguration(input: PrivateStartupConfigu
       ...(input.ideaProjects ? { ideaProjects: { integrityKey: key(input.ideaProjects.integrityKey) } } : {}),
       ...(input.news ? { news: { integrityKey: key(input.news.integrityKey) } } : {}),
       ...(input.productConfiguration === undefined ? {} : { productConfiguration: parseProductConfigurationV1(input.productConfiguration) }),
+      ...(input.installationTopologyPlan === undefined ? {} : {
+        installationTopologyPlan: verifyInstallationTopologyPlanV1(input.installationTopologyPlan) }),
       ...(input.tasks ? { tasks: { harnessIntegrityKey: key(input.tasks.harnessIntegrityKey),
         ...(input.tasks.results ? { results: { ...input.tasks.results, integrityKey: key(input.tasks.results.integrityKey) } } : {}),
         ...(input.tasks.reviews ? { reviews: { ...input.tasks.reviews, integrityKey: key(input.tasks.reviews.integrityKey) } } : {}),

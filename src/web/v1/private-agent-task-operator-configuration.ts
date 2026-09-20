@@ -243,7 +243,7 @@ function captureWebTasks(input: unknown): Readonly<{
  * input. The profile carries a `loadKeys` callback and optional nested
  * service references (`secondaryAccess`, `gatewayAssertionProfile`,
  * `herdrObservations`, `newsCollections`, `ideaCreation`, `connections`,
- * `productConfiguration`, `ideaProjects`, `news`); those trusted callbacks
+ * `productConfiguration`, `installationTopologyPlan`, `ideaProjects`, `news`); those trusted callbacks
  * must be preserved as frozen references, not deep-cloned. The `tasks`
  * field is captured through `captureWebTasks` because the production gate
  * accepts it as a structurally valid object with any prototype. Every
@@ -266,6 +266,8 @@ function captureWebProfile(input: PrivateStartupConfiguration): PrivateStartupCo
     ...(input.news === undefined ? {} : { news: deepDetach(input.news) }),
     ...(input.productConfiguration === undefined ? {} : {
       productConfiguration: deepDetach(input.productConfiguration) }),
+    ...(input.installationTopologyPlan === undefined ? {} : {
+      installationTopologyPlan: deepDetach(input.installationTopologyPlan) }),
     ...(input.connections === undefined ? {} : { connections: deepDetach(input.connections) }),
     ...(input.tasks === undefined ? {} : { tasks: captureWebTasks(input.tasks) }),
   };

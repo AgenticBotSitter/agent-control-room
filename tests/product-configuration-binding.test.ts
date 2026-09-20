@@ -54,6 +54,18 @@ test("startup capture does not retain a mutable owner-settings product configura
   assert.equal(Object.isFrozen(startup.productConfiguration), true);
 });
 
+test("startup capture preserves a reviewed immutable installation plan", () => {
+  const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
+    currentRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }],
+    requestedRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }] });
+  const startup = validatePrivateStartupConfiguration({ origin, ...trust, tenantId: "tenant:web", workspaceId: "workspace:web",
+    loadKeys: async () => trust.keys, ownerIdentityId: "identity:web", installationTopologyPlan: plan, database: {
+      host: "127.0.0.1", port: 5432, database: "template1", username: "web_test", password: "synthetic-only", majorVersion: 17,
+    } });
+  assert.equal(startup.installationTopologyPlan?.mode, "this_computer");
+  assert.equal(Object.isFrozen(startup.installationTopologyPlan), true);
+});
+
 test("a saved installation plan is an authenticated read-only setup status", async t => {
   const store = await limitedWebFixture();
   const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("one-db"), schedulerAuthorityDigest: sha256Digest("one-scheduler"),
