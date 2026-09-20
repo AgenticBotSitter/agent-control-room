@@ -31,7 +31,7 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_project_coordinator_heads", "control_project_coordination_proposals", "control_project_delegation_policies",
   "control_project_coordination_operation_receipts", "control_project_coordination_operation_jobs",
   "control_work_resources", "control_attempt_resource_admissions", "control_attempt_resource_scopes",
-  "control_durable_result_write_reservations", "control_worker_delivery_receipts"] as const;
+  "control_durable_result_write_reservations"] as const;
 const inserts = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
   "control_jobs", "control_web_task_commands", "control_completion_gate_records", "control_web_task_review_commands", "control_news_source_settings", "control_news_story_archives",
