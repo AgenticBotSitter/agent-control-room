@@ -15,10 +15,15 @@ test("local harness capabilities are truthful, bounded and installation-safe", (
   assert.equal(hermes.operations.submit, "unknown");
   assert.match(hermes.firstSupportedWork, /plain-text review/);
   assert.match(hermes.firstSupportedWork, /cannot edit a project yet/);
+  assert.match(hermes.safeNow, /does not send work to Hermes/i);
+  assert.match(hermes.sourceOnly, /source-only evidence/i);
+  assert.equal(hermes.remainingSetupCategory, "Local runner, protected storage and recovery proof");
   assert.equal(claude.state, "setup_required");
   assert.equal(claude.operations.submit, "unsupported");
+  assert.equal(claude.remainingSetupCategory, "Installed-process and permission qualification");
   assert.equal(codex.state, "not_available");
   assert.equal(codex.operations.submit, "unsupported");
+  assert.equal(codex.remainingSetupCategory, "macOS process and private-state custody qualification");
   const rendered = JSON.stringify(localHarnessCapabilitiesV1);
   assert.doesNotMatch(rendered, /\/Users\/|https?:\/\/|(?:token|password|profile)\s*[=:]/i);
 });
@@ -36,6 +41,7 @@ test("local Hermes proof completion is honest about the separate enablement deci
   assert.equal(hermes.state, "owner_enablement_required");
   assert.match(hermes.stateLabel, /owner enablement/);
   assert.match(hermes.summary, /still has not started Hermes/);
+  assert.equal(hermes.remainingSetupCategory, "Separate owner enablement decision");
 });
 
 test("macOS Codex custody readiness is plan-bound and never becomes launch authority", () => {
@@ -51,6 +57,7 @@ test("macOS Codex custody readiness is plan-bound and never becomes launch autho
   assert.match(codex.stateLabel, /safety prerequisites/i);
   assert.match(codex.summary, /has not started Codex/i);
   assert.match(codex.nextStep, /cannot enable or launch Codex/i);
+  assert.equal(codex.remainingSetupCategory, "Owner-attended exact-harness qualification");
   assert.doesNotMatch(JSON.stringify(custody), /(?:path|token|password|credential|CODEX_HOME)\s*[=:]/i);
   const otherPlanCustody = createCodexMacosCustodyReadinessV1({ ...custody, planDigest: sha256Digest("other"),
     proofs: custody.proofs });

@@ -41,8 +41,11 @@ function LocalAgentCapabilityCard({ agent }: { agent: LocalHarnessCapabilityV1 }
   return <li className="private-local-agent-card">
     <h4>{agent.label}</h4>
     <p><strong>Status: {agent.stateLabel}.</strong> {agent.summary}</p>
+    <p><strong>Safe now:</strong> {agent.safeNow}</p>
+    <p><strong>Source-only:</strong> {agent.sourceOnly}</p>
     <p><strong>First useful work after setup:</strong> {agent.firstSupportedWork}</p>
-    <p><strong>What is stopping it:</strong> {agent.nextStep}</p>
+    <p><strong>Remaining setup category:</strong> {agent.remainingSetupCategory}.</p>
+    <p><strong>What that category requires:</strong> {agent.nextStep}</p>
     <details>
       <summary>Connection capability details</summary>
       <ul aria-label={`${agent.label} connector capability details`}>
@@ -73,8 +76,9 @@ export function InstallationTopologySummary({ plan, readiness, codexMacosCustody
       <p>Before a local agent can receive real work, the owner completes its short connection check and the installation verifies protected data and recovery. Until then, the page shows setup status only—not a live agent.</p>
     </section>}
     {plan.mode === "this_computer" && <section className="private-note" aria-labelledby="local-agent-capabilities-title">
-      <h3 id="local-agent-capabilities-title">Local agent capabilities</h3>
-      <p>These are product capabilities, not a scan of this computer. They do not reveal private settings, and none of the statuses below means an agent is running.</p>
+      <h3 id="local-agent-capabilities-title">Three local worker routes</h3>
+      <p><strong>Source-only status, not a live installation.</strong> These cards describe the Hermes Agent, Codex and Claude Code routes in Control Room source. They are not a scan of this computer, do not reveal private settings, and none of the statuses below means an agent is running.</p>
+      <p>“Safe now” is limited to preparation or checked source contracts. “Source-only” identifies what is simulated with disposable test data rather than proven on this computer.</p>
       <p>“Supported” means the connector has that kind of operation in its contract. It does not override the proof and owner-enablement steps shown above.</p>
       <ul className="private-local-agent-list">{localCapabilities.map(agent => <LocalAgentCapabilityCard key={agent.id} agent={agent} />)}</ul>
     </section>}
