@@ -56,7 +56,8 @@ Completed in source:
 Remaining:
 
 - connect the shared packet to the existing task dispatcher at the approved
-  application composition point;
+  application composition point, using the versioned Hermes-0.21 plan form
+  described in [UNIFIED_DISPATCH_COMPOSITION.md](UNIFIED_DISPATCH_COMPOSITION.md);
 - add one common result-return composition that uses the current durable
   result and review services.
 
