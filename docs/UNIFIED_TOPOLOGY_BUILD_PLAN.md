@@ -137,8 +137,11 @@ Completed in source:
   route and connector profile, and are rechecked at queue pickup. This is the
   existing scheduler and database, not a second local queue; no queue write
   starts Hermes. The lifecycle has an explicit, guarded injection point for a
-  verified pickup; configuring it with an installation-owned local runner
-  remains the next source-composition step.
+  verified pickup. The local executor bridge converts only that verified
+  pickup into the existing dispatch, controlled-runner and pending-review
+  composition; the normal startup configuration accepts this local route
+  without requiring a remote-session transport. Constructing either bridge
+  does not start Hermes.
 
 Remaining before an automatic local worker is enabled:
 
@@ -148,8 +151,10 @@ Remaining before an automatic local worker is enabled:
   operational worker);
 - a controlled local data directory, restart procedure, and backup/restore
   proof.
-- installation-owned binding of the tested stream-json runner bridge to the
-  actual Hermes process, followed by a real local restart proof.
+- owner selection and installation-owned binding of the tested stream-json
+  runner bridge to the actual Hermes process, followed by a real local restart
+  proof. This must retain the owner's existing tool, model, provider and
+  workspace rules privately; source code must not guess or record them.
 - a successful owner-attended qualification, local data recovery proof, and
   terminal-byte recovery remain separate prerequisites for enabling an
   automatic local worker. The disposable local/remote lifecycle and correction
