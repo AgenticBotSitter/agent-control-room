@@ -5,6 +5,7 @@ import { classifyHermes021MacosResultV1, prepareHermes021MacosTaskV1, runHermes0
   refuseHermes021MacosOperationV1 } from "../src/harness/hermes-021-v1";
 import { createControllerWorkerDeliveryV1 } from "../src/harness/v1/controller-worker-delivery";
 import { sha256Digest } from "../src/security/canonical-digest";
+import { projectHermes021MacosTerminalResultEvidenceV1, terminalResultEvidenceSchemaV1 } from "../src/harness/v1/terminal-result-evidence";
 
 const result = (overrides: Record<string, unknown> = {}) => ({ type: "result", session_id: "session:marvin", exit_code: 0,
   text: "Finished the requested task.", tokens: { input: 12, output: 8, total: 20, cache_read: 0, cache_write: 0 },
@@ -61,4 +62,23 @@ test("Marvin's local connector records what is proven and explicitly refuses unq
     attempted: false, grantsExecutionAuthority: false, permitsRetry: false,
   });
   assert.throws(() => refuseHermes021MacosOperationV1("result"), /hermes_021_macos_operation_refusal_unavailable/);
+});
+
+test("Marvin's completed JSON report becomes shared inert result evidence", () => {
+  const raw = JSON.stringify(result());
+  const evidence = projectHermes021MacosTerminalResultEvidenceV1({
+    lineage: { tenantId: "tenant:local", projectId: "project:local", jobId: "job:local", attemptId: "attempt:local",
+      runId: "run:local", nodeId: "node:marvin" },
+    retained: { sessionId: "session:marvin", connectorProfileDigest: sha256Digest("profile"),
+      terminalResultDigest: sha256Digest(JSON.parse(raw)) },
+    terminalResultRawLine: raw,
+    observedAt: "2026-09-19T12:00:00.000Z",
+  });
+  assert.equal(evidence.kind, "hermes_021_macos_terminal_result");
+  assert.equal(evidence.source.totalTokens, 20);
+  assert.deepEqual(terminalResultEvidenceSchemaV1.parse(evidence), evidence);
+  assert.throws(() => projectHermes021MacosTerminalResultEvidenceV1({
+    lineage: evidence.lineage, retained: { ...evidence.source, terminalResultDigest: sha256Digest("other") },
+    terminalResultRawLine: raw, observedAt: evidence.observedAt,
+  }), /terminal_result_evidence_unavailable/);
 });
