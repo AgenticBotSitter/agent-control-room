@@ -5,15 +5,15 @@
  * database, queue, or service, and prints only a sanitized result.
  */
 import { createHash, randomBytes } from "node:crypto";
-import { isAbsolute } from "node:path";
 import { createHermes021MacosSubprocessStreamJsonHostV1 } from "../src/harness/hermes-021-v1/subprocess-stream-json-host";
 import { hermes021MacosTerminalResultSchemaV1 } from "../src/harness/hermes-021-v1/macos-local-worker";
 import { HERMES_021_MACOS_LOCAL_RUNNER_QUALIFICATION_REPORT_V1 } from "../src/harness/hermes-021-v1/runner-qualification-evidence";
+import { resolveOwnerSelectedHermesExecutableV1 } from "../src/harness/hermes-021-v1/owner-executable-resolution";
 
 const args = process.argv.slice(2).filter(value => value !== "--");
 const ownerAttended = args.includes("--owner-attended");
 const dryRun = args.includes("--dry-run");
-const names = ["--executable", "--profile", "--model", "--provider", "--workdir"] as const;
+const names = ["--executable", "--executable-command", "--profile", "--model", "--provider", "--workdir"] as const;
 type Name = typeof names[number];
 
 const valueFor = (name: Name): string | undefined => {
@@ -24,7 +24,9 @@ const valueFor = (name: Name): string | undefined => {
 };
 const supplied = Object.fromEntries(names.map(name => [name, valueFor(name)])) as Record<Name, string | undefined>;
 const accepted = new Set<string>(["--owner-attended", "--dry-run", ...names, ...Object.values(supplied).filter((value): value is string => Boolean(value))]);
-const valid = ownerAttended && args.every(value => accepted.has(value)) && names.every(name => supplied[name] !== undefined);
+const hasOneExecutable = Number(Boolean(supplied["--executable"])) + Number(Boolean(supplied["--executable-command"])) === 1;
+const valid = ownerAttended && args.every(value => accepted.has(value)) && hasOneExecutable
+  && ["--profile", "--model", "--provider", "--workdir"].every(name => supplied[name as Name] !== undefined);
 
 function safeResult(value: Readonly<{ qualified: boolean; terminal?: unknown; failureReason: string }>) {
   const terminal = hermes021MacosTerminalResultSchemaV1.safeParse(value.terminal);
@@ -45,7 +47,7 @@ function safeResult(value: Readonly<{ qualified: boolean; terminal?: unknown; fa
 }
 
 if (!valid) {
-  console.error("Usage: node --import tsx scripts/qualify-local-hermes-021-runner.ts --owner-attended [--dry-run] --executable ABSOLUTE_PATH --profile PROFILE --model MODEL --provider PROVIDER --workdir ABSOLUTE_PATH");
+  console.error("Usage: node --import tsx scripts/qualify-local-hermes-021-runner.ts --owner-attended [--dry-run] (--executable ABSOLUTE_PATH | --executable-command hermes) --profile PROFILE --model MODEL --provider PROVIDER --workdir ABSOLUTE_PATH");
   process.exitCode = 2;
 } else if (dryRun) {
   // Do not echo paths, model, provider, or profile: this report may be saved
@@ -53,17 +55,18 @@ if (!valid) {
   console.log(JSON.stringify({ qualificationReady: true, ownerAttended: true,
     invocation: "fixed-argument local Hermes stream-json bridge", startsWork: false }, null, 2));
 } else {
-  const executablePath = supplied["--executable"]!;
   const workingDirectory = supplied["--workdir"]!;
-  if (!isAbsolute(executablePath) || !isAbsolute(workingDirectory)) {
+  if (!workingDirectory.startsWith("/")) {
     console.log(JSON.stringify(safeResult({ qualified: false, failureReason: "owner_configuration_invalid" }), null, 2));
     process.exitCode = 1;
   } else {
-    const nonce = randomBytes(16).toString("hex");
-    const expected = `CONTROL_ROOM_HERMES_RUNNER_${nonce}`;
-    const deadline = Date.now() + 125_000;
-    const lines: string[] = [];
     try {
+      const executablePath = await resolveOwnerSelectedHermesExecutableV1({ executable: supplied["--executable"],
+        executableCommand: supplied["--executable-command"], path: process.env.PATH ?? "" });
+      const nonce = randomBytes(16).toString("hex");
+      const expected = `CONTROL_ROOM_HERMES_RUNNER_${nonce}`;
+      const deadline = Date.now() + 125_000;
+      const lines: string[] = [];
       const host = createHermes021MacosSubprocessStreamJsonHostV1({ executablePath,
         profile: supplied["--profile"]!, model: supplied["--model"]!, provider: supplied["--provider"]!, workingDirectory,
         maximumTurns: 1, maximumRunBudgetSeconds: 120 });

@@ -3,12 +3,12 @@
  * qualification. It reads only executable/directory metadata and deliberately
  * emits no path, profile, model, or provider value.
  */
-import { isAbsolute } from "node:path";
 import { preflightHermes021MacosLocalRunnerV1 } from "../src/harness/hermes-021-v1/subprocess-preflight";
+import { resolveOwnerSelectedHermesExecutableV1 } from "../src/harness/hermes-021-v1/owner-executable-resolution";
 
 const args = process.argv.slice(2).filter(value => value !== "--");
 const ownerAttended = args.includes("--owner-attended");
-const names = ["--executable", "--profile", "--model", "--provider", "--workdir"] as const;
+const names = ["--executable", "--executable-command", "--profile", "--model", "--provider", "--workdir"] as const;
 type Name = typeof names[number];
 
 const valueFor = (name: Name): string | undefined => {
@@ -20,17 +20,21 @@ const valueFor = (name: Name): string | undefined => {
 const supplied = Object.fromEntries(names.map(name => [name, valueFor(name)])) as Record<Name, string | undefined>;
 const accepted = new Set<string>(["--owner-attended", ...names,
   ...Object.values(supplied).filter((value): value is string => Boolean(value))]);
-const valid = ownerAttended && args.every(value => accepted.has(value)) && names.every(name => supplied[name] !== undefined);
+const hasOneExecutable = Number(Boolean(supplied["--executable"])) + Number(Boolean(supplied["--executable-command"])) === 1;
+const valid = ownerAttended && args.every(value => accepted.has(value)) && hasOneExecutable
+  && ["--profile", "--model", "--provider", "--workdir"].every(name => supplied[name as Name] !== undefined);
 
 if (!valid) {
-  console.error("Usage: node --import tsx scripts/preflight-local-hermes-021-runner.ts --owner-attended --executable ABSOLUTE_PATH --profile PROFILE --model MODEL --provider PROVIDER --workdir ABSOLUTE_WORKDIR");
+  console.error("Usage: node --import tsx scripts/preflight-local-hermes-021-runner.ts --owner-attended (--executable ABSOLUTE_PATH | --executable-command hermes) --profile PROFILE --model MODEL --provider PROVIDER --workdir ABSOLUTE_WORKDIR");
   process.exitCode = 2;
-} else if (!isAbsolute(supplied["--executable"]!) || !isAbsolute(supplied["--workdir"]!)) {
+} else if (!supplied["--workdir"]!.startsWith("/")) {
   console.log(JSON.stringify({ ready: false, failureReason: "owner_configuration_invalid", startsWork: false }, null, 2));
   process.exitCode = 1;
 } else {
   try {
-    console.log(JSON.stringify(await preflightHermes021MacosLocalRunnerV1({ executablePath: supplied["--executable"]!,
+    const executablePath = await resolveOwnerSelectedHermesExecutableV1({ executable: supplied["--executable"],
+      executableCommand: supplied["--executable-command"], path: process.env.PATH ?? "" });
+    console.log(JSON.stringify(await preflightHermes021MacosLocalRunnerV1({ executablePath,
       profile: supplied["--profile"]!, model: supplied["--model"]!, provider: supplied["--provider"]!,
       workingDirectory: supplied["--workdir"]! }), null, 2));
   } catch {

@@ -111,9 +111,16 @@ only checks that the selected program is executable and the selected work
 folder exists; it does not start Hermes, contact a model, create a task, or
 retain the values. Its output intentionally says only ready/not ready:
 
+If Hermes is normally available as the `hermes` terminal command, the owner
+may use `--executable-command hermes` instead of finding its private absolute
+path. The check resolves that command once through the owner's current PATH,
+uses the resulting executable only in memory, and never prints or stores the
+resolved path. It is still an owner-selected one-shot check, not a permanent
+configuration.
+
 ```sh
 npx --yes pnpm@11.19.0 run preflight:hermes:local-runner -- --owner-attended \
-  --executable OWNER_ABSOLUTE_HERMES_PATH --profile OWNER_PROFILE \
+  --executable-command hermes --profile OWNER_PROFILE \
   --model OWNER_MODEL --provider OWNER_PROVIDER --workdir OWNER_ABSOLUTE_WORKDIR
 ```
 
@@ -122,7 +129,7 @@ qualification:
 
 ```sh
 npx --yes pnpm@11.19.0 run qualify:hermes:local-runner -- --owner-attended \
-  --executable OWNER_ABSOLUTE_HERMES_PATH --profile OWNER_PROFILE \
+  --executable-command hermes --profile OWNER_PROFILE \
   --model OWNER_MODEL --provider OWNER_PROVIDER --workdir OWNER_ABSOLUTE_WORKDIR
 ```
 
