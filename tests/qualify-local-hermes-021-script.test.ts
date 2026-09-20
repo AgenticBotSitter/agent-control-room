@@ -90,3 +90,17 @@ test("a provider quota refusal is classified without emitting provider output", 
   assert.equal(output.failureReason, "model_quota_exhausted");
   assert.equal(JSON.stringify(output).includes("quota has been exhausted"), false);
 });
+
+test("a retired model is classified without emitting provider output", async t => {
+  const dir = await mkdtemp(join(tmpdir(), "control-room-hermes-qualification-test-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const fake = join(dir, "hermes");
+  await writeFile(fake, `#!${process.execPath}\nprocess.stderr.write('HTTP 404: model is retired\\n'); process.exit(1);\n`, { mode: 0o700 });
+  await chmod(fake, 0o700);
+  const result = await run(["--owner-attended"], { PATH: dir });
+  assert.equal(result.code, 1);
+  assert.equal(result.stderr, "");
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.failureReason, "model_unavailable");
+  assert.equal(JSON.stringify(output).includes("model is retired"), false);
+});

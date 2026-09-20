@@ -91,6 +91,7 @@ if (!ownerAttended || args.some(value => !accepted.has(value)) || (args.includes
           : timedOut ? "timed_out"
             : /(?:insufficient_quota|quota (?:has been )?exhausted|rate.?limit|\b429\b)/i.test(stderr) ? "model_quota_exhausted"
               : /(?:authentication|unauthenticated|invalid (?:api )?key|\b401\b|\b403\b)/i.test(stderr) ? "model_authentication_unavailable"
+                : /(?:\b404\b|model (?:is )?(?:retired|unavailable|not found)|testing period)/i.test(stderr) ? "model_unavailable"
             : !terminal ? "terminal_result_missing"
               : terminalTotalTokens === 0 ? "model_response_missing"
                 : exit.code !== 0 ? "runner_exit_nonzero"
