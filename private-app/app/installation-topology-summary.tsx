@@ -1,5 +1,6 @@
 import type { InstallationTopologyPlanV1 } from "../../src/harness/v1/installation-topology";
 import { summarizeInstallationReadinessV1, type InstallationReadinessV1 } from "../../src/harness/v1/installation-readiness";
+import { guideInstallationReadinessV1 } from "../../src/harness/v1/installation-guidance";
 
 const proofLabels = {
   local_owner_qualification: "a successful owner-attended local worker check",
@@ -29,6 +30,7 @@ export function InstallationTopologySummary({ plan, readiness }: { plan?: Readon
     <p>No reviewed setup plan is currently available. This screen does not guess whether this computer or another worker is ready.</p>
   </section>;
   const summary = summarizeInstallationReadinessV1(plan, readiness);
+  const guidance = guideInstallationReadinessV1(plan, readiness);
   const mode = plan.mode === "this_computer" ? "This computer" : "Several computers";
   return <section className="private-panel" aria-labelledby="installation-title">
     <h2 id="installation-title">Installation setup</h2>
@@ -42,6 +44,10 @@ export function InstallationTopologySummary({ plan, readiness }: { plan?: Readon
     <h3>Setup proof status</h3>
     <p><strong>{overallLabels[summary.state]}.</strong>{summary.nextProof ? ` Next: ${proofLabels[summary.nextProof]}.` : ""}</p>
     <ul>{summary.proofs.map(item => <li key={item.proof}><strong>{stateLabels[item.state]}:</strong> {proofLabels[item.proof]}</li>)}</ul>
+    <section className="private-note" aria-labelledby="installation-next-title">
+      <h3 id="installation-next-title">What to do next</h3>
+      {guidance.map(step => <div key={`${step.state}:${step.title}`}><p><strong>{step.title}.</strong> {step.detail}</p></div>)}
+    </section>
     <p className="private-note">This page is read-only. It cannot start an agent, connect another computer, change credentials, or approve work.</p>
   </section>;
 }

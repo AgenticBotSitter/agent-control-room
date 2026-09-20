@@ -33,5 +33,7 @@ test("setup summary shows an honest proof checklist rather than a live worker", 
   assert.match(html, /Passed:.*backup-and-restore check/);
   assert.match(html, /Not started:.*owner-attended local worker check/);
   assert.match(html, /Not started:.*owner-attended local runner check/);
+  assert.match(html, /What to do next/);
+  assert.match(html, /Check the local agent connection/);
   assert.doesNotMatch(html, /<button|<form|<input|worker:local|sha256:/);
 });
