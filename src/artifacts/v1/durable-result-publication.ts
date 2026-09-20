@@ -234,6 +234,8 @@ export interface DurableResultBindingV1 {
    */
   harness: string;
   connectorProfileDigest: string;
+  /** Current canonical authority recorded when this run was admitted. */
+  authorityDigest?: string;
   snapshotDigest?: string; snapshotVersion?: number;
   publicationContractDigest?: string; terminalEvidenceDigest?: string;
   threadId?: string; turnId?: string; itemId?: string;
@@ -326,18 +328,8 @@ async function verifyRecordedIdentity(tx: DatabaseSession, binding: DurableResul
   const payload = payloadRow?.payload as { connectorProfileDigest?: string; authorityDigest?: string } | undefined;
   if (!payload || payload.connectorProfileDigest !== binding.connectorProfileDigest)
     throw new Error("durable_result_identity_mismatch");
-  // Terminal evidence anchor: native binds the snapshot digest; codex
-  // binds the publication contract + terminal evidence digest. If the
-  // binding carries any of these, at least one must match the recorded
-  // payload's authority digest (the recorded digest is the digest the
-  // connector profile / harness attested at admission time).
-  const evidenceAnchors: string[] = [];
-  if (binding.snapshotDigest !== undefined) evidenceAnchors.push(binding.snapshotDigest);
-  if (binding.publicationContractDigest !== undefined) evidenceAnchors.push(binding.publicationContractDigest);
-  if (binding.terminalEvidenceDigest !== undefined) evidenceAnchors.push(binding.terminalEvidenceDigest);
   const recordedAuthority = payload?.authorityDigest;
-  if (evidenceAnchors.length > 0 && (recordedAuthority === undefined
-    || !evidenceAnchors.includes(recordedAuthority)))
+  if (binding.authorityDigest !== undefined && recordedAuthority !== binding.authorityDigest)
     throw new Error("durable_result_identity_mismatch");
 }
 

@@ -13,7 +13,7 @@ import { hermes021MacosTerminalResultSchemaV1, type Hermes021MacosTaskOutcomeV1 
 
 const retainedBindingSchema = z.object({
   tenantId: localId, projectId: localId, jobId: localId, attemptId: localId, runId: localId, nodeId: localId,
-  workflowId: localId, acceptanceProfileId: localId, acceptanceProfileDigest: digestSchema,
+  workflowId: localId, authorityDigest: digestSchema, acceptanceProfileId: localId, acceptanceProfileDigest: digestSchema,
 }).strict();
 const retainedTerminalSchema = z.object({
   sessionId: z.string().min(3).max(180).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/),
@@ -22,7 +22,7 @@ const retainedTerminalSchema = z.object({
 
 export interface Hermes021MacosRetainedPublicationBindingV1 {
   tenantId: string; projectId: string; jobId: string; attemptId: string; runId: string; nodeId: string;
-  workflowId: string; acceptanceProfileId: string; acceptanceProfileDigest: string;
+  workflowId: string; authorityDigest: string; acceptanceProfileId: string; acceptanceProfileDigest: string;
 }
 export interface Hermes021MacosRetainedTerminalEvidenceV1 { sessionId: string; terminalResultDigest: string; }
 export interface Hermes021MacosTerminalResultPublicationInputV1 {

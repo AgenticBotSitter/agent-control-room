@@ -103,6 +103,10 @@ Completed in source:
   is called. It binds the run to the task, attempt, approved authority, and
   connector profile without recording a local login, model, provider, or
   workspace.
+- durable result publication now checks the recorded task-authority fingerprint
+  separately from the completed-result fingerprint. This avoids treating a
+  result's contents as if they were the task's approval while preserving both
+  checks before a pending-review record is written.
 
 Remaining before an automatic local worker is enabled:
 

@@ -863,6 +863,7 @@ function hermes021PublicationInput(runId: string, rawLine = hermes021RawLine("du
   return {
     retainedBinding: { tenantId: binding.tenantId, projectId: binding.projectId, jobId: `job:${runId}`,
       attemptId: `attempt:${runId}`, runId, nodeId: binding.nodeId, workflowId: "workflow:test",
+      authorityDigest: digest("hermes-021-authority"),
       acceptanceProfileId: "profile:test:hermes-021", acceptanceProfileDigest: digest("hermes-021-profile") },
     retainedTerminal: { sessionId: String(record.session_id), terminalResultDigest: sha256Digest(record) },
     terminalResultRawLine: rawLine, acceptedConnectorProfileDigest: HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1,
@@ -878,7 +879,7 @@ async function setupHermes021Provision(runId: string, input: ReturnType<typeof h
     retained: { ...input.retainedTerminal, connectorProfileDigest: HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1 },
     terminalResultRawLine: input.terminalResultRawLine, observedAt: receivedAt,
   });
-  const f = await setupWithProvision(runId, evidence.evidenceDigest);
+  const f = await setupWithProvision(runId, retained.authorityDigest);
   await f.db.query("UPDATE control_harness_runs SET payload = payload || $3::jsonb WHERE tenant_id=$1 AND id=$2", [
     binding.tenantId, runId, JSON.stringify({ connectorProfileDigest: HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1 }),
   ]);
