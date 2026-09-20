@@ -6,13 +6,14 @@ import { TaskAssignmentCoordinator } from "../src/web/v1/task-assignment-coordin
 import { HERMES_021_MACOS_LOCAL_ADAPTER_V1, HERMES_021_MACOS_LOCAL_CAPABILITY_V1,
   HERMES_021_MACOS_LOCAL_JOB_TYPE_V1, HERMES_021_MACOS_LOCAL_START_OPERATION_V1,
   HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1, Hermes021MacosDispatchPreparationV1,
-  executeAssignedHermes021MacosTaskV1, executeAndPublishAssignedHermes021MacosTaskV1 } from "../src/harness/hermes-021-v1";
+  executeAssignedHermes021MacosTaskV1 } from "../src/harness/hermes-021-v1";
 import { createInMemoryNeutralReservationPort } from "../src/artifacts/v1/neutral-reservation-port";
 import { FleetSignalStore } from "../src/node-fleet/v1/fleet-signal-store";
 import { HarnessRunStoreV1 } from "../src/harness/v1/store";
 import { NativeApprovalPacketStore } from "../src/web/v1/native-approval-packet-store";
 import type { NativeTaskSubmission } from "../src/persistence/native-task-submission";
 import { deliverVerifiedHermes021LocalQueueTaskV1 } from "../src/web/v1/hermes-021-local-queue-delivery";
+import { createHermes021LocalQueueExecutorV1 } from "../src/web/v1/hermes-021-local-executor";
 import type { FleetSignalEnvelope } from "../src/node-fleet/v1/schemas";
 import { ownerReviewFixture } from "./helpers/web-owner-review";
 import { binding, enrollment, instant } from "./hermes-native-fixture";
@@ -126,7 +127,7 @@ test("a Marvin Hermes 0.21 template creates a pinned v5 plan, not an older gener
       return [{ type: "result", session_id: "session:marvin", exit_code: 0, text: "completed", tokens: {
         input: 1, output: 1, total: 2, cache_read: 0, cache_write: 0 }, duration_ms: 3, timestamp: instant + 9000 }];
     } } }, clock: () => instant + 9000 };
-  const composed = await executeAndPublishAssignedHermes021MacosTaskV1({
+  const localExecutor = createHermes021LocalQueueExecutorV1({ tenantId: binding.tenantId,
     execution,
     results: { db: f.db, integrityKey: f.resultKey, reviewKey: f.reviewKey, storage: f.storage,
       storageClass: "local", reservations: createInMemoryNeutralReservationPort() },
@@ -134,9 +135,8 @@ test("a Marvin Hermes 0.21 template creates a pinned v5 plan, not an older gener
       assert.equal(delivery.identity.jobId, planned.receipt.jobId);
       assert.equal(delivery.authorityDigest, saved.job.authority.digest);
     },
-  }, { tenantId: binding.tenantId,
-    projectId: binding.projectId, jobId: planned.receipt.jobId, attemptId: assigned.receipt.attemptId,
-    leaseId: assigned.receipt.leaseId, inputDigest: planned.receipt.inputDigest });
+  });
+  const composed = await localExecutor.deliver(standardPickup, new AbortController().signal);
   const executed = composed.execution;
   assert.equal(executed.delivered.state, "completed_delivery");
   assert.equal(executed.delivered.outcome?.kind, "completed");
