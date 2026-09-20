@@ -158,15 +158,13 @@ Completed in source:
   worker even when another worker reconnects, while incompatible or revoked
   workers cannot become a ready substitute. This is not a real transport or
   machine-enrollment claim.
+- the same temporary two-worker proof now carries the intended worker's
+  progress and completed result through the managed result receiver, with one
+  saved result receipt and no delivery to the other worker. Separate shared
+  local/remote journeys cover normal review and correction handling.
 
 Remaining:
 
-- a controlled two-worker result-return fixture: the present two-worker proof
-  covers enrollment, assignment, delivery, reconnect, incompatibility, and
-  revocation, while the existing result/review/correction journeys cover each
-  route separately. It does not yet expose both together through one managed
-  result-receiver channel, so it must not be described as that end-to-end
-  proof; and
 - delivery acknowledgement through a real enrolled transport, including its
   verified adapter-version compatibility boundary and the same result, review,
   and correction path.

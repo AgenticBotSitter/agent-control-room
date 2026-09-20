@@ -93,3 +93,36 @@ test("a revoked enrolled worker cannot become a substitute for the assigned work
   assert.equal(sent.deliveryConfirmed, true);
   assert.equal(revoked.peer.outgoing.filter(frame => JSON.parse(frame).type === "harness.native.dispatch").length, 0);
 });
+
+test("a targeted worker alone sends a completed result after delivery acknowledgements are reconciled", async t => {
+  const x = await managedNativeSessionFixture(undefined, { queue: true, twoNodes: true, reporting: true });
+  t.after(x.close);
+  assert.ok(x.secondaryNode);
+  const secondary = await x.attach(x.secondaryNode.nodeId);
+  await x.handshake(secondary);
+  const primary = await x.attachQueue();
+  await x.handshakeQueue(primary);
+  const task = await queued(x), delivery = x.manager.deliverApproved(task, currentSignal());
+  for (let i = 0; i < 20 && primary.peer.outgoing.length === 0; i++) await new Promise(resolve => setImmediate(resolve));
+  const frame = JSON.parse(primary.peer.outgoing[0]) as Parameters<typeof x.prepareNode>[1];
+  await primary.peer.acknowledge();
+  const receipt = primary.peer.incoming.shift(); assert.ok(receipt);
+  await primary.handle.receive(receipt, undefined, currentSignal());
+  await delivery;
+  while (primary.peer.outgoing.length) await primary.peer.acknowledge();
+
+  const native = await x.prepareNode(primary.peer, frame);
+  assert.ok(native.reporter);
+  for (const phase of ["start", "running", "completed"] as const) {
+    const body = await native.advanceNative(phase);
+    await native.reporter.report(currentSignal());
+    const observation = primary.peer.incoming.shift(); assert.ok(observation);
+    const bytes = phase === "completed" ? native.reporter.readResult(body, currentSignal()) : undefined;
+    await primary.handle.receive(observation, bytes, currentSignal());
+    while (primary.peer.outgoing.length) await primary.peer.acknowledge();
+  }
+  const counts = await x.counts();
+  assert.equal(counts.artifacts.length, 1);
+  assert.equal(counts.receipts.length, 1);
+  assert.equal(secondary.peer.outgoing.some(raw => JSON.parse(raw).type === "harness.native.dispatch"), false);
+});
