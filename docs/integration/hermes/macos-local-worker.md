@@ -135,11 +135,21 @@ ordinary result-and-review path without launching Hermes again. The runner
 wiring and a real restart proof are still required before this is enabled.
 
 `createHermes021MacosStreamJsonPrivatePortV1` is the source-level bridge for
-that runner wiring. An installation supplies only an already-owned process
-wrapper that emits bounded JSON lines. The bridge selects one valid terminal
-line, stages it before returning it to Control Room, and refuses to stage an
-ambiguous stream. It does not know how to launch Hermes and cannot read or
-select a login, model, provider, path, or network destination.
+that runner wiring. The installation can use
+`createHermes021MacosSubprocessStreamJsonHostV1` as its narrow process wrapper.
+It has a fixed Hermes executable and fixed argument layout, passes the approved
+task only in a private temporary file, closes standard input, limits output and
+runtime, and removes that temporary file after the process closes. It receives
+the operator's already-selected profile, model, provider and safe work folder
+only in private startup configuration; none are stored in a task, browser page,
+or worker message.
+
+This wrapper is not enabled automatically. The installer must still choose the
+restricted work folder, register the worker, assemble the existing task policy,
+and provide the resulting callback to the ordinary queue worker. That keeps a
+browser request from choosing a model, profile, command, path, or tool access.
+If the process ends without one valid terminal result, Control Room reports an
+uncertain or failed task and never launches it a second time automatically.
 
 The normal operator configuration assembly can now carry that
 installation-owned local executor into the existing task queue. This is the
