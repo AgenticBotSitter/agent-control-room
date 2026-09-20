@@ -5,7 +5,7 @@ import { sha256Digest } from "../../security";
 import { HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1 } from "./connector-profile";
 import { HERMES_021_MACOS_LOCAL_ADAPTER_V1, HERMES_021_MACOS_LOCAL_CAPABILITY_V1,
   HERMES_021_MACOS_LOCAL_JOB_TYPE_V1, hermes021MacosLocalBindingSchemaV1 } from "./macos-local-worker";
-import { createControllerWorkerDeliveryV1, type ControllerWorkerDeliveryV1 } from "../v1/controller-worker-delivery";
+import { controllerWorkerDeliverySchemaV1, createControllerWorkerDeliveryV1, type ControllerWorkerDeliveryV1 } from "../v1/controller-worker-delivery";
 import { hermes021TaskExecutionPlanSchemaV5, hermes021TaskExecutionPlanSchemaV6,
   type TaskExecutionPlanner } from "../../web/v1/task-execution-planner";
 
@@ -34,6 +34,36 @@ export type Hermes021MacosPreparedDispatchV1 = Readonly<{
   grantsExecutionAuthority: false;
 }>;
 
+const dispatchReferenceSchema = z.object({ tenantId: id, projectId: id, jobId: id, attemptId: id, leaseId: id, inputDigest: digest }).strict();
+const preparedDispatchSchema = z.object({
+  schema: z.literal(HERMES_021_MACOS_DISPATCH_PREPARATION_V1),
+  delivery: controllerWorkerDeliverySchemaV1,
+  workflowId: id,
+  route: z.object({ kind: z.literal("local"), workerId: id }).strict(),
+  startsWork: z.literal(false),
+  grantsExecutionAuthority: z.literal(false),
+}).strict();
+
+/**
+ * Delivery packets intentionally contain issuance-specific fields. This digest
+ * compares only the canonical facts that must remain true at the instant the
+ * local runner is about to start: a fresh packet can have a different issue
+ * time, but it may not silently point at a changed task, worker, authority,
+ * plan, acceptance contract, or lease-derived run identity.
+ */
+const preStartBindingDigest = (prepared: Hermes021MacosPreparedDispatchV1) => sha256Digest({
+  workflowId: prepared.workflowId,
+  route: prepared.route,
+  identity: prepared.delivery.identity,
+  worker: prepared.delivery.worker,
+  input: prepared.delivery.input,
+  authorityDigest: prepared.delivery.authorityDigest,
+  connectorProfileDigest: prepared.delivery.connectorProfileDigest,
+  acceptanceProfileId: prepared.delivery.acceptanceProfileId,
+  acceptanceProfileDigest: prepared.delivery.acceptanceProfileDigest,
+  expiresAt: prepared.delivery.expiresAt,
+});
+
 /**
  * Reads an already-assigned canonical task and creates the shared packet for
  * Marvin. This is deliberately a preparation reader: it does not create an
@@ -51,8 +81,21 @@ export class Hermes021MacosDispatchPreparationV1 {
   }
 
   async prepare(value: Hermes021MacosDispatchReferenceV1): Promise<Hermes021MacosPreparedDispatchV1> {
-    const ref = z.object({ tenantId: id, projectId: id, jobId: id, attemptId: id, leaseId: id, inputDigest: digest }).strict().parse(value);
+    const ref = dispatchReferenceSchema.parse(value);
     return this.db.transaction(async tx => this.prepareInSession(tx, ref));
+  }
+
+  /**
+   * Rechecks the same canonical assignment immediately before a local native
+   * launch. It creates no second delivery packet, queue, receipt, or authority.
+   * A late revoke, expiry, reassignment, plan change, or worker binding change
+   * therefore refuses the launch instead of being treated as a retryable task.
+   */
+  async assertCurrent(value: Hermes021MacosDispatchReferenceV1, preparedValue: unknown): Promise<void> {
+    const ref = dispatchReferenceSchema.parse(value);
+    const prepared = preparedDispatchSchema.parse(preparedValue) as Hermes021MacosPreparedDispatchV1;
+    const current = await this.db.transaction(async tx => this.prepareInSession(tx, ref));
+    if (preStartBindingDigest(prepared) !== preStartBindingDigest(current)) unavailable();
   }
 
   private async prepareInSession(tx: DatabaseSession, ref: Hermes021MacosDispatchReferenceV1) {

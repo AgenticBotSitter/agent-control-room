@@ -108,6 +108,11 @@ Completed in source:
   active lease, the matching task plan, and the pinned Hermes profile before
   it creates the shared local delivery packet. It starts neither Hermes nor a
   second queue, and is covered by the same local/remote receipt tests.
+- immediately before the local launcher can create a run record or contact
+  Hermes, that prepared packet is rechecked against the same authoritative
+  task, lease, plan, worker binding, authority, and review contract. A late
+  revoke, expiry, reassignment, or changed binding refuses the launch; this
+  adds no new scheduler, database, authority, or automatic retry.
 - an application composition now connects that prepared packet directly to
   Marvin's controlled local delivery seam. The first accepted handoff invokes
   the injected local runner once; an exact restart replay reports the earlier

@@ -31,6 +31,10 @@ export async function executeAssignedHermes021MacosTaskV1(config: Hermes021Macos
   const clock = config.clock ?? Date.now;
   if (typeof clock !== "function") unavailable();
   const prepared = await config.preparation.prepare(referenceValue);
+  // The initial preparation is what binds this execution to the queue pickup.
+  // Recheck that same binding directly before we create a run record or contact
+  // the private launcher so a late revoke cannot start Marvin in the gap.
+  await config.preparation.assertCurrent(referenceValue, prepared);
   const receivedAt = new Date(clock()).toISOString();
   if (!z.string().datetime().safeParse(receivedAt).success || Date.parse(receivedAt) > Date.parse(prepared.delivery.expiresAt)) unavailable();
   const candidate = Hermes021MacosLocalRunRegistrationV1(prepared.delivery, receivedAt);
