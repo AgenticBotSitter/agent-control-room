@@ -39,7 +39,7 @@ export type PrivateTaskStartupConfiguration = {
   news?: NewsStartupConfiguration;
   /** Explicit, existing local artifact directory for the agent-task composition. */
   artifactStorage?: PrivateArtifactStorageConfigurationV1;
-  coordinator: Pick<TaskCoordinatorConfiguration, "planning" | "routes" | "approvals" | "quality" | "revisionPlanning" | "nativeHttp"> & {
+  coordinator: Pick<TaskCoordinatorConfiguration, "planning" | "routes" | "approvals" | "quality" | "revisionPlanning" | "nativeHttp" | "hermes021Local"> & {
     codex?: CodexPermitConfiguration;
     nativeQueue?: true;
     nativeQueueRecovery?: true;
@@ -127,11 +127,15 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
       || codexResultReturn.qualificationReceipt.body.tenantId !== web.tenantId)) throw new Error();
     const nativeHttp = input.coordinator.nativeHttp ? captureNativeHttpSettings(input.coordinator.nativeHttp) : undefined;
     if (nativeHttp && (!sessions || nativeHttp.peers.some(peer => !sessions.nodes.some(node => node.nodeId === peer.nodeId)))) throw new Error();
+    const hermes021Local = input.coordinator.hermes021Local
+      ? Object.freeze({ deliver: input.coordinator.hermes021Local.deliver.bind(input.coordinator.hermes021Local) }) : undefined;
+    if (hermes021Local && (!nativeQueue || !approvals)) throw new Error();
     const w = input.coordinator.queueWorker;
     const queueWorker = w ? { database: validatePrivatePostgresConfiguration(w.database), concurrency: w.concurrency ?? 1 } : undefined;
-    if (queueWorker && (!nativeQueue || !sessions || queueWorker.database.host !== database.host
+    if (queueWorker && (!nativeQueue || (!sessions && !hermes021Local) || queueWorker.database.host !== database.host
       || queueWorker.database.port !== database.port || queueWorker.database.database !== database.database
-      || [web.database.username, database.username, resultDatabase!.username, evidence!.database.username, sessions.database.username].includes(queueWorker.database.username)
+      || [web.database.username, database.username, resultDatabase!.username, evidence!.database.username,
+        ...(sessions ? [sessions.database.username] : [])].includes(queueWorker.database.username)
       || !Number.isSafeInteger(queueWorker.concurrency) || queueWorker.concurrency < 1 || queueWorker.concurrency > 8)) throw new Error();
     const i = input.coordinator.ideaCreation;
     const ideaCreation = i ? { database: validatePrivatePostgresConfiguration(i.database), integrityKey: key(i.integrityKey),
@@ -157,7 +161,7 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
       [web.database, database, resultDatabase, evidence?.database, sessions?.database, queueWorker?.database,
         ideaCreation?.database, ideaRuntime?.database].filter((value): value is PrivatePostgresConfiguration => !!value)) : undefined;
     return { web, database, planning, routes, approvals, codex, quality, revisionPlanning, resultDatabase, evidence, sessions,
-      codexResultReturn, nativeHttp, nativeQueue, nativeQueueRecovery, queueWorker, ideaCreation, ideaRuntime, news, artifactStorage };
+      codexResultReturn, nativeHttp, nativeQueue, nativeQueueRecovery, queueWorker, hermes021Local, ideaCreation, ideaRuntime, news, artifactStorage };
   } catch { throw new Error("private_task_startup_config_invalid"); }
 }
 
@@ -385,6 +389,7 @@ export function createPrivateTaskBootstrap(dependencies: {
         ...(newsIntegration ? { newsCollections: newsIntegration.web } : {}) }, {
         scope: { tenantId: config.web.tenantId, workspaceId: config.web.workspaceId }, database: coordinator,
         planning: config.planning, routes: config.routes, approvals: config.approvals, quality: config.quality,
+        hermes021Local: config.hermes021Local,
         codex: config.codex,
         revisionPlanning: config.revisionPlanning, resultDatabase, clock,
         ideaCreation: ideaDatabase ? { ...config.ideaCreation!, database: ideaDatabase } : undefined,
@@ -405,7 +410,7 @@ export function createPrivateTaskBootstrap(dependencies: {
         const pending = Promise.resolve().then(() => { requireActive(); return startWorker!({ ...workerConfig,
           application: { host: config.database.host, port: config.database.port, database: config.database.database,
             loginNames: [config.web.database.username, config.database.username, config.resultDatabase!.username,
-              config.evidence!.database.username, config.sessions!.database.username,
+              config.evidence!.database.username, ...(config.sessions ? [config.sessions.database.username] : []),
               ...(config.ideaCreation ? [config.ideaCreation.database.username] : []),
               ...(config.ideaRuntime ? [config.ideaRuntime.database.username] : [])] },
           deliver: async (reference, signal) => {
