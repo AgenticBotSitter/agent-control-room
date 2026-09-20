@@ -160,7 +160,7 @@ Completed in source:
   machine-enrollment claim.
 - the same temporary two-worker proof now carries the intended worker's
   progress and completed result through the managed result receiver, with one
-  saved result receipt and no delivery to the other worker. Separate shared
+  saved result receipt, one ordinary pending-review record, and no delivery to the other worker. Separate shared
   local/remote journeys cover normal review and correction handling.
 
 Remaining:

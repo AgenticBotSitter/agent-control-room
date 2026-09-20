@@ -124,5 +124,10 @@ test("a targeted worker alone sends a completed result after delivery acknowledg
   const counts = await x.counts();
   assert.equal(counts.artifacts.length, 1);
   assert.equal(counts.receipts.length, 1);
+  const reviewPlans = await x.admin(async () => (await x.f.db.query<{ count: string }>(
+    "SELECT count(*)::text AS count FROM control_native_review_plans WHERE tenant_id=$1 AND run_id=$2",
+    [x.f.scope.tenantId, x.registration.id],
+  )).rows[0]?.count);
+  assert.equal(reviewPlans, "1", "the completed result enters the ordinary pending-review path");
   assert.equal(secondary.peer.outgoing.some(raw => JSON.parse(raw).type === "harness.native.dispatch"), false);
 });
