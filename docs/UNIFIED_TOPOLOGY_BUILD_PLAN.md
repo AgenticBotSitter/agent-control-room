@@ -115,10 +115,6 @@ Completed in source:
 
 Remaining before an automatic local worker is enabled:
 
-- an end-to-end controller composition that supplies a completed local Hermes
-  result to the shared review-and-correction reader (the result publisher and
-  correction-plan form are present, but the permanent host composition is not
-  yet wired);
 - one owner-attended, text-only qualification using the existing Hermes login
   that completes successfully (the first bounded attempt ended before model
   use; its sanitized report is evidence of a failed qualification, not an
@@ -129,6 +125,11 @@ Remaining before an automatic local worker is enabled:
   Hermes returns but before the normal result publisher completes. A delivery
   replay correctly refuses to run Hermes twice, but must not be mislabeled as
   result recovery.
+- one current-contract conformance journey that runs the same complete
+  task/result/review/correction sequence through both local and remote route
+  doubles. Existing delivery and lifecycle tests cover the pieces separately;
+  a retired test package was deliberately rejected rather than reintroducing
+  its obsolete queue interface.
 
 The permanent local-installation recovery model, including the boundary
 between the one authoritative database and local result bytes, is documented
