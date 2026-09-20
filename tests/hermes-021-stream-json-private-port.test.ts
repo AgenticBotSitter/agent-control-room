@@ -12,7 +12,7 @@ test("stream-json private port stages its only completed terminal result before 
   const port = createHermes021MacosStreamJsonPrivatePortV1(binding, { async execute(input) {
     await input.onLine(JSON.stringify({ type: "progress", message: "safe non-terminal fixture" }));
     await input.onLine(JSON.stringify(result));
-  } });
+  } }, () => 1);
   const lines = await port.run({ localServiceId: binding.localServiceId, task, terminalStage: { async capture(value) { staged = value; } } });
   assert.equal(lines.length, 2);
   assert.deepEqual(staged, result);
@@ -23,8 +23,16 @@ test("stream-json private port does not stage an ambiguous two-result stream", a
   const port = createHermes021MacosStreamJsonPrivatePortV1(binding, { async execute(input) {
     await input.onLine(JSON.stringify(result));
     await input.onLine(JSON.stringify({ ...result, session_id: "session:second" }));
-  } });
+  } }, () => 1);
   const lines = await port.run({ localServiceId: binding.localServiceId, task, terminalStage: { async capture() { staged++; } } });
   assert.equal(lines.length, 2);
   assert.equal(staged, 0);
+});
+
+test("stream-json private port refuses an expired controller task before it reaches Hermes", async () => {
+  let calls = 0;
+  const port = createHermes021MacosStreamJsonPrivatePortV1(binding, { async execute() { calls++; } }, () => 50);
+  await assert.rejects(port.run({ localServiceId: binding.localServiceId, task: { ...task, deadline: 50 } }),
+    /hermes_021_macos_stream_json_private_port_unavailable/);
+  assert.equal(calls, 0);
 });

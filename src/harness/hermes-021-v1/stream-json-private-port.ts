@@ -24,12 +24,17 @@ export interface Hermes021MacosStreamJsonHostV1 {
  * for normal uncertainty handling and is never staged as a valid completion.
  */
 export function createHermes021MacosStreamJsonPrivatePortV1(bindingValue: unknown,
-  host: Hermes021MacosStreamJsonHostV1): Hermes021MacosLocalPrivatePortV1 {
+  host: Hermes021MacosStreamJsonHostV1, clock: () => number = Date.now): Hermes021MacosLocalPrivatePortV1 {
   const binding = hermes021MacosLocalBindingSchemaV1.parse(bindingValue);
-  if (!host || typeof host.execute !== "function") unavailable();
+  if (!host || typeof host.execute !== "function" || typeof clock !== "function") unavailable();
   return Object.freeze({
     async run(input: Parameters<Hermes021MacosLocalPrivatePortV1["run"]>[0]) {
       if (!input || input.localServiceId !== binding.localServiceId || input.signal?.aborted) unavailable();
+      // A runner is the last process boundary before Hermes.  Refuse a task
+      // that is already outside its controller-approved window even if an
+      // earlier caller failed to stop it.  This creates no retry or fallback.
+      const now = clock();
+      if (!Number.isSafeInteger(now) || now < 0 || now >= input.task.deadline) unavailable();
       const lines: unknown[] = [];
       let receivedBytes = 0;
       await host.execute({ task: input.task, signal: input.signal, async onLine(line) {
