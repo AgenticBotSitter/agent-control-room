@@ -4,5 +4,7 @@ export * from "./owned-process-session";
 export * from "./unsupported-operations";
 export * from "./result-publication";
 export * from "./local-worker-result";
+export * from "./terminal-result-staging";
+export * from "./terminal-result-recovery";
 export * from "./task-planning-contract";
 export * from "./local-delivery-composition";

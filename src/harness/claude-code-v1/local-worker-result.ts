@@ -18,6 +18,7 @@ import {
   type ClaudeCodeResultFrameV1,
   type ClaudeCodeStreamDecoderStateV1,
 } from "./stream-json-decode";
+import { stageClaudeCodeTerminalResultInputV1, type ClaudeCodeTerminalResultStagePortV1 } from "./terminal-result-staging";
 
 export interface ClaudeCodeLocalWorkerResultInputV1 {
   /** The shared publisher configuration already owned by Control Room. */
@@ -35,6 +36,8 @@ export interface ClaudeCodeLocalWorkerResultInputV1 {
   receivedAt: string;
   /** Synchronous retained-authority fence, checked before acquisition and publication. */
   assertAuthority: () => void;
+  /** Optional protected custody for restart-safe replay of this exact terminal record. */
+  terminalStage?: ClaudeCodeTerminalResultStagePortV1;
 }
 
 export interface ClaudeCodeLocalWorkerResultV1 {
@@ -157,7 +160,7 @@ export async function publishClaudeCodeOwnedAttemptResultV1(
     }
 
     const disposition = session.disposition();
-    const publication = await publishClaudeTerminalResultV1(publicationConfiguration, {
+    const publicationInput = {
       retainedBinding,
       processBinding,
       retainedSession: {
@@ -172,7 +175,11 @@ export async function publishClaudeCodeOwnedAttemptResultV1(
       acceptedConnectorProfileDigest,
       receivedAt,
       assertAuthority,
-    });
+    };
+    // Stage only fully decoded evidence after cleanup is certain, before the
+    // shared publisher. A crash in this gap can recover this exact record only.
+    if (input.terminalStage) await input.terminalStage.capture(stageClaudeCodeTerminalResultInputV1(publicationInput), signal);
+    const publication = await publishClaudeTerminalResultV1(publicationConfiguration, publicationInput);
 
     return Object.freeze({
       publication,

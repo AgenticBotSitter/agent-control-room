@@ -22,12 +22,16 @@ import {
 } from "../src/harness/claude-code-v1/result-publication";
 import { publishClaudeCodeOwnedAttemptResultV1 } from
   "../src/harness/claude-code-v1/local-worker-result";
+import { createClaudeCodeTerminalResultStageV1 } from
+  "../src/harness/claude-code-v1/terminal-result-staging";
+import { recoverClaudeCodeTerminalResultV1 } from
+  "../src/harness/claude-code-v1/terminal-result-recovery";
 import type { DurableResultPublicationConfigurationV1 } from "../src/artifacts/v1/durable-result-publication";
 import { terminalResultEvidenceSchemaV1 } from "../src/harness/v1/terminal-result-evidence";
 import { resultBytesHash } from "../src/artifacts/v1/native-results";
 import { createPersistentNeutralReservationPort,
   createPersistentNeutralReservationStore } from "../src/artifacts/v1/neutral-reservation-port";
-import type { ArtifactReadPortV1, ArtifactStoragePortV1 } from "../src/node-executor/artifact-storage";
+import { InMemoryArtifactStorage, type ArtifactReadPortV1, type ArtifactStoragePortV1 } from "../src/node-executor/artifact-storage";
 import { binding as nativeFixtureBinding } from "./hermes-native-fixture";
 import { at } from "./native-task-fixture";
 import { webNativeResultFixture } from "./helpers/web-native-result";
@@ -360,6 +364,8 @@ test("the connector modules read no environment, file, process or network source
     "connector-profile.ts",
     "result-publication.ts",
     "local-worker-result.ts",
+    "terminal-result-staging.ts",
+    "terminal-result-recovery.ts",
     "index.ts",
   ];
   const forbidden = [
@@ -550,6 +556,63 @@ test("the local Claude coordinator carries one owned stream into the shared revi
   assert.equal(f.storage.putCalls, 1);
   const stored = await f.storage.read(completed.publication.receipt.artifactId);
   assert.equal(new TextDecoder().decode(stored!), resultText);
+});
+
+test("a protected Claude terminal stage recovers one exact pending-review result without acquisition", async t => {
+  const runId = "run:claude-terminal-stage";
+  const sessionId = bridgeSession(90);
+  const terminalLine = JSON.stringify({ type: "result", subtype: "success", is_error: false,
+    session_id: sessionId, result: "Staged exactly once for owner review.", total_cost_usd: 0, usage: {} });
+  const f = await bridgeFixture(runId, sha256Digest(JSON.parse(terminalLine))); t.after(f.close);
+  const processBinding = freshBinding({ runId, attemptId: `attempt:${runId}` });
+  const stage = createClaudeCodeTerminalResultStageV1({ storage: new InMemoryArtifactStorage(),
+    retainedBinding: retainedBindingFor(runId), processBinding, receivedAt: at(12_400) });
+  const process = new FakeClaudeProcess();
+  let acquired = 0;
+  const first = publishClaudeCodeOwnedAttemptResultV1({ publication: f.config, retainedBinding: retainedBindingFor(runId),
+    processBinding, acceptedConnectorProfileDigest: CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1,
+    acquire: () => { acquired += 1; return process.acquire(); }, signal: new AbortController().signal, cleanupMs: 500,
+    receivedAt: at(12_400), assertAuthority: () => {}, terminalStage: stage });
+  process.push(`${JSON.stringify({ type: "system", subtype: "init", session_id: sessionId })}\n`);
+  process.push(`${terminalLine}\n`); process.endNaturally();
+  const published = await first;
+  assert.equal(published.publication.replayed, false);
+  assert.equal(acquired, 1);
+  const recovered = await recoverClaudeCodeTerminalResultV1({ publication: f.config, stage, assertAuthority: () => {} });
+  assert.equal(recovered.state, "recovered_pending_review");
+  if (recovered.state === "recovered_pending_review") assert.equal(recovered.publication.replayed, true);
+  assert.equal(acquired, 1, "recovery has no acquisition path");
+  assert.equal((await f.db.query("SELECT plan FROM control_native_review_plans WHERE tenant_id=$1 AND run_id=$2",
+    [nativeFixtureBinding.tenantId, runId])).rows.length, 1, "one ordinary pending-review plan remains");
+});
+
+test("missing or altered staged Claude evidence is explicit uncertainty and never acquires", async t => {
+  const runId = "run:claude-terminal-stage-refusal";
+  const f = await bridgeFixture(runId, digestOf("nothing-staged")); t.after(f.close);
+  const processBinding = freshBinding({ runId, attemptId: `attempt:${runId}` });
+  const missing = createClaudeCodeTerminalResultStageV1({ storage: new InMemoryArtifactStorage(),
+    retainedBinding: retainedBindingFor(runId), processBinding, receivedAt: at(12_500) });
+  const absent = await recoverClaudeCodeTerminalResultV1({ publication: f.config, stage: missing, assertAuthority: () => {} });
+  assert.deepEqual(absent, { state: "terminal_result_uncertain", reasonCode: "staged_terminal_result_missing", permitsRetry: false, permitsResume: false });
+  const altered = await recoverClaudeCodeTerminalResultV1({ publication: f.config, assertAuthority: () => {}, stage: {
+    async capture() {}, async recover() { return {
+      retainedBinding: retainedBindingFor(runId), processBinding,
+      retainedSession: { processAttemptId: processBinding.processAttemptId, sessionId: bridgeSession(91), terminalFrameDigest: digestOf("forged") },
+      disposition: { schema: "control-room.claude-code-session-disposition/v1", processAttemptId: processBinding.processAttemptId,
+        runId, attemptId: `attempt:${runId}`, closed: true, cleanupUncertain: false, exitObserved: true, exitMalformed: false,
+        terminalResultConfirmed: true, resubmissionSafe: false, reasonCode: "closed_with_decoded_terminal_result",
+        grantsExecutionAuthority: false, canonicalPublicationAllowed: false, permitsRetry: false, permitsResume: false },
+      terminalFrameRawLine: JSON.stringify({ type: "result", subtype: "success", is_error: false, session_id: bridgeSession(91), result: "altered", usage: {} }),
+      terminalFrame: { schema: "control-room.claude-code-stream-frame/v1", kind: "result", sessionId: bridgeSession(91), outcome: "succeeded", isError: false,
+        subtypeCode: "success", terminalReasonCode: "none", terminalReasonPresent: false, resultText: "altered", resultBytes: 7,
+        resultTextDigest: digestOf("altered"), totalCostUsd: undefined, usageReported: true, frameDigest: digestOf("forged") },
+      decoderState: { sessionId: bridgeSession(91), framesAccepted: 2, assistantTurns: 0, initObserved: true, terminalObserved: true, failed: false, reasonCode: undefined },
+      acceptedConnectorProfileDigest: CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1, receivedAt: at(12_500),
+    }; },
+  } });
+  assert.equal(altered.state, "terminal_result_uncertain");
+  if (altered.state === "terminal_result_uncertain") assert.equal(altered.reasonCode, "staged_terminal_result_altered");
+  assert.equal(f.storage.putCalls, 0, "refused recovery does not publish bytes");
 });
 
 test("the local Claude coordinator refuses stale authority before process acquisition", async () => {
