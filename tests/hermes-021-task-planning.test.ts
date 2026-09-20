@@ -4,7 +4,8 @@ import { computeAuthorityDigest, sha256Digest } from "../src/security";
 import { TaskExecutionPlanner, type NativeTaskTemplate } from "../src/web/v1/task-execution-planner";
 import { TaskAssignmentCoordinator } from "../src/web/v1/task-assignment-coordinator";
 import { HERMES_021_MACOS_LOCAL_ADAPTER_V1, HERMES_021_MACOS_LOCAL_CAPABILITY_V1,
-  HERMES_021_MACOS_LOCAL_JOB_TYPE_V1, HERMES_021_MACOS_LOCAL_START_OPERATION_V1 } from "../src/harness/hermes-021-v1";
+  HERMES_021_MACOS_LOCAL_JOB_TYPE_V1, HERMES_021_MACOS_LOCAL_START_OPERATION_V1,
+  HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1, Hermes021MacosDispatchPreparationV1 } from "../src/harness/hermes-021-v1";
 import { FleetSignalStore } from "../src/node-fleet/v1/fleet-signal-store";
 import type { FleetSignalEnvelope } from "../src/node-fleet/v1/schemas";
 import { ownerReviewFixture } from "./helpers/web-owner-review";
@@ -20,7 +21,7 @@ test("a Marvin Hermes 0.21 template creates a pinned v5 plan, not an older gener
     maxRisk: "low", maxDurationSeconds: 60, maxConcurrentEffects: 1, expiresAt: at(300_000), digest: "" };
   authority.digest = computeAuthorityDigest(authority);
   const template: NativeTaskTemplate = { id: "template:marvin-021", adapter: HERMES_021_MACOS_LOCAL_ADAPTER_V1, authority,
-    instructions: "Return a bounded plain-text result.", connectorProfileDigest: sha256Digest("marvin-hermes-021-profile"),
+    instructions: "Return a bounded plain-text result.", connectorProfileDigest: HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1,
     acceptanceProfileId: f.profile.id, acceptanceProfileDigest: sha256Digest(f.profile) };
   const planner = new TaskExecutionPlanner(f.db, f.scope, { template, integrityKey: new Uint8Array(32).fill(91),
     reviewIntegrityKey: f.reviewKey, checkpoints: f.checkpoints }, () => instant + 7000);
@@ -61,4 +62,13 @@ test("a Marvin Hermes 0.21 template creates a pinned v5 plan, not an older gener
   const assigned = await assignments.assign(f.identity, binding.projectId, planned.receipt.jobId, binding.nodeId, planned.receipt.inputDigest);
   assert.equal(assigned.replayed, false);
   assert.equal(assigned.receipt.jobId, planned.receipt.jobId);
+  const dispatcher = new Hermes021MacosDispatchPreparationV1(f.db, planner, {
+    localServiceId: "service:marvin-hermes", workerId: "worker:marvin", expectedVersion: "0.21.3", sourceRevision: "00570550" },
+  () => instant + 9000);
+  const dispatch = await dispatcher.prepare({ tenantId: binding.tenantId, projectId: binding.projectId,
+    jobId: planned.receipt.jobId, attemptId: assigned.receipt.attemptId, leaseId: assigned.receipt.leaseId,
+    inputDigest: planned.receipt.inputDigest });
+  assert.equal(dispatch.delivery.worker.adapterId, HERMES_021_MACOS_LOCAL_ADAPTER_V1);
+  assert.equal(dispatch.delivery.identity.attemptId, assigned.receipt.attemptId);
+  assert.equal(dispatch.route.kind, "local");
 });
