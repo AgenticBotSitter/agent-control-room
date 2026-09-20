@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { classifyHermes021MacosResultV1, prepareHermes021MacosTaskV1, runHermes021MacosLocalTaskV1,
-  HERMES_021_MACOS_LOCAL_ADAPTER_V1 } from "../src/harness/hermes-021-v1";
+  HERMES_021_MACOS_LOCAL_ADAPTER_V1, hermes021MacosLocalConnectorProfileV1,
+  refuseHermes021MacosOperationV1 } from "../src/harness/hermes-021-v1";
 import { createControllerWorkerDeliveryV1 } from "../src/harness/v1/controller-worker-delivery";
 import { sha256Digest } from "../src/security/canonical-digest";
 
@@ -49,4 +50,15 @@ test("Hermes 0.21 local worker reports a lost private-port reply as uncertainty 
   const outcome = await runHermes021MacosLocalTaskV1(binding, task, { async run() { attempts++; throw new Error("connection lost"); } });
   assert.deepEqual(outcome, { kind: "uncertain", reason: "hermes_local_transport_unavailable" });
   assert.equal(attempts, 1);
+});
+
+test("Marvin's local connector records what is proven and explicitly refuses unqualified execution", () => {
+  assert.equal(hermes021MacosLocalConnectorProfileV1.harness, "hermes");
+  assert.equal(hermes021MacosLocalConnectorProfileV1.operations.result.status, "supported");
+  assert.deepEqual(refuseHermes021MacosOperationV1("submit"), {
+    connectorId: "connector.hermes-021.macos-local.v1", operation: "submit", refused: true,
+    status: "unknown", evidence: "source_inspected", reasonCode: "restricted_live_qualification_pending",
+    attempted: false, grantsExecutionAuthority: false, permitsRetry: false,
+  });
+  assert.throws(() => refuseHermes021MacosOperationV1("result"), /hermes_021_macos_operation_refusal_unavailable/);
 });
