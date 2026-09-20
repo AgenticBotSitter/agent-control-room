@@ -5,3 +5,4 @@ export * from "./unsupported-operations";
 export * from "./result-publication";
 export * from "./local-worker-result";
 export * from "./task-planning-contract";
+export * from "./local-delivery-composition";
