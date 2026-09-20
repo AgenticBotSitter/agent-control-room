@@ -31,6 +31,14 @@ item while preserving the plan's other requirements, such as backup/restore.
 It is a pure server-side helper; it does not write settings, enable the worker,
 or accept a browser upload.
 
+That first check is intentionally not treated as proof of the automatic route.
+After it passes, the owner separately runs the fixed-runner bridge check. Its
+report is reduced to another opaque fingerprint through
+`recordHermes021MacosLocalRunnerQualificationReadinessV1`. This proves the
+same controlled runner that would receive a Control Room task can reach the
+existing Hermes installation, without keeping the selected path, profile,
+model, provider, task text, or response.
+
 ## What still needs an owner decision
 
 Before a real automatic task can be enabled, the owner chooses:
