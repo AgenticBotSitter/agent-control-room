@@ -29,7 +29,8 @@ export const harnessAdapterManifestSchemaV1 = z.object({
 export const harnessRunSchemaV1 = z.object({
   schemaVersion: z.literal(HARNESS_CONTRACT_VERSION_V1), id, tenantId: id, projectId: id, jobId: id, attemptId: id, nodeId: id,
   adapterId: id, adapterVersion: version, harness: z.enum(["hermes", "codex", "claude", "other"]), harnessVersion: version,
-  nativeSessionKeyDigest: digest, parentRunId: id.optional(), revisionOfRunId: id.optional(), state: z.enum(harnessRunStates), resumable: z.boolean(),
+  nativeSessionKeyDigest: digest, connectorProfileDigest: digest.optional(), authorityDigest: digest.optional(),
+  parentRunId: id.optional(), revisionOfRunId: id.optional(), state: z.enum(harnessRunStates), resumable: z.boolean(),
   cancelState: z.enum(["not_requested", "requested", "confirmed", "reported", "unsupported"]), nativeTask: nativeTaskRegistrationSchema.optional(),
   createdAt: time, updatedAt: time, startedAt: time.optional(), finishedAt: time.optional(), lastObservedAt: time, safeReasonCode: id.optional(),
 }).strict().superRefine((run, context) => {

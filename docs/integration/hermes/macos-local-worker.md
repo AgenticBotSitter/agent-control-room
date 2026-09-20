@@ -97,6 +97,11 @@ and complete the text-only qualification first. A policy refusal starts no
 Hermes task. A lost reply is recorded as uncertain and is never automatically
 run a second time.
 
+Before that controlled handoff, Control Room creates its ordinary harness-run
+record. It binds Marvin's run to the assigned task, attempt, approved authority
+and connector profile, while keeping local model, login, provider and workspace
+details private.
+
 Before the controlled runner is called, the shared local delivery composition
 stores Marvin's accepted delivery receipt in Control Room's one database. If
 the controller restarts after that point, it reports the task as already

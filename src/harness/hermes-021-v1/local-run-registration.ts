@@ -1,0 +1,29 @@
+import { z } from "zod";
+import { sha256Digest } from "../../security/canonical-digest";
+import type { HarnessRunV1 } from "../v1/types";
+import { controllerWorkerDeliverySchemaV1 } from "../v1/controller-worker-delivery";
+import { HERMES_021_MACOS_LOCAL_ADAPTER_V1 } from "./macos-local-worker";
+
+const unavailable = (): never => { throw new Error("hermes_021_macos_run_registration_unavailable"); };
+const instant = z.string().datetime().refine(value => new Date(value).toISOString() === value);
+
+/**
+ * Creates the ordinary harness-run record for one admitted Marvin delivery.
+ * It is not a scheduler, session, or second result store. Its opaque binding
+ * digest deliberately reveals no Hermes login, model, provider, or workspace.
+ */
+export function Hermes021MacosLocalRunRegistrationV1(deliveryValue: unknown,
+  createdAtValue: unknown): HarnessRunV1 {
+  const delivery = controllerWorkerDeliverySchemaV1.parse(deliveryValue);
+  const createdAt = instant.parse(createdAtValue);
+  if (delivery.worker.adapterId !== HERMES_021_MACOS_LOCAL_ADAPTER_V1
+    || Date.parse(createdAt) > Date.parse(delivery.expiresAt)) unavailable();
+  return Object.freeze({ schemaVersion: "control-room-harness/v1", id: delivery.identity.runId,
+    tenantId: delivery.identity.tenantId, projectId: delivery.identity.projectId, jobId: delivery.identity.jobId,
+    attemptId: delivery.identity.attemptId, nodeId: delivery.identity.nodeId,
+    adapterId: HERMES_021_MACOS_LOCAL_ADAPTER_V1, adapterVersion: "0.21.3", harness: "hermes",
+    harnessVersion: "0.21.3", nativeSessionKeyDigest: sha256Digest({ purpose: "hermes-021-local-run-binding/v1",
+      deliveryDigest: delivery.deliveryDigest }), connectorProfileDigest: delivery.connectorProfileDigest,
+    authorityDigest: delivery.authorityDigest, state: "discovered", resumable: false,
+    cancelState: "unsupported", createdAt, updatedAt: createdAt, lastObservedAt: createdAt });
+}

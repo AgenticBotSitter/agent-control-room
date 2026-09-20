@@ -99,6 +99,10 @@ Completed in source:
   from the local runner and creates the normal pending-review item with exact
   replay protection. The permanent host still needs to compose this final
   result handoff; Marvin cannot accept its own result.
+- a normal harness-run record is created before the controlled local launcher
+  is called. It binds the run to the task, attempt, approved authority, and
+  connector profile without recording a local login, model, provider, or
+  workspace.
 
 Remaining before an automatic local worker is enabled:
 

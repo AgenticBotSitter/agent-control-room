@@ -7,3 +7,4 @@ export * from "./local-task-policy";
 export * from "./local-delivery-composition";
 export * from "./dispatch-preparation";
 export * from "./assigned-task-execution";
+export * from "./local-run-registration";

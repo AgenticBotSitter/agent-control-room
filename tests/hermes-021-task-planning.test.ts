@@ -8,6 +8,7 @@ import { HERMES_021_MACOS_LOCAL_ADAPTER_V1, HERMES_021_MACOS_LOCAL_CAPABILITY_V1
   HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1, Hermes021MacosDispatchPreparationV1,
   executeAssignedHermes021MacosTaskV1 } from "../src/harness/hermes-021-v1";
 import { FleetSignalStore } from "../src/node-fleet/v1/fleet-signal-store";
+import { HarnessRunStoreV1 } from "../src/harness/v1/store";
 import type { FleetSignalEnvelope } from "../src/node-fleet/v1/schemas";
 import { ownerReviewFixture } from "./helpers/web-owner-review";
 import { binding, enrollment, instant } from "./hermes-native-fixture";
@@ -74,7 +75,8 @@ test("a Marvin Hermes 0.21 template creates a pinned v5 plan, not an older gener
   assert.equal(dispatch.route.kind, "local");
 
   let launches = 0;
-  const execution = { preparation: dispatcher, delivery: { db: f.db, integrityKey: new Uint8Array(32).fill(24),
+  const execution = { preparation: dispatcher, runs: new HarnessRunStoreV1(f.db, new Uint8Array(32).fill(25)),
+    delivery: { db: f.db, integrityKey: new Uint8Array(32).fill(24),
     binding: { localServiceId: "service:marvin-hermes", workerId: "worker:marvin", expectedVersion: "0.21.3" as const,
       sourceRevision: "00570550" }, policy: { assertAdmitted() {} }, privatePort: { async run() {
       launches++;
@@ -86,11 +88,15 @@ test("a Marvin Hermes 0.21 template creates a pinned v5 plan, not an older gener
     leaseId: assigned.receipt.leaseId, inputDigest: planned.receipt.inputDigest });
   assert.equal(executed.delivered.state, "completed_delivery");
   assert.equal(executed.delivered.outcome?.kind, "completed");
+  assert.equal(executed.registered.replayed, false);
+  assert.equal(executed.registered.run.connectorProfileDigest, HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1);
+  assert.equal(executed.registered.run.authorityDigest, saved.job.authority.digest);
   assert.equal(launches, 1);
 
   const replay = await executeAssignedHermes021MacosTaskV1(execution, { tenantId: binding.tenantId,
     projectId: binding.projectId, jobId: planned.receipt.jobId, attemptId: assigned.receipt.attemptId,
     leaseId: assigned.receipt.leaseId, inputDigest: planned.receipt.inputDigest });
   assert.equal(replay.delivered.state, "already_delivered");
+  assert.equal(replay.registered.replayed, true);
   assert.equal(launches, 1);
 });
