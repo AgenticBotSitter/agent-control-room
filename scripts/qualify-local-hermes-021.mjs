@@ -13,20 +13,32 @@ import { join } from "node:path";
 // pnpm forwards the conventional `--` argument separator to this direct Node
 // script in some supported versions. It is not an instruction to Hermes and
 // must not make the documented owner command fail before the bounded check.
-const args = new Set(process.argv.slice(2).filter(value => value !== "--"));
-const ownerAttended = args.has("--owner-attended");
-const dryRun = args.has("--dry-run");
-if (!ownerAttended || [...args].some(value => value !== "--owner-attended" && value !== "--dry-run")) {
-  console.error("Usage: node scripts/qualify-local-hermes-021.mjs --owner-attended [--dry-run]");
+const args = process.argv.slice(2).filter(value => value !== "--");
+const ownerAttended = args.includes("--owner-attended");
+const dryRun = args.includes("--dry-run");
+const overrideValue = name => {
+  const indexes = args.reduce((found, value, index) => value === name ? [...found, index] : found, []);
+  if (indexes.length !== 1 || indexes[0] === args.length - 1) return null;
+  const value = args[indexes[0] + 1];
+  return !value.startsWith("--") && /^[A-Za-z0-9._/-]{1,120}$/.test(value) ? value : null;
+};
+const model = overrideValue("--model");
+const provider = overrideValue("--provider");
+const profile = overrideValue("--profile");
+const accepted = new Set(["--owner-attended", "--dry-run", "--model", "--provider", "--profile", model, provider, profile]);
+if (!ownerAttended || args.some(value => !accepted.has(value)) || (args.includes("--model") && !model) || (args.includes("--provider") && !provider) || (args.includes("--profile") && !profile)) {
+  console.error("Usage: node scripts/qualify-local-hermes-021.mjs --owner-attended [--dry-run] [--profile PROFILE] [--model MODEL] [--provider PROVIDER]");
   process.exitCode = 2;
 } else {
   const nonce = randomBytes(16).toString("hex");
   const query = `Reply with exactly this text and nothing else: CONTROL_ROOM_HERMES_021_${nonce}`;
   const invocation = Object.freeze({
     executable: "hermes",
-    arguments: ["chat", "--query-file", "<temporary-query-file>", "--format", "stream-json",
+    arguments: [...(profile ? ["-p", "<owner-selected-profile>"] : []), "chat", "--query-file", "<temporary-query-file>", "--format", "stream-json",
       "--toolsets", "bot_room", "--ignore-rules", "--max-turns", "1", "--run-budget", "120",
-      "--source", "control-room-local-qualification", "--in", "<temporary-work-directory>"],
+      "--source", "control-room-local-qualification", "--in", "<temporary-work-directory>",
+      ...(model ? ["--model", "<owner-selected-model>"] : []),
+      ...(provider ? ["--provider", "<owner-selected-provider>"] : [])],
     toolAccess: "none", maxTurns: 1, runBudgetSeconds: 120,
   });
   if (dryRun) {
@@ -34,17 +46,21 @@ if (!ownerAttended || [...args].some(value => value !== "--owner-attended" && va
   } else {
     const directory = await mkdtemp(join(tmpdir(), "control-room-hermes-021-"));
     const queryFile = join(directory, "qualification.txt");
-    let stdout = "", stderrBytes = 0, timedOut = false, launchError = false;
+    let stdout = "", stderr = "", stderrBytes = 0, timedOut = false, launchError = false;
     try {
       await writeFile(queryFile, query, { encoding: "utf8", mode: 0o600 });
-      const child = spawn("hermes", ["chat", "--query-file", queryFile, "--format", "stream-json",
+      const child = spawn("hermes", [...(profile ? ["-p", profile] : []), "chat", "--query-file", queryFile, "--format", "stream-json",
         "--toolsets", "bot_room", "--ignore-rules", "--max-turns", "1", "--run-budget", "120",
-        "--source", "control-room-local-qualification", "--in", directory],
+        "--source", "control-room-local-qualification", "--in", directory,
+        ...(model ? ["--model", model] : []), ...(provider ? ["--provider", provider] : [])],
       { shell: false, stdio: ["ignore", "pipe", "pipe"] });
       const timeout = setTimeout(() => { timedOut = true; child.kill("SIGTERM"); }, 130_000);
       const exit = await new Promise(resolve => {
         child.stdout.on("data", chunk => { if (stdout.length < 262_144) stdout += String(chunk); });
-        child.stderr.on("data", chunk => { stderrBytes += Buffer.byteLength(chunk); });
+        child.stderr.on("data", chunk => {
+          stderrBytes += Buffer.byteLength(chunk);
+          if (stderr.length < 65_536) stderr += String(chunk);
+        });
         child.once("error", () => { launchError = true; resolve({ code: null, signal: "error" }); });
         child.once("close", (code, signal) => resolve({ code, signal }));
       });
@@ -73,6 +89,8 @@ if (!ownerAttended || [...args].some(value => value !== "--owner-attended" && va
       const failureReason = completed ? "none"
         : launchError ? "runner_unavailable"
           : timedOut ? "timed_out"
+            : /(?:insufficient_quota|quota (?:has been )?exhausted|rate.?limit|\b429\b)/i.test(stderr) ? "model_quota_exhausted"
+              : /(?:authentication|unauthenticated|invalid (?:api )?key|\b401\b|\b403\b)/i.test(stderr) ? "model_authentication_unavailable"
             : !terminal ? "terminal_result_missing"
               : terminalTotalTokens === 0 ? "model_response_missing"
                 : exit.code !== 0 ? "runner_exit_nonzero"
@@ -91,6 +109,9 @@ if (!ownerAttended || [...args].some(value => value !== "--owner-attended" && va
         stderrBytes: Math.min(stderrBytes, 65_536),
         failureStage,
         failureReason,
+        profileOverrideUsed: Boolean(profile),
+        modelOverrideUsed: Boolean(model),
+        providerOverrideUsed: Boolean(provider),
         // A non-dry native attempt must be explicitly authorized again; the
         // script never interprets a failed attempt as permission to retry.
         retryRequiresFreshOwnerAuthorization: !completed,

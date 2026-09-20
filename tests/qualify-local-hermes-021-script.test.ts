@@ -29,6 +29,24 @@ test("the local Hermes qualification dry run is explicit and never starts a runn
   assert.equal(output.invocation.toolAccess, "none");
 });
 
+test("an owner can select a temporary model without exposing it in the proof", async () => {
+  const result = await run(["--owner-attended", "--dry-run", "--profile", "local-worker", "--model", "openrouter/example-free", "--provider", "openrouter"]);
+  assert.equal(result.code, 0);
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.modelOverrideUsed, undefined);
+  assert.equal(output.invocation.arguments.includes("openrouter/example-free"), false);
+  assert.equal(output.invocation.arguments.includes("<owner-selected-model>"), true);
+  assert.equal(output.invocation.arguments.includes("local-worker"), false);
+  assert.equal(output.invocation.arguments.includes("<owner-selected-profile>"), true);
+});
+
+test("a malformed override is refused before a runner starts", async () => {
+  const result = await run(["--owner-attended", "--profile", "--model"]);
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /Usage:/);
+  assert.equal(result.stdout, "");
+});
+
 test("a missing local Hermes runner is reported safely and requires fresh owner authorization", async () => {
   const result = await run(["--owner-attended"], { PATH: "" });
   assert.equal(result.code, 1);
@@ -57,4 +75,18 @@ test("a disposable Hermes-compatible runner can return the bounded text-only pro
   assert.equal(output.retryRequiresFreshOwnerAuthorization, false);
   assert.equal(output.sessionDigest.startsWith("sha256:"), true);
   assert.equal(JSON.stringify(output).includes("session:fixture"), false);
+});
+
+test("a provider quota refusal is classified without emitting provider output", async t => {
+  const dir = await mkdtemp(join(tmpdir(), "control-room-hermes-qualification-test-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const fake = join(dir, "hermes");
+  await writeFile(fake, `#!${process.execPath}\nprocess.stderr.write('HTTP 429: quota has been exhausted\\n'); process.exit(1);\n`, { mode: 0o700 });
+  await chmod(fake, 0o700);
+  const result = await run(["--owner-attended"], { PATH: dir });
+  assert.equal(result.code, 1);
+  assert.equal(result.stderr, "");
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.failureReason, "model_quota_exhausted");
+  assert.equal(JSON.stringify(output).includes("quota has been exhausted"), false);
 });

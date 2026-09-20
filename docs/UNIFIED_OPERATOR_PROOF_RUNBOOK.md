@@ -63,6 +63,21 @@ From the reviewed checkout, the owner-run command is:
 npx --yes pnpm@11.19.0 run qualify:hermes:local -- --owner-attended
 ```
 
+If Hermes reports that its current default model has no remaining allowance,
+the owner may repeat the **separately authorized** one-shot check with a
+temporary existing Hermes profile. This does not alter Hermes's default
+settings and the chosen name is not included in the saved proof:
+
+```sh
+npx --yes pnpm@11.19.0 run qualify:hermes:local -- --owner-attended --profile OWNER_SELECTED_PROFILE
+```
+
+If the selected profile needs an already-configured temporary model override,
+the owner may add `--model OWNER_SELECTED_MODEL --provider
+OWNER_SELECTED_PROVIDER`. Do not guess names or change Hermes configuration to
+make this pass. Choose an existing, owner-approved profile/provider/model and
+retain only the sanitized JSON result.
+
 The command requires fresh owner authorization for each non-dry attempt. Its
 matching `--dry-run` form checks only the bounded invocation shape and does
 not contact Hermes.
