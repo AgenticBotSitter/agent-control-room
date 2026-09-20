@@ -1,7 +1,7 @@
 import type { InstallationTopologyPlanV1 } from "../../src/harness/v1/installation-topology";
 import { summarizeInstallationReadinessV1, type InstallationReadinessV1 } from "../../src/harness/v1/installation-readiness";
 import { guideInstallationReadinessV1 } from "../../src/harness/v1/installation-guidance";
-import { localHarnessCapabilitiesV1 } from "../../src/harness/v1/local-harness-capabilities";
+import { summarizeLocalHarnessCapabilitiesV1 } from "../../src/harness/v1/local-harness-capabilities";
 
 const proofLabels = {
   local_owner_qualification: "a successful owner-attended local worker check",
@@ -32,6 +32,7 @@ export function InstallationTopologySummary({ plan, readiness }: { plan?: Readon
   </section>;
   const summary = summarizeInstallationReadinessV1(plan, readiness);
   const guidance = guideInstallationReadinessV1(plan, readiness);
+  const localCapabilities = summarizeLocalHarnessCapabilitiesV1(plan, readiness);
   const mode = plan.mode === "this_computer" ? "This computer" : "Several computers";
   return <section className="private-panel" aria-labelledby="installation-title">
     <h2 id="installation-title">Installation setup</h2>
@@ -45,7 +46,7 @@ export function InstallationTopologySummary({ plan, readiness }: { plan?: Readon
     {plan.mode === "this_computer" && <section className="private-note" aria-labelledby="local-agent-capabilities-title">
       <h3 id="local-agent-capabilities-title">Local agent capabilities</h3>
       <p>These are product capabilities, not a scan of this computer. They do not reveal private settings or mean an agent is running.</p>
-      <ul>{localHarnessCapabilitiesV1.map(agent => <li key={agent.id}>
+      <ul>{localCapabilities.map(agent => <li key={agent.id}>
         <strong>{agent.label}: {agent.stateLabel}.</strong> {agent.summary} <span> First useful work after setup: {agent.firstSupportedWork}</span> <span>Next: {agent.nextStep}</span>
       </li>)}</ul>
     </section>}

@@ -43,3 +43,18 @@ test("setup summary shows an honest proof checklist rather than a live worker", 
   assert.match(html, /Codex: Not available on this Mac yet/);
   assert.doesNotMatch(html, /<button|<form|<input|worker:local|sha256:/);
 });
+
+test("setup summary distinguishes completed Hermes proof from an enabled worker", () => {
+  const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
+    currentRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }],
+    requestedRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }] });
+  const readiness = createInstallationReadinessV1({ planDigest: plan.planDigest, proofs: [
+    { proof: "backup_restore", state: "passed", evidenceDigest: sha256Digest("backup") },
+    { proof: "local_owner_qualification", state: "passed", evidenceDigest: sha256Digest("qualification") },
+    { proof: "local_runner_bridge", state: "passed", evidenceDigest: sha256Digest("bridge") },
+  ] });
+  const html = renderToStaticMarkup(createElement(InstallationTopologySummary, { plan, readiness }));
+  assert.match(html, /Hermes Agent: Proof complete; owner enablement required/);
+  assert.match(html, /still has not started Hermes/);
+  assert.doesNotMatch(html, /<button|<form|<input/);
+});

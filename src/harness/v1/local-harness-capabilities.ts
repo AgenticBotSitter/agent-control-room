@@ -1,8 +1,10 @@
 import type { ConnectorOperationNameV1, ConnectorProfileV1 } from "./connector-profile";
 import { claudeCodeConnectorProfileV1 } from "../claude-code-v1/connector-profile";
 import { hermes021MacosLocalConnectorProfileV1 } from "../hermes-021-v1/connector-profile";
+import { summarizeInstallationReadinessV1, type InstallationReadinessV1 } from "./installation-readiness";
+import type { InstallationTopologyPlanV1 } from "./installation-topology";
 
-export type LocalHarnessCapabilityStateV1 = "setup_required" | "not_available";
+export type LocalHarnessCapabilityStateV1 = "setup_required" | "setup_needs_attention" | "owner_enablement_required" | "not_available";
 export type LocalHarnessCapabilityV1 = Readonly<{
   id: "hermes" | "claude" | "codex";
   label: string;
@@ -63,3 +65,30 @@ export const localHarnessCapabilitiesV1: readonly LocalHarnessCapabilityV1[] = O
     operations: Object.freeze({ submit: "unsupported", result: "unsupported", cancel: "unsupported", read: "unsupported" }),
   }),
 ]);
+
+/**
+ * Combines the safe, installation-independent descriptions above with the
+ * existing non-secret proof record. Passing setup proof never means that an
+ * agent is running: it only means the operator may perform the next, separate
+ * enablement decision. A missing or foreign plan remains the conservative
+ * source-only description.
+ */
+export function summarizeLocalHarnessCapabilitiesV1(plan?: InstallationTopologyPlanV1,
+  readiness?: InstallationReadinessV1): readonly LocalHarnessCapabilityV1[] {
+  if (!plan || !plan.requiredProofs.includes("local_owner_qualification") || !plan.requiredProofs.includes("local_runner_bridge"))
+    return localHarnessCapabilitiesV1;
+  const summary = summarizeInstallationReadinessV1(plan, readiness);
+  const localProofs = summary.proofs.filter(item => ["local_owner_qualification", "local_runner_bridge", "backup_restore"].includes(item.proof));
+  const hermes = localHarnessCapabilitiesV1[0]!;
+  if (localProofs.some(item => item.state === "failed" || item.state === "unavailable")) {
+    return Object.freeze([Object.freeze({ ...hermes, state: "setup_needs_attention" as const,
+      stateLabel: "Setup needs attention", summary: "Control Room has not enabled Hermes. One or more required local proof checks needs attention.",
+      nextStep: "Correct the failed local proof through the owner-run procedure, then record a fresh non-secret proof result." }), ...localHarnessCapabilitiesV1.slice(1)]);
+  }
+  if (localProofs.length === 3 && localProofs.every(item => item.state === "passed")) {
+    return Object.freeze([Object.freeze({ ...hermes, state: "owner_enablement_required" as const,
+      stateLabel: "Proof complete; owner enablement required", summary: "The required local proof records are complete, but Control Room still has not started Hermes.",
+      nextStep: "The owner may now make the separate, explicit local-worker enablement decision." }), ...localHarnessCapabilitiesV1.slice(1)]);
+  }
+  return localHarnessCapabilitiesV1;
+}
