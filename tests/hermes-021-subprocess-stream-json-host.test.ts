@@ -5,7 +5,7 @@ import { PassThrough } from "node:stream";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHermes021MacosSubprocessStreamJsonHostV1 } from "../src/harness/hermes-021-v1";
 
-const configuration = { profile: "cr", model: "qwen3.8:27b-long", provider: "ollama", workingDirectory: "/private/fixture/work" };
+const configuration = { executablePath: "/private/fixture/bin/hermes", profile: "cr", model: "qwen3.8:27b-long", provider: "ollama", workingDirectory: "/private/fixture/work" };
 const task = { tenantId: "tenant:fixture", projectId: "project:fixture", jobId: "job:fixture", attemptId: "attempt:fixture",
   runId: "run:fixture", nodeId: "node:fixture", prompt: "Return the approved answer", instructions: "Use no tools", deadline: 120_000 };
 
@@ -22,7 +22,7 @@ test("local Hermes subprocess host uses fixed argv and a private task file", asy
   let markStarted: (() => void) | undefined;
   const started = new Promise<void>(resolve => { markStarted = resolve; });
   const host = createHermes021MacosSubprocessStreamJsonHostV1(configuration, (file, args, options) => {
-    assert.equal(file, "hermes");
+    assert.equal(file, configuration.executablePath);
     assert.deepEqual(args.slice(0, 6), ["-p", "cr", "chat", "--query-file", "/private/tmp/control-room-hermes-task-fixture/task.txt", "--format"]);
     assert.equal(args.includes("--model"), true); assert.equal(args.at(-3), "qwen3.8:27b-long");
     assert.equal(args.at(-1), "ollama"); assert.equal(options.shell, false); assert.equal(options.cwd, configuration.workingDirectory);
@@ -61,4 +61,9 @@ test("local Hermes subprocess host refuses a late, aborted, or failed child with
     assert.equal(launched, mode === "nonzero" ? 1 : 0);
     assert.equal(removed, mode === "nonzero" ? 1 : 0);
   }
+});
+
+test("local Hermes subprocess host requires owner-pinned absolute executable and work paths", () => {
+  assert.throws(() => createHermes021MacosSubprocessStreamJsonHostV1({ ...configuration, executablePath: "hermes" }));
+  assert.throws(() => createHermes021MacosSubprocessStreamJsonHostV1({ ...configuration, workingDirectory: "relative-work" }));
 });

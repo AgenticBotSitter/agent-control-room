@@ -8,8 +8,8 @@ does not enable the worker by itself.
 
 Control Room can create a narrow local process wrapper for Hermes 0.21. It:
 
-- always launches the existing `hermes` command, never a command supplied by a
-  task or web page;
+- uses one owner-pinned absolute Hermes program path, never a command supplied
+  by a task or web page;
 - uses the operator's existing Hermes profile and selected model/provider;
 - puts task text in a permission-restricted temporary file rather than the
   command line;

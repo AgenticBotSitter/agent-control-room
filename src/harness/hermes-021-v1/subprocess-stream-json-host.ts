@@ -15,7 +15,8 @@ const safePath = z.string().min(1).max(4096).refine(value => isAbsolute(value) &
   && !/[\u0000-\u001f\u007f]/u.test(value));
 
 const configurationSchema = z.object({
-  /** Hermes is fixed by this adapter; callers cannot supply another executable. */
+  /** Owner-pinned absolute Hermes executable; tasks cannot replace it. */
+  executablePath: safePath,
   profile: safeProfile,
   model: safeIdentifier,
   provider: safeIdentifier,
@@ -110,7 +111,7 @@ export function createHermes021MacosSubprocessStreamJsonHostV1(configurationValu
           }
         };
         try {
-          child = launch("hermes", args, { shell: false, windowsHide: true, cwd: configuration.workingDirectory,
+          child = launch(configuration.executablePath, args, { shell: false, windowsHide: true, cwd: configuration.workingDirectory,
             env: { NODE_ENV: "production", PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: process.env.HOME ?? "" }, stdio: ["pipe", "pipe", "pipe"] });
         } catch { reject(unavailableError()); return; }
         const timer = setTimeout(fail, timeoutMilliseconds);
