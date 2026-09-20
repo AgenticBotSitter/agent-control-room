@@ -2,13 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createControllerWorkerDeliveryV1, type ControllerWorkerDeliveryV1 } from "../src/harness/v1/controller-worker-delivery";
 import { deliverClaudeCodeLocalTaskV1 } from "../src/harness/claude-code-v1/local-delivery-composition";
+import { CLAUDE_CODE_LOCAL_ADAPTER_V1 } from "../src/harness/claude-code-v1/task-planning-contract";
 import type { ClaudeCodeProcessBytePortV1, OwnedClaudeCodeProcessV1 } from "../src/harness/claude-code-v1/owned-process-session";
 import { sha256Digest } from "../src/security";
 import { at, nativeTaskFixture, registration } from "./native-task-fixture";
 import { binding, input } from "./hermes-native-fixture";
 
 const integrityKey = new Uint8Array(32).fill(86);
-const worker = { workerId: "worker:claude-local", adapterId: "claude-code-jsonl:v1", adapterRevision: "source-123" } as const;
+const worker = { workerId: "worker:claude-local", adapterId: CLAUDE_CODE_LOCAL_ADAPTER_V1, adapterRevision: "source-123" } as const;
 const authorityDigest = sha256Digest("claude-controller-authority");
 const acceptanceProfileDigest = sha256Digest("claude-acceptance-profile");
 
@@ -40,11 +41,12 @@ function fakePort(): ClaudeCodeProcessBytePortV1 {
 }
 
 function composition(f: Awaited<ReturnType<typeof nativeTaskFixture>>, packet: ControllerWorkerDeliveryV1,
-  state: { revoked: boolean; receives: number; acquires: number }) {
+  state: { revoked: boolean; receives: number; acquires: number; now?: number }) {
   return { db: f.db, integrityKey, binding: { ...worker, authorityDigest, acceptanceProfileId: "profile:claude", acceptanceProfileDigest },
     authority: { currentAdmissionDigest: () => authorityDigest, assertCurrent() { if (state.revoked) throw new Error("revoked"); } },
     receiptPort: { async receive(value: ControllerWorkerDeliveryV1) { state.receives++; return accepted(value); } },
-    acquire: (): OwnedClaudeCodeProcessV1 => { state.acquires++; return { ready: Promise.resolve(fakePort()), close: async () => {} }; }, cleanupMs: 200 };
+    acquire: (): OwnedClaudeCodeProcessV1 => { state.acquires++; return { ready: Promise.resolve(fakePort()), close: async () => {} }; }, cleanupMs: 200,
+    clock: () => state.now ?? Date.parse(at(2000)) };
 }
 
 test("Claude local delivery reserves the exact shared receipt before fake acquisition, and duplicate/restart never acquires again", async t => {
@@ -86,4 +88,16 @@ test("a durable-commit crash boundary remains explicit uncertainty and replay ca
   assert.equal(first.state, "delivery_uncertain"); assert.equal(state.acquires, 0);
   const replay = await deliverClaudeCodeLocalTaskV1(config, packet, { kind: "local", workerId: worker.workerId }, at(2000));
   assert.equal(replay.state, "already_reserved"); assert.equal(state.acquires, 0);
+});
+
+test("a delivery that expires while its receipt is being saved never acquires Claude", async t => {
+  const f = await nativeTaskFixture(); t.after(f.close);
+  const packet = delivery(), state = { revoked: false, receives: 0, acquires: 0, now: Date.parse(at(2000)) };
+  const config = composition(f, packet, state);
+  config.receiptPort = { async receive(value: ControllerWorkerDeliveryV1) {
+    state.receives++; state.now = Date.parse(packet.expiresAt); return accepted(value);
+  } };
+  const result = await deliverClaudeCodeLocalTaskV1(config, packet, { kind: "local", workerId: worker.workerId }, at(2000));
+  assert.equal(result.state, "delivery_uncertain");
+  assert.equal(state.acquires, 0);
 });

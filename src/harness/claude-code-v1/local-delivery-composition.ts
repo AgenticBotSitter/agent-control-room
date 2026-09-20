@@ -9,6 +9,7 @@ import { persistControllerWorkerDeliveryReceiptV1, readControllerWorkerDeliveryR
   from "../v1/controller-worker-delivery-receipt-store";
 import { createClaudeCodeOwnedProcessSessionV1, type AcquireClaudeCodeProcessV1,
   type ClaudeCodeProcessBindingV1, type OwnedClaudeCodeProcessSessionV1 } from "./owned-process-session";
+import { CLAUDE_CODE_LOCAL_ADAPTER_V1 } from "./task-planning-contract";
 
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const unavailable = (): never => { throw new Error("claude_code_local_delivery_unavailable"); };
@@ -52,6 +53,8 @@ export type ClaudeCodeLocalDeliveryCompositionV1 = Readonly<{
   /** This is an existing injected owned-process seam. Production has no CLI runner here. */
   acquire: AcquireClaudeCodeProcessV1;
   cleanupMs: number;
+  /** Installation clock used only to fence the already-bounded delivery window. */
+  clock: () => number;
 }>;
 
 function current(config: ClaudeCodeLocalDeliveryCompositionV1, delivery: ControllerWorkerDeliveryV1): void {
@@ -63,7 +66,7 @@ function current(config: ClaudeCodeLocalDeliveryCompositionV1, delivery: Control
 function validateBinding(config: ClaudeCodeLocalDeliveryCompositionV1, delivery: ControllerWorkerDeliveryV1,
   route: z.infer<typeof controllerWorkerRouteSchemaV1>): void {
   const binding = config.binding;
-  if (route.kind !== "local" || route.workerId !== binding.workerId
+  if (binding.adapterId !== CLAUDE_CODE_LOCAL_ADAPTER_V1 || route.kind !== "local" || route.workerId !== binding.workerId
     || delivery.worker.workerId !== binding.workerId || delivery.worker.adapterId !== binding.adapterId
     || delivery.worker.adapterRevision !== binding.adapterRevision || delivery.authorityDigest !== binding.authorityDigest
     || delivery.acceptanceProfileId !== binding.acceptanceProfileId
@@ -96,7 +99,7 @@ export async function deliverClaudeCodeLocalTaskV1(config: ClaudeCodeLocalDelive
   if (!config || !config.db || typeof config.db.transaction !== "function" || !(config.integrityKey instanceof Uint8Array)
     || config.integrityKey.length !== 32 || !config.receiptPort || typeof config.receiptPort.receive !== "function"
     || typeof config.acquire !== "function" || !Number.isSafeInteger(config.cleanupMs)
-    || config.cleanupMs < 1 || config.cleanupMs > 5_000 || signal?.aborted) unavailable();
+    || config.cleanupMs < 1 || config.cleanupMs > 5_000 || typeof config.clock !== "function" || signal?.aborted) unavailable();
   const delivery = controllerWorkerDeliverySchemaV1.parse(deliveryValue);
   const route = controllerWorkerRouteSchemaV1.parse(routeValue);
   const receivedAt = z.string().datetime().refine(value => new Date(value).toISOString() === value).parse(receivedAtValue);
@@ -106,8 +109,16 @@ export async function deliverClaudeCodeLocalTaskV1(config: ClaudeCodeLocalDelive
     return Object.freeze({ reservation: reservationFor(prior.delivery, prior.receipt), state: "already_reserved" as const,
       startsWork: false as const, grantsExecutionAuthority: false as const });
   }
+  let highWater = Date.parse(receivedAt);
+  const fence = () => {
+    const now = config.clock();
+    if (!Number.isSafeInteger(now) || now < highWater || now < Date.parse(delivery.issuedAt)
+      || now >= Date.parse(delivery.expiresAt)) unavailable();
+    highWater = now;
+    current(config, delivery);
+  };
   validateBinding(config, delivery, route);
-  current(config, delivery);
+  fence();
   let receipt: ControllerWorkerDeliveryReceiptV1, persisted: Awaited<ReturnType<typeof persistControllerWorkerDeliveryReceiptV1>>;
   try {
     receipt = await deliverControllerWorkerPacketV1(config.receiptPort, delivery, route, signal);
@@ -128,7 +139,7 @@ export async function deliverClaudeCodeLocalTaskV1(config: ClaudeCodeLocalDelive
     if (signal?.aborted) unavailable();
     // This is the final fence immediately before synchronous acquisition in the
     // owned-session factory; an authority change during either await is refused.
-    current(config, delivery);
+    fence();
     const session = createClaudeCodeOwnedProcessSessionV1({ binding: reservation.processBinding,
       signal: signal ?? new AbortController().signal, acquire: config.acquire, cleanupMs: config.cleanupMs });
     return Object.freeze({ reservation, session, state: "reserved_session_open" as const,
