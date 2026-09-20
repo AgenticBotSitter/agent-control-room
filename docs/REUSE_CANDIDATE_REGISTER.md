@@ -18,6 +18,7 @@ interface or adapter, but it may not silently replace those rules.
 | `herdrdev/herdr` | Optional and deferred. | Read-only terminal/session observation. | Task authority, launch control, scheduling, approval or result publication. |
 | `alibaba/open-code-review` | Planned review-tool evaluation. | A supplementary code-review pass after ordinary project checks. | Final approval, merge authority, credentials or the worker queue. |
 | `pingdotgg/t3code` | **New: source-inspected candidate; no code retained.** Pinned for evaluation at `7445aa733ada33e45289e5aa5055f79142556513` (2026-09-19). | Local multi-harness control-surface ideas: provider adapters, authenticated client/server boundary, capability negotiation, connection/reconnect presentation, and mobile/desktop/web experience patterns. | Its complete application, event-log/database model, service installer, update mechanism, authentication design, provider credentials, or background process control. Control Room's canonical records and effect boundaries remain authoritative. |
+| `jmanzo/ralph-sandbox` | **Source-inspected; selectively adapt later.** Pinned for evaluation at `5cc70ef4d09e336e6d9c5cedd91a87270eeb51b6` (2026-09-20). Do not install, vendor, or use for Marvin. | Later optional hardened development-worker mechanics: private writable clone, no Docker-socket exposure, egress containment, resource caps, progress-stall observation, and host-side notifications. | Its complete Docker/runtime setup, writable-host default, credentials, provider fallback, completion signals, scheduler, logs/snapshots, or dependency recipe. It is not a Hermes adapter or Control Room authority system. |
 
 ## T3 Code initial finding
 
@@ -47,3 +48,21 @@ Before any code is copied or adapted:
 4. Compare the prototype against the smallest existing Control Room component
    it would replace. Adopt only if it removes real custom code without adding a
    second authority, scheduler, database, or credential path.
+
+## Ralph Sandbox source finding
+
+Ralph Sandbox is MIT licensed at the inspected pin, but its runnable image is
+not yet suitable for Control Room reuse: it resolves agent packages and system
+packages without a locked dependency inventory or software-bill-of-materials.
+Its helper shell scripts contain useful containment and recovery ideas, but
+the runnable product defaults to a writable host mode, broad persistent
+credentials and model-declared completion/fallback behavior that conflict with
+Control Room's exact task assignment, review, and evidence rules.
+
+The only future fit is an **optional** isolated code-writing executor behind
+the existing Control Room task, approval, result, and review contracts. That
+future package may study a read-only source/private writable clone, no Docker
+socket, internal-only network plus egress proxy, fixed resource limits and
+host-side notifications. It must reimplement those pieces with pinned images,
+license inventory, a task-bound policy, durable journal, cleanup proof and no
+shared credentials. It does not affect the current Marvin integration path.
