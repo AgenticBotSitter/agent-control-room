@@ -158,3 +158,25 @@ export function reconcileRemoteWorkerDeliveryAfterReconnectV1(input: {
       reconciled: false, startsWork: false, grantsExecutionAuthority: false, permitsRetry: false });
   }
 }
+
+/**
+ * Records a receipt recovered from an enrolled worker after a lost reply.
+ * It first applies the exact no-resend reconciliation rules above; only an
+ * accepted, original receipt is retained. A missing or foreign receipt stays
+ * uncertain and performs no database write.
+ */
+export async function reconcileAndRecordRemoteWorkerDeliveryAfterReconnectV1(config: {
+  db: DatabaseClient; integrityKey: Uint8Array;
+}, input: Parameters<typeof reconcileRemoteWorkerDeliveryAfterReconnectV1>[0], recordedAt: unknown) {
+  if (!config || !config.db || typeof config.db.transaction !== "function"
+    || !(config.integrityKey instanceof Uint8Array) || config.integrityKey.length !== 32) {
+    throw new Error("remote_worker_delivery_unavailable");
+  }
+  const reconciled = reconcileRemoteWorkerDeliveryAfterReconnectV1(input);
+  if (reconciled.kind !== "receipt") return reconciled;
+  const delivery = controllerWorkerDeliverySchemaV1.parse(input.delivery);
+  const persisted = await config.db.transaction(tx => persistControllerWorkerDeliveryReceiptV1(tx, config.integrityKey,
+    delivery, reconciled.receipt, recordedAt));
+  return Object.freeze({ ...reconciled, receipt: persisted.receipt, replayed: persisted.replayed,
+    startsWork: false as const, grantsExecutionAuthority: false as const, permitsRetry: false as const });
+}

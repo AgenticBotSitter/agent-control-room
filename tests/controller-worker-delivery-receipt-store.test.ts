@@ -3,7 +3,8 @@ import test from "node:test";
 import { createControllerWorkerDeliveryV1, type ControllerWorkerDeliveryV1 } from "../src/harness/v1/controller-worker-delivery";
 import { persistControllerWorkerDeliveryReceiptV1, readControllerWorkerDeliveryReceiptV1 } from "../src/harness/v1/controller-worker-delivery-receipt-store";
 import { admitRemoteWorkerDeliveryV1, createRemoteWorkerEnrollmentV1,
-  deliverAndRecordAdmittedRemoteWorkerPacketV1 } from "../src/harness/v1/remote-worker-delivery";
+  deliverAndRecordAdmittedRemoteWorkerPacketV1, observeRemoteWorkerDeliveryV1,
+  reconcileAndRecordRemoteWorkerDeliveryAfterReconnectV1 } from "../src/harness/v1/remote-worker-delivery";
 import { sha256Digest } from "../src/security";
 import { at, nativeTaskFixture, registration } from "./native-task-fixture";
 import { binding, input } from "./hermes-native-fixture";
@@ -67,6 +68,28 @@ test("the admitted remote route records its acknowledgement through the same rec
     port: { async receive(value, route) { return receipt(value, route.kind); } } }, admission, at(3000));
   assert.equal(recorded.replayed, false);
   assert.equal(recorded.receipt.route.kind, "remote");
+  const saved = await f.db.transaction(tx => readControllerWorkerDeliveryReceiptV1(tx, key, {
+    tenantId: binding.tenantId, projectId: binding.projectId, jobId: binding.jobId, attemptId: binding.attemptId }));
+  assert.equal(saved?.delivery.deliveryDigest, packet.deliveryDigest);
+  assert.equal(saved?.receipt.route.kind, "remote");
+});
+
+test("a remote receipt recovered after a lost reply is recorded without resending the task", async t => {
+  const f = await nativeTaskFixture(); t.after(f.close);
+  const { schema: _schema, inputDigest: _inputDigest, deliveryId: _deliveryId, deliveryDigest: _deliveryDigest, ...base } = delivery();
+  const packet = createControllerWorkerDeliveryV1({ ...base, worker: {
+    workerId: "worker:remote", adapterId: "connector:remote-fixture", adapterRevision: "00570550" },
+  });
+  const enrollment = createRemoteWorkerEnrollmentV1({ workerId: "worker:remote", adapterId: "connector:remote-fixture",
+    adapterRevision: "00570550", enrollmentId: "enrollment:remote-fixture", state: "enrolled", enrolledAt: at(0), revokedAt: null });
+  const recovered = await reconcileAndRecordRemoteWorkerDeliveryAfterReconnectV1({ db: f.db, integrityKey: key }, {
+    prior: observeRemoteWorkerDeliveryV1({ result: undefined, failure: "disconnect" }), delivery: packet,
+    route: { kind: "remote", workerId: "worker:remote" }, enrollment, supportedAdapterRevisions: ["00570550"],
+    receipt: receipt(packet, "remote"),
+  }, at(3000));
+  assert.equal(recovered.kind, "receipt");
+  if (recovered.kind !== "receipt") throw new Error("expected recovered receipt");
+  assert.equal(recovered.replayed, false);
   const saved = await f.db.transaction(tx => readControllerWorkerDeliveryReceiptV1(tx, key, {
     tenantId: binding.tenantId, projectId: binding.projectId, jobId: binding.jobId, attemptId: binding.attemptId }));
   assert.equal(saved?.delivery.deliveryDigest, packet.deliveryDigest);
