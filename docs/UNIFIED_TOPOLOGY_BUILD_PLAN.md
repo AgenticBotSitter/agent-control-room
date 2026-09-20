@@ -146,6 +146,11 @@ Completed in source:
   composition; the normal startup configuration accepts this local route
   without requiring a remote-session transport. Constructing either bridge
   does not start Hermes.
+- the normal operator configuration assembly now accepts an
+  installation-owned local Hermes executor for that queue route. It preserves
+  the same one-database startup composition and does not require a remote
+  session manager; construction captures the callback but cannot invoke
+  Hermes.
 
 Remaining before an automatic local worker is enabled:
 

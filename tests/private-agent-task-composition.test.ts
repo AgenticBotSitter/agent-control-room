@@ -867,6 +867,25 @@ test("operator assembly builds the full artifact/result/review/Codex composition
   assert.equal(composed.configuration.coordinator.sessions!.nodes.length, 2);
 });
 
+test("operator assembly can carry an installation-owned local Hermes executor without a remote session transport", () => {
+  const { settings, trusted } = operatorConfigurationScenario("full");
+  settings.features = { ...settings.features, sessions: false, codex: false, codexResultReturn: false,
+    nativeHttp: false, hermes021Local: true };
+  trusted.sessions = undefined;
+  trusted.codex = undefined;
+  trusted.codexResultReturn = undefined;
+  trusted.nativeHttp = undefined;
+  let delivered = 0;
+  trusted.hermes021Local = { deliver: async function () { delivered++; } };
+  const result = assemblePrivateAgentTaskOperatorConfiguration(settings, trusted);
+  assert.equal(result.configuration.coordinator.sessions, undefined);
+  assert.equal(typeof result.configuration.coordinator.hermes021Local?.deliver, "function");
+  assert.equal(delivered, 0, "assembly must not start Hermes");
+  assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(
+    { ...settings, features: { ...settings.features, hermes021Local: false } }, trusted),
+  /unexpected_trusted_input:hermes021Local/);
+});
+
 test("website-only settings cannot enter the operator assembler", async () => {
   const { settings, trusted } = operatorConfigurationScenario("minimal");
   assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(

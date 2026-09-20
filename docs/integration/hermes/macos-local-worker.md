@@ -140,3 +140,12 @@ wrapper that emits bounded JSON lines. The bridge selects one valid terminal
 line, stages it before returning it to Control Room, and refuses to stage an
 ambiguous stream. It does not know how to launch Hermes and cannot read or
 select a login, model, provider, path, or network destination.
+
+The normal operator configuration assembly can now carry that
+installation-owned local executor into the existing task queue. This is the
+same startup path used for other workers, not a separate local launcher. It
+requires the ordinary queue, reviewed result handling, protected artifact
+storage, and an explicit queue-worker setting. It does not require a remote
+session transport. The assembly captures only the executor callback; it never
+accepts a Hermes command, credentials, model, provider, workspace, or any
+browser setting.

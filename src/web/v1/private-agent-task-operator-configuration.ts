@@ -59,6 +59,8 @@ const operatorSettingsSchema = z.object({
     codex: z.boolean().optional(),
     codexResultReturn: z.boolean().optional(),
     nativeHttp: z.boolean().optional(),
+    /** A local Hermes delivery callback supplied by the installation, never by the browser. */
+    hermes021Local: z.boolean().optional(),
     artifactStorage: z.boolean().optional(),
     idea: z.boolean().optional(),
     news: z.boolean().optional(),
@@ -90,6 +92,8 @@ export type AgentTaskOperatorTrustedInputs = {
   codex?: CodexPermitConfiguration;
   codexResultReturn?: CodexResultIntakeSettingsV1;
   nativeHttp?: NativeHttpSettings;
+  /** Already-built, installation-owned local Hermes executor. It contains no browser input. */
+  hermes021Local?: NonNullable<TaskCoordinatorConfiguration["hermes021Local"]>;
   artifactStorage?: PrivateArtifactStorageConfigurationV1;
   idea?: {
     creation: { integrityKey: Uint8Array; participants: unknown[] };
@@ -243,7 +247,7 @@ function captureWebTasks(input: unknown): Readonly<{
  * input. The profile carries a `loadKeys` callback and optional nested
  * service references (`secondaryAccess`, `gatewayAssertionProfile`,
  * `herdrObservations`, `newsCollections`, `ideaCreation`, `connections`,
- * `productConfiguration`, `installationTopologyPlan`, `ideaProjects`, `news`); those trusted callbacks
+ * `productConfiguration`, `installationTopologyPlan`, `installationReadiness`, `ideaProjects`, `news`); those trusted callbacks
  * must be preserved as frozen references, not deep-cloned. The `tasks`
  * field is captured through `captureWebTasks` because the production gate
  * accepts it as a structurally valid object with any prototype. Every
@@ -268,6 +272,8 @@ function captureWebProfile(input: PrivateStartupConfiguration): PrivateStartupCo
       productConfiguration: deepDetach(input.productConfiguration) }),
     ...(input.installationTopologyPlan === undefined ? {} : {
       installationTopologyPlan: deepDetach(input.installationTopologyPlan) }),
+    ...(input.installationReadiness === undefined ? {} : {
+      installationReadiness: deepDetach(input.installationReadiness) }),
     ...(input.connections === undefined ? {} : { connections: deepDetach(input.connections) }),
     ...(input.tasks === undefined ? {} : { tasks: captureWebTasks(input.tasks) }),
   };
@@ -312,6 +318,7 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
   need(f.codex, t.codex, "codex");
   need(f.codexResultReturn, t.codexResultReturn, "codexResultReturn");
   need(f.nativeHttp, t.nativeHttp, "nativeHttp");
+  need(f.hermes021Local, t.hermes021Local, "hermes021Local");
   need(f.artifactStorage, t.artifactStorage, "artifactStorage");
   need(f.idea, t.idea, "idea");
   need(f.news, t.news, "news");
@@ -323,13 +330,17 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
   if (f.nativeQueueRecovery && !f.nativeQueue) refuse("feature_chain:nativeQueueRecovery_requires_nativeQueue");
   if (f.evidence && (!f.quality || parsed.databaseRoles.results === undefined)) refuse("feature_chain:evidence_requires_quality_and_results_role");
   if (f.sessions && !f.evidence) refuse("feature_chain:sessions_requires_evidence");
-  if (f.queueWorker && (!f.nativeQueue || !f.sessions)) refuse("feature_chain:queueWorker_requires_nativeQueue_and_sessions");
+  if (f.queueWorker && (!f.nativeQueue || (!f.sessions && !f.hermes021Local)))
+    refuse("feature_chain:queueWorker_requires_nativeQueue_and_worker_delivery");
   if (f.codex && (!f.nativeQueue || !f.sessions)) refuse("feature_chain:codex_requires_nativeQueue_and_sessions");
   if (f.codexResultReturn && (!f.codex || !f.quality || !f.artifactStorage || !f.sessions
     || parsed.databaseRoles.results === undefined)) refuse("feature_chain:codexResultReturn_requires_full_composition");
   if (f.nativeHttp && !f.sessions) refuse("feature_chain:nativeHttp_requires_sessions");
   if (f.revisionPlanning && !f.quality) refuse("feature_chain:revisionPlanning_requires_quality");
   if (f.artifactStorage && (!f.quality || !f.evidence || parsed.databaseRoles.results === undefined)) refuse("feature_chain:artifactStorage_requires_quality_evidence_results");
+  if (f.hermes021Local && (!f.nativeQueue || !f.queueWorker || !f.quality || !f.evidence || !f.artifactStorage
+    || parsed.databaseRoles.results === undefined || parsed.databaseRoles.evidence === undefined))
+    refuse("feature_chain:hermes021Local_requires_queue_results_and_artifacts");
 
   // Database roles: one host/database, pairwise-distinct usernames, none reusing
   // the web pool login. Exact credential validation stays downstream.
@@ -434,6 +445,15 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
   }) : undefined;
   deepDetach(capturedSessions);
 
+  // The local Hermes executor is a private installation boundary. Capture only
+  // its original callable receiver, not a worker ID, command, path, provider,
+  // model or any browser-selected setting. Constructing this configuration
+  // remains inert: queue pickup is the first possible delivery attempt.
+  const trustedHermes = t.hermes021Local as NonNullable<AgentTaskOperatorTrustedInputs["hermes021Local"]> | undefined;
+  if (f.hermes021Local && (!trustedHermes || typeof trustedHermes.deliver !== "function")) refuse("hermes021Local_invalid");
+  const capturedHermes = f.hermes021Local && trustedHermes
+    ? Object.freeze({ deliver: trustedHermes.deliver.bind(trustedHermes) }) : undefined;
+
   const coordinator: PrivateTaskStartupConfiguration["coordinator"] = {
     planning: {
       template: planning.template,
@@ -486,6 +506,7 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
     ...(f.codex && t.codex ? { codex: { integrityKey: copyKey(t.codex.integrityKey, "codex_key_invalid"), enrollments: [...t.codex.enrollments] } } : {}),
     ...(f.codexResultReturn && t.codexResultReturn ? { codexResultReturn: t.codexResultReturn } : {}),
     ...(f.nativeHttp && t.nativeHttp ? { nativeHttp: t.nativeHttp } : {}),
+    ...(capturedHermes ? { hermes021Local: capturedHermes } : {}),
     ...(f.idea && t.idea ? {
       ideaCreation: {
         database: dbRole("ideaCreation") ?? dbRole("coordinator") as PrivatePostgresConfiguration,
@@ -551,6 +572,7 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
       ...(coordinatorShape.quality ? { quality: coordinatorShape.quality } : {}),
       ...(coordinatorShape.revisionPlanning ? { revisionPlanning: coordinatorShape.revisionPlanning } : {}),
       ...(coordinatorShape.nativeHttp ? { nativeHttp: coordinatorShape.nativeHttp } : {}),
+      ...(coordinatorShape.hermes021Local ? { hermes021Local: coordinatorShape.hermes021Local } : {}),
       ...(coordinatorShape.codex ? { codex: coordinatorShape.codex } : {}),
       ...(coordinatorShape.nativeQueue ? { nativeQueue: coordinatorShape.nativeQueue } : {}),
       ...(coordinatorShape.nativeQueueRecovery ? { nativeQueueRecovery: coordinatorShape.nativeQueueRecovery } : {}),
