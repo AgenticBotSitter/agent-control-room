@@ -14,24 +14,13 @@ import { resolvePinnedApprovalKey } from "../../src/node-policy/v1/pinned-approv
 import { NativeResultSubmissionService } from "../../src/completion-gate/v1/native-result-submission";
 import { NativeTaskResultService } from "../../src/node-control/native-task-result-service";
 import { sha256Digest } from "../../src/security";
-import type { NativeTaskSubmissionReference } from "../../src/persistence/native-task-submission";
-import type { WorkerDeliveryV1 } from "../../src/web/v1/worker-delivery";
 import { response, statusBody } from "../hermes-native-fixture";
 import type { TaskSourcePreparation } from "./task-assignment";
 
 /** Explicit in-process wiring, not a mounted runtime: real controllers/stores with synthetic
  * owner keys, qualification and native transport. All assertions use the newly planned job;
  * the reused fixture also contains unrelated pre-existing result/review records. */
-export type NativeTaskLifecycleDeliveryFactoryV1 = (input: {
-  deliverCanonical(reference: NativeTaskSubmissionReference, signal: AbortSignal): Promise<void>;
-  reconcileCanonical(reference: NativeTaskSubmissionReference, signal: AbortSignal): Promise<{
-    disposition: "not_observed" | "recorded" | "uncertain"; startsWork: false; grantsExecutionAuthority: false;
-  }>;
-}) => WorkerDeliveryV1;
-
-export async function nativeTaskLifecycleFixture(configuration: {
-  serverFeatures?: string[]; prepareSource?: TaskSourcePreparation; workerDeliveryFactory?: NativeTaskLifecycleDeliveryFactoryV1;
-} = {}) {
+export async function nativeTaskLifecycleFixture(configuration: { serverFeatures?: string[]; prepareSource?: TaskSourcePreparation } = {}) {
   const f = await canonicalApprovalStorageFixture(configuration.prepareSource);
   const local = await nativeStartAuthorityFixture(undefined, f.prepared.enrollment, f.assignmentFixture);
   assert.equal(sha256Digest(local.prepared.binding), sha256Digest(f.prepared.binding));
@@ -69,36 +58,11 @@ export async function nativeTaskLifecycleFixture(configuration: {
   assert.ok(session.nativeDeliveryChannel()); assert.equal(outgoing.length + incoming.length, 0);
   await f.save();
   await f.coordinator.enqueueNativeTask(...f.args, sha256Digest(f.packet), f.abort.signal);
-  const queued = await f.coordinator.readNativeTaskQueue(...f.args);
-  assert.ok(queued);
-  const reference = Object.freeze({ schema: "control-room.native-task-submission/v1" as const, tenantId: f.scope.tenantId,
-    projectId: queued.projectId, jobId: queued.jobId, attemptId: queued.attemptId, queueId: queued.queueId,
-    inputDigest: f.args[3], packetDigest: queued.packetDigest });
-  let dispatch: SignedNodeFrame<"harness.native.dispatch"> | undefined;
-  let receipt: Awaited<ReturnType<typeof f.store.receiveDeliveryReceipt>> | undefined;
-  async function deliverCanonical(value: NativeTaskSubmissionReference, signal: AbortSignal) {
-    assert.deepEqual(value, reference);
-    await f.coordinator.stageQueuedNativeDelivery(...f.args, sha256Digest(f.packet), session, signal);
-    await f.coordinator.transmitQueuedNativeDelivery(...f.args, sha256Digest(f.packet), session, signal);
-    dispatch = JSON.parse(outgoing[0]) as SignedNodeFrame<"harness.native.dispatch">;
-    await bridge.receive(outgoing.shift()!, timestamp());
-    receipt = await f.store.receiveDeliveryReceipt(f.db, session, incoming.shift()!, signal);
-  }
-  // The original signed fixture uses its direct queue wire. Reconciliation is
-  // supplied by the existing canonical reader, configured with the same
-  // database, approval store and no-op test-only submission port; it introduces
-  // neither a second queue nor another authority.
-  const reconciliationCoordinator = f.create(f.db, { async enqueueInSession() {} });
-  const workerDelivery = configuration.workerDeliveryFactory?.({ deliverCanonical,
-    reconcileCanonical: (value, signal) => reconciliationCoordinator.reconcileApprovedQueueDelivery(value, signal) });
-  if (workerDelivery) {
-    const outcome = await workerDelivery.deliver(reference, f.abort.signal);
-    if (outcome.disposition === "unresolved") {
-      const reconciled = await workerDelivery.reconcile(reference, f.abort.signal);
-      assert.equal(reconciled.disposition, "recorded");
-    } else assert.equal(outcome.disposition, "delivered");
-  } else await deliverCanonical(reference, f.abort.signal);
-  assert.ok(dispatch); assert.ok(receipt);
+  await f.coordinator.stageQueuedNativeDelivery(...f.args, sha256Digest(f.packet), session, f.abort.signal);
+  await f.coordinator.transmitQueuedNativeDelivery(...f.args, sha256Digest(f.packet), session, f.abort.signal);
+  const dispatch = JSON.parse(outgoing[0]) as SignedNodeFrame<"harness.native.dispatch">;
+  await bridge.receive(outgoing.shift()!, timestamp());
+  const receipt = await f.store.receiveDeliveryReceipt(f.db, session, incoming.shift()!, f.abort.signal);
   const config = { queueId: dispatch.body.queueId, enrollment: f.prepared.enrollment, serverActorId: "server:test" };
   const dependencies = { deliveries: journal, runs: local.journal, approvals: f.approvals,
     security: { currentServerTrustRevision: () => f.native.trust.currentServerTrustRevision(),
@@ -137,7 +101,7 @@ export async function nativeTaskLifecycleFixture(configuration: {
     return { raw, body, stored };
   }
   return { f, local, handoff, prepare, registration, submission, results, options, register, publish, queueSnapshot,
-    journal, receipt, deliveryReference: reference, sent, session, outgoing,
+    journal, receipt, sent, session, outgoing,
     acknowledgeSnapshot: async () => { await bridge.receive(outgoing.shift()!, timestamp()); },
     loseNextAcknowledgement: () => { loseAcknowledgement = true; },
     setResult: (value: string) => { resultText = value; },

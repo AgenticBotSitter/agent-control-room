@@ -66,11 +66,6 @@ async function prepareNativeRevisedExecution(original: NativeQualityCompletion,
     const childRoute = preparation.sourceCapacityReleased ? f.route : { ...f.route, maxConcurrentTasks: 3 };
     const coordinator = new TaskAssignmentCoordinator(f.db, f.scope, planner, [childRoute], f.clock,
       [{ enrollment: f.prepared.enrollment, nodeClass: "personal-compute" }], f.store);
-    // Test-only read port: the normal fixture dispatches through the signed
-    // session below, while U1 conformance needs the existing canonical receipt
-    // reader without inventing another receipt store or scheduler.
-    const reconciliationCoordinator = new TaskAssignmentCoordinator(f.db, f.scope, planner, [childRoute], f.clock,
-      [{ enrollment: f.prepared.enrollment, nodeClass: "personal-compute" }], f.store, { async enqueueInSession() {} });
     const assigned = await coordinator.assign(f.identity, plan.projectId, plan.job.id, f.route.nodeId, plan.job.inputDigest);
     if (preparation.sourceCapacityReleased) assert.equal((await f.db.query(
       "SELECT id FROM control_leases WHERE state='active' AND node_id=$1", [f.route.nodeId])).rows.length, f.route.maxConcurrentTasks);
@@ -180,7 +175,7 @@ async function prepareNativeRevisedExecution(original: NativeQualityCompletion,
     return { original, f, config: f.ownerConfig, scenario: original.scenario, identity: f.identity, jwt: f.jwt, scope: f.scope,
       source: { jobId: original.registration.jobId, runId: original.registration.id, artifact: original.artifact,
         target: original.target, targetDigest: original.request.targetDigest }, changeReview, planned, plan, prepared, packet, assigned,
-      coordinator, reconciliationCoordinator, args, registration, submission, register, deliver, handoff, receiveOptions, childStates, sourceStates: original.states, seededStates,
+      registration, submission, register, deliver, handoff, receiveOptions, childStates, sourceStates: original.states, seededStates,
       counters: () => ({ sourceCalls: [...original.local.calls], childCalls: [...calls],
         sourceEffects: original.local.effects.countFull(), childEffects: effects.countFull() }), close };
   } catch (error) { await close(); throw error; }
