@@ -62,6 +62,6 @@ export function PrivateConnections() {
     return () => { live = false; generation++; clearInterval(interval); window.removeEventListener("focus", focus); };
   }, [refresh]);
   return <PrivateConnectionView data={data} onRefresh={() => setRefresh(value => value + 1)}>
-    <InstallationTopologySummary plan={installationTopology} />
+    <InstallationTopologySummary plan={installationTopology?.plan} readiness={installationTopology?.readiness} />
   </PrivateConnectionView>;
 }

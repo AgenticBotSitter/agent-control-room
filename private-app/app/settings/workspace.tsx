@@ -30,7 +30,7 @@ export function PrivateSettingsWorkspace() {
       </section>
     </div>
     <ProductConfigurationSummary configuration={configuration} />
-    <InstallationTopologySummary plan={installationTopology} />
+    <InstallationTopologySummary plan={installationTopology?.plan} readiness={installationTopology?.readiness} />
     <OwnerNotificationsWorkspace />
   </main></div>;
 }

@@ -6,6 +6,7 @@ import { captureGatewayAssertionProviderProfileV1, captureWebOrigins } from "./a
 import { captureHerdrReaders } from "./herdr-service";
 import { parseProductConfigurationV1 } from "../../config/v1/product-configuration";
 import { verifyInstallationTopologyPlanV1 } from "../../harness/v1/installation-topology";
+import { verifyInstallationReadinessV1 } from "../../harness/v1/installation-readiness";
 export { createAccessKeyLoader, createStaticAccessKeyLoader } from "./access-key-cache";
 export { createOwnerBootstrapCeremonyV1 } from "./owner-bootstrap-ceremony";
 
@@ -26,6 +27,11 @@ export function validatePrivateStartupConfiguration(input: PrivateStartupConfigu
       .some(name => name in input)) throw new Error();
     if (!Number.isSafeInteger(input.maxSessionSeconds) || input.maxSessionSeconds < 1 || input.maxSessionSeconds > 604800
       || typeof input.loadKeys !== "function") throw new Error();
+    const installationTopologyPlan = input.installationTopologyPlan === undefined ? undefined
+      : verifyInstallationTopologyPlanV1(input.installationTopologyPlan);
+    const installationReadiness = input.installationReadiness === undefined ? undefined
+      : verifyInstallationReadinessV1(input.installationReadiness);
+    if (installationReadiness && (!installationTopologyPlan || installationReadiness.planDigest !== installationTopologyPlan.planDigest)) throw new Error();
     return Object.freeze({ origin: exactOrigin(input.origin), issuer: exactOrigin(input.issuer), audience: reference(input.audience),
       ...(sites[1] ? { secondaryAccess: sites[1] } : {}),
       ...(input.gatewayAssertionProfile === undefined ? {} : {
@@ -37,8 +43,8 @@ export function validatePrivateStartupConfiguration(input: PrivateStartupConfigu
       ...(input.ideaProjects ? { ideaProjects: { integrityKey: key(input.ideaProjects.integrityKey) } } : {}),
       ...(input.news ? { news: { integrityKey: key(input.news.integrityKey) } } : {}),
       ...(input.productConfiguration === undefined ? {} : { productConfiguration: parseProductConfigurationV1(input.productConfiguration) }),
-      ...(input.installationTopologyPlan === undefined ? {} : {
-        installationTopologyPlan: verifyInstallationTopologyPlanV1(input.installationTopologyPlan) }),
+      ...(installationTopologyPlan === undefined ? {} : { installationTopologyPlan }),
+      ...(installationReadiness === undefined ? {} : { installationReadiness }),
       ...(input.tasks ? { tasks: { harnessIntegrityKey: key(input.tasks.harnessIntegrityKey),
         ...(input.tasks.results ? { results: { ...input.tasks.results, integrityKey: key(input.tasks.results.integrityKey) } } : {}),
         ...(input.tasks.reviews ? { reviews: { ...input.tasks.reviews, integrityKey: key(input.tasks.reviews.integrityKey) } } : {}),

@@ -1,4 +1,5 @@
 import type { InstallationTopologyPlanV1 } from "../../src/harness/v1/installation-topology";
+import { summarizeInstallationReadinessV1, type InstallationReadinessV1 } from "../../src/harness/v1/installation-readiness";
 
 const proofLabels = {
   local_owner_qualification: "a successful owner-attended local worker check",
@@ -7,12 +8,26 @@ const proofLabels = {
   backup_restore: "a backup-and-restore check",
 } as const;
 
+const stateLabels = {
+  not_started: "Not started",
+  passed: "Passed",
+  failed: "Needs attention",
+  unavailable: "Cannot be checked yet",
+} as const;
+
+const overallLabels = {
+  not_ready: "Setup is still in progress",
+  blocked: "Setup needs attention",
+  ready_for_owner_enablement: "Proofs are complete; owner enablement is still required",
+} as const;
+
 /** A status-only explanation. There are deliberately no setup, launch, or approval controls here. */
-export function InstallationTopologySummary({ plan }: { plan?: Readonly<InstallationTopologyPlanV1> }) {
+export function InstallationTopologySummary({ plan, readiness }: { plan?: Readonly<InstallationTopologyPlanV1>; readiness?: Readonly<InstallationReadinessV1> }) {
   if (!plan) return <section className="private-panel" aria-labelledby="installation-title">
     <h2 id="installation-title">Installation setup</h2>
     <p>No reviewed setup plan is currently available. This screen does not guess whether this computer or another worker is ready.</p>
   </section>;
+  const summary = summarizeInstallationReadinessV1(plan, readiness);
   const mode = plan.mode === "this_computer" ? "This computer" : "Several computers";
   return <section className="private-panel" aria-labelledby="installation-title">
     <h2 id="installation-title">Installation setup</h2>
@@ -23,8 +38,9 @@ export function InstallationTopologySummary({ plan }: { plan?: Readonly<Installa
       <p><strong>Prepared, not enabled.</strong> Control Room can prepare a checked task for a local agent, but no agent is started from this screen.</p>
       <p>Before a local agent can receive real work, the owner completes its short connection check and the installation verifies protected data and recovery. Until then, the page shows setup status only—not a live agent.</p>
     </section>}
-    <h3>Before workers can be enabled</h3>
-    <ul>{plan.requiredProofs.map(proof => <li key={proof}>{proofLabels[proof]}</li>)}</ul>
+    <h3>Setup proof status</h3>
+    <p><strong>{overallLabels[summary.state]}.</strong>{summary.nextProof ? ` Next: ${proofLabels[summary.nextProof]}.` : ""}</p>
+    <ul>{summary.proofs.map(item => <li key={item.proof}><strong>{stateLabels[item.state]}:</strong> {proofLabels[item.proof]}</li>)}</ul>
     <p className="private-note">This page is read-only. It cannot start an agent, connect another computer, change credentials, or approve work.</p>
   </section>;
 }

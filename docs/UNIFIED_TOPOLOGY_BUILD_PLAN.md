@@ -74,6 +74,10 @@ Completed in source:
   existing saved connection inventory. It keeps planned routes, recorded
   signals, and a running agent distinct; it shows no worker identifiers,
   host details, credentials, or start controls.
+- a plan-bound, read-only proof-status surface now shows which setup checks are
+  not started, passed, failed, or unavailable. It accepts only non-secret
+  evidence fingerprints, cannot enable workers, and does not make missing
+  proof records look successful.
 
 ## U1 — local worker foundation
 

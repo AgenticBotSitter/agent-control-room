@@ -32,6 +32,7 @@ import { newsCollectionStatusSchema, newsCollectionHistorySchema } from "./news-
 import { ideaCreationOptionsSchema } from "./idea-wire";
 import { parseProductConfigurationV1, type ProductConfigurationV1 } from "../../config/v1/product-configuration";
 import { verifyInstallationTopologyPlanV1, type InstallationTopologyPlanV1 } from "../../harness/v1/installation-topology";
+import { verifyInstallationReadinessV1, type InstallationReadinessV1 } from "../../harness/v1/installation-readiness";
 import { WebSessionAuthority } from "./session-authority";
 import { readProjectScheduleStatus } from "../../schedules/read-service";
 import { ProjectCoordinationHttpService, type ProjectCoordinationCanonicalStoreAdapter } from "./project-coordination-http";
@@ -56,6 +57,8 @@ export interface PrivateWebProcessOptions {
   productConfiguration?: Readonly<ProductConfigurationV1>;
   /** Read-only setup status for one-computer or several-computer installation. It cannot start workers. */
   installationTopologyPlan?: Readonly<InstallationTopologyPlanV1>;
+  /** Optional non-secret proof outcomes for that exact setup plan. This process only presents them. */
+  installationReadiness?: Readonly<InstallationReadinessV1>;
   /** Explicit operations from the trusted collector composition. This process does
    * not create readers, worker pools, schedules or collection authority. */
   newsCollections?: readonly { tenantId: string; workspaceId: string; projectId: string; sourceId: string;
@@ -103,6 +106,10 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     : parseProductConfigurationV1(options.productConfiguration);
   const installationTopologyPlan = options.installationTopologyPlan === undefined ? undefined
     : verifyInstallationTopologyPlanV1(options.installationTopologyPlan);
+  const installationReadiness = options.installationReadiness === undefined ? undefined
+    : verifyInstallationReadinessV1(options.installationReadiness);
+  if (installationReadiness && (!installationTopologyPlan || installationReadiness.planDigest !== installationTopologyPlan.planDigest))
+    throw new Error("invalid_private_app_config");
   const moduleEnabled = (name: keyof ProductConfigurationV1["modules"]) =>
     productConfiguration === undefined || productConfiguration.modules[name];
   const sites = captureWebOrigins({ origin: options.origin, audience: options.audience }, options.secondaryAccess);
@@ -239,6 +246,15 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             return await productConfigurationAuthority.authenticated(identity, async (_, actor) => {
               actor.require("projects.read", undefined, true);
               return Response.json(installationTopologyPlan, { headers: privateResponseHeaders });
+            });
+          }
+          if (url.pathname === "/api/v1/installation-readiness") {
+            if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+            if (!installationTopologyPlan) throw new WebAccessError("not_found");
+            return await productConfigurationAuthority.authenticated(identity, async (_, actor) => {
+              actor.require("projects.read", undefined, true);
+              return Response.json({ plan: installationTopologyPlan, ...(installationReadiness ? { readiness: installationReadiness } : {}) },
+                { headers: privateResponseHeaders });
             });
           }
           const observations = /^\/api\/v1\/projects\/([^/]+)\/observations$/.exec(url.pathname);

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { planInstallationTopologyV1, verifyInstallationTopologyPlanV1 } from "../src/harness/v1/installation-topology";
+import { createInstallationReadinessV1, summarizeInstallationReadinessV1, verifyInstallationReadinessV1 } from "../src/harness/v1/installation-readiness";
 import { sha256Digest } from "../src/security/canonical-digest";
 
 const digest = (value: string) => sha256Digest(value);
@@ -44,4 +45,20 @@ test("moving a known worker between local and remote is a rebind, not quiet rete
   assert.deepEqual(plan.reboundWorkerIds, ["worker:marvin"]);
   assert.deepEqual(plan.addedRemoteWorkerIds, []);
   assert.ok(plan.requiredProofs.includes("remote_enrollment"));
+});
+
+test("readiness is bound to one reviewed plan and never means a worker is enabled", () => {
+  const plan = planInstallationTopologyV1(input([local]));
+  const readiness = createInstallationReadinessV1({ planDigest: plan.planDigest, proofs: [
+    { proof: "backup_restore", state: "passed", evidenceDigest: digest("restore-evidence") },
+    { proof: "local_owner_qualification", state: "not_started" },
+  ] });
+  assert.deepEqual(verifyInstallationReadinessV1(readiness), readiness);
+  const summary = summarizeInstallationReadinessV1(plan, readiness);
+  assert.equal(summary.state, "not_ready");
+  assert.equal(summary.nextProof, "local_owner_qualification");
+  const differentPlan = planInstallationTopologyV1({ ...input([local]), currentRoutes: [] });
+  assert.throws(() => summarizeInstallationReadinessV1(differentPlan, readiness), /mismatch/);
+  assert.throws(() => createInstallationReadinessV1({ planDigest: plan.planDigest,
+    proofs: [{ proof: "backup_restore", state: "passed" }] }), /pass_without_evidence/);
 });

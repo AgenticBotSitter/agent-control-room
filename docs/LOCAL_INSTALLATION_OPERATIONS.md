@@ -21,6 +21,13 @@ The local Hermes runner holds its executable location, existing login, selected
 model, provider, and working directory privately. None of those values go in
 the database, task packet, browser response, logs, or backup inventory.
 
+The private website can show a read-only setup checklist. Each item is tied to
+the exact reviewed installation plan and is only **passed** when the installer
+has attached a non-secret evidence fingerprint. The checklist cannot run a
+check, enable a worker, or treat a missing record as success. A completed
+checklist means only that the next, separately authorized owner-enable step is
+available.
+
 ## Normal start
 
 1. The operator supplies the reviewed server-only configuration.
@@ -84,6 +91,9 @@ Ready in source:
 - one-database application composition;
 - local and remote worker delivery records that preserve uncertainty;
 - a local Hermes text-only qualification launcher.
+- a protected website readiness checklist that distinguishes not started,
+  passed, failed, and unavailable proof steps without displaying the underlying
+  host, account, path, command output, or credentials.
 
 Still requires owner-authorized evidence:
 
