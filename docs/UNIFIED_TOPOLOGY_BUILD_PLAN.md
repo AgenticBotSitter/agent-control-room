@@ -70,6 +70,9 @@ Completed in source:
 - shared terminal evidence for a completed local Hermes result.
 - an owner-run, text-only qualification launcher with a bounded one-turn
   invocation and sanitized output.
+- composition that sends a verified local Hermes terminal result through the
+  existing durable-result receipt and pending-review services, including
+  restart-safe exact replay.
 
 Remaining before an automatic local worker is enabled:
 
