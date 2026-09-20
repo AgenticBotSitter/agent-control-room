@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { canonicalJson, sha256Digest } from "../../security/canonical-digest";
+import { assertCodexWorkspaceLeaseV1, type CodexWorkspaceLeaseV1 } from "../codex-v1/workspace";
+import { controllerWorkerDeliverySchemaV1 } from "./controller-worker-delivery";
 
 /**
  * Shared evidence contract for a future harness that is allowed to propose a
@@ -77,6 +79,30 @@ export function createWorktreeChangeAuditPlanV1(input: Omit<WorktreeChangeAuditP
   if (allowedPaths.length !== parsed.allowedPaths.length) throw new Error("worktree_change_audit_scope_duplicated");
   const material = { schema: WORKTREE_CHANGE_AUDIT_PLAN_V1, ...parsed, allowedPaths };
   return freezePlan({ ...material, planDigest: sha256Digest(material) });
+}
+
+/**
+ * Connects the shared isolated-worktree evidence rule to the existing
+ * controller delivery and workspace lease.  The workspace manager remains
+ * responsible for its physical Git operations; this helper merely ensures a
+ * later code-writing adapter cannot mix one task's packet with another task's
+ * worktree or base revision.  It returns no private filesystem path.
+ */
+export function createControllerDeliveryWorktreeChangeAuditPlanV1(input: Readonly<{
+  delivery: unknown;
+  lease: CodexWorkspaceLeaseV1;
+  allowedPaths: readonly string[];
+  maximumChangedFiles: number;
+  maximumChangedBytes: number;
+}>): WorktreeChangeAuditPlanV1 {
+  const delivery = controllerWorkerDeliverySchemaV1.parse(input.delivery);
+  const lease = { ...input.lease };
+  assertCodexWorkspaceLeaseV1(lease);
+  if (lease.runId !== delivery.identity.runId) throw new Error("worktree_change_audit_delivery_lease_mismatch");
+  return createWorktreeChangeAuditPlanV1({ deliveryDigest: delivery.deliveryDigest,
+    worktreeLeaseDigest: lease.leaseId, baseRevision: lease.revision,
+    allowedPaths: [...input.allowedPaths], maximumChangedFiles: input.maximumChangedFiles,
+    maximumChangedBytes: input.maximumChangedBytes });
 }
 
 export function verifyWorktreeChangeAuditPlanV1(value: unknown): WorktreeChangeAuditPlanV1 {
