@@ -29,12 +29,12 @@ test("the local Hermes qualification dry run is explicit and never starts a runn
   assert.equal(output.invocation.toolAccess, "none");
 });
 
-test("an owner can select a temporary model without exposing it in the proof", async () => {
-  const result = await run(["--owner-attended", "--dry-run", "--profile", "local-worker", "--model", "openrouter/example-free", "--provider", "openrouter"]);
+test("an owner can select a temporary local model without exposing it in the proof", async () => {
+  const result = await run(["--owner-attended", "--dry-run", "--profile", "local-worker", "--model", "qwen3.8:27b-long", "--provider", "ollama"]);
   assert.equal(result.code, 0);
   const output = JSON.parse(result.stdout);
   assert.equal(output.modelOverrideUsed, undefined);
-  assert.equal(output.invocation.arguments.includes("openrouter/example-free"), false);
+  assert.equal(output.invocation.arguments.includes("qwen3.8:27b-long"), false);
   assert.equal(output.invocation.arguments.includes("<owner-selected-model>"), true);
   assert.equal(output.invocation.arguments.includes("local-worker"), false);
   assert.equal(output.invocation.arguments.includes("<owner-selected-profile>"), true);

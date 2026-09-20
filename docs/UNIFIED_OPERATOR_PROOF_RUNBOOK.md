@@ -74,9 +74,10 @@ npx --yes pnpm@11.19.0 run qualify:hermes:local -- --owner-attended --profile OW
 
 If the selected profile needs an already-configured temporary model override,
 the owner may add `--model OWNER_SELECTED_MODEL --provider
-OWNER_SELECTED_PROVIDER`. Do not guess names or change Hermes configuration to
-make this pass. Choose an existing, owner-approved profile/provider/model and
-retain only the sanitized JSON result.
+OWNER_SELECTED_PROVIDER`. This supports local Ollama model tags such as
+`qwen3.8:27b-long` as well as hosted providers. Do not guess names or change
+Hermes configuration to make this pass. Choose an existing, owner-approved
+profile/provider/model and retain only the sanitized JSON result.
 
 The command requires fresh owner authorization for each non-dry attempt. Its
 matching `--dry-run` form checks only the bounded invocation shape and does

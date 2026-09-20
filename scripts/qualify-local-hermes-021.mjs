@@ -20,7 +20,9 @@ const overrideValue = name => {
   const indexes = args.reduce((found, value, index) => value === name ? [...found, index] : found, []);
   if (indexes.length !== 1 || indexes[0] === args.length - 1) return null;
   const value = args[indexes[0] + 1];
-  return !value.startsWith("--") && /^[A-Za-z0-9._/-]{1,120}$/.test(value) ? value : null;
+  // Ollama model identifiers commonly include a tag separator, for example
+  // `qwen3.8:27b-long`. Values remain arguments to spawn(), never shell text.
+  return !value.startsWith("--") && /^[A-Za-z0-9._:/-]{1,120}$/.test(value) ? value : null;
 };
 const model = overrideValue("--model");
 const provider = overrideValue("--provider");
