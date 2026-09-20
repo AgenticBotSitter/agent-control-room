@@ -75,7 +75,7 @@ function activationFor(config: CodexLocalDeliveryCompositionV1, delivery: z.infe
   const evidence = config.activationEvidence.acceptedCodexActivation(`native-queue:${sha256Digest({
     tenantId: delivery.identity.tenantId, jobId: delivery.identity.jobId, attemptId: delivery.identity.attemptId,
   }).slice(7)}`);
-  if (!evidence || !evidence.frame) unavailable();
+  if (!evidence) return unavailable();
   const frame = evidence.frame;
   if (frame.type !== 'harness.codex.dispatch.activation' || frame.direction !== 'server_to_node'
     || frame.senderKind !== 'control_room') unavailable();
