@@ -26,6 +26,8 @@ export async function deliverVerifiedHermes021LocalQueueTaskV1(input: Readonly<{
     || local.startsWork !== false || local.grantsExecutionAuthority !== false || input.signal.aborted) fail();
   await input.deliver(local, input.signal);
   if (input.signal.aborted) fail();
-  return Object.freeze({ disposition: "delivered" as const, startsWork: false as const,
-    grantsExecutionAuthority: false as const });
+  // The shared pg-boss worker accepts only this narrow, strictly validated
+  // operational outcome.  It must not carry internal routing metadata into
+  // the shared queue contract.
+  return Object.freeze({ disposition: "delivered" as const });
 }

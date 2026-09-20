@@ -14,6 +14,8 @@ import { NativeApprovalPacketStore } from "../src/web/v1/native-approval-packet-
 import type { NativeTaskSubmission } from "../src/persistence/native-task-submission";
 import { deliverVerifiedHermes021LocalQueueTaskV1 } from "../src/web/v1/hermes-021-local-queue-delivery";
 import { createHermes021LocalSubprocessQueueExecutorV1 } from "../src/web/v1/hermes-021-local-subprocess-executor";
+import { startPgBossNativeTaskWorker, type PgBossNativeWorkerClient } from "../src/persistence/pg-boss-native-task-worker";
+import { PG_BOSS_NATIVE_SUBMISSION, nativeTaskSubmissionId } from "../src/persistence/pg-boss-native-task-submission";
 import type { FleetSignalEnvelope } from "../src/node-fleet/v1/schemas";
 import { ownerReviewFixture } from "./helpers/web-owner-review";
 import { binding, enrollment, instant } from "./hermes-native-fixture";
@@ -95,14 +97,6 @@ test("a Marvin Hermes 0.21 template creates a pinned v5 plan, not an older gener
     attemptId: assigned.receipt.attemptId, inputDigest: planned.receipt.inputDigest });
   const standardPickup = await hermesQueue.locateQueuedHarnessDelivery(queuedReferences[0]!, new AbortController().signal);
   assert.equal(standardPickup.kind, "hermes-021-local", "the shared queue dispatcher selects Marvin's local route");
-  let queueExecutorCalls = 0;
-  await deliverVerifiedHermes021LocalQueueTaskV1({ reference: queuedReferences[0]!, signal: new AbortController().signal,
-    target: standardPickup, async deliver(target) {
-      queueExecutorCalls++;
-      assert.equal(target.kind, "hermes-021-local");
-      assert.equal(target.task.jobId, planned.receipt.jobId);
-    } });
-  assert.equal(queueExecutorCalls, 1, "only the explicit local executor receives the verified queue pickup");
   const replayedQueue = await hermesQueue.enqueueHermes021LocalTask(f.identity, binding.projectId, planned.receipt.jobId,
     planned.receipt.inputDigest, new AbortController().signal);
   assert.equal(replayedQueue.replayed, true);
@@ -137,7 +131,31 @@ test("a Marvin Hermes 0.21 template creates a pinned v5 plan, not an older gener
         input: 1, output: 1, total: 2, cache_read: 0, cache_write: 0 }, duration_ms: 3, timestamp: instant + 9000 }));
     } },
   });
-  const composed = await localExecutor.deliver(standardPickup, new AbortController().signal);
+  let queuedWorkerHandler!: Parameters<PgBossNativeWorkerClient["work"]>[2];
+  let workerStopped = 0;
+  const queue = { name: PG_BOSS_NATIVE_SUBMISSION.name, table: PG_BOSS_NATIVE_SUBMISSION.table, policy: "standard" as const,
+    partition: false, retryLimit: 0, deadLetter: null, notify: false };
+  const workerClient: PgBossNativeWorkerClient = {
+    async getQueue() { return queue; },
+    async work(name, _options, handler) { assert.equal(name, PG_BOSS_NATIVE_SUBMISSION.name); queuedWorkerHandler = handler; return "worker:marvin"; },
+    async cancel() {},
+    async offWork(_name, input) { assert.deepEqual(input, { id: "worker:marvin", wait: true }); workerStopped++; },
+  };
+  let composed: Awaited<ReturnType<typeof localExecutor.deliver>> | undefined;
+  const worker = await startPgBossNativeTaskWorker(workerClient, { async deliver(reference, signal) {
+    const target = await hermesQueue.locateQueuedHarnessDelivery(reference, signal);
+    assert.equal(target.kind, "hermes-021-local");
+    return deliverVerifiedHermes021LocalQueueTaskV1({ reference, signal, target, deliver: async (deliveryTarget, deliverySignal) => {
+      composed = await localExecutor.deliver(deliveryTarget, deliverySignal);
+    } });
+  } });
+  const reference = queuedReferences[0]!;
+  const queueResult = await queuedWorkerHandler([{ id: nativeTaskSubmissionId(reference), name: PG_BOSS_NATIVE_SUBMISSION.name,
+    data: reference, retryLimit: 0, retryCount: 0, state: "active", policy: "standard", deadLetter: null,
+    signal: new AbortController().signal }]);
+  assert.deepEqual(queueResult, { disposition: "delivered" }, "the real shared queue worker selects the local Hermes executor");
+  await worker.close(); assert.equal(workerStopped, 1);
+  assert.ok(composed);
   const executed = composed.execution;
   assert.equal(executed.delivered.state, "completed_delivery");
   assert.equal(executed.delivered.outcome?.kind, "completed");
