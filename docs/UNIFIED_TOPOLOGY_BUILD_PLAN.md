@@ -140,6 +140,8 @@ Remaining before an automatic local worker is enabled:
 The permanent local-installation recovery model, including the boundary
 between the one authoritative database and local result bytes, is documented
 in [LOCAL_INSTALLATION_OPERATIONS.md](LOCAL_INSTALLATION_OPERATIONS.md).
+The single operator procedure that proves either installation choice is
+documented in [UNIFIED_OPERATOR_PROOF_RUNBOOK.md](UNIFIED_OPERATOR_PROOF_RUNBOOK.md).
 
 ## U2 — several-computer delivery
 
@@ -168,6 +170,11 @@ Remaining:
 - delivery acknowledgement through a real enrolled transport, including its
   verified adapter-version compatibility boundary and the same result, review,
   and correction path.
+
+The source-side private certificate-checked transport host is already composed
+behind the existing managed-session service. Enabling it and running a genuine
+two-computer proof remain owner-authorized operations; the proof sequence is
+in [UNIFIED_OPERATOR_PROOF_RUNBOOK.md](UNIFIED_OPERATOR_PROOF_RUNBOOK.md).
 
 ## Acceptance checks
 
