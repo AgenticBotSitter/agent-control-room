@@ -13,3 +13,4 @@ export * from "./terminal-result-staging";
 export * from "./stream-json-private-port";
 export * from "./subprocess-stream-json-host";
 export * from "./qualification-evidence";
+export * from "./installation-readiness-record";

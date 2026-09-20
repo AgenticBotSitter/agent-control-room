@@ -25,6 +25,12 @@ The successful text-only check can be reduced to an opaque proof fingerprint
 for the setup page. That confirms the check passed without putting its session
 reference, token counts, command, or selected model on the page.
 
+Trusted installation code can use the source helper
+`recordHermes021MacosLocalQualificationReadinessV1` to update that one setup
+item while preserving the plan's other requirements, such as backup/restore.
+It is a pure server-side helper; it does not write settings, enable the worker,
+or accept a browser upload.
+
 ## What still needs an owner decision
 
 Before a real automatic task can be enabled, the owner chooses:
