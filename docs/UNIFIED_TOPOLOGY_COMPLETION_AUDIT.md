@@ -80,9 +80,9 @@ procedure has been operated successfully.
 
 ## What remains before enabling This computer
 
-1. The owner supplies the private process wrapper that runs the existing local
-   Hermes installation and connects it to the tested stream-json bridge. The
-   now-complete operator-configuration path can receive that wrapper, but its
+1. The owner supplies private settings that pin the existing local Hermes
+   installation to the tested stream-json wrapper. The wrapper is already in
+   Control Room source; it does not need a custom Hermes modification. Its
    executable location, login, model, provider, and workspace remain outside
    this repository and outside Control Room records.
 2. Preserve the successful text-only, owner-attended Hermes qualification as
