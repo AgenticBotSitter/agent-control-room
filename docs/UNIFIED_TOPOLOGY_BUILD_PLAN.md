@@ -103,10 +103,15 @@ Completed in source:
   is called. It binds the run to the task, attempt, approved authority, and
   connector profile without recording a local login, model, provider, or
   workspace.
+- the same harness-run history now records the controlled launch as starting,
+  running, bounded usage, and succeeded (or an explicit failed/disconnected
+  outcome). A restarted handoff reuses its matching historical run and does
+  not create a second Hermes invocation or rewrite that history.
 - durable result publication now checks the recorded task-authority fingerprint
   separately from the completed-result fingerprint. This avoids treating a
   result's contents as if they were the task's approval while preserving both
-  checks before a pending-review record is written.
+  checks before a pending-review record is written, and also refuses a result
+  when the task's current recorded authority no longer matches the run.
 
 Remaining before an automatic local worker is enabled:
 
@@ -114,7 +119,10 @@ Remaining before an automatic local worker is enabled:
   result to the shared review-and-correction reader (the result publisher and
   correction-plan form are present, but the permanent host composition is not
   yet wired);
-- one owner-attended, text-only qualification using the existing Hermes login;
+- one owner-attended, text-only qualification using the existing Hermes login
+  that completes successfully (the first bounded attempt ended before model
+  use; its sanitized report is evidence of a failed qualification, not an
+  operational worker);
 - a controlled local data directory, restart procedure, and backup/restore
   proof.
 
