@@ -99,6 +99,13 @@ and complete the text-only qualification first. A policy refusal starts no
 Hermes task. A lost reply is recorded as uncertain and is never automatically
 run a second time.
 
+This adapter revision is deliberately limited to one 120-second text-review
+turn. Its prompt asks for a plain-text review, test outline, or proposed patch,
+and explicitly forbids tools, file writes, accounts, and network requests.
+That prompt and the `bot_room` configuration are not a project-writing
+sandbox. Project changes require a later, separately qualified runner with an
+isolated worktree and enforceable file/tool boundary.
+
 Before enabling this worker, the installation also registers the pinned
 Hermes local adapter in Control Room's existing adapter registry. That is the
 same neutral registry entry used by the durable-result checker to confirm

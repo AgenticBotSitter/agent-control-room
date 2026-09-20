@@ -43,6 +43,7 @@ test("local Hermes subprocess host uses fixed argv and a private task file", asy
   await pending;
   assert.equal(savedPath, "/private/tmp/control-room-hermes-task-fixture/task.txt");
   assert.match(savedText, /Return the approved answer/); assert.match(savedText, /Use no tools/);
+  assert.match(savedText, /plain-text review/); assert.match(savedText, /Do not call tools/);
   assert.deepEqual(lines, ['{"type":"progress"}', '{"type":"result","exit_code":0}']);
   assert.equal(removedPath, "/private/tmp/control-room-hermes-task-fixture");
 });
@@ -66,4 +67,6 @@ test("local Hermes subprocess host refuses a late, aborted, or failed child with
 test("local Hermes subprocess host requires owner-pinned absolute executable and work paths", () => {
   assert.throws(() => createHermes021MacosSubprocessStreamJsonHostV1({ ...configuration, executablePath: "hermes" }));
   assert.throws(() => createHermes021MacosSubprocessStreamJsonHostV1({ ...configuration, workingDirectory: "relative-work" }));
+  assert.throws(() => createHermes021MacosSubprocessStreamJsonHostV1({ ...configuration, maximumTurns: 2 }));
+  assert.throws(() => createHermes021MacosSubprocessStreamJsonHostV1({ ...configuration, maximumRunBudgetSeconds: 121 }));
 });

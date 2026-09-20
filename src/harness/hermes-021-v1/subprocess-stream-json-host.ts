@@ -22,9 +22,11 @@ const configurationSchema = z.object({
   provider: safeIdentifier,
   /** Installation-owned folder in which Hermes may perform this approved turn. */
   workingDirectory: safePath,
-  /** A normal approved task is bounded; higher limits require a new adapter revision. */
-  maximumTurns: z.number().int().min(1).max(8).default(1),
-  maximumRunBudgetSeconds: z.number().int().min(15).max(600).default(300),
+  /** This adapter revision is deliberately useful before project-writing exists. */
+  taskClass: z.literal("text_review").default("text_review"),
+  /** More turns or time belong to a separately qualified adapter revision. */
+  maximumTurns: z.literal(1).default(1),
+  maximumRunBudgetSeconds: z.number().int().min(15).max(120).default(120),
 }).strict();
 export type Hermes021MacosSubprocessHostConfigurationV1 = z.input<typeof configurationSchema>;
 
@@ -47,7 +49,9 @@ type SaveFile = (path: string, contents: string, options: Readonly<{ encoding: "
 function taskText(input: Parameters<Hermes021MacosStreamJsonHostV1["execute"]>[0]["task"]): string {
   // The task is passed as file content rather than as command-line text. A task
   // cannot change the executable or arguments selected below.
-  return ["You are completing one approved Control Room task.", "", "Instructions:", input.instructions,
+  return ["You are completing one approved Control Room text-review task.",
+    "Return a plain-text review, test outline, or proposed patch only.",
+    "Do not call tools, write files, access accounts, or make network requests.", "", "Instructions:", input.instructions,
     "", "Task:", input.prompt, ""].join("\n");
 }
 
