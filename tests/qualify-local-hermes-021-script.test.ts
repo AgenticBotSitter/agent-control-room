@@ -91,6 +91,19 @@ test("a provider quota refusal is classified without emitting provider output", 
   assert.equal(JSON.stringify(output).includes("quota has been exhausted"), false);
 });
 
+test("a temporary shared-model limit is not reported as an exhausted allowance", async t => {
+  const dir = await mkdtemp(join(tmpdir(), "control-room-hermes-qualification-test-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const fake = join(dir, "hermes");
+  await writeFile(fake, `#!${process.execPath}\nprocess.stderr.write('HTTP 429: temporarily rate-limited upstream; retry shortly\\n'); process.exit(1);\n`, { mode: 0o700 });
+  await chmod(fake, 0o700);
+  const result = await run(["--owner-attended"], { PATH: dir });
+  assert.equal(result.code, 1);
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.failureReason, "model_rate_limited");
+  assert.equal(JSON.stringify(output).includes("retry shortly"), false);
+});
+
 test("a retired model is classified without emitting provider output", async t => {
   const dir = await mkdtemp(join(tmpdir(), "control-room-hermes-qualification-test-"));
   t.after(() => rm(dir, { recursive: true, force: true }));

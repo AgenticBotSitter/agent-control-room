@@ -85,12 +85,14 @@ not contact Hermes.
 If it refuses or ends early, record the safe `failureReason` only: it will say
 whether the local runner was unavailable, timed out, returned no final result,
 returned no model response, ran out of model allowance, lost model
-authentication, selected a model that is no longer available, exited
-unsuccessfully, or returned an unexpected final result. It deliberately omits
-the command output, account, provider and machine details. Leave automatic work
-off. Do not retry it automatically and do not repair the user's harness from
-Control Room; the output explicitly says that a fresh owner authorization is
-required for any later attempt.
+authentication, selected a model that is no longer available, encountered a
+temporary model rate limit, exited unsuccessfully, or returned an unexpected
+final result. A temporary rate limit means wait for the provider's cooldown;
+it is not evidence that the profile login is broken. It deliberately omits the
+command output, account, provider and machine details. Leave automatic work off.
+Do not retry it automatically and do not repair the user's harness from Control
+Room; the output explicitly says that a fresh owner authorization is required
+for any later attempt.
 
 ### A3. Prove a completed result survives a restart
 
