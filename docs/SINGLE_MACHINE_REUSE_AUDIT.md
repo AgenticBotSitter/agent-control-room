@@ -39,6 +39,12 @@ Control Room already has version checks, unavailable states and explicit
 local/remote receipts. The local capability/status view retains those patterns
 without importing T3's source or Effect runtime.
 
+The pinned presentation helper can render catalog URLs and SSH identities in
+its human-readable output. Control Room must retain opaque worker labels and
+safe reason codes instead. T3's compatibility fallback to protocol version one
+is also unsuitable here: a Control Room adapter version must be explicitly
+registered and an unknown version must remain unavailable.
+
 Do **not** adopt T3's connection supervisor, provider connection catalog,
 credential/profile stores, relay, RPC session ownership, event model, native
 helper programs or Codex App Server client. They are tightly coupled to T3's
@@ -68,6 +74,14 @@ connection and model/capability indicators—but its Electron process, IPC,
 secret storage, remote SSH setup, session database, provider/model management
 and dashboard state are outside the narrow browser/adapter boundary. Importing
 them would expose or duplicate private configuration.
+
+The reviewed Desktop approval card also keeps a failed submission visible and
+prevents a second click while one is in progress. That is a good local UI
+behavior. Its broad "always" approval choice is not: Control Room approvals
+must remain bounded to the declared task and effect. Hermes WebUI's state
+session observer likewise falls back from a failed read-only SQLite open to a
+writable connection; that fallback must not be copied or used as Control Room
+task authority.
 
 **Decision:** do not copy either whole UI. Re-evaluate one pinned, dependency-
 light visual component only if a specific Control Room screen cannot be built
@@ -103,4 +117,3 @@ Codex adapter glue. They are not replacements for a generic agent framework.
 - **UI:** use Control Room's React panels and capability view. Add a narrow
   donor component only after a file-level extraction, dependency-license review
   and disposable fit test under REUSE_DECISION_GATE.md.
-

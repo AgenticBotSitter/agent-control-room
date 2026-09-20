@@ -87,8 +87,10 @@ provide or widen them.
 `createHermes021MacosLocalTaskPolicyV1` creates the policy record from an
 already-authoritative task decision. It checks the selected Marvin worker,
 the pinned Hermes revision, the controller's existing authority digest, and
-the expiry. It is not a second approval system: it cannot authorize a task
-that Control Room did not already authorize.
+the exact approved prompt/instruction digest, and the expiry. It is not a
+second approval system: it cannot authorize a task that Control Room did not
+already authorize, or reuse a broader authority decision for different task
+wording.
 
 This is a controlled launch seam, not a background service. The source host
 composition already joins the prepared packet to the delivery composition,

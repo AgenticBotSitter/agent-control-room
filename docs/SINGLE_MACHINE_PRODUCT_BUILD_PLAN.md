@@ -35,6 +35,12 @@ The shared contract is in [SHARED_CONNECTOR_CONTRACT.md](SHARED_CONNECTOR_CONTRA
 and the local/remote common foundation is in
 [UNIFIED_TOPOLOGY_BUILD_PLAN.md](UNIFIED_TOPOLOGY_BUILD_PLAN.md).
 
+The source-level final integration decision, including the exact decisions for
+T3 Code, Hermes WebUI, and Hermes Desktop, is in
+[SINGLE_MACHINE_FINAL_EXECUTION_PLAN.md](SINGLE_MACHINE_FINAL_EXECUTION_PLAN.md).
+It supersedes this document's earlier Claude-before-Codex sequencing: the
+owner's chosen enablement order is Hermes, Codex, then Claude.
+
 ## What we retain, borrow, and deliberately do not borrow
 
 | Need | Decision | Why |
@@ -106,7 +112,22 @@ dashboard, and ordinary data survives a controlled restart/restore proof.
 **Done when:** one Hermes task reaches pending review once, cannot duplicate on
 restart, and its permitted workspace change is inspectable by the owner.
 
-### S3 — Claude Code local worker
+### S3 — Codex on the selected local host
+
+1. First decide the supported local host: prove a safe macOS custody design or
+   use the existing reviewed Linux path for the first operational installation.
+2. For macOS, solve the two recorded gates before enabling anything: verify the
+   exact running program while suspended before user code, and hold a protected
+   Codex home-directory handle rather than reopening a race-prone pathname.
+3. Reuse the App Server start/read/journal/result pipeline. Qualify actual
+   version, bounded framing, approval requests, stop, restart `thread/read`
+   and cleanup.
+
+**Done when:** a real Codex task has the same reviewable result/correction and
+no-duplicate restart behavior as Hermes. If the macOS proof cannot be made
+safe, the UI must say so and offer no pretend local-Codex start.
+
+### S4 — Claude Code local worker
 
 1. Qualify the exact installed Claude Code version and stream-json behavior
    without copying its credentials into Control Room.
@@ -120,21 +141,6 @@ restart, and its permitted workspace change is inspectable by the owner.
 **Done when:** a real bounded Claude task, a denied action, a cancellation and
 a post-restart result read all produce truthful canonical records without a
 second turn.
-
-### S4 — Codex on the selected local host
-
-1. First decide the supported local host: prove a safe macOS custody design or
-   use the existing reviewed Linux path for the first operational installation.
-2. For macOS, solve the two recorded gates before enabling anything: verify the
-   exact running program while suspended before user code, and hold a protected
-   Codex home-directory handle rather than reopening a race-prone pathname.
-3. Reuse the App Server start/read/journal/result pipeline. Qualify actual
-   version, bounded framing, approval requests, stop, restart `thread/read`
-   and cleanup.
-
-**Done when:** a real Codex task has the same reviewable result/correction and
-no-duplicate restart behavior as Hermes and Claude. If the macOS proof cannot
-be made safe, the UI must say so and offer no pretend local-Codex start.
 
 ### S5 — Three-agent local daily use
 

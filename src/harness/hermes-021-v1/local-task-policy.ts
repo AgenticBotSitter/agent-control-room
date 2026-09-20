@@ -14,6 +14,8 @@ const policySchema = z.object({
   binding: hermes021MacosLocalBindingSchemaV1,
   /** Existing canonical task authority, never a new permission invented here. */
   authorityDigest: digest,
+  /** Exact approved prompt/instruction pair, never a browser or worker claim. */
+  taskInputDigest: digest,
   expiresAt: instant,
   policyDigest: digest,
 }).strict().superRefine((value, context) => {
@@ -24,7 +26,7 @@ export type Hermes021MacosLocalTaskPolicyV1 = z.infer<typeof policySchema>;
 
 export function createHermes021MacosLocalTaskPolicyV1(value: Omit<Hermes021MacosLocalTaskPolicyV1, "schema" | "policyDigest">): Hermes021MacosLocalTaskPolicyV1 {
   const material = z.object({ policyId: policySchema.shape.policyId, binding: hermes021MacosLocalBindingSchemaV1,
-    authorityDigest: digest, expiresAt: instant }).strict().parse(value);
+    authorityDigest: digest, taskInputDigest: digest, expiresAt: instant }).strict().parse(value);
   return Object.freeze(policySchema.parse({ schema: HERMES_021_MACOS_LOCAL_TASK_POLICY_V1, ...material,
     policyDigest: sha256Digest({ schema: HERMES_021_MACOS_LOCAL_TASK_POLICY_V1, ...material }) }));
 }
@@ -51,6 +53,7 @@ export function createHermes021MacosLocalTaskPolicyPortV1(policyValue: unknown,
       || input.delivery.worker.adapterId !== HERMES_021_MACOS_LOCAL_ADAPTER_V1
       || input.delivery.worker.adapterRevision !== policy.binding.sourceRevision
       || input.delivery.authorityDigest !== policy.authorityDigest
+      || sha256Digest({ prompt: input.delivery.input.prompt, instructions: input.delivery.input.instructions }) !== policy.taskInputDigest
       || Date.parse(input.delivery.expiresAt) > deadline) throw new Error("hermes_021_macos_task_policy_refused");
   } });
 }

@@ -81,7 +81,9 @@ test("Marvin's normal local runner needs a synchronous policy for the exact shar
 test("Marvin's local policy accepts only its configured canonical authority", async () => {
   const packet = controllerDelivery();
   const policy = createHermes021MacosLocalTaskPolicyV1({ policyId: "policy:marvin-local", binding,
-    authorityDigest: packet.authorityDigest, expiresAt: "2026-09-19T13:00:00.000Z" });
+    authorityDigest: packet.authorityDigest,
+    taskInputDigest: sha256Digest({ prompt: packet.input.prompt, instructions: packet.input.instructions }),
+    expiresAt: "2026-09-19T13:00:00.000Z" });
   const port = createHermes021MacosLocalTaskPolicyPortV1(policy, () => Date.parse("2026-09-19T12:30:00.000Z"));
   let runs = 0;
   const outcome = await runAdmittedHermes021MacosLocalTaskV1(packet, { kind: "local", workerId: "worker:marvin" }, binding,
@@ -92,6 +94,14 @@ test("Marvin's local policy accepts only its configured canonical authority", as
     acceptanceProfileId: packet.acceptanceProfileId, acceptanceProfileDigest: packet.acceptanceProfileDigest,
     issuedAt: packet.issuedAt, expiresAt: packet.expiresAt });
   await assert.rejects(runAdmittedHermes021MacosLocalTaskV1(foreign, { kind: "local", workerId: "worker:marvin" }, binding,
+    port, { async run() { runs++; return [result()]; } }), /hermes_021_macos_task_policy_refused/);
+  assert.equal(runs, 1);
+
+  const changedInput = createControllerWorkerDeliveryV1({ identity: packet.identity, worker: packet.worker,
+    input: { prompt: "Do different work.", instructions: packet.input.instructions }, authorityDigest: packet.authorityDigest,
+    connectorProfileDigest: packet.connectorProfileDigest, acceptanceProfileId: packet.acceptanceProfileId,
+    acceptanceProfileDigest: packet.acceptanceProfileDigest, issuedAt: packet.issuedAt, expiresAt: packet.expiresAt });
+  await assert.rejects(runAdmittedHermes021MacosLocalTaskV1(changedInput, { kind: "local", workerId: "worker:marvin" }, binding,
     port, { async run() { runs++; return [result()]; } }), /hermes_021_macos_task_policy_refused/);
   assert.equal(runs, 1);
 });
