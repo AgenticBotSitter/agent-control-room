@@ -28,6 +28,11 @@ mistakenly presenting them as a running worker.
 
 ### This computer
 
+- A successful owner-attended, text-only local Hermes qualification has been
+  observed for this installation. Its model, provider, account, command,
+  workspace, session reference, and terminal content are intentionally not
+  retained here. This proves one bounded response path only; it does not
+  enable an automatic worker or authorize a real task.
 - A local Hermes worker accepts only a controller-prepared task with the
   installation-owned policy check.
 - The accepted delivery is recorded before the worker can run. Restarting the
@@ -80,8 +85,9 @@ procedure has been operated successfully.
    now-complete operator-configuration path can receive that wrapper, but its
    executable location, login, model, provider, and workspace remain outside
    this repository and outside Control Room records.
-2. The owner runs one text-only, owner-attended Hermes qualification. It must
-   complete successfully before any real task is enabled.
+2. Preserve the successful text-only, owner-attended Hermes qualification as
+   a plan-bound setup proof when the installation configuration is assembled.
+   It remains insufficient by itself to enable any real task.
 3. The owner chooses an existing protected local result directory and provides
    the already-reviewed database configuration. The application must open both
    successfully without creating a second database.
