@@ -59,9 +59,6 @@ Completed in source:
 
 Remaining:
 
-- connect the shared packet to the existing task dispatcher at the approved
-  application composition point, using the versioned Hermes-0.21 task forms
-  described in [UNIFIED_DISPATCH_COMPOSITION.md](UNIFIED_DISPATCH_COMPOSITION.md);
 - add one common result-return composition that uses the current durable
   result and review services.
 
@@ -90,11 +87,16 @@ Completed in source:
 - the existing task-assignment coordinator accepts that same pinned local
   worker capability, so Marvin uses the ordinary bounded lease path rather
   than a second local scheduler.
+- dispatch preparation now locks and rechecks that ordinary assignment, its
+  active lease, the matching task plan, and the pinned Hermes profile before
+  it creates the shared local delivery packet. It starts neither Hermes nor a
+  second queue, and is covered by the same local/remote receipt tests.
 
 Remaining before an automatic local worker is enabled:
 
-- wiring the reviewed local task-policy record from the authoritative task
-  dispatcher into the local delivery composition;
+- the approved application host composition that takes prepared packets
+  immediately into the local delivery composition while their lease and
+  authority are still valid;
 - an end-to-end controller composition that supplies a completed local Hermes
   result to the shared review-and-correction reader (the result publisher and
   correction-plan form are present, but the permanent host composition is not

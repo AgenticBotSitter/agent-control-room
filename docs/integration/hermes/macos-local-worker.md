@@ -70,7 +70,10 @@ the check. It does not install anything, change Hermes configuration, create a
 listener, or start a persistent service.
 
 Once that evidence is accepted, the normal task dispatcher can use the local
-port for the same worker lifecycle used by remote Hermes workers.
+port for the same worker lifecycle used by remote Hermes workers. Source now
+includes a dispatch-preparation step that reads the existing assigned task,
+active lease, and pinned V5/V6 Hermes plan together, then creates the shared
+delivery packet. It does not create a second queue or start Hermes itself.
 
 ## Normal automatic work
 
@@ -88,10 +91,10 @@ the expiry. It is not a second approval system: it cannot authorize a task
 that Control Room did not already authorize.
 
 This is a controlled launch seam, not a background service. A real automatic
-host still needs the operator to configure its restricted task policy and
-complete the text-only qualification first. A policy refusal starts no Hermes
-task. A lost reply is recorded as uncertain and is never automatically run a
-second time.
+host still needs to join that prepared packet to the delivery composition,
+configure its restricted task policy, and complete the text-only qualification
+first. A policy refusal starts no Hermes task. A lost reply is recorded as
+uncertain and is never automatically run a second time.
 
 Before the controlled runner is called, the shared local delivery composition
 stores Marvin's accepted delivery receipt in Control Room's one database. If
