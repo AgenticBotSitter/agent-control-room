@@ -17,7 +17,13 @@ No production root, default path, URL, environment variable, or credential is se
 
 ## Stored form and replay
 
-Only canonical `artifact:native:<64 lowercase hex characters>` identities are accepted. This is the shape produced by `nativeResultId`. Caller-supplied paths, URLs, traversal components, absolute paths, and either path separator are therefore invalid. The physical filename is a SHA-256 mapping of the artifact identity; the caller never supplies or receives it.
+Only canonical `artifact:native:<64 lowercase hex characters>` and
+`artifact:result:<64 lowercase hex characters>` identities are accepted. The
+second form also holds an exact local Hermes terminal-stage envelope whose
+identifier is derived from an already accepted delivery. Caller-supplied
+paths, URLs, traversal components, absolute paths, and either path separator
+are therefore invalid. The physical filename is a SHA-256 mapping of the
+artifact identity; the caller never supplies or receives it.
 
 Each file is a create-once envelope containing the exact artifact identity, content hash, logical size, and result bytes. Reads validate the envelope, recompute the hash and size with `checkedResultBytes`, and compare the opened file with the directory entry before returning a copy. The returned locator is opaque and contains no root or physical path.
 

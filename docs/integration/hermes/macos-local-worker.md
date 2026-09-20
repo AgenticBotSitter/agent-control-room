@@ -125,7 +125,11 @@ text or the browser. A completed Marvin record is evidence, not an approval:
 it cannot release a task slot, retry an uncertain run, or accept the work on
 its own.
 
-If the computer stops after Hermes returns but before the result is saved,
-Control Room keeps the delivery unresolved. It does not run Hermes again and
-does not pretend that the terminal result was recovered. Durable recovery of
-those in-between terminal bytes is still a separate future safeguard.
+The installed private runner now has a terminal-stage callback. It must save
+the one schema-checked terminal Hermes line through that callback as it reads
+the line, before returning control to Control Room. The staged bytes use the
+same protected local result storage and are tied to the existing accepted
+delivery; they are not a second queue, approval, or database. After a restart,
+Control Room can read only that exact staged line and send it through the
+ordinary result-and-review path without launching Hermes again. The runner
+wiring and a real restart proof are still required before this is enabled.
