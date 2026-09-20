@@ -70,6 +70,10 @@ Completed in source:
   preserves the selected database and scheduler authority
   fingerprints, and lists the owner proofs required before any worker is
   enabled. It does not create, connect, launch, or enable anything.
+- the protected Workers page now presents that reviewed setup plan beside the
+  existing saved connection inventory. It keeps planned routes, recorded
+  signals, and a running agent distinct; it shows no worker identifiers,
+  host details, credentials, or start controls.
 
 ## U1 — local worker foundation
 
