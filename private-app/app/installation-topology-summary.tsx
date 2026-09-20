@@ -3,6 +3,7 @@ import { summarizeInstallationReadinessV1, type InstallationReadinessV1 } from "
 
 const proofLabels = {
   local_owner_qualification: "a successful owner-attended local worker check",
+  local_runner_bridge: "a successful owner-attended local runner check",
   remote_enrollment: "enrollment of the remote worker",
   two_computer_delivery: "a controlled two-computer delivery check",
   backup_restore: "a backup-and-restore check",

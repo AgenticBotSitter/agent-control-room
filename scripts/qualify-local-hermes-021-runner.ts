@@ -8,6 +8,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { isAbsolute } from "node:path";
 import { createHermes021MacosSubprocessStreamJsonHostV1 } from "../src/harness/hermes-021-v1/subprocess-stream-json-host";
 import { hermes021MacosTerminalResultSchemaV1 } from "../src/harness/hermes-021-v1/macos-local-worker";
+import { HERMES_021_MACOS_LOCAL_RUNNER_QUALIFICATION_REPORT_V1 } from "../src/harness/hermes-021-v1/runner-qualification-evidence";
 
 const args = process.argv.slice(2).filter(value => value !== "--");
 const ownerAttended = args.includes("--owner-attended");
@@ -29,6 +30,7 @@ function safeResult(value: Readonly<{ qualified: boolean; terminal?: unknown; fa
   const terminal = hermes021MacosTerminalResultSchemaV1.safeParse(value.terminal);
   const result = terminal.success ? terminal.data : undefined;
   return Object.freeze({
+    schema: HERMES_021_MACOS_LOCAL_RUNNER_QUALIFICATION_REPORT_V1,
     qualified: value.qualified,
     terminalResultObserved: Boolean(result),
     sessionDigest: typeof result?.session_id === "string"

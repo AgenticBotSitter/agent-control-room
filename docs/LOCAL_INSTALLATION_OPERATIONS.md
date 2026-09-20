@@ -90,7 +90,9 @@ Ready in source:
   publish it without launching the task again;
 - one-database application composition;
 - local and remote worker delivery records that preserve uncertainty;
-- a local Hermes text-only qualification launcher.
+- a local Hermes text-only qualification launcher and a separate fixed-runner
+  bridge qualification launcher. The first proves Hermes can answer; the
+  second proves the exact Control Room runner can safely reach it.
 - a protected website readiness checklist that distinguishes not started,
   passed, failed, and unavailable proof steps without displaying the underlying
   host, account, path, command output, or credentials.
@@ -100,6 +102,6 @@ Still requires owner-authorized evidence:
 - real local PostgreSQL configuration and a disposable database restore;
 - a selected private artifact backup location and a verified restore;
 - a persistent unprivileged service supervisor;
-- the local Hermes text-only qualification, followed by a controlled
-  worktree-based runner qualification that proves its terminal-stage callback;
+- the local Hermes text-only qualification, followed by a separately recorded
+  fixed-runner bridge qualification that proves its terminal-stage callback;
 - a two-computer delivery and reconnect proof.

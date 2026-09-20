@@ -98,23 +98,7 @@ automatically and do not repair the user's harness from Control Room; the output
 explicitly says that a fresh owner authorization is required for any later
 attempt.
 
-### A3. Prove a completed result survives a restart
-
-Using disposable work only:
-
-1. Deliver one controller-prepared task to the qualified local bridge.
-2. Let the bridge save its one schema-checked terminal result before returning
-   it to Control Room.
-3. Stop the application through its normal drain procedure after the saved
-   result exists, then start a new application composition over the same
-   database and protected result directory.
-4. Confirm the result reaches the ordinary pending-review state exactly once
-   and the harness is not launched a second time.
-5. Confirm the worker has no ability to approve the result or release its own
-   task capacity.
-
-An absent or ambiguous terminal result remains unresolved. It is not safe to
-infer success or restart the task.
+### A2b. Qualify the exact Control Room runner bridge
 
 Before the first disposable task, the owner may separately qualify the exact
 fixed-argument subprocess bridge. This is one text-only nonce check; it does
@@ -132,6 +116,24 @@ Its `--dry-run` form validates only the command shape and redaction behavior.
 The success report contains only bounded token/time counts and a one-way
 session fingerprint. It is still a qualification record, not authorization to
 enable automatic work.
+
+### A3. Prove a completed result survives a restart
+
+Using disposable work only:
+
+1. Deliver one controller-prepared task to the qualified local bridge.
+2. Let the bridge save its one schema-checked terminal result before returning
+   it to Control Room.
+3. Stop the application through its normal drain procedure after the saved
+   result exists, then start a new application composition over the same
+   database and protected result directory.
+4. Confirm the result reaches the ordinary pending-review state exactly once
+   and the harness is not launched a second time.
+5. Confirm the worker has no ability to approve the result or release its own
+   task capacity.
+
+An absent or ambiguous terminal result remains unresolved. It is not safe to
+infer success or restart the task.
 
 ### A4. Prove backup and recovery
 

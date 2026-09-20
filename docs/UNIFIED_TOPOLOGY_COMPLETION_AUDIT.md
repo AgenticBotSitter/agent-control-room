@@ -92,6 +92,8 @@ procedure has been operated successfully.
 2. Preserve the successful text-only, owner-attended Hermes qualification as
    a plan-bound setup proof when the installation configuration is assembled.
    It remains insufficient by itself to enable any real task.
+   Record a distinct successful owner-attended check of the fixed-argument
+   Control Room runner bridge before treating the local connector as ready.
 3. The owner chooses an existing protected local result directory and provides
    the already-reviewed database configuration. The application must open both
    successfully without creating a second database.

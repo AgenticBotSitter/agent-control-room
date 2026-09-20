@@ -17,7 +17,7 @@ test("a this-computer plan preserves one authority and asks only for local proof
   assert.deepEqual(plan.retainedWorkerIds, ["worker:marvin"]);
   assert.deepEqual(plan.reboundWorkerIds, []);
   assert.deepEqual(plan.addedRemoteWorkerIds, []);
-  assert.deepEqual(plan.requiredProofs, ["backup_restore", "local_owner_qualification"]);
+  assert.deepEqual(plan.requiredProofs, ["backup_restore", "local_owner_qualification", "local_runner_bridge"]);
   assert.equal(plan.enablesWorkers, false);
   assert.deepEqual(verifyInstallationTopologyPlanV1(plan), plan);
 });
@@ -29,7 +29,7 @@ test("adding a remote worker is one-installation migration preparation, not a se
   assert.deepEqual(plan.retainedWorkerIds, ["worker:marvin"]);
   assert.deepEqual(plan.reboundWorkerIds, []);
   assert.deepEqual(plan.addedRemoteWorkerIds, ["worker:remote"]);
-  assert.deepEqual(plan.requiredProofs, ["backup_restore", "local_owner_qualification", "remote_enrollment", "two_computer_delivery"]);
+  assert.deepEqual(plan.requiredProofs, ["backup_restore", "local_owner_qualification", "local_runner_bridge", "remote_enrollment", "two_computer_delivery"]);
   assert.equal(plan.enablesWorkers, false);
 });
 
@@ -52,6 +52,7 @@ test("readiness is bound to one reviewed plan and never means a worker is enable
   const readiness = createInstallationReadinessV1({ planDigest: plan.planDigest, proofs: [
     { proof: "backup_restore", state: "passed", evidenceDigest: digest("restore-evidence") },
     { proof: "local_owner_qualification", state: "not_started" },
+    { proof: "local_runner_bridge", state: "not_started" },
   ] });
   assert.deepEqual(verifyInstallationReadinessV1(readiness), readiness);
   const summary = summarizeInstallationReadinessV1(plan, readiness);

@@ -1,6 +1,7 @@
 import { createInstallationReadinessV1, verifyInstallationReadinessV1, type InstallationReadinessV1 } from "../v1/installation-readiness";
 import { verifyInstallationTopologyPlanV1, type InstallationTopologyPlanV1 } from "../v1/installation-topology";
 import { createHermes021MacosLocalQualificationEvidenceV1 } from "./qualification-evidence";
+import { createHermes021MacosLocalRunnerQualificationEvidenceV1 } from "./runner-qualification-evidence";
 
 const unavailable = (): never => { throw new Error("hermes_021_macos_installation_readiness_unavailable"); };
 
@@ -20,6 +21,26 @@ export function recordHermes021MacosLocalQualificationReadinessV1(planValue: unk
   const evidence = createHermes021MacosLocalQualificationEvidenceV1(successfulReport);
   const byProof = new Map(existing?.proofs.map(item => [item.proof, item]) ?? []);
   byProof.set("local_owner_qualification", { proof: "local_owner_qualification" as const, state: "passed" as const,
+    evidenceDigest: evidence.evidenceDigest });
+  return createInstallationReadinessV1({ planDigest: plan.planDigest,
+    proofs: [...byProof.values()] });
+}
+
+/**
+ * Records the separate proof that the fixed-argument Control Room runner can
+ * reach Hermes. A successful text-only Hermes qualification cannot substitute
+ * for this proof: it did not exercise the runner that will receive work.
+ */
+export function recordHermes021MacosLocalRunnerQualificationReadinessV1(planValue: unknown,
+  successfulReport: unknown, existingValue?: unknown): InstallationReadinessV1 {
+  const plan: InstallationTopologyPlanV1 = verifyInstallationTopologyPlanV1(planValue);
+  if (!plan.requiredProofs.includes("local_runner_bridge")) unavailable();
+  const existing = existingValue === undefined ? undefined : verifyInstallationReadinessV1(existingValue);
+  if (existing && existing.planDigest !== plan.planDigest) unavailable();
+  if (existing?.proofs.some(item => !plan.requiredProofs.includes(item.proof))) unavailable();
+  const evidence = createHermes021MacosLocalRunnerQualificationEvidenceV1(successfulReport);
+  const byProof = new Map(existing?.proofs.map(item => [item.proof, item]) ?? []);
+  byProof.set("local_runner_bridge", { proof: "local_runner_bridge" as const, state: "passed" as const,
     evidenceDigest: evidence.evidenceDigest });
   return createInstallationReadinessV1({ planDigest: plan.planDigest,
     proofs: [...byProof.values()] });

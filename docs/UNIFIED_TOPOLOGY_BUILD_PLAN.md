@@ -89,6 +89,9 @@ Completed in source:
 - shared terminal evidence for a completed local Hermes result.
 - an owner-run, text-only qualification launcher with a bounded one-turn
   invocation and sanitized output.
+- a separate owner-run qualification launcher for the exact fixed-argument
+  local runner bridge. It produces only a bounded, plan-bindable evidence
+  fingerprint and cannot create a task, configure a worker, or enable work.
 - composition that sends a verified local Hermes terminal result through the
   existing durable-result receipt and pending-review services, including
   restart-safe exact replay.
@@ -169,6 +172,9 @@ Remaining before an automatic local worker is enabled:
   individual installation. Source code cannot claim that an installation has
   passed; it accepts only a fingerprint derived from the check's sanitized
   successful report;
+- a separately recorded successful owner-attended qualification of the exact
+  Control Room runner bridge. The text-only check proves Hermes can respond;
+  it does not prove the runner that receives Control Room work can reach it;
 - a controlled local data directory, restart procedure, and backup/restore
   proof.
 - owner selection and installation-owned binding of the tested stream-json

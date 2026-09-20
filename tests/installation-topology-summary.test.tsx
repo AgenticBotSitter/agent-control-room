@@ -26,10 +26,12 @@ test("setup summary shows an honest proof checklist rather than a live worker", 
   const readiness = createInstallationReadinessV1({ planDigest: plan.planDigest, proofs: [
     { proof: "backup_restore", state: "passed", evidenceDigest: sha256Digest("backup") },
     { proof: "local_owner_qualification", state: "not_started" },
+    { proof: "local_runner_bridge", state: "not_started" },
   ] });
   const html = renderToStaticMarkup(createElement(InstallationTopologySummary, { plan, readiness }));
   assert.match(html, /Setup is still in progress/);
   assert.match(html, /Passed:.*backup-and-restore check/);
   assert.match(html, /Not started:.*owner-attended local worker check/);
+  assert.match(html, /Not started:.*owner-attended local runner check/);
   assert.doesNotMatch(html, /<button|<form|<input|worker:local|sha256:/);
 });

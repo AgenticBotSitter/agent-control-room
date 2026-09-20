@@ -10,7 +10,7 @@ import { verifyInstallationTopologyPlanV1, type InstallationTopologyPlanV1 } fro
  */
 export const INSTALLATION_READINESS_V1 = "control-room.installation-readiness/v1" as const;
 
-const proof = z.enum(["local_owner_qualification", "remote_enrollment", "two_computer_delivery", "backup_restore"]);
+const proof = z.enum(["local_owner_qualification", "local_runner_bridge", "remote_enrollment", "two_computer_delivery", "backup_restore"]);
 const proofState = z.enum(["not_started", "passed", "failed", "unavailable"]);
 
 const evidence = z.object({ proof, state: proofState, evidenceDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional() }).strict();
