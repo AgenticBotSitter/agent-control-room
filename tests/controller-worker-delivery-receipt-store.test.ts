@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createControllerWorkerDeliveryV1, type ControllerWorkerDeliveryV1 } from "../src/harness/v1/controller-worker-delivery";
 import { persistControllerWorkerDeliveryReceiptV1, readControllerWorkerDeliveryReceiptV1 } from "../src/harness/v1/controller-worker-delivery-receipt-store";
+import { admitRemoteWorkerDeliveryV1, createRemoteWorkerEnrollmentV1,
+  deliverAndRecordAdmittedRemoteWorkerPacketV1 } from "../src/harness/v1/remote-worker-delivery";
 import { sha256Digest } from "../src/security";
 import { at, nativeTaskFixture, registration } from "./native-task-fixture";
 import { binding, input } from "./hermes-native-fixture";
@@ -49,6 +51,26 @@ test("the same PostgreSQL receipt store retains a remote acknowledgement without
     tenantId: binding.tenantId, projectId: binding.projectId, jobId: binding.jobId, attemptId: binding.attemptId }));
   assert.equal(saved?.receipt.route.kind, "remote");
   assert.equal(saved?.delivery.deliveryDigest, packet.deliveryDigest);
+});
+
+test("the admitted remote route records its acknowledgement through the same receipt composition", async t => {
+  const f = await nativeTaskFixture(); t.after(f.close);
+  const { schema: _schema, inputDigest: _inputDigest, deliveryId: _deliveryId, deliveryDigest: _deliveryDigest, ...base } = delivery();
+  const packet = createControllerWorkerDeliveryV1({ ...base, worker: {
+    workerId: "worker:remote", adapterId: "connector:remote-fixture", adapterRevision: "00570550" },
+  });
+  const admission = admitRemoteWorkerDeliveryV1({ delivery: packet, route: { kind: "remote", workerId: "worker:remote" },
+    enrollment: createRemoteWorkerEnrollmentV1({ workerId: "worker:remote", adapterId: "connector:remote-fixture",
+      adapterRevision: "00570550", enrollmentId: "enrollment:remote-fixture", state: "enrolled", enrolledAt: at(0), revokedAt: null }),
+    supportedAdapterRevisions: ["00570550"] });
+  const recorded = await deliverAndRecordAdmittedRemoteWorkerPacketV1({ db: f.db, integrityKey: key,
+    port: { async receive(value, route) { return receipt(value, route.kind); } } }, admission, at(3000));
+  assert.equal(recorded.replayed, false);
+  assert.equal(recorded.receipt.route.kind, "remote");
+  const saved = await f.db.transaction(tx => readControllerWorkerDeliveryReceiptV1(tx, key, {
+    tenantId: binding.tenantId, projectId: binding.projectId, jobId: binding.jobId, attemptId: binding.attemptId }));
+  assert.equal(saved?.delivery.deliveryDigest, packet.deliveryDigest);
+  assert.equal(saved?.receipt.route.kind, "remote");
 });
 
 test("a second route or changed receipt cannot turn one task attempt into duplicate work", async t => {

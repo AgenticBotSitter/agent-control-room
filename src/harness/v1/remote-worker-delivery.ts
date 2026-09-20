@@ -1,9 +1,11 @@
 import { z } from "zod";
+import type { DatabaseClient } from "../../persistence/database";
 import { sha256Digest } from "../../security/canonical-digest";
 import { controllerWorkerDeliverySchemaV1, controllerWorkerRouteSchemaV1,
   controllerWorkerDeliveryReceiptSchemaV1,
   deliverControllerWorkerPacketV1, type ControllerWorkerDeliveryPortV1,
   type ControllerWorkerDeliveryReceiptV1, type ControllerWorkerDeliveryV1 } from "./controller-worker-delivery";
+import { persistControllerWorkerDeliveryReceiptV1 } from "./controller-worker-delivery-receipt-store";
 
 export const REMOTE_WORKER_ENROLLMENT_V1 = "control-room.remote-worker-enrollment/v1" as const;
 
@@ -81,6 +83,28 @@ export async function deliverAdmittedRemoteWorkerPacketV1(port: ControllerWorker
   admission: RemoteDeliveryAdmissionV1, signal?: AbortSignal): Promise<ControllerWorkerDeliveryReceiptV1> {
   if (!admission.accepted) throw new Error("remote_worker_delivery_not_admitted");
   return deliverControllerWorkerPacketV1(port, admission.delivery, admission.route, signal);
+}
+
+/**
+ * The remote counterpart of the local receipt composition. It sends one
+ * already-admitted packet, then retains that exact acknowledgement in the
+ * installation's existing PostgreSQL authority. It is not a broker, retry
+ * loop, or remote task runner; if the send outcome is uncertain, nothing is
+ * persisted and reconnect reconciliation remains read-only.
+ */
+export async function deliverAndRecordAdmittedRemoteWorkerPacketV1(config: {
+  db: DatabaseClient; integrityKey: Uint8Array; port: ControllerWorkerDeliveryPortV1;
+}, admission: RemoteDeliveryAdmissionV1, recordedAt: unknown, signal?: AbortSignal) {
+  if (!config || !config.db || typeof config.db.transaction !== "function"
+    || !(config.integrityKey instanceof Uint8Array) || config.integrityKey.length !== 32 || !config.port) {
+    throw new Error("remote_worker_delivery_unavailable");
+  }
+  const receipt = await deliverAdmittedRemoteWorkerPacketV1(config.port, admission, signal);
+  if (!admission.accepted) throw new Error("remote_worker_delivery_not_admitted");
+  const persisted = await config.db.transaction(tx => persistControllerWorkerDeliveryReceiptV1(tx, config.integrityKey,
+    admission.delivery, receipt, recordedAt));
+  return Object.freeze({ receipt: persisted.receipt, replayed: persisted.replayed,
+    startsWork: false as const, grantsExecutionAuthority: false as const });
 }
 
 export type RemoteDeliveryObservationV1 =
