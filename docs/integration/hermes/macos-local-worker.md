@@ -97,6 +97,13 @@ and complete the text-only qualification first. A policy refusal starts no
 Hermes task. A lost reply is recorded as uncertain and is never automatically
 run a second time.
 
+Before enabling this worker, the installation also registers the pinned
+Hermes local adapter in Control Room's existing adapter registry. That is the
+same neutral registry entry used by the durable-result checker to confirm
+which adapter admitted a run. It contains no login, model, provider, file
+path, or shell command. Creating that operator configuration is later gated
+installation work; the worker code does not create it silently.
+
 Before that controlled handoff, Control Room creates its ordinary harness-run
 record. It binds Marvin's run to the assigned task, attempt, approved authority
 and connector profile, while keeping local model, login, provider and workspace

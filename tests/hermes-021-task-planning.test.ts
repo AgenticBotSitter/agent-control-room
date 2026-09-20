@@ -6,7 +6,8 @@ import { TaskAssignmentCoordinator } from "../src/web/v1/task-assignment-coordin
 import { HERMES_021_MACOS_LOCAL_ADAPTER_V1, HERMES_021_MACOS_LOCAL_CAPABILITY_V1,
   HERMES_021_MACOS_LOCAL_JOB_TYPE_V1, HERMES_021_MACOS_LOCAL_START_OPERATION_V1,
   HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1, Hermes021MacosDispatchPreparationV1,
-  executeAssignedHermes021MacosTaskV1 } from "../src/harness/hermes-021-v1";
+  executeAssignedHermes021MacosTaskV1, executeAndPublishAssignedHermes021MacosTaskV1 } from "../src/harness/hermes-021-v1";
+import { createInMemoryNeutralReservationPort } from "../src/artifacts/v1/neutral-reservation-port";
 import { FleetSignalStore } from "../src/node-fleet/v1/fleet-signal-store";
 import { HarnessRunStoreV1 } from "../src/harness/v1/store";
 import type { FleetSignalEnvelope } from "../src/node-fleet/v1/schemas";
@@ -17,6 +18,12 @@ import { taskDraft } from "./helpers/web-task";
 
 test("a Marvin Hermes 0.21 template creates a pinned v5 plan, not an older generic Hermes plan", async t => {
   const f = await ownerReviewFixture(); t.after(f.close);
+  // The durable publisher verifies the admitted run's adapter against the
+  // installation registry. A real installer creates this neutral adapter
+  // record before enabling a worker; this disposable fixture does the same.
+  await f.db.query(`INSERT INTO adapter_registry(id,tenant_id,source_system,contract_version,authority_mode,status,redaction_policy_version,cursor_retention_days)
+    VALUES($1,$2,'hermes-021-macos-local','1.0.0','control_room_native','disabled','v1',30)`,
+  [HERMES_021_MACOS_LOCAL_ADAPTER_V1, binding.tenantId]);
   const authority: NativeTaskTemplate["authority"] = { projectId: binding.projectId, allowedExecutor: "executor:marvin",
     allowedOperations: [HERMES_021_MACOS_LOCAL_START_OPERATION_V1], credentialRefs: ["credential:marvin"], filesystemRoots: [],
     networkPolicy: "allowlist", allowedNetworkDestinations: [enrollment.canonicalDestination], effectPolicy: "approval_required",
@@ -84,11 +91,23 @@ test("a Marvin Hermes 0.21 template creates a pinned v5 plan, not an older gener
       return [{ type: "result", session_id: "session:marvin", exit_code: 0, text: "completed", tokens: {
         input: 1, output: 1, total: 2, cache_read: 0, cache_write: 0 }, duration_ms: 3, timestamp: instant + 9000 }];
     } } }, clock: () => instant + 9000 };
-  const executed = await executeAssignedHermes021MacosTaskV1(execution, { tenantId: binding.tenantId,
+  const composed = await executeAndPublishAssignedHermes021MacosTaskV1({
+    execution,
+    results: { db: f.db, integrityKey: f.resultKey, reviewKey: f.reviewKey, storage: f.storage,
+      storageClass: "local", reservations: createInMemoryNeutralReservationPort() },
+    assertAuthority: delivery => {
+      assert.equal(delivery.identity.jobId, planned.receipt.jobId);
+      assert.equal(delivery.authorityDigest, saved.job.authority.digest);
+    },
+  }, { tenantId: binding.tenantId,
     projectId: binding.projectId, jobId: planned.receipt.jobId, attemptId: assigned.receipt.attemptId,
     leaseId: assigned.receipt.leaseId, inputDigest: planned.receipt.inputDigest });
+  const executed = composed.execution;
   assert.equal(executed.delivered.state, "completed_delivery");
   assert.equal(executed.delivered.outcome?.kind, "completed");
+  assert.ok(composed.publication);
+  assert.equal(composed.publication?.replayed, false);
+  assert.equal(composed.publication?.target.acceptanceProfileId, f.profile.id);
   assert.equal(executed.registered.replayed, false);
   assert.equal(executed.registered.run.connectorProfileDigest, HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1);
   assert.equal(executed.registered.run.authorityDigest, saved.job.authority.digest);
@@ -104,4 +123,5 @@ test("a Marvin Hermes 0.21 template creates a pinned v5 plan, not an older gener
   assert.equal(replay.registered.replayed, true);
   assert.equal(replay.lifecycle.length, 0);
   assert.equal(launches, 1);
+
 });
