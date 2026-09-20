@@ -60,6 +60,9 @@ Completed in source:
   from the controller-prepared packet, then uses the current durable result
   and review services. It does not rerun a task when a prior delivery was
   recorded, and it does not claim recovery of terminal bytes it did not save.
+- a disposable conformance journey that carries one complete task, result and
+  owner-review lifecycle through either local or remote route metadata while
+  preserving the same canonical records and one database.
 
 ## U1 — local worker foundation
 
@@ -126,10 +129,9 @@ Remaining before an automatic local worker is enabled:
   replay correctly refuses to run Hermes twice, but must not be mislabeled as
   result recovery.
 - one current-contract conformance journey that runs the same complete
-  task/result/review/correction sequence through both local and remote route
-  doubles. Existing delivery and lifecycle tests cover the pieces separately;
-  a retired test package was deliberately rejected rather than reintroducing
-  its obsolete queue interface.
+  correction sequence through both local and remote route doubles. The
+  current conformance journey proves task/result/review completion; the
+  correction half remains to be routed through the same current contract.
 
 The permanent local-installation recovery model, including the boundary
 between the one authoritative database and local result bytes, is documented
