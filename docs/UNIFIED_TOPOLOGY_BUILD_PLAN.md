@@ -151,6 +151,12 @@ Completed in source:
   the same one-database startup composition and does not require a remote
   session manager; construction captures the callback but cannot invoke
   Hermes.
+- the shared native queue-worker contract is now exercised with the local
+  Hermes route itself: it reconstructs the approved packet, rechecks the
+  local route, invokes the private executor once, records the ordinary
+  pending-review result, and rejects an exact replay without a second Hermes
+  invocation. This is a disposable source test; it is not a live worker
+  activation.
 
 Remaining before an automatic local worker is enabled:
 
