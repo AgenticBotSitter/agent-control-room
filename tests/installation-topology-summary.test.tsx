@@ -35,5 +35,9 @@ test("setup summary shows an honest proof checklist rather than a live worker", 
   assert.match(html, /Not started:.*owner-attended local runner check/);
   assert.match(html, /What to do next/);
   assert.match(html, /Check the local agent connection/);
+  assert.match(html, /Local agent capabilities/);
+  assert.match(html, /Hermes Agent: Setup proof required/);
+  assert.match(html, /Claude Code: Adapter preparation required/);
+  assert.match(html, /Codex: Not available on this Mac yet/);
   assert.doesNotMatch(html, /<button|<form|<input|worker:local|sha256:/);
 });

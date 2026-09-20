@@ -1,6 +1,7 @@
 import type { InstallationTopologyPlanV1 } from "../../src/harness/v1/installation-topology";
 import { summarizeInstallationReadinessV1, type InstallationReadinessV1 } from "../../src/harness/v1/installation-readiness";
 import { guideInstallationReadinessV1 } from "../../src/harness/v1/installation-guidance";
+import { localHarnessCapabilitiesV1 } from "../../src/harness/v1/local-harness-capabilities";
 
 const proofLabels = {
   local_owner_qualification: "a successful owner-attended local worker check",
@@ -40,6 +41,13 @@ export function InstallationTopologySummary({ plan, readiness }: { plan?: Readon
       <h3 id="local-worker-path-title">Local agent delivery</h3>
       <p><strong>Prepared, not enabled.</strong> Control Room can prepare a checked task for a local agent, but no agent is started from this screen.</p>
       <p>Before a local agent can receive real work, the owner completes its short connection check and the installation verifies protected data and recovery. Until then, the page shows setup status only—not a live agent.</p>
+    </section>}
+    {plan.mode === "this_computer" && <section className="private-note" aria-labelledby="local-agent-capabilities-title">
+      <h3 id="local-agent-capabilities-title">Local agent capabilities</h3>
+      <p>These are product capabilities, not a scan of this computer. They do not reveal private settings or mean an agent is running.</p>
+      <ul>{localHarnessCapabilitiesV1.map(agent => <li key={agent.id}>
+        <strong>{agent.label}: {agent.stateLabel}.</strong> {agent.summary} <span>Next: {agent.nextStep}</span>
+      </li>)}</ul>
     </section>}
     <h3>Setup proof status</h3>
     <p><strong>{overallLabels[summary.state]}.</strong>{summary.nextProof ? ` Next: ${proofLabels[summary.nextProof]}.` : ""}</p>
