@@ -12,7 +12,9 @@ export function InstallationTopologyProvider({ children }: { children: ReactNode
   const [plan, setPlan] = useState<InstallationTopologyState>();
   useEffect(() => {
     const controller = new AbortController();
-    void (async () => {
+    let request = 0;
+    const load = async () => {
+      const current = ++request;
       try {
         const response = await fetch("/api/v1/installation-readiness", { method: "GET", credentials: "same-origin",
           cache: "no-store", redirect: "error", signal: controller.signal });
@@ -20,10 +22,14 @@ export function InstallationTopologyProvider({ children }: { children: ReactNode
         const responseBody = await response.json();
         const value = Object.freeze({ plan: verifyInstallationTopologyPlanV1(responseBody.plan),
           ...(responseBody.readiness === undefined ? {} : { readiness: verifyInstallationReadinessV1(responseBody.readiness) }) });
-        if (!controller.signal.aborted) setPlan(value);
+        if (!controller.signal.aborted && current === request) setPlan(value);
       } catch { /* No saved plan means this view must remain unconfigured. */ }
-    })();
-    return () => controller.abort();
+    };
+    void load();
+    const refreshVisible = () => { if (!document.hidden) void load(); };
+    const interval = setInterval(refreshVisible, 30_000);
+    window.addEventListener("focus", refreshVisible);
+    return () => { controller.abort(); clearInterval(interval); window.removeEventListener("focus", refreshVisible); };
   }, []);
   return <InstallationTopologyContext.Provider value={plan}>{children}</InstallationTopologyContext.Provider>;
 }
