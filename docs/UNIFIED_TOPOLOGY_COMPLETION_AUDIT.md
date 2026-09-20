@@ -20,6 +20,12 @@ fingerprints, treats a worker assigned to both routes as an error, and lists
 the proofs that must still be completed. It cannot enable a worker, connect a
 machine, or make any live change.
 
+The private website also has a plan-bound readiness checklist. It can show a
+non-secret proof outcome as not started, passed, failed, or unavailable, but
+only accepts a passed result when an installer supplies a matching evidence
+fingerprint. This makes missing or stale proof records visible rather than
+mistakenly presenting them as a running worker.
+
 ### This computer
 
 - A local Hermes worker accepts only a controller-prepared task with the
@@ -33,6 +39,10 @@ machine, or make any live change.
   a different task, and cannot be replaced by different later bytes.
 - A restart can use those saved bytes to continue normal result publication
   and owner review without starting Hermes again.
+- The normal operator assembly can carry the installation-owned local Hermes
+  executor into the ordinary task queue without requiring a remote session
+  transport. Configuration remains inert: it captures only the executor
+  callback and cannot start Hermes while the configuration is being built.
 
 ### Several computers
 
@@ -66,7 +76,8 @@ procedure has been operated successfully.
 ## What remains before enabling This computer
 
 1. The owner supplies the private process wrapper that runs the existing local
-   Hermes installation and connects it to the tested stream-json bridge. Its
+   Hermes installation and connects it to the tested stream-json bridge. The
+   now-complete operator-configuration path can receive that wrapper, but its
    executable location, login, model, provider, and workspace remain outside
    this repository and outside Control Room records.
 2. The owner runs one text-only, owner-attended Hermes qualification. It must
