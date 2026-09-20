@@ -2,8 +2,10 @@ import { z } from "zod";
 import { sha256Digest } from "../../security/canonical-digest";
 import {
   controllerWorkerDeliverySchemaV1,
+  controllerWorkerDeliveryReceiptSchemaV1,
   controllerWorkerRouteSchemaV1,
   type ControllerWorkerDeliveryV1,
+  type ControllerWorkerDeliveryReceiptV1,
 } from "../v1/controller-worker-delivery";
 import { assertSynchronousFence } from "../../security/synchronous-fence";
 
@@ -100,6 +102,29 @@ export function prepareHermes021MacosTaskV1(deliveryValue: unknown, routeValue: 
   return Object.freeze(hermes021MacosTaskSchemaV1.parse({ ...delivery.identity,
     prompt: delivery.input.prompt, instructions: delivery.input.instructions,
     deadline: Date.parse(delivery.expiresAt) }));
+}
+
+/**
+ * The local half of the shared delivery protocol.  It makes a normal,
+ * non-executing receipt only after the Mac-owned policy has accepted the
+ * exact packet.  It starts neither Hermes nor a background service.  The
+ * separate runner rechecks this policy immediately before it invokes Hermes.
+ */
+export function acceptHermes021MacosLocalDeliveryV1(deliveryValue: unknown, routeValue: unknown,
+  bindingValue: unknown, policy: Hermes021MacosTaskPolicyPortV1, receivedAtValue: unknown): ControllerWorkerDeliveryReceiptV1 {
+  const delivery = controllerWorkerDeliverySchemaV1.parse(deliveryValue);
+  const route = controllerWorkerRouteSchemaV1.parse(routeValue);
+  const binding = hermes021MacosLocalBindingSchemaV1.parse(bindingValue);
+  const receivedAt = z.string().datetime().refine(value => new Date(value).toISOString() === value).parse(receivedAtValue);
+  const task = prepareHermes021MacosTaskV1(delivery, route, binding);
+  if (!policy || typeof policy.assertAdmitted !== "function"
+    || Date.parse(receivedAt) < Date.parse(delivery.issuedAt) || Date.parse(receivedAt) > Date.parse(delivery.expiresAt)) unavailable();
+  assertSynchronousFence(() => policy.assertAdmitted(Object.freeze({ delivery, task, binding })), unavailable);
+  const material = { schema: "control-room.controller-worker-delivery-receipt/v1" as const,
+    deliveryId: delivery.deliveryId, deliveryDigest: delivery.deliveryDigest, workerId: binding.workerId,
+    route, receivedAt, disposition: "accepted" as const, startsWork: false as const,
+    grantsExecutionAuthority: false as const };
+  return Object.freeze(controllerWorkerDeliveryReceiptSchemaV1.parse({ ...material, receiptDigest: sha256Digest(material) }));
 }
 
 /**

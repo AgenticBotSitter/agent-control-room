@@ -80,6 +80,10 @@ Completed in source:
   restart-safe exact replay.
 - a normal local-runner seam that requires the Mac-owned policy to approve the
   exact controller packet before Hermes can be invoked.
+- local delivery composition that records Marvin's accepted shared receipt in
+  the one authoritative database before invoking the controlled runner. A
+  restart sees that receipt and refuses to automatically invoke the same task
+  a second time.
 - a versioned Hermes-0.21 task plan that binds the reviewed connector profile,
   task type, and worker capability rather than reusing an unpinned legacy
   Hermes plan, including a separate correction-task form.
@@ -87,7 +91,7 @@ Completed in source:
 Remaining before an automatic local worker is enabled:
 
 - wiring the reviewed local task-policy record from the authoritative task
-  dispatcher into the local runner;
+  dispatcher into the local delivery composition;
 - an end-to-end controller composition that supplies a completed local Hermes
   result to the shared review-and-correction reader (the result publisher and
   correction-plan form are present, but the permanent host composition is not

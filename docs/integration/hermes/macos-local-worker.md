@@ -92,3 +92,10 @@ host still needs the operator to configure its restricted task policy and
 complete the text-only qualification first. A policy refusal starts no Hermes
 task. A lost reply is recorded as uncertain and is never automatically run a
 second time.
+
+Before the controlled runner is called, the shared local delivery composition
+stores Marvin's accepted delivery receipt in Control Room's one database. If
+the controller restarts after that point, it reports the task as already
+delivered instead of silently starting Hermes again. That protects against
+duplicate work; a person can later reconcile an uncertain prior result through
+the normal result and review records.
