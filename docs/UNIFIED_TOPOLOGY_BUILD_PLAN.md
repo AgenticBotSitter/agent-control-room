@@ -167,7 +167,9 @@ Completed in source:
   installation-owned local Hermes executor for that queue route. It preserves
   the same one-database startup composition and does not require a remote
   session manager; construction captures the callback but cannot invoke
-  Hermes.
+  Hermes. It refuses that callback unless the reviewed local plan has recorded
+  the separate text-check, runner-bridge, and backup/restore proofs. Pending
+  remote proof work does not block an already-proved local route.
 - the shared native queue-worker contract is now exercised with the local
   Hermes route itself: it reconstructs the approved packet, rechecks the
   local route, invokes the private executor once, records the ordinary

@@ -51,7 +51,9 @@ mistakenly presenting them as a running worker.
 - The normal operator assembly can carry the installation-owned local Hermes
   executor into the ordinary task queue without requiring a remote session
   transport. Configuration remains inert: it captures only the executor
-  callback and cannot start Hermes while the configuration is being built.
+  callback and cannot start Hermes while the configuration is being built. It
+  also refuses that callback unless the local text check, runner-bridge check,
+  and backup/restore proof have been recorded for the reviewed plan.
 
 ### Several computers
 
