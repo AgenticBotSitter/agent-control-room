@@ -61,4 +61,8 @@ test("readiness is bound to one reviewed plan and never means a worker is enable
   assert.throws(() => summarizeInstallationReadinessV1(differentPlan, readiness), /mismatch/);
   assert.throws(() => createInstallationReadinessV1({ planDigest: plan.planDigest,
     proofs: [{ proof: "backup_restore", state: "passed" }] }), /pass_without_evidence/);
+  const unrelated = createInstallationReadinessV1({ planDigest: plan.planDigest, proofs: [
+    { proof: "remote_enrollment", state: "not_started" },
+  ] });
+  assert.throws(() => summarizeInstallationReadinessV1(plan, unrelated), /proof_not_required/);
 });

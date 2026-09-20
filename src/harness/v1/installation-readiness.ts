@@ -69,6 +69,8 @@ export function summarizeInstallationReadinessV1(planInput: unknown, readinessIn
   const plan = verifyInstallationTopologyPlanV1(planInput);
   const readiness = readinessInput === undefined ? undefined : verifyInstallationReadinessV1(readinessInput);
   if (readiness && readiness.planDigest !== plan.planDigest) throw new Error("installation_readiness_plan_mismatch");
+  if (readiness?.proofs.some(item => !plan.requiredProofs.includes(item.proof)))
+    throw new Error("installation_readiness_proof_not_required");
   const byProof = new Map(readiness?.proofs.map(item => [item.proof, item]) ?? []);
   const proofs = plan.requiredProofs.map(item => Object.freeze({ proof: item, state: byProof.get(item)?.state ?? "not_started" as InstallationProofStateV1 }));
   const failed = proofs.find(item => item.state === "failed" || item.state === "unavailable");
