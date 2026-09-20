@@ -36,11 +36,17 @@ test("setup summary shows an honest proof checklist rather than a live worker", 
   assert.match(html, /What to do next/);
   assert.match(html, /Check the local agent connection/);
   assert.match(html, /Local agent capabilities/);
-  assert.match(html, /Hermes Agent: Setup proof required/);
+  assert.match(html, /<h4>Hermes Agent<\/h4><p><strong>Status: Setup proof required/);
   assert.match(html, /First useful work after setup:.*plain-text review/);
   assert.match(html, /cannot edit a project yet/);
-  assert.match(html, /Claude Code: Adapter preparation required/);
-  assert.match(html, /Codex: Not available on this Mac yet/);
+  assert.match(html, /<h4>Claude Code<\/h4><p><strong>Status: Adapter preparation required/);
+  assert.match(html, /<h4>Codex<\/h4><p><strong>Status: Not available on this Mac yet/);
+  assert.match(html, /none of the statuses below means an agent is running/);
+  assert.match(html, /Hermes Agent connector capability details/);
+  assert.match(html, /Claude Code connector capability details/);
+  assert.match(html, /Codex connector capability details/);
+  assert.match(html, /<strong>Send a task:<\/strong> Not proven yet/);
+  assert.match(html, /<strong>Send a task:<\/strong> Not available in this connector/);
   assert.doesNotMatch(html, /<button|<form|<input|worker:local|sha256:/);
 });
 
@@ -54,7 +60,7 @@ test("setup summary distinguishes completed Hermes proof from an enabled worker"
     { proof: "local_runner_bridge", state: "passed", evidenceDigest: sha256Digest("bridge") },
   ] });
   const html = renderToStaticMarkup(createElement(InstallationTopologySummary, { plan, readiness }));
-  assert.match(html, /Hermes Agent: Proof complete; owner enablement required/);
+  assert.match(html, /<h4>Hermes Agent<\/h4><p><strong>Status: Proof complete; owner enablement required/);
   assert.match(html, /still has not started Hermes/);
   assert.doesNotMatch(html, /<button|<form|<input/);
 });

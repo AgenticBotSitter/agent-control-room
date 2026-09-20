@@ -3,8 +3,10 @@ import { deliverHermes021MacosLocalTaskV1, type Hermes021MacosLocalDeliveryCompo
 import { Hermes021MacosDispatchPreparationV1, type Hermes021MacosDispatchReferenceV1 } from "./dispatch-preparation";
 import { Hermes021MacosLocalRunRegistrationV1 } from "./local-run-registration";
 import { HarnessRunStoreV1 } from "../v1/store";
+import { isTerminalHarnessRunState } from "../v1/lifecycle";
 import type { HarnessEventPayloadV1, HarnessRunEventV1 } from "../v1/types";
 import { sha256Digest } from "../../security/canonical-digest";
+import { readControllerWorkerDeliveryReceiptV1 } from "../v1/controller-worker-delivery-receipt-store";
 
 const unavailable = (): never => { throw new Error("hermes_021_macos_assigned_task_execution_unavailable"); };
 
@@ -49,6 +51,18 @@ export async function executeAssignedHermes021MacosTaskV1(config: Hermes021Macos
     || existing.connectorProfileDigest !== candidate.connectorProfileDigest
     || existing.authorityDigest !== candidate.authorityDigest)) unavailable();
   const registered = existing ? { run: existing, replayed: true } : await config.runs.create(candidate);
+  // A terminal harness run proves this exact assignment has already crossed
+  // the execution boundary. Before asking the delivery composition to recover
+  // its staged result, require the authenticated delivery receipt to exist and
+  // match the packet prepared from current canonical state. Without this
+  // fence, a damaged or legacy database containing only a terminal run could
+  // be mistaken for a fresh delivery and contact Hermes a second time.
+  if (isTerminalHarnessRunState(registered.run.state)) {
+    const prior = await config.delivery.db.transaction(tx => readControllerWorkerDeliveryReceiptV1(tx,
+      config.delivery.integrityKey, prepared.delivery.identity));
+    if (!prior || prior.delivery.deliveryDigest !== prepared.delivery.deliveryDigest
+      || prior.receipt.deliveryDigest !== prepared.delivery.deliveryDigest) unavailable();
+  }
   let nextSequence = (await config.runs.inspect(candidate.tenantId, candidate.id))?.events.length ?? 0;
   // The ordinary harness history—not a separate local queue—is the visible
   // record of this controlled invocation. An exact delivery replay leaves the
@@ -66,6 +80,16 @@ export async function executeAssignedHermes021MacosTaskV1(config: Hermes021Macos
   if (registered.run.state === "discovered") await append({ category: "lifecycle", state: "starting" });
   const delivered = await deliverHermes021MacosLocalTaskV1(config.delivery, prepared.delivery,
     prepared.route, receivedAt, signal);
+  if (isTerminalHarnessRunState(registered.run.state)) {
+    // Recovery is evidence retrieval, not a second lifecycle. A succeeded run
+    // may expose the exact staged terminal result so durable publication can
+    // finish or replay after restart, but its history remains immutable.
+    if (delivered.state === "recovered_terminal_result") {
+      if (registered.run.state !== "succeeded" || delivered.outcome?.kind !== "completed") unavailable();
+    } else if (delivered.state !== "already_delivered") unavailable();
+    return Object.freeze({ schema: HERMES_021_MACOS_ASSIGNED_TASK_EXECUTION_V1, prepared, registered, delivered,
+      lifecycle: Object.freeze(lifecycle), startsWork: false as const, grantsExecutionAuthority: false as const });
+  }
   if (delivered.state === "completed_delivery" || delivered.state === "recovered_terminal_result") {
     const outcome = delivered.outcome;
     if (outcome?.kind === "completed") {

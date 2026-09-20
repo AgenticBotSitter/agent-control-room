@@ -133,7 +133,7 @@ test("a Marvin Hermes 0.21 template creates a pinned text-review plan, not an ol
   let launches = 0;
   const execution = { preparation: dispatcher, runs: new HarnessRunStoreV1(f.db, new Uint8Array(32).fill(25)),
     delivery: { db: f.db, integrityKey: new Uint8Array(32).fill(24),
-    binding: localBinding, policy: localPolicy }, clock: () => instant + 9000 };
+    binding: localBinding, policy: localPolicy, terminalResultStorage: f.storage }, clock: () => instant + 9000 };
   const localExecutor = createHermes021LocalSubprocessQueueExecutorV1({ tenantId: binding.tenantId,
     execution,
     results: { db: f.db, integrityKey: f.resultKey, reviewKey: f.reviewKey, storage: f.storage,
@@ -187,10 +187,23 @@ test("a Marvin Hermes 0.21 template creates a pinned text-review plan, not an ol
     ["starting", "running", "usage", "succeeded"]);
   assert.equal((await execution.runs.get(binding.tenantId, executed.registered.run.id))?.state, "succeeded");
 
+  const completedEvents = await execution.runs.events(binding.tenantId, executed.registered.run.id);
+  const recovered = await localExecutor.deliver(located, new AbortController().signal);
+  assert.equal(recovered.execution.delivered.state, "recovered_terminal_result");
+  assert.equal(recovered.execution.delivered.outcome?.kind, "completed");
+  assert.equal(recovered.execution.lifecycle.length, 0,
+    "restart recovery retrieves evidence without appending a second completion lifecycle");
+  assert.equal(recovered.publication?.replayed, true,
+    "restart recovery finishes through the existing durable result receipt");
+  assert.equal(launches, 1, "restart recovery never invokes Marvin again");
+  assert.deepEqual(await execution.runs.events(binding.tenantId, executed.registered.run.id), completedEvents,
+    "the terminal harness history is immutable across restart recovery");
+
   const replay = await executeAssignedHermes021MacosTaskV1(localExecutor.execution, { tenantId: binding.tenantId,
     projectId: binding.projectId, jobId: planned.receipt.jobId, attemptId: assigned.receipt.attemptId,
     leaseId: assigned.receipt.leaseId, inputDigest: planned.receipt.inputDigest });
-  assert.equal(replay.delivered.state, "already_delivered");
+  assert.equal(replay.delivered.state, "recovered_terminal_result");
+  assert.equal(replay.delivered.outcome?.kind, "completed");
   assert.equal(replay.registered.replayed, true);
   assert.equal(replay.lifecycle.length, 0);
   assert.equal(launches, 1);

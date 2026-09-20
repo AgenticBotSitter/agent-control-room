@@ -1,7 +1,7 @@
 import type { InstallationTopologyPlanV1 } from "../../src/harness/v1/installation-topology";
 import { summarizeInstallationReadinessV1, type InstallationReadinessV1 } from "../../src/harness/v1/installation-readiness";
 import { guideInstallationReadinessV1 } from "../../src/harness/v1/installation-guidance";
-import { summarizeLocalHarnessCapabilitiesV1 } from "../../src/harness/v1/local-harness-capabilities";
+import { summarizeLocalHarnessCapabilitiesV1, type LocalHarnessCapabilityV1 } from "../../src/harness/v1/local-harness-capabilities";
 
 const proofLabels = {
   local_owner_qualification: "a successful owner-attended local worker check",
@@ -24,6 +24,33 @@ const overallLabels = {
   ready_for_owner_enablement: "Proofs are complete; owner enablement is still required",
 } as const;
 
+const operationLabels = {
+  supported: "Supported by this connector",
+  unsupported: "Not available in this connector",
+  unknown: "Not proven yet",
+} as const;
+
+function LocalAgentCapabilityCard({ agent }: { agent: LocalHarnessCapabilityV1 }) {
+  const operations = [
+    ["Send a task", agent.operations.submit],
+    ["Read a result", agent.operations.result],
+    ["Request a stop", agent.operations.cancel],
+    ["Read saved status", agent.operations.read],
+  ] as const;
+  return <li className="private-local-agent-card">
+    <h4>{agent.label}</h4>
+    <p><strong>Status: {agent.stateLabel}.</strong> {agent.summary}</p>
+    <p><strong>First useful work after setup:</strong> {agent.firstSupportedWork}</p>
+    <p><strong>What is stopping it:</strong> {agent.nextStep}</p>
+    <details>
+      <summary>Connection capability details</summary>
+      <ul aria-label={`${agent.label} connector capability details`}>
+        {operations.map(([label, state]) => <li key={label}><strong>{label}:</strong> {operationLabels[state]}.</li>)}
+      </ul>
+    </details>
+  </li>;
+}
+
 /** A status-only explanation. There are deliberately no setup, launch, or approval controls here. */
 export function InstallationTopologySummary({ plan, readiness }: { plan?: Readonly<InstallationTopologyPlanV1>; readiness?: Readonly<InstallationReadinessV1> }) {
   if (!plan) return <section className="private-panel" aria-labelledby="installation-title">
@@ -45,10 +72,9 @@ export function InstallationTopologySummary({ plan, readiness }: { plan?: Readon
     </section>}
     {plan.mode === "this_computer" && <section className="private-note" aria-labelledby="local-agent-capabilities-title">
       <h3 id="local-agent-capabilities-title">Local agent capabilities</h3>
-      <p>These are product capabilities, not a scan of this computer. They do not reveal private settings or mean an agent is running.</p>
-      <ul>{localCapabilities.map(agent => <li key={agent.id}>
-        <strong>{agent.label}: {agent.stateLabel}.</strong> {agent.summary} <span> First useful work after setup: {agent.firstSupportedWork}</span> <span>Next: {agent.nextStep}</span>
-      </li>)}</ul>
+      <p>These are product capabilities, not a scan of this computer. They do not reveal private settings, and none of the statuses below means an agent is running.</p>
+      <p>“Supported” means the connector has that kind of operation in its contract. It does not override the proof and owner-enablement steps shown above.</p>
+      <ul className="private-local-agent-list">{localCapabilities.map(agent => <LocalAgentCapabilityCard key={agent.id} agent={agent} />)}</ul>
     </section>}
     <h3>Setup proof status</h3>
     <p><strong>{overallLabels[summary.state]}.</strong>{summary.nextProof ? ` Next: ${proofLabels[summary.nextProof]}.` : ""}</p>
