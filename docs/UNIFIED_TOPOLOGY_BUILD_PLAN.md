@@ -141,7 +141,8 @@ Completed in source:
 - disconnect and timeout outcomes that remain uncertain and never retry on
   their own.
 - controlled reconnect reconciliation that accepts only a receipt for the
-  original packet and never retransmits it.
+  original packet and never retransmits it; an exact recovered receipt is
+  retained through the same PostgreSQL receipt record used for local delivery.
 
 Remaining:
 
