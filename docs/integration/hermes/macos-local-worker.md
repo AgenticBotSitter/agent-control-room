@@ -72,7 +72,7 @@ listener, or start a persistent service.
 Once that evidence is accepted, the normal task dispatcher can use the local
 port for the same worker lifecycle used by remote Hermes workers. Source now
 includes a dispatch-preparation step that reads the existing assigned task,
-active lease, and pinned V5/V6 Hermes plan together, then creates the shared
+active lease, and pinned V7/V8 text-review Hermes plan together, then creates the shared
 delivery packet. It does not create a second queue or start Hermes itself.
 
 ## Normal automatic work

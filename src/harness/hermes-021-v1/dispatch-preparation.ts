@@ -6,7 +6,7 @@ import { HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1 } from "./connector-profil
 import { HERMES_021_MACOS_LOCAL_ADAPTER_V1, HERMES_021_MACOS_LOCAL_CAPABILITY_V1,
   HERMES_021_MACOS_LOCAL_JOB_TYPE_V1, hermes021MacosLocalBindingSchemaV1 } from "./macos-local-worker";
 import { controllerWorkerDeliverySchemaV1, createControllerWorkerDeliveryV1, type ControllerWorkerDeliveryV1 } from "../v1/controller-worker-delivery";
-import { hermes021TaskExecutionPlanSchemaV5, hermes021TaskExecutionPlanSchemaV6,
+import { hermes021TaskExecutionPlanSchemaV5, hermes021TaskExecutionPlanSchemaV6, hermes021TaskExecutionPlanSchemaV7, hermes021TaskExecutionPlanSchemaV8,
   type TaskExecutionPlanner } from "../../web/v1/task-execution-planner";
 
 const id = z.string().min(3).max(180).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
@@ -114,6 +114,10 @@ export class Hermes021MacosDispatchPreparationV1 {
       ? hermes021TaskExecutionPlanSchemaV5.parse(rawPlan)
       : rawPlan?.schema === "control-room.task-execution-plan/v6"
         ? hermes021TaskExecutionPlanSchemaV6.parse(rawPlan)
+        : rawPlan?.schema === "control-room.task-execution-plan/v7"
+          ? hermes021TaskExecutionPlanSchemaV7.parse(rawPlan)
+          : rawPlan?.schema === "control-room.task-execution-plan/v8"
+            ? hermes021TaskExecutionPlanSchemaV8.parse(rawPlan)
         : unavailable();
     if (plan.adapter !== HERMES_021_MACOS_LOCAL_ADAPTER_V1 || plan.connectorProfileDigest !== HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1
       || plan.tenantId !== ref.tenantId || plan.projectId !== ref.projectId || plan.job.id !== ref.jobId

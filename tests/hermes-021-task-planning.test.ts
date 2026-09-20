@@ -23,7 +23,7 @@ import { binding, enrollment, instant } from "./hermes-native-fixture";
 import { at } from "./native-task-fixture";
 import { taskDraft } from "./helpers/web-task";
 
-test("a Marvin Hermes 0.21 template creates a pinned v5 plan, not an older generic Hermes plan", async t => {
+test("a Marvin Hermes 0.21 template creates a pinned text-review plan, not an older generic Hermes plan", async t => {
   const f = await ownerReviewFixture(); t.after(f.close);
   // The durable publisher verifies the admitted run's adapter against the
   // installation registry. A real installer creates this neutral adapter
@@ -47,10 +47,11 @@ test("a Marvin Hermes 0.21 template creates a pinned v5 plan, not an older gener
   const source = await f.tasks.propose(f.identity, binding.projectId, taskDraft, "marvin-021-plan-source");
   const planned = await planner.plan(f.identity, binding.projectId, source.receipt.jobId, sha256Digest(taskDraft));
   const saved = await planner.read(planned.receipt.jobId);
-  assert.ok(saved && saved.schema === "control-room.task-execution-plan/v5");
-  if (!saved || saved.schema !== "control-room.task-execution-plan/v5") throw new Error("missing Hermes 0.21 plan");
+  assert.ok(saved && saved.schema === "control-room.task-execution-plan/v7");
+  if (!saved || saved.schema !== "control-room.task-execution-plan/v7") throw new Error("missing Hermes 0.21 plan");
   assert.equal(saved.adapter, HERMES_021_MACOS_LOCAL_ADAPTER_V1);
   assert.equal(saved.connectorProfileDigest, template.connectorProfileDigest);
+  assert.equal(saved.executionClass, "text_review");
   assert.equal(saved.job.jobType, HERMES_021_MACOS_LOCAL_JOB_TYPE_V1);
   assert.equal(saved.job.requiredCapability, HERMES_021_MACOS_LOCAL_CAPABILITY_V1);
   assert.notEqual(saved.schema, "control-room.task-execution-plan/v1");

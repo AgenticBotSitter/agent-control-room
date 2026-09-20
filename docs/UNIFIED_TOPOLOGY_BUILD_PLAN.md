@@ -158,7 +158,7 @@ Completed in source:
   ownership, a retry queue, or a second database.
 - the existing protected task queue now accepts a separately authenticated
   Hermes-0.21 local intent. Its companion approval evidence and queue record
-  are HMAC-protected, bind the exact reviewed V5/V6 plan, lease, authority,
+  are HMAC-protected, bind the exact reviewed V7/V8 text-review plan, lease, authority,
   route and connector profile, and are rechecked at queue pickup. This is the
   existing scheduler and database, not a second local queue; no queue write
   starts Hermes. The lifecycle has an explicit, guarded injection point for a

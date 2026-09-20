@@ -209,7 +209,8 @@ export class TaskAssignmentCoordinator {
       if (job.jobType === CODEX_APP_SERVER_JOB_TYPE
         && (plan.schema === "control-room.task-execution-plan/v3" || plan.schema === "control-room.task-execution-plan/v4")) return "codex" as const;
       if (job.jobType === HERMES_021_MACOS_LOCAL_JOB_TYPE_V1
-        && (plan.schema === "control-room.task-execution-plan/v5" || plan.schema === "control-room.task-execution-plan/v6")) return "hermes-021-local" as const;
+        && (plan.schema === "control-room.task-execution-plan/v5" || plan.schema === "control-room.task-execution-plan/v6"
+          || plan.schema === "control-room.task-execution-plan/v7" || plan.schema === "control-room.task-execution-plan/v8")) return "hermes-021-local" as const;
       if (job.jobType === "harness.hermes.native.task"
         && (plan.schema === "control-room.task-execution-plan/v1" || plan.schema === "control-room.task-execution-plan/v2")) return "hermes" as const;
       return conflict();
@@ -462,7 +463,8 @@ export class TaskAssignmentCoordinator {
       if (!plan || !stored || plan.tenantId !== this.scope.tenantId || plan.projectId !== projectId
         || job.inputDigest !== expectedInputDigest || job.jobType !== HERMES_021_MACOS_LOCAL_JOB_TYPE_V1
         || job.requiredCapability !== HERMES_021_MACOS_LOCAL_CAPABILITY_V1
-        || (plan.schema !== "control-room.task-execution-plan/v5" && plan.schema !== "control-room.task-execution-plan/v6")
+        || (plan.schema !== "control-room.task-execution-plan/v5" && plan.schema !== "control-room.task-execution-plan/v6"
+          && plan.schema !== "control-room.task-execution-plan/v7" && plan.schema !== "control-room.task-execution-plan/v8")
         || plan.connectorProfileDigest !== HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1) conflict();
       const route = this.routes.find(value => value.nodeId === stored.lease.nodeId);
       const now = this.clock(), deadline = Math.min(Date.parse(stored.lease.expiresAt), Date.parse(job.authority.expiresAt));
@@ -503,7 +505,7 @@ export class TaskAssignmentCoordinator {
    * Server-side pickup lookup for a queued Marvin task.  The pg-boss message
    * is merely a locator.  This method verifies its HMAC-backed queue intent,
    * its companion approval evidence, present owner permission, the leased
-   * V5/V6 plan and the selected local route before returning a reference that
+   * current V7/V8 text-review plan and the selected local route before returning a reference that
    * a local delivery composition may prepare.  It does not invoke Hermes.
    */
   async locateApprovedHermes021LocalQueueDelivery(input: NativeTaskSubmissionReference, signal: AbortSignal) {
@@ -524,7 +526,8 @@ export class TaskAssignmentCoordinator {
       if (!plan || !stored || plan.tenantId !== this.scope.tenantId || plan.projectId !== ref.projectId
         || job.inputDigest !== ref.inputDigest || job.jobType !== HERMES_021_MACOS_LOCAL_JOB_TYPE_V1
         || job.requiredCapability !== HERMES_021_MACOS_LOCAL_CAPABILITY_V1
-        || (plan.schema !== "control-room.task-execution-plan/v5" && plan.schema !== "control-room.task-execution-plan/v6")
+        || (plan.schema !== "control-room.task-execution-plan/v5" && plan.schema !== "control-room.task-execution-plan/v6"
+          && plan.schema !== "control-room.task-execution-plan/v7" && plan.schema !== "control-room.task-execution-plan/v8")
         || plan.connectorProfileDigest !== HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1
         || stored.attempt.id !== ref.attemptId || signal.aborted) conflict();
       const route = this.routes.find(value => value.nodeId === stored.lease.nodeId);
