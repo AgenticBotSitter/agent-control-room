@@ -15,9 +15,9 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations 0001-0079, including generic external-content
+// Generated from public migrations 0001-0080, including generic external-content
 // migrations 0025/0026. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "8afef984bba796f041d4ae69555807d9853fa0970a2b98f531eb182b3abfbe17";
+export const privateWebSchemaDigest = "34b5f9de5f25ec2f4c4f87f63d10e49b458fa25042efb094183d1719bfef4d5a";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
@@ -31,7 +31,7 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_project_coordinator_heads", "control_project_coordination_proposals", "control_project_delegation_policies",
   "control_project_coordination_operation_receipts", "control_project_coordination_operation_jobs",
   "control_work_resources", "control_attempt_resource_admissions", "control_attempt_resource_scopes",
-  "control_durable_result_write_reservations"] as const;
+  "control_durable_result_write_reservations", "control_worker_delivery_receipts"] as const;
 const inserts = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
   "control_jobs", "control_web_task_commands", "control_completion_gate_records", "control_web_task_review_commands", "control_news_source_settings", "control_news_story_archives",
@@ -93,7 +93,7 @@ const coordinatorReads = ["tenants", "workspaces", "control_identities", "contro
   "control_attempts", "control_leases", "control_task_execution_plans", "control_nodes", "control_node_keys",
   "control_node_fleet_current", "control_job_dependencies", "control_transition_events", "control_outbox",
   "audit_events", "control_audit_chain_heads", "control_completion_gate_integrity", "control_completion_gate_records", "control_native_approval_packets", "control_native_task_queue", "control_native_delivery_preparations", "control_native_delivery_envelopes", "control_native_transmission_intents", "control_native_delivery_receipts",
-  "control_codex_delivery_envelopes", "control_codex_transmission_intents", "control_codex_delivery_receipts", "control_codex_activation_transmission_intents",
+  "control_codex_delivery_envelopes", "control_codex_transmission_intents", "control_codex_delivery_receipts", "control_codex_activation_transmission_intents", "control_worker_delivery_receipts",
   "control_codex_result_publications",
   "control_harness_runs", "control_harness_run_events", "control_native_review_plans", "control_artifact_manifests", "control_native_artifact_receipts",
   "control_action_inbox", "control_project_coordinator_heads", "control_project_coordination_proposals",
@@ -103,7 +103,7 @@ const coordinatorReads = ["tenants", "workspaces", "control_identities", "contro
 const coordinatorInserts = new Set(["control_web_sessions", "control_requests", "control_workflows", "control_jobs",
   "control_attempts", "control_leases", "control_task_execution_plans", "control_transition_events", "control_outbox",
   "audit_events", "control_audit_chain_heads", "control_native_approval_packets", "control_native_task_queue", "control_native_delivery_preparations", "control_native_delivery_envelopes", "control_native_transmission_intents", "control_native_delivery_receipts",
-  "control_codex_delivery_envelopes", "control_codex_transmission_intents", "control_codex_delivery_receipts",
+  "control_codex_delivery_envelopes", "control_codex_transmission_intents", "control_codex_delivery_receipts", "control_worker_delivery_receipts",
   "control_codex_activation_transmission_intents", "control_completion_gate_records",
   "control_project_coordination_proposals", "control_project_coordination_operation_receipts",
   "control_project_coordination_operation_jobs", "control_action_inbox", "control_work_resources",

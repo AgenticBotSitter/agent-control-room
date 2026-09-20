@@ -52,6 +52,10 @@ Completed in source:
 - separate local/remote route selection that cannot alter packet identity;
 - tests proving a packet cannot be delivered to the wrong worker or accepted
   with an altered receipt.
+- one append-only, signed receipt record in the installation's existing
+  PostgreSQL database. It records a local or remote acknowledgement exactly
+  once, survives a controller restart, and cannot start a worker or grant new
+  authority by itself.
 
 Remaining:
 

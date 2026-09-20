@@ -31,8 +31,9 @@ from a browser request or worker reply.
 4. The selected route is local or remote, outside that packet.
 5. The local policy or remote enrollment verifies the same packet before a
    worker is allowed to receive it.
-6. A received receipt is stored as delivery evidence only. It does not say a
-   task ran, succeeded, or needs retrying.
+6. A received receipt is stored once in the shared append-only
+   `control_worker_delivery_receipts` record. It is delivery evidence only: it
+   does not say a task ran, succeeded, or needs retrying.
 7. A verified terminal result follows the existing durable-result and review
    path.
 
