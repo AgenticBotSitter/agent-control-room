@@ -37,6 +37,10 @@ test("a worker cannot be both local and remote, and a changed reviewed plan is r
   assert.throws(() => planInstallationTopologyV1(input([local, { ...local, kind: "remote" as const }])), /worker_route_ambiguous/);
   const plan = planInstallationTopologyV1(input([local]));
   assert.throws(() => verifyInstallationTopologyPlanV1({ ...plan, mode: "several_computers" }), /plan_invalid/);
+  const duplicateProofs = { ...plan, requiredProofs: [...plan.requiredProofs, "backup_restore"] };
+  const { planDigest: _ignored, ...duplicateMaterial } = duplicateProofs;
+  assert.throws(() => verifyInstallationTopologyPlanV1({ ...duplicateMaterial,
+    planDigest: sha256Digest(duplicateMaterial) }), /plan_invalid/);
 });
 
 test("moving a known worker between local and remote is a rebind, not quiet retention", () => {

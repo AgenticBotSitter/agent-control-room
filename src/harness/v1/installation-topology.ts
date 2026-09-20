@@ -102,6 +102,7 @@ export function verifyInstallationTopologyPlanV1(value: unknown): InstallationTo
     enablesWorkers: z.literal(false), planDigest: digest }).strict().parse(value);
   const { planDigest, ...material } = plan;
   if (planDigest !== sha256Digest(material) || canonicalJson(plan.requiredProofs) !== canonicalJson([...plan.requiredProofs].sort())
+    || new Set(plan.requiredProofs).size !== plan.requiredProofs.length
     || new Set(plan.retainedWorkerIds).size !== plan.retainedWorkerIds.length
     || new Set(plan.reboundWorkerIds).size !== plan.reboundWorkerIds.length
     || new Set(plan.addedRemoteWorkerIds).size !== plan.addedRemoteWorkerIds.length
