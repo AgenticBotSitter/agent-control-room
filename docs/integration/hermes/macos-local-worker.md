@@ -90,11 +90,12 @@ the pinned Hermes revision, the controller's existing authority digest, and
 the expiry. It is not a second approval system: it cannot authorize a task
 that Control Room did not already authorize.
 
-This is a controlled launch seam, not a background service. A real automatic
-host still needs to join that prepared packet to the delivery composition,
-configure its restricted task policy, and complete the text-only qualification
-first. A policy refusal starts no Hermes task. A lost reply is recorded as
-uncertain and is never automatically run a second time.
+This is a controlled launch seam, not a background service. The source host
+composition already joins the prepared packet to the delivery composition,
+but a real installation still needs to configure its restricted task policy
+and complete the text-only qualification first. A policy refusal starts no
+Hermes task. A lost reply is recorded as uncertain and is never automatically
+run a second time.
 
 Before the controlled runner is called, the shared local delivery composition
 stores Marvin's accepted delivery receipt in Control Room's one database. If

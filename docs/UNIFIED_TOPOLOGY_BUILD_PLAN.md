@@ -91,12 +91,13 @@ Completed in source:
   active lease, the matching task plan, and the pinned Hermes profile before
   it creates the shared local delivery packet. It starts neither Hermes nor a
   second queue, and is covered by the same local/remote receipt tests.
+- an application composition now connects that prepared packet directly to
+  Marvin's controlled local delivery seam. The first accepted handoff invokes
+  the injected local runner once; an exact restart replay reports the earlier
+  delivery and never invokes Marvin twice.
 
 Remaining before an automatic local worker is enabled:
 
-- the approved application host composition that takes prepared packets
-  immediately into the local delivery composition while their lease and
-  authority are still valid;
 - an end-to-end controller composition that supplies a completed local Hermes
   result to the shared review-and-correction reader (the result publisher and
   correction-plan form are present, but the permanent host composition is not
