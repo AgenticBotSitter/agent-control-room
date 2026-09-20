@@ -40,7 +40,11 @@ export type CodexLocalDeliveryCompositionV1 = Readonly<{
 }>;
 
 function current(config: CodexLocalDeliveryCompositionV1, queueId: string, admissionDigest: string): void {
-  assertSynchronousFence(() => config.authority.assertCurrent(queueId), unavailable);
+  // Installation fencing failures are intentionally not exposed through this
+  // adapter. They mean the delivery is unavailable; their internal cause is
+  // not task-facing evidence.
+  try { assertSynchronousFence(() => config.authority.assertCurrent(queueId), unavailable); }
+  catch { unavailable(); }
   if (digest.parse(config.authority.currentAdmissionDigest(queueId)) !== admissionDigest) unavailable();
 }
 

@@ -7,7 +7,7 @@ import { at, nativeTaskFixture, registration } from './native-task-fixture';
 import { binding, input } from './hermes-native-fixture';
 
 const integrityKey = new Uint8Array(32).fill(73);
-const worker = { workerId: 'worker:codex-local', adapterId: 'codex-app-server/v1', adapterRevision: 'source-123' } as const;
+const worker = { workerId: 'worker:codex-local', adapterId: 'codex-app-server:v1', adapterRevision: 'source-123' } as const;
 const authorityDigest = sha256Digest('controller-authority');
 const admissionDigest = sha256Digest('current-codex-admission');
 const acceptanceProfileDigest = sha256Digest('codex-acceptance-profile');
