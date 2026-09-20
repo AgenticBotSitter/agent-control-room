@@ -68,6 +68,10 @@ test("one project can offer reviewed local workers without silently choosing one
   const planned = await planner.plan(f.identity, binding.projectId, source.receipt.jobId, sha256Digest(taskDraft), second.id);
   const saved = await planner.read(planned.receipt.jobId);
   assert.ok(saved && saved.templateDigest === sha256Digest(second));
+  assert.equal(await planner.readPreparedWorker(f.identity, binding.projectId, source.receipt.jobId), null,
+    "the source proposal is not presented as prepared for a worker");
+  assert.equal(await planner.readPreparedWorker(f.identity, binding.projectId, planned.receipt.jobId), "claude",
+    "the prepared task exposes only a safe display category");
   await assert.rejects(() => planner.plan(f.identity, binding.projectId, source.receipt.jobId, sha256Digest(taskDraft), first.id), /conflict/,
     "a later choice cannot replace the already saved task plan");
 });

@@ -24,7 +24,7 @@ import type {
   OwnerNotificationSettingsV1,
 } from "../src/notifications/v1/index.ts";
 import { NotificationDecisionList, NotificationSettingsSurface } from "../private-app/app/notification-settings.tsx";
-import { TaskStateGuidance, taskStateGuidance } from "../private-app/app/task-panels.tsx";
+import { TaskDetailPanel, TaskStateGuidance, taskStateGuidance } from "../private-app/app/task-panels.tsx";
 import { PrivateSettingsWorkspace } from "../private-app/app/settings/workspace.tsx";
 import { readOwnerNotificationsV1, unavailableOwnerNotificationsV1 } from "../src/web/v1/owner-notifications-browser-client.ts";
 import { OwnerNotificationsPanel } from "../private-app/app/owner-notifications-workspace.tsx";
@@ -51,8 +51,18 @@ function detail(state: TaskDetail["task"]["state"], run?: Partial<TaskDetail["at
         firstObservedExecutionAt: at, finishedObservedAt: null, cancellation: "not_requested", source: "native_snapshot",
         nativeState: "running", availability: "current", usage: null, resultClaim: null, timeline: [],
         earlierObservationsOmitted: false, ...run }] }] : [], earlierAttemptsOmitted: false,
-    progressSource, dispatch: "configured", artifacts: "configured", review: "recorded" };
+    preparedFor: null, progressSource, dispatch: "configured", artifacts: "configured", review: "recorded" };
 }
+
+test("a prepared task shows only its safe worker category and no assignment claim", () => {
+  for (const [preparedFor, label] of [["hermes", "Hermes Agent"], ["codex", "Codex"], ["claude", "Claude Code"],
+    ["configured_worker", "Configured worker"]] as const) {
+    const html = renderToStaticMarkup(<TaskDetailPanel detail={{ ...detail("ready"), preparedFor }} />);
+    assert.match(html, new RegExp(`prepared for ${label}`));
+    assert.match(html, /Preparation does not assign or start this worker/);
+    assert.doesNotMatch(html, /template:|worker:|credential:|sha256:/);
+  }
+});
 
 test("each ordinary task state points to one safe next destination or explanation", () => {
   const expected = new Map<TaskDetail["task"]["state"], string | undefined>([

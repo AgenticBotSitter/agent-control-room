@@ -131,7 +131,7 @@ type Plan = z.infer<typeof planSchema>;
 export type TaskPlanningTemplateChoice = Readonly<{ id: string; adapter: NativeTaskTemplate["adapter"] }>;
 export type TaskPlanningOperation = Readonly<{ tenantId: string; workspaceId: string; plan: TaskExecutionPlanner["plan"];
   supportsProject?: (projectId: string) => boolean; templatesForProject?: (projectId: string) => readonly TaskPlanningTemplateChoice[];
-  readSaved?: TaskExecutionPlanner["readSaved"] }>;
+  readSaved?: TaskExecutionPlanner["readSaved"]; readPreparedWorker?: TaskExecutionPlanner["readPreparedWorker"] }>;
 type Row = { tenant_id: string; project_id: string; source_job_id: string; job_id: string; plan: unknown; auth_tag: string };
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: async work => work(tx),
   transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); await check(); return result; } });
@@ -239,7 +239,7 @@ export class TaskExecutionPlanner {
   webOperation(): TaskPlanningOperation {
     return Object.freeze({ tenantId: this.scope.tenantId, workspaceId: this.scope.workspaceId, plan: this.plan.bind(this),
       supportsProject: this.supportsProject.bind(this), templatesForProject: this.templatesForProject.bind(this),
-      readSaved: this.readSaved.bind(this) });
+      readSaved: this.readSaved.bind(this), readPreparedWorker: this.readPreparedWorker.bind(this) });
   }
   supportsProject(projectId: string) { return this.projectTemplates.has(projectId); }
   /** Safe server-owned choices only. IDs identify reviewed templates, not a host, login or executable. */
@@ -281,6 +281,27 @@ export class TaskExecutionPlanner {
         || plan.sourceInputDigest !== source.job.inputDigest) fail();
       await this.checkedJob(tx, plan);
       return this.receipt(plan);
+    });
+  }
+  /** A deliberately small read model for a prepared task page. It verifies the saved plan
+   * before translating its adapter to a display category; it never exposes a worker, template,
+   * profile, host or credential reference. */
+  async readPreparedWorker(identity: VerifiedWebIdentity, projectId: string, jobId: string) {
+    localId.parse(projectId); localId.parse(jobId);
+    return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
+      actor.require("tasks.read", projectId);
+      await this.projects.getViewInSession(tx, actor, projectId);
+      const row = (await tx.query<Row>("SELECT * FROM control_task_execution_plans WHERE tenant_id=$1 AND project_id=$2 AND job_id=$3",
+        [this.scope.tenantId, projectId, jobId])).rows[0];
+      if (!row) return null;
+      const plan = this.verify(row);
+      if (plan.projectId !== projectId || plan.job.id !== jobId) fail();
+      await this.checkedJob(tx, plan);
+      if (plan.schema === "control-room.task-execution-plan/v3" || plan.schema === "control-room.task-execution-plan/v4") return "codex" as const;
+      if (plan.schema === "control-room.task-execution-plan/v5" || plan.schema === "control-room.task-execution-plan/v6"
+        || plan.schema === "control-room.task-execution-plan/v7" || plan.schema === "control-room.task-execution-plan/v8") return "hermes" as const;
+      if (plan.schema === "control-room.task-execution-plan/v9" || plan.schema === "control-room.task-execution-plan/v10") return "claude" as const;
+      return "configured_worker" as const;
     });
   }
   private verify(row: Row) {

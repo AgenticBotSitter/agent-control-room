@@ -39,6 +39,7 @@ export const taskDetailSchema = z.object({ project: projectViewSchema, task: tas
   instructions: text(4000), inputDigest: digest, observedAt: z.string().datetime(),
   attempts: z.array(z.object({ attemptId: id, attemptNumber: count, state: z.enum(attemptStates),
     runs: z.array(taskRunSchema).max(10), additionalRunsOmitted: z.boolean() }).strict()).max(10),
-  earlierAttemptsOmitted: z.boolean(), progressSource: z.enum(["configured", "not_configured"]),
+  earlierAttemptsOmitted: z.boolean(), preparedFor: z.enum(["hermes", "codex", "claude", "configured_worker"]).nullable(),
+  progressSource: z.enum(["configured", "not_configured"]),
   dispatch: z.enum(["not_connected", "configured"]), artifacts: z.enum(["not_connected", "configured"]), review: z.enum(["not_connected", "recorded"]) }).strict();
 export type TaskDetail = z.infer<typeof taskDetailSchema>;

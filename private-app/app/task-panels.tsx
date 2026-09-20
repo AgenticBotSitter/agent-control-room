@@ -119,11 +119,15 @@ function RunPanel({ run }: { run: TaskRun }) {
 }
 
 export function TaskDetailPanel({ detail }: { detail: TaskDetail }) {
+  const preparedFor = detail.preparedFor === "hermes" ? "Hermes Agent" : detail.preparedFor === "codex" ? "Codex"
+    : detail.preparedFor === "claude" ? "Claude Code" : detail.preparedFor === "configured_worker" ? "Configured worker" : undefined;
   return <div className="private-task-detail">
     <section className="private-panel"><span className="private-state">{taskStateLabel[detail.task.state]}</span><h2>{detail.task.title}</h2>
       <h3>Requested result</h3><p className="private-summary">{detail.instructions}</p>
       <p className="private-note"><ConfiguredTimestamp value={detail.task.createdAt} prefix="Saved" /> · <ConfiguredTimestamp value={detail.task.updatedAt} prefix="Job record updated" /></p>
       {detail.task.state === "proposed" && <p>This is saved proposed work, not an agent assignment.</p>}</section>
+    {preparedFor && <section className="private-panel" aria-label="Prepared worker"><h2>Prepared worker</h2>
+      <p>This task is prepared for {preparedFor}. Preparation does not assign or start this worker.</p></section>}
     <section className="private-panel"><h2>Agent progress</h2>
       <p>{detail.dispatch === "configured"
         ? "Task submission is configured. A recorded submission is not proof that an agent is online or has started."

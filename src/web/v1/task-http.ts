@@ -19,7 +19,7 @@ import { taskRevisionCommandSchema, taskRevisionRequestSchema } from "./task-rev
 import { sha256Digest } from "../../security";
 
 export function createTaskHttpHandler(options: { origin: string; trust: AccessTrust; service: WebTaskService;
-  ownerReviews?: WebTaskReviewService; ownerVerifications?: WebTaskVerificationService; planning?: Pick<TaskPlanningOperation, "plan" | "readSaved" | "supportsProject" | "templatesForProject">;
+  ownerReviews?: WebTaskReviewService; ownerVerifications?: WebTaskVerificationService; planning?: Pick<TaskPlanningOperation, "plan" | "readSaved" | "readPreparedWorker" | "supportsProject" | "templatesForProject">;
   assignment?: TaskAssignmentOperation; approvals?: TaskApprovalOperation; submission?: TaskSubmissionOperation; revisions?: TaskRevisionOperation; clock?: () => number }) {
   const verify = createAccessVerifier(options.trust);
   return async (request: Request): Promise<Response> => {
@@ -213,9 +213,12 @@ export function createTaskHttpHandler(options: { origin: string; trust: AccessTr
         try { artifactId = route[4] ? decodeURIComponent(route[4]) : undefined; } catch { throw new WebAccessError("invalid_request"); }
         return Response.json(await options.service.results(identity, projectId, jobId, artifactId), { headers: privateResponseHeaders });
       }
-      if (jobId && request.method === "GET")
-        return Response.json({ ...await options.service.detail(identity, projectId, jobId),
+      if (jobId && request.method === "GET") {
+        const detail = await options.service.detail(identity, projectId, jobId);
+        const preparedFor = await options.planning?.readPreparedWorker?.(identity, projectId, jobId);
+        return Response.json({ ...detail, preparedFor: preparedFor ?? null,
           dispatch: options.submission ? "configured" : "not_connected" }, { headers: privateResponseHeaders });
+      }
       if (!jobId && request.method === "POST") {
         if (request.headers.get("content-type")?.split(";")[0].trim() !== "application/json" || !request.body)
           throw new WebAccessError("invalid_request");

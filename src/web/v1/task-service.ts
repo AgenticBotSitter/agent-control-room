@@ -252,7 +252,7 @@ export class WebTaskService {
           runs, additionalRunsOmitted: ids.length > 10 });
       }
       return taskDetailSchema.parse({ project, task: summary, instructions: request.objective, inputDigest: job.inputDigest,
-        observedAt: actor.now, attempts, earlierAttemptsOmitted: attemptRows.length > 10,
+        observedAt: actor.now, attempts, earlierAttemptsOmitted: attemptRows.length > 10, preparedFor: null,
         progressSource: store ? "configured" : "not_configured", dispatch: "not_connected",
         artifacts: this.resultStore ? "configured" : "not_connected", review: this.reviewConfig ? "recorded" : "not_connected" });
     });
