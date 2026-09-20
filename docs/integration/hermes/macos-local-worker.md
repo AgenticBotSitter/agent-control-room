@@ -151,6 +151,13 @@ browser request from choosing a model, profile, command, path, or tool access.
 If the process ends without one valid terminal result, Control Room reports an
 uncertain or failed task and never launches it a second time automatically.
 
+`createHermes021LocalSubprocessQueueExecutorV1` is the one source helper that
+joins this wrapper to the existing local queue executor. It requires the
+ordinary database-backed assignment reader, policy, result store and authority
+check; it creates none of them. This means the local installation uses the
+same queue and review lifecycle as a remote worker rather than a parallel
+Marvin-specific work system.
+
 The normal operator configuration assembly can now carry that
 installation-owned local executor into the existing task queue. This is the
 same startup path used for other workers, not a separate local launcher. It

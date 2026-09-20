@@ -13,7 +13,7 @@ import { HarnessRunStoreV1 } from "../src/harness/v1/store";
 import { NativeApprovalPacketStore } from "../src/web/v1/native-approval-packet-store";
 import type { NativeTaskSubmission } from "../src/persistence/native-task-submission";
 import { deliverVerifiedHermes021LocalQueueTaskV1 } from "../src/web/v1/hermes-021-local-queue-delivery";
-import { createHermes021LocalQueueExecutorV1 } from "../src/web/v1/hermes-021-local-executor";
+import { createHermes021LocalSubprocessQueueExecutorV1 } from "../src/web/v1/hermes-021-local-subprocess-executor";
 import type { FleetSignalEnvelope } from "../src/node-fleet/v1/schemas";
 import { ownerReviewFixture } from "./helpers/web-owner-review";
 import { binding, enrollment, instant } from "./hermes-native-fixture";
@@ -122,12 +122,8 @@ test("a Marvin Hermes 0.21 template creates a pinned v5 plan, not an older gener
   const execution = { preparation: dispatcher, runs: new HarnessRunStoreV1(f.db, new Uint8Array(32).fill(25)),
     delivery: { db: f.db, integrityKey: new Uint8Array(32).fill(24),
     binding: { localServiceId: "service:marvin-hermes", workerId: "worker:marvin", expectedVersion: "0.21.3" as const,
-      sourceRevision: "00570550" }, policy: { assertAdmitted() {} }, privatePort: { async run() {
-      launches++;
-      return [{ type: "result", session_id: "session:marvin", exit_code: 0, text: "completed", tokens: {
-        input: 1, output: 1, total: 2, cache_read: 0, cache_write: 0 }, duration_ms: 3, timestamp: instant + 9000 }];
-    } } }, clock: () => instant + 9000 };
-  const localExecutor = createHermes021LocalQueueExecutorV1({ tenantId: binding.tenantId,
+      sourceRevision: "00570550" }, policy: { assertAdmitted() {} } }, clock: () => instant + 9000 };
+  const localExecutor = createHermes021LocalSubprocessQueueExecutorV1({ tenantId: binding.tenantId,
     execution,
     results: { db: f.db, integrityKey: f.resultKey, reviewKey: f.reviewKey, storage: f.storage,
       storageClass: "local", reservations: createInMemoryNeutralReservationPort() },
@@ -135,6 +131,11 @@ test("a Marvin Hermes 0.21 template creates a pinned v5 plan, not an older gener
       assert.equal(delivery.identity.jobId, planned.receipt.jobId);
       assert.equal(delivery.authorityDigest, saved.job.authority.digest);
     },
+    host: { async execute(input) {
+      launches++;
+      await input.onLine(JSON.stringify({ type: "result", session_id: "session:marvin", exit_code: 0, text: "completed", tokens: {
+        input: 1, output: 1, total: 2, cache_read: 0, cache_write: 0 }, duration_ms: 3, timestamp: instant + 9000 }));
+    } },
   });
   const composed = await localExecutor.deliver(standardPickup, new AbortController().signal);
   const executed = composed.execution;
@@ -151,7 +152,7 @@ test("a Marvin Hermes 0.21 template creates a pinned v5 plan, not an older gener
     ["starting", "running", "usage", "succeeded"]);
   assert.equal((await execution.runs.get(binding.tenantId, executed.registered.run.id))?.state, "succeeded");
 
-  const replay = await executeAssignedHermes021MacosTaskV1(execution, { tenantId: binding.tenantId,
+  const replay = await executeAssignedHermes021MacosTaskV1(localExecutor.execution, { tenantId: binding.tenantId,
     projectId: binding.projectId, jobId: planned.receipt.jobId, attemptId: assigned.receipt.attemptId,
     leaseId: assigned.receipt.leaseId, inputDigest: planned.receipt.inputDigest });
   assert.equal(replay.delivered.state, "already_delivered");
