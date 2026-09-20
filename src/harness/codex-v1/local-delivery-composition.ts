@@ -11,6 +11,20 @@ import type { CodexLocalStartAuthorityV1 } from './local-start-runtime';
 
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const unavailable = (): never => { throw new Error('codex_local_delivery_unavailable'); };
+const id = z.string().min(1).max(180).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
+const hostBindingSchema = z.object({ queueId: id, runId: id,
+  activationDigest: digest, activationFrameDigest: digest }).strict();
+const observationSchema = z.object({
+  disposition: z.literal('observed'), mode: z.literal('initial'), status: z.literal('started'),
+  identity: z.object({ runId: id, threadId: id, turnId: id,
+    source: z.literal('correlated_codex_start_receipts') }).strict(),
+  exactPackageResult: z.null(), selectedResultItemSchemaQualified: z.literal(false),
+  nativeReadQualified: z.literal(false), canonicalPublicationAllowed: z.literal(false),
+  completionVerified: z.literal(false), grantsExecutionAuthority: z.literal(false),
+  permitsRetry: z.literal(false), permitsResume: z.literal(false), permitsNewTurn: z.literal(false),
+  writesResult: z.literal(false), writesArtifact: z.literal(false), writesReview: z.literal(false),
+  releasesCapacity: z.literal(false),
+}).strict();
 
 type ActivationEvidence = Readonly<{ frame: CodexActivationFrameV1; receivedAt: string }>;
 
@@ -34,7 +48,9 @@ export type CodexLocalDeliveryCompositionV1 = Readonly<{
   /** Already authenticated and journaled activation evidence; this adapter never creates it. */
   activationEvidence: Readonly<{ acceptedCodexActivation(queueId: string): ActivationEvidence | undefined }>;
   /** Existing one-shot initial host. The adapter has no process acquisition port. */
-  host: Readonly<{ run(signal: AbortSignal): Promise<unknown> }>;
+  host: Readonly<{ harness: 'codex-local-v1'; mode: 'initial';
+    deliveryBinding(): z.infer<typeof hostBindingSchema>; run(signal: AbortSignal): Promise<unknown> }>;
+  clock(): number;
   /** Existing non-executing controller receipt endpoint. */
   receiptPort: ControllerWorkerDeliveryPortV1;
 }>;
@@ -76,7 +92,7 @@ function activationFor(config: CodexLocalDeliveryCompositionV1, delivery: z.infe
     || Date.parse(receivedAt) < Date.parse(activation.activatedAt) || Date.parse(receivedAt) >= Date.parse(activation.activationExpiresAt)
     || Date.parse(receivedAt) >= Date.parse(frame.expiresAt)) unavailable();
   current(config, activation.queueId, activation.currentAdmissionDigest);
-  return activation;
+  return { activation, frameDigest: sha256Digest(frame), frameExpiresAt: frame.expiresAt };
 }
 
 /**
@@ -88,7 +104,8 @@ function activationFor(config: CodexLocalDeliveryCompositionV1, delivery: z.infe
 export async function deliverCodexLocalTaskV1(config: CodexLocalDeliveryCompositionV1,
   deliveryValue: unknown, routeValue: unknown, receivedAtValue: unknown, signal?: AbortSignal) {
   if (!config || !config.db || typeof config.db.transaction !== 'function' || !(config.integrityKey instanceof Uint8Array)
-    || config.integrityKey.length !== 32 || !config.host || typeof config.host.run !== 'function' || signal?.aborted) unavailable();
+    || config.integrityKey.length !== 32 || !config.host || typeof config.host.run !== 'function'
+    || typeof config.clock !== 'function' || signal?.aborted) unavailable();
   const delivery = controllerWorkerDeliverySchemaV1.parse(deliveryValue);
   const route = controllerWorkerRouteSchemaV1.parse(routeValue);
   const receivedAt = z.string().datetime().refine((value: string) => new Date(value).toISOString() === value).parse(receivedAtValue);
@@ -102,7 +119,23 @@ export async function deliverCodexLocalTaskV1(config: CodexLocalDeliveryComposit
       ? 'already_delivered' as const : 'receipt_rejected' as const, startsWork: false as const,
       grantsExecutionAuthority: false as const });
   }
-  const activation = activationFor(config, delivery, route, receivedAt);
+  const { activation, frameDigest, frameExpiresAt } = activationFor(config, delivery, route, receivedAt);
+  let highWater = Date.parse(receivedAt);
+  const fence = () => {
+    const now = config.clock();
+    if (!Number.isSafeInteger(now) || now < highWater || now < Date.parse(delivery.issuedAt)
+      || now >= Date.parse(delivery.expiresAt) || now < Date.parse(activation.activatedAt)
+      || now >= Date.parse(activation.activationExpiresAt) || now >= Date.parse(frameExpiresAt)) unavailable();
+    highWater = now;
+    current(config, activation.queueId, activation.currentAdmissionDigest);
+    if (config.host.harness !== 'codex-local-v1' || config.host.mode !== 'initial'
+      || typeof config.host.deliveryBinding !== 'function') unavailable();
+    const hostBinding = hostBindingSchema.parse(config.host.deliveryBinding());
+    if (hostBinding.queueId !== activation.queueId || hostBinding.runId !== activation.runId
+      || hostBinding.activationDigest !== activation.activationDigest
+      || hostBinding.activationFrameDigest !== frameDigest) unavailable();
+  };
+  fence();
   const receipt = await deliverControllerWorkerPacketV1(config.receiptPort, delivery, route, signal);
   const persisted = await config.db.transaction(tx => persistControllerWorkerDeliveryReceiptV1(tx, config.integrityKey,
     delivery, receipt, receivedAt));
@@ -112,8 +145,9 @@ export async function deliverCodexLocalTaskV1(config: CodexLocalDeliveryComposit
     startsWork: false as const, grantsExecutionAuthority: false as const });
   try {
     if (signal?.aborted) unavailable();
-    current(config, activation.queueId, activation.currentAdmissionDigest);
-    const observed = await config.host.run(signal ?? new AbortController().signal);
+    fence();
+    const observed = observationSchema.parse(await config.host.run(signal ?? new AbortController().signal));
+    if (signal?.aborted || observed.identity.runId !== delivery.identity.runId) unavailable();
     return Object.freeze({ delivery, receipt, state: 'started_observation' as const, observed,
       startsWork: false as const, grantsExecutionAuthority: false as const });
   } catch {

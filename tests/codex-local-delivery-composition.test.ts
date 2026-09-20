@@ -66,7 +66,21 @@ function composition(f: Awaited<ReturnType<typeof nativeTaskFixture>>, packet: C
       return queueId === frame.body.queueId ? { frame, receivedAt: at(1800) } : undefined;
     } },
     receiptPort: { async receive(value: ControllerWorkerDeliveryV1) { state.receives++; return receipt(value); } },
-    host: { async run() { state.starts++; return { status: 'started' as const }; } } };
+    clock: () => Date.parse(at(2000)),
+    host: { harness: 'codex-local-v1' as const, mode: 'initial' as const,
+      deliveryBinding() { return { queueId: frame.body.queueId, runId: frame.body.runId,
+        activationDigest: frame.body.activationDigest, activationFrameDigest: sha256Digest(frame) }; },
+      async run(): Promise<unknown> { state.starts++; return observation(packet); } } };
+}
+
+function observation(packet: ControllerWorkerDeliveryV1) {
+  return { disposition: 'observed' as const, mode: 'initial' as const, status: 'started' as const,
+    identity: { runId: packet.identity.runId, threadId: 'thread:local', turnId: 'turn:local',
+      source: 'correlated_codex_start_receipts' as const },
+    exactPackageResult: null, selectedResultItemSchemaQualified: false, nativeReadQualified: false,
+    canonicalPublicationAllowed: false, completionVerified: false, grantsExecutionAuthority: false,
+    permitsRetry: false, permitsResume: false, permitsNewTurn: false, writesResult: false,
+    writesArtifact: false, writesReview: false, releasesCapacity: false };
 }
 
 test('Codex local delivery persists the shared receipt before one injected host observation and exact replay never starts again', async t => {
@@ -107,9 +121,74 @@ test('wrong, changed, expired, and revoked deliveries refuse before receipt hand
 test('a failure after durable receipt is uncertainty and cannot be retried into another host acquisition', async t => {
   const f = await nativeTaskFixture(); t.after(f.close);
   const packet = delivery(), state = { revoked: false, receives: 0, starts: 0 }, config = composition(f, packet, state);
-  config.host = { async run() { state.starts++; throw new Error('lost host response'); } };
+  config.host = { ...config.host, async run() { state.starts++; throw new Error('lost host response'); } };
   const first = await deliverCodexLocalTaskV1(config, packet, { kind: 'local', workerId: worker.workerId }, at(2000));
   assert.equal(first.state, 'delivery_uncertain'); assert.equal(state.starts, 1);
   const replay = await deliverCodexLocalTaskV1(config, packet, { kind: 'local', workerId: worker.workerId }, at(2000));
   assert.equal(replay.state, 'already_delivered'); assert.equal(state.starts, 1);
+});
+
+test('swapped, recovery, and changed activation hosts refuse before receipt or invocation', async t => {
+  for (const mismatch of ['run', 'queue', 'activation', 'frame', 'recover'] as const) {
+    const f = await nativeTaskFixture(); t.after(f.close);
+    const packet = delivery(), state = { revoked: false, receives: 0, starts: 0 }, config = composition(f, packet, state);
+    const bound = config.host.deliveryBinding();
+    config.host = { ...config.host,
+      mode: (mismatch === 'recover' ? 'recover' : 'initial') as 'initial',
+      deliveryBinding: () => ({ ...bound,
+        ...(mismatch === 'run' ? { runId: 'run:other' } : {}),
+        ...(mismatch === 'queue' ? { queueId: 'queue:other' } : {}),
+        ...(mismatch === 'activation' ? { activationDigest: sha256Digest('other') } : {}),
+        ...(mismatch === 'frame' ? { activationFrameDigest: sha256Digest('other') } : {}),
+      }) };
+    await assert.rejects(deliverCodexLocalTaskV1(config, packet,
+      { kind: 'local', workerId: worker.workerId }, at(2000)), /codex_local_delivery_unavailable/);
+    assert.equal(state.receives, 0, mismatch); assert.equal(state.starts, 0, mismatch);
+  }
+});
+
+test('receipt delay, backwards clock, and late revocation never invoke the host after receipt', async t => {
+  for (const fault of ['expiry', 'clock', 'revoked', 'host'] as const) {
+    const f = await nativeTaskFixture(); t.after(f.close);
+    const packet = delivery({ expiresAt: at(3000) }), state = { revoked: false, receives: 0, starts: 0 };
+    const config = composition(f, packet, state);
+    let now = Date.parse(at(2000)); config.clock = () => now;
+    config.receiptPort.receive = async value => {
+      state.receives++;
+      if (fault === 'expiry') now = Date.parse(at(3000));
+      if (fault === 'clock') now--;
+      if (fault === 'revoked') state.revoked = true;
+      if (fault === 'host') {
+        const bound = config.host.deliveryBinding();
+        config.host.deliveryBinding = () => ({ ...bound, runId: 'run:other' });
+      }
+      return receipt(value);
+    };
+    const first = await deliverCodexLocalTaskV1(config, packet, { kind: 'local', workerId: worker.workerId }, at(2000));
+    assert.equal(first.state, 'delivery_uncertain', fault); assert.equal(state.starts, 0, fault);
+    const replay = await deliverCodexLocalTaskV1(config, packet, { kind: 'local', workerId: worker.workerId }, at(2000));
+    assert.equal(replay.state, 'already_delivered'); assert.equal(state.receives, 1); assert.equal(state.starts, 0);
+  }
+});
+
+test('unbounded or mismatched observations remain uncertainty and never escape the bridge', async t => {
+  for (const fault of ['extra', 'identity', 'authority', 'recover'] as const) {
+    const f = await nativeTaskFixture(); t.after(f.close);
+    const packet = delivery(), state = { revoked: false, receives: 0, starts: 0 }, config = composition(f, packet, state);
+    config.host.run = async () => {
+      state.starts++;
+      const safe = observation(packet);
+      return { ...safe,
+        ...(fault === 'extra' ? { privateDetails: 'synthetic-private-detail' } : {}),
+        ...(fault === 'identity' ? { identity: { ...safe.identity, runId: 'run:other' } } : {}),
+        ...(fault === 'authority' ? { grantsExecutionAuthority: true } : {}),
+        ...(fault === 'recover' ? { mode: 'recover' } : {}),
+      };
+    };
+    const first = await deliverCodexLocalTaskV1(config, packet, { kind: 'local', workerId: worker.workerId }, at(2000));
+    assert.equal(first.state, 'delivery_uncertain', fault); assert.equal('observed' in first, false);
+    assert.equal(JSON.stringify(first).includes('synthetic-private-detail'), false);
+    await deliverCodexLocalTaskV1(config, packet, { kind: 'local', workerId: worker.workerId }, at(2000));
+    assert.equal(state.starts, 1);
+  }
 });

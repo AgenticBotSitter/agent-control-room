@@ -222,6 +222,14 @@ test('portable activation starts once and recovery reads only the durable thread
   const f = await portableActivation(), starts = new SqliteCodexStartJournalV1(':memory:', { testOnlyAllowEphemeral: true });
   t.after(() => { starts.close(); f.journal.close(); });
   const initial = startHost(f, starts);
+  assert.equal(initial.host.mode, 'initial');
+  if (initial.host.mode !== 'initial') throw new Error('expected initial host');
+  const activationEvidence = f.journal.acceptedCodexActivation(f.body.queueId)!;
+  assert.deepEqual(initial.host.deliveryBinding(), { queueId: f.body.queueId,
+    runId: f.workspaceIntent.runId, activationDigest: activationEvidence.frame.body.activationDigest,
+    activationFrameDigest: sha256Digest(activationEvidence.frame) });
+  assert.equal(initial.opened(), 0, 'reading host binding cannot acquire a process');
+  assert.deepEqual(initial.effects, []);
   const started = await initial.host.run(new AbortController().signal);
   assert.deepEqual(started.identity, { runId: f.workspaceIntent.runId, threadId: 'thread:durable-host',
     turnId: 'turn:durable-host', source: 'correlated_codex_start_receipts' });
