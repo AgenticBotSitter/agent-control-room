@@ -79,6 +79,10 @@ Remaining before an automatic local worker is enabled:
   proof;
 - composition with the durable result and review services.
 
+The permanent local-installation recovery model, including the boundary
+between the one authoritative database and local result bytes, is documented
+in [LOCAL_INSTALLATION_OPERATIONS.md](LOCAL_INSTALLATION_OPERATIONS.md).
+
 ## U2 — several-computer delivery
 
 Completed in source:
