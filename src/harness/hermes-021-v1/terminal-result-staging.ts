@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { ArtifactReadPortV1, ArtifactStoragePortV1 } from "../../node-executor/artifact-storage";
 import { resultBytesHash } from "../../artifacts/v1/native-results";
 import { sha256Digest } from "../../security/canonical-digest";
-import type { ControllerWorkerDeliveryV1 } from "../v1/controller-worker-delivery";
+import { controllerWorkerDeliverySchemaV1, type ControllerWorkerDeliveryV1 } from "../v1/controller-worker-delivery";
 import { hermes021MacosTerminalResultSchemaV1, type Hermes021MacosTerminalResultV1 } from "./macos-local-worker";
 
 const instant = z.string().datetime().refine(value => new Date(value).toISOString() === value);
@@ -34,7 +34,7 @@ export function createHermes021MacosTerminalStageV1(input: Readonly<{
   receivedAt: string;
 }>): Hermes021MacosTerminalStagePortV1 {
   if (!input?.storage || typeof input.storage.put !== "function" || typeof input.storage.read !== "function") unavailable();
-  const receivedAt = instant.parse(input.receivedAt), delivery = input.delivery;
+  const receivedAt = instant.parse(input.receivedAt), delivery = controllerWorkerDeliverySchemaV1.parse(input.delivery);
   const artifactId = `artifact:result:${sha256Digest({ purpose: "hermes-021-macos-terminal-stage/v1", deliveryDigest: delivery.deliveryDigest }).slice(7)}`;
   const expected = { deliveryDigest: delivery.deliveryDigest, identity: delivery.identity, receivedAt };
   const decode = (bytes: Uint8Array): Hermes021MacosTerminalResultV1 => {
