@@ -10,6 +10,10 @@ Agent Control Room has two installation choices:
 They are two ways to run one product. They do not create separate products,
 forks, databases, schedulers, permission systems, or task lifecycles.
 
+The detailed product plan for completing the **This computer** choice while
+preserving this shared architecture is
+[SINGLE_MACHINE_PRODUCT_BUILD_PLAN.md](SINGLE_MACHINE_PRODUCT_BUILD_PLAN.md).
+
 Any substantial new component in either route must pass the documented
 [reuse-before-custom decision gate](REUSE_DECISION_GATE.md). The installation
 choice never justifies adding a second scheduler, authority database, or
