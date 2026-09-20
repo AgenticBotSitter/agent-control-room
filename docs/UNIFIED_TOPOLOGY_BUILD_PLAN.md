@@ -56,11 +56,10 @@ Completed in source:
   PostgreSQL database. It records a local or remote acknowledgement exactly
   once, survives a controller restart, and cannot start a worker or grant new
   authority by itself.
-
-Remaining:
-
-- add one common result-return composition that uses the current durable
-  result and review services.
+- a common local completed-result composition that derives the result binding
+  from the controller-prepared packet, then uses the current durable result
+  and review services. It does not rerun a task when a prior delivery was
+  recorded, and it does not claim recovery of terminal bytes it did not save.
 
 ## U1 — local worker foundation
 
