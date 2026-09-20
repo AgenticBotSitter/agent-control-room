@@ -11,6 +11,10 @@ Control Room keeps one authoritative PostgreSQL database, one task/review
 lifecycle and explicit effect boundaries. A candidate may improve a user
 interface or adapter, but it may not silently replace those rules.
 
+For any substantial new component, the required comparison and adoption record
+is defined in [REUSE_DECISION_GATE.md](REUSE_DECISION_GATE.md). This register
+is the candidate inventory, not a substitute for that decision.
+
 | Candidate | Current decision | Useful possible parts | Must not adopt without a separate fit test |
 | --- | --- | --- | --- |
 | `mreflow/control-center` | Partially adopted for news collection only. | Feed discovery, source reading, freshness and curation. | Its application-level workflow, identities, scheduling or storage assumptions. Provenance is in `THIRD_PARTY.md`. |

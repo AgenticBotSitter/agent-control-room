@@ -10,6 +10,11 @@ Agent Control Room has two installation choices:
 They are two ways to run one product. They do not create separate products,
 forks, databases, schedulers, permission systems, or task lifecycles.
 
+Any substantial new component in either route must pass the documented
+[reuse-before-custom decision gate](REUSE_DECISION_GATE.md). The installation
+choice never justifies adding a second scheduler, authority database, or
+agent framework.
+
 ## Non-negotiable decisions
 
 1. Each installation has one authoritative PostgreSQL database. Local workers
