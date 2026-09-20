@@ -26,11 +26,10 @@ export function retainHermes021MacosResultBindingV1(prepared: Hermes021MacosPrep
  * durable-result and pending-review path. It creates no queue, retry loop,
  * approval, or second authority.
  *
- * If a process stops after Hermes returned but before publication, this helper
- * deliberately reports no publication on its next call: delivery replay does
- * not invoke Hermes again. Persisting and recovering terminal bytes is a
- * separate later recovery feature, not something this composition pretends to
- * solve.
+ * If a process stops after Hermes returned but before publication, an exact
+ * authenticated delivery with staged terminal bytes can recover publication.
+ * A receipt without recoverable bytes reports no publication and never invokes
+ * Hermes again. Recovery still requires a current canonical assignment.
  */
 export async function executeAndPublishAssignedHermes021MacosTaskV1(config: Readonly<{
   execution: Hermes021MacosAssignedTaskExecutionV1;

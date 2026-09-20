@@ -32,13 +32,25 @@ export async function executeAssignedHermes021MacosTaskV1(config: Hermes021Macos
     || !(config.runs instanceof HarnessRunStoreV1) || !config.delivery || typeof config.delivery !== "object" || signal?.aborted) unavailable();
   const clock = config.clock ?? Date.now;
   if (typeof clock !== "function") unavailable();
-  const prepared = await config.preparation.prepare(referenceValue);
+  let prepared = await config.preparation.prepare(referenceValue);
   // The initial preparation is what binds this execution to the queue pickup.
   // Recheck that same binding directly before we create a run record or contact
   // the private launcher so a late revoke cannot start Marvin in the gap.
   await config.preparation.assertCurrent(referenceValue, prepared);
-  const receivedAt = new Date(clock()).toISOString();
-  if (!z.string().datetime().safeParse(receivedAt).success || Date.parse(receivedAt) > Date.parse(prepared.delivery.expiresAt)) unavailable();
+  const now = new Date(clock()).toISOString();
+  if (!z.string().datetime().safeParse(now).success || Date.parse(now) > Date.parse(prepared.delivery.expiresAt)) unavailable();
+  // A later pickup prepares fresh issuance timestamps. Recover the authenticated
+  // original packet before deriving its run identity or comparing a receipt.
+  // assertCurrent compares every stable canonical binding and still refuses a
+  // changed/revoked/expired assignment; only issuance time is historical here.
+  const retained = await config.delivery.db.transaction(tx => readControllerWorkerDeliveryReceiptV1(tx,
+    config.delivery.integrityKey, prepared.delivery.identity));
+  if (retained) {
+    const recovered = Object.freeze({ ...prepared, delivery: retained.delivery });
+    await config.preparation.assertCurrent(referenceValue, recovered);
+    prepared = recovered;
+  }
+  const receivedAt = retained?.receipt.receivedAt ?? now;
   const candidate = Hermes021MacosLocalRunRegistrationV1(prepared.delivery, receivedAt);
   const existing = await config.runs.get(candidate.tenantId, candidate.id);
   // A restart after a completed delivery must reach the durable receipt

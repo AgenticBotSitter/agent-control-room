@@ -114,8 +114,9 @@ test("a Marvin Hermes 0.21 template creates a pinned text-review plan, not an ol
     localServiceId: "service:marvin-hermes", workerId: "worker:marvin", expectedVersion: "0.21.3" as const,
     sourceRevision: "00570550",
   };
+  let deliveryNow = instant + 9000;
   const dispatcher = new Hermes021MacosDispatchPreparationV1(f.db, planner, localBinding,
-  () => instant + 9000);
+  () => deliveryNow);
   const dispatch = await dispatcher.prepare({ tenantId: binding.tenantId, projectId: binding.projectId,
     jobId: planned.receipt.jobId, attemptId: assigned.receipt.attemptId, leaseId: assigned.receipt.leaseId,
     inputDigest: planned.receipt.inputDigest });
@@ -128,16 +129,17 @@ test("a Marvin Hermes 0.21 template creates a pinned text-review plan, not an ol
     policyId: "policy:marvin-text-review", binding: localBinding, authorityDigest: saved.job.authority.digest,
     taskInputDigest: sha256Digest({ prompt: saved.input.prompt, instructions: saved.input.instructions }),
     expiresAt: at(240_000),
-  }), () => instant + 9_000);
+  }), () => deliveryNow);
 
   let launches = 0;
   const execution = { preparation: dispatcher, runs: new HarnessRunStoreV1(f.db, new Uint8Array(32).fill(25)),
     delivery: { db: f.db, integrityKey: new Uint8Array(32).fill(24),
-    binding: localBinding, policy: localPolicy, terminalResultStorage: f.storage }, clock: () => instant + 9000 };
+    binding: localBinding, policy: localPolicy, terminalResultStorage: f.storage }, clock: () => deliveryNow };
+  const results = { db: f.db, integrityKey: f.resultKey, reviewKey: f.reviewKey, storage: f.storage,
+    storageClass: "local" as const, reservations: createInMemoryNeutralReservationPort() };
   const localExecutor = createHermes021LocalSubprocessQueueExecutorV1({ tenantId: binding.tenantId,
     execution,
-    results: { db: f.db, integrityKey: f.resultKey, reviewKey: f.reviewKey, storage: f.storage,
-      storageClass: "local", reservations: createInMemoryNeutralReservationPort() },
+    results,
     assertAuthority: delivery => {
       assert.equal(delivery.identity.jobId, planned.receipt.jobId);
       assert.equal(delivery.authorityDigest, saved.job.authority.digest);
@@ -188,13 +190,24 @@ test("a Marvin Hermes 0.21 template creates a pinned text-review plan, not an ol
   assert.equal((await execution.runs.get(binding.tenantId, executed.registered.run.id))?.state, "succeeded");
 
   const completedEvents = await execution.runs.events(binding.tenantId, executed.registered.run.id);
-  const recovered = await localExecutor.deliver(located, new AbortController().signal);
+  deliveryNow += 5_000;
+  const restartedExecutor = createHermes021LocalSubprocessQueueExecutorV1({ tenantId: binding.tenantId,
+    execution: { ...execution,
+      preparation: new Hermes021MacosDispatchPreparationV1(f.db, planner, localBinding, () => deliveryNow),
+      runs: new HarnessRunStoreV1(f.db, new Uint8Array(32).fill(25)) },
+    results, assertAuthority: delivery => assert.equal(delivery.authorityDigest, saved.job.authority.digest),
+    host: { async execute() { launches++; throw new Error("restart must never invoke Hermes"); } },
+  });
+  const recovered = await restartedExecutor.deliver(located, new AbortController().signal);
   assert.equal(recovered.execution.delivered.state, "recovered_terminal_result");
   assert.equal(recovered.execution.delivered.outcome?.kind, "completed");
   assert.equal(recovered.execution.lifecycle.length, 0,
     "restart recovery retrieves evidence without appending a second completion lifecycle");
   assert.equal(recovered.publication?.replayed, true,
     "restart recovery finishes through the existing durable result receipt");
+  assert.equal(recovered.execution.prepared.delivery.deliveryDigest, executed.prepared.delivery.deliveryDigest,
+    "delayed recovery retains the authenticated original packet instead of signing fresh issuance time");
+  assert.equal(recovered.execution.delivered.receipt.receivedAt, executed.delivered.receipt.receivedAt);
   assert.equal(launches, 1, "restart recovery never invokes Marvin again");
   assert.deepEqual(await execution.runs.events(binding.tenantId, executed.registered.run.id), completedEvents,
     "the terminal harness history is immutable across restart recovery");
@@ -207,6 +220,15 @@ test("a Marvin Hermes 0.21 template creates a pinned text-review plan, not an ol
   assert.equal(replay.registered.replayed, true);
   assert.equal(replay.lifecycle.length, 0);
   assert.equal(launches, 1);
+
+  const reboundExecution = { ...restartedExecutor.execution,
+    preparation: new Hermes021MacosDispatchPreparationV1(f.db, planner,
+      { ...localBinding, workerId: "worker:different" }, () => deliveryNow) };
+  await assert.rejects(() => executeAssignedHermes021MacosTaskV1(reboundExecution, {
+    tenantId: binding.tenantId, projectId: binding.projectId, jobId: planned.receipt.jobId,
+    attemptId: assigned.receipt.attemptId, leaseId: assigned.receipt.leaseId,
+    inputDigest: planned.receipt.inputDigest }), /hermes_021_macos_dispatch_preparation_unavailable/);
+  assert.equal(launches, 1, "a retained receipt cannot move the task to a different worker");
 
   // The runner performs the same canonical recheck immediately before launch.
   // Simulate a revocation after packaging but before the executor reaches its
