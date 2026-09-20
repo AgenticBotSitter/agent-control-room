@@ -57,6 +57,16 @@ qualification using the already-signed-in installation. The result must be a
 sanitized pass record: no prompt, result text, account information, command,
 path, token, or credential is retained in Control Room.
 
+From the reviewed checkout, the owner-run command is:
+
+```sh
+npx --yes pnpm@11.19.0 run qualify:hermes:local -- --owner-attended
+```
+
+The command requires fresh owner authorization for each non-dry attempt. Its
+matching `--dry-run` form checks only the bounded invocation shape and does
+not contact Hermes.
+
 If it refuses or ends early, record the safe `failureReason` only: it will say
 whether the local runner was unavailable, timed out, returned no final result,
 returned no model response, exited unsuccessfully, or returned an unexpected
