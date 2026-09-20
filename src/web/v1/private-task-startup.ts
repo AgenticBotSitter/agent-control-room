@@ -1,4 +1,5 @@
 import { localId } from "../../harness/v1/native-run-identifiers";
+import { captureLocalAdapterInstallationPortsV1, type LocalAdapterInstallationPortsV1 } from "../../harness/v1/local-adapter-installation";
 import { createPrivatePostgresDatabase, validatePrivatePostgresConfiguration, type PrivatePostgresConfiguration } from "./private-postgres";
 import { verifyPrivateDatabase, verifyTaskCoordinatorDatabase, verifyNativeResultDatabase, verifyNativeEvidenceDatabase, verifyNativeSessionDatabase, verifyIdeaCreationDatabase, verifyIdeaRuntimeDatabase, verifyPrivateIdeaAdapter } from "./private-database-preflight";
 import { z } from "zod";
@@ -39,6 +40,8 @@ export type PrivateTaskStartupConfiguration = {
   news?: NewsStartupConfiguration;
   /** Explicit, existing local artifact directory for the agent-task composition. */
   artifactStorage?: PrivateArtifactStorageConfigurationV1;
+  /** Optional inert installation-owned adapters; never mounted in the queue or browser. */
+  preparedLocalAdapters?: LocalAdapterInstallationPortsV1;
   coordinator: Pick<TaskCoordinatorConfiguration, "planning" | "routes" | "approvals" | "quality" | "revisionPlanning" | "nativeHttp" | "hermes021Local"> & {
     codex?: CodexPermitConfiguration;
     nativeQueue?: true;
@@ -62,6 +65,8 @@ export function bindPrivateCodexResultReturnV1(settings: CodexResultIntakeSettin
 }
 export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartupConfiguration) {
   try {
+    const preparedLocalAdapters = input.preparedLocalAdapters === undefined ? undefined
+      : captureLocalAdapterInstallationPortsV1(input.preparedLocalAdapters);
     const artifactStorage = input.artifactStorage
       ? capturePrivateArtifactStorageConfigurationV1(input.artifactStorage) : undefined;
     const web = validatePrivateStartupConfiguration(input.web);
@@ -160,7 +165,7 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
     const news = input.news ? captureNewsStartupConfiguration(input.news, web,
       [web.database, database, resultDatabase, evidence?.database, sessions?.database, queueWorker?.database,
         ideaCreation?.database, ideaRuntime?.database].filter((value): value is PrivatePostgresConfiguration => !!value)) : undefined;
-    return { web, database, planning, routes, approvals, codex, quality, revisionPlanning, resultDatabase, evidence, sessions,
+    return { web, preparedLocalAdapters, database, planning, routes, approvals, codex, quality, revisionPlanning, resultDatabase, evidence, sessions,
       codexResultReturn, nativeHttp, nativeQueue, nativeQueueRecovery, queueWorker, hermes021Local, ideaCreation, ideaRuntime, news, artifactStorage };
   } catch { throw new Error("private_task_startup_config_invalid"); }
 }

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { captureLocalAdapterInstallationPortsV1, type LocalAdapterInstallationPortsV1 } from "../../harness/v1/local-adapter-installation";
 import { localId } from "../../harness/v1/native-run-identifiers";
 import { validatePrivateTaskStartupConfiguration, type PrivateTaskStartupConfiguration } from "./private-task-startup";
 import type { PrivateStartupConfiguration } from "./private-startup";
@@ -72,6 +73,8 @@ export type AgentTaskOperatorSettingsV1 = z.infer<typeof operatorSettingsSchema>
 
 export type AgentTaskOperatorTrustedInputs = {
   web: PrivateStartupConfiguration;
+  /** Prepared source-only compositions, retained without enabling delivery. */
+  preparedLocalAdapters?: LocalAdapterInstallationPortsV1;
   planning: {
     template: NativeTaskTemplate;
     additionalTemplates?: readonly NativeTaskTemplate[];
@@ -548,6 +551,9 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
     refuse("missing_database_role:news");
 
   const full: PrivateTaskStartupConfiguration = {
+    ...(t.preparedLocalAdapters === undefined ? {} : {
+      preparedLocalAdapters: captureLocalAdapterInstallationPortsV1(t.preparedLocalAdapters as LocalAdapterInstallationPortsV1),
+    }),
     web: t.web as PrivateStartupConfiguration,
     coordinator,
     ...(f.artifactStorage && t.artifactStorage ? { artifactStorage: t.artifactStorage } : {}),
@@ -583,6 +589,7 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
   const artifactStorageShape = full.artifactStorage === undefined ? undefined : deepDetach(full.artifactStorage);
   const newsShape = full.news === undefined ? undefined : deepDetach(full.news);
   const hostCompatible: PrivateTaskStartupConfiguration = {
+    ...(full.preparedLocalAdapters === undefined ? {} : { preparedLocalAdapters: full.preparedLocalAdapters }),
     web: webShape,
     ...(artifactStorageShape !== undefined ? { artifactStorage: artifactStorageShape } : {}),
     ...(newsShape !== undefined ? { news: newsShape } : {}),
