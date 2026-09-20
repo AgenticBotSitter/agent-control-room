@@ -62,7 +62,7 @@ export async function executeAssignedHermes021MacosTaskV1(config: Hermes021Macos
   if (registered.run.state === "discovered") await append({ category: "lifecycle", state: "starting" });
   const delivered = await deliverHermes021MacosLocalTaskV1(config.delivery, prepared.delivery,
     prepared.route, receivedAt, signal);
-  if (delivered.state === "completed_delivery") {
+  if (delivered.state === "completed_delivery" || delivered.state === "recovered_terminal_result") {
     const outcome = delivered.outcome;
     if (outcome?.kind === "completed") {
       await append({ category: "lifecycle", state: "running" });

@@ -59,6 +59,8 @@ export interface Hermes021MacosLocalPrivatePortV1 {
   run(input: Readonly<{
     localServiceId: string;
     task: Hermes021MacosTaskV1;
+    /** When supplied, call this on the exact terminal result before returning. */
+    terminalStage?: { capture(terminal: unknown, signal?: AbortSignal): Promise<void> };
     signal?: AbortSignal;
   }>): Promise<readonly unknown[]>;
 }
@@ -155,14 +157,19 @@ export function classifyHermes021MacosResultV1(lines: readonly unknown[]): Herme
 
 /** Performs one caller-authorized local invocation. It does not start a process itself. */
 export async function runHermes021MacosLocalTaskV1(bindingValue: unknown, taskValue: unknown,
-  privatePort: Hermes021MacosLocalPrivatePortV1, signal?: AbortSignal): Promise<Hermes021MacosTaskOutcomeV1> {
+  privatePort: Hermes021MacosLocalPrivatePortV1, signal?: AbortSignal,
+  terminalStage?: { capture(terminal: unknown, signal?: AbortSignal): Promise<void> }): Promise<Hermes021MacosTaskOutcomeV1> {
   const binding = hermes021MacosLocalBindingSchemaV1.parse(bindingValue);
   const task = hermes021MacosTaskSchemaV1.parse(taskValue);
   if (!privatePort || typeof privatePort.run !== "function" || signal?.aborted) unavailable();
   try {
-    const lines = await privatePort.run(Object.freeze({ localServiceId: binding.localServiceId, task, signal }));
+    const lines = await privatePort.run(Object.freeze({ localServiceId: binding.localServiceId, task, terminalStage, signal }));
     if (!Array.isArray(lines)) return Object.freeze({ kind: "uncertain", reason: "hermes_local_result_invalid" });
-    return classifyHermes021MacosResultV1(lines);
+    const outcome = classifyHermes021MacosResultV1(lines);
+    // This fallback closes ordinary in-process paths. The permanent private
+    // runner must use terminalStage while it reads the line, before returning.
+    if (outcome.kind === "completed" && terminalStage) await terminalStage.capture(outcome.terminalResult, signal);
+    return outcome;
   } catch {
     return Object.freeze({ kind: "uncertain", reason: "hermes_local_transport_unavailable" });
   }
@@ -181,11 +188,12 @@ export async function runHermes021MacosLocalTaskV1(bindingValue: unknown, taskVa
  */
 export async function runAdmittedHermes021MacosLocalTaskV1(deliveryValue: unknown, routeValue: unknown,
   bindingValue: unknown, policy: Hermes021MacosTaskPolicyPortV1,
-  privatePort: Hermes021MacosLocalPrivatePortV1, signal?: AbortSignal): Promise<Hermes021MacosTaskOutcomeV1> {
+  privatePort: Hermes021MacosLocalPrivatePortV1, signal?: AbortSignal,
+  terminalStage?: { capture(terminal: unknown, signal?: AbortSignal): Promise<void> }): Promise<Hermes021MacosTaskOutcomeV1> {
   const delivery = controllerWorkerDeliverySchemaV1.parse(deliveryValue);
   const binding = hermes021MacosLocalBindingSchemaV1.parse(bindingValue);
   const task = prepareHermes021MacosTaskV1(delivery, routeValue, binding);
   if (!policy || typeof policy.assertAdmitted !== "function" || signal?.aborted) unavailable();
   assertSynchronousFence(() => policy.assertAdmitted(Object.freeze({ delivery, task, binding })), unavailable);
-  return runHermes021MacosLocalTaskV1(binding, task, privatePort, signal);
+  return runHermes021MacosLocalTaskV1(binding, task, privatePort, signal, terminalStage);
 }

@@ -45,7 +45,8 @@ export async function executeAndPublishAssignedHermes021MacosTaskV1(config: Read
 }>> {
   if (!config || !config.execution || !config.results || typeof config.assertAuthority !== "function") unavailable();
   const execution = await executeAssignedHermes021MacosTaskV1(config.execution, reference, signal);
-  if (execution.delivered.state !== "completed_delivery" || execution.delivered.outcome?.kind !== "completed") {
+  if ((execution.delivered.state !== "completed_delivery" && execution.delivered.state !== "recovered_terminal_result")
+    || execution.delivered.outcome?.kind !== "completed") {
     return Object.freeze({ execution, startsWork: false as const, grantsExecutionAuthority: false as const });
   }
   const retainedBinding = retainHermes021MacosResultBindingV1(execution.prepared);

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createControllerWorkerDeliveryV1 } from "../src/harness/v1/controller-worker-delivery";
-import { deliverHermes021MacosLocalTaskV1 } from "../src/harness/hermes-021-v1";
+import { deliverHermes021MacosLocalTaskV1, type Hermes021MacosLocalPrivatePortV1 } from "../src/harness/hermes-021-v1";
+import { InMemoryArtifactStorage } from "../src/node-executor/artifact-storage";
 import { sha256Digest } from "../src/security";
 import { at, nativeTaskFixture, registration } from "./native-task-fixture";
 import { binding, input } from "./hermes-native-fixture";
@@ -27,22 +28,25 @@ function delivery() {
 
 test("Marvin's local delivery is recorded before one controlled invocation and never auto-runs again after restart", async t => {
   const f = await nativeTaskFixture(); t.after(f.close);
-  const packet = delivery(); let policyCalls = 0, runs = 0;
+  const packet = delivery(); let policyCalls = 0, runs = 0, stages = 0;
+  const terminalResultStorage = new InMemoryArtifactStorage();
   const config = { db: f.db, integrityKey: receiptKey, binding: localBinding,
     policy: { assertAdmitted(value: { delivery: typeof packet }) {
       policyCalls++; assert.equal(value.delivery.deliveryDigest, packet.deliveryDigest);
-    } }, privatePort: { async run() { runs++; return [result]; } } };
+    } }, privatePort: { async run(input: Parameters<Hermes021MacosLocalPrivatePortV1["run"]>[0]) { runs++; await input.terminalStage?.capture(result); stages++; return [result]; } }, terminalResultStorage };
   const first = await deliverHermes021MacosLocalTaskV1(config, packet,
     { kind: "local", workerId: localBinding.workerId }, at(2000));
   assert.equal(first.state, "completed_delivery");
   assert.equal(first.outcome?.kind, "completed");
   assert.equal(runs, 1);
+  assert.equal(stages, 1, "the private runner stages the terminal line before it returns");
 
   // A fresh composition over the same database models a controller restart.
   const restarted = await deliverHermes021MacosLocalTaskV1({ ...config, privatePort: { async run() {
     runs++; return [result]; } } }, packet, { kind: "local", workerId: localBinding.workerId }, at(2000));
-  assert.equal(restarted.state, "already_delivered");
-  assert.equal("outcome" in restarted, false);
+  assert.equal(restarted.state, "recovered_terminal_result");
+  assert.equal(restarted.outcome?.kind, "completed");
+  assert.equal(restarted.outcome?.text, result.text);
   assert.equal(runs, 1);
   // The first delivery is checked on receipt and immediately before launch;
   // the restart replay is checked once but never invokes Hermes twice.

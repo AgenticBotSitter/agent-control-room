@@ -78,6 +78,9 @@ configuration and disposable restore evidence exist.
 Ready in source:
 
 - persistent local result-byte custody and restart validation;
+- terminal-result staging and recovery composition: an installed local runner
+  can preserve one finished terminal line before returning, so a restart can
+  publish it without launching the task again;
 - one-database application composition;
 - local and remote worker delivery records that preserve uncertainty;
 - a local Hermes text-only qualification launcher.
@@ -88,5 +91,5 @@ Still requires owner-authorized evidence:
 - a selected private artifact backup location and a verified restore;
 - a persistent unprivileged service supervisor;
 - the local Hermes text-only qualification, followed by a controlled
-  worktree-based runner qualification;
+  worktree-based runner qualification that proves its terminal-stage callback;
 - a two-computer delivery and reconnect proof.

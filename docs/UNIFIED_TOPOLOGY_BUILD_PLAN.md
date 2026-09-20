@@ -116,6 +116,11 @@ Completed in source:
   result's contents as if they were the task's approval while preserving both
   checks before a pending-review record is written, and also refuses a result
   when the task's current recorded authority no longer matches the run.
+- a protected terminal-result staging contract now lets the installation-owned
+  local runner save one exact terminal Hermes line before it returns. An exact
+  delivery replay can read that saved line and continue ordinary publication
+  without launching Hermes a second time. The staging bytes are not task
+  ownership, a retry queue, or a second database.
 
 Remaining before an automatic local worker is enabled:
 
@@ -125,10 +130,8 @@ Remaining before an automatic local worker is enabled:
   operational worker);
 - a controlled local data directory, restart procedure, and backup/restore
   proof.
-- durable recovery of terminal result bytes when the process stops after
-  Hermes returns but before the normal result publisher completes. A delivery
-  replay correctly refuses to run Hermes twice, but must not be mislabeled as
-  result recovery.
+- installation-owned runner wiring that calls the terminal-stage callback while
+  it reads Hermes's terminal line, followed by a real local restart proof.
 - a successful owner-attended qualification, local data recovery proof, and
   terminal-byte recovery remain separate prerequisites for enabling an
   automatic local worker. The disposable local/remote lifecycle and correction
