@@ -133,3 +133,10 @@ delivery; they are not a second queue, approval, or database. After a restart,
 Control Room can read only that exact staged line and send it through the
 ordinary result-and-review path without launching Hermes again. The runner
 wiring and a real restart proof are still required before this is enabled.
+
+`createHermes021MacosStreamJsonPrivatePortV1` is the source-level bridge for
+that runner wiring. An installation supplies only an already-owned process
+wrapper that emits bounded JSON lines. The bridge selects one valid terminal
+line, stages it before returning it to Control Room, and refuses to stage an
+ambiguous stream. It does not know how to launch Hermes and cannot read or
+select a login, model, provider, path, or network destination.

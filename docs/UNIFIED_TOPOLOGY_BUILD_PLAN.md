@@ -130,8 +130,8 @@ Remaining before an automatic local worker is enabled:
   operational worker);
 - a controlled local data directory, restart procedure, and backup/restore
   proof.
-- installation-owned runner wiring that calls the terminal-stage callback while
-  it reads Hermes's terminal line, followed by a real local restart proof.
+- installation-owned binding of the tested stream-json runner bridge to the
+  actual Hermes process, followed by a real local restart proof.
 - a successful owner-attended qualification, local data recovery proof, and
   terminal-byte recovery remain separate prerequisites for enabling an
   automatic local worker. The disposable local/remote lifecycle and correction

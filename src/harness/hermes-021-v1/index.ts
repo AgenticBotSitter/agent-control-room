@@ -10,3 +10,4 @@ export * from "./assigned-task-execution";
 export * from "./local-run-registration";
 export * from "./completed-task-publication";
 export * from "./terminal-result-staging";
+export * from "./stream-json-private-port";
