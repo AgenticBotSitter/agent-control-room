@@ -165,3 +165,13 @@ Source tests cover local and remote route doubles, correction handling,
 two-worker targeting, reconnect, revocation, incompatible-version refusal,
 and protected local terminal-result recovery. Those tests support this
 procedure, but do not replace the owner-operated proofs above.
+
+Before an owner-run proof, contributors can run the focused source check:
+
+```sh
+npx --yes pnpm@11.19.0 run test:unified-topology
+```
+
+It creates only disposable test data. It does not qualify a harness, open a
+listener, contact a provider, create a production database, or make an
+installation operational.
