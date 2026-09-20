@@ -557,6 +557,11 @@ export class TaskAssignmentCoordinator {
       EXISTS(SELECT 1 FROM control_native_delivery_envelopes WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3)
       OR EXISTS(SELECT 1 FROM control_native_transmission_intents WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3)
       OR EXISTS(SELECT 1 FROM control_native_delivery_receipts WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3)
+      -- A route-neutral receipt means a local or remote worker may already
+      -- have received this task.  Treat it exactly like an outgoing envelope:
+      -- a missing pg-boss acknowledgement is never evidence that work did
+      -- not start.
+      OR EXISTS(SELECT 1 FROM control_worker_delivery_receipts WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3)
       OR EXISTS(SELECT 1 FROM control_harness_runs WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3)
       AS present`, [ref.tenantId, ref.jobId, ref.attemptId]);
     if (evidence.rows.length !== 1 || evidence.rows[0].present !== false) conflict();
