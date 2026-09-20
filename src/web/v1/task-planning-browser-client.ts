@@ -76,9 +76,9 @@ export function createTaskPlanningBrowserClient(transport: typeof fetch = fetch)
         return value;
       } catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable"); }
     },
-    async prepare(projectId: string, jobId: string, expectedInputDigest: string) {
+    async prepare(projectId: string, jobId: string, expectedInputDigest: string, templateId?: string) {
       ids(projectId, jobId);
-      const parsed = taskPlanningDraftSchema.safeParse({ expectedInputDigest });
+      const parsed = taskPlanningDraftSchema.safeParse({ expectedInputDigest, ...(templateId === undefined ? {} : { templateId }) });
       if (!parsed.success) throw new BrowserRequestError("invalid_request");
       const body = JSON.stringify(parsed.data);
       if (pending && (pending.projectId !== projectId || pending.jobId !== jobId || pending.body !== body)) throw new BrowserRequestError("uncertain");

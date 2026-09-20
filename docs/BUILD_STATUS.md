@@ -34,6 +34,10 @@ separate host qualifications are complete.
 - The protected local setup page presents Hermes Agent, Claude Code and Codex
   separately, including what each could do after setup and what blocks it now.
   It never treats a source contract or setup proof as a live agent.
+- When an installation has more than one prepared worker for a project, task
+  preparation requires the owner to choose one. The selected template is bound
+  into the saved plan; Control Room never silently selects a worker or turns
+  that choice into assignment or launch authority.
 - Local Hermes, Codex and Claude identities have a shared test proof for one
   local topology, one non-executing delivery contract, wrong-worker refusal,
   restart receipt reconciliation and the existing corrected-result lifecycle.

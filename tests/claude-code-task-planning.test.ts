@@ -45,3 +45,29 @@ test("a local Claude task can be saved in the shared lifecycle but cannot be ass
   const foreignProfile = { ...template, connectorProfileDigest: sha256Digest("foreign-claude-profile") };
   assert.throws(() => nativeTaskTemplateSchema.parse(foreignProfile), /unsupported native task template/);
 });
+
+test("one project can offer reviewed local workers without silently choosing one", async t => {
+  const f = await ownerReviewFixture(); t.after(f.close);
+  const make = (id: string, executor: string): NativeTaskTemplate => {
+    const authority: NativeTaskTemplate["authority"] = { projectId: binding.projectId, allowedExecutor: executor,
+      allowedOperations: [CLAUDE_CODE_LOCAL_START_OPERATION_V1], credentialRefs: ["credential:claude"], filesystemRoots: [],
+      networkPolicy: "none", allowedNetworkDestinations: [], effectPolicy: "approval_required", maxRisk: "low",
+      maxDurationSeconds: 60, maxConcurrentEffects: 1, expiresAt: at(300_000), digest: "" };
+    authority.digest = computeAuthorityDigest(authority);
+    return { id, adapter: CLAUDE_CODE_LOCAL_ADAPTER_V1, authority, instructions: "Return bounded review text.",
+      connectorProfileDigest: CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1, acceptanceProfileId: f.profile.id,
+      acceptanceProfileDigest: sha256Digest(f.profile) };
+  };
+  const first = make("template:claude-one", "executor:claude-one");
+  const second = make("template:claude-two", "executor:claude-two");
+  const planner = new TaskExecutionPlanner(f.db, f.scope, { template: first, additionalTemplates: [second],
+    integrityKey: new Uint8Array(32).fill(75), reviewIntegrityKey: f.reviewKey, checkpoints: f.checkpoints }, () => instant + 7_000);
+  assert.deepEqual(planner.templatesForProject(binding.projectId).map(value => value.id), [first.id, second.id]);
+  const source = await f.tasks.propose(f.identity, binding.projectId, taskDraft, "claude-template-choice-source");
+  await assert.rejects(() => planner.plan(f.identity, binding.projectId, source.receipt.jobId, sha256Digest(taskDraft)), /conflict/);
+  const planned = await planner.plan(f.identity, binding.projectId, source.receipt.jobId, sha256Digest(taskDraft), second.id);
+  const saved = await planner.read(planned.receipt.jobId);
+  assert.ok(saved && saved.templateDigest === sha256Digest(second));
+  await assert.rejects(() => planner.plan(f.identity, binding.projectId, source.receipt.jobId, sha256Digest(taskDraft), first.id), /conflict/,
+    "a later choice cannot replace the already saved task plan");
+});

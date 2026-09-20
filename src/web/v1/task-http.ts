@@ -19,7 +19,7 @@ import { taskRevisionCommandSchema, taskRevisionRequestSchema } from "./task-rev
 import { sha256Digest } from "../../security";
 
 export function createTaskHttpHandler(options: { origin: string; trust: AccessTrust; service: WebTaskService;
-  ownerReviews?: WebTaskReviewService; ownerVerifications?: WebTaskVerificationService; planning?: Pick<TaskPlanningOperation, "plan" | "readSaved" | "supportsProject">;
+  ownerReviews?: WebTaskReviewService; ownerVerifications?: WebTaskVerificationService; planning?: Pick<TaskPlanningOperation, "plan" | "readSaved" | "supportsProject" | "templatesForProject">;
   assignment?: TaskAssignmentOperation; approvals?: TaskApprovalOperation; submission?: TaskSubmissionOperation; revisions?: TaskRevisionOperation; clock?: () => number }) {
   const verify = createAccessVerifier(options.trust);
   return async (request: Request): Promise<Response> => {
@@ -163,7 +163,8 @@ export function createTaskHttpHandler(options: { origin: string; trust: AccessTr
           const value = authorized.availability === "available" && options.planning?.supportsProject
             && options.planning.supportsProject(projectId) !== true ? { ...authorized, availability: "not_configured" as const } : authorized;
           const savedPlan = await options.planning?.readSaved?.(identity, projectId, jobId);
-          return Response.json(taskPlanningOptionsSchema.parse({ ...value,
+          const templates = options.planning?.templatesForProject?.(projectId);
+          return Response.json(taskPlanningOptionsSchema.parse({ ...value, ...(templates !== undefined ? { templates } : {}),
             ...(savedPlan !== undefined ? { savedPlan, ...(savedPlan ? { availability: "already_planned" } : {}) } : {}) }),
           { headers: privateResponseHeaders });
         }
@@ -177,7 +178,7 @@ export function createTaskHttpHandler(options: { origin: string; trust: AccessTr
           throw new Error("task_planning_not_configured");
         }
         // Source uniqueness, not a browser-selected key, reconciles this exact plan after a lost reply.
-        const result = taskPlanningCommandSchema.parse(await options.planning.plan(identity, projectId, jobId, draft.data.expectedInputDigest));
+        const result = taskPlanningCommandSchema.parse(await options.planning.plan(identity, projectId, jobId, draft.data.expectedInputDigest, draft.data.templateId));
         if (result.receipt.projectId !== projectId || result.receipt.sourceJobId !== jobId
           || result.receipt.sourceInputDigest !== draft.data.expectedInputDigest || result.receipt.jobId === jobId) throw new Error("task_plan_scope_mismatch");
         return Response.json(result, { status: result.replayed ? 200 : 201, headers: privateResponseHeaders });

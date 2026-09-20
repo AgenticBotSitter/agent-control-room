@@ -287,6 +287,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     isReady: () => { try { check(); return !closing && !invalid; } catch { return false; } }, clock: input.clock }) : undefined;
   const planning: TaskPlanningOperation = Object.freeze({ ...scope, plan: (...args) => run(() => planner.plan(...args)),
     supportsProject: projectId => { check(); return !closing && planner.supportsProject(projectId); },
+    templatesForProject: projectId => { check(); return !closing ? planner.templatesForProject(projectId) : []; },
     readSaved: (identity, projectId, sourceJobId) => {
       const actor = { ...identity };
       return run(() => planner.readSaved(actor, projectId, sourceJobId));

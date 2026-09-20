@@ -74,8 +74,7 @@ export function captureNativeTaskTemplates(config: { template: NativeTaskTemplat
     : z.array(nativeTaskTemplateSchema).max(15).parse(config.additionalTemplates);
   const all = [template, ...additional];
   for (const value of all) assertNoSecretMaterial(value);
-  if (new Set(all.map(value => value.id)).size !== all.length
-    || new Set(all.map(value => value.authority.projectId)).size !== all.length)
+  if (new Set(all.map(value => value.id)).size !== all.length)
     throw new Error("task_execution_templates_ambiguous");
   return { template, ...(config.additionalTemplates === undefined ? {} : { additionalTemplates: additional }) };
 }
@@ -129,8 +128,9 @@ const planSchema = z.discriminatedUnion("schema", [initialPlanSchema, revisionPl
   hermes021TaskExecutionPlanSchemaV7, hermes021TaskExecutionPlanSchemaV8,
   claudeCodeLocalTaskExecutionPlanSchemaV9, claudeCodeLocalTaskExecutionPlanSchemaV10]);
 type Plan = z.infer<typeof planSchema>;
+export type TaskPlanningTemplateChoice = Readonly<{ id: string; adapter: NativeTaskTemplate["adapter"] }>;
 export type TaskPlanningOperation = Readonly<{ tenantId: string; workspaceId: string; plan: TaskExecutionPlanner["plan"];
-  supportsProject?: (projectId: string) => boolean;
+  supportsProject?: (projectId: string) => boolean; templatesForProject?: (projectId: string) => readonly TaskPlanningTemplateChoice[];
   readSaved?: TaskExecutionPlanner["readSaved"] }>;
 type Row = { tenant_id: string; project_id: string; source_job_id: string; job_id: string; plan: unknown; auth_tag: string };
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: async work => work(tx),
@@ -189,6 +189,7 @@ export async function readCodexTaskExecutionPlanV3InSession(tx: DatabaseSession,
  * methods or a live executor. */
 export class TaskExecutionPlanner {
   private readonly templates: ReadonlyMap<string, NativeTaskTemplate>;
+  private readonly projectTemplates: ReadonlyMap<string, readonly NativeTaskTemplate[]>;
   private readonly key: Uint8Array;
   private readonly reviewKey: Uint8Array;
   private readonly checkpoints: AwaitableRollbackCheckpointStoreV1;
@@ -199,7 +200,10 @@ export class TaskExecutionPlanner {
       checkpoints: AwaitableRollbackCheckpointStoreV1; ideaIntegrityKey?: Uint8Array }, private readonly clock: () => number = Date.now,
     revisionResults?: ConstructorParameters<typeof NativeResultSubmissionService>[1], revisionSource?: TaskResultInspectionSourceV1) {
     const captured = captureNativeTaskTemplates(config);
-    this.templates = new Map([captured.template, ...(captured.additionalTemplates ?? [])].map(value => [value.authority.projectId, value]));
+    const values = [captured.template, ...(captured.additionalTemplates ?? [])];
+    this.templates = new Map(values.map(value => [value.id, value]));
+    this.projectTemplates = new Map([...new Set(values.map(value => value.authority.projectId))].map(projectId => [projectId,
+      Object.freeze(values.filter(value => value.authority.projectId === projectId))]));
     if (!(config.integrityKey instanceof Uint8Array) || config.integrityKey.length !== 32
       || !(config.reviewIntegrityKey instanceof Uint8Array) || config.reviewIntegrityKey.length !== 32) fail();
     this.key = Uint8Array.from(config.integrityKey); this.reviewKey = Uint8Array.from(config.reviewIntegrityKey);
@@ -234,10 +238,31 @@ export class TaskExecutionPlanner {
                   ? "task-execution-plan/v9" : "task-execution-plan/v10", plan }); }
   webOperation(): TaskPlanningOperation {
     return Object.freeze({ tenantId: this.scope.tenantId, workspaceId: this.scope.workspaceId, plan: this.plan.bind(this),
-      supportsProject: this.supportsProject.bind(this),
+      supportsProject: this.supportsProject.bind(this), templatesForProject: this.templatesForProject.bind(this),
       readSaved: this.readSaved.bind(this) });
   }
-  supportsProject(projectId: string) { return this.templates.has(projectId); }
+  supportsProject(projectId: string) { return this.projectTemplates.has(projectId); }
+  /** Safe server-owned choices only. IDs identify reviewed templates, not a host, login or executable. */
+  templatesForProject(projectId: string): readonly TaskPlanningTemplateChoice[] {
+    localId.parse(projectId);
+    return Object.freeze((this.projectTemplates.get(projectId) ?? []).map(value => Object.freeze({ id: value.id, adapter: value.adapter })));
+  }
+  private selectTemplate(projectId: string, templateId?: string) {
+    const candidates = this.projectTemplates.get(projectId) ?? [];
+    if (templateId !== undefined) {
+      localId.parse(templateId);
+      const selected = this.templates.get(templateId);
+      if (!selected || selected.authority.projectId !== projectId) throw new WebAccessError("conflict");
+      return selected;
+    }
+    if (candidates.length !== 1) throw new WebAccessError("conflict");
+    return candidates[0]!;
+  }
+  private templateForSavedPlan(projectId: string, templateDigest: string) {
+    const candidates = (this.projectTemplates.get(projectId) ?? []).filter(value => sha256Digest(value) === templateDigest);
+    if (candidates.length !== 1) throw new WebAccessError("conflict");
+    return candidates[0]!;
+  }
   /** Historical receipt only; never replans or applies current template expiry to saved evidence. */
   async readSaved(identity: VerifiedWebIdentity, projectId: string, sourceJobId: string) {
     localId.parse(projectId); localId.parse(sourceJobId);
@@ -290,7 +315,7 @@ export class TaskExecutionPlanner {
   }
   /** An owner plans a saved proposal, not new request-supplied instructions or authority. Exact
    * source uniqueness serves as reconciliation identity across browser keys and service restarts. */
-  async plan(identity: VerifiedWebIdentity, projectId: string, sourceJobId: string, expectedInputDigest: string) {
+  async plan(identity: VerifiedWebIdentity, projectId: string, sourceJobId: string, expectedInputDigest: string, templateId?: string) {
     localId.parse(projectId); localId.parse(sourceJobId); digestSchema.parse(expectedInputDigest);
     let template: NativeTaskTemplate | undefined;
     let materializing = false;
@@ -308,8 +333,7 @@ export class TaskExecutionPlanner {
       const project = await this.projects.getViewInSession(tx, actor, projectId);
       const source = await this.source(tx, projectId, sourceJobId);
       if (source.job.inputDigest !== expectedInputDigest) throw new WebAccessError("conflict");
-      template = this.templates.get(projectId);
-      if (!template) throw new WebAccessError("conflict");
+      template = this.selectTemplate(projectId, templateId);
       const templateDigest = sha256Digest(template), sourceDigest = sha256Digest(source);
       const prior = (await tx.query<Row>("SELECT * FROM control_task_execution_plans WHERE tenant_id=$1 AND source_job_id=$2",
         [this.scope.tenantId, sourceJobId])).rows[0];
@@ -381,8 +405,7 @@ export class TaskExecutionPlanner {
     if (!project || project.lifecycle !== "active") throw new WebAccessError("conflict");
     const source = await this.source(tx, projectId, sourceJobId);
     if (source.job.inputDigest !== expectedInputDigest) throw new WebAccessError("conflict");
-    const template = this.templates.get(projectId);
-    if (!template || template.authority.projectId !== projectId) throw new WebAccessError("conflict");
+    const template = this.selectTemplate(projectId);
     const nowMs = this.clock();
     if (!Number.isSafeInteger(nowMs)
       || Date.parse(template.authority.expiresAt) < nowMs + template.authority.maxDurationSeconds * 1000) {
@@ -513,7 +536,7 @@ export class TaskExecutionPlanner {
           || source.schema === "control-room.task-execution-plan/v6" || source.schema === "control-room.task-execution-plan/v8"
           || source.schema === "control-room.task-execution-plan/v10"
           ? source.revision.originalPrompt : source.input.prompt });
-      template = this.templates.get(projectId);
+      template = this.templateForSavedPlan(projectId, source.templateDigest);
       const codex = source.schema === "control-room.task-execution-plan/v3" || source.schema === "control-room.task-execution-plan/v4";
       const hermes021 = source.schema === "control-room.task-execution-plan/v5" || source.schema === "control-room.task-execution-plan/v6"
         || source.schema === "control-room.task-execution-plan/v7" || source.schema === "control-room.task-execution-plan/v8";
