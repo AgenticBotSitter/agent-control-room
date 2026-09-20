@@ -2,6 +2,7 @@ import type { InstallationTopologyPlanV1 } from "../../src/harness/v1/installati
 import { summarizeInstallationReadinessV1, type InstallationReadinessV1 } from "../../src/harness/v1/installation-readiness";
 import { guideInstallationReadinessV1 } from "../../src/harness/v1/installation-guidance";
 import { summarizeLocalHarnessCapabilitiesV1, type LocalHarnessCapabilityV1 } from "../../src/harness/v1/local-harness-capabilities";
+import type { CodexMacosCustodyReadinessV1 } from "../../src/harness/codex-v1/macos-custody-readiness";
 
 const proofLabels = {
   local_owner_qualification: "a successful owner-attended local worker check",
@@ -52,14 +53,15 @@ function LocalAgentCapabilityCard({ agent }: { agent: LocalHarnessCapabilityV1 }
 }
 
 /** A status-only explanation. There are deliberately no setup, launch, or approval controls here. */
-export function InstallationTopologySummary({ plan, readiness }: { plan?: Readonly<InstallationTopologyPlanV1>; readiness?: Readonly<InstallationReadinessV1> }) {
+export function InstallationTopologySummary({ plan, readiness, codexMacosCustodyReadiness }: { plan?: Readonly<InstallationTopologyPlanV1>;
+  readiness?: Readonly<InstallationReadinessV1>; codexMacosCustodyReadiness?: Readonly<CodexMacosCustodyReadinessV1> }) {
   if (!plan) return <section className="private-panel" aria-labelledby="installation-title">
     <h2 id="installation-title">Installation setup</h2>
     <p>No reviewed setup plan is currently available. This screen does not guess whether this computer or another worker is ready.</p>
   </section>;
   const summary = summarizeInstallationReadinessV1(plan, readiness);
   const guidance = guideInstallationReadinessV1(plan, readiness);
-  const localCapabilities = summarizeLocalHarnessCapabilitiesV1(plan, readiness);
+  const localCapabilities = summarizeLocalHarnessCapabilitiesV1(plan, readiness, codexMacosCustodyReadiness);
   const mode = plan.mode === "this_computer" ? "This computer" : "Several computers";
   return <section className="private-panel" aria-labelledby="installation-title">
     <h2 id="installation-title">Installation setup</h2>

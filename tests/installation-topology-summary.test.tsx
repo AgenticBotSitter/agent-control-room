@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { InstallationTopologySummary } from "../private-app/app/installation-topology-summary";
 import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
 import { createInstallationReadinessV1 } from "../src/harness/v1/installation-readiness";
+import { createCodexMacosCustodyReadinessV1 } from "../src/harness/codex-v1/macos-custody-readiness";
 import { sha256Digest } from "../src/security/canonical-digest";
 
 test("setup summary describes one installation and never offers a live operation", () => {
@@ -63,4 +64,18 @@ test("setup summary distinguishes completed Hermes proof from an enabled worker"
   assert.match(html, /<h4>Hermes Agent<\/h4><p><strong>Status: Proof complete; owner enablement required/);
   assert.match(html, /still has not started Hermes/);
   assert.doesNotMatch(html, /<button|<form|<input/);
+});
+
+test("setup summary shows recorded Codex safety prerequisites without calling Codex enabled", () => {
+  const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
+    currentRoutes: [{ kind: "local", workerId: "worker:codex", adapterId: "connector:codex-local-v1", adapterRevision: "00570550" }],
+    requestedRoutes: [{ kind: "local", workerId: "worker:codex", adapterId: "connector:codex-local-v1", adapterRevision: "00570550" }] });
+  const custody = createCodexMacosCustodyReadinessV1({ planDigest: plan.planDigest, proofs: [
+    { proof: "suspended_executable_identity", state: "passed", evidenceDigest: sha256Digest("suspended") },
+    { proof: "protected_private_state_handle", state: "passed", evidenceDigest: sha256Digest("private-state") },
+  ] });
+  const html = renderToStaticMarkup(createElement(InstallationTopologySummary, { plan, codexMacosCustodyReadiness: custody }));
+  assert.match(html, /Codex<\/h4><p><strong>Status: Mac safety prerequisites recorded/);
+  assert.match(html, /still has not started Codex/);
+  assert.doesNotMatch(html, /sha256:|suspended_executable_identity|protected_private_state_handle/);
 });

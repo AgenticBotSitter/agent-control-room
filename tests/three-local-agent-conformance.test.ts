@@ -67,7 +67,8 @@ test("one this-computer plan represents Hermes, Codex and Claude without a secon
   assert.equal(plan.enablesWorkers, false);
   assert.deepEqual(plan.requiredProofs, ["backup_restore", "local_owner_qualification", "local_runner_bridge"]);
   assert.deepEqual(localHarnessCapabilitiesV1.map(value => value.id), ["hermes", "claude", "codex"]);
-  assert.ok(localHarnessCapabilitiesV1.every(value => value.state !== "available"),
+  assert.deepEqual(localHarnessCapabilitiesV1.map(value => value.state),
+    ["setup_required", "setup_required", "not_available"],
     "a topology plan must not turn an unqualified local connector into a live worker");
 });
 

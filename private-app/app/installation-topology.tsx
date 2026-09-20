@@ -3,8 +3,10 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { verifyInstallationTopologyPlanV1, type InstallationTopologyPlanV1 } from "../../src/harness/v1/installation-topology";
 import { verifyInstallationReadinessV1, type InstallationReadinessV1 } from "../../src/harness/v1/installation-readiness";
+import { verifyCodexMacosCustodyReadinessV1, type CodexMacosCustodyReadinessV1 } from "../../src/harness/codex-v1/macos-custody-readiness";
 
-type InstallationTopologyState = Readonly<{ plan: InstallationTopologyPlanV1; readiness?: InstallationReadinessV1 }> | undefined;
+type InstallationTopologyState = Readonly<{ plan: InstallationTopologyPlanV1; readiness?: InstallationReadinessV1;
+  codexMacosCustodyReadiness?: CodexMacosCustodyReadinessV1 }> | undefined;
 const InstallationTopologyContext = createContext<InstallationTopologyState>(undefined);
 
 /** Reads only an operator-prepared setup plan. A missing plan never implies a local or remote worker is available. */
@@ -24,7 +26,9 @@ export function InstallationTopologyProvider({ children }: { children: ReactNode
         }
         const responseBody = await response.json();
         const value = Object.freeze({ plan: verifyInstallationTopologyPlanV1(responseBody.plan),
-          ...(responseBody.readiness === undefined ? {} : { readiness: verifyInstallationReadinessV1(responseBody.readiness) }) });
+          ...(responseBody.readiness === undefined ? {} : { readiness: verifyInstallationReadinessV1(responseBody.readiness) }),
+          ...(responseBody.codexMacosCustodyReadiness === undefined ? {} : {
+            codexMacosCustodyReadiness: verifyCodexMacosCustodyReadinessV1(responseBody.codexMacosCustodyReadiness) }) });
         if (!controller.signal.aborted && current === request) setPlan(value);
       } catch {
         // A stale setup success must never remain visible after the protected

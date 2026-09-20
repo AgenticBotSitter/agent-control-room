@@ -33,6 +33,7 @@ import { ideaCreationOptionsSchema } from "./idea-wire";
 import { parseProductConfigurationV1, type ProductConfigurationV1 } from "../../config/v1/product-configuration";
 import { verifyInstallationTopologyPlanV1, type InstallationTopologyPlanV1 } from "../../harness/v1/installation-topology";
 import { verifyInstallationReadinessV1, type InstallationReadinessV1 } from "../../harness/v1/installation-readiness";
+import { verifyCodexMacosCustodyReadinessV1, type CodexMacosCustodyReadinessV1 } from "../../harness/codex-v1/macos-custody-readiness";
 import { WebSessionAuthority } from "./session-authority";
 import { readProjectScheduleStatus } from "../../schedules/read-service";
 import { ProjectCoordinationHttpService, type ProjectCoordinationCanonicalStoreAdapter } from "./project-coordination-http";
@@ -59,6 +60,8 @@ export interface PrivateWebProcessOptions {
   installationTopologyPlan?: Readonly<InstallationTopologyPlanV1>;
   /** Optional non-secret proof outcomes for that exact setup plan. This process only presents them. */
   installationReadiness?: Readonly<InstallationReadinessV1>;
+  /** Optional opaque Mac Codex custody proof record. It is display-only and cannot enable Codex. */
+  codexMacosCustodyReadiness?: Readonly<CodexMacosCustodyReadinessV1>;
   /** Explicit operations from the trusted collector composition. This process does
    * not create readers, worker pools, schedules or collection authority. */
   newsCollections?: readonly { tenantId: string; workspaceId: string; projectId: string; sourceId: string;
@@ -108,7 +111,11 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     : verifyInstallationTopologyPlanV1(options.installationTopologyPlan);
   const installationReadiness = options.installationReadiness === undefined ? undefined
     : verifyInstallationReadinessV1(options.installationReadiness);
+  const codexMacosCustodyReadiness = options.codexMacosCustodyReadiness === undefined ? undefined
+    : verifyCodexMacosCustodyReadinessV1(options.codexMacosCustodyReadiness);
   if (installationReadiness && (!installationTopologyPlan || installationReadiness.planDigest !== installationTopologyPlan.planDigest))
+    throw new Error("invalid_private_app_config");
+  if (codexMacosCustodyReadiness && (!installationTopologyPlan || codexMacosCustodyReadiness.planDigest !== installationTopologyPlan.planDigest))
     throw new Error("invalid_private_app_config");
   const moduleEnabled = (name: keyof ProductConfigurationV1["modules"]) =>
     productConfiguration === undefined || productConfiguration.modules[name];
@@ -253,7 +260,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             if (!installationTopologyPlan) throw new WebAccessError("not_found");
             return await productConfigurationAuthority.authenticated(identity, async (_, actor) => {
               actor.require("projects.read", undefined, true);
-              return Response.json({ plan: installationTopologyPlan, ...(installationReadiness ? { readiness: installationReadiness } : {}) },
+              return Response.json({ plan: installationTopologyPlan, ...(installationReadiness ? { readiness: installationReadiness } : {}),
+                ...(codexMacosCustodyReadiness ? { codexMacosCustodyReadiness } : {}) },
                 { headers: privateResponseHeaders });
             });
           }

@@ -5,6 +5,7 @@ import { validatePrivateStartupConfiguration } from "../src/web/v1/private-start
 import { createPrivateWebProcess } from "../src/web/v1/private-process";
 import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
 import { createInstallationReadinessV1 } from "../src/harness/v1/installation-readiness";
+import { createCodexMacosCustodyReadinessV1 } from "../src/harness/codex-v1/macos-custody-readiness";
 import { sha256Digest } from "../src/security/canonical-digest";
 import { now, origin, request, token, trust } from "./helpers/web-foundation";
 import { limitedWebFixture } from "./helpers/web-startup";
@@ -89,13 +90,19 @@ test("readiness is an authenticated non-secret view bound to its saved plan", as
   const readiness = createInstallationReadinessV1({ planDigest: plan.planDigest, proofs: [
     { proof: "backup_restore", state: "passed", evidenceDigest: sha256Digest("backup") },
   ] });
+  const custody = createCodexMacosCustodyReadinessV1({ planDigest: plan.planDigest, proofs: [
+    { proof: "suspended_executable_identity", state: "passed", evidenceDigest: sha256Digest("suspended") },
+    { proof: "protected_private_state_handle", state: "passed", evidenceDigest: sha256Digest("private-state") },
+  ] });
   const app = createPrivateWebProcess({ ...options(configuration("Topology", false), store.pool.client, store.pool.close),
-    installationTopologyPlan: plan, installationReadiness: readiness });
+    installationTopologyPlan: plan, installationReadiness: readiness, codexMacosCustodyReadiness: custody });
   t.after(() => app.close());
   const response = await app.handle(request("/api/v1/installation-readiness"), () => new Response("fallback", { status: 500 }));
   assert.equal(response.status, 200);
   const body = await response.json();
   assert.equal(body.plan.mode, "this_computer");
   assert.equal(body.readiness.planDigest, plan.planDigest);
+  assert.equal(body.codexMacosCustodyReadiness.planDigest, plan.planDigest);
+  assert.equal(body.codexMacosCustodyReadiness.readinessDigest, custody.readinessDigest);
   assert.equal((await app.handle(request("/api/v1/installation-readiness?x=1"), () => new Response("fallback", { status: 500 }))).status, 400);
 });
