@@ -4,7 +4,7 @@ import { classifyHermes021MacosResultV1, prepareHermes021MacosTaskV1, runHermes0
   runAdmittedHermes021MacosLocalTaskV1,
   HERMES_021_MACOS_LOCAL_ADAPTER_V1, hermes021MacosLocalConnectorProfileV1,
   refuseHermes021MacosOperationV1, createHermes021MacosLocalTaskPolicyV1,
-  createHermes021MacosLocalTaskPolicyPortV1 } from "../src/harness/hermes-021-v1";
+  createHermes021MacosLocalTaskPolicyPortV1, deriveHermes021MacosLocalTaskPolicyPortV1 } from "../src/harness/hermes-021-v1";
 import { createControllerWorkerDeliveryV1 } from "../src/harness/v1/controller-worker-delivery";
 import { sha256Digest } from "../src/security/canonical-digest";
 import { projectHermes021MacosTerminalResultEvidenceV1, terminalResultEvidenceSchemaV1 } from "../src/harness/v1/terminal-result-evidence";
@@ -117,6 +117,35 @@ test("Marvin's local policy accepts only its configured canonical authority", as
       { async run() { runs++; return [result()]; } }), /hermes_021_macos_task_policy_refused/);
   }
   assert.equal(runs, 1);
+});
+
+test("per-task local policy is derived from each canonical prepared packet", async () => {
+  const first = controllerDelivery();
+  const second = createControllerWorkerDeliveryV1({ identity: { ...first.identity,
+    jobId: "job:second", attemptId: "attempt:second", runId: "run:second" },
+    input: { prompt: "Review a different bounded task.", instructions: "Return only the finding." },
+    worker: first.worker, authorityDigest: sha256Digest("second-authority"),
+    connectorProfileDigest: first.connectorProfileDigest, acceptanceProfileId: first.acceptanceProfileId,
+    acceptanceProfileDigest: first.acceptanceProfileDigest, issuedAt: first.issuedAt, expiresAt: first.expiresAt });
+  const prepared = (delivery: typeof first) => ({
+    schema: "control-room.hermes-021-macos-dispatch-preparation/v1" as const, delivery,
+    workflowId: "workflow:local", route: { kind: "local" as const, workerId: binding.workerId },
+    startsWork: false as const, grantsExecutionAuthority: false as const,
+  });
+  const clock = () => Date.parse("2026-09-19T12:02:00.000Z");
+  const firstPolicy = deriveHermes021MacosLocalTaskPolicyPortV1(prepared(first), binding, clock);
+  const secondPolicy = deriveHermes021MacosLocalTaskPolicyPortV1(prepared(second), binding, clock);
+  let runs = 0;
+  await runAdmittedHermes021MacosLocalTaskV1(first, { kind: "local", workerId: binding.workerId }, binding,
+    firstPolicy, { async run() { runs++; return [result()]; } });
+  await runAdmittedHermes021MacosLocalTaskV1(second, { kind: "local", workerId: binding.workerId }, binding,
+    secondPolicy, { async run() { runs++; return [result()]; } });
+  assert.equal(runs, 2, "one long-lived installation can admit two distinct canonical tasks");
+  await assert.rejects(runAdmittedHermes021MacosLocalTaskV1(second, { kind: "local", workerId: binding.workerId }, binding,
+    firstPolicy, { async run() { runs++; return [result()]; } }), /hermes_021_macos_task_policy_refused/);
+  assert.equal(runs, 2, "the first task's gate cannot authorize the second task");
+  assert.throws(() => deriveHermes021MacosLocalTaskPolicyPortV1({ ...prepared(second), route: {
+    kind: "local", workerId: "worker:changed" } }, binding, clock), /hermes_021_macos_task_policy_refused/);
 });
 
 test("Marvin's local connector records what is proven and explicitly refuses unqualified execution", () => {

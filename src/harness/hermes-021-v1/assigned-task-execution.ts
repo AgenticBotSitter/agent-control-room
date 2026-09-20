@@ -37,6 +37,10 @@ export async function executeAssignedHermes021MacosTaskV1(config: Hermes021Macos
   // Recheck that same binding directly before we create a run record or contact
   // the private launcher so a late revoke cannot start Marvin in the gap.
   await config.preparation.assertCurrent(referenceValue, prepared);
+  // The queue executor is long-lived.  Never retain an installation policy
+  // from a prior pickup: derive this synchronous gate solely from the freshly
+  // prepared-and-rechecked canonical packet.
+  const perTaskPolicy = config.preparation.policyForPrepared(prepared, clock);
   const now = new Date(clock()).toISOString();
   if (!z.string().datetime().safeParse(now).success || Date.parse(now) > Date.parse(prepared.delivery.expiresAt)) unavailable();
   // A later pickup prepares fresh issuance timestamps. Recover the authenticated
@@ -90,7 +94,7 @@ export async function executeAssignedHermes021MacosTaskV1(config: Hermes021Macos
     lifecycle.push(event);
   };
   if (registered.run.state === "discovered") await append({ category: "lifecycle", state: "starting" });
-  const delivered = await deliverHermes021MacosLocalTaskV1(config.delivery, prepared.delivery,
+  const delivered = await deliverHermes021MacosLocalTaskV1({ ...config.delivery, policy: perTaskPolicy }, prepared.delivery,
     prepared.route, receivedAt, signal);
   if (isTerminalHarnessRunState(registered.run.state)) {
     // Recovery is evidence retrieval, not a second lifecycle. A succeeded run

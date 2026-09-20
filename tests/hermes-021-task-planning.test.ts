@@ -6,8 +6,7 @@ import { TaskAssignmentCoordinator } from "../src/web/v1/task-assignment-coordin
 import { HERMES_021_MACOS_LOCAL_ADAPTER_V1, HERMES_021_MACOS_LOCAL_CAPABILITY_V1,
   HERMES_021_MACOS_LOCAL_JOB_TYPE_V1, HERMES_021_MACOS_LOCAL_START_OPERATION_V1,
   HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1, Hermes021MacosDispatchPreparationV1,
-  executeAssignedHermes021MacosTaskV1, createHermes021MacosLocalTaskPolicyPortV1,
-  createHermes021MacosLocalTaskPolicyV1 } from "../src/harness/hermes-021-v1";
+  executeAssignedHermes021MacosTaskV1 } from "../src/harness/hermes-021-v1";
 import { createInMemoryNeutralReservationPort } from "../src/artifacts/v1/neutral-reservation-port";
 import { FleetSignalStore } from "../src/node-fleet/v1/fleet-signal-store";
 import { HarnessRunStoreV1 } from "../src/harness/v1/store";
@@ -125,11 +124,9 @@ test("a Marvin Hermes 0.21 template creates a pinned text-review plan, not an ol
   assert.equal(dispatch.route.kind, "local");
   assert.equal(dispatch.workflowId, saved.job.workflowId);
 
-  const localPolicy = createHermes021MacosLocalTaskPolicyPortV1(createHermes021MacosLocalTaskPolicyV1({
-    policyId: "policy:marvin-text-review", binding: localBinding, authorityDigest: saved.job.authority.digest,
-    taskInputDigest: sha256Digest({ prompt: saved.input.prompt, instructions: saved.input.instructions }),
-    expiresAt: at(240_000),
-  }), () => deliveryNow);
+  // A construction-time policy must not be reused by the long-lived queue
+  // executor. The execution composition derives a fresh one from dispatch.
+  const localPolicy = { assertAdmitted() { throw new Error("stale_policy_must_not_be_used"); } };
 
   let launches = 0;
   const execution = { preparation: dispatcher, runs: new HarnessRunStoreV1(f.db, new Uint8Array(32).fill(25)),

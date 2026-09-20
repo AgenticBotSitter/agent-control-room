@@ -2,12 +2,14 @@ import { z } from "zod";
 import { sha256Digest } from "../../security/canonical-digest";
 import { hermes021MacosLocalBindingSchemaV1, HERMES_021_MACOS_LOCAL_ADAPTER_V1,
   type Hermes021MacosTaskPolicyPortV1 } from "./macos-local-worker";
+import { controllerWorkerDeliverySchemaV1 } from "../v1/controller-worker-delivery";
 
 export const HERMES_021_MACOS_LOCAL_TASK_POLICY_V1 =
   "control-room.hermes-021-macos-local-task-policy/v1" as const;
 
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const instant = z.string().datetime().refine(value => new Date(value).toISOString() === value);
+const id = z.string().min(3).max(180).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
 const policySchema = z.object({
   schema: z.literal(HERMES_021_MACOS_LOCAL_TASK_POLICY_V1),
   policyId: z.string().min(3).max(180).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/),
@@ -60,4 +62,37 @@ export function createHermes021MacosLocalTaskPolicyPortV1(policyValue: unknown,
       || sha256Digest({ prompt: input.delivery.input.prompt, instructions: input.delivery.input.instructions }) !== policy.taskInputDigest
       || Date.parse(input.delivery.expiresAt) > deadline) throw new Error("hermes_021_macos_task_policy_refused");
   } });
+}
+
+/**
+ * Derive a fresh local policy only from a controller-prepared packet and the
+ * fixed installation binding.  The caller is deliberately unable to supply
+ * an authority, prompt, expiry, or policy identifier of its own.  This is the
+ * policy constructor used by the long-lived local queue composition: every
+ * pickup gets a policy for its own canonical task instead of retaining the
+ * first task's policy in process memory.
+ */
+export function deriveHermes021MacosLocalTaskPolicyPortV1(preparedValue: unknown,
+  bindingValue: unknown, clock: () => number = Date.now): Hermes021MacosTaskPolicyPortV1 {
+  const prepared = z.object({
+    schema: z.literal("control-room.hermes-021-macos-dispatch-preparation/v1"),
+    delivery: controllerWorkerDeliverySchemaV1,
+    workflowId: id,
+    route: z.object({ kind: z.literal("local"), workerId: id }).strict(),
+    startsWork: z.literal(false), grantsExecutionAuthority: z.literal(false),
+  }).strict().parse(preparedValue);
+  const binding = hermes021MacosLocalBindingSchemaV1.parse(bindingValue);
+  const delivery = prepared.delivery;
+  if (prepared.route.workerId !== binding.workerId || delivery.worker.workerId !== binding.workerId
+    || delivery.worker.adapterId !== HERMES_021_MACOS_LOCAL_ADAPTER_V1
+    || delivery.worker.adapterRevision !== binding.sourceRevision) {
+    throw new Error("hermes_021_macos_task_policy_refused");
+  }
+  const policyId = `policy:hermes-021:${sha256Digest({ identity: delivery.identity, worker: delivery.worker,
+    authorityDigest: delivery.authorityDigest, input: delivery.input, expiresAt: delivery.expiresAt }).slice(7)}`;
+  return createHermes021MacosLocalTaskPolicyPortV1(createHermes021MacosLocalTaskPolicyV1({
+    policyId, binding, authorityDigest: delivery.authorityDigest,
+    taskInputDigest: sha256Digest({ prompt: delivery.input.prompt, instructions: delivery.input.instructions }),
+    expiresAt: delivery.expiresAt,
+  }), clock);
 }
