@@ -68,6 +68,8 @@ Completed in source:
 - bounded result and token accounting;
 - a connector profile that records exactly what has and has not been proven;
 - shared terminal evidence for a completed local Hermes result.
+- an owner-run, text-only qualification launcher with a bounded one-turn
+  invocation and sanitized output.
 
 Remaining before an automatic local worker is enabled:
 
