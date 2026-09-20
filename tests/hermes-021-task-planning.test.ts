@@ -79,6 +79,10 @@ test("a Marvin Hermes 0.21 template creates a pinned text-review plan, not an ol
   await signals.ingestAuthenticated(telemetry, at(6000), binding);
   await signals.ingestAuthenticated(capability, at(6000), binding);
   const assignments = new TaskAssignmentCoordinator(f.db, f.scope, planner, [route], () => instant + 8000);
+  const assignmentOptions = await assignments.options(f.identity, binding.projectId, planned.receipt.jobId);
+  assert.deepEqual(assignmentOptions.candidates, [{ nodeId: binding.nodeId, label: "Synthetic node", platform: "linux",
+    workScope: "bounded_text_review" }], "the owner sees the restricted local Hermes scope before reserving it");
+  assert.equal(assignmentOptions.startsWork, false);
   const assigned = await assignments.assign(f.identity, binding.projectId, planned.receipt.jobId, binding.nodeId, planned.receipt.inputDigest);
   assert.equal(assigned.replayed, false);
   assert.equal(assigned.receipt.jobId, planned.receipt.jobId);

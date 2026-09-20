@@ -13,6 +13,9 @@ export const taskAssignmentReceiptSchema = z.object({ projectId: id, jobId: id, 
 export type TaskAssignmentReceipt = z.infer<typeof taskAssignmentReceiptSchema>;
 export const taskAssignmentCommandSchema = z.object({ receipt: taskAssignmentReceiptSchema, replayed: z.boolean() }).strict();
 export const taskAssignmentOptionsSchema = z.object({ projectId: id, jobId: id, inputDigest: digest,
-  candidates: z.array(z.object({ nodeId: id, label: z.string().min(1).max(180), platform: z.enum(["macos", "windows", "linux", "cloud"]) }).strict()).max(64),
+  candidates: z.array(z.object({ nodeId: id, label: z.string().min(1).max(180), platform: z.enum(["macos", "windows", "linux", "cloud"]),
+    /** A task-plan fact, not a claim that the selected worker is currently live. */
+    workScope: z.enum(["bounded_text_review", "configured_task"]),
+  }).strict()).max(64),
   receipt: taskAssignmentReceiptSchema.nullable(), startsWork: z.literal(false), candidateEvidence: z.literal("configured_routes_only") }).strict();
 export type TaskAssignmentOptions = z.infer<typeof taskAssignmentOptionsSchema>;

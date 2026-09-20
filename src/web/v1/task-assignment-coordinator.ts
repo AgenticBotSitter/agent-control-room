@@ -931,7 +931,9 @@ export class TaskAssignmentCoordinator {
       if (!plan || plan.projectId !== projectId) throw new WebAccessError("not_found");
       const stored = await this.stored(tx, job);
       const receipt = stored ? this.receipt(job, stored.attempt, stored.lease) : null;
-      const candidates: Array<{ nodeId: string; label: string; platform: string }> = [];
+      const workScope = plan.schema === "control-room.task-execution-plan/v7" || plan.schema === "control-room.task-execution-plan/v8"
+        ? "bounded_text_review" as const : "configured_task" as const;
+      const candidates: Array<{ nodeId: string; label: string; platform: string; workScope: "bounded_text_review" | "configured_task" }> = [];
       if (!stored && project.lifecycle === "active" && project.origin === "ordinary" && job.state === "proposed") {
         for (const route of this.routes.filter(route => route.executorId === job.authority.allowedExecutor)) {
           const row = (await tx.query<{ payload: unknown }>("SELECT payload FROM control_nodes WHERE tenant_id=$1 AND id=$2",
@@ -939,7 +941,7 @@ export class TaskAssignmentCoordinator {
           if (!row) continue;
           const node = nodeRecordSchema.parse(row.payload);
           if (node.id !== route.nodeId || node.tenantId !== this.scope.tenantId) unavailable();
-          candidates.push({ nodeId: node.id, label: node.displayName, platform: node.platform });
+          candidates.push({ nodeId: node.id, label: node.displayName, platform: node.platform, workScope });
         }
       }
       assertNoSecretMaterial(candidates);
