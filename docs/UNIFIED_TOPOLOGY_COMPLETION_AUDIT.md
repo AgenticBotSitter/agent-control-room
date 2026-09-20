@@ -14,6 +14,12 @@ routes. The route is not part of task authority, and the tests use one
 temporary PostgreSQL-compatible database for each journey. There is no second
 scheduler, synchronization process, or second writable task database.
 
+A read-only setup planner now describes the same transition from “This
+computer” to “Several computers.” It keeps the selected database and scheduler
+fingerprints, treats a worker assigned to both routes as an error, and lists
+the proofs that must still be completed. It cannot enable a worker, connect a
+machine, or make any live change.
+
 ### This computer
 
 - A local Hermes worker accepts only a controller-prepared task with the

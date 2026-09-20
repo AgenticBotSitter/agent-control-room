@@ -64,6 +64,11 @@ Completed in source:
   lifecycle and its correction/revised-result lifecycle through either local or
   remote route metadata while preserving the same canonical records and one
   database. These are route doubles, not installed transport claims.
+- a read-only installation-topology plan that gives both setup choices one
+  migration-safe configuration record. It refuses one worker being assigned to
+  both routes, preserves the selected database and scheduler authority
+  fingerprints, and lists the owner proofs required before any worker is
+  enabled. It does not create, connect, launch, or enable anything.
 
 ## U1 — local worker foundation
 
