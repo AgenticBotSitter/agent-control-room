@@ -44,6 +44,11 @@ export const nativeTaskTemplateSchema = z.object({ id: localId, adapter: z.enum(
     || a.effectPolicy !== "approval_required" || a.maxConcurrentEffects !== 1 || a.maxDurationSeconds > 300
     || a.maxCostUsd !== undefined || a.parentDigest !== undefined || a.maxRisk !== "low"
     || computeAuthorityDigest(a) !== a.digest) context.addIssue({ code: "custom", message: "unsupported native task template" });
+  // The first local Hermes adapter is the restricted one-turn text-review
+  // runner. Its process host cannot be configured above two minutes, so the
+  // durable authority must not advertise a longer local effect window.
+  if (hermes021 && a.maxDurationSeconds > 120)
+    context.addIssue({ code: "custom", message: "unsupported native task template" });
   if (hermesNative ? value.connectorProfileDigest !== undefined || value.workspaceIntentDigest !== undefined
     : hermes021 ? value.connectorProfileDigest === undefined || value.workspaceIntentDigest !== undefined
       : value.connectorProfileDigest === undefined || value.workspaceIntentDigest === undefined) {

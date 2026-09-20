@@ -106,6 +106,11 @@ That prompt and the `bot_room` configuration are not a project-writing
 sandbox. Project changes require a later, separately qualified runner with an
 isolated worktree and enforceable file/tool boundary.
 
+The corresponding Control Room task template also refuses to advertise a
+longer effect window. This keeps the signed task authority, the queue lease,
+and the private subprocess limit aligned instead of letting a browser-visible
+task imply that Marvin may run longer than this adapter can safely support.
+
 Before enabling this worker, the installation also registers the pinned
 Hermes local adapter in Control Room's existing adapter registry. That is the
 same neutral registry entry used by the durable-result checker to confirm

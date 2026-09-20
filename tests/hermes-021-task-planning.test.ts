@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { computeAuthorityDigest, sha256Digest } from "../src/security";
-import { TaskExecutionPlanner, type NativeTaskTemplate } from "../src/web/v1/task-execution-planner";
+import { TaskExecutionPlanner, nativeTaskTemplateSchema, type NativeTaskTemplate } from "../src/web/v1/task-execution-planner";
 import { TaskAssignmentCoordinator } from "../src/web/v1/task-assignment-coordinator";
 import { HERMES_021_MACOS_LOCAL_ADAPTER_V1, HERMES_021_MACOS_LOCAL_CAPABILITY_V1,
   HERMES_021_MACOS_LOCAL_JOB_TYPE_V1, HERMES_021_MACOS_LOCAL_START_OPERATION_V1,
@@ -39,6 +39,9 @@ test("a Marvin Hermes 0.21 template creates a pinned v5 plan, not an older gener
   const template: NativeTaskTemplate = { id: "template:marvin-021", adapter: HERMES_021_MACOS_LOCAL_ADAPTER_V1, authority,
     instructions: "Return a bounded plain-text result.", connectorProfileDigest: HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1,
     acceptanceProfileId: f.profile.id, acceptanceProfileDigest: sha256Digest(f.profile) };
+  const tooLongAuthority = { ...authority, maxDurationSeconds: 121, digest: "" };
+  tooLongAuthority.digest = computeAuthorityDigest(tooLongAuthority);
+  assert.throws(() => nativeTaskTemplateSchema.parse({ ...template, authority: tooLongAuthority }), /unsupported native task template/);
   const planner = new TaskExecutionPlanner(f.db, f.scope, { template, integrityKey: new Uint8Array(32).fill(91),
     reviewIntegrityKey: f.reviewKey, checkpoints: f.checkpoints }, () => instant + 7000);
   const source = await f.tasks.propose(f.identity, binding.projectId, taskDraft, "marvin-021-plan-source");
