@@ -10,7 +10,10 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const args = new Set(process.argv.slice(2));
+// pnpm forwards the conventional `--` argument separator to this direct Node
+// script in some supported versions. It is not an instruction to Hermes and
+// must not make the documented owner command fail before the bounded check.
+const args = new Set(process.argv.slice(2).filter(value => value !== "--"));
 const ownerAttended = args.has("--owner-attended");
 const dryRun = args.has("--dry-run");
 if (!ownerAttended || [...args].some(value => value !== "--owner-attended" && value !== "--dry-run")) {
