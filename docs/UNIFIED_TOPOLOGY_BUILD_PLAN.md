@@ -79,10 +79,20 @@ Remaining before an automatic local worker is enabled:
 
 ## U2 — several-computer delivery
 
-Build after the common local path is composed:
+Completed in source:
 
-- enrollment of a remote worker with a versioned adapter profile;
-- delivery acknowledgement, disconnect, reconnect, and revocation handling;
+- a remote-worker enrollment contract with no host, address, key, or tunnel
+  material;
+- adapter-version compatibility checks before remote delivery;
+- explicit refusal of revoked workers; and
+- disconnect and timeout outcomes that remain uncertain and never retry on
+  their own.
+
+Remaining:
+
+- controlled reconnect evidence for an enrolled worker without creating a new
+  task identity;
+- delivery acknowledgement through the real enrolled transport;
 - a two-computer proof using the same shared delivery packet and result path;
 - a compatibility rule that refuses a worker whose verified adapter version is
   not supported.
