@@ -26,6 +26,12 @@ only accepts a passed result when an installer supplies a matching evidence
 fingerprint. This makes missing or stale proof records visible rather than
 mistakenly presenting them as a running worker.
 
+The local setup page presents Hermes Agent, Claude Code and Codex separately.
+For each it shows an honest first-use scope, capability status and current
+blocker. The optional Mac Codex custody record contains only opaque evidence
+digests, is bound to the selected setup plan, and cannot enable or launch
+Codex. The page never treats a source contract or proof record as a live agent.
+
 ### This computer
 
 - A successful owner-attended, text-only local Hermes qualification has been
