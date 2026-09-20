@@ -151,13 +151,18 @@ Completed in source:
 - controlled reconnect reconciliation that accepts only a receipt for the
   original packet and never retransmits it; an exact recovered receipt is
   retained through the same PostgreSQL receipt record used for local delivery.
+- a disposable two-enrolled-worker proof: a task stays with its intended
+  worker even when another worker reconnects, while incompatible or revoked
+  workers cannot become a ready substitute. This is not a real transport or
+  machine-enrollment claim.
 
 Remaining:
 
 - delivery acknowledgement through the real enrolled transport;
-- a two-computer proof using the same shared delivery packet and result path;
-- a compatibility rule that refuses a worker whose verified adapter version is
-  not supported.
+- an end-to-end two-computer proof using the same shared delivery packet,
+  result, review, and correction path; and
+- delivery acknowledgement through a real enrolled transport, including its
+  verified adapter-version compatibility boundary.
 
 ## Acceptance checks
 
