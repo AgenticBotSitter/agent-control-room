@@ -73,6 +73,7 @@ test("a Marvin Hermes 0.21 template creates a pinned v5 plan, not an older gener
   assert.equal(dispatch.delivery.worker.adapterId, HERMES_021_MACOS_LOCAL_ADAPTER_V1);
   assert.equal(dispatch.delivery.identity.attemptId, assigned.receipt.attemptId);
   assert.equal(dispatch.route.kind, "local");
+  assert.equal(dispatch.workflowId, saved.job.workflowId);
 
   let launches = 0;
   const execution = { preparation: dispatcher, runs: new HarnessRunStoreV1(f.db, new Uint8Array(32).fill(25)),

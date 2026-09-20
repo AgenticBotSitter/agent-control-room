@@ -97,8 +97,9 @@ Completed in source:
   delivery and never invokes Marvin twice.
 - the completed-record publisher now accepts only a verified terminal record
   from the local runner and creates the normal pending-review item with exact
-  replay protection. The permanent host still needs to compose this final
-  result handoff; Marvin cannot accept its own result.
+  replay protection. The normal in-process composition derives its result
+  binding only from the controller-prepared packet and invokes that existing
+  publisher; Marvin cannot accept its own result.
 - a normal harness-run record is created before the controlled local launcher
   is called. It binds the run to the task, attempt, approved authority, and
   connector profile without recording a local login, model, provider, or
@@ -125,6 +126,10 @@ Remaining before an automatic local worker is enabled:
   operational worker);
 - a controlled local data directory, restart procedure, and backup/restore
   proof.
+- durable recovery of terminal result bytes when the process stops after
+  Hermes returns but before the normal result publisher completes. A delivery
+  replay correctly refuses to run Hermes twice, but must not be mislabeled as
+  result recovery.
 
 The permanent local-installation recovery model, including the boundary
 between the one authoritative database and local result bytes, is documented

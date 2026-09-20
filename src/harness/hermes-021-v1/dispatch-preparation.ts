@@ -21,6 +21,20 @@ export type Hermes021MacosDispatchReferenceV1 = Readonly<{
 }>;
 
 /**
+ * Controller-derived facts retained at the delivery boundary. A host uses
+ * these facts to bind a completed local result; it must never recover them
+ * from a browser request or from Hermes's terminal text.
+ */
+export type Hermes021MacosPreparedDispatchV1 = Readonly<{
+  schema: typeof HERMES_021_MACOS_DISPATCH_PREPARATION_V1;
+  delivery: ControllerWorkerDeliveryV1;
+  workflowId: string;
+  route: Readonly<{ kind: "local"; workerId: string }>;
+  startsWork: false;
+  grantsExecutionAuthority: false;
+}>;
+
+/**
  * Reads an already-assigned canonical task and creates the shared packet for
  * Marvin. This is deliberately a preparation reader: it does not create an
  * assignment, queue, run, receipt, policy, or Hermes process. The caller
@@ -36,10 +50,7 @@ export class Hermes021MacosDispatchPreparationV1 {
       || typeof clock !== "function") unavailable();
   }
 
-  async prepare(value: Hermes021MacosDispatchReferenceV1): Promise<Readonly<{
-    schema: typeof HERMES_021_MACOS_DISPATCH_PREPARATION_V1; delivery: ControllerWorkerDeliveryV1;
-    route: Readonly<{ kind: "local"; workerId: string }>; startsWork: false; grantsExecutionAuthority: false;
-  }>> {
+  async prepare(value: Hermes021MacosDispatchReferenceV1): Promise<Hermes021MacosPreparedDispatchV1> {
     const ref = z.object({ tenantId: id, projectId: id, jobId: id, attemptId: id, leaseId: id, inputDigest: digest }).strict().parse(value);
     return this.db.transaction(async tx => this.prepareInSession(tx, ref));
   }
@@ -84,7 +95,7 @@ export class Hermes021MacosDispatchPreparationV1 {
       authorityDigest: job.authority.digest, connectorProfileDigest: plan.connectorProfileDigest,
       acceptanceProfileId: plan.acceptanceProfileId, acceptanceProfileDigest: plan.acceptanceProfileDigest,
       issuedAt: new Date(now).toISOString(), expiresAt });
-    return Object.freeze({ schema: HERMES_021_MACOS_DISPATCH_PREPARATION_V1, delivery,
+    return Object.freeze({ schema: HERMES_021_MACOS_DISPATCH_PREPARATION_V1, delivery, workflowId: job.workflowId,
       route: Object.freeze({ kind: "local" as const, workerId }),
       startsWork: false as const, grantsExecutionAuthority: false as const });
   }

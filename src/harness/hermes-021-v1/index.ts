@@ -8,3 +8,4 @@ export * from "./local-delivery-composition";
 export * from "./dispatch-preparation";
 export * from "./assigned-task-execution";
 export * from "./local-run-registration";
+export * from "./completed-task-publication";
