@@ -88,8 +88,8 @@ tested version and limitations.
 
 | ID | Priority | Requirement | Acceptance evidence |
 | --- | --- | --- | --- |
-| CONN-001 | MVP | Qualify Hermes Agent and Codex as the first two different harness integrations. | One versioned release completes the common task/result/review/revision journey with both at documented versions. |
-| CONN-002 | Next | Add Claude Code through the same shared adapter contract and conformance suite. | Claude-specific behavior is isolated in its adapter; common services require no Claude-only fork. |
+| CONN-001 | MVP | Qualify Hermes Agent and Codex as the first two different harness integrations. | One versioned release completes the common task/result/review/revision journey with both at documented versions. The selected single-computer product path must not fork these shared services. |
+| CONN-002 | MVP for This computer | Add Claude Code through the same shared adapter contract and conformance suite. | Claude-specific behavior is isolated in its adapter; common services require no Claude-only fork. A complete single-computer installation includes Hermes, Claude and Codex at their honestly qualified capabilities. |
 | CONN-003 | Later | Allow OpenClaw and other harness adapters through a public extension contract. | A reference adapter passes conformance without gaining undeclared permissions. |
 | CONN-004 | MVP | Register workers by stable node, harness, version, platform, capabilities and credential identity. | Duplicate, foreign, stale and version-drift registrations fail or downgrade honestly. |
 | CONN-005 | MVP | Let macOS, Windows and Linux machines run their own connectors and credentials. | Published support matrix matches platform-specific install and conformance evidence. |
@@ -98,7 +98,7 @@ tested version and limitations.
 | CONN-008 | Always | Direct SSH or agent-to-agent messaging cannot become the task authority. | Any such transport is bounded behind a connector and canonical server admission remains required. |
 | CONN-009 | Next | Expose compatible Control Room actions through MCP using the same services and permissions. | Website and MCP calls produce the same canonical records and authorization outcomes. |
 | CONN-010 | Always | Publish exact support by harness version, OS and capability; architecture alone is not compatibility. | Support matrix links each positive claim to matching live or installed evidence. |
-| CONN-011 | MVP | Allow browser and contributor use from macOS even when local Codex execution remains unsupported. | UI/setup works on macOS and the local Codex start path refuses safely until separately qualified. |
+| CONN-011 | MVP | Allow browser and contributor use from macOS even when local Codex execution remains unsupported. | UI/setup works on macOS and the local Codex start path refuses safely until separately qualified. The local product may promote macOS Codex only after its separately documented custody qualification; no setup screen may bypass this gate. |
 | CONN-012 | Always | Do not modify an installed harness to satisfy Control Room. | Adapter qualification uses supported upstream interfaces or records the feature unsupported. |
 
 ## 6. Idea Lab and news/research
@@ -207,6 +207,23 @@ the following as an integrated journey:
 | MVP-010 | Restore verified database and artifact backups into disposable targets and validate ownership and access restrictions. |
 | MVP-011 | Complete the core desktop, phone-width and keyboard journey with no project data leak, fake activity or unsafe output rendering. |
 | MVP-012 | Publish the exact support matrix, license/notice inventory, known limitations, rollback instructions and retained acceptance evidence. |
+
+### This-computer completion journey
+
+The local installation choice is not a substitute for the release journey above.
+It is the same product running one controller and its workers on one computer.
+Before it is described as fully functional, it must pass these additional
+requirements with the exact selected installed versions:
+
+| ID | Required journey |
+| --- | --- |
+| LOCAL-001 | Start one configured local application using the same PostgreSQL database, pg-boss scheduler, project/task/result/review services and protected artifact path as the several-computer product. |
+| LOCAL-002 | Show Hermes Agent, Claude Code and Codex separately in the protected browser, including their actual available and unavailable capabilities. A source-tested adapter is not shown as a running worker. |
+| LOCAL-003 | Complete one bounded project task with each qualified harness through the same assignment, authority, delivery, result, review and linked-correction journey. |
+| LOCAL-004 | For every enabled harness, prove denied work, cancellation or interruption, and restart recovery do not silently create another agent execution. Unsupported upstream capability remains visibly unavailable. |
+| LOCAL-005 | Close/reopen the browser and restart the local controller while preserving saved projects, task state, staged terminal result evidence and the owner review record. |
+| LOCAL-006 | Restore database and protected artifact bytes into disposable destinations before calling local backup/recovery verified. |
+| LOCAL-007 | If the chosen local host is macOS, retain the existing Codex custody refusal until its two separate physical qualifications pass. A feature flag, configuration setting or browser button cannot bypass it. |
 
 ## 12. Traceability and change control
 
