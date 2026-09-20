@@ -3,7 +3,9 @@ import { sha256Digest } from "../../security/canonical-digest";
 import {
   controllerWorkerDeliverySchemaV1,
   controllerWorkerRouteSchemaV1,
+  type ControllerWorkerDeliveryV1,
 } from "../v1/controller-worker-delivery";
+import { assertSynchronousFence } from "../../security/synchronous-fence";
 
 /** Source revision observed from the locally installed Hermes Agent 0.21.3. */
 export const HERMES_021_MACOS_LOCAL_WORKER_CONTRACT_V1 = "control-room.hermes-021-macos-local-worker/v1" as const;
@@ -53,6 +55,21 @@ export interface Hermes021MacosLocalPrivatePortV1 {
     task: Hermes021MacosTaskV1;
     signal?: AbortSignal;
   }>): Promise<readonly unknown[]>;
+}
+
+/**
+ * Installation-owned admission boundary for normal local Hermes work. It is
+ * deliberately injected: the Control Room repository never stores the Mac's
+ * workspace path, Hermes login, selected model, or a rule that could widen
+ * the local worker's authority. A host must synchronously approve the exact
+ * immutable delivery before the private runner can be called.
+ */
+export interface Hermes021MacosTaskPolicyPortV1 {
+  assertAdmitted(input: Readonly<{
+    delivery: ControllerWorkerDeliveryV1;
+    task: Hermes021MacosTaskV1;
+    binding: Hermes021MacosLocalBindingV1;
+  }>): void;
 }
 
 export type Hermes021MacosTaskOutcomeV1 =
@@ -117,4 +134,26 @@ export async function runHermes021MacosLocalTaskV1(bindingValue: unknown, taskVa
   } catch {
     return Object.freeze({ kind: "uncertain", reason: "hermes_local_transport_unavailable" });
   }
+}
+
+/**
+ * The normal local-worker launch seam. It prepares the task only from the
+ * shared controller packet, then requires the Mac-owned policy to approve
+ * that exact packet before touching Hermes. The policy is synchronous so an
+ * incomplete asynchronous check cannot be mistaken for authority. A policy
+ * refusal starts nothing; a lost Hermes reply remains uncertain and is never
+ * retried here.
+ *
+ * This function has no default policy and no default private runner. Wiring a
+ * real host remains a separate installation step after owner qualification.
+ */
+export async function runAdmittedHermes021MacosLocalTaskV1(deliveryValue: unknown, routeValue: unknown,
+  bindingValue: unknown, policy: Hermes021MacosTaskPolicyPortV1,
+  privatePort: Hermes021MacosLocalPrivatePortV1, signal?: AbortSignal): Promise<Hermes021MacosTaskOutcomeV1> {
+  const delivery = controllerWorkerDeliverySchemaV1.parse(deliveryValue);
+  const binding = hermes021MacosLocalBindingSchemaV1.parse(bindingValue);
+  const task = prepareHermes021MacosTaskV1(delivery, routeValue, binding);
+  if (!policy || typeof policy.assertAdmitted !== "function" || signal?.aborted) unavailable();
+  assertSynchronousFence(() => policy.assertAdmitted(Object.freeze({ delivery, task, binding })), unavailable);
+  return runHermes021MacosLocalTaskV1(binding, task, privatePort, signal);
 }

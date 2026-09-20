@@ -66,3 +66,18 @@ listener, or start a persistent service.
 
 Once that evidence is accepted, the normal task dispatcher can use the local
 port for the same worker lifecycle used by remote Hermes workers.
+
+## Normal automatic work
+
+The source package now has `runAdmittedHermes021MacosLocalTaskV1`. It accepts
+only the shared Control Room delivery packet and requires an
+installation-owned policy to approve that exact packet before calling the
+private Hermes runner. The policy keeps the local workspace, model selection,
+login, and provider details private; a browser request or task prompt cannot
+provide or widen them.
+
+This is a controlled launch seam, not a background service. A real automatic
+host still needs the operator to configure its restricted task policy and
+complete the text-only qualification first. A policy refusal starts no Hermes
+task. A lost reply is recorded as uncertain and is never automatically run a
+second time.

@@ -73,14 +73,15 @@ Completed in source:
 - composition that sends a verified local Hermes terminal result through the
   existing durable-result receipt and pending-review services, including
   restart-safe exact replay.
+- a normal local-runner seam that requires the Mac-owned policy to approve the
+  exact controller packet before Hermes can be invoked.
 
 Remaining before an automatic local worker is enabled:
 
-- an owner-configured local runner that has a restricted task policy;
+- an owner-configured restricted task policy for the local runner;
 - one owner-attended, text-only qualification using the existing Hermes login;
 - a controlled local data directory, restart procedure, and backup/restore
-  proof;
-- composition with the durable result and review services.
+  proof.
 
 The permanent local-installation recovery model, including the boundary
 between the one authoritative database and local result bytes, is documented

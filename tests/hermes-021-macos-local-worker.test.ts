@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { classifyHermes021MacosResultV1, prepareHermes021MacosTaskV1, runHermes021MacosLocalTaskV1,
+  runAdmittedHermes021MacosLocalTaskV1,
   HERMES_021_MACOS_LOCAL_ADAPTER_V1, hermes021MacosLocalConnectorProfileV1,
   refuseHermes021MacosOperationV1 } from "../src/harness/hermes-021-v1";
 import { createControllerWorkerDeliveryV1 } from "../src/harness/v1/controller-worker-delivery";
@@ -52,6 +53,27 @@ test("Hermes 0.21 local worker reports a lost private-port reply as uncertainty 
   const outcome = await runHermes021MacosLocalTaskV1(binding, task, { async run() { attempts++; throw new Error("connection lost"); } });
   assert.deepEqual(outcome, { kind: "uncertain", reason: "hermes_local_transport_unavailable" });
   assert.equal(attempts, 1);
+});
+
+test("Marvin's normal local runner needs a synchronous policy for the exact shared delivery", async () => {
+  let runs = 0, policyCalls = 0;
+  const completed = await runAdmittedHermes021MacosLocalTaskV1(controllerDelivery(),
+    { kind: "local", workerId: "worker:marvin" }, binding, { assertAdmitted(input) {
+      policyCalls++; assert.equal(input.delivery.worker.workerId, "worker:marvin");
+      assert.equal(input.task.jobId, input.delivery.identity.jobId);
+    } }, { async run() { runs++; return [result()]; } });
+  assert.equal(completed.kind, "completed");
+  assert.equal(policyCalls, 1); assert.equal(runs, 1);
+
+  await assert.rejects(runAdmittedHermes021MacosLocalTaskV1(controllerDelivery(),
+    { kind: "local", workerId: "worker:marvin" }, binding, { assertAdmitted() { throw new Error("local_policy_refused"); } },
+    { async run() { runs++; return [result()]; } }), /local_policy_refused/);
+  assert.equal(runs, 1);
+
+  await assert.rejects(runAdmittedHermes021MacosLocalTaskV1(controllerDelivery(),
+    { kind: "local", workerId: "worker:marvin" }, binding, { assertAdmitted: (() => Promise.resolve()) as never },
+    { async run() { runs++; return [result()]; } }), /hermes_local_worker_unavailable/);
+  assert.equal(runs, 1);
 });
 
 test("Marvin's local connector records what is proven and explicitly refuses unqualified execution", () => {
