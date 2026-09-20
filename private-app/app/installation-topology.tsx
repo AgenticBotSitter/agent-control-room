@@ -18,12 +18,19 @@ export function InstallationTopologyProvider({ children }: { children: ReactNode
       try {
         const response = await fetch("/api/v1/installation-readiness", { method: "GET", credentials: "same-origin",
           cache: "no-store", redirect: "error", signal: controller.signal });
-        if (!response.ok) return;
+        if (!response.ok) {
+          if (!controller.signal.aborted && current === request) setPlan(undefined);
+          return;
+        }
         const responseBody = await response.json();
         const value = Object.freeze({ plan: verifyInstallationTopologyPlanV1(responseBody.plan),
           ...(responseBody.readiness === undefined ? {} : { readiness: verifyInstallationReadinessV1(responseBody.readiness) }) });
         if (!controller.signal.aborted && current === request) setPlan(value);
-      } catch { /* No saved plan means this view must remain unconfigured. */ }
+      } catch {
+        // A stale setup success must never remain visible after the protected
+        // read stops being available or returns malformed data.
+        if (!controller.signal.aborted && current === request) setPlan(undefined);
+      }
     };
     void load();
     const refreshVisible = () => { if (!document.hidden) void load(); };
