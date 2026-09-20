@@ -1,4 +1,5 @@
 import { connectorProfileSchemaV1, type ConnectorProfileV1 } from "../v1/connector-profile";
+import { sha256Digest } from "../../security/canonical-digest";
 
 /** Exact local Hermes revision observed on the Mac during integration. */
 export const HERMES_021_SOURCE_REVISION_V1 = "00570550f37e9082676955d50f65c7d9ba846cc9" as const;
@@ -38,3 +39,6 @@ export const hermes021MacosLocalConnectorProfileV1: ConnectorProfileV1 = connect
   },
   resultContract: { forms: ["utf8_text"], maximumBytes: 65_536, additionalAttachments: false },
 });
+
+/** Fixed digest of the admitted local Hermes connector profile. */
+export const HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1 = sha256Digest(hermes021MacosLocalConnectorProfileV1);
