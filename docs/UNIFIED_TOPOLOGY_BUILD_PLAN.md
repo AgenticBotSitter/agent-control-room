@@ -87,6 +87,9 @@ Completed in source:
 - a versioned Hermes-0.21 task plan that binds the reviewed connector profile,
   task type, and worker capability rather than reusing an unpinned legacy
   Hermes plan, including a separate correction-task form.
+- the existing task-assignment coordinator accepts that same pinned local
+  worker capability, so Marvin uses the ordinary bounded lease path rather
+  than a second local scheduler.
 
 Remaining before an automatic local worker is enabled:
 

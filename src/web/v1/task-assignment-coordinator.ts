@@ -23,6 +23,7 @@ import { readNativeTaskQueueIntentInSession, type NativeTaskQueueScope } from ".
 import type { ServerNodeSession } from "../../node-control/server-node-session";
 import { assertSynchronousFence } from "../../security/synchronous-fence";
 import { CODEX_APP_SERVER_CAPABILITY, CODEX_APP_SERVER_JOB_TYPE } from "../../harness/codex-v1/delivery-contract";
+import { HERMES_021_MACOS_LOCAL_CAPABILITY_V1 } from "../../harness/hermes-021-v1/macos-local-worker";
 import { codexTaskDispatchBodySchemaV1 } from "../../harness/codex-v1/delivery-contract";
 import { buildCodexTaskActivationV1, type CodexDispatchFrameForActivationV1,
   type CodexDispatchReceiptFrameForActivationV1 } from "../../harness/codex-v1/activation-contract";
@@ -45,7 +46,7 @@ type CanonicalNativeApproval = ReturnType<typeof prepareNativeTaskApprovalWithLe
 };
 
 const routeSchema = z.object({ nodeId: localId, executorId: localId,
-  capabilityProbeId: z.enum(["harness.hermes.native.runs.v1", CODEX_APP_SERVER_CAPABILITY]),
+  capabilityProbeId: z.enum(["harness.hermes.native.runs.v1", HERMES_021_MACOS_LOCAL_CAPABILITY_V1, CODEX_APP_SERVER_CAPABILITY]),
   maxConcurrentTasks: z.number().int().min(1).max(8), requiredScratchBytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   leaseSeconds: z.number().int().min(1).max(300) }).strict();
 export type TaskAssignmentRoute = z.infer<typeof routeSchema>;
