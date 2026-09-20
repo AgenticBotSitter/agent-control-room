@@ -66,7 +66,8 @@ Completed in source:
   database. These are route doubles, not installed transport claims.
 - a read-only installation-topology plan that gives both setup choices one
   migration-safe configuration record. It refuses one worker being assigned to
-  both routes, preserves the selected database and scheduler authority
+  both routes, treats a changed worker route or adapter as a fresh recheck,
+  preserves the selected database and scheduler authority
   fingerprints, and lists the owner proofs required before any worker is
   enabled. It does not create, connect, launch, or enable anything.
 

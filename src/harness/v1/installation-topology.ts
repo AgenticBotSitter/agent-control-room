@@ -35,6 +35,8 @@ export type InstallationTopologyPlanV1 = Readonly<{
   databaseAuthorityDigest: string;
   schedulerAuthorityDigest: string;
   retainedWorkerIds: readonly string[];
+  /** A known worker whose location or adapter binding changes must be rechecked. */
+  reboundWorkerIds: readonly string[];
   addedRemoteWorkerIds: readonly string[];
   requiredProofs: readonly ("local_owner_qualification" | "remote_enrollment" | "two_computer_delivery" | "backup_restore")[];
   /** Always false: a plan cannot enable an agent or grant task authority. */
@@ -64,10 +66,15 @@ export function planInstallationTopologyV1(value: unknown): InstallationTopology
   assertUniqueWorkers(input.currentRoutes);
   assertUniqueWorkers(input.requestedRoutes);
   const currentMode = modeOf(input.currentRoutes), mode = modeOf(input.requestedRoutes);
-  const currentWorkerIds = new Set(input.currentRoutes.map(value => value.workerId));
-  const retainedWorkerIds = input.requestedRoutes.filter(value => currentWorkerIds.has(value.workerId))
+  const currentByWorkerId = new Map(input.currentRoutes.map(value => [value.workerId, value]));
+  const unchanged = (value: z.infer<typeof route>) => {
+    const current = currentByWorkerId.get(value.workerId);
+    return current !== undefined && canonicalJson(current) === canonicalJson(value);
+  };
+  const retainedWorkerIds = input.requestedRoutes.filter(unchanged).map(value => value.workerId).sort();
+  const reboundWorkerIds = input.requestedRoutes.filter(value => currentByWorkerId.has(value.workerId) && !unchanged(value))
     .map(value => value.workerId).sort();
-  const addedRemoteWorkerIds = input.requestedRoutes.filter(value => !currentWorkerIds.has(value.workerId) && value.kind === "remote")
+  const addedRemoteWorkerIds = input.requestedRoutes.filter(value => !currentByWorkerId.has(value.workerId) && value.kind === "remote")
     .map(value => value.workerId).sort();
   const proofs = new Set<"local_owner_qualification" | "remote_enrollment" | "two_computer_delivery" | "backup_restore">(["backup_restore"]);
   if (input.requestedRoutes.some(value => value.kind === "local")) proofs.add("local_owner_qualification");
@@ -77,9 +84,9 @@ export function planInstallationTopologyV1(value: unknown): InstallationTopology
   }
   const material = { schema: INSTALLATION_TOPOLOGY_PLAN_V1, mode, currentMode,
     databaseAuthorityDigest: input.databaseAuthorityDigest, schedulerAuthorityDigest: input.schedulerAuthorityDigest,
-    retainedWorkerIds, addedRemoteWorkerIds, requiredProofs: [...proofs].sort(), enablesWorkers: false as const };
+    retainedWorkerIds, reboundWorkerIds, addedRemoteWorkerIds, requiredProofs: [...proofs].sort(), enablesWorkers: false as const };
   return Object.freeze({ ...material, retainedWorkerIds: Object.freeze(retainedWorkerIds),
-    addedRemoteWorkerIds: Object.freeze(addedRemoteWorkerIds), requiredProofs: Object.freeze(material.requiredProofs),
+    reboundWorkerIds: Object.freeze(reboundWorkerIds), addedRemoteWorkerIds: Object.freeze(addedRemoteWorkerIds), requiredProofs: Object.freeze(material.requiredProofs),
     planDigest: sha256Digest(material) });
 }
 
@@ -87,15 +94,19 @@ export function planInstallationTopologyV1(value: unknown): InstallationTopology
 export function verifyInstallationTopologyPlanV1(value: unknown): InstallationTopologyPlanV1 {
   const plan = z.object({ schema: z.literal(INSTALLATION_TOPOLOGY_PLAN_V1), mode: z.enum(["this_computer", "several_computers"]),
     currentMode: z.enum(["this_computer", "several_computers"]), databaseAuthorityDigest: digest, schedulerAuthorityDigest: digest,
-    retainedWorkerIds: z.array(id), addedRemoteWorkerIds: z.array(id),
+    retainedWorkerIds: z.array(id), reboundWorkerIds: z.array(id), addedRemoteWorkerIds: z.array(id),
     requiredProofs: z.array(z.enum(["local_owner_qualification", "remote_enrollment", "two_computer_delivery", "backup_restore"])),
     enablesWorkers: z.literal(false), planDigest: digest }).strict().parse(value);
   const { planDigest, ...material } = plan;
   if (planDigest !== sha256Digest(material) || canonicalJson(plan.requiredProofs) !== canonicalJson([...plan.requiredProofs].sort())
     || new Set(plan.retainedWorkerIds).size !== plan.retainedWorkerIds.length
-    || new Set(plan.addedRemoteWorkerIds).size !== plan.addedRemoteWorkerIds.length) {
+    || new Set(plan.reboundWorkerIds).size !== plan.reboundWorkerIds.length
+    || new Set(plan.addedRemoteWorkerIds).size !== plan.addedRemoteWorkerIds.length
+    || [plan.retainedWorkerIds, plan.reboundWorkerIds, plan.addedRemoteWorkerIds].some((ids, index, all) =>
+      ids.some(id => all.some((other, otherIndex) => otherIndex !== index && other.includes(id))))) {
     throw new Error("installation_topology_plan_invalid");
   }
   return Object.freeze({ ...plan, retainedWorkerIds: Object.freeze([...plan.retainedWorkerIds]),
-    addedRemoteWorkerIds: Object.freeze([...plan.addedRemoteWorkerIds]), requiredProofs: Object.freeze([...plan.requiredProofs]) });
+    reboundWorkerIds: Object.freeze([...plan.reboundWorkerIds]), addedRemoteWorkerIds: Object.freeze([...plan.addedRemoteWorkerIds]),
+    requiredProofs: Object.freeze([...plan.requiredProofs]) });
 }

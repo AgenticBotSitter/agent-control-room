@@ -14,6 +14,7 @@ test("a this-computer plan preserves one authority and asks only for local proof
   assert.equal(plan.currentMode, "this_computer");
   assert.equal(plan.mode, "this_computer");
   assert.deepEqual(plan.retainedWorkerIds, ["worker:marvin"]);
+  assert.deepEqual(plan.reboundWorkerIds, []);
   assert.deepEqual(plan.addedRemoteWorkerIds, []);
   assert.deepEqual(plan.requiredProofs, ["backup_restore", "local_owner_qualification"]);
   assert.equal(plan.enablesWorkers, false);
@@ -25,6 +26,7 @@ test("adding a remote worker is one-installation migration preparation, not a se
   assert.equal(plan.currentMode, "this_computer");
   assert.equal(plan.mode, "several_computers");
   assert.deepEqual(plan.retainedWorkerIds, ["worker:marvin"]);
+  assert.deepEqual(plan.reboundWorkerIds, []);
   assert.deepEqual(plan.addedRemoteWorkerIds, ["worker:remote"]);
   assert.deepEqual(plan.requiredProofs, ["backup_restore", "local_owner_qualification", "remote_enrollment", "two_computer_delivery"]);
   assert.equal(plan.enablesWorkers, false);
@@ -34,4 +36,12 @@ test("a worker cannot be both local and remote, and a changed reviewed plan is r
   assert.throws(() => planInstallationTopologyV1(input([local, { ...local, kind: "remote" as const }])), /worker_route_ambiguous/);
   const plan = planInstallationTopologyV1(input([local]));
   assert.throws(() => verifyInstallationTopologyPlanV1({ ...plan, mode: "several_computers" }), /plan_invalid/);
+});
+
+test("moving a known worker between local and remote is a rebind, not quiet retention", () => {
+  const plan = planInstallationTopologyV1(input([{ ...local, kind: "remote" }]));
+  assert.deepEqual(plan.retainedWorkerIds, []);
+  assert.deepEqual(plan.reboundWorkerIds, ["worker:marvin"]);
+  assert.deepEqual(plan.addedRemoteWorkerIds, []);
+  assert.ok(plan.requiredProofs.includes("remote_enrollment"));
 });
