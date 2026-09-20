@@ -922,6 +922,27 @@ test("Mac-local Hermes 0.21 refuses foreign session or profile before durable wr
   assert.equal(storage.putCalls, 0);
 });
 
+test("Mac-local Hermes 0.21 refuses a result after the recorded task authority changes", async t => {
+  const runId = "run:durable-hermes-021-authority-change";
+  const receivedAt = at(9220);
+  const input = hermes021PublicationInput(runId);
+  const f = await setupHermes021Provision(runId, input, receivedAt); t.after(f.close);
+  const storage = new ControlledStorage();
+  // Simulate the canonical task being amended after this run was admitted.
+  // The stored run still carries the old digest, so accepting its result
+  // would otherwise cross an authority boundary.
+  await f.db.query("UPDATE control_jobs SET authority_digest=$3, payload=jsonb_set(payload,'{authority,digest}',to_jsonb($3::text),false) WHERE tenant_id=$1 AND id=$2", [
+    binding.tenantId, input.retainedBinding.jobId, digest("later-hermes-021-authority"),
+  ]);
+  const outcome = classifyHermes021MacosResultV1([JSON.parse(input.terminalResultRawLine)]);
+  await assert.rejects(publishCompletedHermes021MacosOutcomeV1(configOf(f, storage), {
+    retainedBinding: input.retainedBinding, outcome,
+    acceptedConnectorProfileDigest: input.acceptedConnectorProfileDigest, receivedAt,
+    assertAuthority: input.assertAuthority,
+  }), /durable_result_identity_mismatch/);
+  assert.equal(storage.putCalls, 0);
+});
+
 test("upstream Hermes: a completed session result publishes exactly once and replays the existing receipt", async t => {
   const f = await setupWithProvision("run:durable-upstream-hermes"); t.after(f.close);
   const storage = new ControlledStorage();

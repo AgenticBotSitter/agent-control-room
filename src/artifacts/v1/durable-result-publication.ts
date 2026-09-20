@@ -301,7 +301,10 @@ async function verifyRecordedIdentity(tx: DatabaseSession, binding: DurableResul
   const jobRow = (await tx.query<{ workflow_id: string; authority_digest: string }>(
     "SELECT workflow_id,authority_digest FROM control_jobs WHERE tenant_id=$1 AND id=$2",
     [binding.tenantId, binding.jobId])).rows[0];
-  if (!jobRow || jobRow.workflow_id !== binding.workflowId) throw new Error("durable_result_identity_mismatch");
+  if (!jobRow || jobRow.workflow_id !== binding.workflowId
+    || binding.authorityDigest !== undefined && jobRow.authority_digest !== binding.authorityDigest) {
+    throw new Error("durable_result_identity_mismatch");
+  }
 
   const attemptRow = (await tx.query<{ job_id: string; node_id: string }>(
     "SELECT job_id,node_id FROM control_attempts WHERE tenant_id=$1 AND id=$2",
