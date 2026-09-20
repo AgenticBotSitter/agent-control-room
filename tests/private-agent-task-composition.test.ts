@@ -11,6 +11,8 @@ import { CODEX_APP_SERVER_READ_CONTRACT, CODEX_APP_SERVER_RESULT_CONTRACT,
   CODEX_APP_SERVER_START_CONTRACT } from "../src/harness/codex-v1/schema-contract";
 import { signArtifact } from "../src/node-policy/v1/crypto";
 import { sha256Digest } from "../src/security";
+import { createInstallationReadinessV1 } from "../src/harness/v1/installation-readiness";
+import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
 import { createPrivateTaskHost } from "../src/web/v1/private-task-host";
 import { startPrivateHostLifecycle } from "../src/web/v1/private-host-lifecycle";
 import { bindPrivateCodexResultReturnV1, validatePrivateTaskStartupConfiguration,
@@ -875,6 +877,16 @@ test("operator assembly can carry an installation-owned local Hermes executor wi
   trusted.codex = undefined;
   trusted.codexResultReturn = undefined;
   trusted.nativeHttp = undefined;
+  const topologyRoute = { kind: "local" as const, workerId: "worker:local-hermes", adapterId: "connector:hermes-021-macos-local-v1",
+    adapterRevision: "00570550" };
+  const topology = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("operator-local-db"),
+    schedulerAuthorityDigest: sha256Digest("operator-local-scheduler"), currentRoutes: [topologyRoute], requestedRoutes: [topologyRoute] });
+  trusted.web = { ...(trusted.web as object), installationTopologyPlan: topology,
+    installationReadiness: createInstallationReadinessV1({ planDigest: topology.planDigest, proofs: [
+      { proof: "backup_restore", state: "passed", evidenceDigest: sha256Digest("operator-local-backup") },
+      { proof: "local_owner_qualification", state: "passed", evidenceDigest: sha256Digest("operator-local-text") },
+      { proof: "local_runner_bridge", state: "passed", evidenceDigest: sha256Digest("operator-local-runner") },
+    ] }) } as typeof trusted.web;
   let delivered = 0;
   trusted.hermes021Local = { deliver: async function () { delivered++; } };
   const result = assemblePrivateAgentTaskOperatorConfiguration(settings, trusted);
@@ -884,6 +896,31 @@ test("operator assembly can carry an installation-owned local Hermes executor wi
   assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(
     { ...settings, features: { ...settings.features, hermes021Local: false } }, trusted),
   /unexpected_trusted_input:hermes021Local/);
+});
+
+test("operator assembly refuses a local Hermes callback until its local proof set is recorded", () => {
+  const { settings, trusted } = operatorConfigurationScenario("full");
+  settings.features = { ...settings.features, sessions: false, codex: false, codexResultReturn: false,
+    nativeHttp: false, hermes021Local: true };
+  trusted.sessions = undefined;
+  trusted.codex = undefined;
+  trusted.codexResultReturn = undefined;
+  trusted.nativeHttp = undefined;
+  trusted.hermes021Local = { async deliver() {} };
+  assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(settings, trusted),
+    /hermes021Local_installation_proof_missing/);
+  const topologyRoute = { kind: "local" as const, workerId: "worker:local-hermes", adapterId: "connector:hermes-021-macos-local-v1",
+    adapterRevision: "00570550" };
+  const topology = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("operator-local-db"),
+    schedulerAuthorityDigest: sha256Digest("operator-local-scheduler"), currentRoutes: [topologyRoute], requestedRoutes: [topologyRoute] });
+  trusted.web = { ...(trusted.web as object), installationTopologyPlan: topology,
+    installationReadiness: createInstallationReadinessV1({ planDigest: topology.planDigest, proofs: [
+      { proof: "backup_restore", state: "passed", evidenceDigest: sha256Digest("operator-local-backup") },
+      { proof: "local_owner_qualification", state: "passed", evidenceDigest: sha256Digest("operator-local-text") },
+      { proof: "local_runner_bridge", state: "not_started" },
+    ] }) } as typeof trusted.web;
+  assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(settings, trusted),
+    /hermes021Local_installation_not_ready/);
 });
 
 test("website-only settings cannot enter the operator assembler", async () => {

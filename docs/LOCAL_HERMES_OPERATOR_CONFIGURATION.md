@@ -65,6 +65,12 @@ Control Room then creates one worker registration and one private startup
 configuration. The application still has one task queue, one review process,
 and one database; this is not a separate local system.
 
+The startup configuration refuses to activate the local Hermes callback until
+the reviewed setup plan records all three local prerequisites: the text-only
+agent check, the fixed-runner bridge check, and the disposable backup/restore
+proof. Adding a future remote worker does not make the local callback wait for
+that remote worker's separate proof.
+
 ## Safety rule for the first live task
 
 The first real task should be a small, harmless text task chosen by the owner.

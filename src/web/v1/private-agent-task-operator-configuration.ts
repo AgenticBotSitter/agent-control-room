@@ -14,6 +14,7 @@ import type { NewsStartupConfiguration } from "./news-startup-configuration";
 import type { PrivateArtifactStorageConfigurationV1 } from "./private-artifact-storage";
 import type { AwaitableRollbackCheckpointStoreV1 } from "../../security";
 import type { TaskCoordinatorConfiguration } from "./task-coordinator-lifecycle";
+import { summarizeInstallationReadinessV1 } from "../../harness/v1/installation-readiness";
 
 /** Pure operator-side assembly. This module performs no environment, filesystem,
  * network, listener, credential-store or database access: it only shapes
@@ -119,6 +120,25 @@ export type AgentTaskOperatorTrustedInputs = {
 
 function refuse(code: string): never {
   throw new Error(`agent_task_operator_config_invalid:${code}`);
+}
+
+/**
+ * A local runner is an explicit installation-owned enablement choice, never a
+ * consequence of merely supplying a callback. Require the local proof set but
+ * do not require remote proofs: a unified installation may prepare a remote
+ * worker later without disabling an already-proved local worker.
+ */
+function requireReadyLocalHermesInstallation(web: PrivateStartupConfiguration) {
+  if (web.installationTopologyPlan === undefined || web.installationReadiness === undefined)
+    refuse("hermes021Local_installation_proof_missing");
+  let summary: ReturnType<typeof summarizeInstallationReadinessV1>;
+  try { summary = summarizeInstallationReadinessV1(web.installationTopologyPlan, web.installationReadiness); }
+  catch { refuse("hermes021Local_installation_proof_invalid"); }
+  const passed = new Set(summary.proofs.filter(item => item.state === "passed").map(item => item.proof));
+  for (const proof of ["backup_restore", "local_owner_qualification", "local_runner_bridge"] as const) {
+    if (!summary.plan.requiredProofs.includes(proof) || !passed.has(proof))
+      refuse("hermes021Local_installation_not_ready");
+  }
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -451,6 +471,7 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
   // remains inert: queue pickup is the first possible delivery attempt.
   const trustedHermes = t.hermes021Local as NonNullable<AgentTaskOperatorTrustedInputs["hermes021Local"]> | undefined;
   if (f.hermes021Local && (!trustedHermes || typeof trustedHermes.deliver !== "function")) refuse("hermes021Local_invalid");
+  if (f.hermes021Local) requireReadyLocalHermesInstallation(t.web as PrivateStartupConfiguration);
   const capturedHermes = f.hermes021Local && trustedHermes
     ? Object.freeze({ deliver: trustedHermes.deliver.bind(trustedHermes) }) : undefined;
 
