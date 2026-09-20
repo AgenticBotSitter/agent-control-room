@@ -19,9 +19,12 @@ import { ProjectNavigation } from "../private-app/app/project-navigation";
 import { ProjectTaskViewPanel } from "../private-app/app/project-task-views";
 import { decodePrivateRouteSegment } from "../private-app/app/route-segment";
 import { PrivateConnectionView } from "../private-app/app/connections/workspace";
+import { InstallationTopologySummary } from "../private-app/app/installation-topology-summary";
 import { TaskProposalForm } from "../private-app/app/task-panels";
 import { TaskAttentionPanel } from "../private-app/app/needs-me/task-attention";
 import { taskAttentionPageSchema, taskAttentionPresentation } from "../src/web/v1/task-attention-wire";
+import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
+import { sha256Digest } from "../src/security/canonical-digest";
 
 test("compiled route parameters decode exactly once before reaching browser clients", () => {
   assert.equal(decodePrivateRouteSegment("project%3Aalpha"), "project:alpha");
@@ -560,4 +563,18 @@ test("workers boundary text no longer claims capacity data is unavailable", () =
   assert.match(html, /not part of this inventory/);
   assert.match(html, /operator capacity panel below shows the recorded capacity/);
   assert.match(html, /read-only/);
+});
+
+test("workers can show the reviewed installation plan without revealing routes or offering setup actions", () => {
+  const plan = planInstallationTopologyV1({
+    databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
+    currentRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }],
+    requestedRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }],
+  });
+  const html = renderToStaticMarkup(createElement(PrivateConnectionView, { data: { state: "loading" }, onRefresh: () => {} },
+    createElement(InstallationTopologySummary, { plan })));
+  assert.match(html, /Installation setup/);
+  assert.match(html, /This computer/);
+  assert.match(html, /successful owner-attended local worker check/);
+  assert.doesNotMatch(html, /worker:local|sha256:|<form|<input/);
 });

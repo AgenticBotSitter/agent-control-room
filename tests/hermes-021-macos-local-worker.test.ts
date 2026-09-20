@@ -39,7 +39,7 @@ test("Hermes 0.21 local worker accepts exactly one well-formed terminal report",
   if (outcome.kind !== "completed") throw new Error("expected completed");
   assert.equal(outcome.totalTokens, 20); assert.equal(outcome.sizeBytes, Buffer.byteLength(outcome.text, "utf8"));
   assert.equal(outcome.terminalResultDigest, sha256Digest(outcome.terminalResult));
-  assert.deepEqual(calls, [{ localServiceId: "service:marvin-hermes", task, signal: undefined }]);
+  assert.deepEqual(calls, [{ localServiceId: "service:marvin-hermes", task, terminalStage: undefined, signal: undefined }]);
 });
 
 test("Hermes 0.21 local worker fails closed for missing, duplicate, invalid, or failed terminal reports", () => {
