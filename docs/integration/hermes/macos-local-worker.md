@@ -33,6 +33,11 @@ The result still follows the normal Control Room result-publication and owner
 review path. A local Hermes result is not automatically accepted just because
 it came from the same computer.
 
+Control Room gives an initial Marvin task its own pinned plan form, and gives
+a requested correction a separate pinned correction form. That prevents an
+old generic Hermes task from being silently treated as a Marvin task and keeps
+the correction tied to the exact reviewed result it replaces.
+
 ## What is deliberately not claimed yet
 
 The source adapters have unit tests, but neither has contacted Marvin's live

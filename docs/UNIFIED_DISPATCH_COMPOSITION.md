@@ -48,15 +48,16 @@ but it is insufficient for Marvin's Hermes 0.21 adapter: Control Room must
 bind the task to the exact reviewed connector profile and source revision.
 
 Therefore the dispatcher must **not** reinterpret an old Hermes-native plan as
-a Marvin 0.21 task. The next schema change must add a new, versioned
-Hermes-0.21 execution-plan form that carries:
+a Marvin 0.21 task. Control Room now uses the versioned Hermes-0.21
+execution-plan forms: V5 for an initial task and V6 for a correction task.
+They carry:
 
 - the fixed Hermes-0.21 adapter identity;
 - the reviewed connector-profile digest;
 - the same canonical prompt, instructions, authority, acceptance profile,
   task, attempt, lease, and run lineage as existing plans.
 
-It will be read alongside—not substituted for—the existing V1/V2 plans. Old
+They are read alongside—not substituted for—the existing V1/V2 plans. Old
 plans stay on their existing adapter path or refuse if no qualified adapter is
 available. This preserves compatibility without allowing an unpinned Hermes
 version to receive work.

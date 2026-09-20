@@ -56,7 +56,7 @@ Completed in source:
 Remaining:
 
 - connect the shared packet to the existing task dispatcher at the approved
-  application composition point, using the versioned Hermes-0.21 plan form
+  application composition point, using the versioned Hermes-0.21 task forms
   described in [UNIFIED_DISPATCH_COMPOSITION.md](UNIFIED_DISPATCH_COMPOSITION.md);
 - add one common result-return composition that uses the current durable
   result and review services.
@@ -78,12 +78,16 @@ Completed in source:
   exact controller packet before Hermes can be invoked.
 - a versioned Hermes-0.21 task plan that binds the reviewed connector profile,
   task type, and worker capability rather than reusing an unpinned legacy
-  Hermes plan.
+  Hermes plan, including a separate correction-task form.
 
 Remaining before an automatic local worker is enabled:
 
 - wiring the reviewed local task-policy record from the authoritative task
   dispatcher into the local runner;
+- an end-to-end controller composition that supplies a completed local Hermes
+  result to the shared review-and-correction reader (the result publisher and
+  correction-plan form are present, but the permanent host composition is not
+  yet wired);
 - one owner-attended, text-only qualification using the existing Hermes login;
 - a controlled local data directory, restart procedure, and backup/restore
   proof.
