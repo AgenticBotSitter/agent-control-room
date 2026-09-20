@@ -17,6 +17,9 @@ import { CODEX_APP_SERVER_ADAPTER, CODEX_APP_SERVER_CAPABILITY, CODEX_APP_SERVER
   CODEX_START_OPERATION } from "../../harness/codex-v1/delivery-contract";
 import { HERMES_021_MACOS_LOCAL_ADAPTER_V1, HERMES_021_MACOS_LOCAL_CAPABILITY_V1,
   HERMES_021_MACOS_LOCAL_JOB_TYPE_V1, HERMES_021_MACOS_LOCAL_START_OPERATION_V1 } from "../../harness/hermes-021-v1/macos-local-worker";
+import { CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1, CLAUDE_CODE_LOCAL_ADAPTER_V1,
+  CLAUDE_CODE_LOCAL_CAPABILITY_V1, CLAUDE_CODE_LOCAL_JOB_TYPE_V1,
+  CLAUDE_CODE_LOCAL_START_OPERATION_V1 } from "../../harness/claude-code-v1/task-planning-contract";
 import { parseCanonicalHttpsDestination } from "../../node-policy/v1/network-target-guard";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 import { WebSessionAuthority } from "./session-authority";
@@ -27,7 +30,7 @@ import { taskRevisionContextSchema, taskRevisionRequestSchema, type TaskRevision
 const instant = z.string().datetime().refine(value => new Date(value).toISOString() === value);
 /** Server-owned template, never accepted from a browser or worker request. This first planning
  * class describes one approval-required native text turn, not arbitrary tools or a runnable grant. */
-export const nativeTaskTemplateSchema = z.object({ id: localId, adapter: z.enum([HERMES_NATIVE_ADAPTER, HERMES_021_MACOS_LOCAL_ADAPTER_V1, CODEX_APP_SERVER_ADAPTER]),
+export const nativeTaskTemplateSchema = z.object({ id: localId, adapter: z.enum([HERMES_NATIVE_ADAPTER, HERMES_021_MACOS_LOCAL_ADAPTER_V1, CODEX_APP_SERVER_ADAPTER, CLAUDE_CODE_LOCAL_ADAPTER_V1]),
   instructions: z.string().max(8192).refine(value => Buffer.byteLength(value, "utf8") <= 8192),
   authority: authorityEnvelopeSchema, acceptanceProfileId: localId, acceptanceProfileDigest: digestSchema,
   connectorProfileDigest: digestSchema.optional(), workspaceIntentDigest: digestSchema.optional(),
@@ -35,11 +38,13 @@ export const nativeTaskTemplateSchema = z.object({ id: localId, adapter: z.enum(
   const a = value.authority;
   const hermesNative = value.adapter === HERMES_NATIVE_ADAPTER;
   const hermes021 = value.adapter === HERMES_021_MACOS_LOCAL_ADAPTER_V1;
+  const claude = value.adapter === CLAUDE_CODE_LOCAL_ADAPTER_V1;
   const hermes = hermesNative || hermes021;
-  const operation = hermesNative ? "harness.hermes.native.start" : hermes021 ? HERMES_021_MACOS_LOCAL_START_OPERATION_V1 : CODEX_START_OPERATION;
+  const operation = hermesNative ? "harness.hermes.native.start" : hermes021 ? HERMES_021_MACOS_LOCAL_START_OPERATION_V1
+    : claude ? CLAUDE_CODE_LOCAL_START_OPERATION_V1 : CODEX_START_OPERATION;
   if (a.allowedExecutor === "executor:unassigned" || a.allowedOperations.length !== 1
     || a.allowedOperations[0] !== operation
-    || a.filesystemRoots.length !== (hermes ? 0 : 1) || a.credentialRefs.length !== 1
+    || a.filesystemRoots.length !== (hermes || claude ? 0 : 1) || a.credentialRefs.length !== 1
     || a.networkPolicy !== (hermes ? "allowlist" : "none") || a.allowedNetworkDestinations.length !== (hermes ? 1 : 0)
     || a.effectPolicy !== "approval_required" || a.maxConcurrentEffects !== 1 || a.maxDurationSeconds > 300
     || a.maxCostUsd !== undefined || a.parentDigest !== undefined || a.maxRisk !== "low"
@@ -49,9 +54,13 @@ export const nativeTaskTemplateSchema = z.object({ id: localId, adapter: z.enum(
   // durable authority must not advertise a longer local effect window.
   if (hermes021 && a.maxDurationSeconds > 120)
     context.addIssue({ code: "custom", message: "unsupported native task template" });
+  if (claude && value.connectorProfileDigest !== CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1) {
+    context.addIssue({ code: "custom", message: "unsupported native task template" });
+  }
   if (hermesNative ? value.connectorProfileDigest !== undefined || value.workspaceIntentDigest !== undefined
     : hermes021 ? value.connectorProfileDigest === undefined || value.workspaceIntentDigest !== undefined
-      : value.connectorProfileDigest === undefined || value.workspaceIntentDigest === undefined) {
+      : claude ? value.connectorProfileDigest === undefined || value.workspaceIntentDigest !== undefined
+        : value.connectorProfileDigest === undefined || value.workspaceIntentDigest === undefined) {
     context.addIssue({ code: "custom", message: "unsupported native task template" });
   }
   try { for (const destination of a.allowedNetworkDestinations) parseCanonicalHttpsDestination(destination); }
@@ -104,10 +113,21 @@ export const hermes021TaskExecutionPlanSchemaV8 = hermes021TaskExecutionPlanSche
   schema: z.literal("control-room.task-execution-plan/v8"), revision: taskRevisionContextSchema,
 });
 export type Hermes021TaskExecutionPlanV8 = z.infer<typeof hermes021TaskExecutionPlanSchemaV8>;
+/** Claude may be planned, but this immutable record is not an admission or launch grant. */
+export const claudeCodeLocalTaskExecutionPlanSchemaV9 = initialPlanSchema.extend({
+  schema: z.literal("control-room.task-execution-plan/v9"), adapter: z.literal(CLAUDE_CODE_LOCAL_ADAPTER_V1),
+  connectorProfileDigest: z.literal(CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1), executionClass: z.literal("text_review"),
+});
+export type ClaudeCodeLocalTaskExecutionPlanV9 = z.infer<typeof claudeCodeLocalTaskExecutionPlanSchemaV9>;
+export const claudeCodeLocalTaskExecutionPlanSchemaV10 = claudeCodeLocalTaskExecutionPlanSchemaV9.extend({
+  schema: z.literal("control-room.task-execution-plan/v10"), revision: taskRevisionContextSchema,
+});
+export type ClaudeCodeLocalTaskExecutionPlanV10 = z.infer<typeof claudeCodeLocalTaskExecutionPlanSchemaV10>;
 const planSchema = z.discriminatedUnion("schema", [initialPlanSchema, revisionPlanSchema,
   codexTaskExecutionPlanSchemaV3, codexTaskExecutionPlanSchemaV4,
   hermes021TaskExecutionPlanSchemaV5, hermes021TaskExecutionPlanSchemaV6,
-  hermes021TaskExecutionPlanSchemaV7, hermes021TaskExecutionPlanSchemaV8]);
+  hermes021TaskExecutionPlanSchemaV7, hermes021TaskExecutionPlanSchemaV8,
+  claudeCodeLocalTaskExecutionPlanSchemaV9, claudeCodeLocalTaskExecutionPlanSchemaV10]);
 type Plan = z.infer<typeof planSchema>;
 export type TaskPlanningOperation = Readonly<{ tenantId: string; workspaceId: string; plan: TaskExecutionPlanner["plan"];
   supportsProject?: (projectId: string) => boolean;
@@ -209,7 +229,9 @@ export class TaskExecutionPlanner {
           ? "task-execution-plan/v4" : plan.schema === "control-room.task-execution-plan/v5"
           ? "task-execution-plan/v5" : plan.schema === "control-room.task-execution-plan/v6"
             ? "task-execution-plan/v6" : plan.schema === "control-room.task-execution-plan/v7"
-              ? "task-execution-plan/v7" : "task-execution-plan/v8", plan }); }
+              ? "task-execution-plan/v7" : plan.schema === "control-room.task-execution-plan/v8"
+                ? "task-execution-plan/v8" : plan.schema === "control-room.task-execution-plan/v9"
+                  ? "task-execution-plan/v9" : "task-execution-plan/v10", plan }); }
   webOperation(): TaskPlanningOperation {
     return Object.freeze({ tenantId: this.scope.tenantId, workspaceId: this.scope.workspaceId, plan: this.plan.bind(this),
       supportsProject: this.supportsProject.bind(this),
@@ -229,7 +251,7 @@ export class TaskExecutionPlanner {
         [this.scope.tenantId, sourceJobId])).rows[0];
       if (!row) return null;
       const plan = this.verify(row);
-      if (["control-room.task-execution-plan/v2", "control-room.task-execution-plan/v4", "control-room.task-execution-plan/v6", "control-room.task-execution-plan/v8"].includes(plan.schema) || plan.projectId !== projectId
+      if (["control-room.task-execution-plan/v2", "control-room.task-execution-plan/v4", "control-room.task-execution-plan/v6", "control-room.task-execution-plan/v8", "control-room.task-execution-plan/v10"].includes(plan.schema) || plan.projectId !== projectId
         || plan.sourceJobId !== sourceJobId || plan.sourceDigest !== sha256Digest(source)
         || plan.sourceInputDigest !== source.job.inputDigest) fail();
       await this.checkedJob(tx, plan);
@@ -307,23 +329,25 @@ export class TaskExecutionPlanner {
       const input = { prompt: source.request.objective, instructions: template.instructions };
       const codex = template.adapter === CODEX_APP_SERVER_ADAPTER;
       const hermes021 = template.adapter === HERMES_021_MACOS_LOCAL_ADAPTER_V1;
-      const plan = planSchema.parse({ schema: codex ? "control-room.task-execution-plan/v3" : hermes021 ? "control-room.task-execution-plan/v7" : "control-room.task-execution-plan/v1",
+      const claude = template.adapter === CLAUDE_CODE_LOCAL_ADAPTER_V1;
+      const plan = planSchema.parse({ schema: codex ? "control-room.task-execution-plan/v3" : hermes021 ? "control-room.task-execution-plan/v7" : claude ? "control-room.task-execution-plan/v9" : "control-room.task-execution-plan/v1",
         ...(codex ? { adapter: CODEX_APP_SERVER_ADAPTER, connectorProfileDigest: template.connectorProfileDigest,
           workspaceIntentDigest: template.workspaceIntentDigest } : hermes021 ? { adapter: HERMES_021_MACOS_LOCAL_ADAPTER_V1,
-          connectorProfileDigest: template.connectorProfileDigest, executionClass: "text_review" } : {}), tenantId: this.scope.tenantId,
+          connectorProfileDigest: template.connectorProfileDigest, executionClass: "text_review" } : claude ? {
+          adapter: CLAUDE_CODE_LOCAL_ADAPTER_V1, connectorProfileDigest: template.connectorProfileDigest, executionClass: "text_review" } : {}), tenantId: this.scope.tenantId,
         projectId, sourceJobId, sourceDigest, sourceInputDigest: expectedInputDigest, templateDigest, plannedBy: actor.id, plannedAt: actor.now, input,
         acceptanceProfileId: template.acceptanceProfileId, acceptanceProfileDigest: template.acceptanceProfileDigest,
         request: { ...base, kind: "request", id: `request:execution:${suffix}`, projectId, title: source.request.title,
           objective: source.request.objective, state: "draft", priority: source.request.priority,
           requestedBy: { actorId: actor.id, actorType: "human" }, idempotencyKey: `execution:${suffix}` },
         workflow: { ...base, kind: "workflow", id: `workflow:execution:${suffix}`, projectId, requestId: `request:execution:${suffix}`,
-          definitionVersion: codex ? "codex-task-plan/v1" : hermes021 ? "hermes-021-task-plan/v1" : "native-task-plan/v1", definitionDigest: sha256Digest({ sourceDigest, templateDigest }),
+          definitionVersion: codex ? "codex-task-plan/v1" : hermes021 ? "hermes-021-task-plan/v1" : claude ? "claude-code-local-task-plan/v1" : "native-task-plan/v1", definitionDigest: sha256Digest({ sourceDigest, templateDigest }),
           authorityMode: "control_room_native", state: "proposed", jobIds: [`job:execution:${suffix}`] },
         job: { ...base, kind: "job", id: `job:execution:${suffix}`, projectId, workflowId: `workflow:execution:${suffix}`,
-          jobType: template.adapter === HERMES_NATIVE_ADAPTER ? "harness.hermes.native.task" : hermes021 ? HERMES_021_MACOS_LOCAL_JOB_TYPE_V1 : CODEX_APP_SERVER_JOB_TYPE,
+          jobType: template.adapter === HERMES_NATIVE_ADAPTER ? "harness.hermes.native.task" : hermes021 ? HERMES_021_MACOS_LOCAL_JOB_TYPE_V1 : claude ? CLAUDE_CODE_LOCAL_JOB_TYPE_V1 : CODEX_APP_SERVER_JOB_TYPE,
           specVersion: "1.0.0", inputDigest: sha256Digest(input), state: "proposed",
           priority: source.job.priority, requiredCapability: template.adapter === HERMES_NATIVE_ADAPTER
-            ? "harness.hermes.native.runs.v1" : hermes021 ? HERMES_021_MACOS_LOCAL_CAPABILITY_V1 : CODEX_APP_SERVER_CAPABILITY, dependsOnJobIds: [], authority: template.authority,
+            ? "harness.hermes.native.runs.v1" : hermes021 ? HERMES_021_MACOS_LOCAL_CAPABILITY_V1 : claude ? CLAUDE_CODE_LOCAL_CAPABILITY_V1 : CODEX_APP_SERVER_CAPABILITY, dependsOnJobIds: [], authority: template.authority,
           retryPolicy: { maxAttempts: 1, backoffSeconds: 0, retryableFailureCodes: [], retryAfterOrphan: false, ambiguousEffectPolicy: "attention" } } });
       await this.profile(tx, plan, actor.now); assertNoSecretMaterial(plan);
       // The inert-proposal materializer deliberately rejects this richer envelope. Use the existing
@@ -381,10 +405,12 @@ export class TaskExecutionPlanner {
       instructions: bindScheduledContextReferencesV1(template.instructions, reusableContexts) };
     const codex = template.adapter === CODEX_APP_SERVER_ADAPTER;
     const hermes021 = template.adapter === HERMES_021_MACOS_LOCAL_ADAPTER_V1;
-    const plan = planSchema.parse({ schema: codex ? "control-room.task-execution-plan/v3" : hermes021 ? "control-room.task-execution-plan/v5" : "control-room.task-execution-plan/v1",
+    const claude = template.adapter === CLAUDE_CODE_LOCAL_ADAPTER_V1;
+    const plan = planSchema.parse({ schema: codex ? "control-room.task-execution-plan/v3" : hermes021 ? "control-room.task-execution-plan/v5" : claude ? "control-room.task-execution-plan/v9" : "control-room.task-execution-plan/v1",
       ...(codex ? { adapter: CODEX_APP_SERVER_ADAPTER, connectorProfileDigest: template.connectorProfileDigest,
         workspaceIntentDigest: template.workspaceIntentDigest } : hermes021 ? { adapter: HERMES_021_MACOS_LOCAL_ADAPTER_V1,
-        connectorProfileDigest: template.connectorProfileDigest } : {}), tenantId: this.scope.tenantId,
+        connectorProfileDigest: template.connectorProfileDigest } : claude ? { adapter: CLAUDE_CODE_LOCAL_ADAPTER_V1,
+        connectorProfileDigest: template.connectorProfileDigest, executionClass: "text_review" } : {}), tenantId: this.scope.tenantId,
       projectId, sourceJobId, sourceDigest, sourceInputDigest: expectedInputDigest, templateDigest,
       plannedBy: SCHEDULE_ASSIGNMENT_SERVICE_ACTOR_V1, plannedAt, input: planInput,
       acceptanceProfileId: template.acceptanceProfileId, acceptanceProfileDigest: template.acceptanceProfileDigest,
@@ -392,14 +418,14 @@ export class TaskExecutionPlanner {
         objective: source.request.objective, state: "draft", priority: source.request.priority,
         requestedBy: { actorId: SCHEDULE_ASSIGNMENT_SERVICE_ACTOR_V1, actorType: "service" }, idempotencyKey: `execution:${suffix}` },
       workflow: { ...base, kind: "workflow", id: `workflow:execution:${suffix}`, projectId,
-        requestId: `request:execution:${suffix}`, definitionVersion: codex ? "codex-task-plan/v1" : hermes021 ? "hermes-021-task-plan/v1" : "native-task-plan/v1",
+        requestId: `request:execution:${suffix}`, definitionVersion: codex ? "codex-task-plan/v1" : hermes021 ? "hermes-021-task-plan/v1" : claude ? "claude-code-local-task-plan/v1" : "native-task-plan/v1",
         definitionDigest: sha256Digest({ sourceDigest, templateDigest }), authorityMode: "control_room_native",
         state: "proposed", jobIds: [`job:execution:${suffix}`] },
       job: { ...base, kind: "job", id: `job:execution:${suffix}`, projectId,
         workflowId: `workflow:execution:${suffix}`, jobType: template.adapter === HERMES_NATIVE_ADAPTER
-          ? "harness.hermes.native.task" : hermes021 ? HERMES_021_MACOS_LOCAL_JOB_TYPE_V1 : CODEX_APP_SERVER_JOB_TYPE, specVersion: "1.0.0",
+          ? "harness.hermes.native.task" : hermes021 ? HERMES_021_MACOS_LOCAL_JOB_TYPE_V1 : claude ? CLAUDE_CODE_LOCAL_JOB_TYPE_V1 : CODEX_APP_SERVER_JOB_TYPE, specVersion: "1.0.0",
         inputDigest: sha256Digest(planInput), state: "proposed", priority: source.job.priority,
-        requiredCapability: template.adapter === HERMES_NATIVE_ADAPTER ? "harness.hermes.native.runs.v1" : hermes021 ? HERMES_021_MACOS_LOCAL_CAPABILITY_V1 : CODEX_APP_SERVER_CAPABILITY,
+        requiredCapability: template.adapter === HERMES_NATIVE_ADAPTER ? "harness.hermes.native.runs.v1" : hermes021 ? HERMES_021_MACOS_LOCAL_CAPABILITY_V1 : claude ? CLAUDE_CODE_LOCAL_CAPABILITY_V1 : CODEX_APP_SERVER_CAPABILITY,
         dependsOnJobIds: [], authority: template.authority,
         retryPolicy: { maxAttempts: 1, backoffSeconds: 0, retryableFailureCodes: [], retryAfterOrphan: false,
           ambiguousEffectPolicy: "attention" } } });
@@ -485,12 +511,14 @@ export class TaskExecutionPlanner {
         originalPrompt: source.schema === "control-room.task-execution-plan/v2"
           || source.schema === "control-room.task-execution-plan/v4"
           || source.schema === "control-room.task-execution-plan/v6" || source.schema === "control-room.task-execution-plan/v8"
+          || source.schema === "control-room.task-execution-plan/v10"
           ? source.revision.originalPrompt : source.input.prompt });
       template = this.templates.get(projectId);
       const codex = source.schema === "control-room.task-execution-plan/v3" || source.schema === "control-room.task-execution-plan/v4";
       const hermes021 = source.schema === "control-room.task-execution-plan/v5" || source.schema === "control-room.task-execution-plan/v6"
         || source.schema === "control-room.task-execution-plan/v7" || source.schema === "control-room.task-execution-plan/v8";
-      if (!template || template.adapter !== (codex ? CODEX_APP_SERVER_ADAPTER : hermes021 ? HERMES_021_MACOS_LOCAL_ADAPTER_V1 : HERMES_NATIVE_ADAPTER))
+      const claude = source.schema === "control-room.task-execution-plan/v9" || source.schema === "control-room.task-execution-plan/v10";
+      if (!template || template.adapter !== (codex ? CODEX_APP_SERVER_ADAPTER : hermes021 ? HERMES_021_MACOS_LOCAL_ADAPTER_V1 : claude ? CLAUDE_CODE_LOCAL_ADAPTER_V1 : HERMES_NATIVE_ADAPTER))
         throw new WebAccessError("conflict");
       const sourceDigest = sha256Digest(revision), templateDigest = sha256Digest(template);
       const prior = (await tx.query<Row>(`SELECT * FROM control_task_execution_plans
@@ -498,7 +526,7 @@ export class TaskExecutionPlanner {
         [this.scope.tenantId, sourceJobId])).rows[0];
       if (prior) {
         const plan = this.verify(prior);
-        if (plan.schema !== (codex ? "control-room.task-execution-plan/v4" : hermes021 ? "control-room.task-execution-plan/v8" : "control-room.task-execution-plan/v2") || plan.sourceDigest !== sourceDigest
+        if (plan.schema !== (codex ? "control-room.task-execution-plan/v4" : hermes021 ? "control-room.task-execution-plan/v8" : claude ? "control-room.task-execution-plan/v10" : "control-room.task-execution-plan/v2") || plan.sourceDigest !== sourceDigest
           || plan.templateDigest !== templateDigest || plan.plannedBy !== actor.id) throw new WebAccessError("conflict");
         await this.checkedJob(tx, plan); current(); return { receipt: this.revisionReceipt(plan), replayed: true };
       }
@@ -522,13 +550,13 @@ export class TaskExecutionPlanner {
           objective: prompt, state: "draft", priority: source.request.priority,
           requestedBy: { actorId: actor.id, actorType: "human" }, idempotencyKey: `revision:${suffix}` },
         workflow: { ...base, kind: "workflow", id: `workflow:revision:${suffix}`, projectId, requestId: `request:revision:${suffix}`,
-          definitionVersion: codex ? "codex-task-revision-plan/v1" : hermes021 ? "hermes-021-task-revision-plan/v1" : "native-task-revision-plan/v1",
+          definitionVersion: codex ? "codex-task-revision-plan/v1" : hermes021 ? "hermes-021-task-revision-plan/v1" : claude ? "claude-code-local-task-revision-plan/v1" : "native-task-revision-plan/v1",
           definitionDigest: sha256Digest({ sourceDigest, templateDigest }),
           authorityMode: "control_room_native", state: "proposed", jobIds: [`job:revision:${suffix}`] },
         job: { ...base, kind: "job", id: `job:revision:${suffix}`, projectId, workflowId: `workflow:revision:${suffix}`,
-          jobType: codex ? CODEX_APP_SERVER_JOB_TYPE : hermes021 ? HERMES_021_MACOS_LOCAL_JOB_TYPE_V1 : "harness.hermes.native.task", specVersion: "1.0.0",
+          jobType: codex ? CODEX_APP_SERVER_JOB_TYPE : hermes021 ? HERMES_021_MACOS_LOCAL_JOB_TYPE_V1 : claude ? CLAUDE_CODE_LOCAL_JOB_TYPE_V1 : "harness.hermes.native.task", specVersion: "1.0.0",
           inputDigest: sha256Digest(nextInput), state: "proposed", priority: source.job.priority,
-          requiredCapability: codex ? CODEX_APP_SERVER_CAPABILITY : hermes021 ? HERMES_021_MACOS_LOCAL_CAPABILITY_V1 : "harness.hermes.native.runs.v1",
+          requiredCapability: codex ? CODEX_APP_SERVER_CAPABILITY : hermes021 ? HERMES_021_MACOS_LOCAL_CAPABILITY_V1 : claude ? CLAUDE_CODE_LOCAL_CAPABILITY_V1 : "harness.hermes.native.runs.v1",
           dependsOnJobIds: [], authority: template.authority,
           retryPolicy: { maxAttempts: 1, backoffSeconds: 0, retryableFailureCodes: [], retryAfterOrphan: false, ambiguousEffectPolicy: "attention" } } };
       const plan = codex ? codexTaskExecutionPlanSchemaV4.parse({ ...candidate, schema: "control-room.task-execution-plan/v4",
@@ -536,7 +564,9 @@ export class TaskExecutionPlanner {
         workspaceIntentDigest: template.workspaceIntentDigest })
         : hermes021 ? hermes021TaskExecutionPlanSchemaV8.parse({ ...candidate, schema: "control-room.task-execution-plan/v8",
           adapter: HERMES_021_MACOS_LOCAL_ADAPTER_V1, connectorProfileDigest: template.connectorProfileDigest, executionClass: "text_review" })
-          : revisionPlanSchema.parse({ ...candidate, schema: "control-room.task-execution-plan/v2" });
+          : claude ? claudeCodeLocalTaskExecutionPlanSchemaV10.parse({ ...candidate, schema: "control-room.task-execution-plan/v10",
+            adapter: CLAUDE_CODE_LOCAL_ADAPTER_V1, connectorProfileDigest: template.connectorProfileDigest, executionClass: "text_review" })
+            : revisionPlanSchema.parse({ ...candidate, schema: "control-room.task-execution-plan/v2" });
       assertNoSecretMaterial(plan); current();
       const canonical = new CanonicalStore(joined(tx));
       for (const record of [plan.request, plan.workflow, plan.job]) { await canonical.create(record); current(); }
@@ -551,7 +581,7 @@ export class TaskExecutionPlanner {
     // Preserve the durable bundle for exact reconciliation, but do not report timely success.
     current(); return result;
   }
-  private revisionReceipt(plan: z.infer<typeof revisionPlanSchema> | CodexTaskExecutionPlanV4 | Hermes021TaskExecutionPlanV6 | Hermes021TaskExecutionPlanV8) { return { ...this.receipt(plan),
+  private revisionReceipt(plan: z.infer<typeof revisionPlanSchema> | CodexTaskExecutionPlanV4 | Hermes021TaskExecutionPlanV6 | Hermes021TaskExecutionPlanV8 | ClaudeCodeLocalTaskExecutionPlanV10) { return { ...this.receipt(plan),
     rootSubjectId: plan.revision.rootSubjectId, rootTargetId: plan.revision.rootTargetId,
     fromRunId: plan.revision.fromRunId, fromTargetDigest: plan.revision.fromTargetDigest,
     fromContentHash: plan.revision.fromContentHash, reviewId: plan.revision.reviewId, feedbackDigest: plan.revision.feedbackDigest,

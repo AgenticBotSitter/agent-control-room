@@ -24,9 +24,10 @@ separate host qualifications are complete.
   can be called.
 - A restart can recover the exact staged Hermes result without launching a
   second task or adding a duplicate completion history.
-- Claude Code has a bounded owned-session/result coordinator that can publish
-  one clean terminal result into the existing review path. It remains a
-  source-only component until the installed Claude process is qualified.
+- Claude Code can save the same bounded text-review task plan as the other
+  local harnesses, then decode and prepare one clean terminal result for the
+  existing review path. Planning does not assign, start or enable Claude; it
+  remains a source-only component until the installed process is qualified.
 - The Mac Codex path records only two opaque safety prerequisites: suspended
   executable identity and protected private-state custody. Neither record can
   enable or launch Codex.

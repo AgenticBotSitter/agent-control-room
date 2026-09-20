@@ -4,3 +4,4 @@ export * from "./owned-process-session";
 export * from "./unsupported-operations";
 export * from "./result-publication";
 export * from "./local-worker-result";
+export * from "./task-planning-contract";
