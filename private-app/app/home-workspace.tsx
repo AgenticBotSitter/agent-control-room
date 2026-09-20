@@ -12,6 +12,8 @@ import { PrivateHeader } from "./private-header";
 import { useProductDisplayName, useProductModule } from "./product-configuration";
 import { ConfiguredTimestamp } from "./configured-timestamp";
 import { taskResultHrefV1 } from "./task-results";
+import { useInstallationTopology } from "./installation-topology";
+import { InstallationTopologySummary } from "./installation-topology-summary";
 
 type ReadState<T> = { state: "loading" } | { state: "ready"; value: T } | { state: "unavailable" };
 export type HomeDashboardState = Readonly<{
@@ -92,6 +94,7 @@ export function HomeDashboard({ data }: { data: HomeDashboardState }) {
 export function PrivateHome() {
   const displayName = useProductDisplayName();
   const ideaLab = useProductModule("ideaLab");
+  const installationTopology = useInstallationTopology();
   const [projects] = useState(() => createProjectBrowserClient());
   const [data, setData] = useState<HomeDashboardState>(loadingState);
   const [generation, setGeneration] = useState(0);
@@ -109,6 +112,7 @@ export function PrivateHome() {
     <section className="private-home-intro" aria-labelledby="home-title"><p className="private-eyebrow">Private workspace</p>
       <h1 id="home-title">{displayName}</h1><p>Current saved work, results and attention from the protected Control Room services. Each section reports unavailable data instead of replacing it with a zero.</p>
       <button type="button" onClick={() => setGeneration(value => value + 1)}>Refresh dashboard</button></section>
+    <InstallationTopologySummary plan={installationTopology?.plan} readiness={installationTopology?.readiness} />
     <HomeDashboard data={data} />
     {ideaLab && <aside className="private-note private-home-note" aria-label="Optional module"><strong>Idea Lab is optional.</strong>{" "}
       <a href="/ideas">Open Idea Lab</a> to compare ideas before promoting an approved one to a project.</aside>}
