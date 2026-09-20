@@ -2,6 +2,7 @@ import { z } from "zod";
 import { sha256Digest } from "../../security/canonical-digest";
 import { controllerWorkerDeliverySchemaV1, controllerWorkerRouteSchemaV1,
   controllerWorkerDeliveryReceiptSchemaV1,
+  deliverControllerWorkerPacketV1, type ControllerWorkerDeliveryPortV1,
   type ControllerWorkerDeliveryReceiptV1, type ControllerWorkerDeliveryV1 } from "./controller-worker-delivery";
 
 export const REMOTE_WORKER_ENROLLMENT_V1 = "control-room.remote-worker-enrollment/v1" as const;
@@ -68,6 +69,18 @@ export function admitRemoteWorkerDeliveryV1(input: {
   }
   return Object.freeze({ accepted: true, delivery, enrollment, route: Object.freeze({ kind: "remote", workerId: route.workerId }),
     startsWork: false, grantsExecutionAuthority: false });
+}
+
+/**
+ * Sends an already-admitted remote packet through the one shared delivery
+ * helper. This is intentionally not a remote queue, retry loop, or transport;
+ * an installation injects its enrolled connection behind the same port used
+ * by the local route.
+ */
+export async function deliverAdmittedRemoteWorkerPacketV1(port: ControllerWorkerDeliveryPortV1,
+  admission: RemoteDeliveryAdmissionV1, signal?: AbortSignal): Promise<ControllerWorkerDeliveryReceiptV1> {
+  if (!admission.accepted) throw new Error("remote_worker_delivery_not_admitted");
+  return deliverControllerWorkerPacketV1(port, admission.delivery, admission.route, signal);
 }
 
 export type RemoteDeliveryObservationV1 =

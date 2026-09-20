@@ -3,7 +3,7 @@ import test from "node:test";
 import { sha256Digest } from "../src/security/canonical-digest";
 import { createControllerWorkerDeliveryV1 } from "../src/harness/v1/controller-worker-delivery";
 import { admitRemoteWorkerDeliveryV1, createRemoteWorkerEnrollmentV1,
-  observeRemoteWorkerDeliveryV1 } from "../src/harness/v1/remote-worker-delivery";
+  deliverAdmittedRemoteWorkerPacketV1, observeRemoteWorkerDeliveryV1 } from "../src/harness/v1/remote-worker-delivery";
 
 const digest = (value: string) => sha256Digest(value);
 const delivery = () => createControllerWorkerDeliveryV1({
@@ -28,6 +28,22 @@ test("remote enrollment accepts the shared packet without creating a second task
   assert.equal(admitted.delivery.deliveryId, packet.deliveryId);
   assert.equal(admitted.route.kind, "remote");
   assert.equal(admitted.startsWork, false);
+});
+
+test("an enrolled remote worker uses the same standard receipt as the local route", async () => {
+  const packet = delivery();
+  const admitted = admitRemoteWorkerDeliveryV1({ delivery: packet, route: { kind: "remote", workerId: "worker:remote" },
+    enrollment: enrollment(), supportedAdapterRevisions: ["00570550"] });
+  const receipt = await deliverAdmittedRemoteWorkerPacketV1({ async receive(deliveryValue, route) {
+    const material = { schema: "control-room.controller-worker-delivery-receipt/v1" as const,
+      deliveryId: deliveryValue.deliveryId, deliveryDigest: deliveryValue.deliveryDigest, workerId: route.workerId,
+      route, receivedAt: "2026-09-19T12:00:01.000Z", disposition: "accepted" as const,
+      startsWork: false as const, grantsExecutionAuthority: false as const };
+    return { ...material, receiptDigest: sha256Digest(material) };
+  } }, admitted);
+  assert.equal(receipt.deliveryId, packet.deliveryId);
+  assert.equal(receipt.route.kind, "remote");
+  assert.equal(receipt.startsWork, false);
 });
 
 test("revocation, mismatch, and unsupported versions refuse before remote delivery", () => {
