@@ -12,3 +12,4 @@ export * from "./completed-task-publication";
 export * from "./terminal-result-staging";
 export * from "./stream-json-private-port";
 export * from "./subprocess-stream-json-host";
+export * from "./qualification-evidence";

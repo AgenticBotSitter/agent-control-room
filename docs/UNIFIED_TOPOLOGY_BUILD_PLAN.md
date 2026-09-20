@@ -154,10 +154,10 @@ Completed in source:
 
 Remaining before an automatic local worker is enabled:
 
-- one owner-attended, text-only qualification using the existing Hermes login
-  that completes successfully (the first bounded attempt ended before model
-  use; its sanitized report is evidence of a failed qualification, not an
-  operational worker);
+- a successful owner-attended, text-only qualification recorded for the
+  individual installation. Source code cannot claim that an installation has
+  passed; it accepts only a fingerprint derived from the check's sanitized
+  successful report;
 - a controlled local data directory, restart procedure, and backup/restore
   proof.
 - owner selection and installation-owned binding of the tested stream-json

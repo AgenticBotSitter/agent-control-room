@@ -21,6 +21,10 @@ Control Room can create a narrow local process wrapper for Hermes 0.21. It:
 It does **not** store a Hermes login, API key, local folder, selected model,
 or provider in Control Room records. It does not start a background service.
 
+The successful text-only check can be reduced to an opaque proof fingerprint
+for the setup page. That confirms the check passed without putting its session
+reference, token counts, command, or selected model on the page.
+
 ## What still needs an owner decision
 
 Before a real automatic task can be enabled, the owner chooses:
