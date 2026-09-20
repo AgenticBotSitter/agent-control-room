@@ -3,7 +3,7 @@ import { nativeTaskSubmissionReferenceSchema, type NativeTaskSubmission } from "
 import { localId } from "../../harness/v1/native-run-identifiers";
 import { TaskExecutionPlanner, type TaskPlanningOperation } from "./task-execution-planner";
 import { TaskAssignmentCoordinator, type TaskAssignmentOperation, type TaskAssignmentRoute, type NativeApprovalEnrollment,
-  type CodexPermitConfiguration } from "./task-assignment-coordinator";
+  type CodexPermitConfiguration, type Hermes021LocalQueueDeliveryTarget } from "./task-assignment-coordinator";
 import type { NativeApprovalPacketStore } from "./native-approval-packet-store";
 import { nativeTaskApprovalPacketSchema } from "../../harness/v1/native-approval-packet";
 import { TaskQualityCoordinator, taskQualityRequestSchema, taskQualitySweepRequestSchema, type TaskQualityConfiguration, type TaskQualityOperation } from "./task-quality-coordinator";
@@ -23,6 +23,7 @@ import { CodexCanonicalResultPublisherV1 } from "../../artifacts/v1/codex-result
 import type { ArtifactReadPortV1, ArtifactStoragePortV1 } from "../../node-executor/artifact-storage";
 import { captureCodexResultIntakeSettingsV1, CodexResultIntakeV1,
   type CodexResultIntakeSettingsV1 } from "./codex-result-intake";
+import { deliverVerifiedHermes021LocalQueueTaskV1 } from "./hermes-021-local-queue-delivery";
 
 export type TaskApprovalOperation = Readonly<{ tenantId: string; workspaceId: string;
   prepare: TaskAssignmentCoordinator["prepareNativeApproval"]; store: TaskAssignmentCoordinator["storeNativeApproval"];
@@ -40,6 +41,13 @@ export type TaskCoordinatorConfiguration = {
    * after construction; drained and stopped before the underlying pool closes.
    * Never derived from an HTTP request or enabled implicitly by approval storage. */
   nativeSubmission?: NativeTaskSubmission & { close?: () => Promise<void> };
+  /**
+   * Installation-owned local Marvin delivery composition.  It is optional and
+   * inert: merely configuring it does not invoke Hermes.  When the existing
+   * queue worker picks a canonically verified Hermes-0.21 local task, this
+   * callback is the only route allowed to reach the private runner.
+   */
+  hermes021Local?: { deliver(target: Hermes021LocalQueueDeliveryTarget, signal: AbortSignal): Promise<void> };
   /** Reviewed Codex permit bindings. Configuration alone starts no process or workspace. */
   codex?: CodexPermitConfiguration;
   quality?: TaskQualityConfiguration;
@@ -79,10 +87,15 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   if (input.nativeSubmission && (!input.approvals || typeof input.nativeSubmission.enqueueInSession !== "function"
     || input.nativeSubmission.recoverUnsentInSession !== undefined && typeof input.nativeSubmission.recoverUnsentInSession !== "function"))
     throw new Error("task_coordinator_config_invalid");
+  if (input.hermes021Local && typeof input.hermes021Local.deliver !== "function")
+    throw new Error("task_coordinator_config_invalid");
+  if (input.hermes021Local && !input.nativeSubmission)
+    throw new Error("task_coordinator_config_invalid");
   const nativeSubmission = input.nativeSubmission ? Object.freeze({
     enqueueInSession: input.nativeSubmission.enqueueInSession.bind(input.nativeSubmission),
     ...(input.nativeSubmission.recoverUnsentInSession ? { recoverUnsentInSession: input.nativeSubmission.recoverUnsentInSession.bind(input.nativeSubmission) } : {}),
   }) : undefined;
+  const hermes021Local = input.hermes021Local ? Object.freeze({ deliver: input.hermes021Local.deliver.bind(input.hermes021Local) }) : undefined;
   const closeSubmission = input.nativeSubmission?.close?.bind(input.nativeSubmission);
   const capture = (resource: TaskCoordinatorDatabase) => {
     if (!resource || typeof resource.close !== "function" || typeof resource.isAvailable !== "function"
@@ -344,7 +357,14 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   }) : undefined;
   return Object.freeze({ planning, assignment: assignments, ...(approvals ? { approvals } : {}), ...(quality ? { quality } : {}),
     ...(ideaCreation ? { ideaCreation } : {}),
-    ...(nativeSubmission && sessions ? { queueDelivery: async (ref: Parameters<ManagedNativeSessions["deliverApproved"]>[0], signal: AbortSignal) => {
+    ...(nativeSubmission && (sessions || hermes021Local) ? { queueDelivery: async (ref: Parameters<ManagedNativeSessions["deliverApproved"]>[0], signal: AbortSignal) => {
+      const target = await assignment.locateQueuedHarnessDelivery(ref, signal);
+      if (target.kind === "hermes-021-local") {
+        if (!hermes021Local || signal.aborted) throw new Error("native_task_delivery_unresolved");
+        return deliverVerifiedHermes021LocalQueueTaskV1({ reference: ref, signal, target,
+          deliver: hermes021Local.deliver });
+      }
+      if (!sessions) throw new Error("native_task_delivery_unresolved");
       const result = await sessions.deliverApproved(ref, signal);
       if (!result.transmissionRecorded || !result.deliveryConfirmed) throw new Error("native_task_delivery_unresolved");
       return { disposition: "delivered" as const };

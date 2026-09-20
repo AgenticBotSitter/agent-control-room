@@ -10,6 +10,9 @@ import { HERMES_021_MACOS_LOCAL_ADAPTER_V1, HERMES_021_MACOS_LOCAL_CAPABILITY_V1
 import { createInMemoryNeutralReservationPort } from "../src/artifacts/v1/neutral-reservation-port";
 import { FleetSignalStore } from "../src/node-fleet/v1/fleet-signal-store";
 import { HarnessRunStoreV1 } from "../src/harness/v1/store";
+import { NativeApprovalPacketStore } from "../src/web/v1/native-approval-packet-store";
+import type { NativeTaskSubmission } from "../src/persistence/native-task-submission";
+import { deliverVerifiedHermes021LocalQueueTaskV1 } from "../src/web/v1/hermes-021-local-queue-delivery";
 import type { FleetSignalEnvelope } from "../src/node-fleet/v1/schemas";
 import { ownerReviewFixture } from "./helpers/web-owner-review";
 import { binding, enrollment, instant } from "./hermes-native-fixture";
@@ -71,6 +74,38 @@ test("a Marvin Hermes 0.21 template creates a pinned v5 plan, not an older gener
   const assigned = await assignments.assign(f.identity, binding.projectId, planned.receipt.jobId, binding.nodeId, planned.receipt.inputDigest);
   assert.equal(assigned.replayed, false);
   assert.equal(assigned.receipt.jobId, planned.receipt.jobId);
+  // Hermes 0.21 uses its own canonical packet at pickup.  It must still use
+  // the existing HMAC-protected pg-boss submission channel, rather than a
+  // second local scheduler or a browser-owned task handoff.
+  const queuedReferences: Parameters<NativeTaskSubmission["enqueueInSession"]>[1][] = [];
+  const submissions: NativeTaskSubmission = { async enqueueInSession(_tx, reference) { queuedReferences.push(reference); } };
+  const hermesQueue = new TaskAssignmentCoordinator(f.db, f.scope, planner, [route], () => instant + 8000,
+    [], new NativeApprovalPacketStore(new Uint8Array(32).fill(92), []), submissions);
+  const queued = await hermesQueue.enqueueHermes021LocalTask(f.identity, binding.projectId, planned.receipt.jobId,
+    planned.receipt.inputDigest, new AbortController().signal);
+  assert.equal(queued.replayed, false);
+  assert.equal(queuedReferences.length, 1);
+  assert.equal(queuedReferences[0]?.packetDigest, queued.packetDigest);
+  assert.equal(queuedReferences[0]?.jobId, planned.receipt.jobId);
+  const located = await hermesQueue.locateApprovedHermes021LocalQueueDelivery(queuedReferences[0]!, new AbortController().signal);
+  assert.equal(located.kind, "hermes-021-local");
+  assert.equal(located.leaseId, assigned.receipt.leaseId);
+  assert.deepEqual(located.task, { projectId: binding.projectId, jobId: planned.receipt.jobId,
+    attemptId: assigned.receipt.attemptId, inputDigest: planned.receipt.inputDigest });
+  const standardPickup = await hermesQueue.locateQueuedHarnessDelivery(queuedReferences[0]!, new AbortController().signal);
+  assert.equal(standardPickup.kind, "hermes-021-local", "the shared queue dispatcher selects Marvin's local route");
+  let queueExecutorCalls = 0;
+  await deliverVerifiedHermes021LocalQueueTaskV1({ reference: queuedReferences[0]!, signal: new AbortController().signal,
+    target: standardPickup, async deliver(target) {
+      queueExecutorCalls++;
+      assert.equal(target.kind, "hermes-021-local");
+      assert.equal(target.task.jobId, planned.receipt.jobId);
+    } });
+  assert.equal(queueExecutorCalls, 1, "only the explicit local executor receives the verified queue pickup");
+  const replayedQueue = await hermesQueue.enqueueHermes021LocalTask(f.identity, binding.projectId, planned.receipt.jobId,
+    planned.receipt.inputDigest, new AbortController().signal);
+  assert.equal(replayedQueue.replayed, true);
+  assert.equal(queuedReferences.length, 1);
   const dispatcher = new Hermes021MacosDispatchPreparationV1(f.db, planner, {
     localServiceId: "service:marvin-hermes", workerId: "worker:marvin", expectedVersion: "0.21.3", sourceRevision: "00570550" },
   () => instant + 9000);

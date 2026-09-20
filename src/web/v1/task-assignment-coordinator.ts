@@ -19,11 +19,12 @@ import { enrollmentSchema, type NativeEnrollment } from "../../harness/v1/native
 import { prepareNativeTaskApprovalWithLease } from "../../harness/v1/native-task-lease-grant";
 import type { NativeApprovalPacketStore } from "./native-approval-packet-store";
 import { nativeTaskApprovalPacketSchema } from "../../harness/v1/native-approval-packet";
-import { readNativeTaskQueueIntentInSession, type NativeTaskQueueScope } from "./native-task-queue";
+import { readNativeTaskQueueIntentInSession, type NativeTaskQueueIntent, type NativeTaskQueueScope } from "./native-task-queue";
 import type { ServerNodeSession } from "../../node-control/server-node-session";
 import { assertSynchronousFence } from "../../security/synchronous-fence";
 import { CODEX_APP_SERVER_CAPABILITY, CODEX_APP_SERVER_JOB_TYPE } from "../../harness/codex-v1/delivery-contract";
-import { HERMES_021_MACOS_LOCAL_CAPABILITY_V1 } from "../../harness/hermes-021-v1/macos-local-worker";
+import { HERMES_021_MACOS_LOCAL_CAPABILITY_V1, HERMES_021_MACOS_LOCAL_JOB_TYPE_V1 } from "../../harness/hermes-021-v1/macos-local-worker";
+import { HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1 } from "../../harness/hermes-021-v1/connector-profile";
 import { codexTaskDispatchBodySchemaV1 } from "../../harness/codex-v1/delivery-contract";
 import { buildCodexTaskActivationV1, type CodexDispatchFrameForActivationV1,
   type CodexDispatchReceiptFrameForActivationV1 } from "../../harness/codex-v1/activation-contract";
@@ -70,6 +71,14 @@ export function validateTaskAssignmentRoutes(routes: readonly TaskAssignmentRout
 }
 export type TaskAssignmentOperation = Readonly<{ tenantId: string; workspaceId: string;
   assign: TaskAssignmentCoordinator["assign"]; expire: TaskAssignmentCoordinator["expire"]; options: TaskAssignmentCoordinator["options"] }>;
+/** A fully rechecked local queue pickup. It is deliberately not a runner input:
+ * the private local composition must use it to reconstruct the controller
+ * packet before it can ask the Mac-owned policy to admit a Hermes call. */
+export type Hermes021LocalQueueDeliveryTarget = Readonly<{
+  kind: "hermes-021-local"; nodeId: string; leaseId: string;
+  task: Readonly<{ projectId: string; jobId: string; attemptId: string; inputDigest: string }>;
+  startsWork: false; grantsExecutionAuthority: false;
+}>;
 type LockedAssignmentAuthority = Readonly<{
   actor: Readonly<{ actorId: string; actorType: "human" | "service" }>;
   project: () => Promise<Pick<ProjectView, "lifecycle" | "origin">>;
@@ -199,12 +208,15 @@ export class TaskAssignmentCoordinator {
         || job.inputDigest !== ref.inputDigest || signal.aborted) conflict();
       if (job.jobType === CODEX_APP_SERVER_JOB_TYPE
         && (plan.schema === "control-room.task-execution-plan/v3" || plan.schema === "control-room.task-execution-plan/v4")) return "codex" as const;
+      if (job.jobType === HERMES_021_MACOS_LOCAL_JOB_TYPE_V1
+        && (plan.schema === "control-room.task-execution-plan/v5" || plan.schema === "control-room.task-execution-plan/v6")) return "hermes-021-local" as const;
       if (job.jobType === "harness.hermes.native.task"
         && (plan.schema === "control-room.task-execution-plan/v1" || plan.schema === "control-room.task-execution-plan/v2")) return "hermes" as const;
       return conflict();
     });
     if (signal.aborted) conflict();
     if (kind === "codex") return this.locateApprovedCodexQueueDelivery(ref, signal);
+    if (kind === "hermes-021-local") return this.locateApprovedHermes021LocalQueueDelivery(ref, signal);
     const target = await this.locateApprovedQueueDelivery(ref, signal);
     return Object.freeze({ kind: "hermes" as const, ...target, startsWork: false as const });
   }
@@ -425,6 +437,125 @@ export class TaskAssignmentCoordinator {
         occurredAt: queued.receipt.queuedAt,
       });
       return { value: queued.receipt, assertFresh: queued.assertFresh };
+    });
+  }
+  /**
+   * Queues an already-assigned Marvin task in the same protected pg-boss
+   * channel as other work.  This is deliberately separate from
+   * `enqueueNativeTask`: Hermes 0.21 does not use the older signed-native
+   * packet format, so accepting it there would incorrectly weaken that
+   * format.  This method records no runner command and starts no Hermes work.
+   */
+  async enqueueHermes021LocalTask(identity: VerifiedWebIdentity, projectId: string, jobId: string,
+    expectedInputDigest: string, signal: AbortSignal) {
+    localId.parse(projectId); localId.parse(jobId); digestSchema.parse(expectedInputDigest);
+    if (!this.approvalStore || !this.nativeTaskSubmission || !(signal instanceof AbortSignal) || signal.aborted) conflict();
+    const store = this.approvalStore;
+    return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
+      actor.require("tasks.read", projectId); actor.require("tasks.approve", projectId, true);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
+        [this.scope.tenantId, projectId]);
+      const project = await this.projects.getViewInSession(tx, actor, projectId);
+      if (project.lifecycle !== "active" || project.origin !== "ordinary") conflict();
+      const job = await this.job(tx, projectId, jobId), plan = await this.planner.readInSession(tx, jobId), stored = await this.stored(tx, job);
+      if (!plan || !stored || plan.tenantId !== this.scope.tenantId || plan.projectId !== projectId
+        || job.inputDigest !== expectedInputDigest || job.jobType !== HERMES_021_MACOS_LOCAL_JOB_TYPE_V1
+        || job.requiredCapability !== HERMES_021_MACOS_LOCAL_CAPABILITY_V1
+        || (plan.schema !== "control-room.task-execution-plan/v5" && plan.schema !== "control-room.task-execution-plan/v6")
+        || plan.connectorProfileDigest !== HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1) conflict();
+      const route = this.routes.find(value => value.nodeId === stored.lease.nodeId);
+      const now = this.clock(), deadline = Math.min(Date.parse(stored.lease.expiresAt), Date.parse(job.authority.expiresAt));
+      if (!route || route.executorId !== job.authority.allowedExecutor
+        || route.capabilityProbeId !== HERMES_021_MACOS_LOCAL_CAPABILITY_V1
+        || !Number.isSafeInteger(now) || now < 0 || now >= deadline || signal.aborted) conflict();
+      // The intent is bound to every canonical fact that selects the local
+      // adapter.  A queue reference remains only a locator; pickup rebuilds
+      // and verifies these facts again before it can reach a private runner.
+      const packetDigest = sha256Digest({ schema: "control-room.hermes-021-macos-local-queue-intent/v1",
+        planDigest: sha256Digest(plan), authorityDigest: job.authority.digest, tenantId: this.scope.tenantId,
+        projectId, jobId, attemptId: stored.attempt.id, leaseId: stored.lease.id, leaseEpoch: stored.lease.epoch,
+        nodeId: route.nodeId, executorId: route.executorId, capability: route.capabilityProbeId,
+        connectorProfileDigest: plan.connectorProfileDigest });
+      const intent: NativeTaskQueueIntent = {
+        schema: "control-room.native-task-queue/v1", tenantId: this.scope.tenantId, projectId, jobId,
+        attemptId: stored.attempt.id, nodeId: route.nodeId, leaseId: stored.lease.id, leaseEpoch: stored.lease.epoch,
+        inputDigest: expectedInputDigest, packetDigest, operationDigest: job.authority.digest,
+        bindingDigest: sha256Digest({ nodeId: route.nodeId, executorId: route.executorId,
+          capability: route.capabilityProbeId, connectorProfileDigest: plan.connectorProfileDigest }),
+        enrollmentDigest: sha256Digest({ adapter: HERMES_021_MACOS_LOCAL_JOB_TYPE_V1, nodeId: route.nodeId }),
+        deliveryKind: "hermes-021-macos-local", deadline, queuedAt: new Date(now).toISOString(), queuedBy: actor.id,
+      };
+      const queued = await store.enqueueHermes021LocalInSession(tx, intent, sha256Digest(plan));
+      if (!queued.replayed) await this.nativeTaskSubmission!.enqueueInSession(tx, {
+        schema: "control-room.native-task-submission/v1", tenantId: this.scope.tenantId, projectId, jobId,
+        attemptId: stored.attempt.id, queueId: queued.queueId, inputDigest: expectedInputDigest, packetDigest,
+      });
+      if (!queued.replayed) await appendAuditWith(tx, {
+        id: `audit:hermes-021:${queued.queueId}`, tenantId: this.scope.tenantId, actorId: actor.id, actorType: "human",
+        action: "hermes.021.local.task.queued", targetType: "job", targetId: jobId, correlationId: queued.queueId,
+        idempotencyKey: `hermes-021:${queued.queueId}`, safeMetadata: { packetDigest }, occurredAt: intent.queuedAt,
+      });
+      return Object.freeze({ ...queued, startsWork: false as const, grantsExecutionAuthority: false as const });
+    });
+  }
+  /**
+   * Server-side pickup lookup for a queued Marvin task.  The pg-boss message
+   * is merely a locator.  This method verifies its HMAC-backed queue intent,
+   * its companion approval evidence, present owner permission, the leased
+   * V5/V6 plan and the selected local route before returning a reference that
+   * a local delivery composition may prepare.  It does not invoke Hermes.
+   */
+  async locateApprovedHermes021LocalQueueDelivery(input: NativeTaskSubmissionReference, signal: AbortSignal) {
+    const ref = nativeTaskSubmissionReferenceSchema.parse(input);
+    if (!this.approvalStore || !this.nativeTaskSubmission || !(signal instanceof AbortSignal) || signal.aborted
+      || ref.tenantId !== this.scope.tenantId) conflict();
+    const store = this.approvalStore;
+    return new NativeQueueAuthority(this.db, this.scope, {
+      readQueueIntentInSession: store.readQueueIntentInSession.bind(store),
+    }, this.clock).authenticated(ref, async (tx, actor) => {
+      actor.require("tasks.read", ref.projectId); actor.require("tasks.approve", ref.projectId, true);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
+        [this.scope.tenantId, ref.projectId]);
+      const project = await this.projects.getViewInSession(tx, actor, ref.projectId);
+      if (project.lifecycle !== "active" || project.origin !== "ordinary") conflict();
+      const job = await this.job(tx, ref.projectId, ref.jobId), plan = await this.planner.readInSession(tx, ref.jobId), stored = await this.stored(tx, job);
+      if (!plan || !stored || plan.tenantId !== this.scope.tenantId || plan.projectId !== ref.projectId
+        || job.inputDigest !== ref.inputDigest || job.jobType !== HERMES_021_MACOS_LOCAL_JOB_TYPE_V1
+        || job.requiredCapability !== HERMES_021_MACOS_LOCAL_CAPABILITY_V1
+        || (plan.schema !== "control-room.task-execution-plan/v5" && plan.schema !== "control-room.task-execution-plan/v6")
+        || plan.connectorProfileDigest !== HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1
+        || stored.attempt.id !== ref.attemptId || signal.aborted) conflict();
+      const route = this.routes.find(value => value.nodeId === stored.lease.nodeId);
+      const now = this.clock(), deadline = Math.min(Date.parse(stored.lease.expiresAt), Date.parse(job.authority.expiresAt));
+      if (!route || route.executorId !== job.authority.allowedExecutor
+        || route.capabilityProbeId !== HERMES_021_MACOS_LOCAL_CAPABILITY_V1
+        || !Number.isSafeInteger(now) || now < 0 || now >= deadline) conflict();
+      const approval = await store.readHermes021LocalQueueApprovalInSession(tx, {
+        tenantId: ref.tenantId, projectId: ref.projectId, jobId: ref.jobId, attemptId: ref.attemptId, inputDigest: ref.inputDigest,
+      });
+      const queueIntent = await store.readQueueIntentInSession(tx, {
+        tenantId: ref.tenantId, projectId: ref.projectId, jobId: ref.jobId, attemptId: ref.attemptId, inputDigest: ref.inputDigest,
+      });
+      const packetDigest = sha256Digest({ schema: "control-room.hermes-021-macos-local-queue-intent/v1",
+        planDigest: sha256Digest(plan), authorityDigest: job.authority.digest, tenantId: this.scope.tenantId,
+        projectId: ref.projectId, jobId: ref.jobId, attemptId: stored.attempt.id, leaseId: stored.lease.id,
+        leaseEpoch: stored.lease.epoch, nodeId: route.nodeId, executorId: route.executorId,
+        capability: route.capabilityProbeId, connectorProfileDigest: plan.connectorProfileDigest });
+      if (!approval || !queueIntent || queueIntent.deliveryKind !== "hermes-021-macos-local"
+        || queueIntent.packetDigest !== packetDigest || approval.packetDigest !== packetDigest || approval.planDigest !== sha256Digest(plan)
+        || approval.operationDigest !== job.authority.digest || approval.nodeId !== route.nodeId
+        || approval.leaseId !== stored.lease.id || approval.leaseEpoch !== stored.lease.epoch
+        || ref.packetDigest !== packetDigest) conflict();
+      // A broker acknowledgement is not proof that Marvin never started. Once
+      // any route-neutral worker receipt or harness run exists, recovery must
+      // use the retained terminal-result path rather than launch Hermes again.
+      await this.requireNeverStaged(tx, ref);
+      return Object.freeze({ kind: "hermes-021-local" as const, nodeId: route.nodeId,
+        task: Object.freeze({ projectId: ref.projectId, jobId: ref.jobId, attemptId: ref.attemptId,
+          inputDigest: ref.inputDigest }), leaseId: stored.lease.id,
+        startsWork: false as const, grantsExecutionAuthority: false as const }) satisfies Hermes021LocalQueueDeliveryTarget;
     });
   }
   async prepareQueuedNativeDelivery(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string,

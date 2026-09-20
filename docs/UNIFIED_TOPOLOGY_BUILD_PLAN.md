@@ -131,6 +131,14 @@ Completed in source:
   delivery replay can read that saved line and continue ordinary publication
   without launching Hermes a second time. The staging bytes are not task
   ownership, a retry queue, or a second database.
+- the existing protected task queue now accepts a separately authenticated
+  Hermes-0.21 local intent. Its companion approval evidence and queue record
+  are HMAC-protected, bind the exact reviewed V5/V6 plan, lease, authority,
+  route and connector profile, and are rechecked at queue pickup. This is the
+  existing scheduler and database, not a second local queue; no queue write
+  starts Hermes. The lifecycle has an explicit, guarded injection point for a
+  verified pickup; configuring it with an installation-owned local runner
+  remains the next source-composition step.
 
 Remaining before an automatic local worker is enabled:
 
