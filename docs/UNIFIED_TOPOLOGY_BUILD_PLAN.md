@@ -76,6 +76,9 @@ Completed in source:
   restart-safe exact replay.
 - a normal local-runner seam that requires the Mac-owned policy to approve the
   exact controller packet before Hermes can be invoked.
+- a versioned Hermes-0.21 task plan that binds the reviewed connector profile,
+  task type, and worker capability rather than reusing an unpinned legacy
+  Hermes plan.
 
 Remaining before an automatic local worker is enabled:
 

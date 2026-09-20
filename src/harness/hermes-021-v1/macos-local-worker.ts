@@ -26,6 +26,9 @@ const resultLineSchema = z.object({
 }).strict();
 
 export const HERMES_021_MACOS_LOCAL_ADAPTER_V1 = "connector:hermes-021-macos-local-v1" as const;
+export const HERMES_021_MACOS_LOCAL_CAPABILITY_V1 = "harness.hermes.021.macos.local.v1" as const;
+export const HERMES_021_MACOS_LOCAL_JOB_TYPE_V1 = "harness.hermes.021.macos.task" as const;
+export const HERMES_021_MACOS_LOCAL_START_OPERATION_V1 = "harness.hermes.021.macos.start" as const;
 
 export const hermes021MacosLocalBindingSchemaV1 = z.object({
   localServiceId: id,
