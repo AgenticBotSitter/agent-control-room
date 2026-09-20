@@ -67,3 +67,15 @@ test("readiness is bound to one reviewed plan and never means a worker is enable
   ] });
   assert.throws(() => summarizeInstallationReadinessV1(plan, unrelated), /proof_not_required/);
 });
+
+test("a unified local-and-remote installation can retain all five required proof states", () => {
+  const plan = planInstallationTopologyV1(input([local, remote]));
+  const readiness = createInstallationReadinessV1({ planDigest: plan.planDigest, proofs: [
+    { proof: "backup_restore", state: "passed", evidenceDigest: digest("backup") },
+    { proof: "local_owner_qualification", state: "passed", evidenceDigest: digest("text") },
+    { proof: "local_runner_bridge", state: "passed", evidenceDigest: digest("runner") },
+    { proof: "remote_enrollment", state: "passed", evidenceDigest: digest("remote") },
+    { proof: "two_computer_delivery", state: "passed", evidenceDigest: digest("delivery") },
+  ] });
+  assert.equal(summarizeInstallationReadinessV1(plan, readiness).state, "ready_for_owner_enablement");
+});

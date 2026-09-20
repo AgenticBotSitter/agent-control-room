@@ -18,7 +18,10 @@ const evidence = z.object({ proof, state: proofState, evidenceDigest: z.string()
 export const installationReadinessSchemaV1 = z.object({
   schema: z.literal(INSTALLATION_READINESS_V1),
   planDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
-  proofs: z.array(evidence).max(4),
+  /** A combined local-and-remote installation currently requires five distinct
+   * proofs. Keep this bound aligned with the reviewed topology plan rather
+   * than rejecting a complete unified installation as malformed. */
+  proofs: z.array(evidence).max(5),
   readinessDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
 }).strict();
 
@@ -44,7 +47,7 @@ function freezeReadiness(value: z.infer<typeof installationReadinessSchemaV1>): 
 /** Captures operator-supplied, non-secret proof outcomes for exactly one plan. */
 export function createInstallationReadinessV1(input: Omit<InstallationReadinessV1, "schema" | "readinessDigest">): InstallationReadinessV1 {
   const planDigest = z.string().regex(/^sha256:[a-f0-9]{64}$/).parse(input.planDigest);
-  const parsed = z.array(evidence).max(4).parse(input.proofs);
+  const parsed = z.array(evidence).max(5).parse(input.proofs);
   if (new Set(parsed.map(item => item.proof)).size !== parsed.length) throw new Error("installation_readiness_proof_duplicated");
   if (parsed.some(item => item.state === "passed" && !item.evidenceDigest)) throw new Error("installation_readiness_pass_without_evidence");
   if (parsed.some(item => item.state !== "passed" && item.evidenceDigest !== undefined)) throw new Error("installation_readiness_unverified_evidence");
