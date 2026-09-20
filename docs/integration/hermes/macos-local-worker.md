@@ -50,6 +50,19 @@ change is created by this code.
 ## Next activation step
 
 An owner-attended Mac qualification supplies the private port and performs one
-bounded read-only check before any real task is sent. Once that evidence is
-accepted, the normal task dispatcher can use this local port for the same
-worker lifecycle used by remote Hermes workers.
+bounded text-only check before any real task is sent. The launcher is ready
+locally and can first be inspected without contacting Hermes:
+
+```sh
+npx --yes pnpm@11.19.0 run qualify:hermes:local -- --owner-attended --dry-run
+```
+
+The real command removes `--dry-run`. It starts one temporary Hermes process
+with the `bot_room` text-only toolset, one turn, and a two-minute limit. It
+prints only a sanitized result: pass/fail, safe token counts, elapsed time,
+and a hashed session reference. It deletes its own temporary directory after
+the check. It does not install anything, change Hermes configuration, create a
+listener, or start a persistent service.
+
+Once that evidence is accepted, the normal task dispatcher can use the local
+port for the same worker lifecycle used by remote Hermes workers.
