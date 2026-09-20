@@ -6,6 +6,7 @@ import { classifyHermes021MacosResultV1, prepareHermes021MacosTaskV1, runHermes0
 import { createControllerWorkerDeliveryV1 } from "../src/harness/v1/controller-worker-delivery";
 import { sha256Digest } from "../src/security/canonical-digest";
 import { projectHermes021MacosTerminalResultEvidenceV1, terminalResultEvidenceSchemaV1 } from "../src/harness/v1/terminal-result-evidence";
+import { runHermes021MacosTextOnlyQualificationV1 } from "../src/harness/hermes-021-v1";
 
 const result = (overrides: Record<string, unknown> = {}) => ({ type: "result", session_id: "session:marvin", exit_code: 0,
   text: "Finished the requested task.", tokens: { input: 12, output: 8, total: 20, cache_read: 0, cache_write: 0 },
@@ -81,4 +82,21 @@ test("Marvin's completed JSON report becomes shared inert result evidence", () =
     lineage: evidence.lineage, retained: { ...evidence.source, terminalResultDigest: sha256Digest("other") },
     terminalResultRawLine: raw, observedAt: evidence.observedAt,
   }), /terminal_result_evidence_unavailable/);
+});
+
+test("the first owner qualification is text-only, bounded, and never retried", async () => {
+  const calls: unknown[] = [];
+  const qualification = { ...task, qualificationId: "qualification:marvin", mode: "text_only" as const,
+    toolset: "bot_room" as const, maximumTurns: 1 as const, maximumRunBudgetSeconds: 120 as const,
+    sourceTag: "control-room-local-qualification" as const };
+  const outcome = await runHermes021MacosTextOnlyQualificationV1(binding, qualification, {
+    async runTextOnlyQualification(input) { calls.push(input); return [result()]; },
+  }, classifyHermes021MacosResultV1);
+  assert.equal(outcome.kind, "completed");
+  assert.deepEqual(calls, [{ localServiceId: binding.localServiceId, adapterId: HERMES_021_MACOS_LOCAL_ADAPTER_V1,
+    sourceRevision: binding.sourceRevision, task: qualification, signal: undefined }]);
+  const lost = await runHermes021MacosTextOnlyQualificationV1(binding, qualification, {
+    async runTextOnlyQualification() { throw new Error("lost reply"); },
+  }, classifyHermes021MacosResultV1);
+  assert.deepEqual(lost, { kind: "uncertain", reason: "hermes_local_transport_unavailable" });
 });
