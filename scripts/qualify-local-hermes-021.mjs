@@ -53,6 +53,17 @@ if (!ownerAttended || [...args].some(value => value !== "--owner-attended" && va
         terminal = candidates.length === 1 ? candidates[0] : undefined;
       } catch { terminal = undefined; }
       const completed = exit.code === 0 && terminal?.exit_code === 0 && terminal?.text === `CONTROL_ROOM_HERMES_021_${nonce}`;
+      // Keep diagnostics useful without ever printing the provider's terminal
+      // text or stderr: either may include account, routing, or host detail.
+      // These are only coarse facts needed to decide whether a later,
+      // separately-authorized retry is meaningful.
+      const terminalInputTokens = Number.isSafeInteger(terminal?.tokens?.input) ? terminal.tokens.input : null;
+      const terminalOutputTokens = Number.isSafeInteger(terminal?.tokens?.output) ? terminal.tokens.output : null;
+      const terminalTotalTokens = Number.isSafeInteger(terminal?.tokens?.total) ? terminal.tokens.total : null;
+      const failureStage = completed ? "none"
+        : !terminal ? "before_terminal_result"
+          : terminalTotalTokens === 0 ? "before_model_response"
+            : "after_model_response";
       const safe = {
         qualified: completed,
         exitCode: Number.isInteger(exit.code) ? exit.code : null,
@@ -60,11 +71,12 @@ if (!ownerAttended || [...args].some(value => value !== "--owner-attended" && va
         terminalResultObserved: Boolean(terminal),
         sessionDigest: typeof terminal?.session_id === "string"
           ? `sha256:${createHash("sha256").update(terminal.session_id).digest("hex")}` : null,
-        inputTokens: Number.isSafeInteger(terminal?.tokens?.input) ? terminal.tokens.input : null,
-        outputTokens: Number.isSafeInteger(terminal?.tokens?.output) ? terminal.tokens.output : null,
-        totalTokens: Number.isSafeInteger(terminal?.tokens?.total) ? terminal.tokens.total : null,
+        inputTokens: terminalInputTokens,
+        outputTokens: terminalOutputTokens,
+        totalTokens: terminalTotalTokens,
         durationMs: Number.isSafeInteger(terminal?.duration_ms) ? terminal.duration_ms : null,
         stderrBytes: Math.min(stderrBytes, 65_536),
+        failureStage,
       };
       console.log(JSON.stringify(safe, null, 2));
       if (!completed) process.exitCode = 1;
