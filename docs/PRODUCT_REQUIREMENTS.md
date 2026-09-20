@@ -214,6 +214,8 @@ the following as an integrated journey:
 - This document defines required behavior and proof.
 - `PUBLIC_BUILD_PLAN.md` and `WORK_QUEUE.md` sequence implementation and ownership.
 - `COMPONENT_DECISIONS.md` records what is reused and any remaining qualification.
+- `REUSE_DECISION_GATE.md` requires a recorded comparison before substantial
+  custom infrastructure is added.
 - `WEBPAGE_SPEC.md` gives detailed presentation behavior.
 - `docs/SHARED_CONNECTOR_CONTRACT.md` and
   `docs/SECURITY_CONFIGURATION_CONTRACT.md` define shared technical and authority
