@@ -35,6 +35,10 @@ mistakenly presenting them as a running worker.
   enable an automatic worker or authorize a real task.
 - A local Hermes worker accepts only a controller-prepared task with the
   installation-owned policy check.
+- Control Room rechecks the same canonical task, lease, authority, worker
+  binding, plan, and review contract immediately before it can create the
+  local run record or invoke Hermes. A task revoked or changed in that narrow
+  handoff window is refused rather than launched.
 - The accepted delivery is recorded before the worker can run. Restarting the
   application cannot silently run the same task again.
 - A private stream-json runner bridge accepts bounded result lines, refuses an
