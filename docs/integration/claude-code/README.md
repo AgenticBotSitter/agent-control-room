@@ -16,6 +16,9 @@ credential. Every operation in `claudeCodeConnectorProfileV1` remains `unsupport
   reason code, for every operation the profile has not proven.
 - `src/harness/claude-code-v1/result-publication.ts` — source-only bridge from one
   accepted, decoded terminal result to the existing shared durable publisher.
+- `src/harness/claude-code-v1/local-worker-result.ts` — source-only coordinator for one
+  already-admitted, injected owned process: clean stream decode, retained init/session
+  evidence, certain cleanup, then the shared durable result and pending-review path.
 
 ## Decoding rules
 
@@ -144,16 +147,18 @@ Instead the bridge re-derives the evidence itself:
 The published bytes are therefore always the `result` string of material whose canonical
 digest equals the independently retained terminal-frame digest.
 
-**Retained state this connector does not yet expose.** The retained expected session ID
-and the observed terminal-frame digest are explicit bridge inputs because
+**Retained state at the low-level bridge.** The retained expected session ID and the
+observed terminal-frame digest remain explicit bridge inputs because
 `ClaudeCodeSessionDispositionV1` carries neither, and
 `OwnedClaudeCodeProcessSessionV1` exposes no method that retains the validated `init`
 observation — `recordTerminalResultObserved()` takes no argument, and there is no
 `recordInitSessionObserved(sessionId)` or equivalent accessor. The expected session ID may
 originate from that validated init frame and is then retained by the caller and compared
 against the terminal observation; both sides of that comparison never come from the same
-frame. Runtime acquisition and wiring remain out of scope, so tests supply the retained
-inputs explicitly.
+frame. `publishClaudeCodeOwnedAttemptResultV1` now performs that retention internally for
+one injected owned attempt, so production composition does not need to construct those
+fields by hand. The low-level bridge remains public for replay from already retained
+evidence and for recovery work that must not reacquire a process.
 
 **Refusals.** Every one fails closed before the shared publisher is reached, and the
 tests assert the injected database, storage and reservation ports were never touched:
@@ -186,19 +191,25 @@ The shared publisher's own refusals — `durable_result_identity_mismatch`,
 `durable_result_manual_reconciliation_required` — pass through unswallowed and
 unrelabelled.
 
-**What it does not do.** It approves nothing, completes nothing, releases no capacity,
-retries nothing and redispatches nothing; it starts, acquires and spawns no process, so
-an exact publication retry over retained evidence returns the existing durable receipt
-without starting a new one. It holds no state, so a reconstructed instance over the same
-database replays identically. It is not a live qualification: no authenticated run, no
-provider call and no credential is involved, and every profile operation stays
+**What it does not do.** The publication bridge approves nothing, completes nothing,
+releases no capacity, retries nothing and redispatches nothing; it starts, acquires and
+spawns no process, so an exact publication retry over retained evidence returns the
+existing durable receipt without starting a new one. The source-only coordinator invokes
+only its caller's injected owned-process acquisition. It does not discover an executable,
+construct arguments, read configuration or credentials, select a workspace, schedule a
+task, retry, resume or implement recovery. It publishes only after clean EOF and certain
+owned-session cleanup. Neither module is a live qualification: no authenticated run,
+provider call or credential is involved here, and every profile operation stays
 `unsupported`.
 
 ## Not done yet
 
 - No canonical result publication. That gating stays with the lead; the durable bridge
   above publishes one receipt and one ordinary pending review target, and approves nothing.
-- No Claude variant in the shared `terminal-result-evidence` schema.
+- No queue/admission caller or installed-process host. The coordinator is the narrow seam
+  they may call after admission, but it creates neither and contains no executable binding.
+- No restart read/recovery path. Replaying already retained evidence is safe through the
+  durable publisher; reacquiring or resubmitting a process is never inferred to be safe.
 - No authenticated run, no `--max-budget-usd` ceiling proof, no `--session-id`/`--resume`
   proof. Until those exist, per `docs/SHARED_CONNECTOR_CONTRACT.md`, `submit`, `status`,
   `result`, `resume` and `usage` stay `unsupported` regardless of evidence level.

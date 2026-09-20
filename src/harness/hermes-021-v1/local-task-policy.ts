@@ -46,6 +46,10 @@ export function createHermes021MacosLocalTaskPolicyPortV1(policyValue: unknown,
   return Object.freeze({ assertAdmitted(input: Parameters<Hermes021MacosTaskPolicyPortV1["assertAdmitted"]>[0]) {
     const now = clock(), deadline = Date.parse(policy.expiresAt);
     if (!Number.isSafeInteger(now) || now < 0 || now >= deadline
+      // The installation policy may have a longer lifetime than one delivery.
+      // Recheck the delivery's own window at the private launch boundary so a
+      // queued, future-dated, or expired packet never starts Hermes directly.
+      || Date.parse(input.delivery.issuedAt) > now || Date.parse(input.delivery.expiresAt) <= now
       || input.binding.localServiceId !== policy.binding.localServiceId
       || input.binding.workerId !== policy.binding.workerId
       || input.binding.sourceRevision !== policy.binding.sourceRevision

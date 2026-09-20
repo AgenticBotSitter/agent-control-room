@@ -20,6 +20,8 @@ import {
   publishClaudeTerminalResultV1,
   type ClaudeTerminalResultPublicationInputV1,
 } from "../src/harness/claude-code-v1/result-publication";
+import { publishClaudeCodeOwnedAttemptResultV1 } from
+  "../src/harness/claude-code-v1/local-worker-result";
 import type { DurableResultPublicationConfigurationV1 } from "../src/artifacts/v1/durable-result-publication";
 import { terminalResultEvidenceSchemaV1 } from "../src/harness/v1/terminal-result-evidence";
 import { resultBytesHash } from "../src/artifacts/v1/native-results";
@@ -29,6 +31,7 @@ import type { ArtifactReadPortV1, ArtifactStoragePortV1 } from "../src/node-exec
 import { binding as nativeFixtureBinding } from "./hermes-native-fixture";
 import { at } from "./native-task-fixture";
 import { webNativeResultFixture } from "./helpers/web-native-result";
+import { sha256Digest } from "../src/security/canonical-digest";
 
 // Synthetic placeholder identities only; nothing here is captured from a real host.
 const digestOf = (value: string) => `sha256:${createHash("sha256").update(value).digest("hex")}`;
@@ -356,6 +359,7 @@ test("the connector modules read no environment, file, process or network source
     "unsupported-operations.ts",
     "connector-profile.ts",
     "result-publication.ts",
+    "local-worker-result.ts",
     "index.ts",
   ];
   const forbidden = [
@@ -496,6 +500,129 @@ async function bridgeFixture(runId: string, terminalFrameDigest: string) {
     storage, storageClass: "local", reservations });
   return { ...f, store, storage, configWith, config: configWith() };
 }
+
+test("the local Claude coordinator carries one owned stream into the shared review lifecycle", async t => {
+  const runId = "run:claude-local-coordinator";
+  const sessionId = bridgeSession(20);
+  const resultText = "One bounded Claude result for owner review.";
+  const terminalLine = JSON.stringify({ type: "result", subtype: "success", is_error: false,
+    session_id: sessionId, result: resultText, total_cost_usd: 0, usage: {} });
+  const terminalDigest = sha256Digest(JSON.parse(terminalLine));
+  const f = await bridgeFixture(runId, terminalDigest); t.after(f.close);
+  const process = new FakeClaudeProcess();
+  const processBinding = freshBinding({ runId, attemptId: `attempt:${runId}` });
+  let authorityChecks = 0;
+  let coordinatorAcquisitions = 0;
+
+  const running = publishClaudeCodeOwnedAttemptResultV1({
+    publication: f.config,
+    retainedBinding: retainedBindingFor(runId),
+    processBinding,
+    acceptedConnectorProfileDigest: CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1,
+    acquire: () => {
+      coordinatorAcquisitions += 1;
+      return process.acquire();
+    },
+    signal: new AbortController().signal,
+    cleanupMs: 500,
+    receivedAt: at(12_000),
+    assertAuthority: () => { authorityChecks += 1; },
+  });
+  process.push(`${JSON.stringify({ type: "system", subtype: "init", session_id: sessionId })}\n`);
+  process.push(`${terminalLine}\n`);
+  process.endNaturally();
+
+  const completed = await running;
+  assert.equal(coordinatorAcquisitions, 1);
+  assert.ok(authorityChecks >= 3, "authority is fenced before acquisition and by the shared publisher");
+  assert.equal(completed.sessionId, sessionId);
+  assert.equal(completed.processAttemptId, processBinding.processAttemptId);
+  assert.equal(completed.disposition.reasonCode, "closed_with_decoded_terminal_result");
+  assert.equal(completed.decoderState.terminalObserved, true);
+  assert.equal(completed.publication.replayed, false);
+  assert.equal(completed.publication.target.kind, "document");
+  assert.equal(completed.publication.receipt.qualityAccepted, false);
+  assert.equal(completed.qualityAccepted, false);
+  assert.equal(completed.completionRecorded, false);
+  assert.equal(completed.releasesCapacity, false);
+  assert.equal(completed.permitsRetry, false);
+  assert.equal(completed.permitsResume, false);
+  assert.equal(f.storage.putCalls, 1);
+  const stored = await f.storage.read(completed.publication.receipt.artifactId);
+  assert.equal(new TextDecoder().decode(stored!), resultText);
+});
+
+test("the local Claude coordinator refuses stale authority before process acquisition", async () => {
+  let acquired = false;
+  await assert.rejects(() => publishClaudeCodeOwnedAttemptResultV1({
+    publication: {} as DurableResultPublicationConfigurationV1,
+    retainedBinding: retainedBindingFor("run:claude-local-stale"),
+    processBinding: freshBinding({ runId: "run:claude-local-stale",
+      attemptId: "attempt:run:claude-local-stale" }),
+    acceptedConnectorProfileDigest: CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1,
+    acquire: () => { acquired = true; return new FakeClaudeProcess().acquire(); },
+    signal: new AbortController().signal,
+    cleanupMs: 200,
+    receivedAt: at(12_100),
+    assertAuthority: () => { throw new Error("authority_revoked"); },
+  }), /authority_revoked/);
+  assert.equal(acquired, false);
+});
+
+test("the local Claude coordinator closes malformed streams without publishing", async t => {
+  const runId = "run:claude-local-malformed";
+  const f = await bridgeFixture(runId, digestOf("unused-malformed-terminal")); t.after(f.close);
+  const process = new FakeClaudeProcess();
+  const processBinding = freshBinding({ runId, attemptId: `attempt:${runId}` });
+  const running = publishClaudeCodeOwnedAttemptResultV1({
+    publication: f.config,
+    retainedBinding: retainedBindingFor(runId),
+    processBinding,
+    acceptedConnectorProfileDigest: CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1,
+    acquire: () => process.acquire(),
+    signal: new AbortController().signal,
+    cleanupMs: 500,
+    receivedAt: at(12_200),
+    assertAuthority: () => {},
+  });
+  process.push(`${JSON.stringify({ type: "system", subtype: "init", session_id: bridgeSession(21) })}\n`);
+  process.push("{not json}\n");
+  process.endNaturally();
+
+  await assert.rejects(running, /claude_code_local_worker_result_unavailable/);
+  assert.equal(f.storage.putCalls, 0);
+  assert.equal((await f.db.query("SELECT artifact_id FROM control_native_artifact_receipts WHERE run_id=$1",
+    [runId])).rows.length, 0);
+});
+
+test("uncertain Claude cleanup blocks the shared publisher and never permits another attempt", async t => {
+  const runId = "run:claude-local-cleanup-uncertain";
+  const sessionId = bridgeSession(22);
+  const terminalLine = JSON.stringify({ type: "result", subtype: "success", is_error: false,
+    session_id: sessionId, result: "Result whose cleanup cannot be proven." });
+  const f = await bridgeFixture(runId, sha256Digest(JSON.parse(terminalLine))); t.after(f.close);
+  const process = new FakeClaudeProcess({ hangTerminate: true });
+  const processBinding = freshBinding({ runId, attemptId: `attempt:${runId}` });
+  const running = publishClaudeCodeOwnedAttemptResultV1({
+    publication: f.config,
+    retainedBinding: retainedBindingFor(runId),
+    processBinding,
+    acceptedConnectorProfileDigest: CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1,
+    acquire: () => process.acquire(),
+    signal: new AbortController().signal,
+    cleanupMs: 40,
+    receivedAt: at(12_300),
+    assertAuthority: () => {},
+  });
+  process.push(`${JSON.stringify({ type: "system", subtype: "init", session_id: sessionId })}\n`);
+  process.push(`${terminalLine}\n`);
+  process.endNaturally();
+
+  await assert.rejects(running, /claude_code_local_worker_result_cleanup_uncertain/);
+  assert.equal(f.storage.putCalls, 0);
+  assert.equal((await f.db.query("SELECT artifact_id FROM control_native_artifact_receipts WHERE run_id=$1",
+    [runId])).rows.length, 0);
+});
 
 const bridgeInputFor = (evidence: Awaited<ReturnType<typeof terminalEvidence>>, runId: string,
   overrides: Partial<ClaudeTerminalResultPublicationInputV1> = {}): ClaudeTerminalResultPublicationInputV1 => ({

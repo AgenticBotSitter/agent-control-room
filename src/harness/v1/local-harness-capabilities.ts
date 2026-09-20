@@ -1,6 +1,7 @@
 import type { ConnectorOperationNameV1, ConnectorProfileV1 } from "./connector-profile";
 import { claudeCodeConnectorProfileV1 } from "../claude-code-v1/connector-profile";
 import { hermes021MacosLocalConnectorProfileV1 } from "../hermes-021-v1/connector-profile";
+import { summarizeCodexMacosCustodyReadinessV1 } from "../codex-v1/macos-custody-readiness";
 import { summarizeInstallationReadinessV1, type InstallationReadinessV1 } from "./installation-readiness";
 import type { InstallationTopologyPlanV1 } from "./installation-topology";
 
@@ -74,21 +75,29 @@ export const localHarnessCapabilitiesV1: readonly LocalHarnessCapabilityV1[] = O
  * source-only description.
  */
 export function summarizeLocalHarnessCapabilitiesV1(plan?: InstallationTopologyPlanV1,
-  readiness?: InstallationReadinessV1): readonly LocalHarnessCapabilityV1[] {
+  readiness?: InstallationReadinessV1, codexMacosCustodyReadiness?: unknown): readonly LocalHarnessCapabilityV1[] {
   if (!plan || !plan.requiredProofs.includes("local_owner_qualification") || !plan.requiredProofs.includes("local_runner_bridge"))
     return localHarnessCapabilitiesV1;
   const summary = summarizeInstallationReadinessV1(plan, readiness);
   const localProofs = summary.proofs.filter(item => ["local_owner_qualification", "local_runner_bridge", "backup_restore"].includes(item.proof));
   const hermes = localHarnessCapabilitiesV1[0]!;
+  const codex = localHarnessCapabilitiesV1[2]!;
+  const custody = summarizeCodexMacosCustodyReadinessV1(plan.planDigest, codexMacosCustodyReadiness);
+  const codexCapability = custody.state === "blocked" ? Object.freeze({ ...codex, state: "setup_needs_attention" as const,
+    stateLabel: "Mac safety proof needs attention", summary: "Control Room has not enabled Codex on this Mac. A required process or private-state custody proof is unavailable or failed.",
+    nextStep: "Correct the specific owner-run custody proof, record fresh non-secret evidence, then complete the separate exact-harness qualification." })
+    : custody.state === "custody_recorded" ? Object.freeze({ ...codex, state: "setup_required" as const,
+      stateLabel: "Mac safety prerequisites recorded", summary: "The two Mac custody prerequisites are recorded, but Control Room still has not started Codex.",
+      nextStep: "Perform the separate owner-attended exact-harness qualification. This record alone cannot enable or launch Codex." }) : codex;
   if (localProofs.some(item => item.state === "failed" || item.state === "unavailable")) {
     return Object.freeze([Object.freeze({ ...hermes, state: "setup_needs_attention" as const,
       stateLabel: "Setup needs attention", summary: "Control Room has not enabled Hermes. One or more required local proof checks needs attention.",
-      nextStep: "Correct the failed local proof through the owner-run procedure, then record a fresh non-secret proof result." }), ...localHarnessCapabilitiesV1.slice(1)]);
+      nextStep: "Correct the failed local proof through the owner-run procedure, then record a fresh non-secret proof result." }), localHarnessCapabilitiesV1[1]!, codexCapability]);
   }
   if (localProofs.length === 3 && localProofs.every(item => item.state === "passed")) {
     return Object.freeze([Object.freeze({ ...hermes, state: "owner_enablement_required" as const,
       stateLabel: "Proof complete; owner enablement required", summary: "The required local proof records are complete, but Control Room still has not started Hermes.",
-      nextStep: "The owner may now make the separate, explicit local-worker enablement decision." }), ...localHarnessCapabilitiesV1.slice(1)]);
+      nextStep: "The owner may now make the separate, explicit local-worker enablement decision." }), localHarnessCapabilitiesV1[1]!, codexCapability]);
   }
-  return localHarnessCapabilitiesV1;
+  return Object.freeze([hermes, localHarnessCapabilitiesV1[1]!, codexCapability]);
 }

@@ -170,7 +170,10 @@ accepted bridge, not just a formalisation.
 - `tests/claude-code-owned-process-session.test.ts` — the publication returned
   from a **real** owned session, real stdout framing and real decode carries
   shared evidence bound to the published bytes and the retained session, and
-  replays byte-identically.
+  replays byte-identically. It also covers the source-only local coordinator:
+  one clean owned stream reaches the real shared receipt and pending-review
+  path, while stale authority, malformed output and uncertain cleanup publish
+  nothing.
 - `tests/durable-result-publication.test.ts` — the Claude member inside the
   shared union in the durable lane: `kind` discrimination against every sibling
   member, and forged-evidence-digest refusal.
@@ -180,26 +183,25 @@ accepted bridge, not just a formalisation.
 These are real and are **not** worked around here; closing them needs files
 outside this package's write scopes, or work this package does not authorize.
 
-1. **`publishClaudeTerminalResultV1` has no production caller.** Nothing in
-   `src/` outside the connector package invokes it: it is reached only from
-   tests. There is no dispatcher hook, no runtime wiring, and no code path that
-   collects the retained inputs from live state. Adding one would require a
-   live dispatcher change, which this packet explicitly forbids
-   (`effects: none`).
+1. **There is still no queue/admission or installed-process caller.**
+   `publishClaudeCodeOwnedAttemptResultV1` now provides the connector-local
+   composition seam: it consumes one already-admitted injected owned process,
+   retains validated init/session evidence, requires clean EOF and certain
+   cleanup, then calls this shared publication bridge. Nothing yet binds that
+   seam to the pg-boss worker, executable selection, workspace policy or an
+   installed Claude process.
 
-2. **The connector still exposes no accessor for its own retained session
-   state.** `ClaudeCodeSessionDispositionV1` carries neither a session id nor a
-   terminal-frame digest, and `OwnedClaudeCodeProcessSessionV1` has no
-   `recordInitSessionObserved(sessionId)` or equivalent. Both remain explicit
-   caller-supplied inputs, and the tests supply them by hand. This is unchanged
-   from the previously accepted bridge.
+2. **The low-level owned-session object still exposes no retained-session
+   accessor.** `ClaudeCodeSessionDispositionV1` carries neither a session id nor
+   a terminal-frame digest. The new coordinator deliberately owns that
+   retention so ordinary composition cannot substitute it by hand; direct
+   callers of the lower-level publication bridge still must supply retained
+   evidence explicitly for replay/recovery cases.
 
-3. **`docs/integration/claude-code/README.md` is now stale.** Its "Not done
-   yet" section still reads "No Claude variant in the shared
-   `terminal-result-evidence` schema", which this package has closed, and its
-   bridge section does not mention the shared projection. That file is not in
-   this packet's write scopes, so it is left untouched and the staleness is
-   disclosed here instead.
+3. **No restart read or result recovery composition exists.** The shared
+   publisher can replay the same already-retained evidence without another
+   process, but this package does not claim that evidence can yet be recovered
+   from an installed Claude session after service restart.
 
 4. **The projector's explicit `1..65_536` byte check is redundant.** The
    evidence `contentSchema` already bounds `sizeBytes` to that range, so
