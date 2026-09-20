@@ -104,6 +104,19 @@ test("a temporary shared-model limit is not reported as an exhausted allowance",
   assert.equal(JSON.stringify(output).includes("retry shortly"), false);
 });
 
+test("a terminal provider-credit refusal is classified without returning its detail", async t => {
+  const dir = await mkdtemp(join(tmpdir(), "control-room-hermes-qualification-test-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const fake = join(dir, "hermes");
+  await writeFile(fake, `#!${process.execPath}\nconsole.log(JSON.stringify({ type: 'result', exit_code: 1, text: '', error: 'HTTP 402: insufficient credits', tokens: { input: 0, output: 0, total: 0 } })); process.exit(1);\n`, { mode: 0o700 });
+  await chmod(fake, 0o700);
+  const result = await run(["--owner-attended"], { PATH: dir });
+  assert.equal(result.code, 1);
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.failureReason, "model_credits_unavailable");
+  assert.equal(JSON.stringify(output).includes("insufficient credits"), false);
+});
+
 test("a retired model is classified without emitting provider output", async t => {
   const dir = await mkdtemp(join(tmpdir(), "control-room-hermes-qualification-test-"));
   t.after(() => rm(dir, { recursive: true, force: true }));

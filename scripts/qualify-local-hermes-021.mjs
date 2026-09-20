@@ -81,6 +81,10 @@ if (!ownerAttended || args.some(value => !accepted.has(value)) || (args.includes
       const terminalInputTokens = Number.isSafeInteger(terminal?.tokens?.input) ? terminal.tokens.input : null;
       const terminalOutputTokens = Number.isSafeInteger(terminal?.tokens?.output) ? terminal.tokens.output : null;
       const terminalTotalTokens = Number.isSafeInteger(terminal?.tokens?.total) ? terminal.tokens.total : null;
+      // A stream-json terminal record can safely carry a provider failure even
+      // when stderr is empty. Read it only to choose a fixed, non-sensitive
+      // category; never return it to the caller.
+      const failureText = `${stderr}\n${typeof terminal?.error === "string" ? terminal.error : ""}`;
       const failureStage = completed ? "none"
         : !terminal ? "before_terminal_result"
           : terminalTotalTokens === 0 ? "before_model_response"
@@ -91,10 +95,11 @@ if (!ownerAttended || args.some(value => !accepted.has(value)) || (args.includes
       const failureReason = completed ? "none"
         : launchError ? "runner_unavailable"
           : timedOut ? "timed_out"
-            : /(?:temporarily rate.?limited|retry shortly|shared upstream)/i.test(stderr) ? "model_rate_limited"
-              : /(?:insufficient_quota|quota (?:has been )?exhausted|rate.?limit|\b429\b)/i.test(stderr) ? "model_quota_exhausted"
-              : /(?:authentication|unauthenticated|invalid (?:api )?key|\b401\b|\b403\b)/i.test(stderr) ? "model_authentication_unavailable"
-                : /(?:\b404\b|model (?:is )?(?:retired|unavailable|not found)|testing period)/i.test(stderr) ? "model_unavailable"
+            : /(?:insufficient credits|credit balance|\b402\b)/i.test(failureText) ? "model_credits_unavailable"
+            : /(?:temporarily rate.?limited|retry shortly|shared upstream)/i.test(failureText) ? "model_rate_limited"
+              : /(?:insufficient_quota|quota (?:has been )?exhausted|rate.?limit|\b429\b)/i.test(failureText) ? "model_quota_exhausted"
+              : /(?:authentication|unauthenticated|invalid (?:api )?key|\b401\b|\b403\b)/i.test(failureText) ? "model_authentication_unavailable"
+                : /(?:\b404\b|model (?:is )?(?:retired|unavailable|not found)|testing period)/i.test(failureText) ? "model_unavailable"
             : !terminal ? "terminal_result_missing"
               : terminalTotalTokens === 0 ? "model_response_missing"
                 : exit.code !== 0 ? "runner_exit_nonzero"
