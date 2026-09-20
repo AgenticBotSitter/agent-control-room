@@ -31,18 +31,18 @@ if (!ownerAttended || [...args].some(value => value !== "--owner-attended" && va
   } else {
     const directory = await mkdtemp(join(tmpdir(), "control-room-hermes-021-"));
     const queryFile = join(directory, "qualification.txt");
-    let stdout = "", stderrBytes = 0;
+    let stdout = "", stderrBytes = 0, timedOut = false, launchError = false;
     try {
       await writeFile(queryFile, query, { encoding: "utf8", mode: 0o600 });
       const child = spawn("hermes", ["chat", "--query-file", queryFile, "--format", "stream-json",
         "--toolsets", "bot_room", "--ignore-rules", "--max-turns", "1", "--run-budget", "120",
         "--source", "control-room-local-qualification", "--in", directory],
       { shell: false, stdio: ["ignore", "pipe", "pipe"] });
-      const timeout = setTimeout(() => child.kill("SIGTERM"), 130_000);
+      const timeout = setTimeout(() => { timedOut = true; child.kill("SIGTERM"); }, 130_000);
       const exit = await new Promise(resolve => {
         child.stdout.on("data", chunk => { if (stdout.length < 262_144) stdout += String(chunk); });
         child.stderr.on("data", chunk => { stderrBytes += Buffer.byteLength(chunk); });
-        child.once("error", () => resolve({ code: null, signal: "error" }));
+        child.once("error", () => { launchError = true; resolve({ code: null, signal: "error" }); });
         child.once("close", (code, signal) => resolve({ code, signal }));
       });
       clearTimeout(timeout);
@@ -64,6 +64,16 @@ if (!ownerAttended || [...args].some(value => value !== "--owner-attended" && va
         : !terminal ? "before_terminal_result"
           : terminalTotalTokens === 0 ? "before_model_response"
             : "after_model_response";
+      // A deliberately small, non-sensitive reason to make an owner-run
+      // attempt actionable.  Do not expose command output: it can include
+      // account, provider, or local-machine information.
+      const failureReason = completed ? "none"
+        : launchError ? "runner_unavailable"
+          : timedOut ? "timed_out"
+            : !terminal ? "terminal_result_missing"
+              : terminalTotalTokens === 0 ? "model_response_missing"
+                : exit.code !== 0 ? "runner_exit_nonzero"
+                  : "terminal_result_unexpected";
       const safe = {
         qualified: completed,
         exitCode: Number.isInteger(exit.code) ? exit.code : null,
@@ -77,6 +87,10 @@ if (!ownerAttended || [...args].some(value => value !== "--owner-attended" && va
         durationMs: Number.isSafeInteger(terminal?.duration_ms) ? terminal.duration_ms : null,
         stderrBytes: Math.min(stderrBytes, 65_536),
         failureStage,
+        failureReason,
+        // A non-dry native attempt must be explicitly authorized again; the
+        // script never interprets a failed attempt as permission to retry.
+        retryRequiresFreshOwnerAuthorization: !completed,
       };
       console.log(JSON.stringify(safe, null, 2));
       if (!completed) process.exitCode = 1;

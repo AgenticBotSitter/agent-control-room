@@ -57,9 +57,13 @@ qualification using the already-signed-in installation. The result must be a
 sanitized pass record: no prompt, result text, account information, command,
 path, token, or credential is retained in Control Room.
 
-If it refuses or ends early, record the safe reason and leave automatic work
-off. Do not retry it automatically and do not repair the user's harness from
-Control Room.
+If it refuses or ends early, record the safe `failureReason` only: it will say
+whether the local runner was unavailable, timed out, returned no final result,
+returned no model response, exited unsuccessfully, or returned an unexpected
+final result. It deliberately omits the command output, account, provider and
+machine details. Leave automatic work off. Do not retry it automatically and
+do not repair the user's harness from Control Room; the output explicitly says
+that a fresh owner authorization is required for any later attempt.
 
 ### A3. Prove a completed result survives a restart
 
