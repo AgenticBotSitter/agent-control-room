@@ -197,6 +197,9 @@ evidence only: it enables no worker, database, listener or persistent service.
 ## Latest accepted local checks
 
 - TypeScript type check
+- Shared local/remote and Hermes readiness verification: 49 checks passed.
+  This covers the one-database local and remote lifecycle, correction path,
+  local Hermes runner safeguards, preparation and proof-recording commands.
 - Combined local-agent and topology verification: 47 checks passed in the
   latest run. This covers
   Hermes delivery/revocation/restart, Claude terminal-result recovery, inert
