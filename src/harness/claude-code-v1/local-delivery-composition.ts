@@ -53,6 +53,10 @@ export type ClaudeCodeLocalDeliveryCompositionV1 = Readonly<{
   receiptPort: ControllerWorkerDeliveryPortV1;
   /** This is an existing injected owned-process seam. Production has no CLI runner here. */
   acquire: AcquireClaudeCodeProcessV1;
+  /** Re-reads the canonical task/lease binding after the receipt is durable and
+   * immediately before acquisition. A queue locator alone is never enough. */
+  recheckBeforeAcquire(delivery: ControllerWorkerDeliveryV1,
+    route: z.infer<typeof controllerWorkerRouteSchemaV1>, signal: AbortSignal): Promise<void>;
   cleanupMs: number;
   /** Installation clock used only to fence the already-bounded delivery window. */
   clock: () => number;
@@ -100,7 +104,7 @@ export async function deliverClaudeCodeLocalTaskV1(config: ClaudeCodeLocalDelive
   deliveryValue: unknown, routeValue: unknown, receivedAtValue: unknown, signal?: AbortSignal) {
   if (!config || !config.db || typeof config.db.transaction !== "function" || !(config.integrityKey instanceof Uint8Array)
     || config.integrityKey.length !== 32 || !config.receiptPort || typeof config.receiptPort.receive !== "function"
-    || typeof config.acquire !== "function" || !Number.isSafeInteger(config.cleanupMs)
+    || typeof config.acquire !== "function" || typeof config.recheckBeforeAcquire !== "function" || !Number.isSafeInteger(config.cleanupMs)
     || config.cleanupMs < 1 || config.cleanupMs > 5_000 || typeof config.clock !== "function" || signal?.aborted) unavailable();
   const delivery = controllerWorkerDeliverySchemaV1.parse(deliveryValue);
   const route = controllerWorkerRouteSchemaV1.parse(routeValue);
@@ -140,7 +144,12 @@ export async function deliverClaudeCodeLocalTaskV1(config: ClaudeCodeLocalDelive
   try {
     if (signal?.aborted) unavailable();
     // This is the final fence immediately before synchronous acquisition in the
-    // owned-session factory; an authority change during either await is refused.
+    // owned-session factory. The async recheck detects an altered canonical
+    // task/lease after receipt persistence; the repeated local fence detects an
+    // authority/clock change while that recheck was in flight.
+    fence();
+    await config.recheckBeforeAcquire(delivery, route, signal ?? new AbortController().signal);
+    if (signal?.aborted) unavailable();
     fence();
     const session = createClaudeCodeOwnedProcessSessionV1({ binding: reservation.processBinding,
       signal: signal ?? new AbortController().signal, acquire: config.acquire, cleanupMs: config.cleanupMs });

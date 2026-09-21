@@ -42,11 +42,16 @@ function fakePort(): ClaudeCodeProcessBytePortV1 {
 }
 
 function composition(f: Awaited<ReturnType<typeof nativeTaskFixture>>, packet: ControllerWorkerDeliveryV1,
-  state: { revoked: boolean; receives: number; acquires: number; now?: number }) {
+  state: { revoked: boolean; receives: number; acquires: number; rechecks?: number; now?: number }) {
   return { db: f.db, integrityKey, binding: { ...worker, authorityDigest, acceptanceProfileId: "profile:claude", acceptanceProfileDigest },
     authority: { currentAdmissionDigest: () => authorityDigest, assertCurrent() { if (state.revoked) throw new Error("revoked"); } },
     receiptPort: { async receive(value: ControllerWorkerDeliveryV1) { state.receives++; return accepted(value); } },
     acquire: (): OwnedClaudeCodeProcessV1 => { state.acquires++; return { ready: Promise.resolve(fakePort()), close: async () => {} }; }, cleanupMs: 200,
+    async recheckBeforeAcquire(value: ControllerWorkerDeliveryV1, route: { kind: "local"; workerId: string }, signal: AbortSignal) {
+      if (signal.aborted || value.deliveryDigest !== packet.deliveryDigest || route.workerId !== worker.workerId || state.revoked)
+        throw new Error("canonical_delivery_changed");
+      state.rechecks = (state.rechecks ?? 0) + 1;
+    },
     clock: () => state.now ?? Date.parse(at(2000)) };
 }
 
@@ -58,7 +63,21 @@ test("Claude local delivery reserves the exact shared receipt before fake acquis
   if (first.state === "reserved_session_open") await first.session.close();
   state.revoked = true;
   const replay = await deliverClaudeCodeLocalTaskV1(config, packet, { kind: "local", workerId: worker.workerId }, at(2000));
-  assert.equal(replay.state, "already_reserved"); assert.deepEqual({ receives: state.receives, acquires: state.acquires }, { receives: 1, acquires: 1 });
+  assert.equal(replay.state, "already_reserved"); assert.deepEqual({ receives: state.receives, acquires: state.acquires, rechecks: state.rechecks }, { receives: 1, acquires: 1, rechecks: 1 });
+});
+
+test("a changed canonical task or lease after durable receipt cannot acquire Claude", async t => {
+  const f = await nativeTaskFixture(); t.after(f.close);
+  const packet = delivery(), state = { revoked: false, receives: 0, acquires: 0, rechecks: 0 };
+  const config = composition(f, packet, state);
+  config.recheckBeforeAcquire = async () => { state.rechecks++; throw new Error("lease_changed_after_receipt"); };
+  const result = await deliverClaudeCodeLocalTaskV1(config, packet, { kind: "local", workerId: worker.workerId }, at(2000));
+  assert.equal(result.state, "delivery_uncertain");
+  assert.deepEqual({ receives: state.receives, rechecks: state.rechecks, acquires: state.acquires },
+    { receives: 1, rechecks: 1, acquires: 0 });
+  const replay = await deliverClaudeCodeLocalTaskV1(config, packet, { kind: "local", workerId: worker.workerId }, at(2000));
+  assert.equal(replay.state, "already_reserved");
+  assert.equal(state.acquires, 0, "the saved receipt never causes a second acquisition");
 });
 
 test("wrong worker and authority loss across the receipt await never reach acquisition", async t => {

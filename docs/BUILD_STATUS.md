@@ -79,6 +79,11 @@ evidence only: it enables no worker, database, listener or persistent service.
   callback. This adds neither a database nor a scheduler. The production
   callback is deliberately absent until the separate Claude proof and private
   host binding are supplied, so the new queue path cannot start Claude.
+- After its delivery receipt is durably saved, the Claude composition now
+  requires one last private recheck of the canonical task and lease before it
+  can acquire even an injected test process. If that recheck fails, the saved
+  receipt remains an uncertainty record and cannot trigger a guessed retry or
+  a second process acquisition.
 - The normal protected application configuration now applies that same rule at
   its final assembly boundary: a Claude callback cannot be captured merely
   because one was supplied. Its own complete process-readiness record, the
