@@ -13,23 +13,24 @@ const executeFile = promisify(execFile);
  * workspace, account, or other installation setting.
  */
 export function verifyHermes021MacosLocalRunnerVersionV1(output: unknown) {
-  if (typeof output !== "string" || output.length > 4_096 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(output)) unavailable();
-  const [first, ...rest] = output.replace(/\r\n/g, "\n").split("\n");
+  const safeOutput = typeof output === "string" ? output : unavailable();
+  if (safeOutput.length > 4_096 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(safeOutput)) unavailable();
+  const [first, ...rest] = safeOutput.replace(/\r\n/g, "\n").split("\n");
   if (rest.some(line => line.length > 4_096)) unavailable();
   const match = /^Hermes Agent v([0-9]+\.[0-9]+\.[0-9]+)(?: \([^\r\n)]{1,120}\))? · upstream ([a-f0-9]{8,64})$/.exec(first ?? "");
   if (!match || match[1] !== HERMES_021_VERSION_V1 || !HERMES_021_SOURCE_REVISION_V1.startsWith(match[2])) unavailable();
   return Object.freeze({ version: HERMES_021_VERSION_V1, sourceRevision: HERMES_021_SOURCE_REVISION_V1 });
 }
 
-async function defaultVersionCommand(file: string, args: readonly string[]) {
+async function defaultVersionCommand(file: string, args: readonly string[]): Promise<string> {
   const result = await executeFile(file, [...args], {
     windowsHide: true,
     timeout: 5_000,
     maxBuffer: 4_096,
     encoding: "utf8",
-    env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: process.env.HOME ?? "" },
+    env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: process.env.HOME ?? "", NODE_ENV: process.env.NODE_ENV ?? "production" },
   });
-  return result.stdout;
+  return typeof result.stdout === "string" ? result.stdout : unavailable();
 }
 
 /**
