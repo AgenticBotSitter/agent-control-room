@@ -145,7 +145,10 @@ database, browser login, backup, persistent service or remote machine.
    chooses an existing active project and prepares ordinary first-round tasks
    without provider contact, assignment or launch. The page reads durable task
    links after a refresh, so it shows the prepared project rather than offering
-   a second start. The next source package adds canonical result projection and
+   a second start. The ordinary task prompt now requires one small, exact JSON
+   contribution shape and rejects prose, markdown or extra fields. This is only
+   an output contract; it does not yet turn a worker result into a discussion
+   contribution. The next source package adds canonical result projection and
    retires the direct production start composition.
 
 ## Owner-operated gates before any real local worker is enabled

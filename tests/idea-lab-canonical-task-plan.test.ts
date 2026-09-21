@@ -4,6 +4,7 @@ import { buildIdeaLabFixtureV1 } from "../src/idea-lab/v1/fixture";
 import { buildIdeaLabOwnerPromptV1 } from "../src/idea-lab/v1/discussion-prompt";
 import { buildIdeaLabCanonicalTaskPlanV1, parseIdeaLabCanonicalTaskPlanV1 } from "../src/idea-lab/v1/canonical-task-plan";
 import { IdeaLabErrorV1 } from "../src/idea-lab/v1/errors";
+import { parseIdeaCanonicalTaskResultV1 } from "../src/idea-lab/v1/contracts";
 
 test("Idea Lab participant rounds become deterministic non-runnable ordinary task material", () => {
   const source = buildIdeaLabFixtureV1();
@@ -20,6 +21,7 @@ test("Idea Lab participant rounds become deterministic non-runnable ordinary tas
     assert.equal(plan.grantsExecutionAuthority, false);
     assert.equal(plan.permitsAssignment, false);
     assert.equal(plan.permitsRetry, false);
+    assert.match(plan.taskDraft.instructions, /Return exactly one JSON object/);
     assert.equal(parseIdeaLabCanonicalTaskPlanV1(plan).planDigest, plan.planDigest);
   }
   const roundTwo = source.session.participants.map((participant) => buildIdeaLabCanonicalTaskPlanV1({
@@ -34,6 +36,14 @@ test("Idea Lab participant rounds become deterministic non-runnable ordinary tas
     participantId: source.session.participants[0]!.participantId, round: 2, ownerPrompt,
     contributions: source.contributions.filter((item) => item.round === 1),
   }), roundTwo[0]);
+});
+
+test("Idea Lab canonical task output accepts only the bounded structured contribution shape", () => {
+  const output = { safeOpinion: "A limited owner trial can establish demand before an expensive rollout.",
+    opportunityCode: "owner_trial", primaryRiskCode: "weak_demand", suggestedExperiment: "Interview ten prospective owners.", confidencePercent: 72 };
+  assert.deepEqual(parseIdeaCanonicalTaskResultV1(output), output);
+  assert.throws(() => parseIdeaCanonicalTaskResultV1({ ...output, grantsApproval: true }), IdeaLabErrorV1);
+  assert.throws(() => parseIdeaCanonicalTaskResultV1("```json\n{}\n```"), IdeaLabErrorV1);
 });
 
 test("Idea Lab task material fails closed on altered provenance or incomplete prior round", () => {

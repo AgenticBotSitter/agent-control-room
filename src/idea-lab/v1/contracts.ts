@@ -55,6 +55,26 @@ const contributionInputSchema = z.object({ participantId: ideaIdSchemaV1, round:
   suggestedExperiment: z.string().min(1).max(500), confidencePercent: z.number().int().min(0).max(100),
   contributedAt: ideaTimeSchemaV1 }).strict();
 
+/**
+ * The only text shape that a future reviewed ordinary task may contribute to
+ * an Idea Lab round. It deliberately contains no task, identity, timestamp,
+ * review, authority, or provider claims: those facts are derived and checked
+ * by the Control Room projection service, never supplied by the worker.
+ */
+export const ideaCanonicalTaskResultSchemaV1 = z.object({
+  safeOpinion: ideaTextSchemaV1,
+  opportunityCode: ideaCodeSchemaV1,
+  primaryRiskCode: ideaCodeSchemaV1,
+  suggestedExperiment: z.string().min(1).max(500),
+  confidencePercent: z.number().int().min(0).max(100),
+}).strict();
+export type IdeaCanonicalTaskResultV1 = z.infer<typeof ideaCanonicalTaskResultSchemaV1>;
+
+/** Parse one bounded JSON result; prose, markdown and extra fields fail closed. */
+export function parseIdeaCanonicalTaskResultV1(value: unknown): IdeaCanonicalTaskResultV1 {
+  return parseExactIdeaLabV1(ideaCanonicalTaskResultSchemaV1, value);
+}
+
 export function buildIdeaLabContributionV1(sessionValue: unknown, value: unknown,
   source: { sourceMode: "injected_only"; liveBotContactAuthorized: false; providerContacted: false }
     | { sourceMode: "provider_filtered"; liveBotContactAuthorized: true; providerContacted: true }
