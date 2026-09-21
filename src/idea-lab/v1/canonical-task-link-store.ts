@@ -105,35 +105,60 @@ export class IdeaLabCanonicalTaskLinkStoreV1 {
     if (!safeEqual(this.#tag(kind, tenantId, id, digest), supplied)) throw new IdeaLabErrorV1("integrity_failed");
   }
 
-  async record(planValue: unknown, receiptValue: unknown): Promise<{ link: IdeaLabCanonicalTaskLinkV1; replayed: boolean }> {
-    const link = buildLink(planValue, receiptValue);
+  /** Records or verifies the one ordinary project that owns this discussion.
+   * This is intentionally performed before proposing a task, so a conflicting
+   * project cannot receive even one stray proposed task. */
+  async bindSession(planValue: unknown): Promise<{ replayed: boolean }> {
+    const plan = parseIdeaLabCanonicalTaskPlanV1(planValue);
+    const binding = bindingDigest(plan);
     return this.#transaction(async (tx) => {
-      const binding = bindingDigest(parseIdeaLabCanonicalTaskPlanV1(planValue));
       const session = await tx.query<{ project_id: string; session_digest: string; binding_digest: string; binding_auth_tag: string }>(
         `SELECT project_id,session_digest,binding_digest,binding_auth_tag FROM control_idea_canonical_task_sessions
-         WHERE tenant_id=$1 AND session_id=$2 FOR UPDATE`, [link.tenantId, link.sessionId]);
+         WHERE tenant_id=$1 AND session_id=$2 FOR UPDATE`, [plan.tenantId, plan.sessionId]);
       if (session.rows[0]) {
         const stored = session.rows[0];
-        this.#verify("idea_task_session", link.tenantId, link.sessionId, stored.binding_digest, stored.binding_auth_tag);
-        if (stored.project_id !== link.projectId || stored.session_digest !== link.sessionDigest || stored.binding_digest !== binding) {
+        this.#verify("idea_task_session", plan.tenantId, plan.sessionId, stored.binding_digest, stored.binding_auth_tag);
+        if (stored.project_id !== plan.projectId || stored.session_digest !== plan.sessionDigest || stored.binding_digest !== binding) {
           throw new IdeaLabErrorV1("scope_mismatch");
         }
-      } else {
-        const tag = this.#tag("idea_task_session", link.tenantId, link.sessionId, binding);
-        await tx.query(`INSERT INTO control_idea_canonical_task_sessions(tenant_id,session_id,session_digest,workspace_id,project_id,
-          binding_digest,binding_auth_tag,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)
-          ON CONFLICT (tenant_id,session_id) DO NOTHING`, [link.tenantId, link.sessionId, link.sessionDigest,
-          link.workspaceId, link.projectId, binding, tag, link.createdAt]);
-        const inserted = await tx.query<{ project_id: string; session_digest: string; binding_digest: string; binding_auth_tag: string }>(
-          `SELECT project_id,session_digest,binding_digest,binding_auth_tag FROM control_idea_canonical_task_sessions
-           WHERE tenant_id=$1 AND session_id=$2 FOR UPDATE`, [link.tenantId, link.sessionId]);
-        const stored = inserted.rows[0];
-        if (!stored) throw new IdeaLabErrorV1("integrity_failed");
-        this.#verify("idea_task_session", link.tenantId, link.sessionId, stored.binding_digest, stored.binding_auth_tag);
-        if (stored.project_id !== link.projectId || stored.session_digest !== link.sessionDigest || stored.binding_digest !== binding) {
-          throw new IdeaLabErrorV1("scope_mismatch");
-        }
+        return { replayed: true };
       }
+      const tag = this.#tag("idea_task_session", plan.tenantId, plan.sessionId, binding);
+      await tx.query(`INSERT INTO control_idea_canonical_task_sessions(tenant_id,session_id,session_digest,workspace_id,project_id,
+        binding_digest,binding_auth_tag,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+        ON CONFLICT (tenant_id,session_id) DO NOTHING`, [plan.tenantId, plan.sessionId, plan.sessionDigest,
+        plan.workspaceId, plan.projectId, binding, tag, new Date().toISOString()]);
+      const inserted = await tx.query<{ project_id: string; session_digest: string; binding_digest: string; binding_auth_tag: string }>(
+        `SELECT project_id,session_digest,binding_digest,binding_auth_tag FROM control_idea_canonical_task_sessions
+         WHERE tenant_id=$1 AND session_id=$2 FOR UPDATE`, [plan.tenantId, plan.sessionId]);
+      const stored = inserted.rows[0];
+      if (!stored) throw new IdeaLabErrorV1("integrity_failed");
+      this.#verify("idea_task_session", plan.tenantId, plan.sessionId, stored.binding_digest, stored.binding_auth_tag);
+      if (stored.project_id !== plan.projectId || stored.session_digest !== plan.sessionDigest || stored.binding_digest !== binding) {
+        throw new IdeaLabErrorV1("scope_mismatch");
+      }
+      return { replayed: false };
+    });
+  }
+
+  /** Refuses a changed plan for an already linked participant turn before a
+   * caller asks the normal task service to create anything. */
+  async assertPlanAvailable(planValue: unknown): Promise<void> {
+    const plan = parseIdeaLabCanonicalTaskPlanV1(planValue);
+    const result = await this.#query<{ payload: unknown; link_auth_tag: string }>(
+      `SELECT payload,link_auth_tag FROM control_idea_canonical_task_links WHERE tenant_id=$1 AND task_key=$2`,
+      [plan.tenantId, plan.taskKey]);
+    const row = result.rows[0];
+    if (!row) return;
+    const existing = parseLink(row.payload);
+    this.#verify("idea_task_link", existing.tenantId, existing.taskKey, existing.linkDigest, row.link_auth_tag);
+    if (existing.taskPlanDigest !== plan.planDigest) throw new IdeaLabErrorV1("scope_mismatch");
+  }
+
+  async record(planValue: unknown, receiptValue: unknown): Promise<{ link: IdeaLabCanonicalTaskLinkV1; replayed: boolean }> {
+    const link = buildLink(planValue, receiptValue);
+    await this.bindSession(link.plan);
+    return this.#transaction(async (tx) => {
       const existing = await tx.query<{ payload: unknown; link_auth_tag: string }>(
         `SELECT payload,link_auth_tag FROM control_idea_canonical_task_links WHERE tenant_id=$1 AND task_key=$2 FOR UPDATE`,
         [link.tenantId, link.taskKey]);

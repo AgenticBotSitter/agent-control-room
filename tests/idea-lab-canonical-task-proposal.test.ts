@@ -5,6 +5,9 @@ import { buildIdeaLabSessionV1 } from "../src/idea-lab/v1/contracts";
 import { IdeaLabCanonicalTaskProposalServiceV1 } from "../src/idea-lab/v1/canonical-task-proposal";
 import { IdeaLabCanonicalTaskLinkStoreV1 } from "../src/idea-lab/v1/canonical-task-link-store";
 import { IdeaLabProjectRegistryStoreV1 } from "../src/idea-lab/v1/store";
+import { IdeaLabErrorV1 } from "../src/idea-lab/v1/errors";
+import { buildIdeaLabCanonicalTaskPlanV1 } from "../src/idea-lab/v1/canonical-task-plan";
+import { buildIdeaLabOwnerPromptV1 } from "../src/idea-lab/v1/discussion-prompt";
 import { taskFixture } from "./helpers/web-task";
 
 test("an Idea Lab round uses the normal proposed task service without scheduling or worker contact", async t => {
@@ -32,4 +35,17 @@ test("an Idea Lab round uses the normal proposed task service without scheduling
   assert.deepEqual(replay.receipts.map((item) => item.receipt.jobId).sort(), first.receipts.map((item) => item.receipt.jobId).sort());
   assert.equal((await f.tasks.list(f.identity, f.project.projectId)).tasks.length, session.participants.length);
   assert.equal((await links.list(session.tenantId, session.sessionId)).length, session.participants.length);
+
+  const { project: conflictingProject } = await f.service.create(f.identity,
+    { title: "Different project", summary: "Must not receive Idea Lab tasks" }, "idea-link-conflict-project");
+  const conflicting = new IdeaLabCanonicalTaskProposalServiceV1(f.tasks, { projectId: conflictingProject.projectId }, links);
+  await assert.rejects(conflicting.proposeRound(f.identity, { session, round: 1, contributions: [] }), IdeaLabErrorV1);
+  assert.equal((await f.tasks.list(f.identity, conflictingProject.projectId)).tasks.length, 0);
+
+  const original = first.plans[0]!;
+  const changed = buildIdeaLabCanonicalTaskPlanV1({ session, projectId: f.project.projectId,
+    participantId: original.participantId, round: 1,
+    ownerPrompt: `${buildIdeaLabOwnerPromptV1(session)}\nA different but valid scope.`, contributions: [] });
+  await assert.rejects(links.assertPlanAvailable(changed), IdeaLabErrorV1);
+  assert.equal((await f.tasks.list(f.identity, f.project.projectId)).tasks.length, session.participants.length);
 });

@@ -38,6 +38,13 @@ export class IdeaLabCanonicalTaskProposalServiceV1 {
       projectId: this.scope.projectId, participantId: participant.participantId, round: input.round,
       ownerPrompt, contributions: input.contributions,
     })).sort((left, right) => left.taskKey.localeCompare(right.taskKey));
+    if (this.links) {
+      await this.links.bindSession(plans[0]!);
+      // Check every turn before proposing the first one. A changed later-round
+      // snapshot must fail closed rather than create an unlinked task and only
+      // then discover its provenance conflict.
+      for (const plan of plans) await this.links.assertPlanAvailable(plan);
+    }
     const receipts = [] as { receipt: TaskReceipt; replayed: boolean }[];
     for (const plan of plans) {
       // The key is a deterministic digest of the complete plan. The existing

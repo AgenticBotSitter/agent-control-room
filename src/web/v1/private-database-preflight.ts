@@ -15,14 +15,15 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations 0001-0080, including generic external-content
+// Generated from public migrations 0001-0081, including generic external-content
 // migrations 0025/0026. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "34b5f9de5f25ec2f4c4f87f63d10e49b458fa25042efb094183d1719bfef4d5a";
+export const privateWebSchemaDigest = "30685edabee61e9aca10092633ad55723fc65b19341d1c84ca93e995117508a5";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
   "control_news_story_versions", "control_news_source_observations", "control_news_source_settings", "control_news_story_archives", "control_news_article_details",
   "control_idea_sessions", "control_idea_contributions", "control_idea_syntheses", "control_idea_decisions", "control_idea_bot_run_events",
+  "control_idea_canonical_task_sessions", "control_idea_canonical_task_links",
   "adapter_registry", "projects", "control_manual_project_heads", "control_web_project_commands", "audit_events",
   "control_audit_chain_heads", "control_project_lifecycle_events", "control_policy_decisions", "control_connection_registry_heads",
   "control_connection_enrollments", "control_connection_authenticated_telemetry_receipts", "control_requests", "control_workflows",
@@ -34,7 +35,8 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_durable_result_write_reservations"] as const;
 const inserts = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
-  "control_jobs", "control_web_task_commands", "control_completion_gate_records", "control_web_task_review_commands", "control_news_source_settings", "control_news_story_archives",
+  "control_jobs", "control_web_task_commands", "control_idea_canonical_task_sessions", "control_idea_canonical_task_links",
+  "control_completion_gate_records", "control_web_task_review_commands", "control_news_source_settings", "control_news_story_archives",
   "control_policy_decisions", "control_project_lifecycle_events", "control_project_coordinator_heads",
   "control_project_delegation_policies"]);
 
