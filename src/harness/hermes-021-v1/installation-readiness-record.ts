@@ -1,9 +1,43 @@
 import { createInstallationReadinessV1, verifyInstallationReadinessV1, type InstallationReadinessV1 } from "../v1/installation-readiness";
+import { localBackupRestoreEvidenceDigestForInstallationPlanV1 } from "../v1/local-backup-restore-readiness";
 import { verifyInstallationTopologyPlanV1, type InstallationTopologyPlanV1 } from "../v1/installation-topology";
 import { createHermes021MacosLocalQualificationEvidenceV1 } from "./qualification-evidence";
 import { createHermes021MacosLocalRunnerQualificationEvidenceV1 } from "./runner-qualification-evidence";
 
 const unavailable = (): never => { throw new Error("hermes_021_macos_installation_readiness_unavailable"); };
+
+function existingReadinessFor(plan: InstallationTopologyPlanV1, existingValue?: unknown): InstallationReadinessV1 | undefined {
+  const existing = existingValue === undefined ? undefined : verifyInstallationReadinessV1(existingValue);
+  if (existing && (existing.planDigest !== plan.planDigest
+    || existing.proofs.some(item => !plan.requiredProofs.includes(item.proof)))) unavailable();
+  return existing;
+}
+
+function replaceProof(existing: InstallationReadinessV1 | undefined,
+  proof: InstallationReadinessV1["proofs"][number]): InstallationReadinessV1["proofs"] {
+  const byProof = new Map(existing?.proofs.map(item => [item.proof, item]) ?? []);
+  byProof.set(proof.proof, proof);
+  return [...byProof.values()];
+}
+
+/**
+ * Records the backup-and-restore prerequisite only from the verified,
+ * plan-bound restore evidence. It does not perform a backup or restore; the
+ * caller supplies the already captured safe evidence after an owner-run,
+ * disposable restore. This prevents an arbitrary digest from making a local
+ * Hermes installation look ready.
+ */
+export function recordLocalBackupRestoreReadinessV1(planValue: unknown,
+  backupRestoreProof: unknown, existingValue?: unknown): InstallationReadinessV1 {
+  try {
+    const plan = verifyInstallationTopologyPlanV1(planValue);
+    if (!plan.requiredProofs.includes("backup_restore")) unavailable();
+    const existing = existingReadinessFor(plan, existingValue);
+    const evidenceDigest = localBackupRestoreEvidenceDigestForInstallationPlanV1(plan, backupRestoreProof);
+    return createInstallationReadinessV1({ planDigest: plan.planDigest,
+      proofs: replaceProof(existing, { proof: "backup_restore", state: "passed", evidenceDigest }) });
+  } catch { return unavailable(); }
+}
 
 /**
  * Server-only helper for recording the safe outcome of the already owner-run
@@ -15,15 +49,10 @@ export function recordHermes021MacosLocalQualificationReadinessV1(planValue: unk
   successfulReport: unknown, existingValue?: unknown): InstallationReadinessV1 {
   const plan: InstallationTopologyPlanV1 = verifyInstallationTopologyPlanV1(planValue);
   if (!plan.requiredProofs.includes("local_owner_qualification")) unavailable();
-  const existing = existingValue === undefined ? undefined : verifyInstallationReadinessV1(existingValue);
-  if (existing && existing.planDigest !== plan.planDigest) unavailable();
-  if (existing?.proofs.some(item => !plan.requiredProofs.includes(item.proof))) unavailable();
+  const existing = existingReadinessFor(plan, existingValue);
   const evidence = createHermes021MacosLocalQualificationEvidenceV1(successfulReport);
-  const byProof = new Map(existing?.proofs.map(item => [item.proof, item]) ?? []);
-  byProof.set("local_owner_qualification", { proof: "local_owner_qualification" as const, state: "passed" as const,
-    evidenceDigest: evidence.evidenceDigest });
   return createInstallationReadinessV1({ planDigest: plan.planDigest,
-    proofs: [...byProof.values()] });
+    proofs: replaceProof(existing, { proof: "local_owner_qualification", state: "passed", evidenceDigest: evidence.evidenceDigest }) });
 }
 
 /**
@@ -35,13 +64,8 @@ export function recordHermes021MacosLocalRunnerQualificationReadinessV1(planValu
   successfulReport: unknown, existingValue?: unknown): InstallationReadinessV1 {
   const plan: InstallationTopologyPlanV1 = verifyInstallationTopologyPlanV1(planValue);
   if (!plan.requiredProofs.includes("local_runner_bridge")) unavailable();
-  const existing = existingValue === undefined ? undefined : verifyInstallationReadinessV1(existingValue);
-  if (existing && existing.planDigest !== plan.planDigest) unavailable();
-  if (existing?.proofs.some(item => !plan.requiredProofs.includes(item.proof))) unavailable();
+  const existing = existingReadinessFor(plan, existingValue);
   const evidence = createHermes021MacosLocalRunnerQualificationEvidenceV1(successfulReport);
-  const byProof = new Map(existing?.proofs.map(item => [item.proof, item]) ?? []);
-  byProof.set("local_runner_bridge", { proof: "local_runner_bridge" as const, state: "passed" as const,
-    evidenceDigest: evidence.evidenceDigest });
   return createInstallationReadinessV1({ planDigest: plan.planDigest,
-    proofs: [...byProof.values()] });
+    proofs: replaceProof(existing, { proof: "local_runner_bridge", state: "passed", evidenceDigest: evidence.evidenceDigest }) });
 }

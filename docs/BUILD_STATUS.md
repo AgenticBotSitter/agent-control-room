@@ -131,6 +131,12 @@ unavailable until their separate host qualifications are complete.
   model, provider, or workspace path, and it offers no start, retry, resume,
   publish, or Hermes-contact action. Multiple saved attempts stay explicitly
   ambiguous rather than having one guessed.
+- Local Hermes enablement now binds its recorded backup-and-restore check to
+  the exact verified, disposable restore proof for the current installation
+  plan. A generic or another installation's fingerprint is refused before the
+  executor can be composed. This source-only check ran 68 focused disposable
+  tests and TypeScript successfully; it neither performed a backup/restore nor
+  started a database, Hermes, or a persistent service.
 
 These checks use disposable data. They do not prove a real agent program,
 database, browser login, backup, persistent service or remote machine.

@@ -13,6 +13,8 @@ import { signArtifact } from "../src/node-policy/v1/crypto";
 import { sha256Digest } from "../src/security";
 import { createInstallationReadinessV1 } from "../src/harness/v1/installation-readiness";
 import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
+import { createArtifactBackupInventoryV1, verifyRestoredArtifactBackupInventoryV1 } from "../src/artifacts/v1/artifact-backup-inventory";
+import { createLocalBackupRestoreReadinessV1 } from "../src/harness/v1/local-backup-restore-readiness";
 import { createPrivateTaskHost } from "../src/web/v1/private-task-host";
 import { startPrivateHostLifecycle } from "../src/web/v1/private-host-lifecycle";
 import { bindPrivateCodexResultReturnV1, validatePrivateTaskStartupConfiguration,
@@ -25,6 +27,21 @@ import { operatorConfigurationScenario } from "./helpers/private-agent-task-oper
 
 const handler = async () => new Response("synthetic");
 const assets = { count: 0, digest: "synthetic", respond: () => undefined };
+
+function localBackupRestoreProof(planDigest: string) {
+  const inventory = createArtifactBackupInventoryV1({ tenantId: "tenant:local", releaseId: "release:local",
+    releaseDigest: sha256Digest("release"), databaseSchemaVersion: "schema:local", databaseSchemaDigest: sha256Digest("schema"),
+    storageNamespace: "artifact-namespace:local", storageNamespaceDigest: sha256Digest("namespace"),
+    entries: [{ artifactId: "artifact:local", contentHash: sha256Digest("bytes"), sizeBytes: 5,
+      manifestDigest: sha256Digest("manifest"), receiptDigest: sha256Digest("receipt") }], });
+  return createLocalBackupRestoreReadinessV1({ planDigest, databaseRestore: { tenantId: "tenant:local", releaseId: "release:local",
+    releaseDigest: sha256Digest("release"), databaseIdentityDigest: sha256Digest("database-identity"),
+    databaseDumpDigest: sha256Digest("database-dump"), databaseSchemaVersion: "schema:local", databaseSchemaDigest: sha256Digest("schema"),
+    restoredToDisposableTarget: true, promoted: false, startsWork: false, grantsExecutionAuthority: false,
+    permitsRetry: false, permitsCleanup: false }, expectedArtifactInventory: inventory,
+    restoredArtifactInventory: structuredClone(inventory),
+    artifactRestoreVerification: verifyRestoredArtifactBackupInventoryV1({ expected: inventory, restored: inventory }) });
+}
 
 function resultReturnQualification(tenantId = "tenant:test", nodeId = "node:test") {
   const keys = generateKeyPairSync("ed25519");
@@ -881,12 +898,14 @@ test("operator assembly can carry an installation-owned local Hermes executor wi
     adapterRevision: "00570550" };
   const topology = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("operator-local-db"),
     schedulerAuthorityDigest: sha256Digest("operator-local-scheduler"), currentRoutes: [topologyRoute], requestedRoutes: [topologyRoute] });
+  const backupRestore = localBackupRestoreProof(topology.planDigest);
   trusted.web = { ...(trusted.web as object), installationTopologyPlan: topology,
     installationReadiness: createInstallationReadinessV1({ planDigest: topology.planDigest, proofs: [
-      { proof: "backup_restore", state: "passed", evidenceDigest: sha256Digest("operator-local-backup") },
+      { proof: "backup_restore", state: "passed", evidenceDigest: backupRestore.proofDigest },
       { proof: "local_owner_qualification", state: "passed", evidenceDigest: sha256Digest("operator-local-text") },
       { proof: "local_runner_bridge", state: "passed", evidenceDigest: sha256Digest("operator-local-runner") },
     ] }) } as typeof trusted.web;
+  trusted.localBackupRestoreReadiness = backupRestore;
   let delivered = 0;
   trusted.hermes021Local = { deliver: async function () { delivered++; } };
   const result = assemblePrivateAgentTaskOperatorConfiguration(settings, trusted);
@@ -896,6 +915,11 @@ test("operator assembly can carry an installation-owned local Hermes executor wi
   assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(
     { ...settings, features: { ...settings.features, hermes021Local: false } }, trusted),
   /unexpected_trusted_input:hermes021Local/);
+  const unrelatedTopology = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("other-db"),
+    schedulerAuthorityDigest: sha256Digest("operator-local-scheduler"), currentRoutes: [topologyRoute], requestedRoutes: [topologyRoute] });
+  assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(settings,
+    { ...trusted, localBackupRestoreReadiness: localBackupRestoreProof(unrelatedTopology.planDigest) }),
+  /hermes021Local_backup_restore_proof_invalid/);
 });
 
 test("operator assembly refuses a local Hermes callback until its local proof set is recorded", () => {
@@ -907,6 +931,7 @@ test("operator assembly refuses a local Hermes callback until its local proof se
   trusted.codexResultReturn = undefined;
   trusted.nativeHttp = undefined;
   trusted.hermes021Local = { async deliver() {} };
+  trusted.localBackupRestoreReadiness = localBackupRestoreProof(sha256Digest("not-a-plan"));
   assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(settings, trusted),
     /hermes021Local_installation_proof_missing/);
   const topologyRoute = { kind: "local" as const, workerId: "worker:local-hermes", adapterId: "connector:hermes-021-macos-local-v1",

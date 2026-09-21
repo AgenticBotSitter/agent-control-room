@@ -15,7 +15,9 @@ import type { NewsStartupConfiguration } from "./news-startup-configuration";
 import type { PrivateArtifactStorageConfigurationV1 } from "./private-artifact-storage";
 import type { AwaitableRollbackCheckpointStoreV1 } from "../../security";
 import type { TaskCoordinatorConfiguration } from "./task-coordinator-lifecycle";
-import { summarizeInstallationReadinessV1 } from "../../harness/v1/installation-readiness";
+import { summarizeInstallationReadinessV1, verifyInstallationReadinessV1,
+  type InstallationReadinessV1 } from "../../harness/v1/installation-readiness";
+import { localBackupRestoreEvidenceDigestForInstallationPlanV1 } from "../../harness/v1/local-backup-restore-readiness";
 
 /** Pure operator-side assembly. This module performs no environment, filesystem,
  * network, listener, credential-store or database access: it only shapes
@@ -98,6 +100,9 @@ export type AgentTaskOperatorTrustedInputs = {
   nativeHttp?: NativeHttpSettings;
   /** Already-built, installation-owned local Hermes executor. It contains no browser input. */
   hermes021Local?: NonNullable<TaskCoordinatorConfiguration["hermes021Local"]>;
+  /** Verified, plan-bound evidence from an owner-run disposable local restore.
+   * It is installation-only input, never browser data or a task record. */
+  localBackupRestoreReadiness?: unknown;
   artifactStorage?: PrivateArtifactStorageConfigurationV1;
   idea?: {
     creation: { integrityKey: Uint8Array; participants: unknown[] };
@@ -131,7 +136,7 @@ function refuse(code: string): never {
  * do not require remote proofs: a unified installation may prepare a remote
  * worker later without disabling an already-proved local worker.
  */
-function requireReadyLocalHermesInstallation(web: PrivateStartupConfiguration) {
+function requireReadyLocalHermesInstallation(web: PrivateStartupConfiguration, backupRestoreProof: unknown) {
   if (web.installationTopologyPlan === undefined || web.installationReadiness === undefined)
     refuse("hermes021Local_installation_proof_missing");
   let summary: ReturnType<typeof summarizeInstallationReadinessV1>;
@@ -142,6 +147,16 @@ function requireReadyLocalHermesInstallation(web: PrivateStartupConfiguration) {
     if (!summary.plan.requiredProofs.includes(proof) || !passed.has(proof))
       refuse("hermes021Local_installation_not_ready");
   }
+  let recorded: InstallationReadinessV1;
+  let derivedBackupEvidenceDigest: string;
+  try {
+    recorded = verifyInstallationReadinessV1(web.installationReadiness);
+    derivedBackupEvidenceDigest = localBackupRestoreEvidenceDigestForInstallationPlanV1(
+      web.installationTopologyPlan, backupRestoreProof);
+  } catch { refuse("hermes021Local_backup_restore_proof_invalid"); }
+  const recordedBackup = recorded.proofs.find(item => item.proof === "backup_restore");
+  if (recordedBackup?.state !== "passed" || recordedBackup.evidenceDigest !== derivedBackupEvidenceDigest)
+    refuse("hermes021Local_backup_restore_proof_mismatch");
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -342,6 +357,7 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
   need(f.codexResultReturn, t.codexResultReturn, "codexResultReturn");
   need(f.nativeHttp, t.nativeHttp, "nativeHttp");
   need(f.hermes021Local, t.hermes021Local, "hermes021Local");
+  need(f.hermes021Local, t.localBackupRestoreReadiness, "localBackupRestoreReadiness");
   need(f.artifactStorage, t.artifactStorage, "artifactStorage");
   need(f.idea, t.idea, "idea");
   need(f.news, t.news, "news");
@@ -474,7 +490,8 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
   // remains inert: queue pickup is the first possible delivery attempt.
   const trustedHermes = t.hermes021Local as NonNullable<AgentTaskOperatorTrustedInputs["hermes021Local"]> | undefined;
   if (f.hermes021Local && (!trustedHermes || typeof trustedHermes.deliver !== "function")) refuse("hermes021Local_invalid");
-  if (f.hermes021Local) requireReadyLocalHermesInstallation(t.web as PrivateStartupConfiguration);
+  if (f.hermes021Local) requireReadyLocalHermesInstallation(
+    t.web as PrivateStartupConfiguration, t.localBackupRestoreReadiness);
   const capturedHermes = f.hermes021Local && trustedHermes
     ? Object.freeze({ deliver: trustedHermes.deliver.bind(trustedHermes) }) : undefined;
 
