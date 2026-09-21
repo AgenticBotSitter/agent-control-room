@@ -17,7 +17,7 @@ export function Hermes021MacosLocalRunRegistrationV1(deliveryValue: unknown,
   const delivery = controllerWorkerDeliverySchemaV1.parse(deliveryValue);
   const createdAt = instant.parse(createdAtValue);
   if (delivery.worker.adapterId !== HERMES_021_MACOS_LOCAL_ADAPTER_V1
-    || Date.parse(createdAt) > Date.parse(delivery.expiresAt)) unavailable();
+    || Date.parse(createdAt) >= Date.parse(delivery.expiresAt)) unavailable();
   return Object.freeze({ schemaVersion: "control-room-harness/v1", id: delivery.identity.runId,
     tenantId: delivery.identity.tenantId, projectId: delivery.identity.projectId, jobId: delivery.identity.jobId,
     attemptId: delivery.identity.attemptId, nodeId: delivery.identity.nodeId,

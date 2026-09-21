@@ -11,6 +11,9 @@ import { publishClaudeCodeReservedSessionResultV1 } from "./local-worker-result"
 import { createClaudeCodeTerminalResultStageV1 } from "./terminal-result-staging";
 import { recoverClaudeCodeTerminalResultV1 } from "./terminal-result-recovery";
 import { readControllerWorkerDeliveryReceiptV1 } from "../v1/controller-worker-delivery-receipt-store";
+import { HarnessRunStoreV1 } from "../v1/store";
+import type { HarnessRunV1 } from "../v1/types";
+import { ClaudeCodeLocalRunRegistrationV1 } from "./local-run-registration";
 
 const unavailable = (): never => { throw new Error("claude_code_local_assigned_task_execution_unavailable"); };
 
@@ -22,6 +25,8 @@ export const CLAUDE_CODE_LOCAL_ASSIGNED_TASK_EXECUTION_V1 =
  * profile, credential, workspace or scheduler. */
 export type ClaudeCodeLocalAssignedTaskExecutionV1 = Readonly<{
   preparation: ClaudeCodeLocalDispatchPreparationV1;
+  /** Existing canonical run history; this is not a Claude-specific store. */
+  runs: HarnessRunStoreV1;
   /** The executor supplies the final canonical reread for each queue pickup. */
   delivery: Omit<ClaudeCodeLocalDeliveryCompositionV1, "recheckBeforeAcquire">;
   results: DurableResultPublicationConfigurationV1;
@@ -54,12 +59,13 @@ export async function executeAssignedClaudeCodeLocalTaskV1(config: ClaudeCodeLoc
   referenceValue: ClaudeCodeLocalDispatchReferenceV1, signal?: AbortSignal): Promise<Readonly<{
   schema: typeof CLAUDE_CODE_LOCAL_ASSIGNED_TASK_EXECUTION_V1;
   prepared: ClaudeCodeLocalPreparedDispatchV1;
+  registered: Readonly<{ run: HarnessRunV1; replayed: boolean }>;
   state: "published_pending_review" | "recovered_pending_review" | "terminal_result_uncertain" | "not_started";
   publication?: ClaudeTerminalResultPublicationV1;
   startsWork: false;
   grantsExecutionAuthority: false;
 }>> {
-  if (!config || !(config.preparation instanceof ClaudeCodeLocalDispatchPreparationV1) || !config.delivery
+  if (!config || !(config.preparation instanceof ClaudeCodeLocalDispatchPreparationV1) || !(config.runs instanceof HarnessRunStoreV1) || !config.delivery
     || !config.results || !config.protectedStorage || typeof config.protectedStorage.put !== "function"
     || typeof config.protectedStorage.read !== "function" || typeof config.assertAuthority !== "function" || signal?.aborted)
     unavailable();
@@ -80,6 +86,12 @@ export async function executeAssignedClaudeCodeLocalTaskV1(config: ClaudeCodeLoc
   }
   const now = new Date(clock()).toISOString();
   if (!z.string().datetime().safeParse(now).success || Date.parse(now) > Date.parse(prepared.delivery.expiresAt)) unavailable();
+  // The shared durable publisher verifies its result against this ordinary run
+  // history. Creating it here mirrors the local Hermes path and prevents a
+  // source-only Claude delivery from looking executable while being unable to
+  // retain any result. An exact replay returns the same record.
+  const registered = await config.runs.create(ClaudeCodeLocalRunRegistrationV1(
+    prepared.delivery, retainedReceipt?.receipt.receivedAt ?? now));
   const delivery = await deliverClaudeCodeLocalTaskV1({ ...config.delivery,
     recheckBeforeAcquire: async (candidate, route, recheckSignal) => {
       if (recheckSignal.aborted || !sameDelivery(candidate, prepared.delivery)
@@ -89,7 +101,7 @@ export async function executeAssignedClaudeCodeLocalTaskV1(config: ClaudeCodeLoc
     } }, prepared.delivery, prepared.route, now, signal);
   const finish = (state: "published_pending_review" | "recovered_pending_review" | "terminal_result_uncertain" | "not_started",
     publication?: ClaudeTerminalResultPublicationV1) => Object.freeze({ schema: CLAUDE_CODE_LOCAL_ASSIGNED_TASK_EXECUTION_V1,
-      prepared, state, ...(publication ? { publication } : {}), startsWork: false as const, grantsExecutionAuthority: false as const });
+      prepared, registered, state, ...(publication ? { publication } : {}), startsWork: false as const, grantsExecutionAuthority: false as const });
   if (delivery.state === "delivery_uncertain" || delivery.state === "receipt_rejected") return finish("not_started");
   const reservation = delivery.reservation;
   if (!reservation || !sameDelivery(reservation.delivery, prepared.delivery)) unavailable();
