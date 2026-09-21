@@ -583,11 +583,17 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
     || parsed.databaseRoles.newsIngestion === undefined || parsed.databaseRoles.newsWorker === undefined))
     refuse("missing_database_role:news");
 
+  // Keep the already-verified backup/restore record inside the private startup
+  // configuration so its final server gate can recheck the same evidence.
+  // This is not browser data: the web process exposes only a boolean summary.
+  const webForTaskStartup = f.hermes021Local
+    ? { ...(t.web as PrivateStartupConfiguration), localBackupRestoreReadiness: t.localBackupRestoreReadiness }
+    : t.web as PrivateStartupConfiguration;
   const full: PrivateTaskStartupConfiguration = {
     ...(t.preparedLocalAdapters === undefined ? {} : {
       preparedLocalAdapters: captureLocalAdapterInstallationPortsV1(t.preparedLocalAdapters as LocalAdapterInstallationPortsV1),
     }),
-    web: t.web as PrivateStartupConfiguration,
+    web: webForTaskStartup,
     coordinator,
     ...(f.artifactStorage && t.artifactStorage ? { artifactStorage: t.artifactStorage } : {}),
     ...(f.news && t.news ? {

@@ -33,8 +33,36 @@ import { PersistentLocalArtifactStorageV1 } from "../../artifacts/v1/persistent-
 import { CODEX_RESULT_RETURN_FEATURE_V1 } from "../../harness/codex-v1/result-return";
 import { captureCodexResultIntakeSettingsV1, type CodexResultIntakeSettingsV1 } from "./codex-result-intake";
 import { inspectHermes021MacosDeliveryRecoveryStatusV1 } from "../../harness/hermes-021-v1/delivery-recovery-status";
+import { summarizeInstallationReadinessV1 } from "../../harness/v1/installation-readiness";
+import { localBackupRestoreEvidenceDigestForInstallationPlanV1 } from "../../harness/v1/local-backup-restore-readiness";
+import { summarizeLocalSupervisorReadinessV1 } from "../../harness/v1/local-supervisor-readiness";
 
 type OwnedQueueWorker = { close(): Promise<void>; status(): { accepting: boolean } };
+
+/**
+ * The operator assembler is the usual way to build this configuration, but
+ * the final server-only validator must enforce the same local Hermes boundary.
+ * Otherwise a trusted caller could bypass the assembler with a bare callback.
+ * This checks opaque records only; it neither starts Hermes nor reveals any
+ * private runner setting.
+ */
+function requireReadyLocalHermesInstallation(web: ReturnType<typeof validatePrivateStartupConfiguration>) {
+  const plan = web.installationTopologyPlan;
+  const readiness = web.installationReadiness;
+  const backup = web.localBackupRestoreReadiness;
+  const supervisor = web.localSupervisorReadiness;
+  if (!plan || !readiness || !backup || !supervisor) throw new Error();
+  const summary = summarizeInstallationReadinessV1(plan, readiness);
+  const passed = new Set(summary.proofs.filter(item => item.state === "passed").map(item => item.proof));
+  for (const proof of ["backup_restore", "local_owner_qualification", "local_runner_bridge"] as const) {
+    if (!summary.plan.requiredProofs.includes(proof) || !passed.has(proof)) throw new Error();
+  }
+  const expectedBackup = localBackupRestoreEvidenceDigestForInstallationPlanV1(plan, backup);
+  if (readiness.proofs.find(item => item.proof === "backup_restore")?.evidenceDigest !== expectedBackup)
+    throw new Error();
+  if (summarizeLocalSupervisorReadinessV1(plan.planDigest, supervisor).state !== "readiness_recorded")
+    throw new Error();
+}
 
 export type PrivateTaskStartupConfiguration = {
   web: PrivateStartupConfiguration;
@@ -136,6 +164,7 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
     const hermes021Local = input.coordinator.hermes021Local
       ? Object.freeze({ deliver: input.coordinator.hermes021Local.deliver.bind(input.coordinator.hermes021Local) }) : undefined;
     if (hermes021Local && (!nativeQueue || !approvals)) throw new Error();
+    if (hermes021Local) requireReadyLocalHermesInstallation(web);
     const w = input.coordinator.queueWorker;
     const queueWorker = w ? { database: validatePrivatePostgresConfiguration(w.database), concurrency: w.concurrency ?? 1 } : undefined;
     if (queueWorker && (!nativeQueue || (!sessions && !hermes021Local) || queueWorker.database.host !== database.host
