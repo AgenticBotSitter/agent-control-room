@@ -50,6 +50,10 @@ explains how workers, the controller, and the one authority database can move
 without creating synchronization or a second writer. It also lists the source
 work still needed before these transitions can be operated.
 
+**Reuse before rebuild.** [The reuse research program](docs/REUSE_RESEARCH_PROGRAM.md)
+explains how every substantial component is source-inspected, license-checked,
+and given an adopt/adapt/custom decision before new infrastructure is written.
+
 | What you want to know | Direct link / answer |
 | --- | --- |
 | What can I take on now? | [Ready assignments](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aready) is the authoritative list. |
