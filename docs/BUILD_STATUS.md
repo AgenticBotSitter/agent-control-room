@@ -285,6 +285,16 @@ evidence only: it enables no worker, database, listener or persistent service.
   whether new admission for an affected worker should stay paused. It neither
   changes routes nor starts, stops, enrolls, revokes, or enables a worker.
   The raw journal is unavailable to the browser role.
+- The existing assignment and delivery coordinator now consumes that journal
+  through a private, copied node-to-worker mapping. A paused or damaged
+  journal blocks a new lease or delivery only for the affected worker, before
+  Hermes, Claude, Codex, or the standard native route can start it; historical
+  receipts and result recovery remain readable. The browser, task template,
+  queue item, and worker cannot supply the journal key or choose the mapping.
+  This is a source-only admission fence, not a worker stop, database move, or
+  installation activation. Focused disposable checks cover an affected route,
+  an unaffected route, exact replay, tampering, role verification, and private
+  configuration capture.
 - A source-only database-relocation preparation record now binds the already
   verified schema/restricted-role facts, protected result inventory, external
   rollback-checkpoint fingerprint, and drained transition evidence for one

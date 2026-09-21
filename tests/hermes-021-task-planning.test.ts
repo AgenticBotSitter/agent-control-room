@@ -21,6 +21,9 @@ import { ownerReviewFixture } from "./helpers/web-owner-review";
 import { binding, enrollment, instant } from "./hermes-native-fixture";
 import { at } from "./native-task-fixture";
 import { taskDraft } from "./helpers/web-task";
+import { advanceInstallationTransitionRecordV1, createInstallationTransitionRecordV1,
+  isInstallationTransitionAdmissionPausedV1 } from "../src/harness/v1/installation-transition-store";
+import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
 
 test("a Marvin Hermes 0.21 template creates a pinned text-review plan, not an older generic Hermes plan", async t => {
   const f = await ownerReviewFixture(); t.after(f.close);
@@ -126,6 +129,47 @@ test("a Marvin Hermes 0.21 template creates a pinned text-review plan, not an ol
     planned.receipt.inputDigest, new AbortController().signal);
   assert.equal(replayedQueue.replayed, true);
   assert.equal(queuedReferences.length, 1);
+
+  // The durable transition fence applies only after a route has selected a
+  // node. It must block both a fresh lease and a pending delivery, but leave
+  // the exact previously saved lease receipt available for recovery.
+  const transitionKey = new Uint8Array(32).fill(93);
+  const transitionPlan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("transition-db"),
+    schedulerAuthorityDigest: sha256Digest("transition-scheduler"),
+    currentRoutes: [{ kind: "local", workerId: "worker:marvin", adapterId: "connector:old", adapterRevision: "0000001" },
+      { kind: "local", workerId: "worker:unaffected", adapterId: "connector:unaffected", adapterRevision: "0000001" }],
+    requestedRoutes: [{ kind: "local", workerId: "worker:unaffected", adapterId: "connector:unaffected", adapterRevision: "0000001" }] });
+  const transition = await f.db.transaction(tx => createInstallationTransitionRecordV1(tx, transitionKey, {
+    tenantId: binding.tenantId, transitionId: "transition:assignment-fence", topologyPlan: transitionPlan, now: at(10_000) }));
+  await f.db.transaction(tx => advanceInstallationTransitionRecordV1(tx, transitionKey, {
+    tenantId: binding.tenantId, transitionId: transition.record.transitionId, expectedRevision: transition.record.revision,
+    action: "pause_admission", now: at(10_001), evidenceDigest: sha256Digest("pause") }));
+  const nodeWorkers = new Map([[binding.nodeId, "worker:marvin"], ["node:unaffected", "worker:unaffected"]]);
+  const transitionFence = Object.freeze({ isPausedInSession: (tx: Parameters<typeof isInstallationTransitionAdmissionPausedV1>[0],
+    tenantId: string, nodeId: string) => {
+      const workerId = nodeWorkers.get(nodeId);
+      if (!workerId) throw new Error("installation_transition_unavailable");
+      return isInstallationTransitionAdmissionPausedV1(tx, transitionKey, { tenantId, workerId });
+    } });
+  assert.equal(await f.db.transaction(tx => transitionFence.isPausedInSession(tx, binding.tenantId, "node:unaffected")), false,
+    "an unaffected node passes the coordinator's trusted fence");
+  const fenced = new TaskAssignmentCoordinator(f.db, f.scope, planner, [route], () => instant + 8000,
+    [], new NativeApprovalPacketStore(new Uint8Array(32).fill(92), []), submissions, undefined, transitionFence);
+  assert.equal((await fenced.assign(f.identity, binding.projectId, planned.receipt.jobId, binding.nodeId,
+    planned.receipt.inputDigest)).replayed, true, "the fence does not erase an exact historical lease receipt");
+  await assert.rejects(fenced.locateApprovedHermes021LocalQueueDelivery(queuedReferences[0]!, new AbortController().signal), /conflict/,
+    "a paused affected node cannot deliver an already queued task");
+  const fencedSource = await f.tasks.propose(f.identity, binding.projectId, taskDraft, "marvin-transition-fence-source");
+  const fencedPlan = await planner.plan(f.identity, binding.projectId, fencedSource.receipt.jobId, sha256Digest(taskDraft));
+  await assert.rejects(fenced.assign(f.identity, binding.projectId, fencedPlan.receipt.jobId, binding.nodeId,
+    fencedPlan.receipt.inputDigest), /conflict/, "a paused affected node cannot receive a new lease");
+  await f.raw.query(`INSERT INTO control_installation_transition_revisions
+    (tenant_id,transition_id,revision,plan_digest,state,record,auth_tag)
+    SELECT tenant_id,transition_id,2,plan_digest,state,jsonb_set(record,'{revision}','2'::jsonb),$1
+    FROM control_installation_transition_revisions WHERE tenant_id=$2 AND transition_id=$3 AND revision=1`, [`hmac-sha256:${"0".repeat(64)}`,
+    binding.tenantId, transition.record.transitionId]);
+  await assert.rejects(fenced.locateApprovedHermes021LocalQueueDelivery(queuedReferences[0]!, new AbortController().signal), /conflict/,
+    "a damaged transition journal fails closed at the coordinator fence");
   const localBinding = {
     localServiceId: "service:marvin-hermes", workerId: "worker:marvin", expectedVersion: "0.21.3" as const,
     sourceRevision: "00570550",

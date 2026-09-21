@@ -102,6 +102,9 @@ export type AgentTaskOperatorTrustedInputs = {
   evidence?: NativeEvidenceSettings;
   sessions?: ManagedNativeSessionSettings;
   codex?: CodexPermitConfiguration;
+  /** Installation-only transition-journal integrity material. It is copied
+   * into the coordinator configuration and never into the web profile. */
+  installationTransitionAdmission?: { integrityKey: Uint8Array; workers: readonly { nodeId: string; workerId: string }[] };
   codexResultReturn?: CodexResultIntakeSettingsV1;
   nativeHttp?: NativeHttpSettings;
   /** Already-built, installation-owned local Hermes executor. It contains no browser input. */
@@ -552,6 +555,12 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
   if (f.claudeCodeLocal) requireReadyLocalClaudeInstallation(t.web as PrivateStartupConfiguration, t.localBackupRestoreReadiness);
   const capturedClaude = f.claudeCodeLocal && trustedClaude
     ? Object.freeze({ deliver: trustedClaude.deliver.bind(trustedClaude) }) : undefined;
+  if (t.installationTransitionAdmission !== undefined && !Array.isArray(t.installationTransitionAdmission.workers))
+    refuse("installation_transition_admission_workers_invalid");
+  const capturedTransitionAdmission = t.installationTransitionAdmission === undefined ? undefined
+    : Object.freeze({ integrityKey: copyKey(t.installationTransitionAdmission.integrityKey,
+      "installation_transition_admission_key_invalid"), workers: deepDetach(t.installationTransitionAdmission.workers.map(value => ({
+        nodeId: localId.parse(value.nodeId), workerId: localId.parse(value.workerId) }))) });
 
   const coordinator: PrivateTaskStartupConfiguration["coordinator"] = {
     planning: {
@@ -576,6 +585,7 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
       store: capturedStore as unknown as NonNullable<NonNullable<PrivateTaskStartupConfiguration["coordinator"]["approvals"]>["store"]>,
     },
     database: dbRole("coordinator") as PrivatePostgresConfiguration,
+    ...(capturedTransitionAdmission ? { installationTransitionAdmission: capturedTransitionAdmission } : {}),
     ...(f.nativeQueue ? { nativeQueue: true as const } : {}),
     ...(f.nativeQueueRecovery ? { nativeQueueRecovery: true as const } : {}),
     ...(f.revisionPlanning ? { revisionPlanning: true as const } : {}),
@@ -693,6 +703,7 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
       ...(coordinatorShape.hermes021Local ? { hermes021Local: coordinatorShape.hermes021Local } : {}),
       ...(coordinatorShape.claudeCodeLocal ? { claudeCodeLocal: coordinatorShape.claudeCodeLocal } : {}),
       ...(coordinatorShape.codex ? { codex: coordinatorShape.codex } : {}),
+      ...(coordinatorShape.installationTransitionAdmission ? { installationTransitionAdmission: coordinatorShape.installationTransitionAdmission } : {}),
       ...(coordinatorShape.nativeQueue ? { nativeQueue: coordinatorShape.nativeQueue } : {}),
       ...(coordinatorShape.nativeQueueRecovery ? { nativeQueueRecovery: coordinatorShape.nativeQueueRecovery } : {}),
       ...(coordinatorShape.queueWorker ? { queueWorker: coordinatorShape.queueWorker } : {}),

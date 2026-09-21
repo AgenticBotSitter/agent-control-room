@@ -94,6 +94,7 @@ const coordinatorReads = ["tenants", "workspaces", "control_identities", "contro
   "projects", "control_manual_project_heads", "control_requests", "control_workflows", "control_jobs",
   "control_attempts", "control_leases", "control_task_execution_plans", "control_nodes", "control_node_keys",
   "control_node_fleet_current", "control_job_dependencies", "control_transition_events", "control_outbox",
+  "control_installation_transition_revisions",
   "audit_events", "control_audit_chain_heads", "control_completion_gate_integrity", "control_completion_gate_records", "control_native_approval_packets", "control_native_task_queue", "control_native_delivery_preparations", "control_native_delivery_envelopes", "control_native_transmission_intents", "control_native_delivery_receipts",
   "control_codex_delivery_envelopes", "control_codex_transmission_intents", "control_codex_delivery_receipts", "control_codex_activation_transmission_intents", "control_worker_delivery_receipts",
   "control_codex_result_publications",
@@ -109,7 +110,8 @@ const coordinatorInserts = new Set(["control_web_sessions", "control_requests", 
   "control_codex_activation_transmission_intents", "control_completion_gate_records",
   "control_project_coordination_proposals", "control_project_coordination_operation_receipts",
   "control_project_coordination_operation_jobs", "control_action_inbox", "control_work_resources",
-  "control_attempt_resource_admissions", "control_attempt_resource_scopes", "control_job_dependencies"]);
+  "control_attempt_resource_admissions", "control_attempt_resource_scopes", "control_job_dependencies",
+  "control_installation_transition_revisions"]);
 const coordinatorUpdates: Record<string, readonly string[]> = {
   ...Object.fromEntries(["control_requests", "control_workflows", "control_jobs", "control_attempts", "control_leases"]
     .map(table => [table, ["state", "version", "payload", "updated_at"]])),

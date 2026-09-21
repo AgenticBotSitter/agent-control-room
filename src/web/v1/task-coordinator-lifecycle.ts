@@ -3,7 +3,9 @@ import { nativeTaskSubmissionReferenceSchema, type NativeTaskSubmission } from "
 import { localId } from "../../harness/v1/native-run-identifiers";
 import { TaskExecutionPlanner, type TaskPlanningOperation } from "./task-execution-planner";
 import { TaskAssignmentCoordinator, type TaskAssignmentOperation, type TaskAssignmentRoute, type NativeApprovalEnrollment,
-  type CodexPermitConfiguration, type Hermes021LocalQueueDeliveryTarget, type ClaudeCodeLocalQueueDeliveryTarget } from "./task-assignment-coordinator";
+  type CodexPermitConfiguration, type Hermes021LocalQueueDeliveryTarget, type ClaudeCodeLocalQueueDeliveryTarget,
+  type InstallationTransitionAdmissionFence } from "./task-assignment-coordinator";
+import { isInstallationTransitionAdmissionPausedV1 } from "../../harness/v1/installation-transition-store";
 import type { NativeApprovalPacketStore } from "./native-approval-packet-store";
 import { nativeTaskApprovalPacketSchema } from "../../harness/v1/native-approval-packet";
 import { TaskQualityCoordinator, taskQualityRequestSchema, taskQualitySweepRequestSchema, type TaskQualityConfiguration, type TaskQualityOperation } from "./task-quality-coordinator";
@@ -67,6 +69,9 @@ export type TaskCoordinatorConfiguration = {
   claudeCodeLocal?: { deliver(target: ClaudeCodeLocalQueueDeliveryTarget, signal: AbortSignal): Promise<void> };
   /** Reviewed Codex permit bindings. Configuration alone starts no process or workspace. */
   codex?: CodexPermitConfiguration;
+  /** Private installation journal key. It is copied at assembly and never
+   * mounted in a route, template, browser operation, queue item, or worker. */
+  installationTransitionAdmission?: { integrityKey: Uint8Array; workers: readonly { nodeId: string; workerId: string }[] };
   quality?: TaskQualityConfiguration;
   revisionPlanning?: true;
   /** An already verified, separately owned bounded control-plane pool. Never the private-web login. */
@@ -116,6 +121,25 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     throw new Error("task_coordinator_config_invalid");
   if (input.claudeCodeLocal && !input.nativeSubmission)
     throw new Error("task_coordinator_config_invalid");
+  if (input.installationTransitionAdmission && (!(input.installationTransitionAdmission.integrityKey instanceof Uint8Array)
+    || input.installationTransitionAdmission.integrityKey.length !== 32
+    || !Array.isArray(input.installationTransitionAdmission.workers)
+    || input.installationTransitionAdmission.workers.length !== input.routes.length)) throw new Error("task_coordinator_config_invalid");
+  const transitionAdmissionKey = input.installationTransitionAdmission
+    ? Uint8Array.from(input.installationTransitionAdmission.integrityKey) : undefined;
+  const transitionWorkers = input.installationTransitionAdmission ? (() => {
+    const values = input.installationTransitionAdmission!.workers.map(value => Object.freeze({
+      nodeId: localId.parse(value.nodeId), workerId: localId.parse(value.workerId) }));
+    if (new Set(values.map(value => value.nodeId)).size !== values.length || new Set(values.map(value => value.workerId)).size !== values.length
+      || values.some(value => !input.routes.some(route => route.nodeId === value.nodeId))) throw new Error("task_coordinator_config_invalid");
+    return new Map(values.map(value => [value.nodeId, value.workerId]));
+  })() : undefined;
+  const transitionAdmission: InstallationTransitionAdmissionFence | undefined = input.installationTransitionAdmission
+    ? Object.freeze({ isPausedInSession: (tx, tenantId, nodeId) => {
+      const workerId = transitionWorkers!.get(nodeId);
+      if (!workerId) throw new Error("installation_transition_unavailable");
+      return isInstallationTransitionAdmissionPausedV1(tx, transitionAdmissionKey!, { tenantId, workerId });
+    } }) : undefined;
   const nativeSubmission = input.nativeSubmission ? Object.freeze({
     enqueueInSession: input.nativeSubmission.enqueueInSession.bind(input.nativeSubmission),
     ...(input.nativeSubmission.recoverUnsentInSession ? { recoverUnsentInSession: input.nativeSubmission.recoverUnsentInSession.bind(input.nativeSubmission) } : {}),
@@ -225,7 +249,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   // Constructors validate and snapshot immutable templates, keys, route records and scope without SQL.
   const planner = new TaskExecutionPlanner(db, scope, input.planning, input.clock, input.revisionPlanning ? input.quality : undefined);
   const assignment = new TaskAssignmentCoordinator(db, scope, planner, input.routes, input.clock,
-    input.approvals?.enrollments, input.approvals?.store, nativeSubmission, input.codex);
+    input.approvals?.enrollments, input.approvals?.store, nativeSubmission, input.codex, transitionAdmission);
   if (input.quality && (input.quality.integrityKey.length !== input.planning.reviewIntegrityKey.length
     || !timingSafeEqual(input.quality.integrityKey, input.planning.reviewIntegrityKey)))
     throw new Error("task_coordinator_config_invalid");

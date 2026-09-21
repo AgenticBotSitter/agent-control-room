@@ -91,6 +91,8 @@ export type PrivateTaskStartupConfiguration = {
   preparedLocalAdapters?: LocalAdapterInstallationPortsV1;
   coordinator: Pick<TaskCoordinatorConfiguration, "planning" | "routes" | "approvals" | "quality" | "revisionPlanning" | "nativeHttp" | "hermes021Local" | "claudeCodeLocal"> & {
     codex?: CodexPermitConfiguration;
+    /** Private transition-journal key for coordinator-only admission checks. */
+    installationTransitionAdmission?: { integrityKey: Uint8Array; workers: readonly { nodeId: string; workerId: string }[] };
     nativeQueue?: true;
     nativeQueueRecovery?: true;
     /** Explicit local composition; no default worker factory or deployment activation. */
@@ -175,6 +177,15 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
       value.tenantId !== web.tenantId
       || !routes.some(route => route.nodeId === value.nodeId && route.capabilityProbeId === CODEX_APP_SERVER_CAPABILITY)
       || !sessions.nodes.some(node => node.nodeId === value.nodeId && node.features.includes(CODEX_DELIVERY_FEATURE))))) throw new Error();
+    const installationTransitionAdmission = input.coordinator.installationTransitionAdmission
+      ? (() => {
+        const workers = input.coordinator.installationTransitionAdmission!.workers;
+        if (!Array.isArray(workers) || workers.length !== routes.length) throw new Error();
+        const captured = workers.map(value => Object.freeze({ nodeId: localId.parse(value.nodeId), workerId: localId.parse(value.workerId) }));
+        if (new Set(captured.map(value => value.nodeId)).size !== captured.length || new Set(captured.map(value => value.workerId)).size !== captured.length
+          || captured.some(value => !routes.some(route => route.nodeId === value.nodeId))) throw new Error();
+        return Object.freeze({ integrityKey: key(input.coordinator.installationTransitionAdmission!.integrityKey), workers: Object.freeze(captured) });
+      })() : undefined;
     const codexResultReturn = input.coordinator.codexResultReturn
       ? captureCodexResultIntakeSettingsV1(input.coordinator.codexResultReturn) : undefined;
     if (codexResultReturn && (!codex || !quality || !resultDatabase || !artifactStorage || !sessions
@@ -227,7 +238,7 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
     const news = input.news ? captureNewsStartupConfiguration(input.news, web,
       [web.database, database, resultDatabase, evidence?.database, sessions?.database, queueWorker?.database,
         ideaCreation?.database, ideaRuntime?.database].filter((value): value is PrivatePostgresConfiguration => !!value)) : undefined;
-    return { web, preparedLocalAdapters, database, planning, routes, approvals, codex, quality, revisionPlanning, resultDatabase, evidence, sessions,
+    return { web, preparedLocalAdapters, database, planning, routes, approvals, codex, installationTransitionAdmission, quality, revisionPlanning, resultDatabase, evidence, sessions,
       codexResultReturn, nativeHttp, nativeQueue, nativeQueueRecovery, queueWorker, hermes021Local, claudeCodeLocal, ideaCreation, ideaRuntime, news, artifactStorage };
   } catch { throw new Error("private_task_startup_config_invalid"); }
 }
@@ -492,6 +503,7 @@ export function createPrivateTaskBootstrap(dependencies: {
         planning: config.planning, routes: config.routes, approvals: config.approvals, quality: config.quality,
         hermes021Local: config.hermes021Local,
         codex: config.codex,
+        installationTransitionAdmission: config.installationTransitionAdmission,
         revisionPlanning: config.revisionPlanning, resultDatabase, clock,
         ideaCreation: ideaDatabase ? { ...config.ideaCreation!, database: ideaDatabase } : undefined,
         ideaRuntime: ideaRuntimeDatabase ? { ...config.ideaRuntime!, database: ideaRuntimeDatabase, close: closeIdeaRuntime! } : undefined,

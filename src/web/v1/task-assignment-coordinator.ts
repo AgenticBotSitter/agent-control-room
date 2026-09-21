@@ -61,6 +61,12 @@ export type CodexPermitEnrollment = CodexOwnerPermitBindingV1 & {
   security: Pick<SqliteNodeSecurityStateRepository, "currentServerTrustRevision">;
 };
 export type CodexPermitConfiguration = Readonly<{ integrityKey: Uint8Array; enrollments: readonly CodexPermitEnrollment[] }>;
+/** Installation-owned journal access. This is never a browser operation or a
+ * worker-provided decision: the private coordinator uses it only after the
+ * canonical route has selected a node. */
+export type InstallationTransitionAdmissionFence = Readonly<{
+  isPausedInSession: (tx: DatabaseSession, tenantId: string, nodeId: string) => Promise<boolean>;
+}>;
 export function validateNativeApprovalEnrollments(enrollments: readonly NativeApprovalEnrollment[], tenantId: string, routes: readonly TaskAssignmentRoute[]) {
   const snapshot = z.array(z.object({ enrollment: enrollmentSchema, nodeClass: localId }).strict()).max(64).parse(enrollments);
   if (new Set(snapshot.map(e => e.enrollment.nodeId)).size !== snapshot.length
@@ -111,7 +117,8 @@ export class TaskAssignmentCoordinator {
     private readonly clock: () => number = Date.now, enrollments: readonly NativeApprovalEnrollment[] = [],
     private readonly approvalStore?: NativeApprovalPacketStore,
     private readonly nativeTaskSubmission?: NativeTaskSubmission,
-    codex?: CodexPermitConfiguration) {
+    codex?: CodexPermitConfiguration,
+    private readonly transitionAdmission?: InstallationTransitionAdmissionFence) {
     const plannerScope = planner.webOperation();
     if (plannerScope.tenantId !== scope.tenantId || plannerScope.workspaceId !== scope.workspaceId) unavailable();
     this.scope = Object.freeze({ ...scope });
@@ -136,6 +143,15 @@ export class TaskAssignmentCoordinator {
       this.codex = Object.freeze({ integrityKey: Uint8Array.from(codex.integrityKey), enrollments: Object.freeze(values) });
     }
     this.projects = new WebProjectService(db, scope, clock);
+    if (transitionAdmission && typeof transitionAdmission.isPausedInSession !== "function") unavailable();
+  }
+  /** A bad journal answer is deliberately indistinguishable from ordinary
+   * contention. It must not become a fail-open delivery path. */
+  private async assertTransitionAdmission(tx: DatabaseSession, nodeId: string): Promise<void> {
+    if (!this.transitionAdmission) return;
+    try {
+      if (await this.transitionAdmission.isPausedInSession(tx, this.scope.tenantId, nodeId)) conflict();
+    } catch { conflict(); }
   }
   webOperation(): TaskAssignmentOperation {
     return Object.freeze({ ...this.scope, assign: this.assign.bind(this), expire: this.expire.bind(this), options: this.options.bind(this) });
@@ -548,6 +564,7 @@ export class TaskAssignmentCoordinator {
       if (!route || route.executorId !== job.authority.allowedExecutor
         || route.capabilityProbeId !== HERMES_021_MACOS_LOCAL_CAPABILITY_V1
         || !Number.isSafeInteger(now) || now < 0 || now >= deadline) conflict();
+      await this.assertTransitionAdmission(tx, route.nodeId);
       const approval = await store.readHermes021LocalQueueApprovalInSession(tx, {
         tenantId: ref.tenantId, projectId: ref.projectId, jobId: ref.jobId, attemptId: ref.attemptId, inputDigest: ref.inputDigest,
       });
@@ -646,6 +663,7 @@ export class TaskAssignmentCoordinator {
         const now = this.clock(), deadline = Math.min(Date.parse(stored.lease.expiresAt), Date.parse(job.authority.expiresAt));
         if (!route || route.executorId !== job.authority.allowedExecutor || route.capabilityProbeId !== CLAUDE_CODE_LOCAL_CAPABILITY_V1
           || !Number.isSafeInteger(now) || now < 0 || now >= deadline) conflict();
+        await this.assertTransitionAdmission(tx, route.nodeId);
         const approval = await store.readClaudeCodeLocalQueueApprovalInSession(tx,
           { tenantId: ref.tenantId, projectId: ref.projectId, jobId: ref.jobId, attemptId: ref.attemptId, inputDigest: ref.inputDigest });
         const queueIntent = await store.readQueueIntentInSession(tx,
@@ -886,6 +904,7 @@ export class TaskAssignmentCoordinator {
         || route.executorId !== job.authority.allowedExecutor
         || configured.connectorProfileDigest !== plan.connectorProfileDigest
         || configured.workspaceIntentDigest !== plan.workspaceIntentDigest) conflict();
+      await this.assertTransitionAdmission(tx, route.nodeId);
       const nodeRow = (await tx.query<{ payload: unknown; state: string; version: number }>(
         "SELECT payload,state,version FROM control_nodes WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
         [this.scope.tenantId, configured.nodeId])).rows[0];
@@ -1002,6 +1021,7 @@ export class TaskAssignmentCoordinator {
         || plan.schema === "control-room.task-execution-plan/v3" || plan.schema === "control-room.task-execution-plan/v4") conflict();
       const configured = this.enrollments.find(e => e.enrollment.nodeId === stored.lease.nodeId), route = this.routes.find(r => r.nodeId === stored.lease.nodeId);
       if (!configured || !route || route.executorId !== job.authority.allowedExecutor) conflict();
+      await this.assertTransitionAdmission(tx, route.nodeId);
       const enrollment = configured.enrollment;
       const row = (await tx.query<{ payload: unknown; state: string; version: number }>(
         "SELECT payload,state,version FROM control_nodes WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [this.scope.tenantId, enrollment.nodeId])).rows[0];
@@ -1170,6 +1190,7 @@ export class TaskAssignmentCoordinator {
       if (!route || project.lifecycle !== "active" || project.origin !== "ordinary" || job.state !== "proposed" || job.version !== 0
         || job.authority.allowedExecutor !== route.executorId || job.requiredCapability !== route.capabilityProbeId
         || job.retryPolicy.maxAttempts !== 1 || job.retryPolicy.retryAfterOrphan || job.dependsOnJobIds.length) conflict();
+      await this.assertTransitionAdmission(tx, route.nodeId);
       if ((await tx.query("SELECT id FROM control_attempts WHERE tenant_id=$1 AND job_id=$2 LIMIT 1", [this.scope.tenantId, jobId])).rows.length) conflict();
       const request = requestRecordSchema.parse(await canonical.get(this.scope.tenantId, "request", plan.request.id));
       const workflow = workflowRecordSchema.parse(await canonical.get(this.scope.tenantId, "workflow", plan.workflow.id));

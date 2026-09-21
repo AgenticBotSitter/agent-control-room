@@ -1095,6 +1095,18 @@ test("repeated operator construction is independent and post-assembly mutation c
   assert.deepEqual([...a.configuration.coordinator.quality!.integrityKey], [...first.trusted.quality!.integrityKey]);
 });
 
+test("transition admission material is copied into private coordinator assembly and never the web profile", () => {
+  const { settings, trusted } = operatorConfigurationScenario("minimal");
+  const key = new Uint8Array(32).fill(73);
+  trusted.installationTransitionAdmission = { integrityKey: key,
+    workers: trusted.routes.map(route => ({ nodeId: route.nodeId, workerId: `worker:${route.nodeId.slice(5)}` })) };
+  const captured = assemblePrivateAgentTaskOperatorConfiguration(settings, trusted).configuration;
+  assert.deepEqual([...captured.coordinator.installationTransitionAdmission!.integrityKey], [...key]);
+  assert.equal("installationTransitionAdmission" in captured.web, false);
+  key.fill(9);
+  assert.equal(captured.coordinator.installationTransitionAdmission!.integrityKey[0], 73);
+});
+
 test("the operator assembler performs no environment, filesystem or network access", async () => {
   const source = await readFile(new URL("../src/web/v1/private-agent-task-operator-configuration.ts", import.meta.url), "utf8");
   for (const token of ["node:", "process.", "globalThis", "fetch(", "XMLHttpRequest", "child_process", "require("])
