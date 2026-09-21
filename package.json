@@ -36,6 +36,7 @@
     "qualify:hermes:local": "node scripts/qualify-local-hermes-021.mjs",
     "record:hermes:local-readiness": "node --import tsx scripts/record-local-hermes-readiness.ts",
     "record:local-supervisor-readiness": "node --import tsx scripts/record-local-supervisor-readiness.ts",
+    "preflight:local:service": "node --import tsx scripts/preflight-macos-local-service.ts",
     "preflight:hermes:local-runner": "node --import tsx scripts/preflight-local-hermes-021-runner.ts",
     "qualify:hermes:local-runner": "node --import tsx scripts/qualify-local-hermes-021-runner.ts",
     "test:daily-activity": "node --test tests/public-daily-activity.test.mjs",
