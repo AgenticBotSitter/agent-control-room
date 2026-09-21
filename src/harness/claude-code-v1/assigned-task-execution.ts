@@ -106,6 +106,10 @@ export async function executeAssignedClaudeCodeLocalTaskV1(config: ClaudeCodeLoc
   const registered = existing ? { run: existing, replayed: true } : await config.runs.create(candidate);
   let sequence = (await config.runs.inspect(prepared.delivery.identity.tenantId, registered.run.id))?.events.length ?? 0;
   let observedState = registered.run.state;
+  // A terminal failure/cancellation consumes this exact run. Do this before a
+  // delivery receipt or process session is considered, so old terminal bytes
+  // cannot make a failed run look successful or cause a second Claude start.
+  if (isTerminalHarnessRunState(observedState) && observedState !== "succeeded") unavailable();
   const append = async (payload: HarnessEventPayloadV1, occurredAt: string) => {
     const event: HarnessRunEventV1 = { schemaVersion: "control-room-harness-event/v1",
       tenantId: prepared.delivery.identity.tenantId, runId: registered.run.id, sequence: ++sequence, occurredAt,

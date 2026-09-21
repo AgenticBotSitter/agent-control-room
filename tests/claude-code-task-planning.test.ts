@@ -10,6 +10,7 @@ import { FleetSignalStore } from "../src/node-fleet/v1/fleet-signal-store";
 import type { FleetSignalEnvelope } from "../src/node-fleet/v1/schemas";
 import { ClaudeCodeLocalDispatchPreparationV1 } from "../src/harness/claude-code-v1/dispatch-preparation";
 import { executeAssignedClaudeCodeLocalTaskV1 } from "../src/harness/claude-code-v1/assigned-task-execution";
+import { ClaudeCodeLocalRunRegistrationV1 } from "../src/harness/claude-code-v1/local-run-registration";
 import { HarnessRunStoreV1 } from "../src/harness/v1/store";
 import { NativeApprovalPacketStore } from "../src/web/v1/native-approval-packet-store";
 import type { NativeTaskSubmission } from "../src/persistence/native-task-submission";
@@ -148,8 +149,11 @@ test("a local Claude delivery publishes once, then a rebuilt executor recovers t
     reviewIntegrityKey: f.reviewKey, checkpoints: f.checkpoints }, () => now);
   const source = await f.tasks.propose(f.identity, binding.projectId, taskDraft, "claude-local-executor-source");
   const planned = await planner.plan(f.identity, binding.projectId, source.receipt.jobId, sha256Digest(taskDraft));
+  // This exercises four separate disposable task identities (success,
+  // rejected-before-start, and already-failed/cancelled runs). Capacity must not be
+  // the reason the terminal-run guard is tested.
   const route = [{ nodeId: binding.nodeId, executorId: authority.allowedExecutor,
-    capabilityProbeId: CLAUDE_CODE_LOCAL_CAPABILITY_V1, maxConcurrentTasks: 3, requiredScratchBytes: 0, leaseSeconds: 60 }] as const;
+    capabilityProbeId: CLAUDE_CODE_LOCAL_CAPABILITY_V1, maxConcurrentTasks: 6, requiredScratchBytes: 0, leaseSeconds: 60 }] as const;
   const signals = new FleetSignalStore(f.db);
   for (const signal of [
     { sequence: 1, kind: "telemetry" as const, source: "telemetry_port" as const,
@@ -243,6 +247,63 @@ test("a local Claude delivery publishes once, then a rebuilt executor recovers t
   const rejectedRun = await new HarnessRunStoreV1(f.db, f.harnessKey).inspect(binding.tenantId, rejected.registered.run.id);
   assert.equal(rejectedRun?.run.state, "discovered");
   assert.deepEqual(rejectedRun?.events, [], "a rejected receipt cannot leave a false Claude-start history");
+
+  // A prior terminal failure consumes that exact run. A later call cannot
+  // contact Claude, add a delivery receipt, or publish old success evidence
+  // under the failed task identity.
+  const failedSource = await f.tasks.propose(f.identity, binding.projectId, { ...taskDraft, title: "Failed Claude run" }, "claude-failed-source");
+  const failedPlan = await planner.plan(f.identity, binding.projectId, failedSource.receipt.jobId,
+    sha256Digest({ ...taskDraft, title: "Failed Claude run" }));
+  const failedAssignment = await assignments.assign(f.identity, binding.projectId, failedPlan.receipt.jobId,
+    binding.nodeId, failedPlan.receipt.inputDigest);
+  const failedReference = { tenantId: binding.tenantId, projectId: binding.projectId, jobId: failedPlan.receipt.jobId,
+    attemptId: failedAssignment.receipt.attemptId, leaseId: failedAssignment.receipt.leaseId, inputDigest: failedPlan.receipt.inputDigest };
+  const failedPrepared = await preparation().prepare(failedReference);
+  const failedRuns = new HarnessRunStoreV1(f.db, f.harnessKey);
+  await failedRuns.create(ClaudeCodeLocalRunRegistrationV1(failedPrepared.delivery, new Date(now).toISOString()));
+  await failedRuns.append({ schemaVersion: "control-room-harness-event/v1", tenantId: binding.tenantId,
+    runId: failedPrepared.delivery.identity.runId, sequence: 1, occurredAt: new Date(now).toISOString(), source: "control_room",
+    sourceEventKeyDigest: sha256Digest("failed-claude-run"), payload: { category: "lifecycle", state: "failed", reasonCode: "fixture" } });
+  let failedReceiptCalls = 0;
+  const failedReceiptPort = { async receive(packet: ControllerWorkerDeliveryV1) {
+    failedReceiptCalls++;
+    return acceptedClaudeDelivery(packet, new Date(now).toISOString());
+  } };
+  await assert.rejects(executeAssignedClaudeCodeLocalTaskV1(execution(() => {
+    acquisitions++; return new FinishedClaudeProcess([`${JSON.stringify({ type: "system", subtype: "init", session_id: sessionId })}\n`, `${terminal}\n`]).acquire();
+  }, failedPrepared, failedReceiptPort), failedReference, new AbortController().signal), /claude_code_local_assigned_task_execution_unavailable/);
+  assert.equal(acquisitions, 1, "a failed run must not reopen Claude");
+  assert.equal(failedReceiptCalls, 0, "a failed run must not even contact the receipt endpoint");
+  assert.equal((await f.db.query("SELECT run_id FROM control_native_review_plans WHERE tenant_id=$1 AND run_id=$2",
+    [binding.tenantId, failedPrepared.delivery.identity.runId])).rows.length, 0);
+
+  // Cancellation is terminal for the same reason: a later delivery may not
+  // reinterpret old protected bytes as an approval to revive this task.
+  const cancelledSource = await f.tasks.propose(f.identity, binding.projectId, { ...taskDraft, title: "Cancelled Claude run" }, "claude-cancelled-source");
+  const cancelledPlan = await planner.plan(f.identity, binding.projectId, cancelledSource.receipt.jobId,
+    sha256Digest({ ...taskDraft, title: "Cancelled Claude run" }));
+  const cancelledAssignment = await assignments.assign(f.identity, binding.projectId, cancelledPlan.receipt.jobId,
+    binding.nodeId, cancelledPlan.receipt.inputDigest);
+  const cancelledReference = { tenantId: binding.tenantId, projectId: binding.projectId, jobId: cancelledPlan.receipt.jobId,
+    attemptId: cancelledAssignment.receipt.attemptId, leaseId: cancelledAssignment.receipt.leaseId, inputDigest: cancelledPlan.receipt.inputDigest };
+  const cancelledPrepared = await preparation().prepare(cancelledReference);
+  const cancelledRuns = new HarnessRunStoreV1(f.db, f.harnessKey);
+  await cancelledRuns.create(ClaudeCodeLocalRunRegistrationV1(cancelledPrepared.delivery, new Date(now).toISOString()));
+  await cancelledRuns.append({ schemaVersion: "control-room-harness-event/v1", tenantId: binding.tenantId,
+    runId: cancelledPrepared.delivery.identity.runId, sequence: 1, occurredAt: new Date(now).toISOString(), source: "control_room",
+    sourceEventKeyDigest: sha256Digest("cancelled-claude-run"), payload: { category: "lifecycle", state: "cancelled", reasonCode: "fixture" } });
+  let cancelledReceiptCalls = 0;
+  const cancelledReceiptPort = { async receive(packet: ControllerWorkerDeliveryV1) {
+    cancelledReceiptCalls++;
+    return acceptedClaudeDelivery(packet, new Date(now).toISOString());
+  } };
+  await assert.rejects(executeAssignedClaudeCodeLocalTaskV1(execution(() => {
+    acquisitions++; return new FinishedClaudeProcess([`${JSON.stringify({ type: "system", subtype: "init", session_id: sessionId })}\n`, `${terminal}\n`]).acquire();
+  }, cancelledPrepared, cancelledReceiptPort), cancelledReference, new AbortController().signal), /claude_code_local_assigned_task_execution_unavailable/);
+  assert.equal(acquisitions, 1, "a cancelled run must not reopen Claude");
+  assert.equal(cancelledReceiptCalls, 0, "a cancelled run must not even contact the receipt endpoint");
+  assert.equal((await f.db.query("SELECT run_id FROM control_native_review_plans WHERE tenant_id=$1 AND run_id=$2",
+    [binding.tenantId, cancelledPrepared.delivery.identity.runId])).rows.length, 0);
 });
 
 test("one project can offer reviewed local workers without silently choosing one", async t => {
