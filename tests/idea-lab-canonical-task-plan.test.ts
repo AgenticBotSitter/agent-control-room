@@ -5,6 +5,7 @@ import { buildIdeaLabOwnerPromptV1 } from "../src/idea-lab/v1/discussion-prompt"
 import { buildIdeaLabCanonicalTaskPlanV1, parseIdeaLabCanonicalTaskPlanV1 } from "../src/idea-lab/v1/canonical-task-plan";
 import { IdeaLabErrorV1 } from "../src/idea-lab/v1/errors";
 import { parseIdeaCanonicalTaskResultV1 } from "../src/idea-lab/v1/contracts";
+import { buildIdeaLabContributionV1, parseIdeaLabContributionV1 } from "../src/idea-lab/v1/contracts";
 
 test("Idea Lab participant rounds become deterministic non-runnable ordinary task material", () => {
   const source = buildIdeaLabFixtureV1();
@@ -44,6 +45,26 @@ test("Idea Lab canonical task output accepts only the bounded structured contrib
   assert.deepEqual(parseIdeaCanonicalTaskResultV1(output), output);
   assert.throws(() => parseIdeaCanonicalTaskResultV1({ ...output, grantsApproval: true }), IdeaLabErrorV1);
   assert.throws(() => parseIdeaCanonicalTaskResultV1("```json\n{}\n```"), IdeaLabErrorV1);
+});
+
+test("a canonical task-result contribution retains immutable review provenance without claiming provider contact", () => {
+  const source = buildIdeaLabFixtureV1(), participant = source.session.participants[0]!;
+  const contribution = buildIdeaLabContributionV1(source.session, { participantId: participant.participantId, round: 1,
+    safeOpinion: "A small trial is safer than a broad rollout.", opportunityCode: "small_trial", primaryRiskCode: "weak_signal",
+    suggestedExperiment: "Ask ten prospective owners for a structured interview.", confidencePercent: 69,
+    contributedAt: "2026-09-20T00:00:00.000Z" }, {
+    sourceMode: "canonical_task_result", liveBotContactAuthorized: false, providerContacted: false,
+    canonicalTaskEvidence: { taskKey: "idea-task:projection", taskLinkDigest: "sha256:" + "a".repeat(64),
+      taskPlanDigest: "sha256:" + "b".repeat(64), taskInputDigest: "sha256:" + "c".repeat(64),
+      projectId: "project:idea", jobId: "job:idea", runId: "run:idea", artifactId: "artifact:idea",
+      contentHash: "sha256:" + "d".repeat(64), targetId: "target:idea", targetDigest: "sha256:" + "e".repeat(64),
+      acceptanceProfileDigest: "sha256:" + "f".repeat(64), rootTargetId: "target:root", revisionNumber: 0,
+      acceptedReviewIds: ["review:one"], verificationIds: ["verification:one"] },
+  });
+  assert.equal(contribution.sourceMode, "canonical_task_result");
+  assert.equal(contribution.providerContacted, false);
+  assert.equal(parseIdeaLabContributionV1(contribution, source.session).canonicalTaskEvidence?.jobId, "job:idea");
+  assert.throws(() => parseIdeaLabContributionV1({ ...contribution, canonicalTaskEvidence: null }, source.session), IdeaLabErrorV1);
 });
 
 test("Idea Lab task material fails closed on altered provenance or incomplete prior round", () => {

@@ -110,6 +110,19 @@ export const ideaSessionSchemaV1 = z.object({
   sessionDigest: ideaDigestSchemaV1,
 }).strict();
 
+/** Immutable evidence selected by the server from one reviewed ordinary task.
+ * It is provenance only: it grants no task, review, approval or execution
+ * authority, and the browser never supplies it. */
+export const ideaCanonicalTaskEvidenceSchemaV1 = z.object({
+  taskKey: ideaIdSchemaV1, taskLinkDigest: ideaDigestSchemaV1,
+  taskPlanDigest: ideaDigestSchemaV1, taskInputDigest: ideaDigestSchemaV1,
+  projectId: ideaIdSchemaV1, jobId: ideaIdSchemaV1, runId: ideaIdSchemaV1, artifactId: ideaIdSchemaV1,
+  contentHash: ideaDigestSchemaV1, targetId: ideaIdSchemaV1, targetDigest: ideaDigestSchemaV1,
+  acceptanceProfileDigest: ideaDigestSchemaV1, rootTargetId: ideaIdSchemaV1, revisionNumber: z.number().int().min(0).max(20),
+  acceptedReviewIds: z.array(ideaIdSchemaV1).min(1).max(50), verificationIds: z.array(ideaIdSchemaV1).min(1).max(50),
+}).strict().refine(value => new Set(value.acceptedReviewIds).size === value.acceptedReviewIds.length
+  && new Set(value.verificationIds).size === value.verificationIds.length);
+
 export const ideaContributionSchemaV1 = z.object({
   contractVersion: z.literal(IDEA_LAB_CONTRIBUTION_V1), contributionId: ideaIdSchemaV1,
   sessionId: ideaIdSchemaV1, tenantId: ideaIdSchemaV1, workspaceId: ideaIdSchemaV1,
@@ -117,7 +130,8 @@ export const ideaContributionSchemaV1 = z.object({
   perspective: z.enum(ideaLabPerspectivesV1), round: z.number().int().min(1).max(3),
   safeOpinion: ideaTextSchemaV1, opportunityCode: ideaCodeSchemaV1, primaryRiskCode: ideaCodeSchemaV1,
   suggestedExperiment: z.string().min(1).max(500), confidencePercent: z.number().int().min(0).max(100),
-  sourceMode: z.enum(["injected_only", "provider_filtered"]), contributedAt: ideaTimeSchemaV1,
+  sourceMode: z.enum(["injected_only", "provider_filtered", "canonical_task_result"]),
+  canonicalTaskEvidence: ideaCanonicalTaskEvidenceSchemaV1.nullable(), contributedAt: ideaTimeSchemaV1,
   liveBotContactAuthorized: z.boolean(), providerContacted: z.boolean(), ...nonAuthority,
   contributionDigest: ideaDigestSchemaV1,
 }).strict();

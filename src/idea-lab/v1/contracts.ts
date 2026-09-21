@@ -7,7 +7,7 @@ import {
   PROJECT_REGISTRY_LIFECYCLE_V1, ideaCodeSchemaV1, ideaContributionSchemaV1, ideaDecisionSchemaV1,
   ideaDigestSchemaV1, ideaIdSchemaV1, ideaLabelSchemaV1, ideaParticipantSchemaV1, ideaSessionSchemaV1,
   ideaSynthesisSchemaV1, ideaTextSchemaV1, ideaTimeSchemaV1, projectCreationSpecSchemaV1,
-  projectLifecycleEventSchemaV1, projectLifecycleStatesV1, projectRegistryProjectionSchemaV1,
+  projectLifecycleEventSchemaV1, projectLifecycleStatesV1, projectRegistryProjectionSchemaV1, ideaCanonicalTaskEvidenceSchemaV1,
 } from "./schemas";
 import type {
   IdeaLabContributionV1, IdeaLabDecisionV1, IdeaLabSessionV1, IdeaLabSynthesisV1,
@@ -78,6 +78,8 @@ export function parseIdeaCanonicalTaskResultV1(value: unknown): IdeaCanonicalTas
 export function buildIdeaLabContributionV1(sessionValue: unknown, value: unknown,
   source: { sourceMode: "injected_only"; liveBotContactAuthorized: false; providerContacted: false }
     | { sourceMode: "provider_filtered"; liveBotContactAuthorized: true; providerContacted: true }
+    | { sourceMode: "canonical_task_result"; liveBotContactAuthorized: false; providerContacted: false;
+      canonicalTaskEvidence: z.infer<typeof ideaCanonicalTaskEvidenceSchemaV1> }
     = { sourceMode: "injected_only", liveBotContactAuthorized: false, providerContacted: false }): IdeaLabContributionV1 {
   const session = parseIdeaLabSessionV1(sessionValue), input = parseExactIdeaLabV1(contributionInputSchema, value);
   const participant = session.participants.find((item) => item.participantId === input.participantId);
@@ -93,7 +95,8 @@ export function buildIdeaLabContributionV1(sessionValue: unknown, value: unknown
     perspective: participant.perspective, round: input.round, safeOpinion: input.safeOpinion,
     opportunityCode: input.opportunityCode, primaryRiskCode: input.primaryRiskCode,
     suggestedExperiment: input.suggestedExperiment, confidencePercent: input.confidencePercent,
-    ...source, contributedAt: input.contributedAt, grantsApproval: false as const, grantsCommandAuthority: false as const,
+    ...source, canonicalTaskEvidence: source.sourceMode === "canonical_task_result" ? source.canonicalTaskEvidence : null,
+    contributedAt: input.contributedAt, grantsApproval: false as const, grantsCommandAuthority: false as const,
     grantsLeaseAuthority: false as const, grantsExecutionAuthority: false as const, automaticProjectCreationAllowed: false as const };
   return ideaContributionSchemaV1.parse({ ...material, contributionDigest: sha256Digest(material) });
 }
@@ -107,8 +110,10 @@ export function parseIdeaLabContributionV1(value: unknown, sessionValue: unknown
     || parsed.sessionId !== session.sessionId || parsed.tenantId !== session.tenantId || parsed.workspaceId !== session.workspaceId
     || parsed.sessionDigest !== session.sessionDigest || parsed.participantIdentityDigest !== participant.identityDigest
     || parsed.perspective !== participant.perspective || parsed.round > session.maxRounds
-    || (parsed.sourceMode === "injected_only" && (parsed.liveBotContactAuthorized || parsed.providerContacted))
-    || (parsed.sourceMode === "provider_filtered" && (!parsed.liveBotContactAuthorized || !parsed.providerContacted))
+    || (parsed.sourceMode === "injected_only" && (parsed.liveBotContactAuthorized || parsed.providerContacted || parsed.canonicalTaskEvidence !== null))
+    || (parsed.sourceMode === "provider_filtered" && (!parsed.liveBotContactAuthorized || !parsed.providerContacted || parsed.canonicalTaskEvidence !== null))
+    || (parsed.sourceMode === "canonical_task_result" && (parsed.liveBotContactAuthorized || parsed.providerContacted
+      || !parsed.canonicalTaskEvidence || parsed.canonicalTaskEvidence.projectId.length < 3))
     || capturedIdeaTimeMillisecondsV1(parsed.contributedAt)!
       < capturedIdeaTimeMillisecondsV1(session.createdAt)!) throw new IdeaLabErrorV1("integrity_failed");
   return parsed;
