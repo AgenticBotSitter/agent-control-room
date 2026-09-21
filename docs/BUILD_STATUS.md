@@ -87,6 +87,14 @@ unavailable until their separate host qualifications are complete.
   three-local-worker conformance tests
 - Shared local/remote topology and correction lifecycle tests
 - Production-style application build
+- Focused protected-storage and recovery verification: 28 checks passed. This
+  covers restart reads, corrupt or misplaced result bytes, stale locks,
+  cancelled inventory capture, backup inventory tampering and restore mismatch.
+- Focused local Hermes shutdown verification: 15 checks passed. If Control
+  Room itself stops an already-started local Hermes process, the task is
+  recorded as cancelled and its temporary task data is removed after the child
+  process closes. This does not claim that Hermes has a general public
+  per-task stop feature.
 
 These checks use disposable data. They do not prove a real agent program,
 database, browser login, backup, persistent service or remote machine.
