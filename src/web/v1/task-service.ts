@@ -22,7 +22,8 @@ import { taskAttentionPageSchema, taskAttentionPresentation, type TaskAttentionP
 import { WebProjectService } from "./project-service";
 import { catalogProjectIdSchema } from "./project-wire";
 import { taskDraftSchema, taskSummarySchema, taskReceiptSchema, taskDetailSchema, taskPageSchema,
-  taskRunSchema, type TaskRun, type TaskReceipt } from "./task-wire";
+  taskRunSchema, type HermesDeliveryRecovery, type TaskRun, type TaskReceipt } from "./task-wire";
+import { HERMES_021_MACOS_LOCAL_JOB_TYPE_V1, type Hermes021MacosDeliveryRecoveryStatusV1 } from "../../harness/hermes-021-v1";
 import { taskPlanningOptionsSchema } from "./task-planning-wire";
 import { taskHomeActivitySchema } from "./task-home-wire";
 import { taskProjectOverviewSchema } from "./task-project-overview-wire";
@@ -63,6 +64,10 @@ export interface WebTaskKeys {
   reviews?: { integrityKey: Uint8Array; checkpoints: AwaitableRollbackCheckpointStoreV1 };
   ownerReviews?: WebTaskReviewConfiguration;
   manualVerificationScenarios?: readonly ManualVerificationScenario[];
+  /** Bound installation-owned read only. The web service never receives its
+   * receipt key, storage port, runner, profile, model, or workspace settings. */
+  hermesDeliveryRecovery?: { inspect(scope: { tenantId: string; projectId: string; jobId: string; attemptId: string }):
+    Promise<Hermes021MacosDeliveryRecoveryStatusV1> };
 }
 const resultMetadata = (receipt: TaskResultReceipt) => taskResultMetadataSchema.parse({ artifactId: receipt.artifactId,
   attemptId: receipt.attemptId, runId: receipt.runId, contentHash: receipt.contentHash, sizeBytes: receipt.sizeBytes,
@@ -77,12 +82,17 @@ export class WebTaskService {
   private readonly reviewCommandsConfigured: boolean;
   private readonly verificationCommandsConfigured: boolean;
   private readonly ideaProjectsConfigured: boolean;
+  private readonly hermesDeliveryRecovery?: WebTaskKeys["hermesDeliveryRecovery"];
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     private readonly clock: () => number = Date.now, keys?: WebTaskKeys) {
     this.authority = new WebSessionAuthority(db, scope, clock, "task");
     this.ideaProjectsConfigured = !!keys?.ideaIntegrityKey;
     this.reviewCommandsConfigured = !!keys?.ownerReviews;
     this.verificationCommandsConfigured = !!keys?.manualVerificationScenarios?.length;
+    if (keys?.hermesDeliveryRecovery && typeof keys.hermesDeliveryRecovery.inspect !== "function") throw new Error("task_key_invalid");
+    this.hermesDeliveryRecovery = keys?.hermesDeliveryRecovery ? Object.freeze({
+      inspect: keys.hermesDeliveryRecovery.inspect.bind(keys.hermesDeliveryRecovery),
+    }) : undefined;
     if (keys?.manualVerificationScenarios && (!keys.results || !keys.reviews || !keys.harnessIntegrityKey)) throw new Error("task_key_invalid");
     if (keys?.ownerReviews && (!keys.results || !keys.reviews || !(keys.ownerReviews.integrityKey instanceof Uint8Array)
       || keys.ownerReviews.integrityKey.length !== 32 || keys.reviews.integrityKey.length !== 32
@@ -104,6 +114,17 @@ export class WebTaskService {
         read: keys.reviews.checkpoints.read.bind(keys.reviews.checkpoints), initialize: () => { throw new Error("review_read_only"); },
         advance: () => { throw new Error("review_read_only"); } }) };
     }
+  }
+  private async inspectHermesDeliveryRecovery(job: { jobType: string }, projectId: string, jobId: string,
+    attempts: readonly { attemptId: string }[]): Promise<HermesDeliveryRecovery> {
+    if (job.jobType !== HERMES_021_MACOS_LOCAL_JOB_TYPE_V1) return { source: "not_applicable" };
+    if (!this.hermesDeliveryRecovery) return { source: "not_configured" };
+    if (attempts.length !== 1) return { source: "ambiguous_attempt" };
+    try {
+      const status = await this.hermesDeliveryRecovery.inspect({ tenantId: this.scope.tenantId, projectId, jobId,
+        attemptId: attempts[0]!.attemptId });
+      return { source: "configured", status };
+    } catch { return { source: "unavailable" }; }
   }
   private id(value: string) { if (!catalogProjectIdSchema.safeParse(value).success) throw new WebAccessError("invalid_request"); }
 
@@ -281,8 +302,10 @@ export class WebTaskService {
         attempts.push({ attemptId: attempt.id, attemptNumber: attempt.attemptNumber, state: attempt.state,
           runs, additionalRunsOmitted: ids.length > 10 });
       }
+      const hermesDeliveryRecovery = await this.inspectHermesDeliveryRecovery(job, projectId, jobId, attempts);
       return taskDetailSchema.parse({ project, task: summary, instructions: request.objective, inputDigest: job.inputDigest,
         observedAt: actor.now, attempts, earlierAttemptsOmitted: attemptRows.length > 10, preparedFor: null,
+        hermesDeliveryRecovery,
         progressSource: store ? "configured" : "not_configured", dispatch: "not_connected",
         artifacts: this.resultStore ? "configured" : "not_connected", review: this.reviewConfig ? "recorded" : "not_connected" });
     });

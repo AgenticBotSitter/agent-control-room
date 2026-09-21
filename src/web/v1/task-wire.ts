@@ -22,6 +22,20 @@ export const taskPageSchema = z.object({ project: projectViewSchema, tasks: z.ar
 export type TaskPage = z.infer<typeof taskPageSchema>;
 const nativeState = z.enum(["prepared", "dispatching", "queued", "running", "waiting_approval", "stopping", "completed",
   "failed", "cancelled", "interrupted", "ambiguous"]);
+const hermesDeliveryRecoveryStatus = z.object({
+  state: z.enum(["no_authenticated_delivery", "delivery_receipt_unresolved", "terminal_result_staged"]),
+  terminal: z.object({ terminalResultDigest: digest, contentDigest: digest, sizeBytes: count,
+    inputTokens: count, outputTokens: count, totalTokens: count, durationMs: count }).strict().optional(),
+  startsWork: z.literal(false), grantsExecutionAuthority: z.literal(false), permitsRetry: z.literal(false), permitsResume: z.literal(false),
+}).strict();
+export const hermesDeliveryRecoverySchema = z.discriminatedUnion("source", [
+  z.object({ source: z.literal("not_configured") }).strict(),
+  z.object({ source: z.literal("not_applicable") }).strict(),
+  z.object({ source: z.literal("ambiguous_attempt") }).strict(),
+  z.object({ source: z.literal("unavailable") }).strict(),
+  z.object({ source: z.literal("configured"), status: hermesDeliveryRecoveryStatus }).strict(),
+]);
+export type HermesDeliveryRecovery = z.infer<typeof hermesDeliveryRecoverySchema>;
 const progressPoint = z.object({ version: count, state: nativeState, observedAt: z.string().datetime(),
   availability: z.enum(["unknown", "current", "offline", "expired"]) }).strict();
 export const taskRunSchema = z.object({ runId: id, harness: z.enum(["codex", "hermes", "claude", "other"]),
@@ -40,6 +54,7 @@ export const taskDetailSchema = z.object({ project: projectViewSchema, task: tas
   attempts: z.array(z.object({ attemptId: id, attemptNumber: count, state: z.enum(attemptStates),
     runs: z.array(taskRunSchema).max(10), additionalRunsOmitted: z.boolean() }).strict()).max(10),
   earlierAttemptsOmitted: z.boolean(), preparedFor: z.enum(["hermes", "codex", "claude", "configured_worker"]).nullable(),
+  hermesDeliveryRecovery: hermesDeliveryRecoverySchema,
   progressSource: z.enum(["configured", "not_configured"]),
   dispatch: z.enum(["not_connected", "configured"]), artifacts: z.enum(["not_connected", "configured"]), review: z.enum(["not_connected", "recorded"]) }).strict();
 export type TaskDetail = z.infer<typeof taskDetailSchema>;

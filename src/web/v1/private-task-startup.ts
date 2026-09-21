@@ -32,6 +32,7 @@ import { bindPrivateArtifactStorageV1, capturePrivateArtifactStorageConfiguratio
 import { PersistentLocalArtifactStorageV1 } from "../../artifacts/v1/persistent-local-storage";
 import { CODEX_RESULT_RETURN_FEATURE_V1 } from "../../harness/codex-v1/result-return";
 import { captureCodexResultIntakeSettingsV1, type CodexResultIntakeSettingsV1 } from "./codex-result-intake";
+import { inspectHermes021MacosDeliveryRecoveryStatusV1 } from "../../harness/hermes-021-v1/delivery-recovery-status";
 
 type OwnedQueueWorker = { close(): Promise<void>; status(): { accepting: boolean } };
 
@@ -389,8 +390,22 @@ export function createPrivateTaskBootstrap(dependencies: {
       const coordinationStore = createProjectCoordinationCanonicalStoreAdapterV1({
         database: web.client, tenantId: config.web.tenantId, now: () => clock(),
       });
+      // This bound reader is the only recovery capability passed toward the
+      // browser task view. It closes over already-verified private resources;
+      // the browser never receives the receipt key, artifact storage, runner,
+      // executable, model, provider, or workspace configuration.
+      const hermesDeliveryRecovery = config.hermes021Local && artifactStorage && config.web.tasks
+        ? Object.freeze({ inspect: async (scope: { tenantId: string; projectId: string; jobId: string; attemptId: string }) => {
+          requireActive();
+          const status = await inspectHermes021MacosDeliveryRecoveryStatusV1({ db: coordinator.client,
+            integrityKey: config.web.tasks!.harnessIntegrityKey, storage: artifactStorage!.storage }, scope,
+          startupAbort.signal);
+          requireActive();
+          return status;
+        } }) : undefined;
       application = await createPrivateTaskApplication({ ...config.web, database: web, clock,
         coordination: { store: coordinationStore },
+        ...(hermesDeliveryRecovery ? { tasks: { ...config.web.tasks!, hermesDeliveryRecovery } } : {}),
         ...(newsIntegration ? { newsCollections: newsIntegration.web } : {}) }, {
         scope: { tenantId: config.web.tenantId, workspaceId: config.web.workspaceId }, database: coordinator,
         planning: config.planning, routes: config.routes, approvals: config.approvals, quality: config.quality,

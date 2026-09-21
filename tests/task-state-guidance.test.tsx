@@ -24,7 +24,7 @@ import type {
   OwnerNotificationSettingsV1,
 } from "../src/notifications/v1/index.ts";
 import { NotificationDecisionList, NotificationSettingsSurface } from "../private-app/app/notification-settings.tsx";
-import { TaskDetailPanel, TaskStateGuidance, taskStateGuidance } from "../private-app/app/task-panels.tsx";
+import { HermesDeliveryRecoveryPanel, TaskDetailPanel, TaskStateGuidance, taskStateGuidance } from "../private-app/app/task-panels.tsx";
 import { PrivateSettingsWorkspace } from "../private-app/app/settings/workspace.tsx";
 import { readOwnerNotificationsV1, unavailableOwnerNotificationsV1 } from "../src/web/v1/owner-notifications-browser-client.ts";
 import { OwnerNotificationsPanel } from "../private-app/app/owner-notifications-workspace.tsx";
@@ -51,8 +51,23 @@ function detail(state: TaskDetail["task"]["state"], run?: Partial<TaskDetail["at
         firstObservedExecutionAt: at, finishedObservedAt: null, cancellation: "not_requested", source: "native_snapshot",
         nativeState: "running", availability: "current", usage: null, resultClaim: null, timeline: [],
         earlierObservationsOmitted: false, ...run }] }] : [], earlierAttemptsOmitted: false,
-    preparedFor: null, progressSource, dispatch: "configured", artifacts: "configured", review: "recorded" };
+    preparedFor: null, hermesDeliveryRecovery: { source: "not_applicable" },
+    progressSource, dispatch: "configured", artifacts: "configured", review: "recorded" };
 }
+
+test("local Hermes recovery tells the owner only what saved evidence proves", () => {
+  const staged = renderToStaticMarkup(<HermesDeliveryRecoveryPanel recovery={{ source: "configured", status: {
+    state: "terminal_result_staged", terminal: { terminalResultDigest: digest, contentDigest: digest, sizeBytes: 12,
+      inputTokens: 4, outputTokens: 5, totalTokens: 9, durationMs: 8 },
+    startsWork: false, grantsExecutionAuthority: false, permitsRetry: false, permitsResume: false,
+  } }} />);
+  assert.match(staged, /Terminal result safely staged/);
+  assert.match(staged, /text and private runner settings are not shown/i);
+  assert.match(staged, /cannot start, retry, resume, publish, or contact Hermes/i);
+  assert.doesNotMatch(staged, /<button|<form|Start Hermes|Retry Hermes|Resume Hermes/);
+  const ambiguous = renderToStaticMarkup(<HermesDeliveryRecoveryPanel recovery={{ source: "ambiguous_attempt" }} />);
+  assert.match(ambiguous, /will not guess which delivery record to inspect/i);
+});
 
 test("a prepared task shows only its safe worker category and no assignment claim", () => {
   for (const [preparedFor, label] of [["hermes", "Hermes Agent"], ["codex", "Codex"], ["claude", "Claude Code"],
