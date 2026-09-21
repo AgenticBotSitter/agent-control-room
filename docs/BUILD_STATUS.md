@@ -141,9 +141,12 @@ database, browser login, backup, persistent service or remote machine.
    round is complete. A protected first-round proposal operation now loads a
    saved discussion and creates those ordinary tasks without contacting a
    provider. It does not schedule, assign, contact a worker, or replace the
-   legacy direct fixture. The next source package mounts that operation in the
-   private application, then adds canonical result projection and retires the
-   direct production start composition.
+   legacy direct fixture. The private-page bridge is now complete: the owner
+   chooses an existing active project and prepares ordinary first-round tasks
+   without provider contact, assignment or launch. The page reads durable task
+   links after a refresh, so it shows the prepared project rather than offering
+   a second start. The next source package adds canonical result projection and
+   retires the direct production start composition.
 
 ## Owner-operated gates before any real local worker is enabled
 

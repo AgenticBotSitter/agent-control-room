@@ -4,6 +4,7 @@ import { buildIdeaLabFixtureV1 } from "../src/idea-lab/v1/fixture";
 import { buildIdeaLabSessionV1 } from "../src/idea-lab/v1/contracts";
 import { IdeaLabProjectRegistryStoreV1 } from "../src/idea-lab/v1/store";
 import { WebIdeaRoundProposalOperation } from "../src/web/v1/idea-round-proposal-operation";
+import { WebIdeaService } from "../src/web/v1/idea-service";
 import { WebAccessError } from "../src/web/v1/access-verifier";
 import { taskFixture } from "./helpers/web-task";
 import { now } from "./helpers/web-foundation";
@@ -27,6 +28,10 @@ test("an owner prepares first-round Idea Lab tasks without contacting a provider
     { sessionDigest: session.sessionDigest, projectId: f.project.projectId, round: 1 });
   assert.equal(replay.receipts.every(item => item.replayed), true);
   assert.equal((await f.tasks.list(f.identity, f.project.projectId)).tasks.length, session.participants.length);
+  const detail = await new WebIdeaService(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, key,
+    () => now, true, false, false, true, false).detail(f.identity, session.sessionId);
+  assert.deepEqual(detail.canonicalTasks, { projectId: f.project.projectId, taskCount: session.participants.length, preparedRounds: [1] });
+  assert.equal(detail.canStart, false);
   await assert.rejects(operation.propose(f.identity, session.sessionId,
     { sessionDigest: session.sessionDigest, projectId: "project:other", round: 1 }), WebAccessError);
 });

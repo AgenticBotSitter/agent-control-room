@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { catalogProjectIdSchema as id } from "./project-wire";
+import { taskCommandSchema } from "./task-wire";
 import { ideaOwnerIntentSchemaV1 } from "../../idea-lab/v1/schemas";
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/), text = z.string().min(1).max(2000);
 export const ideaParticipantSelectionSchema = z.array(z.object({ participantId: id, participantDigest: digest }).strict())
@@ -36,6 +37,15 @@ export const ideaStartReceiptSchema = z.object({ sessionId: id, sessionDigest: d
   replayed: z.boolean(), providerContacted: z.boolean(), retryPermitted: z.literal(false),
 }).strict();
 export type IdeaStartReceipt = z.infer<typeof ideaStartReceiptSchema>;
+/**
+ * Preparing an Idea Lab round only creates ordinary proposed tasks. It never
+ * contacts a provider, assigns a worker, or starts work from the browser.
+ */
+export const ideaRoundProposalDraftSchema = z.object({ sessionDigest: digest, projectId: id, round: z.literal(1) }).strict();
+export const ideaRoundProposalReceiptSchema = z.object({ sessionId: id, sessionDigest: digest, projectId: id,
+  round: z.literal(1), receipts: z.array(taskCommandSchema).min(3).max(6), startsWork: z.literal(false),
+}).strict().refine(value => value.receipts.every(item => item.receipt.projectId === value.projectId));
+export type IdeaRoundProposalReceipt = z.infer<typeof ideaRoundProposalReceiptSchema>;
 export const ideaSynthesisDraftSchema = z.object({ sessionDigest: digest, runId: id }).strict();
 export const ideaSynthesisReceiptSchema = z.object({ sessionId: id, sessionDigest: digest, runId: id, synthesisDigest: digest,
   replayed: z.boolean(), startsWork: z.literal(false) }).strict();
@@ -77,10 +87,11 @@ run: z.object({ runId: id, sessionId: id, sessionDigest: digest,
 decision: z.object({ sessionId: id, sessionDigest: digest, synthesisDigest: digest,
   decision: z.enum(["create_project", "save", "reject"]), project: z.object({ projectId: id }).optional(),
 }).nullable(), canSynthesize: z.boolean(), canStart: z.boolean(), canStop: z.boolean(), canDecide: z.boolean(), canPromote: z.boolean(), execution: z.enum(["not_configured", "authorization_required"]), observedAt: z.string().datetime(),
+canonicalTasks: z.object({ projectId: id, taskCount: z.number().int().min(3).max(18), preparedRounds: z.array(z.number().int().min(1).max(3)).min(1).max(3) }).strict().nullable(),
 }).strict().refine(value => {
-  const { session, contributions, synthesis, decision, run } = value;
+  const { session, contributions, synthesis, decision, run, canonicalTasks } = value;
   return new Set(contributions.map(c => `${c.round}:${c.participantId}`)).size === contributions.length
-    && (!value.canStart || value.execution === "authorization_required" && !run && !synthesis && !decision && !contributions.length)
+    && (!value.canStart || value.execution === "authorization_required" && !run && !synthesis && !decision && !contributions.length && !canonicalTasks)
     && (!value.canSynthesize || !!run && run.state === "completed" && !synthesis && !decision
       && contributions.length === session.maxRounds * session.participants.length)
     && (!value.canPromote || value.canDecide)
@@ -95,6 +106,9 @@ decision: z.object({ sessionId: id, sessionDigest: digest, synthesisDigest: dige
       && c.round <= session.maxRounds && session.participants.some(p => p.participantId === c.participantId))
     && contributions.every(c => c.sourceMode === "provider_filtered" ? c.providerContacted && c.liveBotContactAuthorized
       : !c.providerContacted && !c.liveBotContactAuthorized)
+    && (!canonicalTasks || !run && !synthesis && !decision && !contributions.length
+      && canonicalTasks.taskCount >= session.participants.length && canonicalTasks.taskCount <= session.maxMessages
+      && canonicalTasks.preparedRounds.every(round => round <= session.maxRounds))
     && (!synthesis || synthesis.sessionId === session.sessionId && synthesis.sessionDigest === session.sessionDigest)
     && (!decision || !!synthesis && decision.sessionId === session.sessionId && decision.sessionDigest === session.sessionDigest
       && decision.synthesisDigest === synthesis.synthesisDigest && (decision.decision === "create_project") === !!decision.project);
