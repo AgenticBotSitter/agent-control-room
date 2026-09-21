@@ -29,6 +29,12 @@ worker, move the database or perform a change by itself; the future controller
 will use it as its durable checklist rather than treating a setup screen as a
 successful transition.
 
+The local setup interface can use a matching read-only summary. It shows only
+the transition stage and how many workers are affected, with plain language
+about the next safe step. It intentionally omits worker names, locations,
+evidence fingerprints and private configuration; it cannot turn a status
+display into worker enablement or database relocation.
+
 The first local adapter being completed is a bounded Hermes Agent text task.
 Codex and Claude Code have the same project/task/result/review contract but
 still require their own installed-process qualifications. No adapter is made
