@@ -3,7 +3,7 @@ import { isAbsolute, relative, resolve } from "node:path";
 import type { DatabaseClient } from "../../../persistence/database";
 import { sha256Digest } from "../../../security";
 import { createAccessVerifier, cloudflareAccessGatewayAssertionProfileV1, requireSameOrigin,
-  type AccessTrust } from "../access-verifier";
+  captureGatewayAssertionProviderProfileV1, type AccessTrust, type GatewayAssertionProviderProfileV1 } from "../access-verifier";
 import { privateResponseHeaders, readBoundedJson } from "../http-common";
 import { createPrivateOwnerBootstrap, type PrivateOwnerBootstrapConfiguration } from "../private-owner-bootstrap";
 
@@ -45,6 +45,8 @@ export interface OwnerBootstrapLifecycleStoreV1 {
 export interface OwnerBootstrapCeremonyConfigurationV1 {
   origin: string;
   trust: AccessTrust;
+  /** Trusted deployment-selected assertion mapping. The browser never selects it. */
+  gatewayAssertionProfile?: GatewayAssertionProviderProfileV1;
   owner: PrivateOwnerBootstrapConfiguration;
   database: DatabaseClient;
   runtimeDirectory: string;
@@ -116,9 +118,14 @@ export function createOwnerBootstrapCeremonyV1(config: OwnerBootstrapCeremonyCon
     || !isAbsolute(config.socketPath) || !Number.isSafeInteger(config.serviceUid) || config.serviceUid < 0
     || !Number.isSafeInteger(config.operatorUid) || config.operatorUid < 0
     || !Number.isSafeInteger(controlDeadlineMs) || controlDeadlineMs < 1 || controlDeadlineMs > 2000) unavailable();
-  const verify = createAccessVerifier(config.trust, cloudflareAccessGatewayAssertionProfileV1);
+  const profile = captureGatewayAssertionProviderProfileV1(
+    config.gatewayAssertionProfile ?? cloudflareAccessGatewayAssertionProfileV1,
+  );
+  const verify = createAccessVerifier(config.trust, profile);
   const clock = config.clock ?? Date.now, entropy = config.random ?? (size => randomBytes(size));
-  const bootstrap = createPrivateOwnerBootstrap(config.owner, config.trust, { database: config.database, clock });
+  const bootstrap = createPrivateOwnerBootstrap(config.owner, config.trust, {
+    database: config.database, clock, gatewayAssertionProfile: profile,
+  });
   const shutdown = new AbortController(); let closed = false;
   let state: "checking" | "idle" | "arming" | "armed" | "consuming" | "complete" | "terminal" = "checking";
   let codeDigest: string | undefined, expiresAt = 0, highWater = -1;
@@ -218,7 +225,7 @@ export function createOwnerBootstrapCeremonyV1(config: OwnerBootstrapCeremonyCon
         if (code.length !== 43 || !codeDigest || !equal(sha256Digest({ code }), codeDigest)) unavailable();
         if (state !== "armed") unavailable();
         if (now() >= expiresAt) { terminal(); unavailable(); }
-        const assertion = request.headers.get(cloudflareAccessGatewayAssertionProfileV1.assertionHeader) ?? unavailable();
+        const assertion = request.headers.get(profile.assertionHeader) ?? unavailable();
         state = "consuming"; ownsConsumption = true; codeDigest = undefined;
         await bootstrap.bootstrap(assertion, operation.signal);
         if (closed || operation.signal.aborted || state !== "consuming") unavailable();

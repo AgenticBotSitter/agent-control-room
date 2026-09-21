@@ -48,3 +48,22 @@ test("verified assertion and exact code create one owner while races, replay, an
   assert.equal(await x.ceremony.route(x.browser()).then(value => value?.status), 404);
   assert.equal(x.ceremony.isBootstrapOnly(), false);
 });
+
+test("a deployment-selected RS256 assertion header can bootstrap, while a Cloudflare header cannot override it", async t => {
+  const profile = {
+    schema: "control-room.gateway-assertion-provider/v1" as const,
+    profileId: "rs256_gateway_assertion" as const,
+    algorithm: "RS256" as const,
+    assertionHeader: "x-owner-gateway-assertion",
+    claimContract: "standard_gateway_subject" as const,
+    subjectClaim: "sub" as const, audienceClaim: "aud" as const, issuerClaim: "iss" as const,
+    mfaPolicy: "gateway_policy_external" as const,
+  };
+  const x = await prepared(undefined, undefined, { gatewayAssertionProfile: profile }); t.after(() => x.raw.close());
+  await x.ceremony.arm(x.attempt());
+  assert.equal((await x.ceremony.route(new Request(`${origin}/api/v1/owner-bootstrap`, {
+    method: "POST", headers: { origin, "sec-fetch-site": "same-origin", "content-type": "application/json",
+      "cf-access-jwt-assertion": token() }, body: JSON.stringify({ code: x.code() }),
+  })))?.status, 503);
+  assert.equal((await x.ceremony.route(x.browser()))?.status, 201);
+});
