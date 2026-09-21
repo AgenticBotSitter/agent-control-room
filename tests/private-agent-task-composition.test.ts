@@ -24,6 +24,7 @@ import { createPrivateTaskHost } from "../src/web/v1/private-task-host";
 import { startPrivateHostLifecycle } from "../src/web/v1/private-host-lifecycle";
 import { bindPrivateCodexResultReturnV1, validatePrivateTaskStartupConfiguration,
   type PrivateTaskStartupConfiguration } from "../src/web/v1/private-task-startup";
+import { createTaskCoordinatorLifecycle, type TaskCoordinatorConfiguration } from "../src/web/v1/task-coordinator-lifecycle";
 import { privateArtifactStorageNamespaceDigestV1 } from "../src/web/v1/private-artifact-storage";
 import { instant } from "./hermes-native-fixture";
 import { privateAgentTaskCompositionFixture } from "./helpers/private-agent-task-composition";
@@ -717,24 +718,19 @@ test("idea runtime database password and majorVersion must match the declared ro
     assemblePrivateAgentTaskOperatorConfiguration(settings, trusted);
   }, /idea_runtime_role_mismatch:password/);
 
-  // Same declared and trusted password + matching majorVersion passes through
-  // the assembler and the production gate (the matching role case is also
-  // covered by the dedicated happy-path test below).
+  // A matching legacy runtime can still be represented by the isolated
+  // operator fixture, but the production startup boundary must refuse it.
+  // Idea Lab now plans ordinary tasks instead of directly contacting a
+  // provider from the web process.
   const match = buildBase({ trustedPassword: "declared-secret" });
-  const composed = assemblePrivateAgentTaskOperatorConfiguration(match.settings, match.trusted);
-  assert.equal(composed.configuration.coordinator.ideaRuntime!.database.username, "idea_runtime_match");
+  assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(match.settings, match.trusted),
+    /agent_task_operator_config_invalid:production_gate_refused/);
 });
 
-test("idea runtime database positive matching-role case passes through the production gate", async () => {
+test("matching legacy Idea runtime is refused by the production startup gate", async () => {
   const { settings, trusted } = operatorConfigurationScenario("minimal");
-  // Enable idea with a fully matching role: declared and trusted share the
-  // same host/port/database/username/password/majorVersion. The assembler
-  // accepts and the captured configuration carries the runtime identity
-  // exactly as declared. The minimal scenario's `web` profile does not
-  // include `ideaProjects` — add one here so the production gate can
-  // cross-check the creation/runtime integrity keys, and supply three
-  // structurally valid participants so `ideaCreation` parses through the
-  // shared schema.
+  // Build an otherwise matching legacy runtime. This proves the refusal is
+  // policy-driven, rather than caused by a malformed role or participant.
   const ideaKey = new Uint8Array(32).fill(21);
   const webWithIdea = { ...(trusted.web as Record<string, unknown>),
     ideaProjects: { integrityKey: ideaKey } } as unknown as typeof trusted.web;
@@ -776,16 +772,16 @@ test("idea runtime database positive matching-role case passes through the produ
       },
     },
   };
-  const composed = assemblePrivateAgentTaskOperatorConfiguration(settings, newTrusted);
-  // The captured configuration MUST carry the runtime identity exactly as
-  // declared. Every connection field matches, so the operator record and the
-  // runtime contract agree on what gets connected and under what credentials.
-  assert.equal(composed.configuration.coordinator.ideaRuntime!.database.username, "idea_runtime_match");
-  assert.equal(composed.configuration.coordinator.ideaRuntime!.database.password, "shared-secret");
-  assert.equal(composed.configuration.coordinator.ideaRuntime!.database.majorVersion, 17);
-  assert.equal(composed.configuration.coordinator.ideaRuntime!.database.host, "127.0.0.1");
-  assert.equal(composed.configuration.coordinator.ideaRuntime!.database.port, 5433);
-  assert.equal(composed.configuration.coordinator.ideaRuntime!.database.database, "controlroomtest");
+  assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(settings, newTrusted),
+    /agent_task_operator_config_invalid:production_gate_refused/);
+});
+
+test("direct Idea runtime is refused by the lower-level production assembly before any resource is read", () => {
+  // This deliberately omits every other lifecycle field. The guard must run
+  // first, so an accidental alternate bootstrap cannot validate or acquire a
+  // pool before refusing the deprecated direct-provider path.
+  assert.throws(() => createTaskCoordinatorLifecycle({ ideaRuntime: {} } as TaskCoordinatorConfiguration),
+    /task_coordinator_config_invalid/);
 });
 
 test("idea runtime database must match the declared ideaRuntime role", async () => {

@@ -88,6 +88,10 @@ export type TaskCoordinatorConfiguration = {
  * listener, credential loading, approval or dispatch. The supplying bootstrap must verify the pool.
  */
 export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfiguration) {
+  // Direct Idea Lab provider execution is retained only by isolated legacy
+  // fixtures. Production composition must create ordinary participant tasks
+  // and use the shared delivery, result, review, and correction lifecycle.
+  if (input.ideaRuntime !== undefined) throw new Error("task_coordinator_config_invalid");
   const scope = Object.freeze({ tenantId: localId.parse(input.scope.tenantId), workspaceId: localId.parse(input.scope.workspaceId) });
   const maxActive = input.maxActive ?? 8, drainMs = input.drainMs ?? 30_000, closeMs = input.closeMs ?? 5000;
   for (const [value, ceiling] of [[maxActive, 8], [drainMs, 30_000], [closeMs, 5000]])

@@ -308,9 +308,10 @@ database, browser login, backup, persistent service or remote machine.
    be rechecked server-side before ordinary next-round tasks can be prepared.
    Once every canonical task result is reviewed and verified, the owner can
    save an extractive recap from those protected records; no browser-supplied
-   evidence or new provider call is involved. The direct provider panel remains
-   for retained legacy discussions only and must be retired after the ordinary
-   task route proves a full owner-operated journey.
+   evidence or new provider call is involved. Direct-provider Idea Lab code is
+   retained only as an isolated legacy test fixture: private application
+   startup now refuses that configuration, so it cannot become a production
+   delivery route.
 
 ## Owner-operated gates before any real local worker is enabled
 

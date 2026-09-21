@@ -111,6 +111,11 @@ export function bindPrivateCodexResultReturnV1(settings: CodexResultIntakeSettin
 }
 export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartupConfiguration) {
   try {
+    // Idea Lab may plan and project ordinary Control Room tasks, but its
+    // deprecated direct-provider runtime is never a production startup
+    // option. Refuse it before copying callbacks or validating/opening any
+    // resource so an operator cannot accidentally restore the bypass route.
+    if (input.coordinator.ideaRuntime !== undefined) throw new Error();
     const preparedLocalAdapters = input.preparedLocalAdapters === undefined ? undefined
       : captureLocalAdapterInstallationPortsV1(input.preparedLocalAdapters);
     const artifactStorage = input.artifactStorage
