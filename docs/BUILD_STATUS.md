@@ -233,6 +233,15 @@ evidence only: it enables no worker, database, listener or persistent service.
   records. A caller cannot bypass the protected setup and operator-assembly
   checks by supplying a bare local Hermes callback. This remains source-only:
   it starts neither Hermes nor a persistent service.
+- The local service package can now render one fixed-argument macOS background
+  service definition without installing or starting it. It contains no shell,
+  credentials, task text, agent model, or retry policy. A later owner step must
+  still supply the real protected configuration and explicitly install it.
+- The first-owner ceremony now honors the same deployment-selected login
+  assertion profile as the normal website. It rejects a Cloudflare header when
+  the installation instead selected the supported fixed RS256 gateway profile.
+  This fixes a source-level login mismatch; it does not create a database,
+  socket, account, or web service.
 - The protected startup capture now freezes the exact local backup proof after
   it verifies its match to the saved readiness record. A later mutation of a
   caller-owned object cannot change what the application treats as checked.
@@ -262,14 +271,19 @@ database, browser login, backup, persistent service or remote machine.
    captures and validates this composition without browser-controlled inputs;
    it cannot choose private settings, create a database, start a service, or
    enable Hermes by itself.
-2. Add qualified installed-process host compositions for Codex and Claude Code
+2. Complete the fresh-install first-owner package: a durable local ceremony
+   marker, bootstrap-only server composition, narrow database capability and
+   reviewed Linux peer-credential control channel. The present ceremony core is
+   tested but deliberately cannot create that operating-system control socket
+   or start normal application routes on a fresh database.
+3. Add qualified installed-process host compositions for Codex and Claude Code
    below their existing result/review contracts. They must not become another
    scheduler, database or permission system.
-3. Add capability-aware progress, usage, result, correction and attention
+4. Add capability-aware progress, usage, result, correction and attention
    presentation wherever the authoritative source provides those facts.
-4. Continue remote worker enrollment, compatibility, reconnect, revocation and
+5. Continue remote worker enrollment, compatibility, reconnect, revocation and
    two-node source preparation under the same controller delivery contract.
-5. Move Idea Lab participant rounds from its legacy direct fake coordinator
+6. Move Idea Lab participant rounds from its legacy direct fake coordinator
    into the same canonical task, delivery, result, review and correction path
    already used by schedules and news/research. The accepted source decision
    is [IDEA_LAB_CANONICAL_LIFECYCLE_DECISION.md](IDEA_LAB_CANONICAL_LIFECYCLE_DECISION.md).
