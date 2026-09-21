@@ -237,6 +237,7 @@ test('portable activation starts once and recovery reads only the durable thread
   assert.deepEqual(initial.effects, ['create-workspace']); assert.equal(initial.opened(), 1); assert.equal(initial.closed(), 1);
   assert.equal(started.canonicalPublicationAllowed, false); assert.equal(started.writesResult, false);
   assert.equal(starts.load(f.workspaceIntent.runId).status, 'recorded');
+  assert.equal(starts.load(f.workspaceIntent.runId).cleanupVerified, true);
   const recovery = recoverHost(starts, completedResult([
     { type: 'agentMessage', id: 'item:commentary', phase: 'commentary', text: 'ignore me' },
     { type: 'reasoning', id: 'item:reasoning', text: 'do not expose' },

@@ -17,7 +17,7 @@ import type { SqliteBridgeJournal } from '../../node-bridge/journal';
 type BridgeJournal = Pick<SqliteBridgeJournal,
   'acceptedCodexActivation' | 'reserveWorkspaceIntent' | 'recordWorkspaceRoots' | 'recordWorkspaceCreation'
   | 'reserveWorkspaceRemoval' | 'recordWorkspaceRemoved'>;
-type StartJournal = Pick<SqliteCodexStartJournalV1, 'reserveStart' | 'recordThread' | 'recordTurn' | 'load'>;
+type StartJournal = Pick<SqliteCodexStartJournalV1, 'reserveStart' | 'recordThread' | 'recordTurn' | 'recordCleanup' | 'load'>;
 
 interface CommonHostInputV1 {
   runId: string;

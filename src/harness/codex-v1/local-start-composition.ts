@@ -13,7 +13,7 @@ import { parseWorkspaceIntent } from '../../node-bridge/workspace-intent';
 type BridgeStartJournal = Pick<SqliteBridgeJournal,
   'acceptedCodexActivation' | 'reserveWorkspaceIntent' | 'recordWorkspaceRoots' | 'recordWorkspaceCreation'
   | 'reserveWorkspaceRemoval' | 'recordWorkspaceRemoved'>;
-type StartJournal = Pick<SqliteCodexStartJournalV1, 'reserveStart' | 'recordThread' | 'recordTurn'>;
+type StartJournal = Pick<SqliteCodexStartJournalV1, 'reserveStart' | 'recordThread' | 'recordTurn' | 'recordCleanup'>;
 
 const unavailable = (): never => { throw new Error('codex_local_start_composition_unavailable'); };
 
@@ -66,6 +66,7 @@ export function createCodexLocalStartCompositionV1(input: {
     reserveStart: input.startJournal.reserveStart.bind(input.startJournal),
     recordThread: input.startJournal.recordThread.bind(input.startJournal),
     recordTurn: input.startJournal.recordTurn.bind(input.startJournal),
+    recordCleanup: input.startJournal.recordCleanup.bind(input.startJournal),
   };
   const workspacePort: ObservableGitWorkspacePort = Object.freeze({
     inspectRootIdentities: input.workspacePort.inspectRootIdentities.bind(input.workspacePort),
@@ -93,7 +94,7 @@ export function createCodexLocalStartCompositionV1(input: {
     activationEvidence: bridge,
     authority,
     reservation: { reserveExactStart: starts.reserveStart },
-    receipts: { recordThread: starts.recordThread, recordTurn: starts.recordTurn },
+    receipts: { recordThread: starts.recordThread, recordTurn: starts.recordTurn, recordCleanup: starts.recordCleanup },
     workspace: { async prepare(binding, assertCurrent) {
       assertWorkspaceBinding(binding, intent);
       const port = journaledWorkspacePort({ port: workspacePort, journal: bridge, intent, assertCurrent });
