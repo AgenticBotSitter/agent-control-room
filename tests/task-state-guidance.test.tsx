@@ -63,8 +63,15 @@ test("local Hermes recovery tells the owner only what saved evidence proves", ()
   } }} />);
   assert.match(staged, /Terminal result safely staged/);
   assert.match(staged, /text and private runner settings are not shown/i);
+  assert.match(staged, /Saved result size/);
+  assert.match(staged, />12 bytes</);
+  assert.match(staged, /Reported tokens/);
+  assert.match(staged, />9</);
+  assert.match(staged, /Reported duration/);
+  assert.match(staged, />8 ms</);
   assert.match(staged, /cannot start, retry, resume, publish, or contact Hermes/i);
   assert.doesNotMatch(staged, /<button|<form|Start Hermes|Retry Hermes|Resume Hermes/);
+  assert.doesNotMatch(staged, /sha256:|session:/);
   const ambiguous = renderToStaticMarkup(<HermesDeliveryRecoveryPanel recovery={{ source: "ambiguous_attempt" }} />);
   assert.match(ambiguous, /will not guess which delivery record to inspect/i);
 });

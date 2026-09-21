@@ -133,7 +133,10 @@ export function HermesDeliveryRecoveryPanel({ recovery }: { recovery: HermesDeli
     terminal_result_staged: "Terminal result safely staged" } as const;
   return <section className="private-panel" aria-label="Local Hermes recovery"><h2>Local Hermes recovery</h2>
     <p className="private-state">{labels[recovery.status.state]}</p>
-    {recovery.status.state === "terminal_result_staged" && <p>A bounded terminal record is saved for recovery. Its text and private runner settings are not shown here.</p>}
+    {recovery.status.state === "terminal_result_staged" && <><p>A bounded terminal record is saved for recovery. Its text and private runner settings are not shown here.</p>
+      {recovery.status.terminal && <dl className="private-task-facts"><div><dt>Saved result size</dt><dd>{recovery.status.terminal.sizeBytes.toLocaleString()} bytes</dd></div>
+        <div><dt>Reported tokens</dt><dd>{recovery.status.terminal.totalTokens.toLocaleString()}</dd></div>
+        <div><dt>Reported duration</dt><dd>{recovery.status.terminal.durationMs.toLocaleString()} ms</dd></div></dl>}</>}
     {recovery.status.state !== "terminal_result_staged" && <p>This is a saved-delivery check only. It does not prove that Hermes is running or that a result was published.</p>}
     <p className="private-note">This panel cannot start, retry, resume, publish, or contact Hermes.</p>
   </section>;
