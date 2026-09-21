@@ -94,8 +94,16 @@ export async function executeAssignedHermes021MacosTaskV1(config: Hermes021Macos
     lifecycle.push(event);
   };
   if (registered.run.state === "discovered") await append({ category: "lifecycle", state: "starting" });
-  const delivered = await deliverHermes021MacosLocalTaskV1({ ...config.delivery, policy: perTaskPolicy }, prepared.delivery,
-    prepared.route, receivedAt, signal);
+  const delivered = await deliverHermes021MacosLocalTaskV1({ ...config.delivery, policy: perTaskPolicy,
+    recheckBeforeLaunch: async (candidate, route, launchSignal) => {
+      if (launchSignal?.aborted || candidate.deliveryDigest !== prepared.delivery.deliveryDigest
+        || route.kind !== prepared.route.kind || route.workerId !== prepared.route.workerId) unavailable();
+      // This is intentionally the last asynchronous check before the private
+      // port can invoke Hermes. It rereads the current task, lease and
+      // authority rather than trusting the earlier packet-derived policy.
+      await config.preparation.assertCurrent(referenceValue, prepared);
+      if (launchSignal?.aborted) unavailable();
+    } }, prepared.delivery, prepared.route, receivedAt, signal);
   if (isTerminalHarnessRunState(registered.run.state)) {
     // Recovery is evidence retrieval, not a second lifecycle. A succeeded run
     // may expose the exact staged terminal result so durable publication can

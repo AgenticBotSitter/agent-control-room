@@ -19,6 +19,11 @@ export type Hermes021MacosLocalDeliveryCompositionV1 = Readonly<{
   binding: z.infer<typeof hermes021MacosLocalBindingSchemaV1>;
   policy: Hermes021MacosTaskPolicyPortV1;
   privatePort: Hermes021MacosLocalPrivatePortV1;
+  /** Installation-owned canonical recheck from the assigned queue path. It
+   * runs after the receipt is durable and immediately before the private
+   * runner, so a revoked lease cannot cross the process boundary. */
+  recheckBeforeLaunch?: (delivery: ControllerWorkerDeliveryV1, route: ControllerWorkerRouteV1,
+    signal?: AbortSignal) => Promise<void>;
   /** Optional until the installation-owned runner has been upgraded to stage terminal bytes. */
   terminalResultStorage?: ArtifactStoragePortV1 & ArtifactReadPortV1;
 }>;
@@ -56,6 +61,11 @@ export async function deliverHermes021MacosLocalTaskV1(config: Hermes021MacosLoc
         terminalResult: terminal, terminalResultDigest: sha256Digest(terminal) }), startsWork: false as const, grantsExecutionAuthority: false as const });
     return Object.freeze({ delivery, receipt: persisted.receipt, state: "already_delivered" as const,
       startsWork: false as const, grantsExecutionAuthority: false as const });
+  }
+  if (config.recheckBeforeLaunch !== undefined) {
+    if (typeof config.recheckBeforeLaunch !== "function" || signal?.aborted) unavailable();
+    await config.recheckBeforeLaunch(delivery, route, signal);
+    if (signal?.aborted) unavailable();
   }
   const outcome: Hermes021MacosTaskOutcomeV1 = await runAdmittedHermes021MacosLocalTaskV1(delivery, route, binding,
     config.policy, config.privatePort, signal, terminalStage);

@@ -56,7 +56,7 @@ test("a Marvin Hermes 0.21 template creates a pinned text-review plan, not an ol
   assert.notEqual(saved.schema, "control-room.task-execution-plan/v1");
 
   const route = { nodeId: binding.nodeId, executorId: authority.allowedExecutor,
-    capabilityProbeId: HERMES_021_MACOS_LOCAL_CAPABILITY_V1, maxConcurrentTasks: 2,
+    capabilityProbeId: HERMES_021_MACOS_LOCAL_CAPABILITY_V1, maxConcurrentTasks: 3,
     requiredScratchBytes: 100, leaseSeconds: 60 } as const;
   const signals = new FleetSignalStore(f.db);
   const nextSignalSequence = async (kind: "telemetry" | "capability", subject = "node") => {
@@ -144,9 +144,36 @@ test("a Marvin Hermes 0.21 template creates a pinned text-review plan, not an ol
     host: { async execute(input) {
       launches++;
       await input.onLine(JSON.stringify({ type: "result", session_id: "session:marvin", exit_code: 0, text: "completed", tokens: {
-        input: 1, output: 1, total: 2, cache_read: 0, cache_write: 0 }, duration_ms: 3, timestamp: instant + 9000 }));
+      input: 1, output: 1, total: 2, cache_read: 0, cache_write: 0 }, duration_ms: 3, timestamp: instant + 9000 }));
     } },
   });
+
+  // Revoke a different assignment after its first canonical check succeeds.
+  // The second, immediately-before-launch check must see that revocation and
+  // refuse before the private Hermes host can receive a task.
+  const revokedSource = await f.tasks.propose(f.identity, binding.projectId, taskDraft, "marvin-021-revocation-source");
+  const revokedPlan = await planner.plan(f.identity, binding.projectId, revokedSource.receipt.jobId,
+    sha256Digest(taskDraft));
+  const revokedAssigned = await assignments.assign(f.identity, binding.projectId, revokedPlan.receipt.jobId,
+    binding.nodeId, revokedPlan.receipt.inputDigest);
+  const revokedDispatcher = new Hermes021MacosDispatchPreparationV1(f.db, planner, localBinding, () => deliveryNow);
+  const originalCurrent = revokedDispatcher.assertCurrent.bind(revokedDispatcher);
+  let currentChecks = 0;
+  revokedDispatcher.assertCurrent = async (reference, prepared) => {
+    await originalCurrent(reference, prepared);
+    if (++currentChecks === 1) {
+      await f.db.query(`UPDATE control_leases SET state='released', payload=jsonb_set(payload,'{state}',to_jsonb('released'::text))
+        WHERE tenant_id=$1 AND id=$2`, [binding.tenantId, revokedAssigned.receipt.leaseId]);
+    }
+  };
+  await assert.rejects(() => executeAssignedHermes021MacosTaskV1({ ...localExecutor.execution,
+    preparation: revokedDispatcher }, { tenantId: binding.tenantId, projectId: binding.projectId,
+    jobId: revokedPlan.receipt.jobId, attemptId: revokedAssigned.receipt.attemptId,
+    leaseId: revokedAssigned.receipt.leaseId, inputDigest: revokedPlan.receipt.inputDigest }),
+  /hermes_021_macos_dispatch_preparation_unavailable/);
+  assert.equal(currentChecks, 1, "the initial check passed and revoked the lease before the launch fence");
+  assert.equal(launches, 0, "a post-check lease revocation cannot reach the private Hermes host");
+
   let queuedWorkerHandler!: Parameters<PgBossNativeWorkerClient["work"]>[2];
   let workerStopped = 0;
   const queue = { name: PG_BOSS_NATIVE_SUBMISSION.name, table: PG_BOSS_NATIVE_SUBMISSION.table, policy: "standard" as const,
