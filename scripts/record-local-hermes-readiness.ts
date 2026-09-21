@@ -11,6 +11,7 @@ import { readFile } from "node:fs/promises";
 import {
   recordHermes021MacosLocalQualificationReadinessV1,
   recordHermes021MacosLocalRunnerQualificationReadinessV1,
+  recordLocalBackupRestoreReadinessV1,
 } from "../src/harness/hermes-021-v1/installation-readiness-record";
 
 const args = process.argv.slice(2).filter(value => value !== "--");
@@ -27,7 +28,7 @@ function valueFor(field: Field): string | undefined {
 const values = Object.fromEntries(fields.map(field => [field, valueFor(field)])) as Record<Field, string | undefined>;
 const known = new Set<string>([...fields, ...Object.values(values).filter((value): value is string => Boolean(value))]);
 const kind = values["--kind"];
-const valid = args.every(value => known.has(value)) && (kind === "text" || kind === "runner")
+const valid = args.every(value => known.has(value)) && (kind === "text" || kind === "runner" || kind === "backup")
   && Boolean(values["--plan"]) && Boolean(values["--report"]);
 
 async function readJson(path: string): Promise<unknown> {
@@ -39,7 +40,7 @@ async function readJson(path: string): Promise<unknown> {
 }
 
 if (!valid) {
-  console.error("Usage: node --import tsx scripts/record-local-hermes-readiness.ts --kind text|runner --plan PLAN_JSON --report REPORT_JSON [--readiness READINESS_JSON]");
+  console.error("Usage: node --import tsx scripts/record-local-hermes-readiness.ts --kind text|runner|backup --plan PLAN_JSON --report REPORT_JSON [--readiness READINESS_JSON]");
   process.exitCode = 2;
 } else {
   try {
@@ -49,7 +50,9 @@ if (!valid) {
     ]);
     const readiness = kind === "text"
       ? recordHermes021MacosLocalQualificationReadinessV1(plan, report, existing)
-      : recordHermes021MacosLocalRunnerQualificationReadinessV1(plan, report, existing);
+      : kind === "runner"
+        ? recordHermes021MacosLocalRunnerQualificationReadinessV1(plan, report, existing)
+        : recordLocalBackupRestoreReadinessV1(plan, report, existing);
     // Readiness contains only a plan digest, proof names/states and evidence
     // digests. It cannot disclose the report or a private runner setting.
     console.log(JSON.stringify(readiness, null, 2));
