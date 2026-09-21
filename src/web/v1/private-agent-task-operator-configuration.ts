@@ -286,7 +286,7 @@ function captureWebTasks(input: unknown): Readonly<{
  * service references (`secondaryAccess`, `gatewayAssertionProfile`,
  * `herdrObservations`, `newsCollections`, `ideaCreation`, `connections`,
  * `productConfiguration`, `installationTopologyPlan`, `installationReadiness`, `localBackupRestoreReadiness`,
- * `codexMacosCustodyReadiness`, `ideaProjects`, `news`); those trusted callbacks
+ * `codexMacosCustodyReadiness`, `claudeCodeLocalProcessReadiness`, `ideaProjects`, `news`); those trusted callbacks
  * must be preserved as frozen references, not deep-cloned. The `tasks`
  * field is captured through `captureWebTasks` because the production gate
  * accepts it as a structurally valid object with any prototype. Every
@@ -317,6 +317,8 @@ function captureWebProfile(input: PrivateStartupConfiguration): PrivateStartupCo
       localBackupRestoreReadiness: deepDetach(input.localBackupRestoreReadiness) }),
     ...(input.codexMacosCustodyReadiness === undefined ? {} : {
       codexMacosCustodyReadiness: deepDetach(input.codexMacosCustodyReadiness) }),
+    ...(input.claudeCodeLocalProcessReadiness === undefined ? {} : {
+      claudeCodeLocalProcessReadiness: deepDetach(input.claudeCodeLocalProcessReadiness) }),
     ...(input.connections === undefined ? {} : { connections: deepDetach(input.connections) }),
     ...(input.tasks === undefined ? {} : { tasks: captureWebTasks(input.tasks) }),
   };

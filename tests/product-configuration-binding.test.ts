@@ -6,6 +6,7 @@ import { createPrivateWebProcess } from "../src/web/v1/private-process";
 import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
 import { createInstallationReadinessV1 } from "../src/harness/v1/installation-readiness";
 import { createCodexMacosCustodyReadinessV1 } from "../src/harness/codex-v1/macos-custody-readiness";
+import { createClaudeCodeLocalProcessReadinessV1 } from "../src/harness/claude-code-v1/local-process-readiness";
 import { createArtifactBackupInventoryV1, verifyRestoredArtifactBackupInventoryV1 } from "../src/artifacts/v1/artifact-backup-inventory";
 import { createLocalBackupRestoreReadinessV1 } from "../src/harness/v1/local-backup-restore-readiness";
 import { sha256Digest } from "../src/security/canonical-digest";
@@ -128,8 +129,13 @@ test("readiness is an authenticated non-secret view bound to its saved plan", as
     { proof: "suspended_executable_identity", state: "passed", evidenceDigest: sha256Digest("suspended") },
     { proof: "protected_private_state_handle", state: "passed", evidenceDigest: sha256Digest("private-state") },
   ] });
+  const claudeReadiness = createClaudeCodeLocalProcessReadinessV1({ planDigest: plan.planDigest, proofs: [
+    { proof: "installed_process_identity", state: "passed", evidenceDigest: sha256Digest("claude-identity") },
+    { proof: "permission_boundary", state: "passed", evidenceDigest: sha256Digest("claude-permission") },
+    { proof: "cancellation_and_restart_recovery", state: "passed", evidenceDigest: sha256Digest("claude-recovery") },
+  ] });
   const app = createPrivateWebProcess({ ...options(configuration("Topology", false), store.pool.client, store.pool.close),
-    installationTopologyPlan: plan, installationReadiness: readiness, codexMacosCustodyReadiness: custody });
+    installationTopologyPlan: plan, installationReadiness: readiness, codexMacosCustodyReadiness: custody, claudeCodeLocalProcessReadiness: claudeReadiness });
   t.after(() => app.close());
   const response = await app.handle(request("/api/v1/installation-readiness"), () => new Response("fallback", { status: 500 }));
   assert.equal(response.status, 200);
@@ -138,6 +144,8 @@ test("readiness is an authenticated non-secret view bound to its saved plan", as
   assert.equal(body.readiness.planDigest, plan.planDigest);
   assert.equal(body.codexMacosCustodyReadiness.planDigest, plan.planDigest);
   assert.equal(body.codexMacosCustodyReadiness.readinessDigest, custody.readinessDigest);
+  assert.equal(body.claudeCodeLocalProcessReadiness.planDigest, plan.planDigest);
+  assert.equal(body.claudeCodeLocalProcessReadiness.readinessDigest, claudeReadiness.readinessDigest);
   assert.equal(body.localBackupRestoreVerified, false);
   assert.equal((await app.handle(request("/api/v1/installation-readiness?x=1"), () => new Response("fallback", { status: 500 }))).status, 400);
 });

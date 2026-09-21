@@ -32,6 +32,7 @@ export function PrivateSettingsWorkspace() {
     <ProductConfigurationSummary configuration={configuration} />
     <InstallationTopologySummary plan={installationTopology?.plan} readiness={installationTopology?.readiness}
       codexMacosCustodyReadiness={installationTopology?.codexMacosCustodyReadiness}
+      claudeCodeLocalProcessReadiness={installationTopology?.claudeCodeLocalProcessReadiness}
       localBackupRestoreVerified={installationTopology?.localBackupRestoreVerified} status={installationTopology?.state} />
     <OwnerNotificationsWorkspace />
   </main></div>;

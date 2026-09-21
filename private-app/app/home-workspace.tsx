@@ -132,6 +132,7 @@ export function PrivateHome() {
       <button type="button" onClick={() => setGeneration(value => value + 1)}>Refresh dashboard</button></section>
     <InstallationTopologySummary plan={installationTopology?.plan} readiness={installationTopology?.readiness}
       codexMacosCustodyReadiness={installationTopology?.codexMacosCustodyReadiness}
+      claudeCodeLocalProcessReadiness={installationTopology?.claudeCodeLocalProcessReadiness}
       localBackupRestoreVerified={installationTopology?.localBackupRestoreVerified} status={installationTopology?.state} />
     <HomeDashboard data={data} />
     <PrivateOperatorCapacityWorkspace />

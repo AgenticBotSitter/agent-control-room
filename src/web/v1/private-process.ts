@@ -36,6 +36,7 @@ import { verifyInstallationTopologyPlanV1, type InstallationTopologyPlanV1 } fro
 import { verifyInstallationReadinessV1, type InstallationReadinessV1 } from "../../harness/v1/installation-readiness";
 import { localBackupRestoreEvidenceDigestForInstallationPlanV1 } from "../../harness/v1/local-backup-restore-readiness";
 import { verifyCodexMacosCustodyReadinessV1, type CodexMacosCustodyReadinessV1 } from "../../harness/codex-v1/macos-custody-readiness";
+import { verifyClaudeCodeLocalProcessReadinessV1, type ClaudeCodeLocalProcessReadinessV1 } from "../../harness/claude-code-v1/local-process-readiness";
 import { WebSessionAuthority } from "./session-authority";
 import { readProjectScheduleStatus } from "../../schedules/read-service";
 import { ProjectCoordinationHttpService, type ProjectCoordinationCanonicalStoreAdapter } from "./project-coordination-http";
@@ -67,6 +68,8 @@ export interface PrivateWebProcessOptions {
   localBackupRestoreReadiness?: unknown;
   /** Optional opaque Mac Codex custody proof record. It is display-only and cannot enable Codex. */
   codexMacosCustodyReadiness?: Readonly<CodexMacosCustodyReadinessV1>;
+  /** Optional opaque Claude local-process proof record. It is display-only and cannot enable Claude. */
+  claudeCodeLocalProcessReadiness?: Readonly<ClaudeCodeLocalProcessReadinessV1>;
   /** Explicit operations from the trusted collector composition. This process does
    * not create readers, worker pools, schedules or collection authority. */
   newsCollections?: readonly { tenantId: string; workspaceId: string; projectId: string; sourceId: string;
@@ -134,9 +137,13 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   })();
   const codexMacosCustodyReadiness = options.codexMacosCustodyReadiness === undefined ? undefined
     : verifyCodexMacosCustodyReadinessV1(options.codexMacosCustodyReadiness);
+  const claudeCodeLocalProcessReadiness = options.claudeCodeLocalProcessReadiness === undefined ? undefined
+    : verifyClaudeCodeLocalProcessReadinessV1(options.claudeCodeLocalProcessReadiness);
   if (installationReadiness && (!installationTopologyPlan || installationReadiness.planDigest !== installationTopologyPlan.planDigest))
     throw new Error("invalid_private_app_config");
   if (codexMacosCustodyReadiness && (!installationTopologyPlan || codexMacosCustodyReadiness.planDigest !== installationTopologyPlan.planDigest))
+    throw new Error("invalid_private_app_config");
+  if (claudeCodeLocalProcessReadiness && (!installationTopologyPlan || claudeCodeLocalProcessReadiness.planDigest !== installationTopologyPlan.planDigest))
     throw new Error("invalid_private_app_config");
   const moduleEnabled = (name: keyof ProductConfigurationV1["modules"]) =>
     productConfiguration === undefined || productConfiguration.modules[name];
@@ -302,7 +309,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             return await productConfigurationAuthority.authenticated(identity, async (_, actor) => {
               actor.require("projects.read", undefined, true);
               return Response.json({ plan: installationTopologyPlan, ...(installationReadiness ? { readiness: installationReadiness } : {}),
-                ...(codexMacosCustodyReadiness ? { codexMacosCustodyReadiness } : {}), localBackupRestoreVerified },
+                ...(codexMacosCustodyReadiness ? { codexMacosCustodyReadiness } : {}),
+                ...(claudeCodeLocalProcessReadiness ? { claudeCodeLocalProcessReadiness } : {}), localBackupRestoreVerified },
                 { headers: privateResponseHeaders });
             });
           }
