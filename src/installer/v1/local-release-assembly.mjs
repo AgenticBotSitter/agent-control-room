@@ -348,13 +348,13 @@ function splitTarPath(path) {
   return undefined;
 }
 
-function tarHeader(path, size, type) {
+function tarHeader(path, size, type, mode = type === "5" ? 0o755 : 0o644) {
   const split = splitTarPath(path);
   if (!split) refused();
   const { name, prefix } = split;
   const header = Buffer.alloc(512, 0);
   header.write(name, 0, 100, "utf8");
-  writeOctal(header, 100, 8, type === "5" ? 0o755 : 0o644);
+  writeOctal(header, 100, 8, mode);
   writeOctal(header, 108, 8, 0);
   writeOctal(header, 116, 8, 0);
   writeOctal(header, 124, 12, size);
@@ -390,24 +390,39 @@ function paxPathRecord(path) {
   }
 }
 
-function tarEntryHeaders(path, size, type) {
-  if (splitTarPath(path)) return [tarHeader(path, size, type)];
+function tarEntryHeaders(path, size, type, mode) {
+  if (splitTarPath(path)) return [tarHeader(path, size, type, mode)];
   const digest = sha256(Buffer.from(path, "utf8")).slice(0, 32);
   const record = paxPathRecord(path);
   return [
-    tarHeader(`PaxHeaders/${digest}`, record.length, "x"),
+    tarHeader(`PaxHeaders/${digest}`, record.length, "x", 0o644),
     ...paddedTarBytes(record),
-    tarHeader(`PaxFiles/${digest}`, size, type),
+    tarHeader(`PaxFiles/${digest}`, size, type, mode),
   ];
 }
 
-async function deterministicTarGzip(stagingRoot, archiveRoot, paths) {
+/** Shared normalized tar-gzip writer for reviewed release packaging lanes. */
+export async function createDeterministicTarGzipV1(stagingRootInput, archiveRoot, entriesInput) {
+  const stagingRoot = await requireRoot(stagingRootInput);
+  if (typeof archiveRoot !== "string" || archiveRoot.length === 0 || archiveRoot.includes("/")
+    || archiveRoot.includes("\\") || archiveRoot.includes("\0") || archiveRoot === "." || archiveRoot === ".."
+    || !Array.isArray(entriesInput) || entriesInput.length < 1 || entriesInput.length > MAX_FILES + 1) refused();
+  const entries = entriesInput.map(entry => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)
+      || Object.keys(entry).sort().join(",") !== "mode,path"
+      || (entry.mode !== "0644" && entry.mode !== "0755")) refused();
+    return { path: normalizeRelativePath(entry.path), mode: entry.mode };
+  }).sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
+  if (new Set(entries.map(entry => entry.path)).size !== entries.length) refused();
+  for (const entry of entries) await requireRegularFile(join(stagingRoot, entry.path), stagingRoot);
+  const paths = entries.map(entry => entry.path);
   const directories = [...expectedDirectories(paths)].filter(Boolean).sort();
-  const parts = [...tarEntryHeaders(`${archiveRoot}/`, 0, "5")];
-  for (const directory of directories) parts.push(...tarEntryHeaders(`${archiveRoot}/${directory}/`, 0, "5"));
-  for (const path of [...paths].sort()) {
-    const bytes = await readFile(join(stagingRoot, path));
-    parts.push(...tarEntryHeaders(`${archiveRoot}/${path}`, bytes.length, "0"), ...paddedTarBytes(bytes));
+  const parts = [...tarEntryHeaders(`${archiveRoot}/`, 0, "5", 0o755)];
+  for (const directory of directories) parts.push(...tarEntryHeaders(`${archiveRoot}/${directory}/`, 0, "5", 0o755));
+  for (const entry of entries) {
+    const bytes = await readFile(join(stagingRoot, entry.path));
+    const mode = entry.mode === "0755" ? 0o755 : 0o644;
+    parts.push(...tarEntryHeaders(`${archiveRoot}/${entry.path}`, bytes.length, "0", mode), ...paddedTarBytes(bytes));
   }
   parts.push(Buffer.alloc(1024, 0));
   return gzipSync(Buffer.concat(parts), { level: 9, mtime: 0 });
@@ -440,7 +455,9 @@ export async function assembleLocalReleaseV1(input) {
   await verifyExtractedLocalReleaseV1(stagingRoot, manifest);
   const stem = `agent-control-room-${manifest.version}`;
   const archiveName = `${stem}.tar.gz`;
-  const archive = await deterministicTarGzip(stagingRoot, stem, [...manifest.files.map(entry => entry.path), MANIFEST_NAME]);
+  const archive = await createDeterministicTarGzipV1(stagingRoot, stem,
+    [...manifest.files.map(entry => ({ path: entry.path, mode: "0644" })), { path: MANIFEST_NAME, mode: "0644" }]
+      .sort((left, right) => left.path.localeCompare(right.path, "en")));
   const digest = sha256(archive);
   const externalManifest = join(input.outputDirectory, `${stem}.manifest.json`);
   const archivePath = join(input.outputDirectory, archiveName);
