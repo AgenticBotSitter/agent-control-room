@@ -11,6 +11,7 @@ import { createLocalSupervisorReadinessV1 } from "../src/harness/v1/local-superv
 import { createArtifactBackupInventoryV1, verifyRestoredArtifactBackupInventoryV1 } from "../src/artifacts/v1/artifact-backup-inventory";
 import { createLocalBackupRestoreReadinessV1 } from "../src/harness/v1/local-backup-restore-readiness";
 import { sha256Digest } from "../src/security/canonical-digest";
+import { OPERATOR_SURFACES_CONTRACT_V1, type OperatorSurfaceSnapshotV1 } from "../src/operator-surfaces/v1";
 import { now, origin, request, token, trust } from "./helpers/web-foundation";
 import { limitedWebFixture } from "./helpers/web-startup";
 
@@ -26,6 +27,13 @@ const options = (productConfiguration: ReturnType<typeof configuration>, databas
   tenantId: "tenant:web", workspaceId: "workspace:web",
   database: { client: database, close }, loadKeys: async () => trust.keys,
   clock: () => now, productConfiguration });
+
+function operatorSnapshot(): OperatorSurfaceSnapshotV1 {
+  return { contractVersion: OPERATOR_SURFACES_CONTRACT_V1, tenantId: "tenant:web", generatedAt: new Date(now).toISOString(),
+    fleet: [{ workerId: "worker:local", platform: "macos", state: "idle", lastObservedAt: new Date(now).toISOString(),
+      capacityState: "reported", availableSlots: 1, totalSlots: 1, capabilityState: "verified", telemetryState: "fresh" }],
+    bottlenecks: [], activeWork: [], portfolio: [], services: [], schedules: [], serviceIncidents: [], actionInbox: [], ownerFocus: [] };
+}
 
 function backupRestoreProof(planDigest: string) {
   const inventory = createArtifactBackupInventoryV1({ tenantId: "tenant:local", releaseId: "release:local",
@@ -61,6 +69,23 @@ test("two same-artifact processes retain distinct immutable portable configurati
   const unknown = await first.handle(request("/api/v1/product-configuration", "GET", undefined,
     "test-request-key-0002", token({ sub: "unknown-owner" })), () => new Response("fallback", { status: 500 }));
   assert.equal(unknown.status, 403);
+});
+
+test("operator capacity is an authenticated server-bound read, never an empty fallback", async t => {
+  const store = await limitedWebFixture();
+  const calls: unknown[] = [];
+  const app = createPrivateWebProcess({ ...options(configuration("Capacity", false), store.pool.client, store.pool.close),
+    operatorSurface: { read: async input => { calls.push(input); return operatorSnapshot(); } } });
+  t.after(() => app.close());
+  const response = await app.handle(request("/api/v1/operator-surface"), () => new Response("fallback", { status: 500 }));
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).snapshot, operatorSnapshot());
+  assert.deepEqual(calls, [{ tenantId: "tenant:web", actorId: "identity:web", grantedAt: new Date(now).toISOString(), now: new Date(now).toISOString() }]);
+  assert.equal((await app.handle(request("/api/v1/operator-surface?x=1"), () => new Response("fallback", { status: 500 }))).status, 400);
+  assert.equal((await app.handle(request("/api/v1/operator-surface", "POST"), () => new Response("fallback", { status: 500 }))).status, 400);
+  const unavailable = createPrivateWebProcess(options(configuration("No source", false), store.pool.client, async () => {}));
+  t.after(() => unavailable.close());
+  assert.equal((await unavailable.handle(request("/api/v1/operator-surface"), () => new Response("fallback", { status: 500 }))).status, 404);
 });
 
 test("startup capture does not retain a mutable owner-settings product configuration", () => {

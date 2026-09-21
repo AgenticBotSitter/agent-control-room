@@ -43,6 +43,7 @@ import { readProjectScheduleStatus } from "../../schedules/read-service";
 import { ProjectCoordinationHttpService, type ProjectCoordinationCanonicalStoreAdapter } from "./project-coordination-http";
 import { createCoordinationHttpHandler } from "./coordination-http";
 import { IdeaLabErrorV1 } from "../../idea-lab/v1/errors";
+import { parseOperatorSurfaceSnapshotV1, type OperatorSurfaceSnapshotV1 } from "../../operator-surfaces/v1";
 
 export interface PrivateWebProcessOptions {
   origin: string; issuer: string; audience: string; tenantId: string; workspaceId: string;
@@ -80,6 +81,15 @@ export interface PrivateWebProcessOptions {
     admission: Pick<WebNewsCollectionAdmission, "approve"> }[];
   /** Existing enrollment/signal keys, supplied privately. Absence is unavailable, not an empty roster. */
   connections?: WebConnectionKeys;
+  /**
+   * A server-owned, read-only capacity projection. The web process neither
+   * builds the projection nor receives a database, scheduler, or worker
+   * control handle through this port. Omission remains an honest unavailable
+   * view rather than an empty fleet.
+   */
+  operatorSurface?: { read: (input: {
+    tenantId: string; actorId: string; grantedAt: string; now: string;
+  }) => Promise<OperatorSurfaceSnapshotV1> };
   /** Existing harness evidence verification key. No key means progress is unavailable, not no runs. */
   tasks?: Omit<WebTaskKeys, "ideaIntegrityKey"> & { harnessIntegrityKey: Uint8Array };
   /** Trusted control-plane operation only. No planner key, privileged pool or native adapter is
@@ -193,6 +203,10 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     throw new Error("invalid_private_app_config");
   const queueAttention = options.queueAttention ? Object.freeze({ tenantId: options.tenantId,
     workspaceId: options.workspaceId, read: options.queueAttention.read.bind(options.queueAttention) }) : undefined;
+  if (options.operatorSurface && typeof options.operatorSurface.read !== "function") throw new Error("invalid_private_app_config");
+  const operatorSurface = options.operatorSurface ? Object.freeze({
+    read: options.operatorSurface.read.bind(options.operatorSurface),
+  }) : undefined;
   if (options.planning && (options.planning.tenantId !== options.tenantId || options.planning.workspaceId !== options.workspaceId
     || typeof options.planning.plan !== "function" || options.planning.readSaved !== undefined && typeof options.planning.readSaved !== "function"
     || options.planning.readPreparedWorker !== undefined && typeof options.planning.readPreparedWorker !== "function"
@@ -320,6 +334,20 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
                 ...(claudeCodeLocalProcessReadiness ? { claudeCodeLocalProcessReadiness } : {}),
                 ...(localSupervisorReadiness ? { localSupervisorReadiness } : {}), localBackupRestoreVerified },
                 { headers: privateResponseHeaders });
+            });
+          }
+          if (url.pathname === "/api/v1/operator-surface") {
+            if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+            if (!operatorSurface) throw new WebAccessError("not_found");
+            return await productConfigurationAuthority.authenticated(identity, async (_, actor) => {
+              // This is an owner-visible read of already-recorded facts. It
+              // does not schedule, assign, reserve, or authorize work.
+              actor.require("projects.read", undefined, true);
+              const snapshot = parseOperatorSurfaceSnapshotV1(await operatorSurface.read({
+                tenantId: options.tenantId, actorId: actor.id, grantedAt: actor.now, now: actor.now,
+              }));
+              if (snapshot.tenantId !== options.tenantId) throw new Error("operator_surface_scope_mismatch");
+              return Response.json({ snapshot }, { headers: privateResponseHeaders });
             });
           }
           const observations = /^\/api\/v1\/projects\/([^/]+)\/observations$/.exec(url.pathname);

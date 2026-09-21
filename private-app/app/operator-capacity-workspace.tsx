@@ -83,7 +83,11 @@ export function OperatorCapacityWorkspace({ view, unavailableCode, onRetry }: {
       {view.workers.map(worker => <li key={worker.workerId}><strong>{worker.workerId}</strong>
         <span>{worker.platform} · {worker.state} · {worker.capacity.evidence === "measured"
           ? `capacity ${worker.capacity.value.availableSlots} of ${worker.capacity.value.totalSlots} slots`
-          : `capacity unavailable — ${unavailableCopy[worker.capacity.reasonCode]}`} · {worker.attribution === "self_reported" ? "self-reported" : "no capacity reported by this row"}</span></li>)}
+          : `capacity unavailable — ${unavailableCopy[worker.capacity.reasonCode]}`} · capability {worker.capability.evidence === "measured"
+            ? worker.capability.value
+            : worker.capability.evidence === "inferred"
+              ? `${worker.capability.value} (inferred)`
+              : `unavailable — ${unavailableCopy[worker.capability.reasonCode]}`} · {worker.attribution === "self_reported" ? "self-reported" : "no capacity reported by this row"}</span></li>)}
     </ul>
 
     <h3>Active work and queue pressure</h3>

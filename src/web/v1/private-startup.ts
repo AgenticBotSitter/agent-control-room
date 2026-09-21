@@ -31,6 +31,7 @@ export function validatePrivateStartupConfiguration(input: PrivateStartupConfigu
       .some(name => name in input)) throw new Error();
     if (!Number.isSafeInteger(input.maxSessionSeconds) || input.maxSessionSeconds < 1 || input.maxSessionSeconds > 604800
       || typeof input.loadKeys !== "function") throw new Error();
+    if (input.operatorSurface !== undefined && typeof input.operatorSurface.read !== "function") throw new Error();
     const installationTopologyPlan = input.installationTopologyPlan === undefined ? undefined
       : verifyInstallationTopologyPlanV1(input.installationTopologyPlan);
     const installationReadiness = input.installationReadiness === undefined ? undefined
@@ -80,6 +81,7 @@ export function validatePrivateStartupConfiguration(input: PrivateStartupConfigu
         ...(input.tasks.manualVerificationScenarios ? { manualVerificationScenarios: input.tasks.manualVerificationScenarios.map(value => ({ ...value })) } : {}) } } : {}),
       ...(input.connections ? { connections: { registryIntegrityKey: key(input.connections.registryIntegrityKey),
         ...(input.connections.telemetryIntegrityKey ? { telemetryIntegrityKey: key(input.connections.telemetryIntegrityKey) } : {}) } } : {}),
+      ...(input.operatorSurface ? { operatorSurface: { read: input.operatorSurface.read.bind(input.operatorSurface) } } : {}),
     });
   } catch { throw new Error("private_startup_config_invalid"); }
 }
