@@ -95,6 +95,12 @@ evidence only: it enables no worker, database, listener or persistent service.
   dated packet. The queue also refuses to acknowledge receipt uncertainty or
   missing/altered staged evidence as successful delivery, leaving it visible
   for recovery or owner attention.
+- Claude's source-level executor now also creates the same ordinary Control
+  Room run history used by the local Hermes route. A successful disposable
+  run records only `starting`, `running`, and `succeeded`; rebuilding the
+  executor recovers the protected result without making a second history or
+  opening a second session. This is still no evidence that the installed
+  Claude program is qualified or running on this Mac.
 - The normal protected application configuration now applies that same rule at
   its final assembly boundary: a Claude callback cannot be captured merely
   because one was supplied. Its own complete process-readiness record, the
