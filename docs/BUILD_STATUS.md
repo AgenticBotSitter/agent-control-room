@@ -22,6 +22,10 @@ separate host qualifications are complete.
   policy, one receipt and one staged terminal result. An expired, future-dated,
   changed, revoked or wrong-worker delivery is refused before a local runner
   can be called.
+- Control Room repeats the canonical task, lease and authority check after the
+  delivery receipt is saved and immediately before the private Hermes runner
+  can be called. A permission withdrawal in that narrow handoff window stops
+  the run rather than causing an automatic retry.
 - A restart can recover the exact staged Hermes result without launching a
   second task or adding a duplicate completion history.
 - A delayed restart retains the original authenticated Hermes delivery packet,
