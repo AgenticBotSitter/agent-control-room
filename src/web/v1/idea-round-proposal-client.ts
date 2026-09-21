@@ -12,7 +12,7 @@ export function createIdeaRoundProposalClient(transport: typeof fetch = fetch) {
     if (busy) throw new BrowserRequestError("uncertain");
     busy = true;
     try {
-      const response = await transport(`/api/v1/ideas/${encodeURIComponent(sessionId)}/rounds/1/proposals`, {
+      const response = await transport(`/api/v1/ideas/${encodeURIComponent(sessionId)}/rounds/${input.data.round}/proposals`, {
         method: "POST", credentials: "same-origin", cache: "no-store", redirect: "error", signal: AbortSignal.timeout(10_000),
         headers: { "x-requested-with": "XMLHttpRequest", "content-type": "application/json" }, body: JSON.stringify(input.data),
       });

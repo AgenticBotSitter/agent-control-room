@@ -323,7 +323,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             const result = await ideaCreation.start(identity, sessionId, await readBoundedJson(request.body, 2048));
             return Response.json(result, { status: result.replayed ? 200 : 201, headers: privateResponseHeaders });
           }
-          const ideaRoundProposalRoute = /^\/api\/v1\/ideas\/([^/]+)\/rounds\/1\/proposals$/.exec(url.pathname);
+          const ideaRoundProposalRoute = /^\/api\/v1\/ideas\/([^/]+)\/rounds\/([1-3])\/proposals$/.exec(url.pathname);
           if (ideaRoundProposalRoute) {
             if (!moduleEnabled("ideaLab")) throw new WebAccessError("not_found");
             if (request.method !== "POST" || url.search || !request.body
@@ -331,7 +331,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             if (!ideaRoundProposal) throw new Error("idea_round_proposal_not_configured");
             let sessionId: string; try { sessionId = decodeURIComponent(ideaRoundProposalRoute[1]); } catch { throw new WebAccessError("invalid_request"); }
             const value = ideaRoundProposalInputSchema.safeParse(await readBoundedJson(request.body, 2048));
-            if (!value.success) throw new WebAccessError("invalid_request");
+            if (!value.success || value.data.round !== Number(ideaRoundProposalRoute[2])) throw new WebAccessError("invalid_request");
             const result = await ideaRoundProposal.propose(identity, sessionId, value.data);
             return Response.json(result, { status: result.receipts.every(receipt => receipt.replayed) ? 200 : 201, headers: privateResponseHeaders });
           }
