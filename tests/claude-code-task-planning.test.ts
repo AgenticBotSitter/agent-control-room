@@ -14,6 +14,7 @@ import { HarnessRunStoreV1 } from "../src/harness/v1/store";
 import { NativeApprovalPacketStore } from "../src/web/v1/native-approval-packet-store";
 import type { NativeTaskSubmission } from "../src/persistence/native-task-submission";
 import { deliverVerifiedClaudeCodeLocalQueueTaskV1 } from "../src/web/v1/claude-code-local-queue-delivery";
+import { createClaudeCodeLocalQueueExecutorV1 } from "../src/web/v1/claude-code-local-executor";
 import { binding, instant } from "./hermes-native-fixture";
 import { at } from "./native-task-fixture";
 import { ownerReviewFixture } from "./helpers/web-owner-review";
@@ -179,25 +180,31 @@ test("a local Claude delivery publishes once, then a rebuilt executor recovers t
     storageClass: "local" as const, reservations };
   let acquisitions = 0;
   const receiptPort = { async receive(packet: ControllerWorkerDeliveryV1) { return acceptedClaudeDelivery(packet, at(7_000)); } };
-  const execution = (acquire: () => ReturnType<FinishedClaudeProcess["acquire"]>) => ({ preparation: preparation(),
+  const execution = (acquire: () => ReturnType<FinishedClaudeProcess["acquire"]>, prepared = firstPrepared,
+    receiptPortValue = receiptPort) => ({ preparation: preparation(),
     runs: new HarnessRunStoreV1(f.db, f.harnessKey), delivery: { db: f.db, integrityKey: new Uint8Array(32).fill(91),
-      binding: { ...worker, authorityDigest: firstPrepared.delivery.authorityDigest, acceptanceProfileId: f.profile.id,
+      binding: { ...worker, authorityDigest: prepared.delivery.authorityDigest, acceptanceProfileId: f.profile.id,
         acceptanceProfileDigest: sha256Digest(f.profile) }, authority: { currentAdmissionDigest: () => firstPrepared.delivery.authorityDigest,
-        assertCurrent: () => {} }, receiptPort, acquire, cleanupMs: 500, clock: () => now },
+        assertCurrent: () => {} }, receiptPort: receiptPortValue, acquire, cleanupMs: 500, clock: () => now },
     results, protectedStorage: f.storage, assertAuthority: () => {}, clock: () => now });
   const sessionId = "00000000-0000-4000-8000-000000000777";
   const terminal = JSON.stringify({ type: "result", subtype: "success", is_error: false, session_id: sessionId,
     result: "One local Claude result for owner review.", usage: {} });
-  const first = await executeAssignedClaudeCodeLocalTaskV1(execution(() => {
+  const firstExecution = execution(() => {
     acquisitions++; return new FinishedClaudeProcess([
       `${JSON.stringify({ type: "system", subtype: "init", session_id: sessionId })}\n`, `${terminal}\n`,
     ]).acquire();
-  }), reference, new AbortController().signal);
-  assert.equal(first.state, "published_pending_review");
-  assert.equal(first.publication?.replayed, false);
+  });
+  // The application-facing queue wrapper is intentionally narrow, but it
+  // must still prove that a verified locator reaches the same complete
+  // receipt, run-history and protected-result path—not a parallel shortcut.
+  const queued = createClaudeCodeLocalQueueExecutorV1({ tenantId: binding.tenantId, execution: firstExecution });
+  await queued.deliver({ kind: "claude-code-local", nodeId: binding.nodeId, leaseId: assigned.receipt.leaseId,
+    task: { projectId: binding.projectId, jobId: planned.receipt.jobId, attemptId: assigned.receipt.attemptId,
+      inputDigest: planned.receipt.inputDigest }, startsWork: false, grantsExecutionAuthority: false }, new AbortController().signal);
   assert.equal(acquisitions, 1);
-  assert.equal(first.registered.replayed, false);
-  assert.equal((await f.db.query("SELECT id FROM control_harness_runs WHERE tenant_id=$1 AND id=$2", [binding.tenantId, firstPrepared.delivery.identity.runId])).rows.length, 1);
+  assert.equal((await f.db.query("SELECT id FROM control_harness_runs WHERE tenant_id=$1 AND id=$2", [binding.tenantId, firstPrepared.delivery.identity.runId])).rows.length, 1,
+    "the queued delivery created the ordinary run record before publishing");
   const recorded = await new HarnessRunStoreV1(f.db, f.harnessKey).inspect(binding.tenantId, firstPrepared.delivery.identity.runId);
   assert.deepEqual(recorded?.events.map(event => event.payload.category === "lifecycle" ? event.payload.state : undefined),
     ["starting", "running", "succeeded"], "the normal Control Room run history records only observed lifecycle progress");
@@ -213,6 +220,29 @@ test("a local Claude delivery publishes once, then a rebuilt executor recovers t
   assert.equal(recoveredHistory?.events.length, 3, "a recovered result does not invent a second lifecycle history");
   assert.equal((await f.db.query("SELECT run_id FROM control_native_review_plans WHERE tenant_id=$1 AND run_id=$2",
     [binding.tenantId, firstPrepared.delivery.identity.runId])).rows.length, 1);
+
+  // A rejected non-executing receipt is still durable evidence for recovery,
+  // but it must not make the ordinary run look as if Claude started.
+  const rejectedSource = await f.tasks.propose(f.identity, binding.projectId, { ...taskDraft, title: "Rejected Claude delivery" }, "claude-rejected-source");
+  const rejectedPlan = await planner.plan(f.identity, binding.projectId, rejectedSource.receipt.jobId,
+    sha256Digest({ ...taskDraft, title: "Rejected Claude delivery" }));
+  const rejectedAssignment = await assignments.assign(f.identity, binding.projectId, rejectedPlan.receipt.jobId,
+    binding.nodeId, rejectedPlan.receipt.inputDigest);
+  const rejectedReference = { tenantId: binding.tenantId, projectId: binding.projectId, jobId: rejectedPlan.receipt.jobId,
+    attemptId: rejectedAssignment.receipt.attemptId, leaseId: rejectedAssignment.receipt.leaseId, inputDigest: rejectedPlan.receipt.inputDigest };
+  const rejectedPrepared = await preparation().prepare(rejectedReference);
+  const rejectedReceiptPort = { async receive(packet: ControllerWorkerDeliveryV1) {
+    const accepted = acceptedClaudeDelivery(packet, new Date(now).toISOString());
+    const { receiptDigest: _ignored, ...material } = accepted;
+    return Object.freeze({ ...material, disposition: "rejected" as const, receiptDigest: sha256Digest({ ...material, disposition: "rejected" }) });
+  } };
+  const rejected = await executeAssignedClaudeCodeLocalTaskV1(execution(() => {
+    throw new Error("rejected_delivery_must_not_acquire_claude");
+  }, rejectedPrepared, rejectedReceiptPort), rejectedReference, new AbortController().signal);
+  assert.equal(rejected.state, "not_started");
+  const rejectedRun = await new HarnessRunStoreV1(f.db, f.harnessKey).inspect(binding.tenantId, rejected.registered.run.id);
+  assert.equal(rejectedRun?.run.state, "discovered");
+  assert.deepEqual(rejectedRun?.events, [], "a rejected receipt cannot leave a false Claude-start history");
 });
 
 test("one project can offer reviewed local workers without silently choosing one", async t => {

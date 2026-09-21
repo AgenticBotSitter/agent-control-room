@@ -114,10 +114,6 @@ export async function executeAssignedClaudeCodeLocalTaskV1(config: ClaudeCodeLoc
     const appended = await config.runs.append(event);
     observedState = appended.run.state;
   };
-  // This records only controller-observed lifecycle facts. It does not make a
-  // browser or queue locator a process-start signal, and a replayed terminal
-  // run gains no new history.
-  if (observedState === "discovered") await append({ category: "lifecycle", state: "starting" }, retainedReceipt?.receipt.receivedAt ?? now);
   const delivery = await deliverClaudeCodeLocalTaskV1({ ...config.delivery,
     recheckBeforeAcquire: async (candidate, route, recheckSignal) => {
       if (recheckSignal.aborted || !sameDelivery(candidate, prepared.delivery)
@@ -136,7 +132,18 @@ export async function executeAssignedClaudeCodeLocalTaskV1(config: ClaudeCodeLoc
     processBinding: reservation.processBinding, receivedAt: reservation.receipt.receivedAt });
   const assertAuthority = () => config.assertAuthority(reservation.delivery);
   const recordPublished = async () => {
-    if (isTerminalHarnessRunState(observedState)) return;
+    // Completed protected evidence may be recovered only into the same
+    // completed history. A failed or cancelled run must never be relabelled as
+    // a successful result merely because stale staged output also exists.
+    if (isTerminalHarnessRunState(observedState)) {
+      if (observedState !== "succeeded") unavailable();
+      return;
+    }
+    // A controller receipt is deliberately not a start record: it may be
+    // rejected or become uncertain before a process session exists. Record
+    // starting only after the publisher has a reserved session, or after
+    // verified protected terminal evidence is being recovered.
+    if (observedState === "discovered") await append({ category: "lifecycle", state: "starting" }, reservation.receipt.receivedAt);
     if (observedState === "starting") await append({ category: "lifecycle", state: "running" }, reservation.receipt.receivedAt);
     if (observedState === "running") await append({ category: "lifecycle", state: "succeeded" }, reservation.receipt.receivedAt);
     if (observedState !== "succeeded") unavailable();
