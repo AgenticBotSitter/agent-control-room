@@ -1,5 +1,9 @@
 import { lstat, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { z } from "zod";
+import { sha256Digest } from "../../security/canonical-digest";
+import { createLocalSupervisorReadinessV1, verifyLocalSupervisorReadinessV1,
+  type LocalSupervisorReadinessV1 } from "./local-supervisor-readiness";
 import { createMacosLocalServicePackageV1, type MacosLocalServicePackageV1 } from "./macos-local-service-package";
 
 export type MacosLocalServicePreflightV1 = Readonly<{
@@ -10,6 +14,7 @@ export type MacosLocalServicePreflightV1 = Readonly<{
 }>;
 
 const unavailable = (): never => { throw new Error("macos_local_service_preflight_refused"); };
+const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const within = (child: string, parent: string) => {
   const path = relative(parent, child);
   return path === "" || (!path.startsWith("..") && !isAbsolute(path));
@@ -86,4 +91,43 @@ export async function preflightMacosLocalServiceV1(input: unknown): Promise<Maco
     standardErrorPath: canonical.standardErrorPath });
   return Object.freeze({ schema: "control-room.macos-local-service-preflight/v1", ready: true,
     package: package_, startsWork: false });
+}
+
+const preflightRecordSchema = z.object({
+  schema: z.literal("control-room.macos-local-service-preflight/v1"),
+  ready: z.literal(true),
+  startsWork: z.literal(false),
+  package: z.object({ label: z.string(), plist: z.string(), startsWork: z.literal(false),
+    grantsExecutionAuthority: z.literal(false) }).strict(),
+}).strict();
+
+function replacePreflightProofs(existing: LocalSupervisorReadinessV1 | undefined, evidenceDigest: string) {
+  const required = ["private_configuration_custody", "restricted_launch_definition"] as const;
+  const proofMap = new Map(existing?.proofs.map(proof => [proof.proof, proof]) ?? []);
+  for (const proof of required) {
+    const prior = proofMap.get(proof);
+    if (prior?.state === "passed" && prior.evidenceDigest !== evidenceDigest) unavailable();
+    proofMap.set(proof, { proof, state: "passed", evidenceDigest });
+  }
+  return [...proofMap.values()];
+}
+
+/**
+ * Converts a successful read-only local-service preflight into only the two
+ * setup facts it actually establishes: private configuration custody and a
+ * restricted launch definition.  The record contains one opaque digest, not
+ * the plist, label, paths, account, or service-manager details.  It cannot
+ * establish restart/drain or rollback readiness and never installs a service.
+ */
+export function recordMacosLocalServicePreflightReadinessV1(planDigestValue: unknown,
+  preflightValue: unknown, existingValue?: unknown): LocalSupervisorReadinessV1 {
+  try {
+    const planDigest = digest.parse(planDigestValue);
+    const preflight = preflightRecordSchema.parse(preflightValue);
+    const existing = existingValue === undefined ? undefined : verifyLocalSupervisorReadinessV1(existingValue);
+    if (existing && existing.planDigest !== planDigest) unavailable();
+    const evidenceDigest = sha256Digest({ purpose: "macos-local-service-preflight/v1", planDigest,
+      serviceDefinitionDigest: sha256Digest(preflight.package.plist) });
+    return createLocalSupervisorReadinessV1({ planDigest, proofs: replacePreflightProofs(existing, evidenceDigest) });
+  } catch { return unavailable(); }
 }

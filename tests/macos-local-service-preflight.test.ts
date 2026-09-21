@@ -3,7 +3,9 @@ import { chmod, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promis
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
-import { preflightMacosLocalServiceV1 } from "../src/harness/v1/macos-local-service-preflight";
+import { preflightMacosLocalServiceV1, recordMacosLocalServicePreflightReadinessV1 } from "../src/harness/v1/macos-local-service-preflight";
+import { summarizeLocalSupervisorReadinessV1 } from "../src/harness/v1/local-supervisor-readiness";
+import { sha256Digest } from "../src/security/canonical-digest";
 
 const ownerUid = process.getuid?.() ?? -1;
 
@@ -50,4 +52,19 @@ test("local service preflight refuses a symlinked launcher", async t => {
   await rm(input.launcherPath);
   await symlink(input.nodePath, input.launcherPath);
   await assert.rejects(preflightMacosLocalServiceV1(input), /refused/);
+});
+
+test("service preflight records only the two facts it actually proves", async t => {
+  const input = await prepared(t);
+  const preflight = await preflightMacosLocalServiceV1(input);
+  const planDigest = sha256Digest("local-installation-plan");
+  const readiness = recordMacosLocalServicePreflightReadinessV1(planDigest, preflight);
+  const summary = summarizeLocalSupervisorReadinessV1(planDigest, readiness);
+  assert.equal(summary.state, "not_started");
+  assert.equal(summary.nextProof, "restart_and_drain_procedure");
+  assert.deepEqual(readiness.proofs.map(proof => proof.proof).sort(),
+    ["private_configuration_custody", "restricted_launch_definition"]);
+  assert.doesNotMatch(JSON.stringify(readiness), /acr-macos-service|config\.mjs|launch\.mjs|service\.out/i);
+  const changed = { ...preflight, package: { ...preflight.package, plist: `${preflight.package.plist}\n<!-- altered -->` } };
+  assert.throws(() => recordMacosLocalServicePreflightReadinessV1(planDigest, changed, readiness), /refused/);
 });
