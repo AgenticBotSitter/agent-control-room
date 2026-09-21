@@ -3,6 +3,7 @@ import test from "node:test";
 import { createControllerWorkerDeliveryV1, type ControllerWorkerDeliveryV1 } from "../src/harness/v1/controller-worker-delivery";
 import { deliverClaudeCodeLocalTaskV1 } from "../src/harness/claude-code-v1/local-delivery-composition";
 import { CLAUDE_CODE_LOCAL_ADAPTER_V1 } from "../src/harness/claude-code-v1/task-planning-contract";
+import { CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1 } from "../src/harness/claude-code-v1/result-publication";
 import type { ClaudeCodeProcessBytePortV1, OwnedClaudeCodeProcessV1 } from "../src/harness/claude-code-v1/owned-process-session";
 import { sha256Digest } from "../src/security";
 import { at, nativeTaskFixture, registration } from "./native-task-fixture";
@@ -18,7 +19,7 @@ function delivery(patch: Partial<Parameters<typeof createControllerWorkerDeliver
     identity: { tenantId: binding.tenantId, projectId: binding.projectId, jobId: binding.jobId,
       attemptId: binding.attemptId, runId: registration.id, nodeId: binding.nodeId }, worker,
     input: { prompt: input.prompt, instructions: input.instructions }, authorityDigest,
-    connectorProfileDigest: sha256Digest("claude-profile"), acceptanceProfileId: "profile:claude", acceptanceProfileDigest,
+    connectorProfileDigest: CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1, acceptanceProfileId: "profile:claude", acceptanceProfileDigest,
     issuedAt: at(1000), expiresAt: at(120_000), ...patch,
   });
 }
@@ -73,6 +74,15 @@ test("wrong worker and authority loss across the receipt await never reach acqui
   config.receiptPort = { async receive(value: ControllerWorkerDeliveryV1) { state.receives++; state.revoked = true; return accepted(value); } };
   const result = await deliverClaudeCodeLocalTaskV1(config, packet, { kind: "local", workerId: worker.workerId }, at(2000));
   assert.equal(result.state, "delivery_uncertain"); assert.equal(state.acquires, 0);
+});
+
+test("a delivery claiming a different connector profile never reaches receipt or acquisition", async t => {
+  const f = await nativeTaskFixture(); t.after(f.close);
+  const packet = delivery({ connectorProfileDigest: sha256Digest("other-connector-profile") });
+  const state = { revoked: false, receives: 0, acquires: 0 };
+  await assert.rejects(deliverClaudeCodeLocalTaskV1(composition(f, packet, state), packet,
+    { kind: "local", workerId: worker.workerId }, at(2000)), /claude_code_local_delivery_unavailable/);
+  assert.deepEqual(state, { revoked: false, receives: 0, acquires: 0 });
 });
 
 test("a durable-commit crash boundary remains explicit uncertainty and replay cannot reacquire", async t => {

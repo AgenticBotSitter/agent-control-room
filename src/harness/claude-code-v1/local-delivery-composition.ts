@@ -10,6 +10,7 @@ import { persistControllerWorkerDeliveryReceiptV1, readControllerWorkerDeliveryR
 import { createClaudeCodeOwnedProcessSessionV1, type AcquireClaudeCodeProcessV1,
   type ClaudeCodeProcessBindingV1, type OwnedClaudeCodeProcessSessionV1 } from "./owned-process-session";
 import { CLAUDE_CODE_LOCAL_ADAPTER_V1 } from "./task-planning-contract";
+import { CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1 } from "./result-publication";
 
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const unavailable = (): never => { throw new Error("claude_code_local_delivery_unavailable"); };
@@ -69,6 +70,7 @@ function validateBinding(config: ClaudeCodeLocalDeliveryCompositionV1, delivery:
   if (binding.adapterId !== CLAUDE_CODE_LOCAL_ADAPTER_V1 || route.kind !== "local" || route.workerId !== binding.workerId
     || delivery.worker.workerId !== binding.workerId || delivery.worker.adapterId !== binding.adapterId
     || delivery.worker.adapterRevision !== binding.adapterRevision || delivery.authorityDigest !== binding.authorityDigest
+    || delivery.connectorProfileDigest !== CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1
     || delivery.acceptanceProfileId !== binding.acceptanceProfileId
     || delivery.acceptanceProfileDigest !== binding.acceptanceProfileDigest) unavailable();
 }
