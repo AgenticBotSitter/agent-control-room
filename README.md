@@ -50,6 +50,24 @@ explains how workers, the controller, and the one authority database can move
 without creating synchronization or a second writer. It also lists the source
 work still needed before these transitions can be operated.
 
+## How installation will work
+
+The supported installation is being built now; it is **not downloadable yet**.
+When the first release is ready, a user will download one versioned package from
+GitHub Releases and open one launcher. The launcher will verify the release,
+check the computer, and open a guided local setup page. The owner will choose
+**This computer** or **Several computers**, prepare one PostgreSQL authority,
+protected data, recovery and the background service, then connect workers and
+review every remaining item before explicitly enabling anything.
+
+Users will not be expected to clone the repository or assemble the product one
+terminal command at a time. The two installation choices use the same projects,
+tasks, scheduler, database, results, reviews and permissions, so adding another
+computer later does not require reinstalling a different product or synchronizing
+two databases. See the [supported installation experience](docs/SUPPORTED_INSTALLATION_EXPERIENCE.md)
+and [installation build packages](docs/INSTALLATION_BUILD_PACKAGES.md) for the
+current implementation status and acceptance journey.
+
 **Reuse before rebuild.** [The reuse research program](docs/REUSE_RESEARCH_PROGRAM.md)
 explains how every substantial component is source-inspected, license-checked,
 and given an adopt/adapt/custom decision before new infrastructure is written.
@@ -68,6 +86,7 @@ and given an adopt/adapt/custom decision before new infrastructure is written.
 | What is intentionally inactive? | [Paused](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Apaused) |
 | What has been accepted? | [Completed outcomes](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aclosed+label%3Astatus%3Adone) · [Merged contributions](https://github.com/AgenticBotSitter/agent-control-room/pulls?q=is%3Apr+is%3Amerged) — partial PRs do not imply a whole feature is finished |
 | What is the full plan and what are we borrowing? | [All outcomes, reuse decisions and next steps](PUBLIC_BUILD_PLAN.md) · [Attribution](THIRD_PARTY.md) |
+| How will a normal user install it? | [Supported installation experience](docs/SUPPORTED_INSTALLATION_EXPERIENCE.md) — one verified release, one launcher, and one guided setup for either one computer or several. It is still under construction. |
 | What must finish before the first installable release? | [Required Hermes-plus-Codex release jobs](WORK_QUEUE.md#required-for-the-first-hermes-plus-codex-release) — with parallel additions listed separately on the same board |
 | Exactly what remains, including unanswered questions? | [Complete remaining-work inventory](PUBLIC_BUILD_PLAN.md#complete-remaining-work-and-open-questions) — substantial workstreams, dependencies, decisions and release gates |
 | What should the webpage look like and do? | [Public webpage specification](WEBPAGE_SPEC.md) — layout, every core screen, optional modules, error states and acceptance |

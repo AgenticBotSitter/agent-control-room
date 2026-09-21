@@ -1,0 +1,164 @@
+import type { InstallationSetupViewV1 } from "../../src/harness/v1/installation-setup-wire";
+
+type SetupStatus = "loading" | "available" | "unavailable";
+type StageState = "guide" | "recorded" | "remaining" | "attention";
+
+const stageStateLabels: Readonly<Record<StageState, string>> = Object.freeze({
+  guide: "Guide",
+  recorded: "Recorded proof",
+  remaining: "Still required",
+  attention: "Needs attention",
+});
+
+const proofLabels = Object.freeze({
+  local_owner_qualification: "Owner-attended local worker qualification",
+  local_runner_bridge: "Local runner delivery and result qualification",
+  remote_enrollment: "Remote worker enrollment",
+  two_computer_delivery: "Controlled two-computer delivery",
+  backup_restore: "Verified backup and disposable restore",
+});
+
+const serviceProofLabels = Object.freeze({
+  private_configuration_custody: "Protected private settings",
+  restricted_launch_definition: "Restricted background-service definition",
+  restart_and_drain_procedure: "Safe restart and shutdown procedure",
+  upgrade_and_rollback_procedure: "Safe update and rollback procedure",
+});
+
+function stageState(setup: InstallationSetupViewV1 | undefined, proof: keyof typeof proofLabels): StageState {
+  if (!setup) return "remaining";
+  const item = setup.proofs.find(candidate => candidate.proof === proof);
+  if (!item || item.state === "not_started" || item.state === "unavailable") return "remaining";
+  if (item.state === "failed") return "attention";
+  if (proof === "backup_restore" && setup.backupEvidencePending) return "remaining";
+  return "recorded";
+}
+
+function serviceState(setup: InstallationSetupViewV1 | undefined): StageState {
+  if (!setup?.localService) return "remaining";
+  if (setup.localService.state === "blocked" || setup.localService.proofs.some(item => item.state === "failed")) return "attention";
+  return setup.localService.state === "readiness_recorded" && setup.localService.proofs.every(item => item.state === "passed")
+    ? "recorded" : "remaining";
+}
+
+function workerConnectionState(setup: InstallationSetupViewV1 | undefined): StageState {
+  if (!setup) return "remaining";
+  const required = setup.mode === "this_computer"
+    ? (["local_owner_qualification", "local_runner_bridge"] as const)
+    : (["remote_enrollment", "two_computer_delivery"] as const);
+  const states = required.map(proof => setup.proofs.find(item => item.proof === proof)?.state);
+  if (states.some(state => state === "failed" || state === "unavailable")) return "attention";
+  return states.every(state => state === "passed") ? "recorded" : "remaining";
+}
+
+function finalState(setup: InstallationSetupViewV1 | undefined): StageState {
+  if (!setup) return "remaining";
+  if (setup.overallState === "blocked" || serviceState(setup) === "attention") return "attention";
+  // Database, protected-data, owner-access, release-authenticity and final
+  // activation proof are deliberately not projected into this browser record.
+  // Until that shared installation projection exists, this stage must fail
+  // closed even when every topology proof has passed.
+  return "remaining";
+}
+
+function Stage({ state, title, children }: Readonly<{ state: StageState; title: string; children: React.ReactNode }>) {
+  return <li className="private-local-agent-card">
+    <p className="private-eyebrow">{stageStateLabels[state]}</p>
+    <h4>{title}</h4>
+    <div>{children}</div>
+  </li>;
+}
+
+function remainingProofs(setup: InstallationSetupViewV1): readonly string[] {
+  const remaining = new Set<string>();
+  for (const item of setup.proofs) {
+    if (item.state !== "passed" || (item.proof === "backup_restore" && setup.backupEvidencePending)) {
+      remaining.add(proofLabels[item.proof]);
+    }
+  }
+  for (const item of setup.localService?.proofs ?? []) {
+    if (item.state !== "passed") remaining.add(serviceProofLabels[item.proof]);
+  }
+  for (const agent of setup.localCapabilities ?? []) {
+    if (agent.state !== "owner_enablement_required") remaining.add(`${agent.label}: ${agent.remainingSetupCategory}`);
+  }
+  return Object.freeze([...remaining]);
+}
+
+/**
+ * Read-only first-run guidance composed from the redacted installation setup
+ * projection. It never performs installation work or accepts private values.
+ */
+export function LocalInstallationWizard({ setup, status }: Readonly<{
+  setup?: InstallationSetupViewV1;
+  status?: SetupStatus;
+}>) {
+  const selectedMode = setup?.mode === "this_computer" ? "This computer"
+    : setup?.mode === "several_computers" ? "Several computers" : undefined;
+  const remaining = setup ? remainingProofs(setup) : [];
+
+  return <section className="private-panel" aria-labelledby="first-run-installation-title">
+    <p className="private-eyebrow">First-run installation</p>
+    <h2 id="first-run-installation-title">Set up one Agent Control Room</h2>
+    <p><strong>This source-only preview shows the guided installation experience being built.</strong> The public release asset and launcher are not available yet. A source checkout and chat-provided terminal commands remain contributor tools, not the supported installation.</p>
+    <p className="private-note"><strong>No installation effects happen from this read-only view.</strong> Database, private-data, login, service, and agent changes run only through separately reviewed installation-owned actions after the owner sees and confirms what will change.</p>
+
+    <section aria-labelledby="placement-choice-title">
+      <h3 id="placement-choice-title">Choose how you want to begin</h3>
+      <div className="private-settings-grid">
+        <article className="private-local-agent-card" aria-current={selectedMode === "This computer" ? "step" : undefined}>
+          <h4>This computer{selectedMode === "This computer" ? " — selected" : ""}</h4>
+          <p>The controller, website and first workers run together. The installation still uses the same database, scheduler, tasks, results, reviews and corrections as the larger setup.</p>
+        </article>
+        <article className="private-local-agent-card" aria-current={selectedMode === "Several computers" ? "step" : undefined}>
+          <h4>Several computers{selectedMode === "Several computers" ? " — selected" : ""}</h4>
+          <p>Remote workers join the same installation. They do not receive a second controller or a synchronized copy of the authority database.</p>
+        </article>
+      </div>
+      {!selectedMode && <p className="private-note">No reviewed placement choice is recorded yet. These descriptions do not select one.</p>}
+    </section>
+
+    <section aria-labelledby="installation-stage-title">
+      <h3 id="installation-stage-title">Download and setup stages</h3>
+      {status === "loading" && <p role="status">Reading saved installation proof…</p>}
+      {status === "unavailable" && <p role="alert"><strong>Saved setup proof is unavailable.</strong> Nothing is treated as installed, ready, or running.</p>}
+      <ol className="private-local-agent-list">
+        <Stage state="guide" title="1. Planned download and compatibility check">
+          <p>When the supported package is published, use its GitHub Releases asset for this computer. The planned platform launcher will verify the published checksum, platform, release, and available space without starting agents.</p>
+        </Stage>
+        <Stage state={selectedMode ? "recorded" : "remaining"} title="2. Record placement">
+          <p>Choose This computer or Several computers. This records a reviewed placement plan only; it does not move data or start a worker.</p>
+        </Stage>
+        <Stage state="guide" title="3. Prepare the authority database">
+          <p>A separate installation action prepares one PostgreSQL authority, restricted roles, and migrations. This redacted view does not yet project database preparation proof, so it does not call that work complete.</p>
+        </Stage>
+        <Stage state="guide" title="4. Prepare protected data">
+          <p>A separate installation action prepares an owner-only data location and private configuration. This page cannot accept a password, signing key, executable path, private path, or command.</p>
+        </Stage>
+        <Stage state="guide" title="5. Prepare owner access">
+          <p>The owner reviews the private login and recovery boundary before the one guarded first-owner ceremony. This redacted view never displays an identity or login secret.</p>
+        </Stage>
+        <Stage state={stageState(setup, "backup_restore")} title="6. Prove recovery">
+          <p>Configure a backup destination and restore into a disposable database. A backup file alone is not restore proof.</p>
+        </Stage>
+        <Stage state={serviceState(setup)} title="7. Prepare the background service">
+          <p>Review restart, shutdown, update, and rollback behavior before a separate owner-confirmed action installs the service definition.</p>
+        </Stage>
+        <Stage state={workerConnectionState(setup)} title="8. Connect workers">
+          <p>Hermes, Codex, and Claude remain separate connections. Each is qualified and privately bound before the owner can enable it. A remote setup also proves enrollment and controlled two-computer delivery.</p>
+        </Stage>
+        <Stage state={finalState(setup)} title="9. Review and enable">
+          <p>Review every passed, missing, and failed proof. Enabling the controller and selected workers is a separate owner decision and is not available from this status view.</p>
+        </Stage>
+      </ol>
+    </section>
+
+    <section className="private-note" aria-labelledby="remaining-proof-title">
+      <h3 id="remaining-proof-title">Remaining categories visible in saved setup status</h3>
+      {!setup && <p>A reviewed setup record is required before Control Room can list remaining proof. It does not guess from this browser.</p>}
+      {setup && remaining.length === 0 && <p>The saved setup status does not list a missing category in the proof types it exposes. This does not prove the installation is complete.</p>}
+      {remaining.length > 0 && <ul>{remaining.map(item => <li key={item}>{item}</li>)}</ul>}
+      {setup && <p>Database, protected-data, owner-access, release-authenticity, and final activation proof are not projected here yet. Control Room therefore does not claim installation readiness from this list.</p>}
+    </section>
+  </section>;
+}

@@ -19,6 +19,12 @@ Any substantial new component in either route must pass the documented
 choice never justifies adding a second scheduler, authority database, or
 agent framework.
 
+The product installation experience is shared by both choices. Its supported
+release, setup, clean-install and upgrade journey is defined in
+[SUPPORTED_INSTALLATION_EXPERIENCE.md](SUPPORTED_INSTALLATION_EXPERIENCE.md).
+The pinned source-level reuse decisions for building it are in
+[INSTALLATION_REUSE_IMPLEMENTATION_MAP.md](INSTALLATION_REUSE_IMPLEMENTATION_MAP.md).
+
 ## Non-negotiable decisions
 
 1. Each installation has one authoritative PostgreSQL database. Local workers

@@ -61,6 +61,13 @@ Before custom code is added for a substantial component, use
 similar screen, or "faster to write" is not enough to skip this decision.
 The current file-level donor decisions are recorded in
 [SINGLE_MACHINE_REUSE_AUDIT.md](SINGLE_MACHINE_REUSE_AUDIT.md).
+The supported download-to-first-task owner journey is defined in
+[SUPPORTED_INSTALLATION_EXPERIENCE.md](SUPPORTED_INSTALLATION_EXPERIENCE.md),
+and the exact reuse decision for every remaining installation component is in
+[INSTALLATION_REUSE_IMPLEMENTATION_MAP.md](INSTALLATION_REUSE_IMPLEMENTATION_MAP.md).
+Those two records are the acceptance and implementation inputs for future
+installer packages; a developer-checkout command is not a substitute for the
+downloaded-release journey.
 
 ## Capability truth today
 

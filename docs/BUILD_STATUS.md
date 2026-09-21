@@ -31,6 +31,16 @@ remain readable for recovery. Focused adapter tests, private-startup tests,
 VPS compilation and TypeScript passed. This is source and disposable-test
 evidence only: it enables no worker, database, listener or persistent service.
 
+The installable-product track now also has three accepted source foundations:
+an allowlisted reproducible release archive with a manifest and checksum; a
+standalone extracted-release preflight that needs no developer dependency;
+and a restart-safe nine-stage installation plan. The protected Settings page
+shows the planned one-launcher journey but prominently says the public release
+and launcher are not available yet. These components perform no install,
+database, service, credential, or worker effect. Release staging, production
+dependency preparation, durable plan persistence and the owner-only setup
+actions remain active build work.
+
 ## What source evidence proves today
 
 - A local Hermes delivery is bound to one intended worker, one exact task, one
@@ -197,6 +207,11 @@ evidence only: it enables no worker, database, listener or persistent service.
 ## Latest accepted local checks
 
 - TypeScript type check
+- Combined local-installation foundation: 23 checks passed for deterministic
+  release assembly, license-evidence freshness, extracted-package refusal,
+  standalone preflight, restart-safe stage coordination and the truthful
+  first-run page. Independent reviewers accepted the release, setup-plan and
+  browser packages after correcting early-completion and retry hazards.
 - Shared local/remote and Hermes readiness verification: 49 checks passed.
   This covers the one-database local and remote lifecycle, correction path,
   local Hermes runner safeguards, preparation and proof-recording commands.

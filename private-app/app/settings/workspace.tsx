@@ -6,6 +6,7 @@ import { ProductConfigurationSummary } from "../product-configuration-summary";
 import { OwnerNotificationsWorkspace } from "../owner-notifications-workspace";
 import { useInstallationTopology } from "../installation-topology";
 import { InstallationTopologySummary } from "../installation-topology-summary";
+import { LocalInstallationWizard } from "../local-installation-wizard";
 
 export function PrivateSettingsWorkspace() {
   const configuration = useProductConfiguration();
@@ -30,6 +31,7 @@ export function PrivateSettingsWorkspace() {
       </section>
     </div>
     <ProductConfigurationSummary configuration={configuration} />
+    <LocalInstallationWizard setup={installationTopology?.setup} status={installationTopology?.state} />
     <InstallationTopologySummary setup={installationTopology?.setup} status={installationTopology?.state} />
     <OwnerNotificationsWorkspace />
   </main></div>;

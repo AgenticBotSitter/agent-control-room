@@ -295,7 +295,9 @@ test("settings links to the real session surface without credential controls", (
   const html = renderToStaticMarkup(createElement(SettingsPage));
   assert.match(html, /href="\/session"/);
   assert.match(html, /does not expose credentials/);
-  assert.doesNotMatch(html, /password|api key|secret key/i);
+  assert.match(html, /Set up one Agent Control Room/);
+  assert.match(html, /No installation effects happen from this read-only view/);
+  assert.doesNotMatch(html, /type="password"|api key|secret key/i);
 });
 
 test("home links each recent result to its exact file, not a generic results anchor", () => {
