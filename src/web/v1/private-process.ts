@@ -209,7 +209,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   // runtime or a second Idea Lab worker system.
   const ideaRoundProposal = options.ideaCreation && options.ideaProjects
     ? new WebIdeaRoundProposalOperation(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
-      options.ideaProjects.integrityKey, tasks, clock) : undefined;
+      options.ideaProjects.integrityKey, tasks, clock, ideaResultProjection) : undefined;
   const news = new WebNewsService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
     { integrityKey: options.news?.integrityKey, ideaIntegrityKey: options.ideaProjects?.integrityKey }, clock);
   const herdr = new WebHerdrService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },

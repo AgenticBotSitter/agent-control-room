@@ -13,9 +13,9 @@ import { WebTaskService } from "./task-service";
 export const ideaRoundProposalInputSchema = z.object({
   sessionDigest: ideaDigestSchemaV1,
   projectId: catalogProjectIdSchema,
-  // Later rounds require canonical result projection, so this initial endpoint
-  // deliberately cannot skip ahead with a caller-supplied contribution list.
-  round: z.literal(1),
+  // The project is supplied only to select/confirm the one already linked
+  // ordinary project. Later rounds cannot supply a contribution snapshot.
+  round: z.number().int().min(1).max(3),
 }).strict();
 
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: async work => work(tx),
@@ -31,7 +31,8 @@ export class WebIdeaRoundProposalOperation {
   private readonly authority: WebSessionAuthority;
   private readonly key: Uint8Array;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
-    key: Uint8Array, private readonly tasks: WebTaskService, clock: () => number = Date.now) {
+    key: Uint8Array, private readonly tasks: WebTaskService, clock: () => number = Date.now,
+    private readonly revalidate?: { project: (sessionId: string, taskKey: string) => Promise<unknown> }) {
     if (!(key instanceof Uint8Array) || key.length !== 32) throw new Error("idea_key_invalid");
     this.key = Uint8Array.from(key);
     this.authority = new WebSessionAuthority(db, scope, clock, "idea_lab_session");
@@ -48,27 +49,51 @@ export class WebIdeaRoundProposalOperation {
       // it now authorizes task preparation only, never provider contact.
       actor.require("idea_lab.panel_start", undefined, true);
       await tx.query("SELECT id FROM workspaces WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [this.scope.tenantId, this.scope.workspaceId]);
-      const store = new IdeaLabProjectRegistryStoreV1(joined(tx), this.key);
+      const db = joined(tx), store = new IdeaLabProjectRegistryStoreV1(db, this.key);
       const saved = await store.getSession(this.scope.tenantId, sessionId);
       if (!saved || saved.workspaceId !== this.scope.workspaceId) throw new WebAccessError("not_found");
       if (saved.sessionDigest !== input.data.sessionDigest) throw new WebAccessError("conflict");
-      // A retained legacy run or result is evidence only. It cannot be mixed
-      // into this new canonical task lineage.
-      if (await store.getSynthesis(this.scope.tenantId, sessionId) || await store.getDecision(this.scope.tenantId, sessionId)
-        || (await store.listContributions(this.scope.tenantId, sessionId)).length) throw new WebAccessError("conflict");
-      return saved;
+      if (await store.getSynthesis(this.scope.tenantId, sessionId) || await store.getDecision(this.scope.tenantId, sessionId))
+        throw new WebAccessError("conflict");
+      const links = await new IdeaLabCanonicalTaskLinkStoreV1(db, this.key).list(this.scope.tenantId, sessionId);
+      const contributions = await store.listContributions(this.scope.tenantId, sessionId);
+      if (input.data.round === 1) {
+        // A retained legacy run or result is evidence only. It cannot be mixed
+        // into this new canonical task lineage. Existing exact first-round
+        // links are permitted so a lost browser response can replay the normal
+        // task-service receipts; a partial or later-round lineage cannot.
+        const firstRound = links.filter(link => link.round === 1);
+        if (contributions.length || links.length !== firstRound.length
+          || (firstRound.length !== 0 && (firstRound.length !== saved.participants.length
+            || firstRound.some(link => link.projectId !== input.data.projectId)
+            || new Set(firstRound.map(link => link.participantId)).size !== saved.participants.length))) {
+          throw new WebAccessError("conflict");
+        }
+      } else {
+        const previous = links.filter(link => link.round === input.data.round - 1);
+        if (!this.revalidate || previous.length !== saved.participants.length
+          || previous.some(link => link.projectId !== input.data.projectId)
+          || contributions.filter(contribution => contribution.round === input.data.round - 1
+            && contribution.sourceMode === "canonical_task_result").length !== saved.participants.length
+          || new Set(previous.map(link => link.participantId)).size !== saved.participants.length) throw new WebAccessError("conflict");
+        // Re-read every accepted result through the guarded result-role
+        // operation before freezing peer excerpts for a later round. A stale
+        // correction or revoked review cannot become prompt material.
+        for (const link of previous) await this.revalidate.project(sessionId, link.taskKey);
+      }
+      return { session: saved, contributions };
     });
     const links = new IdeaLabCanonicalTaskLinkStoreV1(this.db, this.key);
     const service = new IdeaLabCanonicalTaskProposalServiceV1(this.tasks, { projectId: input.data.projectId }, links);
     let result;
-    try { result = await service.proposeRound(identity, { session, round: input.data.round, contributions: [] }); }
+    try { result = await service.proposeRound(identity, { session: session.session, round: input.data.round, contributions: session.contributions }); }
     catch (error) {
       // The canonical planner's integrity/scope codes deliberately disclose no
       // discussion or project detail through the browser boundary.
       if (error instanceof IdeaLabErrorV1) throw new WebAccessError("conflict");
       throw error;
     }
-    return { sessionId: session.sessionId, sessionDigest: session.sessionDigest, projectId: input.data.projectId,
+    return { sessionId: session.session.sessionId, sessionDigest: session.session.sessionDigest, projectId: input.data.projectId,
       round: input.data.round, receipts: result.receipts, startsWork: false as const };
   }
 }
