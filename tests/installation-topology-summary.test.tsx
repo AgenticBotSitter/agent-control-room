@@ -48,6 +48,12 @@ test("setup summary shows an honest proof checklist rather than a live worker", 
   assert.match(html, /What to do next/);
   assert.match(html, /Check the local agent connection/);
   assert.match(html, /Three local worker routes/);
+  assert.match(html, /Local background service preparation/);
+  assert.match(html, /Private settings are protected/);
+  assert.match(html, /The service has one restricted launch definition/);
+  assert.match(html, /Safe restart and shutdown handling is prepared/);
+  assert.match(html, /Safe update and rollback handling is prepared/);
+  assert.match(html, /This panel cannot install, start, stop, or restart Control Room/);
   assert.match(html, /Source-only status, not a live installation/);
   assert.match(html, /what is simulated with disposable test data/);
   assert.match(html, /<h4>Hermes Agent<\/h4><p><strong>Status: Partial setup proof recorded/);
@@ -89,6 +95,7 @@ test("setup summary distinguishes completed Hermes proof from an enabled worker"
     localBackupRestoreVerified: true, localSupervisorReadiness: supervisor }));
   assert.match(html, /<h4>Hermes Agent<\/h4><p><strong>Status: Proof complete; owner enablement required/);
   assert.match(html, /still has not started Hermes/);
+  assert.match(html, /Preparation recorded; service is still not installed or running/);
   assert.doesNotMatch(html, /<button|<form|<input/);
 });
 

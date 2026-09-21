@@ -3,7 +3,7 @@ import { summarizeInstallationReadinessV1, type InstallationReadinessV1 } from "
 import { guideInstallationReadinessV1 } from "../../src/harness/v1/installation-guidance";
 import { summarizeLocalHarnessCapabilitiesV1, type LocalHarnessCapabilityV1 } from "../../src/harness/v1/local-harness-capabilities";
 import type { CodexMacosCustodyReadinessV1 } from "../../src/harness/codex-v1/macos-custody-readiness";
-import type { LocalSupervisorReadinessV1 } from "../../src/harness/v1/local-supervisor-readiness";
+import { summarizeLocalSupervisorReadinessV1, type LocalSupervisorReadinessV1 } from "../../src/harness/v1/local-supervisor-readiness";
 
 const proofLabels = {
   local_owner_qualification: "a successful owner-attended local worker check",
@@ -32,6 +32,13 @@ const operationLabels = {
   unknown: "Not proven yet",
 } as const;
 
+const localServiceProofLabels = {
+  private_configuration_custody: "Private settings are protected",
+  restricted_launch_definition: "The service has one restricted launch definition",
+  restart_and_drain_procedure: "Safe restart and shutdown handling is prepared",
+  upgrade_and_rollback_procedure: "Safe update and rollback handling is prepared",
+} as const;
+
 function LocalAgentCapabilityCard({ agent }: { agent: LocalHarnessCapabilityV1 }) {
   const operations = [
     ["Send a task", agent.operations.submit],
@@ -54,6 +61,19 @@ function LocalAgentCapabilityCard({ agent }: { agent: LocalHarnessCapabilityV1 }
       </ul>
     </details>
   </li>;
+}
+
+/** Shows only the non-secret service-proof state. This is setup information,
+ * not a process monitor and never says that Control Room is running. */
+function LocalServicePreparation({ planDigest, readiness }: { planDigest: string; readiness?: Readonly<LocalSupervisorReadinessV1> }) {
+  const summary = summarizeLocalSupervisorReadinessV1(planDigest, readiness);
+  const heading = summary.state === "readiness_recorded" ? "Preparation recorded; service is still not installed or running"
+    : summary.state === "blocked" ? "Preparation needs attention" : "Preparation is not complete";
+  return <section className="private-note" aria-labelledby="local-service-preparation-title">
+    <h3 id="local-service-preparation-title">Local background service preparation</h3>
+    <p><strong>{heading}.</strong> This panel cannot install, start, stop, or restart Control Room.</p>
+    <ul>{summary.proofs.map(proof => <li key={proof.proof}><strong>{stateLabels[proof.state]}:</strong> {localServiceProofLabels[proof.proof]}</li>)}</ul>
+  </section>;
 }
 
 /** A status-only explanation. There are deliberately no setup, launch, or approval controls here. */
@@ -95,6 +115,7 @@ export function InstallationTopologySummary({ plan, readiness, codexMacosCustody
       <p><strong>Prepared, not enabled.</strong> Control Room can prepare a checked task for a local agent, but no agent is started from this screen.</p>
       <p>Before a local agent can receive real work, the owner completes its short connection check and the installation verifies protected data and recovery. Until then, the page shows setup status only—not a live agent.</p>
     </section>}
+    {plan.mode === "this_computer" && <LocalServicePreparation planDigest={plan.planDigest} readiness={localSupervisorReadiness} />}
     {plan.mode === "this_computer" && <section className="private-note" aria-labelledby="local-agent-capabilities-title">
       <h3 id="local-agent-capabilities-title">Three local worker routes</h3>
       <p><strong>Source-only status, not a live installation.</strong> These cards describe the Hermes Agent, Codex and Claude Code routes in Control Room source. They are not a scan of this computer, do not reveal private settings, and none of the statuses below means an agent is running.</p>
