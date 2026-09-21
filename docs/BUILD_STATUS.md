@@ -79,6 +79,13 @@ evidence only: it enables no worker, database, listener or persistent service.
   callback. This adds neither a database nor a scheduler. The production
   callback is deliberately absent until the separate Claude proof and private
   host binding are supplied, so the new queue path cannot start Claude.
+- The normal protected application configuration now applies that same rule at
+  its final assembly boundary: a Claude callback cannot be captured merely
+  because one was supplied. Its own complete process-readiness record, the
+  plan-bound backup-and-restore evidence recorded in installation readiness,
+  and the local supervisor readiness record must all agree first. This is
+  still source and disposable-test proof only; no Claude process, credential,
+  service, or local task has been enabled.
 - The Mac Codex path records only two opaque safety prerequisites: suspended
   executable identity and protected private-state custody. Neither record can
   enable or launch Codex.

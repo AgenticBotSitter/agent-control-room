@@ -33,9 +33,10 @@ import { PersistentLocalArtifactStorageV1 } from "../../artifacts/v1/persistent-
 import { CODEX_RESULT_RETURN_FEATURE_V1 } from "../../harness/codex-v1/result-return";
 import { captureCodexResultIntakeSettingsV1, type CodexResultIntakeSettingsV1 } from "./codex-result-intake";
 import { inspectHermes021MacosDeliveryRecoveryStatusV1 } from "../../harness/hermes-021-v1/delivery-recovery-status";
-import { summarizeInstallationReadinessV1 } from "../../harness/v1/installation-readiness";
+import { summarizeInstallationReadinessV1, verifyInstallationReadinessV1 } from "../../harness/v1/installation-readiness";
 import { localBackupRestoreEvidenceDigestForInstallationPlanV1 } from "../../harness/v1/local-backup-restore-readiness";
 import { summarizeLocalSupervisorReadinessV1 } from "../../harness/v1/local-supervisor-readiness";
+import { summarizeClaudeCodeLocalProcessReadinessV1 } from "../../harness/claude-code-v1/local-process-readiness";
 
 type OwnedQueueWorker = { close(): Promise<void>; status(): { accepting: boolean } };
 
@@ -64,6 +65,22 @@ function requireReadyLocalHermesInstallation(web: ReturnType<typeof validatePriv
     throw new Error();
 }
 
+/** Claude's opaque process proof is separate from Hermes's qualification, but
+ * it still needs the same installation-level recovery evidence before a
+ * private callback can be mounted. Nothing here discovers or starts Claude. */
+function requireReadyLocalClaudeInstallation(web: ReturnType<typeof validatePrivateStartupConfiguration>) {
+  const plan = web.installationTopologyPlan, readiness = web.installationReadiness;
+  const backup = web.localBackupRestoreReadiness, supervisor = web.localSupervisorReadiness;
+  if (!plan || !readiness || !backup || !supervisor || web.claudeCodeLocalProcessReadiness === undefined) throw new Error();
+  if (summarizeClaudeCodeLocalProcessReadinessV1(plan.planDigest, web.claudeCodeLocalProcessReadiness).state !== "readiness_recorded")
+    throw new Error();
+  if (summarizeLocalSupervisorReadinessV1(plan.planDigest, supervisor).state !== "readiness_recorded") throw new Error();
+  const expectedBackup = localBackupRestoreEvidenceDigestForInstallationPlanV1(plan, backup);
+  const recorded = verifyInstallationReadinessV1(readiness)
+    .proofs.find(item => item.proof === "backup_restore");
+  if (recorded?.state !== "passed" || recorded.evidenceDigest !== expectedBackup) throw new Error();
+}
+
 export type PrivateTaskStartupConfiguration = {
   web: PrivateStartupConfiguration;
   news?: NewsStartupConfiguration;
@@ -71,7 +88,7 @@ export type PrivateTaskStartupConfiguration = {
   artifactStorage?: PrivateArtifactStorageConfigurationV1;
   /** Optional inert installation-owned adapters; never mounted in the queue or browser. */
   preparedLocalAdapters?: LocalAdapterInstallationPortsV1;
-  coordinator: Pick<TaskCoordinatorConfiguration, "planning" | "routes" | "approvals" | "quality" | "revisionPlanning" | "nativeHttp" | "hermes021Local"> & {
+  coordinator: Pick<TaskCoordinatorConfiguration, "planning" | "routes" | "approvals" | "quality" | "revisionPlanning" | "nativeHttp" | "hermes021Local" | "claudeCodeLocal"> & {
     codex?: CodexPermitConfiguration;
     nativeQueue?: true;
     nativeQueueRecovery?: true;
@@ -166,9 +183,13 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
       ? Object.freeze({ deliver: input.coordinator.hermes021Local.deliver.bind(input.coordinator.hermes021Local) }) : undefined;
     if (hermes021Local && (!nativeQueue || !approvals)) throw new Error();
     if (hermes021Local) requireReadyLocalHermesInstallation(web);
+    const claudeCodeLocal = input.coordinator.claudeCodeLocal
+      ? Object.freeze({ deliver: input.coordinator.claudeCodeLocal.deliver.bind(input.coordinator.claudeCodeLocal) }) : undefined;
+    if (claudeCodeLocal && (!nativeQueue || !approvals)) throw new Error();
+    if (claudeCodeLocal) requireReadyLocalClaudeInstallation(web);
     const w = input.coordinator.queueWorker;
     const queueWorker = w ? { database: validatePrivatePostgresConfiguration(w.database), concurrency: w.concurrency ?? 1 } : undefined;
-    if (queueWorker && (!nativeQueue || (!sessions && !hermes021Local) || queueWorker.database.host !== database.host
+    if (queueWorker && (!nativeQueue || (!sessions && !hermes021Local && !claudeCodeLocal) || queueWorker.database.host !== database.host
       || queueWorker.database.port !== database.port || queueWorker.database.database !== database.database
       || [web.database.username, database.username, resultDatabase!.username, evidence!.database.username,
         ...(sessions ? [sessions.database.username] : [])].includes(queueWorker.database.username)
@@ -197,7 +218,7 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
       [web.database, database, resultDatabase, evidence?.database, sessions?.database, queueWorker?.database,
         ideaCreation?.database, ideaRuntime?.database].filter((value): value is PrivatePostgresConfiguration => !!value)) : undefined;
     return { web, preparedLocalAdapters, database, planning, routes, approvals, codex, quality, revisionPlanning, resultDatabase, evidence, sessions,
-      codexResultReturn, nativeHttp, nativeQueue, nativeQueueRecovery, queueWorker, hermes021Local, ideaCreation, ideaRuntime, news, artifactStorage };
+      codexResultReturn, nativeHttp, nativeQueue, nativeQueueRecovery, queueWorker, hermes021Local, claudeCodeLocal, ideaCreation, ideaRuntime, news, artifactStorage };
   } catch { throw new Error("private_task_startup_config_invalid"); }
 }
 

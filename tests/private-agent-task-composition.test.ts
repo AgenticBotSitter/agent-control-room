@@ -18,6 +18,8 @@ import { createArtifactBackupInventoryV1, verifyRestoredArtifactBackupInventoryV
 import { createLocalBackupRestoreReadinessV1 } from "../src/harness/v1/local-backup-restore-readiness";
 import { createCodexMacosCustodyReadinessV1 } from "../src/harness/codex-v1/macos-custody-readiness";
 import { createLocalSupervisorReadinessV1 } from "../src/harness/v1/local-supervisor-readiness";
+import { createClaudeCodeLocalProcessReadinessV1 } from "../src/harness/claude-code-v1/local-process-readiness";
+import { CLAUDE_CODE_LOCAL_ADAPTER_V1 } from "../src/harness/claude-code-v1/task-planning-contract";
 import { createPrivateTaskHost } from "../src/web/v1/private-task-host";
 import { startPrivateHostLifecycle } from "../src/web/v1/private-host-lifecycle";
 import { bindPrivateCodexResultReturnV1, validatePrivateTaskStartupConfiguration,
@@ -968,6 +970,61 @@ test("operator assembly refuses a local Hermes callback until its local proof se
     ] }) } as typeof trusted.web;
   assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(settings, trusted),
     /hermes021Local_installation_not_ready/);
+});
+
+test("operator assembly admits a local Claude callback only after its independent process and recovery proofs", () => {
+  const { settings, trusted } = operatorConfigurationScenario("full");
+  settings.features = { ...settings.features, sessions: false, codex: false, codexResultReturn: false,
+    nativeHttp: false, claudeCodeLocal: true };
+  trusted.sessions = undefined;
+  trusted.codex = undefined;
+  trusted.codexResultReturn = undefined;
+  trusted.nativeHttp = undefined;
+  const route = { kind: "local" as const, workerId: "worker:local-claude",
+    adapterId: CLAUDE_CODE_LOCAL_ADAPTER_V1, adapterRevision: "source-123" };
+  const topology = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("operator-claude-db"),
+    schedulerAuthorityDigest: sha256Digest("operator-claude-scheduler"), currentRoutes: [route], requestedRoutes: [route] });
+  const backupRestore = localBackupRestoreProof(topology.planDigest);
+  const supervisor = createLocalSupervisorReadinessV1({ planDigest: topology.planDigest, proofs: [
+    { proof: "private_configuration_custody", state: "passed", evidenceDigest: sha256Digest("claude-custody") },
+    { proof: "restricted_launch_definition", state: "passed", evidenceDigest: sha256Digest("claude-launch") },
+    { proof: "restart_and_drain_procedure", state: "passed", evidenceDigest: sha256Digest("claude-restart") },
+    { proof: "upgrade_and_rollback_procedure", state: "passed", evidenceDigest: sha256Digest("claude-rollback") },
+  ] });
+  const processReadiness = createClaudeCodeLocalProcessReadinessV1({ planDigest: topology.planDigest, proofs: [
+    { proof: "installed_process_identity", state: "passed", evidenceDigest: sha256Digest("claude-identity") },
+    { proof: "permission_boundary", state: "passed", evidenceDigest: sha256Digest("claude-permission") },
+    { proof: "cancellation_and_restart_recovery", state: "passed", evidenceDigest: sha256Digest("claude-recovery") },
+  ] });
+  trusted.web = { ...(trusted.web as object), installationTopologyPlan: topology,
+    installationReadiness: createInstallationReadinessV1({ planDigest: topology.planDigest, proofs: [
+      { proof: "backup_restore", state: "passed", evidenceDigest: backupRestore.proofDigest },
+    ] }), localSupervisorReadiness: supervisor, claudeCodeLocalProcessReadiness: processReadiness } as typeof trusted.web;
+  trusted.localBackupRestoreReadiness = backupRestore;
+  let delivered = 0;
+  trusted.claudeCodeLocal = { deliver: async () => { delivered++; } };
+  const result = assemblePrivateAgentTaskOperatorConfiguration(settings, trusted);
+  assert.deepEqual(result.configuration.coordinator.planning.localAdapterAdmission, {
+    enabledAdapters: [CLAUDE_CODE_LOCAL_ADAPTER_V1],
+  });
+  assert.equal(typeof result.configuration.coordinator.claudeCodeLocal?.deliver, "function");
+  assert.equal(delivered, 0, "assembly cannot start Claude");
+  const mismatchedBackup = localBackupRestoreProof(sha256Digest("wrong-claude-plan"));
+  assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(settings,
+    { ...trusted, localBackupRestoreReadiness: mismatchedBackup }),
+  /claudeCodeLocal_installation_proof_invalid/);
+  const missingProcess = createClaudeCodeLocalProcessReadinessV1({ planDigest: topology.planDigest, proofs: [
+    { proof: "installed_process_identity", state: "passed", evidenceDigest: sha256Digest("claude-identity") },
+  ] });
+  assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(settings,
+    { ...trusted, web: { ...(trusted.web as object), claudeCodeLocalProcessReadiness: missingProcess } }),
+  /claudeCodeLocal_process_not_ready/);
+  const unrecordedBackup = createInstallationReadinessV1({ planDigest: topology.planDigest, proofs: [
+    { proof: "backup_restore", state: "not_started" },
+  ] });
+  assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(settings,
+    { ...trusted, web: { ...(trusted.web as object), installationReadiness: unrecordedBackup } }),
+  /claudeCodeLocal_backup_restore_proof_mismatch/);
 });
 
 test("website-only settings cannot enter the operator assembler", async () => {
