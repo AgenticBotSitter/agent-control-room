@@ -31,11 +31,14 @@ remain readable for recovery. Focused adapter tests, private-startup tests,
 VPS compilation and TypeScript passed. This is source and disposable-test
 evidence only: it enables no worker, database, listener or persistent service.
 
-The installable-product track now also has seven accepted source foundations:
+The installable-product track now also has eight accepted source foundations:
 an allowlisted reproducible release archive with a manifest and checksum; a
 standalone extracted-release preflight that needs no developer dependency;
 crash-safe, concurrency-tested placement of a verified release into an inert
 version directory without activating it;
+isolated, production-only dependency preparation that is bound to the exact
+verified release and publishes atomically without running package scripts or
+starting the application;
 the restart-safe nine-stage installation plan; and a redacted PostgreSQL-stage
 preparation that binds that plan to the existing migration ledger and database
 toolchain without retaining connection details or running SQL; and an effect-free
