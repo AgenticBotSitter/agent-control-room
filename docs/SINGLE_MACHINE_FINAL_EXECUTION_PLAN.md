@@ -58,3 +58,10 @@ readiness. A plan-bound opaque record must cover configuration custody,
 restricted launch, restart/drain, and upgrade/rollback procedure before the
 local Hermes card can advance to owner enablement. It is not a supervisor
 installation or a claim that any process is running.
+
+The source package now generates a fixed-argument macOS service definition and
+has a read-only preflight for the selected release, protected configuration and
+log locations. The preflight refuses relative paths, symlinks, loose
+permissions, unsafe existing logs and files outside the selected private roots.
+It neither creates folders nor installs or starts a service. Restart/drain and
+upgrade/rollback proof remain separate owner-reviewed requirements.
