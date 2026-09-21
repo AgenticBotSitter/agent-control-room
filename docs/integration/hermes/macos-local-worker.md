@@ -40,9 +40,18 @@ the correction tied to the exact reviewed result it replaces.
 
 ## What is deliberately not claimed yet
 
-The source adapters have unit tests, but neither has contacted Marvin's live
-installation. A real qualification must separately verify the exact local
-Hermes version, the structured 0.21 output, and the controlled launch policy.
+The owner has completed the two bounded, text-only qualifications on this Mac:
+one confirmed the selected Hermes installation can return structured output,
+and one confirmed the exact fixed Control Room runner can reach it. Their
+sanitized reports are private installation evidence, not repository data.
+They did not create a Control Room task, register a worker, start a background
+service, or enable ordinary work.
+
+The remaining activation work must bind that already-checked Hermes revision,
+structured 0.21 output, and controlled launch policy to the protected result
+and recovery setup. This is not a repeat of the same model call by default. A
+fresh qualification is appropriate only when the selected runner, Hermes
+revision, or private policy changes.
 The CLI documentation notes that one-shot operation can bypass Hermes approval
 prompts, so Control Room must not send unrestricted tasks through it. The
 qualification must prove a restrictive, Control-Room-owned task policy before
@@ -52,11 +61,11 @@ Room must mark that task uncertain; it must not retry and risk duplicate work.
 No local listener, background service, credential access, or configuration
 change is created by this code.
 
-## Next activation step
+## Qualification procedure for another installation
 
-An owner-attended Mac qualification supplies the private port and performs one
-bounded text-only check before any real task is sent. The launcher is ready
-locally and can first be inspected without contacting Hermes:
+For a different Mac installation, an owner-attended qualification supplies the
+private port and performs one bounded text-only check before any real task is
+sent. The launcher can first be inspected without contacting Hermes:
 
 ```sh
 npx --yes pnpm@11.19.0 run qualify:hermes:local -- --owner-attended --dry-run
@@ -103,10 +112,10 @@ Hermes output in Control Room. If `pnpm` is not installed globally, the
 `npx --yes pnpm@11.19.0` form above is the supported replacement; do not
 install a global package merely for this check.
 
-Even a pass does not start Marvin, create a service, or authorize a real
-project task. It only supplies one of the required installation proofs. The
-separate text-only Hermes check, protected result storage with a successful
-backup-and-restore proof, and an explicit owner enablement decision are still
+Even a pass does not start Hermes, create a service, or authorize a real
+project task. It only supplies one of the required installation proofs.
+Protected result storage with a successful backup-and-restore proof, local
+service readiness, and an explicit owner enablement decision are still
 required before the local queue can deliver a real task.
 
 Once that evidence is accepted, the normal task dispatcher can use the local
