@@ -12,9 +12,12 @@ PostgreSQL authority database, the existing pg-boss scheduler, and one
 project → task → delivery → result → review → correction lifecycle.
 
 The current priority is the first local Hermes Agent text-review path. It is a
-bounded supplied-context review path, not project-writing authority. Codex and
-Claude Code use the same lifecycle but remain visibly unavailable until their
-separate host qualifications are complete.
+bounded supplied-context review path, not project-writing authority. Its
+owner-run fixed runner check has now passed on the Mac: the exact private
+Control Room bridge reached the existing Hermes installation and returned one
+expected text-only response. The sanitized proof is not copied into this
+repository. Codex and Claude Code use the same lifecycle but remain visibly
+unavailable until their separate host qualifications are complete.
 
 ## What source evidence proves today
 
@@ -33,6 +36,10 @@ separate host qualifications are complete.
   because the clock moved forward. A long-running local installation also
   derives a fresh permission gate for every prepared task, so one task's
   permission can never authorize the next task.
+- The owner has separately proved the exact fixed-argument Hermes runner on
+  this Mac. The check created no Control Room task, worker registration,
+  database, permanent service, or project write. It is evidence that the
+  runner bridge works, not evidence that Marvin is enabled for ordinary work.
 - Claude Code can save the same bounded text-review task plan as the other
   local harnesses, then decode and prepare one clean terminal result for the
   existing review path. Planning does not assign, start or enable Claude; it
@@ -85,12 +92,10 @@ database, browser login, backup, persistent service or remote machine.
 
 1. Choose private local runner, profile, model/provider and permitted working
    folder settings outside repository records.
-2. Run the separate owner-attended fixed-runner bridge qualification after its
-   no-agent preflight succeeds.
-3. Provide one approved PostgreSQL installation, protected result-byte storage
+2. Provide one approved PostgreSQL installation, protected result-byte storage
    and a disposable backup-and-restore proof.
-4. Approve the persistent supervisor, restart/recovery and rollback procedure.
-5. For local Codex on macOS, complete both custody qualifications and the
+3. Approve the persistent supervisor, restart/recovery and rollback procedure.
+4. For local Codex on macOS, complete both custody qualifications and the
    separate exact-harness qualification. For Claude Code, qualify its installed
    process, permissions, cancellation and restart-result behavior.
 
