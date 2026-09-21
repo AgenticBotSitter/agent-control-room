@@ -84,6 +84,12 @@ evidence only: it enables no worker, database, listener or persistent service.
   can acquire even an injected test process. If that recheck fails, the saved
   receipt remains an uncertainty record and cannot trigger a guessed retry or
   a second process acquisition.
+- The source-level Claude queue executor now joins only an already-verified
+  queue locator to the existing dispatch reader, receipt-first session helper,
+  protected terminal staging, result publisher and restart recovery. It still
+  has no installed-process binding, so it cannot discover, start or configure
+  Claude. A saved receipt without protected terminal evidence remains clearly
+  uncertain rather than becoming a fresh process attempt.
 - The normal protected application configuration now applies that same rule at
   its final assembly boundary: a Claude callback cannot be captured merely
   because one was supplied. Its own complete process-readiness record, the

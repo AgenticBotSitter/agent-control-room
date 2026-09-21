@@ -9,3 +9,4 @@ export * from "./terminal-result-recovery";
 export * from "./task-planning-contract";
 export * from "./local-delivery-composition";
 export * from "./dispatch-preparation";
+export * from "./assigned-task-execution";
