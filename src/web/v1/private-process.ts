@@ -16,6 +16,7 @@ import type { WebNewsCollectionPlanning } from "./news-collection-planning";
 import type { WebNewsCollectionAdmission } from "./news-collection-admission";
 import { projectWorkspaceSafeIdSchemaV1 } from "../../project-workspace/v1";
 import { WebIdeaService } from "./idea-service";
+import { WebIdeaRoundProposalOperation, ideaRoundProposalInputSchema } from "./idea-round-proposal-operation";
 import type { IdeaCreateOperation } from "./idea-create-operation";
 import { createTaskHttpHandler } from "./task-http";
 import { WebTaskReviewService } from "./task-review-service";
@@ -194,12 +195,19 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock, options.connections);
   const tasks = new WebTaskService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock,
     { ...options.tasks, ideaIntegrityKey: options.ideaProjects?.integrityKey });
+  // This is a task-planning bridge only. It is deliberately composed from the
+  // same private web database and ordinary task service, not from a provider
+  // runtime or a second Idea Lab worker system.
+  const ideaRoundProposal = options.ideaCreation && options.ideaProjects
+    ? new WebIdeaRoundProposalOperation(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
+      options.ideaProjects.integrityKey, tasks, clock) : undefined;
   const news = new WebNewsService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
     { integrityKey: options.news?.integrityKey, ideaIntegrityKey: options.ideaProjects?.integrityKey }, clock);
   const herdr = new WebHerdrService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
     options.herdrObservations ?? [], clock, options.ideaProjects?.integrityKey);
   const ideas = new WebIdeaService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
-    options.ideaProjects?.integrityKey, clock, !!ideaCreation, !!ideaCreation?.stop, !!ideaCreation?.decide, !!ideaCreation?.start, !!ideaCreation?.synthesize);
+    options.ideaProjects?.integrityKey, clock, !!ideaCreation, !!ideaCreation?.stop, !!ideaCreation?.decide,
+    !!ideaRoundProposal || !!ideaCreation?.start, !!ideaCreation?.synthesize);
   const productConfigurationAuthority = new WebSessionAuthority(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock, "workspace_configuration");
   const scheduleAuthority = new WebSessionAuthority(options.database.client,
@@ -300,6 +308,18 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             let sessionId: string; try { sessionId = decodeURIComponent(ideaStart[1]); } catch { throw new WebAccessError("invalid_request"); }
             const result = await ideaCreation.start(identity, sessionId, await readBoundedJson(request.body, 2048));
             return Response.json(result, { status: result.replayed ? 200 : 201, headers: privateResponseHeaders });
+          }
+          const ideaRoundProposalRoute = /^\/api\/v1\/ideas\/([^/]+)\/rounds\/1\/proposals$/.exec(url.pathname);
+          if (ideaRoundProposalRoute) {
+            if (!moduleEnabled("ideaLab")) throw new WebAccessError("not_found");
+            if (request.method !== "POST" || url.search || !request.body
+              || request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") throw new WebAccessError("invalid_request");
+            if (!ideaRoundProposal) throw new Error("idea_round_proposal_not_configured");
+            let sessionId: string; try { sessionId = decodeURIComponent(ideaRoundProposalRoute[1]); } catch { throw new WebAccessError("invalid_request"); }
+            const value = ideaRoundProposalInputSchema.safeParse(await readBoundedJson(request.body, 2048));
+            if (!value.success) throw new WebAccessError("invalid_request");
+            const result = await ideaRoundProposal.propose(identity, sessionId, value.data);
+            return Response.json(result, { status: result.receipts.every(receipt => receipt.replayed) ? 200 : 201, headers: privateResponseHeaders });
           }
           const ideaDecision = /^\/api\/v1\/ideas\/([^/]+)\/decision$/.exec(url.pathname);
           if (ideaDecision) {
