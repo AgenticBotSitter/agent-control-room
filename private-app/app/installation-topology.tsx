@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { verifyInstallationTopologyPlanV1, type InstallationTopologyPlanV1 } from "../../src/harness/v1/installation-topology";
 import { verifyInstallationReadinessV1, type InstallationReadinessV1 } from "../../src/harness/v1/installation-readiness";
+import { parseInstallationTransitionSummaryV1, type InstallationTransitionSummaryV1 } from "../../src/harness/v1/installation-transition-summary";
 import { verifyCodexMacosCustodyReadinessV1, type CodexMacosCustodyReadinessV1 } from "../../src/harness/codex-v1/macos-custody-readiness";
 import { verifyClaudeCodeLocalProcessReadinessV1, type ClaudeCodeLocalProcessReadinessV1 } from "../../src/harness/claude-code-v1/local-process-readiness";
 import { verifyLocalSupervisorReadinessV1, type LocalSupervisorReadinessV1 } from "../../src/harness/v1/local-supervisor-readiness";
@@ -12,6 +13,7 @@ type InstallationTopologyState = Readonly<{
   state: "loading" | "available" | "unavailable";
   plan?: InstallationTopologyPlanV1;
   readiness?: InstallationReadinessV1;
+  transition?: InstallationTransitionSummaryV1;
   codexMacosCustodyReadiness?: CodexMacosCustodyReadinessV1;
   claudeCodeLocalProcessReadiness?: ClaudeCodeLocalProcessReadinessV1;
   localSupervisorReadiness?: LocalSupervisorReadinessV1;
@@ -37,6 +39,7 @@ export function InstallationTopologyProvider({ children }: { children: ReactNode
         const responseBody = await response.json();
         const value = Object.freeze({ state: "available" as const, plan: verifyInstallationTopologyPlanV1(responseBody.plan),
           ...(responseBody.readiness === undefined ? {} : { readiness: verifyInstallationReadinessV1(responseBody.readiness) }),
+          ...(responseBody.transition === undefined ? {} : { transition: parseInstallationTransitionSummaryV1(responseBody.transition) }),
           ...(responseBody.codexMacosCustodyReadiness === undefined ? {} : {
             codexMacosCustodyReadiness: verifyCodexMacosCustodyReadinessV1(responseBody.codexMacosCustodyReadiness) }),
           ...(responseBody.claudeCodeLocalProcessReadiness === undefined ? {} : {

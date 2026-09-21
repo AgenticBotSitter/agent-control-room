@@ -34,6 +34,8 @@ import { ideaCreationOptionsSchema } from "./idea-wire";
 import { parseProductConfigurationV1, type ProductConfigurationV1 } from "../../config/v1/product-configuration";
 import { verifyInstallationTopologyPlanV1, type InstallationTopologyPlanV1 } from "../../harness/v1/installation-topology";
 import { verifyInstallationReadinessV1, type InstallationReadinessV1 } from "../../harness/v1/installation-readiness";
+import { verifyInstallationTransitionV1, type InstallationTransitionV1 } from "../../harness/v1/installation-transition";
+import { summarizeInstallationTransitionV1 } from "../../harness/v1/installation-transition-summary";
 import { localBackupRestoreEvidenceDigestForInstallationPlanV1 } from "../../harness/v1/local-backup-restore-readiness";
 import { verifyCodexMacosCustodyReadinessV1, type CodexMacosCustodyReadinessV1 } from "../../harness/codex-v1/macos-custody-readiness";
 import { verifyClaudeCodeLocalProcessReadinessV1, type ClaudeCodeLocalProcessReadinessV1 } from "../../harness/claude-code-v1/local-process-readiness";
@@ -66,6 +68,8 @@ export interface PrivateWebProcessOptions {
   installationTopologyPlan?: Readonly<InstallationTopologyPlanV1>;
   /** Optional non-secret proof outcomes for that exact setup plan. This process only presents them. */
   installationReadiness?: Readonly<InstallationReadinessV1>;
+  /** Optional read-only transition record for this exact reviewed setup plan. */
+  installationTransition?: Readonly<InstallationTransitionV1>;
   /** Installation-owned, verified disposable restore evidence. Its contents are never sent to the browser. */
   localBackupRestoreReadiness?: unknown;
   /** Optional opaque Mac Codex custody proof record. It is display-only and cannot enable Codex. */
@@ -134,6 +138,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     : verifyInstallationTopologyPlanV1(options.installationTopologyPlan);
   const installationReadiness = options.installationReadiness === undefined ? undefined
     : verifyInstallationReadinessV1(options.installationReadiness);
+  const installationTransition = options.installationTransition === undefined ? undefined
+    : verifyInstallationTransitionV1(options.installationTransition);
   const localBackupRestoreVerified = options.localBackupRestoreReadiness === undefined ? false : (() => {
     if (!installationTopologyPlan) throw new Error("invalid_private_app_config");
     try {
@@ -155,6 +161,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const localSupervisorReadiness = options.localSupervisorReadiness === undefined ? undefined
     : verifyLocalSupervisorReadinessV1(options.localSupervisorReadiness);
   if (installationReadiness && (!installationTopologyPlan || installationReadiness.planDigest !== installationTopologyPlan.planDigest))
+    throw new Error("invalid_private_app_config");
+  if (installationTransition && (!installationTopologyPlan || installationTransition.planDigest !== installationTopologyPlan.planDigest))
     throw new Error("invalid_private_app_config");
   if (codexMacosCustodyReadiness && (!installationTopologyPlan || codexMacosCustodyReadiness.planDigest !== installationTopologyPlan.planDigest))
     throw new Error("invalid_private_app_config");
@@ -330,6 +338,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             return await productConfigurationAuthority.authenticated(identity, async (_, actor) => {
               actor.require("projects.read", undefined, true);
               return Response.json({ plan: installationTopologyPlan, ...(installationReadiness ? { readiness: installationReadiness } : {}),
+                ...(installationTransition ? { transition: summarizeInstallationTransitionV1(installationTransition) } : {}),
                 ...(codexMacosCustodyReadiness ? { codexMacosCustodyReadiness } : {}),
                 ...(claudeCodeLocalProcessReadiness ? { claudeCodeLocalProcessReadiness } : {}),
                 ...(localSupervisorReadiness ? { localSupervisorReadiness } : {}), localBackupRestoreVerified },

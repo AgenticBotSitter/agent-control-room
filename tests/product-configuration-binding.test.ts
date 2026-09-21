@@ -5,6 +5,7 @@ import { validatePrivateStartupConfiguration } from "../src/web/v1/private-start
 import { createPrivateWebProcess } from "../src/web/v1/private-process";
 import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
 import { createInstallationReadinessV1 } from "../src/harness/v1/installation-readiness";
+import { createInstallationTransitionV1 } from "../src/harness/v1/installation-transition";
 import { createCodexMacosCustodyReadinessV1 } from "../src/harness/codex-v1/macos-custody-readiness";
 import { createClaudeCodeLocalProcessReadinessV1 } from "../src/harness/claude-code-v1/local-process-readiness";
 import { createLocalSupervisorReadinessV1 } from "../src/harness/v1/local-supervisor-readiness";
@@ -183,9 +184,11 @@ test("readiness is an authenticated non-secret view bound to its saved plan", as
     { proof: "restart_and_drain_procedure", state: "passed", evidenceDigest: sha256Digest("supervisor-restart") },
     { proof: "upgrade_and_rollback_procedure", state: "passed", evidenceDigest: sha256Digest("supervisor-rollback") },
   ] });
+  const transition = createInstallationTransitionV1({ transitionId: "transition:route", topologyPlan: plan,
+    now: "2027-01-15T00:00:00.000Z" });
   const app = createPrivateWebProcess({ ...options(configuration("Topology", false), store.pool.client, store.pool.close),
     installationTopologyPlan: plan, installationReadiness: readiness, codexMacosCustodyReadiness: custody,
-    claudeCodeLocalProcessReadiness: claudeReadiness, localSupervisorReadiness: supervisorReadiness });
+    claudeCodeLocalProcessReadiness: claudeReadiness, localSupervisorReadiness: supervisorReadiness, installationTransition: transition });
   t.after(() => app.close());
   const response = await app.handle(request("/api/v1/installation-readiness"), () => new Response("fallback", { status: 500 }));
   assert.equal(response.status, 200);
@@ -198,8 +201,11 @@ test("readiness is an authenticated non-secret view bound to its saved plan", as
   assert.equal(body.claudeCodeLocalProcessReadiness.readinessDigest, claudeReadiness.readinessDigest);
   assert.equal(body.localSupervisorReadiness.planDigest, plan.planDigest);
   assert.equal(body.localSupervisorReadiness.readinessDigest, supervisorReadiness.readinessDigest);
+  assert.equal(body.transition.affectedWorkerCount, 0);
+  assert.equal(body.transition.state, "prepared");
   assert.equal(body.localBackupRestoreVerified, false);
   assert.doesNotMatch(JSON.stringify(body), /supervisor-(?:custody|launch|restart|rollback)/);
+  assert.doesNotMatch(JSON.stringify(body.transition), /worker:remote|sha256:|transition:route/);
   assert.equal((await app.handle(request("/api/v1/installation-readiness?x=1"), () => new Response("fallback", { status: 500 }))).status, 400);
 });
 

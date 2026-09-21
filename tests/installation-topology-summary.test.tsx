@@ -7,6 +7,8 @@ import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topol
 import { createInstallationReadinessV1 } from "../src/harness/v1/installation-readiness";
 import { createCodexMacosCustodyReadinessV1 } from "../src/harness/codex-v1/macos-custody-readiness";
 import { createLocalSupervisorReadinessV1 } from "../src/harness/v1/local-supervisor-readiness";
+import { createInstallationTransitionV1 } from "../src/harness/v1/installation-transition";
+import { summarizeInstallationTransitionV1 } from "../src/harness/v1/installation-transition-summary";
 import { sha256Digest } from "../src/security/canonical-digest";
 
 test("setup summary distinguishes a pending or unavailable saved-status read from an absent plan", () => {
@@ -74,6 +76,21 @@ test("setup summary shows an honest proof checklist rather than a live worker", 
   assert.match(html, /<strong>Send a task:<\/strong> Not proven yet/);
   assert.match(html, /<strong>Send a task:<\/strong> Not available in this connector/);
   assert.doesNotMatch(html, /<button|<form|<input|worker:local|sha256:/);
+});
+
+test("setup summary presents an active reviewed transition without leaking worker identity or offering actions", () => {
+  const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
+    currentRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }],
+    requestedRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" },
+      { kind: "remote", workerId: "worker:remote", adapterId: "connector:remote-v1", adapterRevision: "00570550" }] });
+  const transition = createInstallationTransitionV1({ transitionId: "transition:display", topologyPlan: plan,
+    now: "2027-01-15T00:00:00.000Z" });
+  const html = renderToStaticMarkup(createElement(InstallationTopologySummary, { plan, transition: summarizeInstallationTransitionV1(transition) }));
+  assert.match(html, /Changing the setup/);
+  assert.match(html, /reviewed setup change is prepared/);
+  assert.match(html, /1 worker is affected/);
+  assert.match(html, /cannot start workers or move the database/);
+  assert.doesNotMatch(html, /<button|<form|<input|worker:remote|sha256:/);
 });
 
 test("setup summary distinguishes completed Hermes proof from an enabled worker", () => {

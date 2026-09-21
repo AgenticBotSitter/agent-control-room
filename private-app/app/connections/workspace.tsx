@@ -63,6 +63,7 @@ export function PrivateConnections() {
   }, [refresh]);
   return <PrivateConnectionView data={data} onRefresh={() => setRefresh(value => value + 1)}>
     <InstallationTopologySummary plan={installationTopology?.plan} readiness={installationTopology?.readiness}
+      transition={installationTopology?.transition}
       localSupervisorReadiness={installationTopology?.localSupervisorReadiness}
       codexMacosCustodyReadiness={installationTopology?.codexMacosCustodyReadiness}
       claudeCodeLocalProcessReadiness={installationTopology?.claudeCodeLocalProcessReadiness}

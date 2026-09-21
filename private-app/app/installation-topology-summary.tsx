@@ -2,6 +2,7 @@ import type { InstallationTopologyPlanV1 } from "../../src/harness/v1/installati
 import { summarizeInstallationReadinessV1, type InstallationReadinessV1 } from "../../src/harness/v1/installation-readiness";
 import { guideInstallationReadinessV1 } from "../../src/harness/v1/installation-guidance";
 import { summarizeLocalHarnessCapabilitiesV1, type LocalHarnessCapabilityV1 } from "../../src/harness/v1/local-harness-capabilities";
+import { summarizeInstallationTransitionV1, type InstallationTransitionSummaryV1 } from "../../src/harness/v1/installation-transition-summary";
 import type { CodexMacosCustodyReadinessV1 } from "../../src/harness/codex-v1/macos-custody-readiness";
 import { summarizeLocalSupervisorReadinessV1, type LocalSupervisorReadinessV1 } from "../../src/harness/v1/local-supervisor-readiness";
 
@@ -77,8 +78,9 @@ function LocalServicePreparation({ planDigest, readiness }: { planDigest: string
 }
 
 /** A status-only explanation. There are deliberately no setup, launch, or approval controls here. */
-export function InstallationTopologySummary({ plan, readiness, codexMacosCustodyReadiness, claudeCodeLocalProcessReadiness, localSupervisorReadiness, localBackupRestoreVerified, status }: { plan?: Readonly<InstallationTopologyPlanV1>;
+export function InstallationTopologySummary({ plan, readiness, transition, codexMacosCustodyReadiness, claudeCodeLocalProcessReadiness, localSupervisorReadiness, localBackupRestoreVerified, status }: { plan?: Readonly<InstallationTopologyPlanV1>;
   readiness?: Readonly<InstallationReadinessV1>; codexMacosCustodyReadiness?: Readonly<CodexMacosCustodyReadinessV1>;
+  transition?: Readonly<InstallationTransitionSummaryV1>;
   claudeCodeLocalProcessReadiness?: unknown;
   localSupervisorReadiness?: Readonly<LocalSupervisorReadinessV1>;
   localBackupRestoreVerified?: boolean;
@@ -105,11 +107,18 @@ export function InstallationTopologySummary({ plan, readiness, codexMacosCustody
   const overallState = backupEvidencePending ? "not_ready" : summary.state;
   const localCapabilities = summarizeLocalHarnessCapabilitiesV1(plan, readiness, codexMacosCustodyReadiness, claudeCodeLocalProcessReadiness,
     localBackupRestoreVerified === true, localSupervisorReadiness);
+  const transitionSummary = transition ?? summarizeInstallationTransitionV1(undefined);
   const mode = plan.mode === "this_computer" ? "This computer" : "Several computers";
   return <section className="private-panel" aria-labelledby="installation-title">
     <h2 id="installation-title">Installation setup</h2>
     <p><strong>Selected setup:</strong> {mode}</p>
     <p>This is one Control Room installation. It keeps one database and one scheduler as the authority whether workers are on this computer or elsewhere.</p>
+    <section className="private-note" aria-labelledby="installation-transition-title">
+      <h3 id="installation-transition-title">Changing the setup</h3>
+      <p><strong>{transitionSummary.ownerMessage}</strong> {transitionSummary.nextStep}</p>
+      {transitionSummary.state !== "not_started" && <p>{transitionSummary.affectedWorkerCount} worker{transitionSummary.affectedWorkerCount === 1 ? " is" : "s are"} affected by this reviewed change.</p>}
+      <p>This screen cannot start workers or move the database.</p>
+    </section>
     {plan.mode === "this_computer" && <section className="private-note" aria-labelledby="local-worker-path-title">
       <h3 id="local-worker-path-title">Local agent delivery</h3>
       <p><strong>Prepared, not enabled.</strong> Control Room can prepare a checked task for a local agent, but no agent is started from this screen.</p>

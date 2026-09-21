@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { verifyInstallationTransitionV1 } from "./installation-transition";
 
 /**
@@ -17,6 +18,21 @@ export type InstallationTransitionSummaryV1 = Readonly<{
   canEnableWorkers: false;
   canRelocateAuthority: false;
 }>;
+
+const summarySchema = z.object({
+  state: z.enum(["not_started", "prepared", "admission_paused", "drained", "proofs_verified", "committed", "failed", "rollback_ready", "rolled_back"]),
+  affectedWorkerCount: z.number().int().min(0).max(200),
+  ownerMessage: z.string().min(1).max(500),
+  nextStep: z.string().min(1).max(500),
+  canEnableWorkers: z.literal(false),
+  canRelocateAuthority: z.literal(false),
+}).strict();
+
+/** Validates the already-redacted browser shape. It is intentionally not the
+ * transition record verifier: browsers never receive that record. */
+export function parseInstallationTransitionSummaryV1(value: unknown): InstallationTransitionSummaryV1 {
+  return Object.freeze(summarySchema.parse(value));
+}
 
 const messages: Readonly<Record<Exclude<InstallationTransitionSummaryV1["state"], "not_started">, Readonly<{
   ownerMessage: string; nextStep: string;
@@ -40,12 +56,12 @@ const messages: Readonly<Record<Exclude<InstallationTransitionSummaryV1["state"]
 });
 
 export function summarizeInstallationTransitionV1(value: unknown): InstallationTransitionSummaryV1 {
-  if (value === undefined || value === null) return Object.freeze({ state: "not_started", affectedWorkerCount: 0,
+  if (value === undefined || value === null) return parseInstallationTransitionSummaryV1({ state: "not_started", affectedWorkerCount: 0,
     ownerMessage: "No setup change is in progress.", nextStep: "Create a reviewed setup plan before changing worker placement.",
     canEnableWorkers: false, canRelocateAuthority: false });
   const record = verifyInstallationTransitionV1(value);
   const message = messages[record.state];
-  return Object.freeze({ state: record.state, affectedWorkerCount: record.affectedWorkerIds.length,
+  return parseInstallationTransitionSummaryV1({ state: record.state, affectedWorkerCount: record.affectedWorkerIds.length,
     ownerMessage: message.ownerMessage, nextStep: message.nextStep,
     canEnableWorkers: false, canRelocateAuthority: false });
 }
