@@ -70,7 +70,9 @@ export const ideaDetailSchema = z.object({ session: summary.extend({ participant
 contributions: z.array(z.object({ contributionId: id, sessionId: id, sessionDigest: digest, participantId: id,
   round: z.number().int().min(1).max(3), safeOpinion: text, suggestedExperiment: z.string().min(1).max(500),
   confidencePercent: z.number().int().min(0).max(100),
-  sourceMode: z.enum(["injected_only", "provider_filtered"]), providerContacted: z.boolean(), liveBotContactAuthorized: z.boolean(),
+  sourceMode: z.enum(["injected_only", "provider_filtered", "canonical_task_result"]),
+  evidenceState: z.enum(["none", "reviewed_control_room_task"]),
+  providerContacted: z.boolean(), liveBotContactAuthorized: z.boolean(),
 })).max(18),
 synthesis: z.object({ sessionId: id, sessionDigest: digest, synthesisDigest: digest, executiveSummary: text,
   nextExperiment: z.string().min(1).max(500), overallScore: z.number().min(0).max(100),
@@ -104,8 +106,9 @@ canonicalTasks: z.object({ projectId: id, taskCount: z.number().int().min(3).max
       && run.attempts.every(a => a.round <= session.maxRounds && session.participants.some(p => p.participantId === a.participantId)))
     && contributions.every(c => c.sessionId === session.sessionId && c.sessionDigest === session.sessionDigest
       && c.round <= session.maxRounds && session.participants.some(p => p.participantId === c.participantId))
-    && contributions.every(c => c.sourceMode === "provider_filtered" ? c.providerContacted && c.liveBotContactAuthorized
-      : !c.providerContacted && !c.liveBotContactAuthorized)
+    && contributions.every(c => c.sourceMode === "provider_filtered" ? c.providerContacted && c.liveBotContactAuthorized && c.evidenceState === "none"
+      : c.sourceMode === "canonical_task_result" ? !c.providerContacted && !c.liveBotContactAuthorized && c.evidenceState === "reviewed_control_room_task"
+      : !c.providerContacted && !c.liveBotContactAuthorized && c.evidenceState === "none")
     && (!canonicalTasks || !run && !synthesis && !decision && !contributions.length
       && canonicalTasks.taskCount >= session.participants.length && canonicalTasks.taskCount <= session.maxMessages
       && canonicalTasks.preparedRounds.every(round => round <= session.maxRounds))

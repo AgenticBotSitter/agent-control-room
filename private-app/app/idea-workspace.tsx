@@ -38,7 +38,9 @@ export function IdeaDiscussion({ detail, refresh, pendingChanged }: { detail: Id
         const contribution = contributions.find(c => c.round === round && c.participantId === participant.participantId);
         return <article className="private-panel" key={participant.participantId}><h3>{participant.displayName} · {participant.perspective}</h3>
           {contribution ? <><p style={{ whiteSpace: "pre-wrap" }}>{contribution.safeOpinion}</p>
-            <p>{contribution.sourceMode === "injected_only" ? "Synthetic test contribution — no provider was contacted." : "Retained, filtered provider contribution."}</p>
+            <p>{contribution.sourceMode === "injected_only" ? "Synthetic test contribution — no provider was contacted."
+              : contribution.sourceMode === "canonical_task_result" ? "Reviewed Control Room task result."
+              : "Retained, filtered provider contribution."}</p>
             <p>Suggested experiment: {contribution.suggestedExperiment}</p><p>{contribution.sourceMode === "injected_only" ? "Test confidence" : "Bot-reported confidence"}: {contribution.confidencePercent}%</p></>
             : <p>No contribution saved for this round.</p>}</article>;
       })}</section>)}

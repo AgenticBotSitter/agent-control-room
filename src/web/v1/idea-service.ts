@@ -74,7 +74,13 @@ export class WebIdeaService {
         || run.state === "completed" && run.messagesUsed !== session.maxMessages)) throw new Error("idea_snapshot_changed");
       const canDecide = this.decisionConfigured && !!synthesis && !decision && (!run || run.state === "completed")
         && actor.can("idea_lab.owner_decide", undefined, true);
-      return { session, contributions, synthesis: synthesis ?? null, decision: decision ?? null, canDecide,
+      const presentationContributions = contributions.map(contribution => ({ contributionId: contribution.contributionId,
+        sessionId: contribution.sessionId, sessionDigest: contribution.sessionDigest, participantId: contribution.participantId,
+        round: contribution.round, safeOpinion: contribution.safeOpinion, suggestedExperiment: contribution.suggestedExperiment,
+        confidencePercent: contribution.confidencePercent, sourceMode: contribution.sourceMode,
+        evidenceState: contribution.sourceMode === "canonical_task_result" ? "reviewed_control_room_task" as const : "none" as const,
+        providerContacted: contribution.providerContacted, liveBotContactAuthorized: contribution.liveBotContactAuthorized }));
+      return { session, contributions: presentationContributions, synthesis: synthesis ?? null, decision: decision ?? null, canDecide,
         canSynthesize: this.synthesisConfigured && !!run && run.state === "completed" && !synthesis && !decision
           && contributions.length === session.maxMessages && actor.can("idea_lab.synthesize", undefined, true),
         canStart: this.startConfigured && !canonicalTasks && !run && !synthesis && !decision && !contributions.length
