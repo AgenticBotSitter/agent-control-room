@@ -22,6 +22,9 @@ test("local harness capabilities are truthful, bounded and installation-safe", (
   assert.equal(hermes.remainingSetupCategory, "Local runner, protected storage and recovery proof");
   assert.equal(claude.state, "setup_required");
   assert.equal(claude.operations.submit, "unsupported");
+  assert.match(claude.summary, /one-time receipt/);
+  assert.match(claude.safeNow, /recheck/);
+  assert.match(claude.sourceOnly, /delivery, result and recovery path/);
   assert.equal(claude.remainingSetupCategory, "Installed-process and permission qualification");
   assert.equal(codex.state, "not_available");
   assert.equal(codex.operations.submit, "unsupported");

@@ -57,7 +57,7 @@ test("setup summary shows an honest proof checklist rather than a live worker", 
   assert.match(html, /<strong>Remaining setup category:<\/strong> Remaining local setup proof/);
   assert.match(html, /First useful work after setup:.*plain-text review/);
   assert.match(html, /cannot edit a project yet/);
-  assert.match(html, /<h4>Claude Code<\/h4><p><strong>Status: Adapter preparation required/);
+  assert.match(html, /<h4>Claude Code<\/h4><p><strong>Status: Local delivery preparation complete; process proof required/);
   assert.match(html, /<strong>Remaining setup category:<\/strong> Installed-process and permission qualification/);
   assert.match(html, /<h4>Codex<\/h4><p><strong>Status: Not available on this Mac yet/);
   assert.match(html, /<strong>Remaining setup category:<\/strong> macOS process and private-state custody qualification/);
