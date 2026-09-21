@@ -278,6 +278,13 @@ evidence only: it enables no worker, database, listener or persistent service.
   Focused browser and navigation checks confirm the complete endpoint payload
   has none of those internal values. This remains a read-only status change;
   it cannot enable a worker or relocate the installation.
+- A requested change between local and remote worker layouts can now be
+  retained as a tenant-bound, signed, append-only transition journal in the
+  existing PostgreSQL authority. It preserves the reviewed pause, drain,
+  proof, commit, failure and rollback-preparation history, and can answer only
+  whether new admission for an affected worker should stay paused. It neither
+  changes routes nor starts, stops, enrolls, revokes, or enables a worker.
+  The raw journal is unavailable to the browser role.
 - The final private task-startup gate now independently rechecks the same
   Hermes installation, backup-and-restore, and local-service readiness
   records. A caller cannot bypass the protected setup and operator-assembly
