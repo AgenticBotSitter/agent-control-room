@@ -129,6 +129,17 @@ resume, approval or merge authority. A later protected database writer must
 authenticate the durable receipt before it persists this record; the contract
 does not perform that I/O or treat a digest as authentication.
 
+The first protected storage layer is also complete: an append-only plan record
+in the same PostgreSQL authority can be created only from an accepted,
+authenticated controller delivery and an active lease owned by the existing
+process-private workspace manager. The installation fixes permitted paths and
+size limits when it creates that authority object; a worker cannot supply its
+own lease, paths or limits. Raw plan data remains available only to the narrow
+evidence database role, never the web role. The remaining storage layer must
+re-read this plan and the authenticated durable result receipt before it writes
+the final result-bound record; the existing browser contract may receive only
+its aggregate summary.
+
 ### S2 — Hermes first complete vertical slice
 
 1. Keep the existing queue-to-Hermes-to-result-to-review path.
