@@ -33,9 +33,9 @@ The result still follows the normal Control Room result-publication and owner
 review path. A local Hermes result is not automatically accepted just because
 it came from the same computer.
 
-Control Room gives an initial Marvin task its own pinned plan form, and gives
+Control Room gives an initial local Hermes task its own pinned plan form, and gives
 a requested correction a separate pinned correction form. That prevents an
-old generic Hermes task from being silently treated as a Marvin task and keeps
+old generic Hermes task from being silently treated as a local Hermes task and keeps
 the correction tied to the exact reviewed result it replaces.
 
 ## What is deliberately not claimed yet
@@ -134,7 +134,7 @@ login, and provider details private; a browser request or task prompt cannot
 provide or widen them.
 
 `createHermes021MacosLocalTaskPolicyV1` creates the policy record from an
-already-authoritative task decision. It checks the selected Marvin worker,
+already-authoritative task decision. It checks the selected local Hermes worker,
 the pinned Hermes revision, the controller's existing authority digest, and
 the exact approved prompt/instruction digest, and the expiry. It is not a
 second approval system: it cannot authorize a task that Control Room did not
@@ -158,7 +158,7 @@ isolated worktree and enforceable file/tool boundary.
 The corresponding Control Room task template also refuses to advertise a
 longer effect window. This keeps the signed task authority, the queue lease,
 and the private subprocess limit aligned instead of letting a browser-visible
-task imply that Marvin may run longer than this adapter can safely support.
+task imply that the local Hermes worker may run longer than this adapter can safely support.
 
 Before enabling this worker, the installation also registers the pinned
 Hermes local adapter in Control Room's existing adapter registry. That is the
@@ -168,12 +168,12 @@ path, or shell command. Creating that operator configuration is later gated
 installation work; the worker code does not create it silently.
 
 Before that controlled handoff, Control Room creates its ordinary harness-run
-record. It binds Marvin's run to the assigned task, attempt, approved authority
+record. It binds the local Hermes worker's run to the assigned task, attempt, approved authority
 and connector profile, while keeping local model, login, provider and workspace
 details private.
 
 Before the controlled runner is called, the shared local delivery composition
-stores Marvin's accepted delivery receipt in Control Room's one database. If
+stores the local Hermes worker's accepted delivery receipt in Control Room's one database. If
 the controller restarts after that point, it reports the task as already
 delivered instead of silently starting Hermes again. That protects against
 duplicate work; a person can later reconcile an uncertain prior result through
@@ -184,7 +184,7 @@ with its matching fingerprint and then creates Control Room's ordinary
 pending-review item. The normal in-process handoff now wires that publisher to
 the controlled runner. Its project, task, authority, review profile and
 workflow details come from the controller-prepared packet—not from terminal
-text or the browser. A completed Marvin record is evidence, not an approval:
+text or the browser. A completed local Hermes record is evidence, not an approval:
 it cannot release a task slot, retry an uncertain run, or accept the work on
 its own.
 
@@ -219,7 +219,7 @@ joins this wrapper to the existing local queue executor. It requires the
 ordinary database-backed assignment reader, policy, result store and authority
 check; it creates none of them. This means the local installation uses the
 same queue and review lifecycle as a remote worker rather than a parallel
-Marvin-specific work system.
+worker-specific work system.
 
 The normal operator configuration assembly can now carry that
 installation-owned local executor into the existing task queue. This is the

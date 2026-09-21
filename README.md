@@ -44,6 +44,12 @@ to join or refresh an existing agent without losing its assignment.
 workflow, using existing proven components. One configurable public product serves
 everyone; no separate private core.
 
+**New: choose one computer or several without changing products.**
+[Installation choices and safe transitions](docs/INSTALLATION_TRANSITIONS.md)
+explains how workers, the controller, and the one authority database can move
+without creating synchronization or a second writer. It also lists the source
+work still needed before these transitions can be operated.
+
 | What you want to know | Direct link / answer |
 | --- | --- |
 | What can I take on now? | [Ready assignments](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aready) is the authoritative list. |

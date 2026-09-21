@@ -45,11 +45,11 @@ task or transmit the packet again.
 
 The older `task-execution-plan/v1` and `/v2` Hermes-native plans intentionally
 have no connector-profile digest. That was safe for their older native adapter,
-but it is insufficient for Marvin's Hermes 0.21 adapter: Control Room must
+but it is insufficient for a local Hermes 0.21 adapter: Control Room must
 bind the task to the exact reviewed connector profile and source revision.
 
 Therefore the dispatcher must **not** reinterpret an old Hermes-native plan as
-a Marvin 0.21 task. Control Room now uses the versioned Hermes-0.21
+a local Hermes 0.21 task. Control Room now uses the versioned Hermes-0.21
 execution-plan forms: V5 for an initial task and V6 for a correction task.
 They carry:
 

@@ -51,7 +51,7 @@ evidence only: it enables no worker, database, listener or persistent service.
 - The owner has separately proved the exact fixed-argument Hermes runner on
   this Mac. The check created no Control Room task, worker registration,
   database, permanent service, or project write. It is evidence that the
-  runner bridge works, not evidence that Marvin is enabled for ordinary work.
+  runner bridge works, not evidence that the local Hermes worker is enabled for ordinary work.
 - The local runner preflight and qualification now also refuse an unreviewed
   Hermes version or source revision before asking it to handle a task. The
   compatibility check reads only the fixed `--version` response and retains
@@ -155,6 +155,12 @@ evidence only: it enables no worker, database, listener or persistent service.
   passed installation proof.
 - Shared local and remote lifecycle tests prove that later remote delivery is
   an extension of the same product, not a second scheduler or database.
+- The reviewed topology plan now binds opaque digests of its complete current
+  and requested worker-route sets and records every removed worker. A changed
+  route, adapter revision, addition, or removal therefore invalidates prior
+  setup evidence instead of being mistaken for the same installation plan.
+  This remains source-only planning; it does not enroll, remove, start, or
+  contact a worker.
 
 ## Latest accepted local checks
 

@@ -6,7 +6,7 @@
 
 Agent Control Room has two installation choices: **This computer** and **Several computers**. They are one product: one PostgreSQL authority database, the existing pg-boss queue, one task/result/review/correction lifecycle, and the same signed delivery packet.
 
-The local enablement order is Hermes / Marvin, Codex, Claude, then three-agent daily use and remote delivery. Later source work may proceed while an earlier real-world proof waits on the owner. An unproven capability is never shown as live.
+The local enablement order is Hermes Agent, Codex, Claude, then three-agent daily use and remote delivery. Later source work may proceed while an earlier real-world proof waits on the owner. An unproven capability is never shown as live.
 
 ## Donor decisions
 
@@ -24,7 +24,7 @@ No donor source is copied by this plan. A future extraction must pass `REUSE_DEC
 
 Finish the existing project, task, result, review, correction, worker and attention screens. Show safe reason codes and proof freshness, not paths, accounts, tokens or addresses. Prove canonical task identity, duplicate-delivery refusal, disposable recovery and truthful missing-proof UI.
 
-### P1 — Make Marvin useful first
+### P1 — Make the local Hermes worker useful first
 
 Use the existing Hermes queue delivery, controlled subprocess, task policy, terminal staging, receipt and pending-review publisher. Keep private executable, profile, model/provider and folder bindings out of task records.
 

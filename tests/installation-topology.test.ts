@@ -17,6 +17,7 @@ test("a this-computer plan preserves one authority and asks only for local proof
   assert.deepEqual(plan.retainedWorkerIds, ["worker:marvin"]);
   assert.deepEqual(plan.reboundWorkerIds, []);
   assert.deepEqual(plan.addedRemoteWorkerIds, []);
+  assert.deepEqual(plan.removedWorkerIds, []);
   assert.deepEqual(plan.requiredProofs, ["backup_restore", "local_owner_qualification", "local_runner_bridge"]);
   assert.equal(plan.enablesWorkers, false);
   assert.deepEqual(verifyInstallationTopologyPlanV1(plan), plan);
@@ -29,6 +30,7 @@ test("adding a remote worker is one-installation migration preparation, not a se
   assert.deepEqual(plan.retainedWorkerIds, ["worker:marvin"]);
   assert.deepEqual(plan.reboundWorkerIds, []);
   assert.deepEqual(plan.addedRemoteWorkerIds, ["worker:remote"]);
+  assert.deepEqual(plan.removedWorkerIds, []);
   assert.deepEqual(plan.requiredProofs, ["backup_restore", "local_owner_qualification", "local_runner_bridge", "remote_enrollment", "two_computer_delivery"]);
   assert.equal(plan.enablesWorkers, false);
 });
@@ -48,7 +50,20 @@ test("moving a known worker between local and remote is a rebind, not quiet rete
   assert.deepEqual(plan.retainedWorkerIds, []);
   assert.deepEqual(plan.reboundWorkerIds, ["worker:marvin"]);
   assert.deepEqual(plan.addedRemoteWorkerIds, []);
+  assert.deepEqual(plan.removedWorkerIds, []);
   assert.ok(plan.requiredProofs.includes("remote_enrollment"));
+});
+
+test("the plan binds every route change and records an explicit worker removal", () => {
+  const original = planInstallationTopologyV1(input([local, remote]));
+  const removed = planInstallationTopologyV1({ ...input([local]), currentRoutes: [local, remote] });
+  const changedAdapter = planInstallationTopologyV1(input([{ ...local, adapterRevision: "00600000" }]));
+  const differentLocal = planInstallationTopologyV1(input([local, { ...local, workerId: "worker:local-second" }]));
+  assert.deepEqual(removed.removedWorkerIds, ["worker:remote"]);
+  assert.notEqual(original.planDigest, removed.planDigest);
+  assert.notEqual(planInstallationTopologyV1(input([local])).planDigest, changedAdapter.planDigest);
+  assert.notEqual(planInstallationTopologyV1(input([local, { ...local, workerId: "worker:local-first" }])).planDigest, differentLocal.planDigest);
+  assert.throws(() => verifyInstallationTopologyPlanV1({ ...removed, removedWorkerIds: [] }), /plan_invalid/);
 });
 
 test("readiness is bound to one reviewed plan and never means a worker is enabled", () => {

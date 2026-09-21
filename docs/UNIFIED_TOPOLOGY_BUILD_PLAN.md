@@ -110,7 +110,7 @@ Completed in source:
   restart-safe exact replay.
 - a normal local-runner seam that requires the Mac-owned policy to approve the
   exact controller packet before Hermes can be invoked.
-- local delivery composition that records Marvin's accepted shared receipt in
+- local delivery composition that records the local Hermes worker's accepted shared receipt in
   the one authoritative database before invoking the controlled runner. A
   restart sees that receipt and refuses to automatically invoke the same task
   a second time.
@@ -118,7 +118,7 @@ Completed in source:
   task type, and worker capability rather than reusing an unpinned legacy
   Hermes plan, including a separate correction-task form.
 - the existing task-assignment coordinator accepts that same pinned local
-  worker capability, so Marvin uses the ordinary bounded lease path rather
+  worker capability, so the local Hermes worker uses the ordinary bounded lease path rather
   than a second local scheduler.
 - dispatch preparation now locks and rechecks that ordinary assignment, its
   active lease, the matching task plan, and the pinned Hermes profile before
@@ -135,14 +135,14 @@ Completed in source:
   the saved receipt remains an unresolved safety record rather than a reason
   to retry the task automatically.
 - an application composition now connects that prepared packet directly to
-  Marvin's controlled local delivery seam. The first accepted handoff invokes
+  the local Hermes worker's controlled delivery seam. The first accepted handoff invokes
   the injected local runner once; an exact restart replay reports the earlier
-  delivery and never invokes Marvin twice.
+  delivery and never invokes the worker twice.
 - the completed-record publisher now accepts only a verified terminal record
   from the local runner and creates the normal pending-review item with exact
   replay protection. The normal in-process composition derives its result
   binding only from the controller-prepared packet and invokes that existing
-  publisher; Marvin cannot accept its own result.
+  publisher; the worker cannot accept its own result.
 - a normal harness-run record is created before the controlled local launcher
   is called. It binds the run to the task, attempt, approved authority, and
   connector profile without recording a local login, model, provider, or
