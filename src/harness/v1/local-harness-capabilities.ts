@@ -2,6 +2,7 @@ import type { ConnectorOperationNameV1, ConnectorProfileV1 } from "./connector-p
 import { claudeCodeConnectorProfileV1 } from "../claude-code-v1/connector-profile";
 import { hermes021MacosLocalConnectorProfileV1 } from "../hermes-021-v1/connector-profile";
 import { summarizeCodexMacosCustodyReadinessV1 } from "../codex-v1/macos-custody-readiness";
+import { summarizeClaudeCodeLocalProcessReadinessV1 } from "../claude-code-v1/local-process-readiness";
 import { summarizeInstallationReadinessV1, type InstallationReadinessV1 } from "./installation-readiness";
 import type { InstallationTopologyPlanV1 } from "./installation-topology";
 
@@ -90,13 +91,14 @@ export const localHarnessCapabilitiesV1: readonly LocalHarnessCapabilityV1[] = O
  * source-only description.
  */
 export function summarizeLocalHarnessCapabilitiesV1(plan?: InstallationTopologyPlanV1,
-  readiness?: InstallationReadinessV1, codexMacosCustodyReadiness?: unknown,
+  readiness?: InstallationReadinessV1, codexMacosCustodyReadiness?: unknown, claudeCodeLocalProcessReadiness?: unknown,
   localBackupRestoreVerified = false): readonly LocalHarnessCapabilityV1[] {
   if (!plan || !plan.requiredProofs.includes("local_owner_qualification") || !plan.requiredProofs.includes("local_runner_bridge"))
     return localHarnessCapabilitiesV1;
   const summary = summarizeInstallationReadinessV1(plan, readiness);
   const localProofs = summary.proofs.filter(item => ["local_owner_qualification", "local_runner_bridge", "backup_restore"].includes(item.proof));
   const hermes = localHarnessCapabilitiesV1[0]!;
+  const claude = localHarnessCapabilitiesV1[1]!;
   const codex = localHarnessCapabilitiesV1[2]!;
   const custody = summarizeCodexMacosCustodyReadinessV1(plan.planDigest, codexMacosCustodyReadiness);
   const codexCapability = custody.state === "blocked" ? Object.freeze({ ...codex, state: "setup_needs_attention" as const,
@@ -107,11 +109,20 @@ export function summarizeLocalHarnessCapabilitiesV1(plan?: InstallationTopologyP
       stateLabel: "Mac safety prerequisites recorded", summary: "The two Mac custody prerequisites are recorded, but Control Room still has not started Codex.",
       remainingSetupCategory: "Owner-attended exact-harness qualification",
       nextStep: "Perform the separate owner-attended exact-harness qualification. This record alone cannot enable or launch Codex." }) : codex;
+  const claudeReadiness = summarizeClaudeCodeLocalProcessReadinessV1(plan.planDigest, claudeCodeLocalProcessReadiness);
+  const claudeCapability = claudeReadiness.state === "blocked" ? Object.freeze({ ...claude, state: "setup_needs_attention" as const,
+    stateLabel: "Claude process proof needs attention", summary: "Control Room has not enabled Claude Code. One of its required local process proofs is unavailable or failed.",
+    remainingSetupCategory: "Corrective installed-process proof",
+    nextStep: "Correct the specific owner-run Claude process proof, record fresh non-secret evidence, then complete the separate enablement decision." })
+    : claudeReadiness.state === "readiness_recorded" ? Object.freeze({ ...claude, state: "owner_enablement_required" as const,
+      stateLabel: "Claude process proof recorded; owner enablement required", summary: "The required local Claude process proofs are recorded, but Control Room still has not started Claude Code.",
+      remainingSetupCategory: "Separate owner enablement decision",
+      nextStep: "The owner may now make the separate, explicit Claude local-worker enablement decision." }) : claude;
   if (localProofs.some(item => item.state === "failed" || item.state === "unavailable")) {
     return Object.freeze([Object.freeze({ ...hermes, state: "setup_needs_attention" as const,
       stateLabel: "Setup needs attention", summary: "Control Room has not enabled Hermes. One or more required local proof checks needs attention.",
       remainingSetupCategory: "Corrective local proof",
-      nextStep: "Correct the failed local proof through the owner-run procedure, then record a fresh non-secret proof result." }), localHarnessCapabilitiesV1[1]!, codexCapability]);
+      nextStep: "Correct the failed local proof through the owner-run procedure, then record a fresh non-secret proof result." }), claudeCapability, codexCapability]);
   }
   if (localProofs.length === 3 && localProofs.every(item => item.state === "passed")) {
     if (!localBackupRestoreVerified) {
@@ -120,12 +131,12 @@ export function summarizeLocalHarnessCapabilitiesV1(plan?: InstallationTopologyP
         summary: "Control Room has not enabled Hermes. Its recorded backup-and-restore check is not yet tied to verified disposable restore evidence for this installation.",
         remainingSetupCategory: "Verified backup-and-restore evidence",
         nextStep: "Record the existing disposable backup-and-restore proof for this exact installation before requesting local-worker enablement." }),
-      localHarnessCapabilitiesV1[1]!, codexCapability]);
+      claudeCapability, codexCapability]);
     }
     return Object.freeze([Object.freeze({ ...hermes, state: "owner_enablement_required" as const,
       stateLabel: "Proof complete; owner enablement required", summary: "The required local proof records are complete, but Control Room still has not started Hermes.",
       remainingSetupCategory: "Separate owner enablement decision",
-      nextStep: "The owner may now make the separate, explicit local-worker enablement decision." }), localHarnessCapabilitiesV1[1]!, codexCapability]);
+      nextStep: "The owner may now make the separate, explicit local-worker enablement decision." }), claudeCapability, codexCapability]);
   }
   const passed = new Set(localProofs.filter(item => item.state === "passed").map(item => item.proof));
   const runnerRecorded = passed.has("local_runner_bridge");
@@ -142,7 +153,7 @@ export function summarizeLocalHarnessCapabilitiesV1(plan?: InstallationTopologyP
       summary: "Control Room has recorded part of the local Hermes setup proof. Hermes is still not enabled or running.",
       remainingSetupCategory: "Remaining local setup proof",
       nextStep: `Record ${missing.join(", ")} before a bounded Hermes task can be enabled.`,
-    }), localHarnessCapabilitiesV1[1]!, codexCapability]);
+    }), claudeCapability, codexCapability]);
   }
-  return Object.freeze([hermes, localHarnessCapabilitiesV1[1]!, codexCapability]);
+  return Object.freeze([hermes, claudeCapability, codexCapability]);
 }

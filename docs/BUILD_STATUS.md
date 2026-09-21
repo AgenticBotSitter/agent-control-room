@@ -150,6 +150,10 @@ unavailable until their separate host qualifications are complete.
   Hermes card: a generic "passed" backup label cannot make the page say setup
   proof is complete. It asks for verified recovery evidence without exposing
   any backup details.
+- Claude Code now has an installation-bound, opaque local-process readiness
+  record for process identity, permission limits, and cancellation/restart
+  behavior. Even a complete record remains an owner-enablement prerequisite;
+  it does not start, contact, or make Claude Code available.
 
 These checks use disposable data. They do not prove a real agent program,
 database, browser login, backup, persistent service or remote machine.

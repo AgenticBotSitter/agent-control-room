@@ -5,6 +5,7 @@ import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topol
 import { createInstallationReadinessV1 } from "../src/harness/v1/installation-readiness";
 import { sha256Digest } from "../src/security/canonical-digest";
 import { createCodexMacosCustodyReadinessV1 } from "../src/harness/codex-v1/macos-custody-readiness";
+import { createClaudeCodeLocalProcessReadinessV1 } from "../src/harness/claude-code-v1/local-process-readiness";
 
 test("local harness capabilities are truthful, bounded and installation-safe", () => {
   assert.deepEqual(localHarnessCapabilitiesV1.map(value => value.id), ["hermes", "claude", "codex"]);
@@ -37,7 +38,7 @@ test("local Hermes proof completion is honest about the separate enablement deci
     { proof: "local_owner_qualification", state: "passed", evidenceDigest: sha256Digest("qualification") },
     { proof: "local_runner_bridge", state: "passed", evidenceDigest: sha256Digest("bridge") },
   ] });
-  const hermes = summarizeLocalHarnessCapabilitiesV1(plan, ready, undefined, true).find(value => value.id === "hermes")!;
+  const hermes = summarizeLocalHarnessCapabilitiesV1(plan, ready, undefined, undefined, true).find(value => value.id === "hermes")!;
   assert.equal(hermes.state, "owner_enablement_required");
   assert.match(hermes.stateLabel, /owner enablement/);
   assert.match(hermes.summary, /still has not started Hermes/);
@@ -93,6 +94,21 @@ test("macOS Codex custody readiness is plan-bound and never becomes launch autho
   const otherPlanCustody = createCodexMacosCustodyReadinessV1({ ...custody, planDigest: sha256Digest("other"),
     proofs: custody.proofs });
   assert.throws(() => summarizeLocalHarnessCapabilitiesV1(plan, undefined, otherPlanCustody), /plan_mismatch/);
+});
+
+test("recorded Claude process proof remains owner-enabled rather than live", () => {
+  const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
+    currentRoutes: [{ kind: "local", workerId: "worker:claude", adapterId: "connector:claude-code-local-v1", adapterRevision: "00570550" }],
+    requestedRoutes: [{ kind: "local", workerId: "worker:claude", adapterId: "connector:claude-code-local-v1", adapterRevision: "00570550" }] });
+  const claudeReadiness = createClaudeCodeLocalProcessReadinessV1({ planDigest: plan.planDigest, proofs: [
+    { proof: "installed_process_identity", state: "passed", evidenceDigest: sha256Digest("identity") },
+    { proof: "permission_boundary", state: "passed", evidenceDigest: sha256Digest("permission") },
+    { proof: "cancellation_and_restart_recovery", state: "passed", evidenceDigest: sha256Digest("recovery") },
+  ] });
+  const claude = summarizeLocalHarnessCapabilitiesV1(plan, undefined, undefined, claudeReadiness).find(value => value.id === "claude")!;
+  assert.equal(claude.state, "owner_enablement_required");
+  assert.match(claude.summary, /still has not started Claude Code/);
+  assert.equal(claude.operations.submit, "unsupported");
 });
 
 test("failed macOS Codex custody evidence remains an actionable refusal", () => {
