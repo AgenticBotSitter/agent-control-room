@@ -254,10 +254,14 @@ evidence only: it enables no worker, database, listener or persistent service.
 These checks use disposable data. They do not prove a real agent program,
 database, browser login, backup, persistent service or remote machine.
 
-## Remaining source work
+## Remaining implementation and installation work
 
-1. Finish the safe local installation composition around the existing one
-   database, queue, protected artifact store and read-only setup status.
+1. Supply the separately approved private installation inputs to the existing
+   safe local Hermes composition: one database, queue, protected artifact
+   store, exact runner binding and read-only setup status. The source already
+   captures and validates this composition without browser-controlled inputs;
+   it cannot choose private settings, create a database, start a service, or
+   enable Hermes by itself.
 2. Add qualified installed-process host compositions for Codex and Claude Code
    below their existing result/review contracts. They must not become another
    scheduler, database or permission system.
