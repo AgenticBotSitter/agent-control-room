@@ -17,3 +17,4 @@ export * from "./qualification-evidence";
 export * from "./runner-qualification-evidence";
 export * from "./runner-compatibility";
 export * from "./installation-readiness-record";
+export * from "./delivery-recovery-status";
