@@ -10,6 +10,9 @@ credential. Every operation in `claudeCodeConnectorProfileV1` remains `unsupport
   package identity, transport, and per-operation evidence. Unchanged by this work.
 - `src/harness/claude-code-v1/stream-json-decode.ts` — strict decoder for the CLI's
   newline-delimited `--output-format stream-json` output.
+- `src/harness/claude-code-v1/session-identity.ts` — derives one expected opaque
+  session identifier from the already accepted task/run/attempt binding. It does not
+  start Claude Code or create authority.
 - `src/harness/claude-code-v1/owned-process-session.ts` — synchronously owned process
   lifecycle over an injected byte port, with bounded stdout framing and bounded cleanup.
 - `src/harness/claude-code-v1/unsupported-operations.ts` — explicit refusal, with a
@@ -26,6 +29,10 @@ Lines are classified as `init`, `assistant_turn`, `result` or `decode_error`.
 
 - The first frame must be `system`/`init`; it fixes the session identity. Later frames
   must repeat that same `session_id`.
+- When a caller has derived an expected session identifier from the accepted attempt,
+  the first `init` frame must match it. This closes the source-only identity seam
+  without trusting a process-selected session. Existing runtime callers have not yet
+  been wired to pass that value, so this is preparation, not a live-process claim.
 - Only `system`/`init`, `assistant` and `result` are accepted. Any other `type`, any
   other `system` subtype, malformed JSON, a non-object, an empty line, an embedded
   carriage return or a line over 262,144 bytes is a `decode_error`.
@@ -69,6 +76,11 @@ ceiling and discarded.
   `cleanupUncertain`. It never silently claims a clean shutdown.
 - `disposition().resubmissionSafe` is always `false`. A restart proves nothing about a
   previous attempt, so no path here marks a run safe to resubmit.
+
+The installed-process launcher remains deliberately absent. Before that is built, its
+fixed executable, argument list, bounded prompt bytes, working-directory custody,
+minimal environment, permission policy, process-group cleanup and cancellation proof
+must all be bound to the accepted task. This repository does not yet claim that proof.
 
 ## Result identity is not minted in this package
 

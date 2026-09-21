@@ -21,6 +21,14 @@ also has a read-only setup plan that lists the proofs required before workers
 can be enabled. These are preparation and test results, not a claim that any
 agent or remote computer is live.
 
+It now also has a source-only transition record which binds a reviewed topology
+plan and tracks preparation, paused admission, drain evidence, proof checks,
+commit, failure and rollback preparation. It includes newly added local workers
+as well as remote, rebound and removed workers. The record cannot enable a
+worker, move the database or perform a change by itself; the future controller
+will use it as its durable checklist rather than treating a setup screen as a
+successful transition.
+
 The first local adapter being completed is a bounded Hermes Agent text task.
 Codex and Claude Code have the same project/task/result/review contract but
 still require their own installed-process qualifications. No adapter is made

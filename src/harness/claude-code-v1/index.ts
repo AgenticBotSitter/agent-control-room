@@ -1,5 +1,6 @@
 export * from "./connector-profile";
 export * from "./stream-json-decode";
+export * from "./session-identity";
 export * from "./owned-process-session";
 export * from "./unsupported-operations";
 export * from "./result-publication";

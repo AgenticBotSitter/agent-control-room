@@ -63,6 +63,7 @@ test("one this-computer plan represents Hermes, Codex and Claude without a secon
 
   assert.equal(plan.mode, "this_computer");
   assert.deepEqual(plan.retainedWorkerIds, workers.map(worker => worker.workerId).sort());
+  assert.deepEqual(plan.addedLocalWorkerIds, []);
   assert.deepEqual(plan.addedRemoteWorkerIds, []);
   assert.equal(plan.enablesWorkers, false);
   assert.deepEqual(plan.requiredProofs, ["backup_restore", "local_owner_qualification", "local_runner_bridge"]);

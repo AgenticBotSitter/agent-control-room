@@ -16,6 +16,7 @@ test("a this-computer plan preserves one authority and asks only for local proof
   assert.equal(plan.mode, "this_computer");
   assert.deepEqual(plan.retainedWorkerIds, ["worker:marvin"]);
   assert.deepEqual(plan.reboundWorkerIds, []);
+  assert.deepEqual(plan.addedLocalWorkerIds, []);
   assert.deepEqual(plan.addedRemoteWorkerIds, []);
   assert.deepEqual(plan.removedWorkerIds, []);
   assert.deepEqual(plan.requiredProofs, ["backup_restore", "local_owner_qualification", "local_runner_bridge"]);
@@ -29,6 +30,7 @@ test("adding a remote worker is one-installation migration preparation, not a se
   assert.equal(plan.mode, "several_computers");
   assert.deepEqual(plan.retainedWorkerIds, ["worker:marvin"]);
   assert.deepEqual(plan.reboundWorkerIds, []);
+  assert.deepEqual(plan.addedLocalWorkerIds, []);
   assert.deepEqual(plan.addedRemoteWorkerIds, ["worker:remote"]);
   assert.deepEqual(plan.removedWorkerIds, []);
   assert.deepEqual(plan.requiredProofs, ["backup_restore", "local_owner_qualification", "local_runner_bridge", "remote_enrollment", "two_computer_delivery"]);
@@ -49,6 +51,7 @@ test("moving a known worker between local and remote is a rebind, not quiet rete
   const plan = planInstallationTopologyV1(input([{ ...local, kind: "remote" }]));
   assert.deepEqual(plan.retainedWorkerIds, []);
   assert.deepEqual(plan.reboundWorkerIds, ["worker:marvin"]);
+  assert.deepEqual(plan.addedLocalWorkerIds, []);
   assert.deepEqual(plan.addedRemoteWorkerIds, []);
   assert.deepEqual(plan.removedWorkerIds, []);
   assert.ok(plan.requiredProofs.includes("remote_enrollment"));
@@ -64,6 +67,12 @@ test("the plan binds every route change and records an explicit worker removal",
   assert.notEqual(planInstallationTopologyV1(input([local])).planDigest, changedAdapter.planDigest);
   assert.notEqual(planInstallationTopologyV1(input([local, { ...local, workerId: "worker:local-first" }])).planDigest, differentLocal.planDigest);
   assert.throws(() => verifyInstallationTopologyPlanV1({ ...removed, removedWorkerIds: [] }), /plan_invalid/);
+});
+
+test("a newly added local worker is explicit and cannot bypass transition review", () => {
+  const plan = planInstallationTopologyV1(input([local, { ...local, workerId: "worker:local-second" }]));
+  assert.deepEqual(plan.addedLocalWorkerIds, ["worker:local-second"]);
+  assert.deepEqual(plan.addedRemoteWorkerIds, []);
 });
 
 test("readiness is bound to one reviewed plan and never means a worker is enabled", () => {

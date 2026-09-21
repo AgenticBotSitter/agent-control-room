@@ -53,6 +53,21 @@ test("a well formed stream decodes to init, assistant turns and one terminal res
   assert.equal(frames[2].kind === "result" && frames[2].usageReported, true);
 });
 
+test("a process-selected session ID is enforced from the first init frame", () => {
+  const decoder = createClaudeCodeStreamDecoderV1({ expectedSessionId: SESSION });
+  assert.equal(decoder.accept(initLine()).kind, "init");
+
+  const wrong = createClaudeCodeStreamDecoderV1({ expectedSessionId: SESSION });
+  assert.deepEqual(wrong.accept(initLine(OTHER_SESSION)), {
+    schema: "control-room.claude-code-stream-frame/v1",
+    kind: "decode_error",
+    reasonCode: "session_id_mismatch",
+  });
+  assert.throws(() => createClaudeCodeStreamDecoderV1({ expectedSessionId: "not-a-uuid" }));
+  assert.equal(decodeClaudeCodeStreamJsonLinesV1([initLine(OTHER_SESSION)], { expectedSessionId: SESSION })[0]?.kind,
+    "decode_error");
+});
+
 test("a success subtype carrying is_error true is classified as failed", () => {
   const frames = decodeClaudeCodeStreamJsonLinesV1([
     initLine(),

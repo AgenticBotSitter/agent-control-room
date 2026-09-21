@@ -167,7 +167,13 @@ function textDigest(value: string): string {
  * type, out-of-order frame or duplicate terminal frame is a decode failure, and
  * the first failure permanently poisons the decoder rather than resynchronising.
  */
-export function createClaudeCodeStreamDecoderV1(): ClaudeCodeStreamDecoderV1 {
+export function createClaudeCodeStreamDecoderV1(input: Readonly<{ expectedSessionId?: unknown }> = {}): ClaudeCodeStreamDecoderV1 {
+  const expectedSessionId = input.expectedSessionId === undefined ? undefined : (() => {
+    if (typeof input.expectedSessionId !== "string" || !sessionIdPattern.test(input.expectedSessionId)) {
+      throw new Error("claude_code_stream_decoder_expected_session_invalid");
+    }
+    return input.expectedSessionId;
+  })();
   let sessionId: string | undefined;
   let framesAccepted = 0;
   let assistantTurns = 0;
@@ -217,6 +223,7 @@ export function createClaudeCodeStreamDecoderV1(): ClaudeCodeStreamDecoderV1 {
     if (terminalObserved) return fail(type === "result" ? "duplicate_terminal_frame" : "frame_after_terminal");
     if (type === "system") {
       if (initObserved) return fail("duplicate_init_frame");
+      if (expectedSessionId !== undefined && frameSessionId !== expectedSessionId) return fail("session_id_mismatch");
     } else if (!initObserved) {
       return fail("init_frame_not_first");
     } else if (frameSessionId !== sessionId) {
@@ -329,8 +336,9 @@ export function createClaudeCodeStreamDecoderV1(): ClaudeCodeStreamDecoderV1 {
 }
 
 /** Convenience one-shot decode of an already-framed line sequence. Stops at the first failure. */
-export function decodeClaudeCodeStreamJsonLinesV1(lines: readonly string[]): readonly ClaudeCodeStreamFrameV1[] {
-  const decoder = createClaudeCodeStreamDecoderV1();
+export function decodeClaudeCodeStreamJsonLinesV1(lines: readonly string[],
+  options: Readonly<{ expectedSessionId?: unknown }> = {}): readonly ClaudeCodeStreamFrameV1[] {
+  const decoder = createClaudeCodeStreamDecoderV1(options);
   const frames: ClaudeCodeStreamFrameV1[] = [];
   for (const line of lines) {
     const frame = decoder.accept(line);
