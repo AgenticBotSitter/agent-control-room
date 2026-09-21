@@ -132,6 +132,16 @@ unavailable until their separate host qualifications are complete.
   browser-presentation checks passed, followed by the TypeScript project check
   and production-style build. It did not create a worker, start an agent, or
   connect to an installation database.
+- The normal private task application now supplies that same protected,
+  read-only capacity projection from its existing canonical coordinator
+  records. The compiled application proof confirms the owner can read a real
+  tenant-bound fleet and active-work snapshot while task assignment remains
+  inert until separately authorized. The route completes authentication before
+  reading the independent projection, so a one-database local installation
+  does not hold its web transaction open across a second read. This package
+  passed 24 focused checks, the TypeScript project check, and the
+  production-style build; it did not create a worker, start an agent, connect
+  to an installation database, or expose a database handle to the browser.
 - Local Hermes recovery inspection now reads only an authenticated saved
   delivery and its protected staged terminal record. It reports no saved
   delivery, an unresolved saved delivery, or a staged result using only safe

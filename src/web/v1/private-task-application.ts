@@ -2,6 +2,8 @@ import { createPrivateWebProcess, type PrivateWebProcessOptions } from "./privat
 import { createTaskCoordinatorLifecycle, type TaskCoordinatorConfiguration, type TaskCoordinatorDatabase } from "./task-coordinator-lifecycle";
 import { validateTaskQualityKeys } from "./task-quality-coordinator";
 import { timingSafeEqual } from "node:crypto";
+import { DatabaseOperatorFleetReadSourceV1, OperatorSurfaceReadServiceV1, OperatorSurfaceStoreV1 } from "../../operator-surfaces/v1";
+import { ServiceIncidentStore } from "../../services/v1/incident-store";
 
 /** Trusted composition for two separately verified resources; not a deployment preflight bypass.
  * No pools are opened here. The separate task bootstrap verifies both roles before calling this factory.
@@ -26,6 +28,21 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
   // Until construction succeeds, the caller retains both resources.
   if (coordinator.quality) validateTaskQualityKeys(coordinator.quality, coordinator.planning.reviewIntegrityKey, web.tasks);
   const tasks = createTaskCoordinatorLifecycle(coordinator);
+  // The coordinator-side pool already owns the canonical task records. Give
+  // the web process only a narrow read callback, never that pool or a worker
+  // control handle. This uses the existing operator projection rather than a
+  // local dashboard cache, so the same screen can later serve local and remote
+  // workers from the one installation database.
+  const operatorSurfaceService = new OperatorSurfaceReadServiceV1(
+    new OperatorSurfaceStoreV1(coordinator.database.client),
+    new ServiceIncidentStore(coordinator.database.client),
+    new DatabaseOperatorFleetReadSourceV1(coordinator.database.client),
+  );
+  const operatorSurface = Object.freeze({ read: async (input: {
+    tenantId: string; actorId: string; grantedAt: string; now: string;
+  }) => (await operatorSurfaceService.read({
+    scope: { tenantId: input.tenantId, actorId: input.actorId, grantedAt: input.grantedAt }, now: input.now,
+  })).snapshot });
   const available = web.database.isAvailable.bind(web.database), closePool = web.database.close.bind(web.database);
   let poolClose: Promise<void> | undefined;
   const database = { client: web.database.client, close: () => {
@@ -38,7 +55,7 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
     return poolClose;
   } };
   let app: ReturnType<typeof createPrivateWebProcess>;
-  try { app = createPrivateWebProcess({ ...web, database, planning: tasks.planning, assignment: tasks.assignment, approvals: tasks.approvals, submission: tasks.submission, revisions: tasks.revisions, queueAttention: tasks.queueAttention, ideaCreation: tasks.ideaCreation, ideaResultProjection: tasks.ideaResultProjection }); }
+  try { app = createPrivateWebProcess({ ...web, database, operatorSurface, planning: tasks.planning, assignment: tasks.assignment, approvals: tasks.approvals, submission: tasks.submission, revisions: tasks.revisions, queueAttention: tasks.queueAttention, ideaCreation: tasks.ideaCreation, ideaResultProjection: tasks.ideaResultProjection }); }
   catch {
     const results = await Promise.allSettled([tasks.close(), database.close()]);
     if (results.some(result => result.status === "rejected")) throw new Error("private_task_application_cleanup_uncertain");

@@ -339,16 +339,20 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           if (url.pathname === "/api/v1/operator-surface") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
             if (!operatorSurface) throw new WebAccessError("not_found");
-            return await productConfigurationAuthority.authenticated(identity, async (_, actor) => {
+            const scope = await productConfigurationAuthority.authenticated(identity, async (_, actor) => {
               // This is an owner-visible read of already-recorded facts. It
               // does not schedule, assign, reserve, or authorize work.
               actor.require("projects.read", undefined, true);
-              const snapshot = parseOperatorSurfaceSnapshotV1(await operatorSurface.read({
-                tenantId: options.tenantId, actorId: actor.id, grantedAt: actor.now, now: actor.now,
-              }));
-              if (snapshot.tenantId !== options.tenantId) throw new Error("operator_surface_scope_mismatch");
-              return Response.json({ snapshot }, { headers: privateResponseHeaders });
+              return Object.freeze({ tenantId: options.tenantId, actorId: actor.id, grantedAt: actor.now, now: actor.now });
             });
+            // Authenticate and complete the access recheck before asking the
+            // separately owned read source for its snapshot. Holding the web
+            // transaction open while another database client reads canonical
+            // records can deadlock a local single-database installation; this
+            // endpoint has no mutation that needs one combined transaction.
+            const snapshot = parseOperatorSurfaceSnapshotV1(await operatorSurface.read(scope));
+            if (snapshot.tenantId !== options.tenantId) throw new Error("operator_surface_scope_mismatch");
+            return Response.json({ snapshot }, { headers: privateResponseHeaders });
           }
           const observations = /^\/api\/v1\/projects\/([^/]+)\/observations$/.exec(url.pathname);
           if (observations) {
