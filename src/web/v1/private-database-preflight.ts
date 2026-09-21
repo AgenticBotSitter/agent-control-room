@@ -131,8 +131,10 @@ const resultReads = ["workspaces", "control_identities", "control_role_grants", 
   "control_jobs", "control_workflows", "control_requests", "control_task_execution_plans",
   "control_harness_runs", "control_harness_run_events", "control_codex_result_publications", "control_native_review_plans",
   "control_artifact_manifests", "control_native_artifact_receipts", "control_completion_gate_records",
-  "control_completion_gate_integrity", "audit_events", "control_audit_chain_heads"];
-const resultInserts = new Set(["control_native_review_plans", "control_completion_gate_records", "audit_events", "control_audit_chain_heads"]);
+  "control_completion_gate_integrity", "audit_events", "control_audit_chain_heads", "control_idea_sessions",
+  "control_idea_canonical_task_links", "control_idea_contributions", "control_idea_decisions"];
+const resultInserts = new Set(["control_native_review_plans", "control_completion_gate_records", "audit_events", "control_audit_chain_heads",
+  "control_idea_contributions"]);
 const resultUpdates: Record<string, readonly string[]> = {
   control_jobs: ["result_lock"], control_harness_runs: ["coordinator_lock"], projects: ["coordinator_lock"],
   control_completion_gate_records: ["web_lock"],
