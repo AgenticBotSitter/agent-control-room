@@ -34,3 +34,8 @@ test("private Hermes installation composition refuses test-host and malformed ru
     ...input().execution, delivery: { ...input().execution.delivery, privatePort: {} },
   } }), /hermes_021_private_installation_composition_unavailable/);
 });
+
+test("private Hermes installation composition validates an untrusted queue target before dispatch", async () => {
+  const delivery = createPrivateHermes021LocalInstallationDeliveryV1(input());
+  await assert.rejects(delivery.deliver({ kind: "not-hermes" }, new AbortController().signal));
+});
