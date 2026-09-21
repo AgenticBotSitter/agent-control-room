@@ -36,6 +36,7 @@ export async function prepared(database?: (base: DatabaseClient) => DatabaseClie
     serviceUid: 1000, operatorUid: 1000, clock: () => clock,
     random: options.random ?? (() => new Uint8Array(32).fill(7)),
     controlDeadlineMs: 20, lifecycle, owner: { databaseName: name, tenantId: "tenant:web", workspaceId: "workspace:web",
+      tenantDisplayName: "Bootstrap tenant", workspaceDisplayName: "Bootstrap workspace",
       identityId: "identity:owner", grantId: "grant:owner", displayName: "First owner",
       expectedOwnerSubjectDigest: sha256Digest({ provider: trust.issuer, subject: "test-owner" }),
     },

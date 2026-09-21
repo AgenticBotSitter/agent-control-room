@@ -104,6 +104,15 @@ The donors do not solve these product-specific requirements:
 Those narrow contracts are why Control Room retains custom Hermes, Claude and
 Codex adapter glue. They are not replacements for a generic agent framework.
 
+The fresh first-owner path is likewise intentionally retained Control Room
+code: the existing `private-owner-bootstrap`, `SecurityStore`, PostgreSQL
+transaction and role/preflight work already supply its required pieces. A
+general setup wizard or identity package would add a competing login, tenancy
+or permission model at the exact point where Control Room must establish its
+single owner. The small addition creates only the reviewed tenant and workspace
+inside the already guarded one-owner transaction; it does not add a donor,
+dependency, scheduler, database, credential store, or authority path.
+
 ## Next donor decisions
 
 - **Hermes:** finish the existing local CLI adapter first. Evaluate no second

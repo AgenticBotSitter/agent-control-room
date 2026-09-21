@@ -98,6 +98,14 @@ what proof is missing, and which exact existing code or approved donor applies.
 **Done when:** the browser is a truthful control surface, not a fake agent
 dashboard, and ordinary data survives a controlled restart/restore proof.
 
+**Current source preparation:** the first-owner command can create a selected
+empty tenant and workspace only inside its existing guarded transaction. It
+refuses any pre-existing root, even one with identical ordinary display names,
+and tests rollback on conflict and before-commit failure. This is not an
+installation command: it neither creates a production database nor starts the
+browser/service. The remaining S1 work is the protected local-data location,
+supervisor design, and owner-authorized restart/backup proof.
+
 ### S2 — Hermes first complete vertical slice
 
 1. Keep the existing queue-to-Hermes-to-result-to-review path.
@@ -146,7 +154,12 @@ second turn.
 
 1. Share one isolated Git workspace contract across the three adapters.
 2. Add capability-aware task assignment, progress, cost/usage when truthfully
-   supplied, result/diff evidence, correction and attention views.
+   supplied, result/change evidence, correction and attention views. For a
+   code-writing result, retain a verified, run-bound change inventory as
+   protected evidence, then show the owner only a passive aggregate (file
+   counts, byte total and evidence fingerprint). Never expose file paths,
+   checkout locations, raw revisions, patches or a live-workspace claim in the
+   ordinary browser result page.
 3. Connect schedules, Idea Lab and news/research promotion to this same task
    path—never their own runner/queue. Idea Lab follows the accepted
    [canonical lifecycle decision](IDEA_LAB_CANONICAL_LIFECYCLE_DECISION.md):

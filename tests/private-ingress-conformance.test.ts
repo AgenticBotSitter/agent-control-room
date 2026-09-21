@@ -24,7 +24,7 @@ function genericGatewayProfile(): GatewayAssertionProviderProfileV1 {
 }
 
 async function ingressFixture(options: { gatewayAssertionProfile?: GatewayAssertionProviderProfileV1 } = {}) {
-  const f = await privateOwnerBootstrapFixture();
+  const f = await privateOwnerBootstrapFixture({ fresh: `ingress-${++ingressFixtureCount}` });
   await createPrivateOwnerBootstrapCommand({ openDatabase: f.openDatabase(), clock: () => conformanceNow })({
     configuration: f.configuration, database: f.database, trust: f.trust, assertion: f.assertion,
     ...(options.gatewayAssertionProfile ? { gatewayAssertionProfile: options.gatewayAssertionProfile } : {}) });
@@ -73,6 +73,8 @@ async function ingressFixture(options: { gatewayAssertionProfile?: GatewayAssert
     outage: (value: boolean) => { outage = value; }, loads: () => loads, databaseCloses: () => databaseCloses,
     closeAll: async () => { await service.close(); await f.close(); } };
 }
+
+let ingressFixtureCount = 0;
 
 function assertJson(exchange: Awaited<ReturnType<Awaited<ReturnType<typeof ingressFixture>>["send"]>>,
   status: number, error: string) {

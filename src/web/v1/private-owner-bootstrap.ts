@@ -8,6 +8,7 @@ import { createPrivatePostgresDatabase, validatePrivatePostgresConfiguration, ty
 
 const configurationSchema = z.object({
   databaseName: z.string().min(1).max(63), tenantId: localId, workspaceId: localId,
+  tenantDisplayName: z.string().trim().min(1).max(120), workspaceDisplayName: z.string().trim().min(1).max(120),
   identityId: localId, grantId: localId, displayName: z.string().trim().min(1).max(120),
   expectedOwnerSubjectDigest: digestSchema,
 }).strict();
@@ -59,9 +60,25 @@ export function createPrivateOwnerBootstrap(input: PrivateOwnerBootstrapConfigur
         current();
         const target = (await tx.query<{ database_name: string }>("SELECT current_database() AS database_name")).rows;
         if (target.length !== 1 || target[0].database_name !== config.databaseName) return fail();
-        const tenant = (await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [config.tenantId])).rows;
-        const workspace = (await tx.query("SELECT id FROM workspaces WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [config.tenantId, config.workspaceId])).rows;
-        if (tenant.length !== 1 || workspace.length !== 1) return fail();
+        // A fresh installation has no tenant or workspace yet. These are the
+        // exact deployment-selected empty roots for this one ceremony; no
+        // browser field, assertion claim, or retry may select a different one.
+        // An existing root is never adopted. Display names are not durable
+        // identities, so a same-named tenant could belong to another
+        // installation. A concurrent first setup loses the insert race and
+        // fails closed for the same reason.
+        const tenant = (await tx.query<{ id: string; display_name: string }>(
+          "SELECT id,display_name FROM tenants WHERE id=$1 FOR UPDATE", [config.tenantId])).rows;
+        if (tenant.length !== 0) return fail();
+        const createdTenant = (await tx.query<{ id: string }>(`INSERT INTO tenants(id,display_name) VALUES($1,$2)
+          ON CONFLICT(id) DO NOTHING RETURNING id`, [config.tenantId, config.tenantDisplayName])).rows;
+        if (createdTenant.length !== 1 || createdTenant[0]?.id !== config.tenantId) return fail();
+        const workspace = (await tx.query<{ id: string; tenant_id: string; display_name: string }>(
+          "SELECT id,tenant_id,display_name FROM workspaces WHERE id=$1 FOR UPDATE", [config.workspaceId])).rows;
+        if (workspace.length !== 0) return fail();
+        const createdWorkspace = (await tx.query<{ id: string }>(`INSERT INTO workspaces(id,tenant_id,display_name) VALUES($1,$2,$3)
+          ON CONFLICT(id) DO NOTHING RETURNING id`, [config.workspaceId, config.tenantId, config.workspaceDisplayName])).rows;
+        if (createdWorkspace.length !== 1 || createdWorkspace[0]?.id !== config.workspaceId) return fail();
         const joined: DatabaseClient = { query: tx.query.bind(tx), transaction: work => work(tx),
           transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); await check(); return result; } };
         const { identity, now } = current();

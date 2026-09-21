@@ -263,6 +263,12 @@ evidence only: it enables no worker, database, listener or persistent service.
   records either an attempted setup or a completed setup, refuses an unsafe or
   damaged marker, and never deletes it to make a second attempt possible. The
   marker code is not wired to a real service or VPS yet.
+- The fresh first-owner source path can now create its selected empty tenant
+  and workspace as part of that same guarded owner transaction. It refuses an
+  existing root even if its ordinary display name matches, and rolls the new
+  roots back on a collision or before-commit failure. Thirty-four focused
+  disposable checks and the TypeScript check passed. This is preparation for a
+  later owner-authorized installation, not a real database change.
 - A bootstrap-only host can now be composed without constructing the normal
   application, web pages, task queue, workers, or artifact store. After the
   owner is created it deliberately becomes unavailable and requires a clean
@@ -297,11 +303,15 @@ database, browser login, backup, persistent service or remote machine.
    captures and validates this composition without browser-controlled inputs;
    it cannot choose private settings, create a database, start a service, or
    enable Hermes by itself.
-2. Complete the fresh-install first-owner package: a durable local ceremony
-   marker, bootstrap-only server composition, narrow database capability and
-   reviewed Linux peer-credential control channel. The present ceremony core is
-   tested but deliberately cannot create that operating-system control socket
-   or start normal application routes on a fresh database.
+2. Complete the remaining fresh-install first-owner package: a durable local
+   ceremony marker, bootstrap-only server composition, narrow database
+   capability and reviewed Linux peer-credential control channel. The ceremony
+   now creates only a brand-new, deployment-selected tenant and workspace in
+   the existing guarded owner transaction; it refuses all existing roots,
+   including same-named ones, and rolls back on collision or pre-commit
+   failure. That is source-level, disposable-database evidence only—not an
+   installed database, operating-system control socket, or normal application
+   route on a fresh machine.
 3. Add qualified installed-process host compositions for Codex and Claude Code
    below their existing result/review contracts. They must not become another
    scheduler, database or permission system.
