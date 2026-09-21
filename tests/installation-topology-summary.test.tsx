@@ -6,6 +6,7 @@ import { InstallationTopologySummary } from "../private-app/app/installation-top
 import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
 import { createInstallationReadinessV1 } from "../src/harness/v1/installation-readiness";
 import { createCodexMacosCustodyReadinessV1 } from "../src/harness/codex-v1/macos-custody-readiness";
+import { createLocalSupervisorReadinessV1 } from "../src/harness/v1/local-supervisor-readiness";
 import { sha256Digest } from "../src/security/canonical-digest";
 
 test("setup summary distinguishes a pending or unavailable saved-status read from an absent plan", () => {
@@ -78,7 +79,14 @@ test("setup summary distinguishes completed Hermes proof from an enabled worker"
     { proof: "local_owner_qualification", state: "passed", evidenceDigest: sha256Digest("qualification") },
     { proof: "local_runner_bridge", state: "passed", evidenceDigest: sha256Digest("bridge") },
   ] });
-  const html = renderToStaticMarkup(createElement(InstallationTopologySummary, { plan, readiness, localBackupRestoreVerified: true }));
+  const supervisor = createLocalSupervisorReadinessV1({ planDigest: plan.planDigest, proofs: [
+    { proof: "private_configuration_custody", state: "passed", evidenceDigest: sha256Digest("custody") },
+    { proof: "restricted_launch_definition", state: "passed", evidenceDigest: sha256Digest("launch") },
+    { proof: "restart_and_drain_procedure", state: "passed", evidenceDigest: sha256Digest("restart") },
+    { proof: "upgrade_and_rollback_procedure", state: "passed", evidenceDigest: sha256Digest("rollback") },
+  ] });
+  const html = renderToStaticMarkup(createElement(InstallationTopologySummary, { plan, readiness,
+    localBackupRestoreVerified: true, localSupervisorReadiness: supervisor }));
   assert.match(html, /<h4>Hermes Agent<\/h4><p><strong>Status: Proof complete; owner enablement required/);
   assert.match(html, /still has not started Hermes/);
   assert.doesNotMatch(html, /<button|<form|<input/);

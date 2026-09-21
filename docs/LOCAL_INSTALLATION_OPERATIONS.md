@@ -96,6 +96,10 @@ Ready in source:
 - a protected website readiness checklist that distinguishes not started,
   passed, failed, and unavailable proof steps without displaying the underlying
   host, account, path, command output, or credentials.
+- a plan-bound local-service readiness record that separately tracks private
+  configuration custody, a restricted launch definition, restart/drain, and
+  upgrade/rollback preparation. It is a status record only: it does not install
+  or start a background service, and it cannot enable a worker.
 
 Still requires owner-authorized evidence:
 

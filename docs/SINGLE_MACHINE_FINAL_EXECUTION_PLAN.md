@@ -52,3 +52,9 @@ Finish capability-aware assignment, progress, attention, correction, schedules a
 ## Owner-attended gates
 
 Source work can continue without the owner. Live enablement needs private bindings, exact harness qualification, actual database/artifact/backup choices, a narrow first coding task and any persistent supervisor. Codex on macOS and Claude have their additional process-specific gates. Remote enrollment follows local proof.
+
+Local-service preparation is tracked separately from generic installation
+readiness. A plan-bound opaque record must cover configuration custody,
+restricted launch, restart/drain, and upgrade/rollback procedure before the
+local Hermes card can advance to owner enablement. It is not a supervisor
+installation or a claim that any process is running.

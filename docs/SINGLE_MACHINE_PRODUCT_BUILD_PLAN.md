@@ -186,6 +186,17 @@ owner only when the relevant phase is ready:
 No owner action is needed to finish source contracts, UI, tests, documentation,
 reusable donor evaluation, or safe installation preparation first.
 
+### Local service preparation status
+
+The protected setup page requires a separate, plan-bound local-service readiness
+record before it says Hermes is ready for the owner-enablement decision. The
+record contains only four opaque evidence digests: private configuration
+custody, restricted launch definition, restart/drain procedure, and
+upgrade/rollback procedure. It does not identify the service manager,
+configuration path, account, launch command, or any credential. Recording it
+does not install, start, stop, or restart Control Room. A real supervisor and
+restart proof remain owner-authorized installation work.
+
 ## Acceptance: one product, two installation choices
 
 The local release is complete only when all three harnesses, at their honestly

@@ -31,6 +31,7 @@ export function PrivateSettingsWorkspace() {
     </div>
     <ProductConfigurationSummary configuration={configuration} />
     <InstallationTopologySummary plan={installationTopology?.plan} readiness={installationTopology?.readiness}
+      localSupervisorReadiness={installationTopology?.localSupervisorReadiness}
       codexMacosCustodyReadiness={installationTopology?.codexMacosCustodyReadiness}
       claudeCodeLocalProcessReadiness={installationTopology?.claudeCodeLocalProcessReadiness}
       localBackupRestoreVerified={installationTopology?.localBackupRestoreVerified} status={installationTopology?.state} />

@@ -131,6 +131,7 @@ export function PrivateHome() {
       <h1 id="home-title">{displayName}</h1><p>Current saved work, results and attention from the protected Control Room services. This page refreshes while it is open and again when you return to it. Each section reports unavailable data instead of replacing it with a zero.</p>
       <button type="button" onClick={() => setGeneration(value => value + 1)}>Refresh dashboard</button></section>
     <InstallationTopologySummary plan={installationTopology?.plan} readiness={installationTopology?.readiness}
+      localSupervisorReadiness={installationTopology?.localSupervisorReadiness}
       codexMacosCustodyReadiness={installationTopology?.codexMacosCustodyReadiness}
       claudeCodeLocalProcessReadiness={installationTopology?.claudeCodeLocalProcessReadiness}
       localBackupRestoreVerified={installationTopology?.localBackupRestoreVerified} status={installationTopology?.state} />

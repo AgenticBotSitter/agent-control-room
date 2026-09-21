@@ -5,6 +5,7 @@ import { verifyInstallationTopologyPlanV1, type InstallationTopologyPlanV1 } fro
 import { verifyInstallationReadinessV1, type InstallationReadinessV1 } from "../../src/harness/v1/installation-readiness";
 import { verifyCodexMacosCustodyReadinessV1, type CodexMacosCustodyReadinessV1 } from "../../src/harness/codex-v1/macos-custody-readiness";
 import { verifyClaudeCodeLocalProcessReadinessV1, type ClaudeCodeLocalProcessReadinessV1 } from "../../src/harness/claude-code-v1/local-process-readiness";
+import { verifyLocalSupervisorReadinessV1, type LocalSupervisorReadinessV1 } from "../../src/harness/v1/local-supervisor-readiness";
 
 type InstallationTopologyState = Readonly<{
   /** The setup read is deliberately distinct from an absent or unavailable plan. */
@@ -13,6 +14,7 @@ type InstallationTopologyState = Readonly<{
   readiness?: InstallationReadinessV1;
   codexMacosCustodyReadiness?: CodexMacosCustodyReadinessV1;
   claudeCodeLocalProcessReadiness?: ClaudeCodeLocalProcessReadinessV1;
+  localSupervisorReadiness?: LocalSupervisorReadinessV1;
   localBackupRestoreVerified?: true;
 }>;
 const InstallationTopologyContext = createContext<InstallationTopologyState>({ state: "loading" });
@@ -39,6 +41,8 @@ export function InstallationTopologyProvider({ children }: { children: ReactNode
             codexMacosCustodyReadiness: verifyCodexMacosCustodyReadinessV1(responseBody.codexMacosCustodyReadiness) }),
           ...(responseBody.claudeCodeLocalProcessReadiness === undefined ? {} : {
             claudeCodeLocalProcessReadiness: verifyClaudeCodeLocalProcessReadinessV1(responseBody.claudeCodeLocalProcessReadiness) }),
+          ...(responseBody.localSupervisorReadiness === undefined ? {} : {
+            localSupervisorReadiness: verifyLocalSupervisorReadinessV1(responseBody.localSupervisorReadiness) }),
           ...(responseBody.localBackupRestoreVerified === true ? { localBackupRestoreVerified: true as const } : {}) });
         if (!controller.signal.aborted && current === request) setPlan(value);
       } catch {

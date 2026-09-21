@@ -3,6 +3,7 @@ import { summarizeInstallationReadinessV1, type InstallationReadinessV1 } from "
 import { guideInstallationReadinessV1 } from "../../src/harness/v1/installation-guidance";
 import { summarizeLocalHarnessCapabilitiesV1, type LocalHarnessCapabilityV1 } from "../../src/harness/v1/local-harness-capabilities";
 import type { CodexMacosCustodyReadinessV1 } from "../../src/harness/codex-v1/macos-custody-readiness";
+import type { LocalSupervisorReadinessV1 } from "../../src/harness/v1/local-supervisor-readiness";
 
 const proofLabels = {
   local_owner_qualification: "a successful owner-attended local worker check",
@@ -56,9 +57,10 @@ function LocalAgentCapabilityCard({ agent }: { agent: LocalHarnessCapabilityV1 }
 }
 
 /** A status-only explanation. There are deliberately no setup, launch, or approval controls here. */
-export function InstallationTopologySummary({ plan, readiness, codexMacosCustodyReadiness, claudeCodeLocalProcessReadiness, localBackupRestoreVerified, status }: { plan?: Readonly<InstallationTopologyPlanV1>;
+export function InstallationTopologySummary({ plan, readiness, codexMacosCustodyReadiness, claudeCodeLocalProcessReadiness, localSupervisorReadiness, localBackupRestoreVerified, status }: { plan?: Readonly<InstallationTopologyPlanV1>;
   readiness?: Readonly<InstallationReadinessV1>; codexMacosCustodyReadiness?: Readonly<CodexMacosCustodyReadinessV1>;
   claudeCodeLocalProcessReadiness?: unknown;
+  localSupervisorReadiness?: Readonly<LocalSupervisorReadinessV1>;
   localBackupRestoreVerified?: boolean;
   status?: "loading" | "available" | "unavailable" }) {
   if (!plan && status === "loading") return <section className="private-panel" aria-labelledby="installation-title">
@@ -82,7 +84,7 @@ export function InstallationTopologySummary({ plan, readiness, codexMacosCustody
     && summary.state === "ready_for_owner_enablement" && localBackupRestoreVerified !== true;
   const overallState = backupEvidencePending ? "not_ready" : summary.state;
   const localCapabilities = summarizeLocalHarnessCapabilitiesV1(plan, readiness, codexMacosCustodyReadiness, claudeCodeLocalProcessReadiness,
-    localBackupRestoreVerified === true);
+    localBackupRestoreVerified === true, localSupervisorReadiness);
   const mode = plan.mode === "this_computer" ? "This computer" : "Several computers";
   return <section className="private-panel" aria-labelledby="installation-title">
     <h2 id="installation-title">Installation setup</h2>

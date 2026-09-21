@@ -3,6 +3,7 @@ import { claudeCodeConnectorProfileV1 } from "../claude-code-v1/connector-profil
 import { hermes021MacosLocalConnectorProfileV1 } from "../hermes-021-v1/connector-profile";
 import { summarizeCodexMacosCustodyReadinessV1 } from "../codex-v1/macos-custody-readiness";
 import { summarizeClaudeCodeLocalProcessReadinessV1 } from "../claude-code-v1/local-process-readiness";
+import { summarizeLocalSupervisorReadinessV1 } from "./local-supervisor-readiness";
 import { summarizeInstallationReadinessV1, type InstallationReadinessV1 } from "./installation-readiness";
 import type { InstallationTopologyPlanV1 } from "./installation-topology";
 
@@ -92,7 +93,7 @@ export const localHarnessCapabilitiesV1: readonly LocalHarnessCapabilityV1[] = O
  */
 export function summarizeLocalHarnessCapabilitiesV1(plan?: InstallationTopologyPlanV1,
   readiness?: InstallationReadinessV1, codexMacosCustodyReadiness?: unknown, claudeCodeLocalProcessReadiness?: unknown,
-  localBackupRestoreVerified = false): readonly LocalHarnessCapabilityV1[] {
+  localBackupRestoreVerified = false, localSupervisorReadiness?: unknown): readonly LocalHarnessCapabilityV1[] {
   if (!plan || !plan.requiredProofs.includes("local_owner_qualification") || !plan.requiredProofs.includes("local_runner_bridge"))
     return localHarnessCapabilitiesV1;
   const summary = summarizeInstallationReadinessV1(plan, readiness);
@@ -110,6 +111,7 @@ export function summarizeLocalHarnessCapabilitiesV1(plan?: InstallationTopologyP
       remainingSetupCategory: "Owner-attended exact-harness qualification",
       nextStep: "Perform the separate owner-attended exact-harness qualification. This record alone cannot enable or launch Codex." }) : codex;
   const claudeReadiness = summarizeClaudeCodeLocalProcessReadinessV1(plan.planDigest, claudeCodeLocalProcessReadiness);
+  const supervisor = summarizeLocalSupervisorReadinessV1(plan.planDigest, localSupervisorReadiness);
   const claudeCapability = claudeReadiness.state === "blocked" ? Object.freeze({ ...claude, state: "setup_needs_attention" as const,
     stateLabel: "Claude process proof needs attention", summary: "Control Room has not enabled Claude Code. One of its required local process proofs is unavailable or failed.",
     remainingSetupCategory: "Corrective installed-process proof",
@@ -131,6 +133,22 @@ export function summarizeLocalHarnessCapabilitiesV1(plan?: InstallationTopologyP
         summary: "Control Room has not enabled Hermes. Its recorded backup-and-restore check is not yet tied to verified disposable restore evidence for this installation.",
         remainingSetupCategory: "Verified backup-and-restore evidence",
         nextStep: "Record the existing disposable backup-and-restore proof for this exact installation before requesting local-worker enablement." }),
+      claudeCapability, codexCapability]);
+    }
+    if (supervisor.state === "blocked") {
+      return Object.freeze([Object.freeze({ ...hermes, state: "setup_needs_attention" as const,
+        stateLabel: "Local service preparation needs attention",
+        summary: "Control Room has not enabled Hermes. A required local service supervision check is unavailable or failed.",
+        remainingSetupCategory: "Corrective local service preparation",
+        nextStep: "Correct the owner-run local service preparation check and record fresh non-secret evidence before requesting local-worker enablement." }),
+      claudeCapability, codexCapability]);
+    }
+    if (supervisor.state !== "readiness_recorded") {
+      return Object.freeze([Object.freeze({ ...hermes, state: "setup_required" as const,
+        stateLabel: "Persistent local service preparation required",
+        summary: "Control Room has not enabled Hermes. Its service supervision, restart, and rollback preparation is not yet recorded.",
+        remainingSetupCategory: "Persistent local service preparation",
+        nextStep: "Review and record the private configuration, restricted launch, restart/drain, and rollback preparation before requesting local-worker enablement." }),
       claudeCapability, codexCapability]);
     }
     return Object.freeze([Object.freeze({ ...hermes, state: "owner_enablement_required" as const,

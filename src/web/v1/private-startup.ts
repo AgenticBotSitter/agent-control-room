@@ -10,6 +10,7 @@ import { verifyInstallationReadinessV1 } from "../../harness/v1/installation-rea
 import { localBackupRestoreEvidenceDigestForInstallationPlanV1, verifyLocalBackupRestoreReadinessV1 } from "../../harness/v1/local-backup-restore-readiness";
 import { verifyCodexMacosCustodyReadinessV1 } from "../../harness/codex-v1/macos-custody-readiness";
 import { verifyClaudeCodeLocalProcessReadinessV1 } from "../../harness/claude-code-v1/local-process-readiness";
+import { verifyLocalSupervisorReadinessV1 } from "../../harness/v1/local-supervisor-readiness";
 export { createAccessKeyLoader, createStaticAccessKeyLoader } from "./access-key-cache";
 export { createOwnerBootstrapCeremonyV1 } from "./owner-bootstrap-ceremony";
 
@@ -49,9 +50,12 @@ export function validatePrivateStartupConfiguration(input: PrivateStartupConfigu
       : verifyCodexMacosCustodyReadinessV1(input.codexMacosCustodyReadiness);
     const claudeCodeLocalProcessReadiness = input.claudeCodeLocalProcessReadiness === undefined ? undefined
       : verifyClaudeCodeLocalProcessReadinessV1(input.claudeCodeLocalProcessReadiness);
+    const localSupervisorReadiness = input.localSupervisorReadiness === undefined ? undefined
+      : verifyLocalSupervisorReadinessV1(input.localSupervisorReadiness);
     if (installationReadiness && (!installationTopologyPlan || installationReadiness.planDigest !== installationTopologyPlan.planDigest)) throw new Error();
     if (codexMacosCustodyReadiness && (!installationTopologyPlan || codexMacosCustodyReadiness.planDigest !== installationTopologyPlan.planDigest)) throw new Error();
     if (claudeCodeLocalProcessReadiness && (!installationTopologyPlan || claudeCodeLocalProcessReadiness.planDigest !== installationTopologyPlan.planDigest)) throw new Error();
+    if (localSupervisorReadiness && (!installationTopologyPlan || localSupervisorReadiness.planDigest !== installationTopologyPlan.planDigest)) throw new Error();
     return Object.freeze({ origin: exactOrigin(input.origin), issuer: exactOrigin(input.issuer), audience: reference(input.audience),
       ...(sites[1] ? { secondaryAccess: sites[1] } : {}),
       ...(input.gatewayAssertionProfile === undefined ? {} : {
@@ -68,6 +72,7 @@ export function validatePrivateStartupConfiguration(input: PrivateStartupConfigu
       ...(localBackupRestoreReadiness === undefined ? {} : { localBackupRestoreReadiness }),
       ...(codexMacosCustodyReadiness === undefined ? {} : { codexMacosCustodyReadiness }),
       ...(claudeCodeLocalProcessReadiness === undefined ? {} : { claudeCodeLocalProcessReadiness }),
+      ...(localSupervisorReadiness === undefined ? {} : { localSupervisorReadiness }),
       ...(input.tasks ? { tasks: { harnessIntegrityKey: key(input.tasks.harnessIntegrityKey),
         ...(input.tasks.results ? { results: { ...input.tasks.results, integrityKey: key(input.tasks.results.integrityKey) } } : {}),
         ...(input.tasks.reviews ? { reviews: { ...input.tasks.reviews, integrityKey: key(input.tasks.reviews.integrityKey) } } : {}),

@@ -6,6 +6,7 @@ import { createInstallationReadinessV1 } from "../src/harness/v1/installation-re
 import { sha256Digest } from "../src/security/canonical-digest";
 import { createCodexMacosCustodyReadinessV1 } from "../src/harness/codex-v1/macos-custody-readiness";
 import { createClaudeCodeLocalProcessReadinessV1 } from "../src/harness/claude-code-v1/local-process-readiness";
+import { createLocalSupervisorReadinessV1 } from "../src/harness/v1/local-supervisor-readiness";
 
 test("local harness capabilities are truthful, bounded and installation-safe", () => {
   assert.deepEqual(localHarnessCapabilitiesV1.map(value => value.id), ["hermes", "claude", "codex"]);
@@ -29,7 +30,7 @@ test("local harness capabilities are truthful, bounded and installation-safe", (
   assert.doesNotMatch(rendered, /\/Users\/|https?:\/\/|(?:token|password|profile)\s*[=:]/i);
 });
 
-test("local Hermes proof completion is honest about the separate enablement decision", () => {
+test("local Hermes proof completion remains blocked until persistent service preparation is recorded", () => {
   const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
     currentRoutes: [{ kind: "local", workerId: "worker:marvin", adapterId: "connector:hermes-021-macos-local-v1", adapterRevision: "00570550" }],
     requestedRoutes: [{ kind: "local", workerId: "worker:marvin", adapterId: "connector:hermes-021-macos-local-v1", adapterRevision: "00570550" }] });
@@ -38,7 +39,17 @@ test("local Hermes proof completion is honest about the separate enablement deci
     { proof: "local_owner_qualification", state: "passed", evidenceDigest: sha256Digest("qualification") },
     { proof: "local_runner_bridge", state: "passed", evidenceDigest: sha256Digest("bridge") },
   ] });
-  const hermes = summarizeLocalHarnessCapabilitiesV1(plan, ready, undefined, undefined, true).find(value => value.id === "hermes")!;
+  const incomplete = summarizeLocalHarnessCapabilitiesV1(plan, ready, undefined, undefined, true).find(value => value.id === "hermes")!;
+  assert.equal(incomplete.state, "setup_required");
+  assert.match(incomplete.stateLabel, /persistent local service/i);
+  assert.match(incomplete.summary, /not enabled Hermes/i);
+  const supervisor = createLocalSupervisorReadinessV1({ planDigest: plan.planDigest, proofs: [
+    { proof: "private_configuration_custody", state: "passed", evidenceDigest: sha256Digest("custody") },
+    { proof: "restricted_launch_definition", state: "passed", evidenceDigest: sha256Digest("launch") },
+    { proof: "restart_and_drain_procedure", state: "passed", evidenceDigest: sha256Digest("restart") },
+    { proof: "upgrade_and_rollback_procedure", state: "passed", evidenceDigest: sha256Digest("rollback") },
+  ] });
+  const hermes = summarizeLocalHarnessCapabilitiesV1(plan, ready, undefined, undefined, true, supervisor).find(value => value.id === "hermes")!;
   assert.equal(hermes.state, "owner_enablement_required");
   assert.match(hermes.stateLabel, /owner enablement/);
   assert.match(hermes.summary, /still has not started Hermes/);

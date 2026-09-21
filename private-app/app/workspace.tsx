@@ -81,6 +81,7 @@ export function ProjectAgentInstallationStatus({ topology }: { topology: ReturnT
     <h2 id="project-local-agent-setup-title">Local worker setup on this computer</h2>
     <p>Installation-scoped setup status only — it is not this project’s agent eligibility, available capacity, current work, or permission to assign a task.</p>
     <InstallationTopologySummary plan={topology.plan} readiness={topology.readiness}
+      localSupervisorReadiness={topology.localSupervisorReadiness}
       codexMacosCustodyReadiness={topology.codexMacosCustodyReadiness}
       claudeCodeLocalProcessReadiness={topology.claudeCodeLocalProcessReadiness}
       localBackupRestoreVerified={topology.localBackupRestoreVerified} status={topology.state} />
