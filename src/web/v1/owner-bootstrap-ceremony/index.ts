@@ -245,3 +245,5 @@ export function createOwnerBootstrapCeremonyV1(config: OwnerBootstrapCeremonyCon
     async close() { closed = true; shutdown.abort(); terminal(); },
   });
 }
+
+export { createFilesystemOwnerBootstrapLifecycleStoreV1 } from "./filesystem-lifecycle";
