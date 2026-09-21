@@ -31,7 +31,7 @@ remain readable for recovery. Focused adapter tests, private-startup tests,
 VPS compilation and TypeScript passed. This is source and disposable-test
 evidence only: it enables no worker, database, listener or persistent service.
 
-The installable-product track now also has fourteen accepted source foundations:
+The installable-product track now also has fifteen accepted source foundations:
 an allowlisted reproducible release archive with a manifest and checksum; a
 standalone extracted-release preflight that needs no developer dependency;
 crash-safe, concurrency-tested placement of a verified release into an inert
@@ -55,6 +55,10 @@ process host and owner qualification visibly incomplete;
 an authenticated, redacted setup-progress view that labels coordination state
 as saved progress rather than evidence and gives the browser no installation
 or database capability;
+one private, effect-free setup-action composition that reuses the existing
+PostgreSQL, protected-data/recovery and platform-service planners against the
+exact current plan revision, refuses private parser detail, and creates no
+second journal, state machine, authority or browser capability;
 the restart-safe nine-stage installation plan plus a private, append-only,
 crash-recoverable pre-database journal for its exact revisions; and a redacted PostgreSQL-stage
 preparation that binds that plan to the existing migration ledger and database
