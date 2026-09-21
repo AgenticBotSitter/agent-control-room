@@ -3,11 +3,11 @@
 **Status:** inert, owner-attended release placement. Staging is not an
 installation, activation, update or service operation.
 
-This slice narrowly adapts the checksum-first, isolated temporary directory
+This slice independently implements the checksum-first, isolated temporary directory
 and version-directory concepts from T3 Code's MIT-licensed installers at
 revision `6a699f0f2fbd8847d7ec2df8d9245ce8c2eb8707`. It reuses Control Room's
 accepted release manifest and extracted-tree verifier. No T3 runtime, service,
-profile, provider or connection code is copied.
+profile, provider or connection code is copied or materially adapted.
 
 ## What it does
 

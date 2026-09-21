@@ -6,7 +6,7 @@ backup system is ready for real use.
 
 ## Reuse decision
 
-- **Adapt narrowly:** T3 Code's MIT-licensed smoke-test idea, pinned at
+- **Reference / adapt concepts only:** T3 Code's MIT-licensed smoke-test idea, pinned at
   `6a699f0f2fbd8847d7ec2df8d9245ce8c2eb8707`, specifically the separation
   between a downloadable release, a disposable install location, and a final
   smoke check.

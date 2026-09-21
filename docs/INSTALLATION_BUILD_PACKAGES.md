@@ -10,8 +10,8 @@ must also pass.
 
 ### I0 — Reproducible release and self-contained preflight
 
-- **Reuse:** adapt T3 Code's pinned version-directory, staging, checksum,
-  install-complete and atomic-switch mechanics; retain Control Room build and
+- **Reuse:** reference/adapt concepts only from T3 Code's pinned version-directory,
+  staging, checksum, install-complete and atomic-switch mechanics; retain Control Room build and
   license inventory.
 - **Output:** release archive, manifest/checksum, compiled preflight and an
   extracted-release smoke test with no developer dependencies.
@@ -60,8 +60,8 @@ must also pass.
 
 ### I5 — Platform service lifecycle
 
-- **Reuse:** existing macOS service definition/preflight plus narrowly adapted
-  T3 service ordering and tests.
+- **Reuse:** existing macOS service definition/preflight plus T3 service-ordering
+  concepts only.
 - **Output:** status, install, stop, drain, start, update, rollback and
   data-preserving uninstall behind explicit owner actions.
 - **Accept when:** a failed update restarts the last verified release; start is

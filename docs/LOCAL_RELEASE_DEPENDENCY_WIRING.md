@@ -4,11 +4,11 @@
 and include it in every verified local release. No package manager, downloader,
 database, scheduler, credential store, service, or agent mechanism is added.
 
-The release assembler already uses the accepted, narrow T3 Code reuse decision:
+The release assembler already uses the accepted T3 Code reference/adapt-concepts-only decision:
 versioned release layout, manifest verification and staged-release ordering from
 the MIT-licensed T3 Code sources pinned at
 `6a699f0f2fbd8847d7ec2df8d9245ce8c2eb8707`. This package copies no additional
-T3 Code source. It adapts only that existing release-layout decision by placing
+T3 Code source. It independently implements the release-layout concepts by placing
 Control Room's own tested dependency CLI and Node-only runtime in the same
 manifest-bound archive.
 

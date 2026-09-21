@@ -12,10 +12,11 @@ architecture before it can ask the pinned package manager to run.
 
 ## Reuse decision
 
-- **Adapt:** T3 Code's MIT-licensed isolated temporary workspace, versioned
+- **Reference / adapt concepts only:** T3 Code's MIT-licensed isolated temporary workspace, versioned
   release directory and atomic publication concepts, pinned at
   `6a699f0f2fbd8847d7ec2df8d9245ce8c2eb8707`. The source references were
-  `scripts/install.sh`, `scripts/install.ps1` and `scripts/install.test.ts`.
+  `scripts/install.sh`, `scripts/install.ps1` and `scripts/install.test.ts`; no
+  T3 source is retained or materially adapted.
 - **Retain:** Control Room's release manifest, checksum-verified stager,
   package-manager pin and release-tree verification.
 - **Do not adopt:** T3's downloader, executable bundle, service activation,
