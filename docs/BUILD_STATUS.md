@@ -138,9 +138,12 @@ database, browser login, backup, persistent service or remote machine.
    the one selected project plus each participant/round/task relationship
    across a restart. Later-round tasks also use the same durable dependency
    links as ordinary jobs, so they cannot become eligible before the earlier
-   round is complete. It does not schedule, assign, contact a worker, or
-   replace the legacy direct fixture. The next source package is canonical
-   result projection and retiring the direct production start composition.
+   round is complete. A protected first-round proposal operation now loads a
+   saved discussion and creates those ordinary tasks without contacting a
+   provider. It does not schedule, assign, contact a worker, or replace the
+   legacy direct fixture. The next source package mounts that operation in the
+   private application, then adds canonical result projection and retires the
+   direct production start composition.
 
 ## Owner-operated gates before any real local worker is enabled
 
