@@ -56,8 +56,9 @@ function LocalAgentCapabilityCard({ agent }: { agent: LocalHarnessCapabilityV1 }
 }
 
 /** A status-only explanation. There are deliberately no setup, launch, or approval controls here. */
-export function InstallationTopologySummary({ plan, readiness, codexMacosCustodyReadiness, status }: { plan?: Readonly<InstallationTopologyPlanV1>;
+export function InstallationTopologySummary({ plan, readiness, codexMacosCustodyReadiness, localBackupRestoreVerified, status }: { plan?: Readonly<InstallationTopologyPlanV1>;
   readiness?: Readonly<InstallationReadinessV1>; codexMacosCustodyReadiness?: Readonly<CodexMacosCustodyReadinessV1>;
+  localBackupRestoreVerified?: boolean;
   status?: "loading" | "available" | "unavailable" }) {
   if (!plan && status === "loading") return <section className="private-panel" aria-labelledby="installation-title">
     <h2 id="installation-title">Installation setup</h2>
@@ -73,7 +74,8 @@ export function InstallationTopologySummary({ plan, readiness, codexMacosCustody
   </section>;
   const summary = summarizeInstallationReadinessV1(plan, readiness);
   const guidance = guideInstallationReadinessV1(plan, readiness);
-  const localCapabilities = summarizeLocalHarnessCapabilitiesV1(plan, readiness, codexMacosCustodyReadiness);
+  const localCapabilities = summarizeLocalHarnessCapabilitiesV1(plan, readiness, codexMacosCustodyReadiness,
+    localBackupRestoreVerified === true);
   const mode = plan.mode === "this_computer" ? "This computer" : "Several computers";
   return <section className="private-panel" aria-labelledby="installation-title">
     <h2 id="installation-title">Installation setup</h2>

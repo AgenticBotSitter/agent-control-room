@@ -11,6 +11,7 @@ type InstallationTopologyState = Readonly<{
   plan?: InstallationTopologyPlanV1;
   readiness?: InstallationReadinessV1;
   codexMacosCustodyReadiness?: CodexMacosCustodyReadinessV1;
+  localBackupRestoreVerified?: true;
 }>;
 const InstallationTopologyContext = createContext<InstallationTopologyState>({ state: "loading" });
 
@@ -33,7 +34,8 @@ export function InstallationTopologyProvider({ children }: { children: ReactNode
         const value = Object.freeze({ state: "available" as const, plan: verifyInstallationTopologyPlanV1(responseBody.plan),
           ...(responseBody.readiness === undefined ? {} : { readiness: verifyInstallationReadinessV1(responseBody.readiness) }),
           ...(responseBody.codexMacosCustodyReadiness === undefined ? {} : {
-            codexMacosCustodyReadiness: verifyCodexMacosCustodyReadinessV1(responseBody.codexMacosCustodyReadiness) }) });
+            codexMacosCustodyReadiness: verifyCodexMacosCustodyReadinessV1(responseBody.codexMacosCustodyReadiness) }),
+          ...(responseBody.localBackupRestoreVerified === true ? { localBackupRestoreVerified: true as const } : {}) });
         if (!controller.signal.aborted && current === request) setPlan(value);
       } catch {
         // A stale setup success must never remain visible after the protected

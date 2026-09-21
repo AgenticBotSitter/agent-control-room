@@ -15,6 +15,7 @@ import { createInstallationReadinessV1 } from "../src/harness/v1/installation-re
 import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
 import { createArtifactBackupInventoryV1, verifyRestoredArtifactBackupInventoryV1 } from "../src/artifacts/v1/artifact-backup-inventory";
 import { createLocalBackupRestoreReadinessV1 } from "../src/harness/v1/local-backup-restore-readiness";
+import { createCodexMacosCustodyReadinessV1 } from "../src/harness/codex-v1/macos-custody-readiness";
 import { createPrivateTaskHost } from "../src/web/v1/private-task-host";
 import { startPrivateHostLifecycle } from "../src/web/v1/private-host-lifecycle";
 import { bindPrivateCodexResultReturnV1, validatePrivateTaskStartupConfiguration,
@@ -899,18 +900,24 @@ test("operator assembly can carry an installation-owned local Hermes executor wi
   const topology = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("operator-local-db"),
     schedulerAuthorityDigest: sha256Digest("operator-local-scheduler"), currentRoutes: [topologyRoute], requestedRoutes: [topologyRoute] });
   const backupRestore = localBackupRestoreProof(topology.planDigest);
+  const codexCustody = createCodexMacosCustodyReadinessV1({ planDigest: topology.planDigest, proofs: [
+    { proof: "suspended_executable_identity", state: "passed", evidenceDigest: sha256Digest("operator-local-suspended") },
+    { proof: "protected_private_state_handle", state: "passed", evidenceDigest: sha256Digest("operator-local-private-state") },
+  ] });
   trusted.web = { ...(trusted.web as object), installationTopologyPlan: topology,
     installationReadiness: createInstallationReadinessV1({ planDigest: topology.planDigest, proofs: [
       { proof: "backup_restore", state: "passed", evidenceDigest: backupRestore.proofDigest },
       { proof: "local_owner_qualification", state: "passed", evidenceDigest: sha256Digest("operator-local-text") },
       { proof: "local_runner_bridge", state: "passed", evidenceDigest: sha256Digest("operator-local-runner") },
-    ] }) } as typeof trusted.web;
+    ] }), codexMacosCustodyReadiness: codexCustody } as typeof trusted.web;
   trusted.localBackupRestoreReadiness = backupRestore;
   let delivered = 0;
   trusted.hermes021Local = { deliver: async function () { delivered++; } };
   const result = assemblePrivateAgentTaskOperatorConfiguration(settings, trusted);
   assert.equal(result.configuration.coordinator.sessions, undefined);
   assert.equal(typeof result.configuration.coordinator.hermes021Local?.deliver, "function");
+  assert.equal(result.configuration.web.codexMacosCustodyReadiness?.readinessDigest, codexCustody.readinessDigest);
+  assert.equal(Object.isFrozen(result.configuration.web.codexMacosCustodyReadiness), true);
   assert.equal(delivered, 0, "assembly must not start Hermes");
   assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(
     { ...settings, features: { ...settings.features, hermes021Local: false } }, trusted),

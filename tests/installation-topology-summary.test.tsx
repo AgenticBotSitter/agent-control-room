@@ -39,7 +39,7 @@ test("setup summary shows an honest proof checklist rather than a live worker", 
     { proof: "local_owner_qualification", state: "not_started" },
     { proof: "local_runner_bridge", state: "not_started" },
   ] });
-  const html = renderToStaticMarkup(createElement(InstallationTopologySummary, { plan, readiness }));
+  const html = renderToStaticMarkup(createElement(InstallationTopologySummary, { plan, readiness, localBackupRestoreVerified: true }));
   assert.match(html, /Setup is still in progress/);
   assert.match(html, /Passed:.*backup-and-restore check/);
   assert.match(html, /Not started:.*owner-attended local worker check/);
@@ -78,7 +78,7 @@ test("setup summary distinguishes completed Hermes proof from an enabled worker"
     { proof: "local_owner_qualification", state: "passed", evidenceDigest: sha256Digest("qualification") },
     { proof: "local_runner_bridge", state: "passed", evidenceDigest: sha256Digest("bridge") },
   ] });
-  const html = renderToStaticMarkup(createElement(InstallationTopologySummary, { plan, readiness }));
+  const html = renderToStaticMarkup(createElement(InstallationTopologySummary, { plan, readiness, localBackupRestoreVerified: true }));
   assert.match(html, /<h4>Hermes Agent<\/h4><p><strong>Status: Proof complete; owner enablement required/);
   assert.match(html, /still has not started Hermes/);
   assert.doesNotMatch(html, /<button|<form|<input/);

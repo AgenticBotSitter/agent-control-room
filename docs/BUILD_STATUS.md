@@ -137,6 +137,12 @@ unavailable until their separate host qualifications are complete.
   executor can be composed. This source-only check ran 68 focused disposable
   tests and TypeScript successfully; it neither performed a backup/restore nor
   started a database, Hermes, or a persistent service.
+- The protected setup page now uses that same verified backup-and-restore
+  binding before it can describe Hermes as awaiting owner enablement. It
+  exposes only a true/false verification state, not proof contents or local
+  settings. Operator assembly also now carries an already-verified, opaque
+  Codex macOS safety record through to the existing protected setup display;
+  neither change enables or contacts a local agent.
 
 These checks use disposable data. They do not prove a real agent program,
 database, browser login, backup, persistent service or remote machine.

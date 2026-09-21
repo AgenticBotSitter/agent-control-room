@@ -90,7 +90,8 @@ export const localHarnessCapabilitiesV1: readonly LocalHarnessCapabilityV1[] = O
  * source-only description.
  */
 export function summarizeLocalHarnessCapabilitiesV1(plan?: InstallationTopologyPlanV1,
-  readiness?: InstallationReadinessV1, codexMacosCustodyReadiness?: unknown): readonly LocalHarnessCapabilityV1[] {
+  readiness?: InstallationReadinessV1, codexMacosCustodyReadiness?: unknown,
+  localBackupRestoreVerified = false): readonly LocalHarnessCapabilityV1[] {
   if (!plan || !plan.requiredProofs.includes("local_owner_qualification") || !plan.requiredProofs.includes("local_runner_bridge"))
     return localHarnessCapabilitiesV1;
   const summary = summarizeInstallationReadinessV1(plan, readiness);
@@ -113,6 +114,14 @@ export function summarizeLocalHarnessCapabilitiesV1(plan?: InstallationTopologyP
       nextStep: "Correct the failed local proof through the owner-run procedure, then record a fresh non-secret proof result." }), localHarnessCapabilitiesV1[1]!, codexCapability]);
   }
   if (localProofs.length === 3 && localProofs.every(item => item.state === "passed")) {
+    if (!localBackupRestoreVerified) {
+      return Object.freeze([Object.freeze({ ...hermes, state: "setup_required" as const,
+        stateLabel: "Backup recovery record needs verification",
+        summary: "Control Room has not enabled Hermes. Its recorded backup-and-restore check is not yet tied to verified disposable restore evidence for this installation.",
+        remainingSetupCategory: "Verified backup-and-restore evidence",
+        nextStep: "Record the existing disposable backup-and-restore proof for this exact installation before requesting local-worker enablement." }),
+      localHarnessCapabilitiesV1[1]!, codexCapability]);
+    }
     return Object.freeze([Object.freeze({ ...hermes, state: "owner_enablement_required" as const,
       stateLabel: "Proof complete; owner enablement required", summary: "The required local proof records are complete, but Control Room still has not started Hermes.",
       remainingSetupCategory: "Separate owner enablement decision",

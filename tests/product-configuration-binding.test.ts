@@ -6,6 +6,8 @@ import { createPrivateWebProcess } from "../src/web/v1/private-process";
 import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
 import { createInstallationReadinessV1 } from "../src/harness/v1/installation-readiness";
 import { createCodexMacosCustodyReadinessV1 } from "../src/harness/codex-v1/macos-custody-readiness";
+import { createArtifactBackupInventoryV1, verifyRestoredArtifactBackupInventoryV1 } from "../src/artifacts/v1/artifact-backup-inventory";
+import { createLocalBackupRestoreReadinessV1 } from "../src/harness/v1/local-backup-restore-readiness";
 import { sha256Digest } from "../src/security/canonical-digest";
 import { now, origin, request, token, trust } from "./helpers/web-foundation";
 import { limitedWebFixture } from "./helpers/web-startup";
@@ -22,6 +24,20 @@ const options = (productConfiguration: ReturnType<typeof configuration>, databas
   tenantId: "tenant:web", workspaceId: "workspace:web",
   database: { client: database, close }, loadKeys: async () => trust.keys,
   clock: () => now, productConfiguration });
+
+function backupRestoreProof(planDigest: string) {
+  const inventory = createArtifactBackupInventoryV1({ tenantId: "tenant:local", releaseId: "release:local",
+    releaseDigest: sha256Digest("release"), databaseSchemaVersion: "schema:local", databaseSchemaDigest: sha256Digest("schema"),
+    storageNamespace: "artifact-namespace:local", storageNamespaceDigest: sha256Digest("namespace"),
+    entries: [{ artifactId: "artifact:local", contentHash: sha256Digest("bytes"), sizeBytes: 5,
+      manifestDigest: sha256Digest("manifest"), receiptDigest: sha256Digest("receipt") }] });
+  return createLocalBackupRestoreReadinessV1({ planDigest, databaseRestore: { tenantId: "tenant:local", releaseId: "release:local",
+    releaseDigest: sha256Digest("release"), databaseIdentityDigest: sha256Digest("database-identity"),
+    databaseDumpDigest: sha256Digest("database-dump"), databaseSchemaVersion: "schema:local", databaseSchemaDigest: sha256Digest("schema"),
+    restoredToDisposableTarget: true, promoted: false, startsWork: false, grantsExecutionAuthority: false,
+    permitsRetry: false, permitsCleanup: false }, expectedArtifactInventory: inventory, restoredArtifactInventory: structuredClone(inventory),
+    artifactRestoreVerification: verifyRestoredArtifactBackupInventoryV1({ expected: inventory, restored: inventory }) });
+}
 
 test("two same-artifact processes retain distinct immutable portable configurations", async t => {
   const firstStore = await limitedWebFixture();
@@ -104,5 +120,26 @@ test("readiness is an authenticated non-secret view bound to its saved plan", as
   assert.equal(body.readiness.planDigest, plan.planDigest);
   assert.equal(body.codexMacosCustodyReadiness.planDigest, plan.planDigest);
   assert.equal(body.codexMacosCustodyReadiness.readinessDigest, custody.readinessDigest);
+  assert.equal(body.localBackupRestoreVerified, false);
   assert.equal((await app.handle(request("/api/v1/installation-readiness?x=1"), () => new Response("fallback", { status: 500 }))).status, 400);
+});
+
+test("the setup view calls a local backup ready only when the saved record has that exact proof", async t => {
+  const store = await limitedWebFixture();
+  const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("one-db"), schedulerAuthorityDigest: sha256Digest("one-scheduler"),
+    currentRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }],
+    requestedRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }] });
+  const proof = backupRestoreProof(plan.planDigest);
+  const readiness = createInstallationReadinessV1({ planDigest: plan.planDigest,
+    proofs: [{ proof: "backup_restore", state: "passed", evidenceDigest: proof.proofDigest }] });
+  const app = createPrivateWebProcess({ ...options(configuration("Topology", false), store.pool.client, store.pool.close),
+    installationTopologyPlan: plan, installationReadiness: readiness, localBackupRestoreReadiness: proof });
+  t.after(() => app.close());
+  const body = await (await app.handle(request("/api/v1/installation-readiness"), () => new Response("fallback", { status: 500 }))).json();
+  assert.equal(body.localBackupRestoreVerified, true);
+  assert.doesNotMatch(JSON.stringify(body), /tenant:local|artifact-namespace:local|database-dump|release:local/);
+  assert.throws(() => createPrivateWebProcess({ ...options(configuration("Topology", false), store.pool.client, store.pool.close),
+    installationTopologyPlan: plan, installationReadiness: createInstallationReadinessV1({ planDigest: plan.planDigest,
+      proofs: [{ proof: "backup_restore", state: "passed", evidenceDigest: sha256Digest("wrong-proof") }] }), localBackupRestoreReadiness: proof }),
+  /invalid_private_app_config/);
 });

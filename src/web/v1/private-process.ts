@@ -34,6 +34,7 @@ import { ideaCreationOptionsSchema } from "./idea-wire";
 import { parseProductConfigurationV1, type ProductConfigurationV1 } from "../../config/v1/product-configuration";
 import { verifyInstallationTopologyPlanV1, type InstallationTopologyPlanV1 } from "../../harness/v1/installation-topology";
 import { verifyInstallationReadinessV1, type InstallationReadinessV1 } from "../../harness/v1/installation-readiness";
+import { localBackupRestoreEvidenceDigestForInstallationPlanV1 } from "../../harness/v1/local-backup-restore-readiness";
 import { verifyCodexMacosCustodyReadinessV1, type CodexMacosCustodyReadinessV1 } from "../../harness/codex-v1/macos-custody-readiness";
 import { WebSessionAuthority } from "./session-authority";
 import { readProjectScheduleStatus } from "../../schedules/read-service";
@@ -62,6 +63,8 @@ export interface PrivateWebProcessOptions {
   installationTopologyPlan?: Readonly<InstallationTopologyPlanV1>;
   /** Optional non-secret proof outcomes for that exact setup plan. This process only presents them. */
   installationReadiness?: Readonly<InstallationReadinessV1>;
+  /** Installation-owned, verified disposable restore evidence. Its contents are never sent to the browser. */
+  localBackupRestoreReadiness?: unknown;
   /** Optional opaque Mac Codex custody proof record. It is display-only and cannot enable Codex. */
   codexMacosCustodyReadiness?: Readonly<CodexMacosCustodyReadinessV1>;
   /** Explicit operations from the trusted collector composition. This process does
@@ -115,6 +118,20 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     : verifyInstallationTopologyPlanV1(options.installationTopologyPlan);
   const installationReadiness = options.installationReadiness === undefined ? undefined
     : verifyInstallationReadinessV1(options.installationReadiness);
+  const localBackupRestoreVerified = options.localBackupRestoreReadiness === undefined ? false : (() => {
+    if (!installationTopologyPlan) throw new Error("invalid_private_app_config");
+    try {
+      const evidenceDigest = localBackupRestoreEvidenceDigestForInstallationPlanV1(
+        installationTopologyPlan,
+        options.localBackupRestoreReadiness,
+      );
+      const recorded = installationReadiness?.proofs.find((proof) => proof.proof === "backup_restore");
+      if (recorded?.state !== "passed" || recorded.evidenceDigest !== evidenceDigest) {
+        throw new Error("backup_restore_readiness_mismatch");
+      }
+      return true;
+    } catch { throw new Error("invalid_private_app_config"); }
+  })();
   const codexMacosCustodyReadiness = options.codexMacosCustodyReadiness === undefined ? undefined
     : verifyCodexMacosCustodyReadinessV1(options.codexMacosCustodyReadiness);
   if (installationReadiness && (!installationTopologyPlan || installationReadiness.planDigest !== installationTopologyPlan.planDigest))
@@ -285,7 +302,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             return await productConfigurationAuthority.authenticated(identity, async (_, actor) => {
               actor.require("projects.read", undefined, true);
               return Response.json({ plan: installationTopologyPlan, ...(installationReadiness ? { readiness: installationReadiness } : {}),
-                ...(codexMacosCustodyReadiness ? { codexMacosCustodyReadiness } : {}) },
+                ...(codexMacosCustodyReadiness ? { codexMacosCustodyReadiness } : {}), localBackupRestoreVerified },
                 { headers: privateResponseHeaders });
             });
           }

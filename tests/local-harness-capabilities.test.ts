@@ -37,11 +37,26 @@ test("local Hermes proof completion is honest about the separate enablement deci
     { proof: "local_owner_qualification", state: "passed", evidenceDigest: sha256Digest("qualification") },
     { proof: "local_runner_bridge", state: "passed", evidenceDigest: sha256Digest("bridge") },
   ] });
-  const hermes = summarizeLocalHarnessCapabilitiesV1(plan, ready).find(value => value.id === "hermes")!;
+  const hermes = summarizeLocalHarnessCapabilitiesV1(plan, ready, undefined, true).find(value => value.id === "hermes")!;
   assert.equal(hermes.state, "owner_enablement_required");
   assert.match(hermes.stateLabel, /owner enablement/);
   assert.match(hermes.summary, /still has not started Hermes/);
   assert.equal(hermes.remainingSetupCategory, "Separate owner enablement decision");
+});
+
+test("a generic passed backup label never substitutes for verified restore evidence", () => {
+  const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
+    currentRoutes: [{ kind: "local", workerId: "worker:marvin", adapterId: "connector:hermes-021-macos-local-v1", adapterRevision: "00570550" }],
+    requestedRoutes: [{ kind: "local", workerId: "worker:marvin", adapterId: "connector:hermes-021-macos-local-v1", adapterRevision: "00570550" }] });
+  const generic = createInstallationReadinessV1({ planDigest: plan.planDigest, proofs: [
+    { proof: "backup_restore", state: "passed", evidenceDigest: sha256Digest("unbound-backup") },
+    { proof: "local_owner_qualification", state: "passed", evidenceDigest: sha256Digest("qualification") },
+    { proof: "local_runner_bridge", state: "passed", evidenceDigest: sha256Digest("bridge") },
+  ] });
+  const hermes = summarizeLocalHarnessCapabilitiesV1(plan, generic).find(value => value.id === "hermes")!;
+  assert.equal(hermes.state, "setup_required");
+  assert.match(hermes.stateLabel, /backup recovery record needs verification/i);
+  assert.match(hermes.summary, /not enabled Hermes/i);
 });
 
 test("a recorded Hermes runner proof remains visible while other local setup proof is missing", () => {
