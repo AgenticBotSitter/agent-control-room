@@ -95,6 +95,11 @@ unavailable until their separate host qualifications are complete.
   recorded as cancelled and its temporary task data is removed after the child
   process closes. This does not claim that Hermes has a general public
   per-task stop feature.
+- Broader local durability and startup verification: 101 checks passed. This
+  covers one-database application composition, startup refusal before a
+  listener opens, cleanup on partial failures, protected artifact storage,
+  restart recovery, rollback protection, and the fact that a worker cannot
+  turn an uncertain result into a retry.
 
 These checks use disposable data. They do not prove a real agent program,
 database, browser login, backup, persistent service or remote machine.
