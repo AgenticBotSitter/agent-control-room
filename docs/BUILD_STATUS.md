@@ -285,6 +285,12 @@ evidence only: it enables no worker, database, listener or persistent service.
   whether new admission for an affected worker should stay paused. It neither
   changes routes nor starts, stops, enrolls, revokes, or enables a worker.
   The raw journal is unavailable to the browser role.
+- A source-only database-relocation preparation record now binds the already
+  verified schema/restricted-role facts, protected result inventory, external
+  rollback-checkpoint fingerprint, and drained transition evidence for one
+  distinct target. It is intentionally not a backup, restore, fence, or
+  activation command. A real move still requires the separate owner-operated
+  export, empty-target restore, verification, and one-controller cutover.
 - The final private task-startup gate now independently rechecks the same
   Hermes installation, backup-and-restore, and local-service readiness
   records. A caller cannot bypass the protected setup and operator-assembly
