@@ -7,7 +7,7 @@ import { captureHerdrReaders } from "./herdr-service";
 import { parseProductConfigurationV1 } from "../../config/v1/product-configuration";
 import { verifyInstallationTopologyPlanV1 } from "../../harness/v1/installation-topology";
 import { verifyInstallationReadinessV1 } from "../../harness/v1/installation-readiness";
-import { localBackupRestoreEvidenceDigestForInstallationPlanV1 } from "../../harness/v1/local-backup-restore-readiness";
+import { localBackupRestoreEvidenceDigestForInstallationPlanV1, verifyLocalBackupRestoreReadinessV1 } from "../../harness/v1/local-backup-restore-readiness";
 import { verifyCodexMacosCustodyReadinessV1 } from "../../harness/codex-v1/macos-custody-readiness";
 export { createAccessKeyLoader, createStaticAccessKeyLoader } from "./access-key-cache";
 export { createOwnerBootstrapCeremonyV1 } from "./owner-bootstrap-ceremony";
@@ -33,11 +33,13 @@ export function validatePrivateStartupConfiguration(input: PrivateStartupConfigu
       : verifyInstallationTopologyPlanV1(input.installationTopologyPlan);
     const installationReadiness = input.installationReadiness === undefined ? undefined
       : verifyInstallationReadinessV1(input.installationReadiness);
-    if (input.localBackupRestoreReadiness !== undefined) {
+    const localBackupRestoreReadiness = input.localBackupRestoreReadiness === undefined ? undefined
+      : verifyLocalBackupRestoreReadinessV1(input.localBackupRestoreReadiness);
+    if (localBackupRestoreReadiness !== undefined) {
       if (!installationTopologyPlan || !installationReadiness) throw new Error();
       const evidenceDigest = localBackupRestoreEvidenceDigestForInstallationPlanV1(
         installationTopologyPlan,
-        input.localBackupRestoreReadiness,
+        localBackupRestoreReadiness,
       );
       const recorded = installationReadiness.proofs.find((proof) => proof.proof === "backup_restore");
       if (recorded?.state !== "passed" || recorded.evidenceDigest !== evidenceDigest) throw new Error();
@@ -59,7 +61,7 @@ export function validatePrivateStartupConfiguration(input: PrivateStartupConfigu
       ...(input.productConfiguration === undefined ? {} : { productConfiguration: parseProductConfigurationV1(input.productConfiguration) }),
       ...(installationTopologyPlan === undefined ? {} : { installationTopologyPlan }),
       ...(installationReadiness === undefined ? {} : { installationReadiness }),
-      ...(input.localBackupRestoreReadiness === undefined ? {} : { localBackupRestoreReadiness: input.localBackupRestoreReadiness }),
+      ...(localBackupRestoreReadiness === undefined ? {} : { localBackupRestoreReadiness }),
       ...(codexMacosCustodyReadiness === undefined ? {} : { codexMacosCustodyReadiness }),
       ...(input.tasks ? { tasks: { harnessIntegrityKey: key(input.tasks.harnessIntegrityKey),
         ...(input.tasks.results ? { results: { ...input.tasks.results, integrityKey: key(input.tasks.results.integrityKey) } } : {}),

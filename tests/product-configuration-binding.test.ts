@@ -84,6 +84,24 @@ test("startup capture preserves a reviewed immutable installation plan", () => {
   assert.equal(Object.isFrozen(startup.installationTopologyPlan), true);
 });
 
+test("startup capture detaches an exact local backup proof after checking its saved readiness", () => {
+  const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
+    currentRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }],
+    requestedRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }] });
+  const proof = { ...backupRestoreProof(plan.planDigest) };
+  const startup = validatePrivateStartupConfiguration({ origin, ...trust, tenantId: "tenant:web", workspaceId: "workspace:web",
+    loadKeys: async () => trust.keys, ownerIdentityId: "identity:web", installationTopologyPlan: plan,
+    installationReadiness: createInstallationReadinessV1({ planDigest: plan.planDigest,
+      proofs: [{ proof: "backup_restore", state: "passed", evidenceDigest: proof.proofDigest }] }),
+    localBackupRestoreReadiness: proof, database: {
+      host: "127.0.0.1", port: 5432, database: "template1", username: "web_test", password: "synthetic-only", majorVersion: 17,
+    } });
+  proof.planDigest = sha256Digest("changed-after-capture");
+  const captured = startup.localBackupRestoreReadiness as { planDigest: string };
+  assert.equal(captured.planDigest, plan.planDigest);
+  assert.equal(Object.isFrozen(captured), true);
+});
+
 test("a saved installation plan is an authenticated read-only setup status", async t => {
   const store = await limitedWebFixture();
   const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("one-db"), schedulerAuthorityDigest: sha256Digest("one-scheduler"),
