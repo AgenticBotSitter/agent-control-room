@@ -59,6 +59,9 @@ unavailable until their separate host qualifications are complete.
 - The protected local setup page presents Hermes Agent, Claude Code and Codex
   separately, including what each could do after setup and what blocks it now.
   It never treats a source contract or setup proof as a live agent.
+- The Hermes setup card also distinguishes a recorded partial proof from a
+  complete or failed setup. It names only the remaining proof category and
+  never discloses a local command, profile, model, provider or worker identity.
 - The local home dashboard refreshes its saved projects, work, results,
   attention and worker signals while the owner is viewing it, and on return to
   the tab. This is a read-only status refresh; it neither schedules work nor
