@@ -86,6 +86,9 @@ export type Hermes021MacosTaskOutcomeV1 =
     /** Canonical terminal record retained only after the private runner returned it. */
     terminalResult: Hermes021MacosTerminalResultV1; terminalResultDigest: string }>
   | Readonly<{ kind: "failed"; reason: "hermes_local_exit_nonzero" | "hermes_local_result_missing" }>
+  /** Control Room stopped its own already-started child. This is not a claimed
+   * public Hermes interrupt capability and it must never trigger a retry. */
+  | Readonly<{ kind: "cancelled"; reason: "hermes_local_execution_aborted" }>
   | Readonly<{ kind: "uncertain"; reason: "hermes_local_transport_unavailable" | "hermes_local_result_invalid" }>;
 
 function unavailable(): never { throw new Error("hermes_local_worker_unavailable"); }
@@ -171,6 +174,11 @@ export async function runHermes021MacosLocalTaskV1(bindingValue: unknown, taskVa
     if (outcome.kind === "completed" && terminalStage) await terminalStage.capture(outcome.terminalResult, signal);
     return outcome;
   } catch {
+    // The caller-owned shutdown/expiry signal is an observed Control Room
+    // cancellation, distinct from an unconfirmed lost reply. The connector
+    // still advertises public cancel as unsupported: it has no independently
+    // qualified Hermes interrupt API.
+    if (signal?.aborted) return Object.freeze({ kind: "cancelled", reason: "hermes_local_execution_aborted" });
     return Object.freeze({ kind: "uncertain", reason: "hermes_local_transport_unavailable" });
   }
 }

@@ -57,6 +57,22 @@ test("Hermes 0.21 local worker reports a lost private-port reply as uncertainty 
   assert.equal(attempts, 1);
 });
 
+test("a controller shutdown during an already-started Hermes run is recorded as cancellation", async () => {
+  const controller = new AbortController();
+  let started = false;
+  const pending = runHermes021MacosLocalTaskV1(binding, task, { async run(input) {
+    started = true;
+    await new Promise<void>(resolve => input.signal?.addEventListener("abort", () => resolve(), { once: true }));
+    throw new Error("child stopped after controller abort");
+  } }, controller.signal);
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(started, true);
+  controller.abort();
+  assert.deepEqual(await pending, { kind: "cancelled", reason: "hermes_local_execution_aborted" });
+  assert.equal(hermes021MacosLocalConnectorProfileV1.operations.cancel.status, "unsupported",
+    "controller shutdown does not invent a public Hermes cancel capability");
+});
+
 test("Marvin's normal local runner needs a synchronous policy for the exact shared delivery", async () => {
   let runs = 0, policyCalls = 0;
   const completed = await runAdmittedHermes021MacosLocalTaskV1(controllerDelivery(),

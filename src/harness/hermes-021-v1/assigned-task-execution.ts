@@ -123,6 +123,10 @@ export async function executeAssignedHermes021MacosTaskV1(config: Hermes021Macos
       await append({ category: "lifecycle", state: "succeeded" });
     } else if (outcome?.kind === "failed") {
       await append({ category: "lifecycle", state: "failed", reasonCode: outcome.reason });
+    } else if (outcome?.kind === "cancelled") {
+      // This records an observed controller shutdown/expiry only. It does not
+      // claim that Hermes exposes a user-requestable cancel operation.
+      await append({ category: "lifecycle", state: "cancelled", reasonCode: outcome.reason });
     } else {
       await append({ category: "transport", state: "disconnected", reasonCode: outcome?.reason ?? "hermes_local_outcome_missing" });
     }

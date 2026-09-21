@@ -64,6 +64,28 @@ test("local Hermes subprocess host refuses a late, aborted, or failed child with
   }
 });
 
+test("an abort after Hermes starts terminates the owned child and removes private task material", async t => {
+  const fixture = child(); t.after(fixture.cleanup);
+  let removed = 0, kills = 0;
+  fixture.process.kill = (() => {
+    kills++;
+    queueMicrotask(() => fixture.process.emit("close", null, "SIGTERM"));
+    return true;
+  }) as typeof fixture.process.kill;
+  let markStarted: (() => void) | undefined;
+  const started = new Promise<void>(resolve => { markStarted = resolve; });
+  const controller = new AbortController();
+  const host = createHermes021MacosSubprocessStreamJsonHostV1(configuration, () => {
+    markStarted?.(); return fixture.process;
+  }, async () => "/private/tmp/control-room-hermes-task-fixture", async () => { removed++; }, async () => {}, () => 1);
+  const pending = host.execute({ task, signal: controller.signal, async onLine() {} });
+  await started;
+  controller.abort();
+  await assert.rejects(pending, /hermes_021_macos_subprocess_host_unavailable/);
+  assert.equal(kills, 1);
+  assert.equal(removed, 1, "the private task directory is removed only after child close");
+});
+
 test("local Hermes subprocess host requires owner-pinned absolute executable and work paths", () => {
   assert.throws(() => createHermes021MacosSubprocessStreamJsonHostV1({ ...configuration, executablePath: "hermes" }));
   assert.throws(() => createHermes021MacosSubprocessStreamJsonHostV1({ ...configuration, workingDirectory: "relative-work" }));

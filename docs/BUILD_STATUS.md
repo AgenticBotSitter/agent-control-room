@@ -79,6 +79,10 @@ unavailable until their separate host qualifications are complete.
 ## Latest accepted local checks
 
 - TypeScript type check
+- Combined local-agent and topology verification: 57 checks passed. This covers
+  Hermes delivery/revocation/restart, Claude terminal-result recovery, inert
+  local adapter capture, and the shared local/remote task and correction
+  lifecycle.
 - Focused local capability, setup-screen, Hermes delivery/restart and
   three-local-worker conformance tests
 - Shared local/remote topology and correction lifecycle tests
