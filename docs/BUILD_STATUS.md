@@ -66,6 +66,11 @@ unavailable until their separate host qualifications are complete.
 - The protected local setup page presents Hermes Agent, Claude Code and Codex
   separately, including what each could do after setup and what blocks it now.
   It never treats a source contract or setup proof as a live agent.
+- The protected Workers view can now read a supplied, authenticated operator
+  capacity projection. If the installation has not supplied this read-only
+  source, the page says it is unavailable; it never invents an empty fleet.
+  Each worker row shows its reported capability separately from capacity. This
+  screen cannot start, schedule, assign, or reserve work.
 - The Hermes setup card also distinguishes a recorded partial proof from a
   complete or failed setup. It names only the remaining proof category and
   never discloses a local command, profile, model, provider or worker identity.
@@ -123,6 +128,10 @@ unavailable until their separate host qualifications are complete.
 - Latest local service-preparation package: 24 focused readiness, protected
   setup-page, and recorder checks passed, followed by the TypeScript project
   check and production-style build. It did not install or start a supervisor.
+- Latest operator-capacity package: 22 focused authenticated-route and
+  browser-presentation checks passed, followed by the TypeScript project check
+  and production-style build. It did not create a worker, start an agent, or
+  connect to an installation database.
 - Local Hermes recovery inspection now reads only an authenticated saved
   delivery and its protected staged terminal record. It reports no saved
   delivery, an unresolved saved delivery, or a staged result using only safe
