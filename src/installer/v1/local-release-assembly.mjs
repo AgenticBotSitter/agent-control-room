@@ -12,9 +12,6 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { gzipSync } from "node:zlib";
-import { buildArtifactInventory } from "../../../scripts/runtime-license-artifact-inventory.mjs";
-import { scanBundledUndisclosed } from "../../../scripts/runtime-license-bundled-scan.mjs";
-import { finalizedRuntimeLicenseOutputs } from "../../../scripts/runtime-license-finalize.mjs";
 import {
   basename,
   dirname,
@@ -47,10 +44,14 @@ export const LOCAL_RELEASE_FILE_POLICY_V1 = Object.freeze({
     "pnpm-lock.yaml",
     "scripts/prepare-local-installation.mjs",
     "scripts/prepare-local-production-dependencies.mjs",
+    "scripts/launch-local-setup.mjs",
     "scripts/run-private-vps.mjs",
+    "src/installer/v1/local-clean-install-acceptance.mjs",
     "src/installer/v1/local-production-dependencies.mjs",
     "src/installer/v1/local-installation-release.d.mts",
     "src/installer/v1/local-installation-release.mjs",
+    "src/installer/v1/local-release-assembly.mjs",
+    "src/installer/v1/local-release-stager.mjs",
   ]),
   directories: Object.freeze([
     "db/migrations",
@@ -145,6 +146,14 @@ function sameJson(left, right) {
 export async function validateRuntimeLicenseEvidenceV1(releaseRootInput) {
   const releaseRoot = await requireRoot(releaseRootInput);
   try {
+    // The extracted release uses this module only for checksum/tree
+    // verification. Keep the build-only license analyzers lazy so a public
+    // release never needs developer checkout scripts merely to stage itself.
+    const [{ buildArtifactInventory }, { scanBundledUndisclosed }, { finalizedRuntimeLicenseOutputs }] = await Promise.all([
+      import("../../../scripts/runtime-license-artifact-inventory.mjs"),
+      import("../../../scripts/runtime-license-bundled-scan.mjs"),
+      import("../../../scripts/runtime-license-finalize.mjs"),
+    ]);
     const savedInventory = JSON.parse(await readFile(join(releaseRoot,
       "research/runtime-license-artifact-inventory.json"), "utf8"));
     const savedScan = JSON.parse(await readFile(join(releaseRoot,

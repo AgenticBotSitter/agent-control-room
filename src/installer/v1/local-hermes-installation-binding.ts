@@ -9,6 +9,7 @@ import { HERMES_021_MACOS_LOCAL_ADAPTER_V1, hermes021MacosLocalBindingSchemaV1 }
 import { captureHermes021MacosSubprocessHostConfigurationV1 } from "../../harness/hermes-021-v1/subprocess-stream-json-host";
 import { createHermes021MacosLocalRunnerQualificationEvidenceV1 } from "../../harness/hermes-021-v1/runner-qualification-evidence";
 import { verifyInstallationPlanV1 } from "./installation-plan";
+import { captureLocalPlatformServiceObservationV1, localPlatformServiceObservationDigestV1 } from "./local-platform-service-observation";
 
 /** Installer-private preparation only. No returned value is an admission grant. */
 export const LOCAL_HERMES_INSTALLATION_BINDING_V1 = "control-room.local-hermes-installation-binding/v1" as const;
@@ -18,12 +19,6 @@ const qualificationObservation = z.object({
   topologyPlanDigest: digest, releaseDigest: digest, workerBindingDigest: digest,
   runnerConfigurationDigest: digest, qualificationEvidenceDigest: digest,
   observationDigest: digest,
-}).strict();
-const serviceObservation = z.object({
-  state: z.enum(["running", "stopped", "failed", "uncertain", "revoked"]),
-  topologyPlanDigest: digest, releaseDigest: digest, serviceIdentityDigest: digest,
-  databaseAuthorityDigest: digest, protectedDataBindingDigest: digest,
-  supervisorReadinessDigest: digest, observationDigest: digest,
 }).strict();
 const stageBindings = z.object({ topologyPlanDigest: digest, releaseDigest: digest,
   workerBindingDigest: digest, runnerConfigurationDigest: digest,
@@ -59,7 +54,7 @@ export function localHermesRunnerConfigurationDigestV1(value: unknown): string {
 /** This is the completion digest recorded by the private service action after
  * observing health. Preparing a service lifecycle is not a health observation. */
 export function localHermesServiceObservationDigestV1(value: unknown): string {
-  try { return sha256Digest({ purpose: "local-hermes-service-observation/v1", observation: serviceObservation.parse(value) }); }
+  try { return localPlatformServiceObservationDigestV1(value); }
   catch { return refuse(); }
 }
 
@@ -85,7 +80,7 @@ export function prepareLocalHermesInstallationBindingV1(input: LocalHermesInstal
     const readiness = verifyInstallationReadinessV1(input.installationReadiness);
     const recovery = verifyLocalBackupRestoreReadinessV1(input.backupRestoreProof);
     const supervisor = verifyLocalSupervisorReadinessV1(input.supervisorReadiness);
-    const service = serviceObservation.parse(input.serviceObservation);
+    const service = captureLocalPlatformServiceObservationV1(input.serviceObservation);
     const route = topologyInput.requestedRoutes.find(item => item.workerId === binding.workerId);
     const stage = plan.stages.find(item => item.stage === "agent_readiness");
     const recovered = plan.stages.find(item => item.stage === "recovery");
@@ -113,7 +108,7 @@ export function prepareLocalHermesInstallationBindingV1(input: LocalHermesInstal
       || service.releaseDigest !== plan.releaseDigest || service.databaseAuthorityDigest !== topology.databaseAuthorityDigest
       || service.protectedDataBindingDigest !== protectedData.outcomeDigest
       || service.supervisorReadinessDigest !== supervisor.readinessDigest) refuse();
-    const serviceObservationDigest = localHermesServiceObservationDigestV1(service);
+    const serviceObservationDigest = localPlatformServiceObservationDigestV1(service);
     if (supervised.outcomeDigest !== serviceObservationDigest) refuse();
     const bound = { topologyPlanDigest: topology.planDigest, releaseDigest: plan.releaseDigest,
       workerBindingDigest, runnerConfigurationDigest, qualificationEvidenceDigest: qualification.evidenceDigest,

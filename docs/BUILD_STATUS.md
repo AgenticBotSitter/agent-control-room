@@ -31,7 +31,7 @@ remain readable for recovery. Focused adapter tests, private-startup tests,
 VPS compilation and TypeScript passed. This is source and disposable-test
 evidence only: it enables no worker, database, listener or persistent service.
 
-The installable-product track now also has twelve accepted source foundations:
+The installable-product track now also has fourteen accepted source foundations:
 an allowlisted reproducible release archive with a manifest and checksum; a
 standalone extracted-release preflight that needs no developer dependency;
 crash-safe, concurrency-tested placement of a verified release into an inert
@@ -41,9 +41,17 @@ verified release and publishes atomically without running package scripts or
 starting the application;
 release packaging that manifest-binds and ships that dependency command and
 runtime, with an extracted-release proof through the public command boundary;
+an artifact-only clean-install rehearsal that runs the shipped setup command
+from an extracted release in separate processes, resumes from a private
+disposable receipt, and refuses altered staged files before another dependency
+operation; this is explicitly rehearsal evidence, not a live installation;
 an effect-free local Hermes installation binding that ties the already
 qualified runner to the exact topology, release, recovery and healthy-service
 observations while keeping owner enablement and real work separate;
+an effect-free local Claude installation binding that reuses the same generic
+platform-service observation and requires exact process, configuration,
+topology, release, recovery and supervisor evidence while leaving the private
+process host and owner qualification visibly incomplete;
 an authenticated, redacted setup-progress view that labels coordination state
 as saved progress rather than evidence and gives the browser no installation
 or database capability;
@@ -58,7 +66,7 @@ artifact store, database restore proof and artifact inventory proof to the exact
 ordered setup stages without exposing a private path or running a backup.
 The protected Settings page shows both the planned one-launcher journey and
 the supplied saved stage progress, while prominently saying the public release
-and launcher are not available yet. These components perform no install,
+and double-click launcher are not available yet. These components perform no install,
 database, service, credential, or worker effect. Release staging, production
 dependency preparation, the owner-only protected-data/recovery actions, the effectful service wrapper,
 durable plan persistence and the owner-only setup

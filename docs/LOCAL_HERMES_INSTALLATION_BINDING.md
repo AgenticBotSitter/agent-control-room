@@ -40,7 +40,7 @@ signature and does not authenticate its origin.
 - The `recovery` passed outcome is the verified existing backup/restore
   `proofDigest`. The readiness record must contain that same proof.
 - The `platform_service` passed outcome is
-  `localHermesServiceObservationDigestV1(observation)` after the private host
+  `localPlatformServiceObservationDigestV1(observation)` after the private host
   observes a running, healthy service for the exact release, authority and
   protected-data binding. A proposed service lifecycle is insufficient.
 - Supervisor readiness here is bound to the stable topology plan, matching

@@ -75,8 +75,12 @@ test("assembles the same reviewed release bytes twice with no installation effec
     const paths = new Set(manifest.files.map(entry => entry.path));
     assert.equal(paths.has("scripts/prepare-local-installation.mjs"), true);
     assert.equal(paths.has("scripts/prepare-local-production-dependencies.mjs"), true);
+    assert.equal(paths.has("scripts/launch-local-setup.mjs"), true);
+    assert.equal(paths.has("src/installer/v1/local-clean-install-acceptance.mjs"), true);
     assert.equal(paths.has("src/installer/v1/local-installation-release.mjs"), true);
     assert.equal(paths.has("src/installer/v1/local-production-dependencies.mjs"), true);
+    assert.equal(paths.has("src/installer/v1/local-release-assembly.mjs"), true);
+    assert.equal(paths.has("src/installer/v1/local-release-stager.mjs"), true);
     assert.equal(paths.has("deploy/postgres/migration-ledger.json"), true);
     assert.equal(paths.has("db/migrations/0084_installation_transition_revisions.sql"), true);
     assert.equal(paths.has("research/runtime-license-manifest.json"), true);

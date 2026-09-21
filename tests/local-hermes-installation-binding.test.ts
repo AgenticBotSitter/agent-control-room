@@ -11,8 +11,9 @@ import { HERMES_021_MACOS_LOCAL_ADAPTER_V1 } from "../src/harness/hermes-021-v1/
 import { createHermes021MacosLocalRunnerQualificationEvidenceV1, HERMES_021_MACOS_LOCAL_RUNNER_QUALIFICATION_REPORT_V1 } from "../src/harness/hermes-021-v1/runner-qualification-evidence";
 import { advanceInstallationPlanV1, createInstallationPlanV1, installationSetupStagesV1 } from "../src/installer/v1/installation-plan";
 import { localHermesInstallationStageInputDigestV1, localHermesRunnerConfigurationDigestV1,
-  localHermesServiceObservationDigestV1, prepareLocalHermesInstallationBindingV1,
+  prepareLocalHermesInstallationBindingV1,
   verifyLocalHermesInstallationBindingV1 } from "../src/installer/v1/local-hermes-installation-binding";
+import { localPlatformServiceObservationDigestV1 } from "../src/installer/v1/local-platform-service-observation";
 
 const d = (value: unknown) => sha256Digest(value);
 function fixture(remote = false) {
@@ -59,7 +60,7 @@ function fixture(remote = false) {
     runnerConfigurationDigest: qualificationObservation.runnerConfigurationDigest, qualificationEvidenceDigest,
     qualificationObservationDigest: d(qualificationObservation), installationReadinessDigest: installationReadiness.readinessDigest,
     recoveryProofDigest: backupRestoreProof.proofDigest, supervisorReadinessDigest: supervisorReadiness.readinessDigest,
-    serviceObservationDigest: localHermesServiceObservationDigestV1(serviceObservation) };
+    serviceObservationDigest: localPlatformServiceObservationDigestV1(serviceObservation) };
   let installationPlan = createInstallationPlanV1({ topologyPlan: topology, releaseDigest,
     stageInputDigests: Object.fromEntries(installationSetupStagesV1.map(stage => [stage,
       stage === "agent_readiness" ? localHermesInstallationStageInputDigestV1(bound) : d(stage)])) });
