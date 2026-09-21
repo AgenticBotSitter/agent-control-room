@@ -128,6 +128,10 @@ database, browser login, backup, persistent service or remote machine.
    presentation wherever the authoritative source provides those facts.
 4. Continue remote worker enrollment, compatibility, reconnect, revocation and
    two-node source preparation under the same controller delivery contract.
+5. Move Idea Lab participant rounds from its legacy direct fake coordinator
+   into the same canonical task, delivery, result, review and correction path
+   already used by schedules and news/research. The accepted source decision
+   is [IDEA_LAB_CANONICAL_LIFECYCLE_DECISION.md](IDEA_LAB_CANONICAL_LIFECYCLE_DECISION.md).
 
 ## Owner-operated gates before any real local worker is enabled
 

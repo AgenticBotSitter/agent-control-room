@@ -47,7 +47,7 @@ Keep the bounded JSON-lines decoder, owned process-session helper and canonical 
 
 ### P4 — Complete locally, then extend remotely
 
-Finish capability-aware assignment, progress, attention, correction, schedules and research-to-task promotion on the same queue. Later add remote enrollment, compatibility, reconnect, revocation and a two-node proof below the existing delivery contract. Every qualified agent must complete the same project → task → delivery → result → review → correction journey across restart and disposable restore. Remote delivery never adds synchronization or a second writer.
+Finish capability-aware assignment, progress, attention, correction, schedules and research-to-task promotion on the same queue. Idea Lab participant rounds are ordinary canonical tasks, not direct provider calls; the accepted rule and its migration/acceptance proof are in [IDEA_LAB_CANONICAL_LIFECYCLE_DECISION.md](IDEA_LAB_CANONICAL_LIFECYCLE_DECISION.md). Later add remote enrollment, compatibility, reconnect, revocation and a two-node proof below the existing delivery contract. Every qualified agent must complete the same project → task → delivery → result → review → correction journey across restart and disposable restore. Remote delivery never adds synchronization or a second writer.
 
 ## Owner-attended gates
 

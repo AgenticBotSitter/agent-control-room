@@ -148,7 +148,10 @@ second turn.
 2. Add capability-aware task assignment, progress, cost/usage when truthfully
    supplied, result/diff evidence, correction and attention views.
 3. Connect schedules, Idea Lab and news/research promotion to this same task
-   path—never their own runner/queue.
+   path—never their own runner/queue. Idea Lab follows the accepted
+   [canonical lifecycle decision](IDEA_LAB_CANONICAL_LIFECYCLE_DECISION.md):
+   every participant/round is a normal task with normal delivery, result,
+   review and correction evidence.
 4. Optionally invoke a pinned Alibaba review run against a frozen diff and
    store its bounded findings as advisory evidence.
 
