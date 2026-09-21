@@ -102,6 +102,7 @@ Still requires owner-authorized evidence:
 - real local PostgreSQL configuration and a disposable database restore;
 - a selected private artifact backup location and a verified restore;
 - a persistent unprivileged service supervisor;
-- the local Hermes text-only qualification, followed by a separately recorded
-  fixed-runner bridge qualification that proves its terminal-stage callback;
+- one separately authorized real, restricted Hermes text task through the
+  already-qualified runner, including its terminal-stage callback, restart
+  recovery, and owner review;
 - a two-computer delivery and reconnect proof.
