@@ -198,6 +198,9 @@ test("a local Claude delivery publishes once, then a rebuilt executor recovers t
   assert.equal(acquisitions, 1);
   assert.equal(first.registered.replayed, false);
   assert.equal((await f.db.query("SELECT id FROM control_harness_runs WHERE tenant_id=$1 AND id=$2", [binding.tenantId, firstPrepared.delivery.identity.runId])).rows.length, 1);
+  const recorded = await new HarnessRunStoreV1(f.db, f.harnessKey).inspect(binding.tenantId, firstPrepared.delivery.identity.runId);
+  assert.deepEqual(recorded?.events.map(event => event.payload.category === "lifecycle" ? event.payload.state : undefined),
+    ["starting", "running", "succeeded"], "the normal Control Room run history records only observed lifecycle progress");
   now += 1_000;
   const restart = await executeAssignedClaudeCodeLocalTaskV1(execution(() => {
     acquisitions++; throw new Error("restart_must_not_acquire_claude");
@@ -206,6 +209,8 @@ test("a local Claude delivery publishes once, then a rebuilt executor recovers t
   assert.equal(restart.publication?.replayed, true);
   assert.equal(restart.registered.replayed, true);
   assert.equal(acquisitions, 1, "recovery reuses protected terminal evidence and never opens another Claude session");
+  const recoveredHistory = await new HarnessRunStoreV1(f.db, f.harnessKey).inspect(binding.tenantId, firstPrepared.delivery.identity.runId);
+  assert.equal(recoveredHistory?.events.length, 3, "a recovered result does not invent a second lifecycle history");
   assert.equal((await f.db.query("SELECT run_id FROM control_native_review_plans WHERE tenant_id=$1 AND run_id=$2",
     [binding.tenantId, firstPrepared.delivery.identity.runId])).rows.length, 1);
 });

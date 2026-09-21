@@ -12,8 +12,10 @@ import { createClaudeCodeTerminalResultStageV1 } from "./terminal-result-staging
 import { recoverClaudeCodeTerminalResultV1 } from "./terminal-result-recovery";
 import { readControllerWorkerDeliveryReceiptV1 } from "../v1/controller-worker-delivery-receipt-store";
 import { HarnessRunStoreV1 } from "../v1/store";
-import type { HarnessRunV1 } from "../v1/types";
+import type { HarnessEventPayloadV1, HarnessRunEventV1, HarnessRunV1 } from "../v1/types";
 import { ClaudeCodeLocalRunRegistrationV1 } from "./local-run-registration";
+import { sha256Digest } from "../../security/canonical-digest";
+import { isTerminalHarnessRunState } from "../v1/lifecycle";
 
 const unavailable = (): never => { throw new Error("claude_code_local_assigned_task_execution_unavailable"); };
 
@@ -90,8 +92,32 @@ export async function executeAssignedClaudeCodeLocalTaskV1(config: ClaudeCodeLoc
   // history. Creating it here mirrors the local Hermes path and prevents a
   // source-only Claude delivery from looking executable while being unable to
   // retain any result. An exact replay returns the same record.
-  const registered = await config.runs.create(ClaudeCodeLocalRunRegistrationV1(
-    prepared.delivery, retainedReceipt?.receipt.receivedAt ?? now));
+  const candidate = ClaudeCodeLocalRunRegistrationV1(prepared.delivery, retainedReceipt?.receipt.receivedAt ?? now);
+  const existing = await config.runs.get(candidate.tenantId, candidate.id);
+  // A published run naturally has newer lifecycle state than its initial
+  // registration. Compare the immutable controller binding rather than trying
+  // to recreate a "discovered" row during recovery.
+  if (existing && (existing.projectId !== candidate.projectId || existing.jobId !== candidate.jobId
+    || existing.attemptId !== candidate.attemptId || existing.nodeId !== candidate.nodeId
+    || existing.adapterId !== candidate.adapterId || existing.harness !== candidate.harness
+    || existing.nativeSessionKeyDigest !== candidate.nativeSessionKeyDigest
+    || existing.connectorProfileDigest !== candidate.connectorProfileDigest
+    || existing.authorityDigest !== candidate.authorityDigest)) unavailable();
+  const registered = existing ? { run: existing, replayed: true } : await config.runs.create(candidate);
+  let sequence = (await config.runs.inspect(prepared.delivery.identity.tenantId, registered.run.id))?.events.length ?? 0;
+  let observedState = registered.run.state;
+  const append = async (payload: HarnessEventPayloadV1, occurredAt: string) => {
+    const event: HarnessRunEventV1 = { schemaVersion: "control-room-harness-event/v1",
+      tenantId: prepared.delivery.identity.tenantId, runId: registered.run.id, sequence: ++sequence, occurredAt,
+      source: "control_room", sourceEventKeyDigest: sha256Digest({ purpose: "claude-code-local-lifecycle/v1",
+        deliveryDigest: prepared.delivery.deliveryDigest, sequence, payload }), payload };
+    const appended = await config.runs.append(event);
+    observedState = appended.run.state;
+  };
+  // This records only controller-observed lifecycle facts. It does not make a
+  // browser or queue locator a process-start signal, and a replayed terminal
+  // run gains no new history.
+  if (observedState === "discovered") await append({ category: "lifecycle", state: "starting" }, retainedReceipt?.receipt.receivedAt ?? now);
   const delivery = await deliverClaudeCodeLocalTaskV1({ ...config.delivery,
     recheckBeforeAcquire: async (candidate, route, recheckSignal) => {
       if (recheckSignal.aborted || !sameDelivery(candidate, prepared.delivery)
@@ -109,16 +135,24 @@ export async function executeAssignedClaudeCodeLocalTaskV1(config: ClaudeCodeLoc
   const stage = createClaudeCodeTerminalResultStageV1({ storage: config.protectedStorage, retainedBinding,
     processBinding: reservation.processBinding, receivedAt: reservation.receipt.receivedAt });
   const assertAuthority = () => config.assertAuthority(reservation.delivery);
+  const recordPublished = async () => {
+    if (isTerminalHarnessRunState(observedState)) return;
+    if (observedState === "starting") await append({ category: "lifecycle", state: "running" }, reservation.receipt.receivedAt);
+    if (observedState === "running") await append({ category: "lifecycle", state: "succeeded" }, reservation.receipt.receivedAt);
+    if (observedState !== "succeeded") unavailable();
+  };
   if (delivery.state === "reserved_session_open") {
     const result = await publishClaudeCodeReservedSessionResultV1({ publication: config.results,
       reservedSession: { reservation, session: delivery.session }, retainedBinding,
       acceptedConnectorProfileDigest: reservation.delivery.connectorProfileDigest,
       signal: signal ?? new AbortController().signal, receivedAt: reservation.receipt.receivedAt,
       assertAuthority, terminalStage: stage });
+    await recordPublished();
     return finish("published_pending_review", result.publication);
   }
   if (delivery.state !== "already_reserved") unavailable();
   const recovered = await recoverClaudeCodeTerminalResultV1({ publication: config.results, stage, assertAuthority, signal });
-  return recovered.state === "recovered_pending_review"
-    ? finish("recovered_pending_review", recovered.publication) : finish("terminal_result_uncertain");
+  if (recovered.state !== "recovered_pending_review") return finish("terminal_result_uncertain");
+  await recordPublished();
+  return finish("recovered_pending_review", recovered.publication);
 }
