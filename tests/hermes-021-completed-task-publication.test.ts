@@ -13,6 +13,7 @@ test("local Hermes result binding is wholly derived from the prepared controller
       authorityDigest: sha256Digest("authority"), connectorProfileDigest: HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1,
       acceptanceProfileId: "profile:test", acceptanceProfileDigest: sha256Digest("profile"),
     }, workflowId: "workflow:test", route: { kind: "local" as const, workerId: "worker:test" },
+    executionClass: "text_review" as const,
     startsWork: false as const, grantsExecutionAuthority: false as const,
   };
   const retained = retainHermes021MacosResultBindingV1(prepared as never);

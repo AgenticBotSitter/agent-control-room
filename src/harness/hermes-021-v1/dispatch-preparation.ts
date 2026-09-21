@@ -31,6 +31,8 @@ export type Hermes021MacosPreparedDispatchV1 = Readonly<{
   delivery: ControllerWorkerDeliveryV1;
   workflowId: string;
   route: Readonly<{ kind: "local"; workerId: string }>;
+  /** This first runner is deliberately not a project-writing route. */
+  executionClass: "text_review";
   startsWork: false;
   grantsExecutionAuthority: false;
 }>;
@@ -41,6 +43,7 @@ const preparedDispatchSchema = z.object({
   delivery: controllerWorkerDeliverySchemaV1,
   workflowId: id,
   route: z.object({ kind: z.literal("local"), workerId: id }).strict(),
+  executionClass: z.literal("text_review"),
   startsWork: z.literal(false),
   grantsExecutionAuthority: z.literal(false),
 }).strict();
@@ -55,6 +58,7 @@ const preparedDispatchSchema = z.object({
 const preStartBindingDigest = (prepared: Hermes021MacosPreparedDispatchV1) => sha256Digest({
   workflowId: prepared.workflowId,
   route: prepared.route,
+  executionClass: prepared.executionClass,
   identity: prepared.delivery.identity,
   worker: prepared.delivery.worker,
   input: prepared.delivery.input,
@@ -136,7 +140,8 @@ export class Hermes021MacosDispatchPreparationV1 {
       || leaseRow.state !== lease.state || leaseRow.version !== lease.version || leaseRow.attempt_id !== lease.attemptId
       || leaseRow.job_id !== lease.jobId || leaseRow.node_id !== lease.nodeId || new Date(leaseRow.expires_at).toISOString() !== lease.expiresAt
       || job.state !== "leased" || attempt.state !== "leased" || lease.state !== "active"
-      || job.inputDigest !== ref.inputDigest || plan.job.inputDigest !== ref.inputDigest || job.jobType !== HERMES_021_MACOS_LOCAL_JOB_TYPE_V1
+      || job.inputDigest !== ref.inputDigest || plan.job.inputDigest !== ref.inputDigest || plan.executionClass !== "text_review"
+      || job.jobType !== HERMES_021_MACOS_LOCAL_JOB_TYPE_V1
       || job.requiredCapability !== HERMES_021_MACOS_LOCAL_CAPABILITY_V1 || attempt.jobId !== job.id || lease.jobId !== job.id
       || lease.attemptId !== attempt.id || lease.nodeId !== attempt.nodeId || Date.parse(lease.expiresAt) <= now
       || Date.parse(job.authority.expiresAt) <= now) unavailable();
@@ -154,6 +159,7 @@ export class Hermes021MacosDispatchPreparationV1 {
       issuedAt: new Date(now).toISOString(), expiresAt });
     return Object.freeze({ schema: HERMES_021_MACOS_DISPATCH_PREPARATION_V1, delivery, workflowId: job.workflowId,
       route: Object.freeze({ kind: "local" as const, workerId }),
+      executionClass: "text_review" as const,
       startsWork: false as const, grantsExecutionAuthority: false as const });
   }
 }

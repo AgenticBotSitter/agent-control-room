@@ -82,6 +82,7 @@ export function deriveHermes021MacosLocalTaskPolicyPortV1(preparedValue: unknown
     delivery: controllerWorkerDeliverySchemaV1,
     workflowId: id,
     route: z.object({ kind: z.literal("local"), workerId: id }).strict(),
+    executionClass: z.literal("text_review"),
     startsWork: z.literal(false), grantsExecutionAuthority: z.literal(false),
   }).strict().parse(preparedValue);
   const binding = hermes021MacosLocalBindingSchemaV1.parse(bindingValue);

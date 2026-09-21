@@ -141,6 +141,7 @@ test("per-task local policy is derived from each canonical prepared packet", asy
   const prepared = (delivery: typeof first) => ({
     schema: "control-room.hermes-021-macos-dispatch-preparation/v1" as const, delivery,
     workflowId: "workflow:local", route: { kind: "local" as const, workerId: binding.workerId },
+    executionClass: "text_review" as const,
     startsWork: false as const, grantsExecutionAuthority: false as const,
   });
   const clock = () => Date.parse("2026-09-19T12:02:00.000Z");
@@ -157,6 +158,9 @@ test("per-task local policy is derived from each canonical prepared packet", asy
   assert.equal(runs, 2, "the first task's gate cannot authorize the second task");
   assert.throws(() => deriveHermes021MacosLocalTaskPolicyPortV1({ ...prepared(second), route: {
     kind: "local", workerId: "worker:changed" } }, binding, clock), /hermes_021_macos_task_policy_refused/);
+  assert.throws(() => deriveHermes021MacosLocalTaskPolicyPortV1({ ...prepared(second),
+    executionClass: "project_write" }, binding, clock), undefined,
+  "a future writing route cannot reuse this text-review policy constructor");
 });
 
 test("Marvin's local connector records what is proven and explicitly refuses unqualified execution", () => {
