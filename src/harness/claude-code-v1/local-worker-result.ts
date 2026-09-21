@@ -6,7 +6,12 @@ import {
   type AcquireClaudeCodeProcessV1,
   type ClaudeCodeProcessBindingV1,
   type ClaudeCodeSessionDispositionV1,
+  type OwnedClaudeCodeProcessSessionV1,
 } from "./owned-process-session";
+import type { ClaudeCodeReservedSessionV1 } from "./local-delivery-composition";
+import { CLAUDE_CODE_LOCAL_ADAPTER_V1 } from "./task-planning-contract";
+import { controllerWorkerDeliveryReceiptSchemaV1, controllerWorkerDeliverySchemaV1 } from "../v1/controller-worker-delivery";
+import { sha256Digest } from "../../security/canonical-digest";
 import {
   CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1,
   publishClaudeTerminalResultV1,
@@ -54,6 +59,22 @@ export interface ClaudeCodeLocalWorkerResultV1 {
   readonly permitsResume: false;
 }
 
+/**
+ * Consumes the session that the local delivery bridge already reserved.  This
+ * input deliberately has no acquisition seam: the only process it can touch
+ * is the one session supplied by that bridge.
+ */
+export interface ClaudeCodeReservedSessionResultInputV1 {
+  publication: DurableResultPublicationConfigurationV1;
+  reservedSession: ClaudeCodeReservedSessionV1;
+  retainedBinding: ClaudeRetainedPublicationBindingV1;
+  acceptedConnectorProfileDigest: string;
+  signal: AbortSignal;
+  receivedAt: string;
+  assertAuthority: () => void;
+  terminalStage?: ClaudeCodeTerminalResultStagePortV1;
+}
+
 function unavailable(): never {
   throw new Error("claude_code_local_worker_result_unavailable");
 }
@@ -82,6 +103,110 @@ const processBindingSchema = z.object({
 }).strict();
 
 const instant = z.string().datetime().refine(value => new Date(value).toISOString() === value);
+
+function reservedSessionBinding(input: ClaudeCodeReservedSessionResultInputV1,
+  retainedBinding: ClaudeRetainedPublicationBindingV1): ClaudeCodeProcessBindingV1 {
+  const reserved = input.reservedSession;
+  if (!reserved || typeof reserved !== "object" || !reserved.reservation || !reserved.session
+    || typeof reserved.session.close !== "function" || !reserved.session.ready
+    || typeof (reserved.session.ready as Promise<unknown>).then !== "function") unavailable();
+  const reservation = reserved.reservation;
+  const delivery = controllerWorkerDeliverySchemaV1.parse(reservation.delivery);
+  const receipt = controllerWorkerDeliveryReceiptSchemaV1.parse(reservation.receipt);
+  const processBinding = Object.freeze(processBindingSchema.parse(reservation.processBinding));
+  const reservationDigest = digestSchema.parse(reservation.reservationDigest);
+  if (reservationDigest !== sha256Digest({ delivery, receipt })
+    || reservation.startsWork !== false || reservation.grantsExecutionAuthority !== false
+    || reservation.permitsRetry !== false || reservation.permitsResume !== false
+    || receipt.disposition !== "accepted" || receipt.route.kind !== "local"
+    || receipt.workerId !== delivery.worker.workerId || receipt.route.workerId !== delivery.worker.workerId
+    || receipt.deliveryId !== delivery.deliveryId || receipt.deliveryDigest !== delivery.deliveryDigest
+    || processBinding.processAttemptId !== `claude-process:${reservationDigest.slice(7)}`
+    || processBinding.runId !== delivery.identity.runId || processBinding.attemptId !== delivery.identity.attemptId
+    || processBinding.invocationDigest !== reservationDigest
+    || delivery.identity.tenantId !== retainedBinding.tenantId || delivery.identity.projectId !== retainedBinding.projectId
+    || delivery.identity.jobId !== retainedBinding.jobId || delivery.identity.attemptId !== retainedBinding.attemptId
+    || delivery.identity.runId !== retainedBinding.runId || delivery.identity.nodeId !== retainedBinding.nodeId
+    || delivery.acceptanceProfileId !== retainedBinding.acceptanceProfileId
+    || delivery.acceptanceProfileDigest !== retainedBinding.acceptanceProfileDigest
+    || delivery.connectorProfileDigest !== CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1
+    || delivery.worker.adapterId !== CLAUDE_CODE_LOCAL_ADAPTER_V1) unavailable();
+  return processBinding;
+}
+
+async function consumeClaudeCodeSessionResultV1(input: {
+  publication: DurableResultPublicationConfigurationV1;
+  retainedBinding: ClaudeRetainedPublicationBindingV1;
+  processBinding: ClaudeCodeProcessBindingV1;
+  session: OwnedClaudeCodeProcessSessionV1;
+  acceptedConnectorProfileDigest: string;
+  signal: AbortSignal;
+  receivedAt: string;
+  assertAuthority: () => void;
+  terminalStage?: ClaudeCodeTerminalResultStagePortV1;
+}): Promise<ClaudeCodeLocalWorkerResultV1> {
+  const decoder = createClaudeCodeStreamDecoderV1();
+  let retainedSessionId: string | undefined;
+  let terminalFrame: ClaudeCodeResultFrameV1 | undefined;
+  let terminalFrameRawLine: string | undefined;
+  let cleanupCertain = false;
+
+  try {
+    const wire = await input.session.ready;
+    for (;;) {
+      const line = await wire.readLine(input.signal);
+      if (line === undefined) break;
+      const frame = decoder.accept(line);
+      if (frame.kind === "decode_error") unavailable();
+      if (frame.kind === "init") retainedSessionId = frame.sessionId;
+      if (frame.kind === "result") { terminalFrame = frame; terminalFrameRawLine = line; }
+    }
+
+    const decoderState = decoder.state();
+    if (!retainedSessionId || !terminalFrame || !terminalFrameRawLine
+      || decoderState.failed || !decoderState.initObserved || !decoderState.terminalObserved
+      || decoderState.sessionId !== retainedSessionId) unavailable();
+    input.session.recordTerminalResultObserved();
+    try { await input.session.close(); cleanupCertain = true; } catch { cleanupUncertain(); }
+
+    const disposition = input.session.disposition();
+    const publicationInput = {
+      retainedBinding: input.retainedBinding, processBinding: input.processBinding,
+      retainedSession: { processAttemptId: input.processBinding.processAttemptId, sessionId: retainedSessionId,
+        terminalFrameDigest: terminalFrame.frameDigest },
+      disposition, terminalFrameRawLine, terminalFrame, decoderState,
+      acceptedConnectorProfileDigest: input.acceptedConnectorProfileDigest,
+      receivedAt: input.receivedAt, assertAuthority: input.assertAuthority,
+    };
+    if (input.terminalStage) await input.terminalStage.capture(stageClaudeCodeTerminalResultInputV1(publicationInput), input.signal);
+    const publication = await publishClaudeTerminalResultV1(input.publication, publicationInput);
+    return Object.freeze({ publication, disposition, decoderState, processAttemptId: input.processBinding.processAttemptId,
+      sessionId: retainedSessionId, qualityAccepted: false, completionRecorded: false, releasesCapacity: false,
+      permitsRetry: false, permitsResume: false });
+  } finally {
+    if (!cleanupCertain) {
+      try { await input.session.close(); } catch { cleanupUncertain(); }
+    }
+  }
+}
+
+/** Consumes, decodes, stages and publishes one already-reserved local session. */
+export async function publishClaudeCodeReservedSessionResultV1(
+  input: ClaudeCodeReservedSessionResultInputV1,
+): Promise<ClaudeCodeLocalWorkerResultV1> {
+  if (!input || typeof input !== "object" || typeof input.assertAuthority !== "function") unavailable();
+  const retainedBinding = Object.freeze(retainedBindingSchema.parse(input.retainedBinding));
+  const acceptedConnectorProfileDigest = digestSchema.parse(input.acceptedConnectorProfileDigest);
+  const receivedAt = instant.parse(input.receivedAt);
+  if (!(input.signal instanceof AbortSignal) || input.signal.aborted) unavailable();
+  input.assertAuthority();
+  if (acceptedConnectorProfileDigest !== CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1) unavailable();
+  const processBinding = reservedSessionBinding(input, retainedBinding);
+  input.assertAuthority();
+  return consumeClaudeCodeSessionResultV1({ publication: input.publication, retainedBinding, processBinding,
+    session: input.reservedSession.session, acceptedConnectorProfileDigest, signal: input.signal, receivedAt,
+    assertAuthority: input.assertAuthority, terminalStage: input.terminalStage });
+}
 
 /**
  * Composes the existing Claude owned-session, bounded decoder and shared durable

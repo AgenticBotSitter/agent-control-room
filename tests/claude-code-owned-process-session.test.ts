@@ -22,6 +22,10 @@ import {
 } from "../src/harness/claude-code-v1/result-publication";
 import { publishClaudeCodeOwnedAttemptResultV1 } from
   "../src/harness/claude-code-v1/local-worker-result";
+import { publishClaudeCodeReservedSessionResultV1 } from
+  "../src/harness/claude-code-v1/local-worker-result";
+import { createControllerWorkerDeliveryV1 } from "../src/harness/v1/controller-worker-delivery";
+import { CLAUDE_CODE_LOCAL_ADAPTER_V1 } from "../src/harness/claude-code-v1/task-planning-contract";
 import { createClaudeCodeTerminalResultStageV1 } from
   "../src/harness/claude-code-v1/terminal-result-staging";
 import { recoverClaudeCodeTerminalResultV1 } from
@@ -556,6 +560,79 @@ test("the local Claude coordinator carries one owned stream into the shared revi
   assert.equal(f.storage.putCalls, 1);
   const stored = await f.storage.read(completed.publication.receipt.artifactId);
   assert.equal(new TextDecoder().decode(stored!), resultText);
+});
+
+test("an already-reserved Claude session publishes once without a second acquisition", async t => {
+  const runId = "run:claude-reserved-session";
+  const sessionId = bridgeSession(81);
+  const terminalLine = JSON.stringify({ type: "result", subtype: "success", is_error: false,
+    session_id: sessionId, result: "Reserved session result for pending review.", usage: {} });
+  const retainedBinding = retainedBindingFor(runId);
+  const worker = { workerId: "worker:claude-reserved", adapterId: CLAUDE_CODE_LOCAL_ADAPTER_V1,
+    adapterRevision: "source-123" } as const;
+  const delivery = createControllerWorkerDeliveryV1({ identity: { tenantId: retainedBinding.tenantId,
+    projectId: retainedBinding.projectId, jobId: retainedBinding.jobId, attemptId: retainedBinding.attemptId,
+    runId, nodeId: retainedBinding.nodeId }, worker, input: { prompt: "bounded", instructions: "review" },
+  authorityDigest: digestOf("reserved-authority"), connectorProfileDigest: CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1,
+  acceptanceProfileId: retainedBinding.acceptanceProfileId, acceptanceProfileDigest: retainedBinding.acceptanceProfileDigest,
+  issuedAt: at(12_000), expiresAt: at(120_000) });
+  const receiptMaterial = { schema: "control-room.controller-worker-delivery-receipt/v1" as const,
+    deliveryId: delivery.deliveryId, deliveryDigest: delivery.deliveryDigest, workerId: worker.workerId,
+    route: { kind: "local" as const, workerId: worker.workerId }, receivedAt: at(12_100),
+    disposition: "accepted" as const, startsWork: false as const, grantsExecutionAuthority: false as const };
+  const receipt = { ...receiptMaterial, receiptDigest: sha256Digest(receiptMaterial) };
+  const reservationDigest = sha256Digest({ delivery, receipt });
+  const processBinding = { processAttemptId: `claude-process:${reservationDigest.slice(7)}`,
+    runId, attemptId: retainedBinding.attemptId, invocationDigest: reservationDigest };
+  const f = await bridgeFixture(runId, sha256Digest(JSON.parse(terminalLine))); t.after(f.close);
+  const process = new FakeClaudeProcess();
+  let acquisitions = 0;
+  const session = createClaudeCodeOwnedProcessSessionV1({ binding: processBinding,
+    signal: new AbortController().signal, acquire: () => { acquisitions++; return process.acquire(); }, cleanupMs: 500 });
+  const reservedSession = { reservation: { delivery, receipt, reservationDigest, processBinding,
+    startsWork: false as const, grantsExecutionAuthority: false as const, permitsRetry: false as const,
+    permitsResume: false as const }, session };
+
+  const running = publishClaudeCodeReservedSessionResultV1({ publication: f.config, reservedSession,
+    retainedBinding, acceptedConnectorProfileDigest: CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1,
+    signal: new AbortController().signal, receivedAt: at(12_200), assertAuthority: () => {} });
+  process.push(`${JSON.stringify({ type: "system", subtype: "init", session_id: sessionId })}\n`);
+  process.push(`${terminalLine}\n`); process.endNaturally();
+  const result = await running;
+  assert.equal(acquisitions, 1, "the result consumer has no acquisition path");
+  assert.equal(result.publication.replayed, false);
+  assert.equal(result.publication.target.kind, "document");
+  assert.equal(f.storage.putCalls, 1);
+  assert.equal((await f.db.query("SELECT plan FROM control_native_review_plans WHERE tenant_id=$1 AND run_id=$2",
+    [nativeFixtureBinding.tenantId, runId])).rows.length, 1);
+});
+
+test("a reserved Claude session with mismatched retained lineage is refused before it is consumed", async () => {
+  const delivery = createControllerWorkerDeliveryV1({ identity: { tenantId: nativeFixtureBinding.tenantId,
+    projectId: nativeFixtureBinding.projectId, jobId: "job:reserved-mismatch", attemptId: "attempt:reserved-mismatch",
+    runId: "run:reserved-mismatch", nodeId: nativeFixtureBinding.nodeId }, worker: { workerId: "worker:reserved-mismatch",
+    adapterId: CLAUDE_CODE_LOCAL_ADAPTER_V1, adapterRevision: "source-123" }, input: { prompt: "bounded", instructions: "review" },
+  authorityDigest: digestOf("reserved-mismatch-authority"), connectorProfileDigest: CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1,
+  acceptanceProfileId: "profile:test", acceptanceProfileDigest: retainedBindingFor("run:any").acceptanceProfileDigest,
+  issuedAt: at(12_000), expiresAt: at(120_000) });
+  const receiptMaterial = { schema: "control-room.controller-worker-delivery-receipt/v1" as const,
+    deliveryId: delivery.deliveryId, deliveryDigest: delivery.deliveryDigest, workerId: delivery.worker.workerId,
+    route: { kind: "local" as const, workerId: delivery.worker.workerId }, receivedAt: at(12_100),
+    disposition: "accepted" as const, startsWork: false as const, grantsExecutionAuthority: false as const };
+  const receipt = { ...receiptMaterial, receiptDigest: sha256Digest(receiptMaterial) };
+  const reservationDigest = sha256Digest({ delivery, receipt });
+  const processBinding = { processAttemptId: `claude-process:${reservationDigest.slice(7)}`,
+    runId: delivery.identity.runId, attemptId: delivery.identity.attemptId, invocationDigest: reservationDigest };
+  const process = new FakeClaudeProcess();
+  const session = createClaudeCodeOwnedProcessSessionV1({ binding: processBinding, signal: new AbortController().signal,
+    acquire: () => process.acquire(), cleanupMs: 500 });
+  await assert.rejects(() => publishClaudeCodeReservedSessionResultV1({ publication: {} as DurableResultPublicationConfigurationV1,
+    reservedSession: { reservation: { delivery, receipt, reservationDigest, processBinding, startsWork: false,
+      grantsExecutionAuthority: false, permitsRetry: false, permitsResume: false }, session },
+    retainedBinding: retainedBindingFor("run:other-lineage"), acceptedConnectorProfileDigest: CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1,
+    signal: new AbortController().signal, receivedAt: at(12_200), assertAuthority: () => {} }),
+  /claude_code_local_worker_result_unavailable/);
+  await session.close();
 });
 
 test("a protected Claude terminal stage recovers one exact pending-review result without acquisition", async t => {

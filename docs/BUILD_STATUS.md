@@ -118,6 +118,12 @@ unavailable until their separate host qualifications are complete.
   delivery, an unresolved saved delivery, or a staged result using only safe
   digests, sizes, and usage totals. It never contacts Hermes, exposes terminal
   text or private settings, publishes a result, or permits a retry.
+- When the trusted local installation composes that recovery reader, the exact
+  Hermes task page can display its saved recovery state. The page receives no
+  receipt key, protected-storage handle, terminal text, executable, profile,
+  model, provider, or workspace path, and it offers no start, retry, resume,
+  publish, or Hermes-contact action. Multiple saved attempts stay explicitly
+  ambiguous rather than having one guessed.
 
 These checks use disposable data. They do not prove a real agent program,
 database, browser login, backup, persistent service or remote machine.
