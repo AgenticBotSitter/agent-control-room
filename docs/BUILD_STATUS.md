@@ -45,9 +45,11 @@ unavailable until their separate host qualifications are complete.
   compatibility check reads only the fixed `--version` response and retains
   no private runner setting or raw version output.
 - Claude Code can save the same bounded text-review task plan as the other
-  local harnesses, then decode and prepare one clean terminal result for the
-  existing review path. A mismatched Claude connector profile is now refused
-  before a receipt is saved or an installed process could be acquired.
+  local harnesses. Once the ordinary delivery bridge has reserved exactly one
+  session, its result bridge can consume only that session, decode and prepare
+  one clean terminal result for the existing review path; it cannot start a
+  second process. A mismatched Claude connector profile is refused before a
+  receipt is saved or an installed process could be acquired.
   Planning does not assign, start or enable Claude; it remains a source-only
   component until the installed process is qualified.
 - The Mac Codex path records only two opaque safety prerequisites: suspended
