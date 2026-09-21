@@ -41,8 +41,10 @@ async function defaultVersionCommand(file: string, args: readonly string[]): Pro
  */
 export async function inspectHermes021MacosLocalRunnerCompatibilityV1(executablePath: unknown,
   command: VersionCommand = defaultVersionCommand) {
-  if (typeof executablePath !== "string" || !executablePath.startsWith("/") || typeof command !== "function") unavailable();
+  const executablePathValue = typeof executablePath === "string" && executablePath.startsWith("/")
+    ? executablePath : unavailable();
+  if (typeof command !== "function") unavailable();
   try {
-    return verifyHermes021MacosLocalRunnerVersionV1(await command(executablePath, Object.freeze(["--version"])));
+    return verifyHermes021MacosLocalRunnerVersionV1(await command(executablePathValue, Object.freeze(["--version"])));
   } catch { unavailable(); }
 }

@@ -127,7 +127,7 @@ canonicalTasks: z.object({ projectId: id, taskCount: z.number().int().min(3).max
       : c.sourceMode === "canonical_task_result" ? !c.providerContacted && !c.liveBotContactAuthorized && c.evidenceState === "reviewed_control_room_task"
       : !c.providerContacted && !c.liveBotContactAuthorized && c.evidenceState === "none")
     && (!canonicalTasks || !run
-      && canonicalTasks.taskCount >= session.participants.length && canonicalTasks.taskCount <= session.maxMessages
+      && canonicalTasks.taskCount >= session.participants.length && canonicalTasks.taskCount <= session.maxRounds * session.participants.length
       && canonicalTasks.preparedRounds.every(round => round <= session.maxRounds)
       && canonicalTasks.tasks.length === canonicalTasks.taskCount
       && new Set(canonicalTasks.tasks.map(task => task.taskKey)).size === canonicalTasks.tasks.length

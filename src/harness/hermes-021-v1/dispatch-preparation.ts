@@ -140,7 +140,8 @@ export class Hermes021MacosDispatchPreparationV1 {
       || leaseRow.state !== lease.state || leaseRow.version !== lease.version || leaseRow.attempt_id !== lease.attemptId
       || leaseRow.job_id !== lease.jobId || leaseRow.node_id !== lease.nodeId || new Date(leaseRow.expires_at).toISOString() !== lease.expiresAt
       || job.state !== "leased" || attempt.state !== "leased" || lease.state !== "active"
-      || job.inputDigest !== ref.inputDigest || plan.job.inputDigest !== ref.inputDigest || plan.executionClass !== "text_review"
+      || job.inputDigest !== ref.inputDigest || plan.job.inputDigest !== ref.inputDigest
+      || !("executionClass" in plan) || plan.executionClass !== "text_review"
       || job.jobType !== HERMES_021_MACOS_LOCAL_JOB_TYPE_V1
       || job.requiredCapability !== HERMES_021_MACOS_LOCAL_CAPABILITY_V1 || attempt.jobId !== job.id || lease.jobId !== job.id
       || lease.attemptId !== attempt.id || lease.nodeId !== attempt.nodeId || Date.parse(lease.expiresAt) <= now

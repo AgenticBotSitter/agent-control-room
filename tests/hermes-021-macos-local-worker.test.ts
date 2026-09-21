@@ -175,7 +175,7 @@ test("per-task local policy is derived from each canonical prepared packet", asy
   assert.throws(() => deriveHermes021MacosLocalTaskPolicyPortV1({ ...prepared(second), route: {
     kind: "local", workerId: "worker:changed" } }, binding, clock), /hermes_021_macos_task_policy_refused/);
   assert.throws(() => deriveHermes021MacosLocalTaskPolicyPortV1({ ...prepared(second),
-    executionClass: "project_write" }, binding, clock), undefined,
+    executionClass: "project_write" }, binding, clock),
   "a future writing route cannot reuse this text-review policy constructor");
 });
 
