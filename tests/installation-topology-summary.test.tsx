@@ -8,6 +8,16 @@ import { createInstallationReadinessV1 } from "../src/harness/v1/installation-re
 import { createCodexMacosCustodyReadinessV1 } from "../src/harness/codex-v1/macos-custody-readiness";
 import { sha256Digest } from "../src/security/canonical-digest";
 
+test("setup summary distinguishes a pending or unavailable saved-status read from an absent plan", () => {
+  const loading = renderToStaticMarkup(createElement(InstallationTopologySummary, { status: "loading" }));
+  assert.match(loading, /Checking saved setup status/);
+  assert.doesNotMatch(loading, /No reviewed setup plan/);
+  const unavailable = renderToStaticMarkup(createElement(InstallationTopologySummary, { status: "unavailable" }));
+  assert.match(unavailable, /Installation setup status is unavailable/);
+  assert.match(unavailable, /does not mean this computer or another worker is ready/);
+  assert.doesNotMatch(unavailable, /<button|<form|<input/);
+});
+
 test("setup summary describes one installation and never offers a live operation", () => {
   const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
     currentRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }],

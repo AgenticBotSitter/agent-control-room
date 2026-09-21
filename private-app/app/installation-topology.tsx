@@ -5,13 +5,18 @@ import { verifyInstallationTopologyPlanV1, type InstallationTopologyPlanV1 } fro
 import { verifyInstallationReadinessV1, type InstallationReadinessV1 } from "../../src/harness/v1/installation-readiness";
 import { verifyCodexMacosCustodyReadinessV1, type CodexMacosCustodyReadinessV1 } from "../../src/harness/codex-v1/macos-custody-readiness";
 
-type InstallationTopologyState = Readonly<{ plan: InstallationTopologyPlanV1; readiness?: InstallationReadinessV1;
-  codexMacosCustodyReadiness?: CodexMacosCustodyReadinessV1 }> | undefined;
-const InstallationTopologyContext = createContext<InstallationTopologyState>(undefined);
+type InstallationTopologyState = Readonly<{
+  /** The setup read is deliberately distinct from an absent or unavailable plan. */
+  state: "loading" | "available" | "unavailable";
+  plan?: InstallationTopologyPlanV1;
+  readiness?: InstallationReadinessV1;
+  codexMacosCustodyReadiness?: CodexMacosCustodyReadinessV1;
+}>;
+const InstallationTopologyContext = createContext<InstallationTopologyState>({ state: "loading" });
 
 /** Reads only an operator-prepared setup plan. A missing plan never implies a local or remote worker is available. */
 export function InstallationTopologyProvider({ children }: { children: ReactNode }) {
-  const [plan, setPlan] = useState<InstallationTopologyState>();
+  const [plan, setPlan] = useState<InstallationTopologyState>({ state: "loading" });
   useEffect(() => {
     const controller = new AbortController();
     let request = 0;
@@ -21,11 +26,11 @@ export function InstallationTopologyProvider({ children }: { children: ReactNode
         const response = await fetch("/api/v1/installation-readiness", { method: "GET", credentials: "same-origin",
           cache: "no-store", redirect: "error", signal: controller.signal });
         if (!response.ok) {
-          if (!controller.signal.aborted && current === request) setPlan(undefined);
+          if (!controller.signal.aborted && current === request) setPlan({ state: "unavailable" });
           return;
         }
         const responseBody = await response.json();
-        const value = Object.freeze({ plan: verifyInstallationTopologyPlanV1(responseBody.plan),
+        const value = Object.freeze({ state: "available" as const, plan: verifyInstallationTopologyPlanV1(responseBody.plan),
           ...(responseBody.readiness === undefined ? {} : { readiness: verifyInstallationReadinessV1(responseBody.readiness) }),
           ...(responseBody.codexMacosCustodyReadiness === undefined ? {} : {
             codexMacosCustodyReadiness: verifyCodexMacosCustodyReadinessV1(responseBody.codexMacosCustodyReadiness) }) });
@@ -33,7 +38,7 @@ export function InstallationTopologyProvider({ children }: { children: ReactNode
       } catch {
         // A stale setup success must never remain visible after the protected
         // read stops being available or returns malformed data.
-        if (!controller.signal.aborted && current === request) setPlan(undefined);
+        if (!controller.signal.aborted && current === request) setPlan({ state: "unavailable" });
       }
     };
     void load();

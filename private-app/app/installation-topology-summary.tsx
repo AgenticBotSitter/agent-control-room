@@ -56,8 +56,17 @@ function LocalAgentCapabilityCard({ agent }: { agent: LocalHarnessCapabilityV1 }
 }
 
 /** A status-only explanation. There are deliberately no setup, launch, or approval controls here. */
-export function InstallationTopologySummary({ plan, readiness, codexMacosCustodyReadiness }: { plan?: Readonly<InstallationTopologyPlanV1>;
-  readiness?: Readonly<InstallationReadinessV1>; codexMacosCustodyReadiness?: Readonly<CodexMacosCustodyReadinessV1> }) {
+export function InstallationTopologySummary({ plan, readiness, codexMacosCustodyReadiness, status }: { plan?: Readonly<InstallationTopologyPlanV1>;
+  readiness?: Readonly<InstallationReadinessV1>; codexMacosCustodyReadiness?: Readonly<CodexMacosCustodyReadinessV1>;
+  status?: "loading" | "available" | "unavailable" }) {
+  if (!plan && status === "loading") return <section className="private-panel" aria-labelledby="installation-title">
+    <h2 id="installation-title">Installation setup</h2>
+    <p role="status">Checking saved setup status…</p>
+  </section>;
+  if (!plan && status === "unavailable") return <section className="private-panel" aria-labelledby="installation-title" role="alert">
+    <h2 id="installation-title">Installation setup status is unavailable</h2>
+    <p>The saved setup status could not be read. This does not mean this computer or another worker is ready.</p>
+  </section>;
   if (!plan) return <section className="private-panel" aria-labelledby="installation-title">
     <h2 id="installation-title">Installation setup</h2>
     <p>No reviewed setup plan is currently available. This screen does not guess whether this computer or another worker is ready.</p>

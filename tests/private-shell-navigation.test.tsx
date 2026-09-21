@@ -43,7 +43,8 @@ test("home gives honest navigation to existing private workspace surfaces", () =
   assert.doesNotMatch(html, /<details/);
   assert.match(html, /Each section reports unavailable data instead of replacing it with a zero/);
   assert.match(html, /Installation setup/);
-  assert.match(html, /No reviewed setup plan is currently available/);
+  assert.match(html, /Checking saved setup status/);
+  assert.doesNotMatch(html, /No reviewed setup plan is currently available/);
   assert.doesNotMatch(html, /Idea Lab is optional/);
   assert.doesNotMatch(html, /live workers|running now|0 tasks/i);
   for (const label of ["Loading saved work", "Loading saved attention items", "Loading verified result records",
