@@ -39,10 +39,11 @@ test("setup summary shows an honest proof checklist rather than a live worker", 
   assert.match(html, /Three local worker routes/);
   assert.match(html, /Source-only status, not a live installation/);
   assert.match(html, /what is simulated with disposable test data/);
-  assert.match(html, /<h4>Hermes Agent<\/h4><p><strong>Status: Setup proof required/);
+  assert.match(html, /<h4>Hermes Agent<\/h4><p><strong>Status: Partial setup proof recorded/);
+  assert.match(html, /Hermes is still not enabled or running/);
   assert.match(html, /<strong>Safe now:<\/strong> Prepare and check one bounded delivery/);
   assert.match(html, /<strong>Source-only:<\/strong> The delivery, result and recovery path is source-only evidence/);
-  assert.match(html, /<strong>Remaining setup category:<\/strong> Local runner, protected storage and recovery proof/);
+  assert.match(html, /<strong>Remaining setup category:<\/strong> Remaining local setup proof/);
   assert.match(html, /First useful work after setup:.*plain-text review/);
   assert.match(html, /cannot edit a project yet/);
   assert.match(html, /<h4>Claude Code<\/h4><p><strong>Status: Adapter preparation required/);

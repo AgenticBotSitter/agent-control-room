@@ -44,6 +44,22 @@ test("local Hermes proof completion is honest about the separate enablement deci
   assert.equal(hermes.remainingSetupCategory, "Separate owner enablement decision");
 });
 
+test("a recorded Hermes runner proof remains visible while other local setup proof is missing", () => {
+  const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
+    currentRoutes: [{ kind: "local", workerId: "worker:marvin", adapterId: "connector:hermes-021-macos-local-v1", adapterRevision: "00570550" }],
+    requestedRoutes: [{ kind: "local", workerId: "worker:marvin", adapterId: "connector:hermes-021-macos-local-v1", adapterRevision: "00570550" }] });
+  const partial = createInstallationReadinessV1({ planDigest: plan.planDigest, proofs: [
+    { proof: "local_runner_bridge", state: "passed", evidenceDigest: sha256Digest("runner") },
+  ] });
+  const hermes = summarizeLocalHarnessCapabilitiesV1(plan, partial).find(value => value.id === "hermes")!;
+  assert.equal(hermes.state, "setup_required");
+  assert.equal(hermes.stateLabel, "Partial setup proof recorded");
+  assert.match(hermes.summary, /still not enabled or running/i);
+  assert.match(hermes.nextStep, /local agent check/);
+  assert.match(hermes.nextStep, /backup-and-restore check/);
+  assert.doesNotMatch(JSON.stringify(hermes), /sha256:|worker:marvin|profile|provider|model/i);
+});
+
 test("macOS Codex custody readiness is plan-bound and never becomes launch authority", () => {
   const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
     currentRoutes: [{ kind: "local", workerId: "worker:codex", adapterId: "codex-app-server/v1", adapterRevision: "00570550" }],

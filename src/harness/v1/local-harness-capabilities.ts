@@ -118,5 +118,22 @@ export function summarizeLocalHarnessCapabilitiesV1(plan?: InstallationTopologyP
       remainingSetupCategory: "Separate owner enablement decision",
       nextStep: "The owner may now make the separate, explicit local-worker enablement decision." }), localHarnessCapabilitiesV1[1]!, codexCapability]);
   }
+  const passed = new Set(localProofs.filter(item => item.state === "passed").map(item => item.proof));
+  const runnerRecorded = passed.has("local_runner_bridge");
+  const textRecorded = passed.has("local_owner_qualification");
+  const backupRecorded = passed.has("backup_restore");
+  if (runnerRecorded || textRecorded || backupRecorded) {
+    const missing = [
+      !runnerRecorded ? "the local runner check" : undefined,
+      !textRecorded ? "the local agent check" : undefined,
+      !backupRecorded ? "the backup-and-restore check" : undefined,
+    ].filter((value): value is string => value !== undefined);
+    return Object.freeze([Object.freeze({ ...hermes,
+      stateLabel: "Partial setup proof recorded",
+      summary: "Control Room has recorded part of the local Hermes setup proof. Hermes is still not enabled or running.",
+      remainingSetupCategory: "Remaining local setup proof",
+      nextStep: `Record ${missing.join(", ")} before a bounded Hermes task can be enabled.`,
+    }), localHarnessCapabilitiesV1[1]!, codexCapability]);
+  }
   return Object.freeze([hermes, localHarnessCapabilitiesV1[1]!, codexCapability]);
 }
