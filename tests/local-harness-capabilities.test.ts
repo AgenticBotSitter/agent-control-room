@@ -46,8 +46,8 @@ test("local Hermes proof completion is honest about the separate enablement deci
 
 test("macOS Codex custody readiness is plan-bound and never becomes launch authority", () => {
   const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
-    currentRoutes: [{ kind: "local", workerId: "worker:codex", adapterId: "connector:codex-local-v1", adapterRevision: "00570550" }],
-    requestedRoutes: [{ kind: "local", workerId: "worker:codex", adapterId: "connector:codex-local-v1", adapterRevision: "00570550" }] });
+    currentRoutes: [{ kind: "local", workerId: "worker:codex", adapterId: "codex-app-server/v1", adapterRevision: "00570550" }],
+    requestedRoutes: [{ kind: "local", workerId: "worker:codex", adapterId: "codex-app-server/v1", adapterRevision: "00570550" }] });
   const custody = createCodexMacosCustodyReadinessV1({ planDigest: plan.planDigest, proofs: [
     { proof: "suspended_executable_identity", state: "passed", evidenceDigest: sha256Digest("suspended") },
     { proof: "protected_private_state_handle", state: "passed", evidenceDigest: sha256Digest("private-state") },
@@ -66,8 +66,8 @@ test("macOS Codex custody readiness is plan-bound and never becomes launch autho
 
 test("failed macOS Codex custody evidence remains an actionable refusal", () => {
   const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
-    currentRoutes: [{ kind: "local", workerId: "worker:codex", adapterId: "connector:codex-local-v1", adapterRevision: "00570550" }],
-    requestedRoutes: [{ kind: "local", workerId: "worker:codex", adapterId: "connector:codex-local-v1", adapterRevision: "00570550" }] });
+    currentRoutes: [{ kind: "local", workerId: "worker:codex", adapterId: "codex-app-server/v1", adapterRevision: "00570550" }],
+    requestedRoutes: [{ kind: "local", workerId: "worker:codex", adapterId: "codex-app-server/v1", adapterRevision: "00570550" }] });
   const custody = createCodexMacosCustodyReadinessV1({ planDigest: plan.planDigest, proofs: [
     { proof: "suspended_executable_identity", state: "passed", evidenceDigest: sha256Digest("suspended") },
     { proof: "protected_private_state_handle", state: "failed" },

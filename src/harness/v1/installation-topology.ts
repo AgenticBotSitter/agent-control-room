@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { canonicalJson, sha256Digest } from "../../security/canonical-digest";
+import { controllerWorkerAdapterIdSchemaV1 } from "./controller-worker-delivery";
 
 /**
  * A read-only installation plan for the two supported ways to run the same
@@ -16,7 +17,7 @@ export const INSTALLATION_TOPOLOGY_PLAN_V1 = "control-room.installation-topology
 
 const id = z.string().min(3).max(180).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
-const route = z.object({ kind: z.enum(["local", "remote"]), workerId: id, adapterId: id,
+const route = z.object({ kind: z.enum(["local", "remote"]), workerId: id, adapterId: controllerWorkerAdapterIdSchemaV1,
   adapterRevision: z.string().min(7).max(180) }).strict();
 
 export const installationTopologyInputSchemaV1 = z.object({

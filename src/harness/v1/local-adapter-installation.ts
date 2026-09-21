@@ -3,12 +3,13 @@ import type { deliverHermes021MacosLocalTaskV1 } from "../hermes-021-v1/local-de
 import type { deliverCodexLocalTaskV1 } from "../codex-v1/local-delivery-composition";
 import type { deliverClaudeCodeLocalTaskV1 } from "../claude-code-v1/local-delivery-composition";
 import { controllerWorkerDeliverySchemaV1, controllerWorkerRouteSchemaV1,
-  type ControllerWorkerDeliveryV1, type ControllerWorkerRouteV1 } from "./controller-worker-delivery";
+  controllerWorkerAdapterIdSchemaV1, type ControllerWorkerDeliveryV1, type ControllerWorkerRouteV1 } from "./controller-worker-delivery";
 import { localId } from "./native-run-identifiers";
+import { CODEX_APP_SERVER_ADAPTER } from "../codex-v1/delivery-contract";
 
 export const LOCAL_ADAPTER_IDS_V1 = Object.freeze({
   hermes: "connector:hermes-021-macos-local-v1",
-  codex: "connector:codex-local-v1",
+  codex: CODEX_APP_SERVER_ADAPTER,
   claude: "connector:claude-code-local-v1",
 } as const);
 
@@ -34,7 +35,7 @@ export type LocalAdapterInstallationPortsV1 = {
 };
 
 const unavailable = (): never => { throw new Error("local_adapter_installation_unavailable"); };
-const identity = z.object({ workerId: localId, adapterId: localId,
+const identity = z.object({ workerId: localId, adapterId: controllerWorkerAdapterIdSchemaV1,
   adapterRevision: z.string().min(1).max(180), state: z.literal("source_only") }).strict();
 
 /** Pure capture, not enablement. Deliberately accepts no proof flag: generic

@@ -11,12 +11,17 @@ export const CONTROLLER_WORKER_DELIVERY_V1 = "control-room.controller-worker-del
 export const CONTROLLER_WORKER_DELIVERY_RECEIPT_V1 = "control-room.controller-worker-delivery-receipt/v1" as const;
 
 const id = z.string().min(3).max(180).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
+/** A harness adapter is an identifier, not a path.  The slash-separated form
+ * is already used by the existing Codex App Server planning contract. */
+export const controllerWorkerAdapterIdSchemaV1 = z.string().min(3).max(180)
+  .regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*(?:\/[a-zA-Z0-9][a-zA-Z0-9._:-]*)*$/);
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const instant = z.string().datetime().refine(value => new Date(value).toISOString() === value);
 const taskText = z.string().min(1).max(32_768).refine(value => Buffer.byteLength(value, "utf8") <= 32_768);
 
 const identitySchema = z.object({ tenantId: id, projectId: id, jobId: id, attemptId: id, runId: id, nodeId: id }).strict();
-const workerSchema = z.object({ workerId: id, adapterId: id, adapterRevision: z.string().min(7).max(180) }).strict();
+const workerSchema = z.object({ workerId: id, adapterId: controllerWorkerAdapterIdSchemaV1,
+  adapterRevision: z.string().min(7).max(180) }).strict();
 const inputSchema = z.object({ prompt: taskText, instructions: z.string().max(8192).refine(value => Buffer.byteLength(value, "utf8") <= 8192) }).strict();
 
 const materialSchema = z.object({

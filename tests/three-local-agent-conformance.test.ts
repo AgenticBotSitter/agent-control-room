@@ -20,7 +20,7 @@ import { NativeTaskCompletionService } from "../src/persistence/native-task-comp
  */
 const workers = [
   { harness: "hermes", workerId: "worker:marvin", adapterId: "connector:hermes-021-macos-local-v1" },
-  { harness: "codex", workerId: "worker:codex", adapterId: "connector:codex-local-v1" },
+  { harness: "codex", workerId: "worker:codex", adapterId: "codex-app-server/v1" },
   { harness: "claude", workerId: "worker:claude", adapterId: "connector:claude-code-local-v1" },
 ] as const;
 

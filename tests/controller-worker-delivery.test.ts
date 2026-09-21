@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createControllerWorkerDeliveryV1, deliverControllerWorkerPacketV1, type ControllerWorkerDeliveryReceiptV1 } from "../src/harness/v1/controller-worker-delivery";
+import { controllerWorkerAdapterIdSchemaV1, createControllerWorkerDeliveryV1, deliverControllerWorkerPacketV1, type ControllerWorkerDeliveryReceiptV1 } from "../src/harness/v1/controller-worker-delivery";
 import { sha256Digest } from "../src/security/canonical-digest";
 
 const digest = (value: string) => sha256Digest(value);
@@ -39,4 +39,10 @@ test("controller packet refuses changed contents, wrong worker routes, and misma
   const validButForeign = { ...changed, receiptDigest: sha256Digest(changed) };
   await assert.rejects(deliverControllerWorkerPacketV1({ async receive() { return validButForeign; } }, d,
     { kind: "local", workerId: d.worker.workerId }), /controller_worker_delivery_receipt_mismatch/);
+});
+
+test("adapter identifiers may use reviewed slash-separated names but never paths or empty segments", () => {
+  assert.equal(controllerWorkerAdapterIdSchemaV1.parse("codex-app-server/v1"), "codex-app-server/v1");
+  for (const unsafe of ["/codex-app-server/v1", "codex-app-server/", "codex-app-server//v1", "../codex", "codex/../v1", "codex/app server"])
+    assert.equal(controllerWorkerAdapterIdSchemaV1.safeParse(unsafe).success, false, unsafe);
 });
