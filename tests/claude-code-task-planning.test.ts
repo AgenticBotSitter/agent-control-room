@@ -21,7 +21,7 @@ import { at } from "./native-task-fixture";
 import { ownerReviewFixture } from "./helpers/web-owner-review";
 import { taskDraft } from "./helpers/web-task";
 import { createPersistentNeutralReservationPort, createPersistentNeutralReservationStore } from "../src/artifacts/v1/neutral-reservation-port";
-import type { ControllerWorkerDeliveryV1 } from "../src/harness/v1/controller-worker-delivery";
+import type { ControllerWorkerDeliveryPortV1, ControllerWorkerDeliveryV1 } from "../src/harness/v1/controller-worker-delivery";
 
 class FinishedClaudeProcess {
   constructor(private readonly lines: string[]) {}
@@ -155,17 +155,16 @@ test("a local Claude delivery publishes once, then a rebuilt executor recovers t
   const route = [{ nodeId: binding.nodeId, executorId: authority.allowedExecutor,
     capabilityProbeId: CLAUDE_CODE_LOCAL_CAPABILITY_V1, maxConcurrentTasks: 6, requiredScratchBytes: 0, leaseSeconds: 60 }] as const;
   const signals = new FleetSignalStore(f.db);
-  for (const signal of [
-    { sequence: 1, kind: "telemetry" as const, source: "telemetry_port" as const,
-      payload: { samplingIntervalSeconds: 30, cpuUtilizationPercent: { quality: "observed" as const, value: 10 },
-        availableMemoryBytes: { quality: "observed" as const, value: 1000 }, availableStorageBytes: { quality: "observed" as const, value: 1000 },
-        networkClass: "unmetered" as const, powerState: "ac" as const, thermalState: "nominal" as const } },
-    { sequence: 1, kind: "capability" as const, source: "probe_runner" as const,
-      payload: { probeId: CLAUDE_CODE_LOCAL_CAPABILITY_V1, probeVersion: "1.0.0", outcome: "pass" as const, reasonCode: "fixture" } },
-  ] as const) {
-    const envelope: FleetSignalEnvelope = { schemaVersion: "1.0.0", tenantId: binding.tenantId, nodeId: binding.nodeId,
-      sequence: signal.sequence, observedAt: at(6_000), expiresAt: at(120_000), trust: "reported", fingerprint: sha256Digest(signal),
-      kind: signal.kind, source: signal.source, payload: signal.payload };
+  const telemetry: FleetSignalEnvelope = { schemaVersion: "1.0.0", tenantId: binding.tenantId, nodeId: binding.nodeId,
+    sequence: 1, observedAt: at(6_000), expiresAt: at(120_000), trust: "reported", fingerprint: sha256Digest("claude-telemetry"),
+    kind: "telemetry", source: "telemetry_port", payload: { samplingIntervalSeconds: 30,
+      cpuUtilizationPercent: { quality: "observed", value: 10 }, availableMemoryBytes: { quality: "observed", value: 1000 },
+      availableStorageBytes: { quality: "observed", value: 1000 }, networkClass: "unmetered", powerState: "ac", thermalState: "nominal" } };
+  const capability: FleetSignalEnvelope = { schemaVersion: "1.0.0", tenantId: binding.tenantId, nodeId: binding.nodeId,
+    sequence: 1, observedAt: at(6_000), expiresAt: at(120_000), trust: "reported", fingerprint: sha256Digest("claude-capability"),
+    kind: "capability", source: "probe_runner", payload: { probeId: CLAUDE_CODE_LOCAL_CAPABILITY_V1,
+      probeVersion: "1.0.0", outcome: "pass", reasonCode: "fixture" } };
+  for (const envelope of [telemetry, capability]) {
     await signals.ingestAuthenticated(envelope, at(6_000), binding);
   }
   const assignments = new TaskAssignmentCoordinator(f.db, f.scope, planner, route, () => now + 1_000);
@@ -185,7 +184,7 @@ test("a local Claude delivery publishes once, then a rebuilt executor recovers t
   let acquisitions = 0;
   const receiptPort = { async receive(packet: ControllerWorkerDeliveryV1) { return acceptedClaudeDelivery(packet, at(7_000)); } };
   const execution = (acquire: () => ReturnType<FinishedClaudeProcess["acquire"]>, prepared = firstPrepared,
-    receiptPortValue = receiptPort) => ({ preparation: preparation(),
+    receiptPortValue: ControllerWorkerDeliveryPortV1 = receiptPort) => ({ preparation: preparation(),
     runs: new HarnessRunStoreV1(f.db, f.harnessKey), delivery: { db: f.db, integrityKey: new Uint8Array(32).fill(91),
       binding: { ...worker, authorityDigest: prepared.delivery.authorityDigest, acceptanceProfileId: f.profile.id,
         acceptanceProfileDigest: sha256Digest(f.profile) }, authority: { currentAdmissionDigest: () => firstPrepared.delivery.authorityDigest,

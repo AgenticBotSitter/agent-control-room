@@ -32,7 +32,7 @@ export function createOwnerBootstrapOnlyHostV1(input: BootstrapOnlyHostInputV1) 
     },
     ownerBootstrapCeremony: input.ceremony,
     handler: unavailable,
-    assets: { respond: () => undefined },
+    assets: { count: 0, digest: `sha256:${"0".repeat(64)}`, respond: () => undefined },
   });
   let attempted = false;
   return Object.freeze({

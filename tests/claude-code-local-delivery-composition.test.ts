@@ -57,7 +57,7 @@ function composition(f: Awaited<ReturnType<typeof nativeTaskFixture>>, packet: C
 
 test("Claude local delivery reserves the exact shared receipt before fake acquisition, and duplicate/restart never acquires again", async t => {
   const f = await nativeTaskFixture(); t.after(f.close);
-  const packet = delivery(), state = { revoked: false, receives: 0, acquires: 0 }, config = composition(f, packet, state);
+  const packet = delivery(), state = { revoked: false, receives: 0, acquires: 0, rechecks: 0 }, config = composition(f, packet, state);
   const first = await deliverClaudeCodeLocalTaskV1(config, packet, { kind: "local", workerId: worker.workerId }, at(2000));
   assert.equal(first.state, "reserved_session_open"); assert.equal(state.acquires, 1);
   if (first.state === "reserved_session_open") await first.session.close();

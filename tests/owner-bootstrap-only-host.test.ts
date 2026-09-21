@@ -6,6 +6,7 @@ const ceremony = (bootstrapOnly = true) => {
   let closed = 0;
   return { value: {
     isBootstrapOnly: () => bootstrapOnly,
+    async arm() { throw new Error("owner_bootstrap_unavailable"); },
     async route() { return Response.json({ error: "owner_bootstrap_unavailable" }, { status: 503 }); },
     async close() { closed++; },
   }, closed: () => closed };
