@@ -100,6 +100,11 @@ unavailable until their separate host qualifications are complete.
   listener opens, cleanup on partial failures, protected artifact storage,
   restart recovery, rollback protection, and the fact that a worker cannot
   turn an uncertain result into a retry.
+- Shared local/remote delivery verification: 56 checks passed. The same
+  controller packet, restart handling, result/review/correction lifecycle,
+  wrong-worker refusal, compatibility refusal, and revocation behavior work
+  through both local and remote test routes. This is proof of one product,
+  not a claim that a second computer is enabled.
 
 These checks use disposable data. They do not prove a real agent program,
 database, browser login, backup, persistent service or remote machine.
