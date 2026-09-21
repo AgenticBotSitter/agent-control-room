@@ -208,7 +208,11 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
       || [web.database, database, resultDatabase, evidence?.database, sessions?.database, queueWorker?.database]
         .some(value => value?.username === ideaCreation.database.username)
       || new Set(ideaCreation.participants.map(value => value.participantId)).size !== ideaCreation.participants.length)) throw new Error();
-    const ir = input.coordinator.ideaRuntime;
+    // Kept only to read legacy records during this release; the early guard
+    // above makes this branch unreachable for production configuration.
+    const ir = (input.coordinator as { ideaRuntime?: Omit<NonNullable<TaskCoordinatorConfiguration["ideaRuntime"]>, "database"> & {
+      database: PrivatePostgresConfiguration;
+    } }).ideaRuntime;
     const ideaRuntime = ir ? { database: validatePrivatePostgresConfiguration(ir.database), close: ir.close.bind(ir),
       runtime: Object.freeze({ resolve: ir.runtime.resolve.bind(ir.runtime),
         driver: Object.freeze({ mode: ir.runtime.driver.mode, invoke: ir.runtime.driver.invoke.bind(ir.runtime.driver) }),

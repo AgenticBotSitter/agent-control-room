@@ -134,11 +134,14 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     .some(resource => resource && resource.client === input.ideaCreation!.database.client))
     throw new Error("task_coordinator_config_invalid");
   const ideaPool = input.ideaCreation ? capture(input.ideaCreation.database) : undefined;
-  if (input.ideaRuntime && (!ideaPool || typeof input.ideaRuntime.close !== "function"
+  // Legacy direct-runtime assembly remains below only to preserve isolated
+  // fixture compatibility. The entry guard above prevents it in production.
+  const legacyIdeaRuntime = (input as { ideaRuntime?: TaskCoordinatorConfiguration["ideaRuntime"] }).ideaRuntime;
+  if (legacyIdeaRuntime && (!ideaPool || typeof legacyIdeaRuntime.close !== "function"
     || [input.database, input.resultDatabase, input.evidence?.database, input.sessions?.database, input.ideaCreation?.database]
-      .some(resource => resource?.client === input.ideaRuntime!.database.client))) throw new Error("task_coordinator_config_invalid");
-  const ideaRuntimePool = input.ideaRuntime ? capture(input.ideaRuntime.database) : undefined;
-  const closeIdeaRuntime = input.ideaRuntime?.close.bind(input.ideaRuntime);
+      .some(resource => resource?.client === legacyIdeaRuntime.database.client))) throw new Error("task_coordinator_config_invalid");
+  const ideaRuntimePool = legacyIdeaRuntime ? capture(legacyIdeaRuntime.database) : undefined;
+  const closeIdeaRuntime = legacyIdeaRuntime?.close.bind(legacyIdeaRuntime);
   const evidenceSettings = input.evidence ? captureNativeEvidenceSettings(input.evidence) : undefined;
   if (evidenceSettings && (evidenceSettings.storage.storageClass !== input.quality!.results.storageClass
     || !timingSafeEqual(evidenceSettings.storage.integrityKey, input.quality!.results.integrityKey)))
@@ -206,7 +209,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     } }) : undefined;
   const ideaStart = (() => {
     if (!ideaRuntimePool) return undefined;
-    const source = input.ideaRuntime!.runtime;
+    const source = legacyIdeaRuntime!.runtime;
     if (source.driver.mode !== "hermes_bot_mode_filtered") throw new Error("task_coordinator_config_invalid");
     const resolve = source.resolve.bind(source), invoke = source.driver.invoke.bind(source.driver),
       verify = source.evidenceAuthority.verify.bind(source.evidenceAuthority), consume = source.admissionAuthority.consume.bind(source.admissionAuthority);
