@@ -80,6 +80,11 @@ unavailable until their separate host qualifications are complete.
 - Local Hermes, Codex and Claude identities have a shared test proof for one
   local topology, one non-executing delivery contract, wrong-worker refusal,
   restart receipt reconciliation and the existing corrected-result lifecycle.
+- A local backup-and-restore proof now binds the reviewed installation plan,
+  safe database restore identity, and an independently rechecked protected
+  result-file inventory. It is source-only: it cannot run a backup or restore,
+  promote a recovered copy, start work, or turn missing owner evidence into a
+  passed installation proof.
 - Shared local and remote lifecycle tests prove that later remote delivery is
   an extension of the same product, not a second scheduler or database.
 
