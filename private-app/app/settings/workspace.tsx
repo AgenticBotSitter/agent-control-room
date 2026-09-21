@@ -31,7 +31,8 @@ export function PrivateSettingsWorkspace() {
       </section>
     </div>
     <ProductConfigurationSummary configuration={configuration} />
-    <LocalInstallationWizard setup={installationTopology?.setup} status={installationTopology?.state} />
+    <LocalInstallationWizard setup={installationTopology?.setup} status={installationTopology?.state}
+      installationPlan={installationTopology?.plan} installationPlanStatus={installationTopology?.planState} />
     <InstallationTopologySummary setup={installationTopology?.setup} status={installationTopology?.state} />
     <OwnerNotificationsWorkspace />
   </main></div>;

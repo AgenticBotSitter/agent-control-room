@@ -1,10 +1,12 @@
 import type { InstallationSetupViewV1 } from "../../src/harness/v1/installation-setup-wire";
+import type { InstallationPlanViewV1 } from "../../src/installer/v1/installation-plan-view";
 
 type SetupStatus = "loading" | "available" | "unavailable";
-type StageState = "guide" | "recorded" | "remaining" | "attention";
+type StageState = "guide" | "saved" | "recorded" | "remaining" | "attention";
 
 const stageStateLabels: Readonly<Record<StageState, string>> = Object.freeze({
   guide: "Guide",
+  saved: "Saved progress",
   recorded: "Recorded proof",
   remaining: "Still required",
   attention: "Needs attention",
@@ -61,6 +63,17 @@ function finalState(setup: InstallationSetupViewV1 | undefined): StageState {
   return "remaining";
 }
 
+function planStageState(plan: InstallationPlanViewV1 | undefined,
+  stage: InstallationPlanViewV1["stages"][number]["stage"], fallback: StageState): StageState {
+  const saved = plan?.stages.find(item => item.stage === stage)?.state;
+  // The installation plan records coordination progress, not independent
+  // proof of the underlying database, service, recovery or worker outcome.
+  if (saved === "passed") return "saved";
+  if (saved === "failed" || saved === "uncertain") return "attention";
+  if (saved === "running" || saved === "not_started") return "remaining";
+  return fallback;
+}
+
 function Stage({ state, title, children }: Readonly<{ state: StageState; title: string; children: React.ReactNode }>) {
   return <li className="private-local-agent-card">
     <p className="private-eyebrow">{stageStateLabels[state]}</p>
@@ -89,9 +102,11 @@ function remainingProofs(setup: InstallationSetupViewV1): readonly string[] {
  * Read-only first-run guidance composed from the redacted installation setup
  * projection. It never performs installation work or accepts private values.
  */
-export function LocalInstallationWizard({ setup, status }: Readonly<{
+export function LocalInstallationWizard({ setup, status, installationPlan, installationPlanStatus }: Readonly<{
   setup?: InstallationSetupViewV1;
   status?: SetupStatus;
+  installationPlan?: InstallationPlanViewV1;
+  installationPlanStatus?: SetupStatus;
 }>) {
   const selectedMode = setup?.mode === "this_computer" ? "This computer"
     : setup?.mode === "several_computers" ? "Several computers" : undefined;
@@ -122,32 +137,35 @@ export function LocalInstallationWizard({ setup, status }: Readonly<{
       <h3 id="installation-stage-title">Download and setup stages</h3>
       {status === "loading" && <p role="status">Reading saved installation proof…</p>}
       {status === "unavailable" && <p role="alert"><strong>Saved setup proof is unavailable.</strong> Nothing is treated as installed, ready, or running.</p>}
+      {installationPlanStatus === "loading" && <p role="status">Reading saved setup progress…</p>}
+      {installationPlanStatus === "unavailable" && <p role="alert"><strong>Saved setup progress is unavailable.</strong> No stage is treated as completed.</p>}
       <ol className="private-local-agent-list">
-        <Stage state="guide" title="1. Planned download and compatibility check">
+        <Stage state={planStageState(installationPlan, "release_preflight", "guide")} title="1. Planned download and compatibility check">
           <p>When the supported package is published, use its GitHub Releases asset for this computer. The planned platform launcher will verify the published checksum, platform, release, and available space without starting agents.</p>
         </Stage>
-        <Stage state={selectedMode ? "recorded" : "remaining"} title="2. Record placement">
+        <Stage state={planStageState(installationPlan, "private_placement", selectedMode ? "recorded" : "remaining")} title="2. Record placement">
           <p>Choose This computer or Several computers. This records a reviewed placement plan only; it does not move data or start a worker.</p>
         </Stage>
-        <Stage state="guide" title="3. Prepare the authority database">
+        <Stage state={planStageState(installationPlan, "database_authority", "guide")} title="3. Prepare the authority database">
           <p>A separate installation action prepares one PostgreSQL authority, restricted roles, and migrations. This redacted view does not yet project database preparation proof, so it does not call that work complete.</p>
         </Stage>
-        <Stage state="guide" title="4. Prepare protected data">
+        <Stage state={planStageState(installationPlan, "protected_data", "guide")} title="4. Prepare protected data">
           <p>A separate installation action prepares an owner-only data location and private configuration. This page cannot accept a password, signing key, executable path, private path, or command.</p>
         </Stage>
-        <Stage state="guide" title="5. Prepare owner access">
+        <Stage state={planStageState(installationPlan, "first_owner", "guide")} title="5. Prepare owner access">
           <p>The owner reviews the private login and recovery boundary before the one guarded first-owner ceremony. This redacted view never displays an identity or login secret.</p>
         </Stage>
-        <Stage state={stageState(setup, "backup_restore")} title="6. Prove recovery">
+        <Stage state={planStageState(installationPlan, "recovery", stageState(setup, "backup_restore"))} title="6. Prove recovery">
           <p>Configure a backup destination and restore into a disposable database. A backup file alone is not restore proof.</p>
         </Stage>
-        <Stage state={serviceState(setup)} title="7. Prepare the background service">
+        <Stage state={planStageState(installationPlan, "platform_service", serviceState(setup))} title="7. Prepare the background service">
           <p>Review restart, shutdown, update, and rollback behavior before a separate owner-confirmed action installs the service definition.</p>
         </Stage>
-        <Stage state={workerConnectionState(setup)} title="8. Connect workers">
+        <Stage state={planStageState(installationPlan, "agent_readiness", workerConnectionState(setup))} title="8. Connect workers">
           <p>Hermes, Codex, and Claude remain separate connections. Each is qualified and privately bound before the owner can enable it. A remote setup also proves enrollment and controlled two-computer delivery.</p>
         </Stage>
-        <Stage state={finalState(setup)} title="9. Review and enable">
+        <Stage state={setup?.overallState === "blocked" ? "attention"
+          : planStageState(installationPlan, "final_review", finalState(setup))} title="9. Review and enable">
           <p>Review every passed, missing, and failed proof. Enabling the controller and selected workers is a separate owner decision and is not available from this status view.</p>
         </Stage>
       </ol>

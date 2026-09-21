@@ -12,6 +12,8 @@ import { createLocalSupervisorReadinessV1 } from "../src/harness/v1/local-superv
 import { createArtifactBackupInventoryV1, verifyRestoredArtifactBackupInventoryV1 } from "../src/artifacts/v1/artifact-backup-inventory";
 import { createLocalBackupRestoreReadinessV1 } from "../src/harness/v1/local-backup-restore-readiness";
 import { sha256Digest } from "../src/security/canonical-digest";
+import { advanceInstallationPlanV1, createInstallationPlanV1,
+  installationSetupStagesV1 } from "../src/installer/v1/installation-plan";
 import { OPERATOR_SURFACES_CONTRACT_V1, type OperatorSurfaceSnapshotV1 } from "../src/operator-surfaces/v1";
 import { now, origin, request, token, trust } from "./helpers/web-foundation";
 import { limitedWebFixture } from "./helpers/web-startup";
@@ -161,6 +163,48 @@ test("a saved installation plan is an authenticated read-only setup status", asy
   assert.equal(body.setup.mode, "several_computers");
   assert.doesNotMatch(JSON.stringify(body), /worker:remote|worker:local|sha256:/);
   assert.equal((await app.handle(request("/api/v1/installation-topology?x=1"), () => new Response("fallback", { status: 500 }))).status, 400);
+});
+
+test("supplied setup progress has a separate authenticated redacted read", async t => {
+  const store = await limitedWebFixture();
+  const topology = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("one-db"),
+    schedulerAuthorityDigest: sha256Digest("one-scheduler"), currentRoutes: [], requestedRoutes: [
+      { kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" },
+    ] });
+  let plan = createInstallationPlanV1({ topologyPlan: topology, releaseDigest: sha256Digest("release"),
+    stageInputDigests: Object.fromEntries(installationSetupStagesV1.map(stage => [stage, sha256Digest(`input:${stage}`)])) });
+  plan = advanceInstallationPlanV1(plan, { expectedRevision: plan.revision, stage: "release_preflight", action: "start" });
+  plan = advanceInstallationPlanV1(plan, { expectedRevision: plan.revision, stage: "release_preflight", action: "pass",
+    outcomeDigest: sha256Digest("private-release-proof") });
+  const app = createPrivateWebProcess({ ...options(configuration("Installer", false), store.pool.client, store.pool.close),
+    installationTopologyPlan: topology, installationPlan: plan });
+  t.after(() => app.close());
+  const response = await app.handle(request("/api/v1/installation-plan"), () => new Response("fallback", { status: 500 }));
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.plan.stages[0].state, "passed");
+  assert.doesNotMatch(JSON.stringify(body), /sha256:|revision|private-release-proof|input:release/);
+  assert.equal((await app.handle(request("/api/v1/installation-plan?x=1"), () => new Response("fallback", { status: 500 }))).status, 400);
+  assert.throws(() => createPrivateWebProcess({ ...options(configuration("Wrong", false), store.pool.client, async () => {}),
+    installationTopologyPlan: planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("other-db"),
+      schedulerAuthorityDigest: sha256Digest("other-scheduler"), currentRoutes: [], requestedRoutes: [
+        { kind: "local", workerId: "worker:other", adapterId: "connector:local-v1", adapterRevision: "00570550" },
+      ] }), installationPlan: plan }),
+  /invalid_private_app_config/);
+});
+
+test("startup captures a supplied installation plan as an immutable topology-bound record", () => {
+  const topology = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("one-db"),
+    schedulerAuthorityDigest: sha256Digest("one-scheduler"), currentRoutes: [], requestedRoutes: [
+      { kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" },
+    ] });
+  const input = createInstallationPlanV1({ topologyPlan: topology, releaseDigest: sha256Digest("release"),
+    stageInputDigests: Object.fromEntries(installationSetupStagesV1.map(stage => [stage, sha256Digest(`input:${stage}`)])) });
+  const startup = validatePrivateStartupConfiguration({ origin, ...trust, tenantId: "tenant:web", workspaceId: "workspace:web",
+    loadKeys: async () => trust.keys, ownerIdentityId: "identity:web", installationTopologyPlan: topology, installationPlan: input,
+    database: { host: "127.0.0.1", port: 5432, database: "template1", username: "web_test", password: "synthetic-only", majorVersion: 17 } });
+  assert.deepEqual(startup.installationPlan, input);
+  assert.equal(Object.isFrozen(startup.installationPlan), true);
 });
 
 test("readiness is an authenticated non-secret view bound to its saved plan", async t => {

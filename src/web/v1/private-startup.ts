@@ -12,6 +12,7 @@ import { localBackupRestoreEvidenceDigestForInstallationPlanV1, verifyLocalBacku
 import { verifyCodexMacosCustodyReadinessV1 } from "../../harness/codex-v1/macos-custody-readiness";
 import { verifyClaudeCodeLocalProcessReadinessV1 } from "../../harness/claude-code-v1/local-process-readiness";
 import { verifyLocalSupervisorReadinessV1 } from "../../harness/v1/local-supervisor-readiness";
+import { verifyInstallationPlanV1 } from "../../installer/v1/installation-plan";
 export { createAccessKeyLoader, createStaticAccessKeyLoader } from "./access-key-cache";
 export { createOwnerBootstrapCeremonyV1 } from "./owner-bootstrap-ceremony";
 
@@ -39,6 +40,8 @@ export function validatePrivateStartupConfiguration(input: PrivateStartupConfigu
       : verifyInstallationReadinessV1(input.installationReadiness);
     const installationTransition = input.installationTransition === undefined ? undefined
       : verifyInstallationTransitionV1(input.installationTransition);
+    const installationPlan = input.installationPlan === undefined ? undefined
+      : verifyInstallationPlanV1(input.installationPlan);
     const localBackupRestoreReadiness = input.localBackupRestoreReadiness === undefined ? undefined
       : verifyLocalBackupRestoreReadinessV1(input.localBackupRestoreReadiness);
     if (localBackupRestoreReadiness !== undefined) {
@@ -58,6 +61,7 @@ export function validatePrivateStartupConfiguration(input: PrivateStartupConfigu
       : verifyLocalSupervisorReadinessV1(input.localSupervisorReadiness);
     if (installationReadiness && (!installationTopologyPlan || installationReadiness.planDigest !== installationTopologyPlan.planDigest)) throw new Error();
     if (installationTransition && (!installationTopologyPlan || installationTransition.planDigest !== installationTopologyPlan.planDigest)) throw new Error();
+    if (installationPlan && (!installationTopologyPlan || installationPlan.topologyPlanDigest !== installationTopologyPlan.planDigest)) throw new Error();
     if (codexMacosCustodyReadiness && (!installationTopologyPlan || codexMacosCustodyReadiness.planDigest !== installationTopologyPlan.planDigest)) throw new Error();
     if (claudeCodeLocalProcessReadiness && (!installationTopologyPlan || claudeCodeLocalProcessReadiness.planDigest !== installationTopologyPlan.planDigest)) throw new Error();
     if (localSupervisorReadiness && (!installationTopologyPlan || localSupervisorReadiness.planDigest !== installationTopologyPlan.planDigest)) throw new Error();
@@ -75,6 +79,7 @@ export function validatePrivateStartupConfiguration(input: PrivateStartupConfigu
       ...(installationTopologyPlan === undefined ? {} : { installationTopologyPlan }),
       ...(installationReadiness === undefined ? {} : { installationReadiness }),
       ...(installationTransition === undefined ? {} : { installationTransition }),
+      ...(installationPlan === undefined ? {} : { installationPlan }),
       ...(localBackupRestoreReadiness === undefined ? {} : { localBackupRestoreReadiness }),
       ...(codexMacosCustodyReadiness === undefined ? {} : { codexMacosCustodyReadiness }),
       ...(claudeCodeLocalProcessReadiness === undefined ? {} : { claudeCodeLocalProcessReadiness }),

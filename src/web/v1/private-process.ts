@@ -46,6 +46,8 @@ import { ProjectCoordinationHttpService, type ProjectCoordinationCanonicalStoreA
 import { createCoordinationHttpHandler } from "./coordination-http";
 import { IdeaLabErrorV1 } from "../../idea-lab/v1/errors";
 import { parseOperatorSurfaceSnapshotV1, type OperatorSurfaceSnapshotV1 } from "../../operator-surfaces/v1";
+import { verifyInstallationPlanV1, type InstallationPlanV1 } from "../../installer/v1/installation-plan";
+import { createInstallationPlanViewV1 } from "../../installer/v1/installation-plan-view";
 
 export interface PrivateWebProcessOptions {
   origin: string; issuer: string; audience: string; tenantId: string; workspaceId: string;
@@ -70,6 +72,8 @@ export interface PrivateWebProcessOptions {
   installationReadiness?: Readonly<InstallationReadinessV1>;
   /** Optional read-only transition record for this exact reviewed setup plan. */
   installationTransition?: Readonly<InstallationTransitionV1>;
+  /** Optional verified installation-plan revision supplied by trusted composition. Only its redacted progress reaches the browser. */
+  installationPlan?: Readonly<InstallationPlanV1>;
   /** Installation-owned, verified disposable restore evidence. Its contents are never sent to the browser. */
   localBackupRestoreReadiness?: unknown;
   /** Optional opaque Mac Codex custody proof record. It is display-only and cannot enable Codex. */
@@ -140,6 +144,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     : verifyInstallationReadinessV1(options.installationReadiness);
   const installationTransition = options.installationTransition === undefined ? undefined
     : verifyInstallationTransitionV1(options.installationTransition);
+  const installationPlan = options.installationPlan === undefined ? undefined
+    : verifyInstallationPlanV1(options.installationPlan);
   const localBackupRestoreVerified = options.localBackupRestoreReadiness === undefined ? false : (() => {
     if (!installationTopologyPlan) throw new Error("invalid_private_app_config");
     try {
@@ -164,6 +170,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     throw new Error("invalid_private_app_config");
   if (installationTransition && (!installationTopologyPlan || installationTransition.planDigest !== installationTopologyPlan.planDigest))
     throw new Error("invalid_private_app_config");
+  if (installationPlan && (!installationTopologyPlan || installationPlan.topologyPlanDigest !== installationTopologyPlan.planDigest))
+    throw new Error("invalid_private_app_config");
   if (codexMacosCustodyReadiness && (!installationTopologyPlan || codexMacosCustodyReadiness.planDigest !== installationTopologyPlan.planDigest))
     throw new Error("invalid_private_app_config");
   if (claudeCodeLocalProcessReadiness && (!installationTopologyPlan || claudeCodeLocalProcessReadiness.planDigest !== installationTopologyPlan.planDigest))
@@ -177,6 +185,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     ...(localSupervisorReadiness ? { localSupervisorReadiness } : {}),
     ...(installationTransition ? { transition: installationTransition } : {}),
   });
+  const installationPlanView = installationPlan === undefined ? undefined : createInstallationPlanViewV1(installationPlan);
   const moduleEnabled = (name: keyof ProductConfigurationV1["modules"]) =>
     productConfiguration === undefined || productConfiguration.modules[name];
   const sites = captureWebOrigins({ origin: options.origin, audience: options.audience }, options.secondaryAccess);
@@ -346,6 +355,14 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
               actor.require("projects.read", undefined, true);
               return Response.json({ setup: installationSetupView },
                 { headers: privateResponseHeaders });
+            });
+          }
+          if (url.pathname === "/api/v1/installation-plan") {
+            if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+            if (!installationPlanView) throw new WebAccessError("not_found");
+            return await productConfigurationAuthority.authenticated(identity, async (_, actor) => {
+              actor.require("projects.read", undefined, true);
+              return Response.json({ plan: installationPlanView }, { headers: privateResponseHeaders });
             });
           }
           if (url.pathname === "/api/v1/operator-surface") {
