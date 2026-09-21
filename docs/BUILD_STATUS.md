@@ -159,7 +159,8 @@ evidence only: it enables no worker, database, listener or persistent service.
 ## Latest accepted local checks
 
 - TypeScript type check
-- Combined local-agent and topology verification: 57 checks passed. This covers
+- Combined local-agent and topology verification: 47 checks passed in the
+  latest run. This covers
   Hermes delivery/revocation/restart, Claude terminal-result recovery, inert
   local adapter capture, and the shared local/remote task and correction
   lifecycle.
