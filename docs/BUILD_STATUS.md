@@ -120,6 +120,9 @@ unavailable until their separate host qualifications are complete.
 - Latest focused local checks: Hermes (89), Claude (35), Codex (34), and
   setup-screen (40) checks passed, followed by a full production-style build.
   No installed harness was started by these checks.
+- Latest local service-preparation package: 24 focused readiness, protected
+  setup-page, and recorder checks passed, followed by the TypeScript project
+  check and production-style build. It did not install or start a supervisor.
 - Local Hermes recovery inspection now reads only an authenticated saved
   delivery and its protected staged terminal record. It reports no saved
   delivery, an unresolved saved delivery, or a staged result using only safe
@@ -154,6 +157,12 @@ unavailable until their separate host qualifications are complete.
   record for process identity, permission limits, and cancellation/restart
   behavior. Even a complete record remains an owner-enablement prerequisite;
   it does not start, contact, or make Claude Code available.
+- Local Hermes setup now also requires a separate, plan-bound local-service
+  preparation record before its card can say owner enablement is the next
+  step. The record covers private configuration custody, restricted launch,
+  restart/drain, and upgrade/rollback procedure using opaque evidence only.
+  A small recorder can convert an already-sanitized owner review into that
+  record, but it cannot install, start, stop, or inspect a background service.
 
 These checks use disposable data. They do not prove a real agent program,
 database, browser login, backup, persistent service or remote machine.
