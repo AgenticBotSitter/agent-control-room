@@ -138,7 +138,10 @@ own lease, paths or limits. Raw plan data remains available only to the narrow
 evidence database role, never the web role. The final storage layer now
 re-reads this plan and the authenticated durable result receipt before it
 writes the result-bound record. The existing browser contract may receive only
-its aggregate summary; connecting that protected reader remains source work.
+its aggregate summary. The protected reader is now connected at private
+application assembly only after the evidence-database preflight. It requires
+the complete result lineage, returns only the aggregate-safe fields, and is
+unreachable to a person without ordinary result-reading permission.
 
 ### S2 — Hermes first complete vertical slice
 

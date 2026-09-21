@@ -67,7 +67,8 @@ export interface WebTaskKeys {
   manualVerificationScenarios?: readonly ManualVerificationScenario[];
   /** Installation-owned aggregate reader. The web layer cannot receive a raw
    * evidence table, receipt key, worktree plan, or filesystem path. */
-  worktreeChangeEvidence?: { inspect(identity: { tenantId: string; runId: string; artifactId: string }):
+  worktreeChangeEvidence?: { inspect(identity: { tenantId: string; projectId: string; jobId: string; attemptId: string;
+    runId: string; artifactId: string }):
     Promise<Readonly<{ changedFiles: number; changedBytes: number; addedFiles: number; modifiedFiles: number;
       deletedFiles: number; evidenceDigest: string }> | undefined> };
   /** Bound installation-owned read only. The web service never receives its
@@ -367,8 +368,8 @@ export class WebTaskService {
         else if (!receipt.artifactId.startsWith("artifact:result:")) worktreeChangeSummary = { source: "not_applicable" };
         else {
           let summary: Awaited<ReturnType<NonNullable<WebTaskKeys["worktreeChangeEvidence"]>["inspect"]>>;
-          try { summary = await this.worktreeChangeEvidence.inspect({ tenantId: this.scope.tenantId,
-            runId: receipt.runId, artifactId: receipt.artifactId }); } catch { summary = undefined; }
+          try { summary = await this.worktreeChangeEvidence.inspect({ tenantId: this.scope.tenantId, projectId,
+            jobId, attemptId: receipt.attemptId, runId: receipt.runId, artifactId: receipt.artifactId }); } catch { summary = undefined; }
           worktreeChangeSummary = summary ? { source: "recorded", changedFiles: summary.changedFiles,
             changedBytes: summary.changedBytes, addedFiles: summary.addedFiles, modifiedFiles: summary.modifiedFiles,
             deletedFiles: summary.deletedFiles, evidenceDigest: summary.evidenceDigest, startsWork: false,

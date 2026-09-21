@@ -33,6 +33,7 @@ import { PersistentLocalArtifactStorageV1 } from "../../artifacts/v1/persistent-
 import { CODEX_RESULT_RETURN_FEATURE_V1 } from "../../harness/codex-v1/result-return";
 import { captureCodexResultIntakeSettingsV1, type CodexResultIntakeSettingsV1 } from "./codex-result-intake";
 import { inspectHermes021MacosDeliveryRecoveryStatusV1 } from "../../harness/hermes-021-v1/delivery-recovery-status";
+import { readResultBoundWorktreeChangeAuditSummaryV1 } from "../../harness/v1/worktree-change-audit-record-store";
 import { summarizeInstallationReadinessV1, verifyInstallationReadinessV1 } from "../../harness/v1/installation-readiness";
 import { localBackupRestoreEvidenceDigestForInstallationPlanV1 } from "../../harness/v1/local-backup-restore-readiness";
 import { summarizeLocalSupervisorReadinessV1 } from "../../harness/v1/local-supervisor-readiness";
@@ -463,9 +464,29 @@ export function createPrivateTaskBootstrap(dependencies: {
           requireActive();
           return status;
         } }) : undefined;
+      // The evidence-role pool passed its dedicated preflight above.  Bind a
+      // complete-lineage, aggregate-only reader here, after that proof, rather
+      // than granting private-web access to protected worktree records.  The
+      // browser task service receives only this callback; it cannot inspect a
+      // record, receipt, audit plan, key, or evidence database.
+      const worktreeChangeEvidence = evidenceDatabase && config.web.tasks
+        ? Object.freeze({ inspect: async (scope: { tenantId: string; projectId: string; jobId: string;
+          attemptId: string; runId: string; artifactId: string }) => {
+          requireActive();
+          if (!evidenceDatabase.isAvailable() || scope.tenantId !== config.web.tenantId) throw new Error("worktree_change_evidence_unavailable");
+          const summary = await evidenceDatabase.client.transaction(tx =>
+            readResultBoundWorktreeChangeAuditSummaryV1(tx, config.web.tasks!.harnessIntegrityKey, scope));
+          requireActive();
+          return summary === undefined ? undefined : Object.freeze({ changedFiles: summary.changedFiles,
+            changedBytes: summary.changedBytes, addedFiles: summary.addedFiles, modifiedFiles: summary.modifiedFiles,
+            deletedFiles: summary.deletedFiles, evidenceDigest: summary.evidenceDigest });
+        } }) : undefined;
+      const webTasks = config.web.tasks ? Object.freeze({ ...config.web.tasks,
+        ...(hermesDeliveryRecovery ? { hermesDeliveryRecovery } : {}),
+        ...(worktreeChangeEvidence ? { worktreeChangeEvidence } : {}) }) : undefined;
       application = await createPrivateTaskApplication({ ...config.web, database: web, clock,
         coordination: { store: coordinationStore },
-        ...(hermesDeliveryRecovery ? { tasks: { ...config.web.tasks!, hermesDeliveryRecovery } } : {}),
+        ...(webTasks ? { tasks: webTasks } : {}),
         ...(newsIntegration ? { newsCollections: newsIntegration.web } : {}) }, {
         scope: { tenantId: config.web.tenantId, workspaceId: config.web.workspaceId }, database: coordinator,
         planning: config.planning, routes: config.routes, approvals: config.approvals, quality: config.quality,

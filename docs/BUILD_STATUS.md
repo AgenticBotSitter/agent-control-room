@@ -165,8 +165,11 @@ evidence only: it enables no worker, database, listener or persistent service.
   is accepted. The raw plan stays evidence-role-only; no web account can read
   it. The later result-bound record is now also persisted only after it
   independently rereads that protected plan and the authenticated durable
-  result receipt. Supplying a protected aggregate reader to the Result page
-  remains the next package.
+  result receipt. The protected Result-page reader now mounts only after the
+  separately verified evidence database preflight and receives the complete
+  result lineage. It returns only the existing aggregate-safe summary; a
+  missing or damaged record is shown as unavailable, and a person without
+  result permission cannot invoke it.
 - The local Result page now has a per-result, aggregate-only coding-evidence
   presentation contract. It can say not configured, not applicable,
   unavailable, not authorized, or show only verified file counts, byte counts

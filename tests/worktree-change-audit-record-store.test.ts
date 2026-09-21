@@ -6,7 +6,7 @@ import { createManagedWorktreeChangeAuditAuthorityV1 } from "../src/harness/v1/w
 import { createControllerWorkerDeliveryV1, type ControllerWorkerDeliveryV1 } from "../src/harness/v1/controller-worker-delivery";
 import { persistControllerWorkerDeliveryReceiptV1 } from "../src/harness/v1/controller-worker-delivery-receipt-store";
 import { persistManagedWorktreeChangeAuditPlanV1 } from "../src/harness/v1/worktree-change-audit-plan-store";
-import { persistResultBoundWorktreeChangeAuditRecordV1 } from "../src/harness/v1/worktree-change-audit-record-store";
+import { persistResultBoundWorktreeChangeAuditRecordV1, readResultBoundWorktreeChangeAuditSummaryV1 } from "../src/harness/v1/worktree-change-audit-record-store";
 import { createWorktreeChangeAuditEvidenceV1 } from "../src/harness/v1/worktree-change-audit";
 import { buildTaskResultManifestV1 } from "../src/artifacts/v1/durable-result-publication";
 import { durableResultArtifactIdV1, durableResultReceiptTagV1 } from "../src/artifacts/v1/durable-result-receipt";
@@ -95,6 +95,27 @@ test("result-bound audit writer reads both protected authorities and exact-repla
   await assert.rejects(x.f.db.transaction(tx => persistResultBoundWorktreeChangeAuditRecordV1(tx, key,
     { scope: x.scope, evidence: { ...x.evidence, evidenceDigest: sha256Digest("changed") }, recordedAt: at(6000) })),
   /worktree_change_audit_record_unavailable|evidence_invalid/);
+});
+
+test("aggregate reader accepts only a verified complete-lineage record and returns no raw evidence", async t => {
+  const x = await fixture(); t.after(x.f.close);
+  await x.f.db.transaction(tx => persistResultBoundWorktreeChangeAuditRecordV1(tx, key,
+    { scope: x.scope, evidence: x.evidence, recordedAt: at(6000) }));
+  const summary = await x.f.db.transaction(tx => readResultBoundWorktreeChangeAuditSummaryV1(tx, key, x.scope));
+  assert.deepEqual(summary, {
+    schema: "control-room.worktree-change-audit-summary/v1", startsWork: false, grantsExecutionAuthority: false,
+    permitsRetry: false, permitsResume: false, permitsApproval: false, permitsMerge: false,
+    changedFiles: 1, changedBytes: 20, addedFiles: 0, modifiedFiles: 1, deletedFiles: 0,
+    evidenceDigest: x.evidence.evidenceDigest,
+  });
+  assert.doesNotMatch(JSON.stringify(summary), /safe\.ts|allowedPaths|baseRevision|contentDigest|resultReceiptDigest/);
+  assert.equal(await x.f.db.transaction(tx => readResultBoundWorktreeChangeAuditSummaryV1(tx, key,
+    { ...x.scope, projectId: "project:wrong" })), undefined, "a changed lineage cannot discover a same-run record");
+  assert.equal(await x.f.db.transaction(tx => readResultBoundWorktreeChangeAuditSummaryV1(tx, key,
+    { ...x.scope, artifactId: `artifact:result:${"b".repeat(64)}` })), undefined, "a missing result is not zero changes");
+  await assert.rejects(x.f.db.transaction(tx => readResultBoundWorktreeChangeAuditSummaryV1(tx,
+    new Uint8Array(32).fill(60), x.scope)), /worktree_change_audit_record_unavailable/,
+    "a retagged/tampered stored record is unavailable, not displayed");
 });
 
 test("record writer refuses a missing or non-durable legacy receipt and early timestamps", async t => {

@@ -4,7 +4,8 @@ import type { DatabaseSession } from "../../persistence/database";
 import { assertNoSecretMaterial, hmacSha256Tag, sha256Digest } from "../../security";
 import { verifyDurableResultReceiptV1 } from "../../artifacts/v1/durable-result-receipt";
 import { createWorktreeChangeAuditRecordV1, verifyWorktreeChangeAuditRecordV1,
-  type WorktreeChangeAuditRecordV1 } from "./worktree-change-audit-record";
+  summarizeWorktreeChangeAuditRecordV1, type WorktreeChangeAuditRecordV1,
+  type WorktreeChangeAuditSummaryV1 } from "./worktree-change-audit-record";
 import { readManagedWorktreeChangeAuditPlanV1 } from "./worktree-change-audit-plan-store";
 
 /** Protected persistence for result-bound worktree audit evidence only. */
@@ -29,6 +30,11 @@ const tag = (key: Uint8Array, record: WorktreeChangeAuditRecordV1) => hmacSha256
 function sameScope(scope: Scope, row: Row | ReceiptRow): boolean {
   return scope.tenantId === row.tenant_id && scope.projectId === row.project_id && scope.jobId === row.job_id
     && scope.attemptId === row.attempt_id && scope.runId === row.run_id && scope.artifactId === row.artifact_id;
+}
+
+function sameIdentity(scope: Scope, identity: WorktreeChangeAuditRecordV1["identity"]): boolean {
+  return scope.tenantId === identity.tenantId && scope.projectId === identity.projectId && scope.jobId === identity.jobId
+    && scope.attemptId === identity.attemptId && scope.runId === identity.runId && scope.artifactId === identity.artifactId;
 }
 
 function verifyStored(key: Uint8Array, row: Row): WorktreeChangeAuditRecordV1 {
@@ -97,4 +103,28 @@ export async function persistResultBoundWorktreeChangeAuditRecordV1(tx: Database
   if (sha256Digest(prior) !== sha256Digest(record)) fail();
   return Object.freeze({ record: prior, replayed: true as const, startsWork: false as const,
     grantsExecutionAuthority: false as const });
+}
+
+/**
+ * Reads one complete, HMAC-authenticated evidence record and returns only its
+ * deliberately safe aggregate.  This belongs on the separately-preflighted
+ * evidence connection: callers never receive the protected record, plan,
+ * receipt, worktree path, revision, or per-file digest.
+ *
+ * A missing record is an honest absence. A malformed, retagged, or
+ * cross-lineage record is an unavailable evidence condition, never a zero
+ * change summary.
+ */
+export async function readResultBoundWorktreeChangeAuditSummaryV1(tx: DatabaseSession, integrityKey: Uint8Array,
+  scopeValue: unknown): Promise<WorktreeChangeAuditSummaryV1 | undefined> {
+  if (!(integrityKey instanceof Uint8Array) || integrityKey.length !== 32) fail();
+  const scope = scopeSchema.parse(scopeValue);
+  const row = (await tx.query<Row>(`SELECT tenant_id,project_id,job_id,attempt_id,run_id,artifact_id,record,auth_tag
+    FROM control_worktree_change_audit_records
+    WHERE tenant_id=$1 AND project_id=$2 AND job_id=$3 AND attempt_id=$4 AND run_id=$5 AND artifact_id=$6`,
+  [scope.tenantId, scope.projectId, scope.jobId, scope.attemptId, scope.runId, scope.artifactId])).rows[0];
+  if (!row) return undefined;
+  const record = verifyStored(integrityKey, row);
+  if (!sameIdentity(scope, record.identity)) fail();
+  return summarizeWorktreeChangeAuditRecordV1(record);
 }
