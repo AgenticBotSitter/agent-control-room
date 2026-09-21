@@ -2,10 +2,6 @@ import { z } from "zod";
 import { catalogProjectIdSchema as id } from "./project-wire";
 
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/), time = z.string().datetime();
-export const taskResultMetadataSchema = z.object({ artifactId: id, attemptId: id, runId: id, contentHash: digest,
-  sizeBytes: z.number().int().min(0).max(65_536), receivedAt: time, byteCheck: z.literal("matched_recorded_claim"),
-  qualityAccepted: z.literal(false) }).strict();
-export type TaskResultMetadata = z.infer<typeof taskResultMetadataSchema>;
 export const taskReviewEvidenceSchema = z.object({ targetId: id, kind: z.enum(["code", "media", "document", "operation"]),
   targetDigest: digest, contentHash: digest, revision: z.number().int().min(0).max(20), supersedesTargetId: id.nullable(),
   status: z.enum(["pending", "changes_requested", "verification_blocked", "revision_limit_reached", "ready", "superseded"]),
@@ -19,6 +15,27 @@ export const taskReviewEvidenceSchema = z.object({ targetId: id, kind: z.enum(["
   missingVerificationScenarioIds: z.array(id).max(50), openFindingCount: z.number().int().nonnegative(),
   grantsApproval: z.literal(false), grantsExecutionAuthority: z.literal(false) }).strict();
 export type TaskReviewEvidence = z.infer<typeof taskReviewEvidenceSchema>;
+const worktreeChangeSummarySchema = z.discriminatedUnion("source", [
+  z.object({ source: z.literal("not_configured") }).strict(),
+  z.object({ source: z.literal("not_authorized") }).strict(),
+  z.object({ source: z.literal("not_applicable") }).strict(),
+  z.object({ source: z.literal("unavailable") }).strict(),
+  z.object({ source: z.literal("recorded"), changedFiles: z.number().int().nonnegative(),
+    changedBytes: z.number().int().nonnegative(), addedFiles: z.number().int().nonnegative(),
+    modifiedFiles: z.number().int().nonnegative(), deletedFiles: z.number().int().nonnegative(), evidenceDigest: digest,
+    startsWork: z.literal(false), grantsExecutionAuthority: z.literal(false), permitsRetry: z.literal(false),
+    permitsResume: z.literal(false), permitsApproval: z.literal(false), permitsMerge: z.literal(false) }).strict(),
+]);
+/** Aggregate-only coding-work evidence. Undefined is treated as not configured
+ * for backward compatible browser reads, never as a zero-change audit. */
+export const taskWorktreeChangeSummarySchema = worktreeChangeSummarySchema;
+export type TaskWorktreeChangeSummary = z.infer<typeof taskWorktreeChangeSummarySchema>;
+export const taskResultMetadataSchema = z.object({ artifactId: id, attemptId: id, runId: id, contentHash: digest,
+  sizeBytes: z.number().int().min(0).max(65_536), receivedAt: time, byteCheck: z.literal("matched_recorded_claim"),
+  qualityAccepted: z.literal(false),
+  /** Bound to this result artifact only; missing never means zero changes. */
+  worktreeChangeSummary: taskWorktreeChangeSummarySchema.optional() }).strict();
+export type TaskResultMetadata = z.infer<typeof taskResultMetadataSchema>;
 export const taskResultsPageSchema = z.object({ projectId: id, jobId: id, observedAt: time,
   resultSource: z.enum(["configured", "not_configured"]), reviewSource: z.enum(["configured", "not_configured"]),
   items: z.array(taskResultMetadataSchema).max(50), reviews: z.array(taskReviewEvidenceSchema).max(20),

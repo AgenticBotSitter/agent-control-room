@@ -52,10 +52,24 @@ export function TaskResultsPanel({ page, content: suppliedContent, pending, sele
   return <div className="private-task-results"><section className="private-panel"><h2>Result files</h2>
     {page.resultSource === "not_configured" ? <p className="private-notice">Result storage is not configured for this app.</p>
       : !page.items.length ? <p>No result files have been received for this task.</p> : <ul className="private-result-list">
-        {page.items.map((item, index) => <li key={item.artifactId}><div><h3>Saved result file {index + 1}</h3>
+        {page.items.map((item, index) => {
+          const worktreeChange = item.worktreeChangeSummary ?? { source: "not_configured" as const };
+          return <li key={item.artifactId}><div><h3>Saved result file {index + 1}</h3>
           <p>File ID: <code>{item.artifactId}</code></p>
           <p>{item.sizeBytes.toLocaleString()} bytes · <ConfiguredTimestamp value={item.receivedAt} prefix="Received" /></p>
           <p>Received bytes matched the agent’s recorded fingerprint. This is not a quality approval.</p>
+          {worktreeChange.source === "not_configured"
+            ? <p className="private-notice">Verified coding-change evidence is not configured for this result.</p>
+            : worktreeChange.source === "not_authorized"
+              ? <p className="private-note">Your access permits result metadata, not this protected coding-change evidence.</p>
+            : worktreeChange.source === "not_applicable"
+              ? <p className="private-note">Verified coding-change evidence does not apply to this result type.</p>
+            : worktreeChange.source === "unavailable"
+              ? <p className="private-notice">Verified coding-change evidence is unavailable. This does not mean no files changed.</p>
+              : <><p>Verified change summary: {worktreeChange.changedFiles} file{worktreeChange.changedFiles === 1 ? "" : "s"} / {worktreeChange.changedBytes.toLocaleString()} bytes
+                ({worktreeChange.addedFiles} added, {worktreeChange.modifiedFiles} modified, {worktreeChange.deletedFiles} deleted).</p>
+                <details><summary>Evidence fingerprint</summary><code>{worktreeChange.evidenceDigest}</code></details>
+                <p className="private-note">This evidence does not start, retry, resume, approve or merge work.</p></>}
           {page.reviews.filter(review => review.kind === "document" && review.contentHash === item.contentHash
             && review.matchingArtifactIds.includes(item.artifactId)).map(review => <p key={review.targetId}>
               Matches Revision {review.revision} · {reviewLabel[review.status]}</p>)}
@@ -63,7 +77,8 @@ export function TaskResultsPanel({ page, content: suppliedContent, pending, sele
           {page.canReadContent ? <button type="button" disabled={pending}
             ref={node => { openers.current.set(item.artifactId, node); }}
             onClick={() => onOpen(item.artifactId)}>Read result</button>
-            : <p>Your access permits metadata, not reading this file.</p>}</li>)}</ul>}
+            : <p>Your access permits metadata, not reading this file.</p>}</li>;
+        })}</ul>}
     {page.additionalResultsOmitted && <p>Only the first 50 result records are listed. Additional records remain saved.</p>}
     {pending && <p role="status">Reading protected result…</p>}
     {content && <section className="private-result-content" aria-label="Protected result content"

@@ -28,6 +28,7 @@ import { taskPlanningOptionsSchema } from "./task-planning-wire";
 import { taskHomeActivitySchema } from "./task-home-wire";
 import { taskProjectOverviewSchema } from "./task-project-overview-wire";
 import { taskProjectFilesSchema } from "./task-project-files-wire";
+import type { TaskWorktreeChangeSummary } from "./task-result-wire";
 
 /** Joins existing stores to the caller-owned session transaction. No nested BEGIN/COMMIT and no
  * new authority: this closure stays inside authenticated(). The outer freshness check owns commit. */
@@ -64,6 +65,11 @@ export interface WebTaskKeys {
   reviews?: { integrityKey: Uint8Array; checkpoints: AwaitableRollbackCheckpointStoreV1 };
   ownerReviews?: WebTaskReviewConfiguration;
   manualVerificationScenarios?: readonly ManualVerificationScenario[];
+  /** Installation-owned aggregate reader. The web layer cannot receive a raw
+   * evidence table, receipt key, worktree plan, or filesystem path. */
+  worktreeChangeEvidence?: { inspect(identity: { tenantId: string; runId: string; artifactId: string }):
+    Promise<Readonly<{ changedFiles: number; changedBytes: number; addedFiles: number; modifiedFiles: number;
+      deletedFiles: number; evidenceDigest: string }> | undefined> };
   /** Bound installation-owned read only. The web service never receives its
    * receipt key, storage port, runner, profile, model, or workspace settings. */
   hermesDeliveryRecovery?: { inspect(scope: { tenantId: string; projectId: string; jobId: string; attemptId: string }):
@@ -83,6 +89,7 @@ export class WebTaskService {
   private readonly verificationCommandsConfigured: boolean;
   private readonly ideaProjectsConfigured: boolean;
   private readonly hermesDeliveryRecovery?: WebTaskKeys["hermesDeliveryRecovery"];
+  private readonly worktreeChangeEvidence?: NonNullable<WebTaskKeys["worktreeChangeEvidence"]>;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     private readonly clock: () => number = Date.now, keys?: WebTaskKeys) {
     this.authority = new WebSessionAuthority(db, scope, clock, "task");
@@ -107,6 +114,10 @@ export class WebTaskService {
       // The web service retains only the read capability, even when composition supplied a fuller store.
       this.resultStore = new NativeResultStore(db, this.harnessKey, { ...keys.results,
         storage: Object.freeze({ read: keys.results.storage.read.bind(keys.results.storage) }) });
+    }
+    if (keys?.worktreeChangeEvidence) {
+      if (typeof keys.worktreeChangeEvidence.inspect !== "function") throw new Error("task_key_invalid");
+      this.worktreeChangeEvidence = Object.freeze({ inspect: keys.worktreeChangeEvidence.inspect.bind(keys.worktreeChangeEvidence) });
     }
     if (keys?.reviews) {
       if (!(keys.reviews.integrityKey instanceof Uint8Array) || keys.reviews.integrityKey.length !== 32) throw new Error("task_key_invalid");
@@ -349,7 +360,23 @@ export class WebTaskService {
   private async resultPage(tx: DatabaseSession, actor: WebActor, projectId: string, jobId: string) {
       const result = this.resultStore ? await this.resultStore.list(tx, this.scope.tenantId, projectId, jobId)
         : { receipts: [], additionalResultsOmitted: false };
-      const items = result.receipts.map(resultMetadata);
+      const items = await Promise.all(result.receipts.map(async receipt => {
+        let worktreeChangeSummary: TaskWorktreeChangeSummary;
+        if (!actor.can("tasks.results.read", projectId)) worktreeChangeSummary = { source: "not_authorized" };
+        else if (!this.worktreeChangeEvidence) worktreeChangeSummary = { source: "not_configured" };
+        else if (!receipt.artifactId.startsWith("artifact:result:")) worktreeChangeSummary = { source: "not_applicable" };
+        else {
+          let summary: Awaited<ReturnType<NonNullable<WebTaskKeys["worktreeChangeEvidence"]>["inspect"]>>;
+          try { summary = await this.worktreeChangeEvidence.inspect({ tenantId: this.scope.tenantId,
+            runId: receipt.runId, artifactId: receipt.artifactId }); } catch { summary = undefined; }
+          worktreeChangeSummary = summary ? { source: "recorded", changedFiles: summary.changedFiles,
+            changedBytes: summary.changedBytes, addedFiles: summary.addedFiles, modifiedFiles: summary.modifiedFiles,
+            deletedFiles: summary.deletedFiles, evidenceDigest: summary.evidenceDigest, startsWork: false,
+            grantsExecutionAuthority: false, permitsRetry: false, permitsResume: false, permitsApproval: false,
+            permitsMerge: false } : { source: "unavailable" };
+        }
+        return taskResultMetadataSchema.parse({ ...resultMetadata(receipt), worktreeChangeSummary });
+      }));
       const lineage = this.reviewConfig ? await readTaskReviewPlanV1(tx, this.reviewConfig.integrityKey,
         this.scope.tenantId, projectId, jobId) : undefined;
       const subjectId = taskReviewRootSubjectIdV1(lineage, jobId);

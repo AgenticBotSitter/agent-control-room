@@ -161,6 +161,14 @@ evidence only: it enables no worker, database, listener or persistent service.
   to start, retry, resume, approve or merge work. This is source-only
   evidence; authenticated database storage and the protected result-page read
   remain the next package.
+- The local Result page now has a per-result, aggregate-only coding-evidence
+  presentation contract. It can say not configured, not applicable,
+  unavailable, not authorized, or show only verified file counts, byte counts
+  and an evidence fingerprint. It never receives paths, scopes, revisions,
+  receipt data or content fingerprints, and it never makes unavailable proof
+  look like zero changes. The protected reader is an installation-owned input
+  rather than a browser database capability, and requires ordinary
+  result-reading permission before it can disclose even the aggregate.
 - Shared local and remote lifecycle tests prove that later remote delivery is
   an extension of the same product, not a second scheduler or database.
 - An authenticated remote-session bridge can now hand one already-approved
