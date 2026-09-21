@@ -142,6 +142,15 @@ will reuse this repository's transaction, HMAC and append-only conventions.
 It must authenticate the durable receipt and verify the receipt lineage before
 storing the record; a browser can receive only the aggregate projection.
 
+The first persistence prerequisite is now also present: only the existing
+process-private workspace manager can derive an audit plan while it still owns
+the exact active worktree lease. The installation fixes its allowed paths and
+size limits when it creates that small authority object; a worker cannot
+provide its own lease, paths or limits. This borrows the repository's existing
+workspace manager and delivery-bound plan verifier. It deliberately does not
+copy a generic sandbox or worktree library because those cannot prove the
+Control Room task/delivery/result lineage or preserve its one-authority rule.
+
 ## Next donor decisions
 
 - **Hermes:** finish the existing local CLI adapter first. Evaluate no second
