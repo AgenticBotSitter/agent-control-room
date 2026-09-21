@@ -20,7 +20,7 @@ test("macOS local service preflight emits only a redacted no-start result", asyn
     standardErrorPath: join(logs, "err.log"), releaseRoot: release, protectedRoot, ownerUid: process.getuid?.() ?? -1 }));
   t.after(() => rm(root, { recursive: true, force: true }));
   const { stdout, stderr } = await run(process.execPath, ["--import", "tsx", "scripts/preflight-macos-local-service.ts",
-    "--owner-attended", "--configuration", input], { cwd: process.cwd() });
+    "--owner-attended", "--service-definition", input], { cwd: process.cwd() });
   assert.equal(stderr, "");
   assert.deepEqual(JSON.parse(stdout), { schema: "control-room.macos-local-service-preflight/v1", ready: true, startsWork: false });
   assert.doesNotMatch(stdout, /acr-service-launcher|release|protected|config\.mjs|launch\.mjs/);
@@ -29,7 +29,7 @@ test("macOS local service preflight emits only a redacted no-start result", asyn
 test("macOS local service preflight fails without echoing a private configuration path", async () => {
   const privatePath = "/private/owner/local-service.json";
   const result = await run(process.execPath, ["--import", "tsx", "scripts/preflight-macos-local-service.ts",
-    "--owner-attended", "--configuration", privatePath], { cwd: process.cwd() })
+    "--owner-attended", "--service-definition", privatePath], { cwd: process.cwd() })
     .catch(error => ({ stdout: error.stdout ?? "", stderr: error.stderr ?? "" }));
   assert.match(result.stdout, /macos_local_service_preflight_refused/);
   assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /private\/owner/);

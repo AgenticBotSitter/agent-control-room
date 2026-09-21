@@ -110,3 +110,19 @@ Still requires owner-authorized evidence:
   already-qualified runner, including its terminal-stage callback, restart
   recovery, and owner review;
 - a two-computer delivery and reconnect proof.
+
+## Future macOS service check
+
+When the owner is ready for the separately authorized service-installation
+step, the release includes a **read-only** preflight command named
+`preflight:local:service`. Its input is called a *service definition*, not an
+application configuration: it identifies the already-reviewed release,
+launcher, protected configuration, private log locations, and owner account.
+The actual application configuration stays in its protected file and is never
+printed by the check.
+
+The preflight only says whether those existing files and folders have the
+required private ownership and permissions. It does not make folders, write a
+LaunchAgent file, start Control Room, open a web address, contact an agent, or
+enable a worker. A successful result is therefore preparation evidence, not a
+running-service status.

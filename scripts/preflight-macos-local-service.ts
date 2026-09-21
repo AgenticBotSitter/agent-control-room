@@ -9,11 +9,11 @@ import { preflightMacosLocalServiceV1 } from "../src/harness/v1/macos-local-serv
 
 const args = process.argv.slice(2).filter(value => value !== "--");
 const ownerAttended = args.filter(value => value === "--owner-attended").length === 1;
-const configurationIndexes = args.reduce<number[]>((all, value, index) => value === "--configuration" ? [...all, index] : all, []);
-const configurationPath = configurationIndexes.length === 1 && configurationIndexes[0] !== args.length - 1
-  ? args[configurationIndexes[0]! + 1] : undefined;
-const known = new Set(["--owner-attended", "--configuration", ...(configurationPath ? [configurationPath] : [])]);
-const valid = ownerAttended && typeof configurationPath === "string" && configurationPath.length > 0
+const definitionIndexes = args.reduce<number[]>((all, value, index) => value === "--service-definition" ? [...all, index] : all, []);
+const definitionPath = definitionIndexes.length === 1 && definitionIndexes[0] !== args.length - 1
+  ? args[definitionIndexes[0]! + 1] : undefined;
+const known = new Set(["--owner-attended", "--service-definition", ...(definitionPath ? [definitionPath] : [])]);
+const valid = ownerAttended && typeof definitionPath === "string" && definitionPath.length > 0
   && args.every(value => known.has(value));
 
 async function configuration(path: string): Promise<unknown> {
@@ -24,11 +24,11 @@ async function configuration(path: string): Promise<unknown> {
 }
 
 if (!valid) {
-  console.error("Usage: node --import tsx scripts/preflight-macos-local-service.ts --owner-attended --configuration PRIVATE_CONFIGURATION_JSON");
+  console.error("Usage: node --import tsx scripts/preflight-macos-local-service.ts --owner-attended --service-definition PRIVATE_SERVICE_DEFINITION_JSON");
   process.exitCode = 2;
 } else {
   try {
-    const result = await preflightMacosLocalServiceV1(await configuration(configurationPath));
+    const result = await preflightMacosLocalServiceV1(await configuration(definitionPath));
     // Deliberately omit the generated plist, label and all owner paths.  This
     // report proves only that a later, separately authorized setup step may be
     // reviewed; it is never a running-service status.
