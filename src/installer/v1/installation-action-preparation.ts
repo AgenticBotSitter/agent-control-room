@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { verifyInstallationTopologyPlanV1 } from "../../harness/v1/installation-topology";
 import { canonicalJson, sha256Digest } from "../../security/canonical-digest";
+import { prepareFirstOwnerSetupV1 } from "./first-owner-setup-preparation";
 import { verifyInstallationPlanV1 } from "./installation-plan";
 import { preparePlatformServiceLifecycleV1 } from "./platform-service-lifecycle";
 import { preparePostgresSetupV1 } from "./postgres-setup-preparation";
@@ -14,11 +15,11 @@ import { prepareProtectedDataV1, prepareRecoveryV1 } from "./protected-data-reco
 export const INSTALLATION_ACTION_PREPARATION_V1 = "control-room.installation-action-preparation/v1" as const;
 
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
-const action = z.enum(["postgres", "protected_data", "recovery", "platform_service"]);
+const action = z.enum(["postgres", "protected_data", "first_owner", "recovery", "platform_service"]);
 const schema = z.object({
   schema: z.literal(INSTALLATION_ACTION_PREPARATION_V1),
   action,
-  stage: z.enum(["database_authority", "protected_data", "recovery", "platform_service"]),
+  stage: z.enum(["database_authority", "protected_data", "first_owner", "recovery", "platform_service"]),
   installationPlanDigest: digest,
   installationPlanRevision: z.number().int().min(0),
   topologyPlanDigest: digest,
@@ -70,6 +71,18 @@ function component(inputAction: z.infer<typeof action>, plan: unknown, topology:
     const prepared = prepareProtectedDataV1({ installationPlan: plan,
       storageConfiguration: source.storageConfiguration as Parameters<typeof prepareProtectedDataV1>[0]["storageConfiguration"],
       observedState: source.observedState, observationDigest: source.observationDigest });
+    return { stage: prepared.stage, componentDigest: prepared.preparationDigest, preparedAction: prepared } as const;
+  }
+  if (inputAction === "first_owner") {
+    const source = exact(sourceValue, ["databaseAuthorityOutcomeDigest", "bootstrapConfigurationDigest",
+      "trustConfigurationDigest", "expectedOwnerSubjectDigest", "observedOwnerState", "observationDigest"]);
+    const prepared = prepareFirstOwnerSetupV1({ installationPlan: plan,
+      releaseDigest: verifyInstallationPlanV1(plan).releaseDigest,
+      databaseAuthorityOutcomeDigest: source.databaseAuthorityOutcomeDigest,
+      bootstrapConfigurationDigest: source.bootstrapConfigurationDigest,
+      trustConfigurationDigest: source.trustConfigurationDigest,
+      expectedOwnerSubjectDigest: source.expectedOwnerSubjectDigest,
+      observedOwnerState: source.observedOwnerState, observationDigest: source.observationDigest });
     return { stage: prepared.stage, componentDigest: prepared.preparationDigest, preparedAction: prepared } as const;
   }
   if (inputAction === "recovery") {

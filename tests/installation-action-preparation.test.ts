@@ -3,6 +3,7 @@ import test from "node:test";
 import { captureArtifactStorageConfigurationV1 } from "../src/config/v1/artifact-storage";
 import { createLocalSupervisorReadinessV1 } from "../src/harness/v1/local-supervisor-readiness";
 import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
+import { firstOwnerStageInputDigestV1 } from "../src/installer/v1/first-owner-setup-preparation";
 import { prepareInstallationActionV1, verifyInstallationActionPreparationV1 } from "../src/installer/v1/installation-action-preparation";
 import { advanceInstallationPlanV1, createInstallationPlanV1, installationSetupStagesV1,
   type InstallationPlanV1 } from "../src/installer/v1/installation-plan";
@@ -24,6 +25,10 @@ const storage = () => captureArtifactStorageConfigurationV1({ schema: "control-r
 const protectedObservation = { observedState: "verified" as const, observationDigest: d("protected-observation") };
 const postgresSource = { ledgerDigest: d("ledger"), targetIdentityDigest: d("target"),
   observedTargetState: "fresh" as const, observationDigest: d("postgres-observation") };
+const firstOwnerSource = { databaseAuthorityOutcomeDigest: d("database-outcome"),
+  bootstrapConfigurationDigest: d("bootstrap-configuration"), trustConfigurationDigest: d("trust-configuration"),
+  expectedOwnerSubjectDigest: d("expected-owner-subject"), observedOwnerState: "empty" as const,
+  observationDigest: d("owner-observation") };
 const serviceSourceBase = { action: "status" as const, platform: "macos_launchd" as const,
   serviceIdentityDigest: d("service"), authorityDatabaseDigest: d("database-outcome"),
   protectedDataDigest: d("protected-binding"), observation: { state: "unknown" as const,
@@ -44,13 +49,14 @@ function fixture() {
           storageNamespaceDigest: stored.inventory.storageNamespaceDigest,
           databaseAuthorityOutcomeDigest: d("database-outcome"), expectedDatabaseIdentityDigest: d("database-identity"),
           expectedDatabaseSchemaDigest: d("schema") })
+          : stage === "first_owner" ? firstOwnerStageInputDigestV1({ releaseDigest: d("release"), ...firstOwnerSource })
           : stage === "platform_service" ? platformServiceStageInputDigestV1({ ...serviceSourceBase, releaseDigest: d("release") })
             : d(`input:${stage}`)]));
   return { topo, stored, protectedBinding, stageInputDigests,
     plan: createInstallationPlanV1({ topologyPlan: topo, releaseDigest: d("release"), stageInputDigests }) };
 }
 
-function advanceTo(base: ReturnType<typeof fixture>, target: "database_authority" | "protected_data" | "recovery" | "platform_service") {
+function advanceTo(base: ReturnType<typeof fixture>, target: "database_authority" | "protected_data" | "first_owner" | "recovery" | "platform_service") {
   let plan: InstallationPlanV1 = base.plan;
   for (const stage of installationSetupStagesV1) {
     if (stage === target) return advanceInstallationPlanV1(plan, { expectedRevision: plan.revision, stage, action: "start" });
@@ -118,6 +124,20 @@ test("the same seam prepares recovery and service ordering against their exact c
   assert.equal(service.topologyPlanDigest, base.topo.planDigest);
   assert.equal(service.releaseDigest, servicePlan.releaseDigest);
   assert.doesNotMatch(JSON.stringify([recovery, service]), /private\/owner|rootPath|launchctl|systemctl|\.plist|\.service/i);
+});
+
+test("the same seam prepares the retained first-owner ceremony without identity or listener authority", () => {
+  const base = fixture(), ownerPlan = advanceTo(base, "first_owner");
+  const ownerInput = envelope(base, ownerPlan, "first_owner", firstOwnerSource);
+  const owner = prepareInstallationActionV1(ownerInput);
+  assert.equal(owner.stage, "first_owner");
+  assert.equal(owner.preparedAction.nextOperation, "arm_existing_owner_bootstrap_ceremony");
+  assert.equal(owner.performsEffect, false); assert.equal(owner.runsDatabaseOperation, false);
+  assert.equal(owner.startsService, false); assert.equal(owner.grantsAuthority, false);
+  assert.equal(owner.preparedAction.acceptsAssertion, false);
+  assert.equal(owner.preparedAction.acceptsOneTimeCode, false);
+  assert.deepEqual(verifyInstallationActionPreparationV1(owner, ownerInput), owner);
+  assert.doesNotMatch(JSON.stringify(owner), /raw-assertion|123456|test-owner|postgresql:\/\//i);
 });
 
 test("stale revisions, changed topology, wrong active stages, forged outputs, and injected request fields refuse", () => {

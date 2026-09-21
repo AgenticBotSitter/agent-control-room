@@ -31,7 +31,7 @@ remain readable for recovery. Focused adapter tests, private-startup tests,
 VPS compilation and TypeScript passed. This is source and disposable-test
 evidence only: it enables no worker, database, listener or persistent service.
 
-The installable-product track now also has sixteen accepted source foundations:
+The installable-product track now also has seventeen accepted source foundations:
 an allowlisted reproducible release archive with a manifest and checksum; a
 standalone extracted-release preflight that needs no developer dependency;
 crash-safe, concurrency-tested placement of a verified release into an inert
@@ -66,6 +66,13 @@ one private, effect-free setup-action composition that reuses the existing
 PostgreSQL, protected-data/recovery and platform-service planners against the
 exact current plan revision, refuses private parser detail, and creates no
 second journal, state machine, authority or browser capability;
+that same private seam now prepares the retained first-owner ceremony, binds
+it to the exact passed database outcome, and refuses an existing or uncertain
+owner state without accepting a login assertion or one-time code; pure,
+redacted PostgreSQL and protected-data/recovery requests name only the existing
+deployment, storage, backup, restore and proof components without calling
+them, while a macOS injected-runner simulation proves the existing service
+and rollback order; no production runner or durable effect receipt is supplied;
 the restart-safe nine-stage installation plan plus a private, append-only,
 crash-recoverable pre-database journal for its exact revisions; and a redacted PostgreSQL-stage
 preparation that binds that plan to the existing migration ledger and database
@@ -77,11 +84,11 @@ artifact store, database restore proof and artifact inventory proof to the exact
 ordered setup stages without exposing a private path or running a backup.
 The protected Settings page shows both the planned one-launcher journey and
 the supplied saved stage progress, while prominently saying that a public
-release and an owner-accepted clean install are not available yet. These components perform no install,
+release and an owner-accepted clean install are not available yet. These components perform no live install,
 database, service, credential, or worker effect. Release staging, production
 dependency preparation, the owner-only protected-data/recovery actions, the effectful service wrapper,
 durable plan persistence and the owner-only setup
-actions remain active build work.
+actions and their durable replay/evidence boundary remain active build work.
 
 ## What source evidence proves today
 
