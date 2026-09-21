@@ -934,7 +934,8 @@ export class TaskAssignmentCoordinator {
       const workScope = plan.schema === "control-room.task-execution-plan/v7" || plan.schema === "control-room.task-execution-plan/v8"
         ? "bounded_text_review" as const : "configured_task" as const;
       const candidates: Array<{ nodeId: string; label: string; platform: string; workScope: "bounded_text_review" | "configured_task" }> = [];
-      if (!stored && project.lifecycle === "active" && project.origin === "ordinary" && job.state === "proposed") {
+      if (!stored && this.planner.isPlanAssignable(plan)
+        && project.lifecycle === "active" && project.origin === "ordinary" && job.state === "proposed") {
         for (const route of this.routes.filter(route => route.executorId === job.authority.allowedExecutor)) {
           const row = (await tx.query<{ payload: unknown }>("SELECT payload FROM control_nodes WHERE tenant_id=$1 AND id=$2",
             [this.scope.tenantId, route.nodeId])).rows[0];
@@ -1057,6 +1058,11 @@ export class TaskAssignmentCoordinator {
         if (prior.lease.nodeId !== nodeId) conflict();
         return { receipt: this.receipt(job, prior.attempt, prior.lease), replayed: true };
       }
+      // Fleet telemetry can select capacity, but it can never turn an
+      // unprepared local process into an admitted worker.  The planner owns
+      // the immutable installation policy and this check occurs before a new
+      // lease is created; an already-recorded lease remains recoverable.
+      this.planner.assertPlanAssignable(plan);
       const route = this.routes.find(route => route.nodeId === nodeId);
       if (!route || project.lifecycle !== "active" || project.origin !== "ordinary" || job.state !== "proposed" || job.version !== 0
         || job.authority.allowedExecutor !== route.executorId || job.requiredCapability !== route.capabilityProbeId

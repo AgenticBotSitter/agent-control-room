@@ -42,9 +42,20 @@ test("a Marvin Hermes 0.21 template creates a pinned text-review plan, not an ol
   tooLongAuthority.digest = computeAuthorityDigest(tooLongAuthority);
   assert.throws(() => nativeTaskTemplateSchema.parse({ ...template, authority: tooLongAuthority }), /unsupported native task template/);
   const planner = new TaskExecutionPlanner(f.db, f.scope, { template, integrityKey: new Uint8Array(32).fill(91),
-    reviewIntegrityKey: f.reviewKey, checkpoints: f.checkpoints }, () => instant + 7000);
+    reviewIntegrityKey: f.reviewKey, checkpoints: f.checkpoints,
+    localAdapterAdmission: { enabledAdapters: [HERMES_021_MACOS_LOCAL_ADAPTER_V1] } }, () => instant + 7000);
   const source = await f.tasks.propose(f.identity, binding.projectId, taskDraft, "marvin-021-plan-source");
+  const notInstalled = new TaskExecutionPlanner(f.db, f.scope, { template, integrityKey: new Uint8Array(32).fill(91),
+    reviewIntegrityKey: f.reviewKey, checkpoints: f.checkpoints,
+    localAdapterAdmission: { enabledAdapters: [] } }, () => instant + 7000);
+  assert.equal(notInstalled.supportsProject(binding.projectId), false,
+    "a project with no admitted local worker is not advertised as configured");
+  assert.deepEqual(notInstalled.templatesForProject(binding.projectId), [],
+    "a local Hermes template is not offered until the installation-owned gate admits it");
+  await assert.rejects(() => notInstalled.plan(f.identity, binding.projectId, source.receipt.jobId, sha256Digest(taskDraft)), /conflict/,
+    "a direct browser template ID cannot bypass local adapter admission");
   const planned = await planner.plan(f.identity, binding.projectId, source.receipt.jobId, sha256Digest(taskDraft));
+  assert.equal(planner.supportsProject(binding.projectId), true);
   const saved = await planner.read(planned.receipt.jobId);
   assert.ok(saved && saved.schema === "control-room.task-execution-plan/v7");
   if (!saved || saved.schema !== "control-room.task-execution-plan/v7") throw new Error("missing Hermes 0.21 plan");
@@ -77,6 +88,12 @@ test("a Marvin Hermes 0.21 template creates a pinned text-review plan, not an ol
       probeVersion: "1.0.0", outcome: "pass", reasonCode: "reported_only" } };
   await signals.ingestAuthenticated(telemetry, at(6000), binding);
   await signals.ingestAuthenticated(capability, at(6000), binding);
+  const blockedAssignment = new TaskAssignmentCoordinator(f.db, f.scope, notInstalled, [route], () => instant + 8000);
+  assert.deepEqual((await blockedAssignment.options(f.identity, binding.projectId, planned.receipt.jobId)).candidates, [],
+    "the owner is not offered an uninstalled local runner that the server will refuse");
+  await assert.rejects(() => blockedAssignment.assign(f.identity, binding.projectId, planned.receipt.jobId,
+    binding.nodeId, planned.receipt.inputDigest), /conflict/,
+  "reported fleet capability cannot lease a local runner that the installation has not admitted");
   const assignments = new TaskAssignmentCoordinator(f.db, f.scope, planner, [route], () => instant + 8000);
   const assignmentOptions = await assignments.options(f.identity, binding.projectId, planned.receipt.jobId);
   assert.deepEqual(assignmentOptions.candidates, [{ nodeId: binding.nodeId, label: "Synthetic node", platform: "linux",

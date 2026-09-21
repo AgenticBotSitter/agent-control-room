@@ -67,6 +67,35 @@ export const nativeTaskTemplateSchema = z.object({ id: localId, adapter: z.enum(
   catch { context.addIssue({ code: "custom", message: "unsupported native destination" }); }
 });
 export type NativeTaskTemplate = z.infer<typeof nativeTaskTemplateSchema>;
+/**
+ * Local adapters require installation-specific proof in addition to a normal
+ * task template.  This is deliberately server configuration, never a fleet
+ * signal, browser value, or worker claim.  It applies only to the adapters
+ * that represent a process on this computer; the existing native Hermes
+ * adapter remains available for its separately-qualified route.
+ */
+export const locallyAdmittedTaskAdapterSchema = z.enum([
+  HERMES_021_MACOS_LOCAL_ADAPTER_V1,
+  CODEX_APP_SERVER_ADAPTER,
+  CLAUDE_CODE_LOCAL_ADAPTER_V1,
+]);
+export type LocallyAdmittedTaskAdapter = z.infer<typeof locallyAdmittedTaskAdapterSchema>;
+export const localTaskAdapterAdmissionSchema = z.object({
+  enabledAdapters: z.array(locallyAdmittedTaskAdapterSchema).max(3),
+}).strict().superRefine((value, context) => {
+  if (new Set(value.enabledAdapters).size !== value.enabledAdapters.length)
+    context.addIssue({ code: "custom", message: "local adapters ambiguous" });
+});
+export type LocalTaskAdapterAdmission = z.infer<typeof localTaskAdapterAdmissionSchema>;
+
+function captureLocalTaskAdapterAdmission(value: LocalTaskAdapterAdmission | undefined) {
+  if (value === undefined) return undefined;
+  const parsed = localTaskAdapterAdmissionSchema.parse(value);
+  return Object.freeze({ enabledAdapters: Object.freeze([...parsed.enabledAdapters]) });
+}
+function requiresLocalAdmission(adapter: NativeTaskTemplate["adapter"]): adapter is LocallyAdmittedTaskAdapter {
+  return locallyAdmittedTaskAdapterSchema.safeParse(adapter).success;
+}
 /** Explicit server configuration only. No fallback template or project-ID substitution. */
 export function captureNativeTaskTemplates(config: { template: NativeTaskTemplate; additionalTemplates?: readonly NativeTaskTemplate[] }) {
   const template = nativeTaskTemplateSchema.parse(config.template);
@@ -197,7 +226,7 @@ export class TaskExecutionPlanner {
   private readonly revisionSource?: NativeResultSubmissionService | TaskResultInspectionSourceV1;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     config: { template: NativeTaskTemplate; additionalTemplates?: readonly NativeTaskTemplate[]; integrityKey: Uint8Array; reviewIntegrityKey: Uint8Array;
-      checkpoints: AwaitableRollbackCheckpointStoreV1; ideaIntegrityKey?: Uint8Array }, private readonly clock: () => number = Date.now,
+      checkpoints: AwaitableRollbackCheckpointStoreV1; ideaIntegrityKey?: Uint8Array; localAdapterAdmission?: LocalTaskAdapterAdmission }, private readonly clock: () => number = Date.now,
     revisionResults?: ConstructorParameters<typeof NativeResultSubmissionService>[1], revisionSource?: TaskResultInspectionSourceV1) {
     const captured = captureNativeTaskTemplates(config);
     const values = [captured.template, ...(captured.additionalTemplates ?? [])];
@@ -209,12 +238,37 @@ export class TaskExecutionPlanner {
     this.key = Uint8Array.from(config.integrityKey); this.reviewKey = Uint8Array.from(config.reviewIntegrityKey);
     this.checkpoints = { read: config.checkpoints.read.bind(config.checkpoints),
       initialize: fail, advance: fail };
+    this.localAdapterAdmission = captureLocalTaskAdapterAdmission(config.localAdapterAdmission);
     this.projects = new WebProjectService(db, scope, clock, config.ideaIntegrityKey);
     if (revisionResults) {
       if (revisionResults.integrityKey.length !== this.reviewKey.length || !timingSafeEqual(revisionResults.integrityKey, this.reviewKey)) fail();
       this.revisionSource = new NativeResultSubmissionService(db, { ...revisionResults, checkpoints: this.checkpoints });
     }
     if (revisionSource) this.revisionSource = revisionSource;
+  }
+  private readonly localAdapterAdmission?: Readonly<{ enabledAdapters: readonly LocallyAdmittedTaskAdapter[] }>;
+  private canPrepare(template: NativeTaskTemplate) {
+    return !requiresLocalAdmission(template.adapter) || this.localAdapterAdmission === undefined
+      || this.localAdapterAdmission.enabledAdapters.includes(template.adapter);
+  }
+  /** New work only. Historical receipts remain readable for recovery and audit. */
+  private requirePrepared(template: NativeTaskTemplate) {
+    if (!this.canPrepare(template)) throw new WebAccessError("conflict");
+  }
+  /** Read-only availability check. It exposes no installation details. */
+  isPlanAssignable(plan: Plan) {
+    const adapter = plan.schema === "control-room.task-execution-plan/v3" || plan.schema === "control-room.task-execution-plan/v4"
+      ? CODEX_APP_SERVER_ADAPTER : plan.schema === "control-room.task-execution-plan/v5"
+        || plan.schema === "control-room.task-execution-plan/v6" || plan.schema === "control-room.task-execution-plan/v7"
+        || plan.schema === "control-room.task-execution-plan/v8" ? HERMES_021_MACOS_LOCAL_ADAPTER_V1
+          : plan.schema === "control-room.task-execution-plan/v9" || plan.schema === "control-room.task-execution-plan/v10"
+            ? CLAUDE_CODE_LOCAL_ADAPTER_V1 : HERMES_NATIVE_ADAPTER;
+    return !requiresLocalAdmission(adapter) || this.localAdapterAdmission === undefined
+      || this.localAdapterAdmission.enabledAdapters.includes(adapter);
+  }
+  /** Used by assignment after exact-lease replay is resolved. It is not exposed to the browser. */
+  assertPlanAssignable(plan: Plan) {
+    if (!this.isPlanAssignable(plan)) throw new WebAccessError("conflict");
   }
   private async inspectRevision(tx: DatabaseSession, tenantId: string, runId: string) {
     const context = await this.revisionSource!.inspectSubmitted(tx, tenantId, runId);
@@ -241,11 +295,14 @@ export class TaskExecutionPlanner {
       supportsProject: this.supportsProject.bind(this), templatesForProject: this.templatesForProject.bind(this),
       readSaved: this.readSaved.bind(this), readPreparedWorker: this.readPreparedWorker.bind(this) });
   }
-  supportsProject(projectId: string) { return this.projectTemplates.has(projectId); }
+  supportsProject(projectId: string) {
+    return (this.projectTemplates.get(projectId) ?? []).some(template => this.canPrepare(template));
+  }
   /** Safe server-owned choices only. IDs identify reviewed templates, not a host, login or executable. */
   templatesForProject(projectId: string): readonly TaskPlanningTemplateChoice[] {
     localId.parse(projectId);
-    return Object.freeze((this.projectTemplates.get(projectId) ?? []).map(value => Object.freeze({ id: value.id, adapter: value.adapter })));
+    return Object.freeze((this.projectTemplates.get(projectId) ?? []).filter(value => this.canPrepare(value))
+      .map(value => Object.freeze({ id: value.id, adapter: value.adapter })));
   }
   private selectTemplate(projectId: string, templateId?: string) {
     const candidates = this.projectTemplates.get(projectId) ?? [];
@@ -364,6 +421,7 @@ export class TaskExecutionPlanner {
         await this.checkedJob(tx, plan);
         return { receipt: this.receipt(plan), replayed: true };
       }
+      this.requirePrepared(template);
       if (project.lifecycle !== "active" || template.authority.projectId !== projectId)
         throw new WebAccessError("conflict");
       // Identity/source locks may have waited. Sample current time here and again at commit,
@@ -442,6 +500,7 @@ export class TaskExecutionPlanner {
       await this.checkedJob(tx, plan); await assertCurrent();
       return { receipt: this.receipt(plan), replayed: true };
     }
+    this.requirePrepared(template);
     const suffix = sha256Digest({ tenantId: this.scope.tenantId, sourceJobId }).slice(7);
     const base = { contractVersion: DOMAIN_CONTRACT_VERSION, tenantId: this.scope.tenantId, version: 0,
       createdAt: plannedAt, updatedAt: plannedAt };
@@ -574,6 +633,7 @@ export class TaskExecutionPlanner {
           || plan.templateDigest !== templateDigest || plan.plannedBy !== actor.id) throw new WebAccessError("conflict");
         await this.checkedJob(tx, plan); current(); return { receipt: this.revisionReceipt(plan), replayed: true };
       }
+      this.requirePrepared(template);
       if (project.lifecycle !== "active" || context.snapshot.status !== "changes_requested"
         || revision.revisionNumber > context.profile.maximumRevisionRounds || !["leased", "running"].includes(context.job.state)
         || template.authority.projectId !== projectId || template.acceptanceProfileId !== context.profile.id

@@ -8,7 +8,7 @@ import { validatePrivateStartupConfiguration, type PrivateStartupConfiguration }
 import { installPrivateApplication } from "./private-process";
 import { createPrivateTaskApplication } from "./private-task-application";
 import { createProjectCoordinationCanonicalStoreAdapterV1 } from "./project-coordination-http";
-import { captureNativeTaskTemplates } from "./task-execution-planner";
+import { captureNativeTaskTemplates, localTaskAdapterAdmissionSchema } from "./task-execution-planner";
 import { validateTaskAssignmentRoutes, validateNativeApprovalEnrollments, type CodexPermitConfiguration } from "./task-assignment-coordinator";
 import type { TaskCoordinatorConfiguration, TaskCoordinatorDatabase } from "./task-coordinator-lifecycle";
 import { captureTaskQualityConfiguration, validateTaskQualityKeys } from "./task-quality-coordinator";
@@ -109,7 +109,8 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
     const denied = (): never => { throw new Error("private_task_checkpoint_write_denied"); };
     const planning = { ...templates, integrityKey: key(p.integrityKey), reviewIntegrityKey: key(p.reviewIntegrityKey),
       checkpoints: Object.freeze({ read, initialize: denied, advance: denied }),
-      ...(p.ideaIntegrityKey ? { ideaIntegrityKey: key(p.ideaIntegrityKey) } : {}) };
+      ...(p.ideaIntegrityKey ? { ideaIntegrityKey: key(p.ideaIntegrityKey) } : {}),
+      ...(p.localAdapterAdmission ? { localAdapterAdmission: localTaskAdapterAdmissionSchema.parse(p.localAdapterAdmission) } : {}) };
     const routes = validateTaskAssignmentRoutes(input.coordinator.routes), a = input.coordinator.approvals;
     if (a && (typeof a.store?.acceptInSession !== "function" || typeof a.store?.readInSession !== "function")) throw new Error();
     const approvals = a ? { enrollments: validateNativeApprovalEnrollments(a.enrollments, web.tenantId, routes), store: a.store } : undefined;

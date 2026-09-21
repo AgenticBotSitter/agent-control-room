@@ -19,6 +19,18 @@ expected text-only response. The sanitized proof is not copied into this
 repository. Codex and Claude Code use the same lifecycle but remain visibly
 unavailable until their separate host qualifications are complete.
 
+The normal private task application also now reads the saved worker-capacity
+snapshot through a narrow authenticated server endpoint, without exposing a
+database handle or starting workers. A separate installation-owned admission
+gate prevents browser requests, status signals or reported worker capability
+from making local Hermes, Codex or Claude selectable, plannable or leaseable.
+The protected operator assembly can admit only its captured local Hermes route
+after the existing readiness proof; Codex and Claude remain unavailable until
+their distinct proof exists. Historical receipts and an already-recorded lease
+remain readable for recovery. Focused adapter tests, private-startup tests,
+VPS compilation and TypeScript passed. This is source and disposable-test
+evidence only: it enables no worker, database, listener or persistent service.
+
 ## What source evidence proves today
 
 - A local Hermes delivery is bound to one intended worker, one exact task, one

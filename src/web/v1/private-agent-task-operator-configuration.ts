@@ -19,6 +19,7 @@ import { summarizeInstallationReadinessV1, verifyInstallationReadinessV1,
   type InstallationReadinessV1 } from "../../harness/v1/installation-readiness";
 import { localBackupRestoreEvidenceDigestForInstallationPlanV1 } from "../../harness/v1/local-backup-restore-readiness";
 import { summarizeLocalSupervisorReadinessV1 } from "../../harness/v1/local-supervisor-readiness";
+import { HERMES_021_MACOS_LOCAL_ADAPTER_V1 } from "../../harness/hermes-021-v1/macos-local-worker";
 
 /** Pure operator-side assembly. This module performs no environment, filesystem,
  * network, listener, credential-store or database access: it only shapes
@@ -519,6 +520,11 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
       reviewIntegrityKey: copyKey(planning.reviewIntegrityKey, "planning_review_key_invalid"),
       ...(planning.ideaIntegrityKey === undefined ? {} : { ideaIntegrityKey: copyKey(planning.ideaIntegrityKey, "planning_idea_key_invalid") }),
       checkpoints: planning.checkpoints,
+      // This installation composition is the local admission authority.  It
+      // admits only a runner captured through the protected Hermes readiness
+      // gate; configured fleet signals, browser data, Codex and Claude do not
+      // make a Mac process selectable or leaseable.
+      localAdapterAdmission: { enabledAdapters: capturedHermes ? [HERMES_021_MACOS_LOCAL_ADAPTER_V1] : [] },
     },
     routes: deepDetach([...t.routes]),
     approvals: {

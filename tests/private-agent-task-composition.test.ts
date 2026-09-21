@@ -6,6 +6,7 @@ import test from "node:test";
 import { CODEX_APP_SERVER_CAPABILITY, CODEX_APP_SERVER_ADAPTER,
   CODEX_DELIVERY_FEATURE } from "../src/harness/codex-v1/delivery-contract";
 import { CODEX_RESULT_RETURN_FEATURE_V1 } from "../src/harness/codex-v1/result-return";
+import { HERMES_021_MACOS_LOCAL_ADAPTER_V1 } from "../src/harness/hermes-021-v1/macos-local-worker";
 import { createCodexPhysicalQualificationReceiptBodyV1 } from "../src/harness/codex-v1/result-publication-contract";
 import { CODEX_APP_SERVER_READ_CONTRACT, CODEX_APP_SERVER_RESULT_CONTRACT,
   CODEX_APP_SERVER_START_CONTRACT } from "../src/harness/codex-v1/schema-contract";
@@ -923,6 +924,9 @@ test("operator assembly can carry an installation-owned local Hermes executor wi
   const result = assemblePrivateAgentTaskOperatorConfiguration(settings, trusted);
   assert.equal(result.configuration.coordinator.sessions, undefined);
   assert.equal(typeof result.configuration.coordinator.hermes021Local?.deliver, "function");
+  assert.deepEqual(result.configuration.coordinator.planning.localAdapterAdmission, {
+    enabledAdapters: [HERMES_021_MACOS_LOCAL_ADAPTER_V1],
+  }, "only the separately-proved local Hermes route is admitted by operator assembly");
   assert.equal(result.configuration.web.codexMacosCustodyReadiness?.readinessDigest, codexCustody.readinessDigest);
   assert.equal(Object.isFrozen(result.configuration.web.codexMacosCustodyReadiness), true);
   assert.equal(result.configuration.web.localSupervisorReadiness?.readinessDigest, supervisor.readinessDigest);
