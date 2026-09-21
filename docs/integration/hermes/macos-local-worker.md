@@ -69,6 +69,46 @@ and a hashed session reference. It deletes its own temporary directory after
 the check. It does not install anything, change Hermes configuration, create a
 listener, or start a persistent service.
 
+## Check the actual Control Room runner separately
+
+The first check proves that the installed Hermes program can return one
+text-only answer. Before Control Room can ever use its own local runner, the
+owner must also check the exact fixed-argument runner bridge. These are two
+different checks on purpose: a normal Hermes command can work while the more
+restricted Control Room runner is misconfigured.
+
+First run the no-agent preflight. It only checks that the owner-selected
+program and working folder are usable; it does not contact Hermes or spend a
+model call.
+
+```sh
+npx --yes pnpm@11.19.0 run preflight:hermes:local-runner -- --owner-attended \
+  --executable-command hermes --profile <private-profile> \
+  --model <private-model> --provider <private-provider> --workdir "$PWD"
+```
+
+When it reports `"ready": true`, the owner may run one separate, text-only
+qualification through that same bridge:
+
+```sh
+npx --yes pnpm@11.19.0 run qualify:hermes:local-runner -- --owner-attended \
+  --executable-command hermes --profile <private-profile> \
+  --model <private-model> --provider <private-provider> --workdir "$PWD"
+```
+
+A successful report says `"qualified": true` and `"failureReason": "none"`.
+It contains only safe totals and a hashed session reference. It does **not**
+save the profile, model, provider, executable location, working folder, or
+Hermes output in Control Room. If `pnpm` is not installed globally, the
+`npx --yes pnpm@11.19.0` form above is the supported replacement; do not
+install a global package merely for this check.
+
+Even a pass does not start Marvin, create a service, or authorize a real
+project task. It only supplies one of the required installation proofs. The
+separate text-only Hermes check, protected result storage with a successful
+backup-and-restore proof, and an explicit owner enablement decision are still
+required before the local queue can deliver a real task.
+
 Once that evidence is accepted, the normal task dispatcher can use the local
 port for the same worker lifecycle used by remote Hermes workers. Source now
 includes a dispatch-preparation step that reads the existing assigned task,
