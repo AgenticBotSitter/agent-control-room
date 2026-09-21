@@ -16,7 +16,8 @@ export class WebIdeaService {
   private readonly key?: Uint8Array;
   constructor(db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     integrityKey?: Uint8Array, clock: () => number = Date.now, private readonly creationConfigured = false, private readonly stopConfigured = false,
-    private readonly decisionConfigured = false, private readonly startConfigured = false, private readonly synthesisConfigured = false) {
+    private readonly decisionConfigured = false, private readonly startConfigured = false, private readonly synthesisConfigured = false,
+    private readonly resultProjectionConfigured = false) {
     this.authority = new WebSessionAuthority(db, scope, clock, "idea_lab_session");
     if (integrityKey !== undefined) {
       if (!(integrityKey instanceof Uint8Array) || integrityKey.length !== 32) throw new Error("idea_key_invalid");
@@ -58,7 +59,11 @@ export class WebIdeaService {
           || link.projectId !== projectId || !session.participants.some(participant => participant.participantId === link.participantId)
           || link.round > session.maxRounds)) throw new Error("idea_snapshot_changed");
         const preparedRounds = [...new Set(canonicalLinks.map(link => link.round))].sort((a, b) => a - b);
-        return { projectId, taskCount: canonicalLinks.length, preparedRounds };
+        return { projectId, taskCount: canonicalLinks.length, preparedRounds, tasks: canonicalLinks.map(link => ({
+          taskKey: link.taskKey, participantId: link.participantId, round: link.round,
+          contributionRecorded: contributions.some(contribution => contribution.participantId === link.participantId && contribution.round === link.round
+            && contribution.sourceMode === "canonical_task_result"),
+        })) };
       })() : null;
       // READ COMMITTED may observe new records between queries. Validate this exact
       // returned tuple, not only each getter's independently reread dependencies.
@@ -80,6 +85,8 @@ export class WebIdeaService {
         confidencePercent: contribution.confidencePercent, sourceMode: contribution.sourceMode,
         evidenceState: contribution.sourceMode === "canonical_task_result" ? "reviewed_control_room_task" as const : "none" as const,
         providerContacted: contribution.providerContacted, liveBotContactAuthorized: contribution.liveBotContactAuthorized }));
+      const canProjectResults = this.resultProjectionConfigured && !!canonicalTasks && !run && !synthesis && !decision
+        && actor.can("idea_lab.panel_start", undefined, true);
       return { session, contributions: presentationContributions, synthesis: synthesis ?? null, decision: decision ?? null, canDecide,
         canSynthesize: this.synthesisConfigured && !!run && run.state === "completed" && !synthesis && !decision
           && contributions.length === session.maxMessages && actor.can("idea_lab.synthesize", undefined, true),
@@ -93,7 +100,8 @@ export class WebIdeaService {
           providerContacted: run.providerContacted, updatedAt: run.updatedAt, retryPermitted: run.retryPermitted,
           cancellationRequestedAt: run.cancellationRequestedAt ?? null,
           attempts: run.attempts.map(a => ({ participantId: a.participantId, round: a.round, state: a.state })) } : null,
-        execution: this.startConfigured ? "authorization_required" as const : "not_configured" as const, canonicalTasks, observedAt: actor.now };
+        execution: this.startConfigured ? "authorization_required" as const : "not_configured" as const,
+        canonicalTasks, canProjectResults, observedAt: actor.now };
     });
   }
 }

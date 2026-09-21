@@ -10,6 +10,7 @@ import { IdeaStopControl } from "./idea-stop-control";
 import { IdeaDecisionForm } from "./idea-decision-form";
 import { IdeaStartControl } from "./idea-start-control";
 import { IdeaSynthesisControl } from "./idea-synthesis-control";
+import { IdeaResultProjectionControl } from "./idea-result-projection-control";
 
 export function IdeaDiscussion({ detail, refresh, pendingChanged }: { detail: IdeaDetail; refresh?: () => void; pendingChanged?: (held: boolean) => void }) {
   const { session, contributions, synthesis, decision, run, canonicalTasks } = detail;
@@ -44,6 +45,15 @@ export function IdeaDiscussion({ detail, refresh, pendingChanged }: { detail: Id
             <p>Suggested experiment: {contribution.suggestedExperiment}</p><p>{contribution.sourceMode === "injected_only" ? "Test confidence" : "Bot-reported confidence"}: {contribution.confidencePercent}%</p></>
             : <p>No contribution saved for this round.</p>}</article>;
       })}</section>)}
+    {canonicalTasks ? <section className="private-panel" aria-label="Reviewed task results"><h2>Reviewed task results</h2>
+      <p>Each participant result must first pass the ordinary Control Room review and verification path. Adding it here never starts a worker or accepts a review.</p>
+      {canonicalTasks.tasks.map(task => {
+        const participant = session.participants.find(item => item.participantId === task.participantId);
+        return <article key={task.taskKey}><h3>Round {task.round} · {participant?.displayName ?? "Prepared participant"}</h3>
+          {task.contributionRecorded ? <p>Reviewed result added to this discussion.</p>
+            : detail.canProjectResults ? <IdeaResultProjectionControl sessionId={session.sessionId} taskKey={task.taskKey} refresh={refresh} />
+            : <p>Waiting for a reviewed task result. Result projection is not configured for this installation.</p>}</article>;
+      })}</section> : null}
     <section className="private-panel"><h2>Discussion recap</h2>{synthesis ? <><p style={{ whiteSpace: "pre-wrap" }}>{synthesis.executiveSummary}</p>
       <p>Advisory score: {synthesis.overallScore}/100 — not a prediction of business success.</p>
       <p>Proposed experiment: {synthesis.nextExperiment}</p></> : detail.canSynthesize && run

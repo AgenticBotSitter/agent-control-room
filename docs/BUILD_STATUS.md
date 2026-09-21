@@ -160,9 +160,13 @@ database, browser login, backup, persistent service or remote machine.
    private owner session check: the browser names only the saved discussion
    and task key, while the separately verified result role re-reads all result,
    review, and verification facts. It cannot launch an agent, accept a review,
-   or accept browser-supplied evidence. The remaining Idea Lab source work is
-   to expose safe per-task readiness in the page and retire the direct provider
-   start composition after the ordinary task route proves the full journey.
+   or accept browser-supplied evidence. The Idea Lab page now lists each saved
+   participant task as either waiting for a reviewed result or already added,
+   and offers the owner a safe request to re-check and add only an eligible
+   result. The remaining Idea Lab source work is to create later canonical
+   rounds and synthesis from the same reviewed-task contributions, then retire
+   the direct provider start composition after the ordinary task route proves
+   the full journey.
 
 ## Owner-operated gates before any real local worker is enabled
 

@@ -30,7 +30,12 @@ test("an owner prepares first-round Idea Lab tasks without contacting a provider
   assert.equal((await f.tasks.list(f.identity, f.project.projectId)).tasks.length, session.participants.length);
   const detail = await new WebIdeaService(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, key,
     () => now, true, false, false, true, false).detail(f.identity, session.sessionId);
-  assert.deepEqual(detail.canonicalTasks, { projectId: f.project.projectId, taskCount: session.participants.length, preparedRounds: [1] });
+  assert.equal(detail.canonicalTasks?.projectId, f.project.projectId);
+  assert.equal(detail.canonicalTasks?.taskCount, session.participants.length);
+  assert.deepEqual(detail.canonicalTasks?.preparedRounds, [1]);
+  assert.deepEqual(detail.canonicalTasks?.tasks.map(task => task.participantId).sort(),
+    session.participants.map(participant => participant.participantId).sort());
+  assert.equal(detail.canonicalTasks?.tasks.every(task => task.round === 1 && task.taskKey.startsWith("idea-task:") && !task.contributionRecorded), true);
   assert.equal(detail.canStart, false);
   await assert.rejects(operation.propose(f.identity, session.sessionId,
     { sessionDigest: session.sessionDigest, projectId: "project:other", round: 1 }), WebAccessError);

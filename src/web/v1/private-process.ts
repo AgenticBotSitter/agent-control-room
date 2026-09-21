@@ -216,7 +216,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     options.herdrObservations ?? [], clock, options.ideaProjects?.integrityKey);
   const ideas = new WebIdeaService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
     options.ideaProjects?.integrityKey, clock, !!ideaCreation, !!ideaCreation?.stop, !!ideaCreation?.decide,
-    !!ideaRoundProposal || !!ideaCreation?.start, !!ideaCreation?.synthesize);
+    !!ideaRoundProposal || !!ideaCreation?.start, !!ideaCreation?.synthesize, !!ideaResultProjection);
   const productConfigurationAuthority = new WebSessionAuthority(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock, "workspace_configuration");
   // The browser is authenticated against the private-web database. The actual
