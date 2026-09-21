@@ -84,6 +84,22 @@ test("setup summary distinguishes completed Hermes proof from an enabled worker"
   assert.doesNotMatch(html, /<button|<form|<input/);
 });
 
+test("a generic local backup pass never makes the overall setup page claim proof completion", () => {
+  const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
+    currentRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }],
+    requestedRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }] });
+  const readiness = createInstallationReadinessV1({ planDigest: plan.planDigest, proofs: [
+    { proof: "backup_restore", state: "passed", evidenceDigest: sha256Digest("generic-backup") },
+    { proof: "local_owner_qualification", state: "passed", evidenceDigest: sha256Digest("qualification") },
+    { proof: "local_runner_bridge", state: "passed", evidenceDigest: sha256Digest("bridge") },
+  ] });
+  const html = renderToStaticMarkup(createElement(InstallationTopologySummary, { plan, readiness }));
+  assert.match(html, /Setup is still in progress/);
+  assert.match(html, /Next: a verified backup-and-restore check/);
+  assert.match(html, /Needs verification:.*backup-and-restore check/);
+  assert.doesNotMatch(html, /Proofs are complete; owner enablement is still required/);
+});
+
 test("setup summary shows recorded Codex safety prerequisites without calling Codex enabled", () => {
   const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
     currentRoutes: [{ kind: "local", workerId: "worker:codex", adapterId: "codex-app-server/v1", adapterRevision: "00570550" }],

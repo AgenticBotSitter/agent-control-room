@@ -74,6 +74,12 @@ export function InstallationTopologySummary({ plan, readiness, codexMacosCustody
   </section>;
   const summary = summarizeInstallationReadinessV1(plan, readiness);
   const guidance = guideInstallationReadinessV1(plan, readiness);
+  // A generic passed label is not sufficient for a local installation. The
+  // protected process verifies the actual disposable restore record separately;
+  // keep the overall wording aligned with that stronger gate.
+  const backupEvidencePending = plan.mode === "this_computer"
+    && summary.state === "ready_for_owner_enablement" && localBackupRestoreVerified !== true;
+  const overallState = backupEvidencePending ? "not_ready" : summary.state;
   const localCapabilities = summarizeLocalHarnessCapabilitiesV1(plan, readiness, codexMacosCustodyReadiness,
     localBackupRestoreVerified === true);
   const mode = plan.mode === "this_computer" ? "This computer" : "Several computers";
@@ -94,8 +100,13 @@ export function InstallationTopologySummary({ plan, readiness, codexMacosCustody
       <ul className="private-local-agent-list">{localCapabilities.map(agent => <LocalAgentCapabilityCard key={agent.id} agent={agent} />)}</ul>
     </section>}
     <h3>Setup proof status</h3>
-    <p><strong>{overallLabels[summary.state]}.</strong>{summary.nextProof ? ` Next: ${proofLabels[summary.nextProof]}.` : ""}</p>
-    <ul>{summary.proofs.map(item => <li key={item.proof}><strong>{stateLabels[item.state]}:</strong> {proofLabels[item.proof]}</li>)}</ul>
+    <p><strong>{overallLabels[overallState]}.</strong>{backupEvidencePending
+      ? " Next: a verified backup-and-restore check."
+      : summary.nextProof ? ` Next: ${proofLabels[summary.nextProof]}.` : ""}</p>
+    <ul>{summary.proofs.map(item => {
+      const backupNeedsVerification = backupEvidencePending && item.proof === "backup_restore";
+      return <li key={item.proof}><strong>{backupNeedsVerification ? "Needs verification" : stateLabels[item.state]}:</strong> {proofLabels[item.proof]}</li>;
+    })}</ul>
     <section className="private-note" aria-labelledby="installation-next-title">
       <h3 id="installation-next-title">What to do next</h3>
       {guidance.map(step => <div key={`${step.state}:${step.title}`}><p><strong>{step.title}.</strong> {step.detail}</p></div>)}
