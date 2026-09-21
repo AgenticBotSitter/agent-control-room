@@ -31,7 +31,7 @@ remain readable for recovery. Focused adapter tests, private-startup tests,
 VPS compilation and TypeScript passed. This is source and disposable-test
 evidence only: it enables no worker, database, listener or persistent service.
 
-The installable-product track now also has ten accepted source foundations:
+The installable-product track now also has eleven accepted source foundations:
 an allowlisted reproducible release archive with a manifest and checksum; a
 standalone extracted-release preflight that needs no developer dependency;
 crash-safe, concurrency-tested placement of a verified release into an inert
@@ -39,6 +39,8 @@ version directory without activating it;
 isolated, production-only dependency preparation that is bound to the exact
 verified release and publishes atomically without running package scripts or
 starting the application;
+release packaging that manifest-binds and ships that dependency command and
+runtime, with an extracted-release proof through the public command boundary;
 an authenticated, redacted setup-progress view that labels coordination state
 as saved progress rather than evidence and gives the browser no installation
 or database capability;
