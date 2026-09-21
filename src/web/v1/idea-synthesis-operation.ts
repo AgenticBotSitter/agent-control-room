@@ -69,7 +69,7 @@ export class WebIdeaSynthesisOperation {
               || evidence.taskPlanDigest !== link.taskPlanDigest || evidence.taskInputDigest !== link.taskInputDigest
               || evidence.projectId !== link.projectId || evidence.jobId !== link.jobId;
           })) throw new WebAccessError("conflict");
-      } else if (!run || run.runId !== input.data.runId || run.state !== "completed" || run.messagesUsed !== session.maxMessages
+      } else if (!("runId" in input.data) || !run || run.runId !== input.data.runId || run.state !== "completed" || run.messagesUsed !== session.maxMessages
         || contributions.length !== session.maxMessages || run.attempts.length !== session.maxMessages
         || run.attempts.some(a => a.state !== "completed"
           || !session.participants.some(p => p.participantId === a.participantId && p.identityDigest === a.participantIdentityDigest)
