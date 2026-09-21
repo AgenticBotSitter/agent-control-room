@@ -163,8 +163,10 @@ evidence only: it enables no worker, database, listener or persistent service.
   pre-approved audit plan—but only when its process-private workspace manager
   still owns the exact active worktree lease and the stored delivery receipt
   is accepted. The raw plan stays evidence-role-only; no web account can read
-  it. Persisting the later result-bound record and supplying a protected
-  aggregate reader to the Result page remain the next package.
+  it. The later result-bound record is now also persisted only after it
+  independently rereads that protected plan and the authenticated durable
+  result receipt. Supplying a protected aggregate reader to the Result page
+  remains the next package.
 - The local Result page now has a per-result, aggregate-only coding-evidence
   presentation contract. It can say not configured, not applicable,
   unavailable, not authorized, or show only verified file counts, byte counts
