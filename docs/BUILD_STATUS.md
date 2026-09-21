@@ -46,8 +46,10 @@ unavailable until their separate host qualifications are complete.
   no private runner setting or raw version output.
 - Claude Code can save the same bounded text-review task plan as the other
   local harnesses, then decode and prepare one clean terminal result for the
-  existing review path. Planning does not assign, start or enable Claude; it
-  remains a source-only component until the installed process is qualified.
+  existing review path. A mismatched Claude connector profile is now refused
+  before a receipt is saved or an installed process could be acquired.
+  Planning does not assign, start or enable Claude; it remains a source-only
+  component until the installed process is qualified.
 - The Mac Codex path records only two opaque safety prerequisites: suspended
   executable identity and protected private-state custody. Neither record can
   enable or launch Codex.
@@ -56,6 +58,9 @@ unavailable until their separate host qualifications are complete.
   observation. A replay, changed task, expired task or revoked authority never
   asks the host a second time. This is disposable-test evidence, not proof
   that Codex is running locally.
+- A local Codex start is now considered safely recoverable only after its
+  owned one-shot process has closed cleanly. An interrupted or uncertain close
+  remains unrecoverable, rather than becoming a false safe-restart claim.
 - The protected local setup page presents Hermes Agent, Claude Code and Codex
   separately, including what each could do after setup and what blocks it now.
   It never treats a source contract or setup proof as a live agent.
@@ -105,6 +110,9 @@ unavailable until their separate host qualifications are complete.
   wrong-worker refusal, compatibility refusal, and revocation behavior work
   through both local and remote test routes. This is proof of one product,
   not a claim that a second computer is enabled.
+- Latest focused local checks: Hermes (89), Claude (35), Codex (34), and
+  setup-screen (40) checks passed, followed by a full production-style build.
+  No installed harness was started by these checks.
 
 These checks use disposable data. They do not prove a real agent program,
 database, browser login, backup, persistent service or remote machine.
