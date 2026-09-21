@@ -1,4 +1,4 @@
-import type { TaskDetail, TaskDraft, TaskPage, TaskRun } from "../../src/web/v1/task-wire";
+import type { HermesDeliveryRecovery, TaskDetail, TaskDraft, TaskPage, TaskRun } from "../../src/web/v1/task-wire";
 import { ConfiguredTimestamp } from "./configured-timestamp";
 
 export const taskStateLabel: Record<TaskPage["tasks"][number]["state"], string> = {
@@ -118,12 +118,41 @@ function RunPanel({ run }: { run: TaskRun }) {
   </section>;
 }
 
+export function HermesDeliveryRecoveryPanel({ recovery }: { recovery: HermesDeliveryRecovery }) {
+  if (recovery.source === "not_applicable") return null;
+  if (recovery.source === "not_configured") return <section className="private-panel" aria-label="Local Hermes recovery">
+    <h2>Local Hermes recovery</h2><p>Recovery inspection is not configured for this task. This does not mean that no delivery or result exists.</p>
+  </section>;
+  if (recovery.source === "ambiguous_attempt") return <section className="private-panel private-notice" aria-label="Local Hermes recovery">
+    <h2>Local Hermes recovery needs attention</h2><p>More than one saved attempt exists, so Control Room will not guess which delivery record to inspect.</p>
+  </section>;
+  if (recovery.source === "unavailable") return <section className="private-panel private-notice" aria-label="Local Hermes recovery">
+    <h2>Local Hermes recovery is unavailable</h2><p>Control Room could not safely read the saved delivery record. It has not started, retried, resumed, published, or contacted Hermes.</p>
+  </section>;
+  const labels = { no_authenticated_delivery: "No saved authenticated delivery", delivery_receipt_unresolved: "Delivery receipt saved; terminal result not staged",
+    terminal_result_staged: "Terminal result safely staged" } as const;
+  return <section className="private-panel" aria-label="Local Hermes recovery"><h2>Local Hermes recovery</h2>
+    <p className="private-state">{labels[recovery.status.state]}</p>
+    {recovery.status.state === "terminal_result_staged" && <><p>A bounded terminal record is saved for recovery. Its text and private runner settings are not shown here.</p>
+      {recovery.status.terminal && <dl className="private-task-facts"><div><dt>Saved result size</dt><dd>{recovery.status.terminal.sizeBytes.toLocaleString()} bytes</dd></div>
+        <div><dt>Reported tokens</dt><dd>{recovery.status.terminal.totalTokens.toLocaleString()}</dd></div>
+        <div><dt>Reported duration</dt><dd>{recovery.status.terminal.durationMs.toLocaleString()} ms</dd></div></dl>}</>}
+    {recovery.status.state !== "terminal_result_staged" && <p>This is a saved-delivery check only. It does not prove that Hermes is running or that a result was published.</p>}
+    <p className="private-note">This panel cannot start, retry, resume, publish, or contact Hermes.</p>
+  </section>;
+}
+
 export function TaskDetailPanel({ detail }: { detail: TaskDetail }) {
+  const preparedFor = detail.preparedFor === "hermes" ? "Hermes Agent" : detail.preparedFor === "codex" ? "Codex"
+    : detail.preparedFor === "claude" ? "Claude Code" : detail.preparedFor === "configured_worker" ? "Configured worker" : undefined;
   return <div className="private-task-detail">
     <section className="private-panel"><span className="private-state">{taskStateLabel[detail.task.state]}</span><h2>{detail.task.title}</h2>
       <h3>Requested result</h3><p className="private-summary">{detail.instructions}</p>
       <p className="private-note"><ConfiguredTimestamp value={detail.task.createdAt} prefix="Saved" /> · <ConfiguredTimestamp value={detail.task.updatedAt} prefix="Job record updated" /></p>
       {detail.task.state === "proposed" && <p>This is saved proposed work, not an agent assignment.</p>}</section>
+    {preparedFor && <section className="private-panel" aria-label="Prepared worker"><h2>Prepared worker</h2>
+      <p>This task is prepared for {preparedFor}. Preparation does not assign or start this worker.</p></section>}
+    <HermesDeliveryRecoveryPanel recovery={detail.hermesDeliveryRecovery} />
     <section className="private-panel"><h2>Agent progress</h2>
       <p>{detail.dispatch === "configured"
         ? "Task submission is configured. A recorded submission is not proof that an agent is online or has started."

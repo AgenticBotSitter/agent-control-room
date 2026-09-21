@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test, { after } from "node:test";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
 import { sha256Digest } from "../src/security";
+import { GATEWAY_ASSERTION_PROVIDER_PROFILE_SCHEMA_V1 } from "../src/web/v1/access-verifier";
 import { createPrivateOwnerBootstrapCommand } from "../src/web/v1/private-owner-bootstrap";
 import { afterCommitUncertain, conformanceAudience, conformanceEmail, conformanceIssuer, conformanceNow, conformanceSubject,
   closePrivateOwnerBootstrapConformanceDatabase, privateOwnerBootstrapFixture,
@@ -58,6 +59,22 @@ test("wrong target, assertion, abort, and time regression refuse before inapprop
         assert.equal(f.stats().opens, 0);
     });
   }
+});
+
+test("an explicitly selected generic gateway profile keeps its selected assertion header end to end", async t => {
+  const f = await privateOwnerBootstrapFixture(); t.after(f.close);
+  const gatewayAssertionProfile = {
+    schema: GATEWAY_ASSERTION_PROVIDER_PROFILE_SCHEMA_V1, profileId: "rs256_gateway_assertion" as const,
+    algorithm: "RS256" as const, assertionHeader: "x-owner-gateway-assertion",
+    claimContract: "standard_gateway_subject" as const, subjectClaim: "sub" as const,
+    audienceClaim: "aud" as const, issuerClaim: "iss" as const,
+    mfaPolicy: "gateway_policy_external" as const,
+  };
+  const command = createPrivateOwnerBootstrapCommand({ openDatabase: f.openDatabase(), clock: () => conformanceNow });
+  const output = await command({ configuration: f.configuration, database: f.database, trust: f.trust,
+    assertion: f.assertion, gatewayAssertionProfile });
+  assert.equal(output.ownerCreated, true);
+  assert.deepEqual(await f.counts(), { identities: 1, grants: 1 });
 });
 
 test("uncertain commit and failed cleanup are never success or permission to retry", async t => {

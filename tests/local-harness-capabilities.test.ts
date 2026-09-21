@@ -1,0 +1,139 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { localHarnessCapabilitiesV1, summarizeLocalHarnessCapabilitiesV1 } from "../src/harness/v1/local-harness-capabilities";
+import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
+import { createInstallationReadinessV1 } from "../src/harness/v1/installation-readiness";
+import { sha256Digest } from "../src/security/canonical-digest";
+import { createCodexMacosCustodyReadinessV1 } from "../src/harness/codex-v1/macos-custody-readiness";
+import { createClaudeCodeLocalProcessReadinessV1 } from "../src/harness/claude-code-v1/local-process-readiness";
+import { createLocalSupervisorReadinessV1 } from "../src/harness/v1/local-supervisor-readiness";
+
+test("local harness capabilities are truthful, bounded and installation-safe", () => {
+  assert.deepEqual(localHarnessCapabilitiesV1.map(value => value.id), ["hermes", "claude", "codex"]);
+  const hermes = localHarnessCapabilitiesV1.find(value => value.id === "hermes")!;
+  const claude = localHarnessCapabilitiesV1.find(value => value.id === "claude")!;
+  const codex = localHarnessCapabilitiesV1.find(value => value.id === "codex")!;
+  assert.equal(hermes.state, "setup_required");
+  assert.equal(hermes.operations.submit, "unknown");
+  assert.match(hermes.firstSupportedWork, /plain-text review/);
+  assert.match(hermes.firstSupportedWork, /cannot edit a project yet/);
+  assert.match(hermes.safeNow, /does not send work to Hermes/i);
+  assert.match(hermes.sourceOnly, /source-only evidence/i);
+  assert.equal(hermes.remainingSetupCategory, "Local runner, protected storage and recovery proof");
+  assert.equal(claude.state, "setup_required");
+  assert.equal(claude.operations.submit, "unsupported");
+  assert.match(claude.summary, /one-time receipt/);
+  assert.match(claude.safeNow, /recheck/);
+  assert.match(claude.sourceOnly, /delivery, result and recovery path/);
+  assert.equal(claude.remainingSetupCategory, "Installed-process and permission qualification");
+  assert.equal(codex.state, "not_available");
+  assert.equal(codex.operations.submit, "unsupported");
+  assert.equal(codex.remainingSetupCategory, "macOS process and private-state custody qualification");
+  const rendered = JSON.stringify(localHarnessCapabilitiesV1);
+  assert.doesNotMatch(rendered, /\/Users\/|https?:\/\/|(?:token|password|profile)\s*[=:]/i);
+});
+
+test("local Hermes proof completion remains blocked until persistent service preparation is recorded", () => {
+  const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
+    currentRoutes: [{ kind: "local", workerId: "worker:local-hermes", adapterId: "connector:hermes-021-macos-local-v1", adapterRevision: "00570550" }],
+    requestedRoutes: [{ kind: "local", workerId: "worker:local-hermes", adapterId: "connector:hermes-021-macos-local-v1", adapterRevision: "00570550" }] });
+  const ready = createInstallationReadinessV1({ planDigest: plan.planDigest, proofs: [
+    { proof: "backup_restore", state: "passed", evidenceDigest: sha256Digest("backup") },
+    { proof: "local_owner_qualification", state: "passed", evidenceDigest: sha256Digest("qualification") },
+    { proof: "local_runner_bridge", state: "passed", evidenceDigest: sha256Digest("bridge") },
+  ] });
+  const incomplete = summarizeLocalHarnessCapabilitiesV1(plan, ready, undefined, undefined, true).find(value => value.id === "hermes")!;
+  assert.equal(incomplete.state, "setup_required");
+  assert.match(incomplete.stateLabel, /persistent local service/i);
+  assert.match(incomplete.summary, /not enabled Hermes/i);
+  const supervisor = createLocalSupervisorReadinessV1({ planDigest: plan.planDigest, proofs: [
+    { proof: "private_configuration_custody", state: "passed", evidenceDigest: sha256Digest("custody") },
+    { proof: "restricted_launch_definition", state: "passed", evidenceDigest: sha256Digest("launch") },
+    { proof: "restart_and_drain_procedure", state: "passed", evidenceDigest: sha256Digest("restart") },
+    { proof: "upgrade_and_rollback_procedure", state: "passed", evidenceDigest: sha256Digest("rollback") },
+  ] });
+  const hermes = summarizeLocalHarnessCapabilitiesV1(plan, ready, undefined, undefined, true, supervisor).find(value => value.id === "hermes")!;
+  assert.equal(hermes.state, "owner_enablement_required");
+  assert.match(hermes.stateLabel, /owner enablement/);
+  assert.match(hermes.summary, /still has not started Hermes/);
+  assert.equal(hermes.remainingSetupCategory, "Separate owner enablement decision");
+});
+
+test("a generic passed backup label never substitutes for verified restore evidence", () => {
+  const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
+    currentRoutes: [{ kind: "local", workerId: "worker:local-hermes", adapterId: "connector:hermes-021-macos-local-v1", adapterRevision: "00570550" }],
+    requestedRoutes: [{ kind: "local", workerId: "worker:local-hermes", adapterId: "connector:hermes-021-macos-local-v1", adapterRevision: "00570550" }] });
+  const generic = createInstallationReadinessV1({ planDigest: plan.planDigest, proofs: [
+    { proof: "backup_restore", state: "passed", evidenceDigest: sha256Digest("unbound-backup") },
+    { proof: "local_owner_qualification", state: "passed", evidenceDigest: sha256Digest("qualification") },
+    { proof: "local_runner_bridge", state: "passed", evidenceDigest: sha256Digest("bridge") },
+  ] });
+  const hermes = summarizeLocalHarnessCapabilitiesV1(plan, generic).find(value => value.id === "hermes")!;
+  assert.equal(hermes.state, "setup_required");
+  assert.match(hermes.stateLabel, /backup recovery record needs verification/i);
+  assert.match(hermes.summary, /not enabled Hermes/i);
+});
+
+test("a recorded Hermes runner proof remains visible while other local setup proof is missing", () => {
+  const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
+    currentRoutes: [{ kind: "local", workerId: "worker:local-hermes", adapterId: "connector:hermes-021-macos-local-v1", adapterRevision: "00570550" }],
+    requestedRoutes: [{ kind: "local", workerId: "worker:local-hermes", adapterId: "connector:hermes-021-macos-local-v1", adapterRevision: "00570550" }] });
+  const partial = createInstallationReadinessV1({ planDigest: plan.planDigest, proofs: [
+    { proof: "local_runner_bridge", state: "passed", evidenceDigest: sha256Digest("runner") },
+  ] });
+  const hermes = summarizeLocalHarnessCapabilitiesV1(plan, partial).find(value => value.id === "hermes")!;
+  assert.equal(hermes.state, "setup_required");
+  assert.equal(hermes.stateLabel, "Partial setup proof recorded");
+  assert.match(hermes.summary, /still not enabled or running/i);
+  assert.match(hermes.nextStep, /local agent check/);
+  assert.match(hermes.nextStep, /backup-and-restore check/);
+  assert.doesNotMatch(JSON.stringify(hermes), /sha256:|worker:local-hermes|profile|provider|model/i);
+});
+
+test("macOS Codex custody readiness is plan-bound and never becomes launch authority", () => {
+  const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
+    currentRoutes: [{ kind: "local", workerId: "worker:codex", adapterId: "codex-app-server/v1", adapterRevision: "00570550" }],
+    requestedRoutes: [{ kind: "local", workerId: "worker:codex", adapterId: "codex-app-server/v1", adapterRevision: "00570550" }] });
+  const custody = createCodexMacosCustodyReadinessV1({ planDigest: plan.planDigest, proofs: [
+    { proof: "suspended_executable_identity", state: "passed", evidenceDigest: sha256Digest("suspended") },
+    { proof: "protected_private_state_handle", state: "passed", evidenceDigest: sha256Digest("private-state") },
+  ] });
+  const codex = summarizeLocalHarnessCapabilitiesV1(plan, undefined, custody).find(value => value.id === "codex")!;
+  assert.equal(codex.state, "setup_required");
+  assert.match(codex.stateLabel, /safety prerequisites/i);
+  assert.match(codex.summary, /has not started Codex/i);
+  assert.match(codex.nextStep, /cannot enable or launch Codex/i);
+  assert.equal(codex.remainingSetupCategory, "Owner-attended exact-harness qualification");
+  assert.doesNotMatch(JSON.stringify(custody), /(?:path|token|password|credential|CODEX_HOME)\s*[=:]/i);
+  const otherPlanCustody = createCodexMacosCustodyReadinessV1({ ...custody, planDigest: sha256Digest("other"),
+    proofs: custody.proofs });
+  assert.throws(() => summarizeLocalHarnessCapabilitiesV1(plan, undefined, otherPlanCustody), /plan_mismatch/);
+});
+
+test("recorded Claude process proof remains owner-enabled rather than live", () => {
+  const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
+    currentRoutes: [{ kind: "local", workerId: "worker:claude", adapterId: "connector:claude-code-local-v1", adapterRevision: "00570550" }],
+    requestedRoutes: [{ kind: "local", workerId: "worker:claude", adapterId: "connector:claude-code-local-v1", adapterRevision: "00570550" }] });
+  const claudeReadiness = createClaudeCodeLocalProcessReadinessV1({ planDigest: plan.planDigest, proofs: [
+    { proof: "installed_process_identity", state: "passed", evidenceDigest: sha256Digest("identity") },
+    { proof: "permission_boundary", state: "passed", evidenceDigest: sha256Digest("permission") },
+    { proof: "cancellation_and_restart_recovery", state: "passed", evidenceDigest: sha256Digest("recovery") },
+  ] });
+  const claude = summarizeLocalHarnessCapabilitiesV1(plan, undefined, undefined, claudeReadiness).find(value => value.id === "claude")!;
+  assert.equal(claude.state, "owner_enablement_required");
+  assert.match(claude.summary, /still has not started Claude Code/);
+  assert.equal(claude.operations.submit, "unsupported");
+});
+
+test("failed macOS Codex custody evidence remains an actionable refusal", () => {
+  const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
+    currentRoutes: [{ kind: "local", workerId: "worker:codex", adapterId: "codex-app-server/v1", adapterRevision: "00570550" }],
+    requestedRoutes: [{ kind: "local", workerId: "worker:codex", adapterId: "codex-app-server/v1", adapterRevision: "00570550" }] });
+  const custody = createCodexMacosCustodyReadinessV1({ planDigest: plan.planDigest, proofs: [
+    { proof: "suspended_executable_identity", state: "passed", evidenceDigest: sha256Digest("suspended") },
+    { proof: "protected_private_state_handle", state: "failed" },
+  ] });
+  const codex = summarizeLocalHarnessCapabilitiesV1(plan, undefined, custody).find(value => value.id === "codex")!;
+  assert.equal(codex.state, "setup_needs_attention");
+  assert.match(codex.nextStep, /owner-run custody proof/i);
+});

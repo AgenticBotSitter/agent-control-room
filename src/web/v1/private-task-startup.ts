@@ -1,4 +1,5 @@
 import { localId } from "../../harness/v1/native-run-identifiers";
+import { captureLocalAdapterInstallationPortsV1, type LocalAdapterInstallationPortsV1 } from "../../harness/v1/local-adapter-installation";
 import { createPrivatePostgresDatabase, validatePrivatePostgresConfiguration, type PrivatePostgresConfiguration } from "./private-postgres";
 import { verifyPrivateDatabase, verifyTaskCoordinatorDatabase, verifyNativeResultDatabase, verifyNativeEvidenceDatabase, verifyNativeSessionDatabase, verifyIdeaCreationDatabase, verifyIdeaRuntimeDatabase, verifyPrivateIdeaAdapter } from "./private-database-preflight";
 import { z } from "zod";
@@ -7,7 +8,7 @@ import { validatePrivateStartupConfiguration, type PrivateStartupConfiguration }
 import { installPrivateApplication } from "./private-process";
 import { createPrivateTaskApplication } from "./private-task-application";
 import { createProjectCoordinationCanonicalStoreAdapterV1 } from "./project-coordination-http";
-import { captureNativeTaskTemplates } from "./task-execution-planner";
+import { captureNativeTaskTemplates, localTaskAdapterAdmissionSchema } from "./task-execution-planner";
 import { validateTaskAssignmentRoutes, validateNativeApprovalEnrollments, type CodexPermitConfiguration } from "./task-assignment-coordinator";
 import type { TaskCoordinatorConfiguration, TaskCoordinatorDatabase } from "./task-coordinator-lifecycle";
 import { captureTaskQualityConfiguration, validateTaskQualityKeys } from "./task-quality-coordinator";
@@ -31,15 +32,63 @@ import { bindPrivateArtifactStorageV1, capturePrivateArtifactStorageConfiguratio
 import { PersistentLocalArtifactStorageV1 } from "../../artifacts/v1/persistent-local-storage";
 import { CODEX_RESULT_RETURN_FEATURE_V1 } from "../../harness/codex-v1/result-return";
 import { captureCodexResultIntakeSettingsV1, type CodexResultIntakeSettingsV1 } from "./codex-result-intake";
+import { inspectHermes021MacosDeliveryRecoveryStatusV1 } from "../../harness/hermes-021-v1/delivery-recovery-status";
+import { summarizeInstallationReadinessV1, verifyInstallationReadinessV1 } from "../../harness/v1/installation-readiness";
+import { localBackupRestoreEvidenceDigestForInstallationPlanV1 } from "../../harness/v1/local-backup-restore-readiness";
+import { summarizeLocalSupervisorReadinessV1 } from "../../harness/v1/local-supervisor-readiness";
+import { summarizeClaudeCodeLocalProcessReadinessV1 } from "../../harness/claude-code-v1/local-process-readiness";
 
 type OwnedQueueWorker = { close(): Promise<void>; status(): { accepting: boolean } };
+
+/**
+ * The operator assembler is the usual way to build this configuration, but
+ * the final server-only validator must enforce the same local Hermes boundary.
+ * Otherwise a trusted caller could bypass the assembler with a bare callback.
+ * This checks opaque records only; it neither starts Hermes nor reveals any
+ * private runner setting.
+ */
+function requireReadyLocalHermesInstallation(web: ReturnType<typeof validatePrivateStartupConfiguration>) {
+  const plan = web.installationTopologyPlan;
+  const readiness = web.installationReadiness;
+  const backup = web.localBackupRestoreReadiness;
+  const supervisor = web.localSupervisorReadiness;
+  if (!plan || !readiness || !backup || !supervisor) throw new Error();
+  const summary = summarizeInstallationReadinessV1(plan, readiness);
+  const passed = new Set(summary.proofs.filter(item => item.state === "passed").map(item => item.proof));
+  for (const proof of ["backup_restore", "local_owner_qualification", "local_runner_bridge"] as const) {
+    if (!summary.plan.requiredProofs.includes(proof) || !passed.has(proof)) throw new Error();
+  }
+  const expectedBackup = localBackupRestoreEvidenceDigestForInstallationPlanV1(plan, backup);
+  if (readiness.proofs.find(item => item.proof === "backup_restore")?.evidenceDigest !== expectedBackup)
+    throw new Error();
+  if (summarizeLocalSupervisorReadinessV1(plan.planDigest, supervisor).state !== "readiness_recorded")
+    throw new Error();
+}
+
+/** Claude's opaque process proof is separate from Hermes's qualification, but
+ * it still needs the same installation-level recovery evidence before a
+ * private callback can be mounted. Nothing here discovers or starts Claude. */
+function requireReadyLocalClaudeInstallation(web: ReturnType<typeof validatePrivateStartupConfiguration>) {
+  const plan = web.installationTopologyPlan, readiness = web.installationReadiness;
+  const backup = web.localBackupRestoreReadiness, supervisor = web.localSupervisorReadiness;
+  if (!plan || !readiness || !backup || !supervisor || web.claudeCodeLocalProcessReadiness === undefined) throw new Error();
+  if (summarizeClaudeCodeLocalProcessReadinessV1(plan.planDigest, web.claudeCodeLocalProcessReadiness).state !== "readiness_recorded")
+    throw new Error();
+  if (summarizeLocalSupervisorReadinessV1(plan.planDigest, supervisor).state !== "readiness_recorded") throw new Error();
+  const expectedBackup = localBackupRestoreEvidenceDigestForInstallationPlanV1(plan, backup);
+  const recorded = verifyInstallationReadinessV1(readiness)
+    .proofs.find(item => item.proof === "backup_restore");
+  if (recorded?.state !== "passed" || recorded.evidenceDigest !== expectedBackup) throw new Error();
+}
 
 export type PrivateTaskStartupConfiguration = {
   web: PrivateStartupConfiguration;
   news?: NewsStartupConfiguration;
   /** Explicit, existing local artifact directory for the agent-task composition. */
   artifactStorage?: PrivateArtifactStorageConfigurationV1;
-  coordinator: Pick<TaskCoordinatorConfiguration, "planning" | "routes" | "approvals" | "quality" | "revisionPlanning" | "nativeHttp"> & {
+  /** Optional inert installation-owned adapters; never mounted in the queue or browser. */
+  preparedLocalAdapters?: LocalAdapterInstallationPortsV1;
+  coordinator: Pick<TaskCoordinatorConfiguration, "planning" | "routes" | "approvals" | "quality" | "revisionPlanning" | "nativeHttp" | "hermes021Local" | "claudeCodeLocal"> & {
     codex?: CodexPermitConfiguration;
     nativeQueue?: true;
     nativeQueueRecovery?: true;
@@ -62,6 +111,13 @@ export function bindPrivateCodexResultReturnV1(settings: CodexResultIntakeSettin
 }
 export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartupConfiguration) {
   try {
+    // Idea Lab may plan and project ordinary Control Room tasks, but its
+    // deprecated direct-provider runtime is never a production startup
+    // option. Refuse it before copying callbacks or validating/opening any
+    // resource so an operator cannot accidentally restore the bypass route.
+    if (input.coordinator.ideaRuntime !== undefined) throw new Error();
+    const preparedLocalAdapters = input.preparedLocalAdapters === undefined ? undefined
+      : captureLocalAdapterInstallationPortsV1(input.preparedLocalAdapters);
     const artifactStorage = input.artifactStorage
       ? capturePrivateArtifactStorageConfigurationV1(input.artifactStorage) : undefined;
     const web = validatePrivateStartupConfiguration(input.web);
@@ -75,7 +131,8 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
     const denied = (): never => { throw new Error("private_task_checkpoint_write_denied"); };
     const planning = { ...templates, integrityKey: key(p.integrityKey), reviewIntegrityKey: key(p.reviewIntegrityKey),
       checkpoints: Object.freeze({ read, initialize: denied, advance: denied }),
-      ...(p.ideaIntegrityKey ? { ideaIntegrityKey: key(p.ideaIntegrityKey) } : {}) };
+      ...(p.ideaIntegrityKey ? { ideaIntegrityKey: key(p.ideaIntegrityKey) } : {}),
+      ...(p.localAdapterAdmission ? { localAdapterAdmission: localTaskAdapterAdmissionSchema.parse(p.localAdapterAdmission) } : {}) };
     const routes = validateTaskAssignmentRoutes(input.coordinator.routes), a = input.coordinator.approvals;
     if (a && (typeof a.store?.acceptInSession !== "function" || typeof a.store?.readInSession !== "function")) throw new Error();
     const approvals = a ? { enrollments: validateNativeApprovalEnrollments(a.enrollments, web.tenantId, routes), store: a.store } : undefined;
@@ -127,11 +184,20 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
       || codexResultReturn.qualificationReceipt.body.tenantId !== web.tenantId)) throw new Error();
     const nativeHttp = input.coordinator.nativeHttp ? captureNativeHttpSettings(input.coordinator.nativeHttp) : undefined;
     if (nativeHttp && (!sessions || nativeHttp.peers.some(peer => !sessions.nodes.some(node => node.nodeId === peer.nodeId)))) throw new Error();
+    const hermes021Local = input.coordinator.hermes021Local
+      ? Object.freeze({ deliver: input.coordinator.hermes021Local.deliver.bind(input.coordinator.hermes021Local) }) : undefined;
+    if (hermes021Local && (!nativeQueue || !approvals)) throw new Error();
+    if (hermes021Local) requireReadyLocalHermesInstallation(web);
+    const claudeCodeLocal = input.coordinator.claudeCodeLocal
+      ? Object.freeze({ deliver: input.coordinator.claudeCodeLocal.deliver.bind(input.coordinator.claudeCodeLocal) }) : undefined;
+    if (claudeCodeLocal && (!nativeQueue || !approvals)) throw new Error();
+    if (claudeCodeLocal) requireReadyLocalClaudeInstallation(web);
     const w = input.coordinator.queueWorker;
     const queueWorker = w ? { database: validatePrivatePostgresConfiguration(w.database), concurrency: w.concurrency ?? 1 } : undefined;
-    if (queueWorker && (!nativeQueue || !sessions || queueWorker.database.host !== database.host
+    if (queueWorker && (!nativeQueue || (!sessions && !hermes021Local && !claudeCodeLocal) || queueWorker.database.host !== database.host
       || queueWorker.database.port !== database.port || queueWorker.database.database !== database.database
-      || [web.database.username, database.username, resultDatabase!.username, evidence!.database.username, sessions.database.username].includes(queueWorker.database.username)
+      || [web.database.username, database.username, resultDatabase!.username, evidence!.database.username,
+        ...(sessions ? [sessions.database.username] : [])].includes(queueWorker.database.username)
       || !Number.isSafeInteger(queueWorker.concurrency) || queueWorker.concurrency < 1 || queueWorker.concurrency > 8)) throw new Error();
     const i = input.coordinator.ideaCreation;
     const ideaCreation = i ? { database: validatePrivatePostgresConfiguration(i.database), integrityKey: key(i.integrityKey),
@@ -142,7 +208,11 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
       || [web.database, database, resultDatabase, evidence?.database, sessions?.database, queueWorker?.database]
         .some(value => value?.username === ideaCreation.database.username)
       || new Set(ideaCreation.participants.map(value => value.participantId)).size !== ideaCreation.participants.length)) throw new Error();
-    const ir = input.coordinator.ideaRuntime;
+    // Kept only to read legacy records during this release; the early guard
+    // above makes this branch unreachable for production configuration.
+    const ir = (input.coordinator as { ideaRuntime?: Omit<NonNullable<TaskCoordinatorConfiguration["ideaRuntime"]>, "database"> & {
+      database: PrivatePostgresConfiguration;
+    } }).ideaRuntime;
     const ideaRuntime = ir ? { database: validatePrivatePostgresConfiguration(ir.database), close: ir.close.bind(ir),
       runtime: Object.freeze({ resolve: ir.runtime.resolve.bind(ir.runtime),
         driver: Object.freeze({ mode: ir.runtime.driver.mode, invoke: ir.runtime.driver.invoke.bind(ir.runtime.driver) }),
@@ -156,8 +226,8 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
     const news = input.news ? captureNewsStartupConfiguration(input.news, web,
       [web.database, database, resultDatabase, evidence?.database, sessions?.database, queueWorker?.database,
         ideaCreation?.database, ideaRuntime?.database].filter((value): value is PrivatePostgresConfiguration => !!value)) : undefined;
-    return { web, database, planning, routes, approvals, codex, quality, revisionPlanning, resultDatabase, evidence, sessions,
-      codexResultReturn, nativeHttp, nativeQueue, nativeQueueRecovery, queueWorker, ideaCreation, ideaRuntime, news, artifactStorage };
+    return { web, preparedLocalAdapters, database, planning, routes, approvals, codex, quality, revisionPlanning, resultDatabase, evidence, sessions,
+      codexResultReturn, nativeHttp, nativeQueue, nativeQueueRecovery, queueWorker, hermes021Local, claudeCodeLocal, ideaCreation, ideaRuntime, news, artifactStorage };
   } catch { throw new Error("private_task_startup_config_invalid"); }
 }
 
@@ -380,11 +450,26 @@ export function createPrivateTaskBootstrap(dependencies: {
       const coordinationStore = createProjectCoordinationCanonicalStoreAdapterV1({
         database: web.client, tenantId: config.web.tenantId, now: () => clock(),
       });
+      // This bound reader is the only recovery capability passed toward the
+      // browser task view. It closes over already-verified private resources;
+      // the browser never receives the receipt key, artifact storage, runner,
+      // executable, model, provider, or workspace configuration.
+      const hermesDeliveryRecovery = config.hermes021Local && artifactStorage && config.web.tasks
+        ? Object.freeze({ inspect: async (scope: { tenantId: string; projectId: string; jobId: string; attemptId: string }) => {
+          requireActive();
+          const status = await inspectHermes021MacosDeliveryRecoveryStatusV1({ db: coordinator.client,
+            integrityKey: config.web.tasks!.harnessIntegrityKey, storage: artifactStorage!.storage }, scope,
+          startupAbort.signal);
+          requireActive();
+          return status;
+        } }) : undefined;
       application = await createPrivateTaskApplication({ ...config.web, database: web, clock,
         coordination: { store: coordinationStore },
+        ...(hermesDeliveryRecovery ? { tasks: { ...config.web.tasks!, hermesDeliveryRecovery } } : {}),
         ...(newsIntegration ? { newsCollections: newsIntegration.web } : {}) }, {
         scope: { tenantId: config.web.tenantId, workspaceId: config.web.workspaceId }, database: coordinator,
         planning: config.planning, routes: config.routes, approvals: config.approvals, quality: config.quality,
+        hermes021Local: config.hermes021Local,
         codex: config.codex,
         revisionPlanning: config.revisionPlanning, resultDatabase, clock,
         ideaCreation: ideaDatabase ? { ...config.ideaCreation!, database: ideaDatabase } : undefined,
@@ -405,7 +490,7 @@ export function createPrivateTaskBootstrap(dependencies: {
         const pending = Promise.resolve().then(() => { requireActive(); return startWorker!({ ...workerConfig,
           application: { host: config.database.host, port: config.database.port, database: config.database.database,
             loginNames: [config.web.database.username, config.database.username, config.resultDatabase!.username,
-              config.evidence!.database.username, config.sessions!.database.username,
+              config.evidence!.database.username, ...(config.sessions ? [config.sessions.database.username] : []),
               ...(config.ideaCreation ? [config.ideaCreation.database.username] : []),
               ...(config.ideaRuntime ? [config.ideaRuntime.database.username] : [])] },
           deliver: async (reference, signal) => {

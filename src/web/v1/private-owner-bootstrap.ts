@@ -2,7 +2,8 @@ import { z } from "zod";
 import type { DatabaseClient } from "../../persistence/database";
 import { SecurityStore, assertNoSecretMaterial, sha256Digest } from "../../security";
 import { localId, digestSchema } from "../../harness/v1/native-run-identifiers";
-import { createAccessVerifier, type AccessTrust } from "./access-verifier";
+import { captureGatewayAssertionProviderProfileV1, createAccessVerifier, cloudflareAccessGatewayAssertionProfileV1,
+  type AccessTrust, type GatewayAssertionProviderProfileV1 } from "./access-verifier";
 import { createPrivatePostgresDatabase, validatePrivatePostgresConfiguration, type PrivatePostgresConfiguration } from "./private-postgres";
 
 const configurationSchema = z.object({
@@ -26,11 +27,16 @@ function verifyPinnedOwner(verify: ReturnType<typeof createAccessVerifier>, conf
  * The borrowed client must provide bounded transactions and precommit checks;
  * the caller retains connection cleanup and uncertainty reconciliation duties. */
 export function createPrivateOwnerBootstrap(input: PrivateOwnerBootstrapConfiguration,
-  trust: AccessTrust, dependencies: { database: DatabaseClient; clock: () => number }) {
+  trust: AccessTrust, dependencies: { database: DatabaseClient; clock: () => number;
+    gatewayAssertionProfile?: GatewayAssertionProviderProfileV1 }) {
   let config: PrivateOwnerBootstrapConfiguration, verify: ReturnType<typeof createAccessVerifier>;
+  let profile: GatewayAssertionProviderProfileV1;
   try {
     config = configurationSchema.parse(input); assertNoSecretMaterial(config);
-    verify = createAccessVerifier(trust);
+    profile = captureGatewayAssertionProviderProfileV1(
+      dependencies.gatewayAssertionProfile ?? cloudflareAccessGatewayAssertionProfileV1,
+    );
+    verify = createAccessVerifier(trust, profile);
   } catch { throw new Error("private_owner_bootstrap_config_invalid"); }
   const db = dependencies.database, clock = dependencies.clock;
   let attempted = false;
@@ -39,7 +45,7 @@ export function createPrivateOwnerBootstrap(input: PrivateOwnerBootstrapConfigur
     if (attempted) return fail(); attempted = true;
     try {
       if (typeof assertion !== "string" || !assertion || assertion.length > 16_384) return fail();
-      const request = new Request("https://bootstrap.invalid", { headers: { "cf-access-jwt-assertion": assertion } });
+      const request = new Request("https://bootstrap.invalid", { headers: { [profile.assertionHeader]: assertion } });
       let highWater = -1;
       const current = () => {
         const now = clock();
@@ -71,7 +77,9 @@ export function createPrivateOwnerBootstrap(input: PrivateOwnerBootstrapConfigur
 }
 
 export type PrivateOwnerBootstrapInput = { configuration: PrivateOwnerBootstrapConfiguration;
-  trust: AccessTrust; database: PrivatePostgresConfiguration; assertion: string };
+  trust: AccessTrust; database: PrivatePostgresConfiguration; assertion: string;
+  /** Deployment-selected only. The request can never select a provider or header. */
+  gatewayAssertionProfile?: GatewayAssertionProviderProfileV1 };
 
 /** Explicit operator operation with owned, bounded connection cleanup. Never
  * called by website startup. The real factory contains no fixture override. */
@@ -82,10 +90,15 @@ export function createPrivateOwnerBootstrapCommand(dependencies: {
     let pool: ReturnType<typeof createPrivatePostgresDatabase> | undefined;
     let passed = false;
     try {
-      if (Object.keys(input).sort().join(',') !== 'assertion,configuration,database,trust') throw new Error();
+      const keys = Object.keys(input).sort().join(',');
+      if (keys !== 'assertion,configuration,database,trust'
+        && keys !== 'assertion,configuration,database,gatewayAssertionProfile,trust') throw new Error();
       const config = configurationSchema.parse(input.configuration); assertNoSecretMaterial(config);
       const database = validatePrivatePostgresConfiguration(input.database), trust = structuredClone(input.trust);
       const assertion = input.assertion, sourceClock = dependencies.clock ?? Date.now;
+      const profile = captureGatewayAssertionProviderProfileV1(
+        input.gatewayAssertionProfile ?? cloudflareAccessGatewayAssertionProfileV1,
+      );
       let highWater = -1;
       const clock = () => {
         const now = sourceClock();
@@ -94,10 +107,12 @@ export function createPrivateOwnerBootstrapCommand(dependencies: {
       };
       if (database.database !== config.databaseName || signal?.aborted || typeof assertion !== 'string'
         || !assertion || assertion.length > 16_384) throw new Error();
-      verifyPinnedOwner(createAccessVerifier(trust), config,
-        new Request('https://bootstrap.invalid', { headers: { 'cf-access-jwt-assertion': assertion } }), clock());
+      verifyPinnedOwner(createAccessVerifier(trust, profile), config,
+        new Request('https://bootstrap.invalid', { headers: { [profile.assertionHeader]: assertion } }), clock());
       pool = dependencies.openDatabase(database);
-      await createPrivateOwnerBootstrap(config, trust, { database: pool.client, clock }).bootstrap(assertion, signal);
+      await createPrivateOwnerBootstrap(config, trust, {
+        database: pool.client, clock, gatewayAssertionProfile: profile,
+      }).bootstrap(assertion, signal);
       passed = true;
     } catch { passed = false; }
     if (pool) {

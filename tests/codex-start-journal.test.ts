@@ -74,6 +74,9 @@ test('persists the exact start identity across reopen without granting authority
   assert.equal(reserve(journal, pair), 'duplicate');
   assert.equal(journal.recordThread(pair.thread, current), 'recorded');
   assert.equal(journal.recordTurn(pair.thread, pair.turn, current), 'recorded');
+  assert.equal(journal.load(pair.admission.scope.runId).cleanupVerified, false);
+  assert.equal(journal.recordCleanup(pair.thread, pair.turn, current), 'recorded');
+  assert.equal(journal.recordCleanup(pair.thread, pair.turn, current), 'duplicate');
   assert.equal(journal.recordThread(pair.thread, current), 'duplicate');
   assert.equal(journal.recordTurn(pair.thread, pair.turn, current), 'duplicate');
   journal.close();
@@ -82,6 +85,7 @@ test('persists the exact start identity across reopen without granting authority
   assert.equal(restored.status, 'recorded');
   assert.equal(restored.threadId, pair.thread.threadId);
   assert.equal(restored.turnId, pair.turn.turnId);
+  assert.equal(restored.cleanupVerified, true);
   assert.equal(restored.grantsExecutionAuthority, false);
   assert.equal(restored.permitsResume, false);
   assert.equal(restored.permitsRetry, false);
@@ -188,14 +192,14 @@ test('refuses a journal whose protected schema was changed', () => withJournalFi
 test('upgrades the receipt-only schema without treating old evidence as start authority', () => withJournalFile(path => {
   let journal = new SqliteCodexStartJournalV1(path); journal.close();
   const raw = new DatabaseSync(path);
-  raw.exec('DROP TABLE codex_start_reservations; PRAGMA user_version=1;'); raw.close();
+  raw.exec('DROP TABLE codex_start_cleanup_receipts; DROP TABLE codex_start_reservations; PRAGMA user_version=1;'); raw.close();
   journal = new SqliteCodexStartJournalV1(path);
   const pair = makePair({ name: 'migrated' });
   assert.equal(journal.load(pair.admission.scope.runId).status, 'not_reserved');
   assert.equal(reserve(journal, pair), 'recorded');
   journal.close();
   const upgraded = new DatabaseSync(path);
-  assert.equal((upgraded.prepare('PRAGMA user_version').get() as { user_version: number }).user_version, 3);
+  assert.equal((upgraded.prepare('PRAGMA user_version').get() as { user_version: number }).user_version, 4);
   assert.ok(upgraded.prepare('PRAGMA table_info(codex_start_reservations)').all()
     .some((column) => (column as { name: string }).name === 'attempt_id'));
   upgraded.close();
@@ -208,6 +212,7 @@ test('upgrades an existing reservation schema and preserves its attempt fence', 
   journal.close();
   const raw = new DatabaseSync(path);
   raw.exec(`BEGIN IMMEDIATE;
+    DROP TABLE codex_start_cleanup_receipts;
     ALTER TABLE codex_start_reservations RENAME TO codex_start_reservations_v3;
     CREATE TABLE codex_start_reservations (
       run_id TEXT PRIMARY KEY NOT NULL, queue_id TEXT NOT NULL UNIQUE,
@@ -250,6 +255,7 @@ test('migration waits for an active v2 writer and retains its committed reservat
     journal.close();
     const writer = new DatabaseSync(path);
     writer.exec(`BEGIN IMMEDIATE;
+      DROP TABLE codex_start_cleanup_receipts;
       ALTER TABLE codex_start_reservations RENAME TO codex_start_reservations_v3;
       CREATE TABLE codex_start_reservations (
         run_id TEXT PRIMARY KEY NOT NULL, queue_id TEXT NOT NULL UNIQUE,
@@ -320,7 +326,7 @@ test('a populated receipt-only journal cannot reserve or send the historical sta
   reserve(journal, pair); journal.recordThread(pair.thread, current);
   journal.recordTurn(pair.thread, pair.turn, current); journal.close();
   const raw = new DatabaseSync(path);
-  raw.exec('DROP TABLE codex_start_reservations; PRAGMA user_version=1;'); raw.close();
+  raw.exec('DROP TABLE codex_start_cleanup_receipts; DROP TABLE codex_start_reservations; PRAGMA user_version=1;'); raw.close();
   journal = new SqliteCodexStartJournalV1(path);
   assert.equal(journal.load(pair.admission.scope.runId).status, 'not_reserved');
   assert.throws(() => reserve(journal, pair));

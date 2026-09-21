@@ -6,15 +6,25 @@ import test from "node:test";
 import { CODEX_APP_SERVER_CAPABILITY, CODEX_APP_SERVER_ADAPTER,
   CODEX_DELIVERY_FEATURE } from "../src/harness/codex-v1/delivery-contract";
 import { CODEX_RESULT_RETURN_FEATURE_V1 } from "../src/harness/codex-v1/result-return";
+import { HERMES_021_MACOS_LOCAL_ADAPTER_V1 } from "../src/harness/hermes-021-v1/macos-local-worker";
 import { createCodexPhysicalQualificationReceiptBodyV1 } from "../src/harness/codex-v1/result-publication-contract";
 import { CODEX_APP_SERVER_READ_CONTRACT, CODEX_APP_SERVER_RESULT_CONTRACT,
   CODEX_APP_SERVER_START_CONTRACT } from "../src/harness/codex-v1/schema-contract";
 import { signArtifact } from "../src/node-policy/v1/crypto";
 import { sha256Digest } from "../src/security";
+import { createInstallationReadinessV1 } from "../src/harness/v1/installation-readiness";
+import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
+import { createArtifactBackupInventoryV1, verifyRestoredArtifactBackupInventoryV1 } from "../src/artifacts/v1/artifact-backup-inventory";
+import { createLocalBackupRestoreReadinessV1 } from "../src/harness/v1/local-backup-restore-readiness";
+import { createCodexMacosCustodyReadinessV1 } from "../src/harness/codex-v1/macos-custody-readiness";
+import { createLocalSupervisorReadinessV1 } from "../src/harness/v1/local-supervisor-readiness";
+import { createClaudeCodeLocalProcessReadinessV1 } from "../src/harness/claude-code-v1/local-process-readiness";
+import { CLAUDE_CODE_LOCAL_ADAPTER_V1 } from "../src/harness/claude-code-v1/task-planning-contract";
 import { createPrivateTaskHost } from "../src/web/v1/private-task-host";
 import { startPrivateHostLifecycle } from "../src/web/v1/private-host-lifecycle";
 import { bindPrivateCodexResultReturnV1, validatePrivateTaskStartupConfiguration,
   type PrivateTaskStartupConfiguration } from "../src/web/v1/private-task-startup";
+import { createTaskCoordinatorLifecycle, type TaskCoordinatorConfiguration } from "../src/web/v1/task-coordinator-lifecycle";
 import { privateArtifactStorageNamespaceDigestV1 } from "../src/web/v1/private-artifact-storage";
 import { instant } from "./hermes-native-fixture";
 import { privateAgentTaskCompositionFixture } from "./helpers/private-agent-task-composition";
@@ -23,6 +33,21 @@ import { operatorConfigurationScenario } from "./helpers/private-agent-task-oper
 
 const handler = async () => new Response("synthetic");
 const assets = { count: 0, digest: "synthetic", respond: () => undefined };
+
+function localBackupRestoreProof(planDigest: string) {
+  const inventory = createArtifactBackupInventoryV1({ tenantId: "tenant:local", releaseId: "release:local",
+    releaseDigest: sha256Digest("release"), databaseSchemaVersion: "schema:local", databaseSchemaDigest: sha256Digest("schema"),
+    storageNamespace: "artifact-namespace:local", storageNamespaceDigest: sha256Digest("namespace"),
+    entries: [{ artifactId: "artifact:local", contentHash: sha256Digest("bytes"), sizeBytes: 5,
+      manifestDigest: sha256Digest("manifest"), receiptDigest: sha256Digest("receipt") }], });
+  return createLocalBackupRestoreReadinessV1({ planDigest, databaseRestore: { tenantId: "tenant:local", releaseId: "release:local",
+    releaseDigest: sha256Digest("release"), databaseIdentityDigest: sha256Digest("database-identity"),
+    databaseDumpDigest: sha256Digest("database-dump"), databaseSchemaVersion: "schema:local", databaseSchemaDigest: sha256Digest("schema"),
+    restoredToDisposableTarget: true, promoted: false, startsWork: false, grantsExecutionAuthority: false,
+    permitsRetry: false, permitsCleanup: false }, expectedArtifactInventory: inventory,
+    restoredArtifactInventory: structuredClone(inventory),
+    artifactRestoreVerification: verifyRestoredArtifactBackupInventoryV1({ expected: inventory, restored: inventory }) });
+}
 
 function resultReturnQualification(tenantId = "tenant:test", nodeId = "node:test") {
   const keys = generateKeyPairSync("ed25519");
@@ -693,24 +718,19 @@ test("idea runtime database password and majorVersion must match the declared ro
     assemblePrivateAgentTaskOperatorConfiguration(settings, trusted);
   }, /idea_runtime_role_mismatch:password/);
 
-  // Same declared and trusted password + matching majorVersion passes through
-  // the assembler and the production gate (the matching role case is also
-  // covered by the dedicated happy-path test below).
+  // A matching legacy runtime can still be represented by the isolated
+  // operator fixture, but the production startup boundary must refuse it.
+  // Idea Lab now plans ordinary tasks instead of directly contacting a
+  // provider from the web process.
   const match = buildBase({ trustedPassword: "declared-secret" });
-  const composed = assemblePrivateAgentTaskOperatorConfiguration(match.settings, match.trusted);
-  assert.equal(composed.configuration.coordinator.ideaRuntime!.database.username, "idea_runtime_match");
+  assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(match.settings, match.trusted),
+    /agent_task_operator_config_invalid:production_gate_refused/);
 });
 
-test("idea runtime database positive matching-role case passes through the production gate", async () => {
+test("matching legacy Idea runtime is refused by the production startup gate", async () => {
   const { settings, trusted } = operatorConfigurationScenario("minimal");
-  // Enable idea with a fully matching role: declared and trusted share the
-  // same host/port/database/username/password/majorVersion. The assembler
-  // accepts and the captured configuration carries the runtime identity
-  // exactly as declared. The minimal scenario's `web` profile does not
-  // include `ideaProjects` — add one here so the production gate can
-  // cross-check the creation/runtime integrity keys, and supply three
-  // structurally valid participants so `ideaCreation` parses through the
-  // shared schema.
+  // Build an otherwise matching legacy runtime. This proves the refusal is
+  // policy-driven, rather than caused by a malformed role or participant.
   const ideaKey = new Uint8Array(32).fill(21);
   const webWithIdea = { ...(trusted.web as Record<string, unknown>),
     ideaProjects: { integrityKey: ideaKey } } as unknown as typeof trusted.web;
@@ -752,16 +772,16 @@ test("idea runtime database positive matching-role case passes through the produ
       },
     },
   };
-  const composed = assemblePrivateAgentTaskOperatorConfiguration(settings, newTrusted);
-  // The captured configuration MUST carry the runtime identity exactly as
-  // declared. Every connection field matches, so the operator record and the
-  // runtime contract agree on what gets connected and under what credentials.
-  assert.equal(composed.configuration.coordinator.ideaRuntime!.database.username, "idea_runtime_match");
-  assert.equal(composed.configuration.coordinator.ideaRuntime!.database.password, "shared-secret");
-  assert.equal(composed.configuration.coordinator.ideaRuntime!.database.majorVersion, 17);
-  assert.equal(composed.configuration.coordinator.ideaRuntime!.database.host, "127.0.0.1");
-  assert.equal(composed.configuration.coordinator.ideaRuntime!.database.port, 5433);
-  assert.equal(composed.configuration.coordinator.ideaRuntime!.database.database, "controlroomtest");
+  assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(settings, newTrusted),
+    /agent_task_operator_config_invalid:production_gate_refused/);
+});
+
+test("direct Idea runtime is refused by the lower-level production assembly before any resource is read", () => {
+  // This deliberately omits every other lifecycle field. The guard must run
+  // first, so an accidental alternate bootstrap cannot validate or acquire a
+  // pool before refusing the deprecated direct-provider path.
+  assert.throws(() => createTaskCoordinatorLifecycle({ ideaRuntime: {} } as TaskCoordinatorConfiguration),
+    /task_coordinator_config_invalid/);
 });
 
 test("idea runtime database must match the declared ideaRuntime role", async () => {
@@ -865,6 +885,142 @@ test("operator assembly builds the full artifact/result/review/Codex composition
   assert.equal(composed.configuration.coordinator.nativeHttp!.origin, "https://machine.example.test");
   assert.ok(composed.configuration.artifactStorage !== undefined);
   assert.equal(composed.configuration.coordinator.sessions!.nodes.length, 2);
+});
+
+test("operator assembly can carry an installation-owned local Hermes executor without a remote session transport", () => {
+  const { settings, trusted } = operatorConfigurationScenario("full");
+  settings.features = { ...settings.features, sessions: false, codex: false, codexResultReturn: false,
+    nativeHttp: false, hermes021Local: true };
+  trusted.sessions = undefined;
+  trusted.codex = undefined;
+  trusted.codexResultReturn = undefined;
+  trusted.nativeHttp = undefined;
+  const topologyRoute = { kind: "local" as const, workerId: "worker:local-hermes", adapterId: "connector:hermes-021-macos-local-v1",
+    adapterRevision: "00570550" };
+  const topology = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("operator-local-db"),
+    schedulerAuthorityDigest: sha256Digest("operator-local-scheduler"), currentRoutes: [topologyRoute], requestedRoutes: [topologyRoute] });
+  const backupRestore = localBackupRestoreProof(topology.planDigest);
+  const codexCustody = createCodexMacosCustodyReadinessV1({ planDigest: topology.planDigest, proofs: [
+    { proof: "suspended_executable_identity", state: "passed", evidenceDigest: sha256Digest("operator-local-suspended") },
+    { proof: "protected_private_state_handle", state: "passed", evidenceDigest: sha256Digest("operator-local-private-state") },
+  ] });
+  const supervisor = createLocalSupervisorReadinessV1({ planDigest: topology.planDigest, proofs: [
+    { proof: "private_configuration_custody", state: "passed", evidenceDigest: sha256Digest("operator-local-custody") },
+    { proof: "restricted_launch_definition", state: "passed", evidenceDigest: sha256Digest("operator-local-launch") },
+    { proof: "restart_and_drain_procedure", state: "passed", evidenceDigest: sha256Digest("operator-local-restart") },
+    { proof: "upgrade_and_rollback_procedure", state: "passed", evidenceDigest: sha256Digest("operator-local-rollback") },
+  ] });
+  trusted.web = { ...(trusted.web as object), installationTopologyPlan: topology,
+    installationReadiness: createInstallationReadinessV1({ planDigest: topology.planDigest, proofs: [
+      { proof: "backup_restore", state: "passed", evidenceDigest: backupRestore.proofDigest },
+      { proof: "local_owner_qualification", state: "passed", evidenceDigest: sha256Digest("operator-local-text") },
+      { proof: "local_runner_bridge", state: "passed", evidenceDigest: sha256Digest("operator-local-runner") },
+    ] }), codexMacosCustodyReadiness: codexCustody, localSupervisorReadiness: supervisor } as typeof trusted.web;
+  trusted.localBackupRestoreReadiness = backupRestore;
+  let delivered = 0;
+  trusted.hermes021Local = { deliver: async function () { delivered++; } };
+  const result = assemblePrivateAgentTaskOperatorConfiguration(settings, trusted);
+  assert.equal(result.configuration.coordinator.sessions, undefined);
+  assert.equal(typeof result.configuration.coordinator.hermes021Local?.deliver, "function");
+  assert.deepEqual(result.configuration.coordinator.planning.localAdapterAdmission, {
+    enabledAdapters: [HERMES_021_MACOS_LOCAL_ADAPTER_V1],
+  }, "only the separately-proved local Hermes route is admitted by operator assembly");
+  assert.equal(result.configuration.web.codexMacosCustodyReadiness?.readinessDigest, codexCustody.readinessDigest);
+  assert.equal(Object.isFrozen(result.configuration.web.codexMacosCustodyReadiness), true);
+  assert.equal(result.configuration.web.localSupervisorReadiness?.readinessDigest, supervisor.readinessDigest);
+  assert.equal(delivered, 0, "assembly must not start Hermes");
+  assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(
+    { ...settings, features: { ...settings.features, hermes021Local: false } }, trusted),
+  /unexpected_trusted_input:hermes021Local/);
+  const unrelatedTopology = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("other-db"),
+    schedulerAuthorityDigest: sha256Digest("operator-local-scheduler"), currentRoutes: [topologyRoute], requestedRoutes: [topologyRoute] });
+  assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(settings,
+    { ...trusted, localBackupRestoreReadiness: localBackupRestoreProof(unrelatedTopology.planDigest) }),
+  /hermes021Local_backup_restore_proof_invalid/);
+  assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(settings,
+    { ...trusted, web: { ...(trusted.web as object), localSupervisorReadiness: undefined } }),
+  /hermes021Local_supervisor_not_ready/);
+});
+
+test("operator assembly refuses a local Hermes callback until its local proof set is recorded", () => {
+  const { settings, trusted } = operatorConfigurationScenario("full");
+  settings.features = { ...settings.features, sessions: false, codex: false, codexResultReturn: false,
+    nativeHttp: false, hermes021Local: true };
+  trusted.sessions = undefined;
+  trusted.codex = undefined;
+  trusted.codexResultReturn = undefined;
+  trusted.nativeHttp = undefined;
+  trusted.hermes021Local = { async deliver() {} };
+  trusted.localBackupRestoreReadiness = localBackupRestoreProof(sha256Digest("not-a-plan"));
+  assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(settings, trusted),
+    /hermes021Local_installation_proof_missing/);
+  const topologyRoute = { kind: "local" as const, workerId: "worker:local-hermes", adapterId: "connector:hermes-021-macos-local-v1",
+    adapterRevision: "00570550" };
+  const topology = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("operator-local-db"),
+    schedulerAuthorityDigest: sha256Digest("operator-local-scheduler"), currentRoutes: [topologyRoute], requestedRoutes: [topologyRoute] });
+  trusted.web = { ...(trusted.web as object), installationTopologyPlan: topology,
+    installationReadiness: createInstallationReadinessV1({ planDigest: topology.planDigest, proofs: [
+      { proof: "backup_restore", state: "passed", evidenceDigest: sha256Digest("operator-local-backup") },
+      { proof: "local_owner_qualification", state: "passed", evidenceDigest: sha256Digest("operator-local-text") },
+      { proof: "local_runner_bridge", state: "not_started" },
+    ] }) } as typeof trusted.web;
+  assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(settings, trusted),
+    /hermes021Local_installation_not_ready/);
+});
+
+test("operator assembly admits a local Claude callback only after its independent process and recovery proofs", () => {
+  const { settings, trusted } = operatorConfigurationScenario("full");
+  settings.features = { ...settings.features, sessions: false, codex: false, codexResultReturn: false,
+    nativeHttp: false, claudeCodeLocal: true };
+  trusted.sessions = undefined;
+  trusted.codex = undefined;
+  trusted.codexResultReturn = undefined;
+  trusted.nativeHttp = undefined;
+  const route = { kind: "local" as const, workerId: "worker:local-claude",
+    adapterId: CLAUDE_CODE_LOCAL_ADAPTER_V1, adapterRevision: "source-123" };
+  const topology = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("operator-claude-db"),
+    schedulerAuthorityDigest: sha256Digest("operator-claude-scheduler"), currentRoutes: [route], requestedRoutes: [route] });
+  const backupRestore = localBackupRestoreProof(topology.planDigest);
+  const supervisor = createLocalSupervisorReadinessV1({ planDigest: topology.planDigest, proofs: [
+    { proof: "private_configuration_custody", state: "passed", evidenceDigest: sha256Digest("claude-custody") },
+    { proof: "restricted_launch_definition", state: "passed", evidenceDigest: sha256Digest("claude-launch") },
+    { proof: "restart_and_drain_procedure", state: "passed", evidenceDigest: sha256Digest("claude-restart") },
+    { proof: "upgrade_and_rollback_procedure", state: "passed", evidenceDigest: sha256Digest("claude-rollback") },
+  ] });
+  const processReadiness = createClaudeCodeLocalProcessReadinessV1({ planDigest: topology.planDigest, proofs: [
+    { proof: "installed_process_identity", state: "passed", evidenceDigest: sha256Digest("claude-identity") },
+    { proof: "permission_boundary", state: "passed", evidenceDigest: sha256Digest("claude-permission") },
+    { proof: "cancellation_and_restart_recovery", state: "passed", evidenceDigest: sha256Digest("claude-recovery") },
+  ] });
+  trusted.web = { ...(trusted.web as object), installationTopologyPlan: topology,
+    installationReadiness: createInstallationReadinessV1({ planDigest: topology.planDigest, proofs: [
+      { proof: "backup_restore", state: "passed", evidenceDigest: backupRestore.proofDigest },
+    ] }), localSupervisorReadiness: supervisor, claudeCodeLocalProcessReadiness: processReadiness } as typeof trusted.web;
+  trusted.localBackupRestoreReadiness = backupRestore;
+  let delivered = 0;
+  trusted.claudeCodeLocal = { deliver: async () => { delivered++; } };
+  const result = assemblePrivateAgentTaskOperatorConfiguration(settings, trusted);
+  assert.deepEqual(result.configuration.coordinator.planning.localAdapterAdmission, {
+    enabledAdapters: [CLAUDE_CODE_LOCAL_ADAPTER_V1],
+  });
+  assert.equal(typeof result.configuration.coordinator.claudeCodeLocal?.deliver, "function");
+  assert.equal(delivered, 0, "assembly cannot start Claude");
+  const mismatchedBackup = localBackupRestoreProof(sha256Digest("wrong-claude-plan"));
+  assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(settings,
+    { ...trusted, localBackupRestoreReadiness: mismatchedBackup }),
+  /claudeCodeLocal_installation_proof_invalid/);
+  const missingProcess = createClaudeCodeLocalProcessReadinessV1({ planDigest: topology.planDigest, proofs: [
+    { proof: "installed_process_identity", state: "passed", evidenceDigest: sha256Digest("claude-identity") },
+  ] });
+  assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(settings,
+    { ...trusted, web: { ...(trusted.web as object), claudeCodeLocalProcessReadiness: missingProcess } }),
+  /claudeCodeLocal_process_not_ready/);
+  const unrecordedBackup = createInstallationReadinessV1({ planDigest: topology.planDigest, proofs: [
+    { proof: "backup_restore", state: "not_started" },
+  ] });
+  assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(settings,
+    { ...trusted, web: { ...(trusted.web as object), installationReadiness: unrecordedBackup } }),
+  /claudeCodeLocal_backup_restore_proof_mismatch/);
 });
 
 test("website-only settings cannot enter the operator assembler", async () => {

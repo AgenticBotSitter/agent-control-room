@@ -130,7 +130,7 @@ test('fixed read composition inspects only the exact durable start identity and 
   const operation = createCodexLocalReadCompositionV1({ runId: composedIdentity.runId,
     startEvidence: { load: () => ({ status: 'recorded' as const, ...composedIdentity,
       threadReceiptDigest: 'sha256:' + '9'.repeat(64), turnReceiptDigest: 'sha256:' + 'a'.repeat(64),
-      readIdentity: composedIdentity }) },
+      readIdentity: composedIdentity, cleanupVerified: false as const }) },
     authority: { assertCurrent(identity) { checked++; assert.equal(identity.runId, composedIdentity.runId); } },
     open(identity) { opened++; assert.equal(identity.threadId, binding.threadId); return {
       ready: Promise.resolve({ async send() {}, async readLine() { return responses[index++]; } }),
@@ -152,7 +152,7 @@ test('fixed read composition refuses missing durable identity before opening a p
   const operation = createCodexLocalReadCompositionV1({ runId: 'run:missing',
     startEvidence: { load: runId => ({ status: 'not_reserved' as const, runId, readIdentity: null,
       grantsExecutionAuthority: false as const, permitsResume: false as const,
-      permitsRetry: false as const, permitsThreadRead: false as const }) },
+      permitsRetry: false as const, permitsThreadRead: false as const, cleanupVerified: false as const }) },
     authority: { assertCurrent() { throw new Error('must not check'); } },
     open() { opened++; throw new Error('must not open'); } });
   await assert.rejects(operation.read(new AbortController().signal), /unavailable/);
@@ -164,7 +164,7 @@ test('fixed read composition rejects asynchronous authority before opening a pro
   const operation = createCodexLocalReadCompositionV1({ runId: composedIdentity.runId,
     startEvidence: { load: () => ({ status: 'recorded' as const, ...composedIdentity,
       threadReceiptDigest: 'sha256:' + '9'.repeat(64), turnReceiptDigest: 'sha256:' + 'a'.repeat(64),
-      readIdentity: composedIdentity }) },
+      readIdentity: composedIdentity, cleanupVerified: false as const }) },
     authority: { assertCurrent: (() => Promise.resolve()) as never },
     open() { opened++; throw new Error('must not open'); } });
   await assert.rejects(operation.read(new AbortController().signal), /unavailable/);

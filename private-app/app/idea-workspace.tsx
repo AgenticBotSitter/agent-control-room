@@ -10,12 +10,13 @@ import { IdeaStopControl } from "./idea-stop-control";
 import { IdeaDecisionForm } from "./idea-decision-form";
 import { IdeaStartControl } from "./idea-start-control";
 import { IdeaSynthesisControl } from "./idea-synthesis-control";
+import { IdeaResultProjectionControl } from "./idea-result-projection-control";
 
-export function IdeaDiscussion({ detail, refresh, pendingChanged, observeStart }: { detail: IdeaDetail; refresh?: () => void; pendingChanged?: (held: boolean) => void; observeStart?: () => void }) {
-  const { session, contributions, synthesis, decision, run } = detail;
+export function IdeaDiscussion({ detail, refresh, pendingChanged }: { detail: IdeaDetail; refresh?: () => void; pendingChanged?: (held: boolean) => void }) {
+  const { session, contributions, synthesis, decision, run, canonicalTasks } = detail;
   return <><h1>{session.title}</h1><p>{session.ideaSummary}</p><p>For: {session.targetCustomer}</p>
-    <p>{detail.execution === "not_configured" ? "Starting live panels is not connected on this installation."
-      : "Live start is configured. Current authorization is still required; this does not confirm that bots are connected."}</p>
+    <p>{detail.execution === "not_configured" ? "Discussion task preparation is not connected on this installation."
+      : "Preparing ordinary Control Room tasks is configured. This does not contact a bot or confirm that a worker is available."}</p>
     <section className="private-panel" aria-label="Panel status"><h2>Panel status</h2>{run ? <>
       <p>{({ prepared: "Prepared — no turn started", running: "Discussion in progress", completed: "Discussion completed",
         cancelled: "Discussion stopped", failed_definite: "Discussion failed", ambiguous: "Outcome uncertain — do not restart" })[run.state]}</p>
@@ -27,23 +28,41 @@ export function IdeaDiscussion({ detail, refresh, pendingChanged, observeStart }
       <p>Automatic retry is disabled.</p>
       {run.cancellationRequestedAt && run.state !== "cancelled" ? <p>Stop requested. This is not confirmation that the current turn stopped.</p> : null}
       {detail.canStop ? <IdeaStopControl key={run.runId} sessionId={session.sessionId} sessionDigest={session.sessionDigest} runId={run.runId} refresh={refresh} /> : null}
-    </> : <><p>No panel run is recorded for this idea.</p>
-      {detail.canStart ? <IdeaStartControl key={session.sessionId} session={session} refresh={refresh} observeStart={observeStart} />
-        : <p>Starting requires a configured runtime, an untouched idea and current owner access.</p>}</>}</section>
+    </> : <><p>{canonicalTasks ? `Round ${canonicalTasks.preparedRounds.join(", ")} has ${canonicalTasks.taskCount} ordinary Control Room tasks saved.`
+      : "No legacy panel run is recorded for this idea. New discussion work is prepared as ordinary Control Room tasks."}</p>
+      {canonicalTasks ? <a href={`/projects/${encodeURIComponent(canonicalTasks.projectId)}`}>Open prepared project tasks</a>
+        : detail.canStart ? <IdeaStartControl key={session.sessionId} session={session} refresh={refresh} />
+        : <p>Preparing tasks requires a configured task path, an untouched idea and current owner access.</p>}</>}</section>
     {contributions.some(c => c.sourceMode === "injected_only") ? <p role="note">This discussion contains synthetic test contributions. Its synthesis is not evidence of a completed live bot panel.</p> : null}
     {Array.from({ length: session.maxRounds }, (_, i) => i + 1).map(round => <section key={round} aria-label={`Round ${round}`}>
       <h2>Round {round}</h2>{session.participants.map(participant => {
         const contribution = contributions.find(c => c.round === round && c.participantId === participant.participantId);
         return <article className="private-panel" key={participant.participantId}><h3>{participant.displayName} · {participant.perspective}</h3>
           {contribution ? <><p style={{ whiteSpace: "pre-wrap" }}>{contribution.safeOpinion}</p>
-            <p>{contribution.sourceMode === "injected_only" ? "Synthetic test contribution — no provider was contacted." : "Retained, filtered provider contribution."}</p>
+            <p>{contribution.sourceMode === "injected_only" ? "Synthetic test contribution — no provider was contacted."
+              : contribution.sourceMode === "canonical_task_result" ? "Reviewed Control Room task result."
+              : "Retained, filtered provider contribution."}</p>
             <p>Suggested experiment: {contribution.suggestedExperiment}</p><p>{contribution.sourceMode === "injected_only" ? "Test confidence" : "Bot-reported confidence"}: {contribution.confidencePercent}%</p></>
             : <p>No contribution saved for this round.</p>}</article>;
       })}</section>)}
+    {canonicalTasks && !synthesis && !decision ? <section className="private-panel" aria-label="Reviewed task results"><h2>Reviewed task results</h2>
+      <p>Each participant result must first pass the ordinary Control Room review and verification path. Adding it here never starts a worker or accepts a review.</p>
+      {canonicalTasks.tasks.map(task => {
+        const participant = session.participants.find(item => item.participantId === task.participantId);
+        return <article key={task.taskKey}><h3>Round {task.round} · {participant?.displayName ?? "Prepared participant"}</h3>
+          {task.contributionRecorded ? <p>Reviewed result added to this discussion.</p>
+            : detail.canProjectResults ? <IdeaResultProjectionControl sessionId={session.sessionId} taskKey={task.taskKey} refresh={refresh} />
+            : <p>Waiting for a reviewed task result. Result projection is not configured for this installation.</p>}</article>;
+      })}</section> : null}
+    {detail.canPrepareNextRound && canonicalTasks && detail.nextCanonicalRound ? <section className="private-panel" aria-label="Next discussion round">
+      <h2>Next discussion round</h2><p>Every result in the last round was reviewed and verified. Preparing the next round creates ordinary proposed tasks; it does not start an agent.</p>
+      <IdeaStartControl key={`round-${detail.nextCanonicalRound}`} session={session} projectId={canonicalTasks.projectId} round={detail.nextCanonicalRound} refresh={refresh} />
+    </section> : null}
     <section className="private-panel"><h2>Discussion recap</h2>{synthesis ? <><p style={{ whiteSpace: "pre-wrap" }}>{synthesis.executiveSummary}</p>
       <p>Advisory score: {synthesis.overallScore}/100 — not a prediction of business success.</p>
-      <p>Proposed experiment: {synthesis.nextExperiment}</p></> : detail.canSynthesize && run
-        ? <IdeaSynthesisControl key={run.runId} sessionId={session.sessionId} sessionDigest={session.sessionDigest} runId={run.runId} refresh={refresh} />
+      <p>Proposed experiment: {synthesis.nextExperiment}</p></> : detail.canSynthesize
+        ? <IdeaSynthesisControl key={run?.runId ?? "canonical-reviewed-tasks"} sessionId={session.sessionId} sessionDigest={session.sessionDigest}
+          {...(run ? { runId: run.runId, mode: "legacy_panel" as const } : { mode: "canonical_reviewed_tasks" as const })} refresh={refresh} />
         : <p>No recap saved yet. Preparing one requires a completed discussion and current owner access.</p>}</section>
     <section className="private-panel"><h2>Your decision</h2>{decision ? <>
       <p>{decision.decision === "create_project" ? "Promoted to a project" : decision.decision === "save" ? "Saved for later" : "Rejected"}</p>
@@ -91,12 +110,12 @@ export function PrivateIdeaWorkspace({ sessionId, after }: { sessionId?: string;
     {creating ? <IdeaCreateForm close={() => { setCreating(false); setPage(undefined); setRefresh(v => v + 1); }} /> : null}
     {error ? <p role="alert">{error} Previously loaded discussion content is not a fresh status check.</p> : null}
     {detail ? <><p className="private-note">Active discussions are checked automatically while this page is visible, for up to 180 checks. These checks only read saved status; they never restart a bot. Use Refresh for a new check after a pause or login.</p>
-      <IdeaDiscussion detail={detail} refresh={() => { void observer.current?.read(); }} pendingChanged={pendingChanged} observeStart={() => observer.current?.watchStart()} /></> : page ? <>
+      <IdeaDiscussion detail={detail} refresh={() => { void observer.current?.read(); }} pendingChanged={pendingChanged} /></> : page ? <>
       <h1>Idea Lab</h1><p>Explore saved discussions and the projects you chose to pursue.</p>
       {page.availability === "not_configured" ? <p>Idea storage is not configured. No sample discussions are shown.</p>
         : <>{page.canCreate ? <button type="button" disabled={creating} onClick={() => setCreating(true)}>New idea</button>
           : <p>Idea creation is not available with the current configuration and access.</p>}<p>{page.execution === "not_configured"
-            ? "Running new panels is not connected yet." : "Open an idea to request a discussion. Current authorization is required."}</p>
+            ? "Preparing new discussion tasks is not connected yet." : "Open an idea to prepare ordinary Control Room tasks. Current authorization is required."}</p>
           {!page.sessions.length ? <p>No saved ideas on this page.</p> : page.sessions.map(session => <article className="private-panel" key={session.sessionId}>
             <h2><a href={`/ideas/${encodeURIComponent(session.sessionId)}`}
               style={{ display: "inline-flex", minHeight: 24, alignItems: "center" }}>{session.title}</a></h2>

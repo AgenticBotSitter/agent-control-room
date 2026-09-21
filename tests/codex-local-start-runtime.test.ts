@@ -134,6 +134,7 @@ function runtimeFixture(options: { authority?: 'current' | 'false' | 'stale'; fa
     receipts: {
       recordThread: async (_value, assertCurrent) => { calls.push('thread-receipt'); assertCurrent(); return 'recorded' as const; },
       recordTurn: async (_thread, _turn, assertCurrent) => { calls.push('turn-receipt'); assertCurrent(); return 'recorded' as const; },
+      recordCleanup: async (_thread, _turn, assertCurrent) => { calls.push('cleanup-receipt'); assertCurrent(); return 'recorded' as const; },
     },
     admissionFactory: { create: binding => {
       assert.equal(binding.activationMessageId, saved.activation.messageId);
@@ -170,7 +171,7 @@ test('uses exact current activation and a one-shot local reservation before boun
   const { runtime, calls, written } = runtimeFixture();
   const result = await runtime.start();
   assert.deepEqual(calls, ['reserve', 'workspace', 'open', 'write:initialize', 'write:initialized',
-    'write:thread/start', 'thread-receipt', 'write:turn/start', 'turn-receipt', 'close']);
+    'write:thread/start', 'thread-receipt', 'write:turn/start', 'turn-receipt', 'close', 'cleanup-receipt']);
   assert.equal(result.thread.threadId, 'thr_synthetic');
   assert.equal(result.turn.turnId, 'turn_synthetic');
   assert.equal(result.grantsExecutionAuthority, false);

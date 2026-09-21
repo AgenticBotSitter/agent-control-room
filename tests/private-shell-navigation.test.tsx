@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import Home from "../private-app/app/page";
 import { HomeDashboard, type HomeDashboardState } from "../private-app/app/home-workspace";
 import SettingsPage from "../private-app/app/settings/page";
-import { PrivateProjectWorkspace } from "../private-app/app/workspace";
+import { PrivateProjectWorkspace, ProjectAgentInstallationStatus } from "../private-app/app/workspace";
 import { ProjectCatalogNavigation } from "../app/components/project-catalog-navigation";
 import { createProjectBrowserClient } from "../src/web/v1/browser-client";
 import { readTaskHomeActivity } from "../src/web/v1/task-home-browser-client";
@@ -19,9 +19,12 @@ import { ProjectNavigation } from "../private-app/app/project-navigation";
 import { ProjectTaskViewPanel } from "../private-app/app/project-task-views";
 import { decodePrivateRouteSegment } from "../private-app/app/route-segment";
 import { PrivateConnectionView } from "../private-app/app/connections/workspace";
+import { InstallationTopologySummary } from "../private-app/app/installation-topology-summary";
 import { TaskProposalForm } from "../private-app/app/task-panels";
 import { TaskAttentionPanel } from "../private-app/app/needs-me/task-attention";
 import { taskAttentionPageSchema, taskAttentionPresentation } from "../src/web/v1/task-attention-wire";
+import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
+import { sha256Digest } from "../src/security/canonical-digest";
 
 test("compiled route parameters decode exactly once before reaching browser clients", () => {
   assert.equal(decodePrivateRouteSegment("project%3Aalpha"), "project:alpha");
@@ -39,10 +42,16 @@ test("home gives honest navigation to existing private workspace surfaces", () =
   assert.match(html, /<nav id="private-workspace-navigation" class="private-navigation"/);
   assert.doesNotMatch(html, /<details/);
   assert.match(html, /Each section reports unavailable data instead of replacing it with a zero/);
+  assert.match(html, /Installation setup/);
+  assert.match(html, /Checking saved setup status/);
+  assert.doesNotMatch(html, /No reviewed setup plan is currently available/);
   assert.doesNotMatch(html, /Idea Lab is optional/);
   assert.doesNotMatch(html, /live workers|running now|0 tasks/i);
   for (const label of ["Loading saved work", "Loading saved attention items", "Loading verified result records",
     "Loading saved worker signals", "Loading saved projects"]) assert.match(html, new RegExp(label));
+  assert.match(html, /Operator capacity/);
+  assert.match(html, /Reading the recorded capacity and outcome evidence/);
+  assert.equal((html.match(/operator-capacity-title/g) ?? []).length, 2, "one read-only capacity panel is mounted");
 });
 
 test("task proposal and worker inventory disclose unavailable operational facts", () => {
@@ -58,6 +67,28 @@ test("task proposal and worker inventory disclose unavailable operational facts"
     "Cancel and resume are unsupported"])
     assert.match(connections, new RegExp(text));
   assert.doesNotMatch(connections, /usage are unavailable in this view/);
+});
+
+test("project agents separates local installation setup from project availability", () => {
+  const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
+    currentRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }],
+    requestedRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }] });
+  const html = renderToStaticMarkup(createElement(ProjectAgentInstallationStatus, { topology: {
+    state: "available", plan,
+  } }));
+  assert.match(html, /Local worker setup on this computer/);
+  assert.match(html, /Installation-scoped setup status only/);
+  assert.match(html, /Three local worker routes/);
+  for (const label of ["Hermes Agent", "Claude Code", "Codex"]) assert.match(html, new RegExp(label));
+  assert.match(html, /not this project’s agent eligibility, available capacity, current work, or permission to assign a task/);
+  assert.doesNotMatch(html, /<button|<form|<input|Assign|Start agent/);
+  const remoteOnly = renderToStaticMarkup(createElement(ProjectAgentInstallationStatus, { topology: {
+    state: "available", plan: planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database-remote"),
+      schedulerAuthorityDigest: sha256Digest("scheduler-remote"), currentRoutes: [{ kind: "remote", workerId: "worker:remote",
+        adapterId: "connector:remote-v1", adapterRevision: "00570550" }], requestedRoutes: [{ kind: "remote", workerId: "worker:remote",
+        adapterId: "connector:remote-v1", adapterRevision: "00570550" }] }),
+  } }));
+  assert.equal(remoteOnly, "");
 });
 
 test("needs-attention items expose owner questions and sort urgent work first", () => {
@@ -560,4 +591,18 @@ test("workers boundary text no longer claims capacity data is unavailable", () =
   assert.match(html, /not part of this inventory/);
   assert.match(html, /operator capacity panel below shows the recorded capacity/);
   assert.match(html, /read-only/);
+});
+
+test("workers can show the reviewed installation plan without revealing routes or offering setup actions", () => {
+  const plan = planInstallationTopologyV1({
+    databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
+    currentRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }],
+    requestedRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }],
+  });
+  const html = renderToStaticMarkup(createElement(PrivateConnectionView, { data: { state: "loading" }, onRefresh: () => {} },
+    createElement(InstallationTopologySummary, { plan })));
+  assert.match(html, /Installation setup/);
+  assert.match(html, /This computer/);
+  assert.match(html, /successful owner-attended local worker check/);
+  assert.doesNotMatch(html, /worker:local|sha256:|<form|<input/);
 });

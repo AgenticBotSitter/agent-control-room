@@ -162,11 +162,38 @@ const claudeTerminalResultEvidenceSchema = z.object({
   evidenceDigest: digest,
 }).strict();
 
+/**
+ * A terminal JSON-lines report emitted by a Mac-local Hermes 0.21 worker.
+ * It intentionally retains only the session identifier, fixed connector
+ * profile, digest of the terminal record, and safe numeric accounting — never
+ * the executable, login, provider, model, prompt, workspace, or command.
+ */
+const hermes021MacosTerminalResultEvidenceSchema = z.object({
+  schema: z.literal(TERMINAL_RESULT_EVIDENCE_SCHEMA_V1),
+  kind: z.literal("hermes_021_macos_terminal_result"),
+  lineage: lineageSchema,
+  terminalState: z.literal("completed"),
+  observedAt: instant,
+  content: contentSchema,
+  source: z.object({
+    sessionId: id,
+    connectorProfileDigest: digest,
+    terminalResultDigest: digest,
+    inputTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    outputTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    totalTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    durationMs: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  }).strict(),
+  ...inertFlags,
+  evidenceDigest: digest,
+}).strict();
+
 export const terminalResultEvidenceSchemaV1 = z.discriminatedUnion("kind", [
   hermesEvidenceSchema,
   codexEvidenceSchema,
   upstreamHermesSessionResultEvidenceSchema,
   claudeTerminalResultEvidenceSchema,
+  hermes021MacosTerminalResultEvidenceSchema,
 ]).superRefine((value, context) => {
   const { evidenceDigest, ...material } = value;
   if (evidenceDigest !== sha256Digest(material)) {
@@ -178,6 +205,7 @@ export type HermesTerminalResultEvidenceV1 = z.infer<typeof hermesEvidenceSchema
 export type CodexTerminalResultEvidenceV1 = z.infer<typeof codexEvidenceSchema>;
 export type UpstreamHermesSessionResultEvidenceV1 = z.infer<typeof upstreamHermesSessionResultEvidenceSchema>;
 export type ClaudeTerminalResultEvidenceV1 = z.infer<typeof claudeTerminalResultEvidenceSchema>;
+export type Hermes021MacosTerminalResultEvidenceV1 = z.infer<typeof hermes021MacosTerminalResultEvidenceSchema>;
 
 const hermesInputSchema = z.object({
   expected: z.object({
@@ -243,6 +271,10 @@ function wellFormedUnicode(value: string): boolean {
     } else if (code >= 0xdc00 && code <= 0xdfff) return false;
   }
   return true;
+}
+
+function nonnegativeSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
 function finalized<T extends Omit<TerminalResultEvidenceV1, "evidenceDigest">>(material: T): TerminalResultEvidenceV1 {
@@ -514,6 +546,18 @@ const claudeTerminalResultInputSchema = z.object({
   observedAt: instant,
 }).strict();
 
+const hermes021MacosTerminalResultInputSchema = z.object({
+  lineage: lineageSchema,
+  retained: z.object({
+    sessionId: id,
+    connectorProfileDigest: digest,
+    terminalResultDigest: digest,
+  }).strict(),
+  /** Exact JSON line emitted by Hermes; it is the sole source of result text. */
+  terminalResultRawLine: z.string().min(1).max(262_144),
+  observedAt: instant,
+}).strict();
+
 function plainJsonObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -601,5 +645,61 @@ export function projectClaudeTerminalResultEvidenceV1(value: unknown): ClaudeTer
       permitsRetry: false,
       permitsResume: false,
     }) as ClaudeTerminalResultEvidenceV1;
+  } catch { return unavailable(); }
+}
+
+/**
+ * Projects one completed Hermes 0.21 `--format stream-json` terminal record
+ * into the shared, inert result-evidence union. The retained digest must match
+ * the exact raw JSON line, and all text and accounting is re-read from that
+ * verified line. A terminal record proves an answer was received; it never by
+ * itself approves work, releases a slot, or permits a retry.
+ */
+export function projectHermes021MacosTerminalResultEvidenceV1(value: unknown): Hermes021MacosTerminalResultEvidenceV1 {
+  try {
+    const parsed = hermes021MacosTerminalResultInputSchema.parse(value);
+    let decoded: unknown;
+    try { decoded = JSON.parse(parsed.terminalResultRawLine); } catch { return unavailable(); }
+    if (!plainJsonObject(decoded) || sha256Digest(decoded) !== parsed.retained.terminalResultDigest) return unavailable();
+    const material = decoded;
+    if (material.type !== "result" || typeof material.session_id !== "string"
+      || material.session_id !== parsed.retained.sessionId || material.exit_code !== 0
+      || typeof material.text !== "string" || material.text.trim().length === 0
+      || !wellFormedUnicode(material.text)) return unavailable();
+    const tokens = material.tokens;
+    if (!plainJsonObject(tokens)) return unavailable();
+    const inputTokens = tokens.input, outputTokens = tokens.output, totalTokens = tokens.total;
+    const cacheRead = tokens.cache_read, cacheWrite = tokens.cache_write, durationMs = material.duration_ms;
+    if (!nonnegativeSafeInteger(inputTokens) || !nonnegativeSafeInteger(outputTokens)
+      || !nonnegativeSafeInteger(totalTokens) || !nonnegativeSafeInteger(cacheRead)
+      || !nonnegativeSafeInteger(cacheWrite) || !nonnegativeSafeInteger(durationMs)
+      || totalTokens < inputTokens + outputTokens) return unavailable();
+    const bytes = Buffer.from(material.text, "utf8");
+    if (bytes.byteLength < 1 || bytes.byteLength > 65_536) return unavailable();
+    const contentHash = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+    assertNoSecretMaterial(material.text, "Hermes local terminal result evidence");
+    return finalized({
+      schema: TERMINAL_RESULT_EVIDENCE_SCHEMA_V1,
+      kind: "hermes_021_macos_terminal_result",
+      lineage: parsed.lineage,
+      terminalState: "completed",
+      observedAt: parsed.observedAt,
+      content: { contentHash, sizeBytes: bytes.byteLength },
+      source: {
+        sessionId: parsed.retained.sessionId,
+        connectorProfileDigest: parsed.retained.connectorProfileDigest,
+        terminalResultDigest: parsed.retained.terminalResultDigest,
+        inputTokens,
+        outputTokens,
+        totalTokens,
+        durationMs,
+      },
+      canonicalPublicationAllowed: false,
+      qualityAccepted: false,
+      completionRecorded: false,
+      grantsExecutionAuthority: false,
+      permitsRetry: false,
+      permitsResume: false,
+    }) as Hermes021MacosTerminalResultEvidenceV1;
   } catch { return unavailable(); }
 }

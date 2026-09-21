@@ -22,7 +22,8 @@ import { taskAttentionPageSchema, taskAttentionPresentation, type TaskAttentionP
 import { WebProjectService } from "./project-service";
 import { catalogProjectIdSchema } from "./project-wire";
 import { taskDraftSchema, taskSummarySchema, taskReceiptSchema, taskDetailSchema, taskPageSchema,
-  taskRunSchema, type TaskRun, type TaskReceipt } from "./task-wire";
+  taskRunSchema, type HermesDeliveryRecovery, type TaskRun, type TaskReceipt } from "./task-wire";
+import { HERMES_021_MACOS_LOCAL_JOB_TYPE_V1, type Hermes021MacosDeliveryRecoveryStatusV1 } from "../../harness/hermes-021-v1";
 import { taskPlanningOptionsSchema } from "./task-planning-wire";
 import { taskHomeActivitySchema } from "./task-home-wire";
 import { taskProjectOverviewSchema } from "./task-project-overview-wire";
@@ -63,6 +64,10 @@ export interface WebTaskKeys {
   reviews?: { integrityKey: Uint8Array; checkpoints: AwaitableRollbackCheckpointStoreV1 };
   ownerReviews?: WebTaskReviewConfiguration;
   manualVerificationScenarios?: readonly ManualVerificationScenario[];
+  /** Bound installation-owned read only. The web service never receives its
+   * receipt key, storage port, runner, profile, model, or workspace settings. */
+  hermesDeliveryRecovery?: { inspect(scope: { tenantId: string; projectId: string; jobId: string; attemptId: string }):
+    Promise<Hermes021MacosDeliveryRecoveryStatusV1> };
 }
 const resultMetadata = (receipt: TaskResultReceipt) => taskResultMetadataSchema.parse({ artifactId: receipt.artifactId,
   attemptId: receipt.attemptId, runId: receipt.runId, contentHash: receipt.contentHash, sizeBytes: receipt.sizeBytes,
@@ -77,12 +82,17 @@ export class WebTaskService {
   private readonly reviewCommandsConfigured: boolean;
   private readonly verificationCommandsConfigured: boolean;
   private readonly ideaProjectsConfigured: boolean;
+  private readonly hermesDeliveryRecovery?: WebTaskKeys["hermesDeliveryRecovery"];
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     private readonly clock: () => number = Date.now, keys?: WebTaskKeys) {
     this.authority = new WebSessionAuthority(db, scope, clock, "task");
     this.ideaProjectsConfigured = !!keys?.ideaIntegrityKey;
     this.reviewCommandsConfigured = !!keys?.ownerReviews;
     this.verificationCommandsConfigured = !!keys?.manualVerificationScenarios?.length;
+    if (keys?.hermesDeliveryRecovery && typeof keys.hermesDeliveryRecovery.inspect !== "function") throw new Error("task_key_invalid");
+    this.hermesDeliveryRecovery = keys?.hermesDeliveryRecovery ? Object.freeze({
+      inspect: keys.hermesDeliveryRecovery.inspect.bind(keys.hermesDeliveryRecovery),
+    }) : undefined;
     if (keys?.manualVerificationScenarios && (!keys.results || !keys.reviews || !keys.harnessIntegrityKey)) throw new Error("task_key_invalid");
     if (keys?.ownerReviews && (!keys.results || !keys.reviews || !(keys.ownerReviews.integrityKey instanceof Uint8Array)
       || keys.ownerReviews.integrityKey.length !== 32 || keys.reviews.integrityKey.length !== 32
@@ -104,6 +114,17 @@ export class WebTaskService {
         read: keys.reviews.checkpoints.read.bind(keys.reviews.checkpoints), initialize: () => { throw new Error("review_read_only"); },
         advance: () => { throw new Error("review_read_only"); } }) };
     }
+  }
+  private async inspectHermesDeliveryRecovery(job: { jobType: string }, projectId: string, jobId: string,
+    attempts: readonly { attemptId: string }[]): Promise<HermesDeliveryRecovery> {
+    if (job.jobType !== HERMES_021_MACOS_LOCAL_JOB_TYPE_V1) return { source: "not_applicable" };
+    if (!this.hermesDeliveryRecovery) return { source: "not_configured" };
+    if (attempts.length !== 1) return { source: "ambiguous_attempt" };
+    try {
+      const status = await this.hermesDeliveryRecovery.inspect({ tenantId: this.scope.tenantId, projectId, jobId,
+        attemptId: attempts[0]!.attemptId });
+      return { source: "configured", status };
+    } catch { return { source: "unavailable" }; }
   }
   private id(value: string) { if (!catalogProjectIdSchema.safeParse(value).success) throw new WebAccessError("invalid_request"); }
 
@@ -160,11 +181,31 @@ export class WebTaskService {
   }
 
   async propose(identity: VerifiedWebIdentity, projectId: string, value: unknown, key: string) {
+    return this.proposeInternal(identity, projectId, value, key, []);
+  }
+
+  /** Internal integration seam for a reviewed feature that needs ordinary
+   * proposed tasks to wait on already-existing ordinary tasks. This retains
+   * the same owner authorization, request/workflow/job bundle, idempotency
+   * ledger, and non-runnable materialization ceiling as `propose()`. */
+  async proposeWithDependencies(identity: VerifiedWebIdentity, projectId: string, value: unknown, key: string,
+    dependsOnJobIds: readonly string[]) {
+    return this.proposeInternal(identity, projectId, value, key, dependsOnJobIds);
+  }
+
+  private async proposeInternal(identity: VerifiedWebIdentity, projectId: string, value: unknown, key: string,
+    dependsOnJobIds: readonly string[]) {
     this.id(projectId);
     const parsed = taskDraftSchema.safeParse(value);
-    if (!parsed.success || !/^[A-Za-z0-9:_-]{12,180}$/.test(key)) throw new WebAccessError("invalid_request");
+    const dependencies = [...dependsOnJobIds].sort();
+    if (!parsed.success || !/^[A-Za-z0-9:_-]{12,180}$/.test(key)
+      || dependencies.some(id => !catalogProjectIdSchema.safeParse(id).success)
+      || new Set(dependencies).size !== dependencies.length) throw new WebAccessError("invalid_request");
     try { assertNoSecretMaterial(parsed.data); } catch { throw new WebAccessError("invalid_request"); }
-    const digest = sha256Digest({ ...this.scope, projectId, action: "tasks.propose", draft: parsed.data });
+    // Preserve the prior idempotency digest byte-for-byte for ordinary browser
+    // proposals. Only the narrow dependency integration adds this field.
+    const digest = sha256Digest({ ...this.scope, projectId, action: "tasks.propose", draft: parsed.data,
+      ...(dependencies.length ? { dependsOnJobIds: dependencies } : {}) });
     return this.authority.authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.propose", projectId);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
@@ -178,6 +219,16 @@ export class WebTaskService {
         return { receipt, replayed: true };
       }
       if (project.lifecycle !== "active") throw new WebAccessError("conflict");
+      for (const dependencyId of dependencies) {
+        const dependency = (await tx.query<{ project_id: string; payload: unknown }>(
+          "SELECT project_id,payload FROM control_jobs WHERE tenant_id=$1 AND id=$2 FOR SHARE",
+          [this.scope.tenantId, dependencyId])).rows[0];
+        if (!dependency || dependency.project_id !== projectId) throw new WebAccessError("conflict");
+        const job = jobRecordSchema.safeParse(dependency.payload);
+        if (!job.success || job.data.tenantId !== this.scope.tenantId || job.data.projectId !== projectId || job.data.id !== dependencyId) {
+          throw new WebAccessError("conflict");
+        }
+      }
       const requestId = `request:${randomUUID()}`, workflowId = `workflow:${randomUUID()}`, jobId = `job:${randomUUID()}`;
       const base = { contractVersion: DOMAIN_CONTRACT_VERSION, tenantId: this.scope.tenantId, version: 0, createdAt: actor.now, updatedAt: actor.now };
       const authority: AuthorityEnvelope = { projectId, allowedExecutor: "executor:unassigned", allowedOperations: ["task.propose"],
@@ -190,11 +241,11 @@ export class WebTaskService {
           state: "draft", priority: 50, requestedBy: { actorId: actor.id, actorType: "human" },
           idempotencyKey: sha256Digest({ ...this.scope, actorId: actor.id, key, action: "tasks.propose" }) },
         workflow: { ...base, id: workflowId, kind: "workflow", requestId, projectId, definitionVersion: "private-task-proposal/v1",
-          definitionDigest: sha256Digest({ type: "private-task-proposal/v1", projectId, draft: parsed.data }),
+          definitionDigest: sha256Digest({ type: "private-task-proposal/v1", projectId, draft: parsed.data, dependsOnJobIds: dependencies }),
           authorityMode: "control_room_native", state: "proposed", jobIds: [jobId] },
         job: { ...base, id: jobId, kind: "job", workflowId, projectId, jobType: "task.proposal", specVersion: "1.0.0",
           inputDigest: sha256Digest(parsed.data), state: "proposed", priority: 50, requiredCapability: "task.proposal.review",
-          dependsOnJobIds: [], authority, retryPolicy: { maxAttempts: 1, backoffSeconds: 0, retryableFailureCodes: [],
+          dependsOnJobIds: dependencies, authority, retryPolicy: { maxAttempts: 1, backoffSeconds: 0, retryableFailureCodes: [],
             retryAfterOrphan: false, ambiguousEffectPolicy: "attention" } },
       };
       await new CanonicalStore(joined(tx)).createProposedWorkBundle(bundle);
@@ -251,8 +302,10 @@ export class WebTaskService {
         attempts.push({ attemptId: attempt.id, attemptNumber: attempt.attemptNumber, state: attempt.state,
           runs, additionalRunsOmitted: ids.length > 10 });
       }
+      const hermesDeliveryRecovery = await this.inspectHermesDeliveryRecovery(job, projectId, jobId, attempts);
       return taskDetailSchema.parse({ project, task: summary, instructions: request.objective, inputDigest: job.inputDigest,
-        observedAt: actor.now, attempts, earlierAttemptsOmitted: attemptRows.length > 10,
+        observedAt: actor.now, attempts, earlierAttemptsOmitted: attemptRows.length > 10, preparedFor: null,
+        hermesDeliveryRecovery,
         progressSource: store ? "configured" : "not_configured", dispatch: "not_connected",
         artifacts: this.resultStore ? "configured" : "not_connected", review: this.reviewConfig ? "recorded" : "not_connected" });
     });

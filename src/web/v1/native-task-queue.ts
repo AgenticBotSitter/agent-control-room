@@ -8,6 +8,13 @@ const intentSchema = z.object({ schema: z.literal("control-room.native-task-queu
   tenantId: localId, projectId: localId, jobId: localId, attemptId: localId, nodeId: localId,
   leaseId: localId, leaseEpoch: z.number().int().positive(), inputDigest: digestSchema,
   packetDigest: digestSchema, operationDigest: digestSchema, bindingDigest: digestSchema, enrollmentDigest: digestSchema,
+  /**
+   * The shared pg-boss queue carries more than one already-authorized harness
+   * contract.  Older rows intentionally omit this field; absence means the
+   * original signed native-dispatch route.  A new value must be selected only
+   * after the coordinator has reconstructed the matching canonical plan.
+   */
+  deliveryKind: z.enum(["native-dispatch", "hermes-021-macos-local", "claude-code-local"]).optional(),
   deadline: z.number().int().nonnegative(), queuedAt: z.string().datetime(), queuedBy: localId,
 }).strict();
 export type NativeTaskQueueIntent = z.infer<typeof intentSchema>;

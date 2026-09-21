@@ -21,7 +21,8 @@ export function TaskAssignmentPanel({ options, receipt = options?.receipt, error
         ? <button type="button" disabled={pending} onClick={() => onChange("expire")}>Reconcile expired reservation</button> : null
       : options.candidates.length ? <div><p>Configured machines only. Availability and capacity are checked when you assign.</p>
         <label htmlFor="task-assignment-node">Machine</label><select id="task-assignment-node" value={nodeId} disabled={pending} onChange={event => setNodeId(event.target.value)}>
-          <option value="">Choose a machine</option>{options.candidates.map(candidate => <option key={candidate.nodeId} value={candidate.nodeId}>{candidate.label} · {candidate.platform}</option>)}</select>
+          <option value="">Choose a machine</option>{options.candidates.map(candidate => <option key={candidate.nodeId} value={candidate.nodeId}>{candidate.label} · {candidate.platform} · {candidate.workScope === "bounded_text_review" ? "text review only" : "configured task"}</option>)}</select>
+        {options.candidates.some(candidate => candidate.workScope === "bounded_text_review") && <p className="private-note">Text-review-only work returns a review, test outline, or proposed patch from supplied context. It cannot edit this project, use tools, access accounts, or make network requests.</p>}
         <button type="button" disabled={pending || !options.candidates.some(candidate => candidate.nodeId === nodeId)} onClick={() => onChange("assign")}>Assign without starting</button></div>
         : <p>No configured machine is available for a new assignment of this task.</p>)}
   </section>;

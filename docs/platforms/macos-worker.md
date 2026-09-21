@@ -36,3 +36,22 @@ For an upgrade, stop new assignment admission, let owned work drain, and retain 
 For removal, first revoke future admission at Control Room and stop the operator-managed worker. Retain credentials in their native store, repositories, worktrees and all unresolved journals for manual disposition. This project deliberately provides no recursive deletion or credential-removal command. Removing application files does not prove that a running process drained or that unfinished work is safe to discard.
 
 Real enrollment, native execution, credential access and persistent service setup remain separately approved operations.
+
+## Codex custody readiness record
+
+Before a local macOS Codex task can even be considered, record both separate
+custody prerequisites against the current installation-plan digest:
+
+1. the exact executable was identified while it was still suspended, before it
+   could run user work; and
+2. the protected private Codex state directory was held without reopening a
+   race-prone pathname.
+
+`src/harness/codex-v1/macos-custody-readiness.ts` represents only the plan
+digest and opaque evidence digests for those two facts. It has no path,
+executable, account, credential, command, launch or approval field. A complete
+record changes the local capability display to **Mac safety prerequisites
+recorded**; it does not enable, launch, qualify or authorize Codex. A failed or
+unavailable record remains a visible refusal until the owner-run procedure
+records fresh evidence. The later owner-attended exact-harness qualification is
+still required.

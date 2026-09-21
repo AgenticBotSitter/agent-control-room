@@ -3,7 +3,7 @@ import { nativeTaskSubmissionReferenceSchema, type NativeTaskSubmission } from "
 import { localId } from "../../harness/v1/native-run-identifiers";
 import { TaskExecutionPlanner, type TaskPlanningOperation } from "./task-execution-planner";
 import { TaskAssignmentCoordinator, type TaskAssignmentOperation, type TaskAssignmentRoute, type NativeApprovalEnrollment,
-  type CodexPermitConfiguration } from "./task-assignment-coordinator";
+  type CodexPermitConfiguration, type Hermes021LocalQueueDeliveryTarget, type ClaudeCodeLocalQueueDeliveryTarget } from "./task-assignment-coordinator";
 import type { NativeApprovalPacketStore } from "./native-approval-packet-store";
 import { nativeTaskApprovalPacketSchema } from "../../harness/v1/native-approval-packet";
 import { TaskQualityCoordinator, taskQualityRequestSchema, taskQualitySweepRequestSchema, type TaskQualityConfiguration, type TaskQualityOperation } from "./task-quality-coordinator";
@@ -23,6 +23,13 @@ import { CodexCanonicalResultPublisherV1 } from "../../artifacts/v1/codex-result
 import type { ArtifactReadPortV1, ArtifactStoragePortV1 } from "../../node-executor/artifact-storage";
 import { captureCodexResultIntakeSettingsV1, CodexResultIntakeV1,
   type CodexResultIntakeSettingsV1 } from "./codex-result-intake";
+import { deliverVerifiedHermes021LocalQueueTaskV1 } from "./hermes-021-local-queue-delivery";
+import { deliverVerifiedClaudeCodeLocalQueueTaskV1 } from "./claude-code-local-queue-delivery";
+import { NativeResultStore } from "../../artifacts/v1/native-results";
+import { CompletionGateStoreV1 } from "../../completion-gate/v1/store";
+import { CanonicalIdeaTaskResultProjectionServiceV1 } from "../../idea-lab/v1/canonical-result-projection";
+import { IdeaLabCanonicalTaskLinkStoreV1 } from "../../idea-lab/v1/canonical-task-link-store";
+import { IdeaLabProjectRegistryStoreV1 } from "../../idea-lab/v1/store";
 
 export type TaskApprovalOperation = Readonly<{ tenantId: string; workspaceId: string;
   prepare: TaskAssignmentCoordinator["prepareNativeApproval"]; store: TaskAssignmentCoordinator["storeNativeApproval"];
@@ -30,6 +37,14 @@ export type TaskApprovalOperation = Readonly<{ tenantId: string; workspaceId: st
 export type TaskSubmissionOperation = Readonly<{ tenantId: string; workspaceId: string;
   enqueue: TaskAssignmentCoordinator["enqueueNativeTask"]; read: TaskAssignmentCoordinator["readNativeTaskQueue"];
   readDelivery?: TaskAssignmentCoordinator["readNativeDeliveryStatus"] }>;
+/**
+ * A narrow trusted-control-plane operation. The private web process performs
+ * authentication and authorization before it may invoke this operation. The
+ * browser supplies only an already-linked Idea task key; it never supplies a
+ * result, review, verification, or evidence record.
+ */
+export type IdeaCanonicalResultProjectionOperation = Readonly<{ tenantId: string; workspaceId: string;
+  project: (sessionId: string, taskKey: string) => Promise<{ contribution: { contributionId: string; contributionDigest: string }; replayed: boolean }> }>;
 
 export type TaskCoordinatorDatabase = Readonly<{ client: DatabaseClient; close: () => Promise<void>; isAvailable: () => boolean }>;
 export type TaskCoordinatorConfiguration = {
@@ -40,6 +55,16 @@ export type TaskCoordinatorConfiguration = {
    * after construction; drained and stopped before the underlying pool closes.
    * Never derived from an HTTP request or enabled implicitly by approval storage. */
   nativeSubmission?: NativeTaskSubmission & { close?: () => Promise<void> };
+  /**
+   * Installation-owned local Hermes delivery composition. It is optional and
+   * inert: merely configuring it does not invoke Hermes.  When the existing
+   * queue worker picks a canonically verified Hermes-0.21 local task, this
+   * callback is the only route allowed to reach the private runner.
+   */
+  hermes021Local?: { deliver(target: Hermes021LocalQueueDeliveryTarget, signal: AbortSignal): Promise<void> };
+  /** Installation-owned Claude route. It is optional and inert until a separate
+   * process qualification and private host composition supply this callback. */
+  claudeCodeLocal?: { deliver(target: ClaudeCodeLocalQueueDeliveryTarget, signal: AbortSignal): Promise<void> };
   /** Reviewed Codex permit bindings. Configuration alone starts no process or workspace. */
   codex?: CodexPermitConfiguration;
   quality?: TaskQualityConfiguration;
@@ -63,6 +88,10 @@ export type TaskCoordinatorConfiguration = {
  * listener, credential loading, approval or dispatch. The supplying bootstrap must verify the pool.
  */
 export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfiguration) {
+  // Direct Idea Lab provider execution is retained only by isolated legacy
+  // fixtures. Production composition must create ordinary participant tasks
+  // and use the shared delivery, result, review, and correction lifecycle.
+  if (input.ideaRuntime !== undefined) throw new Error("task_coordinator_config_invalid");
   const scope = Object.freeze({ tenantId: localId.parse(input.scope.tenantId), workspaceId: localId.parse(input.scope.workspaceId) });
   const maxActive = input.maxActive ?? 8, drainMs = input.drainMs ?? 30_000, closeMs = input.closeMs ?? 5000;
   for (const [value, ceiling] of [[maxActive, 8], [drainMs, 30_000], [closeMs, 5000]])
@@ -79,10 +108,20 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   if (input.nativeSubmission && (!input.approvals || typeof input.nativeSubmission.enqueueInSession !== "function"
     || input.nativeSubmission.recoverUnsentInSession !== undefined && typeof input.nativeSubmission.recoverUnsentInSession !== "function"))
     throw new Error("task_coordinator_config_invalid");
+  if (input.hermes021Local && typeof input.hermes021Local.deliver !== "function")
+    throw new Error("task_coordinator_config_invalid");
+  if (input.hermes021Local && !input.nativeSubmission)
+    throw new Error("task_coordinator_config_invalid");
+  if (input.claudeCodeLocal && typeof input.claudeCodeLocal.deliver !== "function")
+    throw new Error("task_coordinator_config_invalid");
+  if (input.claudeCodeLocal && !input.nativeSubmission)
+    throw new Error("task_coordinator_config_invalid");
   const nativeSubmission = input.nativeSubmission ? Object.freeze({
     enqueueInSession: input.nativeSubmission.enqueueInSession.bind(input.nativeSubmission),
     ...(input.nativeSubmission.recoverUnsentInSession ? { recoverUnsentInSession: input.nativeSubmission.recoverUnsentInSession.bind(input.nativeSubmission) } : {}),
   }) : undefined;
+  const hermes021Local = input.hermes021Local ? Object.freeze({ deliver: input.hermes021Local.deliver.bind(input.hermes021Local) }) : undefined;
+  const claudeCodeLocal = input.claudeCodeLocal ? Object.freeze({ deliver: input.claudeCodeLocal.deliver.bind(input.claudeCodeLocal) }) : undefined;
   const closeSubmission = input.nativeSubmission?.close?.bind(input.nativeSubmission);
   const capture = (resource: TaskCoordinatorDatabase) => {
     if (!resource || typeof resource.close !== "function" || typeof resource.isAvailable !== "function"
@@ -95,11 +134,14 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     .some(resource => resource && resource.client === input.ideaCreation!.database.client))
     throw new Error("task_coordinator_config_invalid");
   const ideaPool = input.ideaCreation ? capture(input.ideaCreation.database) : undefined;
-  if (input.ideaRuntime && (!ideaPool || typeof input.ideaRuntime.close !== "function"
+  // Legacy direct-runtime assembly remains below only to preserve isolated
+  // fixture compatibility. The entry guard above prevents it in production.
+  const legacyIdeaRuntime = (input as { ideaRuntime?: TaskCoordinatorConfiguration["ideaRuntime"] }).ideaRuntime;
+  if (legacyIdeaRuntime && (!ideaPool || typeof legacyIdeaRuntime.close !== "function"
     || [input.database, input.resultDatabase, input.evidence?.database, input.sessions?.database, input.ideaCreation?.database]
-      .some(resource => resource?.client === input.ideaRuntime!.database.client))) throw new Error("task_coordinator_config_invalid");
-  const ideaRuntimePool = input.ideaRuntime ? capture(input.ideaRuntime.database) : undefined;
-  const closeIdeaRuntime = input.ideaRuntime?.close.bind(input.ideaRuntime);
+      .some(resource => resource?.client === legacyIdeaRuntime.database.client))) throw new Error("task_coordinator_config_invalid");
+  const ideaRuntimePool = legacyIdeaRuntime ? capture(legacyIdeaRuntime.database) : undefined;
+  const closeIdeaRuntime = legacyIdeaRuntime?.close.bind(legacyIdeaRuntime);
   const evidenceSettings = input.evidence ? captureNativeEvidenceSettings(input.evidence) : undefined;
   if (evidenceSettings && (evidenceSettings.storage.storageClass !== input.quality!.results.storageClass
     || !timingSafeEqual(evidenceSettings.storage.integrityKey, input.quality!.results.integrityKey)))
@@ -159,11 +201,15 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     input.ideaCreation!.integrityKey, input.ideaCreation!.participants, input.clock) : undefined;
   const ideaDecision = ideaPool ? new WebIdeaDecisionOperation(guardedDatabase(ideaPool), scope,
     input.ideaCreation!.integrityKey, input.clock) : undefined;
+  let ideaProjectionService: CanonicalIdeaTaskResultProjectionServiceV1 | undefined;
   const ideaSynthesis = ideaPool ? new WebIdeaSynthesisOperation(guardedDatabase(ideaPool), scope,
-    input.ideaCreation!.integrityKey, input.clock) : undefined;
+    input.ideaCreation!.integrityKey, input.clock, { project: async (sessionId, taskKey) => {
+      if (!ideaProjectionService) throw new Error("idea_result_projection_not_configured");
+      return ideaProjectionService.project({ tenantId: scope.tenantId, workspaceId: scope.workspaceId, sessionId, taskKey });
+    } }) : undefined;
   const ideaStart = (() => {
     if (!ideaRuntimePool) return undefined;
-    const source = input.ideaRuntime!.runtime;
+    const source = legacyIdeaRuntime!.runtime;
     if (source.driver.mode !== "hermes_bot_mode_filtered") throw new Error("task_coordinator_config_invalid");
     const resolve = source.resolve.bind(source), invoke = source.driver.invoke.bind(source.driver),
       verify = source.evidenceAuthority.verify.bind(source.evidenceAuthority), consume = source.admissionAuthority.consume.bind(source.admissionAuthority);
@@ -185,6 +231,17 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     throw new Error("task_coordinator_config_invalid");
   const qualityCoordinator = input.quality ? new TaskQualityCoordinator(db, scope, input.quality, input.clock) : undefined;
   const resultCoordinator = resultPool ? new TaskResultCoordinator(guardedDatabase(resultPool), scope, input.planning, input.quality!, input.clock) : undefined;
+  // Result projection deliberately runs through the fixed native-result role,
+  // after private-web authentication. It does not use the web role to write
+  // Idea records and it does not reuse the legacy Idea provider runtime.
+  ideaProjectionService = ideaPool && resultPool && input.quality
+    ? new CanonicalIdeaTaskResultProjectionServiceV1(guardedDatabase(resultPool),
+      new IdeaLabProjectRegistryStoreV1(guardedDatabase(resultPool), input.ideaCreation!.integrityKey),
+      new IdeaLabCanonicalTaskLinkStoreV1(guardedDatabase(resultPool), input.ideaCreation!.integrityKey),
+      new NativeResultStore(guardedDatabase(resultPool), input.quality.harnessIntegrityKey, input.quality.results),
+      new CompletionGateStoreV1(guardedDatabase(resultPool), input.quality.integrityKey, input.quality.checkpoints,
+        () => new Date((input.clock ?? Date.now)()).toISOString()), input.planning.reviewIntegrityKey,
+      () => new Date((input.clock ?? Date.now)()).toISOString()) : undefined;
   const receiver = evidencePool ? new NativeEvidenceReceiver(guardedDatabase(evidencePool), {
     ...evidenceSettings!, scope, harnessIntegrityKey: input.quality!.harnessIntegrityKey,
     results: { ...scope, register: resultCoordinator!.register.bind(resultCoordinator), submit: resultCoordinator!.submit.bind(resultCoordinator) },
@@ -256,6 +313,13 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
       return run(() => ideaService.create(actor, request.data, key));
     },
   }) : undefined;
+  const ideaResultProjection: IdeaCanonicalResultProjectionOperation | undefined = ideaProjectionService ? Object.freeze({ ...scope,
+    project: (sessionId, taskKey) => run(async () => {
+      const saved = await ideaProjectionService.project({ tenantId: scope.tenantId, workspaceId: scope.workspaceId, sessionId, taskKey });
+      return { contribution: { contributionId: saved.contribution.contributionId, contributionDigest: saved.contribution.contributionDigest },
+        replayed: saved.replayed };
+    }),
+  }) : undefined;
   const sessions = sessionPool ? new ManagedNativeSessions(guardedDatabase(sessionPool), sessionSettings!, scope, {
     queue: nativeSubmission ? { locate: assignment.locateQueuedHarnessDelivery.bind(assignment),
       ...(nativeSubmission.recoverUnsentInSession ? { ready: assignment.recoverForReadyNode.bind(assignment) } : {}),
@@ -274,9 +338,14 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     isReady: () => { try { check(); return !closing && !invalid; } catch { return false; } }, clock: input.clock }) : undefined;
   const planning: TaskPlanningOperation = Object.freeze({ ...scope, plan: (...args) => run(() => planner.plan(...args)),
     supportsProject: projectId => { check(); return !closing && planner.supportsProject(projectId); },
+    templatesForProject: projectId => { check(); return !closing ? planner.templatesForProject(projectId) : []; },
     readSaved: (identity, projectId, sourceJobId) => {
       const actor = { ...identity };
       return run(() => planner.readSaved(actor, projectId, sourceJobId));
+    },
+    readPreparedWorker: (identity, projectId, jobId) => {
+      const actor = { ...identity };
+      return run(() => planner.readPreparedWorker(actor, projectId, jobId));
     } });
   const revisions = input.revisionPlanning ? Object.freeze({ ...scope,
     plan: (identity: Parameters<TaskExecutionPlanner["revise"]>[0], projectId: string, sourceJobId: string,
@@ -344,7 +413,20 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   }) : undefined;
   return Object.freeze({ planning, assignment: assignments, ...(approvals ? { approvals } : {}), ...(quality ? { quality } : {}),
     ...(ideaCreation ? { ideaCreation } : {}),
-    ...(nativeSubmission && sessions ? { queueDelivery: async (ref: Parameters<ManagedNativeSessions["deliverApproved"]>[0], signal: AbortSignal) => {
+    ...(ideaResultProjection ? { ideaResultProjection } : {}),
+    ...(nativeSubmission && (sessions || hermes021Local || claudeCodeLocal) ? { queueDelivery: async (ref: Parameters<ManagedNativeSessions["deliverApproved"]>[0], signal: AbortSignal) => {
+      const target = await assignment.locateQueuedHarnessDelivery(ref, signal);
+      if (target.kind === "hermes-021-local") {
+        if (!hermes021Local || signal.aborted) throw new Error("native_task_delivery_unresolved");
+        return deliverVerifiedHermes021LocalQueueTaskV1({ reference: ref, signal, target,
+          deliver: hermes021Local.deliver });
+      }
+      if (target.kind === "claude-code-local") {
+        if (!claudeCodeLocal || signal.aborted) throw new Error("native_task_delivery_unresolved");
+        return deliverVerifiedClaudeCodeLocalQueueTaskV1({ reference: ref, signal, target,
+          deliver: claudeCodeLocal.deliver });
+      }
+      if (!sessions) throw new Error("native_task_delivery_unresolved");
       const result = await sessions.deliverApproved(ref, signal);
       if (!result.transmissionRecorded || !result.deliveryConfirmed) throw new Error("native_task_delivery_unresolved");
       return { disposition: "delivered" as const };

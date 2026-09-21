@@ -74,9 +74,9 @@ export async function webNativeResultFixture() {
       runTag = runRunDigest(runId, "run-tag-", "hmac-sha256");
     await f.db.query(`INSERT INTO control_jobs(id,tenant_id,workflow_id,project_id,state,version,priority,required_capability,authority_digest,payload,created_at,updated_at)
       VALUES ($1,'tenant:test','workflow:test',$2,'leased',2,50,'capability:fixture',$3,$4,$5,$5)`,
-      [jobId, binding.projectId, keyDigest, JSON.stringify({
+      [jobId, binding.projectId, authorityDigest, JSON.stringify({
         id: jobId, kind: "job", state: "leased", jobType: "hermes-native-evidence-fixture", version: 2,
-        priority: 50, tenantId: binding.tenantId, authority: { digest: keyDigest, maxRisk: "low",
+        priority: 50, tenantId: binding.tenantId, authority: { digest: authorityDigest, maxRisk: "low",
           expiresAt: at(600_000), projectId: binding.projectId, effectPolicy: "none", networkPolicy: "none",
           credentialRefs: [], allowedExecutor: "executor:fixture", filesystemRoots: [], allowedOperations: ["operation:fixture"],
           maxDurationSeconds: 600, maxConcurrentEffects: 0, allowedNetworkDestinations: [] },

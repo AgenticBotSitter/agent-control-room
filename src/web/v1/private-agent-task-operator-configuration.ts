@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { captureLocalAdapterInstallationPortsV1, type LocalAdapterInstallationPortsV1 } from "../../harness/v1/local-adapter-installation";
 import { localId } from "../../harness/v1/native-run-identifiers";
 import { validatePrivateTaskStartupConfiguration, type PrivateTaskStartupConfiguration } from "./private-task-startup";
 import type { PrivateStartupConfiguration } from "./private-startup";
@@ -14,6 +15,13 @@ import type { NewsStartupConfiguration } from "./news-startup-configuration";
 import type { PrivateArtifactStorageConfigurationV1 } from "./private-artifact-storage";
 import type { AwaitableRollbackCheckpointStoreV1 } from "../../security";
 import type { TaskCoordinatorConfiguration } from "./task-coordinator-lifecycle";
+import { summarizeInstallationReadinessV1, verifyInstallationReadinessV1,
+  type InstallationReadinessV1 } from "../../harness/v1/installation-readiness";
+import { localBackupRestoreEvidenceDigestForInstallationPlanV1 } from "../../harness/v1/local-backup-restore-readiness";
+import { summarizeLocalSupervisorReadinessV1 } from "../../harness/v1/local-supervisor-readiness";
+import { HERMES_021_MACOS_LOCAL_ADAPTER_V1 } from "../../harness/hermes-021-v1/macos-local-worker";
+import { CLAUDE_CODE_LOCAL_ADAPTER_V1 } from "../../harness/claude-code-v1/task-planning-contract";
+import { summarizeClaudeCodeLocalProcessReadinessV1 } from "../../harness/claude-code-v1/local-process-readiness";
 
 /** Pure operator-side assembly. This module performs no environment, filesystem,
  * network, listener, credential-store or database access: it only shapes
@@ -59,6 +67,10 @@ const operatorSettingsSchema = z.object({
     codex: z.boolean().optional(),
     codexResultReturn: z.boolean().optional(),
     nativeHttp: z.boolean().optional(),
+    /** A local Hermes delivery callback supplied by the installation, never by the browser. */
+    hermes021Local: z.boolean().optional(),
+    /** A local Claude callback supplied by a separately qualified private host. */
+    claudeCodeLocal: z.boolean().optional(),
     artifactStorage: z.boolean().optional(),
     idea: z.boolean().optional(),
     news: z.boolean().optional(),
@@ -69,6 +81,8 @@ export type AgentTaskOperatorSettingsV1 = z.infer<typeof operatorSettingsSchema>
 
 export type AgentTaskOperatorTrustedInputs = {
   web: PrivateStartupConfiguration;
+  /** Prepared source-only compositions, retained without enabling delivery. */
+  preparedLocalAdapters?: LocalAdapterInstallationPortsV1;
   planning: {
     template: NativeTaskTemplate;
     additionalTemplates?: readonly NativeTaskTemplate[];
@@ -90,6 +104,13 @@ export type AgentTaskOperatorTrustedInputs = {
   codex?: CodexPermitConfiguration;
   codexResultReturn?: CodexResultIntakeSettingsV1;
   nativeHttp?: NativeHttpSettings;
+  /** Already-built, installation-owned local Hermes executor. It contains no browser input. */
+  hermes021Local?: NonNullable<TaskCoordinatorConfiguration["hermes021Local"]>;
+  /** Already-built, installation-owned Claude composition. It contains no browser input. */
+  claudeCodeLocal?: NonNullable<TaskCoordinatorConfiguration["claudeCodeLocal"]>;
+  /** Verified, plan-bound evidence from an owner-run disposable local restore.
+   * It is installation-only input, never browser data or a task record. */
+  localBackupRestoreReadiness?: unknown;
   artifactStorage?: PrivateArtifactStorageConfigurationV1;
   idea?: {
     creation: { integrityKey: Uint8Array; participants: unknown[] };
@@ -115,6 +136,67 @@ export type AgentTaskOperatorTrustedInputs = {
 
 function refuse(code: string): never {
   throw new Error(`agent_task_operator_config_invalid:${code}`);
+}
+
+/**
+ * A local runner is an explicit installation-owned enablement choice, never a
+ * consequence of merely supplying a callback. Require the local proof set but
+ * do not require remote proofs: a unified installation may prepare a remote
+ * worker later without disabling an already-proved local worker.
+ */
+function requireReadyLocalHermesInstallation(web: PrivateStartupConfiguration, backupRestoreProof: unknown) {
+  if (web.installationTopologyPlan === undefined || web.installationReadiness === undefined)
+    refuse("hermes021Local_installation_proof_missing");
+  let summary: ReturnType<typeof summarizeInstallationReadinessV1>;
+  try { summary = summarizeInstallationReadinessV1(web.installationTopologyPlan, web.installationReadiness); }
+  catch { refuse("hermes021Local_installation_proof_invalid"); }
+  const passed = new Set(summary.proofs.filter(item => item.state === "passed").map(item => item.proof));
+  for (const proof of ["backup_restore", "local_owner_qualification", "local_runner_bridge"] as const) {
+    if (!summary.plan.requiredProofs.includes(proof) || !passed.has(proof))
+      refuse("hermes021Local_installation_not_ready");
+  }
+  let recorded: InstallationReadinessV1;
+  let derivedBackupEvidenceDigest: string;
+  try {
+    recorded = verifyInstallationReadinessV1(web.installationReadiness);
+    derivedBackupEvidenceDigest = localBackupRestoreEvidenceDigestForInstallationPlanV1(
+      web.installationTopologyPlan, backupRestoreProof);
+  } catch { refuse("hermes021Local_backup_restore_proof_invalid"); }
+  const recordedBackup = recorded.proofs.find(item => item.proof === "backup_restore");
+  if (recordedBackup?.state !== "passed" || recordedBackup.evidenceDigest !== derivedBackupEvidenceDigest)
+    refuse("hermes021Local_backup_restore_proof_mismatch");
+  if (web.localSupervisorReadiness === undefined)
+    refuse("hermes021Local_supervisor_not_ready");
+  try {
+    if (summarizeLocalSupervisorReadinessV1(summary.plan.planDigest, web.localSupervisorReadiness).state !== "readiness_recorded")
+      refuse("hermes021Local_supervisor_not_ready");
+  } catch { refuse("hermes021Local_supervisor_proof_invalid"); }
+}
+
+function requireReadyLocalClaudeInstallation(web: PrivateStartupConfiguration, backupRestoreProof: unknown) {
+  if (web.installationTopologyPlan === undefined || web.installationReadiness === undefined
+    || web.claudeCodeLocalProcessReadiness === undefined)
+    refuse("claudeCodeLocal_installation_proof_missing");
+  let processState: ReturnType<typeof summarizeClaudeCodeLocalProcessReadinessV1>;
+  let derivedBackupEvidenceDigest: string, recorded: InstallationReadinessV1;
+  try {
+    processState = summarizeClaudeCodeLocalProcessReadinessV1(web.installationTopologyPlan.planDigest,
+      web.claudeCodeLocalProcessReadiness);
+    derivedBackupEvidenceDigest = localBackupRestoreEvidenceDigestForInstallationPlanV1(
+      web.installationTopologyPlan, backupRestoreProof);
+    recorded = verifyInstallationReadinessV1(web.installationReadiness);
+  } catch { refuse("claudeCodeLocal_installation_proof_invalid"); }
+  if (processState.state !== "readiness_recorded") refuse("claudeCodeLocal_process_not_ready");
+  const recordedBackup = recorded.proofs.find(item => item.proof === "backup_restore");
+  if (recordedBackup?.state !== "passed" || recordedBackup.evidenceDigest !== derivedBackupEvidenceDigest)
+    refuse("claudeCodeLocal_backup_restore_proof_mismatch");
+  if (web.localSupervisorReadiness === undefined)
+    refuse("claudeCodeLocal_supervisor_not_ready");
+  try {
+    if (summarizeLocalSupervisorReadinessV1(web.installationTopologyPlan.planDigest,
+      web.localSupervisorReadiness).state !== "readiness_recorded")
+      refuse("claudeCodeLocal_supervisor_not_ready");
+  } catch { refuse("claudeCodeLocal_supervisor_proof_invalid"); }
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -243,7 +325,8 @@ function captureWebTasks(input: unknown): Readonly<{
  * input. The profile carries a `loadKeys` callback and optional nested
  * service references (`secondaryAccess`, `gatewayAssertionProfile`,
  * `herdrObservations`, `newsCollections`, `ideaCreation`, `connections`,
- * `productConfiguration`, `ideaProjects`, `news`); those trusted callbacks
+ * `productConfiguration`, `installationTopologyPlan`, `installationReadiness`, `localBackupRestoreReadiness`,
+ * `codexMacosCustodyReadiness`, `claudeCodeLocalProcessReadiness`, `localSupervisorReadiness`, `ideaProjects`, `news`); those trusted callbacks
  * must be preserved as frozen references, not deep-cloned. The `tasks`
  * field is captured through `captureWebTasks` because the production gate
  * accepts it as a structurally valid object with any prototype. Every
@@ -266,6 +349,18 @@ function captureWebProfile(input: PrivateStartupConfiguration): PrivateStartupCo
     ...(input.news === undefined ? {} : { news: deepDetach(input.news) }),
     ...(input.productConfiguration === undefined ? {} : {
       productConfiguration: deepDetach(input.productConfiguration) }),
+    ...(input.installationTopologyPlan === undefined ? {} : {
+      installationTopologyPlan: deepDetach(input.installationTopologyPlan) }),
+    ...(input.installationReadiness === undefined ? {} : {
+      installationReadiness: deepDetach(input.installationReadiness) }),
+    ...(input.localBackupRestoreReadiness === undefined ? {} : {
+      localBackupRestoreReadiness: deepDetach(input.localBackupRestoreReadiness) }),
+    ...(input.codexMacosCustodyReadiness === undefined ? {} : {
+      codexMacosCustodyReadiness: deepDetach(input.codexMacosCustodyReadiness) }),
+    ...(input.claudeCodeLocalProcessReadiness === undefined ? {} : {
+      claudeCodeLocalProcessReadiness: deepDetach(input.claudeCodeLocalProcessReadiness) }),
+    ...(input.localSupervisorReadiness === undefined ? {} : {
+      localSupervisorReadiness: deepDetach(input.localSupervisorReadiness) }),
     ...(input.connections === undefined ? {} : { connections: deepDetach(input.connections) }),
     ...(input.tasks === undefined ? {} : { tasks: captureWebTasks(input.tasks) }),
   };
@@ -310,6 +405,9 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
   need(f.codex, t.codex, "codex");
   need(f.codexResultReturn, t.codexResultReturn, "codexResultReturn");
   need(f.nativeHttp, t.nativeHttp, "nativeHttp");
+  need(f.hermes021Local, t.hermes021Local, "hermes021Local");
+  need(Boolean(f.hermes021Local || f.claudeCodeLocal), t.localBackupRestoreReadiness, "localBackupRestoreReadiness");
+  need(f.claudeCodeLocal, t.claudeCodeLocal, "claudeCodeLocal");
   need(f.artifactStorage, t.artifactStorage, "artifactStorage");
   need(f.idea, t.idea, "idea");
   need(f.news, t.news, "news");
@@ -321,13 +419,20 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
   if (f.nativeQueueRecovery && !f.nativeQueue) refuse("feature_chain:nativeQueueRecovery_requires_nativeQueue");
   if (f.evidence && (!f.quality || parsed.databaseRoles.results === undefined)) refuse("feature_chain:evidence_requires_quality_and_results_role");
   if (f.sessions && !f.evidence) refuse("feature_chain:sessions_requires_evidence");
-  if (f.queueWorker && (!f.nativeQueue || !f.sessions)) refuse("feature_chain:queueWorker_requires_nativeQueue_and_sessions");
+  if (f.queueWorker && (!f.nativeQueue || (!f.sessions && !f.hermes021Local && !f.claudeCodeLocal)))
+    refuse("feature_chain:queueWorker_requires_nativeQueue_and_worker_delivery");
   if (f.codex && (!f.nativeQueue || !f.sessions)) refuse("feature_chain:codex_requires_nativeQueue_and_sessions");
   if (f.codexResultReturn && (!f.codex || !f.quality || !f.artifactStorage || !f.sessions
     || parsed.databaseRoles.results === undefined)) refuse("feature_chain:codexResultReturn_requires_full_composition");
   if (f.nativeHttp && !f.sessions) refuse("feature_chain:nativeHttp_requires_sessions");
   if (f.revisionPlanning && !f.quality) refuse("feature_chain:revisionPlanning_requires_quality");
   if (f.artifactStorage && (!f.quality || !f.evidence || parsed.databaseRoles.results === undefined)) refuse("feature_chain:artifactStorage_requires_quality_evidence_results");
+  if (f.hermes021Local && (!f.nativeQueue || !f.queueWorker || !f.quality || !f.evidence || !f.artifactStorage
+    || parsed.databaseRoles.results === undefined || parsed.databaseRoles.evidence === undefined))
+    refuse("feature_chain:hermes021Local_requires_queue_results_and_artifacts");
+  if (f.claudeCodeLocal && (!f.nativeQueue || !f.queueWorker || !f.quality || !f.evidence || !f.artifactStorage
+    || parsed.databaseRoles.results === undefined || parsed.databaseRoles.evidence === undefined))
+    refuse("feature_chain:claudeCodeLocal_requires_queue_results_and_artifacts");
 
   // Database roles: one host/database, pairwise-distinct usernames, none reusing
   // the web pool login. Exact credential validation stays downstream.
@@ -432,6 +537,22 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
   }) : undefined;
   deepDetach(capturedSessions);
 
+  // The local Hermes executor is a private installation boundary. Capture only
+  // its original callable receiver, not a worker ID, command, path, provider,
+  // model or any browser-selected setting. Constructing this configuration
+  // remains inert: queue pickup is the first possible delivery attempt.
+  const trustedHermes = t.hermes021Local as NonNullable<AgentTaskOperatorTrustedInputs["hermes021Local"]> | undefined;
+  if (f.hermes021Local && (!trustedHermes || typeof trustedHermes.deliver !== "function")) refuse("hermes021Local_invalid");
+  if (f.hermes021Local) requireReadyLocalHermesInstallation(
+    t.web as PrivateStartupConfiguration, t.localBackupRestoreReadiness);
+  const capturedHermes = f.hermes021Local && trustedHermes
+    ? Object.freeze({ deliver: trustedHermes.deliver.bind(trustedHermes) }) : undefined;
+  const trustedClaude = t.claudeCodeLocal as NonNullable<AgentTaskOperatorTrustedInputs["claudeCodeLocal"]> | undefined;
+  if (f.claudeCodeLocal && (!trustedClaude || typeof trustedClaude.deliver !== "function")) refuse("claudeCodeLocal_invalid");
+  if (f.claudeCodeLocal) requireReadyLocalClaudeInstallation(t.web as PrivateStartupConfiguration, t.localBackupRestoreReadiness);
+  const capturedClaude = f.claudeCodeLocal && trustedClaude
+    ? Object.freeze({ deliver: trustedClaude.deliver.bind(trustedClaude) }) : undefined;
+
   const coordinator: PrivateTaskStartupConfiguration["coordinator"] = {
     planning: {
       template: planning.template,
@@ -440,6 +561,14 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
       reviewIntegrityKey: copyKey(planning.reviewIntegrityKey, "planning_review_key_invalid"),
       ...(planning.ideaIntegrityKey === undefined ? {} : { ideaIntegrityKey: copyKey(planning.ideaIntegrityKey, "planning_idea_key_invalid") }),
       checkpoints: planning.checkpoints,
+      // This installation composition is the local admission authority.  It
+      // admits only a runner captured through the protected Hermes readiness
+      // gate; configured fleet signals, browser data, Codex and Claude do not
+      // make a Mac process selectable or leaseable.
+      localAdapterAdmission: { enabledAdapters: [
+        ...(capturedHermes ? [HERMES_021_MACOS_LOCAL_ADAPTER_V1] : []),
+        ...(capturedClaude ? [CLAUDE_CODE_LOCAL_ADAPTER_V1] : []),
+      ] },
     },
     routes: deepDetach([...t.routes]),
     approvals: {
@@ -484,6 +613,8 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
     ...(f.codex && t.codex ? { codex: { integrityKey: copyKey(t.codex.integrityKey, "codex_key_invalid"), enrollments: [...t.codex.enrollments] } } : {}),
     ...(f.codexResultReturn && t.codexResultReturn ? { codexResultReturn: t.codexResultReturn } : {}),
     ...(f.nativeHttp && t.nativeHttp ? { nativeHttp: t.nativeHttp } : {}),
+    ...(capturedHermes ? { hermes021Local: capturedHermes } : {}),
+    ...(capturedClaude ? { claudeCodeLocal: capturedClaude } : {}),
     ...(f.idea && t.idea ? {
       ideaCreation: {
         database: dbRole("ideaCreation") ?? dbRole("coordinator") as PrivatePostgresConfiguration,
@@ -503,8 +634,17 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
     || parsed.databaseRoles.newsIngestion === undefined || parsed.databaseRoles.newsWorker === undefined))
     refuse("missing_database_role:news");
 
+  // Keep the already-verified backup/restore record inside the private startup
+  // configuration so its final server gate can recheck the same evidence.
+  // This is not browser data: the web process exposes only a boolean summary.
+  const webForTaskStartup = f.hermes021Local || f.claudeCodeLocal
+    ? { ...(t.web as PrivateStartupConfiguration), localBackupRestoreReadiness: t.localBackupRestoreReadiness }
+    : t.web as PrivateStartupConfiguration;
   const full: PrivateTaskStartupConfiguration = {
-    web: t.web as PrivateStartupConfiguration,
+    ...(t.preparedLocalAdapters === undefined ? {} : {
+      preparedLocalAdapters: captureLocalAdapterInstallationPortsV1(t.preparedLocalAdapters as LocalAdapterInstallationPortsV1),
+    }),
+    web: webForTaskStartup,
     coordinator,
     ...(f.artifactStorage && t.artifactStorage ? { artifactStorage: t.artifactStorage } : {}),
     ...(f.news && t.news ? {
@@ -539,6 +679,7 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
   const artifactStorageShape = full.artifactStorage === undefined ? undefined : deepDetach(full.artifactStorage);
   const newsShape = full.news === undefined ? undefined : deepDetach(full.news);
   const hostCompatible: PrivateTaskStartupConfiguration = {
+    ...(full.preparedLocalAdapters === undefined ? {} : { preparedLocalAdapters: full.preparedLocalAdapters }),
     web: webShape,
     ...(artifactStorageShape !== undefined ? { artifactStorage: artifactStorageShape } : {}),
     ...(newsShape !== undefined ? { news: newsShape } : {}),
@@ -549,6 +690,8 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
       ...(coordinatorShape.quality ? { quality: coordinatorShape.quality } : {}),
       ...(coordinatorShape.revisionPlanning ? { revisionPlanning: coordinatorShape.revisionPlanning } : {}),
       ...(coordinatorShape.nativeHttp ? { nativeHttp: coordinatorShape.nativeHttp } : {}),
+      ...(coordinatorShape.hermes021Local ? { hermes021Local: coordinatorShape.hermes021Local } : {}),
+      ...(coordinatorShape.claudeCodeLocal ? { claudeCodeLocal: coordinatorShape.claudeCodeLocal } : {}),
       ...(coordinatorShape.codex ? { codex: coordinatorShape.codex } : {}),
       ...(coordinatorShape.nativeQueue ? { nativeQueue: coordinatorShape.nativeQueue } : {}),
       ...(coordinatorShape.nativeQueueRecovery ? { nativeQueueRecovery: coordinatorShape.nativeQueueRecovery } : {}),

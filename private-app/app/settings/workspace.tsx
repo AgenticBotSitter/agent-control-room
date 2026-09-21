@@ -4,9 +4,12 @@ import { PrivateHeader } from "../private-header";
 import { useProductConfiguration } from "../product-configuration";
 import { ProductConfigurationSummary } from "../product-configuration-summary";
 import { OwnerNotificationsWorkspace } from "../owner-notifications-workspace";
+import { useInstallationTopology } from "../installation-topology";
+import { InstallationTopologySummary } from "../installation-topology-summary";
 
 export function PrivateSettingsWorkspace() {
   const configuration = useProductConfiguration();
+  const installationTopology = useInstallationTopology();
   return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1}>
     <section className="private-heading" aria-labelledby="settings-title">
       <p className="private-eyebrow">Private workspace</p>
@@ -27,6 +30,11 @@ export function PrivateSettingsWorkspace() {
       </section>
     </div>
     <ProductConfigurationSummary configuration={configuration} />
+    <InstallationTopologySummary plan={installationTopology?.plan} readiness={installationTopology?.readiness}
+      localSupervisorReadiness={installationTopology?.localSupervisorReadiness}
+      codexMacosCustodyReadiness={installationTopology?.codexMacosCustodyReadiness}
+      claudeCodeLocalProcessReadiness={installationTopology?.claudeCodeLocalProcessReadiness}
+      localBackupRestoreVerified={installationTopology?.localBackupRestoreVerified} status={installationTopology?.state} />
     <OwnerNotificationsWorkspace />
   </main></div>;
 }

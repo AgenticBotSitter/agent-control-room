@@ -6,6 +6,8 @@ import test, { after } from "node:test";
 import { createPrivateNodeService } from "../src/web/v1/private-serving";
 import { createPrivateWebProcess } from "../src/web/v1/private-process";
 import { createPrivateOwnerBootstrapCommand } from "../src/web/v1/private-owner-bootstrap";
+import { GATEWAY_ASSERTION_PROVIDER_PROFILE_SCHEMA_V1,
+  type GatewayAssertionProviderProfileV1 } from "../src/web/v1/access-verifier";
 import { nodeExchange } from "./helpers/web-node";
 import { conformanceEmail, conformanceNow, conformanceOrigin, conformanceSubject,
   closePrivateOwnerBootstrapConformanceDatabase, privateOwnerBootstrapFixture,
@@ -14,16 +16,25 @@ import { conformanceEmail, conformanceNow, conformanceOrigin, conformanceSubject
 
 after(closePrivateOwnerBootstrapConformanceDatabase);
 
-async function ingressFixture() {
+function genericGatewayProfile(): GatewayAssertionProviderProfileV1 {
+  return Object.freeze({ schema: GATEWAY_ASSERTION_PROVIDER_PROFILE_SCHEMA_V1,
+    profileId: "rs256_gateway_assertion", algorithm: "RS256", assertionHeader: "x-owner-gateway-assertion",
+    claimContract: "standard_gateway_subject", subjectClaim: "sub", audienceClaim: "aud", issuerClaim: "iss",
+    mfaPolicy: "gateway_policy_external" });
+}
+
+async function ingressFixture(options: { gatewayAssertionProfile?: GatewayAssertionProviderProfileV1 } = {}) {
   const f = await privateOwnerBootstrapFixture();
   await createPrivateOwnerBootstrapCommand({ openDatabase: f.openDatabase(), clock: () => conformanceNow })({
-    configuration: f.configuration, database: f.database, trust: f.trust, assertion: f.assertion });
+    configuration: f.configuration, database: f.database, trust: f.trust, assertion: f.assertion,
+    ...(options.gatewayAssertionProfile ? { gatewayAssertionProfile: options.gatewayAssertionProfile } : {}) });
   let now = conformanceNow, activeKey = f.key, outage = false, loads = 0, databaseCloses = 0;
   const application = createPrivateWebProcess({ origin: conformanceOrigin, issuer: f.trust.issuer,
     audience: f.trust.audience, tenantId: f.configuration.tenantId, workspaceId: f.configuration.workspaceId,
     maxSessionSeconds: f.trust.maxSessionSeconds, clock: () => now,
     loadKeys: async () => { loads++; if (outage) throw new Error("synthetic_key_outage"); return [activeKey.publicKey]; },
-    database: { client: f.client, close: async () => { databaseCloses++; } } });
+    database: { client: f.client, close: async () => { databaseCloses++; } },
+    ...(options.gatewayAssertionProfile ? { gatewayAssertionProfile: options.gatewayAssertionProfile } : {}) });
   const server = new EventEmitter() as Server;
   let serverOptions: Readonly<ServerOptions> | undefined, listenOptions: Record<string, unknown> | undefined;
   server.listen = ((options: Record<string, unknown>, callback: () => void) => {
@@ -36,6 +47,7 @@ async function ingressFixture() {
     application: { isReady: () => true, close: () => application.close() },
     handler: request => application.handle(request, () => new Response("synthetic shell")),
     assets: { count: 0, digest: "synthetic-empty", respond: () => undefined },
+    ...(options.gatewayAssertionProfile ? { gatewayAssertionProfile: options.gatewayAssertionProfile } : {}),
     createServer: options => { serverOptions = options; return server; },
     listenerTiming: { bindMs: 100, closeMs: 100 } });
   await service.start();
@@ -53,7 +65,8 @@ async function ingressFixture() {
     server.emit("connection", socket);
     return { destroyed: () => destroyed, close: () => socket.emit("close") };
   }
-  const headers = (assertion = syntheticAssertion(activeKey)) => ["cf-access-jwt-assertion", assertion];
+  const headers = (assertion = syntheticAssertion(activeKey)) => [
+    options.gatewayAssertionProfile?.assertionHeader ?? "cf-access-jwt-assertion", assertion];
   return { ...f, service, send, connect, headers, serverOptions: () => serverOptions, listenOptions: () => listenOptions,
     now: (value: number) => { now = value; },
     rotate: (key: ReturnType<typeof syntheticSigningKey>) => { activeKey = key; },
@@ -97,6 +110,16 @@ test("issuer, audience, signature, and expiry faults refuse through the actual H
   for (const assertion of assertions) assertJson(await f.send({ headers: f.headers(assertion) }),
     401, "authentication_required");
   assert.equal((await f.send({ headers: f.headers(f.assertion) })).output.statusCode, 200);
+});
+
+test("a selected generic gateway profile reaches ordinary project routes through the Node boundary", async t => {
+  const f = await ingressFixture({ gatewayAssertionProfile: genericGatewayProfile() }); t.after(f.closeAll);
+  assert.equal((await f.send({ headers: f.headers(f.assertion) })).output.statusCode, 200);
+  const projects = await f.send({ path: "/api/v1/projects", headers: f.headers(f.assertion) });
+  assert.equal(projects.output.statusCode, 200);
+  assert.match(projects.body(), /projects/);
+  const cloudflare = await f.send({ headers: ["cf-access-jwt-assertion", f.assertion] });
+  assertJson(cloudflare, 401, "authentication_required");
 });
 
 test("key rotation and outage follow bounded cache freshness with no stale fallback", async t => {

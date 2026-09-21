@@ -19,6 +19,8 @@ import { NativeResultSubmissionService } from "../../src/completion-gate/v1/nati
 import { nativeReviewRevision } from "../../src/completion-gate/v1/native-review-plan";
 import { NativeTaskResultService } from "../../src/node-control/native-task-result-service";
 import { sha256Digest } from "../../src/security";
+import { createControllerWorkerDeliveryV1, deliverControllerWorkerPacketV1,
+  type ControllerWorkerDeliveryReceiptV1 } from "../../src/harness/v1/controller-worker-delivery";
 import type { CompletionRevisionV1 } from "../../src/completion-gate/v1";
 import type { JobRecord, AttemptRecord, LeaseRecord } from "../../src/domain/v1";
 import { capabilityBody, response, statusBody } from "../hermes-native-fixture";
@@ -34,7 +36,8 @@ type NativeQualityCompletion = Awaited<ReturnType<typeof nativeQualityCompletion
 
 async function prepareNativeRevisedExecution(original: NativeQualityCompletion,
   planned: { receipt: { jobId: string } }, changeReview: { reviewId: string } | undefined,
-  preparation: { sourceCapacityReleased: boolean; ownsOriginal: boolean }) {
+  preparation: { sourceCapacityReleased: boolean; ownsOriginal: boolean;
+    topologyRoute?: "local" | "remote" }) {
   const { f } = original;
   const cleanup: (() => void | Promise<void>)[] = preparation.ownsOriginal ? [original.close] : [];
   const close = async () => { for (const fn of cleanup.reverse()) await fn(); };
@@ -72,6 +75,8 @@ async function prepareNativeRevisedExecution(original: NativeQualityCompletion,
     const args = [f.identity, plan.projectId, plan.job.id, plan.job.inputDigest] as const;
     const prepared = await coordinator.prepareNativeApproval(...args), abort = new AbortController();
     const timestamp = () => new Date(f.clock()).toISOString();
+    const registration = nativeTaskRegistration(prepared.binding, plan.job.inputDigest,
+      prepared.request.leaseId, prepared.request.leaseEpoch, timestamp());
     const packet = { schema: "control-room.native-task-approval-packet/v1" as const,
       approval: f.sign({ ...f.packet.approval.body, jobId: prepared.request.jobId, attemptId: prepared.request.attemptId,
         operationDigest: prepared.request.operationDigest, issuedAt: timestamp(), expiresAt: new Date(prepared.start.deadline).toISOString(),
@@ -130,11 +135,38 @@ async function prepareNativeRevisedExecution(original: NativeQualityCompletion,
     }
     assert.ok(session.nativeDeliveryChannel()); assert.equal(incoming.length + outgoing.length, 0);
     await coordinator.enqueueNativeTask(...args, sha256Digest(packet), abort.signal);
-    await coordinator.stageQueuedNativeDelivery(...args, sha256Digest(packet), session, abort.signal);
-    await coordinator.transmitQueuedNativeDelivery(...args, sha256Digest(packet), session, abort.signal);
-    const dispatch = JSON.parse(outgoing[0]) as SignedNodeFrame<"harness.native.dispatch">;
-    await bridge.receive(outgoing.shift()!, timestamp());
-    await f.store.receiveDeliveryReceipt(f.db, session, incoming.shift()!, abort.signal);
+    let dispatch!: SignedNodeFrame<"harness.native.dispatch">;
+    const transmitNative = async () => {
+      await coordinator.stageQueuedNativeDelivery(...args, sha256Digest(packet), session, abort.signal);
+      await coordinator.transmitQueuedNativeDelivery(...args, sha256Digest(packet), session, abort.signal);
+      dispatch = JSON.parse(outgoing[0]) as SignedNodeFrame<"harness.native.dispatch">;
+      await bridge.receive(outgoing.shift()!, timestamp());
+      return f.store.receiveDeliveryReceipt(f.db, session, incoming.shift()!, abort.signal);
+    };
+    let topology: { deliveryId: string; deliveryDigest: string; route: "local" | "remote" } | undefined;
+    if (preparation.topologyRoute) {
+      const route = { kind: preparation.topologyRoute, workerId: `worker:${prepared.request.nodeId}` } as const;
+      const delivery = createControllerWorkerDeliveryV1({
+        identity: { tenantId: registration.tenantId, projectId: registration.projectId, jobId: registration.jobId,
+          attemptId: registration.attemptId, runId: registration.id, nodeId: registration.nodeId },
+        worker: { workerId: route.workerId, adapterId: "connector:native-revision-lifecycle-test", adapterRevision: "0000000" },
+        input: plan.input, authorityDigest: plan.job.authority.digest,
+        connectorProfileDigest: sha256Digest("native-revision-lifecycle-test-profile/v1"),
+        acceptanceProfileId: plan.acceptanceProfileId, acceptanceProfileDigest: plan.acceptanceProfileDigest,
+        issuedAt: timestamp(), expiresAt: new Date(prepared.start.deadline).toISOString(),
+      });
+      const sharedReceipt = await deliverControllerWorkerPacketV1({ async receive(deliveryPacket, receivedRoute) {
+        if (deliveryPacket.deliveryDigest !== delivery.deliveryDigest || receivedRoute.kind !== route.kind)
+          throw new Error("topology_delivery_mismatch");
+        await transmitNative();
+        const material = { schema: "control-room.controller-worker-delivery-receipt/v1" as const,
+          deliveryId: deliveryPacket.deliveryId, deliveryDigest: deliveryPacket.deliveryDigest,
+          workerId: receivedRoute.workerId, route: receivedRoute, receivedAt: timestamp(),
+          disposition: "accepted" as const, startsWork: false as const, grantsExecutionAuthority: false as const };
+        return { ...material, receiptDigest: sha256Digest(material) } satisfies ControllerWorkerDeliveryReceiptV1;
+      } }, delivery, route, abort.signal);
+      topology = { deliveryId: sharedReceipt.deliveryId, deliveryDigest: sharedReceipt.deliveryDigest, route: route.kind };
+    } else await transmitNative();
     const calls: string[] = [], providerRunId = `run_${"2".repeat(32)}`;
     let resultText: string | undefined;
     const handoff = await prepareNativeExecutionHandoff({ queueId: dispatch.body.queueId, enrollment: prepared.enrollment, serverActorId: "server:revised" },
@@ -148,7 +180,6 @@ async function prepareNativeRevisedExecution(original: NativeQualityCompletion,
           session_id: prepared.binding.sessionId, ...(resultText === undefined ? {} : { output: resultText, usage: { input_tokens: 20, output_tokens: 10 } }) }));
       }, async events(wire) { await wire.authorize(); calls.push("events"); } } }, abort.signal);
     cleanup.push(() => handoff.close());
-    const registration = nativeTaskRegistration(prepared.binding, plan.job.inputDigest, prepared.request.leaseId, prepared.request.leaseEpoch, timestamp());
     await f.runs.create(registration);
     assert.deepEqual(await original.states(), sourceBefore); assert.deepEqual(await seededStates(), seededBefore);
     const submission = new NativeResultSubmissionService(f.db, f.ownerConfig);
@@ -176,13 +207,13 @@ async function prepareNativeRevisedExecution(original: NativeQualityCompletion,
       source: { jobId: original.registration.jobId, runId: original.registration.id, artifact: original.artifact,
         target: original.target, targetDigest: original.request.targetDigest }, changeReview, planned, plan, prepared, packet, assigned,
       registration, submission, register, deliver, handoff, receiveOptions, childStates, sourceStates: original.states, seededStates,
-      counters: () => ({ sourceCalls: [...original.local.calls], childCalls: [...calls],
+      topology, counters: () => ({ sourceCalls: [...original.local.calls], childCalls: [...calls],
         sourceEffects: original.local.effects.countFull(), childEffects: effects.countFull() }), close };
   } catch (error) { await close(); throw error; }
 }
 
-export async function nativeRevisedExecutionFixture() {
-  const original = await nativeQualityCompletionFixture();
+export async function nativeRevisedExecutionFixture(configuration: { topologyRoute?: "local" | "remote" } = {}) {
+  const original = await nativeQualityCompletionFixture(undefined, undefined, configuration);
   let changeReview: Awaited<ReturnType<typeof original.review>>["receipt"];
   let planned: Awaited<ReturnType<TaskExecutionPlanner["revise"]>>;
   try {
@@ -197,7 +228,7 @@ export async function nativeRevisedExecutionFixture() {
   // Ownership transfers here. Preparation closes the original fixture on its own failure,
   // so this wrapper must not catch and close it a second time.
   return prepareNativeRevisedExecution(original, planned, changeReview,
-    { sourceCapacityReleased: false, ownsOriginal: true });
+    { sourceCapacityReleased: false, ownsOriginal: true, topologyRoute: configuration.topologyRoute });
 }
 
 /** Prepare a revised synthetic child only after a mounted runtime has durably reviewed and
@@ -205,13 +236,14 @@ export async function nativeRevisedExecutionFixture() {
  * The caller retains ownership of the supplied source fixture.
  */
 export function nativeRevisedExecutionAfterCapacityReleaseFixture(original: NativeQualityCompletion,
-  plannedReceipt: { jobId: string }) {
+  plannedReceipt: { jobId: string }, configuration: { topologyRoute?: "local" | "remote" } = {}) {
   return prepareNativeRevisedExecution(original, { receipt: plannedReceipt }, undefined,
-    { sourceCapacityReleased: true, ownsOriginal: false });
+    { sourceCapacityReleased: true, ownsOriginal: false, topologyRoute: configuration.topologyRoute });
 }
 
-export async function nativeRevisedResultFixture(text = revisedText) {
-  const x = await nativeRevisedExecutionFixture();
+export async function nativeRevisedResultFixture(text = revisedText,
+  configuration: { topologyRoute?: "local" | "remote" } = {}) {
+  const x = await nativeRevisedExecutionFixture(configuration);
   try {
     const reviewPlan = await x.register(), delivered = await x.deliver(text);
     const context = await x.f.db.transaction(tx => x.submission.inspectSubmitted(tx, x.plan.tenantId, x.registration.id));
