@@ -4,6 +4,8 @@ import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeWebStream } from "node:stream/web";
 import { privateResponseHeaders } from "./http-common";
 import type { PrivateClientAssets } from "./private-assets";
+import { captureGatewayAssertionProviderProfileV1, cloudflareAccessGatewayAssertionProfileV1,
+  type GatewayAssertionProviderProfileV1 } from "./access-verifier";
 
 export const privateHttpLimits = Object.freeze({ headersBytes: 24_576, headerCount: 64, urlBytes: 4096,
   bodyBytes: 8192, responseBytes: 4 * 1024 * 1024, activeRequests: 64,
@@ -11,12 +13,13 @@ export const privateHttpLimits = Object.freeze({ headersBytes: 24_576, headerCou
   bodyMs: 5000, requestMs: 30_000, drainMs: 30_000 });
 export interface PrivateServingApplication { isReady(): boolean; close(): Promise<void> }
 export type PrivateBuiltHandler = (request: Request) => Promise<Response> | Response;
-const forwarded = new Set(["accept", "accept-language", "cf-access-jwt-assertion", "origin", "sec-fetch-site",
+const forwarded = new Set(["accept", "accept-language", "origin", "sec-fetch-site",
   "content-type", "idempotency-key", "x-requested-with", "rsc", "next-router-state-tree", "next-router-prefetch",
   "next-router-segment-prefetch", "next-url"]);
 class RequestFailure extends Error { constructor(readonly status: number) { super("private_request_rejected"); } }
 
-function requestHead(input: IncomingMessage, origins: readonly string[], localDemo: boolean) {
+function requestHead(input: IncomingMessage, origins: readonly string[], localDemo: boolean,
+  forwardedHeaders: ReadonlySet<string>) {
   if (input.socket.remoteAddress !== "127.0.0.1" || input.httpVersion !== "1.1") throw new RequestFailure(403);
   const method = input.method;
   const target = input.url;
@@ -36,7 +39,7 @@ function requestHead(input: IncomingMessage, origins: readonly string[], localDe
       || [...value].some(char => char.charCodeAt(0) < 32 && char !== "\t" || char.charCodeAt(0) === 127)
       || all.has(name)) throw new RequestFailure(400);
     all.set(name, value);
-    if (forwarded.has(name) || localDemo && name === "cookie") headers.set(name, value);
+    if (forwardedHeaders.has(name) || localDemo && name === "cookie") headers.set(name, value);
   }
   const origin = origins.find(value => new URL(value).host === all.get("host"));
   if (!origin) throw new RequestFailure(403);
@@ -121,6 +124,8 @@ async function deliver(output: ServerResponse, response: Response, method: strin
 interface NodeHandlerOptions {
   origin: string; application: PrivateServingApplication; handler: PrivateBuiltHandler; assets: PrivateClientAssets;
   secondaryOrigin?: string;
+  /** Server-selected only. The transport forwards exactly this one assertion header. */
+  gatewayAssertionProfile?: GatewayAssertionProviderProfileV1;
   /** Optional first-owner gate. It is constructed only by trusted bootstrap composition. */
   ownerBootstrapCeremony?: { isBootstrapOnly(): boolean; route(request: Request): Promise<Response | undefined> };
   /** Test-only shortening, never a production extension. */
@@ -152,6 +157,10 @@ function createNodeHandler(options: NodeHandlerOptions, localDemo: boolean) {
   if (origin.origin !== options.origin) throw new Error("private_serving_config_invalid");
   if (localDemo && options.secondaryOrigin !== undefined) throw new Error("demo_serving_config_invalid");
   const origins = Object.freeze([options.origin, ...(options.secondaryOrigin ? [options.secondaryOrigin] : [])]);
+  const gatewayAssertionProfile = captureGatewayAssertionProviderProfileV1(
+    options.gatewayAssertionProfile ?? cloudflareAccessGatewayAssertionProfileV1,
+  );
+  const forwardedHeaders = new Set([...forwarded, gatewayAssertionProfile.assertionHeader]);
   const limits = { ...privateHttpLimits, ...options.timing };
   for (const name of ["bodyMs", "requestMs", "drainMs"] as const)
     if (!Number.isSafeInteger(limits[name]) || limits[name] < 1 || limits[name] > privateHttpLimits[name]) throw new Error("private_serving_config_invalid");
@@ -169,7 +178,7 @@ function createNodeHandler(options: NodeHandlerOptions, localDemo: boolean) {
       const timer = setTimeout(() => { controller.abort(); input.destroy(); output.destroy(); }, limits.requestMs);
       try {
         if (!admitted) throw new RequestFailure(503);
-        const head = requestHead(input, origins, localDemo);
+        const head = requestHead(input, origins, localDemo, forwardedHeaders);
         const body = await consumeBody(input, signal, head.expectedLength, limits.bodyMs, head.bodyLimit);
         if (signal.aborted) return;
         if (head.method !== "POST" && body.length) throw new RequestFailure(400);

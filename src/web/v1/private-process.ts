@@ -641,7 +641,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             return Response.json(await tasks.projectFiles(identity, projectId), { headers: privateResponseHeaders });
           }
           if (/^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/.test(url.pathname))
-            return await createTaskHttpHandler({ origin: site.origin, trust, service: tasks, ownerReviews, ownerVerifications, planning, assignment, approvals, submission, revisions, clock })(request);
+            return await createTaskHttpHandler({ origin: site.origin, trust, service: tasks, ownerReviews, ownerVerifications,
+              planning, assignment, approvals, submission, revisions, gatewayAssertionProfile, clock })(request);
           if (url.pathname === "/api/v1/connections") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
             return Response.json(await connections.read(identity), { headers: privateResponseHeaders });
@@ -662,12 +663,13 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
               origin: site.origin,
               trust,
               service: coordination,
+              gatewayAssertionProfile,
               clock,
               isCoordinationEnabled: () => coordination.isEnabled(),
               inflight: coordinationInflight,
             })(request);
           }
-          return await createProjectHttpHandler({ origin: site.origin, trust, service, clock })(request);
+          return await createProjectHttpHandler({ origin: site.origin, trust, service, gatewayAssertionProfile, clock })(request);
         }
         if (request.method !== "GET" && request.method !== "HEAD") throw new WebAccessError("invalid_request");
         const taskPage = /^\/projects\/([^/]+)\/tasks(?:\/([^/]+))?$/.exec(url.pathname);

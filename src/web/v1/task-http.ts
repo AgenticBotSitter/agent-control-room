@@ -1,4 +1,4 @@
-import { createAccessVerifier, requireSameOrigin, WebAccessError, type AccessTrust } from "./access-verifier";
+import { createAccessVerifier, requireSameOrigin, WebAccessError, type AccessTrust, type GatewayAssertionProviderProfileV1 } from "./access-verifier";
 import { privateResponseHeaders, readBoundedJson, webFailure } from "./http-common";
 import type { WebTaskService } from "./task-service";
 import type { WebTaskReviewService } from "./task-review-service";
@@ -20,8 +20,10 @@ import { sha256Digest } from "../../security";
 
 export function createTaskHttpHandler(options: { origin: string; trust: AccessTrust; service: WebTaskService;
   ownerReviews?: WebTaskReviewService; ownerVerifications?: WebTaskVerificationService; planning?: Pick<TaskPlanningOperation, "plan" | "readSaved" | "readPreparedWorker" | "supportsProject" | "templatesForProject">;
-  assignment?: TaskAssignmentOperation; approvals?: TaskApprovalOperation; submission?: TaskSubmissionOperation; revisions?: TaskRevisionOperation; clock?: () => number }) {
-  const verify = createAccessVerifier(options.trust);
+  assignment?: TaskAssignmentOperation; approvals?: TaskApprovalOperation; submission?: TaskSubmissionOperation; revisions?: TaskRevisionOperation;
+  /** Trusted process selection; the browser cannot choose a header/provider. */
+  gatewayAssertionProfile?: GatewayAssertionProviderProfileV1; clock?: () => number }) {
+  const verify = createAccessVerifier(options.trust, options.gatewayAssertionProfile);
   return async (request: Request): Promise<Response> => {
     try {
       requireSameOrigin(request, options.origin);

@@ -238,10 +238,12 @@ evidence only: it enables no worker, database, listener or persistent service.
   credentials, task text, agent model, or retry policy. A later owner step must
   still supply the real protected configuration and explicitly install it.
 - The first-owner ceremony now honors the same deployment-selected login
-  assertion profile as the normal website. It rejects a Cloudflare header when
-  the installation instead selected the supported fixed RS256 gateway profile.
-  This fixes a source-level login mismatch; it does not create a database,
-  socket, account, or web service.
+  assertion profile as the normal website. The private network boundary and
+  ordinary project, task, and coordination routes now forward and verify only
+  that selected header. A Cloudflare header is not treated as a fallback when
+  the installation selected the supported fixed RS256 gateway profile. This
+  fixes a source-level login mismatch; it does not create a database, socket,
+  account, or web service.
 - The first-owner ceremony also has a source-level durable local marker: it
   records either an attempted setup or a completed setup, refuses an unsafe or
   damaged marker, and never deletes it to make a second attempt possible. The
