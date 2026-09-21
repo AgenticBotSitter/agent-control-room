@@ -121,6 +121,19 @@ history—each conflicts with the existing enrollment, receipt and review
 contracts. The bridge therefore borrows no external code and adds none of
 those responsibilities.
 
+For future code-writing tasks, the existing worktree-change audit is retained
+as the shared contract. Its full inventory is protected evidence, not browser
+data: it includes relative file names, allowed scopes, the base revision and
+per-file fingerprints. A future immutable, run-bound record must therefore
+be harness-neutral and attach to the existing result receipt lineage, then
+derive only counts and a safe evidence fingerprint for the existing result
+page. Extending the Codex-only canonical-result record was considered, but
+would make the same Hermes, Claude and future remote lifecycle depend on a
+Codex-specific format. A generic diff viewer or external result store cannot
+provide this exact delivery/lease/result binding without adding a competing
+permission or storage model. This is legitimate narrow connecting code; it
+does not authorize a worktree, read files, start an agent or approve a result.
+
 ## Next donor decisions
 
 - **Hermes:** finish the existing local CLI adapter first. Evaluate no second

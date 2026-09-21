@@ -106,6 +106,19 @@ installation command: it neither creates a production database nor starts the
 browser/service. The remaining S1 work is the protected local-data location,
 supervisor design, and owner-authorized restart/backup proof.
 
+### Planned shared code-change evidence package
+
+Before a local or remote coding worker is enabled, retain a verified
+worktree-change inventory as one immutable, run-bound record in the existing
+PostgreSQL authority. The record will reuse the existing delivery receipt,
+result receipt, audit-plan verification, transaction, HMAC and append-only
+patterns. It will not use a second database, result store, scheduler or
+permission system. The ordinary result page will receive only a safe summary:
+added/changed/removed file counts, byte total and an evidence fingerprint.
+It will never receive file names, paths, allowed scopes, raw revisions,
+worktree details, patches or a live-workspace claim. Missing or damaged
+evidence will say unavailable, not zero changes.
+
 ### S2 — Hermes first complete vertical slice
 
 1. Keep the existing queue-to-Hermes-to-result-to-review path.
