@@ -31,7 +31,7 @@ remain readable for recovery. Focused adapter tests, private-startup tests,
 VPS compilation and TypeScript passed. This is source and disposable-test
 evidence only: it enables no worker, database, listener or persistent service.
 
-The installable-product track now also has six accepted source foundations:
+The installable-product track now also has seven accepted source foundations:
 an allowlisted reproducible release archive with a manifest and checksum; a
 standalone extracted-release preflight that needs no developer dependency;
 crash-safe, concurrency-tested placement of a verified release into an inert
@@ -41,11 +41,14 @@ preparation that binds that plan to the existing migration ledger and database
 toolchain without retaining connection details or running SQL; and an effect-free
 service lifecycle that binds status, install, bounded drain, stop, start-last,
 update, rollback and data-preserving uninstall to the exact active setup plan.
+Protected-data and recovery preparation now also binds the existing private
+artifact store, database restore proof and artifact inventory proof to the exact
+ordered setup stages without exposing a private path or running a backup.
 The protected Settings page
 shows the planned one-launcher journey but prominently says the public release
 and launcher are not available yet. These components perform no install,
 database, service, credential, or worker effect. Release staging, production
-dependency preparation, protected-data/recovery preparation, the effectful service wrapper,
+dependency preparation, the owner-only protected-data/recovery actions, the effectful service wrapper,
 durable plan persistence and the owner-only setup
 actions remain active build work.
 
