@@ -155,6 +155,13 @@ evidence only: it enables no worker, database, listener or persistent service.
   passed installation proof.
 - Shared local and remote lifecycle tests prove that later remote delivery is
   an extension of the same product, not a second scheduler or database.
+- An authenticated remote-session bridge can now hand one already-approved
+  packet to one already-authenticated selected worker. It refuses a local
+  route, a different route worker, a different packet worker, cancellation,
+  and a forged reply before the session callback can run. It opens no
+  connection and cannot enroll a worker, create credentials, start work,
+  retry, or store a receipt; those duties remain in the existing admission and
+  result/review paths. This is source and fake-session proof only.
 - The reviewed topology plan now binds opaque digests of its complete current
   and requested worker-route sets and records every removed worker. A changed
   route, adapter revision, addition, or removal therefore invalidates prior

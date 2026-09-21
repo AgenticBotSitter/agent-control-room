@@ -113,6 +113,14 @@ single owner. The small addition creates only the reviewed tenant and workspace
 inside the already guarded one-owner transaction; it does not add a donor,
 dependency, scheduler, database, credential store, or authority path.
 
+The remote-session bridge is also deliberately thin Control Room glue. It
+accepts only an already-authenticated selected session and forwards the
+existing immutable delivery packet. Whole remote-control donors would own
+connection creation, credentials, lifecycle, retries or a second session
+history—each conflicts with the existing enrollment, receipt and review
+contracts. The bridge therefore borrows no external code and adds none of
+those responsibilities.
+
 ## Next donor decisions
 
 - **Hermes:** finish the existing local CLI adapter first. Evaluate no second

@@ -233,12 +233,17 @@ Completed in source:
   progress and completed result through the managed result receiver, with one
   saved result receipt, one ordinary pending-review record, and no delivery to the other worker. Separate shared
   local/remote journeys cover normal review and correction handling.
+- a source-only bridge from one already-authenticated, selected remote session
+  to the shared delivery port. It validates the remote route and both worker
+  bindings before one delegation, while leaving enrollment, certificates,
+  connection lifetime, retries, receipt persistence, and work start to their
+  existing owners. It does not open or contact a transport.
 
 Remaining:
 
-- delivery acknowledgement through a real enrolled transport, including its
-  verified adapter-version compatibility boundary and the same result, review,
-  and correction path.
+- owner-authorized delivery acknowledgement through a real enrolled transport,
+  followed by a controlled two-computer proof of the already-shared result,
+  review, and correction path.
 
 The source-side private certificate-checked transport host is already composed
 behind the existing managed-session service. Enabling it and running a genuine
