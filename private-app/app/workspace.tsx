@@ -76,16 +76,11 @@ export type ProjectSection = "overview" | "inbox" | "agents" | "automations" | "
  * to assign this project's task.
  */
 export function ProjectAgentInstallationStatus({ topology }: { topology: ReturnType<typeof useInstallationTopology> }) {
-  if (topology.state !== "available" || topology.plan?.mode !== "this_computer") return null;
+  if (topology.state !== "available" || topology.setup?.mode !== "this_computer") return null;
   return <section className="private-panel" aria-labelledby="project-local-agent-setup-title">
     <h2 id="project-local-agent-setup-title">Local worker setup on this computer</h2>
     <p>Installation-scoped setup status only — it is not this project’s agent eligibility, available capacity, current work, or permission to assign a task.</p>
-    <InstallationTopologySummary plan={topology.plan} readiness={topology.readiness}
-      transition={topology.transition}
-      localSupervisorReadiness={topology.localSupervisorReadiness}
-      codexMacosCustodyReadiness={topology.codexMacosCustodyReadiness}
-      claudeCodeLocalProcessReadiness={topology.claudeCodeLocalProcessReadiness}
-      localBackupRestoreVerified={topology.localBackupRestoreVerified} status={topology.state} />
+    <InstallationTopologySummary setup={topology.setup} status={topology.state} />
   </section>;
 }
 

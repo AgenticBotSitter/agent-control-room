@@ -157,7 +157,9 @@ test("a saved installation plan is an authenticated read-only setup status", asy
   t.after(() => app.close());
   const response = await app.handle(request("/api/v1/installation-topology"), () => new Response("fallback", { status: 500 }));
   assert.equal(response.status, 200);
-  assert.equal((await response.json()).mode, "several_computers");
+  const body = await response.json();
+  assert.equal(body.setup.mode, "several_computers");
+  assert.doesNotMatch(JSON.stringify(body), /worker:remote|worker:local|sha256:/);
   assert.equal((await app.handle(request("/api/v1/installation-topology?x=1"), () => new Response("fallback", { status: 500 }))).status, 400);
 });
 
@@ -193,19 +195,13 @@ test("readiness is an authenticated non-secret view bound to its saved plan", as
   const response = await app.handle(request("/api/v1/installation-readiness"), () => new Response("fallback", { status: 500 }));
   assert.equal(response.status, 200);
   const body = await response.json();
-  assert.equal(body.plan.mode, "this_computer");
-  assert.equal(body.readiness.planDigest, plan.planDigest);
-  assert.equal(body.codexMacosCustodyReadiness.planDigest, plan.planDigest);
-  assert.equal(body.codexMacosCustodyReadiness.readinessDigest, custody.readinessDigest);
-  assert.equal(body.claudeCodeLocalProcessReadiness.planDigest, plan.planDigest);
-  assert.equal(body.claudeCodeLocalProcessReadiness.readinessDigest, claudeReadiness.readinessDigest);
-  assert.equal(body.localSupervisorReadiness.planDigest, plan.planDigest);
-  assert.equal(body.localSupervisorReadiness.readinessDigest, supervisorReadiness.readinessDigest);
-  assert.equal(body.transition.affectedWorkerCount, 0);
-  assert.equal(body.transition.state, "prepared");
-  assert.equal(body.localBackupRestoreVerified, false);
-  assert.doesNotMatch(JSON.stringify(body), /supervisor-(?:custody|launch|restart|rollback)/);
-  assert.doesNotMatch(JSON.stringify(body.transition), /worker:remote|sha256:|transition:route/);
+  assert.equal(body.setup.mode, "this_computer");
+  assert.equal(body.setup.localCapabilities.length, 3);
+  assert.equal(body.setup.localService.state, "readiness_recorded");
+  assert.equal(body.setup.transition.affectedWorkerCount, 0);
+  assert.equal(body.setup.transition.state, "prepared");
+  assert.equal(body.setup.backupEvidencePending, false);
+  assert.doesNotMatch(JSON.stringify(body), /supervisor-(?:custody|launch|restart|rollback)|worker:remote|worker:local|sha256:|transition:route/);
   assert.equal((await app.handle(request("/api/v1/installation-readiness?x=1"), () => new Response("fallback", { status: 500 }))).status, 400);
 });
 
@@ -221,7 +217,7 @@ test("the setup view calls a local backup ready only when the saved record has t
     installationTopologyPlan: plan, installationReadiness: readiness, localBackupRestoreReadiness: proof });
   t.after(() => app.close());
   const body = await (await app.handle(request("/api/v1/installation-readiness"), () => new Response("fallback", { status: 500 }))).json();
-  assert.equal(body.localBackupRestoreVerified, true);
+  assert.equal(body.setup.backupEvidencePending, false);
   assert.doesNotMatch(JSON.stringify(body), /tenant:local|artifact-namespace:local|database-dump|release:local/);
   assert.throws(() => createPrivateWebProcess({ ...options(configuration("Topology", false), store.pool.client, store.pool.close),
     installationTopologyPlan: plan, installationReadiness: createInstallationReadinessV1({ planDigest: plan.planDigest,

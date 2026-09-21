@@ -24,6 +24,7 @@ import { TaskProposalForm } from "../private-app/app/task-panels";
 import { TaskAttentionPanel } from "../private-app/app/needs-me/task-attention";
 import { taskAttentionPageSchema, taskAttentionPresentation } from "../src/web/v1/task-attention-wire";
 import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
+import { createInstallationSetupViewV1 } from "../src/harness/v1/installation-setup-view";
 import { sha256Digest } from "../src/security/canonical-digest";
 
 test("compiled route parameters decode exactly once before reaching browser clients", () => {
@@ -74,7 +75,7 @@ test("project agents separates local installation setup from project availabilit
     currentRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }],
     requestedRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }] });
   const html = renderToStaticMarkup(createElement(ProjectAgentInstallationStatus, { topology: {
-    state: "available", plan,
+    state: "available", setup: createInstallationSetupViewV1({ plan, localBackupRestoreVerified: false }),
   } }));
   assert.match(html, /Local worker setup on this computer/);
   assert.match(html, /Installation-scoped setup status only/);
@@ -83,10 +84,10 @@ test("project agents separates local installation setup from project availabilit
   assert.match(html, /not this project’s agent eligibility, available capacity, current work, or permission to assign a task/);
   assert.doesNotMatch(html, /<button|<form|<input|Assign|Start agent/);
   const remoteOnly = renderToStaticMarkup(createElement(ProjectAgentInstallationStatus, { topology: {
-    state: "available", plan: planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database-remote"),
+    state: "available", setup: createInstallationSetupViewV1({ plan: planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database-remote"),
       schedulerAuthorityDigest: sha256Digest("scheduler-remote"), currentRoutes: [{ kind: "remote", workerId: "worker:remote",
         adapterId: "connector:remote-v1", adapterRevision: "00570550" }], requestedRoutes: [{ kind: "remote", workerId: "worker:remote",
-        adapterId: "connector:remote-v1", adapterRevision: "00570550" }] }),
+        adapterId: "connector:remote-v1", adapterRevision: "00570550" }] }), localBackupRestoreVerified: false }),
   } }));
   assert.equal(remoteOnly, "");
 });
@@ -600,7 +601,7 @@ test("workers can show the reviewed installation plan without revealing routes o
     requestedRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }],
   });
   const html = renderToStaticMarkup(createElement(PrivateConnectionView, { data: { state: "loading" }, onRefresh: () => {} },
-    createElement(InstallationTopologySummary, { plan })));
+    createElement(InstallationTopologySummary, { setup: createInstallationSetupViewV1({ plan, localBackupRestoreVerified: false }) })));
   assert.match(html, /Installation setup/);
   assert.match(html, /This computer/);
   assert.match(html, /successful owner-attended local worker check/);

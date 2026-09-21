@@ -62,11 +62,6 @@ export function PrivateConnections() {
     return () => { live = false; generation++; clearInterval(interval); window.removeEventListener("focus", focus); };
   }, [refresh]);
   return <PrivateConnectionView data={data} onRefresh={() => setRefresh(value => value + 1)}>
-    <InstallationTopologySummary plan={installationTopology?.plan} readiness={installationTopology?.readiness}
-      transition={installationTopology?.transition}
-      localSupervisorReadiness={installationTopology?.localSupervisorReadiness}
-      codexMacosCustodyReadiness={installationTopology?.codexMacosCustodyReadiness}
-      claudeCodeLocalProcessReadiness={installationTopology?.claudeCodeLocalProcessReadiness}
-      localBackupRestoreVerified={installationTopology?.localBackupRestoreVerified} status={installationTopology?.state} />
+    <InstallationTopologySummary setup={installationTopology?.setup} status={installationTopology?.state} />
   </PrivateConnectionView>;
 }

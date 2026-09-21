@@ -35,7 +35,7 @@ import { parseProductConfigurationV1, type ProductConfigurationV1 } from "../../
 import { verifyInstallationTopologyPlanV1, type InstallationTopologyPlanV1 } from "../../harness/v1/installation-topology";
 import { verifyInstallationReadinessV1, type InstallationReadinessV1 } from "../../harness/v1/installation-readiness";
 import { verifyInstallationTransitionV1, type InstallationTransitionV1 } from "../../harness/v1/installation-transition";
-import { summarizeInstallationTransitionV1 } from "../../harness/v1/installation-transition-summary";
+import { createInstallationSetupViewV1 } from "../../harness/v1/installation-setup-view";
 import { localBackupRestoreEvidenceDigestForInstallationPlanV1 } from "../../harness/v1/local-backup-restore-readiness";
 import { verifyCodexMacosCustodyReadinessV1, type CodexMacosCustodyReadinessV1 } from "../../harness/codex-v1/macos-custody-readiness";
 import { verifyClaudeCodeLocalProcessReadinessV1, type ClaudeCodeLocalProcessReadinessV1 } from "../../harness/claude-code-v1/local-process-readiness";
@@ -170,6 +170,13 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     throw new Error("invalid_private_app_config");
   if (localSupervisorReadiness && (!installationTopologyPlan || localSupervisorReadiness.planDigest !== installationTopologyPlan.planDigest))
     throw new Error("invalid_private_app_config");
+  const installationSetupView = installationTopologyPlan === undefined ? undefined : createInstallationSetupViewV1({
+    plan: installationTopologyPlan, ...(installationReadiness ? { readiness: installationReadiness } : {}),
+    localBackupRestoreVerified, ...(codexMacosCustodyReadiness ? { codexMacosCustodyReadiness } : {}),
+    ...(claudeCodeLocalProcessReadiness ? { claudeCodeLocalProcessReadiness } : {}),
+    ...(localSupervisorReadiness ? { localSupervisorReadiness } : {}),
+    ...(installationTransition ? { transition: installationTransition } : {}),
+  });
   const moduleEnabled = (name: keyof ProductConfigurationV1["modules"]) =>
     productConfiguration === undefined || productConfiguration.modules[name];
   const sites = captureWebOrigins({ origin: options.origin, audience: options.audience }, options.secondaryAccess);
@@ -326,22 +333,18 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           }
           if (url.pathname === "/api/v1/installation-topology") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
-            if (!installationTopologyPlan) throw new WebAccessError("not_found");
+            if (!installationSetupView) throw new WebAccessError("not_found");
             return await productConfigurationAuthority.authenticated(identity, async (_, actor) => {
               actor.require("projects.read", undefined, true);
-              return Response.json(installationTopologyPlan, { headers: privateResponseHeaders });
+              return Response.json({ setup: installationSetupView }, { headers: privateResponseHeaders });
             });
           }
           if (url.pathname === "/api/v1/installation-readiness") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
-            if (!installationTopologyPlan) throw new WebAccessError("not_found");
+            if (!installationSetupView) throw new WebAccessError("not_found");
             return await productConfigurationAuthority.authenticated(identity, async (_, actor) => {
               actor.require("projects.read", undefined, true);
-              return Response.json({ plan: installationTopologyPlan, ...(installationReadiness ? { readiness: installationReadiness } : {}),
-                ...(installationTransition ? { transition: summarizeInstallationTransitionV1(installationTransition) } : {}),
-                ...(codexMacosCustodyReadiness ? { codexMacosCustodyReadiness } : {}),
-                ...(claudeCodeLocalProcessReadiness ? { claudeCodeLocalProcessReadiness } : {}),
-                ...(localSupervisorReadiness ? { localSupervisorReadiness } : {}), localBackupRestoreVerified },
+              return Response.json({ setup: installationSetupView },
                 { headers: privateResponseHeaders });
             });
           }
