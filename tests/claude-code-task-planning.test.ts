@@ -5,13 +5,16 @@ import { CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1, CLAUDE_CODE_LOCAL_ADAPTER_V1,
   CLAUDE_CODE_LOCAL_CAPABILITY_V1, CLAUDE_CODE_LOCAL_JOB_TYPE_V1,
   CLAUDE_CODE_LOCAL_START_OPERATION_V1 } from "../src/harness/claude-code-v1";
 import { TaskExecutionPlanner, nativeTaskTemplateSchema, type NativeTaskTemplate } from "../src/web/v1/task-execution-planner";
-import { validateTaskAssignmentRoutes } from "../src/web/v1/task-assignment-coordinator";
+import { TaskAssignmentCoordinator, validateTaskAssignmentRoutes } from "../src/web/v1/task-assignment-coordinator";
+import { FleetSignalStore } from "../src/node-fleet/v1/fleet-signal-store";
+import type { FleetSignalEnvelope } from "../src/node-fleet/v1/schemas";
+import { ClaudeCodeLocalDispatchPreparationV1 } from "../src/harness/claude-code-v1/dispatch-preparation";
 import { binding, instant } from "./hermes-native-fixture";
 import { at } from "./native-task-fixture";
 import { ownerReviewFixture } from "./helpers/web-owner-review";
 import { taskDraft } from "./helpers/web-task";
 
-test("a local Claude task can be saved in the shared lifecycle but cannot be assigned or started", async t => {
+test("a local Claude task can be saved and prepared as a signed local delivery without starting Claude", async t => {
   const f = await ownerReviewFixture(); t.after(f.close);
   const authority: NativeTaskTemplate["authority"] = { projectId: binding.projectId, allowedExecutor: "executor:claude",
     allowedOperations: [CLAUDE_CODE_LOCAL_START_OPERATION_V1], credentialRefs: ["credential:claude"], filesystemRoots: [],
@@ -38,9 +41,37 @@ test("a local Claude task can be saved in the shared lifecycle but cannot be ass
   assert.equal(planned.receipt.startsWork, false);
   assert.equal(planned.receipt.grantsExecutionAuthority, false);
 
-  assert.throws(() => validateTaskAssignmentRoutes([{ nodeId: binding.nodeId, executorId: authority.allowedExecutor,
-    capabilityProbeId: CLAUDE_CODE_LOCAL_CAPABILITY_V1, maxConcurrentTasks: 1, requiredScratchBytes: 0, leaseSeconds: 60 }] as unknown as Parameters<typeof validateTaskAssignmentRoutes>[0]),
-  /Invalid option/, "no route can make an unqualified Claude plan runnable");
+  const route = [{ nodeId: binding.nodeId, executorId: authority.allowedExecutor,
+    capabilityProbeId: CLAUDE_CODE_LOCAL_CAPABILITY_V1, maxConcurrentTasks: 3, requiredScratchBytes: 0, leaseSeconds: 60 }] as const;
+  assert.doesNotThrow(() => validateTaskAssignmentRoutes(route),
+    "the shared coordinator recognizes Claude's capability; private startup still keeps it unadmitted until separate proof and host composition exist");
+
+  const signals = new FleetSignalStore(f.db);
+  const telemetry: FleetSignalEnvelope = { schemaVersion: "1.0.0", tenantId: binding.tenantId, nodeId: binding.nodeId,
+    sequence: 1, observedAt: at(6_000), expiresAt: at(120_000), trust: "reported", fingerprint: sha256Digest("claude-telemetry"),
+    kind: "telemetry", source: "telemetry_port", payload: { samplingIntervalSeconds: 30,
+      cpuUtilizationPercent: { quality: "observed", value: 10 }, availableMemoryBytes: { quality: "observed", value: 1000 },
+      availableStorageBytes: { quality: "observed", value: 1000 }, networkClass: "unmetered", powerState: "ac", thermalState: "nominal" } };
+  const capability: FleetSignalEnvelope = { schemaVersion: "1.0.0", tenantId: binding.tenantId, nodeId: binding.nodeId,
+    sequence: 1, observedAt: at(6_000), expiresAt: at(120_000), trust: "reported", fingerprint: sha256Digest("claude-capability"),
+    kind: "capability", source: "probe_runner", payload: { probeId: CLAUDE_CODE_LOCAL_CAPABILITY_V1,
+      probeVersion: "1.0.0", outcome: "pass", reasonCode: "reported_only" } };
+  await signals.ingestAuthenticated(telemetry, at(6_000), binding);
+  await signals.ingestAuthenticated(capability, at(6_000), binding);
+  const assignments = new TaskAssignmentCoordinator(f.db, f.scope, planner, route, () => instant + 8_000);
+  const assigned = await assignments.assign(f.identity, binding.projectId, planned.receipt.jobId, binding.nodeId, planned.receipt.inputDigest);
+  const preparation = new ClaudeCodeLocalDispatchPreparationV1(f.db, planner,
+    { workerId: "worker:claude-local", adapterRevision: "source-123" }, () => instant + 9_000);
+  const dispatch = await preparation.prepare({ tenantId: binding.tenantId, projectId: binding.projectId,
+    jobId: planned.receipt.jobId, attemptId: assigned.receipt.attemptId, leaseId: assigned.receipt.leaseId,
+    inputDigest: planned.receipt.inputDigest });
+  assert.equal(dispatch.delivery.worker.adapterId, CLAUDE_CODE_LOCAL_ADAPTER_V1);
+  assert.equal(dispatch.delivery.identity.attemptId, assigned.receipt.attemptId);
+  assert.equal(dispatch.route.kind, "local");
+  assert.equal(dispatch.startsWork, false);
+  assert.equal(dispatch.grantsExecutionAuthority, false);
+  await preparation.assertCurrent({ tenantId: binding.tenantId, projectId: binding.projectId, jobId: planned.receipt.jobId,
+    attemptId: assigned.receipt.attemptId, leaseId: assigned.receipt.leaseId, inputDigest: planned.receipt.inputDigest }, dispatch);
 
   const foreignProfile = { ...template, connectorProfileDigest: sha256Digest("foreign-claude-profile") };
   assert.throws(() => nativeTaskTemplateSchema.parse(foreignProfile), /unsupported native task template/);

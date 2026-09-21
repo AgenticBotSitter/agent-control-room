@@ -64,6 +64,14 @@ evidence only: it enables no worker, database, listener or persistent service.
   receipt is saved or an installed process could be acquired.
   Planning does not assign, start or enable Claude; it remains a source-only
   component until the installed process is qualified.
+- A Claude task that has already received a canonical lease can now be read
+  back into the same signed controller-to-worker delivery packet shape used by
+  the local Hermes route. The preparation reader checks the task, lease,
+  worker, authority, accepted connector profile and expiry again before it
+  returns that packet. It does not start Claude, acquire a process, create a
+  queue entry, or expose any local setting. The remaining source work is to
+  connect this already-tested packet and receipt path to the existing queue
+  only after the separate installed-process proof and private host binding.
 - The Mac Codex path records only two opaque safety prerequisites: suspended
   executable identity and protected private-state custody. Neither record can
   enable or launch Codex.
