@@ -101,6 +101,13 @@ evidence only: it enables no worker, database, listener or persistent service.
   executor recovers the protected result without making a second history or
   opening a second session. This is still no evidence that the installed
   Claude program is qualified or running on this Mac.
+- The application-facing Claude queue now has the same disposable proof: a
+  verified queue locator reaches the shared signed delivery, ordinary run
+  history, protected result and pending-review path once. A restart reads the
+  staged result without reopening Claude. A refused receipt remains visibly
+  not started, and stale success evidence cannot override a recorded failed or
+  cancelled run. This is source/test evidence only; it does not operate
+  Claude on this computer.
 - The normal protected application configuration now applies that same rule at
   its final assembly boundary: a Claude callback cannot be captured merely
   because one was supplied. Its own complete process-readiness record, the
