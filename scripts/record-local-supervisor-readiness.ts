@@ -35,7 +35,10 @@ if (!valid) {
 } else {
   try {
     const report = await readJson(values["--report"]!);
-    const readiness = createLocalSupervisorReadinessV1(report);
+    // The factory parses the unknown input itself.  The cast keeps the CLI
+    // boundary explicit to TypeScript without making the runtime parser trust
+    // a JSON file merely because it reached this line.
+    const readiness = createLocalSupervisorReadinessV1(report as Parameters<typeof createLocalSupervisorReadinessV1>[0]);
     // The returned record contains only a plan digest, proof names/states, and
     // opaque evidence digests. It cannot reveal a service, account, command,
     // configuration location, or report contents.
