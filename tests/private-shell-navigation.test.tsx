@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import Home from "../private-app/app/page";
 import { HomeDashboard, type HomeDashboardState } from "../private-app/app/home-workspace";
 import SettingsPage from "../private-app/app/settings/page";
-import { PrivateProjectWorkspace } from "../private-app/app/workspace";
+import { PrivateProjectWorkspace, ProjectAgentInstallationStatus } from "../private-app/app/workspace";
 import { ProjectCatalogNavigation } from "../app/components/project-catalog-navigation";
 import { createProjectBrowserClient } from "../src/web/v1/browser-client";
 import { readTaskHomeActivity } from "../src/web/v1/task-home-browser-client";
@@ -64,6 +64,28 @@ test("task proposal and worker inventory disclose unavailable operational facts"
     "Cancel and resume are unsupported"])
     assert.match(connections, new RegExp(text));
   assert.doesNotMatch(connections, /usage are unavailable in this view/);
+});
+
+test("project agents separates local installation setup from project availability", () => {
+  const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
+    currentRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }],
+    requestedRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }] });
+  const html = renderToStaticMarkup(createElement(ProjectAgentInstallationStatus, { topology: {
+    state: "available", plan,
+  } }));
+  assert.match(html, /Local worker setup on this computer/);
+  assert.match(html, /Installation-scoped setup status only/);
+  assert.match(html, /Three local worker routes/);
+  for (const label of ["Hermes Agent", "Claude Code", "Codex"]) assert.match(html, new RegExp(label));
+  assert.match(html, /not this project’s agent eligibility, available capacity, current work, or permission to assign a task/);
+  assert.doesNotMatch(html, /<button|<form|<input|Assign|Start agent/);
+  const remoteOnly = renderToStaticMarkup(createElement(ProjectAgentInstallationStatus, { topology: {
+    state: "available", plan: planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database-remote"),
+      schedulerAuthorityDigest: sha256Digest("scheduler-remote"), currentRoutes: [{ kind: "remote", workerId: "worker:remote",
+        adapterId: "connector:remote-v1", adapterRevision: "00570550" }], requestedRoutes: [{ kind: "remote", workerId: "worker:remote",
+        adapterId: "connector:remote-v1", adapterRevision: "00570550" }] }),
+  } }));
+  assert.equal(remoteOnly, "");
 });
 
 test("needs-attention items expose owner questions and sort urgent work first", () => {

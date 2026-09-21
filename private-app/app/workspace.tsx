@@ -13,6 +13,8 @@ import { ConfiguredTimestamp } from "./configured-timestamp";
 import { useProductConfiguration, useProductModule } from "./product-configuration";
 import { ProjectScheduleStatusPanel } from "./schedule-status";
 import { ProjectModuleAvailability } from "./project-module-availability";
+import { useInstallationTopology } from "./installation-topology";
+import { InstallationTopologySummary } from "./installation-topology-summary";
 
 /** Browser-side canonical JSON: stable across equivalent object key ordering. Mirrors the
  * server's canonical-digest implementation so the template-selection key the browser sends
@@ -67,6 +69,22 @@ function useProductTemplateOptions(): readonly { templateId: string; displayName
 
 export type ProjectSection = "overview" | "inbox" | "agents" | "automations" | "settings";
 
+/**
+ * Local route setup belongs to the installation, not to the selected project.
+ * Keep that distinction visible where an owner is looking for project agents:
+ * these cards never claim eligibility, capacity, current work, or permission
+ * to assign this project's task.
+ */
+export function ProjectAgentInstallationStatus({ topology }: { topology: ReturnType<typeof useInstallationTopology> }) {
+  if (topology.state !== "available" || topology.plan?.mode !== "this_computer") return null;
+  return <section className="private-panel" aria-labelledby="project-local-agent-setup-title">
+    <h2 id="project-local-agent-setup-title">Local worker setup on this computer</h2>
+    <p>Installation-scoped setup status only — it is not this project’s agent eligibility, available capacity, current work, or permission to assign a task.</p>
+    <InstallationTopologySummary plan={topology.plan} readiness={topology.readiness}
+      codexMacosCustodyReadiness={topology.codexMacosCustodyReadiness} status={topology.state} />
+  </section>;
+}
+
 export function ProjectSaveRecovery({ pending, onRetry }: { pending: boolean; onRetry: () => void }) {
   return <section className="private-notice" aria-label="Unconfirmed project save">
     <p>A previous project save is still unconfirmed. Other changes are paused until it is resolved.</p>
@@ -93,6 +111,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
   projectId?: string; section?: ProjectSection; after?: string; lifecycleFilter?: WebProject["lifecycle"];
 }) {
   const sessionObservations = useProductModule("sessionObservations");
+  const installationTopology = useInstallationTopology();
   const templateOptions = useProductTemplateOptions();
   const [client] = useState(() => createProjectBrowserClient());
   const [projects, setProjects] = useState<ProjectView[]>([]);
@@ -234,7 +253,8 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
             <p className="private-note">Project-specific eligibility, capabilities, available slots, current work and usage are unavailable here.
               Cancel and resume are not supported from this page.</p>
             <a className="private-action-link" href="/workers">Open all worker connections</a>
-          </section>{sessionObservations && <SessionObservations projectId={projectId} />}</>}
+          </section><ProjectAgentInstallationStatus topology={installationTopology} />
+          {sessionObservations && <SessionObservations projectId={projectId} />}</>}
           {section === "automations" && <ProjectScheduleStatusPanel projectId={projectId} />}
           {section === "settings" && <section className="private-panel"><h2>Project status</h2>
             <p className="private-summary">{project.summary || "No summary added."}</p>

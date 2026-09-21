@@ -75,6 +75,10 @@ test("a later Idea Lab round requires every reviewed prior task and rechecks it 
       acceptedReviewIds: [`review:accepted-${index + 1}`], verificationIds: [`verification:passed-${index + 1}`],
     } }));
   }
+  const readyForNextRound = await new WebIdeaService(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, key,
+    () => now, true, false, false, true, false, true).detail(f.identity, session.sessionId);
+  assert.equal(readyForNextRound.nextCanonicalRound, 2);
+  assert.equal(readyForNextRound.canPrepareNextRound, true);
   const second = await operation.propose(f.identity, session.sessionId,
     { sessionDigest: session.sessionDigest, projectId: f.project.projectId, round: 2 });
   assert.equal(second.receipts.length, session.participants.length);
