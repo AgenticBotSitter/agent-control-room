@@ -160,11 +160,31 @@ export class WebTaskService {
   }
 
   async propose(identity: VerifiedWebIdentity, projectId: string, value: unknown, key: string) {
+    return this.proposeInternal(identity, projectId, value, key, []);
+  }
+
+  /** Internal integration seam for a reviewed feature that needs ordinary
+   * proposed tasks to wait on already-existing ordinary tasks. This retains
+   * the same owner authorization, request/workflow/job bundle, idempotency
+   * ledger, and non-runnable materialization ceiling as `propose()`. */
+  async proposeWithDependencies(identity: VerifiedWebIdentity, projectId: string, value: unknown, key: string,
+    dependsOnJobIds: readonly string[]) {
+    return this.proposeInternal(identity, projectId, value, key, dependsOnJobIds);
+  }
+
+  private async proposeInternal(identity: VerifiedWebIdentity, projectId: string, value: unknown, key: string,
+    dependsOnJobIds: readonly string[]) {
     this.id(projectId);
     const parsed = taskDraftSchema.safeParse(value);
-    if (!parsed.success || !/^[A-Za-z0-9:_-]{12,180}$/.test(key)) throw new WebAccessError("invalid_request");
+    const dependencies = [...dependsOnJobIds].sort();
+    if (!parsed.success || !/^[A-Za-z0-9:_-]{12,180}$/.test(key)
+      || dependencies.some(id => !catalogProjectIdSchema.safeParse(id).success)
+      || new Set(dependencies).size !== dependencies.length) throw new WebAccessError("invalid_request");
     try { assertNoSecretMaterial(parsed.data); } catch { throw new WebAccessError("invalid_request"); }
-    const digest = sha256Digest({ ...this.scope, projectId, action: "tasks.propose", draft: parsed.data });
+    // Preserve the prior idempotency digest byte-for-byte for ordinary browser
+    // proposals. Only the narrow dependency integration adds this field.
+    const digest = sha256Digest({ ...this.scope, projectId, action: "tasks.propose", draft: parsed.data,
+      ...(dependencies.length ? { dependsOnJobIds: dependencies } : {}) });
     return this.authority.authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.propose", projectId);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
@@ -178,6 +198,16 @@ export class WebTaskService {
         return { receipt, replayed: true };
       }
       if (project.lifecycle !== "active") throw new WebAccessError("conflict");
+      for (const dependencyId of dependencies) {
+        const dependency = (await tx.query<{ project_id: string; payload: unknown }>(
+          "SELECT project_id,payload FROM control_jobs WHERE tenant_id=$1 AND id=$2 FOR SHARE",
+          [this.scope.tenantId, dependencyId])).rows[0];
+        if (!dependency || dependency.project_id !== projectId) throw new WebAccessError("conflict");
+        const job = jobRecordSchema.safeParse(dependency.payload);
+        if (!job.success || job.data.tenantId !== this.scope.tenantId || job.data.projectId !== projectId || job.data.id !== dependencyId) {
+          throw new WebAccessError("conflict");
+        }
+      }
       const requestId = `request:${randomUUID()}`, workflowId = `workflow:${randomUUID()}`, jobId = `job:${randomUUID()}`;
       const base = { contractVersion: DOMAIN_CONTRACT_VERSION, tenantId: this.scope.tenantId, version: 0, createdAt: actor.now, updatedAt: actor.now };
       const authority: AuthorityEnvelope = { projectId, allowedExecutor: "executor:unassigned", allowedOperations: ["task.propose"],
@@ -190,11 +220,11 @@ export class WebTaskService {
           state: "draft", priority: 50, requestedBy: { actorId: actor.id, actorType: "human" },
           idempotencyKey: sha256Digest({ ...this.scope, actorId: actor.id, key, action: "tasks.propose" }) },
         workflow: { ...base, id: workflowId, kind: "workflow", requestId, projectId, definitionVersion: "private-task-proposal/v1",
-          definitionDigest: sha256Digest({ type: "private-task-proposal/v1", projectId, draft: parsed.data }),
+          definitionDigest: sha256Digest({ type: "private-task-proposal/v1", projectId, draft: parsed.data, dependsOnJobIds: dependencies }),
           authorityMode: "control_room_native", state: "proposed", jobIds: [jobId] },
         job: { ...base, id: jobId, kind: "job", workflowId, projectId, jobType: "task.proposal", specVersion: "1.0.0",
           inputDigest: sha256Digest(parsed.data), state: "proposed", priority: 50, requiredCapability: "task.proposal.review",
-          dependsOnJobIds: [], authority, retryPolicy: { maxAttempts: 1, backoffSeconds: 0, retryableFailureCodes: [],
+          dependsOnJobIds: dependencies, authority, retryPolicy: { maxAttempts: 1, backoffSeconds: 0, retryableFailureCodes: [],
             retryAfterOrphan: false, ambiguousEffectPolicy: "attention" } },
       };
       await new CanonicalStore(joined(tx)).createProposedWorkBundle(bundle);

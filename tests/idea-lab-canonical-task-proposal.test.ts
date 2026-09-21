@@ -8,6 +8,7 @@ import { IdeaLabProjectRegistryStoreV1 } from "../src/idea-lab/v1/store";
 import { IdeaLabErrorV1 } from "../src/idea-lab/v1/errors";
 import { buildIdeaLabCanonicalTaskPlanV1 } from "../src/idea-lab/v1/canonical-task-plan";
 import { buildIdeaLabOwnerPromptV1 } from "../src/idea-lab/v1/discussion-prompt";
+import { buildIdeaLabContributionV1 } from "../src/idea-lab/v1/contracts";
 import { taskFixture } from "./helpers/web-task";
 
 test("an Idea Lab round uses the normal proposed task service without scheduling or worker contact", async t => {
@@ -48,4 +49,38 @@ test("an Idea Lab round uses the normal proposed task service without scheduling
     ownerPrompt: `${buildIdeaLabOwnerPromptV1(session)}\nA different but valid scope.`, contributions: [] });
   await assert.rejects(links.assertPlanAvailable(changed), IdeaLabErrorV1);
   assert.equal((await f.tasks.list(f.identity, f.project.projectId)).tasks.length, session.participants.length);
+});
+
+test("later Idea Lab rounds use ordinary canonical job dependencies", async t => {
+  const f = await taskFixture(); t.after(() => f.db.close());
+  const source = buildIdeaLabFixtureV1();
+  const session = buildIdeaLabSessionV1({ sessionId: "idea:task-proposal-dependencies", tenantId: "tenant:web", workspaceId: "workspace:web",
+    title: source.session.title, ideaSummary: source.session.ideaSummary, targetCustomer: source.session.targetCustomer,
+    participants: source.session.participants, maxRounds: source.session.maxRounds, maxDurationSeconds: source.session.maxDurationSeconds,
+    maxCostUsd: source.session.maxCostUsd, createdByIdentityDigest: source.session.createdByIdentityDigest, createdAt: source.session.createdAt });
+  const integrityKey = new Uint8Array(32).fill(23);
+  await new IdeaLabProjectRegistryStoreV1(f.client, integrityKey).registerSession(session);
+  const links = new IdeaLabCanonicalTaskLinkStoreV1(f.client, integrityKey);
+  const service = new IdeaLabCanonicalTaskProposalServiceV1(f.tasks, { projectId: f.project.projectId }, links);
+  const first = await service.proposeRound(f.identity, { session, round: 1, contributions: [] });
+  const contributions = session.participants.map((participant, index) => buildIdeaLabContributionV1(session, {
+    participantId: participant.participantId, round: 1,
+    safeOpinion: `Bounded opinion ${index + 1} for the next discussion round.`,
+    opportunityCode: `${participant.perspective}_opportunity`, primaryRiskCode: `${participant.perspective}_risk`,
+    suggestedExperiment: `Run a bounded experiment ${index + 1} before any outside action.`, confidencePercent: 70,
+    contributedAt: `2026-08-31T16:0${index + 1}:00.000Z`,
+  }));
+  const second = await service.proposeRound(f.identity, { session, round: 2, contributions });
+  assert.equal(second.receipts.every((item) => !item.replayed && !item.receipt.startsWork), true);
+  const firstIds = first.receipts.map((item) => item.receipt.jobId).sort();
+  const secondIds = second.receipts.map((item) => item.receipt.jobId).sort();
+  const rows = (await f.client.query<{ job_id: string; depends_on_job_id: string }>(
+    "SELECT job_id,depends_on_job_id FROM control_job_dependencies WHERE tenant_id=$1 ORDER BY job_id,depends_on_job_id", [session.tenantId])).rows;
+  assert.equal(rows.length, session.participants.length ** 2);
+  for (const jobId of secondIds) {
+    assert.deepEqual(rows.filter((row) => row.job_id === jobId).map((row) => row.depends_on_job_id), firstIds);
+  }
+  assert.deepEqual(new Set(rows.map((row) => row.job_id)), new Set(secondIds));
+  assert.equal((await links.list(session.tenantId, session.sessionId)).length, session.participants.length * 2);
+  assert.equal((await f.tasks.list(f.identity, f.project.projectId)).tasks.length, session.participants.length * 2);
 });

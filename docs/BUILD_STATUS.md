@@ -136,7 +136,9 @@ database, browser login, backup, persistent service or remote machine.
    proposed tasks for a selected discussion round and safely reuses an exact
    repeat. An append-only source migration and protected link store now retain
    the one selected project plus each participant/round/task relationship
-   across a restart. It does not schedule, assign, contact a worker, or
+   across a restart. Later-round tasks also use the same durable dependency
+   links as ordinary jobs, so they cannot become eligible before the earlier
+   round is complete. It does not schedule, assign, contact a worker, or
    replace the legacy direct fixture. The next source package is canonical
    result projection and retiring the direct production start composition.
 
