@@ -30,7 +30,8 @@ export function PrivateSettingsWorkspace() {
       </section>
     </div>
     <ProductConfigurationSummary configuration={configuration} />
-    <InstallationTopologySummary plan={installationTopology?.plan} readiness={installationTopology?.readiness} />
+    <InstallationTopologySummary plan={installationTopology?.plan} readiness={installationTopology?.readiness}
+      codexMacosCustodyReadiness={installationTopology?.codexMacosCustodyReadiness} />
     <OwnerNotificationsWorkspace />
   </main></div>;
 }

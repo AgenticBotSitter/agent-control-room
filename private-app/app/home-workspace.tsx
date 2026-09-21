@@ -112,7 +112,8 @@ export function PrivateHome() {
     <section className="private-home-intro" aria-labelledby="home-title"><p className="private-eyebrow">Private workspace</p>
       <h1 id="home-title">{displayName}</h1><p>Current saved work, results and attention from the protected Control Room services. Each section reports unavailable data instead of replacing it with a zero.</p>
       <button type="button" onClick={() => setGeneration(value => value + 1)}>Refresh dashboard</button></section>
-    <InstallationTopologySummary plan={installationTopology?.plan} readiness={installationTopology?.readiness} />
+    <InstallationTopologySummary plan={installationTopology?.plan} readiness={installationTopology?.readiness}
+      codexMacosCustodyReadiness={installationTopology?.codexMacosCustodyReadiness} />
     <HomeDashboard data={data} />
     {ideaLab && <aside className="private-note private-home-note" aria-label="Optional module"><strong>Idea Lab is optional.</strong>{" "}
       <a href="/ideas">Open Idea Lab</a> to compare ideas before promoting an approved one to a project.</aside>}
