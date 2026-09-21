@@ -23,7 +23,7 @@ import { WebTaskReviewService } from "./task-review-service";
 import { WebTaskVerificationService } from "./task-verification-service";
 import type { TaskPlanningOperation } from "./task-execution-planner";
 import type { TaskAssignmentOperation } from "./task-assignment-coordinator";
-import type { TaskApprovalOperation, TaskSubmissionOperation } from "./task-coordinator-lifecycle";
+import type { IdeaCanonicalResultProjectionOperation, TaskApprovalOperation, TaskSubmissionOperation } from "./task-coordinator-lifecycle";
 import type { TaskRevisionOperation } from "./task-revision-operation";
 import type { QueueAttentionSource } from "./queue-attention-wire";
 import { taskPlanningReceiptSchema } from "./task-planning-wire";
@@ -39,6 +39,7 @@ import { WebSessionAuthority } from "./session-authority";
 import { readProjectScheduleStatus } from "../../schedules/read-service";
 import { ProjectCoordinationHttpService, type ProjectCoordinationCanonicalStoreAdapter } from "./project-coordination-http";
 import { createCoordinationHttpHandler } from "./coordination-http";
+import { IdeaLabErrorV1 } from "../../idea-lab/v1/errors";
 
 export interface PrivateWebProcessOptions {
   origin: string; issuer: string; audience: string; tenantId: string; workspaceId: string;
@@ -76,6 +77,8 @@ export interface PrivateWebProcessOptions {
    * given to the web SQL service. Its resource lifecycle is owned by the supplying composition. */
   planning?: TaskPlanningOperation;
   ideaCreation?: IdeaCreateOperation;
+  /** Server-only conversion of one accepted ordinary task result into an Idea Lab contribution. */
+  ideaResultProjection?: IdeaCanonicalResultProjectionOperation;
   /** Narrow optional coordinator operations; resource ownership remains in trusted composition. */
   assignment?: TaskAssignmentOperation;
   approvals?: TaskApprovalOperation;
@@ -148,6 +151,12 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     ...(options.ideaCreation.decide ? { decide: options.ideaCreation.decide.bind(options.ideaCreation) } : {}),
     ...(options.ideaCreation.synthesize ? { synthesize: options.ideaCreation.synthesize.bind(options.ideaCreation) } : {}),
     ...(options.ideaCreation.start ? { start: options.ideaCreation.start.bind(options.ideaCreation) } : {}) }) : undefined;
+  if (options.ideaResultProjection && (options.ideaResultProjection.tenantId !== options.tenantId
+    || options.ideaResultProjection.workspaceId !== options.workspaceId || typeof options.ideaResultProjection.project !== "function"
+    || !options.ideaProjects)) throw new Error("idea_result_projection_config_invalid");
+  const ideaResultProjection = options.ideaResultProjection ? Object.freeze({
+    project: options.ideaResultProjection.project.bind(options.ideaResultProjection),
+  }) : undefined;
   if (options.queueAttention && (options.queueAttention.tenantId !== options.tenantId
     || options.queueAttention.workspaceId !== options.workspaceId || typeof options.queueAttention.read !== "function"))
     throw new Error("invalid_private_app_config");
@@ -210,6 +219,11 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     !!ideaRoundProposal || !!ideaCreation?.start, !!ideaCreation?.synthesize);
   const productConfigurationAuthority = new WebSessionAuthority(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock, "workspace_configuration");
+  // The browser is authenticated against the private-web database. The actual
+  // projection uses its separately verified result-role operation below; this
+  // avoids granting the web role direct result or Idea contribution writes.
+  const ideaProjectionAuthority = new WebSessionAuthority(options.database.client,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock, "idea_lab_session");
   const scheduleAuthority = new WebSessionAuthority(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock);
   const coordination = options.coordination
@@ -320,6 +334,33 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             if (!value.success) throw new WebAccessError("invalid_request");
             const result = await ideaRoundProposal.propose(identity, sessionId, value.data);
             return Response.json(result, { status: result.receipts.every(receipt => receipt.replayed) ? 200 : 201, headers: privateResponseHeaders });
+          }
+          const ideaResultProjectionRoute = /^\/api\/v1\/ideas\/([^/]+)\/tasks\/([^/]+)\/contribution$/.exec(url.pathname);
+          if (ideaResultProjectionRoute) {
+            if (!moduleEnabled("ideaLab")) throw new WebAccessError("not_found");
+            // There is intentionally no JSON body: all result, review and
+            // verification facts are reread from canonical stores server-side.
+            if (request.method !== "POST" || url.search || request.body) throw new WebAccessError("invalid_request");
+            if (!ideaResultProjection) throw new Error("idea_result_projection_not_configured");
+            let sessionId: string, taskKey: string;
+            try { sessionId = decodeURIComponent(ideaResultProjectionRoute[1]); taskKey = decodeURIComponent(ideaResultProjectionRoute[2]); }
+            catch { throw new WebAccessError("invalid_request"); }
+            return await ideaProjectionAuthority.authenticated(identity, async (_, actor) => {
+              actor.require("idea_lab.session_read", undefined, true);
+              // This existing owner action authorizes a deliberate discussion
+              // transition, but does not authorize an agent run or acceptance.
+              actor.require("idea_lab.panel_start", undefined, true);
+              try {
+                const result = await ideaResultProjection.project(sessionId, taskKey);
+                return Response.json({ sessionId, taskKey, contribution: result.contribution, replayed: result.replayed,
+                  startsWork: false }, { status: result.replayed ? 200 : 201, headers: privateResponseHeaders });
+              } catch (error) {
+                // Do not let private result/review state distinguish a missing,
+                // malformed, unaccepted, or competing result at this boundary.
+                if (error instanceof IdeaLabErrorV1) throw new WebAccessError("conflict");
+                throw error;
+              }
+            });
           }
           const ideaDecision = /^\/api\/v1\/ideas\/([^/]+)\/decision$/.exec(url.pathname);
           if (ideaDecision) {

@@ -156,10 +156,13 @@ database, browser login, backup, persistent service or remote machine.
    current review target to be accepted by a human and verified, then persists
    the bounded contribution in the same locked transaction. Exact repeats
    reuse the saved contribution; changed, missing, superseded, or ambiguous
-   evidence fails closed. The service is not mounted in the private web
-   process yet, so it cannot make a live claim. The next source package mounts
-   that guarded operation and then retires the direct production start
-   composition.
+   evidence fails closed. The operation is now mounted behind the existing
+   private owner session check: the browser names only the saved discussion
+   and task key, while the separately verified result role re-reads all result,
+   review, and verification facts. It cannot launch an agent, accept a review,
+   or accept browser-supplied evidence. The remaining Idea Lab source work is
+   to expose safe per-task readiness in the page and retire the direct provider
+   start composition after the ordinary task route proves the full journey.
 
 ## Owner-operated gates before any real local worker is enabled
 

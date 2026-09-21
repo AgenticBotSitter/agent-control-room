@@ -24,6 +24,11 @@ import type { ArtifactReadPortV1, ArtifactStoragePortV1 } from "../../node-execu
 import { captureCodexResultIntakeSettingsV1, CodexResultIntakeV1,
   type CodexResultIntakeSettingsV1 } from "./codex-result-intake";
 import { deliverVerifiedHermes021LocalQueueTaskV1 } from "./hermes-021-local-queue-delivery";
+import { NativeResultStore } from "../../artifacts/v1/native-results";
+import { CompletionGateStoreV1 } from "../../completion-gate/v1/store";
+import { CanonicalIdeaTaskResultProjectionServiceV1 } from "../../idea-lab/v1/canonical-result-projection";
+import { IdeaLabCanonicalTaskLinkStoreV1 } from "../../idea-lab/v1/canonical-task-link-store";
+import { IdeaLabProjectRegistryStoreV1 } from "../../idea-lab/v1/store";
 
 export type TaskApprovalOperation = Readonly<{ tenantId: string; workspaceId: string;
   prepare: TaskAssignmentCoordinator["prepareNativeApproval"]; store: TaskAssignmentCoordinator["storeNativeApproval"];
@@ -31,6 +36,14 @@ export type TaskApprovalOperation = Readonly<{ tenantId: string; workspaceId: st
 export type TaskSubmissionOperation = Readonly<{ tenantId: string; workspaceId: string;
   enqueue: TaskAssignmentCoordinator["enqueueNativeTask"]; read: TaskAssignmentCoordinator["readNativeTaskQueue"];
   readDelivery?: TaskAssignmentCoordinator["readNativeDeliveryStatus"] }>;
+/**
+ * A narrow trusted-control-plane operation. The private web process performs
+ * authentication and authorization before it may invoke this operation. The
+ * browser supplies only an already-linked Idea task key; it never supplies a
+ * result, review, verification, or evidence record.
+ */
+export type IdeaCanonicalResultProjectionOperation = Readonly<{ tenantId: string; workspaceId: string;
+  project: (sessionId: string, taskKey: string) => Promise<{ contribution: { contributionId: string; contributionDigest: string }; replayed: boolean }> }>;
 
 export type TaskCoordinatorDatabase = Readonly<{ client: DatabaseClient; close: () => Promise<void>; isAvailable: () => boolean }>;
 export type TaskCoordinatorConfiguration = {
@@ -198,6 +211,17 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     throw new Error("task_coordinator_config_invalid");
   const qualityCoordinator = input.quality ? new TaskQualityCoordinator(db, scope, input.quality, input.clock) : undefined;
   const resultCoordinator = resultPool ? new TaskResultCoordinator(guardedDatabase(resultPool), scope, input.planning, input.quality!, input.clock) : undefined;
+  // Result projection deliberately runs through the fixed native-result role,
+  // after private-web authentication. It does not use the web role to write
+  // Idea records and it does not reuse the legacy Idea provider runtime.
+  const ideaProjectionService = ideaPool && resultPool && input.quality
+    ? new CanonicalIdeaTaskResultProjectionServiceV1(guardedDatabase(resultPool),
+      new IdeaLabProjectRegistryStoreV1(guardedDatabase(resultPool), input.ideaCreation!.integrityKey),
+      new IdeaLabCanonicalTaskLinkStoreV1(guardedDatabase(resultPool), input.ideaCreation!.integrityKey),
+      new NativeResultStore(guardedDatabase(resultPool), input.quality.harnessIntegrityKey, input.quality.results),
+      new CompletionGateStoreV1(guardedDatabase(resultPool), input.quality.integrityKey, input.quality.checkpoints,
+        () => new Date((input.clock ?? Date.now)()).toISOString()), input.planning.reviewIntegrityKey,
+      () => new Date((input.clock ?? Date.now)()).toISOString()) : undefined;
   const receiver = evidencePool ? new NativeEvidenceReceiver(guardedDatabase(evidencePool), {
     ...evidenceSettings!, scope, harnessIntegrityKey: input.quality!.harnessIntegrityKey,
     results: { ...scope, register: resultCoordinator!.register.bind(resultCoordinator), submit: resultCoordinator!.submit.bind(resultCoordinator) },
@@ -268,6 +292,13 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
       if (!request.success) return Promise.reject(new WebAccessError("invalid_request"));
       return run(() => ideaService.create(actor, request.data, key));
     },
+  }) : undefined;
+  const ideaResultProjection: IdeaCanonicalResultProjectionOperation | undefined = ideaProjectionService ? Object.freeze({ ...scope,
+    project: (sessionId, taskKey) => run(async () => {
+      const saved = await ideaProjectionService.project({ tenantId: scope.tenantId, sessionId, taskKey });
+      return { contribution: { contributionId: saved.contribution.contributionId, contributionDigest: saved.contribution.contributionDigest },
+        replayed: saved.replayed };
+    }),
   }) : undefined;
   const sessions = sessionPool ? new ManagedNativeSessions(guardedDatabase(sessionPool), sessionSettings!, scope, {
     queue: nativeSubmission ? { locate: assignment.locateQueuedHarnessDelivery.bind(assignment),
@@ -362,6 +393,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   }) : undefined;
   return Object.freeze({ planning, assignment: assignments, ...(approvals ? { approvals } : {}), ...(quality ? { quality } : {}),
     ...(ideaCreation ? { ideaCreation } : {}),
+    ...(ideaResultProjection ? { ideaResultProjection } : {}),
     ...(nativeSubmission && (sessions || hermes021Local) ? { queueDelivery: async (ref: Parameters<ManagedNativeSessions["deliverApproved"]>[0], signal: AbortSignal) => {
       const target = await assignment.locateQueuedHarnessDelivery(ref, signal);
       if (target.kind === "hermes-021-local") {
