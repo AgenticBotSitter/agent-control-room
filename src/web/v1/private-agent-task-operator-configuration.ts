@@ -18,6 +18,7 @@ import type { TaskCoordinatorConfiguration } from "./task-coordinator-lifecycle"
 import { summarizeInstallationReadinessV1, verifyInstallationReadinessV1,
   type InstallationReadinessV1 } from "../../harness/v1/installation-readiness";
 import { localBackupRestoreEvidenceDigestForInstallationPlanV1 } from "../../harness/v1/local-backup-restore-readiness";
+import { summarizeLocalSupervisorReadinessV1 } from "../../harness/v1/local-supervisor-readiness";
 
 /** Pure operator-side assembly. This module performs no environment, filesystem,
  * network, listener, credential-store or database access: it only shapes
@@ -157,6 +158,12 @@ function requireReadyLocalHermesInstallation(web: PrivateStartupConfiguration, b
   const recordedBackup = recorded.proofs.find(item => item.proof === "backup_restore");
   if (recordedBackup?.state !== "passed" || recordedBackup.evidenceDigest !== derivedBackupEvidenceDigest)
     refuse("hermes021Local_backup_restore_proof_mismatch");
+  if (web.localSupervisorReadiness === undefined)
+    refuse("hermes021Local_supervisor_not_ready");
+  try {
+    if (summarizeLocalSupervisorReadinessV1(summary.plan.planDigest, web.localSupervisorReadiness).state !== "readiness_recorded")
+      refuse("hermes021Local_supervisor_not_ready");
+  } catch { refuse("hermes021Local_supervisor_proof_invalid"); }
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
