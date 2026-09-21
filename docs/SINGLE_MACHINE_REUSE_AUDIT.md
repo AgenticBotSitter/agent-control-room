@@ -134,6 +134,14 @@ provide this exact delivery/lease/result binding without adding a competing
 permission or storage model. This is legitimate narrow connecting code; it
 does not authorize a worktree, read files, start an agent or approve a result.
 
+The resulting source contract has now been implemented as a harness-neutral,
+immutable result-bound record. It adapts the existing durable-result receipt,
+audit-plan and digest patterns, rather than adopting a donor application's
+workspace manager or result store. The remaining protected persistence layer
+will reuse this repository's transaction, HMAC and append-only conventions.
+It must authenticate the durable receipt and verify the receipt lineage before
+storing the record; a browser can receive only the aggregate projection.
+
 ## Next donor decisions
 
 - **Hermes:** finish the existing local CLI adapter first. Evaluate no second

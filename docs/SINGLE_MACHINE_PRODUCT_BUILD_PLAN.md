@@ -106,7 +106,7 @@ installation command: it neither creates a production database nor starts the
 browser/service. The remaining S1 work is the protected local-data location,
 supervisor design, and owner-authorized restart/backup proof.
 
-### Planned shared code-change evidence package
+### Shared code-change evidence package
 
 Before a local or remote coding worker is enabled, retain a verified
 worktree-change inventory as one immutable, run-bound record in the existing
@@ -118,6 +118,16 @@ added/changed/removed file counts, byte total and an evidence fingerprint.
 It will never receive file names, paths, allowed scopes, raw revisions,
 worktree details, patches or a live-workspace claim. Missing or damaged
 evidence will say unavailable, not zero changes.
+
+**Source preparation completed:** the shared contract now derives one immutable
+record only after it has checked the complete durable result receipt against
+the same tenant, project, task, attempt, run and result artifact. It rechecks
+the existing delivery-bound audit plan and inventory before it makes the
+record fingerprint. The browser projection is limited to aggregate counts,
+bytes and an evidence fingerprint, and explicitly grants no start, retry,
+resume, approval or merge authority. A later protected database writer must
+authenticate the durable receipt before it persists this record; the contract
+does not perform that I/O or treat a digest as authentication.
 
 ### S2 — Hermes first complete vertical slice
 

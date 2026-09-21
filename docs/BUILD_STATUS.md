@@ -153,6 +153,14 @@ evidence only: it enables no worker, database, listener or persistent service.
   result-file inventory. It is source-only: it cannot run a backup or restore,
   promote a recovered copy, start work, or turn missing owner evidence into a
   passed installation proof.
+- A future coding-worker result can now bind its verified change inventory to
+  the exact durable result receipt and the pre-approved delivery/worktree
+  audit plan. The record rejects a different tenant, project, task, attempt,
+  run or result artifact, and its browser-safe summary exposes only aggregate
+  change counts, bytes and an evidence fingerprint. It grants no authority
+  to start, retry, resume, approve or merge work. This is source-only
+  evidence; authenticated database storage and the protected result-page read
+  remain the next package.
 - Shared local and remote lifecycle tests prove that later remote delivery is
   an extension of the same product, not a second scheduler or database.
 - An authenticated remote-session bridge can now hand one already-approved
