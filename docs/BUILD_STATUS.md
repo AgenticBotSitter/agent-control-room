@@ -246,6 +246,11 @@ evidence only: it enables no worker, database, listener or persistent service.
   records either an attempted setup or a completed setup, refuses an unsafe or
   damaged marker, and never deletes it to make a second attempt possible. The
   marker code is not wired to a real service or VPS yet.
+- A bootstrap-only host can now be composed without constructing the normal
+  application, web pages, task queue, workers, or artifact store. After the
+  owner is created it deliberately becomes unavailable and requires a clean
+  supervisor restart into the normal restricted application. It is not yet
+  connected to a real control socket or database role.
 - The protected startup capture now freezes the exact local backup proof after
   it verifies its match to the saved readiness record. A later mutation of a
   caller-owned object cannot change what the application treats as checked.
