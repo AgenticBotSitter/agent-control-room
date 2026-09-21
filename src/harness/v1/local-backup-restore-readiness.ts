@@ -2,6 +2,7 @@ import { z } from "zod";
 import { artifactBackupInventorySchemaV1, artifactBackupRestoreVerificationSchemaV1,
   verifyRestoredArtifactBackupInventoryV1 } from "../../artifacts/v1/artifact-backup-inventory";
 import { sha256Digest } from "../../security/canonical-digest";
+import { verifyInstallationTopologyPlanV1 } from "./installation-topology";
 
 /**
  * A sanitized, source-only binding for evidence that an owner has already
@@ -127,4 +128,19 @@ export function createLocalBackupRestoreReadinessV1(input: unknown): LocalBackup
 export function verifyLocalBackupRestoreReadinessV1(input: unknown): LocalBackupRestoreReadinessV1 {
   try { return freeze(localBackupRestoreReadinessSchemaV1.parse(input)); }
   catch { return unavailable(); }
+}
+
+/**
+ * Produces the one opaque backup-restore evidence digest an installation
+ * readiness record may retain. The same check works before or after remote
+ * workers are enrolled: both modes still have one authority and one backup
+ * proof, rather than a separate local recovery system.
+ */
+export function localBackupRestoreEvidenceDigestForInstallationPlanV1(planInput: unknown, proofInput: unknown): string {
+  try {
+    const plan = verifyInstallationTopologyPlanV1(planInput);
+    const proof = verifyLocalBackupRestoreReadinessV1(proofInput);
+    if (!plan.requiredProofs.includes("backup_restore") || proof.planDigest !== plan.planDigest) unavailable();
+    return proof.proofDigest;
+  } catch { return unavailable(); }
 }

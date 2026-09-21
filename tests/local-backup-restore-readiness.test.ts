@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createArtifactBackupInventoryV1, verifyRestoredArtifactBackupInventoryV1 } from "../src/artifacts/v1/artifact-backup-inventory";
 import { createLocalBackupRestoreReadinessV1, verifyLocalBackupRestoreReadinessV1 } from "../src/harness/v1/local-backup-restore-readiness";
+import { localBackupRestoreEvidenceDigestForInstallationPlanV1 } from "../src/harness/v1/local-backup-restore-readiness";
+import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
 import { sha256Digest } from "../src/security";
 
 const planDigest = sha256Digest("reviewed-local-installation-plan");
@@ -60,4 +62,18 @@ test("refuses substituted plans, mismatched inventory/verification, non-disposab
   const proof = createLocalBackupRestoreReadinessV1(base);
   for (const changed of [{ ...proof, planDigest: "sha256:" + "0".repeat(64) }, { ...proof, promoted: true }])
     assert.throws(() => verifyLocalBackupRestoreReadinessV1(changed), /local_backup_restore_readiness_unavailable/);
+});
+
+test("accepts backup evidence only for the exact reviewed unified installation plan", () => {
+  const proof = createLocalBackupRestoreReadinessV1(input());
+  const routes = [{ kind: "local" as const, workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }];
+  const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"),
+    schedulerAuthorityDigest: sha256Digest("scheduler"), currentRoutes: routes, requestedRoutes: routes });
+  const bound = { ...proof, planDigest: plan.planDigest };
+  const usable = createLocalBackupRestoreReadinessV1({ ...input(), planDigest: plan.planDigest });
+  assert.equal(localBackupRestoreEvidenceDigestForInstallationPlanV1(plan, usable), usable.proofDigest);
+  assert.throws(() => localBackupRestoreEvidenceDigestForInstallationPlanV1(plan, bound), /local_backup_restore_readiness_unavailable/);
+  const changed = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database:changed"),
+    schedulerAuthorityDigest: sha256Digest("scheduler"), currentRoutes: routes, requestedRoutes: routes });
+  assert.throws(() => localBackupRestoreEvidenceDigestForInstallationPlanV1(changed, usable), /local_backup_restore_readiness_unavailable/);
 });
