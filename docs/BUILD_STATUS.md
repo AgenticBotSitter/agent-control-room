@@ -242,6 +242,10 @@ evidence only: it enables no worker, database, listener or persistent service.
   the installation instead selected the supported fixed RS256 gateway profile.
   This fixes a source-level login mismatch; it does not create a database,
   socket, account, or web service.
+- The first-owner ceremony also has a source-level durable local marker: it
+  records either an attempted setup or a completed setup, refuses an unsafe or
+  damaged marker, and never deletes it to make a second attempt possible. The
+  marker code is not wired to a real service or VPS yet.
 - The protected startup capture now freezes the exact local backup proof after
   it verifies its match to the saved readiness record. A later mutation of a
   caller-owned object cannot change what the application treats as checked.
