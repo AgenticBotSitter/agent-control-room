@@ -10,6 +10,7 @@ import { deliverClaudeCodeLocalTaskV1, type ClaudeCodeLocalDeliveryCompositionV1
 import { publishClaudeCodeReservedSessionResultV1 } from "./local-worker-result";
 import { createClaudeCodeTerminalResultStageV1 } from "./terminal-result-staging";
 import { recoverClaudeCodeTerminalResultV1 } from "./terminal-result-recovery";
+import { readControllerWorkerDeliveryReceiptV1 } from "../v1/controller-worker-delivery-receipt-store";
 
 const unavailable = (): never => { throw new Error("claude_code_local_assigned_task_execution_unavailable"); };
 
@@ -64,8 +65,19 @@ export async function executeAssignedClaudeCodeLocalTaskV1(config: ClaudeCodeLoc
     unavailable();
   const clock = config.clock ?? Date.now;
   if (typeof clock !== "function") unavailable();
-  const prepared = await config.preparation.prepare(referenceValue);
+  let prepared = await config.preparation.prepare(referenceValue);
   await config.preparation.assertCurrent(referenceValue, prepared);
+  // A new preparation has a fresh issued-at timestamp. If the exact run has a
+  // durable receipt, recover that authenticated original packet before asking
+  // the delivery composition to decide whether it may publish staged evidence.
+  // A restart must never turn a changed timestamp into a new acquisition.
+  const retainedReceipt = await config.delivery.db.transaction(tx => readControllerWorkerDeliveryReceiptV1(tx,
+    config.delivery.integrityKey, prepared.delivery.identity));
+  if (retainedReceipt) {
+    const recovered = Object.freeze({ ...prepared, delivery: retainedReceipt.delivery });
+    await config.preparation.assertCurrent(referenceValue, recovered);
+    prepared = recovered;
+  }
   const now = new Date(clock()).toISOString();
   if (!z.string().datetime().safeParse(now).success || Date.parse(now) > Date.parse(prepared.delivery.expiresAt)) unavailable();
   const delivery = await deliverClaudeCodeLocalTaskV1({ ...config.delivery,

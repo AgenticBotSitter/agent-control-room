@@ -90,6 +90,11 @@ evidence only: it enables no worker, database, listener or persistent service.
   has no installed-process binding, so it cannot discover, start or configure
   Claude. A saved receipt without protected terminal evidence remains clearly
   uncertain rather than becoming a fresh process attempt.
+- If a restart finds an existing Claude delivery receipt, it restores that
+  exact signed packet before attempting recovery instead of minting a newly
+  dated packet. The queue also refuses to acknowledge receipt uncertainty or
+  missing/altered staged evidence as successful delivery, leaving it visible
+  for recovery or owner attention.
 - The normal protected application configuration now applies that same rule at
   its final assembly boundary: a Claude callback cannot be captured merely
   because one was supplied. Its own complete process-readiness record, the
