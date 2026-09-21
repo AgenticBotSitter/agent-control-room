@@ -14,6 +14,7 @@ import { ConfiguredTimestamp } from "./configured-timestamp";
 import { taskResultHrefV1 } from "./task-results";
 import { useInstallationTopology } from "./installation-topology";
 import { InstallationTopologySummary } from "./installation-topology-summary";
+import { PrivateOperatorCapacityWorkspace } from "./operator-capacity-workspace";
 
 type ReadState<T> = { state: "loading" } | { state: "ready"; value: T } | { state: "unavailable" };
 export type HomeDashboardState = Readonly<{
@@ -132,6 +133,7 @@ export function PrivateHome() {
     <InstallationTopologySummary plan={installationTopology?.plan} readiness={installationTopology?.readiness}
       codexMacosCustodyReadiness={installationTopology?.codexMacosCustodyReadiness} status={installationTopology?.state} />
     <HomeDashboard data={data} />
+    <PrivateOperatorCapacityWorkspace />
     {ideaLab && <aside className="private-note private-home-note" aria-label="Optional module"><strong>Idea Lab is optional.</strong>{" "}
       <a href="/ideas">Open Idea Lab</a> to compare ideas before promoting an approved one to a project.</aside>}
   </main></div>;

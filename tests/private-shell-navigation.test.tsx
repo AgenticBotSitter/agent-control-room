@@ -49,6 +49,9 @@ test("home gives honest navigation to existing private workspace surfaces", () =
   assert.doesNotMatch(html, /live workers|running now|0 tasks/i);
   for (const label of ["Loading saved work", "Loading saved attention items", "Loading verified result records",
     "Loading saved worker signals", "Loading saved projects"]) assert.match(html, new RegExp(label));
+  assert.match(html, /Operator capacity/);
+  assert.match(html, /Reading the recorded capacity and outcome evidence/);
+  assert.equal((html.match(/operator-capacity-title/g) ?? []).length, 2, "one read-only capacity panel is mounted");
 });
 
 test("task proposal and worker inventory disclose unavailable operational facts", () => {
