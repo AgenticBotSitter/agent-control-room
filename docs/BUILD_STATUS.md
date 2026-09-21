@@ -151,8 +151,15 @@ database, browser login, backup, persistent service or remote machine.
    server to record linked task, result, review, and verification facts. This
    does not yet turn a worker result into a discussion contribution: browser
    input cannot supply that evidence, and task completion is not acceptance.
-   The next source package adds protected canonical result projection and
-   retires the direct production start composition.
+   A protected server-side projection service now selects exactly one saved
+   result for the linked ordinary task, rejects malformed output, requires the
+   current review target to be accepted by a human and verified, then persists
+   the bounded contribution in the same locked transaction. Exact repeats
+   reuse the saved contribution; changed, missing, superseded, or ambiguous
+   evidence fails closed. The service is not mounted in the private web
+   process yet, so it cannot make a live claim. The next source package mounts
+   that guarded operation and then retires the direct production start
+   composition.
 
 ## Owner-operated gates before any real local worker is enabled
 

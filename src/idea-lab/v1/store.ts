@@ -90,13 +90,18 @@ export class IdeaLabProjectRegistryStoreV1 {
     });
   }
 
-  async getSession(tenantId: string, sessionId: string): Promise<IdeaLabSessionV1|undefined> {
-    const result = await this.#query<{ payload: unknown; session_auth_tag: string }>(
+  private async sessionIn(source: Pick<DatabaseSession, "query">, tenantId: string, sessionId: string): Promise<IdeaLabSessionV1|undefined> {
+    const result = await source.query<{ payload: unknown; session_auth_tag: string }>(
       `SELECT payload,session_auth_tag FROM control_idea_sessions WHERE tenant_id=$1 AND session_id=$2`, [tenantId,sessionId]);
     if (!result.rows[0]) return undefined;
     const session = parseIdeaLabSessionV1(result.rows[0].payload);
     if (session.tenantId !== tenantId || session.sessionId !== sessionId) throw new IdeaLabErrorV1("integrity_failed");
-    this.#verifyTag("session",session.tenantId,session.sessionId,session.sessionDigest,result.rows[0].session_auth_tag); return session;
+    this.#verifyTag("session",session.tenantId,session.sessionId,session.sessionDigest,result.rows[0].session_auth_tag);
+    return session;
+  }
+
+  async getSession(tenantId: string, sessionId: string): Promise<IdeaLabSessionV1|undefined> {
+    return this.sessionIn({ query: this.#query }, tenantId, sessionId);
   }
 
   /** Complete, cursor-based catalog for the private workspace; immutable session IDs order pages. */
@@ -126,31 +131,40 @@ export class IdeaLabProjectRegistryStoreV1 {
       session.sessionId,session.sessionDigest,row.session_auth_tag);return session;});
   }
 
-  async recordContribution(value: unknown): Promise<{ contribution: IdeaLabContributionV1; replayed: boolean }> {
+  /**
+   * Records one contribution while the caller already holds the surrounding
+   * database transaction.  This is intentionally used by trusted result
+   * projectors so review acceptance and contribution persistence cannot be
+   * separated by a concurrent correction or revocation.
+   */
+  async recordContributionInSession(tx: DatabaseSession, value: unknown): Promise<{ contribution: IdeaLabContributionV1; replayed: boolean }> {
     const raw = parseExactIdeaLabV1(ideaContributionSchemaV1, value);
-    const session = await this.getSession(raw.tenantId, raw.sessionId); if (!session) throw new IdeaLabErrorV1("not_found");
+    const session = await this.sessionIn(tx, raw.tenantId, raw.sessionId); if (!session) throw new IdeaLabErrorV1("not_found");
     const contribution = parseIdeaLabContributionV1(value,session);
     const tag = this.#tag("contribution",contribution.tenantId,contribution.contributionId,contribution.contributionDigest);
-    return this.#transaction(async (tx) => {
-      const existing = await tx.query<{ payload: unknown; contribution_auth_tag: string }>(
-        `SELECT payload,contribution_auth_tag FROM control_idea_contributions WHERE tenant_id=$1 AND contribution_id=$2`,
-        [contribution.tenantId,contribution.contributionId]);
-      if (existing.rows[0]) {
-        const stored = parseIdeaLabContributionV1(existing.rows[0].payload,session);
-        this.#verifyTag("contribution",stored.tenantId,stored.contributionId,stored.contributionDigest,existing.rows[0].contribution_auth_tag);
-        if (stored.contributionDigest !== contribution.contributionDigest) throw new IdeaLabErrorV1("duplicate_record");
-        return { contribution: stored, replayed: true };
-      }
-      const decided = await tx.query(`SELECT 1 FROM control_idea_decisions WHERE tenant_id=$1 AND session_id=$2`,
-        [contribution.tenantId,contribution.sessionId]);
-      if (decided.rows.length) throw new IdeaLabErrorV1("state_conflict");
-      await tx.query(`INSERT INTO control_idea_contributions(contribution_id,tenant_id,workspace_id,session_id,session_digest,
-        participant_id,round,contribution_digest,contribution_auth_tag,payload,contributed_at)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11)`, [contribution.contributionId,contribution.tenantId,
-        contribution.workspaceId,contribution.sessionId,contribution.sessionDigest,contribution.participantId,contribution.round,
-        contribution.contributionDigest,tag,JSON.stringify(contribution),contribution.contributedAt]);
-      return { contribution, replayed:false };
-    });
+    const existing = await tx.query<{ payload: unknown; contribution_auth_tag: string }>(
+      `SELECT payload,contribution_auth_tag FROM control_idea_contributions WHERE tenant_id=$1 AND contribution_id=$2`,
+      [contribution.tenantId,contribution.contributionId]);
+    if (existing.rows[0]) {
+      const stored = parseIdeaLabContributionV1(existing.rows[0].payload,session);
+      this.#verifyTag("contribution",stored.tenantId,stored.contributionId,stored.contributionDigest,existing.rows[0].contribution_auth_tag);
+      if (stored.contributionDigest !== contribution.contributionDigest) throw new IdeaLabErrorV1("duplicate_record");
+      return { contribution: stored, replayed: true };
+    }
+    const decided = await tx.query(`SELECT 1 FROM control_idea_decisions WHERE tenant_id=$1 AND session_id=$2`,
+      [contribution.tenantId,contribution.sessionId]);
+    if (decided.rows.length) throw new IdeaLabErrorV1("state_conflict");
+    await tx.query(`INSERT INTO control_idea_contributions(contribution_id,tenant_id,workspace_id,session_id,session_digest,
+      participant_id,round,contribution_digest,contribution_auth_tag,payload,contributed_at)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11)`, [contribution.contributionId,
+      contribution.tenantId, contribution.workspaceId, contribution.sessionId, contribution.sessionDigest,
+      contribution.participantId, contribution.round, contribution.contributionDigest, tag,
+      JSON.stringify(contribution), contribution.contributedAt]);
+    return { contribution, replayed:false };
+  }
+
+  async recordContribution(value: unknown): Promise<{ contribution: IdeaLabContributionV1; replayed: boolean }> {
+    return this.#transaction((tx) => this.recordContributionInSession(tx, value));
   }
 
   async listContributions(tenantId: string, sessionId: string): Promise<IdeaLabContributionV1[]> {
