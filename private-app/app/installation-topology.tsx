@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import { parseInstallationSetupViewV1, type InstallationSetupViewV1 } from "../../src/harness/v1/installation-setup-view";
+import { parseInstallationSetupViewV1, type InstallationSetupViewV1 } from "../../src/harness/v1/installation-setup-wire";
 
 type InstallationTopologyState = Readonly<{
   /** The setup read is deliberately distinct from an absent or unavailable plan. */

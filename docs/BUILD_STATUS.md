@@ -278,6 +278,15 @@ evidence only: it enables no worker, database, listener or persistent service.
   Focused browser and navigation checks confirm the complete endpoint payload
   has none of those internal values. This remains a read-only status change;
   it cannot enable a worker or relocate the installation.
+- The local setup screen now uses a browser-safe, redacted wire parser rather
+  than importing server-only connector validation into the browser. A
+  disposable browser journey proves that unavailable, malformed, and failed
+  setup refreshes remove earlier success instead of leaving a false “ready”
+  display; it also proves unavailable worker inventory remains unavailable
+  while navigating Workers, a saved project and task, and Needs Me. That
+  journey made no protected write and exposed no fixture route, digest, or
+  private-path material. It is interface evidence only, not proof that a
+  local agent or service is running.
 - A requested change between local and remote worker layouts can now be
   retained as a tenant-bound, signed, append-only transition journal in the
   existing PostgreSQL authority. It preserves the reviewed pause, drain,

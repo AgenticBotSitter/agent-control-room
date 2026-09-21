@@ -15,9 +15,9 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations 0001-0082, including generic external-content
+// Generated from public migrations 0001-0084, including generic external-content
 // migrations 0025/0026. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "4f9825fc0ab185eba6196cb901d1a096894fab8161857d5dbcf8730f8fae71f7";
+export const privateWebSchemaDigest = "2923816c63e462829ce6c9bcbda55ea8c2fa4b84b8725260b32686dacfd671ec";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
