@@ -51,6 +51,12 @@ work folder without starting Hermes or contacting a model. It uses the exact
 same settings shape as the bridge, so it catches an unusable local path before
 the one permitted live check is spent.
 
+Both the preflight and the one-shot bridge check also ask that already-selected
+program for its public `--version` response. They refuse a version or upstream
+revision other than the pinned Hermes 0.21.3 source identity. The command does
+not return, save, or display the selected program path, profile, model,
+provider, workspace, or the rest of the version output.
+
 ## What still needs an owner decision
 
 Before a real automatic task can be enabled, the owner chooses:

@@ -5,6 +5,7 @@
  */
 import { preflightHermes021MacosLocalRunnerV1 } from "../src/harness/hermes-021-v1/subprocess-preflight";
 import { resolveOwnerSelectedHermesExecutableV1 } from "../src/harness/hermes-021-v1/owner-executable-resolution";
+import { inspectHermes021MacosLocalRunnerCompatibilityV1 } from "../src/harness/hermes-021-v1/runner-compatibility";
 
 const args = process.argv.slice(2).filter(value => value !== "--");
 const ownerAttended = args.includes("--owner-attended");
@@ -34,6 +35,7 @@ if (!valid) {
   try {
     const executablePath = await resolveOwnerSelectedHermesExecutableV1({ executable: supplied["--executable"],
       executableCommand: supplied["--executable-command"], path: process.env.PATH ?? "" });
+    await inspectHermes021MacosLocalRunnerCompatibilityV1(executablePath);
     console.log(JSON.stringify(await preflightHermes021MacosLocalRunnerV1({ executablePath,
       profile: supplied["--profile"]!, model: supplied["--model"]!, provider: supplied["--provider"]!,
       workingDirectory: supplied["--workdir"]! }), null, 2));

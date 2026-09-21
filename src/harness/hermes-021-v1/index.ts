@@ -15,4 +15,5 @@ export * from "./subprocess-stream-json-host";
 export * from "./subprocess-preflight";
 export * from "./qualification-evidence";
 export * from "./runner-qualification-evidence";
+export * from "./runner-compatibility";
 export * from "./installation-readiness-record";

@@ -9,6 +9,7 @@ import { createHermes021MacosSubprocessStreamJsonHostV1 } from "../src/harness/h
 import { hermes021MacosTerminalResultSchemaV1 } from "../src/harness/hermes-021-v1/macos-local-worker";
 import { HERMES_021_MACOS_LOCAL_RUNNER_QUALIFICATION_REPORT_V1 } from "../src/harness/hermes-021-v1/runner-qualification-evidence";
 import { resolveOwnerSelectedHermesExecutableV1 } from "../src/harness/hermes-021-v1/owner-executable-resolution";
+import { inspectHermes021MacosLocalRunnerCompatibilityV1 } from "../src/harness/hermes-021-v1/runner-compatibility";
 
 const args = process.argv.slice(2).filter(value => value !== "--");
 const ownerAttended = args.includes("--owner-attended");
@@ -63,6 +64,7 @@ if (!valid) {
     try {
       const executablePath = await resolveOwnerSelectedHermesExecutableV1({ executable: supplied["--executable"],
         executableCommand: supplied["--executable-command"], path: process.env.PATH ?? "" });
+      await inspectHermes021MacosLocalRunnerCompatibilityV1(executablePath);
       const nonce = randomBytes(16).toString("hex");
       const expected = `CONTROL_ROOM_HERMES_RUNNER_${nonce}`;
       const deadline = Date.now() + 125_000;

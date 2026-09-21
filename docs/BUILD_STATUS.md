@@ -40,6 +40,10 @@ unavailable until their separate host qualifications are complete.
   this Mac. The check created no Control Room task, worker registration,
   database, permanent service, or project write. It is evidence that the
   runner bridge works, not evidence that Marvin is enabled for ordinary work.
+- The local runner preflight and qualification now also refuse an unreviewed
+  Hermes version or source revision before asking it to handle a task. The
+  compatibility check reads only the fixed `--version` response and retains
+  no private runner setting or raw version output.
 - Claude Code can save the same bounded text-review task plan as the other
   local harnesses, then decode and prepare one clean terminal result for the
   existing review path. Planning does not assign, start or enable Claude; it
