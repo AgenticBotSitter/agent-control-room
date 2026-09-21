@@ -295,7 +295,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   }) : undefined;
   const ideaResultProjection: IdeaCanonicalResultProjectionOperation | undefined = ideaProjectionService ? Object.freeze({ ...scope,
     project: (sessionId, taskKey) => run(async () => {
-      const saved = await ideaProjectionService.project({ tenantId: scope.tenantId, sessionId, taskKey });
+      const saved = await ideaProjectionService.project({ tenantId: scope.tenantId, workspaceId: scope.workspaceId, sessionId, taskKey });
       return { contribution: { contributionId: saved.contribution.contributionId, contributionDigest: saved.contribution.contributionDigest },
         replayed: saved.replayed };
     }),

@@ -26,9 +26,9 @@ export class CanonicalIdeaTaskResultProjectionServiceV1 {
     }
   }
 
-  async project(input: { tenantId: string; sessionId: string; taskKey: string }) {
+  async project(input: { tenantId: string; workspaceId: string; sessionId: string; taskKey: string }) {
     const session = await this.registry.getSession(input.tenantId, input.sessionId);
-    if (!session) throw new IdeaLabErrorV1("not_found");
+    if (!session || session.workspaceId !== input.workspaceId) throw new IdeaLabErrorV1("not_found");
     const link = (await this.links.list(session.tenantId, session.sessionId)).find(item => item.taskKey === input.taskKey);
     if (!link || link.projectId === "" || link.sessionDigest !== session.sessionDigest) throw new IdeaLabErrorV1("not_found");
 

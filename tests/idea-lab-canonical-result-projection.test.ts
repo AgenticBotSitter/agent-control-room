@@ -50,21 +50,22 @@ async function accept(f: Awaited<ReturnType<typeof fixture>>["f"]) {
 
 test("only one accepted ordinary task result becomes canonical Idea Lab evidence", async t => {
   const x = await fixture(); t.after(x.f.close);
-  await assert.rejects(x.service.project({ tenantId: x.session.tenantId, sessionId: x.session.sessionId, taskKey: x.plan.taskKey }));
+  await assert.rejects(x.service.project({ tenantId: x.session.tenantId, workspaceId: x.session.workspaceId, sessionId: x.session.sessionId, taskKey: x.plan.taskKey }));
   const review = await accept(x.f);
-  const saved = await x.service.project({ tenantId: x.session.tenantId, sessionId: x.session.sessionId, taskKey: x.plan.taskKey });
+  const saved = await x.service.project({ tenantId: x.session.tenantId, workspaceId: x.session.workspaceId, sessionId: x.session.sessionId, taskKey: x.plan.taskKey });
   assert.equal(saved.replayed, false);
   assert.equal(saved.contribution.sourceMode, "canonical_task_result");
   assert.equal(saved.contribution.canonicalTaskEvidence?.artifactId, x.f.artifact.artifactId);
   assert.deepEqual(saved.contribution.canonicalTaskEvidence?.acceptedReviewIds, [review.receipt.reviewId]);
-  const replay = await x.service.project({ tenantId: x.session.tenantId, sessionId: x.session.sessionId, taskKey: x.plan.taskKey });
+  const replay = await x.service.project({ tenantId: x.session.tenantId, workspaceId: x.session.workspaceId, sessionId: x.session.sessionId, taskKey: x.plan.taskKey });
   assert.equal(replay.replayed, true);
   assert.equal((await x.registry.listContributions(x.session.tenantId, x.session.sessionId)).length, 1);
 });
 
 test("malformed ordinary task output and a wrong task key fail closed", async t => {
   const x = await fixture(); t.after(x.f.close); await accept(x.f);
-  await assert.rejects(x.service.project({ tenantId: x.session.tenantId, sessionId: x.session.sessionId, taskKey: "idea-task:missing" }));
+  await assert.rejects(x.service.project({ tenantId: x.session.tenantId, workspaceId: x.session.workspaceId, sessionId: x.session.sessionId, taskKey: "idea-task:missing" }));
+  await assert.rejects(x.service.project({ tenantId: x.session.tenantId, workspaceId: "workspace:other", sessionId: x.session.sessionId, taskKey: x.plan.taskKey }));
   const bad = await ownerReviewFixture(undefined, "not a structured result"); t.after(bad.close);
   const source = buildIdeaLabFixtureV1(), session = buildIdeaLabSessionV1({ sessionId: "idea:bad-task-result", tenantId: bad.scope.tenantId,
     workspaceId: bad.scope.workspaceId, title: source.session.title, ideaSummary: source.session.ideaSummary, targetCustomer: source.session.targetCustomer,
@@ -77,5 +78,5 @@ test("malformed ordinary task output and a wrong task key fail closed", async t 
   await links.record(plan, { jobId: binding.jobId, projectId: binding.projectId, requestId: "request:bad-idea-projection", createdAt: at(1000), submission: "proposed", startsWork: false });
   await accept(bad);
   const service = new CanonicalIdeaTaskResultProjectionServiceV1(bad.db, registry, links, bad.results, bad.reviewStore, bad.reviewKey, () => at(7000));
-  await assert.rejects(service.project({ tenantId: session.tenantId, sessionId: session.sessionId, taskKey: plan.taskKey }));
+  await assert.rejects(service.project({ tenantId: session.tenantId, workspaceId: session.workspaceId, sessionId: session.sessionId, taskKey: plan.taskKey }));
 });
