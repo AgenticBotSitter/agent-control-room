@@ -1,6 +1,6 @@
 # Single-machine reuse audit
 
-**Status:** source-level decision record, September 20, 2026.  
+**Status:** source-level decision record, September 20, 2026.
 **Scope:** possible borrowed code for the **This computer** installation choice.
 This record does not authorize an installation, provider call, service, process
 launch, credential read, or live worker.

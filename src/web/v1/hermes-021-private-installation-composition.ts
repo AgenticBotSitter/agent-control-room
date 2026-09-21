@@ -15,7 +15,7 @@ const unavailable = (): never => { throw new Error("hermes_021_private_installat
 const identifier = z.string().min(3).max(180).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
 
 /**
- * The installation-only seam for Marvin's local delivery callback. It binds
+ * The installation-only seam for a local Hermes delivery callback. It binds
  * already-verified private runner settings to the existing queue executor and
  * exposes only `deliver` to protected operator assembly. It has no browser,
  * database-opening, worker-starting, or Hermes-invocation behavior of its own.

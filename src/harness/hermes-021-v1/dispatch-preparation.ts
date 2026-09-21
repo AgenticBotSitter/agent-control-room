@@ -71,7 +71,7 @@ const preStartBindingDigest = (prepared: Hermes021MacosPreparedDispatchV1) => sh
 
 /**
  * Reads an already-assigned canonical task and creates the shared packet for
- * Marvin. This is deliberately a preparation reader: it does not create an
+ * the local Hermes worker. This is deliberately a preparation reader: it does not create an
  * assignment, queue, run, receipt, policy, or Hermes process. The caller
  * must pass its result straight to the local delivery composition while the
  * packet remains inside its short lease/authority window.

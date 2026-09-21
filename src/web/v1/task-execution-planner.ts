@@ -132,7 +132,7 @@ export const hermes021TaskExecutionPlanSchemaV6 = hermes021TaskExecutionPlanSche
   schema: z.literal("control-room.task-execution-plan/v6"), revision: taskRevisionContextSchema,
 });
 export type Hermes021TaskExecutionPlanV6 = z.infer<typeof hermes021TaskExecutionPlanSchemaV6>;
-/** The first Marvin adapter may return review text but may not write a project. */
+/** The first local Hermes adapter may return review text but may not write a project. */
 export const hermes021TaskExecutionPlanSchemaV7 = hermes021TaskExecutionPlanSchemaV5.extend({
   schema: z.literal("control-room.task-execution-plan/v7"), executionClass: z.literal("text_review"),
 });

@@ -454,7 +454,7 @@ export class TaskAssignmentCoordinator {
     });
   }
   /**
-   * Queues an already-assigned Marvin task in the same protected pg-boss
+   * Queues an already-assigned local Hermes task in the same protected pg-boss
    * channel as other work.  This is deliberately separate from
    * `enqueueNativeTask`: Hermes 0.21 does not use the older signed-native
    * packet format, so accepting it there would incorrectly weaken that
@@ -515,7 +515,7 @@ export class TaskAssignmentCoordinator {
     });
   }
   /**
-   * Server-side pickup lookup for a queued Marvin task.  The pg-boss message
+   * Server-side pickup lookup for a queued local Hermes task.  The pg-boss message
    * is merely a locator.  This method verifies its HMAC-backed queue intent,
    * its companion approval evidence, present owner permission, the leased
    * current V7/V8 text-review plan and the selected local route before returning a reference that
@@ -564,7 +564,7 @@ export class TaskAssignmentCoordinator {
         || approval.operationDigest !== job.authority.digest || approval.nodeId !== route.nodeId
         || approval.leaseId !== stored.lease.id || approval.leaseEpoch !== stored.lease.epoch
         || ref.packetDigest !== packetDigest) conflict();
-      // A broker acknowledgement is not proof that Marvin never started. Once
+      // A broker acknowledgement is not proof that the local worker never started. Once
       // any route-neutral worker receipt or harness run exists, recovery must
       // use the retained terminal-result path rather than launch Hermes again.
       await this.requireNeverStaged(tx, ref);

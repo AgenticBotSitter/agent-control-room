@@ -56,7 +56,7 @@ export type TaskCoordinatorConfiguration = {
    * Never derived from an HTTP request or enabled implicitly by approval storage. */
   nativeSubmission?: NativeTaskSubmission & { close?: () => Promise<void> };
   /**
-   * Installation-owned local Marvin delivery composition.  It is optional and
+   * Installation-owned local Hermes delivery composition. It is optional and
    * inert: merely configuring it does not invoke Hermes.  When the existing
    * queue worker picks a canonically verified Hermes-0.21 local task, this
    * callback is the only route allowed to reach the private runner.

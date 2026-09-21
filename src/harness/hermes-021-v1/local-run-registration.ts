@@ -8,7 +8,7 @@ const unavailable = (): never => { throw new Error("hermes_021_macos_run_registr
 const instant = z.string().datetime().refine(value => new Date(value).toISOString() === value);
 
 /**
- * Creates the ordinary harness-run record for one admitted Marvin delivery.
+ * Creates the ordinary harness-run record for one admitted local Hermes delivery.
  * It is not a scheduler, session, or second result store. Its opaque binding
  * digest deliberately reveals no Hermes login, model, provider, or workspace.
  */

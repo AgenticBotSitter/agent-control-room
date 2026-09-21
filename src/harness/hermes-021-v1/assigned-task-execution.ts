@@ -14,7 +14,7 @@ export const HERMES_021_MACOS_ASSIGNED_TASK_EXECUTION_V1 =
   "control-room.hermes-021-macos-assigned-task-execution/v1" as const;
 
 /**
- * The application composition for an already-assigned Marvin task. It joins
+ * The application composition for an already-assigned local Hermes task. It joins
  * the canonical assignment reader to the local delivery composition; neither
  * side supplies a browser-controlled task, queue, authority, or runner. The
  * host must still inject the Mac-owned policy and private Hermes runner.
@@ -35,7 +35,7 @@ export async function executeAssignedHermes021MacosTaskV1(config: Hermes021Macos
   let prepared = await config.preparation.prepare(referenceValue);
   // The initial preparation is what binds this execution to the queue pickup.
   // Recheck that same binding directly before we create a run record or contact
-  // the private launcher so a late revoke cannot start Marvin in the gap.
+  // the private launcher so a late revoke cannot start the worker in the gap.
   await config.preparation.assertCurrent(referenceValue, prepared);
   const now = new Date(clock()).toISOString();
   if (!z.string().datetime().safeParse(now).success || Date.parse(now) > Date.parse(prepared.delivery.expiresAt)) unavailable();

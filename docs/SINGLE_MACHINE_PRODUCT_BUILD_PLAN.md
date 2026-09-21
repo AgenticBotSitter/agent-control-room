@@ -1,6 +1,6 @@
 # Single-machine product build plan
 
-**Status:** active architecture plan, September 20, 2026.  
+**Status:** active architecture plan, September 20, 2026.
 **Goal:** make **This computer** a complete installation choice of Agent Control
 Room. It must use the same projects, tasks, results, reviews, corrections,
 database, and scheduler as **Several computers**. It is not a smaller fork.

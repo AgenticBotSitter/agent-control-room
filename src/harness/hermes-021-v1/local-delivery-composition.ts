@@ -29,10 +29,10 @@ export type Hermes021MacosLocalDeliveryCompositionV1 = Readonly<{
 }>;
 
 /**
- * Topology-neutral delivery composed with Marvin's local execution seam.
+ * Topology-neutral delivery composed with the local Hermes execution seam.
  * It records the accepted receipt before contacting Hermes. An exact replay
  * after a restart returns `already_delivered`; it deliberately does not run
- * Marvin again because the original invocation may already have happened.
+ * the worker again because the original invocation may already have happened.
  * It neither creates a task, lease, queue nor an execution permission.
  */
 export async function deliverHermes021MacosLocalTaskV1(config: Hermes021MacosLocalDeliveryCompositionV1,

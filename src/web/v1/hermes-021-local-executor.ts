@@ -23,7 +23,7 @@ export function hermes021LocalQueueTargetToDispatchReferenceV1(tenantIdValue: un
 }
 
 /**
- * Installation-owned bridge from the existing shared task queue to Marvin's
+ * Installation-owned bridge from the existing shared task queue to the local Hermes worker's
  * already-reviewed local composition. It adds no scheduler, broker, database,
  * or Hermes API. The surrounding installation supplies the tenant scope and
  * the private runner; merely constructing this bridge does not invoke Hermes.
