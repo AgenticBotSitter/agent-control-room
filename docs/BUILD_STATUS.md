@@ -113,6 +113,11 @@ unavailable until their separate host qualifications are complete.
 - Latest focused local checks: Hermes (89), Claude (35), Codex (34), and
   setup-screen (40) checks passed, followed by a full production-style build.
   No installed harness was started by these checks.
+- Local Hermes recovery inspection now reads only an authenticated saved
+  delivery and its protected staged terminal record. It reports no saved
+  delivery, an unresolved saved delivery, or a staged result using only safe
+  digests, sizes, and usage totals. It never contacts Hermes, exposes terminal
+  text or private settings, publishes a result, or permits a retry.
 
 These checks use disposable data. They do not prove a real agent program,
 database, browser login, backup, persistent service or remote machine.
@@ -163,10 +168,13 @@ database, browser login, backup, persistent service or remote machine.
    or accept browser-supplied evidence. The Idea Lab page now lists each saved
    participant task as either waiting for a reviewed result or already added,
    and offers the owner a safe request to re-check and add only an eligible
-   result. The remaining Idea Lab source work is to create later canonical
-   rounds and synthesis from the same reviewed-task contributions, then retire
-   the direct provider start composition after the ordinary task route proves
-   the full journey.
+   result. Later rounds now require every prior-round reviewed task result to
+   be rechecked server-side before ordinary next-round tasks can be prepared.
+   Once every canonical task result is reviewed and verified, the owner can
+   save an extractive recap from those protected records; no browser-supplied
+   evidence or new provider call is involved. The direct provider panel remains
+   for retained legacy discussions only and must be retired after the ordinary
+   task route proves a full owner-operated journey.
 
 ## Owner-operated gates before any real local worker is enabled
 
