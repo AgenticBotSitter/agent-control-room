@@ -30,6 +30,11 @@ Use the existing Hermes queue delivery, controlled subprocess, task policy, term
 
 The current `bot_room` route is text-only, not project writing. First jobs are supplied-context reviews, acceptance cases, test outlines and proposed patches returned as text. Codex reviews/applies changes. Then qualify a separate writing route with an isolated worktree, exact allowed files/commands, bounded diff, out-of-scope denial and process-tree cancellation. Prove one task reaches review once, restart uses staged evidence, and forbidden/expired work cannot start. Writing also needs a permitted change and blocked out-of-scope attempt.
 
+The current text-only path also performs a fresh canonical task/lease/authority
+check after its delivery receipt is retained and immediately before the private
+Hermes runner is invoked. A cancellation or permission withdrawal in that
+handoff window stops the run instead of being treated as an automatic retry.
+
 The shared worktree-change audit is source-only preparation for that later writing route. It binds a returned list of changed files to one approved delivery, one existing worktree lease, one base revision, explicit file limits and exact allowed paths. It also refuses a worktree lease that belongs to a different delivery run. It does not create a worktree, run Git, launch a harness or turn an audit into permission to write. This is deliberately shared so a later local or remote worker uses the same evidence rule rather than a separate local-only system.
 
 ### P2 — Codex second

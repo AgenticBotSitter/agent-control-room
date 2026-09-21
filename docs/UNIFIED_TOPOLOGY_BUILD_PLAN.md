@@ -129,6 +129,11 @@ Completed in source:
   task, lease, plan, worker binding, authority, and review contract. A late
   revoke, expiry, reassignment, or changed binding refuses the launch; this
   adds no new scheduler, database, authority, or automatic retry.
+- the assigned queue path now repeats that canonical check after its delivery
+  receipt is safely stored and immediately before the private runner is
+  called. A lease revoked in the handoff window therefore cannot reach Hermes;
+  the saved receipt remains an unresolved safety record rather than a reason
+  to retry the task automatically.
 - an application composition now connects that prepared packet directly to
   Marvin's controlled local delivery seam. The first accepted handoff invokes
   the injected local runner once; an exact restart replay reports the earlier
