@@ -1,0 +1,51 @@
+import type { VerifiedWebIdentity } from "../../web/v1/access-verifier";
+import type { TaskReceipt } from "../../web/v1/task-wire";
+import type { WebTaskService } from "../../web/v1/task-service";
+import { buildIdeaLabCanonicalTaskPlanV1, type IdeaLabCanonicalTaskPlanV1 } from "./canonical-task-plan";
+import { buildIdeaLabOwnerPromptV1 } from "./discussion-prompt";
+import { IdeaLabErrorV1 } from "./errors";
+import { parseIdeaLabSessionV1 } from "./contracts";
+import { ideaIdSchemaV1 } from "./schemas";
+
+/**
+ * Thin bridge from a planned Idea Lab round to the ordinary proposed-task
+ * service. It deliberately has no runner, queue, provider, retry, or result
+ * handling: those remain the existing shared Control Room lifecycle.
+ *
+ * The project is constructor-owned rather than supplied by a browser request.
+ * Persistent session-to-project linking is the following migration package;
+ * this bridge is safe to use only after its caller has already selected the
+ * ordinary project that owns the discussion.
+ */
+export class IdeaLabCanonicalTaskProposalServiceV1 {
+  constructor(private readonly tasks: Pick<WebTaskService, "propose">,
+    private readonly scope: Readonly<{ projectId: string }>) {
+    if (!ideaIdSchemaV1.safeParse(scope.projectId).success) throw new Error("idea_task_proposal_config_invalid");
+  }
+
+  async proposeRound(identity: VerifiedWebIdentity, input: {
+    session: unknown;
+    round: number;
+    contributions: readonly unknown[];
+  }): Promise<Readonly<{ plans: readonly IdeaLabCanonicalTaskPlanV1[]; receipts: readonly { receipt: TaskReceipt; replayed: boolean }[] }>> {
+    const session = parseIdeaLabSessionV1(input.session);
+    if (!Number.isInteger(input.round) || input.round < 1 || input.round > session.maxRounds) {
+      throw new IdeaLabErrorV1("invalid_input");
+    }
+    const ownerPrompt = buildIdeaLabOwnerPromptV1(session);
+    const plans = session.participants.map((participant) => buildIdeaLabCanonicalTaskPlanV1({ session,
+      projectId: this.scope.projectId, participantId: participant.participantId, round: input.round,
+      ownerPrompt, contributions: input.contributions,
+    })).sort((left, right) => left.taskKey.localeCompare(right.taskKey));
+    const receipts = [] as { receipt: TaskReceipt; replayed: boolean }[];
+    for (const plan of plans) {
+      // The key is a deterministic digest of the complete plan. The existing
+      // task service binds it to the authenticated owner and rejects changed
+      // replays, then writes the normal request/workflow/job bundle.
+      const result = await this.tasks.propose(identity, this.scope.projectId, plan.taskDraft,
+        `idea-round-proposal:${plan.planDigest.slice(7)}`);
+      receipts.push(result);
+    }
+    return Object.freeze({ plans: Object.freeze(plans), receipts: Object.freeze(receipts) });
+  }
+}

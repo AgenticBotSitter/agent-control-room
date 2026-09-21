@@ -132,6 +132,11 @@ database, browser login, backup, persistent service or remote machine.
    into the same canonical task, delivery, result, review and correction path
    already used by schedules and news/research. The accepted source decision
    is [IDEA_LAB_CANONICAL_LIFECYCLE_DECISION.md](IDEA_LAB_CANONICAL_LIFECYCLE_DECISION.md).
+   The first safe bridge is now present: it creates deterministic, ordinary
+   proposed tasks for a selected discussion round and safely reuses an exact
+   repeat. It does not schedule, assign, contact a worker, or replace the
+   legacy direct fixture. The next source package is durable
+   discussion-to-project linkage and canonical result projection.
 
 ## Owner-operated gates before any real local worker is enabled
 
