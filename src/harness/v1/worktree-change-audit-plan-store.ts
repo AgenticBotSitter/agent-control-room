@@ -117,3 +117,23 @@ export async function persistManagedWorktreeChangeAuditPlanV1(tx: DatabaseSessio
   return Object.freeze({ plan: prior.plan, replayed: true as const, startsWork: false as const,
     grantsExecutionAuthority: false as const });
 }
+
+/**
+ * Reads one authenticated historical plan only when the caller knows its full
+ * immutable lineage. This remains evidence-role material, not a browser
+ * projection or worker instruction.
+ */
+export async function readManagedWorktreeChangeAuditPlanV1(tx: DatabaseSession, integrityKey: Uint8Array,
+  scopeValue: unknown) {
+  if (!(integrityKey instanceof Uint8Array) || integrityKey.length !== 32) fail();
+  const scope = identitySchema.parse(scopeValue);
+  const row = (await tx.query<Row>(`SELECT tenant_id,project_id,job_id,attempt_id,run_id,record,auth_tag
+    FROM control_worktree_change_audit_plans
+    WHERE tenant_id=$1 AND project_id=$2 AND job_id=$3 AND attempt_id=$4 AND run_id=$5`,
+  [scope.tenantId, scope.projectId, scope.jobId, scope.attemptId, scope.runId])).rows[0];
+  if (!row) return null;
+  const verified = verify(integrityKey, row);
+  if (!sameScope(verified.record.identity, scope)) fail();
+  return Object.freeze({ plan: verified.plan, recordedAt: verified.record.recordedAt,
+    startsWork: false as const, grantsExecutionAuthority: false as const });
+}

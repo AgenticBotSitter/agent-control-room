@@ -18,7 +18,7 @@ GRANT USAGE ON SCHEMA public TO control_room_native_evidence;
 GRANT SELECT ON workspaces, control_identities, control_role_grants, projects, control_manual_project_heads,
   control_jobs, control_attempts, control_leases, control_nodes, control_node_keys, control_harness_runs, control_harness_run_events,
   control_native_delivery_envelopes, control_native_transmission_intents, control_native_delivery_receipts,
-  control_worker_delivery_receipts, control_worktree_change_audit_plans,
+  control_worker_delivery_receipts, control_worktree_change_audit_plans, control_worktree_change_audit_records,
   control_task_execution_plans, control_codex_activation_transmission_intents, control_codex_result_publications,
   control_artifact_manifests, control_native_artifact_receipts, control_native_result_write_reservations,
   control_durable_result_write_reservations,
@@ -26,7 +26,7 @@ GRANT SELECT ON workspaces, control_identities, control_role_grants, projects, c
   TO control_room_native_evidence;
 GRANT INSERT ON control_harness_runs, control_harness_run_events, control_codex_result_publications, control_artifact_manifests,
   control_native_artifact_receipts, control_native_result_write_reservations,
-  control_worktree_change_audit_plans,
+  control_worktree_change_audit_plans, control_worktree_change_audit_records,
   control_durable_result_write_reservations,
   audit_events, control_audit_chain_heads TO control_room_native_evidence;
 GRANT UPDATE (state,contract_digest,reservation,auth_tag,updated_at)
