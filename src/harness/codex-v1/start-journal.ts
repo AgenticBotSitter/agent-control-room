@@ -411,7 +411,7 @@ export class SqliteCodexStartJournalV1 {
     this.assertUsable(); const runId = localId.parse(runIdValue), reservationRow = this.reservationRow(runId);
     if (!reservationRow) return Object.freeze({ status: 'not_reserved' as const, runId,
       readIdentity: null, grantsExecutionAuthority: false as const, permitsResume: false as const,
-      permitsRetry: false as const, permitsThreadRead: false as const });
+      permitsRetry: false as const, permitsThreadRead: false as const, cleanupVerified: false as const });
     let admission: CodexStartAdmissionV1;
     try { admission = verifyCodexStartAdmissionV1(JSON.parse(reservationRow.admission_json)); }
     catch { return this.integrityFailure(); }
@@ -420,7 +420,7 @@ export class SqliteCodexStartJournalV1 {
     if (!row) return Object.freeze({ status: 'start_reserved' as const, ...admission.scope,
       admissionId: admission.admissionId, reservedAt: reservationRow.reserved_at,
       readIdentity: null, grantsExecutionAuthority: false as const, permitsResume: false as const,
-      permitsRetry: false as const, permitsThreadRead: false as const });
+      permitsRetry: false as const, permitsThreadRead: false as const, cleanupVerified: false as const });
     let thread: CodexThreadStartReceiptV1;
     try { thread = verifyCodexThreadStartReceiptV1(JSON.parse(row.receipt_json)); }
     catch { return this.integrityFailure(); }
@@ -434,7 +434,7 @@ export class SqliteCodexStartJournalV1 {
     if (!turnRow) return Object.freeze({ status: 'thread_recorded_turn_unknown' as const, ...scope,
       threadId: thread.threadId, threadReceiptDigest: thread.receiptDigest, turnId: null,
       readIdentity: null, grantsExecutionAuthority: false as const, permitsResume: false as const,
-      permitsRetry: false as const, permitsThreadRead: false as const });
+      permitsRetry: false as const, permitsThreadRead: false as const, cleanupVerified: false as const });
     let turn: CodexTurnStartReceiptV1, identity: ReturnType<typeof codexReadIdentityFromStartV1>;
     try {
       turn = codexTurnStartReceiptSchemaV1.parse(JSON.parse(turnRow.receipt_json));
