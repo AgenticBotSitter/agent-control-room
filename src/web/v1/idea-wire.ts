@@ -52,9 +52,14 @@ export const ideaResultProjectionReceiptSchema = z.object({ sessionId: id, taskK
   startsWork: z.literal(false),
 }).strict();
 export type IdeaResultProjectionReceipt = z.infer<typeof ideaResultProjectionReceiptSchema>;
-export const ideaSynthesisDraftSchema = z.object({ sessionDigest: digest, runId: id }).strict();
-export const ideaSynthesisReceiptSchema = z.object({ sessionId: id, sessionDigest: digest, runId: id, synthesisDigest: digest,
-  replayed: z.boolean(), startsWork: z.literal(false) }).strict();
+export const ideaSynthesisDraftSchema = z.union([
+  z.object({ sessionDigest: digest, runId: id }).strict(),
+  z.object({ sessionDigest: digest, mode: z.literal("canonical_reviewed_tasks") }).strict(),
+]);
+export const ideaSynthesisReceiptSchema = z.object({ sessionId: id, sessionDigest: digest, runId: id.nullable(),
+  mode: z.enum(["legacy_panel", "canonical_reviewed_tasks"]), synthesisDigest: digest,
+  replayed: z.boolean(), startsWork: z.literal(false) }).strict().refine(value =>
+  (value.mode === "legacy_panel") === (value.runId !== null));
 export type IdeaSynthesisReceipt = z.infer<typeof ideaSynthesisReceiptSchema>;
 export const ideaDecisionDraftSchema = z.object({ sessionDigest: digest, synthesisDigest: digest,
   intent: ideaOwnerIntentSchemaV1 }).strict().refine(v => (v.intent.decision === "create_project") === !!v.intent.project);
@@ -98,13 +103,16 @@ decision: z.object({ sessionId: id, sessionDigest: digest, synthesisDigest: dige
 canonicalTasks: z.object({ projectId: id, taskCount: z.number().int().min(3).max(18), preparedRounds: z.array(z.number().int().min(1).max(3)).min(1).max(3),
   tasks: z.array(z.object({ taskKey: id, participantId: id, round: z.number().int().min(1).max(3),
     contributionRecorded: z.boolean() }).strict()).min(3).max(18),
-}).strict().nullable(), canProjectResults: z.boolean(),
+}).strict().nullable(), canProjectResults: z.boolean(), nextCanonicalRound: z.number().int().min(2).max(3).nullable(), canPrepareNextRound: z.boolean(),
 }).strict().refine(value => {
   const { session, contributions, synthesis, decision, run, canonicalTasks } = value;
   return new Set(contributions.map(c => `${c.round}:${c.participantId}`)).size === contributions.length
     && (!value.canStart || value.execution === "authorization_required" && !run && !synthesis && !decision && !contributions.length && !canonicalTasks)
-    && (!value.canSynthesize || !!run && run.state === "completed" && !synthesis && !decision
-      && contributions.length === session.maxRounds * session.participants.length)
+    && (!value.canSynthesize || !synthesis && !decision && (run
+      ? run.state === "completed" && contributions.length === session.maxRounds * session.participants.length
+      : !!canonicalTasks && canonicalTasks.taskCount === session.maxRounds * session.participants.length
+        && contributions.length === session.maxRounds * session.participants.length
+        && contributions.every(contribution => contribution.sourceMode === "canonical_task_result")))
     && (!value.canPromote || value.canDecide)
     && (!value.canDecide || !!synthesis && !decision && (!run || run.state === "completed"))
     && (!run || run.sessionId === session.sessionId && run.sessionDigest === session.sessionDigest
@@ -118,13 +126,17 @@ canonicalTasks: z.object({ projectId: id, taskCount: z.number().int().min(3).max
     && contributions.every(c => c.sourceMode === "provider_filtered" ? c.providerContacted && c.liveBotContactAuthorized && c.evidenceState === "none"
       : c.sourceMode === "canonical_task_result" ? !c.providerContacted && !c.liveBotContactAuthorized && c.evidenceState === "reviewed_control_room_task"
       : !c.providerContacted && !c.liveBotContactAuthorized && c.evidenceState === "none")
-    && (!canonicalTasks || !run && !synthesis && !decision
+    && (!canonicalTasks || !run
       && canonicalTasks.taskCount >= session.participants.length && canonicalTasks.taskCount <= session.maxMessages
       && canonicalTasks.preparedRounds.every(round => round <= session.maxRounds)
       && canonicalTasks.tasks.length === canonicalTasks.taskCount
       && new Set(canonicalTasks.tasks.map(task => task.taskKey)).size === canonicalTasks.tasks.length
       && canonicalTasks.tasks.every(task => task.round <= session.maxRounds && session.participants.some(participant => participant.participantId === task.participantId)))
     && (!value.canProjectResults || !!canonicalTasks && !run && !synthesis && !decision)
+    && (value.nextCanonicalRound === null || !!canonicalTasks && !run && !synthesis && !decision
+      && value.nextCanonicalRound <= session.maxRounds && canonicalTasks.preparedRounds.includes(value.nextCanonicalRound - 1)
+      && canonicalTasks.tasks.filter(task => task.round === value.nextCanonicalRound! - 1).every(task => task.contributionRecorded))
+    && (!value.canPrepareNextRound || value.nextCanonicalRound !== null && value.execution === "authorization_required")
     && (!synthesis || synthesis.sessionId === session.sessionId && synthesis.sessionDigest === session.sessionDigest)
     && (!decision || !!synthesis && decision.sessionId === session.sessionId && decision.sessionDigest === session.sessionDigest
       && decision.synthesisDigest === synthesis.synthesisDigest && (decision.decision === "create_project") === !!decision.project);

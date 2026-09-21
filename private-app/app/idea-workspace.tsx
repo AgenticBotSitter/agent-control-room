@@ -45,7 +45,7 @@ export function IdeaDiscussion({ detail, refresh, pendingChanged }: { detail: Id
             <p>Suggested experiment: {contribution.suggestedExperiment}</p><p>{contribution.sourceMode === "injected_only" ? "Test confidence" : "Bot-reported confidence"}: {contribution.confidencePercent}%</p></>
             : <p>No contribution saved for this round.</p>}</article>;
       })}</section>)}
-    {canonicalTasks ? <section className="private-panel" aria-label="Reviewed task results"><h2>Reviewed task results</h2>
+    {canonicalTasks && !synthesis && !decision ? <section className="private-panel" aria-label="Reviewed task results"><h2>Reviewed task results</h2>
       <p>Each participant result must first pass the ordinary Control Room review and verification path. Adding it here never starts a worker or accepts a review.</p>
       {canonicalTasks.tasks.map(task => {
         const participant = session.participants.find(item => item.participantId === task.participantId);
@@ -54,10 +54,15 @@ export function IdeaDiscussion({ detail, refresh, pendingChanged }: { detail: Id
             : detail.canProjectResults ? <IdeaResultProjectionControl sessionId={session.sessionId} taskKey={task.taskKey} refresh={refresh} />
             : <p>Waiting for a reviewed task result. Result projection is not configured for this installation.</p>}</article>;
       })}</section> : null}
+    {detail.canPrepareNextRound && canonicalTasks && detail.nextCanonicalRound ? <section className="private-panel" aria-label="Next discussion round">
+      <h2>Next discussion round</h2><p>Every result in the last round was reviewed and verified. Preparing the next round creates ordinary proposed tasks; it does not start an agent.</p>
+      <IdeaStartControl key={`round-${detail.nextCanonicalRound}`} session={session} projectId={canonicalTasks.projectId} round={detail.nextCanonicalRound} refresh={refresh} />
+    </section> : null}
     <section className="private-panel"><h2>Discussion recap</h2>{synthesis ? <><p style={{ whiteSpace: "pre-wrap" }}>{synthesis.executiveSummary}</p>
       <p>Advisory score: {synthesis.overallScore}/100 — not a prediction of business success.</p>
-      <p>Proposed experiment: {synthesis.nextExperiment}</p></> : detail.canSynthesize && run
-        ? <IdeaSynthesisControl key={run.runId} sessionId={session.sessionId} sessionDigest={session.sessionDigest} runId={run.runId} refresh={refresh} />
+      <p>Proposed experiment: {synthesis.nextExperiment}</p></> : detail.canSynthesize
+        ? <IdeaSynthesisControl key={run?.runId ?? "canonical-reviewed-tasks"} sessionId={session.sessionId} sessionDigest={session.sessionDigest}
+          {...(run ? { runId: run.runId, mode: "legacy_panel" as const } : { mode: "canonical_reviewed_tasks" as const })} refresh={refresh} />
         : <p>No recap saved yet. Preparing one requires a completed discussion and current owner access.</p>}</section>
     <section className="private-panel"><h2>Your decision</h2>{decision ? <>
       <p>{decision.decision === "create_project" ? "Promoted to a project" : decision.decision === "save" ? "Saved for later" : "Rejected"}</p>

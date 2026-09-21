@@ -185,8 +185,12 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     input.ideaCreation!.integrityKey, input.ideaCreation!.participants, input.clock) : undefined;
   const ideaDecision = ideaPool ? new WebIdeaDecisionOperation(guardedDatabase(ideaPool), scope,
     input.ideaCreation!.integrityKey, input.clock) : undefined;
+  let ideaProjectionService: CanonicalIdeaTaskResultProjectionServiceV1 | undefined;
   const ideaSynthesis = ideaPool ? new WebIdeaSynthesisOperation(guardedDatabase(ideaPool), scope,
-    input.ideaCreation!.integrityKey, input.clock) : undefined;
+    input.ideaCreation!.integrityKey, input.clock, { project: async (sessionId, taskKey) => {
+      if (!ideaProjectionService) throw new Error("idea_result_projection_not_configured");
+      return ideaProjectionService.project({ tenantId: scope.tenantId, workspaceId: scope.workspaceId, sessionId, taskKey });
+    } }) : undefined;
   const ideaStart = (() => {
     if (!ideaRuntimePool) return undefined;
     const source = input.ideaRuntime!.runtime;
@@ -214,7 +218,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   // Result projection deliberately runs through the fixed native-result role,
   // after private-web authentication. It does not use the web role to write
   // Idea records and it does not reuse the legacy Idea provider runtime.
-  const ideaProjectionService = ideaPool && resultPool && input.quality
+  ideaProjectionService = ideaPool && resultPool && input.quality
     ? new CanonicalIdeaTaskResultProjectionServiceV1(guardedDatabase(resultPool),
       new IdeaLabProjectRegistryStoreV1(guardedDatabase(resultPool), input.ideaCreation!.integrityKey),
       new IdeaLabCanonicalTaskLinkStoreV1(guardedDatabase(resultPool), input.ideaCreation!.integrityKey),

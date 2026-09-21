@@ -87,9 +87,19 @@ export class WebIdeaService {
         providerContacted: contribution.providerContacted, liveBotContactAuthorized: contribution.liveBotContactAuthorized }));
       const canProjectResults = this.resultProjectionConfigured && !!canonicalTasks && !run && !synthesis && !decision
         && actor.can("idea_lab.panel_start", undefined, true);
+      const nextCanonicalRound = canonicalTasks && !run && !synthesis && !decision ? (() => {
+        const latest = canonicalTasks.preparedRounds.at(-1)!;
+        return canonicalTasks.tasks.filter(task => task.round === latest).every(task => task.contributionRecorded)
+          && latest < session.maxRounds ? latest + 1 : null;
+      })() : null;
+      const canPrepareNextRound = this.startConfigured && nextCanonicalRound !== null
+        && actor.can("idea_lab.panel_start", undefined, true);
       return { session, contributions: presentationContributions, synthesis: synthesis ?? null, decision: decision ?? null, canDecide,
-        canSynthesize: this.synthesisConfigured && !!run && run.state === "completed" && !synthesis && !decision
-          && contributions.length === session.maxMessages && actor.can("idea_lab.synthesize", undefined, true),
+        canSynthesize: this.synthesisConfigured && !synthesis && !decision && (run
+          ? run.state === "completed" && contributions.length === session.maxMessages
+          : !!canonicalTasks && canonicalTasks.taskCount === session.maxMessages && contributions.length === session.maxMessages
+            && contributions.every(contribution => contribution.sourceMode === "canonical_task_result"))
+          && actor.can("idea_lab.synthesize", undefined, true),
         canStart: this.startConfigured && !canonicalTasks && !run && !synthesis && !decision && !contributions.length
           && actor.can("idea_lab.panel_start", undefined, true),
         canPromote: canDecide && actor.can("projects.create", undefined, true),
@@ -101,7 +111,7 @@ export class WebIdeaService {
           cancellationRequestedAt: run.cancellationRequestedAt ?? null,
           attempts: run.attempts.map(a => ({ participantId: a.participantId, round: a.round, state: a.state })) } : null,
         execution: this.startConfigured ? "authorization_required" as const : "not_configured" as const,
-        canonicalTasks, canProjectResults, observedAt: actor.now };
+        canonicalTasks, canProjectResults, nextCanonicalRound, canPrepareNextRound, observedAt: actor.now };
     });
   }
 }

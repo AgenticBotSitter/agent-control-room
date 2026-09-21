@@ -3,12 +3,16 @@ import type { DatabaseClient, DatabaseSession } from "../../persistence/database
 import { appendAuditWith } from "../../audit/audit-store";
 import { IdeaLabProjectRegistryStoreV1 } from "../../idea-lab/v1/store";
 import { IdeaLabBotRunStoreV1 } from "../../idea-lab/v1/coordinator-store";
+import { IdeaLabCanonicalTaskLinkStoreV1 } from "../../idea-lab/v1/canonical-task-link-store";
 import { DeterministicIdeaLabSynthesisEngineV1 } from "../../idea-lab/v1/synthesis-engine";
 import { ideaDigestSchemaV1, ideaIdSchemaV1 } from "../../idea-lab/v1/schemas";
 import { WebSessionAuthority } from "./session-authority";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 
-export const ideaSynthesisInputSchema = z.object({ sessionDigest: ideaDigestSchemaV1, runId: ideaIdSchemaV1 }).strict();
+export const ideaSynthesisInputSchema = z.union([
+  z.object({ sessionDigest: ideaDigestSchemaV1, runId: ideaIdSchemaV1 }).strict(),
+  z.object({ sessionDigest: ideaDigestSchemaV1, mode: z.literal("canonical_reviewed_tasks") }).strict(),
+]);
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: async work => work(tx),
   transactionWithPreCommitCheck: async (work, check) => { const value = await work(tx); await check(); return value; } });
 
@@ -17,13 +21,32 @@ export class WebIdeaSynthesisOperation {
   private readonly authority: WebSessionAuthority;
   private readonly key: Uint8Array;
   constructor(db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string }, key: Uint8Array,
-    clock: () => number = Date.now) {
+    clock: () => number = Date.now, private readonly revalidate?: { project: (sessionId: string, taskKey: string) => Promise<unknown> }) {
     if (!(key instanceof Uint8Array) || key.length !== 32) throw new Error("idea_key_invalid");
     this.key = Uint8Array.from(key); this.authority = new WebSessionAuthority(db, scope, clock, "idea_lab_session");
   }
   async synthesize(identity: VerifiedWebIdentity, sessionId: string, value: unknown) {
     const input = ideaSynthesisInputSchema.safeParse(value);
     if (!input.success || !ideaIdSchemaV1.safeParse(sessionId).success) throw new WebAccessError("invalid_request");
+    if ("mode" in input.data) {
+      // Re-check every linked result before the recap write transaction. This
+      // uses the existing restricted result projector; the browser supplies no
+      // task output, review, or verification evidence.
+      if (!this.revalidate) throw new WebAccessError("conflict");
+      const taskKeys = await this.authority.authenticated({ ...identity }, async (tx, actor) => {
+        actor.require("idea_lab.session_read", undefined, true); actor.require("idea_lab.synthesize", undefined, true);
+        const db = joined(tx), store = new IdeaLabProjectRegistryStoreV1(db, this.key);
+        const session = await store.getSession(this.scope.tenantId, sessionId);
+        if (!session || session.workspaceId !== this.scope.workspaceId) throw new WebAccessError("not_found");
+        if (session.sessionDigest !== input.data.sessionDigest) throw new WebAccessError("conflict");
+        const links = await new IdeaLabCanonicalTaskLinkStoreV1(db, this.key).list(this.scope.tenantId, sessionId);
+        if (links.length !== session.maxMessages || new Set(links.map(link => `${link.participantId}:${link.round}`)).size !== session.maxMessages) {
+          throw new WebAccessError("conflict");
+        }
+        return links.map(link => link.taskKey);
+      });
+      for (const taskKey of taskKeys) await this.revalidate.project(sessionId, taskKey);
+    }
     return this.authority.authenticated({ ...identity }, async (tx, actor) => {
       actor.require("idea_lab.session_read", undefined, true); actor.require("idea_lab.synthesize", undefined, true);
       await tx.query("SELECT id FROM workspaces WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [this.scope.tenantId, this.scope.workspaceId]);
@@ -31,11 +54,23 @@ export class WebIdeaSynthesisOperation {
       const session = await store.getSession(this.scope.tenantId, sessionId);
       if (!session || session.workspaceId !== this.scope.workspaceId) throw new WebAccessError("not_found");
       if (session.sessionDigest !== input.data.sessionDigest) throw new WebAccessError("conflict");
-      const run = await new IdeaLabBotRunStoreV1(db, this.key).getForSession(session);
-      if (!run || run.runId !== input.data.runId || run.state !== "completed" || run.messagesUsed !== session.maxMessages)
-        throw new WebAccessError("conflict");
       const contributions = await store.listContributions(this.scope.tenantId, sessionId);
-      if (contributions.length !== session.maxMessages || run.attempts.length !== session.maxMessages
+      const canonical = "mode" in input.data;
+      const run = await new IdeaLabBotRunStoreV1(db, this.key).getForSession(session);
+      if (canonical) {
+        const links = await new IdeaLabCanonicalTaskLinkStoreV1(db, this.key).list(this.scope.tenantId, sessionId);
+        const linkByTurn = new Map(links.map(link => [`${link.participantId}:${link.round}`, link] as const));
+        if (run || links.length !== session.maxMessages || linkByTurn.size !== session.maxMessages
+          || contributions.length !== session.maxMessages
+          || contributions.some(contribution => {
+            const evidence = contribution.canonicalTaskEvidence, link = linkByTurn.get(`${contribution.participantId}:${contribution.round}`);
+            return contribution.sourceMode !== "canonical_task_result" || !evidence || !link
+              || evidence.taskKey !== link.taskKey || evidence.taskLinkDigest !== link.linkDigest
+              || evidence.taskPlanDigest !== link.taskPlanDigest || evidence.taskInputDigest !== link.taskInputDigest
+              || evidence.projectId !== link.projectId || evidence.jobId !== link.jobId;
+          })) throw new WebAccessError("conflict");
+      } else if (!run || run.runId !== input.data.runId || run.state !== "completed" || run.messagesUsed !== session.maxMessages
+        || contributions.length !== session.maxMessages || run.attempts.length !== session.maxMessages
         || run.attempts.some(a => a.state !== "completed"
           || !session.participants.some(p => p.participantId === a.participantId && p.identityDigest === a.participantIdentityDigest)
           || !contributions.some(c => c.contributionDigest === a.contributionDigest
@@ -43,15 +78,19 @@ export class WebIdeaSynthesisOperation {
       let synthesis = await store.getSynthesis(this.scope.tenantId, sessionId); const replayed = !!synthesis;
       if (!synthesis) {
         if (await store.getDecision(this.scope.tenantId, sessionId)) throw new WebAccessError("conflict");
-        synthesis = new DeterministicIdeaLabSynthesisEngineV1().build(session, contributions, actor.now);
+        synthesis = canonical
+          ? new DeterministicIdeaLabSynthesisEngineV1().buildCanonicalReviewedTasks(session, contributions, actor.now)
+          : new DeterministicIdeaLabSynthesisEngineV1().build(session, contributions, actor.now);
         await store.recordSynthesis(synthesis);
         await appendAuditWith(tx, { id: `audit:idea-synthesis:${synthesis.synthesisDigest.slice(7)}`, ...this.scope,
           actorId: actor.id, actorType: "human", action: "idea_lab.synthesize", targetType: "idea_lab_session", targetId: sessionId,
           idempotencyKey: `idea-synthesis:${session.sessionDigest.slice(7)}`, occurredAt: actor.now,
-          safeMetadata: { sessionDigest: session.sessionDigest, synthesisDigest: synthesis.synthesisDigest, state: "extractive_recap_saved" } });
+          safeMetadata: { sessionDigest: session.sessionDigest, synthesisDigest: synthesis.synthesisDigest,
+            state: canonical ? "canonical_task_recap_saved" : "extractive_recap_saved" } });
       }
-      return { sessionId, sessionDigest: session.sessionDigest, runId: run.runId, synthesisDigest: synthesis.synthesisDigest,
-        replayed, startsWork: false as const };
+      return { sessionId, sessionDigest: session.sessionDigest, runId: canonical ? null : run!.runId,
+        mode: canonical ? "canonical_reviewed_tasks" as const : "legacy_panel" as const,
+        synthesisDigest: synthesis.synthesisDigest, replayed, startsWork: false as const };
     });
   }
 }
