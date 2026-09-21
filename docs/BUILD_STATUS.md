@@ -143,6 +143,13 @@ unavailable until their separate host qualifications are complete.
   settings. Operator assembly also now carries an already-verified, opaque
   Codex macOS safety record through to the existing protected setup display;
   neither change enables or contacts a local agent.
+- The protected startup capture now freezes the exact local backup proof after
+  it verifies its match to the saved readiness record. A later mutation of a
+  caller-owned object cannot change what the application treats as checked.
+- The setup page's overall wording now follows the same strict binding as the
+  Hermes card: a generic "passed" backup label cannot make the page say setup
+  proof is complete. It asks for verified recovery evidence without exposing
+  any backup details.
 
 These checks use disposable data. They do not prove a real agent program,
 database, browser login, backup, persistent service or remote machine.
