@@ -235,6 +235,14 @@ evidence only: it enables no worker, database, listener or persistent service.
   settings. Operator assembly also now carries an already-verified, opaque
   Codex macOS safety record through to the existing protected setup display;
   neither change enables or contacts a local agent.
+- The protected browser setup endpoints now return one deliberately redacted
+  setup view rather than the internal topology, readiness, transition and
+  proof records. The owner can still see the selected installation choice,
+  proof state and next safe step, while route identifiers, adapter details,
+  fingerprints, evidence records and private host state stay on the server.
+  Focused browser and navigation checks confirm the complete endpoint payload
+  has none of those internal values. This remains a read-only status change;
+  it cannot enable a worker or relocate the installation.
 - The final private task-startup gate now independently rechecks the same
   Hermes installation, backup-and-restore, and local-service readiness
   records. A caller cannot bypass the protected setup and operator-assembly
