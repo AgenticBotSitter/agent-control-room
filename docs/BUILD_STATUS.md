@@ -146,6 +146,11 @@ unavailable until their separate host qualifications are complete.
   settings. Operator assembly also now carries an already-verified, opaque
   Codex macOS safety record through to the existing protected setup display;
   neither change enables or contacts a local agent.
+- The final private task-startup gate now independently rechecks the same
+  Hermes installation, backup-and-restore, and local-service readiness
+  records. A caller cannot bypass the protected setup and operator-assembly
+  checks by supplying a bare local Hermes callback. This remains source-only:
+  it starts neither Hermes nor a persistent service.
 - The protected startup capture now freezes the exact local backup proof after
   it verifies its match to the saved readiness record. A later mutation of a
   caller-owned object cannot change what the application treats as checked.
