@@ -72,6 +72,13 @@ evidence only: it enables no worker, database, listener or persistent service.
   queue entry, or expose any local setting. The remaining source work is to
   connect this already-tested packet and receipt path to the existing queue
   only after the separate installed-process proof and private host binding.
+- Claude now also has the same existing queue envelope as Hermes: its queued
+  locator is protected by a Claude-specific authenticated record, is replayed
+  rather than duplicated, and is rebuilt against the current task, lease,
+  authority, route and receipt state before the queue can hand it to a private
+  callback. This adds neither a database nor a scheduler. The production
+  callback is deliberately absent until the separate Claude proof and private
+  host binding are supplied, so the new queue path cannot start Claude.
 - The Mac Codex path records only two opaque safety prerequisites: suspended
   executable identity and protected private-state custody. Neither record can
   enable or launch Codex.

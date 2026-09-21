@@ -3,7 +3,7 @@ import { nativeTaskSubmissionReferenceSchema, type NativeTaskSubmission } from "
 import { localId } from "../../harness/v1/native-run-identifiers";
 import { TaskExecutionPlanner, type TaskPlanningOperation } from "./task-execution-planner";
 import { TaskAssignmentCoordinator, type TaskAssignmentOperation, type TaskAssignmentRoute, type NativeApprovalEnrollment,
-  type CodexPermitConfiguration, type Hermes021LocalQueueDeliveryTarget } from "./task-assignment-coordinator";
+  type CodexPermitConfiguration, type Hermes021LocalQueueDeliveryTarget, type ClaudeCodeLocalQueueDeliveryTarget } from "./task-assignment-coordinator";
 import type { NativeApprovalPacketStore } from "./native-approval-packet-store";
 import { nativeTaskApprovalPacketSchema } from "../../harness/v1/native-approval-packet";
 import { TaskQualityCoordinator, taskQualityRequestSchema, taskQualitySweepRequestSchema, type TaskQualityConfiguration, type TaskQualityOperation } from "./task-quality-coordinator";
@@ -24,6 +24,7 @@ import type { ArtifactReadPortV1, ArtifactStoragePortV1 } from "../../node-execu
 import { captureCodexResultIntakeSettingsV1, CodexResultIntakeV1,
   type CodexResultIntakeSettingsV1 } from "./codex-result-intake";
 import { deliverVerifiedHermes021LocalQueueTaskV1 } from "./hermes-021-local-queue-delivery";
+import { deliverVerifiedClaudeCodeLocalQueueTaskV1 } from "./claude-code-local-queue-delivery";
 import { NativeResultStore } from "../../artifacts/v1/native-results";
 import { CompletionGateStoreV1 } from "../../completion-gate/v1/store";
 import { CanonicalIdeaTaskResultProjectionServiceV1 } from "../../idea-lab/v1/canonical-result-projection";
@@ -61,6 +62,9 @@ export type TaskCoordinatorConfiguration = {
    * callback is the only route allowed to reach the private runner.
    */
   hermes021Local?: { deliver(target: Hermes021LocalQueueDeliveryTarget, signal: AbortSignal): Promise<void> };
+  /** Installation-owned Claude route. It is optional and inert until a separate
+   * process qualification and private host composition supply this callback. */
+  claudeCodeLocal?: { deliver(target: ClaudeCodeLocalQueueDeliveryTarget, signal: AbortSignal): Promise<void> };
   /** Reviewed Codex permit bindings. Configuration alone starts no process or workspace. */
   codex?: CodexPermitConfiguration;
   quality?: TaskQualityConfiguration;
@@ -104,11 +108,16 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     throw new Error("task_coordinator_config_invalid");
   if (input.hermes021Local && !input.nativeSubmission)
     throw new Error("task_coordinator_config_invalid");
+  if (input.claudeCodeLocal && typeof input.claudeCodeLocal.deliver !== "function")
+    throw new Error("task_coordinator_config_invalid");
+  if (input.claudeCodeLocal && !input.nativeSubmission)
+    throw new Error("task_coordinator_config_invalid");
   const nativeSubmission = input.nativeSubmission ? Object.freeze({
     enqueueInSession: input.nativeSubmission.enqueueInSession.bind(input.nativeSubmission),
     ...(input.nativeSubmission.recoverUnsentInSession ? { recoverUnsentInSession: input.nativeSubmission.recoverUnsentInSession.bind(input.nativeSubmission) } : {}),
   }) : undefined;
   const hermes021Local = input.hermes021Local ? Object.freeze({ deliver: input.hermes021Local.deliver.bind(input.hermes021Local) }) : undefined;
+  const claudeCodeLocal = input.claudeCodeLocal ? Object.freeze({ deliver: input.claudeCodeLocal.deliver.bind(input.claudeCodeLocal) }) : undefined;
   const closeSubmission = input.nativeSubmission?.close?.bind(input.nativeSubmission);
   const capture = (resource: TaskCoordinatorDatabase) => {
     if (!resource || typeof resource.close !== "function" || typeof resource.isAvailable !== "function"
@@ -398,12 +407,17 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   return Object.freeze({ planning, assignment: assignments, ...(approvals ? { approvals } : {}), ...(quality ? { quality } : {}),
     ...(ideaCreation ? { ideaCreation } : {}),
     ...(ideaResultProjection ? { ideaResultProjection } : {}),
-    ...(nativeSubmission && (sessions || hermes021Local) ? { queueDelivery: async (ref: Parameters<ManagedNativeSessions["deliverApproved"]>[0], signal: AbortSignal) => {
+    ...(nativeSubmission && (sessions || hermes021Local || claudeCodeLocal) ? { queueDelivery: async (ref: Parameters<ManagedNativeSessions["deliverApproved"]>[0], signal: AbortSignal) => {
       const target = await assignment.locateQueuedHarnessDelivery(ref, signal);
       if (target.kind === "hermes-021-local") {
         if (!hermes021Local || signal.aborted) throw new Error("native_task_delivery_unresolved");
         return deliverVerifiedHermes021LocalQueueTaskV1({ reference: ref, signal, target,
           deliver: hermes021Local.deliver });
+      }
+      if (target.kind === "claude-code-local") {
+        if (!claudeCodeLocal || signal.aborted) throw new Error("native_task_delivery_unresolved");
+        return deliverVerifiedClaudeCodeLocalQueueTaskV1({ reference: ref, signal, target,
+          deliver: claudeCodeLocal.deliver });
       }
       if (!sessions) throw new Error("native_task_delivery_unresolved");
       const result = await sessions.deliverApproved(ref, signal);

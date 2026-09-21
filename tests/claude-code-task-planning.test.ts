@@ -9,6 +9,9 @@ import { TaskAssignmentCoordinator, validateTaskAssignmentRoutes } from "../src/
 import { FleetSignalStore } from "../src/node-fleet/v1/fleet-signal-store";
 import type { FleetSignalEnvelope } from "../src/node-fleet/v1/schemas";
 import { ClaudeCodeLocalDispatchPreparationV1 } from "../src/harness/claude-code-v1/dispatch-preparation";
+import { NativeApprovalPacketStore } from "../src/web/v1/native-approval-packet-store";
+import type { NativeTaskSubmission } from "../src/persistence/native-task-submission";
+import { deliverVerifiedClaudeCodeLocalQueueTaskV1 } from "../src/web/v1/claude-code-local-queue-delivery";
 import { binding, instant } from "./hermes-native-fixture";
 import { at } from "./native-task-fixture";
 import { ownerReviewFixture } from "./helpers/web-owner-review";
@@ -60,6 +63,31 @@ test("a local Claude task can be saved and prepared as a signed local delivery w
   await signals.ingestAuthenticated(capability, at(6_000), binding);
   const assignments = new TaskAssignmentCoordinator(f.db, f.scope, planner, route, () => instant + 8_000);
   const assigned = await assignments.assign(f.identity, binding.projectId, planned.receipt.jobId, binding.nodeId, planned.receipt.inputDigest);
+  const queuedReferences: Parameters<NativeTaskSubmission["enqueueInSession"]>[1][] = [];
+  const submissions: NativeTaskSubmission = { async enqueueInSession(_tx, reference) { queuedReferences.push(reference); } };
+  const queuedCoordinator = new TaskAssignmentCoordinator(f.db, f.scope, planner, route, () => instant + 8_000,
+    [], new NativeApprovalPacketStore(new Uint8Array(32).fill(76), []), submissions);
+  const queued = await queuedCoordinator.enqueueClaudeCodeLocalTask(f.identity, binding.projectId, planned.receipt.jobId,
+    planned.receipt.inputDigest, new AbortController().signal);
+  assert.equal(queued.replayed, false);
+  assert.equal(queuedReferences.length, 1);
+  const located = await queuedCoordinator.locateApprovedClaudeCodeLocalQueueDelivery(queuedReferences[0]!, new AbortController().signal);
+  assert.equal(located.kind, "claude-code-local");
+  assert.equal(located.leaseId, assigned.receipt.leaseId);
+  assert.deepEqual(located.task, { projectId: binding.projectId, jobId: planned.receipt.jobId,
+    attemptId: assigned.receipt.attemptId, inputDigest: planned.receipt.inputDigest });
+  const standardPickup = await queuedCoordinator.locateQueuedHarnessDelivery(queuedReferences[0]!, new AbortController().signal);
+  assert.equal(standardPickup.kind, "claude-code-local", "the shared queue recognizes the Claude route without using a second scheduler");
+  let callbackCalls = 0;
+  await deliverVerifiedClaudeCodeLocalQueueTaskV1({ reference: queuedReferences[0]!, target: located,
+    signal: new AbortController().signal, deliver: async target => {
+      callbackCalls++; assert.equal(target.startsWork, false); assert.equal(target.grantsExecutionAuthority, false);
+    } });
+  assert.equal(callbackCalls, 1, "the queue switch forwards only a verified locator; it does not acquire Claude itself");
+  const replayedQueue = await queuedCoordinator.enqueueClaudeCodeLocalTask(f.identity, binding.projectId, planned.receipt.jobId,
+    planned.receipt.inputDigest, new AbortController().signal);
+  assert.equal(replayedQueue.replayed, true);
+  assert.equal(queuedReferences.length, 1);
   const preparation = new ClaudeCodeLocalDispatchPreparationV1(f.db, planner,
     { workerId: "worker:claude-local", adapterRevision: "source-123" }, () => instant + 9_000);
   const dispatch = await preparation.prepare({ tenantId: binding.tenantId, projectId: binding.projectId,

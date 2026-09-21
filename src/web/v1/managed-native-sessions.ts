@@ -165,7 +165,7 @@ export class ManagedNativeSessions {
     // injected local composition in the coordinator lifecycle.  This class
     // owns signed node sessions only; treating that pickup as a legacy remote
     // Hermes delivery would be an authority error.
-    if (target.kind === "hermes-021-local") return fail();
+    if (target.kind === "hermes-021-local" || target.kind === "claude-code-local") return fail();
     const task = nativeEvidenceRegistrationSchema.parse(target.task);
     if (task.projectId !== ref.projectId || task.jobId !== ref.jobId || task.attemptId !== ref.attemptId
       || task.inputDigest !== ref.inputDigest) return fail();
