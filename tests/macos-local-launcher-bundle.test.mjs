@@ -8,7 +8,7 @@ import { setTimeout as wait } from "node:timers/promises";
 import test, { after, before } from "node:test";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
-import { assembleLocalReleaseV1 } from "../src/installer/v1/local-release-assembly.mjs";
+import { assembleLocalReleaseV1, createDeterministicTarGzipV1 } from "../src/installer/v1/local-release-assembly.mjs";
 import {
   assembleMacosLocalLauncherBundleV1,
   runBoundedMacosLauncherChildV1,
@@ -16,11 +16,35 @@ import {
   verifyExtractedMacosLocalLauncherBundleV1,
 } from "../src/installer/v1/macos-local-launcher-bundle.mjs";
 import { runLocalLauncherCoreV1 } from "../src/installer/v1/local-launcher-core.mjs";
+import { PROTECTED_DIRECTORY_NATIVE_REVIEWED_CFLAGS_V1 } from "../src/installer/v1/macos-protected-directory-native-sidecar.mjs";
 
 const run = promisify(execFile);
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const refusal = { message: "macos_local_launcher_bundle_refused" };
-let suiteRoot, releaseDirectory, bundleRoot, assembled;
+const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
+let suiteRoot, releaseDirectory, nativeArtifactDirectory, bundleRoot, assembled;
+
+async function writeNativeArtifact(directory, architecture = "arm64") {
+  const staging = join(directory, "staging"); await mkdir(staging, { recursive: true });
+  const contents = new Map([["LICENSE", Buffer.from("native license\n")], ["NOTICE", Buffer.from("native notice\n")],
+    ["protected-directory-v1", Buffer.from("fixture native helper\n")]]);
+  for (const [name, bytes] of contents) await writeFile(join(staging, name), bytes, { mode: name === "protected-directory-v1" ? 0o755 : 0o644 });
+  const files = [...contents].map(([path, bytes]) => ({ path, bytes: bytes.byteLength, sha256: sha256(bytes),
+    mode: path === "protected-directory-v1" ? "0755" : "0644" }));
+  const manifest = { schema: "control-room.protected-directory-native-artifact/v1", platform: "darwin", architecture,
+    minimumMacos: "13.0", protocol: "ACRDIR1", sourceSha256: "a".repeat(64),
+    toolchain: { compiler: "Apple clang version 16.0.0", sdkVersion: "16.0", flags: [...PROTECTED_DIRECTORY_NATIVE_REVIEWED_CFLAGS_V1] }, files, ownerQualified: false };
+  const manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
+  await writeFile(join(staging, "PROTECTED_DIRECTORY_MANIFEST.json"), manifestBytes, { mode: 0o644 });
+  const root = `agent-control-room-protected-directory-darwin-${architecture}`;
+  const archive = await createDeterministicTarGzipV1(staging, root, [...files.map(({ path, mode }) => ({ path, mode })),
+    { path: "PROTECTED_DIRECTORY_MANIFEST.json", mode: "0644" }]);
+  await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, "PROTECTED_DIRECTORY_MANIFEST.json"), manifestBytes, { mode: 0o644 });
+  await writeFile(join(directory, `${root}.tar.gz`), archive, { mode: 0o644 });
+  await writeFile(join(directory, "SHA256SUMS"), `${sha256(archive)}  ${root}.tar.gz\n`, { mode: 0o644 });
+  await rm(staging, { recursive: true, force: true });
+}
 
 async function extract(archive, destination) {
   await run("tar", ["-xzf", archive, "-C", destination]);
@@ -31,8 +55,10 @@ before(async () => {
   suiteRoot = await realpath(await mkdtemp(join(tmpdir(), "acr-macos-launcher-")));
   releaseDirectory = join(suiteRoot, "release");
   await assembleLocalReleaseV1({ releaseRoot: repository, outputDirectory: releaseDirectory });
+  nativeArtifactDirectory = join(suiteRoot, "native-artifact");
+  await writeNativeArtifact(nativeArtifactDirectory);
   const output = join(suiteRoot, "bundle-output");
-  assembled = await assembleMacosLocalLauncherBundleV1({ sourceRoot: repository, releaseDirectory, outputDirectory: output });
+  assembled = await assembleMacosLocalLauncherBundleV1({ sourceRoot: repository, releaseDirectory, nativeArtifactDirectory, outputDirectory: output });
   bundleRoot = await extract(join(output, assembled.archiveName), suiteRoot);
 });
 
@@ -48,7 +74,7 @@ test("assembles one deterministic macOS asset with an executable Finder launcher
   assert.equal(assembled.installsNode, false);
   const secondOutput = join(suiteRoot, "bundle-output-second");
   const second = await assembleMacosLocalLauncherBundleV1({ sourceRoot: repository, releaseDirectory,
-    outputDirectory: secondOutput });
+    nativeArtifactDirectory, outputDirectory: secondOutput });
   assert.equal(second.archiveSha256, assembled.archiveSha256);
   assert.deepEqual(await readFile(join(secondOutput, second.archiveName)),
     await readFile(join(suiteRoot, "bundle-output", assembled.archiveName)));
@@ -58,11 +84,11 @@ test("assembles one deterministic macOS asset with an executable Finder launcher
   assert.match(source, /Node\.js 22\.13 or later/u);
   assert.doesNotMatch(source, /curl|wget|brew|npm install/u);
   await run("/bin/sh", ["-n", command]);
-  assert.deepEqual(await verifyExtractedMacosLocalLauncherBundleV1(bundleRoot), {
-    verified: true, version: "0.1.0", fileCount: 9,
-    releaseManifestDigest: `sha256:${createHash("sha256").update(await readFile(join(bundleRoot,
-      "release", "agent-control-room-0.1.0.manifest.json"))).digest("hex")}`,
-  });
+  const verified = await verifyExtractedMacosLocalLauncherBundleV1(bundleRoot);
+  assert.equal(verified.verified, true); assert.equal(verified.version, "0.1.0"); assert.equal(verified.fileCount, 14);
+  assert.equal(verified.releaseManifestDigest, `sha256:${createHash("sha256").update(await readFile(join(bundleRoot,
+    "release", "agent-control-room-0.1.0.manifest.json"))).digest("hex")}`);
+  assert.equal(verified.protectedDirectoryNativeSidecar.executableSha256, assembled.protectedDirectoryNativeSidecar.executableSha256);
 });
 
 test("the shared launcher core accepts a host-neutral handoff without platform policy", async () => {
@@ -82,7 +108,7 @@ test("the shared launcher core accepts a host-neutral handoff without platform p
       startsService: false, startsWorker: false, enablesAuthority: false, enablesWorkers: false, grantsExecutionAuthority: false,
     }) };
   };
-  const verifiedBundle = await verifyExtractedMacosLocalLauncherBundleV1(bundleRoot);
+  const { protectedDirectoryNativeSidecar: _sidecar, ...verifiedBundle } = await verifyExtractedMacosLocalLauncherBundleV1(bundleRoot);
   const report = await runLocalLauncherCoreV1({ verifiedBundle,
     releaseDirectory: join(bundleRoot, "release"), installRoot, journalRoot, installationId: "portable-local",
     topologyPlanDigest: `sha256:${"d".repeat(64)}`, environment: { PATH: "/safe/bin" },
@@ -172,7 +198,7 @@ test("composes the existing stager with one stable installation identity without
     throw new Error("unexpected process");
   };
   const report = await runMacosLocalLauncherBundleV1({ bundleRoot, homeDirectory: launcherHome, installRoot, journalRoot }, {
-    platform: "darwin", architecture: "arm64", nodeVersion: "22.13.0", runner,
+    platform: "darwin", architecture: "arm64", macosVersion: "13.0", nodeVersion: "22.13.0", runner,
     async supervisor(spec, dependencies) {
       supervisors.push({ spec, dependencies });
       return { state: "setup_host_closed", ready: true, opened: true, reaped: true };
@@ -244,7 +270,7 @@ test("a refused canonical plan bootstrap never starts or opens the setup host", 
   };
   await assert.rejects(runMacosLocalLauncherBundleV1({ bundleRoot, homeDirectory: launcherHome,
     installRoot, journalRoot, installationId: "bootstrap-refusal" }, {
-    platform: "darwin", architecture: "arm64", nodeVersion: "22.13.0", runner,
+    platform: "darwin", architecture: "arm64", macosVersion: "13.0", nodeVersion: "22.13.0", runner,
     async supervisor() { supervisorCalls += 1; throw new Error("must not start"); },
   }), { message: "macos_local_launcher_plan_bootstrap_refused" });
   assert.equal(supervisorCalls, 0);
@@ -280,7 +306,7 @@ test("an exact reopening resumes the saved rehearsal before replaying the canoni
   };
   let supervisorCalls = 0;
   const report = await runMacosLocalLauncherBundleV1({ bundleRoot, homeDirectory: launcherHome,
-    installRoot, journalRoot }, { platform: "darwin", architecture: "arm64", nodeVersion: "22.13.0", runner,
+  installRoot, journalRoot }, { platform: "darwin", architecture: "arm64", macosVersion: "13.0", nodeVersion: "22.13.0", runner,
     async supervisor() { supervisorCalls += 1; return { state: "setup_host_closed", ready: true, opened: true, reaped: true }; },
   });
   assert.equal(report.state, "source_only_setup_prepared");

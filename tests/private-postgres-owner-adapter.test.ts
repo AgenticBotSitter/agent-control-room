@@ -82,7 +82,7 @@ test("provisioning uses only the fixed reviewed SQL and exact structured psql ar
   assert.equal(request.env.PGPASSWORD, f.configuration.operator.password);
   assert.equal(request.environmentMode, "replace");
   assert.deepEqual({ ...request.env, PGPASSWORD: "redacted" }, { PGPASSWORD: "redacted", PGSSLMODE: "disable",
-    PGAPPNAME: "control-room-owner-provision", PGOPTIONS: "-c search_path=pg_catalog, public -c timezone=UTC",
+    PGAPPNAME: "control-room-owner-provision", PGOPTIONS: "-c search_path=pg_catalog,\\ public -c timezone=UTC",
     PGCLIENTENCODING: "UTF8", PGREPLICATION: "false", PGCONNECT_TIMEOUT: "5" });
   assert.doesNotMatch(JSON.stringify(request.args), /operator-|password|postgresql:\/\//u);
   assert.equal(request.files.length, 4);

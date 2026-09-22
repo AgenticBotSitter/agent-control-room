@@ -4,6 +4,47 @@
 with disposable data; no Control Room installation or local worker is
 operational yet.
 
+## Source checkpoint (2026-09-22)
+
+The single-computer product now has one accepted, source-only operator path
+from an extracted release into the existing installation journal, setup
+dispatcher, runtime assembly, and task bootstrap. Its fixed commands are
+`status`, `setup-next`, and `start`; it cannot select arbitrary stages, loop
+through setup automatically, or expose an effect through the browser. It
+authenticates the exact installation, topology, release, and agent admission
+before use. Cancellation reaches an active owner step, interrupted work stays
+visible as running or uncertain, and reconstruction cannot repeat that step.
+The extracted-release command keeps ownership of the exact started host until
+termination and closes it once. Missing production custody remains an explicit
+blocker instead of an invented live installation.
+
+The macOS launcher now carries a separately verified protected-directory
+native sidecar. The sidecar binds the exact source, reviewed compiler flags,
+platform, architecture, files, modes, licenses, manifest, archive, and
+executable digests. Verification rejects traversal, links, duplicates,
+substitution, altered modes, and changed bytes before staging. It neither
+downloads nor compiles at runtime. Two independent native builds and two full
+launcher assemblies were byte-identical during review. This is release
+evidence, not owner qualification or installation.
+
+The private PostgreSQL production boundary is also source-complete. It reuses
+the accepted PostgreSQL owner adapter and migration ledger while adding the
+missing private configuration, executable, reviewed-module, SQL, and child
+process custody. Protected ancestor identities and ACL checks remain bound
+through spawn and cleanup. PostgreSQL startup files are disabled, the fixed
+dependency closure is captured and digest-verified, cancellation and pipe or
+output failures become irreversible uncertainty, and unconfirmed cleanup can
+never later be reported as successful. No database was contacted and no
+credential was read during acceptance.
+
+Independent acceptance covered 367 local-installation checks, four isolated
+owner-tool-host checks, the registered operator and PostgreSQL lanes, a full
+TypeScript build, and whitespace validation. The existing public PR was green
+at its earlier committed head; this checkpoint still requires commit, push,
+and fresh public CI. Real private configuration, PostgreSQL provisioning,
+protected-directory creation, first-owner setup, backup/restore, native service
+installation, and ordinary live agent work remain owner-attended boundaries.
+
 ## Current installable-product checkpoint (2026-09-21)
 
 The public macOS package now uses one shared, platform-neutral launcher core,

@@ -14,8 +14,8 @@ conflicting first plan is refused and the browser is not opened.
 
 ## User boundary
 
-A release maintainer can package the three existing local-release files into
-one macOS asset. After macOS Archive Utility extracts the downloaded
+A release maintainer can package the three existing local-release files and one
+separately verified protected-directory native sidecar into one macOS asset. After macOS Archive Utility extracts the downloaded
 `.tar.gz`, a user opens `Open Agent Control Room.command`. The command explains
 that Node.js 22.13 or later is required and does not download or alter Node.
 It passes control to the Node launcher in the same extracted directory; there
@@ -32,7 +32,7 @@ composes, rather than replaces, the accepted paths:
 4. the controller-only canonical setup-plan bootstrap; and
 5. the staged release's fixed loopback setup-host entrypoint.
 
-Every manifest, runtime and release file must have exact mode `0644`; the
+Every manifest, runtime, release, and sidecar archive file must have exact mode `0644`; the
 Finder command and directories must have exact mode `0755`. Broader write or
 execute access and set-user-ID, set-group-ID or sticky bits are refused. Child
 commands receive only `PATH`, the selected `HOME`, and present temp/locale/time
@@ -81,8 +81,12 @@ copies or materially adapts T3 source.
 ## Deterministic asset
 
 The assembler first asks the existing stager to validate the three supplied
-release files in a disposable directory. It then includes only those files,
-the four required Control Room runtime modules, the `.command` file, and the
+release files in a disposable directory. It independently verifies the supplied
+native sidecar's platform, architecture, minimum macOS version, protocol,
+source and toolchain identities, `LICENSE`, `NOTICE`, file modes, digests and
+archive digest. It parses the archive itself and refuses links, traversal,
+unexpected members and content/mode drift. It then includes only those files,
+the required Control Room runtime modules, the `.command` file, and the
 outer manifest. It reuses the ordinary local release's deterministic tar-gzip
 writer, with normalized paths, hashes, byte lengths, Unix modes, ownership and
 timestamps. Repeating assembly over identical inputs produces the same gzip
@@ -94,6 +98,7 @@ Build the ordinary local release first, then run:
 node scripts/assemble-macos-local-launcher.mjs \
   --source-root /absolute/path/to/control-room \
   --release-directory /absolute/path/to/local-release-output \
+  --native-artifact-directory /absolute/path/to/reviewed-protected-directory-artifact \
   --output-directory /absolute/path/to/new-macos-output
 ```
 
@@ -115,3 +120,21 @@ notarize, install, or launch it.
 - Automated tests use only disposable folders and injected process results.
   They perform no network, database, service, credential, agent, or persistent
   installation effect.
+
+## Native sidecar boundary
+
+The portable Node release still has no native executable member and no changed
+file modes. The macOS bundle instead carries a versioned sidecar manifest under
+`native/protected-directory`. Before any installation-root directory is written,
+the launcher refuses an unsupported macOS version or CPU architecture and
+rechecks that manifest. The launch and assembly reports include the sidecar's
+archive, executable and artifact-manifest digests so a later protected-root
+composition can bind the exact reviewed helper.
+
+The sidecar constructor and verifier are inert. An explicit, later private
+composition may materialize it once into a newly-created private staging
+directory; it returns only the existing protected-root factory input
+(`executablePath` and `executableSha256`). That operation never compiles,
+downloads, installs, activates, updates or starts anything. It is not the
+owner-attended native qualification and does not provide any real owner path,
+service or protected-data effect.

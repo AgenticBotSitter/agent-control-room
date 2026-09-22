@@ -94,7 +94,7 @@ export type PrivatePostgresProvisionRequestV1 = CommonToolRequest & Readonly<{
     PGPASSWORD: string;
     PGSSLMODE: "disable";
     PGAPPNAME: "control-room-owner-provision";
-    PGOPTIONS: "-c search_path=pg_catalog, public -c timezone=UTC";
+    PGOPTIONS: "-c search_path=pg_catalog,\\ public -c timezone=UTC";
     PGCLIENTENCODING: "UTF8";
     PGREPLICATION: "false";
     PGCONNECT_TIMEOUT: "5";
@@ -388,7 +388,7 @@ export function createPrivatePostgresOwnerAdapterV1(input: unknown): PrivatePost
         const request = Object.freeze({ ...shared, operation: "provision_database" as const, executable: "psql" as const,
           args, environmentMode: "replace" as const, env: Object.freeze({ PGPASSWORD: config.operator.password,
             PGSSLMODE: "disable" as const, PGAPPNAME: "control-room-owner-provision" as const,
-            PGOPTIONS: "-c search_path=pg_catalog, public -c timezone=UTC" as const,
+            PGOPTIONS: "-c search_path=pg_catalog,\\ public -c timezone=UTC" as const,
             PGCLIENTENCODING: "UTF8" as const, PGREPLICATION: "false" as const, PGCONNECT_TIMEOUT: "5" as const }) });
         try {
           if (closed || signal.aborted) return uncertain();

@@ -375,6 +375,41 @@ function result(receipt, alreadyPrepared) {
   });
 }
 
+/**
+ * Read-only boundary for a release that has already completed the frozen
+ * production-dependency preparation step.  It deliberately permits only the
+ * receipt and installed node_modules additions, then reuses the same source,
+ * publication, package, lock and dependency-tree checks as exact retry.
+ */
+export async function verifyPreparedLocalProductionReleaseV1(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)
+    || Object.keys(input).sort().join(",") !== "expectedManifestDigest,installRoot,version"
+    || !versionPattern.test(input.version) || !digestPattern.test(input.expectedManifestDigest)) refuse();
+  const installRoot = await canonicalDirectory(input.installRoot);
+  const versionsRoot = await canonicalDirectory(join(installRoot, "versions"));
+  const versionRoot = await canonicalDirectory(join(versionsRoot, input.version));
+  const manifestPath = join(versionRoot, "RELEASE_MANIFEST.json");
+  await regularFile(manifestPath, versionRoot, MAX_MANIFEST_BYTES);
+  const manifestBytes = await readFile(manifestPath);
+  const manifestDigest = sha256(manifestBytes);
+  if (manifestDigest !== input.expectedManifestDigest) refuse();
+  const manifest = parseManifest(manifestBytes);
+  if (manifest.version !== input.version) refuse();
+  await verifyPublicationClaim(versionsRoot, manifest, manifestDigest);
+  const packageRecord = await parsePackage(versionRoot, manifest);
+  const lockRecord = await verifyLockfile(versionRoot, manifest);
+  const expected = { version: manifest.version, manifestDigest, packageDigest: packageRecord.digest,
+    lockfileDigest: lockRecord.digest };
+  parseNodeVersion(process.versions.node);
+  if (!await absent(join(versionRoot, LOCK_NAME)))
+    await verifyExactLock(join(versionRoot, LOCK_NAME), versionRoot, operationDigest(expected));
+  await verifyPreparedReleaseSources(versionRoot, manifest, { allowPrepared: true,
+    allowLock: !await absent(join(versionRoot, LOCK_NAME)) });
+  const receipt = await existingReceipt(versionRoot, expected, packageRecord.dependencies);
+  if (!receipt) refuse();
+  return result(receipt, true);
+}
+
 async function writeDurableFile(path, bytes, mode = 0o600) {
   const handle = await open(path, "wx", mode);
   try {

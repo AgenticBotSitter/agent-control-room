@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import { execFile } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { promisify } from "node:util";
 import {
   cp,
@@ -19,6 +20,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { pathToFileURL } from "node:url";
 import {
   assembleLocalReleaseV1,
   validateRuntimeLicenseEvidenceV1,
@@ -99,6 +101,31 @@ test("assembles the same reviewed release bytes twice with no installation effec
   }
 });
 
+test("the extracted operator command uses only its compiled entry and refuses bad assets before custody", async () => {
+  const root = await temporaryRoot("acr-release-operator-entry-");
+  try {
+    const report = await assembleLocalReleaseV1({ releaseRoot: repository, outputDirectory: join(root, "output") });
+    const manifest = JSON.parse(await readFile(join(root, "output", report.manifestName), "utf8"));
+    const extracted = await extract(join(root, "output", report.archiveName), root);
+    const script = join(extracted, "scripts/run-private-local-installation-operator.mjs");
+    const entry = join(extracted, "dist-vps/server/privateLocalInstallationOperatorCli.js");
+    const text = `${await readFile(script, "utf8")}\n${await readFile(entry, "utf8")}`;
+    assert.doesNotMatch(text, /(?:^|["'])[^"']*\.(?:ts|tsx)(?:["']|$)/u,
+      "the installed command has no TypeScript/TSX or checkout-source fallback");
+
+    const help = await run(process.execPath, [script, "--help"], { cwd: extracted, env: { PATH: process.env.PATH ?? "" } });
+    assert.match(help.stdout, /status \| setup-next \| start/u); assert.equal(help.stderr, "");
+    await assert.rejects(run(process.execPath, [script, "status", "--loop"], {
+      cwd: extracted, env: { PATH: process.env.PATH ?? "" },
+    }), error => error?.code === 2);
+
+    assert.ok(manifest.files.some(file => file.path === "scripts/run-private-local-installation-operator.mjs"));
+    assert.ok(manifest.files.some(file => file.path === "dist-vps/server/privateLocalInstallationOperatorCli.js"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("an extracted release runs its shipped dependency-preparation CLI with a controlled package runner", async () => {
   const root = await temporaryRoot("acr-release-dependency-entrypoint-");
   try {
@@ -138,6 +165,40 @@ process.stdout.write("prepared by controlled test fixture\\n");
     assert.deepEqual(calls[0], ["--version"]);
     assert.deepEqual(calls[1].slice(0, 4), ["install", "--prod", "--frozen-lockfile", "--ignore-scripts"]);
     assert.equal(calls.length, 2);
+
+    const operator = await import(`${pathToFileURL(join(versionRoot,
+      "scripts/run-private-local-installation-operator.mjs")).href}?prepared=${encodeURIComponent(root)}`);
+    await operator.verifyInstalledPreparedOperatorReleaseV1(versionRoot);
+    let preparedCustodyLoads = 0;
+    assert.equal(await operator.runPrivateLocalInstallationOperator(["status"], {
+      async verifyRelease() { await operator.verifyInstalledPreparedOperatorReleaseV1(versionRoot); },
+      async loadRelease() { return { async runPrivateLocalInstallationOperatorCliV1(_args, runtime) {
+        preparedCustodyLoads++; await runtime.loadInstalledConfiguration(); return 0;
+      } }; },
+      async loadInstalledConfiguration() { return { custody: {}, journal: {} }; }, report() {}, reportError() {},
+      signals: new EventEmitter(), createOperator: undefined, startLifecycle: undefined,
+    }), 0, "a successfully prepared extracted release reaches its fixed custody handoff");
+    assert.equal(preparedCustodyLoads, 1);
+    for (const name of ["altered", "missing", "linked"]) {
+      const copiedInstall = join(root, `prepared-${name}`); await cp(installRoot, copiedInstall, { recursive: true });
+      const copiedRoot = join(copiedInstall, "versions", manifest.version);
+      const copiedEntry = join(copiedRoot, "dist-vps/server/privateLocalInstallationOperatorCli.js");
+      if (name === "altered") await writeFile(copiedEntry, "export const altered = true;\n");
+      if (name === "missing") await unlink(copiedEntry);
+      if (name === "linked") { await unlink(copiedEntry); await symlink("localSetupHost.js", copiedEntry); }
+      let custodyLoads = 0, moduleLoads = 0;
+      const code = await operator.runPrivateLocalInstallationOperator(["status"], {
+        async verifyRelease() { await operator.verifyInstalledPreparedOperatorReleaseV1(copiedRoot); },
+        async loadRelease() { moduleLoads++; return { async runPrivateLocalInstallationOperatorCliV1(_args, runtime) {
+          custodyLoads++; await runtime.loadInstalledConfiguration(); return 0;
+        } }; },
+        async loadInstalledConfiguration() { return { custody: {}, journal: {} }; }, report() {}, reportError() {},
+        signals: new EventEmitter(), createOperator: undefined, startLifecycle: undefined,
+      });
+      assert.equal(code, 1, `${name} prepared release refused`);
+      assert.equal(moduleLoads, 0, `${name} reviewed asset was refused before compiled import`);
+      assert.equal(custodyLoads, 0, `${name} reviewed asset was refused before custody`);
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }

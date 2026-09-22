@@ -7,6 +7,8 @@ import test from "node:test";
 import { prepareLocalInstallationPackageV1 } from "../src/installer/v1/local-installation-package";
 
 const ownerUid = process.getuid?.() ?? -1;
+const fixtureOperatorCli = "export {};\n";
+const fixtureOperatorRunner = "export {};\n";
 
 async function release(t: import("node:test").TestContext) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "acr-local-installer-")));
@@ -20,11 +22,13 @@ async function release(t: import("node:test").TestContext) {
     "dist-vps/server/runtime.js": "export {};\n",
     "dist-vps/server/serving.js": "export {};\n",
     "dist-vps/server/taskApplication.js": "export {};\n",
+    "dist-vps/server/privateLocalInstallationOperatorCli.js": fixtureOperatorCli,
     "package.json": JSON.stringify({ name: "control-room", version: "0.1.0", packageManager: "pnpm@11.19.0", engines: { node: ">=22.13.0" } }),
     "pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
     "RELEASE_MANIFEST.json": "{\"schema\":\"fixture\"}\n",
     "scripts/prepare-local-installation.mjs": await readFile("scripts/prepare-local-installation.mjs", "utf8"),
     "scripts/run-private-vps.mjs": "export {};\n",
+    "scripts/run-private-local-installation-operator.mjs": fixtureOperatorRunner,
     "src/installer/v1/local-installation-release.mjs": await readFile("src/installer/v1/local-installation-release.mjs", "utf8"),
   };
   await mkdir(join(root, "src/installer/v1"), { recursive: true });
@@ -83,6 +87,26 @@ test("installer refuses altered or linked bundle inputs", async t => {
   await writeFile(target, "export {};\n");
   await rm(join(root, "dist-vps/server/index.js"));
   await symlink(target, join(root, "dist-vps/server/index.js"));
+  await assert.rejects(prepareLocalInstallationPackageV1({ releaseRoot: root }), /refused/);
+});
+
+test("installer requires the compiled operator CLI and runner as unchanged regular release assets", async t => {
+  const root = await release(t);
+  const cli = join(root, "dist-vps/server/privateLocalInstallationOperatorCli.js");
+  const runner = join(root, "scripts/run-private-local-installation-operator.mjs");
+
+  await rm(cli);
+  await assert.rejects(prepareLocalInstallationPackageV1({ releaseRoot: root }), /refused/);
+  await writeFile(cli, fixtureOperatorCli);
+
+  const fingerprint = await prepareLocalInstallationPackageV1({ releaseRoot: root });
+  await writeFile(cli, "export const altered = true;\n");
+  await assert.rejects(prepareLocalInstallationPackageV1({ releaseRoot: root,
+    expectedDigest: fingerprint.bundle.digest }), /refused/);
+  await writeFile(cli, fixtureOperatorCli);
+
+  await rm(runner);
+  await symlink(join(root, "scripts/run-private-vps.mjs"), runner);
   await assert.rejects(prepareLocalInstallationPackageV1({ releaseRoot: root }), /refused/);
 });
 

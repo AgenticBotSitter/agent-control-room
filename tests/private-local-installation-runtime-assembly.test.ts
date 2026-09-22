@@ -12,18 +12,22 @@ import { createLocalBackupRestoreReadinessV1 } from "../src/harness/v1/local-bac
 import { createLocalSupervisorReadinessV1 } from "../src/harness/v1/local-supervisor-readiness";
 import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
 import { advanceInstallationPlanV1, createInstallationPlanV1, installationSetupStagesV1, refreshInstallationPlanV1,
-  type InstallationPlanV1 } from "../src/installer/v1/installation-plan";
+  type InstallationPlanV1, verifyInstallationPlanV1 } from "../src/installer/v1/installation-plan";
 import { createPrivateLocalInstallationRuntimeAssemblyV1 } from
   "../src/installer/v1/private-local-installation-runtime-assembly";
+import { createPrivateLocalInstallationOperatorV1 } from
+  "../src/installer/v1/private-local-installation-operator";
 import { prepareLocalHermesAdmissionV1 } from "../src/installer/v1/local-hermes-admission-preparation";
 import { localHermesAdmissionTerminalReceiptForRequestV1 } from
   "../src/installer/v1/local-hermes-admission-transaction";
 import { localHermesInstallationStageInputDigestV1, localHermesRunnerConfigurationDigestV1,
   prepareLocalHermesInstallationBindingV1 } from "../src/installer/v1/local-hermes-installation-binding";
 import { localPlatformServiceObservationDigestV1 } from "../src/installer/v1/local-platform-service-observation";
-import { preparePrivateLocalHermesAdmissionRequestV1 } from
+import { PRIVATE_LOCAL_HERMES_OWNER_ATTACHED_TERMINAL_V1,
+  preparePrivateLocalHermesAdmissionRequestV1, type PrivateLocalHermesAdmissionRunnerContextV1 } from
   "../src/installer/v1/private-local-hermes-admission-runner";
-import { privateInstallationFinalReviewBindingsV1 } from
+import { PRIVATE_INSTALLATION_FINAL_REVIEW_OWNER_CONFIRMATION_V1,
+  privateInstallationFinalReviewBindingsV1, type PrivateInstallationFinalReviewContextV1 } from
   "../src/installer/v1/private-installation-final-review";
 import { sha256Digest } from "../src/security/canonical-digest";
 import { createPrivateHermes021LocalInstallationDeliveryV1,
@@ -33,6 +37,19 @@ import { privateArtifactStorageNamespaceDigestV1 } from "../src/web/v1/private-a
 import { privateAgentTaskCompositionFixture } from "./helpers/private-agent-task-composition";
 
 const d = (value: unknown) => sha256Digest(value);
+
+function completedInstallationPlan(result: unknown): InstallationPlanV1 {
+  assert.ok(result && typeof result === "object");
+  assert.equal((result as { status?: unknown }).status, "completed");
+  return verifyInstallationPlanV1((result as { installationPlan?: unknown }).installationPlan);
+}
+
+function assertBlocked(result: unknown, blocker: "private_configuration_custody_missing"):
+  asserts result is Readonly<{ status: "blocked"; blocker: typeof blocker }> {
+  assert.ok(result && typeof result === "object");
+  assert.equal((result as { status?: unknown }).status, "blocked");
+  assert.equal((result as { blocker?: unknown }).blocker, blocker);
+}
 
 async function fixture(t: { after(fn: () => unknown): void }) {
   const workerBinding = { localServiceId: "service:hermes", workerId: "worker:hermes", expectedVersion: "0.21.3",
@@ -169,12 +186,16 @@ async function fixture(t: { after(fn: () => unknown): void }) {
     },
     async readHistory() { reads++; return currentHistory; }, async append(value: InstallationPlanV1) {
       appends++; const existing = currentHistory[value.revision];
-      if (!existing || existing.planDigest !== value.planDigest) throw new Error("journal conflict");
+      if (existing && existing.planDigest !== value.planDigest) throw new Error("journal conflict");
+      if (!existing) {
+        if (value.revision !== currentHistory.length) throw new Error("journal conflict");
+        currentHistory = Object.freeze([...currentHistory, value]);
+      }
       return { schema: "control-room.installation-plan-journal/v1" as const, installationId: "fixture-installation",
-        revision: value.revision, planDigest: value.planDigest, replayed: true, enablesAuthority: false as const,
+        revision: value.revision, planDigest: value.planDigest, replayed: existing !== undefined, enablesAuthority: false as const,
         startsService: false as const, startsWorker: false as const };
     } };
-  return { runnerInput, history: Object.freeze(history), plan, delivery, makeDelivery,
+  return { runnerInput, history: Object.freeze(history), plan, topology, delivery, makeDelivery,
     queueWorker: c.queueWorker!, settings, trusted, journal, hermesCalls: () => hermesCalls,
     reads: () => reads, appends: () => appends, move(value: readonly InstallationPlanV1[]) { currentHistory = value; },
     inspectInOrder(...values: readonly (readonly InstallationPlanV1[])[]) {
@@ -185,6 +206,37 @@ async function fixture(t: { after(fn: () => unknown): void }) {
 function dependencies(calls: string[]) {
   return { openDatabase() { calls.push("database"); throw new Error("test effect"); },
     install() { calls.push("install"); throw new Error("test effect"); } };
+}
+
+function startupBoundaryDependencies(calls: string[]) {
+  return { openDatabase() { calls.push("database"); throw new Error("must_not_open_database"); },
+    install() { calls.push("install"); throw new Error("must_not_install"); },
+    clock() { calls.push("clock"); return 1; },
+    async prepareNativeSubmission() { calls.push("native-submission"); throw new Error("must_not_prepare_native_submission"); },
+    async startNativeWorker() { calls.push("native-worker"); throw new Error("must_not_start_native_worker"); },
+    prepareNewsSubmission() { calls.push("news-submission"); throw new Error("must_not_prepare_news_submission"); },
+    async startNewsWorker() { calls.push("news-worker"); throw new Error("must_not_start_news_worker"); },
+    async openArtifactStorage() { calls.push("artifact-storage"); throw new Error("synthetic_first_startup_boundary"); } };
+}
+
+function finalReviewConfiguration(f: Awaited<ReturnType<typeof fixture>>, effects: string[],
+  confirmOwnerAttached: (context: PrivateInstallationFinalReviewContextV1) => Promise<unknown>) {
+  const setupSources = Object.fromEntries(["database_authority", "protected_data", "first_owner", "recovery",
+    "platform_service", "agent_readiness", "final_review"].map(stage => [stage, {}]));
+  const setupRuntimes = Object.fromEntries(Object.keys(setupSources).map(stage => [stage, undefined])) as Record<string, unknown>;
+  setupRuntimes.final_review = { finalReview: { signal: new AbortController().signal, controlDeadlineMs: 1_000,
+    confirmOwnerAttached } };
+  return { prerequisiteInput: { installationId: "fixture-installation", topologyPlan: f.topology,
+      releaseDigest: f.plan.releaseDigest, releasePreflight: {}, privatePlacement: {} },
+    assemblyInput: { runnerInput: f.runnerInput, operatorSettings: f.settings, operatorTrustedInputs: f.trusted },
+    startupDependencies: dependencies(effects), setupSources, setupRuntimes };
+}
+
+function finalReviewConfirmation(context: PrivateInstallationFinalReviewContextV1) {
+  return Object.freeze({ schema: PRIVATE_INSTALLATION_FINAL_REVIEW_OWNER_CONFIRMATION_V1,
+    installationId: context.installationId, installationPlanDigest: context.installationPlanDigest,
+    installationPlanRevision: context.installationPlanRevision,
+    finalReviewInputDigest: context.finalReviewInputDigest, ownerAttached: true as const, confirmed: true as const });
 }
 
 test("construction is inert and settled preparation supplies the exact opaque receipt to operator configuration", async t => {
@@ -200,7 +252,177 @@ test("construction is inert and settled preparation supplies the exact opaque re
     hermes021LocalStartupReverification?: { receiptDigest?: string } } };
   assert.equal(configuration.coordinator.hermes021LocalStartupReverification?.receiptDigest,
     prepared.receipt.receiptDigest);
+  assert.equal((prepared.configuration.web as { installationPlan?: { planDigest?: string } }).installationPlan?.planDigest,
+    f.plan.planDigest);
   assert.deepEqual(effects, []); assert.equal(f.hermesCalls(), 0);
+});
+
+test("installed operator reports ready and reaches the exact first injected startup boundary once", async t => {
+  const f = await fixture(t), effects: string[] = [];
+  const setupSources = Object.fromEntries(["database_authority", "protected_data", "first_owner", "recovery",
+    "platform_service", "agent_readiness", "final_review"].map(stage => [stage, {}]));
+  const setupRuntimes = Object.fromEntries(Object.keys(setupSources).map(stage => [stage, undefined]));
+  const loaded = { prerequisiteInput: { installationId: "fixture-installation",
+      topologyPlan: f.topology,
+      releaseDigest: f.plan.releaseDigest, releasePreflight: {}, privatePlacement: {} },
+    assemblyInput: { runnerInput: f.runnerInput, operatorSettings: f.settings, operatorTrustedInputs: f.trusted },
+    startupDependencies: startupBoundaryDependencies(effects), setupSources, setupRuntimes };
+  const direct = createPrivateLocalInstallationRuntimeAssemblyV1(loaded.assemblyInput,
+    { journal: f.journal, startupDependencies: loaded.startupDependencies });
+  assert.equal(direct.status, "ready");
+  const operator = createPrivateLocalInstallationOperatorV1({ async loadPrivateConfiguration() { return loaded; } }, { journal: f.journal });
+  if (operator.status === "blocked") throw new Error("operator constructor blocked");
+  const status = await operator.status();
+  assert.equal(status.status, "ready", JSON.stringify(status));
+  if (status.status === "ready") assert.equal(status.nextStage, "complete");
+  await assert.rejects(operator.start(), /private_task_startup_prerequisites_failed/u);
+  assert.deepEqual(effects, ["artifact-storage"]);
+  assert.equal(f.hermesCalls(), 0);
+});
+
+test("installed operator dispatches final review after settled prerequisites", async t => {
+  const f = await fixture(t), effects: string[] = [];
+  f.move(Object.freeze(f.history.slice(0, -2)));
+  let confirmations = 0;
+  const loaded = finalReviewConfiguration(f, effects, async context => {
+    confirmations += 1;
+    return finalReviewConfirmation(context);
+  });
+  const operator = createPrivateLocalInstallationOperatorV1(
+    { async loadPrivateConfiguration() { return loaded; } }, { journal: f.journal });
+  if (operator.status === "blocked") throw new Error("operator constructor blocked");
+  const status = await operator.status();
+  assert.equal(status.status, "ready", JSON.stringify(status));
+  if (status.status === "ready") assert.equal(status.nextStage, "final_review");
+  const result = await operator.setupNext();
+  const completedPlan = completedInstallationPlan(result);
+  assert.equal(completedPlan.stages.find(item => item.stage === "final_review")?.state, "passed");
+  assert.equal(confirmations, 1); assert.deepEqual(effects, []); assert.equal(f.hermesCalls(), 0);
+});
+
+test("successive operator setup calls pass agent admission and final review before completing", async t => {
+  const f = await fixture(t), effects: string[] = [], ownerCalls: string[] = [];
+  const beforeAdmission = f.history.findIndex(plan =>
+    plan.stages.find(item => item.stage === "platform_service")?.state === "passed"
+      && plan.stages.find(item => item.stage === "agent_readiness")?.state === "not_started");
+  assert.notEqual(beforeAdmission, -1);
+  f.move(Object.freeze(f.history.slice(0, beforeAdmission + 1)));
+  const loaded = finalReviewConfiguration(f, effects, async context => {
+    ownerCalls.push("final-review");
+    return finalReviewConfirmation(context);
+  });
+  loaded.setupSources.agent_readiness = f.runnerInput;
+  loaded.setupRuntimes.agent_readiness = { agentReadiness: {
+    signal: new AbortController().signal, controlDeadlineMs: 1_000,
+    async confirmOwnerAttachedTerminal(context: PrivateLocalHermesAdmissionRunnerContextV1) {
+      ownerCalls.push("agent-admission");
+      return { schema: PRIVATE_LOCAL_HERMES_OWNER_ATTACHED_TERMINAL_V1,
+        installationId: context.installationId, requestDigest: context.requestDigest,
+        admissionRequestDigest: context.admissionRequestDigest,
+        privateStartupBindingDigest: context.privateStartupBindingDigest,
+        installationPlanDigest: context.installationPlanDigest,
+        installationPlanRevision: context.installationPlanRevision,
+        ownerAttached: true as const, confirmed: true as const };
+    } } };
+  const operator = createPrivateLocalInstallationOperatorV1(
+    { async loadPrivateConfiguration() { return loaded; } }, { journal: f.journal });
+  if (operator.status === "blocked") throw new Error("operator constructor blocked");
+
+  const admitted = await operator.setupNext();
+  const admittedPlan = completedInstallationPlan(admitted);
+  assert.equal(admittedPlan.stages.find(item => item.stage === "agent_readiness")?.state, "passed");
+  assert.deepEqual(ownerCalls, ["agent-admission"]);
+
+  const reviewed = await operator.setupNext();
+  const reviewedPlan = completedInstallationPlan(reviewed);
+  assert.equal(reviewedPlan.stages.find(item => item.stage === "final_review")?.state, "passed");
+  assert.deepEqual(ownerCalls, ["agent-admission", "final-review"]);
+
+  const complete = await operator.setupNext();
+  assert.equal(complete.status, "complete");
+  assert.equal(complete.installationPlanDigest, reviewedPlan.planDigest);
+  assert.deepEqual(ownerCalls, ["agent-admission", "final-review"]);
+  assert.deepEqual(effects, []); assert.equal(f.hermesCalls(), 0);
+});
+
+test("operator parent abort reaches the active owner context and reconstruction will not repeat review", async t => {
+  const f = await fixture(t), effects: string[] = [];
+  f.move(Object.freeze(f.history.slice(0, -2)));
+  const parent = new AbortController();
+  let confirmations = 0, contextSignal: AbortSignal | undefined;
+  const loaded = finalReviewConfiguration(f, effects, async context => {
+    confirmations += 1; contextSignal = context.signal;
+    assert.equal(context.signal.aborted, false);
+    parent.abort();
+    assert.equal(context.signal.aborted, true);
+    return finalReviewConfirmation(context);
+  });
+  const construct = () => createPrivateLocalInstallationOperatorV1(
+    { async loadPrivateConfiguration() { return loaded; } }, { journal: f.journal });
+  const first = construct();
+  if (first.status === "blocked") throw new Error("operator constructor blocked");
+  await assert.rejects(first.setupNext(parent.signal),
+    /private_(?:installation_final_review|local_installation_operator|local_setup_orchestrator)_refused/u);
+  assert.equal(contextSignal?.aborted, true);
+  assert.equal(confirmations, 1);
+  const history = await f.journal.readHistory();
+  assert.equal(history.at(-1)?.stages.find(item => item.stage === "final_review")?.state, "running");
+
+  const reconstructed = construct();
+  if (reconstructed.status === "blocked") throw new Error("reconstructed operator blocked at construction");
+  await assert.rejects(reconstructed.setupNext(), /private_local_installation_operator_refused/u);
+  assert.equal(confirmations, 1, "a running owner review cannot be called a second time");
+  assert.deepEqual(effects, []); assert.equal(f.hermesCalls(), 0);
+});
+
+test("operator seals nested configuration and runtime before awaited journal custody", async t => {
+  const f = await fixture(t), effects: string[] = [];
+  f.move(Object.freeze(f.history.slice(0, -2)));
+  let originalCalls = 0, replacementCalls = 0;
+  const loaded = finalReviewConfiguration(f, effects, async context => {
+    originalCalls += 1;
+    return finalReviewConfirmation(context);
+  });
+  let releaseRead!: () => void, announceRead!: () => void;
+  const readStarted = new Promise<void>(resolve => { announceRead = resolve; });
+  const continueRead = new Promise<void>(resolve => { releaseRead = resolve; });
+  let delayed = false;
+  const delayedJournal = { ...f.journal, async readHistory() {
+    if (!delayed) { delayed = true; announceRead(); await continueRead; }
+    return f.journal.readHistory();
+  } };
+  const operator = createPrivateLocalInstallationOperatorV1(
+    { async loadPrivateConfiguration() { return loaded; } }, { journal: delayedJournal });
+  if (operator.status === "blocked") throw new Error("operator constructor blocked");
+  const pending = operator.setupNext();
+  await readStarted;
+  loaded.assemblyInput.runnerInput.admissionPreparationInput.installationId = "foreign-after-capture";
+  loaded.assemblyInput.runnerInput.privateStartupConfiguration.coordinator.hermes021Local = f.makeDelivery();
+  const runtime = loaded.setupRuntimes.final_review as { finalReview: {
+    confirmOwnerAttached(context: PrivateInstallationFinalReviewContextV1): Promise<unknown> } };
+  runtime.finalReview.confirmOwnerAttached = async context => {
+    replacementCalls += 1;
+    return finalReviewConfirmation(context);
+  };
+  releaseRead();
+  const result = await pending;
+  assert.equal(result.status, "completed");
+  assert.equal(originalCalls, 1); assert.equal(replacementCalls, 0);
+  assert.deepEqual(effects, []); assert.equal(f.hermesCalls(), 0);
+});
+
+test("operator status and start both refuse a foreign assembly installation", async t => {
+  for (const operation of ["status", "start"] as const) {
+    const f = await fixture(t), effects: string[] = [];
+    const loaded = finalReviewConfiguration(f, effects, async context => finalReviewConfirmation(context));
+    loaded.assemblyInput.runnerInput.admissionPreparationInput.installationId = "foreign-installation";
+    const operator = createPrivateLocalInstallationOperatorV1(
+      { async loadPrivateConfiguration() { return loaded; } }, { journal: f.journal });
+    if (operator.status === "blocked") throw new Error("operator constructor blocked");
+    const result = await operator[operation]();
+    assertBlocked(result, "private_configuration_custody_missing");
+    assert.deepEqual(effects, [], operation); assert.equal(f.hermesCalls(), 0, operation);
+  }
 });
 
 test("missing configuration or native custody returns an explicit inert blocker", async t => {

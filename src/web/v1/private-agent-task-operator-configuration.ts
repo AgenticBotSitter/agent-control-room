@@ -368,6 +368,7 @@ function captureWebProfile(input: PrivateStartupConfiguration): PrivateStartupCo
       claudeCodeLocalProcessReadiness: deepDetach(input.claudeCodeLocalProcessReadiness) }),
     ...(input.localSupervisorReadiness === undefined ? {} : {
       localSupervisorReadiness: deepDetach(input.localSupervisorReadiness) }),
+    ...(input.installationPlan === undefined ? {} : { installationPlan: deepDetach(input.installationPlan) }),
     ...(input.connections === undefined ? {} : { connections: deepDetach(input.connections) }),
     ...(input.tasks === undefined ? {} : { tasks: captureWebTasks(input.tasks) }),
   };

@@ -12,15 +12,13 @@ import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { createDeterministicTarGzipV1 } from "../src/installer/v1/local-release-assembly.mjs";
+import { PROTECTED_DIRECTORY_NATIVE_REVIEWED_CFLAGS_V1 } from "../src/installer/v1/macos-protected-directory-native-sidecar.mjs";
 
 const run = promisify(execFile);
 const sourcePath = fileURLToPath(new URL("../native/protected-directory-v1.c", import.meta.url));
 const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
 const refused = () => { throw new Error("protected_directory_native_build_refused"); };
-export const PROTECTED_DIRECTORY_NATIVE_CFLAGS_V1 = Object.freeze([
-  "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-Wconversion", "-Wshadow", "-Wstrict-prototypes",
-  "-fstack-protector-strong", "-D_FORTIFY_SOURCE=2", "-mmacosx-version-min=13.0",
-]);
+export const PROTECTED_DIRECTORY_NATIVE_CFLAGS_V1 = PROTECTED_DIRECTORY_NATIVE_REVIEWED_CFLAGS_V1;
 
 export async function buildProtectedDirectoryNativeArtifactV1({ outputDirectory }) {
   if (process.platform !== "darwin" || !["arm64", "x64"].includes(process.arch)

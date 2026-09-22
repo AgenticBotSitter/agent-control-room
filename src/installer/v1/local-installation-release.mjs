@@ -18,11 +18,13 @@ const requiredFiles = Object.freeze([
   "dist-vps/server/runtime.js",
   "dist-vps/server/serving.js",
   "dist-vps/server/taskApplication.js",
+  "dist-vps/server/privateLocalInstallationOperatorCli.js",
   "package.json",
   "pnpm-lock.yaml",
   "RELEASE_MANIFEST.json",
   "scripts/prepare-local-installation.mjs",
   "scripts/run-private-vps.mjs",
+  "scripts/run-private-local-installation-operator.mjs",
   "src/installer/v1/local-installation-release.mjs",
 ]);
 
