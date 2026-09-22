@@ -1,5 +1,11 @@
 import { canonicalJson, sha256Digest } from "../../security/canonical-digest";
 import { verifyInstallationTopologyPlanV1 } from "../../harness/v1/installation-topology";
+import { createMacosLocalServicePackageV1 } from "../../harness/v1/macos-local-service-package";
+import { verifyLocalSupervisorReadinessV1 } from "../../harness/v1/local-supervisor-readiness";
+import { validatePrivateTaskStartupConfiguration } from "../../web/v1/private-task-startup";
+import { verifyPrivateHermes021LocalStartupAdmissionBindingV1 } from
+  "../../web/v1/hermes-021-private-installation-composition";
+import { prepareLocalHermesAdmissionV1 } from "./local-hermes-admission-preparation";
 import { confirmFirstOwnerActionTerminalV1 } from "./first-owner-action-transaction";
 import { firstOwnerStageInputDigestV1 } from "./first-owner-setup-preparation";
 import { prepareInstallationActionV1 } from "./installation-action-preparation";
@@ -23,6 +29,16 @@ import { prepareProtectedDataRecoveryOwnerActionV1 } from "./protected-data-reco
 import { protectedDataStageInputDigestV1, protectedDataStorageBindingsV1, recoveryStageInputDigestV1 } from
   "./protected-data-recovery-preparation";
 import { confirmRecoveryActionTerminalV1 } from "./recovery-action-transaction";
+import { confirmPrivateMacosServiceOwnerActionTerminalV1, runPrivateMacosServiceOwnerActionV1,
+  PRIVATE_MACOS_SERVICE_TOOL_V1, type PrivateMacosServiceOwnerRuntimeV1, type PrivateMacosServiceOwnerToolV1 } from
+  "./private-macos-service-owner-runner";
+import { macosServiceIdentityDigestV1 } from "./macos-service-owner-action";
+import { preparePlatformServiceLifecycleV1 } from "./platform-service-lifecycle";
+import { confirmLocalHermesAdmissionTerminalV1 } from "./local-hermes-admission-transaction";
+import { runPrivateLocalHermesAdmissionV1, type PrivateLocalHermesAdmissionRunnerContextV1 } from
+  "./private-local-hermes-admission-runner";
+import { confirmPrivateInstallationFinalReviewV1, runPrivateInstallationFinalReviewV1,
+  type PrivateInstallationFinalReviewContextV1 } from "./private-installation-final-review";
 
 /**
  * Private, source-only dispatcher over the accepted installation journal and
@@ -33,10 +49,15 @@ export const PRIVATE_LOCAL_SETUP_ORCHESTRATOR_V1 =
   "control-room.private-local-setup-orchestrator/v1" as const;
 
 type Journal = Pick<InstallationPlanFilesystemJournalV1, "append" | "readHistory">;
-type Stage = "database_authority" | "protected_data" | "first_owner" | "recovery" | "platform_service";
+type Stage = "database_authority" | "protected_data" | "first_owner" | "recovery" | "platform_service"
+  | "agent_readiness" | "final_review";
 type Runtime = Readonly<{ journal: Journal; postgres?: PrivatePostgresOwnerRuntimeV1;
   protectedData?: PrivateProtectedRootOwnerRuntimeV1; firstOwner?: PrivateFirstOwnerRuntimeV1;
-  recovery?: PrivateRecoveryOwnerRuntimeV1 }>;
+  recovery?: PrivateRecoveryOwnerRuntimeV1; platformService?: PrivateMacosServiceOwnerRuntimeV1;
+  agentReadiness?: Readonly<{ signal: AbortSignal; controlDeadlineMs: number;
+    confirmOwnerAttachedTerminal(context: PrivateLocalHermesAdmissionRunnerContextV1): Promise<unknown> }>;
+  finalReview?: Readonly<{ signal: AbortSignal; controlDeadlineMs: number;
+    confirmOwnerAttached(context: PrivateInstallationFinalReviewContextV1): Promise<unknown> }> }>;
 
 export type PrivateLocalSetupOrchestratorResultV1 = Readonly<{
   schema: typeof PRIVATE_LOCAL_SETUP_ORCHESTRATOR_V1;
@@ -45,7 +66,8 @@ export type PrivateLocalSetupOrchestratorResultV1 = Readonly<{
   status: "completed" | "blocked";
   installationPlan: InstallationPlanV1;
   receiptDigest?: string;
-  blocker?: "recovery_private_adapter_missing" | "macos_native_service_port_missing";
+  blocker?: "recovery_private_adapter_missing" | "macos_native_service_port_missing"
+    | "local_hermes_admission_runtime_missing" | "final_review_runtime_missing";
   replayed: false;
   createsStateMachine: false;
   createsReceiptStore: false;
@@ -53,6 +75,7 @@ export type PrivateLocalSetupOrchestratorResultV1 = Readonly<{
   exposesBrowserEffect: false;
   suppliesNativeEffect: false;
   retriesUncertainEffect: false;
+  invokesHermes: false;
 }>;
 
 const installationIdPattern = /^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])?$/u;
@@ -80,6 +103,148 @@ function exact(value: unknown, names: readonly string[]): Readonly<Record<string
 function digest(value: unknown): string {
   if (typeof value !== "string" || !digestPattern.test(value)) return refused();
   return value;
+}
+
+function signal(value: unknown): AbortSignal {
+  const candidate = value as AbortSignal;
+  if (!candidate || typeof candidate !== "object" || typeof candidate.aborted !== "boolean"
+    || typeof candidate.addEventListener !== "function" || typeof candidate.removeEventListener !== "function") return refused();
+  return candidate;
+}
+
+function deadline(value: unknown, maximum: number): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1 || (value as number) > maximum) return refused();
+  return value as number;
+}
+
+function clonePlain<T>(value: T): T {
+  try { return structuredClone(value); } catch { return refused(); }
+}
+
+function precedingClaimedPlan(runningValue: unknown, selected: "platform_service" | "agent_readiness", input: Captured) {
+  const running = verifyInstallationPlanV1(runningValue), selectedRecord = stage(running, selected);
+  if (running.revision !== input.expectedPlanRevision + 1 || selectedRecord.state !== "running"
+    || selectedRecord.recordedRevision !== running.revision || running.releaseDigest !== input.expectedReleaseDigest
+    || running.topologyPlanDigest !== input.topologyPlan.planDigest) return refused();
+  const { planDigest: _digest, ...runningBody } = running; void _digest;
+  const body = { ...runningBody, revision: input.expectedPlanRevision,
+    stages: running.stages.map(item => item.stage === selected
+      ? { stage: selected, inputDigest: item.inputDigest, state: "not_started" as const } : item) };
+  const previous = verifyInstallationPlanV1({ ...body, planDigest: sha256Digest(body) });
+  if (previous.planDigest !== input.expectedPlanDigest || previous.revision !== input.expectedPlanRevision
+    || nextStage(previous) !== selected) return refused();
+  return Object.freeze({ previous, running });
+}
+
+type PlatformServiceSource = Readonly<{ request: Readonly<{ lifecycle: unknown; lifecycleInput: unknown;
+  servicePackageInput: unknown }>; previous: InstallationPlanV1; running: InstallationPlanV1 }>;
+
+function capturePlatformServiceSource(value: unknown, input: Captured): PlatformServiceSource {
+  const source = exact(value, ["lifecycle", "lifecycleInput", "servicePackageInput"]), captured = clonePlain(source);
+  const lifecycleInput = exact(captured.lifecycleInput, ["action", "platform", "installationPlan",
+    "supervisorReadiness", "serviceIdentityDigest", "authorityDatabaseDigest", "protectedDataDigest", "observation",
+    "targetReleaseDigest", "targetServiceDefinitionDigest"]);
+  const plans = precedingClaimedPlan(lifecycleInput.installationPlan, "platform_service", input);
+  const servicePackageInput = captured.servicePackageInput;
+  try {
+    const package_ = createMacosLocalServicePackageV1(servicePackageInput as Parameters<typeof createMacosLocalServicePackageV1>[0]);
+    const readiness = verifyLocalSupervisorReadinessV1(lifecycleInput.supervisorReadiness);
+    if (lifecycleInput.action !== "install" || lifecycleInput.platform !== "macos_launchd"
+      || lifecycleInput.targetReleaseDigest !== input.expectedReleaseDigest
+      || lifecycleInput.serviceIdentityDigest !== macosServiceIdentityDigestV1(servicePackageInput as
+        Parameters<typeof createMacosLocalServicePackageV1>[0])
+      || lifecycleInput.targetServiceDefinitionDigest !== sha256Digest(package_.plist)
+      || readiness.planDigest !== plans.running.planDigest) return refused();
+    preparePlatformServiceLifecycleV1(lifecycleInput as Parameters<typeof preparePlatformServiceLifecycleV1>[0]);
+  }
+  catch { return refused(); }
+  const expected = preparePlatformServiceLifecycleV1(lifecycleInput as Parameters<typeof preparePlatformServiceLifecycleV1>[0]);
+  if (canonicalJson(captured.lifecycle) !== canonicalJson(expected)) return refused();
+  return Object.freeze({ request: Object.freeze({ lifecycle: expected, lifecycleInput, servicePackageInput }), ...plans });
+}
+
+function capturePlatformServiceRuntime(value: unknown): PrivateMacosServiceOwnerRuntimeV1 {
+  const runtime = exact(value, ["signal", "controlDeadlineMs", "cleanupDeadlineMs", "reviewedServicePackageInput",
+    "confirmOwnerAttachedTerminal", "tool"]);
+  const tool = exact(runtime.tool, ["schema", "executeStep", "observeFinal", "cleanup"]);
+  if (tool.schema !== PRIVATE_MACOS_SERVICE_TOOL_V1 || typeof runtime.confirmOwnerAttachedTerminal !== "function" || typeof tool.executeStep !== "function"
+    || typeof tool.observeFinal !== "function" || typeof tool.cleanup !== "function") return refused();
+  const owner = value as PrivateMacosServiceOwnerRuntimeV1, toolOwner = runtime.tool as PrivateMacosServiceOwnerToolV1;
+  const reviewedServicePackageInput = clonePlain(runtime.reviewedServicePackageInput) as
+    Parameters<typeof createMacosLocalServicePackageV1>[0];
+  try { createMacosLocalServicePackageV1(reviewedServicePackageInput); } catch { return refused(); }
+  return Object.freeze({ signal: signal(runtime.signal), controlDeadlineMs: deadline(runtime.controlDeadlineMs, 300_000),
+    cleanupDeadlineMs: deadline(runtime.cleanupDeadlineMs, 30_000), reviewedServicePackageInput,
+    confirmOwnerAttachedTerminal: owner.confirmOwnerAttachedTerminal.bind(owner),
+    tool: Object.freeze({ schema: tool.schema as PrivateMacosServiceOwnerToolV1["schema"],
+      executeStep: toolOwner.executeStep.bind(toolOwner), observeFinal: toolOwner.observeFinal.bind(toolOwner),
+      cleanup: toolOwner.cleanup.bind(toolOwner) }) });
+}
+
+async function captureAgentReadinessSource(value: unknown, input: Captured) {
+  const source = exact(value, ["admissionPreparationInput", "privateStartupConfiguration", "startupAdmissionBinding"]);
+  const admission = exact(source.admissionPreparationInput, ["installationId", "installationPlan", "topologyInput",
+    "workerBinding", "installationBinding", "installationBindingInput"]);
+  const admissionPreparationInput = clonePlain(admission);
+  if (admissionPreparationInput.installationId !== input.installationId) return refused();
+  const plans = precedingClaimedPlan(admissionPreparationInput.installationPlan, "agent_readiness", input);
+  const startupInput = source.privateStartupConfiguration as Parameters<typeof validatePrivateTaskStartupConfiguration>[0];
+  let startup: ReturnType<typeof validatePrivateTaskStartupConfiguration>;
+  try { startup = validatePrivateTaskStartupConfiguration(startupInput); } catch { return refused(); }
+  if (!startupInput || typeof startupInput !== "object" || Array.isArray(startupInput)) return refused();
+  const coordinator = (startupInput as { coordinator?: unknown }).coordinator;
+  if (!coordinator || typeof coordinator !== "object" || Array.isArray(coordinator)) return refused();
+  const delivery = (coordinator as { hermes021Local?: unknown }).hermes021Local;
+  if (!delivery || typeof delivery !== "object" || typeof (delivery as { deliver?: unknown }).deliver !== "function") return refused();
+  const startupAdmissionBinding = clonePlain(source.startupAdmissionBinding);
+  const capturedCoordinator = Object.freeze({ ...(coordinator as Record<string, unknown>), planning: startup.planning,
+    routes: startup.routes, approvals: startup.approvals, quality: startup.quality,
+    revisionPlanning: startup.revisionPlanning, nativeHttp: startup.nativeHttp, nativeQueue: startup.nativeQueue,
+    nativeQueueRecovery: startup.nativeQueueRecovery, queueWorker: startup.queueWorker, database: startup.database,
+    resultDatabase: startup.resultDatabase, evidence: startup.evidence, sessions: startup.sessions,
+    hermes021Local: delivery });
+  const privateStartupConfiguration = Object.freeze({ ...(startupInput as Record<string, unknown>),
+    web: startup.web, coordinator: capturedCoordinator });
+  const isolatedJournal: Journal = Object.freeze({
+    async readHistory() { return Object.freeze([plans.running]); },
+    async append(plan: InstallationPlanV1) {
+      if (canonicalJson(plan) !== canonicalJson(plans.running)) return refused();
+      return { schema: "control-room.installation-plan-journal/v1" as const, installationId: input.installationId,
+        revision: plan.revision, planDigest: plan.planDigest, replayed: true, enablesAuthority: false as const,
+        startsService: false as const, startsWorker: false as const };
+    },
+  });
+  let preparation: Awaited<ReturnType<typeof prepareLocalHermesAdmissionV1>>;
+  try { preparation = await prepareLocalHermesAdmissionV1(admissionPreparationInput as never, { journal: isolatedJournal }); }
+  catch { return refused(); }
+  if (preparation.state !== "awaiting_owner_admission_review" || !preparation.admissionRequestDigest
+    || preparation.installationId !== input.installationId || preparation.topologyPlanDigest !== input.topologyPlan.planDigest
+    || preparation.releaseDigest !== input.expectedReleaseDigest || preparation.installationPlanDigest !== plans.running.planDigest
+    || preparation.installationPlanRevision !== plans.running.revision) return refused();
+  try {
+    verifyPrivateHermes021LocalStartupAdmissionBindingV1(startupAdmissionBinding, {
+      delivery, queueWorker: startup.queueWorker, installationBinding: admissionPreparationInput.installationBinding,
+      topologyPlanDigest: preparation.topologyPlanDigest, releaseDigest: preparation.releaseDigest,
+      admissionRequestDigest: preparation.admissionRequestDigest,
+    });
+  } catch { return refused(); }
+  return Object.freeze({ admissionPreparationInput, privateStartupConfiguration, startupAdmissionBinding, ...plans });
+}
+
+function captureAgentReadinessRuntime(value: unknown) {
+  const runtime = exact(value, ["signal", "controlDeadlineMs", "confirmOwnerAttachedTerminal"]);
+  if (typeof runtime.confirmOwnerAttachedTerminal !== "function") return refused();
+  const owner = value as NonNullable<Runtime["agentReadiness"]>;
+  return Object.freeze({ signal: signal(runtime.signal), controlDeadlineMs: deadline(runtime.controlDeadlineMs, 30_000),
+    confirmOwnerAttachedTerminal: owner.confirmOwnerAttachedTerminal.bind(owner) });
+}
+
+function captureFinalReviewRuntime(value: unknown) {
+  const runtime = exact(value, ["signal", "controlDeadlineMs", "confirmOwnerAttached"]);
+  if (typeof runtime.confirmOwnerAttached !== "function") return refused();
+  const owner = value as NonNullable<Runtime["finalReview"]>;
+  return Object.freeze({ signal: signal(runtime.signal), controlDeadlineMs: deadline(runtime.controlDeadlineMs, 30_000),
+    confirmOwnerAttached: owner.confirmOwnerAttached.bind(owner) });
 }
 
 function captureRecoverySource(value: unknown): unknown {
@@ -113,7 +278,8 @@ function stage(plan: InstallationPlanV1, selected: Stage) {
 
 function requestedStage(value: unknown): Stage {
   if (value === "database_authority" || value === "protected_data"
-    || value === "first_owner" || value === "recovery" || value === "platform_service") return value;
+    || value === "first_owner" || value === "recovery" || value === "platform_service"
+    || value === "agent_readiness" || value === "final_review") return value;
   return refused();
 }
 
@@ -122,7 +288,8 @@ function nextStage(plan: InstallationPlanV1): Stage {
   if (!next) return refused();
   if (next.stage === "release_preflight" || next.stage === "private_placement") return refused();
   if (next.stage === "database_authority" || next.stage === "protected_data" || next.stage === "first_owner"
-    || next.stage === "recovery" || next.stage === "platform_service") return next.stage;
+    || next.stage === "recovery" || next.stage === "platform_service" || next.stage === "agent_readiness"
+    || next.stage === "final_review") return next.stage;
   return refused();
 }
 
@@ -168,7 +335,7 @@ async function append(journal: Journal, installationId: string, plan: Installati
 }
 
 async function startStage(journal: Journal, input: Captured, plan: InstallationPlanV1,
-  selected: "protected_data" | "first_owner" | "recovery", stageInputDigest: string): Promise<InstallationPlanV1> {
+  selected: "protected_data" | "first_owner" | "recovery" | "platform_service", stageInputDigest: string): Promise<InstallationPlanV1> {
   if (nextStage(plan) !== selected || stage(plan, selected).state !== "not_started") return refused();
   const stageInputDigests = Object.fromEntries(plan.stages.map(item => [item.stage,
     item.stage === selected ? stageInputDigest : item.inputDigest]));
@@ -190,15 +357,17 @@ function completed(input: Captured, plan: InstallationPlanV1, receiptDigest?: st
   return Object.freeze({ schema: PRIVATE_LOCAL_SETUP_ORCHESTRATOR_V1, installationId: input.installationId,
     requestedStage: input.requestedStage, status: "completed", installationPlan: plan,
     ...(receiptDigest ? { receiptDigest } : {}), replayed: false, createsStateMachine: false, createsReceiptStore: false,
-    startsScheduler: false, exposesBrowserEffect: false, suppliesNativeEffect: false, retriesUncertainEffect: false });
+    startsScheduler: false, exposesBrowserEffect: false, suppliesNativeEffect: false, retriesUncertainEffect: false,
+    invokesHermes: false });
 }
 
 function blocked(input: Captured, plan: InstallationPlanV1,
-  blocker: "recovery_private_adapter_missing" | "macos_native_service_port_missing"): PrivateLocalSetupOrchestratorResultV1 {
+  blocker: "recovery_private_adapter_missing" | "macos_native_service_port_missing"
+    | "local_hermes_admission_runtime_missing" | "final_review_runtime_missing"): PrivateLocalSetupOrchestratorResultV1 {
   return Object.freeze({ schema: PRIVATE_LOCAL_SETUP_ORCHESTRATOR_V1, installationId: input.installationId,
     requestedStage: input.requestedStage, status: "blocked", installationPlan: plan, blocker, replayed: false,
     createsStateMachine: false, createsReceiptStore: false, startsScheduler: false, exposesBrowserEffect: false,
-    suppliesNativeEffect: false, retriesUncertainEffect: false });
+    suppliesNativeEffect: false, retriesUncertainEffect: false, invokesHermes: false });
 }
 
 async function database(input: Captured, journal: Journal, runtime: PrivatePostgresOwnerRuntimeV1) {
@@ -306,6 +475,56 @@ async function recovery(input: Captured, journal: Journal, current: Installation
   return completed(input, latest, settled.receipt.receiptDigest);
 }
 
+async function platformService(input: Captured, journal: Journal, current: InstallationPlanV1,
+  source: PlatformServiceSource, runtime: PrivateMacosServiceOwnerRuntimeV1) {
+  if (canonicalJson(current) !== canonicalJson(source.previous)) return refused();
+  await append(journal, input.installationId, source.running, true);
+  const result = await runPrivateMacosServiceOwnerActionV1(source.request, runtime);
+  const settled = await confirmPrivateMacosServiceOwnerActionTerminalV1({ installationId: input.installationId,
+    request: source.request, terminalConfirmation: result.terminalConfirmation }, { journal });
+  const history = await journal.readHistory();
+  const latest = verifyInstallationPlanV1(history.at(-1)), record = stage(latest, "platform_service");
+  if (record.state !== "passed" || record.outcomeDigest !== settled.receipt.receiptDigest) return refused();
+  return completed(input, latest, settled.receipt.receiptDigest);
+}
+
+async function agentReadiness(input: Captured, journal: Journal, current: InstallationPlanV1,
+  source: Awaited<ReturnType<typeof captureAgentReadinessSource>>,
+  runtime: ReturnType<typeof captureAgentReadinessRuntime>) {
+  if (canonicalJson(current) !== canonicalJson(source.previous)) return refused();
+  await append(journal, input.installationId, source.running, true);
+  const runnerInput = Object.freeze({ admissionPreparationInput: source.admissionPreparationInput,
+    privateStartupConfiguration: source.privateStartupConfiguration,
+    startupAdmissionBinding: source.startupAdmissionBinding });
+  const result = await runPrivateLocalHermesAdmissionV1(runnerInput, Object.freeze({ journal,
+    signal: runtime.signal, controlDeadlineMs: runtime.controlDeadlineMs,
+    confirmOwnerAttachedTerminal: runtime.confirmOwnerAttachedTerminal }));
+  if (result.invokesHermes !== false) return refused();
+  const settlement = Object.freeze({ runnerInput, terminalConfirmation: result.terminalConfirmation });
+  let settled;
+  try { settled = await confirmLocalHermesAdmissionTerminalV1(settlement, { journal }); }
+  catch { settled = await confirmLocalHermesAdmissionTerminalV1(settlement, { journal }); }
+  const history = await journal.readHistory();
+  const latest = verifyInstallationPlanV1(history.at(-1)), record = stage(latest, "agent_readiness");
+  if (record.state !== "passed" || record.outcomeDigest !== settled.receipt.receiptDigest) return refused();
+  return completed(input, latest, settled.receipt.receiptDigest);
+}
+
+async function finalReview(input: Captured, journal: Journal, current: InstallationPlanV1,
+  runtime: ReturnType<typeof captureFinalReviewRuntime>) {
+  const terminal = await runPrivateInstallationFinalReviewV1({ installationId: input.installationId,
+    installationPlan: current, topologyPlan: input.topologyPlan }, Object.freeze({ journal,
+    signal: runtime.signal, controlDeadlineMs: runtime.controlDeadlineMs,
+    confirmOwnerAttached: runtime.confirmOwnerAttached }));
+  let settled;
+  try { settled = await confirmPrivateInstallationFinalReviewV1({ terminal }, { journal }); }
+  catch { settled = await confirmPrivateInstallationFinalReviewV1({ terminal }, { journal }); }
+  const history = await journal.readHistory();
+  const latest = verifyInstallationPlanV1(history.at(-1)), record = stage(latest, "final_review");
+  if (record.state !== "passed" || record.outcomeDigest !== settled.terminal.confirmationDigest) return refused();
+  return completed(input, latest, settled.terminal.confirmationDigest);
+}
+
 /**
  * Dispatches only the exact next journal stage. Every effectful accepted stage
  * starts and settles within one call; a retained running/uncertain stage is
@@ -317,9 +536,47 @@ export async function dispatchPrivateLocalSetupStageV1(inputValue: unknown,
     let input = captureInput(inputValue);
     const runtime = record(runtimeValue), journal = captureJournal(runtime.journal);
     let recoveryRuntime: PrivateRecoveryOwnerRuntimeV1 | undefined;
+    let platformSource: PlatformServiceSource | undefined, platformRuntime: PrivateMacosServiceOwnerRuntimeV1 | undefined;
+    let agentSource: Awaited<ReturnType<typeof captureAgentReadinessSource>> | undefined;
+    let agentRuntime: ReturnType<typeof captureAgentReadinessRuntime> | undefined;
+    let finalRuntime: ReturnType<typeof captureFinalReviewRuntime> | undefined;
+    const runtimeShape = Object.keys(runtime).sort().join(",");
     if (input.requestedStage === "recovery" && Object.keys(runtime).sort().join(",") === "journal,recovery") {
       input = Object.freeze({ ...input, source: captureRecoverySource(input.source) });
       recoveryRuntime = capturePrivateRecoveryOwnerRuntimePortV1(runtime.recovery);
+    }
+    if (input.requestedStage === "platform_service") {
+      const missing = runtimeShape === "journal";
+      if (missing && Object.keys(record(input.source)).length === 0) { /* retained explicit blocker */ }
+      else {
+        platformSource = capturePlatformServiceSource(input.source, input);
+        input = Object.freeze({ ...input, source: platformSource });
+      }
+      if (!missing) {
+        if (runtimeShape !== "journal,platformService") return refused();
+        platformRuntime = capturePlatformServiceRuntime(runtime.platformService);
+        if (platformSource && canonicalJson(platformRuntime.reviewedServicePackageInput)
+          !== canonicalJson(platformSource.request.servicePackageInput)) return refused();
+      }
+    }
+    if (input.requestedStage === "agent_readiness") {
+      const missing = runtimeShape === "journal";
+      if (!missing) {
+        if (runtimeShape !== "agentReadiness,journal") return refused();
+        agentRuntime = captureAgentReadinessRuntime(runtime.agentReadiness);
+      }
+      if (missing && Object.keys(record(input.source)).length === 0) { /* retained explicit blocker */ }
+      else {
+        agentSource = await captureAgentReadinessSource(input.source, input);
+        input = Object.freeze({ ...input, source: agentSource });
+      }
+    }
+    if (input.requestedStage === "final_review") {
+      if (Object.keys(record(input.source)).length !== 0) return refused();
+      if (runtimeShape !== "journal") {
+        if (runtimeShape !== "finalReview,journal") return refused();
+        finalRuntime = captureFinalReviewRuntime(runtime.finalReview);
+      }
     }
     const plan = await currentAndBound(journal, input);
     if (nextStage(plan) !== input.requestedStage) return refused();
@@ -333,8 +590,18 @@ export async function dispatchPrivateLocalSetupStageV1(inputValue: unknown,
       return await recovery(input, journal, plan, recoveryRuntime);
     }
     if (input.requestedStage === "platform_service") {
-      if (Object.keys(runtime).sort().join(",") !== "journal" || Object.keys(record(input.source)).length !== 0) return refused();
-      return blocked(input, plan, "macos_native_service_port_missing");
+      if (!platformRuntime) return blocked(input, plan, "macos_native_service_port_missing");
+      if (!platformSource) return refused();
+      return await platformService(input, journal, plan, platformSource, platformRuntime);
+    }
+    if (input.requestedStage === "agent_readiness") {
+      if (!agentRuntime) return blocked(input, plan, "local_hermes_admission_runtime_missing");
+      if (!agentSource) return refused();
+      return await agentReadiness(input, journal, plan, agentSource, agentRuntime);
+    }
+    if (input.requestedStage === "final_review") {
+      if (!finalRuntime) return blocked(input, plan, "final_review_runtime_missing");
+      return await finalReview(input, journal, plan, finalRuntime);
     }
     if (input.requestedStage === "database_authority") {
       if (Object.keys(runtime).sort().join(",") !== "journal,postgres" || !runtime.postgres) return refused();

@@ -14,7 +14,8 @@ This package implements the guided-setup row in
 - `local-installation-prerequisite-transaction.ts` remains the earlier launcher-owned
   release and private-placement settlement path and is deliberately outside
   this owner-effect dispatcher;
-- the PostgreSQL, protected-data, first-owner, and recovery private runners remain the
+- the PostgreSQL, protected-data, first-owner, recovery, platform-service,
+  local-Hermes-admission, and final-review private runners remain the
   only effect boundaries, and their existing terminal transactions remain the
   only way those stages can pass; and
 - every owner confirmation remains inside its stage runner and is bound to the
@@ -38,8 +39,9 @@ An effectful stage is moved to `running` and completed in the same dispatcher
 call. PostgreSQL's provision, migration, and final-evidence operations remain
 one database stage and run in their existing order. Each operation independently
 requires its existing owner-attached confirmation and exact release and ledger
-verification. Protected-data, first-owner, and recovery similarly use only
-their accepted runner plus terminal settlement. Recovery accepts only an exact
+verification. Protected-data, first-owner, recovery, platform service, local
+Hermes admission, and final review similarly use only their accepted runner
+plus terminal settlement. Recovery accepts only an exact
 injected private runtime for the existing owner-attended backup/restore
 rehearsal; the dispatcher supplies no production adapter of its own.
 
@@ -68,10 +70,21 @@ through the existing journal transaction. An uncertain rehearsal remains
 `running` and cannot be retried by a later dispatch. No production
 backup/restore adapter is supplied by this package.
 
-After an accepted recovery settlement, the service stage still returns
-`macos_native_service_port_missing`. The source-only service runner does not
-supply the separately reviewed launchd/filesystem/process implementation, so
-the dispatcher cannot install or start the service.
+After an accepted recovery settlement, the service stage returns
+`macos_native_service_port_missing` unless private composition supplies the
+accepted service runtime and already-prepared lifecycle package. It validates
+that entire package against the claimed predecessor before reading or changing
+the real journal. The dispatcher itself still supplies no native
+launchd/filesystem/process implementation.
+
+With an exact injected service runtime, the dispatcher can continue through
+the same journal into local Hermes `agent_readiness` and `final_review`.
+Hermes admission independently rebuilds the owner request in an isolated
+read-only replay, validates the factory-created delivery and startup binding,
+captures all caller-owned source and runtime methods before awaiting anything,
+and never invokes Hermes. Final review uses only its accepted bounded owner
+runner and pass-only settlement. Concurrent attempts elect one callback;
+after a lost settlement reply, only the idempotent settlement is retried.
 
 The focused adversarial tests cover exact first-owner and recovery dispatch and
 settlement, foreign installation/release/revision/stage substitution, the visible
@@ -79,4 +92,9 @@ recovery stop when the private adapter is absent, single-winner concurrent
 recovery dispatch, immutable source and callable capture across journal awaits,
 malformed recovery input leaving the journal unchanged, recovery after a lost
 settlement reply without rerunning the rehearsal, and refusal to repeat a stage
-after an uncertain owner or recovery attempt.
+after an uncertain owner or recovery attempt. Tail-stage tests additionally
+cover exact service operation order, missing-runtime stops, valid-but-stale
+service and Hermes bindings before real journal I/O, foreign admission
+identity, mutation of caller source and callbacks across awaits, concurrent
+single-winner behavior, settlement-reply loss, zero Hermes invocation, and
+final-review isolation.
