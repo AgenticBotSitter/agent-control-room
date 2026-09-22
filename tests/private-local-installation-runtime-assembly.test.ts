@@ -559,11 +559,12 @@ test("the installed operator loader joins v2 custody, the exact Hermes graph and
   prepared.input.stagedJournalSidecar.installationJournalNativeFactoryInput.executablePath = "/private/foreign-helper";
   prepared.input.hermesRuntimePorts.deliveryIntegrityKey.fill(0);
   const installed = await loader.loadInstalledConfiguration();
-  assert.ok(prepared.protectedReads.includes("manifest")); assert.ok(prepared.protectedReads.includes("configuration"));
+  const protectedReadKinds = prepared.protectedReads as readonly string[];
+  assert.ok(protectedReadKinds.includes("manifest")); assert.ok(protectedReadKinds.includes("configuration"));
   assert.equal(prepared.factoryInputs.length, 1); assert.equal(prepared.nativeSessionOpens(), 0);
   assert.deepEqual(prepared.factoryInputs[0], prepared.expectedFactoryInput);
   assert.equal(installed.journal instanceof InstallationPlanFilesystemJournalV1, true);
-  const loaded = await installed.custody.loadPrivateConfiguration() as any;
+  const loaded = await (installed.custody as { loadPrivateConfiguration(): Promise<unknown> }).loadPrivateConfiguration() as any;
   assert.equal(loaded.assemblyInput.runnerInput.privateStartupConfiguration.coordinator.queueWorker?.concurrency,
     f.queueWorker.concurrency);
   assert.equal(loaded.setupSources.agent_readiness, loaded.assemblyInput.runnerInput);
