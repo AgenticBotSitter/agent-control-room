@@ -25,7 +25,7 @@ export const installationTopologyInputSchemaV1 = z.object({
   databaseAuthorityDigest: digest,
   schedulerAuthorityDigest: digest,
   currentRoutes: z.array(route).max(100),
-  requestedRoutes: z.array(route).min(1).max(100),
+  requestedRoutes: z.array(route).max(100),
 }).strict();
 export type InstallationTopologyInputV1 = z.infer<typeof installationTopologyInputSchemaV1>;
 
@@ -75,6 +75,11 @@ function routeDigest(routes: readonly z.infer<typeof route>[]): string {
  */
 export function planInstallationTopologyV1(value: unknown): InstallationTopologyPlanV1 {
   const input = installationTopologyInputSchemaV1.parse(value);
+  // The sole route-free state is the initial controller-only bootstrap. Once
+  // a route exists, removing all routes is not a quiet topology transition.
+  if (input.currentRoutes.length !== 0 && input.requestedRoutes.length === 0) {
+    throw new Error("installation_topology_controller_only_bootstrap_required");
+  }
   assertUniqueWorkers(input.currentRoutes);
   assertUniqueWorkers(input.requestedRoutes);
   const currentMode = modeOf(input.currentRoutes), mode = modeOf(input.requestedRoutes);

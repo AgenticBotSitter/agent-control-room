@@ -248,6 +248,78 @@ jobs:
       - name: Article build lane
         run: pnpm run test:build:articles
 
+  test-unified-product:
+    name: Unified local and multi-computer product tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.13.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Shared topology and installable product lanes
+        run: |
+          pnpm run test:unified-topology
+          pnpm run test:local-installation
+      - name: Local adapters, recovery, transitions and product surfaces
+        run: |
+          node --import tsx --test \
+            tests/claude-code-local-delivery-composition.test.ts \
+            tests/claude-code-local-executor.test.ts \
+            tests/claude-code-local-process-readiness.test.ts \
+            tests/claude-code-local-run-registration.test.ts \
+            tests/claude-code-private-process-acquisition.test.ts \
+            tests/claude-code-session-identity.test.ts \
+            tests/claude-code-task-planning.test.ts \
+            tests/codex-local-delivery-composition.test.ts \
+            tests/controller-worker-delivery-receipt-store.test.ts \
+            tests/controller-worker-delivery.test.ts \
+            tests/database-relocation-preparation.test.ts \
+            tests/hermes-021-completed-task-publication.test.ts \
+            tests/hermes-021-delivery-recovery-status.test.ts \
+            tests/hermes-021-local-executor.test.ts \
+            tests/hermes-021-macos-local-worker.test.ts \
+            tests/hermes-021-private-installation-composition.test.ts \
+            tests/hermes-021-terminal-result-staging.test.ts \
+            tests/hermes-macos-local-session-port.test.ts \
+            tests/idea-canonical-synthesis-operation.test.ts \
+            tests/idea-lab-canonical-result-projection.test.ts \
+            tests/idea-lab-canonical-task-plan.test.ts \
+            tests/idea-lab-canonical-task-proposal.test.ts \
+            tests/idea-result-projection-route.test.ts \
+            tests/idea-round-proposal-client.test.ts \
+            tests/idea-round-proposal-operation.test.ts \
+            tests/installation-setup-view.test.ts \
+            tests/installation-topology-summary.test.tsx \
+            tests/installation-transition-store.test.ts \
+            tests/installation-transition-summary.test.ts \
+            tests/installation-transition.test.ts \
+            tests/local-backup-restore-readiness.test.ts \
+            tests/local-harness-capabilities.test.ts \
+            tests/local-supervisor-readiness-recorder.test.mjs \
+            tests/local-supervisor-readiness.test.ts \
+            tests/macos-local-service-package.test.ts \
+            tests/macos-local-service-preflight-launcher.test.mjs \
+            tests/macos-local-service-preflight.test.ts \
+            tests/owner-bootstrap-filesystem-lifecycle.test.ts \
+            tests/owner-bootstrap-only-host.test.ts \
+            tests/qualify-local-hermes-021-script.test.ts \
+            tests/remote-session-delivery-bridge.test.ts \
+            tests/remote-worker-delivery.test.ts \
+            tests/task-assignment-panel.test.tsx \
+            tests/three-local-agent-conformance.test.ts \
+            tests/worktree-change-audit-authority.test.ts \
+            tests/worktree-change-audit-plan-store.test.ts \
+            tests/worktree-change-audit-record-store.test.ts \
+            tests/worktree-change-audit-record.test.ts \
+            tests/worktree-change-audit.test.ts \
+            tests/worktree-evidence-web-authorization.test.ts
+
   # Runs exactly the lanes the fast path skipped, so the union of everything that
   # ran is the complete suite. One matrix entry per lane, so a skipped lane is
   # caught up in parallel rather than serialised behind the others.
@@ -302,7 +374,7 @@ jobs:
   merge-gate:
     name: Full suite (merge gate)
     if: ${{ always() }}
-    needs: [route, quick, test-demo, test-server, test-components, test-articles, full-gate]
+    needs: [route, quick, test-demo, test-server, test-components, test-articles, test-unified-product, full-gate]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -323,6 +395,7 @@ jobs:
           check server "${{ needs.test-server.result }}"
           check components "${{ needs.test-components.result }}"
           check articles "${{ needs.test-articles.result }}"
+          check unified-product "${{ needs.test-unified-product.result }}"
           check full-gate "${{ needs.full-gate.result }}"
           if [ "${status}" -ne 0 ]; then
             echo "::error::the complete suite did not pass, so this pull request is not merge-ready"

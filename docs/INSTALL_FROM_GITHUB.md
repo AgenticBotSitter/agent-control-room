@@ -28,11 +28,13 @@ not install Node or pnpm for you.
 
 The first public product path is deliberately narrow. A compiled, read-only
 loopback setup page now exists, is tested from the built artifact, and is wired
-to the launcher. After the existing verification, preflight, and source-only
-rehearsal succeed, the launcher starts that host, waits until it is actually
-ready, and opens only `http://127.0.0.1:3210/setup`. Closing the launcher stops
-the host. This still does not activate a database, background service, Hermes,
-Codex, or Claude.
+to the launcher. After verification, preflight, and the source-only rehearsal
+succeed, the launcher creates or exactly replays the first durable setup plan.
+That initial plan is controller-only: it does not invent a database, scheduler,
+Hermes, Codex, Claude, or another worker. The launcher then starts the setup
+host, waits until it is actually ready, and opens only
+`http://127.0.0.1:3210/setup`. Closing the launcher stops the host. This still
+does not activate a database, background service, or agent.
 Do not treat a successful download or launcher opening as a working Control
 Room installation.
 
@@ -63,9 +65,12 @@ Double-click the archive to extract it, then double-click:
 
 The launcher verifies its own contents and the inner release, places the
 verified release in a private version directory, performs a read-only
-compatibility check, runs the shipped source-only setup entrypoint, starts the
-shipped read-only setup host, and opens the fixed local setup page only after
-the host reports that it is ready. The launcher remains responsible for that
+compatibility check, runs the shipped source-only setup entrypoint, records the
+first append-only setup-plan revision, starts the shipped read-only setup host,
+and opens the fixed local setup page only after the host reports that it is
+ready. Reopening the same exact release reuses that same first revision instead
+of adding another. A changed release or changed first plan is refused rather
+than silently replacing history. The launcher remains responsible for that
 temporary host and shuts down its whole owned process group when the user
 stops it or startup fails. It stops if the package is incomplete or changed,
 if macOS/CPU is unsupported, if Node.js is too old, or if pnpm is not exactly

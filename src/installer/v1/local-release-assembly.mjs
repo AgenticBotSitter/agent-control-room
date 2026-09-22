@@ -45,6 +45,7 @@ export const LOCAL_RELEASE_FILE_POLICY_V1 = Object.freeze({
     "scripts/prepare-local-installation.mjs",
     "scripts/prepare-local-production-dependencies.mjs",
     "scripts/launch-local-setup.mjs",
+    "scripts/initialize-local-installation-plan.mjs",
     "scripts/run-local-setup-host.mjs",
     "scripts/run-private-vps.mjs",
     "src/installer/v1/local-clean-install-acceptance.mjs",

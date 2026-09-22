@@ -10,6 +10,32 @@ const remote = { kind: "remote" as const, workerId: "worker:remote", adapterId: 
 const input = (requestedRoutes: readonly unknown[]) => ({ databaseAuthorityDigest: digest("one-postgres"),
   schedulerAuthorityDigest: digest("one-scheduler"), currentRoutes: [local], requestedRoutes });
 
+test("a controller-only bootstrap has no implied worker or worker proof", () => {
+  const plan = planInstallationTopologyV1({ ...input([]), currentRoutes: [] });
+  assert.equal(plan.currentMode, "this_computer");
+  assert.equal(plan.mode, "this_computer");
+  assert.deepEqual(plan.retainedWorkerIds, []);
+  assert.deepEqual(plan.reboundWorkerIds, []);
+  assert.deepEqual(plan.addedLocalWorkerIds, []);
+  assert.deepEqual(plan.addedRemoteWorkerIds, []);
+  assert.deepEqual(plan.removedWorkerIds, []);
+  assert.deepEqual(plan.requiredProofs, ["backup_restore"]);
+  assert.equal(plan.enablesWorkers, false);
+  assert.deepEqual(verifyInstallationTopologyPlanV1(plan), plan);
+});
+
+test("the controller-only bootstrap names the first local or remote route and its proofs", () => {
+  const firstLocal = planInstallationTopologyV1({ ...input([local]), currentRoutes: [] });
+  const firstRemote = planInstallationTopologyV1({ ...input([remote]), currentRoutes: [] });
+  assert.deepEqual(firstLocal.addedLocalWorkerIds, ["worker:marvin"]);
+  assert.deepEqual(firstLocal.addedRemoteWorkerIds, []);
+  assert.deepEqual(firstLocal.requiredProofs, ["backup_restore", "local_owner_qualification", "local_runner_bridge"]);
+  assert.equal(firstRemote.mode, "several_computers");
+  assert.deepEqual(firstRemote.addedLocalWorkerIds, []);
+  assert.deepEqual(firstRemote.addedRemoteWorkerIds, ["worker:remote"]);
+  assert.deepEqual(firstRemote.requiredProofs, ["backup_restore", "remote_enrollment", "two_computer_delivery"]);
+});
+
 test("a this-computer plan preserves one authority and asks only for local proof", () => {
   const plan = planInstallationTopologyV1(input([local]));
   assert.equal(plan.currentMode, "this_computer");
@@ -37,8 +63,10 @@ test("adding a remote worker is one-installation migration preparation, not a se
   assert.equal(plan.enablesWorkers, false);
 });
 
-test("a worker cannot be both local and remote, and a changed reviewed plan is refused", () => {
+test("malformed and duplicate routes remain refused, and a changed reviewed plan is refused", () => {
+  assert.throws(() => planInstallationTopologyV1({ ...input([]), currentRoutes: [], requestedRoutes: [{}] }));
   assert.throws(() => planInstallationTopologyV1(input([local, { ...local, kind: "remote" as const }])), /worker_route_ambiguous/);
+  assert.throws(() => planInstallationTopologyV1(input([])), /controller_only_bootstrap_required/);
   const plan = planInstallationTopologyV1(input([local]));
   assert.throws(() => verifyInstallationTopologyPlanV1({ ...plan, mode: "several_computers" }), /plan_invalid/);
   const duplicateProofs = { ...plan, requiredProofs: [...plan.requiredProofs, "backup_restore"] };

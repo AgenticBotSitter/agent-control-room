@@ -1,9 +1,10 @@
 import { z } from "zod";
+import { HERMES_NATIVE_ADAPTER } from "../../harness/v1/native-run-identifiers";
 import { catalogProjectIdSchema as id } from "./project-wire";
 
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 export const taskPlanningTemplateChoiceSchema = z.object({ id: id,
-  adapter: z.enum(["hermes-native/v1", "connector:hermes-021-macos-local-v1", "codex-app-server/v1", "connector:claude-code-local-v1"]),
+  adapter: z.enum([HERMES_NATIVE_ADAPTER, "connector:hermes-021-macos-local-v1", "codex-app-server/v1", "connector:claude-code-local-v1"]),
 }).strict();
 export type TaskPlanningTemplateChoice = z.infer<typeof taskPlanningTemplateChoiceSchema>;
 export const taskPlanningDraftSchema = z.object({ expectedInputDigest: digest, templateId: id.optional() }).strict();

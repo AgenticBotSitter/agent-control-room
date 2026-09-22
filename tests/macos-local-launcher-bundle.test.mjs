@@ -96,7 +96,7 @@ test("refuses unsupported systems and old Node before writing an installation ro
   await assert.rejects(lstat(join(home, "Library")), error => error?.code === "ENOENT");
 });
 
-test("composes the existing stager, shipped preflight, and shipped setup entrypoint without effects", async () => {
+test("composes the existing stager with one stable installation identity without effects", async () => {
   const installRoot = join(suiteRoot, "private-install"), journalRoot = join(suiteRoot, "private-journal");
   const launcherHome = join(suiteRoot, "launcher-home");
   await mkdir(installRoot, { mode: 0o700 }); await mkdir(journalRoot, { mode: 0o700 });
@@ -112,10 +112,17 @@ test("composes the existing stager, shipped preflight, and shipped setup entrypo
         version: "0.1.0", createsDatabase: false, startsService: false, startsWorker: false,
         launcherComplete: false, productionAcceptanceComplete: false }), stderr: "" };
     }
+    if (spec.args[0].endsWith("scripts/initialize-local-installation-plan.mjs")) {
+      return { exitCode: 0, signal: null, stdout: JSON.stringify({
+        schema: "control-room.local-installation-plan-bootstrap/v1", installationId: "macos-local",
+        revision: 0, planDigest: `sha256:${"a".repeat(64)}`, replayed: false,
+        createsDatabase: false, writesCredentials: false, startsService: false, startsWorker: false,
+        enablesAuthority: false, enablesWorkers: false, grantsExecutionAuthority: false,
+      }), stderr: "" };
+    }
     throw new Error("unexpected process");
   };
-  const report = await runMacosLocalLauncherBundleV1({ bundleRoot, homeDirectory: launcherHome, installRoot, journalRoot,
-    installationId: "disposable-macos-test" }, {
+  const report = await runMacosLocalLauncherBundleV1({ bundleRoot, homeDirectory: launcherHome, installRoot, journalRoot }, {
     platform: "darwin", architecture: "arm64", nodeVersion: "22.13.0", runner,
     async supervisor(spec, dependencies) {
       supervisors.push({ spec, dependencies });
@@ -131,24 +138,102 @@ test("composes the existing stager, shipped preflight, and shipped setup entrypo
   assert.equal(report.launcherComplete, false);
   assert.equal(report.setupHostOpened, true);
   assert.equal(report.setupHostClosed, true);
+  assert.equal(report.installationPlanInitialized, true);
   assert.equal(report.productionAcceptanceComplete, false);
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 3);
   assert.match(calls[0].args[0], /versions\/0\.1\.0\/scripts\/prepare-local-installation\.mjs$/u);
   assert.match(calls[1].args[0], /versions\/0\.1\.0\/scripts\/launch-local-setup\.mjs$/u);
+  assert.match(calls[2].args[0], /versions\/0\.1\.0\/scripts\/initialize-local-installation-plan\.mjs$/u);
   assert.ok(calls[1].args.includes(join(bundleRoot, "release")));
   assert.ok(calls[1].args.includes("--owner-attended"));
+  assert.ok(calls[2].args.includes("--controller-only"));
+  assert.ok(calls[2].args.includes("--owner-attended"));
+  assert.ok(calls[2].args.includes("--release-digest"));
+  for (const call of calls.slice(1)) {
+    const idIndex = call.args.indexOf("--installation-id");
+    assert.notEqual(idIndex, -1);
+    assert.equal(call.args[idIndex + 1], "macos-local");
+  }
   assert.deepEqual(calls[0].environment, { PATH: "/safe/bin", HOME: launcherHome,
     TMPDIR: "/private/tmp", LANG: "en_US.UTF-8" });
   assert.equal(calls[0].timeoutMs, 60_000);
   assert.equal(calls[1].timeoutMs, 20 * 60_000);
+  assert.equal(calls[2].timeoutMs, 60_000);
   assert.equal(supervisors.length, 1);
   assert.deepEqual(supervisors[0].spec.args, [join(installRoot, "versions", "0.1.0", "scripts", "run-local-setup-host.mjs"),
     "--release-root", join(installRoot, "versions", "0.1.0"), "--journal-root", journalRoot,
-    "--installation-id", "disposable-macos-test", "--port", "3210"]);
+    "--installation-id", "macos-local", "--port", "3210"]);
   assert.equal(supervisors[0].dependencies.runOpener, runBoundedMacosLauncherChildV1);
   for (const key of ["NODE_OPTIONS", "BASH_ENV", "ENV", "NPM_TOKEN", "npm_config_userconfig"]) {
     assert.equal(Object.hasOwn(calls[0].environment, key), false);
   }
+});
+
+test("a refused canonical plan bootstrap never starts or opens the setup host", async () => {
+  const installRoot = join(suiteRoot, "bootstrap-refusal-install");
+  const journalRoot = join(suiteRoot, "bootstrap-refusal-journal");
+  const launcherHome = join(suiteRoot, "bootstrap-refusal-home");
+  await mkdir(installRoot, { mode: 0o700 });
+  await mkdir(journalRoot, { mode: 0o700 });
+  let supervisorCalls = 0;
+  const runner = async spec => {
+    if (spec.args[0].endsWith("scripts/prepare-local-installation.mjs")) return {
+      exitCode: 0, signal: null, stdout: JSON.stringify({ readyForOwnerSetup: true,
+        startsService: false, createsDatabase: false, writesCredentials: false }), stderr: "",
+    };
+    if (spec.args[0].endsWith("scripts/launch-local-setup.mjs")) return {
+      exitCode: 0, signal: null, stdout: JSON.stringify({ state: "source_only_rehearsal_begun",
+        version: "0.1.0", createsDatabase: false, startsService: false, startsWorker: false,
+        launcherComplete: false, productionAcceptanceComplete: false }), stderr: "",
+    };
+    return { exitCode: 1, signal: null, stdout: "", stderr: "sanitized refusal" };
+  };
+  await assert.rejects(runMacosLocalLauncherBundleV1({ bundleRoot, homeDirectory: launcherHome,
+    installRoot, journalRoot, installationId: "bootstrap-refusal" }, {
+    platform: "darwin", architecture: "arm64", nodeVersion: "22.13.0", runner,
+    async supervisor() { supervisorCalls += 1; throw new Error("must not start"); },
+  }), { message: "macos_local_launcher_plan_bootstrap_refused" });
+  assert.equal(supervisorCalls, 0);
+});
+
+test("an exact reopening resumes the saved rehearsal before replaying the canonical plan", async () => {
+  const installRoot = join(suiteRoot, "reopen-install");
+  const journalRoot = join(suiteRoot, "reopen-journal");
+  const launcherHome = join(suiteRoot, "reopen-home");
+  await mkdir(installRoot, { mode: 0o700 });
+  await mkdir(journalRoot, { mode: 0o700 });
+  const calls = [];
+  const runner = async spec => {
+    calls.push(spec);
+    if (spec.args[0].endsWith("scripts/prepare-local-installation.mjs")) return {
+      exitCode: 0, signal: null, stdout: JSON.stringify({ readyForOwnerSetup: true,
+        startsService: false, createsDatabase: false, writesCredentials: false }), stderr: "",
+    };
+    if (spec.args.includes("begin")) return { exitCode: 1, signal: null, stdout: "", stderr: "already exists" };
+    if (spec.args.includes("resume")) return { exitCode: 0, signal: null, stdout: JSON.stringify({
+      state: "source_only_rehearsal_resumed", version: "0.1.0", createsDatabase: false,
+      startsService: false, startsWorker: false, launcherComplete: false, productionAcceptanceComplete: false,
+    }), stderr: "" };
+    if (spec.args[0].endsWith("scripts/initialize-local-installation-plan.mjs")) return {
+      exitCode: 0, signal: null, stdout: JSON.stringify({
+        schema: "control-room.local-installation-plan-bootstrap/v1", installationId: "macos-local",
+        revision: 0, planDigest: `sha256:${"b".repeat(64)}`, replayed: true,
+        createsDatabase: false, writesCredentials: false, startsService: false, startsWorker: false,
+        enablesAuthority: false, enablesWorkers: false, grantsExecutionAuthority: false,
+      }), stderr: "",
+    };
+    throw new Error("unexpected process");
+  };
+  let supervisorCalls = 0;
+  const report = await runMacosLocalLauncherBundleV1({ bundleRoot, homeDirectory: launcherHome,
+    installRoot, journalRoot }, { platform: "darwin", architecture: "arm64", nodeVersion: "22.13.0", runner,
+    async supervisor() { supervisorCalls += 1; return { state: "setup_host_closed", ready: true, opened: true, reaped: true }; },
+  });
+  assert.equal(report.state, "source_only_setup_prepared");
+  assert.equal(supervisorCalls, 1);
+  const setupModes = calls.filter(call => call.args[0].endsWith("scripts/launch-local-setup.mjs"))
+    .map(call => call.args[call.args.indexOf("--mode") + 1]);
+  assert.deepEqual(setupModes, ["begin", "resume"]);
 });
 
 test("owned timeout kills the full descendant process group before returning", async () => {

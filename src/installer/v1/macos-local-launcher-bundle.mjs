@@ -35,6 +35,7 @@ const MANIFEST_NAME = "MACOS_LAUNCHER_MANIFEST.json";
 const COMMAND_NAME = "Open Agent Control Room.command";
 const MAX_FILES = 16;
 const MAX_FILE_BYTES = 1024 * 1024 * 1024;
+const MAX_RELEASE_MANIFEST_BYTES = 16 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const digestPattern = /^[a-f0-9]{64}$/u;
 const versionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u;
@@ -296,7 +297,10 @@ export async function runMacosLocalLauncherBundleV1(input, dependencies = {}) {
   const installRoot = await ensurePrivateDirectory(input.installRoot
     ?? join(home, "Library", "Application Support", "Agent Control Room"));
   const journalRoot = await ensurePrivateDirectory(input.journalRoot ?? join(installRoot, "setup-journal"));
-  const installationId = input.installationId ?? `macos-local-${verified.version.replaceAll(".", "-")}`;
+  // The installation identity belongs to the owner installation, not to a
+  // release. Keeping it stable makes upgrades replay or conflict against the
+  // same canonical setup history instead of silently creating a second one.
+  const installationId = input.installationId ?? "macos-local";
   if (!safeIdPattern.test(installationId)) refused();
   const releaseDirectory = await canonicalDirectory(join(bundleRoot, "release"));
   const staged = await stageLocalReleaseV1({ ownerAttended: true, releaseDirectory, installRoot });
@@ -312,15 +316,44 @@ export async function runMacosLocalLauncherBundleV1(input, dependencies = {}) {
   if (preflight.readyForOwnerSetup !== true || preflight.startsService || preflight.createsDatabase || preflight.writesCredentials) refused();
   // The shipped setup entrypoint gives its package-manager child 15 minutes.
   // This outer ownership bound stays distinct so both timers cannot race.
-  const setup = await runJson(runner, { ...common, timeoutMs: 20 * 60_000,
-    args: [join(versionRoot, "scripts", "launch-local-setup.mjs"),
-    "--owner-attended", "--mode", "begin", "--release-directory", releaseDirectory,
-    "--install-root", installRoot, "--journal-root", journalRoot,
-    "--installation-id", installationId, "--topology-plan-digest", defaultTopologyDigest(staged.version)] },
-  "macos_local_launcher_setup_refused");
-  if (setup.state !== "source_only_rehearsal_begun" || setup.version !== staged.version
+  const setupScript = join(versionRoot, "scripts", "launch-local-setup.mjs");
+  const topologyPlanDigest = defaultTopologyDigest(staged.version);
+  let setup;
+  try {
+    setup = await runJson(runner, { ...common, timeoutMs: 20 * 60_000,
+      args: [setupScript, "--owner-attended", "--mode", "begin", "--release-directory", releaseDirectory,
+        "--install-root", installRoot, "--journal-root", journalRoot,
+        "--installation-id", installationId, "--topology-plan-digest", topologyPlanDigest] },
+    "macos_local_launcher_setup_refused");
+  } catch (error) {
+    if (!(error instanceof Error) || error.message !== "macos_local_launcher_setup_refused") throw error;
+    // An exact reopening is the only safe fallback. The existing resume path
+    // verifies the saved release and topology; changed or uncertain state is
+    // still refused before the setup host can open.
+    setup = await runJson(runner, { ...common, timeoutMs: 20 * 60_000,
+      args: [setupScript, "--owner-attended", "--mode", "resume",
+        "--install-root", installRoot, "--journal-root", journalRoot,
+        "--installation-id", installationId, "--topology-plan-digest", topologyPlanDigest] },
+    "macos_local_launcher_setup_refused");
+  }
+  if (!["source_only_rehearsal_begun", "source_only_rehearsal_resumed"].includes(setup.state)
+    || setup.version !== staged.version
     || setup.createsDatabase || setup.startsService || setup.startsWorker || setup.launcherComplete
     || setup.productionAcceptanceComplete) refused();
+  const releaseManifestPath = join(versionRoot, "RELEASE_MANIFEST.json");
+  await regularFile(releaseManifestPath, versionRoot, MAX_RELEASE_MANIFEST_BYTES);
+  const releaseDigest = `sha256:${sha256(await readFile(releaseManifestPath))}`;
+  const bootstrap = await runJson(runner, { ...common, timeoutMs: 60_000,
+    args: [join(versionRoot, "scripts", "initialize-local-installation-plan.mjs"),
+      "--owner-attended", "--journal-root", journalRoot,
+      "--installation-id", installationId, "--release-digest", releaseDigest,
+      "--controller-only"] }, "macos_local_launcher_plan_bootstrap_refused");
+  if (bootstrap.schema !== "control-room.local-installation-plan-bootstrap/v1"
+    || bootstrap.installationId !== installationId || bootstrap.revision !== 0
+    || typeof bootstrap.planDigest !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(bootstrap.planDigest)
+    || typeof bootstrap.replayed !== "boolean" || bootstrap.createsDatabase || bootstrap.writesCredentials
+    || bootstrap.startsService || bootstrap.startsWorker || bootstrap.enablesAuthority
+    || bootstrap.enablesWorkers || bootstrap.grantsExecutionAuthority) refused();
   const supervisor = dependencies.supervisor ?? superviseLocalSetupLauncherHostV1;
   const supervised = await supervisor({ executable: process.execPath, cwd: versionRoot,
     environment: common.environment, args: [join(versionRoot, "scripts", "run-local-setup-host.mjs"),
@@ -337,6 +370,7 @@ export async function runMacosLocalLauncherBundleV1(input, dependencies = {}) {
     || supervised.opened !== true || supervised.reaped !== true) refused("macos_local_launcher_setup_host_refused");
   return Object.freeze({ schema: MACOS_LOCAL_LAUNCHER_BUNDLE_V1, state: "source_only_setup_prepared",
     version: staged.version, releaseVerified: true, preflightPassed: true, setupEntrypointCompleted: true,
+    installationPlanInitialized: true,
     alreadyStaged: staged.alreadyStaged, createsDatabase: false, startsService: false, startsWorker: false,
     setupHostOpened: true, setupHostClosed: true, launcherComplete: false, productionAcceptanceComplete: false });
 }

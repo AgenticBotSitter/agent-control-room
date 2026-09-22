@@ -10,7 +10,10 @@ import { at } from "./native-task-fixture.ts";
 import { request, origin } from "./helpers/web-foundation.ts";
 
 test("compiled assignment keeps scheduled planning and allocation server-only", async () => {
-  const compiled = await readFile(new URL("../dist-vps/server/taskApplication.js", import.meta.url), "utf8");
+  const compiled = await Promise.all([
+    readFile(new URL("../dist-vps/server/taskApplication.js", import.meta.url), "utf8"),
+    readFile(new URL("../dist-vps/server/runtime.js", import.meta.url), "utf8"),
+  ]).then(parts => parts.join("\n"));
   assert.match(compiled, /service:schedule-assignment:v1/);
   assert.match(compiled, /scheduled\.tasks\.plan/);
   assert.doesNotMatch(compiled, /api\/v1\/scheduled-assignment/);

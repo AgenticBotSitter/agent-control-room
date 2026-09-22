@@ -24,6 +24,14 @@ import { taskDraft } from "./helpers/web-task";
 import { advanceInstallationTransitionRecordV1, createInstallationTransitionRecordV1,
   isInstallationTransitionAdmissionPausedV1 } from "../src/harness/v1/installation-transition-store";
 import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
+import { HERMES_NATIVE_ADAPTER } from "../src/harness/v1/native-run-identifiers";
+import { taskPlanningTemplateChoiceSchema } from "../src/web/v1/task-planning-wire";
+
+test("the planning wire accepts the canonical Hermes native adapter identifier", () => {
+  assert.deepEqual(taskPlanningTemplateChoiceSchema.parse({ id: "template:hermes-native", adapter: HERMES_NATIVE_ADAPTER }),
+    { id: "template:hermes-native", adapter: HERMES_NATIVE_ADAPTER });
+  assert.equal(taskPlanningTemplateChoiceSchema.safeParse({ id: "template:hermes-native", adapter: "hermes-native/v1" }).success, false);
+});
 
 test("a Marvin Hermes 0.21 template creates a pinned text-review plan, not an older generic Hermes plan", async t => {
   const f = await ownerReviewFixture(); t.after(f.close);

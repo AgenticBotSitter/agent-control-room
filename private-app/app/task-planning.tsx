@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import { HERMES_NATIVE_ADAPTER } from "../../src/harness/v1/native-run-identifiers";
 import { BrowserRequestError } from "../../src/web/v1/browser-client";
 import { createTaskPlanningBrowserClient, planningErrorMessage } from "../../src/web/v1/task-planning-browser-client";
 import type { TaskPlanningOptions, TaskPlanningReceipt } from "../../src/web/v1/task-planning-wire";
@@ -11,7 +12,7 @@ export function TaskPlanningPanel({ options, receipt, error, pending, uncertain,
   pending: boolean; uncertain: boolean; selectedTemplateId?: string; onSelectTemplate: (value: string) => void;
   onPrepare: () => void; onRetry: () => void;
 }) {
-  const labels: Record<string, string> = { "hermes-native/v1": "Hermes Agent", "connector:hermes-021-macos-local-v1": "Hermes Agent (local review)",
+  const labels: Record<string, string> = { [HERMES_NATIVE_ADAPTER]: "Hermes Agent", "connector:hermes-021-macos-local-v1": "Hermes Agent (local review)",
     "codex-app-server/v1": "Codex", "connector:claude-code-local-v1": "Claude Code" };
   const choices = options?.templates ?? [];
   const needsChoice = choices.length > 1 && !selectedTemplateId;

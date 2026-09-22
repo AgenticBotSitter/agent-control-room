@@ -4,6 +4,14 @@
 Control Room installer, activation path, signed/notarized application, or
 clean-install acceptance result.
 
+The launcher now also creates or exactly replays canonical setup-plan revision
+zero before it opens the read-only setup page. The first plan is explicitly
+controller-only and records that database, scheduler, and workers are not yet
+selected. It cannot enable authority, create a database, start a service, or
+start a worker. Reopening the same verified release resumes the existing
+source-only rehearsal and exactly replays the first plan. A changed release or
+conflicting first plan is refused and the browser is not opened.
+
 ## User boundary
 
 A release maintainer can package the three existing local-release files into
@@ -20,8 +28,9 @@ composes, rather than replaces, the accepted paths:
 
 1. the checksum- and manifest-verifying local release stager;
 2. the staged release's read-only platform/package preflight; and
-3. the staged release's `scripts/launch-local-setup.mjs` entrypoint; and
-4. the staged release's fixed loopback setup-host entrypoint.
+3. the staged release's `scripts/launch-local-setup.mjs` entrypoint;
+4. the controller-only canonical setup-plan bootstrap; and
+5. the staged release's fixed loopback setup-host entrypoint.
 
 Every manifest, runtime and release file must have exact mode `0644`; the
 Finder command and directories must have exact mode `0755`. Broader write or
