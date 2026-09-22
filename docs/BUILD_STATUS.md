@@ -136,8 +136,11 @@ existing operator CLI. The shipped script no longer contains an undefined
 configuration loader and refuses `status`, `setup-next`, and `start` before the
 CLI when owner-held inputs are absent. Construction remains inert: it neither
 opens a native session or database nor starts a listener, service, worker or
-Hermes. This is source evidence awaiting independent review; it does not stage
-the sidecar, qualify native custody, authorize setup, or clear the owner gate.
+Hermes. Independent security review accepted the loader after adversarial
+tests confirmed that malformed, accessor-backed, proxy-backed, or later-mutated
+owner input cannot run code during construction or redirect a protected read.
+It still does not stage the sidecar, qualify native custody, authorize setup,
+or clear the owner gate.
 
 The additive local Claude composition is now source-complete and independently
 accepted. It rereads the settled original installation and one committed

@@ -4,7 +4,7 @@
 injected adapter, release-bound sidecar, installed-custody composer and
 installed-operator loader. Merely constructing the loader performs no native
 operation, stages no bytes and does not make installed operation ready. The
-blocker remains until this wiring is independently accepted and passes separate
+loader source has passed independent review; the blocker remains until separate
 owner-attended staging and native qualification.
 
 ## Reuse decision
