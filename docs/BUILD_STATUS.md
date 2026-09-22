@@ -112,9 +112,21 @@ platform, protocol and architecture. It returns frozen data only, retains the
 original journal-root device and inode across reread, and refuses replacement.
 The old v1 manifest remains blocked and is never auto-upgraded; no manifest is
 written and no native file is staged into the immutable portable release tree.
-Native-sidecar staging, operator composition and separate owner-attended
-qualification remain before
+Owner-attended native-sidecar staging, installed operator wiring and separate
+native qualification remain before
 `native_journal_operation_custody_missing` can be cleared.
+
+The next source-only journal custody seam is now implemented for independent
+review. It strictly composes the v2 manifest-bound configuration, complete
+release-bound staged-sidecar identity, native custody preparation, one injected
+native session port, held-session adapter and the retained installation journal.
+It preserves the originally authenticated journal owner/device/inode and burns
+its one-use constructor before an injected factory is called, so cancellation
+or uncertainty cannot reconstruct the port or reset recovery. Construction
+does not stage bytes, run the helper, create a private directory, contact a
+database, start a service or invoke Hermes. The live blocker remains until this
+source is independently accepted and the owner separately permits staging and
+native qualification in the installed operator path.
 
 The additive local Claude composition is now source-complete and independently
 accepted. It rereads the settled original installation and one committed

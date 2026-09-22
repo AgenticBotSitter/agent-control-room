@@ -1,10 +1,11 @@
 # Private installation-journal native custody contract
 
-**Status:** source-only storage-session extraction and injected adapter. They
-perform no native operation, compile no helper, and do not make installed
-operator composition ready. The blocker remains until a separately reviewed
-held native implementation, release packaging, disposable adversarial evidence,
-and owner-attended qualification are complete.
+**Status:** source-only storage-session extraction, held native session,
+injected adapter, release-bound sidecar and installed-custody composer. Merely
+constructing the composer performs no native operation, stages no bytes and
+does not make installed operator composition ready. The blocker remains until
+this composition is independently accepted, wired through the installed
+operator, and passes separate owner-attended staging and native qualification.
 
 ## Reuse decision
 
@@ -47,8 +48,19 @@ the prepared operation and one injected native session, validates the exact
 installation/root/owner binding, bounds entry names and canonical bytes, gates
 mutation capabilities by operation, enforces create-write-file-sync-directory-
 sync-link ordering, carries abort and the absolute deadline through every call,
-and treats an unconfirmed close as failure. This is adapter evidence only: no
-native descriptor-relative implementation is present.
+and treats an unconfirmed close as failure.
+
+The source-only installed composer now joins the v2 manifest-bound preparation,
+the complete release-bound sidecar identity, the native custody preparation,
+one injected native session port, the held-session adapter, and
+`InstallationPlanFilesystemJournalV1`'s injected storage factory. It retains
+the originally authenticated owner, device and inode; compares every staged
+sidecar binding field before constructing the journal; and keeps both complete
+captured identities behind every later storage operation. Composition is
+one-use and is burned before an injected factory is called, so cancellation or
+uncertainty cannot mint a replacement port or reset recovery. Construction is
+otherwise inert. It does not stage a sidecar, open a session, create a private
+directory, contact PostgreSQL, start a service or invoke an agent.
 
 ## Why a check-before/check-after wrapper is insufficient
 
@@ -130,5 +142,5 @@ held descriptor is what prevents redirection during the operation.
 - deterministic sidecar builds/assemblies followed by a separate
   owner-attended native qualification.
 
-The preparation tests are contract evidence only. They do not compile or run a
-native helper and do not remove the production blocker.
+The preparation and composition tests are source evidence only. They do not
+stage or run a native helper and do not remove the production blocker.

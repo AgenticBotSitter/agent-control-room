@@ -47,11 +47,16 @@ configuration data, real installed journal path and retained root identity,
 owner and mode, plus the exact native-sidecar tuple. It returns no callback,
 native port, executable path, staging location or journal object.
 
-The native sidecar remains outside the immutable portable release tree. A
-later package must verify and stage the separately packaged sidecar into a
-fresh private staging directory, then join that staged identity to the held
-journal session. This reader never derives a substitute installed location and
-does not clear `native_journal_operation_custody_missing`.
+The native sidecar remains outside the immutable portable release tree. The
+source-only installed journal composer can now join this packet to a separately
+staged sidecar and the retained held-session journal chain. It compares the
+release, platform, architecture, protocol, sidecar-manifest, archive,
+artifact-manifest and executable identities, retains the original journal
+owner/device/inode, and burns its one-use factory before invoking an injected
+port. The reader and composer still never stage native bytes or derive a
+substitute installed location, and neither clears
+`native_journal_operation_custody_missing` without installed operator wiring,
+independent acceptance and owner-attended native qualification.
 
 ## Evidence
 
