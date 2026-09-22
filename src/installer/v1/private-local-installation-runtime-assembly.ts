@@ -178,7 +178,9 @@ export function createPrivateLocalInstallationRuntimeAssemblyV1(inputValue: unkn
       .filter(([name]) => name !== "hermes021Local"));
     detachedTrusted = captureOwned(withoutDelivery) as Record<string, unknown>;
   } catch { return blocked("private_configuration_custody_missing"); }
-  const capturedTrusted = Object.freeze({ ...detachedTrusted, hermes021Local: captured.delivery });
+  const capturedTrusted: Readonly<Record<string, unknown>> = Object.freeze({
+    ...detachedTrusted, hermes021Local: captured.delivery,
+  });
 
   async function prepare(signal?: AbortSignal) {
     if (signal?.aborted) return refused();

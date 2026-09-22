@@ -40,7 +40,7 @@ before(async () => {
     }),
   ] as [string, string, string[]][]) {
     await run("/usr/bin/clang", [...PROTECTED_DIRECTORY_NATIVE_CFLAGS_V1, ...extra, join(repository, source), "-o", output],
-      { timeout: 30_000, maxBuffer: 16_384, env: { PATH: "/usr/bin:/bin", TMPDIR: root } });
+      { timeout: 30_000, maxBuffer: 16_384, env: { NODE_ENV: "test", PATH: "/usr/bin:/bin", TMPDIR: root } });
   }
   digest = byteDigest(await readFile(executable));
 });
@@ -62,7 +62,8 @@ function encode(value: PrivateProtectedRootNativeCreateRequestV1) {
   return Buffer.concat([header, parent, child]);
 }
 async function raw(binary: string, bytes: Buffer, onCheckpoint?: (phase: number, child: ReturnType<typeof spawn>) => Promise<void>, fragmentedInput = false) {
-  const child = spawn(binary, [], { stdio: onCheckpoint ? ["pipe", "pipe", "pipe", "pipe", "pipe"] : ["pipe", "pipe", "pipe"], env: {} });
+  const child = spawn(binary, [], { stdio: onCheckpoint ? ["pipe", "pipe", "pipe", "pipe", "pipe"] : ["pipe", "pipe", "pipe"],
+    env: { NODE_ENV: "test" } });
   const output: Buffer[] = [], errors: Buffer[] = [];
   child.stdout!.on("data", (bytes: Buffer) => output.push(bytes));
   child.stderr!.on("data", (bytes: Buffer) => errors.push(bytes));

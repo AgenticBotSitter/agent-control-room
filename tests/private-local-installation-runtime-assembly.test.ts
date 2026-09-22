@@ -184,7 +184,7 @@ async function fixture(t: { after(fn: () => unknown): void }) {
 
 function dependencies(calls: string[]) {
   return { openDatabase() { calls.push("database"); throw new Error("test effect"); },
-    install() { calls.push("install"); throw new Error("test effect"); } } as never;
+    install() { calls.push("install"); throw new Error("test effect"); } };
 }
 
 test("construction is inert and settled preparation supplies the exact opaque receipt to operator configuration", async t => {
@@ -196,7 +196,9 @@ test("construction is inert and settled preparation supplies the exact opaque re
   if (assembly.status !== "ready") return;
   const prepared = await assembly.prepare();
   assert.equal(prepared.plan.planDigest, f.plan.planDigest);
-  assert.equal(prepared.configuration.coordinator.hermes021LocalStartupReverification?.receiptDigest,
+  const configuration = prepared.configuration as { coordinator: {
+    hermes021LocalStartupReverification?: { receiptDigest?: string } } };
+  assert.equal(configuration.coordinator.hermes021LocalStartupReverification?.receiptDigest,
     prepared.receipt.receiptDigest);
   assert.deepEqual(effects, []); assert.equal(f.hermesCalls(), 0);
 });

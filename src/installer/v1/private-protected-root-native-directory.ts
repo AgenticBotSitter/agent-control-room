@@ -155,7 +155,8 @@ function ownedProcess(executable: string, args: readonly string[], input: Buffer
   end: number, maximumOutput: number, custody: Custody): Promise<Buffer> {
   active(signal, end);
   return new Promise<Buffer>((resolve, reject) => {
-    const child = spawn(executable, [...args], { shell: false, cwd: "/", env: { LANG: "C", LC_ALL: "C" },
+    const child = spawn(executable, [...args], { shell: false, cwd: "/",
+      env: { NODE_ENV: "production", LANG: "C", LC_ALL: "C" },
       stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
     custody.runningChild = true;
     const chunks: Buffer[] = [];
