@@ -49,10 +49,11 @@ function actionFor(plan = runningPlan(), bindings = ownerBindings) {
   return { actionInput, actionPreparation: prepareInstallationActionV1(actionInput) };
 }
 
-async function fixture() {
+async function fixture(selectedInstallationId = installationId) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "control-room-first-owner-transaction-")));
   await chmod(root, 0o700);
-  const journal = new InstallationPlanFilesystemJournalV1({ rootDirectory: root, installationId, ownerUid: process.getuid!() });
+  const journal = new InstallationPlanFilesystemJournalV1({ rootDirectory: root,
+    installationId: selectedInstallationId, ownerUid: process.getuid!() });
   let plan = createInstallationPlanV1({ topologyPlan: topology, releaseDigest, stageInputDigests: stageInputs() });
   await journal.append(plan);
   for (const selected of installationSetupStagesV1) {
@@ -67,6 +68,7 @@ async function fixture() {
   const request = prepareFirstOwnerActionTransactionRequestV1(action);
   const terminalConfirmation = (ownerProofDigest = d("verified-owner-proof"), ceremonyOutcomeDigest = d("ceremony-complete")) => ({
     schema: FIRST_OWNER_ACTION_TERMINAL_CONFIRMATION_V1,
+    installationId: selectedInstallationId,
     requestDigest: sha256Digest({ purpose: "first-owner-action-request/v1", request }),
     expectedOwnerSubjectDigest: ownerBindings.expectedOwnerSubjectDigest,
     ownerConfirmed: true as const, ownerState: "existing" as const, ownerProofDigest, ceremonyOutcomeDigest,
@@ -126,6 +128,18 @@ test("simultaneous changed confirmations cannot both settle", async () => {
     assert.equal((await f.journal.readHistory()).at(-1)!.stages[4]!.outcomeDigest,
       accepted.value.receipt.receiptDigest);
   } finally { await f.cleanup(); }
+});
+
+test("a terminal confirmation is bound to one installation even when another journal has identical plan bytes", async () => {
+  const first = await fixture("local-installation-one"), second = await fixture("local-installation-two");
+  try {
+    assert.deepEqual(first.request, second.request);
+    await assert.rejects(() => confirmFirstOwnerActionTerminalV1({ installationId: "local-installation-two",
+      actionPreparation: second.actionPreparation, actionInput: second.actionInput,
+      terminalConfirmation: first.terminalConfirmation() }, { journal: second.journal }),
+    /first_owner_action_transaction_refused/);
+    assert.equal((await second.journal.readHistory()).at(-1)!.stages[4]!.state, "running");
+  } finally { await first.cleanup(); await second.cleanup(); }
 });
 
 test("preparation, arming, changed proof, changed subject, and uncertain owner state cannot pass", async () => {

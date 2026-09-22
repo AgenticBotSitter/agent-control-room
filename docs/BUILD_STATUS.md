@@ -41,9 +41,14 @@ or uncertain state refuse. The PostgreSQL transaction records one final
 terminal-confirmed exact-replay receipt through that same journal; it does not
 call PostgreSQL itself. No public release has been published and no live
 database, service, credential, agent, listener, or browser operation was
-performed by these source packages. The next database step is the separately
-reviewed private adapter/configuration binding and owner-attended rehearsal;
-that step has not run.
+performed by these source packages. The private adapter/configuration binding
+is now source-complete behind injected custody and fixed tool ports. It reuses
+the existing provision, migration and evidence implementations, replaces all
+ambient PostgreSQL process settings with reviewed values, accepts only exact
+operation-specific replies, closes credential custody independently of tool
+cleanup, and retains no private value in observations or errors. The production
+custody loader, concrete process/module boundary and owner-attended rehearsal
+remain separate work; none has run.
 
 The protected-data stage now also has an accepted source-only owner runner
 contract. It reuses the existing private artifact configuration and persistent
@@ -54,6 +59,15 @@ root identities are checked around creation and preflight, and the runner has
 no repair or deletion authority. The real operating-system implementation of
 identity-bound, no-follow directory creation remains intentionally absent and
 must be separately reviewed before this runner can touch an owner's directory.
+The private macOS/POSIX composition beneath that runner is now source-complete
+as a strict native-port boundary: it derives the effective process user,
+reuses the production persistent-storage preflight exactly once, and requires
+one path-free receipt proving descriptor-relative `mkdirat` plus no-follow
+`fstatat`. Node does not expose those syscalls and the repository has no
+reviewed native binding, so no path-based fallback was added. This remains a
+deliberate live-install blocker until that small native implementation is
+separately reviewed and owner-attended; disposable adversarial tests are not
+native qualification evidence.
 
 The first-owner stage now has an accepted durable settlement transaction over
 the existing installation journal. It rebuilds the exact prepared request from
@@ -63,8 +77,19 @@ terminal confirmation of the expected existing owner can append the stage
 receipt; preparation, an armed ceremony, a changed subject or proof, stale or
 uncertain state, and competing outcomes refuse. This transaction accepts no
 login assertion, one-time code, credential, database handle, listener, owner
-creation port, or alternate receipt store. The later private owner-attended
-runner remains required before any real owner ceremony can be performed.
+creation port, or alternate receipt store. A private owner-attended runner and
+live ceremony adapter remain required before any real owner ceremony.
+
+That private first-owner runner is now source-complete behind injected ports.
+It requires attached-owner confirmation bound to the exact installation,
+release, running plan revision, passed database outcome and expected subject;
+accepts only the retained ceremony's completed response; and independently
+requires an exact existing-owner proof before producing the transaction's
+terminal confirmation. Pre-effect refusal is distinct from post-attempt
+uncertainty, cleanup is narrowly bounded, and outputs and errors are redacted.
+The live retained-ceremony adapter, authoritative owner-observation adapter and
+owner-attended qualification remain separate work; no assertion, code,
+credential, database, listener, browser or native effect was used here.
 
 ## Current build block
 

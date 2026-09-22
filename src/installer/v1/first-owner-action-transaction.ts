@@ -36,6 +36,18 @@ export type FirstOwnerActionRequestV1 = Readonly<{
   startsListener: false;
 }>;
 
+export type FirstOwnerActionTerminalConfirmationV1 = Readonly<{
+  schema: typeof FIRST_OWNER_ACTION_TERMINAL_CONFIRMATION_V1;
+  installationId: string;
+  requestDigest: string;
+  expectedOwnerSubjectDigest: string;
+  ownerConfirmed: true;
+  ownerState: "existing";
+  ownerProofDigest: string;
+  ceremonyOutcomeDigest: string;
+  terminalState: "confirmed";
+}>;
+
 export type FirstOwnerActionTerminalReceiptV1 = Readonly<{
   schema: typeof FIRST_OWNER_ACTION_TRANSACTION_V1;
   installationId: string;
@@ -126,10 +138,11 @@ function requestDigest(request: FirstOwnerActionRequestV1): string {
   return sha256Digest({ purpose: "first-owner-action-request/v1", request });
 }
 
-function terminalConfirmation(value: unknown, request: FirstOwnerActionRequestV1) {
-  const confirmation = exact(value, ["schema", "requestDigest", "expectedOwnerSubjectDigest", "ownerConfirmed",
+function terminalConfirmation(value: unknown, installationId: string, request: FirstOwnerActionRequestV1) {
+  const confirmation = exact(value, ["schema", "installationId", "requestDigest", "expectedOwnerSubjectDigest", "ownerConfirmed",
     "ownerState", "ownerProofDigest", "ceremonyOutcomeDigest", "terminalState"]);
   if (confirmation.schema !== FIRST_OWNER_ACTION_TERMINAL_CONFIRMATION_V1
+    || confirmation.installationId !== installationId
     || confirmation.requestDigest !== requestDigest(request)
     || confirmation.expectedOwnerSubjectDigest !== request.expectedOwnerSubjectDigest
     || confirmation.ownerConfirmed !== true || confirmation.ownerState !== "existing"
@@ -207,7 +220,7 @@ export async function confirmFirstOwnerActionTerminalV1(input: unknown,
     || typeof runtime.journal.readHistory !== "function") return refuse();
   const request = prepareFirstOwnerActionTransactionRequestV1({ actionPreparation: envelope.actionPreparation,
     actionInput: envelope.actionInput });
-  const confirmation = terminalConfirmation(envelope.terminalConfirmation, request);
+  const confirmation = terminalConfirmation(envelope.terminalConfirmation, envelope.installationId, request);
   const receipt = receiptFor(envelope.installationId, request, confirmation);
 
   try {

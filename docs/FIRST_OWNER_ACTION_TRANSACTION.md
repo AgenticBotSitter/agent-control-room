@@ -25,9 +25,9 @@ and the existing installation journal.
 ## Safety boundary
 
 `confirmFirstOwnerActionTerminalV1` accepts only a private wrapper's exact
-terminal confirmation. That confirmation must bind the prepared request, the
-expected owner subject, an independently verified `existing` owner state, an
-opaque owner proof, and the completed ceremony outcome. An armed ceremony,
+terminal confirmation. That confirmation must bind the exact installation ID,
+the prepared request, the expected owner subject, an independently verified
+`existing` owner state, an opaque owner proof, and the completed ceremony outcome. An armed ceremony,
 preparation record, changed proof, stale revision, uncertain owner state, or
 different subject cannot pass.
 
