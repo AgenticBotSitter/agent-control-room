@@ -6,6 +6,50 @@ operational yet.
 
 ## Source checkpoint (2026-09-22)
 
+The local product now also has an accepted read-only **Project Agents** page.
+It reuses the canonical task-assignment predicate and presents four independent
+facts without joining identities that the server deliberately keeps separate:
+task-specific eligibility, operator capacity, installation-wide sanitized
+connection inventory, and project-wide current work. Every browser read is
+project-scoped where applicable, cancellation-aware and time-bounded. The page
+offers no assignment or start authority and never turns unavailable evidence
+into an empty or healthy claim.
+
+Private installed-configuration custody is now source-complete through the
+point that can be implemented safely without the native installation-journal
+session. It loads exact manifest-bound JSON as frozen data, retains no callable
+configuration, rejects links, replacement, owner/mode/ACL drift and unsafe
+ancestors, and actively cancels bounded native verification. It deliberately
+keeps operator composition blocked by
+`native_journal_operation_custody_missing`. An independently accepted,
+source-only preparation now defines the missing operation-scoped held-descriptor
+boundary and evidence packet. It gives status inspection no mutation capability,
+limits recovery to the retained publication algorithm, and specifies exact
+bounded same-descriptor writes for plan and witness bytes. It performs no native
+operation and does not claim the blocker is cleared.
+
+Fresh Linux CI exposed one real portability defect in the private PostgreSQL
+boundary: Linux refuses to execute a staged program while a write-capable file
+descriptor remains open. The boundary now closes the writer after sync and
+verification, reopens and re-verifies a read-only held descriptor, and retains
+that read-only identity through child cleanup. The focused boundary, child-host,
+configuration-custody, Project Agents, product-shell, build-profile and type
+checks pass locally. A fresh hosted Linux run is still required after this
+checkpoint is committed and pushed.
+
+The first private installed-process host for Claude Code is now source-complete
+and independently accepted. Review first reproduced four defects involving
+launch-time abort cleanup, a stale-authority window during asynchronous
+verification, stdin-close cancellation, and proxy-wrapped native ports. The
+corrected host now retires a child returned after synchronous cancellation,
+rechecks retained authority immediately before launch, actively cancels the
+exact stdin-close operation at its deadline, and refuses proxied native ports,
+children, promises and callables. It writes one fixed bounded text input, closes
+stdin, owns TERM-to-KILL-to-reap cleanup, and retains the shared durable task,
+result, review and recovery contracts. Live Claude delivery remains unsupported
+until an exact installed CLI and private authentication/process port pass a
+separate owner-attended qualification.
+
 The single-computer product now has one accepted, source-only operator path
 from an extracted release into the existing installation journal, setup
 dispatcher, runtime assembly, and task bootstrap. Its fixed commands are

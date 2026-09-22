@@ -1,5 +1,6 @@
 import { isAbsolute, normalize } from "node:path";
 import { z } from "zod";
+import { digestSchema } from "../v1/native-run-identifiers";
 
 const safePath = z.string().min(1).max(4096).refine(value => isAbsolute(value) && normalize(value) === value
   && !/[\u0000-\u001f\u007f]/u.test(value));
@@ -11,6 +12,26 @@ const configurationSchema = z.object({ executablePath: safePath, args: z.array(s
   workingDirectory: safePath, cleanupMs: z.number().int().min(1).max(5_000).default(2_000) }).strict();
 
 export type PrivateClaudeCodeProcessAcquisitionConfigurationV1 = z.input<typeof configurationSchema>;
+
+const installedHostConfigurationSchema = z.object({
+  schema: z.literal("control-room.claude-code-private-installed-process-host-configuration/v1"),
+  process: configurationSchema,
+  executableSha256: digestSchema,
+  workingDirectoryBindingDigest: digestSchema,
+  qualificationDigest: digestSchema,
+  startupDeadlineMs: z.number().int().min(1).max(5_000),
+  terminateDeadlineMs: z.number().int().min(1).max(5_000),
+  killDeadlineMs: z.number().int().min(1).max(5_000),
+}).strict();
+
+export type PrivateClaudeCodeInstalledProcessHostConfigurationV1 = z.input<typeof installedHostConfigurationSchema>;
+
+/** Captures data-only installation material. It does not supply callable
+ * verification, launch, credential, environment, or process dependencies. */
+export function capturePrivateClaudeCodeInstalledProcessHostConfigurationV1(value: unknown) {
+  const parsed = installedHostConfigurationSchema.parse(value);
+  return Object.freeze({ ...parsed, process: capturePrivateClaudeCodeProcessAcquisitionConfigurationV1(parsed.process) });
+}
 
 /** Validates fixed installation-owned command material without launching it.
  * This is containment/preflight only, not a Claude task runner: the existing

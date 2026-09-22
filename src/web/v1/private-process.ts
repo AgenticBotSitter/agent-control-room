@@ -29,6 +29,7 @@ import type { QueueAttentionSource } from "./queue-attention-wire";
 import { taskPlanningReceiptSchema } from "./task-planning-wire";
 import { taskAttentionPageSchema } from "./task-attention-wire";
 import { taskDeliveryStatusSchema } from "./task-delivery-wire";
+import { taskProjectAgentOptionsSchema } from "./task-project-agents-wire";
 import { newsCollectionStatusSchema, newsCollectionHistorySchema } from "./news-collection-status-wire";
 import { ideaCreationOptionsSchema } from "./idea-wire";
 import { parseProductConfigurationV1, type ProductConfigurationV1 } from "../../config/v1/product-configuration";
@@ -244,11 +245,12 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const revisions = options.revisions ? Object.freeze({ tenantId: options.tenantId, workspaceId: options.workspaceId,
     plan: options.revisions.plan.bind(options.revisions) }) : undefined;
   if (options.assignment && (options.assignment.tenantId !== options.tenantId || options.assignment.workspaceId !== options.workspaceId
-    || [options.assignment.assign, options.assignment.expire, options.assignment.options].some(method => typeof method !== "function")))
+    || [options.assignment.assign, options.assignment.expire, options.assignment.options, options.assignment.projectOptions]
+      .some(method => typeof method !== "function")))
     throw new Error("invalid_private_app_config");
   const assignment = options.assignment ? Object.freeze({ tenantId: options.tenantId, workspaceId: options.workspaceId,
     assign: options.assignment.assign.bind(options.assignment), expire: options.assignment.expire.bind(options.assignment),
-    options: options.assignment.options.bind(options.assignment) }) : undefined;
+    options: options.assignment.options.bind(options.assignment), projectOptions: options.assignment.projectOptions.bind(options.assignment) }) : undefined;
   const drainMs = options.drainMs ?? 30_000;
   if (options.approvals && (options.approvals.tenantId !== options.tenantId || options.approvals.workspaceId !== options.workspaceId
     || [options.approvals.prepare, options.approvals.store, options.approvals.read].some(method => typeof method !== "function")))
@@ -668,6 +670,22 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             let projectId: string;
             try { projectId = decodeURIComponent(projectFiles[1]); } catch { throw new WebAccessError("invalid_request"); }
             return Response.json(await tasks.projectFiles(identity, projectId), { headers: privateResponseHeaders });
+          }
+          const projectAgents = /^\/api\/v1\/projects\/([^/]+)\/agents$/.exec(url.pathname);
+          if (projectAgents) {
+            if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+            let projectId: string;
+            try { projectId = decodeURIComponent(projectAgents[1]); } catch { throw new WebAccessError("invalid_request"); }
+            if (!catalogProjectIdSchema.safeParse(projectId).success) throw new WebAccessError("invalid_request");
+            if (assignment) return Response.json(taskProjectAgentOptionsSchema.parse(
+              await assignment.projectOptions(identity, projectId)), { headers: privateResponseHeaders });
+            await tasks.authorize(identity, projectId);
+            return Response.json(taskProjectAgentOptionsSchema.parse({
+              projectId, eligibilitySource: "not_configured", workers: [], tasksExamined: 0,
+              additionalTasksOmitted: false, candidateEvidence: "configured_routes_only",
+              observedAt: new Date(clock()).toISOString(), startsWork: false,
+              grantsAssignmentAuthority: false, grantsExecutionAuthority: false,
+            }), { headers: privateResponseHeaders });
           }
           const projectAttention = /^\/api\/v1\/projects\/([^/]+)\/(inbox|reviews)$/.exec(url.pathname);
           if (projectAttention) {

@@ -155,7 +155,11 @@ test("notification reader maps only attention and incidents using the fixed defa
     calls.push([url, init]);
     return Response.json({ snapshot });
   });
-  assert.deepEqual(calls, [["/api/v1/operator-surface", { credentials: "same-origin", cache: "no-store" }]]);
+  assert.equal(calls.length, 1);
+  const [url, init] = calls[0] as [string, RequestInit];
+  assert.equal(url, "/api/v1/operator-surface");
+  assert.equal(init.credentials, "same-origin"); assert.equal(init.cache, "no-store");
+  assert.ok(init.signal instanceof AbortSignal);
   assert.equal(view.state, "available");
   assert.equal(ownerNotificationSettingsSchemaV1.safeParse(view.settings).success, true);
   assert.equal(view.settings.tenantId, snapshot.tenantId);

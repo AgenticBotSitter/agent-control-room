@@ -2,6 +2,8 @@ export * from "./connector-profile";
 export * from "./stream-json-decode";
 export * from "./session-identity";
 export * from "./owned-process-session";
+export * from "./private-process-acquisition";
+export * from "./private-installed-process-host";
 export * from "./unsupported-operations";
 export * from "./result-publication";
 export * from "./local-worker-result";

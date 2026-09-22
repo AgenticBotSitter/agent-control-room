@@ -27,6 +27,7 @@ class FinishedClaudeProcess {
   constructor(private readonly lines: string[]) {}
   acquire() {
     return { ready: Promise.resolve({
+      writeStdin: async () => {},
       readStdout: async () => {
         const line = this.lines.shift();
         return line === undefined ? undefined : new TextEncoder().encode(line);

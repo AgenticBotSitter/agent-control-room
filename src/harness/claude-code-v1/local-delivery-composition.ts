@@ -15,6 +15,26 @@ import { CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1 } from "./result-publication";
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const unavailable = (): never => { throw new Error("claude_code_local_delivery_unavailable"); };
 
+/** Fixed text-only stdin ABI candidate. It remains source-only until the exact
+ * installed Claude version and this byte shape pass owner-attended qualification. */
+export function encodeClaudeCodeLocalTextReviewInputV1(deliveryValue: unknown): Uint8Array {
+  const delivery = controllerWorkerDeliverySchemaV1.parse(deliveryValue);
+  const text = [
+    "You are completing one approved Agent Control Room text-review task.",
+    "Return only the requested bounded result. Do not retry, resume, or widen authority.",
+    "",
+    "Instructions:",
+    delivery.input.instructions,
+    "",
+    "Task:",
+    delivery.input.prompt,
+    "",
+  ].join("\n");
+  const bytes = new TextEncoder().encode(text);
+  if (bytes.byteLength < 1 || bytes.byteLength > 49_152) unavailable();
+  return bytes;
+}
+
 /** Installation-owned values only. A controller delivery cannot select a local profile. */
 export type ClaudeCodeLocalDeliveryBindingV1 = Readonly<{
   workerId: string;
@@ -151,8 +171,9 @@ export async function deliverClaudeCodeLocalTaskV1(config: ClaudeCodeLocalDelive
     await config.recheckBeforeAcquire(delivery, route, signal ?? new AbortController().signal);
     if (signal?.aborted) unavailable();
     fence();
+    const initialInput = encodeClaudeCodeLocalTextReviewInputV1(delivery);
     const session = createClaudeCodeOwnedProcessSessionV1({ binding: reservation.processBinding,
-      signal: signal ?? new AbortController().signal, acquire: config.acquire, cleanupMs: config.cleanupMs });
+      initialInput, signal: signal ?? new AbortController().signal, acquire: config.acquire, cleanupMs: config.cleanupMs });
     return Object.freeze({ reservation, session, state: "reserved_session_open" as const,
       startsWork: false as const, grantsExecutionAuthority: false as const });
   } catch {

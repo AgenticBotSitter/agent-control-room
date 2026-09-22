@@ -43,6 +43,7 @@ import { persistCodexTransmissionIntent } from "./codex-transmission-intent";
 import { persistCodexDeliveryReceipt } from "./codex-delivery-receipt";
 import { codexCurrentAdmissionSchemaV1, persistCodexActivationTransmissionIntent,
   type CodexCurrentAdmissionBasisV1 } from "./codex-activation-transmission-intent";
+import { taskProjectAgentOptionsSchema } from "./task-project-agents-wire";
 
 type CanonicalNativeApproval = ReturnType<typeof prepareNativeTaskApprovalWithLease> & {
   enrollment: NativeEnrollment; preparedAt: string; sourceInputDigest: string; inputDigest: string;
@@ -79,7 +80,8 @@ export function validateTaskAssignmentRoutes(routes: readonly TaskAssignmentRout
   return Object.freeze(snapshot.map(route => Object.freeze(route)));
 }
 export type TaskAssignmentOperation = Readonly<{ tenantId: string; workspaceId: string;
-  assign: TaskAssignmentCoordinator["assign"]; expire: TaskAssignmentCoordinator["expire"]; options: TaskAssignmentCoordinator["options"] }>;
+  assign: TaskAssignmentCoordinator["assign"]; expire: TaskAssignmentCoordinator["expire"];
+  options: TaskAssignmentCoordinator["options"]; projectOptions: TaskAssignmentCoordinator["projectOptions"] }>;
 /** A fully rechecked local queue pickup. It is deliberately not a runner input:
  * the private local composition must use it to reconstruct the controller
  * packet before it can ask the Mac-owned policy to admit a Hermes call. */
@@ -154,7 +156,8 @@ export class TaskAssignmentCoordinator {
     } catch { conflict(); }
   }
   webOperation(): TaskAssignmentOperation {
-    return Object.freeze({ ...this.scope, assign: this.assign.bind(this), expire: this.expire.bind(this), options: this.options.bind(this) });
+    return Object.freeze({ ...this.scope, assign: this.assign.bind(this), expire: this.expire.bind(this),
+      options: this.options.bind(this), projectOptions: this.projectOptions.bind(this) });
   }
   /** Trusted owner-review loader. It reconstructs one unsigned Codex permit from
    * locked canonical state and configured machine bindings. It is not a browser
@@ -1045,6 +1048,28 @@ export class TaskAssignmentCoordinator {
     if (!identity) conflict();
     return new WebSessionAuthority(db, this.scope, this.clock, "task").authenticated(identity, operation);
   }
+  /** One canonical eligibility predicate for both task detail and project aggregation. */
+  private async configuredCandidatesInSession(tx: DatabaseSession, project: Pick<ProjectView, "lifecycle" | "origin">,
+    job: JobRecord, plan: Awaited<ReturnType<TaskExecutionPlanner["readInSession"]>>, hasStoredAssignment: boolean) {
+    const workScope = plan && (plan.schema === "control-room.task-execution-plan/v7" || plan.schema === "control-room.task-execution-plan/v8")
+      ? "bounded_text_review" as const : "configured_task" as const;
+    const candidates: Array<{ nodeId: string; label: string; platform: "macos" | "windows" | "linux" | "cloud";
+      workScope: "bounded_text_review" | "configured_task" }> = [];
+    if (!hasStoredAssignment && plan && this.planner.isPlanAssignable(plan)
+      && project.lifecycle === "active" && project.origin === "ordinary" && job.state === "proposed") {
+      for (const route of this.routes.filter(route => route.executorId === job.authority.allowedExecutor)) {
+        const row = (await tx.query<{ payload: unknown }>("SELECT payload FROM control_nodes WHERE tenant_id=$1 AND id=$2",
+          [this.scope.tenantId, route.nodeId])).rows[0];
+        if (!row) continue;
+        const node = nodeRecordSchema.parse(row.payload);
+        if (node.id !== route.nodeId || node.tenantId !== this.scope.tenantId) unavailable();
+        candidates.push({ nodeId: node.id, label: node.displayName, platform: node.platform, workScope });
+      }
+    }
+    assertNoSecretMaterial(candidates);
+    return Object.freeze({ workScope, candidates: Object.freeze(candidates) });
+  }
+
   async options(identity: VerifiedWebIdentity, projectId: string, jobId: string) {
     localId.parse(projectId); localId.parse(jobId);
     return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
@@ -1054,23 +1079,68 @@ export class TaskAssignmentCoordinator {
       if (!plan || plan.projectId !== projectId) throw new WebAccessError("not_found");
       const stored = await this.stored(tx, job);
       const receipt = stored ? this.receipt(job, stored.attempt, stored.lease) : null;
-      const workScope = plan.schema === "control-room.task-execution-plan/v7" || plan.schema === "control-room.task-execution-plan/v8"
-        ? "bounded_text_review" as const : "configured_task" as const;
-      const candidates: Array<{ nodeId: string; label: string; platform: string; workScope: "bounded_text_review" | "configured_task" }> = [];
-      if (!stored && this.planner.isPlanAssignable(plan)
-        && project.lifecycle === "active" && project.origin === "ordinary" && job.state === "proposed") {
-        for (const route of this.routes.filter(route => route.executorId === job.authority.allowedExecutor)) {
-          const row = (await tx.query<{ payload: unknown }>("SELECT payload FROM control_nodes WHERE tenant_id=$1 AND id=$2",
-            [this.scope.tenantId, route.nodeId])).rows[0];
-          if (!row) continue;
-          const node = nodeRecordSchema.parse(row.payload);
-          if (node.id !== route.nodeId || node.tenantId !== this.scope.tenantId) unavailable();
-          candidates.push({ nodeId: node.id, label: node.displayName, platform: node.platform, workScope });
-        }
-      }
-      assertNoSecretMaterial(candidates);
+      const { candidates } = await this.configuredCandidatesInSession(tx, project, job, plan, !!stored);
       return { projectId, jobId, inputDigest: job.inputDigest, candidates, receipt, startsWork: false as const,
         candidateEvidence: "configured_routes_only" as const };
+    });
+  }
+
+  /**
+   * Read-only, bounded project view over the same task-level assignment predicate.
+   * It returns eligibility only: no route is reserved and no worker state is inferred.
+   */
+  async projectOptions(identity: VerifiedWebIdentity, projectId: string) {
+    localId.parse(projectId);
+    return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
+      actor.require("tasks.read", projectId); actor.require("tasks.assign", projectId, true);
+      const project = await this.projects.getViewInSession(tx, actor, projectId);
+      const rows = (await tx.query<{ id: string; state: string; version: number; workflow_id: string;
+        job: unknown; workflow: unknown; request: unknown }>(`SELECT j.id,j.state,j.version,j.workflow_id,
+          j.payload AS job,w.payload AS workflow,r.payload AS request
+        FROM control_jobs j
+        JOIN control_workflows w ON w.tenant_id=j.tenant_id AND w.id=j.workflow_id AND w.project_id=j.project_id
+        JOIN control_requests r ON r.tenant_id=w.tenant_id AND r.id=w.request_id AND r.project_id=j.project_id
+        WHERE j.tenant_id=$1 AND j.project_id=$2 AND j.state='proposed'
+        ORDER BY j.id COLLATE "C" LIMIT 21`, [this.scope.tenantId, projectId])).rows;
+      const workers = new Map<string, { nodeId: string; label: string; platform: "macos" | "windows" | "linux" | "cloud";
+        eligibleTasks: Array<{ jobId: string; title: string; inputDigest: string;
+          workScope: "bounded_text_review" | "configured_task" }> }>();
+      for (const row of rows.slice(0, 20)) {
+        const job = jobRecordSchema.parse(row.job), workflow = workflowRecordSchema.parse(row.workflow), request = requestRecordSchema.parse(row.request);
+        if (job.tenantId !== this.scope.tenantId || workflow.tenantId !== this.scope.tenantId || request.tenantId !== this.scope.tenantId
+          || job.projectId !== projectId || workflow.projectId !== projectId || request.projectId !== projectId
+          || job.id !== row.id || job.state !== row.state || job.version !== Number(row.version)
+          || job.workflowId !== row.workflow_id || workflow.id !== job.workflowId || request.id !== workflow.requestId
+          || !workflow.jobIds.includes(job.id)) unavailable();
+        const plan = await this.planner.readInSession(tx, job.id);
+        if (plan && plan.projectId !== projectId) unavailable();
+        const stored = await this.stored(tx, job, false);
+        const { candidates } = await this.configuredCandidatesInSession(tx, project, job, plan, !!stored);
+        for (const candidate of candidates) {
+          const existing = workers.get(candidate.nodeId);
+          if (existing && (existing.label !== candidate.label || existing.platform !== candidate.platform)) unavailable();
+          const worker: { nodeId: string; label: string; platform: "macos" | "windows" | "linux" | "cloud";
+            eligibleTasks: Array<{ jobId: string; title: string; inputDigest: string;
+              workScope: "bounded_text_review" | "configured_task" }> } = existing ?? {
+                nodeId: candidate.nodeId,
+                label: candidate.label,
+                platform: candidate.platform,
+                eligibleTasks: [],
+              };
+          worker.eligibleTasks.push({ jobId: job.id, title: request.title, inputDigest: job.inputDigest,
+            workScope: candidate.workScope });
+          workers.set(candidate.nodeId, worker);
+        }
+      }
+      const value = taskProjectAgentOptionsSchema.parse({
+        projectId, eligibilitySource: "configured", workers: [...workers.values()].sort((left, right) => left.nodeId < right.nodeId ? -1 : left.nodeId > right.nodeId ? 1 : 0)
+          .map(worker => ({ ...worker, eligibleTasks: worker.eligibleTasks.sort((left, right) => left.jobId < right.jobId ? -1 : left.jobId > right.jobId ? 1 : 0) })),
+        tasksExamined: Math.min(rows.length, 20), additionalTasksOmitted: rows.length > 20,
+        candidateEvidence: "configured_routes_only", observedAt: actor.now, startsWork: false,
+        grantsAssignmentAuthority: false, grantsExecutionAuthority: false,
+      });
+      assertNoSecretMaterial(value);
+      return value;
     });
   }
   private ids(jobId: string) {
@@ -1097,16 +1167,18 @@ export class TaskAssignmentCoordinator {
       leaseState: lease.state, leaseCurrent: lease.state === "active" && Date.parse(lease.expiresAt) > this.clock(),
       startsWork: false as const, grantsExecutionAuthority: false as const };
   }
-  private async stored(tx: DatabaseSession, job: JobRecord) {
+  private async stored(tx: DatabaseSession, job: JobRecord, lock = true) {
     const ids = this.ids(job.id);
     const row = (await tx.query<{ payload: unknown; state: string; version: number; node_id: string; attempt_id: string;
       epoch: number; acquired_at: string | Date; expires_at: string | Date }>(
-      "SELECT payload,state,version,node_id,attempt_id,epoch,acquired_at,expires_at FROM control_leases WHERE tenant_id=$1 AND job_id=$2 AND id=$3 FOR UPDATE",
+      `SELECT payload,state,version,node_id,attempt_id,epoch,acquired_at,expires_at FROM control_leases
+       WHERE tenant_id=$1 AND job_id=$2 AND id=$3${lock ? " FOR UPDATE" : ""}`,
       [this.scope.tenantId, job.id, ids.leaseId])).rows[0];
     if (!row) return undefined;
     const lease = leaseRecordSchema.parse(row.payload);
     const attemptRow = (await tx.query<{ payload: unknown; state: string; version: number; node_id: string; lease_epoch: number; attempt_number: number }>(
-      "SELECT payload,state,version,node_id,lease_epoch,attempt_number FROM control_attempts WHERE tenant_id=$1 AND job_id=$2 AND id=$3 FOR UPDATE",
+      `SELECT payload,state,version,node_id,lease_epoch,attempt_number FROM control_attempts
+       WHERE tenant_id=$1 AND job_id=$2 AND id=$3${lock ? " FOR UPDATE" : ""}`,
       [this.scope.tenantId, job.id, ids.attemptId])).rows[0];
     if (!attemptRow) return unavailable();
     const attempt = attemptRecordSchema.parse(attemptRow.payload);

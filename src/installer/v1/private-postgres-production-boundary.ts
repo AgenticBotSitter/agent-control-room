@@ -363,8 +363,9 @@ class ParentStage {
     const path = join(this.root, relativePath);
     if (!inside(this.root, path)) return refuse();
     await this.#parents(path);
-    const handle = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL
+    let handle: FileHandle | undefined = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL
       | (constants.O_NOFOLLOW ?? 0), mode);
+    let held: FileHandle | undefined;
     try {
       await handle.writeFile(bytes); await handle.sync(); await handle.chmod(mode);
       const value = await handle.stat(), captured = identity(value);
@@ -373,8 +374,16 @@ class ParentStage {
       await verifyAcl(handle, captured, this.#ports, this.#signal);
       const named = identity(await stat(path));
       if (!same(captured, named) || await realpath(path) !== path) return refuse();
-      this.#handles.push(handle); this.#files.push(Object.freeze({ path, handle, identity: captured, directory: false })); return path;
-    } catch (error) { await handle.close().catch(() => {}); throw error; }
+      await handle.close(); handle = undefined;
+      held = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+      const heldIdentity = identity(await held.stat());
+      if (!same(captured, heldIdentity)) return refuse();
+      await verifyAcl(held, heldIdentity, this.#ports, this.#signal);
+      this.#handles.push(held); this.#files.push(Object.freeze({ path, handle: held,
+        identity: heldIdentity, directory: false })); held = undefined; return path;
+    } catch (error) {
+      await handle?.close().catch(() => {}); await held?.close().catch(() => {}); throw error;
+    }
   }
 
   async current(): Promise<boolean> {

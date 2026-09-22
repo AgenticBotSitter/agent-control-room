@@ -15,6 +15,7 @@ import { ProjectScheduleStatusPanel } from "./schedule-status";
 import { ProjectModuleAvailability } from "./project-module-availability";
 import { useInstallationTopology } from "./installation-topology";
 import { InstallationTopologySummary } from "./installation-topology-summary";
+import { ProjectAgentWorkspace } from "./project-agent-workspace";
 
 /** Browser-side canonical JSON: stable across equivalent object key ordering. Mirrors the
  * server's canonical-digest implementation so the template-selection key the browser sends
@@ -242,12 +243,8 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
             <p className="private-note">Saved revision {project.version} · <ConfiguredTimestamp value={project.updatedAt} prefix="Updated" /></p>
           </section>}
           <ProjectModuleAvailability presentation={project.presentation} />
-          {section === "agents" && <><section className="private-panel"><h2>Project agents</h2>
-            <p>Saved connection records and optional session observations show what can be verified. They do not grant a worker permission to take work.</p>
-            <p className="private-note">Project-specific eligibility, capabilities, available slots, current work and usage are unavailable here.
-              Cancel and resume are not supported from this page.</p>
-            <a className="private-action-link" href="/workers">Open all worker connections</a>
-          </section><ProjectAgentInstallationStatus topology={installationTopology} />
+          {section === "agents" && <><ProjectAgentWorkspace projectId={projectId} />
+            <ProjectAgentInstallationStatus topology={installationTopology} />
           {sessionObservations && <SessionObservations projectId={projectId} />}</>}
           {section === "automations" && <ProjectScheduleStatusPanel projectId={projectId} />}
           {section === "settings" && <section className="private-panel"><h2>Project status</h2>
@@ -265,7 +262,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
           </section>}
           {section === "overview" && <><ProjectOverviewActivity key={projectId} projectId={projectId} />
             <section className="private-panel"><h2>Worker availability</h2>
-              <p>Project-specific eligibility, capabilities, available slots and current work are unavailable in this view.</p>
+              <p>Open Project agents to compare task-specific eligibility with separately recorded availability, capacity, connections, and current project work.</p>
               <a className="private-action-link" href={`/projects/${encodeURIComponent(projectId)}/agents`}>Open project agents</a>
             </section>
             {sessionObservations && <SessionObservations projectId={projectId} />}</>}

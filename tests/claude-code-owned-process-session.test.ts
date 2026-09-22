@@ -68,6 +68,9 @@ class FakeClaudeProcess {
   ended = false;
   closeStdinCalls = 0;
   terminateCalls = 0;
+  readonly closeStdinSignals: AbortSignal[] = [];
+  readonly stdinWrites: Uint8Array[] = [];
+  readonly events: string[] = [];
   private pendingStdout: Deferred<Uint8Array | undefined> | undefined;
   private readonly exitGate = deferred<Readonly<{ code: number | null; signal: string | null }>>();
 
@@ -107,7 +110,9 @@ class FakeClaudeProcess {
 
   port(): ClaudeCodeProcessBytePortV1 {
     return {
+      writeStdin: async bytes => { this.events.push("write"); this.stdinWrites.push(Uint8Array.from(bytes)); },
       readStdout: async () => {
+        this.events.push("read");
         const next = this.stdout.shift();
         if (next !== undefined) return next;
         if (this.ended) return undefined;
@@ -119,9 +124,14 @@ class FakeClaudeProcess {
         await this.exitGate.promise;
         return undefined;
       },
-      closeStdin: async () => {
+      closeStdin: async signal => {
+        this.events.push("close-stdin");
         this.closeStdinCalls += 1;
-        if (this.options.hangCloseStdin) await new Promise(() => {});
+        this.closeStdinSignals.push(signal);
+        if (this.options.hangCloseStdin) await new Promise<void>((_, reject) => {
+          if (signal.aborted) reject(new Error("close_stdin_aborted"));
+          else signal.addEventListener("abort", () => reject(new Error("close_stdin_aborted")), { once: true });
+        });
       },
       terminate: async () => {
         this.terminateCalls += 1;
@@ -142,9 +152,13 @@ test("stdout is framed into lines and a clean close reports a certain dispositio
   process.push('{"type":"system"}\n{"type":"assistant"}\n');
   const controller = new AbortController();
   const session = createClaudeCodeOwnedProcessSessionV1({
-    binding: freshBinding(), signal: controller.signal, acquire: () => process.acquire(), cleanupMs: 500,
+    binding: freshBinding(), initialInput: new TextEncoder().encode("bounded"), signal: controller.signal, acquire: () => process.acquire(), cleanupMs: 500,
   });
   const wire = await session.ready;
+  assert.equal(new TextDecoder().decode(process.stdinWrites[0]), "bounded");
+  assert.equal(process.stdinWrites.length, 1, "the exact initial input is written once");
+  assert.deepEqual(process.events.slice(0, 3), ["write", "close-stdin", "read"],
+    "stdin is written and closed before stdout is read");
   assert.equal(await wire.readLine(new AbortController().signal), '{"type":"system"}');
   assert.equal(await wire.readLine(new AbortController().signal), '{"type":"assistant"}');
   session.recordTerminalResultObserved();
@@ -163,7 +177,7 @@ test("stdout is framed into lines and a clean close reports a certain dispositio
 test("a natural stdout EOF leaves an already emitted result readable", async () => {
   const process = new FakeClaudeProcess();
   const session = createClaudeCodeOwnedProcessSessionV1({
-    binding: freshBinding(), signal: new AbortController().signal,
+    binding: freshBinding(), initialInput: new TextEncoder().encode("bounded"), signal: new AbortController().signal,
     acquire: () => process.acquire(), cleanupMs: 500,
   });
   const wire = await session.ready;
@@ -192,7 +206,7 @@ test("a natural stdout EOF leaves an already emitted result readable", async () 
 test("a natural EOF resolves a consumer that was already waiting for a line", async () => {
   const process = new FakeClaudeProcess();
   const session = createClaudeCodeOwnedProcessSessionV1({
-    binding: freshBinding(), signal: new AbortController().signal,
+    binding: freshBinding(), initialInput: new TextEncoder().encode("bounded"), signal: new AbortController().signal,
     acquire: () => process.acquire(), cleanupMs: 500,
   });
   const wire = await session.ready;
@@ -208,7 +222,7 @@ test("a natural EOF resolves a consumer that was already waiting for a line", as
 test("a truncated trailing line at stdout EOF is still fatal", async () => {
   const process = new FakeClaudeProcess();
   const session = createClaudeCodeOwnedProcessSessionV1({
-    binding: freshBinding(), signal: new AbortController().signal,
+    binding: freshBinding(), initialInput: new TextEncoder().encode("bounded"), signal: new AbortController().signal,
     acquire: () => process.acquire(), cleanupMs: 200,
   });
   const wire = await session.ready;
@@ -224,13 +238,13 @@ test("the same binding cannot be started twice", async () => {
   const first = new FakeClaudeProcess();
   const controller = new AbortController();
   const session = createClaudeCodeOwnedProcessSessionV1({
-    binding, signal: controller.signal, acquire: () => first.acquire(), cleanupMs: 200,
+    binding, initialInput: new TextEncoder().encode("bounded"), signal: controller.signal, acquire: () => first.acquire(), cleanupMs: 200,
   });
   await session.ready;
   const second = new FakeClaudeProcess();
   let acquiredAgain = false;
   assert.throws(() => createClaudeCodeOwnedProcessSessionV1({
-    binding: { ...binding }, signal: new AbortController().signal,
+    binding: { ...binding }, initialInput: new TextEncoder().encode("bounded"), signal: new AbortController().signal,
     acquire: () => { acquiredAgain = true; return second.acquire(); }, cleanupMs: 200,
   }), /claude_code_process_session_duplicate_binding/);
   assert.equal(acquiredAgain, false, "a refused duplicate must never reach acquire");
@@ -241,17 +255,17 @@ test("a binding refused as a duplicate stays refused after the first session clo
   const binding = freshBinding();
   const process = new FakeClaudeProcess();
   const session = createClaudeCodeOwnedProcessSessionV1({
-    binding, signal: new AbortController().signal, acquire: () => process.acquire(), cleanupMs: 200,
+    binding, initialInput: new TextEncoder().encode("bounded"), signal: new AbortController().signal, acquire: () => process.acquire(), cleanupMs: 200,
   });
   await session.ready;
   await session.close();
   assert.throws(() => createClaudeCodeOwnedProcessSessionV1({
-    binding, signal: new AbortController().signal,
+    binding, initialInput: new TextEncoder().encode("bounded"), signal: new AbortController().signal,
     acquire: () => new FakeClaudeProcess().acquire(), cleanupMs: 200,
   }), /claude_code_process_session_duplicate_binding/);
   // A restart is only expressible as a fresh process attempt identity.
   const restart = createClaudeCodeOwnedProcessSessionV1({
-    binding: { ...binding, processAttemptId: "attempt.process.restart" },
+    binding: { ...binding, processAttemptId: "attempt.process.restart" }, initialInput: new TextEncoder().encode("bounded"),
     signal: new AbortController().signal, acquire: () => new FakeClaudeProcess().acquire(), cleanupMs: 200,
   });
   await restart.ready;
@@ -261,7 +275,7 @@ test("a binding refused as a duplicate stays refused after the first session clo
 test("a cancellation whose termination never confirms reports cleanup as uncertain", async () => {
   const process = new FakeClaudeProcess({ hangTerminate: true });
   const session = createClaudeCodeOwnedProcessSessionV1({
-    binding: freshBinding(), signal: new AbortController().signal,
+    binding: freshBinding(), initialInput: new TextEncoder().encode("bounded"), signal: new AbortController().signal,
     acquire: () => process.acquire(), cleanupMs: 40,
   });
   await session.ready;
@@ -272,11 +286,25 @@ test("a cancellation whose termination never confirms reports cleanup as uncerta
   assert.equal(disposition.resubmissionSafe, false);
 });
 
+test("a closeStdin startup deadline immediately aborts its own signal and cleanup still retires custody", async () => {
+  const process = new FakeClaudeProcess({ hangCloseStdin: true });
+  const session = createClaudeCodeOwnedProcessSessionV1({
+    binding: freshBinding(), initialInput: new TextEncoder().encode("bounded"),
+    signal: new AbortController().signal, acquire: () => process.acquire(), cleanupMs: 20,
+  });
+  await assert.rejects(session.ready, /claude_code_process_session_unavailable/);
+  assert.equal(process.closeStdinSignals.length, 1);
+  assert.equal(process.closeStdinSignals[0]?.aborted, true,
+    "the closeStdin deadline must cancel the exact signal passed to the native port");
+  await assert.rejects(session.close(), /claude_code_process_session_cleanup_uncertain/);
+  assert.equal(process.terminateCalls, 1, "failed stdin closure still proceeds through bounded process retirement");
+});
+
 test("a restart after an uncertain close is never treated as safe to resubmit", async () => {
-  const first = new FakeClaudeProcess({ hangCloseStdin: true, hangTerminate: true });
+  const first = new FakeClaudeProcess({ hangTerminate: true });
   const original = freshBinding();
   const session = createClaudeCodeOwnedProcessSessionV1({
-    binding: original, signal: new AbortController().signal,
+    binding: original, initialInput: new TextEncoder().encode("bounded"), signal: new AbortController().signal,
     acquire: () => first.acquire(), cleanupMs: 40,
   });
   await session.ready;
@@ -286,7 +314,7 @@ test("a restart after an uncertain close is never treated as safe to resubmit", 
   assert.equal(before.resubmissionSafe, false);
 
   const restart = createClaudeCodeOwnedProcessSessionV1({
-    binding: { ...original, processAttemptId: "attempt.process.after-uncertain" },
+    binding: { ...original, processAttemptId: "attempt.process.after-uncertain" }, initialInput: new TextEncoder().encode("bounded"),
     signal: new AbortController().signal, acquire: () => new FakeClaudeProcess().acquire(), cleanupMs: 200,
   });
   await restart.ready;
@@ -301,7 +329,7 @@ test("a restart after an uncertain close is never treated as safe to resubmit", 
 test("a malformed process exit shape makes cleanup uncertain", async () => {
   const process = new FakeClaudeProcess({ exitValue: { code: 0, signal: "SIGTERM" } });
   const session = createClaudeCodeOwnedProcessSessionV1({
-    binding: freshBinding(), signal: new AbortController().signal,
+    binding: freshBinding(), initialInput: new TextEncoder().encode("bounded"), signal: new AbortController().signal,
     acquire: () => process.acquire(), cleanupMs: 200,
   });
   await session.ready;
@@ -313,7 +341,7 @@ test("a carriage return or an overlong line on stdout is fatal to the session", 
   for (const chunk of ["{\"type\":\"system\"}\r\n", `${"x".repeat(300_000)}\n`]) {
     const process = new FakeClaudeProcess();
     const session = createClaudeCodeOwnedProcessSessionV1({
-      binding: freshBinding(), signal: new AbortController().signal,
+      binding: freshBinding(), initialInput: new TextEncoder().encode("bounded"), signal: new AbortController().signal,
       acquire: () => process.acquire(), cleanupMs: 200,
     });
     const wire = await session.ready;
@@ -328,7 +356,7 @@ test("an aborted caller signal is refused before any acquisition", () => {
   controller.abort();
   let acquired = false;
   assert.throws(() => createClaudeCodeOwnedProcessSessionV1({
-    binding: freshBinding(), signal: controller.signal,
+    binding: freshBinding(), initialInput: new TextEncoder().encode("bounded"), signal: controller.signal,
     acquire: () => { acquired = true; return new FakeClaudeProcess().acquire(); }, cleanupMs: 200,
   }), /claude_code_process_session_unavailable/);
   assert.equal(acquired, false);
@@ -344,7 +372,7 @@ test("the public package exposes no way to reset or reacquire an already-started
   const binding = freshBinding();
   const first = new FakeClaudeProcess();
   const session = await claudeCodeConnectorPackage.createClaudeCodeOwnedProcessSessionV1({
-    binding, signal: new AbortController().signal, acquire: () => first.acquire(), cleanupMs: 200,
+    binding, initialInput: new TextEncoder().encode("bounded"), signal: new AbortController().signal, acquire: () => first.acquire(), cleanupMs: 200,
   });
   await session.ready;
 
@@ -352,7 +380,7 @@ test("the public package exposes no way to reset or reacquire an already-started
   // is still refused as a duplicate even after the first session's own lifecycle.
   let acquiredAgain = false;
   assert.throws(() => claudeCodeConnectorPackage.createClaudeCodeOwnedProcessSessionV1({
-    binding: { ...binding }, signal: new AbortController().signal,
+    binding: { ...binding }, initialInput: new TextEncoder().encode("bounded"), signal: new AbortController().signal,
     acquire: () => { acquiredAgain = true; return new FakeClaudeProcess().acquire(); }, cleanupMs: 200,
   }), /claude_code_process_session_duplicate_binding/);
   assert.equal(acquiredAgain, false, "a refused duplicate must never reach acquire, with or without a reset path");
@@ -364,6 +392,8 @@ test("the connector modules read no environment, file, process or network source
   const modules = [
     "stream-json-decode.ts",
     "owned-process-session.ts",
+    "private-process-acquisition.ts",
+    "private-installed-process-host.ts",
     "unsupported-operations.ts",
     "connector-profile.ts",
     "result-publication.ts",
@@ -447,7 +477,7 @@ async function terminalEvidence(runId: string, sessionId: string, resultText: st
   const process = new FakeClaudeProcess();
   const processBinding = freshBinding({ runId, attemptId: `attempt:${runId}` });
   const session = createClaudeCodeOwnedProcessSessionV1({
-    binding: processBinding, signal: new AbortController().signal,
+    binding: processBinding, initialInput: new TextEncoder().encode("bounded"), signal: new AbortController().signal,
     acquire: () => { acquisitions += 1; return process.acquire(); }, cleanupMs: 500,
   });
   const wire = await session.ready;
@@ -587,7 +617,7 @@ test("an already-reserved Claude session publishes once without a second acquisi
   const f = await bridgeFixture(runId, sha256Digest(JSON.parse(terminalLine))); t.after(f.close);
   const process = new FakeClaudeProcess();
   let acquisitions = 0;
-  const session = createClaudeCodeOwnedProcessSessionV1({ binding: processBinding,
+  const session = createClaudeCodeOwnedProcessSessionV1({ binding: processBinding, initialInput: new TextEncoder().encode("bounded"),
     signal: new AbortController().signal, acquire: () => { acquisitions++; return process.acquire(); }, cleanupMs: 500 });
   const reservedSession = { reservation: { delivery, receipt, reservationDigest, processBinding,
     startsWork: false as const, grantsExecutionAuthority: false as const, permitsRetry: false as const,
@@ -624,8 +654,9 @@ test("a reserved Claude session with mismatched retained lineage is refused befo
   const processBinding = { processAttemptId: `claude-process:${reservationDigest.slice(7)}`,
     runId: delivery.identity.runId, attemptId: delivery.identity.attemptId, invocationDigest: reservationDigest };
   const process = new FakeClaudeProcess();
-  const session = createClaudeCodeOwnedProcessSessionV1({ binding: processBinding, signal: new AbortController().signal,
+  const session = createClaudeCodeOwnedProcessSessionV1({ binding: processBinding, initialInput: new TextEncoder().encode("bounded"), signal: new AbortController().signal,
     acquire: () => process.acquire(), cleanupMs: 500 });
+  await session.ready;
   await assert.rejects(() => publishClaudeCodeReservedSessionResultV1({ publication: {} as DurableResultPublicationConfigurationV1,
     reservedSession: { reservation: { delivery, receipt, reservationDigest, processBinding, startsWork: false,
       grantsExecutionAuthority: false, permitsRetry: false, permitsResume: false }, session },

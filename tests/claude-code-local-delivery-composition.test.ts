@@ -32,21 +32,24 @@ function accepted(packet: ControllerWorkerDeliveryV1, receivedAt = at(2000)) {
   return { ...material, receiptDigest: sha256Digest(material) };
 }
 
-function fakePort(): ClaudeCodeProcessBytePortV1 {
+function fakePort(state?: { writes: Uint8Array[]; events: string[] }): ClaudeCodeProcessBytePortV1 {
   let ended = false;
   const exit = new Promise<Readonly<{ code: number | null; signal: string | null }>>(resolve => {
     queueMicrotask(() => { if (!ended) { ended = true; resolve({ code: 0, signal: null }); } });
   });
-  return { readStdout: async () => undefined, readStderr: async () => undefined,
-    closeStdin: async () => {}, terminate: async () => { ended = true; }, exited: exit };
+  return { writeStdin: async bytes => { state?.events.push("write"); state?.writes.push(Uint8Array.from(bytes)); },
+    readStdout: async () => { state?.events.push("read"); return undefined; }, readStderr: async () => undefined,
+    closeStdin: async () => { state?.events.push("close-stdin"); }, terminate: async () => { ended = true; }, exited: exit };
 }
 
 function composition(f: Awaited<ReturnType<typeof nativeTaskFixture>>, packet: ControllerWorkerDeliveryV1,
-  state: { revoked: boolean; receives: number; acquires: number; rechecks?: number; now?: number }) {
+  state: { revoked: boolean; receives: number; acquires: number; rechecks?: number; now?: number;
+    writes?: Uint8Array[]; events?: string[] }) {
   return { db: f.db, integrityKey, binding: { ...worker, authorityDigest, acceptanceProfileId: "profile:claude", acceptanceProfileDigest },
     authority: { currentAdmissionDigest: () => authorityDigest, assertCurrent() { if (state.revoked) throw new Error("revoked"); } },
     receiptPort: { async receive(value: ControllerWorkerDeliveryV1) { state.receives++; return accepted(value); } },
-    acquire: (): OwnedClaudeCodeProcessV1 => { state.acquires++; return { ready: Promise.resolve(fakePort()), close: async () => {} }; }, cleanupMs: 200,
+    acquire: (): OwnedClaudeCodeProcessV1 => { state.acquires++; return { ready: Promise.resolve(fakePort(
+      state.writes && state.events ? { writes: state.writes, events: state.events } : undefined)), close: async () => {} }; }, cleanupMs: 200,
     async recheckBeforeAcquire(value: ControllerWorkerDeliveryV1, route: { kind: "local"; workerId: string }, signal: AbortSignal) {
       if (signal.aborted || value.deliveryDigest !== packet.deliveryDigest || route.workerId !== worker.workerId || state.revoked)
         throw new Error("canonical_delivery_changed");
@@ -57,10 +60,14 @@ function composition(f: Awaited<ReturnType<typeof nativeTaskFixture>>, packet: C
 
 test("Claude local delivery reserves the exact shared receipt before fake acquisition, and duplicate/restart never acquires again", async t => {
   const f = await nativeTaskFixture(); t.after(f.close);
-  const packet = delivery(), state = { revoked: false, receives: 0, acquires: 0, rechecks: 0 }, config = composition(f, packet, state);
+  const packet = delivery(), state = { revoked: false, receives: 0, acquires: 0, rechecks: 0,
+    writes: [] as Uint8Array[], events: [] as string[] }, config = composition(f, packet, state);
   const first = await deliverClaudeCodeLocalTaskV1(config, packet, { kind: "local", workerId: worker.workerId }, at(2000));
   assert.equal(first.state, "reserved_session_open"); assert.equal(state.acquires, 1);
-  if (first.state === "reserved_session_open") await first.session.close();
+  if (first.state === "reserved_session_open") { await first.session.ready; await first.session.close(); }
+  assert.equal(state.writes.length, 1);
+  assert.match(new TextDecoder().decode(state.writes[0]), /Task:\nSummarize the supplied synthetic text\./);
+  assert.deepEqual(state.events.slice(0, 3), ["write", "close-stdin", "read"]);
   state.revoked = true;
   const replay = await deliverClaudeCodeLocalTaskV1(config, packet, { kind: "local", workerId: worker.workerId }, at(2000));
   assert.equal(replay.state, "already_reserved"); assert.deepEqual({ receives: state.receives, acquires: state.acquires, rechecks: state.rechecks }, { receives: 1, acquires: 1, rechecks: 1 });
