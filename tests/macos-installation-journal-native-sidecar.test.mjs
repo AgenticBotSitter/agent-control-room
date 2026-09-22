@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import fsPromises from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import osModule, { tmpdir } from "node:os";
@@ -18,6 +18,14 @@ const digest = bytes => createHash("sha256").update(bytes).digest("hex");
 const refusal = { message: "macos_installation_journal_native_sidecar_refused" };
 const macosTest = process.platform === "darwin" && ["arm64", "x64"].includes(process.arch) ? test : test.skip;
 const nonMacosTest = process.platform === "darwin" ? test.skip : test;
+
+function stagingInput(sidecarRoot, stagingParent, verified, overrides = {}) {
+  return { sidecarRoot, stagingParent, expectedReleaseVersion: verified.releaseVersion,
+    expectedSidecarManifestSha256: verified.sidecarManifestSha256,
+    expectedArchiveSha256: verified.archiveSha256,
+    expectedArtifactManifestSha256: verified.artifactManifestSha256,
+    expectedExecutableSha256: verified.executableSha256, ...overrides };
+}
 
 function tarChecksum(header) {
   header.fill(0x20, 148, 156); const text = header.reduce((total, byte) => total + byte, 0).toString(8).padStart(6, "0");
@@ -64,7 +72,7 @@ macosTest("sidecar verifies exact native identity and explicitly stages the fact
       releaseVersion: "0.1.0", architecture: process.arch, macosVersion: "13.0" });
     assert.equal(verified.executableSha256, direct.executableSha256);
     const stageParent = join(root, "stage-parent"); await mkdir(stageParent, { mode: 0o700 });
-    const staged = await stageMacosInstallationJournalNativeFactoryInputV1({ sidecarRoot, stagingParent: stageParent });
+    const staged = await stageMacosInstallationJournalNativeFactoryInputV1(stagingInput(sidecarRoot, stageParent, verified));
     assert.equal(staged.installationJournalNativeFactoryInput.executableSha256, verified.executableSha256);
     assert.equal((await lstat(staged.installationJournalNativeFactoryInput.executablePath)).mode & 0o7777, 0o700);
     assert.deepEqual(await readFile(staged.installationJournalNativeFactoryInput.executablePath), Buffer.from("inert fixture bytes\n"));
@@ -127,7 +135,8 @@ macosTest("private staging refuses a sidecar built for the other supported archi
     await mkdir(parent, { mode: 0o700 });
     await copyVerifiedMacosInstallationJournalNativeSidecarV1({ artifactDirectory: source,
       destinationDirectory: sidecarRoot, releaseVersion: "0.1.0" });
-    await assert.rejects(stageMacosInstallationJournalNativeFactoryInputV1({ sidecarRoot, stagingParent: parent }), refusal);
+    const verified = await verifyMacosInstallationJournalNativeSidecarV1(sidecarRoot);
+    await assert.rejects(stageMacosInstallationJournalNativeFactoryInputV1(stagingInput(sidecarRoot, parent, verified)), refusal);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -138,10 +147,11 @@ macosTest("private staging refuses a host below the sidecar minimum macOS versio
     await mkdir(parent, { mode: 0o700 });
     await copyVerifiedMacosInstallationJournalNativeSidecarV1({ artifactDirectory: source,
       destinationDirectory: sidecarRoot, releaseVersion: "0.1.0" });
+    const verified = await verifyMacosInstallationJournalNativeSidecarV1(sidecarRoot);
     const hook = mock.method(osModule, "release", () => "21.6.0");
     syncBuiltinESMExports();
     try {
-      await assert.rejects(stageMacosInstallationJournalNativeFactoryInputV1({ sidecarRoot, stagingParent: parent }), refusal);
+      await assert.rejects(stageMacosInstallationJournalNativeFactoryInputV1(stagingInput(sidecarRoot, parent, verified)), refusal);
     } finally { hook.mock.restore(); syncBuiltinESMExports(); }
   } finally { await rm(root, { recursive: true, force: true }); }
 });
@@ -153,7 +163,8 @@ nonMacosTest("private staging refuses the unsupported current host platform", as
     await mkdir(parent, { mode: 0o700 });
     await copyVerifiedMacosInstallationJournalNativeSidecarV1({ artifactDirectory: source,
       destinationDirectory: sidecarRoot, releaseVersion: "0.1.0" });
-    await assert.rejects(stageMacosInstallationJournalNativeFactoryInputV1({ sidecarRoot, stagingParent: parent }), refusal);
+    const verified = await verifyMacosInstallationJournalNativeSidecarV1(sidecarRoot);
+    await assert.rejects(stageMacosInstallationJournalNativeFactoryInputV1(stagingInput(sidecarRoot, parent, verified)), refusal);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -204,9 +215,32 @@ macosTest("staging uses captured verified archive bytes despite later sidecar-pa
     });
     syncBuiltinESMExports();
     try {
-      const staged = await stageMacosInstallationJournalNativeFactoryInputV1({ sidecarRoot, stagingParent: parent });
+      const verified = await verifyMacosInstallationJournalNativeSidecarV1(sidecarRoot);
+      const staged = await stageMacosInstallationJournalNativeFactoryInputV1(stagingInput(sidecarRoot, parent, verified));
       assert.deepEqual(await readFile(staged.installationJournalNativeFactoryInput.executablePath), Buffer.from("inert fixture bytes\n"));
     } finally { hook.mock.restore(); syncBuiltinESMExports(); }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+macosTest("private staging binds the outer release and every bounded native digest before creating a directory", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "acr-native-sidecar-release-binding-")));
+  try {
+    const source = await artifact(root, process.arch), sidecarRoot = join(root, "sidecar"), parent = join(root, "parent");
+    await mkdir(parent, { mode: 0o700 });
+    await copyVerifiedMacosInstallationJournalNativeSidecarV1({ artifactDirectory: source,
+      destinationDirectory: sidecarRoot, releaseVersion: "0.1.0" });
+    const verified = await verifyMacosInstallationJournalNativeSidecarV1(sidecarRoot);
+    for (const changed of [
+      { expectedReleaseVersion: "0.1.1" },
+      { expectedSidecarManifestSha256: `sha256:${"0".repeat(64)}` },
+      { expectedArchiveSha256: `sha256:${"1".repeat(64)}` },
+      { expectedArtifactManifestSha256: `sha256:${"2".repeat(64)}` },
+      { expectedExecutableSha256: `sha256:${"3".repeat(64)}` },
+    ]) {
+      await assert.rejects(stageMacosInstallationJournalNativeFactoryInputV1(
+        stagingInput(sidecarRoot, parent, verified, changed)), refusal);
+      assert.deepEqual(await readdir(parent), []);
+    }
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

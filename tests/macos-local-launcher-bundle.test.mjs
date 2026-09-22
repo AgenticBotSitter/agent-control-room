@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { access, chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import { access, chmod, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { setTimeout as wait } from "node:timers/promises";
@@ -16,13 +16,15 @@ import {
   verifyExtractedMacosLocalLauncherBundleV1,
 } from "../src/installer/v1/macos-local-launcher-bundle.mjs";
 import { runLocalLauncherCoreV1 } from "../src/installer/v1/local-launcher-core.mjs";
+import { INSTALLATION_JOURNAL_NATIVE_REVIEWED_CFLAGS_V1 } from
+  "../src/installer/v1/macos-installation-journal-native-sidecar.mjs";
 import { PROTECTED_DIRECTORY_NATIVE_REVIEWED_CFLAGS_V1 } from "../src/installer/v1/macos-protected-directory-native-sidecar.mjs";
 
 const run = promisify(execFile);
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const refusal = { message: "macos_local_launcher_bundle_refused" };
 const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
-let suiteRoot, releaseDirectory, nativeArtifactDirectory, bundleRoot, assembled;
+let suiteRoot, releaseDirectory, nativeArtifactDirectory, journalNativeArtifactDirectory, bundleRoot, assembled;
 
 async function writeNativeArtifact(directory, architecture = "arm64") {
   const staging = join(directory, "staging"); await mkdir(staging, { recursive: true });
@@ -46,6 +48,30 @@ async function writeNativeArtifact(directory, architecture = "arm64") {
   await rm(staging, { recursive: true, force: true });
 }
 
+async function writeJournalNativeArtifact(directory, architecture = "arm64") {
+  const staging = join(directory, "staging"); await mkdir(staging, { recursive: true });
+  const contents = new Map([["LICENSE", Buffer.from("journal native license\n")], ["NOTICE", Buffer.from("journal native notice\n")],
+    ["installation-journal-session-v1", Buffer.from("fixture journal native helper\n")]]);
+  for (const [name, bytes] of contents) await writeFile(join(staging, name), bytes,
+    { mode: name === "installation-journal-session-v1" ? 0o755 : 0o644 });
+  const files = [...contents].map(([path, bytes]) => ({ path, bytes: bytes.byteLength, sha256: sha256(bytes),
+    mode: path === "installation-journal-session-v1" ? "0755" : "0644" }));
+  const manifest = { schema: "control-room.installation-journal-native-artifact/v1", platform: "darwin", architecture,
+    minimumMacos: "13.0", protocol: "ACRJNL1", sourceSha256: "b".repeat(64),
+    toolchain: { compiler: "Apple clang version 16.0.0", sdkVersion: "16.0",
+      flags: [...INSTALLATION_JOURNAL_NATIVE_REVIEWED_CFLAGS_V1] }, files, ownerQualified: false };
+  const manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
+  await writeFile(join(staging, "INSTALLATION_JOURNAL_MANIFEST.json"), manifestBytes, { mode: 0o644 });
+  const root = `agent-control-room-installation-journal-darwin-${architecture}`;
+  const archive = await createDeterministicTarGzipV1(staging, root, [...files.map(({ path, mode }) => ({ path, mode })),
+    { path: "INSTALLATION_JOURNAL_MANIFEST.json", mode: "0644" }]);
+  await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, "INSTALLATION_JOURNAL_MANIFEST.json"), manifestBytes, { mode: 0o644 });
+  await writeFile(join(directory, `${root}.tar.gz`), archive, { mode: 0o644 });
+  await writeFile(join(directory, "SHA256SUMS"), `${sha256(archive)}  ${root}.tar.gz\n`, { mode: 0o644 });
+  await rm(staging, { recursive: true, force: true });
+}
+
 async function extract(archive, destination) {
   await run("tar", ["-xzf", archive, "-C", destination]);
   return join(destination, "agent-control-room-macos-0.1.0");
@@ -57,8 +83,11 @@ before(async () => {
   await assembleLocalReleaseV1({ releaseRoot: repository, outputDirectory: releaseDirectory });
   nativeArtifactDirectory = join(suiteRoot, "native-artifact");
   await writeNativeArtifact(nativeArtifactDirectory);
+  journalNativeArtifactDirectory = join(suiteRoot, "journal-native-artifact");
+  await writeJournalNativeArtifact(journalNativeArtifactDirectory);
   const output = join(suiteRoot, "bundle-output");
-  assembled = await assembleMacosLocalLauncherBundleV1({ sourceRoot: repository, releaseDirectory, nativeArtifactDirectory, outputDirectory: output });
+  assembled = await assembleMacosLocalLauncherBundleV1({ sourceRoot: repository, releaseDirectory,
+    nativeArtifactDirectory, journalNativeArtifactDirectory, outputDirectory: output });
   bundleRoot = await extract(join(output, assembled.archiveName), suiteRoot);
 });
 
@@ -74,7 +103,7 @@ test("assembles one deterministic macOS asset with an executable Finder launcher
   assert.equal(assembled.installsNode, false);
   const secondOutput = join(suiteRoot, "bundle-output-second");
   const second = await assembleMacosLocalLauncherBundleV1({ sourceRoot: repository, releaseDirectory,
-    nativeArtifactDirectory, outputDirectory: secondOutput });
+    nativeArtifactDirectory, journalNativeArtifactDirectory, outputDirectory: secondOutput });
   assert.equal(second.archiveSha256, assembled.archiveSha256);
   assert.deepEqual(await readFile(join(secondOutput, second.archiveName)),
     await readFile(join(suiteRoot, "bundle-output", assembled.archiveName)));
@@ -85,10 +114,33 @@ test("assembles one deterministic macOS asset with an executable Finder launcher
   assert.doesNotMatch(source, /curl|wget|brew|npm install/u);
   await run("/bin/sh", ["-n", command]);
   const verified = await verifyExtractedMacosLocalLauncherBundleV1(bundleRoot);
-  assert.equal(verified.verified, true); assert.equal(verified.version, "0.1.0"); assert.equal(verified.fileCount, 14);
+  assert.equal(verified.verified, true); assert.equal(verified.version, "0.1.0"); assert.equal(verified.fileCount, 19);
   assert.equal(verified.releaseManifestDigest, `sha256:${createHash("sha256").update(await readFile(join(bundleRoot,
     "release", "agent-control-room-0.1.0.manifest.json"))).digest("hex")}`);
   assert.equal(verified.protectedDirectoryNativeSidecar.executableSha256, assembled.protectedDirectoryNativeSidecar.executableSha256);
+  assert.equal(verified.installationJournalNativeSidecar.executableSha256,
+    assembled.installationJournalNativeSidecar.executableSha256);
+  assert.equal(verified.installationJournalNativeSidecar.sidecarManifestSha256,
+    assembled.installationJournalNativeSidecar.sidecarManifestSha256);
+});
+
+test("refuses substituted journal input and mixed native architectures before publishing an output", async () => {
+  const substitutedRoot = join(suiteRoot, "journal-native-substituted");
+  await writeJournalNativeArtifact(substitutedRoot, "arm64");
+  await writeFile(join(substitutedRoot, "agent-control-room-installation-journal-darwin-arm64.tar.gz"),
+    Buffer.from("substituted\n"));
+  const substitutedOutput = join(suiteRoot, "substituted-output");
+  await assert.rejects(assembleMacosLocalLauncherBundleV1({ sourceRoot: repository, releaseDirectory,
+    nativeArtifactDirectory, journalNativeArtifactDirectory: substitutedRoot,
+    outputDirectory: substitutedOutput }), refusal);
+  await assert.rejects(access(substitutedOutput), error => error?.code === "ENOENT");
+
+  const mixedRoot = join(suiteRoot, "journal-native-mixed-architecture");
+  await writeJournalNativeArtifact(mixedRoot, "x64");
+  const mixedOutput = join(suiteRoot, "mixed-output");
+  await assert.rejects(assembleMacosLocalLauncherBundleV1({ sourceRoot: repository, releaseDirectory,
+    nativeArtifactDirectory, journalNativeArtifactDirectory: mixedRoot, outputDirectory: mixedOutput }), refusal);
+  await assert.rejects(access(mixedOutput), error => error?.code === "ENOENT");
 });
 
 test("the shared launcher core accepts a host-neutral handoff without platform policy", async () => {
@@ -108,7 +160,9 @@ test("the shared launcher core accepts a host-neutral handoff without platform p
       startsService: false, startsWorker: false, enablesAuthority: false, enablesWorkers: false, grantsExecutionAuthority: false,
     }) };
   };
-  const { protectedDirectoryNativeSidecar: _sidecar, ...verifiedBundle } = await verifyExtractedMacosLocalLauncherBundleV1(bundleRoot);
+  const { protectedDirectoryNativeSidecar: _protectedSidecar,
+    installationJournalNativeSidecar: _journalSidecar,
+    ...verifiedBundle } = await verifyExtractedMacosLocalLauncherBundleV1(bundleRoot);
   const report = await runLocalLauncherCoreV1({ verifiedBundle,
     releaseDirectory: join(bundleRoot, "release"), installRoot, journalRoot, installationId: "portable-local",
     topologyPlanDigest: `sha256:${"d".repeat(64)}`, environment: { PATH: "/safe/bin" },
@@ -140,6 +194,36 @@ test("refuses changed, missing, linked, extra, or any inexact member mode", asyn
   for (const [name, mutate] of [
     ["changed", root => writeFile(join(root, "runtime/local-release-stager.mjs"), "changed\n")],
     ["missing", root => unlink(join(root, "release/SHA256SUMS"))],
+    ["journal-sidecar-missing", root => unlink(join(root,
+      "native/installation-journal/MACOS_INSTALLATION_JOURNAL_SIDECAR.json"))],
+    ["journal-archive-substituted", root => writeFile(join(root,
+      "native/installation-journal/agent-control-room-installation-journal-darwin-arm64.tar.gz"), "substituted\n")],
+    ["journal-release-mismatch", async root => {
+      const sidecarPath = join(root, "native/installation-journal/MACOS_INSTALLATION_JOURNAL_SIDECAR.json");
+      const sidecar = JSON.parse(await readFile(sidecarPath, "utf8"));
+      sidecar.releaseVersion = "0.1.1";
+      const sidecarBytes = Buffer.from(`${JSON.stringify(sidecar, null, 2)}\n`);
+      await writeFile(sidecarPath, sidecarBytes);
+      const outerPath = join(root, "MACOS_LAUNCHER_MANIFEST.json");
+      const outer = JSON.parse(await readFile(outerPath, "utf8"));
+      const entry = outer.files.find(file => file.path
+        === "native/installation-journal/MACOS_INSTALLATION_JOURNAL_SIDECAR.json");
+      entry.bytes = sidecarBytes.byteLength; entry.sha256 = sha256(sidecarBytes);
+      await writeFile(outerPath, `${JSON.stringify(outer, null, 2)}\n`);
+    }],
+    ["coherently-renamed-runtime", async root => {
+      const original = "runtime/local-release-assembly.mjs";
+      const replacement = "runtime/unexpected-local-release-assembly.mjs";
+      await rename(join(root, original), join(root, replacement));
+      const outerPath = join(root, "MACOS_LAUNCHER_MANIFEST.json");
+      const outer = JSON.parse(await readFile(outerPath, "utf8"));
+      const entry = outer.files.find(file => file.path === original);
+      entry.path = replacement;
+      const bytes = await readFile(join(root, replacement));
+      entry.bytes = bytes.byteLength; entry.sha256 = sha256(bytes);
+      outer.files.sort((left, right) => left.path < right.path ? -1 : left.path > right.path ? 1 : 0);
+      await writeFile(outerPath, `${JSON.stringify(outer, null, 2)}\n`);
+    }],
     ["linked", async root => {
       await unlink(join(root, "release/SHA256SUMS"));
       await symlink("../MACOS_LAUNCHER_MANIFEST.json", join(root, "release/SHA256SUMS"));
@@ -214,6 +298,9 @@ test("composes the existing stager with one stable installation identity without
   assert.equal(report.setupHostOpened, true);
   assert.equal(report.setupHostClosed, true);
   assert.equal(report.installationPlanInitialized, true);
+  assert.equal(report.installationJournalNativeSidecar.releaseVersion, "0.1.0");
+  assert.equal(report.installationJournalNativeSidecar.executableSha256,
+    assembled.installationJournalNativeSidecar.executableSha256);
   assert.equal(report.productionAcceptanceComplete, false);
   assert.equal(calls.length, 3);
   assert.match(calls[0].args[0], /versions\/0\.1\.0\/scripts\/prepare-local-installation\.mjs$/u);
@@ -389,5 +476,11 @@ test("the command prompt is EOF-safe and preserves success and failure status", 
 test("assembler CLI requires canonical absolute inputs", async () => {
   await assert.rejects(run(process.execPath, [join(repository, "scripts/assemble-macos-local-launcher.mjs"),
     "--source-root", ".", "--release-directory", releaseDirectory,
+    "--native-artifact-directory", nativeArtifactDirectory,
+    "--journal-native-artifact-directory", journalNativeArtifactDirectory,
     "--output-directory", join(suiteRoot, "bad-cli-output")], { cwd: repository }), error => error?.code === 2);
+  await assert.rejects(run(process.execPath, [join(repository, "scripts/assemble-macos-local-launcher.mjs"),
+    "--source-root", repository, "--release-directory", releaseDirectory,
+    "--native-artifact-directory", nativeArtifactDirectory,
+    "--output-directory", join(suiteRoot, "missing-journal-cli-output")], { cwd: repository }), error => error?.code === 2);
 });

@@ -5,8 +5,9 @@
 The installation-journal session helper is a macOS-only executable whose
 executable mode cannot be preserved by the ordinary portable Node release.
 This source package defines a separate, deterministic sidecar for the accepted
-`native/installation-journal-session-v1.c`; it does not wire that sidecar into
-a launcher, release, installer, or live operation.
+`native/installation-journal-session-v1.c`. The macOS launcher release now
+packages and verifies the inert sidecar, but does not stage or execute the
+helper in an installation or live operation.
 
 The sidecar contains only the already-built archive, its original native
 manifest, `SHA256SUMS`, and a versioned sidecar manifest. The verified archive
@@ -37,16 +38,20 @@ malformed headers, unsafe filesystem modes, and digest drift.
 Verification is read-only. Staging is a separate explicit operation and is
 restricted to a supported macOS host whose architecture matches the verified
 sidecar and whose Darwin kernel maps to at least the manifest's minimum macOS
-version. It materializes the already-captured, verified archive bytes into a
-fresh exclusive `0700` directory and returns only the existing session
-factory's private input shape:
+version. The staging call requires the exact expected release version plus the
+outer sidecar-manifest, archive, artifact-manifest and executable digests. It
+checks all five identities before creating a staging directory, then
+materializes the already-captured, verified archive bytes into a fresh
+exclusive `0700` directory and returns only the existing session factory's
+private input shape:
 
 ```text
 { executablePath, executableSha256 }
 ```
 
-Path substitution after verification cannot change the staged bytes. Staging
+Path substitution after verification cannot change the staged bytes. A release
+or digest mismatch refuses before staging. Staging
 does not compile, download, install, execute the helper, create or mutate an
-installation journal, or grant broader runner authority. Release composition,
-launcher selection, installation wiring, and owner-attended native
-qualification remain deliberately out of scope.
+installation journal, or grant broader runner authority. Installed-manifest
+binding, operator composition, and owner-attended native qualification remain
+separate work.

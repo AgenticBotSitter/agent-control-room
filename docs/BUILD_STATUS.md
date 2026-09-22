@@ -34,7 +34,7 @@ limits recovery to the retained publication algorithm, and specifies exact
 bounded same-descriptor writes for plan and witness bytes. It performs no native
 operation and does not claim the blocker is cleared.
 
-The next journal package now has an independently accepted, source-tested native
+The journal package now has an independently accepted, source-tested native
 macOS operation session. The existing installation journal opens one
 operation-scoped storage session, and append keeps that same session across
 history read, retained recovery, concurrent-winner handling, publication,
@@ -45,9 +45,14 @@ controls; bounds every request, output, deadline and cleanup; and refuses
 substitution, malformed replies, uncertain process retirement and a second
 concurrent session. A deterministic journal regression also proves that a late
 exact writer accepts a settled winner after recovery safely retired the late
-writer's own temporary witness. This is not yet an installed/released helper:
-deterministic sidecar packaging, manifest binding, release wiring and separate
-owner-attended qualification remain before
+writer's own temporary witness. The deterministic sidecar is now release-bound
+in the source-only macOS launcher. Assembly captures both native artifacts
+before staging, refuses substitution and mixed architectures, and packages the
+journal helper in a fixed inert layout. Outer verification binds the exact
+release, sidecar, archive, artifact-manifest and executable digests before any
+installation-root write; the launcher neither stages nor runs the helper.
+Installed-manifest binding, operator composition and separate owner-attended
+qualification remain before
 `native_journal_operation_custody_missing` can be cleared.
 
 The additive local Claude composition is now source-complete and independently

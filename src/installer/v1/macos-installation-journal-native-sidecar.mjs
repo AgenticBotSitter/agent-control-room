@@ -68,6 +68,10 @@ function version(value) {
   if (typeof value !== "string" || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(value)) refused();
   return value;
 }
+function digestIdentity(value) {
+  if (typeof value !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(value)) refused();
+  return value;
+}
 function minimumMacos(value) {
   if (typeof value !== "string" || !/^1[3-9]\.0$/u.test(value)) refused();
   return value;
@@ -272,6 +276,7 @@ async function verifySidecarInternal(sidecarRootInput, expectedInput = {}) {
   if (artifactRoot.archiveName !== sidecar.archiveName) refused();
   const summary = Object.freeze({ schema: MACOS_INSTALLATION_JOURNAL_NATIVE_SIDECAR_V1, verified: true, releaseVersion: sidecar.releaseVersion,
     platform: "darwin", architecture: sidecar.architecture, minimumMacos: sidecar.minimumMacos, protocol: sidecar.protocol,
+    sidecarManifestSha256: `sha256:${sha256(sidecarBytes)}`,
     archiveSha256: sidecar.archiveSha256, artifactManifestSha256: sidecar.artifactManifestSha256,
     executableSha256: sidecar.executableSha256, sourceSha256: sidecar.sourceSha256,
     toolchain: Object.freeze(structuredClone(sidecar.toolchain)), files: Object.freeze(structuredClone(sidecar.files)),
@@ -289,13 +294,23 @@ export async function verifyMacosInstallationJournalNativeSidecarV1(sidecarRootI
  * object is the only compatible input shape for the existing installation-journal session factory.
  */
 export async function stageMacosInstallationJournalNativeFactoryInputV1(input) {
-  const captured = exact(input, ["sidecarRoot", "stagingParent"]);
+  const captured = exact(input, ["expectedArchiveSha256", "expectedArtifactManifestSha256", "expectedExecutableSha256",
+    "expectedReleaseVersion", "expectedSidecarManifestSha256", "sidecarRoot", "stagingParent"]);
+  const expected = Object.freeze({ releaseVersion: version(captured.expectedReleaseVersion),
+    sidecarManifestSha256: digestIdentity(captured.expectedSidecarManifestSha256),
+    archiveSha256: digestIdentity(captured.expectedArchiveSha256),
+    artifactManifestSha256: digestIdentity(captured.expectedArtifactManifestSha256),
+    executableSha256: digestIdentity(captured.expectedExecutableSha256) });
   const macosVersion = process.platform === "darwin" ? macosVersionFromKernel(kernelRelease()) : undefined;
   if (!macosVersion || !["arm64", "x64"].includes(process.arch)
     || typeof captured.sidecarRoot !== "string" || typeof captured.stagingParent !== "string") refused();
   const parent = await canonicalDirectory(captured.stagingParent);
-  const verified = await verifySidecarInternal(captured.sidecarRoot, { architecture: process.arch, macosVersion });
+  const verified = await verifySidecarInternal(captured.sidecarRoot, {
+    architecture: process.arch, macosVersion, releaseVersion: expected.releaseVersion,
+  });
   const { summary: sidecar, artifactRoot: artifact } = verified;
+  for (const key of ["sidecarManifestSha256", "archiveSha256", "artifactManifestSha256", "executableSha256"])
+    if (sidecar[key] !== expected[key]) refused();
   const staging = await mkdtemp(join(parent, ".acr-installation-journal-sidecar-"));
   try {
     await chmod(staging, 0o700);

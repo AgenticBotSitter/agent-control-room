@@ -51,6 +51,8 @@ jobs:
 
           node scripts/build-protected-directory-native.mjs \
             --output-directory "${RELEASE_OUTPUT_ROOT}/native-one"
+          node scripts/build-installation-journal-native.mjs \
+            --output-directory "${RELEASE_OUTPUT_ROOT}/journal-native-one"
           node scripts/assemble-local-release.mjs \
             --release-root "${RELEASE_SOURCE_ROOT}" \
             --output-directory "${RELEASE_OUTPUT_ROOT}/release-one"
@@ -58,10 +60,13 @@ jobs:
             --source-root "${RELEASE_SOURCE_ROOT}" \
             --release-directory "${RELEASE_OUTPUT_ROOT}/release-one" \
             --native-artifact-directory "${RELEASE_OUTPUT_ROOT}/native-one" \
+            --journal-native-artifact-directory "${RELEASE_OUTPUT_ROOT}/journal-native-one" \
             --output-directory "${RELEASE_OUTPUT_ROOT}/bundle-one"
 
           node scripts/build-protected-directory-native.mjs \
             --output-directory "${RELEASE_OUTPUT_ROOT}/native-two"
+          node scripts/build-installation-journal-native.mjs \
+            --output-directory "${RELEASE_OUTPUT_ROOT}/journal-native-two"
           node scripts/assemble-local-release.mjs \
             --release-root "${RELEASE_SOURCE_ROOT}" \
             --output-directory "${RELEASE_OUTPUT_ROOT}/release-two"
@@ -69,10 +74,12 @@ jobs:
             --source-root "${RELEASE_SOURCE_ROOT}" \
             --release-directory "${RELEASE_OUTPUT_ROOT}/release-two" \
             --native-artifact-directory "${RELEASE_OUTPUT_ROOT}/native-two" \
+            --journal-native-artifact-directory "${RELEASE_OUTPUT_ROOT}/journal-native-two" \
             --output-directory "${RELEASE_OUTPUT_ROOT}/bundle-two"
 
           cmp "${RELEASE_OUTPUT_ROOT}/release-one/SHA256SUMS" "${RELEASE_OUTPUT_ROOT}/release-two/SHA256SUMS"
           cmp "${RELEASE_OUTPUT_ROOT}/native-one/SHA256SUMS" "${RELEASE_OUTPUT_ROOT}/native-two/SHA256SUMS"
+          cmp "${RELEASE_OUTPUT_ROOT}/journal-native-one/SHA256SUMS" "${RELEASE_OUTPUT_ROOT}/journal-native-two/SHA256SUMS"
           (
             cd "${RELEASE_OUTPUT_ROOT}/bundle-one"
             set -- ./*.tar.gz
