@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { access, chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -14,6 +15,7 @@ import {
   runMacosLocalLauncherBundleV1,
   verifyExtractedMacosLocalLauncherBundleV1,
 } from "../src/installer/v1/macos-local-launcher-bundle.mjs";
+import { runLocalLauncherCoreV1 } from "../src/installer/v1/local-launcher-core.mjs";
 
 const run = promisify(execFile);
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -57,8 +59,55 @@ test("assembles one deterministic macOS asset with an executable Finder launcher
   assert.doesNotMatch(source, /curl|wget|brew|npm install/u);
   await run("/bin/sh", ["-n", command]);
   assert.deepEqual(await verifyExtractedMacosLocalLauncherBundleV1(bundleRoot), {
-    verified: true, version: "0.1.0", fileCount: 8,
+    verified: true, version: "0.1.0", fileCount: 9,
+    releaseManifestDigest: `sha256:${createHash("sha256").update(await readFile(join(bundleRoot,
+      "release", "agent-control-room-0.1.0.manifest.json"))).digest("hex")}`,
   });
+});
+
+test("the shared launcher core accepts a host-neutral handoff without platform policy", async () => {
+  const installRoot = join(suiteRoot, "core-install"), journalRoot = join(suiteRoot, "core-journal");
+  await mkdir(installRoot, { mode: 0o700 }); await mkdir(journalRoot, { mode: 0o700 });
+  const calls = [];
+  const runner = async spec => {
+    calls.push(spec);
+    if (spec.args[0].endsWith("scripts/prepare-local-installation.mjs")) return { exitCode: 0, signal: null,
+      stdout: JSON.stringify({ readyForOwnerSetup: true, startsService: false, createsDatabase: false, writesCredentials: false }) };
+    if (spec.args[0].endsWith("scripts/launch-local-setup.mjs")) return { exitCode: 0, signal: null,
+      stdout: JSON.stringify({ state: "source_only_rehearsal_begun", version: "0.1.0", createsDatabase: false,
+        startsService: false, startsWorker: false, launcherComplete: false, productionAcceptanceComplete: false }) };
+    return { exitCode: 0, signal: null, stdout: JSON.stringify({
+      schema: "control-room.local-installation-plan-bootstrap/v1", installationId: "portable-local", revision: 0,
+      planDigest: `sha256:${"c".repeat(64)}`, replayed: false, createsDatabase: false, writesCredentials: false,
+      startsService: false, startsWorker: false, enablesAuthority: false, enablesWorkers: false, grantsExecutionAuthority: false,
+    }) };
+  };
+  const verifiedBundle = await verifyExtractedMacosLocalLauncherBundleV1(bundleRoot);
+  const report = await runLocalLauncherCoreV1({ verifiedBundle,
+    releaseDirectory: join(bundleRoot, "release"), installRoot, journalRoot, installationId: "portable-local",
+    topologyPlanDigest: `sha256:${"d".repeat(64)}`, environment: { PATH: "/safe/bin" },
+    executable: process.execPath, schema: "example.local-launcher/v1" }, {
+    runner, openerRunner: async () => ({ exitCode: 0, signal: null, stdout: "" }), openerExecutable: "/usr/bin/xdg-open",
+    async supervisor(spec, dependencies) {
+      assert.deepEqual(spec.environment, { PATH: "/safe/bin" });
+      assert.equal(typeof dependencies.runOpener, "function");
+      assert.equal(dependencies.openerExecutable, "/usr/bin/xdg-open");
+      return { state: "setup_host_closed", ready: true, opened: true, reaped: true };
+    },
+  });
+  assert.equal(report.schema, "example.local-launcher/v1");
+  assert.equal(report.state, "source_only_setup_prepared");
+  assert.equal(calls.length, 3);
+  const mismatchInstall = join(suiteRoot, "core-manifest-mismatch");
+  await mkdir(mismatchInstall, { mode: 0o700 });
+  await assert.rejects(runLocalLauncherCoreV1({ verifiedBundle: { ...verifiedBundle,
+    releaseManifestDigest: `sha256:${"e".repeat(64)}` }, releaseDirectory: join(bundleRoot, "release"),
+    installRoot: mismatchInstall, journalRoot, installationId: "portable-local",
+    topologyPlanDigest: `sha256:${"d".repeat(64)}`, environment: { PATH: "/safe/bin" },
+    executable: process.execPath, schema: "example.local-launcher/v1" }, {
+    runner: async () => { throw new Error("must not run"); },
+    openerRunner: async () => ({ exitCode: 0, signal: null, stdout: "" }), openerExecutable: "/usr/bin/xdg-open",
+  }), { message: "local_launcher_core_refused" });
 });
 
 test("refuses changed, missing, linked, extra, or any inexact member mode", async () => {
@@ -149,6 +198,10 @@ test("composes the existing stager with one stable installation identity without
   assert.ok(calls[2].args.includes("--controller-only"));
   assert.ok(calls[2].args.includes("--owner-attended"));
   assert.ok(calls[2].args.includes("--release-digest"));
+  const topologyDigest = `sha256:${createHash("sha256").update(JSON.stringify({ placement: "this-computer",
+    schema: "control-room.local-launcher-topology/v1" })).digest("hex")}`;
+  const topologyIndex = calls[1].args.indexOf("--topology-plan-digest");
+  assert.equal(calls[1].args[topologyIndex + 1], topologyDigest);
   for (const call of calls.slice(1)) {
     const idIndex = call.args.indexOf("--installation-id");
     assert.notEqual(idIndex, -1);
@@ -164,6 +217,7 @@ test("composes the existing stager with one stable installation identity without
     "--release-root", join(installRoot, "versions", "0.1.0"), "--journal-root", journalRoot,
     "--installation-id", "macos-local", "--port", "3210"]);
   assert.equal(supervisors[0].dependencies.runOpener, runBoundedMacosLauncherChildV1);
+  assert.equal(supervisors[0].dependencies.openerExecutable, "/usr/bin/open");
   for (const key of ["NODE_OPTIONS", "BASH_ENV", "ENV", "NPM_TOKEN", "npm_config_userconfig"]) {
     assert.equal(Object.hasOwn(calls[0].environment, key), false);
   }
@@ -234,6 +288,11 @@ test("an exact reopening resumes the saved rehearsal before replaying the canoni
   const setupModes = calls.filter(call => call.args[0].endsWith("scripts/launch-local-setup.mjs"))
     .map(call => call.args[call.args.indexOf("--mode") + 1]);
   assert.deepEqual(setupModes, ["begin", "resume"]);
+  const resume = calls.find(call => call.args.includes("resume"));
+  const expectedVersionIndex = resume.args.indexOf("--expected-release-version");
+  const expectedDigestIndex = resume.args.indexOf("--expected-release-manifest-digest");
+  assert.equal(resume.args[expectedVersionIndex + 1], "0.1.0");
+  assert.equal(resume.args[expectedDigestIndex + 1], (await verifyExtractedMacosLocalLauncherBundleV1(bundleRoot)).releaseManifestDigest);
 });
 
 test("owned timeout kills the full descendant process group before returning", async () => {

@@ -10,7 +10,7 @@ const readiness = `${JSON.stringify(LOCAL_SETUP_HOST_READINESS_V1)}\n`;
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
 function fixture(opener = async () => ({ exitCode: 0, signal: null, stdout: "", stderr: "",
-  oversized: false, timedOut: false })) {
+  oversized: false, timedOut: false }), openerExecutable = "/usr/bin/open") {
   const child = new EventEmitter(); child.pid = 4321;
   child.stdout = new EventEmitter(); child.stderr = new EventEmitter();
   const signals = new EventEmitter(), timers = [], kills = [], opens = [], spawns = [];
@@ -19,7 +19,7 @@ function fixture(opener = async () => ({ exitCode: 0, signal: null, stdout: "", 
   const dependencies = {
     signals, setTimer, clearTimer, killGroup(pid, signal) { kills.push([pid, signal]); },
     spawnProcess(executable, args, options) { spawns.push({ executable, args, options }); return child; },
-    async runOpener(spec) { opens.push(spec); return opener(spec); },
+    openerExecutable, async runOpener(spec) { opens.push(spec); return opener(spec); },
   };
   const promise = superviseLocalSetupLauncherHostV1({ executable: "/node", args: ["/host.mjs"],
     cwd: "/release", environment: { PATH: "/usr/bin:/bin", HOME: "/private/home" } }, dependencies);
@@ -52,6 +52,16 @@ test("waits for exact readiness, opens only fixed /setup, and cleans descendants
   assert.deepEqual(await f.promise, { state: "setup_host_closed", ready: true, opened: true, reaped: true });
   assert.deepEqual(f.kills, [[4321, "SIGTERM"], [4321, "SIGKILL"]]);
   assert.deepEqual(f.signals.eventNames(), []);
+});
+
+test("uses an injected platform opener while retaining the fixed loopback setup URL", async () => {
+  const f = fixture(undefined, "/usr/bin/xdg-open");
+  f.child.stdout.emit("data", Buffer.from(readiness));
+  await flush();
+  assert.equal(f.opens[0].executable, "/usr/bin/xdg-open");
+  assert.deepEqual(f.opens[0].args, ["http://127.0.0.1:3210/setup"]);
+  f.signals.emit("SIGTERM"); f.child.emit("close", null, "SIGTERM"); f.fire(2_000);
+  await f.promise;
 });
 
 test("escalates to KILL only when TERM does not close the child, then waits to reap it", async () => {

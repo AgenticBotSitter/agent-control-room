@@ -25,8 +25,8 @@ import {
 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createDeterministicTarGzipV1 } from "./local-release-assembly.mjs";
+import { runLocalLauncherCoreV1 } from "./local-launcher-core.mjs";
 import { stageLocalReleaseV1 } from "./local-release-stager.mjs";
-import { superviseLocalSetupLauncherHostV1 } from "./local-setup-launcher-supervisor.mjs";
 
 export const MACOS_LOCAL_LAUNCHER_BUNDLE_V1 =
   "control-room.macos-local-launcher-bundle/v1";
@@ -35,7 +35,6 @@ const MANIFEST_NAME = "MACOS_LAUNCHER_MANIFEST.json";
 const COMMAND_NAME = "Open Agent Control Room.command";
 const MAX_FILES = 16;
 const MAX_FILE_BYTES = 1024 * 1024 * 1024;
-const MAX_RELEASE_MANIFEST_BYTES = 16 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const digestPattern = /^[a-f0-9]{64}$/u;
 const versionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u;
@@ -162,7 +161,12 @@ export async function verifyExtractedMacosLocalLauncherBundleV1(bundleRootInput)
     const actualMode = exactMode === 0o644 ? "0644" : exactMode === 0o755 ? "0755" : undefined;
     if (bytes.byteLength !== entry.bytes || sha256(bytes) !== entry.sha256 || actualMode !== entry.mode) refused();
   }
-  return Object.freeze({ verified: true, version: manifest.version, fileCount: manifest.fileCount });
+  // The release assembler writes this external manifest byte-for-byte with
+  // the inner RELEASE_MANIFEST.json that the stager later verifies.
+  const releaseManifest = manifest.files.find(entry => entry.path === `release/agent-control-room-${manifest.version}.manifest.json`);
+  if (!releaseManifest) refused();
+  return Object.freeze({ verified: true, version: manifest.version, fileCount: manifest.fileCount,
+    releaseManifestDigest: `sha256:${releaseManifest.sha256}` });
 }
 
 async function ensurePrivateDirectory(path) {
@@ -177,8 +181,8 @@ async function ensurePrivateDirectory(path) {
   return directory;
 }
 
-function defaultTopologyDigest(version) {
-  const plan = JSON.stringify({ placement: "this-computer", schema: "control-room.macos-local-launcher-topology/v1", version });
+function defaultTopologyDigest() {
+  const plan = JSON.stringify({ placement: "this-computer", schema: "control-room.local-launcher-topology/v1" });
   return `sha256:${sha256(Buffer.from(plan, "utf8"))}`;
 }
 
@@ -270,13 +274,6 @@ function allowedChildEnvironment(home, source) {
   return Object.freeze(environment);
 }
 
-async function runJson(runner, spec, failure) {
-  const result = await runner(spec);
-  if (!result || result.exitCode !== 0 || result.signal !== null || result.oversized || result.timedOut
-    || typeof result.stdout !== "string" || (result.stderr !== undefined && typeof result.stderr !== "string")) refused(failure);
-  try { return JSON.parse(result.stdout); } catch { return refused(failure); }
-}
-
 /**
  * Runs the extracted macOS handoff. This composes the existing stager,
  * shipped read-only preflight and shipped source-only setup rehearsal.
@@ -303,76 +300,27 @@ export async function runMacosLocalLauncherBundleV1(input, dependencies = {}) {
   const installationId = input.installationId ?? "macos-local";
   if (!safeIdPattern.test(installationId)) refused();
   const releaseDirectory = await canonicalDirectory(join(bundleRoot, "release"));
-  const staged = await stageLocalReleaseV1({ ownerAttended: true, releaseDirectory, installRoot });
-  if (staged.state !== "verified_release_staged" || staged.version !== verified.version || staged.usesNetwork
-    || staged.installsOrStartsService || staged.createsDatabase || staged.writesCredentials) refused();
-  const versionRoot = join(installRoot, "versions", staged.version);
-  const runner = dependencies.runner ?? runBoundedMacosLauncherChildV1;
-  const common = { executable: process.execPath, cwd: versionRoot,
-    environment: allowedChildEnvironment(home, dependencies.hostEnvironment ?? process.env), terminationGraceMs: 2_000 };
-  const preflight = await runJson(runner, { ...common, timeoutMs: 60_000,
-    args: [join(versionRoot, "scripts", "prepare-local-installation.mjs"),
-    "--release-root", versionRoot, "--dry-run"] }, "macos_local_launcher_preflight_refused");
-  if (preflight.readyForOwnerSetup !== true || preflight.startsService || preflight.createsDatabase || preflight.writesCredentials) refused();
-  // The shipped setup entrypoint gives its package-manager child 15 minutes.
-  // This outer ownership bound stays distinct so both timers cannot race.
-  const setupScript = join(versionRoot, "scripts", "launch-local-setup.mjs");
-  const topologyPlanDigest = defaultTopologyDigest(staged.version);
-  let setup;
-  try {
-    setup = await runJson(runner, { ...common, timeoutMs: 20 * 60_000,
-      args: [setupScript, "--owner-attended", "--mode", "begin", "--release-directory", releaseDirectory,
-        "--install-root", installRoot, "--journal-root", journalRoot,
-        "--installation-id", installationId, "--topology-plan-digest", topologyPlanDigest] },
-    "macos_local_launcher_setup_refused");
-  } catch (error) {
-    if (!(error instanceof Error) || error.message !== "macos_local_launcher_setup_refused") throw error;
-    // An exact reopening is the only safe fallback. The existing resume path
-    // verifies the saved release and topology; changed or uncertain state is
-    // still refused before the setup host can open.
-    setup = await runJson(runner, { ...common, timeoutMs: 20 * 60_000,
-      args: [setupScript, "--owner-attended", "--mode", "resume",
-        "--install-root", installRoot, "--journal-root", journalRoot,
-        "--installation-id", installationId, "--topology-plan-digest", topologyPlanDigest] },
-    "macos_local_launcher_setup_refused");
-  }
-  if (!["source_only_rehearsal_begun", "source_only_rehearsal_resumed"].includes(setup.state)
-    || setup.version !== staged.version
-    || setup.createsDatabase || setup.startsService || setup.startsWorker || setup.launcherComplete
-    || setup.productionAcceptanceComplete) refused();
-  const releaseManifestPath = join(versionRoot, "RELEASE_MANIFEST.json");
-  await regularFile(releaseManifestPath, versionRoot, MAX_RELEASE_MANIFEST_BYTES);
-  const releaseDigest = `sha256:${sha256(await readFile(releaseManifestPath))}`;
-  const bootstrap = await runJson(runner, { ...common, timeoutMs: 60_000,
-    args: [join(versionRoot, "scripts", "initialize-local-installation-plan.mjs"),
-      "--owner-attended", "--journal-root", journalRoot,
-      "--installation-id", installationId, "--release-digest", releaseDigest,
-      "--controller-only"] }, "macos_local_launcher_plan_bootstrap_refused");
-  if (bootstrap.schema !== "control-room.local-installation-plan-bootstrap/v1"
-    || bootstrap.installationId !== installationId || bootstrap.revision !== 0
-    || typeof bootstrap.planDigest !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(bootstrap.planDigest)
-    || typeof bootstrap.replayed !== "boolean" || bootstrap.createsDatabase || bootstrap.writesCredentials
-    || bootstrap.startsService || bootstrap.startsWorker || bootstrap.enablesAuthority
-    || bootstrap.enablesWorkers || bootstrap.grantsExecutionAuthority) refused();
-  const supervisor = dependencies.supervisor ?? superviseLocalSetupLauncherHostV1;
-  const supervised = await supervisor({ executable: process.execPath, cwd: versionRoot,
-    environment: common.environment, args: [join(versionRoot, "scripts", "run-local-setup-host.mjs"),
-      "--release-root", versionRoot, "--journal-root", journalRoot,
-      "--installation-id", installationId, "--port", "3210"] }, {
-    runOpener: dependencies.openerRunner ?? runBoundedMacosLauncherChildV1,
+  return runLocalLauncherCoreV1({ verifiedBundle: verified, releaseDirectory, installRoot, journalRoot,
+    installationId, topologyPlanDigest: defaultTopologyDigest(),
+    environment: allowedChildEnvironment(home, dependencies.hostEnvironment ?? process.env),
+    executable: process.execPath, schema: MACOS_LOCAL_LAUNCHER_BUNDLE_V1 }, {
+    runner: dependencies.runner ?? runBoundedMacosLauncherChildV1,
+    openerRunner: dependencies.openerRunner ?? runBoundedMacosLauncherChildV1,
+    openerExecutable: "/usr/bin/open",
+    ...(dependencies.supervisor ? { supervisor: dependencies.supervisor } : {}),
     ...(dependencies.spawnProcess ? { spawnProcess: dependencies.spawnProcess } : {}),
     ...(dependencies.signals ? { signals: dependencies.signals } : {}),
     ...(dependencies.killGroup ? { killGroup: dependencies.killGroup } : {}),
     ...(dependencies.setTimer ? { setTimer: dependencies.setTimer } : {}),
     ...(dependencies.clearTimer ? { clearTimer: dependencies.clearTimer } : {}),
+    refusalCodes: {
+      refused: "macos_local_launcher_bundle_refused",
+      preflight: "macos_local_launcher_preflight_refused",
+      setup: "macos_local_launcher_setup_refused",
+      bootstrap: "macos_local_launcher_plan_bootstrap_refused",
+      setupHost: "macos_local_launcher_setup_host_refused",
+    },
   });
-  if (supervised?.state !== "setup_host_closed" || supervised.ready !== true
-    || supervised.opened !== true || supervised.reaped !== true) refused("macos_local_launcher_setup_host_refused");
-  return Object.freeze({ schema: MACOS_LOCAL_LAUNCHER_BUNDLE_V1, state: "source_only_setup_prepared",
-    version: staged.version, releaseVerified: true, preflightPassed: true, setupEntrypointCompleted: true,
-    installationPlanInitialized: true,
-    alreadyStaged: staged.alreadyStaged, createsDatabase: false, startsService: false, startsWorker: false,
-    setupHostOpened: true, setupHostClosed: true, launcherComplete: false, productionAcceptanceComplete: false });
 }
 
 async function assertAbsent(path) {
@@ -437,7 +385,7 @@ export async function assembleMacosLocalLauncherBundleV1(input) {
         await chmod(destination, 0o644);
       }
       const runtime = ["local-release-assembly.mjs", "local-release-stager.mjs", "local-setup-launcher-supervisor.mjs",
-        "macos-local-launcher-bundle.mjs"];
+        "local-launcher-core.mjs", "macos-local-launcher-bundle.mjs"];
       for (const name of runtime) {
         const source = join(sourceRoot, "src", "installer", "v1", name);
         await regularFile(source, sourceRoot);

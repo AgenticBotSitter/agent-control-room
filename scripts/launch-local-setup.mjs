@@ -11,9 +11,12 @@ const one = flag => {
 const mode = one("--mode"), installRoot = one("--install-root"), journalRoot = one("--journal-root");
 const installationId = one("--installation-id"), topologyPlanDigest = one("--topology-plan-digest");
 const releaseDirectory = one("--release-directory");
+const expectedReleaseVersion = one("--expected-release-version");
+const expectedReleaseManifestDigest = one("--expected-release-manifest-digest");
 const known = new Set(["--owner-attended", "--mode", "--install-root", "--journal-root", "--installation-id",
-  "--topology-plan-digest", "--release-directory", mode, installRoot, journalRoot, installationId, topologyPlanDigest,
-  releaseDirectory].filter(Boolean));
+  "--topology-plan-digest", "--release-directory", "--expected-release-version", "--expected-release-manifest-digest",
+  mode, installRoot, journalRoot, installationId, topologyPlanDigest, releaseDirectory, expectedReleaseVersion,
+  expectedReleaseManifestDigest].filter(Boolean));
 
 function runBounded(spec) {
   return new Promise((resolve, reject) => {
@@ -37,15 +40,19 @@ function runBounded(spec) {
 const common = args.filter(value => value === "--owner-attended").length === 1
   && [installRoot, journalRoot].every(value => value && isAbsolute(value)) && installationId && topologyPlanDigest
   && (mode === "begin" || mode === "resume") && args.every(value => known.has(value));
-const valid = common && (mode === "begin" ? Boolean(releaseDirectory && isAbsolute(releaseDirectory)) : releaseDirectory === undefined)
-  && args.length === (mode === "begin" ? 13 : 11);
+const valid = common && (mode === "begin"
+  ? Boolean(releaseDirectory && isAbsolute(releaseDirectory)
+    && expectedReleaseVersion === undefined && expectedReleaseManifestDigest === undefined)
+  : releaseDirectory === undefined && Boolean(expectedReleaseVersion && expectedReleaseManifestDigest))
+  && args.length === (mode === "begin" ? 13 : 15);
 if (!valid) {
-  console.error("Usage: node scripts/launch-local-setup.mjs --owner-attended --mode begin --release-directory ABSOLUTE_RELEASE_DIRECTORY --install-root ABSOLUTE_PRIVATE_INSTALL_ROOT --journal-root ABSOLUTE_PRIVATE_JOURNAL_ROOT --installation-id SAFE_ID --topology-plan-digest sha256:...\n       node scripts/launch-local-setup.mjs --owner-attended --mode resume --install-root ABSOLUTE_PRIVATE_INSTALL_ROOT --journal-root ABSOLUTE_PRIVATE_JOURNAL_ROOT --installation-id SAFE_ID --topology-plan-digest sha256:...");
+  console.error("Usage: node scripts/launch-local-setup.mjs --owner-attended --mode begin --release-directory ABSOLUTE_RELEASE_DIRECTORY --install-root ABSOLUTE_PRIVATE_INSTALL_ROOT --journal-root ABSOLUTE_PRIVATE_JOURNAL_ROOT --installation-id SAFE_ID --topology-plan-digest sha256:...\n       node scripts/launch-local-setup.mjs --owner-attended --mode resume --expected-release-version VERSION --expected-release-manifest-digest sha256:... --install-root ABSOLUTE_PRIVATE_INSTALL_ROOT --journal-root ABSOLUTE_PRIVATE_JOURNAL_ROOT --installation-id SAFE_ID --topology-plan-digest sha256:...");
   process.exitCode = 2;
 } else {
   try {
     const report = await runLocalCleanInstallRehearsalV1({ ownerAttended: true, mode, installRoot, journalRoot,
-      installationId, topologyPlanDigest, ...(mode === "begin" ? { releaseDirectory } : {}) }, { runner: runBounded });
+      installationId, topologyPlanDigest, ...(mode === "begin" ? { releaseDirectory }
+        : { expectedReleaseVersion, expectedReleaseManifestDigest }) }, { runner: runBounded });
     console.log(JSON.stringify(report, null, 2));
   } catch (error) {
     const code = error?.code;

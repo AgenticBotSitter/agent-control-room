@@ -36,11 +36,13 @@ export function superviseLocalSetupLauncherHostV1(spec, dependencies = {}) {
   if (!validSpec(spec)) return Promise.reject(refused("local_setup_launcher_supervisor_refused"));
   const spawnProcess = dependencies.spawnProcess ?? ((executable, args, options) => spawn(executable, args, options));
   const runOpener = dependencies.runOpener;
+  const openerExecutable = dependencies.openerExecutable;
   const signals = dependencies.signals ?? process;
   const killGroup = dependencies.killGroup ?? defaultKillGroup;
   const setTimer = dependencies.setTimer ?? setTimeout;
   const clearTimer = dependencies.clearTimer ?? clearTimeout;
-  if (typeof spawnProcess !== "function" || typeof runOpener !== "function" || typeof signals?.on !== "function"
+  if (typeof spawnProcess !== "function" || typeof runOpener !== "function" || typeof openerExecutable !== "string"
+    || !openerExecutable.startsWith("/") || openerExecutable.includes("\0") || typeof signals?.on !== "function"
     || typeof signals?.off !== "function" || typeof killGroup !== "function"
     || typeof setTimer !== "function" || typeof clearTimer !== "function") {
     return Promise.reject(refused("local_setup_launcher_supervisor_refused"));
@@ -128,7 +130,7 @@ export function superviseLocalSetupLauncherHostV1(spec, dependencies = {}) {
       if (newline !== output.byteLength - 1 || !output.equals(READY_BYTES)) { malformed(); return; }
       ready = true; clearTimer(readinessTimer);
       Promise.resolve().then(() => runOpener({
-        executable: "/usr/bin/open",
+        executable: openerExecutable,
         args: ["http://127.0.0.1:3210/setup"],
         cwd: spec.cwd,
         environment: spec.environment,

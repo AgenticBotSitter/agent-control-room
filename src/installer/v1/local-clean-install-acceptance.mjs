@@ -116,9 +116,14 @@ function parse(value) {
   if (raw.ownerAttended !== true || (raw.mode !== "begin" && raw.mode !== "resume")
     || !exactKeys(raw, raw.mode === "begin"
       ? ["installRoot", "installationId", "journalRoot", "mode", "ownerAttended", "releaseDirectory", "topologyPlanDigest"]
-      : ["installRoot", "installationId", "journalRoot", "mode", "ownerAttended", "topologyPlanDigest"])
+      : ["expectedReleaseManifestDigest", "expectedReleaseVersion", "installRoot", "installationId", "journalRoot", "mode",
+        "ownerAttended", "topologyPlanDigest"])
     || typeof raw.installationId !== "string" || !idPattern.test(raw.installationId)
-    || typeof raw.topologyPlanDigest !== "string" || !digestPattern.test(raw.topologyPlanDigest)) refuse();
+    || typeof raw.topologyPlanDigest !== "string" || !digestPattern.test(raw.topologyPlanDigest)
+    || (raw.mode === "resume" && (typeof raw.expectedReleaseVersion !== "string"
+      || !versionPattern.test(raw.expectedReleaseVersion)
+      || typeof raw.expectedReleaseManifestDigest !== "string"
+      || !digestPattern.test(raw.expectedReleaseManifestDigest)))) refuse();
   const parsed = { ...raw, installRoot: absolute(raw.installRoot), journalRoot: absolute(raw.journalRoot),
     releaseDirectory: raw.releaseDirectory === undefined ? undefined : absolute(raw.releaseDirectory) };
   if ((parsed.mode === "begin") !== (parsed.releaseDirectory !== undefined)) refuse();
@@ -151,7 +156,15 @@ export async function runLocalCleanInstallRehearsalV1(value, { runner }) {
       topologyPlanDigest: input.topologyPlanDigest });
     await durableCreate(join(journalRoot, journalName(input.installationId)), Buffer.from(`${JSON.stringify(journal)}\n`, "utf8"));
   } else {
-    if (!journal || journal.topologyPlanDigest !== input.topologyPlanDigest) refuse("local_clean_install_acceptance_journal_unavailable");
+    // Bind a reopen to the release the outer launcher has just verified. This
+    // comparison must precede dependency preparation: otherwise an old
+    // journal could make the package runner act on an older release before the
+    // launcher notices the version mismatch in the returned report.
+    if (!journal || journal.topologyPlanDigest !== input.topologyPlanDigest
+      || journal.version !== input.expectedReleaseVersion
+      || journal.manifestDigest !== input.expectedReleaseManifestDigest) {
+      refuse("local_clean_install_acceptance_journal_unavailable");
+    }
     const prepared = await prepareLocalProductionDependenciesV1({ ownerAttended: true, installRoot, version: journal.version,
       expectedManifestDigest: journal.manifestDigest }, { runner });
     if (!prepared.alreadyPrepared || prepared.installsOrStartsService || prepared.createsOrMigratesDatabase || prepared.startsWorkers) refuse();

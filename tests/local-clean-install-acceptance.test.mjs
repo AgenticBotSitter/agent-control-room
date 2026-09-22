@@ -40,9 +40,12 @@ process.stdout.write("prepared by controlled fixture\\n");
   return { bin, calls };
 }
 
-function args({ mode, releaseDirectory, installRoot, journalRoot }) {
+function args({ mode, releaseDirectory, installRoot, journalRoot, expectedReleaseVersion,
+  expectedReleaseManifestDigest }) {
   return ["--owner-attended", "--mode", mode,
     ...(releaseDirectory ? ["--release-directory", releaseDirectory] : []),
+    ...(expectedReleaseVersion ? ["--expected-release-version", expectedReleaseVersion] : []),
+    ...(expectedReleaseManifestDigest ? ["--expected-release-manifest-digest", expectedReleaseManifestDigest] : []),
     "--install-root", installRoot, "--journal-root", journalRoot,
     "--installation-id", "acceptance-local-one", "--topology-plan-digest", topologyDigest];
 }
@@ -71,7 +74,8 @@ test("an extracted release runs the shipped clean-install rehearsal across separ
   assert.equal(begun.servicePlan.simulated, true);
   assert.ok(begun.servicePlan.steps.indexOf("start_service") > begun.servicePlan.steps.indexOf("install_service_definition"));
 
-  const resumed = JSON.parse((await run(process.execPath, [cli, ...args({ mode: "resume", installRoot, journalRoot })],
+  const resumed = JSON.parse((await run(process.execPath, [cli, ...args({ mode: "resume", installRoot, journalRoot,
+    expectedReleaseVersion: begun.version, expectedReleaseManifestDigest: begun.releaseManifestDigest })],
     { env: environment })).stdout);
   assert.equal(resumed.state, "source_only_rehearsal_resumed");
   assert.equal(resumed.journalResumed, true);
@@ -81,9 +85,17 @@ test("an extracted release runs the shipped clean-install rehearsal across separ
   assert.deepEqual(callsBeforeMutation[1].slice(0, 4), ["install", "--prod", "--frozen-lockfile", "--ignore-scripts"]);
   assert.equal(callsBeforeMutation.length, 2, "the restarted process used the durable receipt rather than rerunning pnpm");
 
+  await assert.rejects(() => run(process.execPath, [cli, ...args({ mode: "resume", installRoot, journalRoot,
+    expectedReleaseVersion: "0.2.0", expectedReleaseManifestDigest: `sha256:${"b".repeat(64)}` })], { env: environment }),
+  error => error?.code === 1 && /local setup rehearsal refused/u.test(error.stderr));
+  const callsAfterChangedRelease = (await readFile(fake.calls, "utf8")).trim().split("\n").map(line => JSON.parse(line));
+  assert.equal(callsAfterChangedRelease.length, 2,
+    "a changed expected release refuses before any package-runner call");
+
   const packagePath = join(installRoot, "versions", begun.version, "package.json");
   await writeFile(packagePath, `${await readFile(packagePath, "utf8")}\n`);
-  await assert.rejects(() => run(process.execPath, [cli, ...args({ mode: "resume", installRoot, journalRoot })], { env: environment }),
+  await assert.rejects(() => run(process.execPath, [cli, ...args({ mode: "resume", installRoot, journalRoot,
+    expectedReleaseVersion: begun.version, expectedReleaseManifestDigest: begun.releaseManifestDigest })], { env: environment }),
     error => error?.code === 1 && /local setup rehearsal refused/u.test(error.stderr));
   const callsAfterMutation = (await readFile(fake.calls, "utf8")).trim().split("\n").map(line => JSON.parse(line));
   assert.equal(callsAfterMutation.length, 2, "changed releases refuse before another package-manager call");

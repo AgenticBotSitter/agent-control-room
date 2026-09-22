@@ -6,14 +6,21 @@ operational yet.
 
 ## Current installable-product checkpoint (2026-09-21)
 
-The public macOS package now stages an exact release, runs the existing
+The public macOS package now uses one shared, platform-neutral launcher core,
+with macOS supplying only its deterministic wrapper and fixed browser opener.
+The core stages an exact release, runs the existing
 effect-free checks, creates or exactly replays one canonical revision-zero
 setup plan, starts the bounded read-only setup host, and opens the fixed local
 setup page. A fresh plan is controller-only: no database, scheduler, Hermes,
 Codex, Claude, or other worker is invented or enabled. Reopening the same exact
 package reuses the first revision; changed first inputs conflict instead of
-rewriting history. The browser remains GET/HEAD-only and cannot perform setup
-effects. Focused source, journal, release, launcher, and type checks pass.
+rewriting history. Resume also binds the exact expected release version and
+manifest digest before dependency preparation, so an older journal cannot make
+the launcher operate on an older release during an upgrade. The browser remains
+GET/HEAD-only and cannot perform setup effects. Focused source, journal,
+release, launcher, and type checks pass. Linux can reuse this core after its
+native wrapper is supplied; Windows still requires native custody and process
+adapters rather than POSIX assumptions.
 
 The GitHub pull request also has a required unified-product CI lane so every
 local/multi-computer test file is reachable from a required workflow. The next
