@@ -69,6 +69,36 @@ deliberate live-install blocker until that small native implementation is
 separately reviewed and owner-attended; disposable adversarial tests are not
 native qualification evidence.
 
+The initial macOS background-service owner step now also has a source-only
+private runner and exact installation-journal settlement. It reuses the
+accepted platform lifecycle, macOS service package/action, local service
+observation and supervisor-readiness records; requires the already-passed
+database, protected-data, first-owner and recovery outcomes plus attached-owner
+confirmation; and sends only the fixed structured install sequence to one
+injected branded tool. Final running evidence must bind the same plan, release,
+service, database, protected data and readiness record before the existing
+`platform_service` stage can pass. Cancellation, deadline, malformed replies,
+observation mismatch or cleanup ambiguity after entry remain uncertain, and
+service start alone never grants an agent readiness. The repository still has
+no reviewed launchd/process/filesystem implementation for that port, so no
+service was installed or started and live local enablement remains blocked.
+
+The protected-data stage now also has a durable settlement transaction over
+the existing append-only installation journal. It rebuilds the exact protected
+action and binds the installation, topology, release, running revision, passed
+database outcome, prior protected-root binding, storage configuration and
+namespace, redacted owner request, verified private-runner observation and
+storage-preflight receipt. Only an installation-bound terminal envelope around
+the exact private protected-root runner result may append the stage. The saved
+stage outcome is the resulting `protectedDataBindingDigest`, not a database or
+transaction receipt, preserving the existing recovery contract. Exact replay
+and concurrent identical confirmation converge; stale, changed, foreign,
+uncertain or competing evidence refuses without repair or retry. Recovery is
+not settled by this package: its existing preparation verifies a disposable
+restore proof, but an accepted private recovery terminal runner/wrapper does
+not yet exist. No live filesystem, storage, backup, restore, database or
+credential effect was performed.
+
 The first-owner stage now has an accepted durable settlement transaction over
 the existing installation journal. It rebuilds the exact prepared request from
 the running plan, including the passed database outcome, expected owner subject,
@@ -87,9 +117,17 @@ accepts only the retained ceremony's completed response; and independently
 requires an exact existing-owner proof before producing the transaction's
 terminal confirmation. Pre-effect refusal is distinct from post-attempt
 uncertainty, cleanup is narrowly bounded, and outputs and errors are redacted.
-The live retained-ceremony adapter, authoritative owner-observation adapter and
-owner-attended qualification remain separate work; no assertion, code,
-credential, database, listener, browser or native effect was used here.
+The retained-ceremony composition beneath that runner is now source-complete.
+It wraps the existing ceremony and bootstrap-only route without opening another
+listener, captures its injected callables, and accepts terminal completion only
+from that same route. One fixed authoritative query then requires the exact
+configured database, tenant, workspace, active human identity, pinned subject,
+and unique unrevoked owner grant; only a bounded binding digest leaves the
+adapter. Cleanup can only close the retained ceremony and is independently
+bounded. Existing host mounting, database connection custody, and the reviewed
+owner-attended native control attempt remain production seams. No live
+assertion, code, credential, database, listener, browser or native effect was
+used here.
 
 ## Current build block
 
