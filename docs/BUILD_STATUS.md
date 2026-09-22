@@ -31,7 +31,7 @@ remain readable for recovery. Focused adapter tests, private-startup tests,
 VPS compilation and TypeScript passed. This is source and disposable-test
 evidence only: it enables no worker, database, listener or persistent service.
 
-The installable-product track now also has seventeen accepted source foundations:
+The installable-product track now also has eighteen accepted source foundations:
 an allowlisted reproducible release archive with a manifest and checksum; a
 standalone extracted-release preflight that needs no developer dependency;
 crash-safe, concurrency-tested placement of a verified release into an inert
@@ -89,6 +89,17 @@ database, service, credential, or worker effect. Release staging, production
 dependency preparation, the owner-only protected-data/recovery actions, the effectful service wrapper,
 durable plan persistence and the owner-only setup
 actions and their durable replay/evidence boundary remain active build work.
+
+The eighteenth foundation is the first real pre-install webpage boundary: the
+compiled `/setup` page can render before the database-backed private
+application exists, but only through an exact loopback transport that accepts
+GET/HEAD, strips all credential state, rejects forwarding and cross-origin
+requests, and exposes only the redacted setup and settled-plan views. Its plan
+reader is genuinely read-only: an interrupted journal publication makes the
+view unavailable and is never repaired or deleted by a browser GET. The
+ordinary private HTTPS application, projects, actions, workers, database and
+credentials remain outside this host. This source package is not yet wired to
+the double-click launcher and starts no listener by itself.
 
 ## What source evidence proves today
 

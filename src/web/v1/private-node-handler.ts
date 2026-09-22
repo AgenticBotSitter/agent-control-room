@@ -6,6 +6,9 @@ import { privateResponseHeaders } from "./http-common";
 import type { PrivateClientAssets } from "./private-assets";
 import { captureGatewayAssertionProviderProfileV1, cloudflareAccessGatewayAssertionProfileV1,
   type GatewayAssertionProviderProfileV1 } from "./access-verifier";
+import { parseInstallationSetupViewV1, type InstallationSetupViewV1 } from "../../harness/v1/installation-setup-wire";
+import type { LocalSetupJournalSourceV1 } from "../../installer/v1/local-setup-journal-source";
+import { verifyInstallationPlanViewV1 } from "../../installer/v1/installation-plan-view";
 
 export const privateHttpLimits = Object.freeze({ headersBytes: 24_576, headerCount: 64, urlBytes: 4096,
   bodyBytes: 8192, responseBytes: 4 * 1024 * 1024, activeRequests: 64,
@@ -18,12 +21,34 @@ const forwarded = new Set(["accept", "accept-language", "origin", "sec-fetch-sit
   "next-router-segment-prefetch", "next-url"]);
 class RequestFailure extends Error { constructor(readonly status: number) { super("private_request_rejected"); } }
 
-function requestHead(input: IncomingMessage, origins: readonly string[], localDemo: boolean,
+type NodeHandlerMode = Readonly<{
+  localLoopback: boolean;
+  allowPost: boolean;
+  allowCookies: boolean;
+  allowSetCookie: boolean;
+  rejectForwarded: boolean;
+  rejectCredentialHeaders: boolean;
+  validateSuppliedOrigin: boolean;
+  injectSetupMarker: boolean;
+}>;
+
+const productionMode: NodeHandlerMode = Object.freeze({ localLoopback: false, allowPost: true,
+  allowCookies: false, allowSetCookie: false, rejectForwarded: false, rejectCredentialHeaders: false,
+  validateSuppliedOrigin: false, injectSetupMarker: false });
+const contributorDemoMode: NodeHandlerMode = Object.freeze({ localLoopback: true, allowPost: true,
+  allowCookies: true, allowSetCookie: true, rejectForwarded: true, rejectCredentialHeaders: false,
+  validateSuppliedOrigin: false, injectSetupMarker: false });
+const localSetupMode: NodeHandlerMode = Object.freeze({ localLoopback: true, allowPost: false,
+  allowCookies: false, allowSetCookie: false, rejectForwarded: true, rejectCredentialHeaders: true,
+  validateSuppliedOrigin: true, injectSetupMarker: true });
+
+function requestHead(input: IncomingMessage, origins: readonly string[], mode: NodeHandlerMode,
   forwardedHeaders: ReadonlySet<string>) {
   if (input.socket.remoteAddress !== "127.0.0.1" || input.httpVersion !== "1.1") throw new RequestFailure(403);
   const method = input.method;
   const target = input.url;
-  if (!method || !["GET", "HEAD", "POST"].includes(method)) throw new RequestFailure(405);
+  if (!method || !(mode.allowPost ? ["GET", "HEAD", "POST"] : ["GET", "HEAD"]).includes(method))
+    throw new RequestFailure(405);
   if (!target || Buffer.byteLength(target) > privateHttpLimits.urlBytes || !target.startsWith("/")
     || target.startsWith("//") || /[\\\s#]/u.test(target)
     || [...target].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) throw new RequestFailure(400);
@@ -39,14 +64,20 @@ function requestHead(input: IncomingMessage, origins: readonly string[], localDe
       || [...value].some(char => char.charCodeAt(0) < 32 && char !== "\t" || char.charCodeAt(0) === 127)
       || all.has(name)) throw new RequestFailure(400);
     all.set(name, value);
-    if (forwardedHeaders.has(name) || localDemo && name === "cookie") headers.set(name, value);
+    if (forwardedHeaders.has(name) || mode.allowCookies && name === "cookie") headers.set(name, value);
   }
   const origin = origins.find(value => new URL(value).host === all.get("host"));
   if (!origin) throw new RequestFailure(403);
   const url = new URL(target, origin);
   // Select only a configured host, never X-Forwarded-Host or an absolute target.
   if (url.origin !== origin || `${url.pathname}${url.search}` !== target) throw new RequestFailure(400);
-  if (localDemo && [...all.keys()].some(name => name === "forwarded" || name.startsWith("x-forwarded-"))) throw new RequestFailure(403);
+  if (mode.validateSuppliedOrigin && all.get("origin") !== undefined && all.get("origin") !== origin)
+    throw new RequestFailure(403);
+  if (mode.rejectForwarded && [...all.keys()].some(name => name === "forwarded" || name.startsWith("x-forwarded-")))
+    throw new RequestFailure(403);
+  if (mode.rejectCredentialHeaders && [...all.keys()].some(name => name === "cookie" || name === "authorization"
+    || name === "proxy-authorization" || /(?:^|[-_])(token|secret|assertion|api[-_]?key)(?:$|[-_])/i.test(name)))
+    throw new RequestFailure(403);
   if (["upgrade", "expect", "trailer", "content-encoding"].some(name => all.has(name))) throw new RequestFailure(400);
   const length = all.get("content-length"), transfer = all.get("transfer-encoding");
   if (length !== undefined && (!/^(0|[1-9][0-9]{0,8})$/.test(length) || transfer !== undefined)
@@ -55,7 +86,7 @@ function requestHead(input: IncomingMessage, origins: readonly string[], localDe
   // Task endpoints have existing 16/24/32 KiB parsers. The outer transport must not
   // truncate valid task input; endpoint-specific limits and authentication still apply.
   const bodyLimit = method === "POST" && (/^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/.test(url.pathname)
-    || localDemo && url.pathname === "/api/v1/local-pilot/workspace")
+    || mode.allowCookies && url.pathname === "/api/v1/local-pilot/workspace")
     ? privateHttpLimits.taskBodyBytes : privateHttpLimits.bodyBytes;
   if (expectedLength !== undefined && expectedLength > bodyLimit) throw new RequestFailure(413);
   if (method !== "POST" && (transfer || expectedLength && expectedLength > 0)) throw new RequestFailure(400);
@@ -88,13 +119,14 @@ function consumeBody(input: IncomingMessage, signal: AbortSignal, expectedLength
   });
 }
 
-async function deliver(output: ServerResponse, response: Response, method: string, signal: AbortSignal, localDemo: boolean) {
+async function deliver(output: ServerResponse, response: Response, method: string, signal: AbortSignal,
+  mode: NodeHandlerMode) {
   if (signal.aborted || output.destroyed) { void response.body?.cancel().catch(() => {}); return; }
   output.statusCode = response.status;
   // Runtime owns framing/connection lifetime. Do not relay a handler's hop-by-hop headers or cookies.
   for (const [name, value] of response.headers) {
     if (!["connection", "transfer-encoding", "keep-alive", "upgrade", "trailer", "content-length"].includes(name)
-      && (name !== "set-cookie" || localDemo))
+      && (name !== "set-cookie" || mode.allowSetCookie))
       output.setHeader(name, value);
   }
   for (const [name, value] of Object.entries(privateResponseHeaders)) output.setHeader(name, value);
@@ -140,7 +172,7 @@ export function createPrivateNodeHandler(options: NodeHandlerOptions) {
     if (secondary.protocol !== "https:" || secondary.origin !== options.secondaryOrigin || secondary.origin === origin.origin
       || secondary.hostname.includes("*")) throw new Error("private_serving_config_invalid");
   }
-  return createNodeHandler(options, false);
+  return createNodeHandler(options, productionMode);
 }
 
 /** Separate local-only composition. Never selected through environment or a request.
@@ -149,13 +181,62 @@ export function createPrivateNodeHandler(options: NodeHandlerOptions) {
  */
 export function createContributorDemoNodeHandler(options: NodeHandlerOptions) {
   if (options.origin !== "http://127.0.0.1:3000") throw new Error("demo_serving_config_invalid");
-  return createNodeHandler(options, true);
+  return createNodeHandler(options, contributorDemoMode);
 }
 
-function createNodeHandler(options: NodeHandlerOptions, localDemo: boolean) {
+export type LocalSetupNodeHandlerOptions = Readonly<{
+  origin: string;
+  assets: PrivateClientAssets;
+  renderSetupPage(request: Request): Promise<Response> | Response;
+  planSource: Pick<LocalSetupJournalSourceV1, "read">;
+  readinessSource?: Readonly<{ read(signal?: AbortSignal): Promise<InstallationSetupViewV1 | undefined> }>;
+  isReady(): boolean;
+  close(): Promise<void>;
+  timing?: NodeHandlerOptions["timing"];
+}>;
+
+/** Read-only first-run transport. Unlike the normal private handler, this
+ * factory cannot receive a database-backed application, gateway profile,
+ * bootstrap ceremony, arbitrary route handler, or secondary origin. */
+export function createLocalSetupNodeHandler(options: LocalSetupNodeHandlerOptions) {
+  const origin = new URL(options.origin);
+  if (origin.protocol !== "http:" || origin.hostname !== "127.0.0.1" || !origin.port
+    || origin.origin !== options.origin || typeof options.renderSetupPage !== "function"
+    || typeof options.planSource?.read !== "function" || typeof options.isReady !== "function"
+    || typeof options.close !== "function")
+    throw new Error("local_setup_serving_config_invalid");
+  return createNodeHandler({ origin: options.origin, assets: options.assets,
+    application: { isReady: options.isReady, close: options.close }, timing: options.timing,
+    async handler(request) {
+    const url = new URL(request.url);
+    if (url.search) return Response.json({ error: "not_found" }, { status: 404, headers: privateResponseHeaders });
+    if (url.pathname === "/setup") return options.renderSetupPage(request);
+    if (url.pathname === "/api/v1/installation-plan") {
+      try {
+        const result = await options.planSource.read(request.signal);
+        return result.status === "available"
+          ? Response.json({ plan: verifyInstallationPlanViewV1(result.plan) }, { headers: privateResponseHeaders })
+          : Response.json({ error: "not_found" }, { status: 404, headers: privateResponseHeaders });
+      } catch {
+        return Response.json({ error: "not_found" }, { status: 404, headers: privateResponseHeaders });
+      }
+    }
+    if (url.pathname === "/api/v1/installation-readiness") {
+      try {
+        const value = await options.readinessSource?.read(request.signal);
+        if (!value) return Response.json({ error: "not_found" }, { status: 404, headers: privateResponseHeaders });
+        return Response.json({ setup: parseInstallationSetupViewV1(value) }, { headers: privateResponseHeaders });
+      }
+      catch { return Response.json({ error: "not_found" }, { status: 404, headers: privateResponseHeaders }); }
+    }
+      return Response.json({ error: "not_found" }, { status: 404, headers: privateResponseHeaders });
+  } }, localSetupMode);
+}
+
+function createNodeHandler(options: NodeHandlerOptions, mode: NodeHandlerMode) {
   const origin = new URL(options.origin);
   if (origin.origin !== options.origin) throw new Error("private_serving_config_invalid");
-  if (localDemo && options.secondaryOrigin !== undefined) throw new Error("demo_serving_config_invalid");
+  if (mode.localLoopback && options.secondaryOrigin !== undefined) throw new Error("demo_serving_config_invalid");
   const origins = Object.freeze([options.origin, ...(options.secondaryOrigin ? [options.secondaryOrigin] : [])]);
   const gatewayAssertionProfile = captureGatewayAssertionProviderProfileV1(
     options.gatewayAssertionProfile ?? cloudflareAccessGatewayAssertionProfileV1,
@@ -178,12 +259,15 @@ function createNodeHandler(options: NodeHandlerOptions, localDemo: boolean) {
       const timer = setTimeout(() => { controller.abort(); input.destroy(); output.destroy(); }, limits.requestMs);
       try {
         if (!admitted) throw new RequestFailure(503);
-        const head = requestHead(input, origins, localDemo, forwardedHeaders);
+        const head = requestHead(input, origins, mode, forwardedHeaders);
         const body = await consumeBody(input, signal, head.expectedLength, limits.bodyMs, head.bodyLimit);
         if (signal.aborted) return;
         if (head.method !== "POST" && body.length) throw new RequestFailure(400);
-        if (head.headers.get("sec-fetch-site") === "cross-site") throw new RequestFailure(403);
+        const fetchSite = head.headers.get("sec-fetch-site");
+        if (fetchSite === "cross-site" || mode.injectSetupMarker
+          && fetchSite !== null && fetchSite !== "same-origin" && fetchSite !== "none") throw new RequestFailure(403);
         const bootstrap = options.ownerBootstrapCeremony;
+        if (mode.injectSetupMarker) head.headers.set("x-control-room-local-setup", "v1");
         const request = new Request(head.url, { method: head.method, headers: head.headers, signal,
           ...(head.method === "POST" && body.length ? { body: new Uint8Array(body) } : {}) });
         const work = Promise.resolve().then(async () => {
@@ -202,12 +286,12 @@ function createNodeHandler(options: NodeHandlerOptions, localDemo: boolean) {
             void work.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
             if (signal.aborted) abort();
         });
-        await deliver(output, response, head.method, signal, localDemo);
+        await deliver(output, response, head.method, signal, mode);
       } catch (error) {
         if (!signal.aborted && !output.headersSent && !output.destroyed) {
           const status = error instanceof RequestFailure ? error.status : 503;
           const response = Response.json({ error: status === 503 ? "service_unavailable" : "invalid_request" }, { status });
-          try { await deliver(output, response, input.method ?? "GET", signal, localDemo); } catch { output.destroy(); }
+          try { await deliver(output, response, input.method ?? "GET", signal, mode); } catch { output.destroy(); }
         } else output.destroy();
       } finally {
         clearTimeout(timer); controller.abort();

@@ -280,6 +280,43 @@ export class InstallationPlanFilesystemJournalV1 {
     return Object.freeze(history);
   }
 
+  /**
+   * Read-only inspection for status surfaces. Unlike readHistory(), this never
+   * performs publication recovery or cleanup. Any temp, witness, hard-link or
+   * otherwise unsettled publication makes the snapshot unavailable so a GET
+   * can never mutate the private journal.
+   */
+  async inspectSettledHistory(signal?: AbortSignal): Promise<readonly InstallationPlanV1[]> {
+    signal?.throwIfAborted();
+    const root = await this.assertRoot();
+    const prefix = `${this.config.installationId}.installation-plan.`;
+    const targetPattern = new RegExp(`^${this.config.installationId}\\.installation-plan\\.revision-(\\d{10})\\.json$`);
+    const tempPattern = new RegExp(`^${this.config.installationId}\\.installation-plan\\.revision-\\d{10}\\.[0-9a-f-]{36}\\.tmp$`);
+    const witnessPattern = new RegExp(`^${this.config.installationId}\\.installation-plan\\.revision-\\d{10}\\.publish\\.json$`);
+    const revisions: number[] = [];
+    for (const name of await readdir(this.config.rootDirectory)) {
+      signal?.throwIfAborted();
+      if (!name.startsWith(prefix)) continue;
+      const match = targetPattern.exec(name);
+      if (match) revisions.push(Number.parseInt(match[1]!, 10));
+      else if (tempPattern.test(name) || witnessPattern.test(name)) unavailable();
+      else unavailable();
+    }
+    revisions.sort((left, right) => left - right);
+    if (revisions.length > MAX_REVISIONS || revisions.some((value, index) => value !== index)) unavailable();
+    const history: InstallationPlanV1[] = [];
+    for (const revision of revisions) {
+      signal?.throwIfAborted();
+      const plan = await this.readPlan(revision, root);
+      if (revision === 0) {
+        if (plan.revision !== 0 || plan.stages.some(stage => stage.state !== "not_started")) unavailable();
+      } else assertLegalHistoryTransition(history[revision - 1]!, plan);
+      history.push(plan);
+    }
+    await this.assertSameRoot(root);
+    return Object.freeze(history);
+  }
+
   private result(plan: InstallationPlanV1, replayed: boolean): InstallationPlanJournalAppendResultV1 {
     return Object.freeze({ schema: INSTALLATION_PLAN_JOURNAL_V1, installationId: this.config.installationId,
       revision: plan.revision, planDigest: plan.planDigest, replayed,

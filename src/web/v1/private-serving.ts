@@ -24,6 +24,7 @@ type GitHubBrokerBridge = Readonly<{
   handle(request: IncomingMessage, response: ServerResponse): Promise<void>;
   close(): Promise<void>;
 }>;
+type LocalSetupBridge = GitHubBrokerBridge;
 
 /** Inert until explicit start(). Tests inject a server with no sockets.
  * Start is a physical effect and requires the separate approved deployment/rehearsal packet.
@@ -48,6 +49,11 @@ export function createContributorDemoService(bridge: RequestBridge & { origin: s
 /** Inert private GitHub broker listener. It shares the reviewed loopback-only
  * lifecycle but is never started by importing or constructing it. */
 export function createGitHubBrokerLoopbackService(bridge: GitHubBrokerBridge, options: ListenerOptions) {
+  return createLoopbackService(options, () => bridge as RequestBridge);
+}
+
+/** Dedicated first-run wrapper over the same reviewed loopback lifecycle. */
+export function createLocalSetupLoopbackService(bridge: LocalSetupBridge, options: ListenerOptions) {
   return createLoopbackService(options, () => bridge as RequestBridge);
 }
 

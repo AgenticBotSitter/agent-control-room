@@ -185,3 +185,42 @@ test("a hard-linked or malformed owned revision cannot become accepted history",
     await assert.rejects(() => f.journal.readHistory(), /installation_plan_journal_unavailable/);
   } finally { await f.cleanup(); }
 });
+
+test("read-only inspection accepts settled history without changing directory entries or inodes", async () => {
+  const f = await fixture();
+  try {
+    const plan = create(); await f.journal.append(plan);
+    const beforeNames = (await readdir(f.root)).sort();
+    const before = await Promise.all(beforeNames.map(async entry => {
+      const stat = await lstat(join(f.root, entry), { bigint: true });
+      return [entry, stat.dev, stat.ino, stat.nlink, stat.size] as const;
+    }));
+    assert.equal((await f.journal.inspectSettledHistory()).length, 1);
+    const afterNames = (await readdir(f.root)).sort();
+    const after = await Promise.all(afterNames.map(async entry => {
+      const stat = await lstat(join(f.root, entry), { bigint: true });
+      return [entry, stat.dev, stat.ino, stat.nlink, stat.size] as const;
+    }));
+    assert.deepEqual(afterNames, beforeNames); assert.deepEqual(after, before);
+  } finally { await f.cleanup(); }
+});
+
+test("read-only inspection refuses unsettled temp, witness, and hard-link states without repairing them", async () => {
+  for (const kind of ["temp", "witness", "hardlink"] as const) {
+    const f = await fixture();
+    try {
+      const plan = create(), target = join(f.root, name(f.installationId, 0));
+      await writeFile(target, `${canonicalJson(plan)}\n`, { mode: 0o600, flag: "wx" });
+      if (kind === "temp") await writeFile(join(f.root,
+        `${f.installationId}.installation-plan.revision-0000000000.44444444-4444-4444-8444-444444444444.tmp`),
+        `${canonicalJson(plan)}\n`, { mode: 0o600, flag: "wx" });
+      if (kind === "witness") await writeFile(join(f.root,
+        `${f.installationId}.installation-plan.revision-0000000000.publish.json`), "{}\n", { mode: 0o600, flag: "wx" });
+      if (kind === "hardlink") await link(target, join(f.root,
+        `${f.installationId}.installation-plan.revision-0000000000.55555555-5555-4555-8555-555555555555.tmp`));
+      const before = (await readdir(f.root)).sort();
+      await assert.rejects(() => f.journal.inspectSettledHistory(), /installation_plan_journal_unavailable/);
+      assert.deepEqual((await readdir(f.root)).sort(), before, `${kind} inspection must not repair or delete`);
+    } finally { await f.cleanup(); }
+  }
+});

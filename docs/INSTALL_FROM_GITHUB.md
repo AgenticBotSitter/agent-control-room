@@ -26,9 +26,11 @@ already installed. The launcher checks Node before it can continue, and the
 shipped dependency-preparation step refuses any other pnpm version. It does
 not install Node or pnpm for you.
 
-The first public product path is deliberately narrow. The launcher reaches a
-source-only, owner-attended setup rehearsal; it does not yet open a browser
-page or activate a database, a background service, Hermes, Codex, or Claude.
+The first public product path is deliberately narrow. A compiled, read-only
+loopback setup page now exists and is tested from the built artifact, but the
+launcher still reaches the source-only, owner-attended setup rehearsal and
+does not yet start that host or open the browser. It does not activate a
+database, background service, Hermes, Codex, or Claude.
 Do not treat a successful download or launcher opening as a working Control
 Room installation.
 
@@ -59,8 +61,9 @@ Double-click the archive to extract it, then double-click:
 
 The launcher verifies its own contents and the inner release, places the
 verified release in a private version directory, performs a read-only
-compatibility check, and runs the shipped source-only setup entrypoint. It
-does not open a browser page yet. It stops if the package is incomplete or
+compatibility check, and runs the shipped source-only setup entrypoint. The
+next package will hand that launcher to the already-built loopback setup page;
+the current launcher does not open it yet. It stops if the package is incomplete or
 changed, if macOS/CPU is unsupported, if Node.js is too old, or if pnpm is not
 exactly 11.19.0 when dependency preparation begins.
 
