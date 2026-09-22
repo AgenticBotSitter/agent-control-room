@@ -19,9 +19,11 @@ The GitHub pull request also has a required unified-product CI lane so every
 local/multi-computer test file is reachable from a required workflow. The next
 build package is a durable, terminal-confirmed owner-action transaction using
 the existing installation plan and action-preparation seams, beginning with the
-PostgreSQL stage. No public release has been published and no live database,
-service, credential, agent, listener, or browser operation was performed by
-this source package.
+PostgreSQL stage. That stage now records one terminal-confirmed, exact-replay
+receipt only through the existing append-only plan journal; changed or uncertain
+state refuses and no PostgreSQL tool is called. No public release has been
+published and no live database, service, credential, agent, listener, or browser
+operation was performed by this source package.
 
 ## Current build block
 
