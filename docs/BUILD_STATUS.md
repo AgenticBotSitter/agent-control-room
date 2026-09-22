@@ -39,6 +39,19 @@ existing behavior and tests. No native helper was implemented, compiled or run;
 installed custody is not wired, and `native_journal_operation_custody_missing`
 remains the live blocker.
 
+The additive local Claude composition is now source-complete and independently
+accepted. It rereads the settled original installation and one committed
+topology transition, binds the exact installation, plan revision, topology,
+release, database and scheduler authority, protected storage, service,
+workspace, connector profile and fixed Claude adapter, and retains the
+bootstrap Hermes route. The transition itself does not publish a route. The
+controlled restart rereads that evidence again before the first startup effect
+and exposes only the module-branded Claude delivery capability; a bare callback,
+foreign installation or substituted adapter refuses before startup. The
+registered server-composition lane passes 84 checks and the full local-installation
+lane passes 382 checks. No Claude process was launched and live use still needs
+the separately owner-attended installed-CLI qualification and enablement.
+
 Fresh Linux CI exposed one real portability defect in the private PostgreSQL
 boundary: Linux refuses to execute a staged program while a write-capable file
 descriptor remains open. The boundary now closes the writer after sync and
