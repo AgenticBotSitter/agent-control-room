@@ -112,8 +112,8 @@ platform, protocol and architecture. It returns frozen data only, retains the
 original journal-root device and inode across reread, and refuses replacement.
 The old v1 manifest remains blocked and is never auto-upgraded; no manifest is
 written and no native file is staged into the immutable portable release tree.
-Owner-attended native-sidecar staging, installed operator wiring and separate
-native qualification remain before
+Owner-attended native-sidecar staging, installed operator acceptance and
+separate native qualification remain before
 `native_journal_operation_custody_missing` can be cleared.
 
 The next source-only journal custody seam is now implemented for independent
@@ -127,6 +127,17 @@ does not stage bytes, run the helper, create a private directory, contact a
 database, start a service or invoke Hermes. The live blocker remains until this
 source is independently accepted and the owner separately permits staging and
 native qualification in the installed operator path.
+
+The installed operator now has a source-only one-use loader for that seam. It
+captures explicit in-process owner/native inputs, rereads the protected v2
+manifest, composes the reviewed local-Hermes graph, constructs the canonical
+held-session journal, and hands exactly that custody/journal pair to the
+existing operator CLI. The shipped script no longer contains an undefined
+configuration loader and refuses `status`, `setup-next`, and `start` before the
+CLI when owner-held inputs are absent. Construction remains inert: it neither
+opens a native session or database nor starts a listener, service, worker or
+Hermes. This is source evidence awaiting independent review; it does not stage
+the sidecar, qualify native custody, authorize setup, or clear the owner gate.
 
 The additive local Claude composition is now source-complete and independently
 accepted. It rereads the settled original installation and one committed

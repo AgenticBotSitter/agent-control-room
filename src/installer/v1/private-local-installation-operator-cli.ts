@@ -3,6 +3,10 @@ import { createPrivateLocalInstallationOperatorV1,
   PRIVATE_LOCAL_INSTALLATION_OPERATOR_V1 } from "./private-local-installation-operator";
 import { startPrivateHostLifecycle } from "../../web/v1/private-host-lifecycle";
 
+export { createPrivateInstalledLocalOperatorLoaderV1,
+  PRIVATE_INSTALLED_LOCAL_OPERATOR_LOADER_V1 } from
+  "./private-installed-local-operator-loader";
+
 /**
  * Narrow, source-only command facade for an already-installed private setup.
  * It deliberately has no configuration path, environment selector, shell

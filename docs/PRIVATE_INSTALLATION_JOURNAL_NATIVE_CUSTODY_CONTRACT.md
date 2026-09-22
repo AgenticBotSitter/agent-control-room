@@ -1,11 +1,11 @@
 # Private installation-journal native custody contract
 
 **Status:** source-only storage-session extraction, held native session,
-injected adapter, release-bound sidecar and installed-custody composer. Merely
-constructing the composer performs no native operation, stages no bytes and
-does not make installed operator composition ready. The blocker remains until
-this composition is independently accepted, wired through the installed
-operator, and passes separate owner-attended staging and native qualification.
+injected adapter, release-bound sidecar, installed-custody composer and
+installed-operator loader. Merely constructing the loader performs no native
+operation, stages no bytes and does not make installed operation ready. The
+blocker remains until this wiring is independently accepted and passes separate
+owner-attended staging and native qualification.
 
 ## Reuse decision
 

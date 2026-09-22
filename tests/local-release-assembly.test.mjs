@@ -172,13 +172,34 @@ process.stdout.write("prepared by controlled test fixture\\n");
     let preparedCustodyLoads = 0;
     assert.equal(await operator.runPrivateLocalInstallationOperator(["status"], {
       async verifyRelease() { await operator.verifyInstalledPreparedOperatorReleaseV1(versionRoot); },
-      async loadRelease() { return { async runPrivateLocalInstallationOperatorCliV1(_args, runtime) {
-        preparedCustodyLoads++; await runtime.loadInstalledConfiguration(); return 0;
-      } }; },
-      async loadInstalledConfiguration() { return { custody: {}, journal: {} }; }, report() {}, reportError() {},
+      async loadRelease() { return {
+        createPrivateInstalledLocalOperatorLoaderV1(input) {
+          assert.deepEqual(input, { ownerHeld: true });
+          return { status: "owner_inputs_captured", async loadInstalledConfiguration() {
+            return { custody: {}, journal: {} };
+          } };
+        },
+        async runPrivateLocalInstallationOperatorCliV1(_args, runtime) {
+          preparedCustodyLoads++; await runtime.loadInstalledConfiguration(); return 0;
+        },
+      }; },
+      async loadOwnerHeldInstalledOperatorInput() { return { ownerHeld: true }; }, report() {}, reportError() {},
       signals: new EventEmitter(), createOperator: undefined, startLifecycle: undefined,
     }), 0, "a successfully prepared extracted release reaches its fixed custody handoff");
     assert.equal(preparedCustodyLoads, 1);
+    let unavailableCliCalls = 0; const unavailableErrors = [];
+    for (const command of ["status", "setup-next", "start"])
+      assert.equal(await operator.runPrivateLocalInstallationOperator([command], {
+        async verifyRelease() { await operator.verifyInstalledPreparedOperatorReleaseV1(versionRoot); },
+        async loadRelease() { return {
+          createPrivateInstalledLocalOperatorLoaderV1() { throw new Error("owner input absent"); },
+          async runPrivateLocalInstallationOperatorCliV1() { unavailableCliCalls++; return 0; },
+        }; },
+        report() {}, reportError(message) { unavailableErrors.push(message); }, signals: new EventEmitter(),
+      }), 1, `${command} refuses before the CLI when explicit owner-held dependencies are absent`);
+    assert.equal(unavailableCliCalls, 0);
+    assert.deepEqual(unavailableErrors, Array(3).fill(
+      "Control Room operator owner-held dependencies are unavailable; no setup action was started."));
     for (const name of ["altered", "missing", "linked"]) {
       const copiedInstall = join(root, `prepared-${name}`); await cp(installRoot, copiedInstall, { recursive: true });
       const copiedRoot = join(copiedInstall, "versions", manifest.version);
@@ -189,10 +210,17 @@ process.stdout.write("prepared by controlled test fixture\\n");
       let custodyLoads = 0, moduleLoads = 0;
       const code = await operator.runPrivateLocalInstallationOperator(["status"], {
         async verifyRelease() { await operator.verifyInstalledPreparedOperatorReleaseV1(copiedRoot); },
-        async loadRelease() { moduleLoads++; return { async runPrivateLocalInstallationOperatorCliV1(_args, runtime) {
-          custodyLoads++; await runtime.loadInstalledConfiguration(); return 0;
-        } }; },
-        async loadInstalledConfiguration() { return { custody: {}, journal: {} }; }, report() {}, reportError() {},
+        async loadRelease() { moduleLoads++; return {
+          createPrivateInstalledLocalOperatorLoaderV1() {
+            return { status: "owner_inputs_captured", async loadInstalledConfiguration() {
+              return { custody: {}, journal: {} };
+            } };
+          },
+          async runPrivateLocalInstallationOperatorCliV1(_args, runtime) {
+            custodyLoads++; await runtime.loadInstalledConfiguration(); return 0;
+          },
+        }; },
+        async loadOwnerHeldInstalledOperatorInput() { return { ownerHeld: true }; }, report() {}, reportError() {},
         signals: new EventEmitter(), createOperator: undefined, startLifecycle: undefined,
       });
       assert.equal(code, 1, `${name} prepared release refused`);

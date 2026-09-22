@@ -26,10 +26,12 @@ const installedRuntime = Object.freeze({
   async loadRelease() {
     return import("../dist-vps/server/privateLocalInstallationOperatorCli.js");
   },
-  // The source-only release has no production custody implementation. A later
-  // reviewed owner-attended boundary supplies this exact port in-process; no
-  // path, environment variable, arbitrary module, or command is accepted here.
-  async loadInstalledConfiguration() { return undefined; },
+  // The release entry never derives protected paths, native custody, database
+  // authority, Hermes authority, or service ports from arguments/environment.
+  // An owner-attended host must inject the exact reviewed input in-process.
+  async loadOwnerHeldInstalledOperatorInput() {
+    throw new Error("owner_held_installed_operator_input_missing");
+  },
   report(message) { process.stdout.write(message); },
   reportError(message) { process.stderr.write(`${message}\n`); },
   signals: process,
@@ -49,9 +51,24 @@ export async function runPrivateLocalInstallationOperator(args, runtime = instal
     if (typeof runtime.verifyRelease !== "function") throw new Error();
     await runtime.verifyRelease();
     const module = await runtime.loadRelease();
-    if (typeof module?.runPrivateLocalInstallationOperatorCliV1 !== "function") throw new Error();
+    if (typeof module?.runPrivateLocalInstallationOperatorCliV1 !== "function"
+      || typeof module?.createPrivateInstalledLocalOperatorLoaderV1 !== "function") throw new Error();
+    if (typeof runtime.loadOwnerHeldInstalledOperatorInput !== "function") {
+      runtime.reportError("Control Room operator owner-held dependencies are unavailable; no setup action was started.");
+      return 1;
+    }
+    let loader;
+    try {
+      loader = module.createPrivateInstalledLocalOperatorLoaderV1(
+        await runtime.loadOwnerHeldInstalledOperatorInput());
+      if (!loader || loader.status !== "owner_inputs_captured"
+        || typeof loader.loadInstalledConfiguration !== "function") throw new Error();
+    } catch {
+      runtime.reportError("Control Room operator owner-held dependencies are unavailable; no setup action was started.");
+      return 1;
+    }
     return await module.runPrivateLocalInstallationOperatorCliV1(args, {
-      loadInstalledConfiguration: runtime.loadInstalledConfiguration,
+      loadInstalledConfiguration: loader.loadInstalledConfiguration,
       report: runtime.report,
       reportError: runtime.reportError,
       signals: runtime.signals,

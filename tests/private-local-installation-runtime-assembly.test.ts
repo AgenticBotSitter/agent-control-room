@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { chmod, lstat, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import test from "node:test";
 import { createArtifactBackupInventoryV1, verifyRestoredArtifactBackupInventoryV1 } from
   "../src/artifacts/v1/artifact-backup-inventory";
@@ -20,6 +23,7 @@ import { createInstallationTransitionV1, advanceInstallationTransitionV1 } from
   "../src/harness/v1/installation-transition";
 import { advanceInstallationPlanV1, createInstallationPlanV1, installationSetupStagesV1, refreshInstallationPlanV1,
   type InstallationPlanV1, verifyInstallationPlanV1 } from "../src/installer/v1/installation-plan";
+import { InstallationPlanFilesystemJournalV1 } from "../src/installer/v1/installation-plan-journal";
 import { createPrivateLocalInstallationRuntimeAssemblyV1 } from
   "../src/installer/v1/private-local-installation-runtime-assembly";
 import { createPrivateLocalInstallationOperatorV1 } from
@@ -28,9 +32,19 @@ import { createPrivateInstalledLocalHermesRuntimeComposerV1,
   PRIVATE_INSTALLED_LOCAL_HERMES_AGENT_SOURCE_V1,
   PRIVATE_INSTALLED_LOCAL_HERMES_CONFIGURATION_V1 } from
   "../src/installer/v1/private-installed-local-hermes-runtime-composer";
+import { createPrivateInstalledLocalOperatorLoaderV1,
+  PRIVATE_INSTALLED_LOCAL_OPERATOR_LOADER_V1 } from
+  "../src/installer/v1/private-installed-local-operator-loader";
 import { PRIVATE_INSTALLED_CONFIGURATION_MANIFEST_BOUND_PREPARATION_V1,
+  PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V2,
+  PRIVATE_INSTALLED_CONFIGURATION_NATIVE_CUSTODY_V1,
   PRIVATE_INSTALLED_CONFIGURATION_NATIVE_SIDECAR_IDENTITY_V1 } from
   "../src/installer/v1/private-installed-configuration-custody";
+import { PRIVATE_INSTALLATION_JOURNAL_HELD_SESSION_PORT_V1 } from
+  "../src/installer/v1/private-installation-journal-held-session-adapter";
+import { MACOS_INSTALLATION_JOURNAL_NATIVE_SIDECAR_V1,
+  PRIVATE_INSTALLED_JOURNAL_CUSTODY_PORTS_V1 } from
+  "../src/installer/v1/private-installed-journal-custody-composer";
 import { prepareLocalHermesAdmissionV1 } from "../src/installer/v1/local-hermes-admission-preparation";
 import { localHermesAdmissionTerminalReceiptForRequestV1 } from
   "../src/installer/v1/local-hermes-admission-transaction";
@@ -43,7 +57,7 @@ import { PRIVATE_LOCAL_HERMES_OWNER_ATTACHED_TERMINAL_V1,
 import { PRIVATE_INSTALLATION_FINAL_REVIEW_OWNER_CONFIRMATION_V1,
   privateInstallationFinalReviewBindingsV1, type PrivateInstallationFinalReviewContextV1 } from
   "../src/installer/v1/private-installation-final-review";
-import { sha256Digest } from "../src/security/canonical-digest";
+import { canonicalJson, sha256Digest } from "../src/security/canonical-digest";
 import { computeAuthorityDigest } from "../src/security/digest";
 import { createPrivateHermes021LocalInstallationDeliveryV1,
   } from
@@ -454,6 +468,219 @@ test("installed identity recreates the same startup binding while source capabil
   assert.notEqual(first.assemblyInput.operatorTrustedInputs.hermes021Local,
     second.assemblyInput.operatorTrustedInputs.hermes021Local);
   assert.equal(f.hermesCalls(), 0); assert.equal(f.reads(), 0); assert.equal(f.appends(), 0);
+});
+
+const installedFileDigest = (value: Uint8Array) =>
+  `sha256:${createHash("sha256").update(value).digest("hex")}`;
+const installedFileBytes = (value: unknown) => Buffer.from(`${canonicalJson(value)}\n`, "utf8");
+
+async function installedOperatorLoaderPackage(t: { after(fn: () => unknown): void }, f: any) {
+  const composed = installedComposerPackage(f);
+  const root = await mkdtemp(join(process.cwd(), ".installed-operator-loader-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await chmod(root, 0o700);
+  const journalPath = join(root, "installation-journal");
+  await mkdir(journalPath, { mode: 0o700 }); await chmod(journalPath, 0o700);
+  const journalStat = await lstat(journalPath), ownerUid = process.geteuid!();
+  const journal = { rootPath: journalPath,
+    expectedRootIdentity: { device: journalStat.dev, inode: journalStat.ino },
+    expectedOwnerUid: ownerUid, expectedRootMode: 0o700 as const };
+  const privateData = composed.preparation.privateConfigurationData as Record<string, unknown>;
+  const { installedManifestBindingDigest: _oldBinding, ...configurationWithoutBinding } = privateData;
+  const configuration = { ...configurationWithoutBinding,
+    installedManifestBindingDigest: d({ purpose: "private-installed-local-hermes-configuration-binding/v1",
+      installationId: "fixture-installation", journal, nativeSidecar: composed.preparation.nativeSidecar,
+      configuration: configurationWithoutBinding }) };
+  const configurationBytes = installedFileBytes(configuration), configurationName = "operator.json";
+  await writeFile(join(root, configurationName), configurationBytes, { mode: 0o600 });
+  await chmod(join(root, configurationName), 0o600);
+  const manifest = { schema: PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V2, installationId: "fixture-installation",
+    ownerUid, configuration: { name: configurationName, bytes: configurationBytes.length,
+      sha256: installedFileDigest(configurationBytes) },
+    journal: { directoryName: "installation-journal", nativeSidecar: composed.preparation.nativeSidecar } };
+  const manifestBytes = installedFileBytes(manifest), manifestPath = join(root, "installed-manifest.json");
+  await writeFile(manifestPath, manifestBytes, { mode: 0o600 }); await chmod(manifestPath, 0o600);
+  const protectedReads: string[] = [], factoryInputs: unknown[] = [];
+  let nativeSessionOpens = 0;
+  const native = { async verifyProtectedPath(request: any) {
+    protectedReads.push(request.kind);
+    return { schema: PRIVATE_INSTALLED_CONFIGURATION_NATIVE_CUSTODY_V1, outcome: "verified",
+      descriptor: request.descriptor, device: request.identity.device, inode: request.identity.inode,
+      ownerUid: request.identity.ownerUid, mode: request.identity.mode, extendedAcl: false,
+      ancestorVerified: true };
+  } };
+  const installedConfigurationCustodyInput = { schema: PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V2,
+    manifestPath, manifestBytes: manifestBytes.length, manifestSha256: installedFileDigest(manifestBytes),
+    expectedOwnerUid: ownerUid, verificationDeadlineMs: 1_000, native };
+  const stagedJournalSidecar = {
+    schema: MACOS_INSTALLATION_JOURNAL_NATIVE_SIDECAR_V1,
+    nativeArtifact: { schema: MACOS_INSTALLATION_JOURNAL_NATIVE_SIDECAR_V1, verified: true as const,
+      releaseVersion: composed.preparation.nativeSidecar.releaseVersion, platform: "darwin" as const,
+      architecture: composed.preparation.nativeSidecar.architecture, minimumMacos: "13.0", protocol: "ACRJNL1" as const,
+      sidecarManifestSha256: composed.preparation.nativeSidecar.sidecarManifestSha256,
+      archiveSha256: composed.preparation.nativeSidecar.archiveSha256,
+      artifactManifestSha256: composed.preparation.nativeSidecar.artifactManifestSha256,
+      executableSha256: composed.preparation.nativeSidecar.executableSha256, sourceSha256: "7".repeat(64),
+      toolchain: { compiler: "reviewed fixture", flags: ["fixed"] },
+      files: [{ path: "installation-journal-session-v1", mode: "0755",
+        sha256: composed.preparation.nativeSidecar.executableSha256.slice("sha256:".length), bytes: 19 }],
+      compiles: false as const, downloads: false as const, installs: false as const },
+    installationJournalNativeFactoryInput: {
+      executablePath: join(root, ".acr-installation-journal-sidecar-fixture", "installation-journal-session-v1"),
+      executableSha256: composed.preparation.nativeSidecar.executableSha256 },
+    staged: true as const, compiles: false as const, downloads: false as const, installs: false as const };
+  const expectedFactoryInput = { ...stagedJournalSidecar.installationJournalNativeFactoryInput };
+  const journalCustodyPorts = { schema: PRIVATE_INSTALLED_JOURNAL_CUSTODY_PORTS_V1,
+    createNativeSessionPort(input: unknown) {
+      factoryInputs.push(input);
+      return Object.freeze({ schema: PRIVATE_INSTALLATION_JOURNAL_HELD_SESSION_PORT_V1,
+        async openSession() { nativeSessionOpens += 1; throw new Error("test session must not open"); } });
+    } };
+  const input = { schema: PRIVATE_INSTALLED_LOCAL_OPERATOR_LOADER_V1,
+    installedConfigurationCustodyInput, hermesRuntimePorts: composed.ports, journalCustodyPorts,
+    stagedJournalSidecar, journalOperationDeadlineMs: 1_000 };
+  return { input, composed, protectedReads, factoryInputs, nativeSessionOpens: () => nativeSessionOpens,
+    manifestPath, manifestBytes, expectedFactoryInput };
+}
+
+test("the installed operator loader joins v2 custody, the exact Hermes graph and held journal without runtime effects", async t => {
+  const f = await fixture(t), prepared = await installedOperatorLoaderPackage(t, f);
+  const loader = createPrivateInstalledLocalOperatorLoaderV1(prepared.input);
+  assert.equal(loader.status, "owner_inputs_captured");
+  assert.equal(loader.performsEffectOnConstruction, false);
+  assert.equal(loader.opensNativeSessionOnConstruction, false);
+  assert.deepEqual(prepared.protectedReads, []); assert.deepEqual(prepared.factoryInputs, []);
+  assert.equal(prepared.nativeSessionOpens(), 0); assert.equal(f.hermesCalls(), 0);
+  assert.equal(f.reads(), 0); assert.equal(f.appends(), 0);
+
+  // All values were captured at construction; later caller replacement cannot
+  // redirect the manifest, helper or delivery-integrity binding.
+  prepared.input.installedConfigurationCustodyInput.manifestPath = "/private/foreign-manifest";
+  prepared.input.stagedJournalSidecar.installationJournalNativeFactoryInput.executablePath = "/private/foreign-helper";
+  prepared.input.hermesRuntimePorts.deliveryIntegrityKey.fill(0);
+  const installed = await loader.loadInstalledConfiguration();
+  assert.ok(prepared.protectedReads.includes("manifest")); assert.ok(prepared.protectedReads.includes("configuration"));
+  assert.equal(prepared.factoryInputs.length, 1); assert.equal(prepared.nativeSessionOpens(), 0);
+  assert.deepEqual(prepared.factoryInputs[0], prepared.expectedFactoryInput);
+  assert.equal(installed.journal instanceof InstallationPlanFilesystemJournalV1, true);
+  const loaded = await installed.custody.loadPrivateConfiguration() as any;
+  assert.equal(loaded.assemblyInput.runnerInput.privateStartupConfiguration.coordinator.queueWorker?.concurrency,
+    f.queueWorker.concurrency);
+  assert.equal(loaded.setupSources.agent_readiness, loaded.assemblyInput.runnerInput);
+  assert.equal(loaded.assemblyInput.operatorTrustedInputs.hermes021Local,
+    loaded.assemblyInput.runnerInput.privateStartupConfiguration.coordinator.hermes021Local);
+  assert.equal(f.hermesCalls(), 0); assert.equal(f.reads(), 0); assert.equal(f.appends(), 0);
+  await assert.rejects(loader.loadInstalledConfiguration(), /private_installed_local_operator_loader_refused/u);
+});
+
+test("installed operator loader refuses missing, foreign and mutated owner input before native session or runtime effects", async t => {
+  const f = await fixture(t), prepared = await installedOperatorLoaderPackage(t, f);
+  const missing = { ...prepared.input } as Record<string, unknown>;
+  delete missing.journalCustodyPorts;
+  assert.throws(() => createPrivateInstalledLocalOperatorLoaderV1(missing),
+    /private_installed_local_operator_loader_refused/u);
+  assert.throws(() => createPrivateInstalledLocalOperatorLoaderV1(new Proxy(prepared.input, {})),
+    /private_installed_local_operator_loader_refused/u);
+  let getters = 0;
+  const accessor = { ...prepared.input } as Record<string, unknown>;
+  Object.defineProperty(accessor, "hermesRuntimePorts", { enumerable: true, get() { getters += 1; return prepared.composed.ports; } });
+  assert.throws(() => createPrivateInstalledLocalOperatorLoaderV1(accessor),
+    /private_installed_local_operator_loader_refused/u);
+  assert.equal(getters, 0); assert.deepEqual(prepared.protectedReads, []);
+
+  prepared.input.stagedJournalSidecar.nativeArtifact.archiveSha256 = d("foreign-sidecar");
+  const foreign = createPrivateInstalledLocalOperatorLoaderV1(prepared.input);
+  await assert.rejects(foreign.loadInstalledConfiguration(), /private_installed_local_operator_loader_refused/u);
+  assert.deepEqual(prepared.factoryInputs, []); assert.equal(prepared.nativeSessionOpens(), 0);
+  assert.equal(f.hermesCalls(), 0); assert.equal(f.reads(), 0); assert.equal(f.appends(), 0);
+});
+
+test("installed operator byte capture never invokes caller iterators or accessors and sanitizes refusal", async t => {
+  const f = await fixture(t), prepared = await installedOperatorLoaderPackage(t, f);
+  let iteratorGets = 0, propertyGets = 0;
+  const sentinel = new Error("secret-byte-iterator-sentinel");
+  sentinel.stack = "private stack must not escape";
+  const iteratorKey = new Uint8Array(32).fill(177);
+  Object.defineProperty(iteratorKey, Symbol.iterator, { configurable: true, get() {
+    iteratorGets += 1; throw sentinel;
+  } });
+  const accessorKey = new Uint8Array(32).fill(177);
+  Object.defineProperty(accessorKey, "extra", { configurable: true, enumerable: true, get() {
+    propertyGets += 1; throw sentinel;
+  } });
+  class DerivedBytes extends Uint8Array {}
+  for (const key of [iteratorKey, accessorKey, new DerivedBytes(32)]) {
+    const input = { ...prepared.input,
+      hermesRuntimePorts: { ...prepared.input.hermesRuntimePorts, deliveryIntegrityKey: key } };
+    assert.throws(() => createPrivateInstalledLocalOperatorLoaderV1(input), error => {
+      assert.ok(error instanceof Error);
+      assert.equal(error.message, "private_installed_local_operator_loader_refused");
+      assert.equal(error.stack, undefined);
+      assert.notEqual(error, sentinel);
+      return true;
+    });
+  }
+  assert.equal(iteratorGets, 0); assert.equal(propertyGets, 0);
+  assert.deepEqual(prepared.protectedReads, []); assert.deepEqual(prepared.factoryInputs, []);
+  assert.equal(prepared.nativeSessionOpens(), 0); assert.equal(f.hermesCalls(), 0);
+});
+
+test("installed operator rejects nonplain custody, staged-sidecar and journal-port records before they can be swapped", async t => {
+  const f = await fixture(t), prepared = await installedOperatorLoaderPackage(t, f);
+  const nonplain = (value: object) => Object.assign(Object.create({ foreign: true }), value);
+  const cases = [
+    { ...prepared.input, installedConfigurationCustodyInput: nonplain(prepared.input.installedConfigurationCustodyInput) },
+    { ...prepared.input, stagedJournalSidecar: nonplain(prepared.input.stagedJournalSidecar) },
+    { ...prepared.input, journalCustodyPorts: nonplain(prepared.input.journalCustodyPorts) },
+  ];
+  for (const input of cases)
+    assert.throws(() => createPrivateInstalledLocalOperatorLoaderV1(input), error => {
+      assert.ok(error instanceof Error);
+      assert.equal(error.message, "private_installed_local_operator_loader_refused");
+      assert.equal(error.stack, undefined);
+      return true;
+    });
+  assert.deepEqual(prepared.protectedReads, []); assert.deepEqual(prepared.factoryInputs, []);
+  assert.equal(prepared.nativeSessionOpens(), 0); assert.equal(f.hermesCalls(), 0);
+  assert.equal(f.reads(), 0); assert.equal(f.appends(), 0);
+});
+
+test("installed operator signal detection never walks an untrusted prototype", async t => {
+  const f = await fixture(t), prepared = await installedOperatorLoaderPackage(t, f);
+  let prototypeTraps = 0, propertyTraps = 0;
+  const sentinel = new Error("secret-prototype-trap-sentinel");
+  sentinel.stack = "private stack must not escape";
+  const prototype = new Proxy({}, {
+    get() { propertyTraps += 1; throw sentinel; },
+    getPrototypeOf() { prototypeTraps += 1; throw sentinel; },
+  });
+  const startupBase = Object.assign(Object.create(prototype), prepared.input.hermesRuntimePorts.startupBase);
+  const originalRuntimes = prepared.input.hermesRuntimePorts.setupRuntimes;
+  const finalReview = { controlDeadlineMs: 1_000, async confirmOwnerAttached() {} };
+  const nativeRuntimes = { ...originalRuntimes,
+    final_review: { finalReview: { ...finalReview, signal: new AbortController().signal } } };
+  assert.equal(createPrivateInstalledLocalOperatorLoaderV1({ ...prepared.input,
+    hermesRuntimePorts: { ...prepared.input.hermesRuntimePorts, setupRuntimes: nativeRuntimes } }).status,
+  "owner_inputs_captured");
+  const setupRuntimes = { ...originalRuntimes,
+    final_review: { finalReview: { ...finalReview, signal: Object.create(prototype) } } };
+  for (const hermesRuntimePorts of [
+    { ...prepared.input.hermesRuntimePorts, startupBase },
+    { ...prepared.input.hermesRuntimePorts, setupRuntimes },
+  ]) {
+    const input = { ...prepared.input, hermesRuntimePorts };
+    assert.throws(() => createPrivateInstalledLocalOperatorLoaderV1(input), error => {
+      assert.ok(error instanceof Error);
+      assert.equal(error.message, "private_installed_local_operator_loader_refused");
+      assert.equal(error.stack, undefined);
+      assert.notEqual(error, sentinel);
+      return true;
+    });
+  }
+  assert.equal(prototypeTraps, 0); assert.equal(propertyTraps, 0);
+  assert.deepEqual(prepared.protectedReads, []); assert.deepEqual(prepared.factoryInputs, []);
+  assert.equal(prepared.nativeSessionOpens(), 0); assert.equal(f.hermesCalls(), 0);
+  assert.equal(f.reads(), 0); assert.equal(f.appends(), 0);
 });
 
 test("construction is inert and settled preparation supplies the exact opaque receipt to operator configuration", async t => {
