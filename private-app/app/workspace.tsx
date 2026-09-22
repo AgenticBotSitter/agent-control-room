@@ -67,7 +67,7 @@ function useProductTemplateOptions(): readonly { templateId: string; displayName
   }, [configuration, digest]);
 }
 
-export type ProjectSection = "overview" | "inbox" | "agents" | "automations" | "settings";
+export type ProjectSection = "overview" | "agents" | "automations" | "settings";
 
 /**
  * Local route setup belongs to the installation, not to the selected project.
@@ -242,11 +242,6 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
             <p className="private-note">Saved revision {project.version} · <ConfiguredTimestamp value={project.updatedAt} prefix="Updated" /></p>
           </section>}
           <ProjectModuleAvailability presentation={project.presentation} />
-          {section === "inbox" && <section className="private-panel"><h2>Project inbox</h2>
-            <p>Open the saved attention list and choose an item from this project. The list reports missing checks and uncertain work instead of claiming an all-clear.</p>
-            <a className="private-action-link" href="/needs-me">Open needs attention</a>
-            <p className="private-note">Project-specific decisions remain on each task page. Opening the inbox does not approve, retry or start work.</p>
-          </section>}
           {section === "agents" && <><section className="private-panel"><h2>Project agents</h2>
             <p>Saved connection records and optional session observations show what can be verified. They do not grant a worker permission to take work.</p>
             <p className="private-note">Project-specific eligibility, capabilities, available slots, current work and usage are unavailable here.

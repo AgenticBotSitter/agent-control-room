@@ -669,6 +669,15 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             try { projectId = decodeURIComponent(projectFiles[1]); } catch { throw new WebAccessError("invalid_request"); }
             return Response.json(await tasks.projectFiles(identity, projectId), { headers: privateResponseHeaders });
           }
+          const projectAttention = /^\/api\/v1\/projects\/([^/]+)\/(inbox|reviews)$/.exec(url.pathname);
+          if (projectAttention) {
+            if (request.method !== "GET" || [...url.searchParams.keys()].some(key => key !== "after")
+              || url.searchParams.getAll("after").length > 1) throw new WebAccessError("invalid_request");
+            let projectId: string;
+            try { projectId = decodeURIComponent(projectAttention[1]); } catch { throw new WebAccessError("invalid_request"); }
+            return Response.json(await tasks.projectAttention(identity, projectId, projectAttention[2] as "inbox" | "reviews",
+              url.searchParams.get("after") ?? undefined), { headers: privateResponseHeaders });
+          }
           if (/^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/.test(url.pathname))
             return await createTaskHttpHandler({ origin: site.origin, trust, service: tasks, ownerReviews, ownerVerifications,
               planning, assignment, approvals, submission, revisions, gatewayAssertionProfile, clock })(request);

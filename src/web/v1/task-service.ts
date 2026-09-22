@@ -19,6 +19,8 @@ import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 import { WebSessionAuthority, type WebActor } from "./session-authority";
 import { CONTROL_ROOM_IDEA_ADAPTER_V1 } from "../../idea-lab/v1/schemas";
 import { taskAttentionPageSchema, taskAttentionPresentation, type TaskAttentionPage } from "./task-attention-wire";
+import { taskProjectAttentionPageSchema, taskProjectResultAttentionReasons,
+  type TaskProjectAttentionPage } from "./task-project-attention-wire";
 import { WebProjectService } from "./project-service";
 import { catalogProjectIdSchema } from "./project-wire";
 import { taskDraftSchema, taskSummarySchema, taskReceiptSchema, taskDetailSchema, taskPageSchema,
@@ -403,6 +405,35 @@ export class WebTaskService {
         verificationCommands: this.verificationCommandsConfigured ? "configured" : "not_connected" });
   }
 
+  /** One result/review inspection powers both the workspace-wide attention list and
+   * project pages. It only returns opaque identifiers already accepted by the signed
+   * result reader; it does not grant result reading, approval, revision, or execution. */
+  private async resultAttention(tx: DatabaseSession, actor: WebActor, row: TaskRow & { has_artifacts: boolean }) {
+    const reasons: TaskAttentionPage["items"][number]["reasons"] = [];
+    const resultArtifactIds: string[] = [];
+    if (!row.has_artifacts) return { reasons, resultArtifactIds };
+    const result = await this.resultPage(tx, actor, row.project_id, row.id);
+    if (result.resultSource === "not_configured" || result.reviewSource === "not_configured") {
+      reasons.push("result_checks_unavailable");
+      return { reasons, resultArtifactIds };
+    }
+    for (const review of result.reviews.filter(value => value.matchingArtifactIds.length > 0)) {
+      switch (review.status) {
+        case "pending": reasons.push("review"); break;
+        case "changes_requested": case "verification_blocked": case "revision_limit_reached":
+          reasons.push(review.status); break;
+      }
+      if (["pending", "changes_requested", "verification_blocked", "revision_limit_reached"].includes(review.status))
+        resultArtifactIds.push(...review.matchingArtifactIds);
+    }
+    if (result.additionalResultsOmitted || result.additionalTargetsOmitted
+      || result.reviews.some(value => value.additionalEvidenceOmitted)
+      || result.items.some(item => !result.reviews.some(review => review.matchingArtifactIds.includes(item.artifactId))))
+      reasons.push("result_checks_unavailable");
+    return { reasons: [...new Set(reasons)],
+      resultArtifactIds: result.canReadContent ? [...new Set(resultArtifactIds)].sort() : [] };
+  }
+
   private attentionSources(actor: WebActor): TaskAttentionPage["sources"] {
       actor.require("tasks.read", undefined, true);
       const ordinary = actor.can("projects.read", undefined, true);
@@ -450,22 +481,7 @@ export class WebTaskService {
         if (job.jobType === "harness.hermes.native.task" && ["leased", "running", "waiting_approval", "orphaned", "failed"].includes(summary.state))
           reasons.push("delivery_check");
         if (row.has_artifacts) {
-          const result = await this.resultPage(tx, actor, row.project_id, row.id);
-          if (result.resultSource === "not_configured" || result.reviewSource === "not_configured") {
-            reasons.push("result_checks_unavailable");
-          } else {
-            for (const review of result.reviews.filter(value => value.matchingArtifactIds.length > 0)) {
-              switch (review.status) {
-                case "pending": reasons.push("review"); break;
-                case "changes_requested": case "verification_blocked": case "revision_limit_reached":
-                  reasons.push(review.status); break;
-              }
-            }
-            if (result.additionalResultsOmitted || result.additionalTargetsOmitted
-              || result.reviews.some(value => value.additionalEvidenceOmitted)
-              || result.items.some(item => !result.reviews.some(review => review.matchingArtifactIds.includes(item.artifactId))))
-              reasons.push("result_checks_unavailable");
-          }
+          reasons.push(...(await this.resultAttention(tx, actor, row)).reasons);
         }
         if (reasons.length) {
           const uniqueReasons = [...new Set(reasons)];
@@ -475,6 +491,50 @@ export class WebTaskService {
       }
       return taskAttentionPageSchema.parse({ items, sources, examined: Math.min(rows.length, 25),
         nextCursor: rows.length > 25 ? rows[24].id : null, observedAt: actor.now, startsWork: false });
+    });
+  }
+
+  /** Bounded project-local slice of the same attention classification used by
+   * /needs-me/tasks. Result attention is deliberately independent from a task's
+   * execution-approval state: a returned pending result can appear after the task
+   * is no longer waiting_approval. */
+  async projectAttention(identity: VerifiedWebIdentity, projectId: string, mode: "inbox" | "reviews", after?: string) {
+    this.id(projectId); if (after !== undefined) this.id(after);
+    return this.authority.authenticated(identity, async (tx, actor) => {
+      actor.require("tasks.read", projectId);
+      await this.projects.getViewInSession(tx, actor, projectId);
+      const hasArtifact = `EXISTS(SELECT 1 FROM control_native_artifact_receipts a
+        WHERE a.tenant_id=j.tenant_id AND a.project_id=j.project_id AND a.job_id=j.id)`;
+      const candidate = mode === "reviews" ? hasArtifact : `(j.state IN ('proposed','waiting_approval','failed','orphaned')
+        OR (j.payload->>'jobType'='harness.hermes.native.task' AND j.state IN ('leased','running')) OR ${hasArtifact})`;
+      const rows = (await tx.query<TaskRow & { has_artifacts: boolean }>(`SELECT ${hasArtifact} AS has_artifacts, ${selection}
+        WHERE j.tenant_id=$1 AND j.project_id=$2 AND ($3::text IS NULL OR j.id COLLATE "C">$3 COLLATE "C") AND ${candidate}
+        ORDER BY j.id COLLATE "C" LIMIT 21`, [this.scope.tenantId, projectId, after ?? null])).rows;
+      const items: TaskProjectAttentionPage["items"] = [];
+      for (const row of rows.slice(0, 20)) {
+        const { summary, job } = validated(row, this.scope.tenantId, projectId);
+        const reasons: TaskAttentionPage["items"][number]["reasons"] = [];
+        if (mode === "inbox") {
+          if (summary.state === "proposed") reasons.push(job.jobType === "task.proposal" ? "proposal" : "assignment");
+          if (summary.state === "waiting_approval") reasons.push("approval");
+          if (summary.state === "failed" || summary.state === "orphaned") reasons.push(summary.state);
+          if (job.jobType === "harness.hermes.native.task" && ["leased", "running", "waiting_approval", "orphaned", "failed"].includes(summary.state))
+            reasons.push("delivery_check");
+        }
+        const result = await this.resultAttention(tx, actor, row);
+        reasons.push(...result.reasons);
+        const uniqueReasons = [...new Set(reasons)];
+        if (!uniqueReasons.length || mode === "reviews" && !uniqueReasons.some(reason =>
+          (taskProjectResultAttentionReasons as readonly string[]).includes(reason))) continue;
+        items.push({ task: summary, inputDigest: job.inputDigest, reasons: uniqueReasons,
+          resultArtifactIds: result.resultArtifactIds, ...taskAttentionPresentation(uniqueReasons) });
+      }
+      return taskProjectAttentionPageSchema.parse({ projectId, mode, items, examined: Math.min(rows.length, 20),
+        nextCursor: rows.length > 20 ? rows[19]!.id : null,
+        resultSource: this.resultStore ? "configured" : "not_configured",
+        reviewSource: this.reviewConfig ? "configured" : "not_configured",
+        resultContent: actor.can("tasks.results.read", projectId) ? "authorized" : "not_authorized",
+        observedAt: actor.now, startsWork: false });
     });
   }
 

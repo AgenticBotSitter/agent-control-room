@@ -258,6 +258,18 @@ remain readable for recovery. Focused adapter tests, private-startup tests,
 VPS compilation and TypeScript passed. This is source and disposable-test
 evidence only: it enables no worker, database, listener or persistent service.
 
+The protected project Inbox and Reviews pages now discover returned-result
+attention from the existing signed result and review records rather than from
+task execution-approval state. They remain read-only, project-scoped and
+bounded; they link only exact protected results that the current identity may
+actually read, and otherwise explain that review metadata is visible while
+result content is not authorized. The same correction, verification-blocked,
+revision-limit and unavailable-evidence classifications are reused from the
+workspace attention path, so this adds no second review engine or scheduler.
+Focused service, limited-permission, browser, compiled-route and TypeScript
+checks passed. T3 Code and Hermes WebUI were retained as presentation
+references only; no donor runtime, store or authority code was copied.
+
 The local Hermes path now also has a source-only owner-admission preparation,
 attached-owner runner and durable `agent_readiness` settlement.
 It re-verifies a saved installation binding against current private

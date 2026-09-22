@@ -17,6 +17,8 @@ import { ProjectFilesView } from "../private-app/app/project-files-workspace";
 import { readTaskProjectFiles } from "../src/web/v1/task-project-files-browser-client";
 import { ProjectNavigation } from "../private-app/app/project-navigation";
 import { ProjectTaskViewPanel } from "../private-app/app/project-task-views";
+import { ProjectResultReviewPanel } from "../private-app/app/project-result-review-workspace";
+import { readTaskProjectAttention } from "../src/web/v1/task-project-attention-browser-client";
 import { decodePrivateRouteSegment } from "../private-app/app/route-segment";
 import { PrivateConnectionView } from "../private-app/app/connections/workspace";
 import { InstallationTopologySummary } from "../private-app/app/installation-topology-summary";
@@ -289,6 +291,54 @@ test("project review page distinguishes unavailable data from an empty list", ()
     { projectId: "project:alpha", view: "reviews", state: { state: "unavailable", code: "unavailable" } }));
   assert.match(html, /No empty list or all-clear is inferred/);
   assert.doesNotMatch(html, /No task is currently recorded/);
+});
+
+test("project inbox and result reviews use exact protected results and keep execution approval separate", async () => {
+  const base = { projectId: "project:alpha", requestId: "request:alpha", jobId: "job:returned", title: "Returned report",
+    state: "succeeded" as const, version: 2, createdAt: "2026-09-04T10:00:00.000Z", updatedAt: "2026-09-04T12:00:00.000Z" };
+  const value = { projectId: base.projectId, mode: "reviews" as const, items: [{ task: base,
+    inputDigest: `sha256:${"a".repeat(64)}`, reasons: ["verification_blocked" as const], resultArtifactIds: ["artifact:returned"],
+    category: "uncertainty" as const, urgency: "urgent" as const, ownerQuestion: "What was already recorded, and is it safe to continue?" }],
+    nextCursor: "job:z-later", examined: 20, resultSource: "configured" as const, reviewSource: "configured" as const,
+    resultContent: "authorized" as const,
+    observedAt: "2026-09-04T12:00:00.000Z", startsWork: false as const };
+  const html = renderToStaticMarkup(createElement(ProjectResultReviewPanel,
+    { projectId: base.projectId, mode: "reviews", data: { state: "ready", value } }));
+  assert.match(html, /Returned result needs review|Verification is blocked/);
+  assert.match(html, /tasks\/job%3Areturned\?result=artifact%3Areturned#task-results/);
+  assert.match(html, /Execution approval remains a separate task decision/);
+  assert.match(html, /Check next saved tasks/);
+  assert.doesNotMatch(html, /approve|retry|submit|start work/i);
+  let requested = "", method = "";
+  const transport = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requested = String(input); method = init?.method ?? ""; return Response.json(value);
+  }) as typeof fetch;
+  assert.equal((await readTaskProjectAttention(base.projectId, "reviews", undefined, transport)).items[0]?.task.state, "succeeded");
+  assert.equal(requested, "/api/v1/projects/project%3Aalpha/reviews"); assert.equal(method, "GET");
+  await assert.rejects(readTaskProjectAttention("project:other", "reviews", "bad\u0000cursor", transport), /invalid_request/);
+});
+
+test("project review attention does not turn unavailable evidence into an empty all-clear", () => {
+  const html = renderToStaticMarkup(createElement(ProjectResultReviewPanel, { projectId: "project:alpha", mode: "reviews",
+    data: { state: "ready", value: { projectId: "project:alpha", mode: "reviews", items: [], nextCursor: null, examined: 1,
+      resultSource: "not_configured", reviewSource: "not_configured", resultContent: "authorized",
+      observedAt: "2026-09-04T12:00:00.000Z", startsWork: false } } }));
+  assert.match(html, /not an all-clear for omitted or unavailable evidence/);
+  assert.doesNotMatch(html, /No returned result needs review/);
+});
+
+test("project review attention explains limited access without advertising a result link", () => {
+  const task = { projectId: "project:alpha", requestId: "request:alpha", jobId: "job:returned", title: "Returned report",
+    state: "succeeded" as const, version: 2, createdAt: "2026-09-04T10:00:00.000Z", updatedAt: "2026-09-04T12:00:00.000Z" };
+  const html = renderToStaticMarkup(createElement(ProjectResultReviewPanel, { projectId: task.projectId, mode: "reviews",
+    data: { state: "ready", value: { projectId: task.projectId, mode: "reviews", items: [{ task,
+      inputDigest: `sha256:${"a".repeat(64)}`, reasons: ["review"], resultArtifactIds: [], category: "review",
+      urgency: "soon", ownerQuestion: "Does the saved result meet the requested outcome, or does it need changes?" }],
+    nextCursor: null, examined: 1, resultSource: "configured", reviewSource: "configured", resultContent: "not_authorized",
+    observedAt: "2026-09-04T12:00:00.000Z", startsWork: false } } }));
+  assert.match(html, /Review metadata is visible/);
+  assert.match(html, /does not authorize opening result content/);
+  assert.doesNotMatch(html, /Open exact protected result/);
 });
 
 test("settings links to the real session surface without credential controls", () => {
