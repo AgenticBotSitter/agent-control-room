@@ -31,7 +31,7 @@ export async function fetchOperatorSurfaceSnapshotV1(fetcher: FetchLike = fetch,
       ? AbortSignal.any([signal, AbortSignal.timeout(10_000)])
       : AbortSignal.timeout(10_000);
     const response = await fetcher("/api/v1/operator-surface", {
-      credentials: "same-origin", cache: "no-store", signal: boundedSignal,
+      method: "GET", credentials: "same-origin", cache: "no-store", signal: boundedSignal,
     });
     if (!response.ok) return unavailableForStatus(response.status);
     const body: unknown = await response.json();

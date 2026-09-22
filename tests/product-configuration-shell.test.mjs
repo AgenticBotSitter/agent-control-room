@@ -48,8 +48,8 @@ test("one client shell binds truthful links to two distinct sanitized configurat
       assert.equal(dom.window.document.querySelector(".private-brand")?.textContent, configuration.displayName);
       const workspaceLinks = [...dom.window.document.querySelectorAll("#private-workspace-navigation a")]
         .map(link => [link.textContent?.replaceAll(/\s+/g, " ").trim(), link.getAttribute("href")]);
-      assert.deepEqual(workspaceLinks.slice(0, 5), [["Home", "/"], ["Projects", "/projects"], ["Workers", "/workers"],
-        ["Needs attention", "/needs-me"], ["Settings", "/settings"]]);
+      assert.deepEqual(workspaceLinks.slice(0, 6), [["Home", "/"], ["Projects", "/projects"], ["Workers", "/workers"],
+        ["Control Room", "/workboard"], ["Needs attention", "/needs-me"], ["Settings", "/settings"]]);
       assert.equal(dom.window.document.querySelector('a[href="/ideas"]') !== null, optionalLinks);
       assert.equal(dom.window.document.querySelector('a[href="/projects/project%3Aalpha/news"]')?.textContent === "News", optionalLinks);
       assert.equal(dom.window.document.querySelector('[data-module="session-observations"]') !== null, optionalLinks);

@@ -9,6 +9,7 @@ const navigation: readonly NavigationItem[] = [
   { href: "/", label: "Home" },
   { href: "/projects", label: "Projects" },
   { href: "/workers", label: "Workers" },
+  { href: "/workboard", label: "Control Room" },
   { href: "/needs-me", label: "Needs attention" },
   { href: "/settings", label: "Settings" },
   { href: "/ideas", label: "Idea Lab", optional: true },

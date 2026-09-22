@@ -264,6 +264,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
             <section className="private-panel"><h2>Worker availability</h2>
               <p>Open Project agents to compare task-specific eligibility with separately recorded availability, capacity, connections, and current project work.</p>
               <a className="private-action-link" href={`/projects/${encodeURIComponent(projectId)}/agents`}>Open project agents</a>
+              <a className="private-action-link" href={`/workboard?projectId=${encodeURIComponent(projectId)}`}>Open Control Room workboard</a>
             </section>
             {sessionObservations && <SessionObservations projectId={projectId} />}</>}
         </>}
