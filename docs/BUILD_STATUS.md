@@ -57,17 +57,21 @@ preflight evidence to the current request, and treats any failure after
 directory creation may have occurred as non-retryable uncertainty. Parent and
 root identities are checked around creation and preflight, and the runner has
 no repair or deletion authority. The real operating-system implementation of
-identity-bound, no-follow directory creation remains intentionally absent and
-must be separately reviewed before this runner can touch an owner's directory.
+identity-bound, no-follow directory creation is now source-complete and
+independently reviewed for disposable macOS use.
 The private macOS/POSIX composition beneath that runner is now source-complete
 as a strict native-port boundary: it derives the effective process user,
 reuses the production persistent-storage preflight exactly once, and requires
 one path-free receipt proving descriptor-relative `mkdirat` plus no-follow
-`fstatat`. Node does not expose those syscalls and the repository has no
-reviewed native binding, so no path-based fallback was added. This remains a
-deliberate live-install blocker until that small native implementation is
-separately reviewed and owner-attended; disposable adversarial tests are not
-native qualification evidence.
+`fstatat`. The reviewed native helper opens every parent component without
+following links, creates exactly one child relative to the held parent, checks
+ownership, private mode and ACLs, and never repairs, deletes or retries the
+owner target. Its Node wrapper executes only a private staged copy of captured,
+hashed helper bytes; source-path replacement cannot change the launched code.
+The deterministic release artifact includes the repository license and notice.
+Release/launcher integration and the separate owner-attended native
+qualification remain live-install blockers; disposable adversarial tests are
+not native qualification evidence.
 
 The initial macOS background-service owner step now also has a source-only
 private runner and exact installation-journal settlement. It reuses the
@@ -91,6 +95,19 @@ and identity-bound service-manager control, so the adapter has no filesystem,
 child-process, shell or ambient-environment fallback. The separately reviewed
 native implementation and owner-attended run remain blockers. No service was
 installed or started and live local enablement remains blocked.
+
+The corresponding source-only authenticated health-evidence contract is now
+complete. It binds the installation and running plan, the trusted owner/root
+publisher and exact `gui/<owner uid>/xyz.agentcontrolroom.local` target,
+service identity and instance, release/configuration, database, protected-data,
+supervisor and readiness digests to one fresh 32-byte nonce challenge. Only a
+healthy response authenticated with an injected installation-private HMAC key
+is eligible for a future journal success; exact response replay is bounded to
+that one challenge, while stale, foreign, substituted, forged or structurally
+unsafe evidence refuses. It neither exposes the key nor performs a service,
+database, credential, journal or native action. A later reviewed native
+publisher and journal-bound settlement integration remain necessary before a
+live installation can claim this evidence.
 
 The protected-data stage now also has a durable settlement transaction over
 the existing append-only installation journal. It rebuilds the exact protected
