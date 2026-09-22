@@ -24,8 +24,16 @@ adapters rather than POSIX assumptions.
 
 The GitHub pull request also has a required unified-product CI lane so every
 local/multi-computer test file is reachable from a required workflow. The next
-build package is the private runner beneath the durable, terminal-confirmed
-PostgreSQL owner-action transaction. The two preceding release stages now use
+build package was the private runner beneath the durable, terminal-confirmed
+PostgreSQL owner-action transaction. That source-only runner now binds the
+exact release and all 87 verified migration-ledger entries, requires attached
+owner confirmation, reuses the existing provision/migrate/evidence tools, and
+validates the final roles, memberships, permissions, migrations, required rows,
+and restricted login against the reviewed production contracts. Provisioning
+and migration remain intermediate observations; only exact final evidence can
+produce the terminal confirmation consumed by the journal transaction. Any
+malformed reply after an effect might have started is uncertain and cannot be
+retried automatically. The two preceding release stages now use
 the real stager and package-preflight reports, bind both reports to the exact
 release manifest, and record their receipts only through the existing
 append-only plan journal. Concurrent changes, stale replay, changed evidence,
@@ -33,7 +41,9 @@ or uncertain state refuse. The PostgreSQL transaction records one final
 terminal-confirmed exact-replay receipt through that same journal; it does not
 call PostgreSQL itself. No public release has been published and no live
 database, service, credential, agent, listener, or browser operation was
-performed by these source packages.
+performed by these source packages. The next database step is the separately
+reviewed private adapter/configuration binding and owner-attended rehearsal;
+that step has not run.
 
 ## Current build block
 
