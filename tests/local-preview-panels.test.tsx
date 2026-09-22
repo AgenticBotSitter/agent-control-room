@@ -105,7 +105,6 @@ test("local workboard is a read-only navigation surface with honest worker evide
 });
 
 test("mounted workboard sends its normal browser reads to the exact local-pilot route", async () => {
-  // @ts-expect-error jsdom has no bundled declarations.
   const jsdomModule = await import("jsdom");
   const JSDOM = (jsdomModule as { JSDOM: unknown }).JSDOM as new (html: string,
     options?: { url?: string; pretendToBeVisual?: boolean }) => { window: Window & typeof globalThis };

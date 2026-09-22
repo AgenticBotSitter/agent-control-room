@@ -408,7 +408,6 @@ async function mountTaskResults(options: { search?: string; canReadContent?: boo
   // jsdom ships no type declarations and cannot be augmented. Import it once
   // and bind exactly the surface these tests use, rather than widening the
   // module to `any`.
-  // @ts-expect-error untyped module
   const jsdomModule = await import("jsdom");
   const JSDOM = (jsdomModule as { JSDOM: unknown }).JSDOM as new (
     html: string, options?: { url?: string; pretendToBeVisual?: boolean },
