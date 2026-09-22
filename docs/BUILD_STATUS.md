@@ -50,6 +50,17 @@ result, review and recovery contracts. Live Claude delivery remains unsupported
 until an exact installed CLI and private authentication/process port pass a
 separate owner-attended qualification.
 
+A proposed native macOS Codex custody helper was independently rejected and is
+not part of the product or release. A disposable prototype exercised suspended
+launch and executable inspection as non-qualifying research, but no
+owner-authorized evidence was retained and it could not bind Codex's
+pathname-based private home to an inherited protected directory. Review also
+found process-group cleanup, cross-layer deadline, stream-backpressure and
+executable-owner contract defects. The helper, sidecar, runner and release
+integration were removed; only a negative evidence record remains. Public issue
+#191 therefore continues to keep local Codex execution on macOS fail-closed,
+while the reviewed Linux Codex route remains the first-release path.
+
 The single-computer product now has one accepted, source-only operator path
 from an extracted release into the existing installation journal, setup
 dispatcher, runtime assembly, and task bootstrap. Its fixed commands are

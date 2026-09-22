@@ -173,7 +173,8 @@ test("one admitted occurrence is planned and assigned once across concurrency an
   assert.equal(replay.assignment.receipt.ownerIdentityDigest, f.policy.policy.ownerIdentityDigest);
   assert.equal(await count(f, "control_native_task_queue"), f.baseline.queue);
   assert.equal(await count(f, "control_harness_runs"), f.baseline.runs);
-  assert.deepEqual(Object.keys(f.coordinator.webOperation()).sort(), ["assign", "expire", "options", "tenantId", "workspaceId"]);
+  assert.deepEqual(Object.keys(f.coordinator.webOperation()).sort(),
+    ["assign", "expire", "options", "projectOptions", "tenantId", "workspaceId"]);
   const extraDraft = { ...f.sourceDraft, title: "A third capacity claimant" };
   const extraSource = await f.tasks.propose(f.identity, binding.projectId, extraDraft, "scheduled-capacity-owner-003");
   const extraPlan = await f.planner.plan(f.identity, binding.projectId, extraSource.receipt.jobId, sha256Digest(extraDraft));
