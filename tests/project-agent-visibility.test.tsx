@@ -151,7 +151,7 @@ test("project aggregation reuses task assignment eligibility and stops listing a
   assert.equal(project.startsWork, false);
   assert.equal(project.grantsAssignmentAuthority, false);
   const app = createPrivateWebProcess({ origin, ...trust, tenantId: fixture.scope.tenantId,
-    workspaceId: fixture.scope.workspaceId, database: { client: fixture.client, close: async () => undefined },
+    workspaceId: fixture.scope.workspaceId, database: { client: fixture.db, close: async () => undefined },
     clock: () => instant, loadKeys: async () => trust.keys, assignment: fixture.coordinator.webOperation() });
   t.after(() => app.close());
   const path = `/api/v1/projects/${encodeURIComponent(binding.projectId)}/agents`;

@@ -235,7 +235,7 @@ export function createPrivateClaudeCodeInstalledProcessHostV1(configurationValue
         workingDirectoryBindingDigest: configuration.workingDirectoryBindingDigest,
         qualificationDigest: configuration.qualificationDigest, binding });
       try {
-        assertSynchronousFence(() => launchAuthority.assertCurrent(binding), refused);
+        assertSynchronousFence(() => launchAuthority.assertCurrent(binding), () => { throw refused(); });
       } catch { throw refused(); }
       if (closed || lifecycle.signal.aborted) throw refused();
       let launched: unknown;
@@ -243,10 +243,10 @@ export function createPrivateClaudeCodeInstalledProcessHostV1(configurationValue
       try { child = captureChild(launched); } catch { throw uncertain(); }
       if (closed || lifecycle.signal.aborted) { await retire(); throw uncertain(); }
       return Object.freeze({
-        writeStdin: (bytes, signal) => child!.writeStdin(bytes, signal),
-        readStdout: signal => child!.readStdout(signal),
-        readStderr: signal => child!.readStderr(signal),
-        closeStdin: signal => child!.closeStdin(signal),
+        writeStdin: (bytes: Uint8Array, signal: AbortSignal) => child!.writeStdin(bytes, signal),
+        readStdout: (signal: AbortSignal) => child!.readStdout(signal),
+        readStderr: (signal: AbortSignal) => child!.readStderr(signal),
+        closeStdin: (signal: AbortSignal) => child!.closeStdin(signal),
         terminate: async () => retire(),
         exited: child.exited,
       });
