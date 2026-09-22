@@ -224,22 +224,24 @@ export async function confirmPostgresOwnerActionTerminalV1(input: unknown,
   const terminalEvidenceDigest = terminalConfirmation(envelope.terminalConfirmation, requestDigest(request));
   const receipt = receiptFor(envelope.installationId, request, terminalEvidenceDigest);
 
-  let history: readonly InstallationPlanV1[];
-  try { history = await runtime.journal.readHistory(); }
-  catch { return refuse(); }
-  const original = expectedPlan(history, receipt);
-  await assertJournalIdentity(runtime.journal, envelope.installationId, original);
-  if (recovered(history, receipt)) return result(receipt, true);
-  if (history.length !== receipt.installationPlanRevision + 1) return refuse();
-
-  const next = advanceInstallationPlanV1(history.at(-1), { expectedRevision: receipt.installationPlanRevision,
-    stage: "database_authority", action: "pass", outcomeDigest: receipt.receiptDigest });
   try {
+    let history = await runtime.journal.readHistory();
+    const original = expectedPlan(history, receipt);
+    // This exact replay is the journal-identity binding for the caller.  It
+    // can overlap a peer's publication of the terminal revision, so all
+    // failures here share the exact-settlement recovery below.
+    await assertJournalIdentity(runtime.journal, envelope.installationId, original);
+    history = await runtime.journal.readHistory();
+    expectedPlan(history, receipt);
+    if (recovered(history, receipt)) return result(receipt, true);
+    if (history.length !== receipt.installationPlanRevision + 1) return refuse();
+    const next = advanceInstallationPlanV1(history.at(-1), { expectedRevision: receipt.installationPlanRevision,
+      stage: "database_authority", action: "pass", outcomeDigest: receipt.receiptDigest });
     const appended = await assertJournalIdentity(runtime.journal, envelope.installationId, next);
     return result(receipt, appended.replayed);
   } catch {
     try {
-      history = await runtime.journal.readHistory();
+      const history = await runtime.journal.readHistory();
       const prior = expectedPlan(history, receipt);
       await assertJournalIdentity(runtime.journal, envelope.installationId, prior);
       if (recovered(history, receipt)) return result(receipt, true);

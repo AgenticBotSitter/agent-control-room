@@ -363,7 +363,7 @@ async function publishReadyDirectory(ready, target, manifest) {
   }
 }
 
-async function report(manifest, alreadyStaged, versionsRoot) {
+async function report(manifest, releaseManifestDigest, alreadyStaged, versionsRoot) {
   // A retry may be the process that finishes durability after another process
   // completed the rename but stopped before flushing the parent directory.
   await syncDirectory(versionsRoot);
@@ -371,6 +371,7 @@ async function report(manifest, alreadyStaged, versionsRoot) {
     schema: STAGING_SCHEMA,
     state: "verified_release_staged",
     version: manifest.version,
+    releaseManifestDigest: `sha256:${releaseManifestDigest}`,
     alreadyStaged,
     fileCount: manifest.fileCount,
     byteCount: manifest.byteCount,
@@ -425,16 +426,16 @@ async function stageLocalReleaseInternalV1(input) {
     } catch (error) {
       if (error?.code !== "ENOENT") throw error;
     }
-    return report(manifest, true, versionsRoot);
+    return report(manifest, manifestDigest, true, versionsRoot);
   }
   try {
     if (await verifiedReadyOrFalse(ready, manifest)) {
       await ensurePublicationClaim(claim, claimBytes, versionsRoot);
       const alreadyStaged = await publishReadyDirectory(ready, target, manifest);
-      return report(manifest, alreadyStaged, versionsRoot);
+      return report(manifest, manifestDigest, alreadyStaged, versionsRoot);
     }
   } catch (error) {
-    if (await existingTarget(target, manifest)) return report(manifest, true, versionsRoot);
+    if (await existingTarget(target, manifest)) return report(manifest, manifestDigest, true, versionsRoot);
     throw error;
   }
   const temporary = await mkdtemp(join(versionsRoot, ".staging-"));
@@ -455,13 +456,13 @@ async function stageLocalReleaseInternalV1(input) {
         if (!await verifiedReadyOrFalse(ready, manifest)) throw error;
       } catch (readyError) {
         if (await existingTarget(target, manifest)) {
-          return report(manifest, true, versionsRoot);
+          return report(manifest, manifestDigest, true, versionsRoot);
         }
         throw readyError;
       }
     }
     const alreadyStaged = await publishReadyDirectory(ready, target, manifest);
-    return report(manifest, alreadyStaged, versionsRoot);
+    return report(manifest, manifestDigest, alreadyStaged, versionsRoot);
   } finally {
     await rm(temporary, { recursive: true, force: true });
     await syncDirectory(versionsRoot);

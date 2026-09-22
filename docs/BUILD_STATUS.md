@@ -17,13 +17,16 @@ effects. Focused source, journal, release, launcher, and type checks pass.
 
 The GitHub pull request also has a required unified-product CI lane so every
 local/multi-computer test file is reachable from a required workflow. The next
-build package is a durable, terminal-confirmed owner-action transaction using
-the existing installation plan and action-preparation seams, beginning with the
-PostgreSQL stage. That stage now records one terminal-confirmed, exact-replay
-receipt only through the existing append-only plan journal; changed or uncertain
-state refuses and no PostgreSQL tool is called. No public release has been
-published and no live database, service, credential, agent, listener, or browser
-operation was performed by this source package.
+build package is the private runner beneath the durable, terminal-confirmed
+PostgreSQL owner-action transaction. The two preceding release stages now use
+the real stager and package-preflight reports, bind both reports to the exact
+release manifest, and record their receipts only through the existing
+append-only plan journal. Concurrent changes, stale replay, changed evidence,
+or uncertain state refuse. The PostgreSQL transaction records one final
+terminal-confirmed exact-replay receipt through that same journal; it does not
+call PostgreSQL itself. No public release has been published and no live
+database, service, credential, agent, listener, or browser operation was
+performed by these source packages.
 
 ## Current build block
 

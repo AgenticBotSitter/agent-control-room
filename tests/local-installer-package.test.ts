@@ -22,6 +22,7 @@ async function release(t: import("node:test").TestContext) {
     "dist-vps/server/taskApplication.js": "export {};\n",
     "package.json": JSON.stringify({ name: "control-room", version: "0.1.0", packageManager: "pnpm@11.19.0", engines: { node: ">=22.13.0" } }),
     "pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
+    "RELEASE_MANIFEST.json": "{\"schema\":\"fixture\"}\n",
     "scripts/prepare-local-installation.mjs": await readFile("scripts/prepare-local-installation.mjs", "utf8"),
     "scripts/run-private-vps.mjs": "export {};\n",
     "src/installer/v1/local-installation-release.mjs": await readFile("src/installer/v1/local-installation-release.mjs", "utf8"),
@@ -53,6 +54,7 @@ test("installer validates a built bundle and reports only safe next steps", asyn
   assert.equal(report.bundle.version, "0.1.0");
   assert.ok(report.bundle.fileCount >= 10);
   assert.match(report.bundle.digest, /^sha256:[a-f0-9]{64}$/u);
+  assert.match(report.releaseManifestDigest, /^sha256:[a-f0-9]{64}$/u);
   assert.equal(report.service.state, "awaiting_owner_setup");
   assert.equal(report.startsService, false);
   assert.equal(report.createsDatabase, false);

@@ -115,6 +115,50 @@ test("simultaneous exact confirmations settle through the existing journal as on
   } finally { await f.cleanup(); }
 });
 
+test("an exact confirmation recovers when its running replay overlaps the winning terminal publication", async () => {
+  const f = await fixture(true, source("existing_verified"));
+  try {
+    const input = { installationId: f.installationId, actionPreparation: f.actionPreparation, actionInput: f.actionInput,
+      terminalConfirmation: f.terminalConfirmation() };
+    const revision = f.setup.plan.revision;
+    let noteRightSnapshot!: () => void, noteLeftPass!: () => void;
+    const rightSnapshot = new Promise<void>(resolve => { noteRightSnapshot = resolve; });
+    const leftPass = new Promise<void>(resolve => { noteLeftPass = resolve; });
+    let firstRightRead = true, refuseOneRunningReplay = true;
+    const leftJournal = {
+      readHistory: () => f.journal.readHistory(),
+      async append(plan: InstallationPlanV1) {
+        if (plan.revision === revision) await rightSnapshot;
+        const appended = await f.journal.append(plan);
+        if (plan.revision === revision + 1) noteLeftPass();
+        return appended;
+      },
+    };
+    const rightJournal = {
+      async readHistory() {
+        const history = await f.journal.readHistory();
+        if (firstRightRead) {
+          firstRightRead = false;
+          noteRightSnapshot();
+          await leftPass;
+        }
+        return history;
+      },
+      async append(plan: InstallationPlanV1) {
+        if (refuseOneRunningReplay && plan.revision === revision) {
+          refuseOneRunningReplay = false;
+          throw new Error("installation_plan_journal_unavailable");
+        }
+        return f.journal.append(plan);
+      },
+    };
+    const [left, right] = await Promise.all([confirmPostgresOwnerActionTerminalV1(input, { journal: leftJournal }),
+      confirmPostgresOwnerActionTerminalV1(input, { journal: rightJournal })]);
+    assert.equal(left.replayed, false); assert.equal(right.replayed, true); assert.deepEqual(left.receipt, right.receipt);
+    assert.equal((await f.journal.readHistory()).length, revision + 2);
+  } finally { await f.cleanup(); }
+});
+
 test("changed confirmation, changed operation, and uncertain terminal plan state refuse rather than retry", async () => {
   const f = await fixture(true, source("existing_verified"));
   try {

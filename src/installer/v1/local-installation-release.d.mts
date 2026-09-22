@@ -10,6 +10,7 @@ export type LocalInstallationReleaseReportV1 = Readonly<{
     authenticityVerified: false;
   }>;
   service: Readonly<{ state: "awaiting_owner_setup" | "validated_not_installed" }>;
+  releaseManifestDigest: `sha256:${string}`;
   readyForOwnerSetup: true;
   startsService: false;
   createsDatabase: false;

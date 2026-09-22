@@ -6,6 +6,7 @@ const SCHEMA = "control-room.local-installation-package-preparation/v1";
 const MAX_FILES = 20_000;
 const MAX_BYTES = 1024 * 1024 * 1024;
 const MAX_PACKAGE_BYTES = 64 * 1024;
+const MAX_RELEASE_MANIFEST_BYTES = 16 * 1024 * 1024;
 const digestPattern = /^sha256:[a-f0-9]{64}$/u;
 const versionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u;
 
@@ -19,6 +20,7 @@ const requiredFiles = Object.freeze([
   "dist-vps/server/taskApplication.js",
   "package.json",
   "pnpm-lock.yaml",
+  "RELEASE_MANIFEST.json",
   "scripts/prepare-local-installation.mjs",
   "scripts/run-private-vps.mjs",
   "src/installer/v1/local-installation-release.mjs",
@@ -104,6 +106,8 @@ export async function prepareLocalInstallationReleaseV1(input) {
       || packageMetadata.packageManager !== "pnpm@11.19.0"
       || packageMetadata.engines?.node !== ">=22.13.0") refused();
     const inventory = await bundleInventory(releaseRoot, packageMetadata.version);
+    const releaseManifestBytes = await readFile(`${releaseRoot}/RELEASE_MANIFEST.json`);
+    if (releaseManifestBytes.byteLength < 1 || releaseManifestBytes.byteLength > MAX_RELEASE_MANIFEST_BYTES) refused();
     if (input.expectedDigest !== undefined && inventory.digest !== input.expectedDigest) refused();
     const bundle = Object.freeze({ state: input.expectedDigest === undefined ? "fingerprinted" : "matched_expected_digest",
       ...inventory, authenticityVerified: false });
@@ -115,6 +119,7 @@ export async function prepareLocalInstallationReleaseV1(input) {
       : ["Review database, backup and supervisor readiness before activation.",
         "Use the separate owner-authorized activation step when every readiness check passes."];
     return Object.freeze({ schema: SCHEMA, mode: "dry-run", bundle, service,
+      releaseManifestDigest: `sha256:${createHash("sha256").update(releaseManifestBytes).digest("hex")}`,
       readyForOwnerSetup: true, startsService: false, createsDatabase: false,
       writesCredentials: false, nextSteps: Object.freeze(nextSteps) });
   } catch {
