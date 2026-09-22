@@ -339,7 +339,11 @@ export class InstallationPlanFilesystemJournalV1 {
     // A no-replace hard-link publication briefly gives the winner two names.
     // Wait only for that bounded retirement window; a crashed/ambiguous link
     // never becomes accepted merely because another writer observed it.
-    for (let attempt = 0; attempt < 100; attempt += 1) {
+    // Bound this by elapsed time rather than a retry count. On a loaded CI
+    // host a nominal 2 ms timer can be delayed by tens of milliseconds, which
+    // previously exhausted 100 retries before the winning writer was scheduled.
+    const settleDeadline = performance.now() + 5_000;
+    while (performance.now() < settleDeadline) {
       signal?.throwIfAborted();
       try {
         await this.recoverPublishedRevision(revision, identity);
