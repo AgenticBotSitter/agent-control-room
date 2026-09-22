@@ -246,6 +246,17 @@ can no longer admit Hermes. The verifier creates no state, queue, scheduler or
 authority and invokes no agent. A real installed setup/final review and
 startup remain owner-attended operational work.
 
+The production-shaped local runtime assembly now consumes that proof before
+normal startup. It joins the accepted setup dispatcher, settled journal,
+startup re-verifier, protected operator assembly and existing task bootstrap
+without adding state, a scheduler or a browser action. It rereads the settled
+journal around operator assembly and refuses missing custody, cancellation,
+drift or substitution before any database, artifact store, worker or Hermes
+callback can run. Journal and startup ports are captured through exact data
+descriptors, so an accessor cannot hide an effect during construction. The
+production private configuration loaders and native ports remain separate
+blocked inputs; no live runtime was started.
+
 The installable-product track now also has eighteen accepted source foundations:
 an allowlisted reproducible release archive with a manifest and checksum; a
 standalone extracted-release preflight that needs no developer dependency;

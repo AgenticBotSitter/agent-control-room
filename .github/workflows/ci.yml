@@ -268,6 +268,7 @@ jobs:
           pnpm run test:local-installation
           pnpm run test:protected-data-transaction
           pnpm run test:local-hermes-admission
+          pnpm run test:private-local-runtime-assembly
       - name: Local adapters, recovery, transitions and product surfaces
         run: |
           node --import tsx --test \
