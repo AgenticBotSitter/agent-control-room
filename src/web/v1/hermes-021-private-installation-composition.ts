@@ -187,3 +187,32 @@ PrivateHermes021LocalStartupAdmissionBindingV1 {
   if (parsed.bindingDigest !== expected.bindingDigest) unavailable();
   return expected;
 }
+
+/** Rechecks the non-secret saved binding against the exact current delivery
+ * instance and queue settings after installation review. The installation
+ * binding was already checked when this record was created; this narrower
+ * matcher exists so normal startup can detect callback, runner, worker, queue
+ * role or concurrency substitution without retaining private installation
+ * inputs in the application configuration. */
+export function verifyPrivateHermes021LocalCurrentStartupBindingV1(value: unknown, input: unknown):
+PrivateHermes021LocalStartupAdmissionBindingV1 {
+  const parsed = startupBindingSchema.parse(value);
+  if (parsed.bindingDigest !== sha256Digest({ purpose: "private-hermes-startup-admission-binding/v1",
+    binding: withoutBindingDigest(parsed) })) unavailable();
+  if (!input || typeof input !== "object" || Array.isArray(input)
+    || Object.getPrototypeOf(input) !== Object.prototype) unavailable();
+  const current = input as Record<string, unknown>;
+  if (Object.keys(current).sort().join(",") !== ["delivery", "queueWorker", "releaseDigest",
+    "topologyPlanDigest"].sort().join(",")) unavailable();
+  const metadata = current.delivery && typeof current.delivery === "object"
+    ? compositions.get(current.delivery as object) : undefined;
+  if (!metadata) return unavailable();
+  if (parsed.topologyPlanDigest !== digest.parse(current.topologyPlanDigest)
+    || parsed.releaseDigest !== digest.parse(current.releaseDigest)
+    || parsed.workerBindingDigest !== metadata.workerBindingDigest
+    || parsed.runnerConfigurationDigest !== metadata.runnerConfigurationDigest
+    || parsed.compositionInstanceDigest !== metadata.compositionInstanceDigest
+    || parsed.compositionContractDigest !== metadata.compositionContractDigest
+    || parsed.queueDatabaseBindingDigest !== queueDatabaseBindingDigest(current.queueWorker)) unavailable();
+  return Object.freeze(parsed);
+}

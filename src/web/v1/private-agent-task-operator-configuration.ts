@@ -22,6 +22,8 @@ import { summarizeLocalSupervisorReadinessV1 } from "../../harness/v1/local-supe
 import { HERMES_021_MACOS_LOCAL_ADAPTER_V1 } from "../../harness/hermes-021-v1/macos-local-worker";
 import { CLAUDE_CODE_LOCAL_ADAPTER_V1 } from "../../harness/claude-code-v1/task-planning-contract";
 import { summarizeClaudeCodeLocalProcessReadinessV1 } from "../../harness/claude-code-v1/local-process-readiness";
+import { verifyPrivateLocalHermesStartupReverificationV1 } from
+  "../../installer/v1/private-local-hermes-startup-reverification";
 
 /** Pure operator-side assembly. This module performs no environment, filesystem,
  * network, listener, credential-store or database access: it only shapes
@@ -109,6 +111,8 @@ export type AgentTaskOperatorTrustedInputs = {
   nativeHttp?: NativeHttpSettings;
   /** Already-built, installation-owned local Hermes executor. It contains no browser input. */
   hermes021Local?: NonNullable<TaskCoordinatorConfiguration["hermes021Local"]>;
+  /** Settled-journal proof for this exact executor and queue composition. */
+  hermes021LocalStartupReverification?: unknown;
   /** Already-built, installation-owned Claude composition. It contains no browser input. */
   claudeCodeLocal?: NonNullable<TaskCoordinatorConfiguration["claudeCodeLocal"]>;
   /** Verified, plan-bound evidence from an owner-run disposable local restore.
@@ -548,8 +552,21 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
   if (f.hermes021Local && (!trustedHermes || typeof trustedHermes.deliver !== "function")) refuse("hermes021Local_invalid");
   if (f.hermes021Local) requireReadyLocalHermesInstallation(
     t.web as PrivateStartupConfiguration, t.localBackupRestoreReadiness);
-  const capturedHermes = f.hermes021Local && trustedHermes
-    ? Object.freeze({ deliver: trustedHermes.deliver.bind(trustedHermes) }) : undefined;
+  if (f.hermes021Local) {
+    if (t.hermes021LocalStartupReverification === undefined)
+      refuse("missing_trusted_input:hermes021LocalStartupReverification");
+    try {
+      verifyPrivateLocalHermesStartupReverificationV1(t.hermes021LocalStartupReverification, {
+        delivery: trustedHermes, queueWorker: parsed.databaseRoles.queueWorker === undefined ? undefined : {
+          database: parsed.databaseRoles.queueWorker, concurrency: parsed.queueWorkerConcurrency ?? 1,
+        }, installationPlan: (t.web as PrivateStartupConfiguration).installationPlan,
+      });
+    } catch { refuse("hermes021Local_startup_reverification_invalid"); }
+  }
+  // The installation delivery is already frozen and privately composed. Keep
+  // its exact identity: the startup verifier deliberately binds that object,
+  // and replacing it with a newly-bound wrapper would discard the proof.
+  const capturedHermes = f.hermes021Local && trustedHermes ? trustedHermes : undefined;
   const trustedClaude = t.claudeCodeLocal as NonNullable<AgentTaskOperatorTrustedInputs["claudeCodeLocal"]> | undefined;
   if (f.claudeCodeLocal && (!trustedClaude || typeof trustedClaude.deliver !== "function")) refuse("claudeCodeLocal_invalid");
   if (f.claudeCodeLocal) requireReadyLocalClaudeInstallation(t.web as PrivateStartupConfiguration, t.localBackupRestoreReadiness);
@@ -588,6 +605,7 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
     ...(capturedTransitionAdmission ? { installationTransitionAdmission: capturedTransitionAdmission } : {}),
     ...(f.nativeQueue ? { nativeQueue: true as const } : {}),
     ...(f.nativeQueueRecovery ? { nativeQueueRecovery: true as const } : {}),
+    ...(capturedHermes ? { hermes021LocalStartupReverification: t.hermes021LocalStartupReverification } : {}),
     ...(f.revisionPlanning ? { revisionPlanning: true as const } : {}),
     ...(f.quality && t.quality ? {
       quality: {
@@ -700,7 +718,10 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
       ...(coordinatorShape.quality ? { quality: coordinatorShape.quality } : {}),
       ...(coordinatorShape.revisionPlanning ? { revisionPlanning: coordinatorShape.revisionPlanning } : {}),
       ...(coordinatorShape.nativeHttp ? { nativeHttp: coordinatorShape.nativeHttp } : {}),
-      ...(coordinatorShape.hermes021Local ? { hermes021Local: coordinatorShape.hermes021Local } : {}),
+      ...(capturedHermes ? { hermes021Local: capturedHermes } : {}),
+      ...(coordinatorShape.hermes021LocalStartupReverification ? {
+        hermes021LocalStartupReverification: coordinatorShape.hermes021LocalStartupReverification,
+      } : {}),
       ...(coordinatorShape.claudeCodeLocal ? { claudeCodeLocal: coordinatorShape.claudeCodeLocal } : {}),
       ...(coordinatorShape.codex ? { codex: coordinatorShape.codex } : {}),
       ...(coordinatorShape.installationTransitionAdmission ? { installationTransitionAdmission: coordinatorShape.installationTransitionAdmission } : {}),
@@ -716,5 +737,9 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
       ...(coordinatorShape.codexResultReturn ? { codexResultReturn: coordinatorShape.codexResultReturn } : {}),
     },
   };
-  return Object.freeze({ configuration: deepDetach(hostCompatible), port: parsed.port });
+  const detached = deepDetach(hostCompatible);
+  const configuration = capturedHermes ? Object.freeze({ ...detached, coordinator: Object.freeze({
+    ...detached.coordinator, hermes021Local: capturedHermes,
+  }) }) : detached;
+  return Object.freeze({ configuration, port: parsed.port });
 }

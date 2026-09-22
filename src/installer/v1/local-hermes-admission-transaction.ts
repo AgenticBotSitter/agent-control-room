@@ -107,7 +107,11 @@ PrivateLocalHermesAdmissionTerminalConfirmationV1 {
   return Object.freeze({ ...body, confirmationDigest: confirmation.confirmationDigest as string });
 }
 
-function receiptFor(request: PrivateLocalHermesAdmissionRequestV1): LocalHermesAdmissionTerminalReceiptV1 {
+/** Pure receipt derivation shared by settlement and later read-only startup
+ * re-verification. It performs no journal or runner effect. */
+export function localHermesAdmissionTerminalReceiptForRequestV1(
+  request: PrivateLocalHermesAdmissionRequestV1,
+): LocalHermesAdmissionTerminalReceiptV1 {
   const body = { schema: LOCAL_HERMES_ADMISSION_TRANSACTION_V1, installationId: request.installationId,
     requestDigest: request.requestDigest, admissionRequestDigest: request.admissionRequestDigest,
     privateStartupBindingDigest: request.privateStartupBindingDigest,
@@ -176,7 +180,7 @@ export async function confirmLocalHermesAdmissionTerminalV1(inputValue: unknown,
     });
     const request = await preparePrivateLocalHermesAdmissionRequestV1(envelope.runnerInput, historicalJournal);
     terminal(envelope.terminalConfirmation, request);
-    const receipt = receiptFor(request);
+    const receipt = localHermesAdmissionTerminalReceiptForRequestV1(request);
     history = await journal.readHistory();
     await authenticatePlan(journal, request.installationId, original);
     history = await journal.readHistory();

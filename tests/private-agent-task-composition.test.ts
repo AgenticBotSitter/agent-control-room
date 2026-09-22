@@ -887,7 +887,7 @@ test("operator assembly builds the full artifact/result/review/Codex composition
   assert.equal(composed.configuration.coordinator.sessions!.nodes.length, 2);
 });
 
-test("operator assembly can carry an installation-owned local Hermes executor without a remote session transport", () => {
+test("generic readiness alone cannot admit an installation-owned local Hermes executor", () => {
   const { settings, trusted } = operatorConfigurationScenario("full");
   settings.features = { ...settings.features, sessions: false, codex: false, codexResultReturn: false,
     nativeHttp: false, hermes021Local: true };
@@ -919,23 +919,16 @@ test("operator assembly can carry an installation-owned local Hermes executor wi
   trusted.localBackupRestoreReadiness = backupRestore;
   let delivered = 0;
   trusted.hermes021Local = { deliver: async function () { delivered++; } };
-  const result = assemblePrivateAgentTaskOperatorConfiguration(settings, trusted);
-  assert.equal(result.configuration.coordinator.sessions, undefined);
-  assert.equal(typeof result.configuration.coordinator.hermes021Local?.deliver, "function");
-  assert.deepEqual(result.configuration.coordinator.planning.localAdapterAdmission, {
-    enabledAdapters: [HERMES_021_MACOS_LOCAL_ADAPTER_V1],
-  }, "only the separately-proved local Hermes route is admitted by operator assembly");
-  assert.equal(result.configuration.web.codexMacosCustodyReadiness?.readinessDigest, codexCustody.readinessDigest);
-  assert.equal(Object.isFrozen(result.configuration.web.codexMacosCustodyReadiness), true);
-  assert.equal(result.configuration.web.localSupervisorReadiness?.readinessDigest, supervisor.readinessDigest);
+  assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(settings, trusted),
+    /missing_trusted_input:hermes021LocalStartupReverification/);
   assert.equal(delivered, 0, "assembly must not start Hermes");
   assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(
     { ...settings, features: { ...settings.features, hermes021Local: false } }, trusted),
   /unexpected_trusted_input:hermes021Local/);
   const unrelatedTopology = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("other-db"),
     schedulerAuthorityDigest: sha256Digest("operator-local-scheduler"), currentRoutes: [topologyRoute], requestedRoutes: [topologyRoute] });
-  assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(settings,
-    { ...trusted, localBackupRestoreReadiness: localBackupRestoreProof(unrelatedTopology.planDigest) }),
+  assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(settings, { ...trusted,
+    localBackupRestoreReadiness: localBackupRestoreProof(unrelatedTopology.planDigest) }),
   /hermes021Local_backup_restore_proof_invalid/);
   assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(settings,
     { ...trusted, web: { ...(trusted.web as object), localSupervisorReadiness: undefined } }),

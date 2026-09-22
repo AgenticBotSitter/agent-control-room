@@ -116,7 +116,10 @@ function priorEvidence(plan: InstallationPlanV1) {
     inputDigest: record.inputDigest, outcomeDigest: record.outcomeDigest!, recordedRevision: record.recordedRevision! })));
 }
 
-function bindings(plan: InstallationPlanV1) {
+/** Pure final-review binding derivation shared by the owner review and later
+ * read-only startup re-verification. */
+export function privateInstallationFinalReviewBindingsV1(planValue: unknown) {
+  const plan = verifyInstallationPlanV1(planValue);
   const evidence = priorEvidence(plan);
   const priorStageEvidenceDigest = sha256Digest({ purpose: "private-installation-final-review-prior-evidence/v1",
     stages: evidence });
@@ -168,7 +171,7 @@ export async function runPrivateInstallationFinalReviewV1(inputValue: unknown,
   try { supplied = verifyInstallationPlanV1(input.installationPlan); topology = verifyInstallationTopologyPlanV1(input.topologyPlan); }
   catch { return refuse(); }
   if (topology.planDigest !== supplied.topologyPlanDigest || stage(supplied, "final_review").state !== "not_started") return refuse();
-  const binding = bindings(supplied);
+  const binding = privateInstallationFinalReviewBindingsV1(supplied);
   const runtime = captureRuntime(runtimeValue);
   const controller = new AbortController();
   const abortChild = () => controller.abort();
@@ -281,7 +284,7 @@ export async function confirmPrivateInstallationFinalReviewV1(inputValue: unknow
     || running.topologyPlanDigest !== terminal.topologyPlanDigest || running.releaseDigest !== terminal.releaseDigest
     || stage(running, "final_review").state !== "running"
     || stage(running, "final_review").inputDigest !== terminal.finalReviewInputDigest
-    || bindings(running).priorStageEvidenceDigest !== terminal.priorStageEvidenceDigest) return refuse();
+    || privateInstallationFinalReviewBindingsV1(running).priorStageEvidenceDigest !== terminal.priorStageEvidenceDigest) return refuse();
   await appendExact(journal, terminal.installationId, running);
   history = await journal.readHistory().catch(refuse);
   if (settled(history, terminal)) return Object.freeze({ terminal, replayed: true,

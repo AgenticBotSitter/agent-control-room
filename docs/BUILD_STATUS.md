@@ -120,7 +120,8 @@ The guided local setup flow now also has one source-only private dispatcher
 over the existing installation plan journal. It verifies the exact
 installation, topology, release, plan digest and revision, dispatches only the
 first incomplete owner-effect stage after the retained launcher prerequisite transaction, and reuses the accepted PostgreSQL,
-protected-data, first-owner and recovery runners and settlement transactions. It creates
+protected-data, first-owner, recovery, platform-service, local-Hermes-admission
+and final-review runners and settlement transactions. It creates
 no second state machine, database, receipt store, scheduler, browser effect or
 native effect. PostgreSQL's provision, migration and terminal evidence remain
 one ordered call, with owner confirmation and exact release/ledger checks at
@@ -128,8 +129,12 @@ each existing runner request. An uncertain call leaves the stage running, so a
 later call refuses rather than retrying. Recovery runs only when private
 composition explicitly injects the accepted existing-rehearsal runtime;
 without it the dispatcher reports the production owner-attended adapter as
-missing. The service remains an explicit stop because no reviewed macOS native
-port exists. No live setup operation was performed.
+missing. Service setup similarly requires the accepted private native port,
+which this package does not supply. With exact injected runtimes, the same
+journal flow can settle service, Hermes admission, and final review without
+invoking Hermes. All caller-owned source and callbacks are captured before the
+first await, and valid stale bindings refuse before real journal I/O. No live
+setup operation was performed.
 Recovery source and runtime callables are captured immutably before the first
 journal await, and the dispatcher reuses the accepted recovery preparation and
 runtime validators against the candidate running action before it publishes
@@ -229,6 +234,17 @@ foreign, stale, changed or uncertain evidence refuses. The review cannot
 start an agent, service or worker and grants no authority. A real
 owner-attended execution and subsequent startup re-verification remain
 separate work.
+
+That startup re-verification is now source-complete. It reads only a settled,
+contiguous installation journal, requires every setup stage to be passed,
+reconstructs the saved Hermes readiness and final-review evidence, and
+rechecks the exact current delivery instance, runner, worker, queue database,
+role, concurrency, topology and release. Its opaque receipt is required at the
+protected operator assembly and again before normal task startup can open
+artifact storage, database pools, workers or an agent. Generic readiness alone
+can no longer admit Hermes. The verifier creates no state, queue, scheduler or
+authority and invokes no agent. A real installed setup/final review and
+startup remain owner-attended operational work.
 
 The installable-product track now also has eighteen accepted source foundations:
 an allowlisted reproducible release archive with a manifest and checksum; a

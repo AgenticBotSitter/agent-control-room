@@ -38,6 +38,8 @@ import { summarizeInstallationReadinessV1, verifyInstallationReadinessV1 } from 
 import { localBackupRestoreEvidenceDigestForInstallationPlanV1 } from "../../harness/v1/local-backup-restore-readiness";
 import { summarizeLocalSupervisorReadinessV1 } from "../../harness/v1/local-supervisor-readiness";
 import { summarizeClaudeCodeLocalProcessReadinessV1 } from "../../harness/claude-code-v1/local-process-readiness";
+import { verifyPrivateLocalHermesStartupReverificationV1 } from
+  "../../installer/v1/private-local-hermes-startup-reverification";
 
 type OwnedQueueWorker = { close(): Promise<void>; status(): { accepting: boolean } };
 
@@ -97,6 +99,8 @@ export type PrivateTaskStartupConfiguration = {
     nativeQueueRecovery?: true;
     /** Explicit local composition; no default worker factory or deployment activation. */
     queueWorker?: { database: PrivatePostgresConfiguration; concurrency?: number };
+    /** Read-only, installation-journal-bound admission for the exact local Hermes composition. */
+    hermes021LocalStartupReverification?: unknown;
     database: PrivatePostgresConfiguration; resultDatabase?: PrivatePostgresConfiguration;
     ideaCreation?: { database: PrivatePostgresConfiguration; integrityKey: Uint8Array; participants: unknown[] };
     /** Already prepared inert ports; ownership transfers after configuration validation. No runtime factory is invoked here. */
@@ -211,6 +215,14 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
       || [web.database.username, database.username, resultDatabase!.username, evidence!.database.username,
         ...(sessions ? [sessions.database.username] : [])].includes(queueWorker.database.username)
       || !Number.isSafeInteger(queueWorker.concurrency) || queueWorker.concurrency < 1 || queueWorker.concurrency > 8)) throw new Error();
+    const hermes021LocalStartupReverification = input.coordinator.hermes021LocalStartupReverification;
+    if (hermes021Local && hermes021LocalStartupReverification !== undefined) {
+      if (!web.installationPlan || !queueWorker) throw new Error();
+      verifyPrivateLocalHermesStartupReverificationV1(hermes021LocalStartupReverification, {
+        delivery: input.coordinator.hermes021Local, queueWorker: input.coordinator.queueWorker,
+        installationPlan: web.installationPlan,
+      });
+    } else if (hermes021LocalStartupReverification !== undefined) throw new Error();
     const i = input.coordinator.ideaCreation;
     const ideaCreation = i ? { database: validatePrivatePostgresConfiguration(i.database), integrityKey: key(i.integrityKey),
       participants: z.array(ideaParticipantSchemaV1).min(3).max(6).parse(i.participants) } : undefined;
@@ -239,7 +251,8 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
       [web.database, database, resultDatabase, evidence?.database, sessions?.database, queueWorker?.database,
         ideaCreation?.database, ideaRuntime?.database].filter((value): value is PrivatePostgresConfiguration => !!value)) : undefined;
     return { web, preparedLocalAdapters, database, planning, routes, approvals, codex, installationTransitionAdmission, quality, revisionPlanning, resultDatabase, evidence, sessions,
-      codexResultReturn, nativeHttp, nativeQueue, nativeQueueRecovery, queueWorker, hermes021Local, claudeCodeLocal, ideaCreation, ideaRuntime, news, artifactStorage };
+      codexResultReturn, nativeHttp, nativeQueue, nativeQueueRecovery, queueWorker, hermes021Local,
+      hermes021LocalStartupReverification, claudeCodeLocal, ideaCreation, ideaRuntime, news, artifactStorage };
   } catch { throw new Error("private_task_startup_config_invalid"); }
 }
 
@@ -270,6 +283,11 @@ export function createPrivateTaskBootstrap(dependencies: {
     started = true;
     if (signal?.aborted) throw new Error("private_task_startup_canceled");
     const capturedConfig = validatePrivateTaskStartupConfiguration(input);
+    // Pure validation is also reused while the owner-admission stage is being
+    // prepared, before this receipt can exist. Actual normal startup is the
+    // authority boundary and must refuse before any resource effect.
+    if (capturedConfig.hermes021Local && capturedConfig.hermes021LocalStartupReverification === undefined)
+      throw new Error("private_task_startup_config_invalid");
     if (capturedConfig.artifactStorage && !dependencies.openArtifactStorage)
       throw new Error("private_task_startup_config_invalid");
     if (capturedConfig.nativeQueue && !prepareSubmission) throw new Error("private_task_startup_config_invalid");
