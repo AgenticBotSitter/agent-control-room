@@ -112,7 +112,7 @@ test("post-install Claude admission binds one additive committed transition with
         binding: { workerId: workerRoute.workerId, adapterId: workerRoute.adapterId,
           adapterRevision: workerRoute.adapterRevision, authorityDigest: d("authority"),
           acceptanceProfileId: "profile:fixture", acceptanceProfileDigest: d("acceptance") },
-        authority: {} as never, receiptPort: {} as never, recheckBeforeAcquire: async () => {}, cleanupMs: 100,
+        authority: {} as never, receiptPort: {} as never, cleanupMs: 100,
         clock: () => 0 }, results: {} as never,
       protectedStorage: { async put() { throw new Error("must not run during composition"); },
         async read() { throw new Error("must not run during composition"); } } },

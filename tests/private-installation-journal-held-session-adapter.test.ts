@@ -10,7 +10,9 @@ import { openInstallationPlanFilesystemStorageSessionV1 } from
 import { createInstallationPlanV1, installationSetupStagesV1 } from "../src/installer/v1/installation-plan";
 import { PRIVATE_INSTALLATION_JOURNAL_HELD_SESSION_PORT_V1,
   PRIVATE_INSTALLATION_JOURNAL_HELD_SESSION_V1,
-  createPrivateInstallationJournalHeldSessionAdapterV1 } from
+  createPrivateInstallationJournalHeldSessionAdapterV1,
+  type PrivateInstallationJournalHeldSessionPortV1,
+  type PrivateInstallationJournalHeldSessionV1 } from
   "../src/installer/v1/private-installation-journal-held-session-adapter";
 import { PRIVATE_INSTALLATION_JOURNAL_NATIVE_CUSTODY_PREPARATION_V1,
   preparePrivateInstallationJournalNativeCustodyV1 } from
@@ -18,6 +20,8 @@ import { PRIVATE_INSTALLATION_JOURNAL_NATIVE_CUSTODY_PREPARATION_V1,
 import { sha256Digest } from "../src/security/canonical-digest";
 
 const digest = (value: string) => sha256Digest(value);
+type OpenRequest = Parameters<PrivateInstallationJournalHeldSessionPortV1["openSession"]>[0];
+type EntryIdentity = Parameters<PrivateInstallationJournalHeldSessionV1["writeExactBounded"]>[1];
 const plan = () => createInstallationPlanV1({ topologyPlan: planInstallationTopologyV1({
   databaseAuthorityDigest: digest("database"), schedulerAuthorityDigest: digest("scheduler"), currentRoutes: [],
   requestedRoutes: [{ kind: "local", workerId: "worker:held", adapterId: "connector:held", adapterRevision: "0000001" }],
@@ -42,7 +46,7 @@ test("held adapter gives append one bounded native session without recursively o
   try {
     const factory = createPrivateInstallationJournalHeldSessionAdapterV1({ preparation: f.preparation,
       nativePort: { schema: PRIVATE_INSTALLATION_JOURNAL_HELD_SESSION_PORT_V1,
-        async openSession(request) {
+        async openSession(request: OpenRequest) {
           opens.push(request.operation); const base = await openInstallationPlanFilesystemStorageSessionV1({
             operation: request.operation, rootDirectory: request.journalRootPath, installationId: request.installationId,
             ownerUid: request.expectedOwnerUid, signal: request.signal,
@@ -75,10 +79,10 @@ test("held adapter gives append one bounded native session without recursively o
 
 test("native identities, entries, and bytes are validated and retained only as frozen snapshots", async () => {
   const f = await fixture();
-  const createdNative = { device: 31n, inode: 41n };
-  const statNative = { identity: { device: 51n, inode: 61n }, kind: "file" as const,
+  const createdNative = { device: BigInt(31), inode: BigInt(41) };
+  const statNative = { identity: { device: BigInt(51), inode: BigInt(61) }, kind: "file" as const,
     ownerUid: f.ownerUid, mode: 0o600, linkCount: 1, size: 3, canonical: true };
-  const readNative = { entry: { identity: { device: 71n, inode: 81n }, kind: "file" as const,
+  const readNative = { entry: { identity: { device: BigInt(71), inode: BigInt(81) }, kind: "file" as const,
     ownerUid: f.ownerUid, mode: 0o600, linkCount: 1, size: 3, canonical: true },
     bytes: new Uint8Array([1, 2, 3]) };
   const targetName = `${f.installationId}.installation-plan.revision-0000000000.json`;
@@ -87,11 +91,11 @@ test("native identities, entries, and bytes are validated and retained only as f
   try {
     const adapter = createPrivateInstallationJournalHeldSessionAdapterV1({ preparation: f.preparation,
       nativePort: { schema: PRIVATE_INSTALLATION_JOURNAL_HELD_SESSION_PORT_V1,
-        async openSession(request) {
+        async openSession(request: OpenRequest) {
           return { schema: PRIVATE_INSTALLATION_JOURNAL_HELD_SESSION_V1, operationId: request.operationId,
             operation: request.operation, async listEntryNames() { return namesNative; }, async statEntry() { return statNative; },
             async readEntry() { return readNative; }, async createExclusiveEntry() { return createdNative; },
-            async writeExactBounded(_name, identity) { forwardedIdentity = identity; }, async syncFile() {},
+            async writeExactBounded(_name: string, identity: EntryIdentity) { forwardedIdentity = identity; }, async syncFile() {},
             async linkNoReplace() {}, async unlinkExact() {}, async syncDirectory() {}, async verifyRoot() {},
             async close() {} };
         } } });
@@ -103,20 +107,20 @@ test("native identities, entries, and bytes are validated and retained only as f
     assert.ok(stat); assert.equal(Object.isFrozen(stat), true); assert.equal(Object.isFrozen(stat.identity), true);
     assert.equal(Object.isFrozen(read), true); assert.equal(Object.isFrozen(read.entry), true);
     assert.equal(Object.isFrozen(read.entry.identity), true);
-    statNative.identity.device = 500n; statNative.size = 99;
-    readNative.entry.identity.device = 700n; readNative.entry.size = 99; readNative.bytes[0] = 9;
+    statNative.identity.device = BigInt(500); statNative.size = 99;
+    readNative.entry.identity.device = BigInt(700); readNative.entry.size = 99; readNative.bytes[0] = 9;
     namesNative[0] = "mutated";
     assert.deepEqual(names, [targetName]); assert.equal(Object.isFrozen(names), true);
-    assert.deepEqual(stat, { identity: { device: 51n, inode: 61n }, kind: "file", ownerUid: f.ownerUid,
+    assert.deepEqual(stat, { identity: { device: BigInt(51), inode: BigInt(61) }, kind: "file", ownerUid: f.ownerUid,
       mode: 0o600, linkCount: 1, size: 3, canonical: true });
-    assert.equal(read.entry.identity.device, 71n); assert.equal(read.entry.size, 3);
+    assert.equal(read.entry.identity.device, BigInt(71)); assert.equal(read.entry.size, 3);
     assert.deepEqual([...read.bytes], [1, 2, 3]);
 
     const tempName = `${f.installationId}.installation-plan.revision-0000000000.bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb.tmp`;
     const created = await session.createExclusiveEntry(tempName);
-    assert.equal(Object.isFrozen(created), true); createdNative.device = 999n;
+    assert.equal(Object.isFrozen(created), true); createdNative.device = BigInt(999);
     await session.writeExactBounded(tempName, created, new Uint8Array([1]), 65_536);
-    assert.deepEqual(forwardedIdentity, { device: 31n, inode: 41n });
+    assert.deepEqual(forwardedIdentity, { device: BigInt(31), inode: BigInt(41) });
     assert.equal(Object.isFrozen(forwardedIdentity), true);
     await session.unlinkExact(tempName, created); await session.close();
   } finally { await f.cleanup(); }
@@ -125,13 +129,13 @@ test("native identities, entries, and bytes are validated and retained only as f
 test("native proxy and accessor identities fail closed without invoking accessors", async () => {
   const f = await fixture(); let opens = 0, getterCalls = 0;
   try {
-    const accessor: Record<string, unknown> = { inode: 2n };
-    Object.defineProperty(accessor, "device", { enumerable: true, get() { getterCalls += 1; return 1n; } });
+    const accessor: Record<string, unknown> = { inode: BigInt(2) };
+    Object.defineProperty(accessor, "device", { enumerable: true, get() { getterCalls += 1; return BigInt(1); } });
     const adapter = createPrivateInstallationJournalHeldSessionAdapterV1({ preparation: f.preparation,
       nativePort: { schema: PRIVATE_INSTALLATION_JOURNAL_HELD_SESSION_PORT_V1,
-        async openSession(request) {
+        async openSession(request: OpenRequest) {
           opens += 1;
-          const identity = opens === 1 ? new Proxy({ device: 1n, inode: 2n }, {}) : accessor;
+          const identity = opens === 1 ? new Proxy({ device: BigInt(1), inode: BigInt(2) }, {}) : accessor;
           return { schema: PRIVATE_INSTALLATION_JOURNAL_HELD_SESSION_V1, operationId: request.operationId,
             operation: request.operation, async listEntryNames() { return []; }, async statEntry() { return undefined; },
             async readEntry() { throw new Error("unused"); }, async createExclusiveEntry() { return identity; },
@@ -162,10 +166,10 @@ test("proxy-wrapped native read bytes fail closed without invoking proxy traps",
     });
     const adapter = createPrivateInstallationJournalHeldSessionAdapterV1({ preparation: f.preparation,
       nativePort: { schema: PRIVATE_INSTALLATION_JOURNAL_HELD_SESSION_PORT_V1,
-        async openSession(request) {
+        async openSession(request: OpenRequest) {
           return { schema: PRIVATE_INSTALLATION_JOURNAL_HELD_SESSION_V1, operationId: request.operationId,
             operation: request.operation, async listEntryNames() { return []; }, async statEntry() { return undefined; },
-            async readEntry() { return { entry: { identity: { device: 1n, inode: 2n }, kind: "file" as const,
+            async readEntry() { return { entry: { identity: { device: BigInt(1), inode: BigInt(2) }, kind: "file" as const,
               ownerUid: f.ownerUid, mode: 0o600, linkCount: 1, size: 3, canonical: true }, bytes }; },
             async createExclusiveEntry() { throw new Error("unused"); }, async writeExactBounded() {}, async syncFile() {},
             async linkNoReplace() {}, async unlinkExact() {}, async syncDirectory() {}, async verifyRoot() {},
@@ -182,14 +186,14 @@ test("proxy-wrapped native read bytes fail closed without invoking proxy traps",
 test("proxy-wrapped caller write bytes fail closed without invoking proxy traps", async () => {
   const f = await fixture(); let trapCalls = 0, nativeWriteCalls = 0;
   try {
-    const identity = { device: 1n, inode: 2n };
+    const identity = { device: BigInt(1), inode: BigInt(2) };
     const bytes = new Proxy(new Uint8Array([1]), {
       getPrototypeOf(target) { trapCalls += 1; return Reflect.getPrototypeOf(target); },
       get(target, property, receiver) { trapCalls += 1; return Reflect.get(target, property, receiver); },
     });
     const adapter = createPrivateInstallationJournalHeldSessionAdapterV1({ preparation: f.preparation,
       nativePort: { schema: PRIVATE_INSTALLATION_JOURNAL_HELD_SESSION_PORT_V1,
-        async openSession(request) {
+        async openSession(request: OpenRequest) {
           return { schema: PRIVATE_INSTALLATION_JOURNAL_HELD_SESSION_V1, operationId: request.operationId,
             operation: request.operation, async listEntryNames() { return []; }, async statEntry() { return undefined; },
             async readEntry() { throw new Error("unused"); }, async createExclusiveEntry() { return identity; },
@@ -212,7 +216,7 @@ test("held adapter bounds capabilities, basenames, bytes, abort, and confirmed c
   try {
     const adapter = createPrivateInstallationJournalHeldSessionAdapterV1({ preparation: f.preparation,
       nativePort: { schema: PRIVATE_INSTALLATION_JOURNAL_HELD_SESSION_PORT_V1,
-        async openSession(request) {
+        async openSession(request: OpenRequest) {
           const base = await openInstallationPlanFilesystemStorageSessionV1({ operation: request.operation,
             rootDirectory: request.journalRootPath, installationId: request.installationId,
             ownerUid: request.expectedOwnerUid, signal: request.signal });
@@ -235,7 +239,7 @@ test("held adapter bounds capabilities, basenames, bytes, abort, and confirmed c
     await assert.rejects(() => bounded.statEntry("../escape"),
       /private_installation_journal_held_session_uncertain/u);
     const tempName = `${f.installationId}.installation-plan.revision-0000000000.aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.tmp`;
-    await assert.rejects(() => bounded.writeExactBounded(tempName, { device: 1n, inode: 1n },
+    await assert.rejects(() => bounded.writeExactBounded(tempName, { device: BigInt(1), inode: BigInt(1) },
       new Uint8Array([1]), 65_536), /private_installation_journal_held_session_uncertain/u);
     const tempIdentity = await bounded.createExclusiveEntry(tempName);
     await assert.rejects(() => bounded.writeExactBounded(tempName, tempIdentity,
@@ -257,7 +261,7 @@ test("unconfirmed native close fails the journal operation closed", async () => 
   try {
     const adapter = createPrivateInstallationJournalHeldSessionAdapterV1({ preparation: f.preparation,
       nativePort: { schema: PRIVATE_INSTALLATION_JOURNAL_HELD_SESSION_PORT_V1,
-        async openSession(request) {
+        async openSession(request: OpenRequest) {
           const base = await openInstallationPlanFilesystemStorageSessionV1({ operation: request.operation,
             rootDirectory: request.journalRootPath, installationId: request.installationId,
             ownerUid: request.expectedOwnerUid, signal: request.signal });

@@ -144,10 +144,10 @@ function inertClone(value: unknown, seen = new WeakSet<object>()): unknown {
     const cloned = inertClone(descriptor.value, seen);
     if (array) {
       if (!/^(0|[1-9][0-9]*)$/.test(key)) unavailable();
-      output[Number(key)] = cloned;
-    } else output[key] = cloned;
+      (output as unknown[])[Number(key)] = cloned;
+    } else (output as Record<string, unknown>)[key] = cloned;
   }
-  if (array && output.length !== value.length) unavailable();
+  if (array && (output as unknown[]).length !== value.length) unavailable();
   seen.delete(value);
   return output;
 }

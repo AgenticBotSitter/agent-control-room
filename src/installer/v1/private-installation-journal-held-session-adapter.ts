@@ -68,8 +68,8 @@ const identityMatches = (left: InstallationPlanJournalEntryIdentityV1,
 
 function identitySnapshot(value: unknown): InstallationPlanJournalEntryIdentityV1 {
   const record = exact(value, ["device", "inode"]);
-  if (typeof record.device !== "bigint" || record.device < 0n
-    || typeof record.inode !== "bigint" || record.inode < 0n) return fail();
+  if (typeof record.device !== "bigint" || record.device < BigInt(0)
+    || typeof record.inode !== "bigint" || record.inode < BigInt(0)) return fail();
   return Object.freeze({ device: record.device, inode: record.inode });
 }
 
