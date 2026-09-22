@@ -45,6 +45,27 @@ performed by these source packages. The next database step is the separately
 reviewed private adapter/configuration binding and owner-attended rehearsal;
 that step has not run.
 
+The protected-data stage now also has an accepted source-only owner runner
+contract. It reuses the existing private artifact configuration and persistent
+storage preflight, binds attached-owner confirmation and exact redacted
+preflight evidence to the current request, and treats any failure after
+directory creation may have occurred as non-retryable uncertainty. Parent and
+root identities are checked around creation and preflight, and the runner has
+no repair or deletion authority. The real operating-system implementation of
+identity-bound, no-follow directory creation remains intentionally absent and
+must be separately reviewed before this runner can touch an owner's directory.
+
+The first-owner stage now has an accepted durable settlement transaction over
+the existing installation journal. It rebuilds the exact prepared request from
+the running plan, including the passed database outcome, expected owner subject,
+and independently observed empty-owner state. Only a private wrapper's exact
+terminal confirmation of the expected existing owner can append the stage
+receipt; preparation, an armed ceremony, a changed subject or proof, stale or
+uncertain state, and competing outcomes refuse. This transaction accepts no
+login assertion, one-time code, credential, database handle, listener, owner
+creation port, or alternate receipt store. The later private owner-attended
+runner remains required before any real owner ceremony can be performed.
+
 ## Current build block
 
 **This computer** is being completed as one installation choice of the same
