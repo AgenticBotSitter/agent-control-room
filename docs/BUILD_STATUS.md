@@ -69,6 +69,25 @@ limits recovery to the retained publication algorithm, and specifies exact
 bounded same-descriptor writes for plan and witness bytes. It performs no native
 operation and does not claim the blocker is cleared.
 
+The installed local-Hermes configuration now also has a source-only composer.
+Strict manifest-bound JSON contributes data only; reviewed source and injected
+owner-held ports construct the callable planning, delivery, result-staging,
+Postgres queue and startup graph. The composition is inert until the existing
+startup boundary opens its exact resources, fixes Hermes to one `text_review`
+turn with no tools, and reconstructs a stable release/sidecar/worker/runner
+identity that is formed before agent readiness and therefore does not hash its
+own settled outcome. A process-local opaque capability binds that identity to
+the exact tenant and authority callback while retaining the delivery brand.
+That capability is a one-use reviewed-graph capsule minted only after the
+composer has captured the fixed execution, result, runner and owner-held
+authority ports; the generic delivery factory has no persistent-identity field
+and arbitrary callers cannot submit a callback graph to the installed wrapper.
+Foreign, mutated,
+secret-bearing and callback-shaped installed input refuses before effects. This
+does not wire the operator launcher or clear
+`native_journal_operation_custody_missing`; the owner-held journal operation
+composition remains the next gate.
+
 The journal package now has an independently accepted, source-tested native
 macOS operation session. The existing installation journal opens one
 operation-scoped storage session, and append keeps that same session across

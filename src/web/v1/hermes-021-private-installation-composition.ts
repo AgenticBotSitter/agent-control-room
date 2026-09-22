@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
+import { types } from "node:util";
 import {
   captureHermes021MacosSubprocessHostConfigurationV1,
   hermes021MacosLocalBindingSchemaV1,
@@ -13,6 +14,8 @@ import { createHermes021LocalSubprocessQueueExecutorV1 } from "./hermes-021-loca
 import type { Hermes021LocalQueueDeliveryTarget } from "./task-assignment-coordinator";
 import { sha256Digest } from "../../security/canonical-digest";
 import { validatePrivatePostgresConfiguration } from "./private-postgres";
+import { consumePrivateInstalledLocalHermesReviewedGraphV1 } from
+  "../../installer/v1/private-installed-local-hermes-runtime-composer";
 
 const unavailable = (): never => { throw new Error("hermes_021_private_installation_composition_unavailable"); };
 const identifier = z.string().min(3).max(180).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
@@ -22,6 +25,10 @@ export const PRIVATE_HERMES_021_LOCAL_INSTALLATION_DELIVERY_V1 =
   "control-room.private-hermes-021-local-installation-delivery/v1" as const;
 export const PRIVATE_HERMES_021_LOCAL_STARTUP_ADMISSION_BINDING_V1 =
   "control-room.private-hermes-021-local-startup-admission-binding/v1" as const;
+export const PRIVATE_HERMES_021_INSTALLED_COMPOSITION_IDENTITY_V1 =
+  "control-room.private-hermes-021-installed-composition-identity/v1" as const;
+export const PRIVATE_HERMES_021_INSTALLED_COMPOSITION_CAPABILITY_V1 =
+  "control-room.private-hermes-021-installed-composition-capability/v1" as const;
 
 type CompositionMetadata = Readonly<{
   compositionInstanceDigest: string;
@@ -54,6 +61,69 @@ const installationBindingSchema = z.object({
   preparationDigest: digest, topologyPlanDigest: digest, releaseDigest: digest,
   workerBindingDigest: digest, runnerConfigurationDigest: digest,
 }).passthrough();
+const installedCompositionIdentitySchema = z.object({
+  schema: z.literal(PRIVATE_HERMES_021_INSTALLED_COMPOSITION_IDENTITY_V1),
+  installationId: identifier,
+  releaseDigest: digest,
+  nativeSidecarIdentityDigest: digest,
+  runtimeIdentityDigest: digest,
+}).strict();
+type InstalledCompositionIdentity = Readonly<z.infer<typeof installedCompositionIdentitySchema>>;
+type InstalledCompositionCapabilityMetadata = Readonly<{ tenantId: string;
+  assertAuthority: (delivery: ControllerWorkerDeliveryV1) => void; identity: InstalledCompositionIdentity }>;
+const installedCompositionCapabilities = new WeakMap<object, InstalledCompositionCapabilityMetadata>();
+
+/** Opaque source-composition capability. The data identity is restart-stable,
+ * but the exact token is process-local and bound to this tenant and authority
+ * callback. Spreading, serializing or reusing it with another callback fails. */
+function createPrivateHermes021InstalledCompositionCapabilityV1(input: unknown): object {
+  if (!input || typeof input !== "object" || Array.isArray(input) || types.isProxy(input)
+    || Object.getPrototypeOf(input) !== Object.prototype || Object.getOwnPropertySymbols(input).length !== 0) unavailable();
+  const names = Object.getOwnPropertyNames(input);
+  if (names.length !== 3 || names.some(name => !["tenantId", "assertAuthority", "identity"].includes(name))) unavailable();
+  const descriptors = Object.fromEntries(names.map(name => [name, Object.getOwnPropertyDescriptor(input, name)]));
+  if (Object.values(descriptors).some(descriptor => !descriptor || descriptor.enumerable !== true || !("value" in descriptor))) unavailable();
+  const tenantId = identifier.parse(descriptors.tenantId!.value);
+  const assertAuthority = descriptors.assertAuthority!.value;
+  if (typeof assertAuthority !== "function" || types.isProxy(assertAuthority)) unavailable();
+  const identity = Object.freeze(installedCompositionIdentitySchema.parse(descriptors.identity!.value));
+  const capability = Object.freeze({ schema: PRIVATE_HERMES_021_INSTALLED_COMPOSITION_CAPABILITY_V1 });
+  installedCompositionCapabilities.set(capability, Object.freeze({ tenantId,
+    assertAuthority: assertAuthority as (delivery: ControllerWorkerDeliveryV1) => void, identity }));
+  return capability;
+}
+
+function captureInstalledCompositionIdentity(value: unknown): InstalledCompositionIdentity {
+  if (!value || typeof value !== "object" || Array.isArray(value) || types.isProxy(value)
+    || Object.getPrototypeOf(value) !== Object.prototype || Object.getOwnPropertySymbols(value).length !== 0) unavailable();
+  const expected = ["schema", "installationId", "releaseDigest", "nativeSidecarIdentityDigest", "runtimeIdentityDigest"];
+  const names = Object.getOwnPropertyNames(value);
+  if (names.length !== expected.length || names.some(name => !expected.includes(name))) unavailable();
+  const captured: Record<string, unknown> = {};
+  for (const name of names) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, name);
+    if (!descriptor || descriptor.enumerable !== true || !("value" in descriptor)) unavailable();
+    captured[name] = (descriptor as PropertyDescriptor & { value: unknown }).value;
+  }
+  return Object.freeze(installedCompositionIdentitySchema.parse(captured));
+}
+
+/** Dedicated reviewed installed-graph constructor. The process-local mint is
+ * intentionally not exported and the opaque capability never leaves this
+ * call. Generic delivery callers cannot request restart-stable identity. */
+export function createPrivateHermes021LocalInstalledCompositionDeliveryV1(input: unknown): Readonly<{
+  deliver: (target: unknown, signal: AbortSignal) => Promise<void>;
+}> {
+  let captured: ReturnType<typeof consumePrivateInstalledLocalHermesReviewedGraphV1>;
+  try { captured = consumePrivateInstalledLocalHermesReviewedGraphV1(input); }
+  catch { return unavailable(); }
+  const identity = captureInstalledCompositionIdentity(captured.installedCompositionIdentity);
+  const capability = createPrivateHermes021InstalledCompositionCapabilityV1({ tenantId: captured.tenantId,
+    assertAuthority: captured.assertAuthority, identity });
+  return createDelivery({ tenantId: captured.tenantId,
+    execution: captured.execution, results: captured.results, assertAuthority: captured.assertAuthority,
+    subprocess: captured.subprocess }, capability);
+}
 
 function runnerConfigurationDigest(value: Hermes021MacosSubprocessHostConfigurationV1) {
   return sha256Digest({ purpose: "local-hermes-runner-configuration/v1", configuration: value });
@@ -82,14 +152,14 @@ const withoutBindingDigest = <T extends { bindingDigest: string }>(value: T) => 
  * exposes only `deliver` to protected operator assembly. It has no browser,
  * database-opening, worker-starting, or Hermes-invocation behavior of its own.
  */
-export function createPrivateHermes021LocalInstallationDeliveryV1(input: unknown): Readonly<{
+function createDelivery(input: unknown, installedCompositionCapability?: object): Readonly<{
   deliver: (target: unknown, signal: AbortSignal) => Promise<void>;
 }> {
   const parsed = z.object({
     tenantId: identifier,
     execution: z.unknown(),
     results: z.unknown(),
-    assertAuthority: z.function(),
+    assertAuthority: z.unknown(),
     subprocess: z.unknown(),
   }).strict().safeParse(input);
   const data = parsed.data;
@@ -97,7 +167,8 @@ export function createPrivateHermes021LocalInstallationDeliveryV1(input: unknown
   const configuration = data as Readonly<{ tenantId: string; execution: unknown; results: unknown;
     assertAuthority: unknown; subprocess: unknown }>;
   if (!configuration.execution || typeof configuration.execution !== "object"
-    || !configuration.results || typeof configuration.results !== "object") unavailable();
+    || !configuration.results || typeof configuration.results !== "object"
+    || typeof configuration.assertAuthority !== "function" || types.isProxy(configuration.assertAuthority)) unavailable();
 
   const execution = configuration.execution as Hermes021MacosAssignedTaskExecutionV1;
   // The outer factory must never accept an injected test host or a completed
@@ -130,11 +201,31 @@ export function createPrivateHermes021LocalInstallationDeliveryV1(input: unknown
     targetContract: "control-room.hermes-021-local-queue-delivery-target/v1",
     deliveryContract: "control-room.controller-worker-delivery/v1",
     terminalPublication: "control-room.durable-result-write-reservation/v1" });
+  // An installed service must be able to reconstruct the same reviewed
+  // composition after restart.  The manifest-bound identity is stable data,
+  // while the WeakMap entry below remains the in-process brand that prevents a
+  // caller from substituting an arbitrary `{ deliver }` callback.  Legacy and
+  // test compositions retain their per-process nonce.
+  const installedCapability = installedCompositionCapability
+    ? installedCompositionCapabilities.get(installedCompositionCapability) : undefined;
+  if (installedCompositionCapability !== undefined && (!installedCapability
+    || installedCapability.tenantId !== configuration.tenantId
+    || installedCapability.assertAuthority !== configuration.assertAuthority)) unavailable();
+  const compositionInstanceDigest = installedCapability
+    ? sha256Digest({ purpose: "private-hermes-installed-composition-instance/v1",
+      identity: installedCapability.identity, tenantId: installedCapability.tenantId, workerBindingDigest,
+      runnerConfigurationDigest: configurationDigest, compositionContractDigest })
+    : sha256Digest({ purpose: "private-hermes-installation-composition-instance/v1", nonce: randomUUID() });
   compositions.set(delivery, Object.freeze({
-    compositionInstanceDigest: sha256Digest({ purpose: "private-hermes-installation-composition-instance/v1",
-      nonce: randomUUID() }), compositionContractDigest, workerBindingDigest,
+    compositionInstanceDigest, compositionContractDigest, workerBindingDigest,
     runnerConfigurationDigest: configurationDigest }));
   return delivery;
+}
+
+export function createPrivateHermes021LocalInstallationDeliveryV1(input: unknown): Readonly<{
+  deliver: (target: unknown, signal: AbortSignal) => Promise<void>;
+}> {
+  return createDelivery(input);
 }
 
 function bindingMaterial(input: unknown) {

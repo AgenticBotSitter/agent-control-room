@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createPrivateHermes021LocalInstallationDeliveryV1 } from "../src/web/v1/hermes-021-private-installation-composition";
+import {
+  createPrivateHermes021LocalInstalledCompositionDeliveryV1,
+  createPrivateHermes021LocalInstallationDeliveryV1,
+  PRIVATE_HERMES_021_INSTALLED_COMPOSITION_IDENTITY_V1 } from
+  "../src/web/v1/hermes-021-private-installation-composition";
 
 const binding = Object.freeze({ localServiceId: "service:marvin", workerId: "worker:marvin",
   expectedVersion: "0.21.3" as const, sourceRevision: "00570550" });
@@ -38,4 +42,35 @@ test("private Hermes installation composition refuses test-host and malformed ru
 test("private Hermes installation composition validates an untrusted queue target before dispatch", async () => {
   const delivery = createPrivateHermes021LocalInstallationDeliveryV1(input());
   await assert.rejects(delivery.deliver({ kind: "not-hermes" }, new AbortController().signal));
+});
+
+test("installed identity mint is internal and same-tenant arbitrary callback graphs cannot reach it", () => {
+  const configured = input(), digest = `sha256:${"a".repeat(64)}`;
+  const identity = { schema: PRIVATE_HERMES_021_INSTALLED_COMPOSITION_IDENTITY_V1,
+    installationId: "fixture-installation", releaseDigest: digest,
+    nativeSidecarIdentityDigest: digest, runtimeIdentityDigest: digest };
+  assert.throws(() => createPrivateHermes021LocalInstallationDeliveryV1({ ...configured,
+    installedCompositionIdentity: identity }),
+  /hermes_021_private_installation_composition_unavailable/u);
+  const plainGraph = { ...configured, installedCompositionIdentity: identity };
+  for (const candidate of [plainGraph, { ...plainGraph, assertAuthority() {} },
+    { ...plainGraph, execution: { ...plainGraph.execution } }, { ...plainGraph, results: { replacement: true } }]) {
+    assert.throws(() => createPrivateHermes021LocalInstalledCompositionDeliveryV1(candidate),
+      /hermes_021_private_installation_composition_unavailable/u);
+  }
+  assert.throws(() => createPrivateHermes021LocalInstallationDeliveryV1({ ...configured,
+    installedCompositionCapability: {} }), /hermes_021_private_installation_composition_unavailable/u);
+  let reads = 0;
+  const getterIdentity = { ...identity };
+  Object.defineProperty(getterIdentity, "runtimeIdentityDigest",
+    { enumerable: true, get() { reads++; return digest; } });
+  assert.throws(() => createPrivateHermes021LocalInstalledCompositionDeliveryV1({ ...configured,
+    assertAuthority() {},
+    installedCompositionIdentity: getterIdentity }), /hermes_021_private_installation_composition_unavailable/u);
+  assert.equal(reads, 0);
+  const proxyIdentity = new Proxy(identity, { ownKeys(target) { reads++; return Reflect.ownKeys(target); } });
+  assert.throws(() => createPrivateHermes021LocalInstalledCompositionDeliveryV1({ ...configured,
+    assertAuthority() {},
+    installedCompositionIdentity: proxyIdentity }), /hermes_021_private_installation_composition_unavailable/u);
+  assert.equal(reads, 0);
 });

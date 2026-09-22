@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createArtifactBackupInventoryV1, verifyRestoredArtifactBackupInventoryV1 } from
   "../src/artifacts/v1/artifact-backup-inventory";
-import { HERMES_021_SOURCE_REVISION_V1 } from "../src/harness/hermes-021-v1/connector-profile";
-import { HERMES_021_MACOS_LOCAL_ADAPTER_V1 } from "../src/harness/hermes-021-v1/macos-local-worker";
+import { HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1, HERMES_021_SOURCE_REVISION_V1 } from
+  "../src/harness/hermes-021-v1/connector-profile";
+import { HERMES_021_MACOS_LOCAL_ADAPTER_V1, HERMES_021_MACOS_LOCAL_START_OPERATION_V1 } from
+  "../src/harness/hermes-021-v1/macos-local-worker";
 import { createHermes021MacosLocalRunnerQualificationEvidenceV1,
   HERMES_021_MACOS_LOCAL_RUNNER_QUALIFICATION_REPORT_V1 } from
   "../src/harness/hermes-021-v1/runner-qualification-evidence";
@@ -22,6 +24,13 @@ import { createPrivateLocalInstallationRuntimeAssemblyV1 } from
   "../src/installer/v1/private-local-installation-runtime-assembly";
 import { createPrivateLocalInstallationOperatorV1 } from
   "../src/installer/v1/private-local-installation-operator";
+import { createPrivateInstalledLocalHermesRuntimeComposerV1,
+  PRIVATE_INSTALLED_LOCAL_HERMES_AGENT_SOURCE_V1,
+  PRIVATE_INSTALLED_LOCAL_HERMES_CONFIGURATION_V1 } from
+  "../src/installer/v1/private-installed-local-hermes-runtime-composer";
+import { PRIVATE_INSTALLED_CONFIGURATION_MANIFEST_BOUND_PREPARATION_V1,
+  PRIVATE_INSTALLED_CONFIGURATION_NATIVE_SIDECAR_IDENTITY_V1 } from
+  "../src/installer/v1/private-installed-configuration-custody";
 import { prepareLocalHermesAdmissionV1 } from "../src/installer/v1/local-hermes-admission-preparation";
 import { localHermesAdmissionTerminalReceiptForRequestV1 } from
   "../src/installer/v1/local-hermes-admission-transaction";
@@ -35,8 +44,9 @@ import { PRIVATE_INSTALLATION_FINAL_REVIEW_OWNER_CONFIRMATION_V1,
   privateInstallationFinalReviewBindingsV1, type PrivateInstallationFinalReviewContextV1 } from
   "../src/installer/v1/private-installation-final-review";
 import { sha256Digest } from "../src/security/canonical-digest";
+import { computeAuthorityDigest } from "../src/security/digest";
 import { createPrivateHermes021LocalInstallationDeliveryV1,
-  createPrivateHermes021LocalStartupAdmissionBindingV1 } from
+  } from
   "../src/web/v1/hermes-021-private-installation-composition";
 import { privateArtifactStorageNamespaceDigestV1 } from "../src/web/v1/private-artifact-storage";
 import { privateAgentTaskCompositionFixture } from "./helpers/private-agent-task-composition";
@@ -44,6 +54,22 @@ import { isClaudeCodePrivateInstalledDeliverCapabilityV1 } from
   "../src/web/v1/claude-code-private-installation-composition";
 
 const d = (value: unknown) => sha256Digest(value);
+
+function installedSidecar(releaseDigest: string, variant = "current") {
+  return { schema: PRIVATE_INSTALLED_CONFIGURATION_NATIVE_SIDECAR_IDENTITY_V1,
+    releaseVersion: "0.1.0", portableReleaseManifestSha256: releaseDigest,
+    outerLauncherManifestSha256: d([variant, "outer"]), sidecarManifestSha256: d([variant, "sidecar"]),
+    archiveSha256: d([variant, "archive"]), artifactManifestSha256: d([variant, "artifact"]),
+    executableSha256: d([variant, "executable"]), platform: "darwin" as const,
+    protocol: "ACRJNL1" as const, architecture: "arm64" as const };
+}
+
+function installedRuntimeIdentity(installationId: string, releaseDigest: string, nativeSidecar: unknown,
+  workerBinding: unknown, runnerConfiguration: unknown) {
+  return d({ purpose: "private-installed-local-hermes-runtime-identity/v1", installationId, releaseDigest,
+    nativeSidecarIdentityDigest: d(nativeSidecar), workerBindingDigest: d(workerBinding),
+    runnerConfigurationDigest: localHermesRunnerConfigurationDigestV1(runnerConfiguration) });
+}
 
 function completedInstallationPlan(result: unknown): InstallationPlanV1 {
   assert.ok(result && typeof result === "object");
@@ -125,12 +151,6 @@ async function fixture(t: { after(fn: () => unknown): void }) {
     execution: { preparation: {}, runs: {}, delivery: { binding: workerBinding, db: {}, integrityKey: new Uint8Array(32),
       policy: { assertAdmitted() {} }, terminalResultStorage: {} } }, results: {}, assertAuthority() { hermesCalls++; },
     subprocess: runnerConfiguration });
-  const delivery = makeDelivery();
-  const privateStartupConfiguration = { ...scenario.configuration, coordinator: { ...scenario.configuration.coordinator,
-    sessions: undefined, nativeHttp: undefined, planning: { ...scenario.configuration.coordinator.planning,
-      localAdapterAdmission: { enabledAdapters: [HERMES_021_MACOS_LOCAL_ADAPTER_V1] } }, hermes021Local: delivery },
-    web: { ...scenario.configuration.web, installationTopologyPlan: topology, installationReadiness,
-      localBackupRestoreReadiness: backupRestoreProof, localSupervisorReadiness: supervisorReadiness } };
   const admissionPreparationInput = { installationId: "fixture-installation", installationPlan: plan,
     topologyInput, workerBinding, installationBinding, installationBindingInput: bindingInput };
   const replay = { async readHistory() { return Object.freeze([...history]); }, async append(value: InstallationPlanV1) {
@@ -140,9 +160,25 @@ async function fixture(t: { after(fn: () => unknown): void }) {
   } };
   const ownerPreparation = await prepareLocalHermesAdmissionV1(admissionPreparationInput, { journal: replay });
   if (!ownerPreparation.admissionRequestDigest) throw new Error("fixture admission missing");
-  const startupAdmissionBinding = createPrivateHermes021LocalStartupAdmissionBindingV1({ delivery,
-    queueWorker: privateStartupConfiguration.coordinator.queueWorker, installationBinding,
-    topologyPlanDigest: topology.planDigest, releaseDigest, admissionRequestDigest: ownerPreparation.admissionRequestDigest });
+  const artifactRoot = "/fixture/private-artifacts", artifactNamespace = "fixture-private-artifacts";
+  const artifactStorage = { local: { rootPath: artifactRoot, maximumArtifacts: 100, maximumFileBytes: 65_536,
+      maximumTotalBytes: 6_553_600, operationTimeoutMs: 1_000 },
+    inventory: { releaseId: "release:fixture", releaseDigest, databaseSchemaVersion: inventory.databaseSchemaVersion,
+      databaseSchemaDigest: inventory.databaseSchemaDigest, storageNamespace: artifactNamespace,
+      storageNamespaceDigest: privateArtifactStorageNamespaceDigestV1(artifactNamespace, artifactRoot) } };
+  const bootstrapStartupConfiguration = { ...scenario.configuration,
+    coordinator: { ...scenario.configuration.coordinator, sessions: undefined, nativeHttp: undefined },
+    web: { ...scenario.configuration.web, installationTopologyPlan: topology, installationReadiness,
+      localBackupRestoreReadiness: backupRestoreProof, localSupervisorReadiness: supervisorReadiness } };
+  const bootstrapPackage = installedComposerPackage({ plan, topology,
+    runnerInput: { admissionPreparationInput, privateStartupConfiguration: bootstrapStartupConfiguration,
+      startupAdmissionBinding: { admissionRequestDigest: ownerPreparation.admissionRequestDigest } },
+    settings: { port: 3210 }, trusted: { artifactStorage } } as never);
+  const bootstrapLoaded = await createPrivateInstalledLocalHermesRuntimeComposerV1(
+    bootstrapPackage.preparation, bootstrapPackage.ports).custody.loadPrivateConfiguration();
+  const privateStartupConfiguration = bootstrapLoaded.assemblyInput.runnerInput.privateStartupConfiguration;
+  const startupAdmissionBinding = bootstrapLoaded.assemblyInput.runnerInput.startupAdmissionBinding;
+  const delivery = bootstrapLoaded.assemblyInput.operatorTrustedInputs.hermes021Local;
   const runnerInput = { admissionPreparationInput, privateStartupConfiguration, startupAdmissionBinding };
   const request = await preparePrivateLocalHermesAdmissionRequestV1(runnerInput, replay);
   const readiness = localHermesAdmissionTerminalReceiptForRequestV1(request);
@@ -172,12 +208,6 @@ async function fixture(t: { after(fn: () => unknown): void }) {
     features: { nativeQueue: true, nativeQueueRecovery: true, quality: true, evidence: true,
       queueWorker: true, artifactStorage: true, hermes021Local: true } };
   const { database: _evidenceDatabase, ...evidence } = c.evidence!;
-  const artifactRoot = "/fixture/private-artifacts", artifactNamespace = "fixture-private-artifacts";
-  const artifactStorage = { local: { rootPath: artifactRoot, maximumArtifacts: 100, maximumFileBytes: 65_536,
-      maximumTotalBytes: 6_553_600, operationTimeoutMs: 1_000 },
-    inventory: { releaseId: "release:fixture", releaseDigest, databaseSchemaVersion: inventory.databaseSchemaVersion,
-      databaseSchemaDigest: inventory.databaseSchemaDigest, storageNamespace: artifactNamespace,
-      storageNamespaceDigest: privateArtifactStorageNamespaceDigestV1(artifactNamespace, artifactRoot) } };
   const trusted = { web: { ...privateStartupConfiguration.web, installationPlan: plan }, planning: c.planning,
     routes: c.routes, approvalEnrollments: c.approvals!.enrollments, approvalStore: c.approvals!.store,
     quality: c.quality, evidence, artifactStorage,
@@ -245,6 +275,186 @@ function finalReviewConfirmation(context: PrivateInstallationFinalReviewContextV
     installationPlanRevision: context.installationPlanRevision,
     finalReviewInputDigest: context.finalReviewInputDigest, ownerAttached: true as const, confirmed: true as const });
 }
+
+function installedComposerPackage(f: any, sidecarVariant = "current"): { preparation: any; ports: any } {
+  const startup = f.runnerInput.privateStartupConfiguration, coordinator = startup.coordinator;
+  const { localAdapterAdmission: _localAdmission, ...basePlanning } = coordinator.planning;
+  const authority = { ...basePlanning.template.authority,
+    allowedOperations: [HERMES_021_MACOS_LOCAL_START_OPERATION_V1], maxDurationSeconds: 60, digest: "" };
+  authority.digest = computeAuthorityDigest(authority);
+  const existingHermesTemplate = [basePlanning.template, ...(basePlanning.additionalTemplates ?? [])]
+    .find(template => template.adapter === HERMES_021_MACOS_LOCAL_ADAPTER_V1);
+  const hermesTemplate = existingHermesTemplate ?? { ...basePlanning.template, id: "template:hermes-text-review",
+    adapter: HERMES_021_MACOS_LOCAL_ADAPTER_V1,
+    connectorProfileDigest: HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1, workspaceIntentDigest: undefined, authority };
+  const planning = existingHermesTemplate ? basePlanning : { ...basePlanning,
+    additionalTemplates: [...(basePlanning.additionalTemplates ?? []), hermesTemplate] };
+  const { installationTopologyPlan: _topology, installationReadiness: _readiness,
+    localBackupRestoreReadiness: _backup, localSupervisorReadiness: _supervisor,
+    installationPlan: _installedPlan, ...web } = startup.web as typeof startup.web & { installationPlan?: unknown };
+  const setupSources = Object.fromEntries(["database_authority", "protected_data", "first_owner", "recovery",
+    "platform_service", "agent_readiness", "final_review"].map(stage => [stage,
+      stage === "agent_readiness" ? { schema: PRIVATE_INSTALLED_LOCAL_HERMES_AGENT_SOURCE_V1 } : {}]));
+  const nativeSidecar = installedSidecar(f.plan.releaseDigest, sidecarVariant);
+  const runtimeIdentityDigest = installedRuntimeIdentity("fixture-installation", f.plan.releaseDigest,
+    nativeSidecar, f.runnerInput.admissionPreparationInput.workerBinding,
+    f.runnerInput.admissionPreparationInput.installationBindingInput.runnerConfiguration);
+  const configurationWithoutBinding = {
+    schema: PRIVATE_INSTALLED_LOCAL_HERMES_CONFIGURATION_V1,
+    installationId: "fixture-installation", releaseDigest: f.plan.releaseDigest,
+    runtimeIdentityDigest,
+    prerequisiteInput: { installationId: "fixture-installation", topologyPlan: f.topology,
+      releaseDigest: f.plan.releaseDigest, releasePreflight: {}, privatePlacement: {} },
+    settledInstallationPlan: f.plan,
+    hermes: { admissionPreparationInput: f.runnerInput.admissionPreparationInput,
+      admissionRequestDigest: f.runnerInput.startupAdmissionBinding.admissionRequestDigest,
+      runnerConfiguration: f.runnerInput.admissionPreparationInput.installationBindingInput.runnerConfiguration,
+      taskPolicy: { adapter: HERMES_021_MACOS_LOCAL_ADAPTER_V1,
+        connectorProfileDigest: HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1,
+        taskClass: "text_review", tools: "none", maximumTurns: 1, maximumRunBudgetSeconds: 120 } },
+    operator: { port: f.settings.port, templateId: hermesTemplate.id },
+    database: { host: coordinator.database.host, port: coordinator.database.port,
+      database: coordinator.database.database, majorVersion: coordinator.database.majorVersion,
+      roles: { web: web.database.username, coordinator: coordinator.database.username,
+        results: coordinator.resultDatabase!.username, evidence: coordinator.evidence!.database.username,
+        queueWorker: coordinator.queueWorker!.database.username },
+      queueConcurrency: coordinator.queueWorker!.concurrency ?? 1 },
+    artifactStorage: f.trusted.artifactStorage, setupSources,
+  };
+  const journal = { rootPath: "/fixture/private-journal", expectedRootIdentity: { device: 1, inode: 2 },
+    expectedOwnerUid: 501, expectedRootMode: 0o700 };
+  const installedManifestBindingDigest = d({ purpose: "private-installed-local-hermes-configuration-binding/v1",
+    installationId: "fixture-installation", journal, nativeSidecar, configuration: configurationWithoutBinding });
+  const privateConfigurationData = { ...configurationWithoutBinding, installedManifestBindingDigest };
+  const preparation = { schema: PRIVATE_INSTALLED_CONFIGURATION_MANIFEST_BOUND_PREPARATION_V1,
+    installationId: "fixture-installation", privateConfigurationData, journal, nativeSidecar,
+    dataOnly: true, opensJournal: false, constructsJournal: false, stagesNativeSidecar: false,
+    performsNativeOperation: false, writesInstalledManifest: false, autoUpgradesManifest: false };
+  const startupBase = { web, coordinator: { planning, routes: coordinator.routes, approvals: coordinator.approvals,
+    quality: coordinator.quality, ...(coordinator.revisionPlanning ? { revisionPlanning: coordinator.revisionPlanning } : {}),
+    database: coordinator.database, resultDatabase: coordinator.resultDatabase, evidence: coordinator.evidence,
+    queueWorker: coordinator.queueWorker } };
+  const setupRuntimes = Object.fromEntries(Object.keys(setupSources).map(stage => [stage, undefined]));
+  const ports = { startupBase, deliveryIntegrityKey: new Uint8Array(32).fill(177), assertCurrentDelivery() {}, setupRuntimes };
+  return { preparation, ports };
+}
+
+test("installed data composes the real inert Hermes graph and retains the native-journal owner gate", async t => {
+  const f = await fixture(t), input = installedComposerPackage(f);
+  const composer = createPrivateInstalledLocalHermesRuntimeComposerV1(input.preparation, input.ports);
+  assert.equal(composer.status, "configuration_graph_ready");
+  assert.deepEqual(composer.operatorComposition,
+    { status: "blocked", blocker: "native_journal_operation_custody_missing" });
+  assert.equal(composer.performsEffect, false); assert.equal(composer.startsWorker, false);
+  assert.equal(f.hermesCalls(), 0); assert.equal(f.reads(), 0); assert.equal(f.appends(), 0);
+  const loaded = await composer.custody.loadPrivateConfiguration();
+  assert.equal(loaded.assemblyInput.runnerInput.privateStartupConfiguration.coordinator.queueWorker?.concurrency,
+    f.queueWorker.concurrency);
+  assert.equal(loaded.setupSources.agent_readiness, loaded.assemblyInput.runnerInput);
+  assert.equal(loaded.assemblyInput.operatorTrustedInputs.hermes021Local,
+    loaded.assemblyInput.runnerInput.privateStartupConfiguration.coordinator.hermes021Local);
+  assert.deepEqual(composer.contracts, { taskClass: "text_review",
+    delivery: "control-room.private-hermes-021-local-installation-delivery/v1",
+    resultStaging: "control-room.hermes-021-macos-terminal-stage/v1", queue: "pg-boss/postgres",
+    startup: "control-room.private-task-startup", setup: "control-room.private-local-setup-orchestrator/v1" });
+  const assembly = createPrivateLocalInstallationRuntimeAssemblyV1(loaded.assemblyInput,
+    { journal: f.journal, startupDependencies: loaded.startupDependencies });
+  assert.equal(assembly.status, "ready");
+  if (assembly.status === "ready") {
+    const prepared = await assembly.prepare();
+    assert.equal(prepared.plan.planDigest, f.plan.planDigest,
+      "the source-composed restart identity must reproduce the receipt that settled agent readiness");
+  }
+  assert.equal(f.hermesCalls(), 0); assert.ok(f.reads() > 0); assert.equal(f.appends(), 0);
+});
+
+test("a changed installed runtime identity cannot reuse the settled admission receipt", async t => {
+  const f = await fixture(t), changed = installedComposerPackage(f, "replacement");
+  const loaded = await createPrivateInstalledLocalHermesRuntimeComposerV1(changed.preparation, changed.ports)
+    .custody.loadPrivateConfiguration();
+  const assembly = createPrivateLocalInstallationRuntimeAssemblyV1(loaded.assemblyInput,
+    { journal: f.journal, startupDependencies: loaded.startupDependencies });
+  assert.equal(assembly.status, "ready");
+  if (assembly.status === "ready") await assert.rejects(assembly.prepare(),
+    /private_local_installation_runtime_assembly_refused|private_local_hermes_admission_runner_unavailable|private_local_hermes_startup_reverification_refused/u);
+  assert.equal(f.hermesCalls(), 0); assert.equal(f.appends(), 0);
+});
+
+test("installed composer rejects foreign, mutated, secret-bearing and callback-shaped input before effects", async t => {
+  const f = await fixture(t), input = installedComposerPackage(f), effects = () => {
+    assert.equal(f.hermesCalls(), 0); assert.equal(f.reads(), 0); assert.equal(f.appends(), 0);
+  };
+  const mutate = (fn: (copy: any) => void) => {
+    const copy = structuredClone(input.preparation); fn(copy);
+    assert.throws(() => createPrivateInstalledLocalHermesRuntimeComposerV1(copy, input.ports),
+      /private_installed_local_hermes_runtime_composer_refused/u); effects();
+  };
+  mutate(copy => { copy.installationId = "foreign-installation"; });
+  mutate(copy => { copy.nativeSidecar.archiveSha256 = d("mutated"); });
+  mutate(copy => { copy.privateConfigurationData.hermes.taskPolicy.tools = "browser"; });
+  mutate(copy => { copy.privateConfigurationData.setupSources.final_review = { credential: "forbidden" }; });
+  const getterPorts = { ...input.ports, get assertCurrentDelivery() { effects(); return () => {}; } };
+  assert.throws(() => createPrivateInstalledLocalHermesRuntimeComposerV1(input.preparation, getterPorts),
+    /private_installed_local_hermes_runtime_composer_refused/u);
+  const proxyPorts = { ...input.ports, startupBase: new Proxy(input.ports.startupBase, {}) };
+  assert.throws(() => createPrivateInstalledLocalHermesRuntimeComposerV1(input.preparation, proxyPorts),
+    /private_installed_local_hermes_runtime_composer_refused/u); effects();
+});
+
+test("installed capture refuses array and sidecar accessors or proxies without executing them", async t => {
+  const f = await fixture(t), input = installedComposerPackage(f); let traps = 0;
+  const getterPreparation = structuredClone(input.preparation);
+  const stages = getterPreparation.privateConfigurationData.settledInstallationPlan.stages;
+  Object.defineProperty(stages, "0", { enumerable: true, configurable: true, get() { traps++; return {}; } });
+  assert.throws(() => createPrivateInstalledLocalHermesRuntimeComposerV1(getterPreparation, input.ports),
+    /private_installed_local_hermes_runtime_composer_refused/u);
+  assert.equal(traps, 0);
+  const proxyArrayPreparation = structuredClone(input.preparation);
+  const originalStages = proxyArrayPreparation.privateConfigurationData.settledInstallationPlan.stages;
+  (proxyArrayPreparation.privateConfigurationData.settledInstallationPlan as { stages: unknown }).stages = new Proxy(originalStages,
+    { get(target, property, receiver) { traps++; return Reflect.get(target, property, receiver); } });
+  assert.throws(() => createPrivateInstalledLocalHermesRuntimeComposerV1(proxyArrayPreparation, input.ports),
+    /private_installed_local_hermes_runtime_composer_refused/u);
+  assert.equal(traps, 0);
+  const sidecarGetter = structuredClone(input.preparation);
+  Object.defineProperty(sidecarGetter.nativeSidecar, "archiveSha256",
+    { enumerable: true, configurable: true, get() { traps++; return d("trap"); } });
+  assert.throws(() => createPrivateInstalledLocalHermesRuntimeComposerV1(sidecarGetter, input.ports),
+    /private_installed_local_hermes_runtime_composer_refused/u);
+  assert.equal(traps, 0);
+  const proxiedSidecar = { ...input.preparation, nativeSidecar: new Proxy(input.preparation.nativeSidecar, {
+    ownKeys(target) { traps++; return Reflect.ownKeys(target); } }) };
+  assert.throws(() => createPrivateInstalledLocalHermesRuntimeComposerV1(proxiedSidecar, input.ports),
+    /private_installed_local_hermes_runtime_composer_refused/u);
+  assert.equal(traps, 0);
+});
+
+test("post-compose caller mutation cannot alter the captured startup graph", async t => {
+  const f = await fixture(t), input = installedComposerPackage(f);
+  const composer = createPrivateInstalledLocalHermesRuntimeComposerV1(input.preparation, input.ports);
+  const queueWorker = input.ports.startupBase.coordinator.queueWorker!;
+  const original = queueWorker.concurrency;
+  queueWorker.concurrency = original === 1 ? 2 : 1;
+  const loaded = await composer.custody.loadPrivateConfiguration();
+  assert.equal(loaded.assemblyInput.runnerInput.privateStartupConfiguration.coordinator.queueWorker?.concurrency,
+    original);
+  assert.equal(loaded.assemblyInput.operatorSettings.queueWorkerConcurrency, original);
+});
+
+test("installed identity recreates the same startup binding while source capabilities remain branded per composition", async t => {
+  const f = await fixture(t), input = installedComposerPackage(f);
+  const first = await createPrivateInstalledLocalHermesRuntimeComposerV1(input.preparation, input.ports)
+    .custody.loadPrivateConfiguration();
+  const second = await createPrivateInstalledLocalHermesRuntimeComposerV1(structuredClone(input.preparation), input.ports)
+    .custody.loadPrivateConfiguration();
+  assert.equal(first.assemblyInput.runnerInput.startupAdmissionBinding.compositionInstanceDigest,
+    second.assemblyInput.runnerInput.startupAdmissionBinding.compositionInstanceDigest);
+  assert.equal(first.assemblyInput.runnerInput.startupAdmissionBinding.bindingDigest,
+    second.assemblyInput.runnerInput.startupAdmissionBinding.bindingDigest);
+  assert.notEqual(first.assemblyInput.operatorTrustedInputs.hermes021Local,
+    second.assemblyInput.operatorTrustedInputs.hermes021Local);
+  assert.equal(f.hermesCalls(), 0); assert.equal(f.reads(), 0); assert.equal(f.appends(), 0);
+});
 
 test("construction is inert and settled preparation supplies the exact opaque receipt to operator configuration", async t => {
   const f = await fixture(t), effects: string[] = [];
@@ -386,10 +596,18 @@ test("operator seals nested configuration and runtime before awaited journal cus
   const f = await fixture(t), effects: string[] = [];
   f.move(Object.freeze(f.history.slice(0, -2)));
   let originalCalls = 0, replacementCalls = 0;
-  const loaded = finalReviewConfiguration(f, effects, async context => {
+  const captured = finalReviewConfiguration(f, effects, async context => {
     originalCalls += 1;
     return finalReviewConfirmation(context);
   });
+  // The installed composer intentionally returns a frozen graph. This race
+  // test exercises the operator's own capture boundary, so give it a mutable
+  // caller-owned wrapper and mutate that wrapper after the awaited read begins.
+  const loaded = { ...captured, assemblyInput: { ...captured.assemblyInput,
+    runnerInput: { ...captured.assemblyInput.runnerInput,
+      admissionPreparationInput: { ...captured.assemblyInput.runnerInput.admissionPreparationInput },
+      privateStartupConfiguration: { ...captured.assemblyInput.runnerInput.privateStartupConfiguration,
+        coordinator: { ...captured.assemblyInput.runnerInput.privateStartupConfiguration.coordinator } } } } };
   let releaseRead!: () => void, announceRead!: () => void;
   const readStarted = new Promise<void>(resolve => { announceRead = resolve; });
   const continueRead = new Promise<void>(resolve => { releaseRead = resolve; });
