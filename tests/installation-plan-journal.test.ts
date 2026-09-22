@@ -5,6 +5,8 @@ import { join } from "node:path";
 import test from "node:test";
 import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
 import { InstallationPlanFilesystemJournalV1 } from "../src/installer/v1/installation-plan-journal";
+import { openInstallationPlanFilesystemStorageSessionV1 } from
+  "../src/installer/v1/installation-plan-journal-storage-session";
 import { advanceInstallationPlanV1, createInstallationPlanV1, installationSetupStagesV1,
   refreshInstallationPlanV1 } from "../src/installer/v1/installation-plan";
 import { canonicalJson, sha256Digest } from "../src/security/canonical-digest";
@@ -28,6 +30,32 @@ async function fixture() {
 
 const name = (installationId: string, revision: number) =>
   `${installationId}.installation-plan.revision-${revision.toString().padStart(10, "0")}.json`;
+
+test("append retains one operation-scoped storage session through read, publication, verification, and close", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "control-room-plan-session-")));
+  await chmod(root, 0o700);
+  const installationId = "local-installation-session", events: string[] = [];
+  let opens = 0;
+  const journal = new InstallationPlanFilesystemJournalV1({ rootDirectory: root, installationId,
+    ownerUid: process.getuid!() }, async request => {
+    opens += 1; events.push(`open:${request.operation}`);
+    const base = await openInstallationPlanFilesystemStorageSessionV1(request);
+    return Object.fromEntries(Object.entries(base).map(([property, value]) => [property,
+      typeof value === "function" ? (...args: unknown[]) => {
+        events.push(property); return Reflect.apply(value, base, args);
+      } : value])) as typeof base;
+  });
+  try {
+    await journal.append(create());
+    assert.equal(opens, 1, "append must not recursively open a read-history session");
+    assert.equal(events[0], "open:append"); assert.equal(events.at(-1), "close");
+    assert.ok(events.indexOf("listEntryNames") < events.indexOf("createExclusiveEntry"));
+    assert.ok(events.indexOf("writeExactBounded") < events.indexOf("syncFile"));
+    assert.ok(events.indexOf("linkNoReplace") < events.lastIndexOf("readEntry"));
+    assert.ok(events.lastIndexOf("readEntry") < events.lastIndexOf("verifyRoot"));
+    assert.ok(events.lastIndexOf("verifyRoot") < events.indexOf("close"));
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 
 test("append-only history persists exact revisions without exposing its private root", async () => {
   const f = await fixture();

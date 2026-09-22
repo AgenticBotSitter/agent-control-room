@@ -1,9 +1,10 @@
 # Private installation-journal native custody contract
 
-**Status:** source-only preparation contract. It performs no native operation,
-does not construct a journal, and does not make installed operator composition
-ready. The blocker remains until the held native session, the retained-journal
-adapter, release packaging, and owner-attended qualification are complete.
+**Status:** source-only storage-session extraction and injected adapter. They
+perform no native operation, compile no helper, and do not make installed
+operator composition ready. The blocker remains until a separately reviewed
+held native implementation, release packaging, disposable adversarial evidence,
+and owner-attended qualification are complete.
 
 ## Reuse decision
 
@@ -18,8 +19,8 @@ but it has the same essential rule: open every protected path component without
 following links, retain native custody of the exact object across the effect,
 and never use a later absolute pathname as authority.
 
-`private-installation-journal-native-custody-preparation.ts` is the smallest
-safe source-only addition now. It captures the installation, owner and exact
+`private-installation-journal-native-custody-preparation.ts` is the safe
+preparation boundary. It captures the installation, owner and exact
 journal-root identity, then prepares a bounded `read_history`,
 `inspect_settled_history`, or `append` request. Capabilities are operation-
 specific: settled inspection receives no create, write, link, unlink, or sync
@@ -28,6 +29,26 @@ mechanics needed by the retained publication recovery; append receives that
 same bounded recovery capability before its publication mechanics. It
 explicitly remains unready; there is no path-based fallback and no claim that
 a TypeScript fake proves native behavior.
+
+## Implemented source seam
+
+`InstallationPlanFilesystemJournalV1` now opens one injected storage session
+for each public operation. The retained plan validation, legal transitions,
+publication witness, recovery and concurrency rules remain in that class.
+`append` calls the internal history reader on the already-open append session;
+it cannot recursively acquire a second read session. That same session spans
+initial read, retained recovery, winner observation, exclusive publication,
+stored-plan verification, final root verification and confirmed close.
+
+The default storage session preserves the existing source journal behavior and
+retains its root and newly created file descriptors for the operation. The
+private held-session adapter supplies no filesystem fallback. It accepts only
+the prepared operation and one injected native session, validates the exact
+installation/root/owner binding, bounds entry names and canonical bytes, gates
+mutation capabilities by operation, enforces create-write-file-sync-directory-
+sync-link ordering, carries abort and the absolute deadline through every call,
+and treats an unconfirmed close as failure. This is adapter evidence only: no
+native descriptor-relative implementation is present.
 
 ## Why a check-before/check-after wrapper is insufficient
 
@@ -45,13 +66,14 @@ held descriptor is what prevents redirection during the operation.
 
 ## Exact implementation packet
 
-1. Extract the filesystem mechanics inside
+1. **Source-complete:** extract the filesystem mechanics inside
    `InstallationPlanFilesystemJournalV1` behind one private operation-scoped
    storage session. Keep the class and its logical transition/publication code
    authoritative. `append` must use one session for its initial history read,
    concurrent-winner handling, publication, recovery, verification and sync;
    it must not recursively open a second path-based session.
-2. Implement the storage session with only the prepared native primitives:
+2. **Native implementation still missing:** implement the held storage session
+   with only the prepared native primitives:
    no-follow component `openat`, `fstat`, no-follow `fstatat`, descriptor-based
    enumeration, `openat` read and exclusive create, exact bounded write,
    no-replace `linkat`, identity-bound `unlinkat`, distinct file and directory

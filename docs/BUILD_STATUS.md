@@ -28,6 +28,17 @@ limits recovery to the retained publication algorithm, and specifies exact
 bounded same-descriptor writes for plan and witness bytes. It performs no native
 operation and does not claim the blocker is cleared.
 
+The next source-only journal package now preserves those constraints in code.
+The existing installation journal opens one operation-scoped storage session,
+and append keeps that same session across history read, retained recovery,
+concurrent-winner handling, publication, verification and confirmed close
+instead of recursively opening a second session. An injected held-session
+adapter bounds operation capabilities, entry basenames, plan and witness bytes,
+ordering, abort, deadline and cleanup. The ordinary source journal retains its
+existing behavior and tests. No native helper was implemented, compiled or run;
+installed custody is not wired, and `native_journal_operation_custody_missing`
+remains the live blocker.
+
 Fresh Linux CI exposed one real portability defect in the private PostgreSQL
 boundary: Linux refuses to execute a staged program while a write-capable file
 descriptor remains open. The boundary now closes the writer after sync and
