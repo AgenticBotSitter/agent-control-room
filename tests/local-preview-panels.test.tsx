@@ -9,6 +9,7 @@ import { BrowserRequestError } from "../src/web/v1/browser-client";
 import type { TaskPage } from "../src/web/v1/task-wire";
 import { ContributorSimulationPanel } from "../app/components/contributor-simulation";
 import { ContributorDemoView, contributorDemoSelection } from "../contributor-demo/view";
+import { LocalControlRoomWorkboard } from "../app/local-preview/control-room-workboard";
 
 test("standalone contributor entry keeps project selection strict and starts without private records", () => {
   assert.deepEqual(contributorDemoSelection("?project=project%3Ademo&job=job%3Ademo"), {
@@ -92,4 +93,58 @@ test("preview initially renders no sample records or operational controls", () =
   assert.match(html, /cannot assign or start agents/);
   assert.doesNotMatch(html, /Save proposal|Create project|Start agent|Example &lt;project&gt;/);
   assert.equal(localPreviewHref(undefined, undefined, "project:next"), "/local-preview?after=project%3Anext");
+});
+
+test("local workboard is a read-only navigation surface with honest worker evidence", () => {
+  const html = renderToStaticMarkup(createElement(LocalControlRoomWorkboard, { projectId: "project:example" }));
+  assert.match(html, /Local Control Room workboard/);
+  assert.match(html, /Reading saved task activity/);
+  assert.match(html, /Reading worker evidence/);
+  assert.match(html, /cannot assign, start, stop, approve, or retry work/);
+  assert.doesNotMatch(html, /Start task|Approve task|Retry task|Assign worker/);
+});
+
+test("mounted workboard sends its normal browser reads to the exact local-pilot route", async () => {
+  // @ts-expect-error jsdom has no bundled declarations.
+  const jsdomModule = await import("jsdom");
+  const JSDOM = (jsdomModule as { JSDOM: unknown }).JSDOM as new (html: string,
+    options?: { url?: string; pretendToBeVisual?: boolean }) => { window: Window & typeof globalThis };
+  const React = await import("react"); const { createRoot } = await import("react-dom/client");
+  const dom = new JSDOM('<div id="root"></div>', { url: "http://127.0.0.1:3000/local-preview?project=project%3Aexample", pretendToBeVisual: true });
+  const saved = Object.fromEntries(["window", "document", "fetch", "IS_REACT_ACT_ENVIRONMENT"]
+    .map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true });
+  const requests: { url: string; method?: string }[] = [];
+  const observedAt = "2026-09-22T00:00:00.000Z";
+  globalThis.fetch = (async (url: string, init?: RequestInit) => {
+    requests.push({ url: String(url), method: init?.method }); const resource = new URL(String(url), dom.window.location.origin).searchParams.get("resource");
+    if (resource === "home") return Response.json({ active: [], recentResults: [], additionalActiveOmitted: false,
+      additionalResultsOmitted: false, resultSource: "not_configured", observedAt, startsWork: false });
+    if (resource === "overview") return Response.json({ projectId: "project:example", current: [], awaitingReview: [], recent: [],
+      additionalCurrentOmitted: false, additionalReviewsOmitted: false, additionalRecentOmitted: false, observedAt, startsWork: false });
+    if (resource === "agents") return Response.json({ projectId: "project:example", eligibilitySource: "not_configured", workers: [],
+      tasksExamined: 0, additionalTasksOmitted: false, candidateEvidence: "configured_routes_only", observedAt, startsWork: false,
+      grantsAssignmentAuthority: false, grantsExecutionAuthority: false });
+    if (resource === "attention") return Response.json({ projectId: "project:example", mode: new URL(String(url), dom.window.location.origin).searchParams.get("mode"),
+      items: [], examined: 0, nextCursor: null, resultSource: "not_configured", reviewSource: "not_configured", resultContent: "authorized", observedAt, startsWork: false });
+    return new Response("not found", { status: 404 });
+  }) as typeof fetch;
+  const root = createRoot(dom.window.document.getElementById("root")!); const { act } = React;
+  try {
+    await act(async () => { root.render(React.createElement(LocalControlRoomWorkboard, { projectId: "project:example" }));
+      await new Promise(resolve => dom.window.setTimeout(resolve, 0)); });
+    for (let attempt = 0; attempt < 20 && requests.length < 5; attempt += 1)
+      await act(async () => { await new Promise(resolve => dom.window.setTimeout(resolve, 0)); });
+    assert.deepEqual(requests.map(item => item.method), ["GET", "GET", "GET", "GET", "GET"]);
+    assert.deepEqual(requests.map(item => new URL(item.url, dom.window.location.origin).pathname),
+      Array(5).fill("/api/v1/local-pilot/workspace"));
+    assert.deepEqual(requests.map(item => new URL(item.url, dom.window.location.origin).searchParams.get("resource")).sort(),
+      ["agents", "attention", "attention", "home", "overview"]);
+  } finally {
+    await act(async () => { root.unmount(); }); dom.window.close();
+    for (const [key, descriptor] of Object.entries(saved)) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete (globalThis as Record<string, unknown>)[key];
+    }
+  }
 });
