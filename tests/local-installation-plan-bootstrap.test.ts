@@ -7,7 +7,7 @@ import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topol
 import { InstallationPlanFilesystemJournalV1 } from "../src/installer/v1/installation-plan-journal";
 import { createControllerOnlyInstallationTopologyV1, initializeLocalInstallationPlanV1, localInstallationStageInputDigestsV1,
   localInstallationStageLabelsV1 } from "../src/installer/v1/local-installation-plan-bootstrap";
-import { installationSetupStagesV1 } from "../src/installer/v1/installation-plan";
+import { installationSetupStagesV1, verifyInstallationPlanV1 } from "../src/installer/v1/installation-plan";
 import { sha256Digest } from "../src/security/canonical-digest";
 
 const digest = (value: string) => sha256Digest(value);
@@ -78,9 +78,10 @@ test("uses the runtime owner identity and refuses malformed or unowned input", a
   try {
     let configuration: unknown, appendCalls = 0;
     const result = await initializeLocalInstallationPlanV1(f.input, { ownerUid: () => 777,
-      createJournal(value) { configuration = value; return { async append(plan) { appendCalls += 1; return {
+      createJournal(value) { configuration = value; return { async append(plan: unknown) { appendCalls += 1;
+        const verified = verifyInstallationPlanV1(plan); return {
         schema: "control-room.installation-plan-journal/v1", installationId: f.installationId,
-        revision: 0, planDigest: plan.planDigest, replayed: false, enablesAuthority: false,
+        revision: 0, planDigest: verified.planDigest, replayed: false, enablesAuthority: false,
         startsService: false, startsWorker: false } as const; } }; } });
     assert.deepEqual(configuration, { rootDirectory: f.root, installationId: f.installationId, ownerUid: 777 });
     assert.equal(appendCalls, 1); assert.equal(result.revision, 0);

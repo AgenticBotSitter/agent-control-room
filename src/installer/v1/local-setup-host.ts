@@ -30,17 +30,19 @@ const installationIdPattern = /^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])?$/u;
 function captureInstalled(input: unknown) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("local_setup_host_config_invalid");
   const value = input as Record<string, unknown>, keys = Object.keys(value).sort().join(",");
+  const ownerUid = value.ownerUid, port = value.port;
   if (keys !== "assets,closeApplication,installationId,isApplicationReady,journalRoot,ownerUid,port,readinessSource,render"
     && keys !== "assets,closeApplication,installationId,isApplicationReady,journalRoot,ownerUid,port,render")
     throw new Error("local_setup_host_config_invalid");
   if (typeof value.journalRoot !== "string" || !isAbsolute(value.journalRoot) || resolve(value.journalRoot) !== value.journalRoot
     || typeof value.installationId !== "string" || !installationIdPattern.test(value.installationId)
-    || !Number.isSafeInteger(value.ownerUid) || value.ownerUid < 0 || !Number.isSafeInteger(value.port) || value.port < 1 || value.port > 65535
+    || typeof ownerUid !== "number" || !Number.isSafeInteger(ownerUid) || ownerUid < 0
+    || typeof port !== "number" || !Number.isSafeInteger(port) || port < 1 || port > 65535
     || typeof value.render !== "function" || typeof value.isApplicationReady !== "function" || typeof value.closeApplication !== "function")
     throw new Error("local_setup_host_config_invalid");
   if (value.readinessSource !== undefined && (!value.readinessSource || typeof (value.readinessSource as { read?: unknown }).read !== "function"))
     throw new Error("local_setup_host_config_invalid");
-  return Object.freeze({ journalRoot: value.journalRoot, installationId: value.installationId, ownerUid: value.ownerUid, port: value.port,
+  return Object.freeze({ journalRoot: value.journalRoot, installationId: value.installationId, ownerUid, port,
     assets: value.assets as PrivateClientAssets, render: value.render as (request: Request) => Promise<Response> | Response,
     isApplicationReady: value.isApplicationReady as () => boolean, closeApplication: value.closeApplication as () => Promise<void>,
     ...(value.readinessSource === undefined ? {} : { readinessSource: value.readinessSource as LocalSetupReadinessSourceV1 }) });

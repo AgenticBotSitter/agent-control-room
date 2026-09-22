@@ -73,12 +73,14 @@ function build(input: Input): Omit<FirstOwnerSetupPreparationV1, "preparationDig
   const bootstrapConfigurationDigest = digest.parse(input.bootstrapConfigurationDigest);
   const trustConfigurationDigest = digest.parse(input.trustConfigurationDigest);
   const expectedOwnerSubjectDigest = digest.parse(input.expectedOwnerSubjectDigest);
-  const observedOwnerState = observed.parse(input.observedOwnerState);
+  const observedOwnerState = z.literal("empty").parse(observed.parse(input.observedOwnerState));
   const observationDigest = digest.parse(input.observationDigest);
   const active = plan.stages.find(item => item.stage === "first_owner");
   const database = plan.stages.find(item => item.stage === "database_authority");
-  if (releaseDigest !== plan.releaseDigest || observedOwnerState !== "empty" || !active || active.state !== "running"
-    || !database || database.state !== "passed" || database.outcomeDigest !== databaseAuthorityOutcomeDigest) refuse();
+  if (releaseDigest !== plan.releaseDigest) refuse();
+  if (!active) throw new Error("first_owner_setup_preparation_refused");
+  if (active.state !== "running") refuse();
+  if (!database || database.state !== "passed" || database.outcomeDigest !== databaseAuthorityOutcomeDigest) refuse();
   const stageInputDigest = firstOwnerStageInputDigestV1({ releaseDigest, databaseAuthorityOutcomeDigest,
     bootstrapConfigurationDigest, trustConfigurationDigest, expectedOwnerSubjectDigest });
   if (active.inputDigest !== stageInputDigest) refuse();
