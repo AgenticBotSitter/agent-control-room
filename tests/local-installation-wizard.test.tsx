@@ -7,6 +7,9 @@ import { createInstallationReadinessV1 } from "../src/harness/v1/installation-re
 import { createInstallationSetupViewV1 } from "../src/harness/v1/installation-setup-view";
 import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
 import { createLocalSupervisorReadinessV1 } from "../src/harness/v1/local-supervisor-readiness";
+import { advanceInstallationPlanV1, createInstallationPlanV1, installationSetupStagesV1,
+  type InstallationPlanV1 } from "../src/installer/v1/installation-plan";
+import { createInstallationPlanViewV1 } from "../src/installer/v1/installation-plan-view";
 import { sha256Digest } from "../src/security/canonical-digest";
 
 function localSetup() {
@@ -22,6 +25,26 @@ function localSetup() {
     { proof: "local_runner_bridge", state: "passed", evidenceDigest: sha256Digest("runner-proof") },
   ] });
   return createInstallationSetupViewV1({ plan, readiness, localBackupRestoreVerified: false });
+}
+
+function restartPlan(state: "ready_to_begin" | "inspect" | "owner_attention" | "complete") {
+  const topology = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest(`restart-database:${state}`),
+    schedulerAuthorityDigest: sha256Digest(`restart-scheduler:${state}`), currentRoutes: [], requestedRoutes: [] });
+  let plan: InstallationPlanV1 = createInstallationPlanV1({ topologyPlan: topology,
+    releaseDigest: sha256Digest(`restart-release:${state}`), stageInputDigests: Object.fromEntries(
+      installationSetupStagesV1.map(stage => [stage, sha256Digest(`restart:${state}:${stage}`)])) });
+  if (state === "inspect" || state === "owner_attention") {
+    plan = advanceInstallationPlanV1(plan, { expectedRevision: plan.revision, stage: "release_preflight", action: "start" });
+    if (state === "owner_attention") plan = advanceInstallationPlanV1(plan, { expectedRevision: plan.revision,
+      stage: "release_preflight", action: "fail", outcomeDigest: sha256Digest("restart-failed") });
+  } else if (state === "complete") {
+    for (const stage of installationSetupStagesV1) {
+      plan = advanceInstallationPlanV1(plan, { expectedRevision: plan.revision, stage, action: "start" });
+      plan = advanceInstallationPlanV1(plan, { expectedRevision: plan.revision, stage, action: "pass",
+        outcomeDigest: sha256Digest(`restart-passed:${stage}`) });
+    }
+  }
+  return createInstallationPlanViewV1(plan);
 }
 
 test("first-run wizard labels the unfinished release journey as a source-only preview", () => {
@@ -103,6 +126,32 @@ test("first-run wizard is read-only and reserves all effects for installation-ow
   assert.match(html, /cannot accept a password, signing key, executable path, private path, or command/);
   assert.match(html, /Enabling the controller and selected workers is a separate owner decision/);
   assert.doesNotMatch(html, /<button|<form|<input|<select|<textarea/);
+});
+
+test("first-run wizard renders bounded read-only restart guidance without implying live services", () => {
+  const cases = [
+    ["ready_to_begin", /No interrupted or failed setup work is recorded/],
+    ["inspect", /Saved setup work requires inspection/],
+    ["owner_attention", /Saved setup work requires owner attention/],
+    ["complete", /progress record only; it does not show that a service or worker is running/],
+  ] as const;
+  for (const [restart, message] of cases) {
+    const html = renderToStaticMarkup(createElement(LocalInstallationWizard, { installationPlan: restartPlan(restart),
+      installationPlanStatus: "available", installationPlanRestart: restart }));
+    assert.match(html, /Read-only recovery guidance/);
+    assert.match(html, message);
+    assert.doesNotMatch(html, /<button|<form|<input|<select|<textarea/);
+  }
+});
+
+test("first-run wizard refuses missing or contradictory restart guidance", () => {
+  const plan = restartPlan("ready_to_begin");
+  for (const installationPlanRestart of [undefined, "inspect"] as const) {
+    const html = renderToStaticMarkup(createElement(LocalInstallationWizard, { installationPlan: plan,
+      installationPlanStatus: "available", installationPlanRestart }));
+    assert.match(html, /Safe recovery guidance is unavailable/);
+    assert.doesNotMatch(html, /No interrupted or failed setup work is recorded/);
+  }
 });
 
 test("first-run wizard treats unavailable saved proof as unknown, never ready", () => {

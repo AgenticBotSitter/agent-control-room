@@ -10,6 +10,18 @@ import { parseInstallationSetupViewV1, type InstallationSetupViewV1 } from "../.
 import type { LocalSetupJournalSourceV1 } from "../../installer/v1/local-setup-journal-source";
 import { verifyInstallationPlanViewV1 } from "../../installer/v1/installation-plan-view";
 
+type InstallationPlanRestartCategoryV1 = "ready_to_begin" | "inspect" | "owner_attention" | "complete";
+
+function verifyInstallationPlanRestartCategoryV1(plan: ReturnType<typeof verifyInstallationPlanViewV1>,
+  value: unknown): InstallationPlanRestartCategoryV1 {
+  const next = plan.stages.find(item => item.state !== "passed");
+  const expected: InstallationPlanRestartCategoryV1 = !next ? "complete"
+    : next.state === "running" || next.state === "uncertain" ? "inspect"
+    : next.state === "failed" ? "owner_attention" : "ready_to_begin";
+  if (value !== expected) throw new Error("installation_plan_restart_guidance_invalid");
+  return expected;
+}
+
 export const privateHttpLimits = Object.freeze({ headersBytes: 24_576, headerCount: 64, urlBytes: 4096,
   bodyBytes: 8192, responseBytes: 4 * 1024 * 1024, activeRequests: 64,
   taskBodyBytes: 32_768,
@@ -214,9 +226,11 @@ export function createLocalSetupNodeHandler(options: LocalSetupNodeHandlerOption
     if (url.pathname === "/api/v1/installation-plan") {
       try {
         const result = await options.planSource.read(request.signal);
-        return result.status === "available"
-          ? Response.json({ plan: verifyInstallationPlanViewV1(result.plan) }, { headers: privateResponseHeaders })
-          : Response.json({ error: "not_found" }, { status: 404, headers: privateResponseHeaders });
+        if (result.status !== "available")
+          return Response.json({ error: "not_found" }, { status: 404, headers: privateResponseHeaders });
+        const plan = verifyInstallationPlanViewV1(result.plan);
+        const restart = verifyInstallationPlanRestartCategoryV1(plan, result.restart);
+        return Response.json({ plan, restart }, { headers: privateResponseHeaders });
       } catch {
         return Response.json({ error: "not_found" }, { status: 404, headers: privateResponseHeaders });
       }

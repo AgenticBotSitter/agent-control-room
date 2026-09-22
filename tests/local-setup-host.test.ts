@@ -47,6 +47,7 @@ test("generic local setup host exposes only page, redacted reads, and verified a
   assert.equal((await f.send("/setup")).headers.has("set-cookie"), false);
   const planResponse = await f.send("/api/v1/installation-plan");
   assert.equal(planResponse.output.statusCode, 200); assert.match(planResponse.body(), /installation-plan-view/);
+  assert.deepEqual(JSON.parse(planResponse.body()).restart, "ready_to_begin");
   assert.doesNotMatch(planResponse.body(), /sha256:|revision|inputDigest|outcomeDigest|planDigest/i);
   const readiness = await f.send("/api/v1/installation-readiness");
   assert.equal(readiness.output.statusCode, 200); assert.doesNotMatch(readiness.body(), /worker:local|connector:local|sha256:/);
@@ -67,14 +68,20 @@ test("generic local setup transport refuses credentials, forwarding, writes and 
   assert.deepEqual(f.calls(), { render: 0, plan: 0, readiness: 0 });
 });
 
-test("generic host maps malformed and unavailable setup readers to no private detail", async () => {
-  for (const mode of ["malformed-plan", "plan-error", "readiness-error"] as const) {
+test("generic host maps malformed, missing, contradictory and unavailable setup reads to no private detail", async () => {
+  for (const mode of ["malformed-plan", "missing-restart", "malformed-restart", "contradictory-restart",
+    "plan-error", "readiness-error"] as const) {
     let bridge: SetupBridge | undefined;
     const host = createLocalSetupHostV1({ origin: "http://127.0.0.1:3210", port: 3210,
       assets: { count: 2, digest: digest("assets"), respond: () => undefined }, render: () => new Response("setup"),
       planSource: { async read() {
         if (mode === "plan-error") throw new Error("private/path");
         if (mode === "malformed-plan") return { status: "available", plan: { privatePath: "/private/path" } } as never;
+        if (mode === "missing-restart") return { status: "available", plan: createInstallationPlanViewV1(plan) } as never;
+        if (mode === "malformed-restart") return { status: "available", plan: createInstallationPlanViewV1(plan),
+          restart: { privatePath: "/private/path" } } as never;
+        if (mode === "contradictory-restart") return { status: "available", plan: createInstallationPlanViewV1(plan),
+          restart: "inspect" } as never;
         return { schema: LOCAL_SETUP_JOURNAL_SOURCE_V1, status: "unavailable", performsEffect: false, permitsRetry: false };
       } }, readinessSource: { async read() { if (mode === "readiness-error") throw new Error("private/path"); return undefined; } },
       isApplicationReady: () => true, async closeApplication() {}, createService(candidate) {

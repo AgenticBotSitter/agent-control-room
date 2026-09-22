@@ -18,6 +18,8 @@ test("standalone setup page is source-only and starts conservatively", async () 
   assert.match(source, /const planPath = "\/api\/v1\/installation-plan"/);
   assert.equal((source.match(/fetch\(/g) ?? []).length, 2);
   assert.equal((source.match(/credentials: "omit"/g) ?? []).length, 2);
+  assert.match(source, /installationPlanRestart/);
+  assert.match(source, /record\.restart !== expected/);
   assert.doesNotMatch(source, /credentials: "same-origin"/);
   assert.doesNotMatch(source, /PrivateHeader|ProductConfiguration|useInstallationTopology|<button|<form|POST/);
   assert.match(source, /setState\(unavailableState\)/);

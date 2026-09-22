@@ -3,6 +3,7 @@ import type { InstallationPlanViewV1 } from "../../src/installer/v1/installation
 
 type SetupStatus = "loading" | "available" | "unavailable";
 type StageState = "guide" | "saved" | "recorded" | "remaining" | "attention";
+type InstallationPlanRestartCategoryV1 = "ready_to_begin" | "inspect" | "owner_attention" | "complete";
 
 const stageStateLabels: Readonly<Record<StageState, string>> = Object.freeze({
   guide: "Guide",
@@ -74,6 +75,33 @@ function planStageState(plan: InstallationPlanViewV1 | undefined,
   return fallback;
 }
 
+function validatedRestartCategory(plan: InstallationPlanViewV1 | undefined,
+  value: InstallationPlanRestartCategoryV1 | undefined): InstallationPlanRestartCategoryV1 | undefined {
+  if (!plan) return undefined;
+  const next = plan.stages.find(item => item.state !== "passed");
+  const expected: InstallationPlanRestartCategoryV1 = !next ? "complete"
+    : next.state === "running" || next.state === "uncertain" ? "inspect"
+    : next.state === "failed" ? "owner_attention" : "ready_to_begin";
+  return value === expected ? expected : undefined;
+}
+
+function RecoveryGuidance({ plan, status, restart }: Readonly<{
+  plan?: InstallationPlanViewV1;
+  status?: SetupStatus;
+  restart?: InstallationPlanRestartCategoryV1;
+}>) {
+  const category = status === "available" ? validatedRestartCategory(plan, restart) : undefined;
+  return <section className="private-note" aria-labelledby="setup-recovery-guidance-title">
+    <h3 id="setup-recovery-guidance-title">Read-only recovery guidance</h3>
+    {status === "loading" && <p role="status">Reading safe recovery guidance…</p>}
+    {status !== "loading" && !category && <p role="alert"><strong>Safe recovery guidance is unavailable.</strong> Do not infer that setup can continue or repeat work from this browser.</p>}
+    {category === "ready_to_begin" && <p><strong>No interrupted or failed setup work is recorded.</strong> The next stage may begin only through a separate installation-owned action; this browser does not start it.</p>}
+    {category === "inspect" && <p><strong>Saved setup work requires inspection.</strong> Review the installation-owned evidence before deciding what to do. This browser cannot repeat the work.</p>}
+    {category === "owner_attention" && <p><strong>Saved setup work requires owner attention.</strong> Review the installation-owned evidence. This browser cannot repair or repeat the work.</p>}
+    {category === "complete" && <p><strong>The saved setup plan records every stage as passed.</strong> That is a progress record only; it does not show that a service or worker is running.</p>}
+  </section>;
+}
+
 function Stage({ state, title, children }: Readonly<{ state: StageState; title: string; children: React.ReactNode }>) {
   return <li className="private-local-agent-card">
     <p className="private-eyebrow">{stageStateLabels[state]}</p>
@@ -102,11 +130,13 @@ function remainingProofs(setup: InstallationSetupViewV1): readonly string[] {
  * Read-only first-run guidance composed from the redacted installation setup
  * projection. It never performs installation work or accepts private values.
  */
-export function LocalInstallationWizard({ setup, status, installationPlan, installationPlanStatus }: Readonly<{
+export function LocalInstallationWizard({ setup, status, installationPlan, installationPlanStatus,
+  installationPlanRestart }: Readonly<{
   setup?: InstallationSetupViewV1;
   status?: SetupStatus;
   installationPlan?: InstallationPlanViewV1;
   installationPlanStatus?: SetupStatus;
+  installationPlanRestart?: InstallationPlanRestartCategoryV1;
 }>) {
   const selectedMode = setup?.mode === "this_computer" ? "This computer"
     : setup?.mode === "several_computers" ? "Several computers" : undefined;
@@ -170,6 +200,8 @@ export function LocalInstallationWizard({ setup, status, installationPlan, insta
         </Stage>
       </ol>
     </section>
+
+    <RecoveryGuidance plan={installationPlan} status={installationPlanStatus} restart={installationPlanRestart} />
 
     <section className="private-note" aria-labelledby="remaining-proof-title">
       <h3 id="remaining-proof-title">Remaining categories visible in saved setup status</h3>
