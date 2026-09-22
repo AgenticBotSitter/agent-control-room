@@ -7,14 +7,21 @@ import { canonicalJson } from "../../security/canonical-digest";
 
 export const PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V1 =
   "control-room.private-installed-configuration-custody/v1" as const;
+export const PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V2 =
+  "control-room.private-installed-configuration-custody/v2" as const;
 export const PRIVATE_INSTALLED_CONFIGURATION_NATIVE_CUSTODY_V1 =
   "control-room.private-installed-configuration-native-custody/v1" as const;
+export const PRIVATE_INSTALLED_CONFIGURATION_NATIVE_SIDECAR_IDENTITY_V1 =
+  "control-room.private-installed-configuration-native-sidecar-identity/v1" as const;
+export const PRIVATE_INSTALLED_CONFIGURATION_MANIFEST_BOUND_PREPARATION_V1 =
+  "control-room.private-installed-configuration-manifest-bound-preparation/v1" as const;
 
 const openReadOnly = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
 const openDirectory = openReadOnly | (constants.O_DIRECTORY ?? 0);
 const digestPattern = /^sha256:[a-f0-9]{64}$/u;
 const installationIdPattern = /^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])?$/u;
 const safeNamePattern = /^[a-z0-9][a-z0-9.-]{0,127}$/u;
+const releaseVersionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u;
 const maximumManifestBytes = 16 * 1024;
 const maximumConfigurationBytes = 256 * 1024;
 const maximumVerificationDeadlineMs = 30_000;
@@ -22,13 +29,29 @@ const maximumVerificationDeadlineMs = 30_000;
 type Identity = Readonly<{ device: number; inode: number; ownerUid: number; mode: number; size: number;
   linkCount: number; modifiedMs: number; changedMs: number }>;
 type NativeKind = "ancestor" | "manifest" | "configuration" | "journal";
-type Manifest = Readonly<{
+type ManifestV1 = Readonly<{
   installationId: string;
   ownerUid: number;
   configurationName: string;
   configurationBytes: number;
   configurationSha256: string;
   journalDirectoryName: string;
+}>;
+export type PrivateInstalledConfigurationNativeSidecarIdentityV1 = Readonly<{
+  schema: typeof PRIVATE_INSTALLED_CONFIGURATION_NATIVE_SIDECAR_IDENTITY_V1;
+  releaseVersion: string;
+  portableReleaseManifestSha256: string;
+  outerLauncherManifestSha256: string;
+  sidecarManifestSha256: string;
+  archiveSha256: string;
+  artifactManifestSha256: string;
+  executableSha256: string;
+  platform: "darwin";
+  protocol: "ACRJNL1";
+  architecture: "arm64" | "x64";
+}>;
+type ManifestV2 = ManifestV1 & Readonly<{
+  nativeSidecar: PrivateInstalledConfigurationNativeSidecarIdentityV1;
 }>;
 type NativePort = Readonly<{ verifyProtectedPath(request: Readonly<{
   schema: typeof PRIVATE_INSTALLED_CONFIGURATION_NATIVE_CUSTODY_V1;
@@ -42,6 +65,16 @@ type CapturedInput = Readonly<{ manifestPath: string; manifestBytes: number; man
 
 export type PrivateInstalledConfigurationCustodyBlockedV1 = Readonly<{
   schema: typeof PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V1;
+  status: "blocked";
+  blocker: "native_custody_verifier_missing";
+  performsEffect: false;
+  createsDirectory: false;
+  repairsDirectory: false;
+  loadsModule: false;
+  loadsCallback: false;
+}>;
+export type PrivateInstalledConfigurationCustodyBlockedV2 = Readonly<{
+  schema: typeof PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V2;
   status: "blocked";
   blocker: "native_custody_verifier_missing";
   performsEffect: false;
@@ -66,6 +99,48 @@ export type PrivateInstalledConfigurationCustodyConfigurationReadyV1 = Readonly<
   loadsModule: false;
   loadsCallback: false;
 }>;
+export type PrivateInstalledConfigurationManifestBoundPreparationV1 = Readonly<{
+  schema: typeof PRIVATE_INSTALLED_CONFIGURATION_MANIFEST_BOUND_PREPARATION_V1;
+  installationId: string;
+  privateConfigurationData: unknown;
+  journal: Readonly<{
+    rootPath: string;
+    expectedRootIdentity: Readonly<{ device: number; inode: number }>;
+    expectedOwnerUid: number;
+    expectedRootMode: 0o700;
+  }>;
+  nativeSidecar: PrivateInstalledConfigurationNativeSidecarIdentityV1;
+  dataOnly: true;
+  opensJournal: false;
+  constructsJournal: false;
+  stagesNativeSidecar: false;
+  performsNativeOperation: false;
+  writesInstalledManifest: false;
+  autoUpgradesManifest: false;
+}>;
+export type PrivateInstalledConfigurationCustodyManifestReadyV2 = Readonly<{
+  schema: typeof PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V2;
+  status: "manifest_bound_configuration_ready";
+  custody: Readonly<{
+    loadManifestBoundPrivateConfigurationData(signal?: AbortSignal):
+      Promise<PrivateInstalledConfigurationManifestBoundPreparationV1>;
+  }>;
+  operatorComposition: Readonly<{
+    status: "blocked";
+    blocker: "native_journal_operation_custody_missing";
+  }>;
+  dataOnly: true;
+  operatorDependencies: "injected_separately";
+  performsEffect: false;
+  createsDirectory: false;
+  repairsDirectory: false;
+  loadsModule: false;
+  loadsCallback: false;
+  writesInstalledManifest: false;
+  autoUpgradesManifest: false;
+  stagesNativeSidecar: false;
+  constructsJournal: false;
+}>;
 
 function sanitized(message: "refused" | "deadline"): Error {
   const error = new Error(`private_installed_configuration_custody_${message}`);
@@ -75,6 +150,16 @@ function sanitized(message: "refused" | "deadline"): Error {
 const refused = (): never => { throw sanitized("refused"); };
 const blocked = (): PrivateInstalledConfigurationCustodyBlockedV1 => Object.freeze({
   schema: PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V1,
+  status: "blocked" as const,
+  blocker: "native_custody_verifier_missing" as const,
+  performsEffect: false as const,
+  createsDirectory: false as const,
+  repairsDirectory: false as const,
+  loadsModule: false as const,
+  loadsCallback: false as const,
+});
+const blockedV2 = (): PrivateInstalledConfigurationCustodyBlockedV2 => Object.freeze({
+  schema: PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V2,
   status: "blocked" as const,
   blocker: "native_custody_verifier_missing" as const,
   performsEffect: false as const,
@@ -133,10 +218,11 @@ function hasDataNative(value: unknown): boolean {
   if (!descriptor || !("value" in descriptor)) return false;
   try { captureNative(descriptor.value); return true; } catch { return false; }
 }
-function captureInput(value: unknown): CapturedInput {
+function captureInput(value: unknown, schema: typeof PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V1
+  | typeof PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V2): CapturedInput {
   const input = exact(value, ["schema", "manifestPath", "manifestBytes", "manifestSha256", "expectedOwnerUid",
     "verificationDeadlineMs", "native"]);
-  if (input.schema !== PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V1 || !Number.isSafeInteger(input.expectedOwnerUid)
+  if (input.schema !== schema || !Number.isSafeInteger(input.expectedOwnerUid)
     || (input.expectedOwnerUid as number) < 0 || (input.expectedOwnerUid as number) > 0x7fffffff) return refused();
   return Object.freeze({ manifestPath: absolutePath(input.manifestPath),
     manifestBytes: boundedPositiveInteger(input.manifestBytes, maximumManifestBytes),
@@ -171,7 +257,7 @@ function parseCanonical(bytes: Buffer): unknown {
   if (!Buffer.from(`${canonicalJson(frozen)}\n`, "utf8").equals(bytes)) return refused();
   return frozen;
 }
-function parseManifest(bytes: Buffer, expectedOwnerUid: number): Manifest {
+function parseManifestV1(bytes: Buffer, expectedOwnerUid: number): ManifestV1 {
   const value = exact(parseCanonical(bytes), ["schema", "installationId", "ownerUid", "configuration", "journal"]);
   const configuration = exact(value.configuration, ["name", "bytes", "sha256"]);
   const journal = exact(value.journal, ["directoryName"]);
@@ -181,6 +267,38 @@ function parseManifest(bytes: Buffer, expectedOwnerUid: number): Manifest {
     configurationName: safeName(configuration.name),
     configurationBytes: boundedPositiveInteger(configuration.bytes, maximumConfigurationBytes),
     configurationSha256: digest(configuration.sha256), journalDirectoryName: safeName(journal.directoryName) });
+}
+
+function nativeSidecarIdentity(value: unknown): PrivateInstalledConfigurationNativeSidecarIdentityV1 {
+  const identity = exact(value, ["schema", "releaseVersion", "portableReleaseManifestSha256",
+    "outerLauncherManifestSha256", "sidecarManifestSha256", "archiveSha256", "artifactManifestSha256",
+    "executableSha256", "platform", "protocol", "architecture"]);
+  if (identity.schema !== PRIVATE_INSTALLED_CONFIGURATION_NATIVE_SIDECAR_IDENTITY_V1
+    || typeof identity.releaseVersion !== "string" || !releaseVersionPattern.test(identity.releaseVersion)
+    || identity.platform !== "darwin" || identity.protocol !== "ACRJNL1"
+    || identity.architecture !== "arm64" && identity.architecture !== "x64") return refused();
+  return Object.freeze({ schema: PRIVATE_INSTALLED_CONFIGURATION_NATIVE_SIDECAR_IDENTITY_V1,
+    releaseVersion: identity.releaseVersion,
+    portableReleaseManifestSha256: digest(identity.portableReleaseManifestSha256),
+    outerLauncherManifestSha256: digest(identity.outerLauncherManifestSha256),
+    sidecarManifestSha256: digest(identity.sidecarManifestSha256),
+    archiveSha256: digest(identity.archiveSha256),
+    artifactManifestSha256: digest(identity.artifactManifestSha256),
+    executableSha256: digest(identity.executableSha256), platform: "darwin" as const,
+    protocol: "ACRJNL1" as const, architecture: identity.architecture });
+}
+
+function parseManifestV2(bytes: Buffer, expectedOwnerUid: number): ManifestV2 {
+  const value = exact(parseCanonical(bytes), ["schema", "installationId", "ownerUid", "configuration", "journal"]);
+  const configuration = exact(value.configuration, ["name", "bytes", "sha256"]);
+  const journal = exact(value.journal, ["directoryName", "nativeSidecar"]);
+  if (value.schema !== PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V2 || typeof value.installationId !== "string"
+    || !installationIdPattern.test(value.installationId) || value.ownerUid !== expectedOwnerUid) return refused();
+  return Object.freeze({ installationId: value.installationId, ownerUid: expectedOwnerUid,
+    configurationName: safeName(configuration.name),
+    configurationBytes: boundedPositiveInteger(configuration.bytes, maximumConfigurationBytes),
+    configurationSha256: digest(configuration.sha256), journalDirectoryName: safeName(journal.directoryName),
+    nativeSidecar: nativeSidecarIdentity(journal.nativeSidecar) });
 }
 
 async function bounded<T>(start: (signal: AbortSignal) => Promise<T>, outer: AbortSignal | undefined,
@@ -287,9 +405,9 @@ export async function createPrivateInstalledConfigurationCustodyV1(inputValue: u
   signal?: AbortSignal): Promise<PrivateInstalledConfigurationCustodyConfigurationReadyV1
     | PrivateInstalledConfigurationCustodyBlockedV1> {
   if (!hasDataNative(inputValue)) return blocked();
-  const input = captureInput(inputValue);
+  const input = captureInput(inputValue, PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V1);
   signal?.throwIfAborted();
-  const manifest = parseManifest(await readProtectedFile(input.manifestPath, input.expectedOwnerUid, 0o600,
+  const manifest = parseManifestV1(await readProtectedFile(input.manifestPath, input.expectedOwnerUid, 0o600,
     input.manifestBytes, input.manifestSha256, input.native, "manifest", signal, input.verificationDeadlineMs),
   input.expectedOwnerUid);
   const parent = dirname(input.manifestPath), journalPath = join(parent, manifest.journalDirectoryName);
@@ -303,7 +421,7 @@ export async function createPrivateInstalledConfigurationCustodyV1(inputValue: u
     operationSignal?.throwIfAborted();
     const manifestBytes = await readProtectedFile(input.manifestPath, input.expectedOwnerUid, 0o600,
       input.manifestBytes, input.manifestSha256, input.native, "manifest", operationSignal, input.verificationDeadlineMs);
-    const rereadManifest = parseManifest(manifestBytes, input.expectedOwnerUid);
+    const rereadManifest = parseManifestV1(manifestBytes, input.expectedOwnerUid);
     if (canonicalJson(rereadManifest) !== canonicalJson(manifest)) return refused();
     const configurationPath = join(parent, manifest.configurationName);
     if (dirname(configurationPath) !== parent) return refused();
@@ -324,4 +442,69 @@ export async function createPrivateInstalledConfigurationCustodyV1(inputValue: u
     operatorDependencies: "injected_separately" as const, performsEffect: false as const,
     createsDirectory: false as const, repairsDirectory: false as const, loadsModule: false as const,
     loadsCallback: false as const });
+}
+
+/**
+ * Reads only an explicitly versioned installed manifest. The returned packet
+ * is inert data for a later sidecar stager and held-journal composition: this
+ * boundary never writes or upgrades a manifest, stages native bytes, opens a
+ * journal session, or invents an installed location inside the portable
+ * release tree.
+ */
+export async function createPrivateInstalledConfigurationCustodyV2(inputValue: unknown,
+  signal?: AbortSignal): Promise<PrivateInstalledConfigurationCustodyManifestReadyV2
+    | PrivateInstalledConfigurationCustodyBlockedV2> {
+  if (!hasDataNative(inputValue)) return blockedV2();
+  const input = captureInput(inputValue, PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V2);
+  signal?.throwIfAborted();
+  const manifest = parseManifestV2(await readProtectedFile(input.manifestPath, input.expectedOwnerUid, 0o600,
+    input.manifestBytes, input.manifestSha256, input.native, "manifest", signal, input.verificationDeadlineMs),
+  input.expectedOwnerUid);
+  const parent = dirname(input.manifestPath), journalPath = join(parent, manifest.journalDirectoryName);
+  if (dirname(journalPath) !== parent) return refused();
+  await protectedAncestors(journalPath, manifest.ownerUid, input.native, signal, input.verificationDeadlineMs);
+  const originalJournalIdentity = await protectedDirectory(journalPath, manifest.ownerUid, input.native, signal,
+    input.verificationDeadlineMs, "journal");
+  const expectedRootIdentity = Object.freeze({ device: originalJournalIdentity.device,
+    inode: originalJournalIdentity.inode });
+
+  const custody = Object.freeze({
+    async loadManifestBoundPrivateConfigurationData(operationSignal?: AbortSignal):
+      Promise<PrivateInstalledConfigurationManifestBoundPreparationV1> {
+      operationSignal?.throwIfAborted();
+      const manifestBytes = await readProtectedFile(input.manifestPath, input.expectedOwnerUid, 0o600,
+        input.manifestBytes, input.manifestSha256, input.native, "manifest", operationSignal,
+        input.verificationDeadlineMs);
+      const rereadManifest = parseManifestV2(manifestBytes, input.expectedOwnerUid);
+      if (canonicalJson(rereadManifest) !== canonicalJson(manifest)) return refused();
+      const configurationPath = join(parent, manifest.configurationName);
+      if (dirname(configurationPath) !== parent) return refused();
+      const configuration = parseCanonical(await readProtectedFile(configurationPath, manifest.ownerUid, 0o600,
+        manifest.configurationBytes, manifest.configurationSha256, input.native, "configuration", operationSignal,
+        input.verificationDeadlineMs));
+      await protectedAncestors(journalPath, manifest.ownerUid, input.native, operationSignal,
+        input.verificationDeadlineMs);
+      const rereadJournalIdentity = await protectedDirectory(journalPath, manifest.ownerUid, input.native,
+        operationSignal, input.verificationDeadlineMs, "journal");
+      if (rereadJournalIdentity.device !== expectedRootIdentity.device
+        || rereadJournalIdentity.inode !== expectedRootIdentity.inode) return refused();
+      operationSignal?.throwIfAborted();
+      const journal = Object.freeze({ rootPath: journalPath, expectedRootIdentity,
+        expectedOwnerUid: manifest.ownerUid, expectedRootMode: 0o700 as const });
+      return Object.freeze({ schema: PRIVATE_INSTALLED_CONFIGURATION_MANIFEST_BOUND_PREPARATION_V1,
+        installationId: manifest.installationId, privateConfigurationData: configuration, journal,
+        nativeSidecar: manifest.nativeSidecar, dataOnly: true as const, opensJournal: false as const,
+        constructsJournal: false as const, stagesNativeSidecar: false as const,
+        performsNativeOperation: false as const, writesInstalledManifest: false as const,
+        autoUpgradesManifest: false as const });
+    },
+  });
+  return Object.freeze({ schema: PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V2,
+    status: "manifest_bound_configuration_ready" as const, custody,
+    operatorComposition: Object.freeze({ status: "blocked" as const,
+      blocker: "native_journal_operation_custody_missing" as const }), dataOnly: true as const,
+    operatorDependencies: "injected_separately" as const, performsEffect: false as const,
+    createsDirectory: false as const, repairsDirectory: false as const, loadsModule: false as const,
+    loadsCallback: false as const, writesInstalledManifest: false as const, autoUpgradesManifest: false as const,
+    stagesNativeSidecar: false as const, constructsJournal: false as const });
 }

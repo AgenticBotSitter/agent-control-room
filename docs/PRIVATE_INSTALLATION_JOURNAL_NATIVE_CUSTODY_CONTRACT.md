@@ -112,7 +112,11 @@ held descriptor is what prevents redirection during the operation.
    substitution/crash/concurrency tests should installed-configuration custody
    replace `native_journal_operation_custody_missing` with the adapted journal.
    It must bind the same installation ID, owner and journal identity already
-   authenticated by the installed manifest.
+   authenticated by the installed manifest. The separately versioned v2
+   installed-manifest reader now supplies that exact frozen identity data,
+   including the release-bound native-sidecar tuple and retained original root
+   device/inode, but deliberately does not stage the sidecar or clear the
+   blocker.
 
 ## Required evidence
 

@@ -53,5 +53,7 @@ Path substitution after verification cannot change the staged bytes. A release
 or digest mismatch refuses before staging. Staging
 does not compile, download, install, execute the helper, create or mutate an
 installation journal, or grant broader runner authority. Installed-manifest
-binding, operator composition, and owner-attended native qualification remain
-separate work.
+identity binding is now a separate inert v2 custody contract: it records the
+exact release, outer launcher and four native artifact digests as canonical
+data, but does not call this stager or select a staging path. Operator
+composition and owner-attended native qualification remain separate work.

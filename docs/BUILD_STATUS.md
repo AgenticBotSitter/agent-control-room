@@ -51,7 +51,14 @@ before staging, refuses substitution and mixed architectures, and packages the
 journal helper in a fixed inert layout. Outer verification binds the exact
 release, sidecar, archive, artifact-manifest and executable digests before any
 installation-root write; the launcher neither stages nor runs the helper.
-Installed-manifest binding, operator composition and separate owner-attended
+The next inert installed-manifest boundary is now source-complete. A separately
+versioned v2 manifest binds the exact portable release, outer launcher,
+sidecar, archive, artifact-manifest and executable digests plus the fixed native
+platform, protocol and architecture. It returns frozen data only, retains the
+original journal-root device and inode across reread, and refuses replacement.
+The old v1 manifest remains blocked and is never auto-upgraded; no manifest is
+written and no native file is staged into the immutable portable release tree.
+Native-sidecar staging, operator composition and separate owner-attended
 qualification remain before
 `native_journal_operation_custody_missing` can be cleared.
 
