@@ -25,7 +25,10 @@ Room has prepared, assigned, approved and queued for its exact worker route.
 2. A worker receives a signed, bounded delivery packet; it never decides on its
    own what to start, retry, approve, or complete.
 3. Hermes and Claude begin with `text_review`: supplied text in, bounded review
-   text out, no project-file editing, tools, network, or account actions.
+   text out, no project-file editing, tools, account actions, or network access
+   **other than the already-qualified model-provider call**. Before the first
+   task, the installed-process qualification must prove that user hooks, MCP
+   servers, plugins and project instructions cannot widen that fixed task.
 4. The private website is the normal owner interface. The setup page, workboard,
    project pages, task pages, review pages and attention page must say plainly
    whether an item is real, unavailable, simulated, pending, or uncertain.
@@ -42,7 +45,7 @@ Room has prepared, assigned, approved and queued for its exact worker route.
 | --- | --- | --- |
 | Owner web workflow | private project, task, assignment, approval, submission, result, review, correction, worker, setup and workboard pages | UI source exists; it is not a live installed service yet. |
 | Hermes local worker | Hermes 0.21 planning, queue delivery, controlled runner, staging, result publication and review path | Source composition exists; first real task needs owner setup and approval. |
-| Claude local worker | Claude connector profile, task planning, dispatch, owned process session, strict stream decoder, terminal-result publisher, private process host, installation binding and post-install admission | Source composition exists; exact installed CLI qualification and first real task remain owner gates. |
+| Claude local worker | Claude connector profile, task planning, dispatch, owned process session, strict stream decoder, terminal-result publisher, private process host, installation binding and post-install admission | Source pieces exist, but they are not yet a complete admitted route: the binding is not wired into admission, delivery input/recovery need explicit completion, and installed CLI qualification plus the first real task remain owner gates. |
 | Shared lifecycle | canonical projects/tasks/attempts/results/reviews/corrections, PostgreSQL, pg-boss, protected result staging and durable publication | Retain; do not add a Claude-specific lifecycle. |
 | Single-to-several transition | installation topology and transition records, shared packet/receipt contracts and remote-worker foundations | Retain; local Claude is an additive local route, not a separate product. |
 
@@ -52,11 +55,18 @@ Room has prepared, assigned, approved and queued for its exact worker route.
 
 **Purpose:** prove Hermes and Claude are two routes through the same lifecycle.
 
+**Prerequisites:** C0 can map and test source-only behavior now. It cannot
+claim a live worker proof. The owner-attended half of C4 waits for the master
+plan's L1 protected-operation custody gate, L2 real database/installation, and
+the necessary L3 service state.
+
 - Map the existing task plan, assignment, approval, submission, delivery,
   terminal result, review and correction records for both adapters.
 - Add only cross-adapter conformance tests that are missing: identical task
   state progression, cancellation result, uncertain delivery handling,
-  restart read, pending review, correction and capacity release.
+  pending review, correction and capacity release. Treat Claude restart-read
+  and recovery as new implementation work, not merely a missing test; name and
+  complete that package before asserting the shared restart row.
 - Keep adapter differences limited to executable/process qualification and
   terminal framing.
 
@@ -65,18 +75,23 @@ states and no adapter can bypass review or claim task authority.
 
 ### C1 — Complete the Claude private installed-process seam
 
-**Purpose:** turn existing source composition into a safely qualified local
-Claude route without changing Claude Code itself.
+**Purpose:** complete the incomplete source composition into a safely qualified
+local Claude route without changing Claude Code itself.
 
 - Retain `src/harness/claude-code-v1/private-installed-process-host.ts`,
   `owned-process-session.ts`, `stream-json-decode.ts`, result publication, and
   `src/installer/v1/local-claude-installation-binding.ts`.
 - Build only the missing private, owner-held port that verifies the selected
   Claude executable/version, fixed arguments, working directory, authentication
-  custody, bounded input, process-group cleanup and exact output format.
+  custody, bounded input delivery, process-group cleanup, restart-read/recovery
+  receipt, and exact output format. The implementation must settle whether it
+  reuses the owner's existing Claude login state, record the accepted custody
+  risks, and require owner attendance for that choice.
 - The port must be single-purpose: no executable discovery, arbitrary command
   construction, inherited broad environment, plugin control, resume, or generic
-  terminal access.
+  terminal access. Its qualification must demonstrate that user hooks, MCP
+  servers, plugins and project instructions are disabled or isolated for the
+  fixed invocation.
 - Use owner-attended qualification only after all source tests pass. Preserve a
   failed qualification as evidence; never turn it into a retry.
 
@@ -91,6 +106,9 @@ not two launchers.
 - Extend the accepted installed operator composition only through reviewed
   adapter slots. The existing local Hermes loader is the pattern, not a generic
   plugin framework.
+- Apply the relevant accepted topology-transition record before registering a
+  Claude route, so a local installation change is recorded through the same
+  transition contract that later governs a move to several computers.
 - Capture each adapter's selected route, profile fingerprint, qualification
   receipt and workspace binding before startup. Revalidate them immediately
   before exposing queue delivery.
@@ -132,12 +150,14 @@ only with owner-approved live actions.
 1. Disposable proof: two independently constructed local routes receive
    different bounded text-review tasks, publish results, wait for review and
    survive a simulated lost reply/restart without duplicate work.
-2. Owner-attended proof: qualify the exact Hermes and Claude installations
+2. Owner-attended proof (only after L1-L3 prerequisites above): qualify the exact Hermes and Claude installations
    separately; create two harmless supplied-text tasks; approve and queue them;
-   confirm one saved terminal result per task; review one and request one
-   correction.
+   run them at the same time; confirm one saved terminal result per task; review
+   one and request one correction.
 3. Failure proof: cancel one task, make one worker unavailable, restart the
-   controller, and confirm no automatic resend or false completion.
+   controller, prove a denied permission plus a provider-authentication or
+   budget failure are safely refused, and confirm no automatic resend or false
+   completion.
 
 **Done when:** one local installation runs one Hermes task and one Claude task
 through the same visible, reviewable lifecycle.
@@ -152,6 +172,10 @@ Before every local package lands, verify it preserves these later needs:
   by sync; and
 - browser screens describe workers by capability and evidence, not a hardcoded
   machine name or harness-specific hidden behavior.
+
+C3 is the Claude-specific portion of the master plan's local UI work, not a
+second UI track. Keep `SUPPORT_MATRIX.md` marked source-only until C4's
+owner-attended proof is actually complete.
 
 ## Reuse and implementation policy
 
