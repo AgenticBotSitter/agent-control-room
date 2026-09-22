@@ -4,6 +4,12 @@
 with disposable data; no Control Room installation or local worker is
 operational yet.
 
+**Authoritative completion order:** follow
+[`LOCAL_TO_MULTI_SYSTEM_EXECUTION_PLAN.md`](LOCAL_TO_MULTI_SYSTEM_EXECUTION_PLAN.md).
+It finishes the supported single-computer installation first and then extends
+that same database, scheduler and lifecycle to several computers. Older build
+plans remain architecture/history references, not competing execution queues.
+
 ## Source checkpoint (2026-09-22)
 
 The local product now also has an accepted read-only **Project Agents** page.
@@ -28,16 +34,21 @@ limits recovery to the retained publication algorithm, and specifies exact
 bounded same-descriptor writes for plan and witness bytes. It performs no native
 operation and does not claim the blocker is cleared.
 
-The next source-only journal package now preserves those constraints in code.
-The existing installation journal opens one operation-scoped storage session,
-and append keeps that same session across history read, retained recovery,
-concurrent-winner handling, publication, verification and confirmed close
-instead of recursively opening a second session. An injected held-session
-adapter bounds operation capabilities, entry basenames, plan and witness bytes,
-ordering, abort, deadline and cleanup. The ordinary source journal retains its
-existing behavior and tests. No native helper was implemented, compiled or run;
-installed custody is not wired, and `native_journal_operation_custody_missing`
-remains the live blocker.
+The next journal package now has an independently accepted, source-tested native
+macOS operation session. The existing installation journal opens one
+operation-scoped storage session, and append keeps that same session across
+history read, retained recovery, concurrent-winner handling, publication,
+verification and confirmed close instead of recursively opening a second
+session. The fixed helper retains descriptor-relative authority only for that
+operation; validates protected ancestors, entries, ownership, modes and access
+controls; bounds every request, output, deadline and cleanup; and refuses
+substitution, malformed replies, uncertain process retirement and a second
+concurrent session. A deterministic journal regression also proves that a late
+exact writer accepts a settled winner after recovery safely retired the late
+writer's own temporary witness. This is not yet an installed/released helper:
+deterministic sidecar packaging, manifest binding, release wiring and separate
+owner-attended qualification remain before
+`native_journal_operation_custody_missing` can be cleared.
 
 The additive local Claude composition is now source-complete and independently
 accepted. It rereads the settled original installation and one committed

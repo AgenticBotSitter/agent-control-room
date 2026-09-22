@@ -105,6 +105,40 @@ test("four exact writers repeatedly settle as one publication and clean replays"
   }
 });
 
+test("a late exact writer accepts recovery that already retired its own witness", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "control-room-plan-late-witness-")));
+  await chmod(root, 0o700);
+  const installationId = "local-installation-late-witness", ownerUid = process.getuid!();
+  let releaseWitness!: () => void;
+  const witnessReleased = new Promise<void>(resolve => { releaseWitness = resolve; });
+  let witnessReached!: () => void;
+  const atWitness = new Promise<void>(resolve => { witnessReached = resolve; });
+  const late = new InstallationPlanFilesystemJournalV1({ rootDirectory: root, installationId, ownerUid },
+    async request => {
+      const base = await openInstallationPlanFilesystemStorageSessionV1(request);
+      return Object.freeze({ ...base,
+        async createExclusiveEntry(entryName: string) {
+          if (entryName.endsWith(".publish.json")) { witnessReached(); await witnessReleased; }
+          return base.createExclusiveEntry(entryName);
+        },
+      });
+    });
+  const winner = new InstallationPlanFilesystemJournalV1({ rootDirectory: root, installationId, ownerUid });
+  try {
+    const plan = create();
+    const lateResult = late.append(plan);
+    await atWitness;
+    const winnerResult = await winner.append(plan);
+    releaseWitness();
+    const recovered = await lateResult;
+    assert.equal(winnerResult.replayed, false);
+    assert.equal(recovered.replayed, true);
+    assert.equal(recovered.planDigest, plan.planDigest);
+    assert.deepEqual((await readdir(root)).sort(), [name(installationId, 0)]);
+    assert.equal((await lstat(join(root, name(installationId, 0)))).nlink, 1);
+  } finally { releaseWitness(); await rm(root, { recursive: true, force: true }); }
+});
+
 test("a crash temp is never read as proof and foreign files are left alone", async () => {
   const f = await fixture();
   try {

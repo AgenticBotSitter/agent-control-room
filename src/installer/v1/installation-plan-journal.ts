@@ -381,7 +381,7 @@ export class InstallationPlanFilesystemJournalV1 {
       return this.result(stored, false);
     } finally {
       if (tempIdentity) await this.cleanupOwnedTemp(temp, tempIdentity, session).catch(unavailable);
-      if (witnessIdentity && !published) await this.unlinkWitness(plan.revision, witnessIdentity, session).catch(unavailable);
+      if (witnessIdentity && !published) await this.unlinkWitness(plan.revision, witnessIdentity, session, true).catch(unavailable);
     }
     });
   }
