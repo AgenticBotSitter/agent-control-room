@@ -79,9 +79,18 @@ injected branded tool. Final running evidence must bind the same plan, release,
 service, database, protected data and readiness record before the existing
 `platform_service` stage can pass. Cancellation, deadline, malformed replies,
 observation mismatch or cleanup ambiguity after entry remain uncertain, and
-service start alone never grants an agent readiness. The repository still has
-no reviewed launchd/process/filesystem implementation for that port, so no
-service was installed or started and live local enablement remains blocked.
+service start alone never grants an agent readiness. The production-shaped tool
+adapter beneath that runner is now source-complete. It accepts only the fixed
+branded label and exact captured-owner `Library/LaunchAgents` target, exact
+rendered definition and ordered structured install operations; caps each native
+deadline by the operation timeout; refuses concurrent entry; captures the
+injected native methods before use; and carries the exact parent, definition
+and service identity digests across native steps. Node
+cannot safely provide descriptor-relative no-follow LaunchAgent publication
+and identity-bound service-manager control, so the adapter has no filesystem,
+child-process, shell or ambient-environment fallback. The separately reviewed
+native implementation and owner-attended run remain blockers. No service was
+installed or started and live local enablement remains blocked.
 
 The protected-data stage now also has a durable settlement transaction over
 the existing append-only installation journal. It rebuilds the exact protected
@@ -111,16 +120,23 @@ The guided local setup flow now also has one source-only private dispatcher
 over the existing installation plan journal. It verifies the exact
 installation, topology, release, plan digest and revision, dispatches only the
 first incomplete owner-effect stage after the retained launcher prerequisite transaction, and reuses the accepted PostgreSQL,
-protected-data and first-owner runners and settlement transactions. It creates
+protected-data, first-owner and recovery runners and settlement transactions. It creates
 no second state machine, database, receipt store, scheduler, browser effect or
 native effect. PostgreSQL's provision, migration and terminal evidence remain
 one ordered call, with owner confirmation and exact release/ledger checks at
 each existing runner request. An uncertain call leaves the stage running, so a
-later call refuses rather than retrying. Recovery remains an explicit stop
-because its production owner-attended adapter is absent and its concurrent
-dispatcher integration has not been independently accepted; the service is a
-second explicit stop because no reviewed macOS native port exists. No live
-setup operation was performed.
+later call refuses rather than retrying. Recovery runs only when private
+composition explicitly injects the accepted existing-rehearsal runtime;
+without it the dispatcher reports the production owner-attended adapter as
+missing. The service remains an explicit stop because no reviewed macOS native
+port exists. No live setup operation was performed.
+Recovery source and runtime callables are captured immutably before the first
+journal await, and the dispatcher reuses the accepted recovery preparation and
+runtime validators against the candidate running action before it publishes
+that action. Malformed source, binding or callable input therefore leaves the
+journal unchanged. Focused coverage also proves one winner under concurrent
+recovery dispatch, resistance to caller mutation during journal reads, and
+lost-settlement-reply convergence without a second rehearsal.
 
 The first-owner stage now has an accepted durable settlement transaction over
 the existing installation journal. It rebuilds the exact prepared request from
@@ -179,18 +195,26 @@ remain readable for recovery. Focused adapter tests, private-startup tests,
 VPS compilation and TypeScript passed. This is source and disposable-test
 evidence only: it enables no worker, database, listener or persistent service.
 
-The local Hermes path now also has a source-only owner-admission preparation.
+The local Hermes path now also has a source-only owner-admission preparation,
+attached-owner runner and durable `agent_readiness` settlement.
 It re-verifies a saved installation binding against current private
 observations, authenticates the supplied installation ID through an exact
 replay against the existing installation journal, binds the shared delivery, canonical result, durable review and
 correction contracts, and emits only a redacted owner-review request. Before
 that proof exists it names the first incomplete database, protected-data,
 first-owner, recovery, service or agent-readiness stage. Capacity observations
-cannot satisfy the gate. Even an exact request remains blocked on production
-private startup, recorded owner admission, durable `agent_readiness`
-settlement and passed final setup review. Nine adversarial checks and the
-TypeScript check pass; no queue, store, callback, service, worker or task was
-created or started.
+cannot satisfy the gate. The runner invokes the existing pure private-startup
+gate, requires an installation-owned opaque binding to the exact Hermes
+composition, qualified runner/worker, queue database identity/role/concurrency,
+topology, release and admission request, records one bounded attached-owner
+confirmation through a child cancellation signal, then rereads the current
+journal tip. Its
+transaction appends only the matching terminal receipt to the existing plan;
+exact replay and concurrent identical settlement converge, while stale,
+foreign, tampered or competing evidence refuses. It never invokes the captured
+Hermes callback and leaves `final_review` not started. Twenty adversarial
+checks and the TypeScript check pass; no queue, store, service, worker or task
+was created or started.
 
 The installable-product track now also has eighteen accepted source foundations:
 an allowlisted reproducible release archive with a manifest and checksum; a
@@ -609,10 +633,11 @@ database, browser login, backup, persistent service or remote machine.
    store, exact runner binding and read-only setup status. The source already
    captures and validates this composition without browser-controlled inputs;
    it cannot choose private settings, create a database, start a service, or
-   enable Hermes by itself. The new admission preparation can bind an exact
-   current installation to the retained lifecycle, but a reviewed production
-   private-startup composition, attached-owner admission runner, durable
-   `agent_readiness` settlement and passed final review are still required.
+   enable Hermes by itself. The source runner and durable settlement can now
+   bind a production private-startup composition and attached-owner
+   confirmation to that exact installation. The real owner-attended control
+   implementation, actual native/recovery/service evidence, passed final
+   review and subsequent startup re-verification are still required.
 2. Complete the remaining fresh-install first-owner package: a durable local
    ceremony marker, bootstrap-only server composition, narrow database
    capability and reviewed Linux peer-credential control channel. The ceremony

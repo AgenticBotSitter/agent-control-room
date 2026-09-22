@@ -1,15 +1,20 @@
 # Local Hermes owner-admission preparation
 
-**Status:** source-only preparation with disposable test evidence. No local
-Hermes worker is operational, admitted, selectable or leaseable because of
-this package.
+**Status:** source-only preparation, attached-owner runner and durable
+`agent_readiness` settlement with disposable test evidence. No local Hermes
+worker is operational, selectable or leaseable because of this package.
 
 ## Outcome
 
 `src/installer/v1/local-hermes-admission-preparation.ts` advances the accepted
-local Hermes installation binding to one redacted owner-review request. It
-does not settle `agent_readiness`, pass `final_review`, construct private
-startup, record owner consent, start the service, run Hermes or create work.
+local Hermes installation binding to one redacted owner-review request.
+`private-local-hermes-admission-runner.ts` rebuilds that request, runs the
+existing pure private-startup validation gate, captures one attached-owner
+confirmation and rereads the current journal tip. The captured Hermes callback
+is never invoked. `local-hermes-admission-transaction.ts` accepts only that
+exact terminal confirmation and appends the `agent_readiness` outcome to the
+existing installation journal. It does not pass `final_review`, start the
+service, run Hermes or create work.
 
 The request binds the current installation plan revision, exact topology,
 pinned Hermes worker binding, current reverified installation preparation and
@@ -50,6 +55,36 @@ service observation or plan therefore refuses instead of creating another
 owner request. A passed, failed or uncertain agent-readiness stage also cannot
 be replayed into a new request.
 
+## Owner runner and settlement
+
+The runner requires the accepted preparation, normal private task startup
+configuration, its installation-owned startup/admission binding, the existing
+journal, one bounded owner-confirmation callback and a cancellation signal.
+The binding is produced only beside the exact private Hermes delivery
+composition and shared queue-worker configuration. Its opaque digests bind the
+qualified runner configuration and worker binding, queue database identity,
+role and concurrency, callback composition contract and instance, topology,
+release and admission request. Passwords, integrity keys and functions are
+validated where appropriate but are never hashed into the record. The runner
+reconstructs and verifies the same record before owner confirmation, and the
+settlement transaction reconstructs it again from the historical journal.
+
+Owner confirmation is bound to the exact installation, plan revision,
+admission request and private-startup digest. A child cancellation signal is
+linked to the caller signal and deadline and is the only signal passed to the
+callback. It is aborted on timeout and before runner exit. Cancellation is
+rechecked after the callback and after the final journal reread. A timeout,
+cancellation, lost reply or journal change after owner-confirmation entry is
+uncertain and is not retried.
+
+Settlement authenticates the installation ID through the journal, rebuilds
+the exact historical request through a read-only view, and accepts only the
+runner's matching terminal confirmation. Exact replay and concurrent identical
+settlement converge. A foreign installation, tampered confirmation, stale tip,
+failed or uncertain competing outcome refuses. The transaction creates no
+receipt store: its outcome is retained only in the existing plan journal.
+`final_review` remains `not_started`.
+
 ## Reuse decision
 
 This is the **retain existing Control Room** row from
@@ -76,9 +111,10 @@ product, not fixtures:
    install/start, and a current healthy-service observation;
 3. production custody of the already-qualified fixed Hermes settings and the
    existing private delivery composition;
-4. an attached-owner admission runner and durable settlement against the one
-   installation journal; and
-5. a passed final installation review followed by startup re-verification.
+4. the real owner-attended control implementation must supply the runner's
+   confirmation callback and execute this source transaction; and
+5. a separately reviewed final installation review followed by startup
+   re-verification.
 
 Only after those steps may the normal task application admit the captured
 local Hermes adapter. The first real task must still be separately authorized
@@ -86,9 +122,14 @@ through the canonical project/task/lease path.
 
 ## Verification
 
-`pnpm test:local-hermes-admission` runs the focused adversarial checks. They
-cover journal-authenticated installation identity, evidence binding, lifecycle binding, recovery and service blockers,
-missing current binding, revoked evidence, route/plan drift, terminal-stage
-replay refusal, secret redaction and attempted browser/callback/capacity grant
-injection. The focused command is included directly in the required
-unified-product continuous-integration lane.
+`pnpm test:local-hermes-admission` runs 20 focused adversarial checks. They
+cover journal-authenticated installation identity, evidence and lifecycle
+binding, recovery and service blockers, missing or revoked evidence,
+route/plan drift, private-startup proof changes, owner uncertainty,
+real hanging-callback timeout, parent cancellation during confirmation and the
+final journal read, malformed signals, callback/worker/runner/queue-role/
+concurrency substitution, post-confirmation journal races, exact settlement
+replay, cross-installation and competing-outcome refusal, secret redaction,
+and attempted browser, callback or capacity grant injection. The focused
+command is included directly in the required unified-product
+continuous-integration lane.
