@@ -3,7 +3,7 @@ import { createMacosLocalServicePackageV1 } from "../../harness/v1/macos-local-s
 import { captureLocalPlatformServiceObservationV1 } from "./local-platform-service-observation";
 import { macosServiceIdentityDigestV1, simulateMacosServiceOwnerActionV1,
   type MacosServiceRunnerRequestV1 } from "./macos-service-owner-action";
-import { advanceInstallationPlanV1, type InstallationPlanV1 } from "./installation-plan";
+import { advanceInstallationPlanV1, verifyInstallationPlanV1, type InstallationPlanV1 } from "./installation-plan";
 import { type InstallationPlanFilesystemJournalV1 } from "./installation-plan-journal";
 import { verifyPlatformServiceLifecycleV1, type PlatformServiceLifecycleV1 } from "./platform-service-lifecycle";
 
@@ -188,6 +188,7 @@ function passedPrerequisite(plan: InstallationPlanV1,
 function capturedRequest(input: unknown): Readonly<{
   lifecycle: PlatformServiceLifecycleV1;
   lifecycleInput: LifecycleInput;
+  installationPlan: InstallationPlanV1;
   servicePackageInput: ServicePackageInput;
   serviceDefinitionDigest: string;
   requestDigest: string;
@@ -203,17 +204,19 @@ function capturedRequest(input: unknown): Readonly<{
     "supervisorReadiness", "serviceIdentityDigest", "authorityDatabaseDigest", "protectedDataDigest", "observation",
     "targetReleaseDigest", "targetServiceDefinitionDigest"]) as unknown as LifecycleInput;
   let lifecycle: PlatformServiceLifecycleV1;
+  let installationPlan: InstallationPlanV1;
   let package_: ReturnType<typeof createMacosLocalServicePackageV1>;
   try {
     lifecycle = verifyPlatformServiceLifecycleV1(lifecycleValue, lifecycleInput);
+    installationPlan = verifyInstallationPlanV1(lifecycleInput.installationPlan);
     package_ = createMacosLocalServicePackageV1(servicePackageInput);
   } catch { return refused(); }
   if (lifecycle.action !== "install" || lifecycle.platform !== "macos_launchd"
     || lifecycle.observation.state !== "not_installed" || package_.label !== PRIVATE_MACOS_SERVICE_LABEL_V1
     || lifecycle.serviceIdentityDigest !== macosServiceIdentityDigestV1(servicePackageInput)
     || lifecycle.targetServiceDefinitionDigest !== sha256Digest(package_.plist)
-    || lifecycle.targetReleaseDigest !== lifecycleInput.installationPlan.releaseDigest) return refused();
-  const plan = lifecycleInput.installationPlan;
+    || lifecycle.targetReleaseDigest !== installationPlan.releaseDigest) return refused();
+  const plan = installationPlan;
   const prerequisites = Object.freeze({ databaseAuthorityOutcomeDigest: passedPrerequisite(plan, "database_authority"),
     protectedDataOutcomeDigest: passedPrerequisite(plan, "protected_data"),
     firstOwnerOutcomeDigest: passedPrerequisite(plan, "first_owner"),
@@ -225,7 +228,7 @@ function capturedRequest(input: unknown): Readonly<{
     serviceIdentityDigest: lifecycle.serviceIdentityDigest, serviceDefinitionDigest,
     authorityDatabaseDigest: lifecycle.authorityDatabaseDigest, protectedDataDigest: lifecycle.protectedDataDigest,
     supervisorReadinessDigest: lifecycle.supervisorReadinessDigest, prerequisites };
-  return Object.freeze({ lifecycle, lifecycleInput, servicePackageInput,
+  return Object.freeze({ lifecycle, lifecycleInput, installationPlan, servicePackageInput,
     serviceDefinitionDigest, requestDigest: sha256Digest({ purpose: "private-macos-service-owner-request/v1", request: body }) });
 }
 
@@ -307,7 +310,7 @@ function finalObservation(value: unknown, request: ReturnType<typeof capturedReq
   let observation: ReturnType<typeof captureLocalPlatformServiceObservationV1>;
   try { observation = captureLocalPlatformServiceObservationV1(result.serviceObservation); }
   catch { return uncertain(); }
-  const plan = request.lifecycleInput.installationPlan;
+  const plan = request.installationPlan;
   if (observation.state !== "running" || observation.topologyPlanDigest !== plan.topologyPlanDigest
     || observation.releaseDigest !== request.lifecycle.targetReleaseDigest
     || observation.serviceIdentityDigest !== request.lifecycle.serviceIdentityDigest

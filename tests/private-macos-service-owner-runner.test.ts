@@ -104,12 +104,12 @@ function journal(initial: readonly InstallationPlanV1[]) {
       if (existing) {
         if (existing.planDigest !== plan.planDigest) throw new Error("conflict");
         return { schema: INSTALLATION_PLAN_JOURNAL_V1, installationId: "install-local", revision: plan.revision,
-          planDigest: plan.planDigest, replayed: true, enablesAuthority: false, startsService: false, startsWorker: false };
+          planDigest: plan.planDigest, replayed: true, enablesAuthority: false, startsService: false, startsWorker: false } as const;
       }
       if (plan.revision !== history.length) throw new Error("gap");
       history.push(plan);
       return { schema: INSTALLATION_PLAN_JOURNAL_V1, installationId: "install-local", revision: plan.revision,
-        planDigest: plan.planDigest, replayed: false, enablesAuthority: false, startsService: false, startsWorker: false };
+        planDigest: plan.planDigest, replayed: false, enablesAuthority: false, startsService: false, startsWorker: false } as const;
     },
   } };
 }
@@ -179,10 +179,13 @@ test("owner confirmation is exact and mutable caller port objects cannot replace
       lifecycleDigest: context.lifecycleDigest, action: "install", ownerAttached: true, confirmed: true };
   } });
   let original = 0, replacement = 0;
-  r.runtime.tool.executeStep = async () => { original++; return { outcome: "succeeded" }; };
+  const mutableTool = r.runtime.tool as unknown as {
+    executeStep: PrivateMacosServiceOwnerRuntimeV1["tool"]["executeStep"];
+  };
+  mutableTool.executeStep = async () => { original++; return { outcome: "succeeded" }; };
   const pending = runPrivateMacosServiceOwnerActionV1(f.request, r.runtime);
   await waiting;
-  r.runtime.tool.executeStep = async () => { replacement++; return { outcome: "succeeded" }; };
+  mutableTool.executeStep = async () => { replacement++; return { outcome: "succeeded" }; };
   release(); await pending;
   assert.equal(original, f.lifecycle.steps.length); assert.equal(replacement, 0);
 
@@ -258,7 +261,7 @@ test("terminal settlement refuses changed binding, stale history and another ins
   }
   const wrong = journal(f.history);
   const wrongJournal = { ...wrong.journal, async append(plan: InstallationPlanV1) {
-    const value = await wrong.journal.append(plan); return { ...value, installationId: "other-install" };
+    const value = await wrong.journal.append(plan); return { ...value, installationId: "other-install" } as const;
   } };
   await assert.rejects(confirmPrivateMacosServiceOwnerActionTerminalV1({ installationId: "install-local",
     request: f.request, terminalConfirmation: result.terminalConfirmation }, { journal: wrongJournal }), /_refused/u);
