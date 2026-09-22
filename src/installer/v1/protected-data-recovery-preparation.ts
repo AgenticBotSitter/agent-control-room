@@ -86,7 +86,7 @@ function capturedStorage(value: PrivateArtifactStorageConfigurationV1) {
   catch { return refuse(); }
 }
 
-function storageBindings(value: PrivateArtifactStorageConfigurationV1) {
+export function protectedDataStorageBindingsV1(value: PrivateArtifactStorageConfigurationV1) {
   const captured = capturedStorage(value);
   return Object.freeze({
     releaseDigest: captured.inventory.releaseDigest,
@@ -142,7 +142,7 @@ export function recoveryStageInputDigestV1(input: Readonly<{
 export function protectedDataBindingDigestV1(input: Readonly<{
   storageConfiguration: PrivateArtifactStorageConfigurationV1; observedState: unknown; observationDigest: unknown;
 }>): string {
-  const storage = storageBindings(input.storageConfiguration), observedState = protectedState.parse(input.observedState),
+  const storage = protectedDataStorageBindingsV1(input.storageConfiguration), observedState = protectedState.parse(input.observedState),
     observationDigest = digest.parse(input.observationDigest);
   return sha256Digest({ purpose: "protected-data-evidence-binding/v1", releaseDigest: storage.releaseDigest,
     storageConfigurationDigest: storage.storageConfigurationDigest, storageNamespaceDigest: storage.storageNamespaceDigest,
@@ -166,7 +166,7 @@ function verifyProtectedShape(value: unknown): ProtectedDataPreparationV1 {
 export function prepareProtectedDataV1(input: Readonly<{ installationPlan: unknown;
   storageConfiguration: PrivateArtifactStorageConfigurationV1; observedState: unknown; observationDigest: unknown;
 }>): ProtectedDataPreparationV1 {
-  const plan = verifyInstallationPlanV1(input.installationPlan), storage = storageBindings(input.storageConfiguration);
+  const plan = verifyInstallationPlanV1(input.installationPlan), storage = protectedDataStorageBindingsV1(input.storageConfiguration);
   const observedState = protectedState.parse(input.observedState), observationDigest = digest.parse(input.observationDigest);
   const protectedDataBindingDigest = protectedDataBindingDigestV1({ storageConfiguration: input.storageConfiguration,
     observedState, observationDigest });
@@ -185,7 +185,7 @@ export function verifyProtectedDataPreparationV1(value: unknown, installationPla
   storageConfiguration: PrivateArtifactStorageConfigurationV1,
   observation: Readonly<{ observedState: unknown; observationDigest: unknown }>): ProtectedDataPreparationV1 {
   const prepared = verifyProtectedShape(value), plan = verifyInstallationPlanV1(installationPlan),
-    storage = storageBindings(storageConfiguration), stage = plan.stages.find(item => item.stage === "protected_data"),
+    storage = protectedDataStorageBindingsV1(storageConfiguration), stage = plan.stages.find(item => item.stage === "protected_data"),
     trustedState = protectedState.parse(observation.observedState), trustedObservation = digest.parse(observation.observationDigest);
   if (!stage || stage.state !== "running" || prepared.installationPlanDigest !== plan.planDigest
     || prepared.releaseDigest !== plan.releaseDigest || prepared.releaseDigest !== storage.releaseDigest
@@ -226,7 +226,7 @@ function prepareRecovery(input: Readonly<{ installationPlan: unknown; topologyPl
   observedState: unknown; observationDigest: unknown; backupRestoreProof?: unknown;
 }>): RecoveryPreparationV1 {
   const plan = verifyInstallationPlanV1(input.installationPlan), topology = verifyInstallationTopologyPlanV1(input.topologyPlan),
-    protectedData = verifyProtectedShape(input.protectedDataPreparation), storage = storageBindings(input.storageConfiguration),
+    protectedData = verifyProtectedShape(input.protectedDataPreparation), storage = protectedDataStorageBindingsV1(input.storageConfiguration),
     captured = capturedStorage(input.storageConfiguration),
     databaseAuthorityOutcomeDigest = digest.parse(input.databaseAuthorityOutcomeDigest),
     expectedDatabaseIdentityDigest = digest.parse(input.expectedDatabaseIdentityDigest),

@@ -94,10 +94,33 @@ stage outcome is the resulting `protectedDataBindingDigest`, not a database or
 transaction receipt, preserving the existing recovery contract. Exact replay
 and concurrent identical confirmation converge; stale, changed, foreign,
 uncertain or competing evidence refuses without repair or retry. Recovery is
-not settled by this package: its existing preparation verifies a disposable
-restore proof, but an accepted private recovery terminal runner/wrapper does
-not yet exist. No live filesystem, storage, backup, restore, database or
-credential effect was performed.
+now source-complete through the matching private owner runner and durable
+settlement transaction. The runner captures one exact installation-bound owner
+confirmation and one injected existing-rehearsal callable, then accepts only
+the existing combined disposable database-and-artifact restore proof bound to
+the running plan revision, topology, release, passed database and protected-data
+outcomes, database identity, schema and storage namespace. Pre-effect refusal
+is distinct from post-call uncertainty. Only its exact terminal confirmation
+may append the existing recovery stage, whose outcome remains the proof digest;
+exact replay and concurrent identical settlement converge, while stale,
+changed, foreign-installation, competing or uncertain evidence refuses. No
+live filesystem, storage, backup, restore, database or credential effect was
+performed, and the production owner-attended adapter remains absent.
+
+The guided local setup flow now also has one source-only private dispatcher
+over the existing installation plan journal. It verifies the exact
+installation, topology, release, plan digest and revision, dispatches only the
+first incomplete owner-effect stage after the retained launcher prerequisite transaction, and reuses the accepted PostgreSQL,
+protected-data and first-owner runners and settlement transactions. It creates
+no second state machine, database, receipt store, scheduler, browser effect or
+native effect. PostgreSQL's provision, migration and terminal evidence remain
+one ordered call, with owner confirmation and exact release/ledger checks at
+each existing runner request. An uncertain call leaves the stage running, so a
+later call refuses rather than retrying. Recovery remains an explicit stop
+because its production owner-attended adapter is absent and its concurrent
+dispatcher integration has not been independently accepted; the service is a
+second explicit stop because no reviewed macOS native port exists. No live
+setup operation was performed.
 
 The first-owner stage now has an accepted durable settlement transaction over
 the existing installation journal. It rebuilds the exact prepared request from
@@ -155,6 +178,19 @@ their distinct proof exists. Historical receipts and an already-recorded lease
 remain readable for recovery. Focused adapter tests, private-startup tests,
 VPS compilation and TypeScript passed. This is source and disposable-test
 evidence only: it enables no worker, database, listener or persistent service.
+
+The local Hermes path now also has a source-only owner-admission preparation.
+It re-verifies a saved installation binding against current private
+observations, authenticates the supplied installation ID through an exact
+replay against the existing installation journal, binds the shared delivery, canonical result, durable review and
+correction contracts, and emits only a redacted owner-review request. Before
+that proof exists it names the first incomplete database, protected-data,
+first-owner, recovery, service or agent-readiness stage. Capacity observations
+cannot satisfy the gate. Even an exact request remains blocked on production
+private startup, recorded owner admission, durable `agent_readiness`
+settlement and passed final setup review. Nine adversarial checks and the
+TypeScript check pass; no queue, store, callback, service, worker or task was
+created or started.
 
 The installable-product track now also has eighteen accepted source foundations:
 an allowlisted reproducible release archive with a manifest and checksum; a
@@ -573,7 +609,10 @@ database, browser login, backup, persistent service or remote machine.
    store, exact runner binding and read-only setup status. The source already
    captures and validates this composition without browser-controlled inputs;
    it cannot choose private settings, create a database, start a service, or
-   enable Hermes by itself.
+   enable Hermes by itself. The new admission preparation can bind an exact
+   current installation to the retained lifecycle, but a reviewed production
+   private-startup composition, attached-owner admission runner, durable
+   `agent_readiness` settlement and passed final review are still required.
 2. Complete the remaining fresh-install first-owner package: a durable local
    ceremony marker, bootstrap-only server composition, narrow database
    capability and reviewed Linux peer-credential control channel. The ceremony

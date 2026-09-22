@@ -266,6 +266,7 @@ jobs:
         run: |
           pnpm run test:unified-topology
           pnpm run test:local-installation
+          pnpm run test:local-hermes-admission
       - name: Local adapters, recovery, transitions and product surfaces
         run: |
           node --import tsx --test \
