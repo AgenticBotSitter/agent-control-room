@@ -121,9 +121,15 @@ async function prepared(storage = new ControlledStorage(), resultText = "Exact s
     updatedAt: currentJob.createdAt });
   const plannedJob = { ...currentJob, state: "proposed" as const, version: 0, updatedAt: currentJob.createdAt };
   const connectorProfileDigest = sha256Digest("profile:codex"), workspaceIntentDigest = sha256Digest("workspace:intent");
+  const revisionAuthority = { ...authority, expiresAt: at(600_000), digest: sha256Digest("pending") };
+  revisionAuthority.digest = computeAuthorityDigest(revisionAuthority);
+  const revisionTemplate = { id: "template:codex-revision", adapter: CODEX_APP_SERVER_ADAPTER,
+    instructions: "Use the saved task only", authority: revisionAuthority,
+    acceptanceProfileId: profile.id, acceptanceProfileDigest: sha256Digest(profile),
+    connectorProfileDigest, workspaceIntentDigest } as const;
   const plan = codexTaskExecutionPlanSchemaV3.parse({ schema: "control-room.task-execution-plan/v3",
     tenantId: "tenant:test", projectId: "project:test", sourceJobId: "job:proposal",
-    sourceDigest: sha256Digest("source"), sourceInputDigest: inputDigest, templateDigest: sha256Digest("template"),
+    sourceDigest: sha256Digest("source"), sourceInputDigest: inputDigest, templateDigest: sha256Digest(revisionTemplate),
     plannedBy: "identity:test", plannedAt: at(-60_000), input: { prompt, instructions }, request, workflow, job: plannedJob,
     acceptanceProfileId: profile.id, acceptanceProfileDigest: sha256Digest(profile), adapter: CODEX_APP_SERVER_ADAPTER,
     connectorProfileDigest, workspaceIntentDigest });
@@ -255,6 +261,7 @@ async function prepared(storage = new ControlledStorage(), resultText = "Exact s
     } };
   };
   return { f, storage, publisher, publisherInstance, publication, terminalEvidence, qualificationReceipt, checkpoints, inputDigest,
+    revisionTemplate,
     bytes: new TextEncoder().encode(text), qualificationTrust,
     setNow(value: number) { clockNow = value; }, revokeAuthority() { authorityCurrent = false; } };
 }
@@ -481,15 +488,7 @@ test("a Codex change request produces one inert authenticated Codex revision pla
   const reviewed = await owner.reviews.record(owner.identity, "project:test", "job:test", {
     artifactId: saved.receipt.artifactId, targetId: saved.target.id, targetDigest: sha256Digest(saved.target),
     contentHash: saved.receipt.contentHash, decision: "changes_requested", feedback }, "codex-revision-plan");
-  const currentJob = await x.f.canonical.get("tenant:test", "job", "job:test");
-  assert.ok(currentJob?.kind === "job");
-  const revisionAuthority = { ...currentJob.authority, expiresAt: at(600_000), digest: sha256Digest("pending") };
-  revisionAuthority.digest = computeAuthorityDigest(revisionAuthority);
-  const template = { id: "template:codex-revision", adapter: CODEX_APP_SERVER_ADAPTER,
-    instructions: "Use the saved task only", authority: revisionAuthority,
-    acceptanceProfileId: saved.target.acceptanceProfileId, acceptanceProfileDigest: saved.target.acceptanceProfileDigest,
-    connectorProfileDigest: x.publication.connection.connectorProfileDigest,
-    workspaceIntentDigest: sha256Digest("workspace:intent") } as const;
+  const template = x.revisionTemplate;
   const inspection = codexInspection(x);
   const planner = new TaskExecutionPlanner(x.f.db, { tenantId: "tenant:test", workspaceId: "workspace:test" },
     { template, integrityKey: taskPlanKey, reviewIntegrityKey: reviewKey, checkpoints: x.checkpoints },
