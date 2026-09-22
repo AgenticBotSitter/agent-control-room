@@ -14,10 +14,15 @@ import { runPrivatePostgresOwnerActionV1, type PrivatePostgresOwnerRuntimeV1 } f
   "./private-postgres-owner-runner";
 import { runPrivateProtectedRootOwnerActionV1, type PrivateProtectedRootOwnerRuntimeV1 } from
   "./private-protected-root-owner-runner";
+import { capturePrivateRecoveryOwnerRuntimePortV1, runPrivateRecoveryOwnerActionV1,
+  verifyPrivateRecoveryOwnerRuntimeV1, type PrivateRecoveryOwnerRuntimeV1 } from
+  "./private-recovery-owner-runner";
 import { confirmProtectedDataActionTerminalV1, prepareProtectedDataActionTransactionRequestV1,
   PROTECTED_DATA_ACTION_TERMINAL_CONFIRMATION_V1 } from "./protected-data-action-transaction";
 import { prepareProtectedDataRecoveryOwnerActionV1 } from "./protected-data-recovery-owner-action";
-import { protectedDataStageInputDigestV1, protectedDataStorageBindingsV1 } from "./protected-data-recovery-preparation";
+import { protectedDataStageInputDigestV1, protectedDataStorageBindingsV1, recoveryStageInputDigestV1 } from
+  "./protected-data-recovery-preparation";
+import { confirmRecoveryActionTerminalV1 } from "./recovery-action-transaction";
 
 /**
  * Private, source-only dispatcher over the accepted installation journal and
@@ -30,7 +35,8 @@ export const PRIVATE_LOCAL_SETUP_ORCHESTRATOR_V1 =
 type Journal = Pick<InstallationPlanFilesystemJournalV1, "append" | "readHistory">;
 type Stage = "database_authority" | "protected_data" | "first_owner" | "recovery" | "platform_service";
 type Runtime = Readonly<{ journal: Journal; postgres?: PrivatePostgresOwnerRuntimeV1;
-  protectedData?: PrivateProtectedRootOwnerRuntimeV1; firstOwner?: PrivateFirstOwnerRuntimeV1 }>;
+  protectedData?: PrivateProtectedRootOwnerRuntimeV1; firstOwner?: PrivateFirstOwnerRuntimeV1;
+  recovery?: PrivateRecoveryOwnerRuntimeV1 }>;
 
 export type PrivateLocalSetupOrchestratorResultV1 = Readonly<{
   schema: typeof PRIVATE_LOCAL_SETUP_ORCHESTRATOR_V1;
@@ -74,6 +80,22 @@ function exact(value: unknown, names: readonly string[]): Readonly<Record<string
 function digest(value: unknown): string {
   if (typeof value !== "string" || !digestPattern.test(value)) return refused();
   return value;
+}
+
+function captureRecoverySource(value: unknown): unknown {
+  const source = exact(value, ["protectedDataPreparation", "storageConfiguration", "protectedDataObservation",
+    "databaseAuthorityOutcomeDigest", "expectedDatabaseIdentityDigest", "expectedDatabaseSchemaDigest",
+    "observedState", "observationDigest"]);
+  const captured = JSON.parse(canonicalJson(source)) as unknown;
+  const freeze = (item: unknown): unknown => {
+    if (Array.isArray(item)) return Object.freeze(item.map(freeze));
+    if (item && typeof item === "object") {
+      const plain = record(item);
+      return Object.freeze(Object.fromEntries(Object.entries(plain).map(([name, nested]) => [name, freeze(nested)])));
+    }
+    return item;
+  };
+  return freeze(captured);
 }
 
 function captureJournal(value: unknown): Journal {
@@ -146,7 +168,7 @@ async function append(journal: Journal, installationId: string, plan: Installati
 }
 
 async function startStage(journal: Journal, input: Captured, plan: InstallationPlanV1,
-  selected: "protected_data" | "first_owner", stageInputDigest: string): Promise<InstallationPlanV1> {
+  selected: "protected_data" | "first_owner" | "recovery", stageInputDigest: string): Promise<InstallationPlanV1> {
   if (nextStage(plan) !== selected || stage(plan, selected).state !== "not_started") return refused();
   const stageInputDigests = Object.fromEntries(plan.stages.map(item => [item.stage,
     item.stage === selected ? stageInputDigest : item.inputDigest]));
@@ -157,7 +179,8 @@ async function startStage(journal: Journal, input: Captured, plan: InstallationP
   return append(journal, input.installationId, running, true);
 }
 
-function actionInput(plan: InstallationPlanV1, input: Captured, action: "postgres" | "protected_data" | "first_owner",
+function actionInput(plan: InstallationPlanV1, input: Captured,
+  action: "postgres" | "protected_data" | "first_owner" | "recovery",
   source: unknown) {
   return Object.freeze({ installationPlan: plan, topologyPlan: input.topologyPlan, expectedPlanRevision: plan.revision,
     action, source });
@@ -246,6 +269,43 @@ async function firstOwner(input: Captured, journal: Journal, current: Installati
   return completed(input, verifyInstallationPlanV1(history.at(-1)), settled.receipt.receiptDigest);
 }
 
+async function recovery(input: Captured, journal: Journal, current: InstallationPlanV1,
+  runtime: PrivateRecoveryOwnerRuntimeV1) {
+  const source = exact(input.source, ["protectedDataPreparation", "storageConfiguration", "protectedDataObservation",
+    "databaseAuthorityOutcomeDigest", "expectedDatabaseIdentityDigest", "expectedDatabaseSchemaDigest",
+    "observedState", "observationDigest"]);
+  const protectedPreparation = record(source.protectedDataPreparation);
+  const storage = protectedDataStorageBindingsV1(source.storageConfiguration as
+    Parameters<typeof protectedDataStorageBindingsV1>[0]);
+  const stageInputDigest = recoveryStageInputDigestV1({ releaseDigest: input.expectedReleaseDigest,
+    topologyPlanDigest: input.topologyPlan.planDigest,
+    protectedDataBindingDigest: digest(protectedPreparation.protectedDataBindingDigest),
+    storageConfigurationDigest: storage.storageConfigurationDigest,
+    storageNamespaceDigest: storage.storageNamespaceDigest,
+    databaseAuthorityOutcomeDigest: source.databaseAuthorityOutcomeDigest,
+    expectedDatabaseIdentityDigest: source.expectedDatabaseIdentityDigest,
+    expectedDatabaseSchemaDigest: source.expectedDatabaseSchemaDigest });
+  if (nextStage(current) !== "recovery" || stage(current, "recovery").state !== "not_started") return refused();
+  const stageInputDigests = Object.fromEntries(current.stages.map(item => [item.stage,
+    item.stage === "recovery" ? stageInputDigest : item.inputDigest]));
+  const refreshed = refreshInstallationPlanV1(current, { topologyPlan: input.topologyPlan,
+    releaseDigest: input.expectedReleaseDigest, stageInputDigests });
+  const running = advanceInstallationPlanV1(refreshed, { expectedRevision: refreshed.revision,
+    stage: "recovery", action: "start" });
+  const currentActionInput = actionInput(running, input, "recovery", source);
+  const actionPreparation = prepareInstallationActionV1(currentActionInput);
+  const exactRuntime = verifyPrivateRecoveryOwnerRuntimeV1({ actionPreparation, actionInput: currentActionInput }, runtime);
+  if (canonicalJson(refreshed) !== canonicalJson(current)) await append(journal, input.installationId, refreshed);
+  await append(journal, input.installationId, running, true);
+  const result = await runPrivateRecoveryOwnerActionV1({ actionPreparation, actionInput: currentActionInput }, exactRuntime);
+  const settled = await confirmRecoveryActionTerminalV1({ installationId: input.installationId,
+    actionPreparation, actionInput: currentActionInput, terminalConfirmation: result.terminalConfirmation }, { journal });
+  const history = await journal.readHistory();
+  const latest = verifyInstallationPlanV1(history.at(-1)), recovered = stage(latest, "recovery");
+  if (recovered.state !== "passed" || recovered.outcomeDigest !== settled.receipt.backupRestoreProofDigest) return refused();
+  return completed(input, latest, settled.receipt.receiptDigest);
+}
+
 /**
  * Dispatches only the exact next journal stage. Every effectful accepted stage
  * starts and settles within one call; a retained running/uncertain stage is
@@ -254,14 +314,23 @@ async function firstOwner(input: Captured, journal: Journal, current: Installati
 export async function dispatchPrivateLocalSetupStageV1(inputValue: unknown,
   runtimeValue: Runtime): Promise<PrivateLocalSetupOrchestratorResultV1> {
   try {
-    const input = captureInput(inputValue), runtime = record(runtimeValue), journal = captureJournal(runtime.journal);
+    let input = captureInput(inputValue);
+    const runtime = record(runtimeValue), journal = captureJournal(runtime.journal);
+    let recoveryRuntime: PrivateRecoveryOwnerRuntimeV1 | undefined;
+    if (input.requestedStage === "recovery" && Object.keys(runtime).sort().join(",") === "journal,recovery") {
+      input = Object.freeze({ ...input, source: captureRecoverySource(input.source) });
+      recoveryRuntime = capturePrivateRecoveryOwnerRuntimePortV1(runtime.recovery);
+    }
     const plan = await currentAndBound(journal, input);
     if (nextStage(plan) !== input.requestedStage) return refused();
     const selected = stage(plan, input.requestedStage);
     if (selected.state !== "not_started") return refused();
     if (input.requestedStage === "recovery") {
-      if (Object.keys(runtime).sort().join(",") !== "journal" || Object.keys(record(input.source)).length !== 0) return refused();
-      return blocked(input, plan, "recovery_private_adapter_missing");
+      const runtimeShape = Object.keys(runtime).sort().join(",");
+      if (runtimeShape === "journal" && Object.keys(record(input.source)).length === 0)
+        return blocked(input, plan, "recovery_private_adapter_missing");
+      if (runtimeShape !== "journal,recovery" || !recoveryRuntime) return refused();
+      return await recovery(input, journal, plan, recoveryRuntime);
     }
     if (input.requestedStage === "platform_service") {
       if (Object.keys(runtime).sort().join(",") !== "journal" || Object.keys(record(input.source)).length !== 0) return refused();

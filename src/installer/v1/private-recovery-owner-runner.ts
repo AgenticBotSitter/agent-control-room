@@ -158,24 +158,45 @@ export function preparePrivateRecoveryOwnerRequestV1(input: unknown): PrivateRec
   } catch { return refused(); }
 }
 
-function capturedRuntime(value: unknown, request: PrivateRecoveryRequestV1) {
+/** Captures the exact private port before any caller-controlled asynchronous boundary. */
+export function capturePrivateRecoveryOwnerRuntimePortV1(value: unknown): PrivateRecoveryOwnerRuntimeV1 {
   const runtime = exact(value, ["binding", "signal", "controlDeadlineMs", "confirmOwnerAttachedTerminal",
     "runExistingBackupRestoreRehearsal"]), binding = exact(runtime.binding, ["schema", "installationId",
       "installationPlanDigest", "installationPlanRevision", "topologyPlanDigest", "releaseDigest",
       "protectedDataBindingDigest", "databaseAuthorityOutcomeDigest"]);
   if (binding.schema !== PRIVATE_RECOVERY_INSTALLATION_BINDING_V1 || typeof binding.installationId !== "string"
-    || !installationIdPattern.test(binding.installationId) || binding.installationPlanDigest !== request.installationPlanDigest
-    || binding.installationPlanRevision !== request.installationPlanRevision || binding.topologyPlanDigest !== request.topologyPlanDigest
-    || binding.releaseDigest !== request.releaseDigest || binding.protectedDataBindingDigest !== request.protectedDataBindingDigest
-    || binding.databaseAuthorityOutcomeDigest !== request.databaseAuthorityOutcomeDigest || !runtime.signal
+    || !installationIdPattern.test(binding.installationId)
+    || !Number.isSafeInteger(binding.installationPlanRevision) || (binding.installationPlanRevision as number) < 0 || !runtime.signal
     || typeof runtime.signal !== "object" || typeof (runtime.signal as AbortSignal).aborted !== "boolean"
     || typeof (runtime.signal as AbortSignal).addEventListener !== "function" || !Number.isSafeInteger(runtime.controlDeadlineMs)
     || (runtime.controlDeadlineMs as number) < 1 || (runtime.controlDeadlineMs as number) > 300_000
     || typeof runtime.confirmOwnerAttachedTerminal !== "function" || typeof runtime.runExistingBackupRestoreRehearsal !== "function") return refused();
   const owner = value as PrivateRecoveryOwnerRuntimeV1;
-  return Object.freeze({ binding: Object.freeze({ ...binding }) as unknown as PrivateRecoveryInstallationBindingV1,
+  const capturedBinding = Object.freeze({ schema: PRIVATE_RECOVERY_INSTALLATION_BINDING_V1,
+    installationId: binding.installationId, installationPlanDigest: digest(binding.installationPlanDigest),
+    installationPlanRevision: binding.installationPlanRevision as number, topologyPlanDigest: digest(binding.topologyPlanDigest),
+    releaseDigest: digest(binding.releaseDigest), protectedDataBindingDigest: digest(binding.protectedDataBindingDigest),
+    databaseAuthorityOutcomeDigest: digest(binding.databaseAuthorityOutcomeDigest) });
+  return Object.freeze({ binding: capturedBinding,
     signal: runtime.signal as AbortSignal, controlDeadlineMs: runtime.controlDeadlineMs as number,
-    confirm: owner.confirmOwnerAttachedTerminal.bind(owner), run: owner.runExistingBackupRestoreRehearsal.bind(owner) });
+    confirmOwnerAttachedTerminal: owner.confirmOwnerAttachedTerminal.bind(owner),
+    runExistingBackupRestoreRehearsal: owner.runExistingBackupRestoreRehearsal.bind(owner) });
+}
+function capturedRuntime(value: unknown, request: PrivateRecoveryRequestV1) {
+  const runtime = capturePrivateRecoveryOwnerRuntimePortV1(value), binding = runtime.binding;
+  if (binding.installationPlanDigest !== request.installationPlanDigest
+    || binding.installationPlanRevision !== request.installationPlanRevision || binding.topologyPlanDigest !== request.topologyPlanDigest
+    || binding.releaseDigest !== request.releaseDigest || binding.protectedDataBindingDigest !== request.protectedDataBindingDigest
+    || binding.databaseAuthorityOutcomeDigest !== request.databaseAuthorityOutcomeDigest) return refused();
+  return Object.freeze({ binding, signal: runtime.signal, controlDeadlineMs: runtime.controlDeadlineMs,
+    confirm: runtime.confirmOwnerAttachedTerminal, run: runtime.runExistingBackupRestoreRehearsal });
+}
+
+/** Reuses the runner's exact request and binding checks without invoking either private callback. */
+export function verifyPrivateRecoveryOwnerRuntimeV1(input: unknown, runtimeInput: unknown): PrivateRecoveryOwnerRuntimeV1 {
+  const request = preparePrivateRecoveryOwnerRequestV1(input), runtime = capturedRuntime(runtimeInput, request);
+  return Object.freeze({ binding: runtime.binding, signal: runtime.signal, controlDeadlineMs: runtime.controlDeadlineMs,
+    confirmOwnerAttachedTerminal: runtime.confirm, runExistingBackupRestoreRehearsal: runtime.run });
 }
 function context(request: PrivateRecoveryRequestV1, runtime: ReturnType<typeof capturedRuntime>): PrivateRecoveryRunnerContextV1 {
   return Object.freeze({ installationId: runtime.binding.installationId, requestDigest: request.requestDigest,
