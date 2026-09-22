@@ -26,6 +26,7 @@ import {
 import { fileURLToPath } from "node:url";
 import { createDeterministicTarGzipV1 } from "./local-release-assembly.mjs";
 import { stageLocalReleaseV1 } from "./local-release-stager.mjs";
+import { superviseLocalSetupLauncherHostV1 } from "./local-setup-launcher-supervisor.mjs";
 
 export const MACOS_LOCAL_LAUNCHER_BUNDLE_V1 =
   "control-room.macos-local-launcher-bundle/v1";
@@ -320,10 +321,24 @@ export async function runMacosLocalLauncherBundleV1(input, dependencies = {}) {
   if (setup.state !== "source_only_rehearsal_begun" || setup.version !== staged.version
     || setup.createsDatabase || setup.startsService || setup.startsWorker || setup.launcherComplete
     || setup.productionAcceptanceComplete) refused();
+  const supervisor = dependencies.supervisor ?? superviseLocalSetupLauncherHostV1;
+  const supervised = await supervisor({ executable: process.execPath, cwd: versionRoot,
+    environment: common.environment, args: [join(versionRoot, "scripts", "run-local-setup-host.mjs"),
+      "--release-root", versionRoot, "--journal-root", journalRoot,
+      "--installation-id", installationId, "--port", "3210"] }, {
+    runOpener: dependencies.openerRunner ?? runBoundedMacosLauncherChildV1,
+    ...(dependencies.spawnProcess ? { spawnProcess: dependencies.spawnProcess } : {}),
+    ...(dependencies.signals ? { signals: dependencies.signals } : {}),
+    ...(dependencies.killGroup ? { killGroup: dependencies.killGroup } : {}),
+    ...(dependencies.setTimer ? { setTimer: dependencies.setTimer } : {}),
+    ...(dependencies.clearTimer ? { clearTimer: dependencies.clearTimer } : {}),
+  });
+  if (supervised?.state !== "setup_host_closed" || supervised.ready !== true
+    || supervised.opened !== true || supervised.reaped !== true) refused("macos_local_launcher_setup_host_refused");
   return Object.freeze({ schema: MACOS_LOCAL_LAUNCHER_BUNDLE_V1, state: "source_only_setup_prepared",
     version: staged.version, releaseVerified: true, preflightPassed: true, setupEntrypointCompleted: true,
     alreadyStaged: staged.alreadyStaged, createsDatabase: false, startsService: false, startsWorker: false,
-    launcherComplete: false, productionAcceptanceComplete: false });
+    setupHostOpened: true, setupHostClosed: true, launcherComplete: false, productionAcceptanceComplete: false });
 }
 
 async function assertAbsent(path) {
@@ -387,7 +402,8 @@ export async function assembleMacosLocalLauncherBundleV1(input) {
         await copyFile(source, destination, fsConstants.COPYFILE_EXCL);
         await chmod(destination, 0o644);
       }
-      const runtime = ["local-release-assembly.mjs", "local-release-stager.mjs", "macos-local-launcher-bundle.mjs"];
+      const runtime = ["local-release-assembly.mjs", "local-release-stager.mjs", "local-setup-launcher-supervisor.mjs",
+        "macos-local-launcher-bundle.mjs"];
       for (const name of runtime) {
         const source = join(sourceRoot, "src", "installer", "v1", name);
         await regularFile(source, sourceRoot);

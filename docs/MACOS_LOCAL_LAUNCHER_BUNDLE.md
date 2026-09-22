@@ -20,7 +20,8 @@ composes, rather than replaces, the accepted paths:
 
 1. the checksum- and manifest-verifying local release stager;
 2. the staged release's read-only platform/package preflight; and
-3. the staged release's `scripts/launch-local-setup.mjs` entrypoint.
+3. the staged release's `scripts/launch-local-setup.mjs` entrypoint; and
+4. the staged release's fixed loopback setup-host entrypoint.
 
 Every manifest, runtime and release file must have exact mode `0644`; the
 Finder command and directories must have exact mode `0755`. Broader write or
@@ -32,6 +33,15 @@ one-minute outer bound. The shipped setup entrypoint has a distinct twenty-
 minute outer bound around its own fifteen-minute dependency-tool bound. A
 timeout terminates the owned process group, including descendants, before the
 launcher returns.
+
+After those finite steps pass, a separate narrow supervisor starts the
+long-lived setup host on fixed port `3210`. It accepts one exact readiness
+record, opens only `/usr/bin/open http://127.0.0.1:3210/setup` after that
+record, and keeps ownership of the host until the launcher is stopped. A
+startup timeout, unexpected output, browser-opener failure, early exit, or
+parent shutdown terminates and reaps the owned process group. This supervisor
+does not reuse the finite-child timeout helper as if the host were a short
+command.
 
 The current shipped setup entrypoint is still the source-only rehearsal. It
 may prepare production dependencies in an owner-run launch, which can use the
@@ -63,7 +73,7 @@ copies or materially adapts T3 source.
 
 The assembler first asks the existing stager to validate the three supplied
 release files in a disposable directory. It then includes only those files,
-the three required Control Room runtime modules, the `.command` file, and the
+the four required Control Room runtime modules, the `.command` file, and the
 outer manifest. It reuses the ordinary local release's deterministic tar-gzip
 writer, with normalized paths, hashes, byte lengths, Unix modes, ownership and
 timestamps. Repeating assembly over identical inputs produces the same gzip
@@ -90,7 +100,7 @@ notarize, install, or launch it.
   owner-attended clean-Mac acceptance run.
 - Node.js 22.13 or later and the pinned `pnpm` 11.19.0 command remain external
   prerequisites; this bundle downloads neither.
-- The real durable setup page, database/protected-data/recovery actions,
+- The setup page is real but deliberately read-only. Database/protected-data/recovery actions,
   background service installation, activation, upgrade, rollback, and agent
   enablement remain separate unfinished packages.
 - Automated tests use only disposable folders and injected process results.

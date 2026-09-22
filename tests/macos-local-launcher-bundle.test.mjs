@@ -57,7 +57,7 @@ test("assembles one deterministic macOS asset with an executable Finder launcher
   assert.doesNotMatch(source, /curl|wget|brew|npm install/u);
   await run("/bin/sh", ["-n", command]);
   assert.deepEqual(await verifyExtractedMacosLocalLauncherBundleV1(bundleRoot), {
-    verified: true, version: "0.1.0", fileCount: 7,
+    verified: true, version: "0.1.0", fileCount: 8,
   });
 });
 
@@ -100,7 +100,7 @@ test("composes the existing stager, shipped preflight, and shipped setup entrypo
   const installRoot = join(suiteRoot, "private-install"), journalRoot = join(suiteRoot, "private-journal");
   const launcherHome = join(suiteRoot, "launcher-home");
   await mkdir(installRoot, { mode: 0o700 }); await mkdir(journalRoot, { mode: 0o700 });
-  const calls = [];
+  const calls = [], supervisors = [];
   const runner = async spec => {
     calls.push(spec);
     if (spec.args[0].endsWith("scripts/prepare-local-installation.mjs")) {
@@ -117,6 +117,10 @@ test("composes the existing stager, shipped preflight, and shipped setup entrypo
   const report = await runMacosLocalLauncherBundleV1({ bundleRoot, homeDirectory: launcherHome, installRoot, journalRoot,
     installationId: "disposable-macos-test" }, {
     platform: "darwin", architecture: "arm64", nodeVersion: "22.13.0", runner,
+    async supervisor(spec, dependencies) {
+      supervisors.push({ spec, dependencies });
+      return { state: "setup_host_closed", ready: true, opened: true, reaped: true };
+    },
     hostEnvironment: { PATH: "/safe/bin", HOME: "/private/source-home", TMPDIR: "/private/tmp",
       LANG: "en_US.UTF-8", NODE_OPTIONS: "--require=/secret/startup.cjs", BASH_ENV: "/secret/bash-env",
       NPM_TOKEN: "secret", npm_config_userconfig: "/secret/npmrc" },
@@ -125,6 +129,8 @@ test("composes the existing stager, shipped preflight, and shipped setup entrypo
   assert.equal(report.releaseVerified, true);
   assert.equal(report.preflightPassed, true);
   assert.equal(report.launcherComplete, false);
+  assert.equal(report.setupHostOpened, true);
+  assert.equal(report.setupHostClosed, true);
   assert.equal(report.productionAcceptanceComplete, false);
   assert.equal(calls.length, 2);
   assert.match(calls[0].args[0], /versions\/0\.1\.0\/scripts\/prepare-local-installation\.mjs$/u);
@@ -135,6 +141,11 @@ test("composes the existing stager, shipped preflight, and shipped setup entrypo
     TMPDIR: "/private/tmp", LANG: "en_US.UTF-8" });
   assert.equal(calls[0].timeoutMs, 60_000);
   assert.equal(calls[1].timeoutMs, 20 * 60_000);
+  assert.equal(supervisors.length, 1);
+  assert.deepEqual(supervisors[0].spec.args, [join(installRoot, "versions", "0.1.0", "scripts", "run-local-setup-host.mjs"),
+    "--release-root", join(installRoot, "versions", "0.1.0"), "--journal-root", journalRoot,
+    "--installation-id", "disposable-macos-test", "--port", "3210"]);
+  assert.equal(supervisors[0].dependencies.runOpener, runBoundedMacosLauncherChildV1);
   for (const key of ["NODE_OPTIONS", "BASH_ENV", "ENV", "NPM_TOKEN", "npm_config_userconfig"]) {
     assert.equal(Object.hasOwn(calls[0].environment, key), false);
   }

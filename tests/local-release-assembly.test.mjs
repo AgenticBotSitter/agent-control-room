@@ -76,6 +76,7 @@ test("assembles the same reviewed release bytes twice with no installation effec
     assert.equal(paths.has("scripts/prepare-local-installation.mjs"), true);
     assert.equal(paths.has("scripts/prepare-local-production-dependencies.mjs"), true);
     assert.equal(paths.has("scripts/launch-local-setup.mjs"), true);
+    assert.equal(paths.has("scripts/run-local-setup-host.mjs"), true);
     assert.equal(paths.has("src/installer/v1/local-clean-install-acceptance.mjs"), true);
     assert.equal(paths.has("src/installer/v1/local-installation-release.mjs"), true);
     assert.equal(paths.has("src/installer/v1/local-production-dependencies.mjs"), true);

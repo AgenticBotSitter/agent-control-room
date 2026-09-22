@@ -98,8 +98,12 @@ requests, and exposes only the redacted setup and settled-plan views. Its plan
 reader is genuinely read-only: an interrupted journal publication makes the
 view unavailable and is never repaired or deleted by a browser GET. The
 ordinary private HTTPS application, projects, actions, workers, database and
-credentials remain outside this host. This source package is not yet wired to
-the double-click launcher and starts no listener by itself.
+credentials remain outside this host. The double-click launcher is now wired
+to the shipped host through a bounded supervisor: it waits for exact readiness,
+opens only the fixed loopback setup URL, stays alive with the host, and owns
+TERM/KILL/reap cleanup. Source tests exercise injected processes only; no real
+listener, browser, installation, database, service, credential, or worker was
+started by this package.
 
 ## What source evidence proves today
 

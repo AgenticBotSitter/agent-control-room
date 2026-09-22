@@ -27,10 +27,12 @@ shipped dependency-preparation step refuses any other pnpm version. It does
 not install Node or pnpm for you.
 
 The first public product path is deliberately narrow. A compiled, read-only
-loopback setup page now exists and is tested from the built artifact, but the
-launcher still reaches the source-only, owner-attended setup rehearsal and
-does not yet start that host or open the browser. It does not activate a
-database, background service, Hermes, Codex, or Claude.
+loopback setup page now exists, is tested from the built artifact, and is wired
+to the launcher. After the existing verification, preflight, and source-only
+rehearsal succeed, the launcher starts that host, waits until it is actually
+ready, and opens only `http://127.0.0.1:3210/setup`. Closing the launcher stops
+the host. This still does not activate a database, background service, Hermes,
+Codex, or Claude.
 Do not treat a successful download or launcher opening as a working Control
 Room installation.
 
@@ -61,11 +63,13 @@ Double-click the archive to extract it, then double-click:
 
 The launcher verifies its own contents and the inner release, places the
 verified release in a private version directory, performs a read-only
-compatibility check, and runs the shipped source-only setup entrypoint. The
-next package will hand that launcher to the already-built loopback setup page;
-the current launcher does not open it yet. It stops if the package is incomplete or
-changed, if macOS/CPU is unsupported, if Node.js is too old, or if pnpm is not
-exactly 11.19.0 when dependency preparation begins.
+compatibility check, runs the shipped source-only setup entrypoint, starts the
+shipped read-only setup host, and opens the fixed local setup page only after
+the host reports that it is ready. The launcher remains responsible for that
+temporary host and shuts down its whole owned process group when the user
+stops it or startup fails. It stops if the package is incomplete or changed,
+if macOS/CPU is unsupported, if Node.js is too old, or if pnpm is not exactly
+11.19.0 when dependency preparation begins.
 
 It does not silently create a PostgreSQL database, install or start a service,
 write credentials, enable an agent, or start work. Those are separate,
