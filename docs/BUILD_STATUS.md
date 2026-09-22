@@ -216,6 +216,20 @@ Hermes callback and leaves `final_review` not started. Twenty adversarial
 checks and the TypeScript check pass; no queue, store, service, worker or task
 was created or started.
 
+The separate final installation review is now source-complete. It authenticates
+the exact installation and current journal tip, requires every earlier stage
+through `agent_readiness` to be passed, and binds the topology, release, and
+every prior input, outcome and recorded revision into one owner-review digest.
+One journal-elected runner presents only a redacted, bounded context to an
+attached owner; a separate settlement appends only the matching
+`final_review: passed` transition. Parent cancellation is linked before the
+first journal operation, so cancellation during pre-start work cannot call the
+owner or leave the review running. Exact and concurrent replay converge, while
+foreign, stale, changed or uncertain evidence refuses. The review cannot
+start an agent, service or worker and grants no authority. A real
+owner-attended execution and subsequent startup re-verification remain
+separate work.
+
 The installable-product track now also has eighteen accepted source foundations:
 an allowlisted reproducible release archive with a manifest and checksum; a
 standalone extracted-release preflight that needs no developer dependency;
