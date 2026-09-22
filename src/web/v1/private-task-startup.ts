@@ -37,9 +37,13 @@ import { readResultBoundWorktreeChangeAuditSummaryV1 } from "../../harness/v1/wo
 import { summarizeInstallationReadinessV1, verifyInstallationReadinessV1 } from "../../harness/v1/installation-readiness";
 import { localBackupRestoreEvidenceDigestForInstallationPlanV1 } from "../../harness/v1/local-backup-restore-readiness";
 import { summarizeLocalSupervisorReadinessV1 } from "../../harness/v1/local-supervisor-readiness";
-import { summarizeClaudeCodeLocalProcessReadinessV1 } from "../../harness/claude-code-v1/local-process-readiness";
 import { verifyPrivateLocalHermesStartupReverificationV1 } from
   "../../installer/v1/private-local-hermes-startup-reverification";
+import { isClaudeCodePrivateInstalledDeliverCapabilityV1 } from
+  "./claude-code-private-installation-composition";
+import { verifyLocalClaudePostInstallAdmissionReceiptV1 } from
+  "../../installer/v1/local-claude-post-install-admission";
+import { CLAUDE_CODE_LOCAL_ADAPTER_V1 } from "../../harness/claude-code-v1/task-planning-contract";
 
 type OwnedQueueWorker = { close(): Promise<void>; status(): { accepting: boolean } };
 
@@ -68,22 +72,6 @@ function requireReadyLocalHermesInstallation(web: ReturnType<typeof validatePriv
     throw new Error();
 }
 
-/** Claude's opaque process proof is separate from Hermes's qualification, but
- * it still needs the same installation-level recovery evidence before a
- * private callback can be mounted. Nothing here discovers or starts Claude. */
-function requireReadyLocalClaudeInstallation(web: ReturnType<typeof validatePrivateStartupConfiguration>) {
-  const plan = web.installationTopologyPlan, readiness = web.installationReadiness;
-  const backup = web.localBackupRestoreReadiness, supervisor = web.localSupervisorReadiness;
-  if (!plan || !readiness || !backup || !supervisor || web.claudeCodeLocalProcessReadiness === undefined) throw new Error();
-  if (summarizeClaudeCodeLocalProcessReadinessV1(plan.planDigest, web.claudeCodeLocalProcessReadiness).state !== "readiness_recorded")
-    throw new Error();
-  if (summarizeLocalSupervisorReadinessV1(plan.planDigest, supervisor).state !== "readiness_recorded") throw new Error();
-  const expectedBackup = localBackupRestoreEvidenceDigestForInstallationPlanV1(plan, backup);
-  const recorded = verifyInstallationReadinessV1(readiness)
-    .proofs.find(item => item.proof === "backup_restore");
-  if (recorded?.state !== "passed" || recorded.evidenceDigest !== expectedBackup) throw new Error();
-}
-
 export type PrivateTaskStartupConfiguration = {
   web: PrivateStartupConfiguration;
   news?: NewsStartupConfiguration;
@@ -101,6 +89,9 @@ export type PrivateTaskStartupConfiguration = {
     queueWorker?: { database: PrivatePostgresConfiguration; concurrency?: number };
     /** Read-only, installation-journal-bound admission for the exact local Hermes composition. */
     hermes021LocalStartupReverification?: unknown;
+    /** Read-only committed-transition proof for the exact branded Claude composition. */
+    claudeCodeLocalStartupReverification?: unknown;
+    claudeCodeLocalInstallationId?: string;
     database: PrivatePostgresConfiguration; resultDatabase?: PrivatePostgresConfiguration;
     ideaCreation?: { database: PrivatePostgresConfiguration; integrityKey: Uint8Array; participants: unknown[] };
     /** Already prepared inert ports; ownership transfers after configuration validation. No runtime factory is invoked here. */
@@ -204,10 +195,9 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
       ? Object.freeze({ deliver: input.coordinator.hermes021Local.deliver.bind(input.coordinator.hermes021Local) }) : undefined;
     if (hermes021Local && (!nativeQueue || !approvals)) throw new Error();
     if (hermes021Local) requireReadyLocalHermesInstallation(web);
-    const claudeCodeLocal = input.coordinator.claudeCodeLocal
-      ? Object.freeze({ deliver: input.coordinator.claudeCodeLocal.deliver.bind(input.coordinator.claudeCodeLocal) }) : undefined;
+    const claudeCodeLocal = input.coordinator.claudeCodeLocal;
+    if (claudeCodeLocal && !isClaudeCodePrivateInstalledDeliverCapabilityV1(claudeCodeLocal)) throw new Error();
     if (claudeCodeLocal && (!nativeQueue || !approvals)) throw new Error();
-    if (claudeCodeLocal) requireReadyLocalClaudeInstallation(web);
     const w = input.coordinator.queueWorker;
     const queueWorker = w ? { database: validatePrivatePostgresConfiguration(w.database), concurrency: w.concurrency ?? 1 } : undefined;
     if (queueWorker && (!nativeQueue || (!sessions && !hermes021Local && !claudeCodeLocal) || queueWorker.database.host !== database.host
@@ -223,6 +213,20 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
         installationPlan: web.installationPlan,
       });
     } else if (hermes021LocalStartupReverification !== undefined) throw new Error();
+    const claudeCodeLocalStartupReverification = input.coordinator.claudeCodeLocalStartupReverification;
+    if (claudeCodeLocal) {
+      if (claudeCodeLocalStartupReverification === undefined || !input.coordinator.claudeCodeLocalInstallationId
+        || !web.installationPlan || !web.installationTopologyPlan) throw new Error();
+      verifyLocalClaudePostInstallAdmissionReceiptV1(claudeCodeLocalStartupReverification, {
+        installationId: input.coordinator.claudeCodeLocalInstallationId,
+        originalInstallationPlanDigest: web.installationPlan.planDigest,
+        originalInstallationPlanRevision: web.installationPlan.revision,
+        originalTopologyPlanDigest: web.installationTopologyPlan.planDigest, releaseDigest: web.installationPlan.releaseDigest,
+        databaseAuthorityDigest: web.installationTopologyPlan.databaseAuthorityDigest,
+        schedulerAuthorityDigest: web.installationTopologyPlan.schedulerAuthorityDigest,
+        adapterId: CLAUDE_CODE_LOCAL_ADAPTER_V1 });
+    } else if (claudeCodeLocalStartupReverification !== undefined
+      || input.coordinator.claudeCodeLocalInstallationId !== undefined) throw new Error();
     const i = input.coordinator.ideaCreation;
     const ideaCreation = i ? { database: validatePrivatePostgresConfiguration(i.database), integrityKey: key(i.integrityKey),
       participants: z.array(ideaParticipantSchemaV1).min(3).max(6).parse(i.participants) } : undefined;
@@ -252,7 +256,9 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
         ideaCreation?.database, ideaRuntime?.database].filter((value): value is PrivatePostgresConfiguration => !!value)) : undefined;
     return { web, preparedLocalAdapters, database, planning, routes, approvals, codex, installationTransitionAdmission, quality, revisionPlanning, resultDatabase, evidence, sessions,
       codexResultReturn, nativeHttp, nativeQueue, nativeQueueRecovery, queueWorker, hermes021Local,
-      hermes021LocalStartupReverification, claudeCodeLocal, ideaCreation, ideaRuntime, news, artifactStorage };
+      hermes021LocalStartupReverification, claudeCodeLocalStartupReverification,
+      claudeCodeLocalInstallationId: input.coordinator.claudeCodeLocalInstallationId,
+      claudeCodeLocal, ideaCreation, ideaRuntime, news, artifactStorage };
   } catch { throw new Error("private_task_startup_config_invalid"); }
 }
 
@@ -287,6 +293,8 @@ export function createPrivateTaskBootstrap(dependencies: {
     // prepared, before this receipt can exist. Actual normal startup is the
     // authority boundary and must refuse before any resource effect.
     if (capturedConfig.hermes021Local && capturedConfig.hermes021LocalStartupReverification === undefined)
+      throw new Error("private_task_startup_config_invalid");
+    if (capturedConfig.claudeCodeLocal && capturedConfig.claudeCodeLocalStartupReverification === undefined)
       throw new Error("private_task_startup_config_invalid");
     if (capturedConfig.artifactStorage && !dependencies.openArtifactStorage)
       throw new Error("private_task_startup_config_invalid");
@@ -520,6 +528,7 @@ export function createPrivateTaskBootstrap(dependencies: {
         scope: { tenantId: config.web.tenantId, workspaceId: config.web.workspaceId }, database: coordinator,
         planning: config.planning, routes: config.routes, approvals: config.approvals, quality: config.quality,
         hermes021Local: config.hermes021Local,
+        claudeCodeLocal: config.claudeCodeLocal,
         codex: config.codex,
         installationTransitionAdmission: config.installationTransitionAdmission,
         revisionPlanning: config.revisionPlanning, resultDatabase, clock,

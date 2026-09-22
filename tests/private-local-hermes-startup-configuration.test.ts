@@ -104,7 +104,7 @@ test("a bare local Hermes callback cannot bypass the final installation-proof ga
   assert.throws(() => validatePrivateTaskStartupConfiguration(configuration), /private_task_startup_config_invalid/);
 });
 
-test("a local Claude callback is captured only after its own independent proof set", async t => {
+test("a bare local Claude callback is refused even with the legacy proof set", async t => {
   const fixture = await privateAgentTaskCompositionFixture(); t.after(fixture.close);
   const scenario = fixture.scenario();
   let called = 0;
@@ -112,11 +112,6 @@ test("a local Claude callback is captured only after its own independent proof s
     ...scenario.configuration.coordinator, sessions: undefined, nativeHttp: undefined, hermes021Local: undefined,
     claudeCodeLocal: { async deliver() { called++; } },
   }, web: { ...scenario.configuration.web, ...readyLocalClaudeInstallation() } };
-  const captured = validatePrivateTaskStartupConfiguration(configuration);
-  assert.equal(typeof captured.claudeCodeLocal?.deliver, "function");
-  await captured.claudeCodeLocal!.deliver({} as never, new AbortController().signal);
-  assert.equal(called, 1, "validation captures a callback but never invokes it itself");
-
-  const withoutClaudeProof = { ...configuration, web: { ...configuration.web, claudeCodeLocalProcessReadiness: undefined } };
-  assert.throws(() => validatePrivateTaskStartupConfiguration(withoutClaudeProof), /private_task_startup_config_invalid/);
+  assert.throws(() => validatePrivateTaskStartupConfiguration(configuration), /private_task_startup_config_invalid/);
+  assert.equal(called, 0);
 });

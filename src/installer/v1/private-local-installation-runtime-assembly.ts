@@ -7,6 +7,12 @@ import type { InstallationPlanFilesystemJournalV1 } from "./installation-plan-jo
 import { dispatchPrivateLocalSetupStageV1 } from "./private-local-setup-orchestrator";
 import { reverifyPrivateLocalHermesStartupV1, verifyPrivateLocalHermesStartupReverificationV1 } from
   "./private-local-hermes-startup-reverification";
+import { verifyLocalClaudePostInstallAdmissionReceiptV1, verifyLocalClaudePostInstallAdmissionV1 } from
+  "./local-claude-post-install-admission";
+import { createClaudeCodePrivateInstallationCompositionV1 } from
+  "../../web/v1/claude-code-private-installation-composition";
+import { planInstallationTopologyV1 } from "../../harness/v1/installation-topology";
+import { CLAUDE_CODE_LOCAL_ADAPTER_V1 } from "../../harness/claude-code-v1/task-planning-contract";
 
 export const PRIVATE_LOCAL_INSTALLATION_RUNTIME_ASSEMBLY_V1 =
   "control-room.private-local-installation-runtime-assembly/v1" as const;
@@ -154,7 +160,13 @@ function settledCurrent(history: readonly InstallationPlanV1[]) {
  */
 export function createPrivateLocalInstallationRuntimeAssemblyV1(inputValue: unknown, runtimeValue: unknown) {
   let input: Readonly<Record<string, unknown>>;
-  try { input = exact(inputValue, ["runnerInput", "operatorSettings", "operatorTrustedInputs"]); }
+  try {
+    const names = inputValue && typeof inputValue === "object"
+      && Object.prototype.hasOwnProperty.call(inputValue, "claudePostInstall")
+      ? ["runnerInput", "operatorSettings", "operatorTrustedInputs", "claudePostInstall"]
+      : ["runnerInput", "operatorSettings", "operatorTrustedInputs"];
+    input = exact(inputValue, names);
+  }
   catch { return blocked("private_configuration_custody_missing"); }
   if (input.runnerInput === undefined || input.operatorSettings === undefined || input.operatorTrustedInputs === undefined)
     return blocked("private_configuration_custody_missing");
@@ -181,6 +193,12 @@ export function createPrivateLocalInstallationRuntimeAssemblyV1(inputValue: unkn
   const capturedTrusted: Readonly<Record<string, unknown>> = Object.freeze({
     ...detachedTrusted, hermes021Local: captured.delivery,
   });
+  let claudePostInstall: Readonly<Record<string, unknown>> | undefined;
+  if (input.claudePostInstall !== undefined) {
+    try { claudePostInstall = exact(input.claudePostInstall,
+      ["admissionInput", "admissionRuntime", "compositionInput"]); }
+    catch { return blocked("private_configuration_custody_missing"); }
+  }
 
   async function prepare(signal?: AbortSignal) {
     if (signal?.aborted) return refused();
@@ -189,9 +207,38 @@ export function createPrivateLocalInstallationRuntimeAssemblyV1(inputValue: unkn
     let history = await journal.inspectSettledHistory(), current = settledCurrent(history);
     verifyPrivateLocalHermesStartupReverificationV1(receipt, { delivery: captured.delivery,
       queueWorker: captured.queueWorker, installationPlan: current });
+    let claudeDelivery: ReturnType<typeof createClaudeCodePrivateInstallationCompositionV1> | undefined;
+    let claudeAdmission: Awaited<ReturnType<typeof verifyLocalClaudePostInstallAdmissionV1>> | undefined;
+    if (claudePostInstall) {
+      const admissionRuntime = claudePostInstall.admissionRuntime;
+      if (!admissionRuntime || typeof admissionRuntime !== "object") return refused();
+      const readHistory = (admissionRuntime as { readOriginalInstallationHistory?: unknown }).readOriginalInstallationHistory;
+      const readTransition = (admissionRuntime as { readTransition?: unknown }).readTransition;
+      if (typeof readHistory !== "function" || typeof readTransition !== "function") return refused();
+      claudeAdmission = await verifyLocalClaudePostInstallAdmissionV1(claudePostInstall.admissionInput as never,
+        Object.freeze({ readOriginalInstallationHistory: Function.prototype.bind.call(readHistory, admissionRuntime),
+          readTransition: Function.prototype.bind.call(readTransition, admissionRuntime) }));
+      if (signal?.aborted) return refused();
+      const originalAdmission = captured.runnerInput.admissionPreparationInput as {
+        installationId?: unknown; topologyInput?: unknown };
+      if (typeof originalAdmission.installationId !== "string") return refused();
+      const originalTopology = planInstallationTopologyV1(originalAdmission.topologyInput);
+      verifyLocalClaudePostInstallAdmissionReceiptV1(claudeAdmission, {
+        installationId: originalAdmission.installationId, originalInstallationPlanDigest: current.planDigest,
+        originalInstallationPlanRevision: current.revision, originalTopologyPlanDigest: current.topologyPlanDigest,
+        releaseDigest: current.releaseDigest, databaseAuthorityDigest: originalTopology.databaseAuthorityDigest,
+        schedulerAuthorityDigest: originalTopology.schedulerAuthorityDigest, adapterId: CLAUDE_CODE_LOCAL_ADAPTER_V1 });
+      const composition = claudePostInstall.compositionInput;
+      if (!composition || typeof composition !== "object") return refused();
+      claudeDelivery = createClaudeCodePrivateInstallationCompositionV1({ ...(composition as Record<string, unknown>),
+        admission: claudeAdmission } as never);
+    }
     const trusted = Object.freeze({ ...capturedTrusted,
       web: Object.freeze({ ...(capturedTrusted.web as Record<string, unknown>), installationPlan: current }),
-      hermes021LocalStartupReverification: receipt });
+      hermes021LocalStartupReverification: receipt,
+      ...(claudeDelivery ? { claudeCodeLocal: claudeDelivery,
+        claudeCodeLocalStartupReverification: claudeAdmission,
+        claudeCodeLocalInstallationId: claudeAdmission?.installationId } : {}) });
     const operator = assemblePrivateAgentTaskOperatorConfiguration(operatorSettings, trusted);
     if (signal?.aborted) return refused();
     history = await journal.inspectSettledHistory(); current = settledCurrent(history);

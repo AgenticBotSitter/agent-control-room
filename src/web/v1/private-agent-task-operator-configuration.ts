@@ -21,9 +21,12 @@ import { localBackupRestoreEvidenceDigestForInstallationPlanV1 } from "../../har
 import { summarizeLocalSupervisorReadinessV1 } from "../../harness/v1/local-supervisor-readiness";
 import { HERMES_021_MACOS_LOCAL_ADAPTER_V1 } from "../../harness/hermes-021-v1/macos-local-worker";
 import { CLAUDE_CODE_LOCAL_ADAPTER_V1 } from "../../harness/claude-code-v1/task-planning-contract";
-import { summarizeClaudeCodeLocalProcessReadinessV1 } from "../../harness/claude-code-v1/local-process-readiness";
 import { verifyPrivateLocalHermesStartupReverificationV1 } from
   "../../installer/v1/private-local-hermes-startup-reverification";
+import { isClaudeCodePrivateInstalledDeliverCapabilityV1 } from
+  "./claude-code-private-installation-composition";
+import { verifyLocalClaudePostInstallAdmissionReceiptV1 } from
+  "../../installer/v1/local-claude-post-install-admission";
 
 /** Pure operator-side assembly. This module performs no environment, filesystem,
  * network, listener, credential-store or database access: it only shapes
@@ -115,6 +118,10 @@ export type AgentTaskOperatorTrustedInputs = {
   hermes021LocalStartupReverification?: unknown;
   /** Already-built, installation-owned Claude composition. It contains no browser input. */
   claudeCodeLocal?: NonNullable<TaskCoordinatorConfiguration["claudeCodeLocal"]>;
+  /** Fresh committed-transition and staged-composition proof for this capability. */
+  claudeCodeLocalStartupReverification?: unknown;
+  /** Exact original installation whose committed transition admitted Claude. */
+  claudeCodeLocalInstallationId?: string;
   /** Verified, plan-bound evidence from an owner-run disposable local restore.
    * It is installation-only input, never browser data or a task record. */
   localBackupRestoreReadiness?: unknown;
@@ -178,32 +185,6 @@ function requireReadyLocalHermesInstallation(web: PrivateStartupConfiguration, b
     if (summarizeLocalSupervisorReadinessV1(summary.plan.planDigest, web.localSupervisorReadiness).state !== "readiness_recorded")
       refuse("hermes021Local_supervisor_not_ready");
   } catch { refuse("hermes021Local_supervisor_proof_invalid"); }
-}
-
-function requireReadyLocalClaudeInstallation(web: PrivateStartupConfiguration, backupRestoreProof: unknown) {
-  if (web.installationTopologyPlan === undefined || web.installationReadiness === undefined
-    || web.claudeCodeLocalProcessReadiness === undefined)
-    refuse("claudeCodeLocal_installation_proof_missing");
-  let processState: ReturnType<typeof summarizeClaudeCodeLocalProcessReadinessV1>;
-  let derivedBackupEvidenceDigest: string, recorded: InstallationReadinessV1;
-  try {
-    processState = summarizeClaudeCodeLocalProcessReadinessV1(web.installationTopologyPlan.planDigest,
-      web.claudeCodeLocalProcessReadiness);
-    derivedBackupEvidenceDigest = localBackupRestoreEvidenceDigestForInstallationPlanV1(
-      web.installationTopologyPlan, backupRestoreProof);
-    recorded = verifyInstallationReadinessV1(web.installationReadiness);
-  } catch { refuse("claudeCodeLocal_installation_proof_invalid"); }
-  if (processState.state !== "readiness_recorded") refuse("claudeCodeLocal_process_not_ready");
-  const recordedBackup = recorded.proofs.find(item => item.proof === "backup_restore");
-  if (recordedBackup?.state !== "passed" || recordedBackup.evidenceDigest !== derivedBackupEvidenceDigest)
-    refuse("claudeCodeLocal_backup_restore_proof_mismatch");
-  if (web.localSupervisorReadiness === undefined)
-    refuse("claudeCodeLocal_supervisor_not_ready");
-  try {
-    if (summarizeLocalSupervisorReadinessV1(web.installationTopologyPlan.planDigest,
-      web.localSupervisorReadiness).state !== "readiness_recorded")
-      refuse("claudeCodeLocal_supervisor_not_ready");
-  } catch { refuse("claudeCodeLocal_supervisor_proof_invalid"); }
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -569,10 +550,23 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
   // and replacing it with a newly-bound wrapper would discard the proof.
   const capturedHermes = f.hermes021Local && trustedHermes ? trustedHermes : undefined;
   const trustedClaude = t.claudeCodeLocal as NonNullable<AgentTaskOperatorTrustedInputs["claudeCodeLocal"]> | undefined;
-  if (f.claudeCodeLocal && (!trustedClaude || typeof trustedClaude.deliver !== "function")) refuse("claudeCodeLocal_invalid");
-  if (f.claudeCodeLocal) requireReadyLocalClaudeInstallation(t.web as PrivateStartupConfiguration, t.localBackupRestoreReadiness);
-  const capturedClaude = f.claudeCodeLocal && trustedClaude
-    ? Object.freeze({ deliver: trustedClaude.deliver.bind(trustedClaude) }) : undefined;
+  if (f.claudeCodeLocal && !isClaudeCodePrivateInstalledDeliverCapabilityV1(trustedClaude)) refuse("claudeCodeLocal_invalid");
+  if (f.claudeCodeLocal) {
+    const currentPlan = (t.web as PrivateStartupConfiguration).installationPlan;
+    const currentTopology = (t.web as PrivateStartupConfiguration).installationTopologyPlan;
+    if (t.claudeCodeLocalStartupReverification === undefined || !t.claudeCodeLocalInstallationId
+      || !currentPlan || !currentTopology)
+      refuse("missing_trusted_input:claudeCodeLocalStartupReverification");
+    try { verifyLocalClaudePostInstallAdmissionReceiptV1(t.claudeCodeLocalStartupReverification, {
+      installationId: t.claudeCodeLocalInstallationId!, originalInstallationPlanDigest: currentPlan!.planDigest,
+      originalInstallationPlanRevision: currentPlan!.revision, originalTopologyPlanDigest: currentTopology!.planDigest,
+      releaseDigest: currentPlan!.releaseDigest, databaseAuthorityDigest: currentTopology!.databaseAuthorityDigest,
+      schedulerAuthorityDigest: currentTopology!.schedulerAuthorityDigest, adapterId: CLAUDE_CODE_LOCAL_ADAPTER_V1 }); }
+    catch { refuse("claudeCodeLocal_startup_reverification_invalid"); }
+  }
+  // Preserve the module-private brand; rebinding into a structurally identical
+  // object would deliberately turn the capability back into an invalid bare callback.
+  const capturedClaude = f.claudeCodeLocal && trustedClaude ? trustedClaude : undefined;
   if (t.installationTransitionAdmission !== undefined && !Array.isArray(t.installationTransitionAdmission.workers))
     refuse("installation_transition_admission_workers_invalid");
   const capturedTransitionAdmission = t.installationTransitionAdmission === undefined ? undefined
@@ -607,6 +601,8 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
     ...(f.nativeQueue ? { nativeQueue: true as const } : {}),
     ...(f.nativeQueueRecovery ? { nativeQueueRecovery: true as const } : {}),
     ...(capturedHermes ? { hermes021LocalStartupReverification: t.hermes021LocalStartupReverification } : {}),
+    ...(capturedClaude ? { claudeCodeLocalStartupReverification: t.claudeCodeLocalStartupReverification } : {}),
+    ...(capturedClaude ? { claudeCodeLocalInstallationId: t.claudeCodeLocalInstallationId } : {}),
     ...(f.revisionPlanning ? { revisionPlanning: true as const } : {}),
     ...(f.quality && t.quality ? {
       quality: {
@@ -724,6 +720,12 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
         hermes021LocalStartupReverification: coordinatorShape.hermes021LocalStartupReverification,
       } : {}),
       ...(coordinatorShape.claudeCodeLocal ? { claudeCodeLocal: coordinatorShape.claudeCodeLocal } : {}),
+      ...(coordinatorShape.claudeCodeLocalStartupReverification ? {
+        claudeCodeLocalStartupReverification: coordinatorShape.claudeCodeLocalStartupReverification,
+      } : {}),
+      ...(coordinatorShape.claudeCodeLocalInstallationId ? {
+        claudeCodeLocalInstallationId: coordinatorShape.claudeCodeLocalInstallationId,
+      } : {}),
       ...(coordinatorShape.codex ? { codex: coordinatorShape.codex } : {}),
       ...(coordinatorShape.installationTransitionAdmission ? { installationTransitionAdmission: coordinatorShape.installationTransitionAdmission } : {}),
       ...(coordinatorShape.nativeQueue ? { nativeQueue: coordinatorShape.nativeQueue } : {}),
@@ -739,8 +741,9 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
     },
   };
   const detached = deepDetach(hostCompatible);
-  const configuration = capturedHermes ? Object.freeze({ ...detached, coordinator: Object.freeze({
-    ...detached.coordinator, hermes021Local: capturedHermes,
+  const configuration = capturedHermes || capturedClaude ? Object.freeze({ ...detached, coordinator: Object.freeze({
+    ...detached.coordinator, ...(capturedHermes ? { hermes021Local: capturedHermes } : {}),
+    ...(capturedClaude ? { claudeCodeLocal: capturedClaude } : {}),
   }) }) : detached;
   return Object.freeze({ configuration, port: parsed.port });
 }

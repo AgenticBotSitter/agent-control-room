@@ -11,6 +11,11 @@ import { createInstallationReadinessV1 } from "../src/harness/v1/installation-re
 import { createLocalBackupRestoreReadinessV1 } from "../src/harness/v1/local-backup-restore-readiness";
 import { createLocalSupervisorReadinessV1 } from "../src/harness/v1/local-supervisor-readiness";
 import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
+import { createClaudeCodeLocalProcessReadinessV1 } from "../src/harness/claude-code-v1/local-process-readiness";
+import { CLAUDE_CODE_LOCAL_ADAPTER_V1, CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1 } from
+  "../src/harness/claude-code-v1/task-planning-contract";
+import { createInstallationTransitionV1, advanceInstallationTransitionV1 } from
+  "../src/harness/v1/installation-transition";
 import { advanceInstallationPlanV1, createInstallationPlanV1, installationSetupStagesV1, refreshInstallationPlanV1,
   type InstallationPlanV1, verifyInstallationPlanV1 } from "../src/installer/v1/installation-plan";
 import { createPrivateLocalInstallationRuntimeAssemblyV1 } from
@@ -35,6 +40,8 @@ import { createPrivateHermes021LocalInstallationDeliveryV1,
   "../src/web/v1/hermes-021-private-installation-composition";
 import { privateArtifactStorageNamespaceDigestV1 } from "../src/web/v1/private-artifact-storage";
 import { privateAgentTaskCompositionFixture } from "./helpers/private-agent-task-composition";
+import { isClaudeCodePrivateInstalledDeliverCapabilityV1 } from
+  "../src/web/v1/claude-code-private-installation-composition";
 
 const d = (value: unknown) => sha256Digest(value);
 
@@ -520,5 +527,113 @@ test("callback, runner and queue substitution plus journal movement refuse befor
     if (assembly.status === "ready") await assert.rejects(assembly.start(),
       /private_local_(?:installation_runtime_assembly|hermes_startup_reverification)_refused|agent_task_operator_config/u);
     assert.deepEqual(effects, [], mode); assert.equal(f.hermesCalls(), 0, mode); assert.equal(f.appends(), 0, mode);
+  }
+});
+
+async function additiveClaudePackage(f: Awaited<ReturnType<typeof fixture>>, options: Readonly<{
+  installationId?: string; compositionAdapterId?: string;
+}> = {}) {
+  const admissionPreparation = f.runnerInput.admissionPreparationInput as unknown as {
+    installationId: string; topologyInput: { databaseAuthorityDigest: string; schedulerAuthorityDigest: string;
+      currentRoutes: readonly unknown[]; requestedRoutes: readonly unknown[] };
+    installationBindingInput: { serviceObservation: unknown } };
+  const installationId = options.installationId ?? admissionPreparation.installationId;
+  const workerRoute = { kind: "local" as const, workerId: "worker:claude-additive",
+    adapterId: CLAUDE_CODE_LOCAL_ADAPTER_V1, adapterRevision: "revision-claude-additive-0001" };
+  const transitionInput = { databaseAuthorityDigest: f.topology.databaseAuthorityDigest,
+    schedulerAuthorityDigest: f.topology.schedulerAuthorityDigest,
+    currentRoutes: admissionPreparation.topologyInput.requestedRoutes,
+    requestedRoutes: [...admissionPreparation.topologyInput.requestedRoutes, workerRoute] };
+  const topology = planInstallationTopologyV1(transitionInput);
+  const processConfiguration = { schema: "control-room.claude-code-private-installed-process-host-configuration/v1" as const,
+    process: { executablePath: "/private/bin/claude", args: ["--print"],
+      workingDirectory: "/private/workspace", cleanupMs: 100 }, executableSha256: d("claude-executable"),
+    workingDirectoryBindingDigest: d("claude-workspace"), qualificationDigest: d("claude-qualification"),
+    startupDeadlineMs: 100, terminateDeadlineMs: 100, killDeadlineMs: 100 };
+  const processConfigurationDigest = d({ purpose: "local-claude-installed-process-configuration/v1",
+    configuration: processConfiguration });
+  const processReadiness = createClaudeCodeLocalProcessReadinessV1({ planDigest: topology.planDigest,
+    proofs: (["installed_process_identity", "permission_boundary", "cancellation_and_restart_recovery"] as const)
+      .map(proof => ({ proof, state: "passed" as const, evidenceDigest: d(`claude:${proof}`) })) });
+  const processObservation = { state: "passed" as const, topologyPlanDigest: topology.planDigest,
+    releaseDigest: f.plan.releaseDigest, workerRouteDigest: d(workerRoute),
+    connectorProfileDigest: CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1, processConfigurationDigest,
+    processReadinessDigest: processReadiness.readinessDigest, observationDigest: d("claude-process-observation") };
+  const protectedResultStorage = f.trusted.artifactStorage!;
+  const serviceObservation = admissionPreparation.installationBindingInput.serviceObservation;
+  const transitionId = "transition:add-local-claude";
+  const reviewedMaterial = { installationId, originalInstallationPlanDigest: f.plan.planDigest,
+    originalInstallationPlanRevision: f.plan.revision, originalTopologyPlanDigest: f.topology.planDigest,
+    transitionId, transitionPlanDigest: topology.planDigest, databaseAuthorityDigest: topology.databaseAuthorityDigest,
+    schedulerAuthorityDigest: topology.schedulerAuthorityDigest, requestedRouteDigest: topology.requestedRouteDigest,
+    workerRouteDigest: d(workerRoute), workerId: workerRoute.workerId, adapterId: workerRoute.adapterId,
+    adapterRevision: workerRoute.adapterRevision, connectorProfileDigest: CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1,
+    processConfigurationDigest, processReadinessDigest: processReadiness.readinessDigest,
+    processObservationDigest: d(processObservation), protectedResultStorageDigest: d(protectedResultStorage),
+    serviceObservationDigest: d(serviceObservation), releaseDigest: f.plan.releaseDigest,
+    workspaceBindingDigest: processConfiguration.workingDirectoryBindingDigest };
+  const evidenceDigest = d({ purpose: "local-claude-post-install-reviewed-evidence/v1", admission: reviewedMaterial });
+  let transition = createInstallationTransitionV1({ transitionId, topologyPlan: topology, now: "2026-09-22T00:00:00.000Z" });
+  for (const [action, second] of [["pause_admission", 1], ["record_drain", 2], ["verify_proofs", 3], ["commit", 4]] as const)
+    transition = advanceInstallationTransitionV1(transition, { expectedRevision: transition.revision, action,
+      now: `2026-09-22T00:00:0${second}.000Z`, evidenceDigest });
+  let transitionReads = 0;
+  const compositionAdapterId = options.compositionAdapterId ?? CLAUDE_CODE_LOCAL_ADAPTER_V1;
+  return { transitionReads: () => transitionReads, claudePostInstall: {
+    admissionInput: { installationId, originalInstallationPlan: f.plan,
+      originalTopologyInput: admissionPreparation.topologyInput, transitionTopologyInput: transitionInput,
+      transitionId, workerRoute, requestedRoutes: transitionInput.requestedRoutes,
+      installedProcessConfiguration: processConfiguration, processReadiness, processObservation,
+      protectedResultStorage, serviceObservation, permittedWorkspace: { workspaceId: "workspace:fixture",
+        workingDirectory: processConfiguration.process.workingDirectory,
+        bindingDigest: processConfiguration.workingDirectoryBindingDigest } },
+    admissionRuntime: { async readOriginalInstallationHistory() { return f.history; },
+      async readTransition() { transitionReads++; return transition; } },
+    compositionInput: { tenantId: "tenant:fixture", installedProcessConfiguration: processConfiguration,
+      ports: { async verifyInstallation() { throw new Error("not invoked during startup"); },
+        launch() { throw new Error("not invoked during startup"); } },
+      execution: { preparation: {} as never, runs: {} as never,
+        delivery: { db: {} as never, integrityKey: new Uint8Array(32), binding: { workerId: workerRoute.workerId,
+          adapterId: compositionAdapterId, adapterRevision: workerRoute.adapterRevision, authorityDigest: d("authority"),
+          acceptanceProfileId: "profile:claude", acceptanceProfileDigest: d("acceptance") },
+          authority: {} as never, receiptPort: {} as never, recheckBeforeAcquire: async () => {}, cleanupMs: 100,
+          clock: () => 0 }, results: {} as never,
+        protectedStorage: { async put() { throw new Error("not invoked during startup"); },
+          async read() { throw new Error("not invoked during startup"); } } },
+      assertCurrentProcess() {}, assertCurrentDelivery() {} } } };
+}
+
+test("additive Claude is reread, branded and carried through operator assembly to final startup while Hermes remains", async t => {
+  const f = await fixture(t), sequence: string[] = [];
+  const claude = await additiveClaudePackage(f);
+  const settings = { ...f.settings, features: { ...f.settings.features, claudeCodeLocal: true } };
+  const assembly = createPrivateLocalInstallationRuntimeAssemblyV1({ runnerInput: f.runnerInput,
+    operatorSettings: settings, operatorTrustedInputs: f.trusted, claudePostInstall: claude.claudePostInstall },
+  { journal: f.journal, startupDependencies: startupBoundaryDependencies(sequence) });
+  assert.equal(assembly.status, "ready");
+  if (assembly.status !== "ready") return;
+  const prepared = await assembly.prepare();
+  assert.equal(claude.transitionReads(), 1, "committed transition is reread before configuration exposure");
+  assert.equal(isClaudeCodePrivateInstalledDeliverCapabilityV1(prepared.configuration.coordinator.claudeCodeLocal), true);
+  assert.equal(prepared.configuration.coordinator.hermes021Local, f.delivery, "bootstrap Hermes remains exact");
+  await assert.rejects(assembly.start(), /private_task_startup_prerequisites_failed/u);
+  assert.equal(claude.transitionReads(), 2, "final startup performs a fresh transition reread");
+  assert.deepEqual(sequence, ["artifact-storage"], "first startup effect occurs only after both rereads");
+});
+
+test("foreign installation and substituted Claude adapter refuse after transition reread and before startup effects", async t => {
+  for (const mode of ["foreign", "adapter"] as const) {
+    const f = await fixture(t), effects: string[] = [];
+    const claude = await additiveClaudePackage(f, mode === "foreign" ? { installationId: "installation:foreign" }
+      : { compositionAdapterId: "connector:substituted" });
+    const assembly = createPrivateLocalInstallationRuntimeAssemblyV1({ runnerInput: f.runnerInput,
+      operatorSettings: { ...f.settings, features: { ...f.settings.features, claudeCodeLocal: true } },
+      operatorTrustedInputs: f.trusted, claudePostInstall: claude.claudePostInstall },
+    { journal: f.journal, startupDependencies: dependencies(effects) });
+    assert.equal(assembly.status, "ready");
+    if (assembly.status === "ready") await assert.rejects(assembly.prepare(),
+      /local_claude_post_install_admission_refused|private_local_installation_runtime_assembly_refused|claude_code_private_installation_composition_unavailable/u);
+    assert.equal(claude.transitionReads(), mode === "foreign" ? 0 : 1, mode);
+    assert.deepEqual(effects, [], mode);
   }
 });
