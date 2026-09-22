@@ -12,6 +12,41 @@ plans remain architecture/history references, not competing execution queues.
 
 ## Source checkpoint (2026-09-22)
 
+The macOS installation-journal sidecar binding and the separately versioned
+installed-manifest v2 binding are **source-only and inert**. The release build
+can bind and verify the named bytes, platform, architecture and digests before
+an installation-root write, but the launcher does not stage, invoke or qualify
+the native sidecar. The v2 reader returns frozen manifest data only; it does not
+write, upgrade or activate a manifest. These are safety checks in the source
+tree, not evidence of an installed package or a completed native operation.
+
+The reuse register now records four additional source inspections:
+`joeynyc/honeycomb-lab`, `joeynyc/hermes-hudui`, `joeynyc/hermes-hud`, and
+`joeynyc/openclaw-mission-control`. Their recorded decisions are deliberately
+limited: status and stale-evidence ideas, presentation organization, and
+negative-test inspiration may be evaluated later; the OpenClaw source is not
+reusable until it supplies a real license. No donor runtime, scheduler,
+worker-control path, credentials, installation behavior or second authority
+has been adopted.
+
+There are now two source-only, read-only Control Room workboards. The local
+preview is explicitly a repository-fake single-computer view. The real private
+`/workboard` page reads the same existing protected task, project, capacity,
+eligibility, inbox and review projections through canonical browser reads.
+Neither board connects to a worker host, creates a scheduler, assigns, starts,
+stops, retries, approves or submits work. Each labels unavailable evidence as
+unavailable; the private board also changes an eligible worker to unavailable
+when its measured capacity evidence becomes stale. An empty checked page is
+not presented as a healthy or all-clear system. These pages make saved evidence
+easier to inspect, but they do not make an installation, database, service or
+worker operational.
+
+Local Hermes activation remains at L4's owner gate. The existing source and
+sanitized qualification evidence do not authorize a real task: the owner must
+complete the installed private setup and approve the first bounded Hermes task
+before Hermes can receive normal Control Room work. No worker was enabled or
+started by this checkpoint.
+
 The local product now also has an accepted read-only **Project Agents** page.
 It reuses the canonical task-assignment predicate and presents four independent
 facts without joining identities that the server deliberately keeps separate:
